@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // boundChannels is the space QueueForPool's answer is a function of, beside
@@ -43,9 +45,7 @@ func TestQueueForPool_TheDefaultPoolIsWhateverChannelTheDeploymentBound(t *testi
 		t.Run(channel.name, func(t *testing.T) {
 			for _, pool := range []string{"", task.DefaultPool} {
 				queue, err := task.QueueForPool(pool, channel.bound)
-				if err != nil {
-					t.Fatalf("QueueForPool(%q, %q): %v", pool, channel.bound, err)
-				}
+				must.OKf(t, err, "QueueForPool(%q, %q)", pool, channel.bound)
 				if queue != channel.want {
 					t.Errorf("QueueForPool(%q, %q) = %q, want %q — the default pool is the "+
 						"channel the deployment bound", pool, channel.bound, queue, channel.want)
@@ -70,9 +70,7 @@ func TestQueueForPool_IsInjectiveAndCannotForgeAReservedQueue(t *testing.T) {
 	seen := map[string]string{}
 	for _, pool := range []string{"", "main", "gpu", "batch", "a", "gpu-large"} {
 		queue, err := task.QueueForPool(pool, "")
-		if err != nil {
-			t.Fatalf("QueueForPool(%q): %v", pool, err)
-		}
+		must.OKf(t, err, "QueueForPool(%q)", pool)
 		if pool != "" && pool != task.DefaultPool {
 			if !strings.HasPrefix(queue, "ork-pool-") {
 				t.Errorf("QueueForPool(%q) = %q, want it under the pool prefix", pool, queue)
@@ -165,9 +163,7 @@ func TestRouteForPool_OneSetOfOrkersHasExactlyOneName(t *testing.T) {
 			queueOf := map[string]string{}
 			for _, pool := range pools {
 				r, err := task.RouteForPool(pool, channel.bound)
-				if err != nil {
-					t.Fatalf("RouteForPool(%q, %q): %v", pool, channel.bound, err)
-				}
+				must.OKf(t, err, "RouteForPool(%q, %q)", pool, channel.bound)
 				if seen, ok := poolOf[r.Queue]; ok && seen != r.Pool {
 					t.Errorf("queue %q is reported as pool %q and pool %q: one set of "+
 						"Orkers under two names", r.Queue, seen, r.Pool)
@@ -183,13 +179,9 @@ func TestRouteForPool_OneSetOfOrkersHasExactlyOneName(t *testing.T) {
 			// The two spellings of the default pool are one route, whatever
 			// the deployment bound (acceptance item 11).
 			omitted, err := task.RouteForPool("", channel.bound)
-			if err != nil {
-				t.Fatalf("RouteForPool(no pool, %q): %v", channel.bound, err)
-			}
+			must.OKf(t, err, "RouteForPool(no pool, %q)", channel.bound)
 			named, err := task.RouteForPool(task.DefaultPool, channel.bound)
-			if err != nil {
-				t.Fatalf("RouteForPool(%q, %q): %v", task.DefaultPool, channel.bound, err)
-			}
+			must.OKf(t, err, "RouteForPool(%q, %q)", task.DefaultPool, channel.bound)
 			if named != omitted {
 				t.Errorf("`pool: %s` routes to %+v and no pool to %+v under the bound "+
 					"channel %q", task.DefaultPool, named, omitted, channel.bound)
@@ -209,14 +201,10 @@ func TestRouteForPool_OneSetOfOrkersHasExactlyOneName(t *testing.T) {
 // answers to another name.
 func TestRouteForPool_NamesTheChannelAPoolQueueWasBoundAs(t *testing.T) {
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool(gpu): %v", err)
-	}
+	must.OKf(t, err, "QueueForPool(gpu)")
 	for _, pool := range []string{"", task.DefaultPool, "gpu"} {
 		r, err := task.RouteForPool(pool, gpuQueue)
-		if err != nil {
-			t.Fatalf("RouteForPool(%q, %q): %v", pool, gpuQueue, err)
-		}
+		must.OKf(t, err, "RouteForPool(%q, %q)", pool, gpuQueue)
 		if r.Queue != gpuQueue || r.Pool != "gpu" {
 			t.Errorf("RouteForPool(%q, %q) = %+v, want pool gpu on %q",
 				pool, gpuQueue, r, gpuQueue)
@@ -227,9 +215,7 @@ func TestRouteForPool_NamesTheChannelAPoolQueueWasBoundAs(t *testing.T) {
 func TestPoolForQueue_ReversesTheMappingAndSkipsForeignQueues(t *testing.T) {
 	for _, pool := range []string{"main", "gpu", "gpu-large"} {
 		queue, err := task.QueueForPool(pool, "")
-		if err != nil {
-			t.Fatalf("QueueForPool(%q): %v", pool, err)
-		}
+		must.OKf(t, err, "QueueForPool(%q)", pool)
 		got, ok := task.PoolForQueue(queue)
 		if !ok || got != pool {
 			t.Errorf("PoolForQueue(%q) = %q, %v; want %q, true", queue, got, ok, pool)

@@ -13,6 +13,8 @@ import (
 	"testing/fstest"
 
 	"github.com/orkstack/orkstack/internal/webui"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // build is a UI build as adapter-static writes one: the SPA fallback page,
@@ -51,9 +53,7 @@ func get(t *testing.T, h http.Handler, method, target string, header map[string]
 func body(t *testing.T, res *http.Response) string {
 	t.Helper()
 	b, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return string(b)
 }
 
@@ -326,13 +326,9 @@ func TestEmbedded_IsTheBuildInDist(t *testing.T) {
 func TestDir(t *testing.T) {
 	t.Run("a build directory", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("from disk"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("from disk"), 0o644))
 		build, err := webui.Dir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if got := body(t, get(t, webui.Handler(build), "GET", "/runs", nil)); got != "from disk" {
 			t.Errorf("body %q, want the directory's index.html", got)
 		}
@@ -349,20 +345,12 @@ func TestDir(t *testing.T) {
 	})
 	t.Run("a link out of the directory is not followed", func(t *testing.T) {
 		outside := t.TempDir()
-		if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("secret"), 0o644))
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("app"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "leak.txt")); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("app"), 0o644))
+		must.OK(t, os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(dir, "leak.txt")))
 		build, err := webui.Dir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		res := get(t, webui.Handler(build), "GET", "/leak.txt", nil)
 		if got := body(t, res); res.StatusCode == http.StatusOK || strings.Contains(got, "secret") {
 			t.Errorf("GET /leak.txt: status %d, body %q: a link out of the UI directory was followed", res.StatusCode, got)
@@ -437,25 +425,17 @@ func TestDir_FollowsARebuild(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "build")
 	write := func(page string) {
 		t.Helper()
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte(page), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(dir, 0o755))
+		must.OK(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte(page), 0o644))
 	}
 	write("first build")
 	build, err := webui.Dir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	h := webui.Handler(build)
 	if got := body(t, get(t, h, "GET", "/runs", nil)); got != "first build" {
 		t.Fatalf("body %q, want the first build", got)
 	}
-	if err := os.RemoveAll(dir); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.RemoveAll(dir))
 	write("second build")
 	if res := get(t, h, "GET", "/runs", nil); res.StatusCode != http.StatusOK || body(t, res) != "second build" {
 		t.Errorf("after a rebuild: status %d, want the second build", res.StatusCode)

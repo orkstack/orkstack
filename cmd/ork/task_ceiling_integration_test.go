@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // flatShellDoc is an Orkflow of n independent `uses: shell` tasks.
@@ -51,7 +53,7 @@ func TestIntegration_EngineBootsAtTheRaisedTaskCeiling(t *testing.T) {
 	_, orkflows, log := bootEngine(ctx, t, binary, temporal, "engine-ceiling-default", "ORK_TEMPORAL_NAMESPACE="+ns)
 	for _, want := range []string{
 		fmt.Sprintf("orkflow_max_tasks=%d", n), "explicit=false", fmt.Sprintf("measured_max=%d", n),
-		"flat_stage_bound=4222", "definition_by_reference=true", "snapshot_overlays=true",
+		"flat_stage_bound=4389", "definition_by_reference=true", "snapshot_overlays=true",
 	} {
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("the default boot log does not say %q:\n%s", want, log.String())
@@ -66,9 +68,7 @@ func TestIntegration_EngineBootsAtTheRaisedTaskCeiling(t *testing.T) {
 	}{{n, 0}, {n + 1, 1}} {
 		resp, err := orkflows.ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
 			Yaml: flatShellDoc("ceiling", tc.tasks)}))
-		if err != nil {
-			t.Fatalf("validate %d tasks: %v", tc.tasks, err)
-		}
+		must.OKf(t, err, "validate %d tasks", tc.tasks)
 		if got := len(resp.Msg.GetIssues()); got != tc.issues {
 			t.Fatalf("validate %d tasks: %d issues %v, want %d", tc.tasks, got, resp.Msg.GetIssues(), tc.issues)
 		}
@@ -82,7 +82,7 @@ func TestIntegration_EngineBootsAtTheRaisedTaskCeiling(t *testing.T) {
 		fmt.Sprintf("ORK_ORKFLOW_MAX_TASKS=%d", n+1000), "ORK_CONTINUATION_RESTORE_TIMEOUT=8h")
 	for _, want := range []string{
 		fmt.Sprintf("is above the largest size measured (%d): this deployment runs unmeasured", n),
-		"is above 3041, the flat-stage bound for", "plain tasks that start together may stop RUN_HISTORY_LIMIT",
+		"is above 3207, the flat-stage bound for", "plain tasks that start together may stop RUN_HISTORY_LIMIT",
 	} {
 		if !strings.Contains(log.String(), want) {
 			t.Fatalf("the raised boot log does not warn %q:\n%s", want, log.String())
@@ -102,6 +102,6 @@ func TestIntegration_EngineBootsAtTheRaisedTaskCeiling(t *testing.T) {
 			t.Fatalf("the refused boot does not name %q:\n%s", want, refused.log.String())
 		}
 	}
-	t.Logf("default: ceiling %d, flat-stage bound 4222, no warning; raised to %d with restore_timeout 8h: both warnings; "+
+	t.Logf("default: ceiling %d, flat-stage bound 4389, no warning; raised to %d with restore_timeout 8h: both warnings; "+
 		"5000 with continuation off: refused at boot", n, n+1000)
 }

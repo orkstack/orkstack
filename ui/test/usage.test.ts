@@ -64,7 +64,7 @@ test('budgetShareCells exist only in the budget window, one per bounded dimensio
 	expect(BUDGET_WARN_RATIO).toBe(0.8);
 });
 
-test('budgetCellLabel is the --group-by namespace BUDGET cell for its three cases', () => {
+test('budgetCellLabel is the -g namespace BUDGET cell for its three cases', () => {
 	const total = create(UsageRowSchema, { cpuSeconds: 755 });
 	expect(budgetCellLabel(response({ total }))).toBe('unbounded');
 	expect(budgetCellLabel(response({ total, budget: budget(500n, 0n, 720, true), budgetWindow: true, budgetReached: true }))).toBe(
@@ -114,12 +114,12 @@ test('usageFooter returns the CLI sentences under the same conditions', () => {
 });
 
 test('usageCli and adminUsageCli are the commands the pages ran', () => {
-	expect(usageCli('budgets-e2e', '1h0m0s')).toBe('orkctl --namespace budgets-e2e stats usage --since 1h0m0s');
+	expect(usageCli('budgets-e2e', '1h0m0s')).toBe('orkctl -n budgets-e2e stats usage -s 1h0m0s');
 	expect(usageCli('', '24h', [FailureGroupBy.ORKFLOW, FailureGroupBy.POOL])).toBe(
-		'orkctl --namespace default stats usage --since 24h --group-by orkflow,pool'
+		'orkctl -n default stats usage -s 24h -g orkflow,pool'
 	);
 	expect(usageCli("o'brien", '2026-01-02T00:00:00.000Z')).toBe(
-		"orkctl --namespace 'o'\"'\"'brien' stats usage --since 2026-01-02T00:00:00.000Z"
+		"orkctl -n 'o'\"'\"'brien' stats usage -s 2026-01-02T00:00:00.000Z"
 	);
-	expect(adminUsageCli('24h')).toBe('orkctl stats usage --group-by namespace --since 24h');
+	expect(adminUsageCli('24h')).toBe('orkctl stats usage -g namespace -s 24h');
 });

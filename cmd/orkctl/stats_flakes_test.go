@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // seedFlakes wires a fixture over a real archive and attempt store holding
@@ -26,9 +28,7 @@ import (
 func seedFlakes(t *testing.T, withAttempts bool) *fixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 	attempts := artifacts.NewMemoryAttemptStore()
@@ -47,9 +47,7 @@ func seedFlakes(t *testing.T, withAttempts bool) *fixture {
 		if code != "" {
 			rec.Error = &orkstackv1.Error{Code: code, Category: category}
 		}
-		if err := attempts.PutAttempt(context.Background(), rec); err != nil {
-			t.Fatalf("put attempt: %v", err)
-		}
+		must.OKf(t, attempts.PutAttempt(context.Background(), rec), "put attempt")
 	}
 	failed := orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED
 	succeeded := orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED
@@ -60,9 +58,7 @@ func seedFlakes(t *testing.T, withAttempts bool) *fixture {
 			Id: id, Namespace: "default", OrkflowName: orkflow, Status: status,
 			CreatedAt: timestamppb.New(at), FinishedAt: timestamppb.New(at.Add(time.Minute)), TaskRuns: tasks,
 		}
-		if err := archiver.Archive(context.Background(), run, nil); err != nil {
-			t.Fatalf("archive %s: %v", id, err)
-		}
+		must.OKf(t, archiver.Archive(context.Background(), run, nil), "archive %s", id)
 	}
 	task := func(id, pool string, attempt int32) *orkstackv1.TaskRun {
 		return &orkstackv1.TaskRun{TaskId: id, Pool: pool, Attempt: attempt, Status: orkstackv1.Status_STATUS_SUCCEEDED}

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -14,6 +13,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // CommitStore holds the durable activity completion records — the object whose
@@ -69,6 +69,11 @@ type CommitRecord struct {
 	// (run evidence) copies these rather than re-marshalling Commit, for the
 	// reason SHA256 is never recomputed. It is nil alongside an error.
 	Raw []byte
+	// confirmedByRead is set by a Create whose answer was lost and which a
+	// read found landed (putConfirmed): equal bytes there may be another
+	// writer's identical commit. Only the boot probe, whose two writers send
+	// one fixed candidate, needs the difference.
+	confirmedByRead bool
 }
 
 const (
@@ -226,7 +231,7 @@ func MarshalCommit(c *orkstackv1.ActivityCommit) ([]byte, error) {
 			c.GetRunId(), c.GetTaskId(), err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode commit for run %q task %q: %w",
 			c.GetRunId(), c.GetTaskId(), err)
 	}

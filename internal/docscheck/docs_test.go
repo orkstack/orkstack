@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 	"unicode"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // repoRoot is the module root: this package lives at internal/docscheck. It is
@@ -19,9 +21,7 @@ import (
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if root, err = filepath.EvalSymlinks(root); err != nil {
 		t.Fatal(err)
 	}
@@ -31,9 +31,7 @@ func repoRoot(t *testing.T) string {
 func readFile(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return string(b)
 }
 
@@ -251,16 +249,19 @@ var changelogRelease = regexp.MustCompile(`^## \[(0|[1-9][0-9]*)\.(0|[1-9][0-9]*
 // changelogProblems checks CHANGELOG.md's shape (Keep a Changelog 1.1.0): an
 // Unreleased section first, then one section per release, newest first, each
 // headed "## [X.Y.Z] - YYYY-MM-DD" with a real date, and subsections only of
-// Keep a Changelog's kinds. A "## " line inside a code fence is text.
+// Keep a Changelog's kinds, after an optional "### Features" that comes
+// first: the version's headline items, which open its release notes. A "## "
+// line inside a code fence is text.
 func changelogProblems(doc string) []string {
-	allowed := map[string]bool{"Added": true, "Changed": true, "Deprecated": true, "Removed": true, "Fixed": true, "Security": true}
+	allowed := map[string]bool{"Features": true, "Added": true, "Changed": true, "Deprecated": true, "Removed": true, "Fixed": true, "Security": true}
 	var (
-		p        []string
-		fenced   bool
-		headings int
-		section  string
-		last     [3]int
-		lastDay  time.Time
+		p           []string
+		fenced      bool
+		headings    int
+		section     string
+		subsections int
+		last        [3]int
+		lastDay     time.Time
 	)
 	for _, line := range strings.Split(doc, "\n") {
 		if strings.HasPrefix(strings.TrimLeft(line, " "), "```") {
@@ -272,7 +273,7 @@ func changelogProblems(doc string) []string {
 		switch {
 		case strings.HasPrefix(line, "## "):
 			headings++
-			section = line
+			section, subsections = line, 0
 			if headings == 1 {
 				if line != "## [Unreleased]" {
 					p = append(p, fmt.Sprintf("the first section is %q; Keep a Changelog's first is ## [Unreleased]", line))
@@ -301,8 +302,15 @@ func changelogProblems(doc string) []string {
 				}
 			}
 			last, lastDay = v, day
-		case strings.HasPrefix(line, "### ") && !allowed[strings.TrimSpace(line[4:])]:
-			p = append(p, fmt.Sprintf("%s has a subsection %q; Keep a Changelog's are Added, Changed, Deprecated, Removed, Fixed and Security", section, line[4:]))
+		case strings.HasPrefix(line, "### "):
+			kind := strings.TrimSpace(line[4:])
+			subsections++
+			switch {
+			case !allowed[kind]:
+				p = append(p, fmt.Sprintf("%s has a subsection %q; Keep a Changelog's are Added, Changed, Deprecated, Removed, Fixed and Security, after an optional Features", section, line[4:]))
+			case kind == "Features" && subsections > 1:
+				p = append(p, fmt.Sprintf("%s has its Features after another subsection; Features comes first, as it opens the release notes", section))
+			}
 		}
 	}
 	if headings == 0 {
@@ -323,7 +331,7 @@ func TestChangelog_IsKeepAChangelogs(t *testing.T) {
 // the shape is found, and a well-formed changelog has none.
 func TestChangelogProblems_RefusesWhatIsNotKeepAChangelogs(t *testing.T) {
 	good := "# Changelog\n\n## [Unreleased]\n\n### Added\n\n- next\n\n" +
-		"## [0.10.0] - 2026-12-01\n\n### Changed\n\n- **BREAKING** a change\n\n```markdown\n## [9.9.9] in a fence\n### Anything\n```\n\n" +
+		"## [0.10.0] - 2026-12-01\n\n### Features\n\n- A headline item.\n\n**Upgrading:** read the breaking entries.\n\n### Changed\n\n- **BREAKING** a change\n\n```markdown\n## [9.9.9] in a fence\n### Anything\n```\n\n" +
 		"## [0.2.0] - 2026-11-20\n\n### Fixed\n\n- a fix\n\n## [0.1.0] - 2026-10-29\n\nFirst release.\n"
 	if p := changelogProblems(good); len(p) > 0 {
 		t.Fatalf("a well-formed changelog: %v", p)
@@ -338,6 +346,7 @@ func TestChangelogProblems_RefusesWhatIsNotKeepAChangelogs(t *testing.T) {
 		{"out of order", "## [0.2.0]", "## [0.11.0]", "not older"},
 		{"dated after the newer one", "2026-11-20", "2026-12-02", "dated after"},
 		{"a subsection of no kind", "### Fixed", "### Bug fixes", "Bug fixes"},
+		{"Features after another subsection", "### Features\n\n- A headline item.\n\n**Upgrading:** read the breaking entries.\n\n### Changed\n\n- **BREAKING** a change\n", "### Changed\n\n- **BREAKING** a change\n\n### Features\n\n- A headline item.\n", "Features comes first"},
 	} {
 		bad := strings.Replace(good, tc.from, tc.to, 1)
 		if bad == good {
@@ -394,9 +403,8 @@ func TestRepositoryNeverKillsByNameOrPattern(t *testing.T) {
 // index go test's cache cannot see, so it must open the index file itself
 // first, asking git for its path; the cache keys on it where the git directory
 // lies inside the module, and make check runs the package uncached for the
-// rest (TestMakeCheck_RunsGitStatePackagesUncached). treeFiles and
-// TestRepositoryScopeTable_MapsEveryTrackedPath do; this keeps them, and any
-// future one, honest. It matches the call, not a mention of the flag, so a
+// rest (TestMakeCheck_RunsGitStatePackagesUncached). treeFiles does; this
+// keeps it, and any future one, honest. It matches the call, not a mention of the flag, so a
 // file that only names it, as this one does, is not taken for one that opens
 // the index.
 func TestDocs_EnumerationsAreCacheVisible(t *testing.T) {
@@ -407,7 +415,6 @@ func TestDocs_EnumerationsAreCacheVisible(t *testing.T) {
 		filepath.Join(root, "internal/docscheck/reasons_test.go"),
 		filepath.Join(root, "cmd/orkctl/cli_reference_test.go"),
 		filepath.Join(root, "test/tools/proofrun/docs_test.go"),
-		filepath.Join(root, "test/tools/proofrun/scope_test.go"),
 	}
 	gitExec := regexp.MustCompile(`exec\.Command(?:Context\([^,]+,\s*|\()"git"`)
 	opensIndex := regexp.MustCompile(`"rev-parse",\s*"--git-path",\s*"index"`)

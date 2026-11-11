@@ -15,13 +15,15 @@ import (
 	"testing"
 	"time"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/dist"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // compose.yaml, at the repository root, is the quickstart a user runs from a
@@ -129,9 +131,7 @@ func parseCompose(t *testing.T, name string, data []byte) composeFile {
 	var doc composeFile
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	decoder.KnownFields(true)
-	if err := decoder.Decode(&doc); err != nil {
-		t.Fatalf("%s: %v", name, err)
-	}
+	must.OKf(t, decoder.Decode(&doc), "%s", name)
 	if len(doc.Services) == 0 {
 		t.Fatalf("%s declares no services", name)
 	}
@@ -236,9 +236,7 @@ func TestQuickstartCompose_BuildsFromTheCheckoutAndPinsTheRest(t *testing.T) {
 	// Every activity under images/ is one the stack builds: one added there
 	// and not here would be missing from the quickstart's catalog.
 	entries, err := os.ReadDir(filepath.Join(repoRoot(t), "images"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, e := range entries {
 		if e.IsDir() && strings.HasPrefix(e.Name(), dist.ActivityPrefix) && !built[e.Name()] {
 			t.Errorf("images/%s is a first-party activity the quickstart does not build", e.Name())
@@ -281,9 +279,7 @@ func TestQuickstartCompose_TheEnginePinsTheActivitiesThePushPushes(t *testing.T)
 	}
 	decoder := yaml.NewDecoder(strings.NewReader(doc.service(t, "ork").Environment["ORK_ACTIVITY_CATALOG"]))
 	decoder.KnownFields(true)
-	if err := decoder.Decode(&catalog); err != nil {
-		t.Fatalf("ORK_ACTIVITY_CATALOG: %v", err)
-	}
+	must.OKf(t, decoder.Decode(&catalog), "ORK_ACTIVITY_CATALOG")
 	if got, want := sorted(slices.Collect(maps.Keys(catalog.Activities))), sorted(dist.ActivityNames()); !slices.Equal(got, want) {
 		t.Errorf("the catalog names %v, want every first-party activity %v", got, want)
 	}
@@ -667,9 +663,7 @@ func TestKindStore_IsReadyOnlyOnceTheBucketServes(t *testing.T) {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil {
-			t.Fatalf("%s: %v", infra, err)
-		}
+		must.OKf(t, err, "%s", infra)
 		if doc.Kind != "Deployment" {
 			continue
 		}
@@ -947,9 +941,7 @@ func TestQuickstartCompose_TheOrkerOutlastsItsContainersGrace(t *testing.T) {
 	t.Parallel()
 	orkerService := loadCompose(t).service(t, "orker")
 	grace, err := time.ParseDuration(orkerService.StopGracePeriod)
-	if err != nil {
-		t.Fatalf("stop_grace_period %q: %v", orkerService.StopGracePeriod, err)
-	}
+	must.OKf(t, err, "stop_grace_period %q", orkerService.StopGracePeriod)
 	// The Orker's own SIGTERM waits this long for each task container before
 	// it kills it (AGENTS.md section 3.3); Docker kills the Orker after
 	// stop_grace_period, so it must be longer than a container's grace.
@@ -1068,9 +1060,7 @@ func checkSmokeOrkerForward(t *testing.T, doc composeFile, path string, node *ya
 		return
 	}
 	var got composeService
-	if err := node.Decode(&got); err != nil {
-		t.Fatalf("%s: %s: %v", path, smokeOrkerForward, err)
-	}
+	must.OKf(t, node.Decode(&got), "%s: %s", path, smokeOrkerForward)
 	engine := doc.service(t, "registry-forward")
 	if got.Image != "${SMOKE_FORWARD_IMAGE:?}" {
 		t.Errorf("%s: %s runs %q, want ${SMOKE_FORWARD_IMAGE:?}, the forwarder compose.yaml pins", path, smokeOrkerForward, got.Image)

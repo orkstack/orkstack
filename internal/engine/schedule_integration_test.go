@@ -4,7 +4,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,8 +23,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_ScheduleFireDuringVersionRollout: a fire open on v1 while
@@ -72,7 +74,7 @@ func TestIntegration_ScheduleFireDuringVersionRollout(t *testing.T) {
 		plan := rawPlan(orkerQueue)
 		plan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_SCHEDULE", ID: rec.GetScheduleId(),
 			Reference: at.UTC().Format(time.RFC3339), Description: rec.GetName()}
-		encoded, err := json.Marshal(plan)
+		encoded, err := stablejson.Marshal(plan)
 		if err != nil {
 			return nil, err
 		}
@@ -111,9 +113,7 @@ func TestIntegration_ScheduleFireDuringVersionRollout(t *testing.T) {
 		t.Fatalf("create schedule: %v", err)
 	}
 	defer func() { _ = scheduler.Delete(context.Background(), "default", name) }()
-	if err := scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED); err != nil {
-		t.Fatalf("fire: %v", err)
-	}
+	must.OKf(t, scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED), "fire")
 	transcript.step("fired the schedule while v1 was current")
 	select {
 	case <-first.started:
@@ -128,9 +128,7 @@ func TestIntegration_ScheduleFireDuringVersionRollout(t *testing.T) {
 	setCurrentVersion(t, ctx, c, v2, runQueue, orkerQueue)
 	transcript.step("v2 workers up; current version = v2, while " + pinnedRun + " is still executing")
 
-	if err := scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED); err != nil {
-		t.Fatalf("second fire: %v", err)
-	}
+	must.OKf(t, scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED), "second fire")
 	transcript.step("fired the schedule again after the switch")
 	deadline := time.Now().Add(60 * time.Second)
 	for runID(1) == "" && time.Now().Before(deadline) {
@@ -143,13 +141,9 @@ func TestIntegration_ScheduleFireDuringVersionRollout(t *testing.T) {
 	// The stub records the run id before the fire starts the child run, so
 	// the run may not exist yet: wait for it before waiting on its result.
 	waitWorkflowStarted(t, ctx, c, newRun)
-	if err := c.GetWorkflow(ctx, newRun, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run of the fire after the switch (%s) did not complete: %v", newRun, err)
-	}
+	must.OKf(t, c.GetWorkflow(ctx, newRun, "").Get(ctx, nil), "the run of the fire after the switch (%s) did not complete", newRun)
 	releaseGate()
-	if err := c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run of the fire opened on v1 (%s) did not complete: %v", pinnedRun, err)
-	}
+	must.OKf(t, c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, nil), "the run of the fire opened on v1 (%s) did not complete", pinnedRun)
 	transcript.step("both runs completed")
 
 	assertRunVersion(t, ctx, c, transcript, pinnedRun, v1)
@@ -198,9 +192,7 @@ func scheduleFireIDs(t *testing.T, ctx context.Context, c interface {
 		resp, err := c.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
 			Query: fmt.Sprintf("WorkflowType = '%s'", engine.ScheduleFireWorkflowType),
 		})
-		if err != nil {
-			t.Fatalf("list fire workflows: %v", err)
-		}
+		must.OKf(t, err, "list fire workflows")
 		type fire struct {
 			id    string
 			start time.Time

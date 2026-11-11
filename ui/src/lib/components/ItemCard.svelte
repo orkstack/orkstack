@@ -17,6 +17,7 @@
 	import type { TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import { LiveAttemptState, type LiveAttempt } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import { isTerminal } from '#lib/status.ts';
+	import { waitingFact } from '#lib/join.ts';
 	import { formatDuration, shortDigestWords } from '#lib/runDetail.ts';
 	import { formatBytes, heartbeatAge, liveLine, unavailableReason } from '#lib/live.ts';
 	import { attemptPhases, phaseGroups, formatQuantity, type TaskTiming } from '#lib/timing.ts';
@@ -59,6 +60,12 @@
 		children?: Snippet;
 		/** The head's words when nothing can be said yet (a fan-out with no item). */
 		note?: string;
+		/** The pin the task belongs to, and its accent token, as its row is tinted. */
+		pin?: { name: string; accent?: string };
+		/** Its join policy in words, and the sentence with its needs, when not the default. */
+		join?: { words: string; tip: string };
+		/** A task that has not started yet: the needs it still waits on, empty once they have finished. */
+		waitsFor?: string[];
 		panelTestid?: string;
 	}
 
@@ -87,7 +94,10 @@
 		resolved,
 		children,
 		note = '',
-		panelTestid = 'item-card'
+		panelTestid = 'item-card',
+		pin,
+		join,
+		waitsFor
 	}: Props = $props();
 
 	const terminal = $derived(isTerminal(status));
@@ -140,10 +150,29 @@
 				<dd class="font-mono text-xs" data-testid={live && !orkerId ? `${prefix}-live-orker` : `${prefix}-card-orker`}>{orker}</dd>
 			</div>
 		{/if}
+		{#if pin}
+			<div>
+				<dt>Pin</dt>
+				<dd data-testid="{prefix}-pin"><i class="pin-dot" style:background-color={pin.accent ? `var(--color-${pin.accent}-line)` : undefined}></i>{pin.name}</dd>
+			</div>
+		{/if}
 		{#if pool}
 			<div>
 				<dt>Pool</dt>
 				<dd>{pool}</dd>
+			</div>
+		{/if}
+		{#if join}
+			<div>
+				<dt>Join</dt>
+				<dd data-testid="{prefix}-join" data-tip={join.tip}>{join.words}</dd>
+			</div>
+		{/if}
+		{#if waitsFor}
+			{@const waiting = waitingFact(waitsFor)}
+			<div>
+				<dt>{waiting.label}</dt>
+				<dd data-testid="{prefix}-waits-for">{waiting.value}</dd>
 			</div>
 		{/if}
 		{#if reserved}
@@ -364,6 +393,14 @@
 	.insp-plate {
 		display: flex;
 		min-width: 0;
+	}
+	.pin-dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		margin-right: 4px;
+		border-radius: 50%;
+		background-color: var(--ink-3);
 	}
 	.pkey {
 		display: grid;

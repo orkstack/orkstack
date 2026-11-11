@@ -30,7 +30,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/signal"
@@ -165,7 +165,7 @@ func readConfig() (map[string]any, error) {
 // ContractViolation, which does not retry. Discovering that after writing a
 // truncated file would turn a clear refusal into a corrupt result.
 func writeValues(values map[string]any, maxBytes int64) error {
-	encoded, err := json.Marshal(values)
+	encoded, err := json.Marshal(values, json.Deterministic(true))
 	if err != nil {
 		return fmt.Errorf("encode values: %w", err)
 	}

@@ -25,7 +25,16 @@ import path from 'node:path';
 // its spec writes itself, and zipping and carrying a passing test's trace
 // over the browser connection was cost for nothing (`--trace on` on the
 // command line records one when a passing test must be inspected).
+//
+// The solo projects (below) write to a directory of their own,
+// `test-results-solo`. Playwright clears the output directory of every
+// project it runs before its first test, and a proof with more than one
+// worker runs the solo projects as a second pass after `chromium`: sharing
+// one directory, that second pass cleared the first pass's failures, so a CI
+// part's artifact held no failed test's trace, screenshot or error context.
 const proofDir = process.env.ORK_PROOF_DIR;
+const outputDir = proofDir ? path.join(proofDir, 'test-results') : 'test-results';
+const soloOutputDir = `${outputDir}-solo`;
 
 // The browser server e2e/global-setup.ts started (e2e/browser-server.ts): a
 // Chromium in a network namespace of its own. Every worker connects to it, and
@@ -71,7 +80,7 @@ export default defineConfig({
 	// The binaries and the UI build every spec uses, built once per run.
 	globalSetup: './e2e/global-setup.ts',
 	globalTeardown: './e2e/global-teardown.ts',
-	outputDir: proofDir ? path.join(proofDir, 'test-results') : 'test-results',
+	outputDir,
 	timeout: 180_000,
 	expect: { timeout: 15_000 },
 	fullyParallel: false,
@@ -121,11 +130,13 @@ export default defineConfig({
 		},
 		{
 			name: 'chromium-solo-each-fan-out',
+			outputDir: soloOutputDir,
 			use: { browserName: 'chromium', ...isolatedBrowser },
 			testMatch: /each-fan-out-ceiling\.spec\.ts$/
 		},
 		{
 			name: 'chromium-solo-run-page-ceiling',
+			outputDir: soloOutputDir,
 			// ORK_CEILING_BROWSER=container drives it through the isolated browser
 			// instead: the comparison that establishes the cause.
 			use: { browserName: 'chromium', ...(process.env.ORK_CEILING_BROWSER === 'container' ? isolatedBrowser : {}) },

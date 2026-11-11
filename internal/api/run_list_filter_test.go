@@ -3,7 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"reflect"
 	"strings"
 	"testing"
@@ -15,6 +15,9 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runListFixture is a namespace's runs split across both halves ListRuns
@@ -45,9 +48,7 @@ func newRunListFixture(t *testing.T) *runListFixture {
 		// ork-lag finished SUCCEEDED; the index has not caught up yet.
 		run("ork-lag", "deploy", 5, orkstackv1.Status_STATUS_SUCCEEDED),
 	} {
-		if err := archiver.Archive(context.Background(), archived, nil); err != nil {
-			t.Fatalf("Archive(%s): %v", archived.GetId(), err)
-		}
+		must.OKf(t, archiver.Archive(context.Background(), archived, nil), "Archive(%s)", archived.GetId())
 	}
 	reader := &fakeReader{runs: map[string]*orkstackv1.Run{}}
 	// ork-a2 is in both halves with the same status: it must appear once.
@@ -64,9 +65,7 @@ func newRunListFixture(t *testing.T) *runListFixture {
 func (f *runListFixture) list(t *testing.T, req *orkstackv1.ListRunsRequest) ([]string, map[string]orkstackv1.Status, string) {
 	t.Helper()
 	resp, err := f.svc.ListRuns(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("ListRuns(%v): %v", req, err)
-	}
+	must.OKf(t, err, "ListRuns(%v)", req)
 	ids := []string{}
 	statuses := map[string]orkstackv1.Status{}
 	for _, r := range resp.Msg.GetRuns() {
@@ -214,7 +213,7 @@ func TestListRuns_OldTokenIsRefused(t *testing.T) {
 		"version 1, the typed filters' shape": {"v": 1, "n": "default", "o": "deploy", "s": 3, "c": at.Format(time.RFC3339Nano), "i": "ork-b"},
 		"version 3":                           {"v": 3, "n": "default", "f": "", "c": at.Format(time.RFC3339Nano), "i": "ork-b"},
 	} {
-		raw, err := json.Marshal(token)
+		raw, err := stablejson.Marshal(token)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -233,9 +232,7 @@ func TestListRuns_OldTokenIsRefused(t *testing.T) {
 		t.Fatalf("first page = %v, %v", resp, err)
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(resp.Msg.GetNextPageToken())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var minted map[string]any
 	if err := json.Unmarshal(raw, &minted); err != nil {
 		t.Fatal(err)

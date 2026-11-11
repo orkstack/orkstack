@@ -13,6 +13,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/telemetry"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // admin starts a stand-in for a daemon's admin listener serving handler, and
@@ -38,9 +40,7 @@ func readyz(status int, body string) http.Handler {
 func TestProbe_ReadyIs200(t *testing.T) {
 	t.Parallel()
 	addr := admin(t, readyz(http.StatusOK, "ready\n"))
-	if err := healthcheck.Probe(context.Background(), addr); err != nil {
-		t.Fatalf("Probe of a ready listener: %v", err)
-	}
+	must.OKf(t, healthcheck.Probe(context.Background(), addr), "Probe of a ready listener")
 }
 
 // TestProbe_AsksForTheReadinessPath: a plain GET of the path the admin listener
@@ -53,9 +53,7 @@ func TestProbe_AsksForTheReadinessPath(t *testing.T) {
 		path.Store(r.URL.RequestURI())
 		w.WriteHeader(http.StatusOK)
 	}))
-	if err := healthcheck.Probe(context.Background(), addr); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, healthcheck.Probe(context.Background(), addr))
 	if method.Load() != http.MethodGet || path.Load() != telemetry.ReadyzPath {
 		t.Fatalf("probe sent %v %v, want GET %s", method.Load(), path.Load(), telemetry.ReadyzPath)
 	}
@@ -115,9 +113,7 @@ func TestProbe_DoesNotFollowARedirect(t *testing.T) {
 func TestProbe_ConnectionRefused(t *testing.T) {
 	t.Parallel()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	addr := listener.Addr().String()
 	_ = listener.Close()
 	err = healthcheck.Probe(context.Background(), addr)
@@ -177,9 +173,7 @@ func TestProbe_FollowsReadiness(t *testing.T) {
 		t.Fatal("ready before the listener said so")
 	}
 	ready.Store(true)
-	if err := healthcheck.Probe(context.Background(), addr); err != nil {
-		t.Fatalf("not ready after the listener said so: %v", err)
-	}
+	must.OKf(t, healthcheck.Probe(context.Background(), addr), "not ready after the listener said so")
 	ready.Store(false)
 	if err := healthcheck.Probe(context.Background(), addr); err == nil {
 		t.Fatal("still ready after the listener went unready")
@@ -294,9 +288,7 @@ func TestRun_ExitStatusAndOneLine(t *testing.T) {
 	t.Run("nothing listening", func(t *testing.T) {
 		t.Parallel()
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		addr := listener.Addr().String()
 		_ = listener.Close()
 		code, _, stderr := runWith(addr)

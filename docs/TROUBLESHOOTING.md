@@ -6,8 +6,8 @@ Every terminal failure carries a machine-readable code and a human-readable mess
 
 ```bash
 orkctl run get <run-id> --attempts            # every task's final outcome, and every try
-orkctl run attempts <run-id> --task <task>    # each try's error, exit status and Orker
-orkctl run logs <run-id> --task <task>        # what the task wrote
+orkctl run attempts <run-id> -t <task>    # each try's error, exit status and Orker
+orkctl run logs <run-id> -t <task>        # what the task wrote
 ```
 
 Every command takes `--json` for scripts and `-n, --namespace` to choose the namespace ([CLI.md](./CLI.md), "`orkctl run get`").
@@ -25,7 +25,7 @@ A submission refused in this section leaves nothing behind: no run id is minted 
 **Confirm.**
 
 ```bash
-orkctl pool list --json     # liveOrkerCount is 0 for the pool named in the error
+orkctl pool list -j     # liveOrkerCount is 0 for the pool named in the error
 orkctl orker list           # the Orkers that are polling, with their pool and cordon state
 ```
 
@@ -43,7 +43,7 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 **Cause.** The task declares a `resources:` request above the per-task cap of every Orker of its pool that answered (`orker.resources.max_cpu`, `orker.resources.max_memory`). An Orker refuses such a request after dispatch, terminally (`RESOURCE_REQUEST_REFUSED`), so the run is refused at submit instead, before a run id exists, and `--allow-empty-pool` does not change that (`internal/engine/pools.go`, `PoolResourcesUnsatisfiableError`). The message names the largest cap the pool reported ([DEPLOY.md](./DEPLOY.md), "Declaring an Orker's capacity").
 
-**Confirm.** `orkctl orker list --filter pool=<pool>` lists the pool's Orkers; each one's cap is in `orkctl orker get <orker-id> --json` (`maxRequest`).
+**Confirm.** `orkctl orker list -F pool=<pool>` lists the pool's Orkers; each one's cap is in `orkctl orker get <orker-id> -j` (`maxRequest`).
 
 **Fix.** Lower the task's request, or move the task to a pool whose Orkers set larger caps. The cap is a pool-wide setting: set the same one on every Orker of a pool.
 
@@ -59,7 +59,7 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 **Cause.** An Orker built before fan-out, task caching or join policies cannot read the input those tasks carry. The engine refuses the submit with `failed_precondition`, naming the Orker and its build. `--allow-empty-pool` does not override this refusal, because the Orker is present and wrong (`internal/engine/pools.go`, `PoolNoEachSupportError`, `PoolNoCacheSupportError`, `PoolNoJoinSupportError`).
 
-**Confirm.** The error names the Orker id and its build. The build is also in `orkctl orker list --json`.
+**Confirm.** The error names the Orker id and its build. The build is also in `orkctl orker list -j`.
 
 **Fix.** Upgrade every Orker of the pool to the release the engine runs. Every Orker of one pool must run one release ([AGENTS.md](../AGENTS.md), "7.2 Versioning"; [DEPLOY.md](./DEPLOY.md), "Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them").
 
@@ -87,7 +87,7 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 
 **Cause.** The namespace's `max_running` is reached. The count is read from the cluster's execution index on each submit, and the check is best-effort: concurrent submits can overshoot by a small bounded amount ([AGENTS.md](../AGENTS.md), "7. Orkflow execution model"; `internal/engine/admission.go`, `MaxRunningRefusal`).
 
-**Confirm.** `orkctl run list --filter status=RUNNING` lists the runs in flight, and `orkctl namespace get <namespace>` shows the cap.
+**Confirm.** `orkctl run list -F status=RUNNING` lists the runs in flight, and `orkctl namespace get <namespace>` shows the cap.
 
 **Fix.** Wait for a run to finish, or raise the cap: `orkctl namespace update <namespace> --max-running N`. `0` means unlimited ([CLI.md](./CLI.md), "`orkctl namespace update`").
 
@@ -98,15 +98,15 @@ orkctl orker list           # the Orkers that are polling, with their pool and c
 **Confirm.**
 
 ```bash
-orkctl stats usage --since 720h                   # what the namespace reserved over the window
-orkctl -n <namespace> stats usage --since 720h    # answers only if the budget can be measured
+orkctl stats usage -s 720h                   # what the namespace reserved over the window
+orkctl -n <namespace> stats usage -s 720h    # answers only if the budget can be measured
 ```
 
 **Fix.** For `BUDGET_EXCEEDED`, raise `--budget-cpu-seconds` or `--budget-gib-seconds`. For `BUDGET_UNMEASURABLE`, shorten `--budget-period`, as the message says. To report without refusing, use `--budget-enforce=false` ([CLI.md](./CLI.md), "`orkctl namespace update`").
 
 ### "a submit or an apply is refused by the image policy"
 
-**Cause.** The deployment's image floor, or the namespace's `--require-signed-by`, forbids an image the document names. At apply and validate the issue is on `tasks[i].uses`. At submit the refusal is `failed_precondition`, because a stored definition can be refused after the policy tightens (`internal/api/image_policy.go`, `submitPolicyError`). The reason codes are `IMAGE_NOT_PERMITTED`, `IMAGE_NOT_SIGNED`, `IMAGE_SIGNATURE_INVALID`, and `IMAGE_SIGNATURE_UNAVAILABLE` when the registry cannot be asked ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
+**Cause.** The deployment's image floor, or the namespace's `--require-signed-by`, forbids an image the document names. At validate and create the issue is on `tasks[i].uses`. At submit the refusal is `failed_precondition`, because a stored definition can be refused after the policy tightens (`internal/api/image_policy.go`, `submitPolicyError`). The reason codes are `IMAGE_NOT_PERMITTED`, `IMAGE_NOT_SIGNED`, `IMAGE_SIGNATURE_INVALID`, and `IMAGE_SIGNATURE_UNAVAILABLE` when the registry cannot be asked ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy").
 
 **Confirm.** `orkctl admin image-policy get` shows the deployment floor, and `orkctl namespace get <namespace>` shows the namespace's settings.
 
@@ -116,7 +116,7 @@ orkctl -n <namespace> stats usage --since 720h    # answers only if the budget c
 
 **Cause.** `PENDING` is the engine's own hold: a ready task it has not dispatched yet. That happens in three cases ([DSL.md](./DSL.md), "How many tasks an Orkflow may declare"; [DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks"):
 
-1. The run is at its in-flight cap, `ORK_RUN_MAX_IN_FLIGHT` (1000 by default). It starts more as running work finishes (`internal/engine/hold.go`; [DSL.md](./DSL.md), "How many tasks an Orkflow may declare").
+1. The run is at its in-flight cap, `ORK_RUN_MAX_IN_FLIGHT` (500 by default). It starts more as running work finishes (`internal/engine/hold.go`; [DSL.md](./DSL.md), "How many tasks an Orkflow may declare").
 2. The run's history is near its hold line. It holds new tasks until the running ones finish, so it can carry on into a fresh history ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
 3. A pin is opening. Its ready tasks stay `PENDING` while the pin opens ([DSL.md](./DSL.md), "Pins").
 
@@ -199,6 +199,14 @@ A waiting run has no deadline of its own, because a task's `timeout_seconds` sta
 
 **Fix.** Remove a dead identity's containers and directories as [DEPLOY.md](./DEPLOY.md), "What removes a task's container", says, and set a stable `ORK_ORKER_ID` on an Orker that is replaced rather than restarted. Never remove a live Orker's containers: that kills its running tasks.
 
+### Attempt directories pile up under the work root
+
+**Cause.** A task's image runs as its own `USER`, and the Orker as its host user. Under a rootful runtime those are two users, and a directory the workload made writable only by itself, such as `0755`, is one the Orker can neither write nor chmod. So the Orker cannot remove the attempt's directory, `ork-<run>-<task>-<attempt>-*` under `ORK_ORKER_WORKDIR`, or a pin's, `ork-pin-*`, when it ends. The task's own outcome is unchanged. Before 0.3.0, the first-party git image left its clone this way on every `clone`, and the file image its `untar` and `tar` scratch.
+
+**Confirm.** The Orker logs `attempt cleanup: a directory could not be removed and is left on disk` for each one, with `refused_by` naming the directory that refused the removal, its mode and owner, and `ork.orker.workspace_cleanup_failures` counts them. A pin's release logs `release pin failed` with the same detail in its error.
+
+**Fix.** Make the image leave nothing the Orker cannot remove: remove its scratch on exit, and create its directories writable by others ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "10.1 The Dockerfile and entry-script rules", rule 11). The first-party images do, from 0.3.0. For an image you cannot change, set `run_as_orker_user: true` on its task. To remove what is already left, open it up as root through a container, then remove it as the Orker's user: `docker run --rm --mount type=bind,source=<dir>,destination=/w docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a chmod -R a+rwX /w`. Check first, with `orkctl orker list`, that no live Orker is still running that attempt.
+
 ### A run shows `CANCELED`, not `FAILED`
 
 **Cause.** A run that was canceled ends with a run-level code. `RUN_CANCELED` means the run was canceled, for example with `orkctl run cancel <run-id>`. `RUN_TERMINATED` means the run was terminated from outside the engine: its status is `CANCELED` and its message is the termination reason. The engine reads both from the event that closed the run (`internal/engine/reader.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.3 Engine side").
@@ -209,7 +217,7 @@ A waiting run has no deadline of its own, because a task's `timeout_seconds` sta
 
 **Cause.** Activities are at-least-once. A retry, a crash, or a lost completion can run a container more than once. OrkStack does not make external side effects exactly once. When a valid commit already exists for the attempt, a retry adopts that commit and does not run the container again ([AGENTS.md](../AGENTS.md), "4.1 Durable output commit"). The `idempotencyKey` stays the same across the retries of one logical activity, so an external system can deduplicate ([AGENTS.md](../AGENTS.md), "3. OCI Activity Contract").
 
-**Confirm.** `orkctl run attempts <run-id> --task <task>` prints one row per try. An adopted commit is the committing attempt ([UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Task attempts").
+**Confirm.** `orkctl run attempts <run-id> -t <task>` prints one row per try. An adopted commit is the committing attempt ([UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Task attempts").
 
 **Fix.** Make the external effect idempotent, keyed on the stable idempotency key. Do not add `retry:` to a task that is not safe to run twice.
 
@@ -223,13 +231,13 @@ A waiting run has no deadline of its own, because a task's `timeout_seconds` sta
 
 **Cause.** The memo missed, or the run was submitted with `--no-cache`, which runs every cached task and refreshes its memo. A miss has a token, such as `MEMO_ABSENT`, `MEMO_EXPIRED` or `MEMO_MISMATCH`. The token is recorded on the cache result (`internal/orker/memo.go`, `MemoMissAbsent` and the others). A memo is advisory: every doubt about one is a miss, and deleting a memo changes no result ([DSL.md](./DSL.md), "Miss reasons"; [AGENTS.md](../AGENTS.md), "4.1 Durable output commit").
 
-**Confirm.** `orkctl run get <run-id>` shows the miss reason beside each cached task. `orkctl cache stats --since 24h` gives the hit rate per cached task ([CLI.md](./CLI.md), "`orkctl cache stats`").
+**Confirm.** `orkctl run get <run-id>` shows the miss reason beside each cached task. `orkctl cache stats -s 24h` gives the hit rate per cached task ([CLI.md](./CLI.md), "`orkctl cache stats`").
 
 ### An awaited task ended `AWAIT_TIMED_OUT` or `AWAIT_REJECTED`
 
 **Cause.** An `await:` task waits for a resolution from outside the run and runs no container. When its deadline passes, it fails with `AWAIT_TIMED_OUT` (category `TimedOut`). When it is rejected, it fails with `AWAIT_REJECTED` (category `ActivityFailed`) (`internal/engine/await.go`; [DSL.md](./DSL.md), "Awaited tasks").
 
-**Fix.** Resolve the await before its deadline, with `orkctl run resolve <run-id> --task <await-id> --values '{…}'`, or `--reject --reason TEXT`. A resolution is accepted only while the task is `AWAITING`. One sent while the task is still `PENDING` is refused, so retry once it is awaiting ([DSL.md](./DSL.md), "Awaited tasks"; [UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Awaited tasks").
+**Fix.** Resolve the await before its deadline, with `orkctl run resolve <run-id> -t <await-id> --values '{…}'`, or `--reject --reason TEXT`. A resolution is accepted only while the task is `AWAITING`. One sent while the task is still `PENDING` is refused, so retry once it is awaiting ([DSL.md](./DSL.md), "Awaited tasks"; [UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Awaited tasks").
 
 ## Failures
 
@@ -252,9 +260,9 @@ The categories are defined in ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRAC
 **Confirm.**
 
 ```bash
-orkctl run attempts <run-id> --task <task>                 # the exit status and the error
-orkctl run logs <run-id> --task <task> --attempt <n>       # what the task wrote on that try
-orkctl run artifacts <run-id> --task <task>                # the recorded stdout and stderr artifacts
+orkctl run attempts <run-id> -t <task>                 # the exit status and the error
+orkctl run logs <run-id> -t <task> --attempt <n>       # what the task wrote on that try
+orkctl run artifacts <run-id> -t <task>                # the recorded stdout and stderr artifacts
 ```
 
 **Fix.** Fix the workload. For a memory kill, raise `resources.memory` on the task, within the Orker's cap. A request above the cap fails `RESOURCE_REQUEST_REFUSED` ([DSL.md](./DSL.md), "Tasks"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
@@ -281,9 +289,9 @@ orkctl run artifacts <run-id> --task <task>                # the recorded stdout
 
 ### A task failed with `VALUES_MALFORMED` or `VALUES_TOO_LARGE`
 
-**Cause.** `values.json` is not valid UTF-8 JSON, or its top-level value is not an object, such as an array. A symlink, a directory or another non-regular file at that path is refused the same way, whatever the link points at: the Orker follows no link the workload wrote. A file over `limits.valuesMaxBytes` is `VALUES_TOO_LARGE`. Both are contract violations and never retried (`internal/orker/workspace.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
+**Cause.** `values.json` is not valid UTF-8 JSON, or an object in it writes a key twice, or its top-level value is not an object, such as an array. The message names a repeated key and the object that holds it, as a JSON Pointer: `the key "id" appears twice in the object at /rows/0`. A symlink, a directory or another non-regular file at that path is refused the same way, whatever the link points at: the Orker follows no link the workload wrote. A file over `limits.valuesMaxBytes` is `VALUES_TOO_LARGE`. Both are contract violations and never retried (`internal/orker/workspace.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 
-**Fix.** Write exactly one JSON object. Move large data into an artifact, which is a regular file, or archive a directory such as `workspace.tar.gz` ([AGENTS.md](../AGENTS.md), "3.1 Files, values, and artifacts").
+**Fix.** Write exactly one JSON object, each key once in every object. Move large data into an artifact, which is a regular file, or archive a directory such as `workspace.tar.gz` ([AGENTS.md](../AGENTS.md), "3.1 Files, values, and artifacts").
 
 ### A task failed with `OUTPUT_NOT_READABLE` or `ARTIFACT_NOT_A_FILE`
 
@@ -298,7 +306,7 @@ orkctl run artifacts <run-id> --task <task>                # the recorded stdout
 **Confirm.** Render the task on this machine without starting a container:
 
 ```bash
-orkctl task run --from-run <run-id> --task <task> --render-only
+orkctl task run --from-run <run-id> -t <task> --render-only
 ```
 
 It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md), "`orkctl task run`").
@@ -309,7 +317,7 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 **Cause.** The Orker could not pull the pinned image within `ORK_DOCKER_PULL_TIMEOUT`, and no verified embedded copy exists. Category `InfrastructureError`, retried per policy (`internal/orker/oci_dispatcher.go`; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.2 Reason codes").
 
-**Confirm.** `orkctl run attempts <run-id> --json` carries each attempt's `image`, the pinned digest reference the Orker used ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy"). Then try a pull of that reference from the Orker's host.
+**Confirm.** `orkctl run attempts <run-id> -j` carries each attempt's `image`, the pinned digest reference the Orker used ([DEPLOY.md](./DEPLOY.md), "Image supply-chain policy"). Then try a pull of that reference from the Orker's host.
 
 **Fix.** Check the registry and the Orker host's network. A running execution never switches images because a tag moved ([AGENTS.md](../AGENTS.md), "5. Image resolution and Orker runtime boundary").
 
@@ -360,7 +368,7 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 **Cause.** `PIN_HOST_LOST`: the run lost contact with the pin's Orker. It stopped heartbeating the pin, its process was stopped while the pin was open, or the cluster stopped hearing from it. Members still running at that moment fail with this code, and members not yet started are canceled. A member that already committed stays `SUCCEEDED`. `PIN_TIMEOUT`: the pin was open for its whole lifetime, `timeout_seconds` (`internal/engine/workflow.go`, `pinFailureError`; [DSL.md](./DSL.md), "Pins").
 
-**Confirm.** `orkctl run attempts <run-id> --task <task>` shows the failed members. `orkctl orker list` shows the host.
+**Confirm.** `orkctl run attempts <run-id> -t <task>` shows the failed members. `orkctl orker list` shows the host.
 
 **Fix.** A pin never moves to another Orker, because its tasks share one host's `/orkstack/shared`, so the run is not retried elsewhere ([AGENTS.md](../AGENTS.md), "5. Image resolution and Orker runtime boundary"). Start a new run with `orkctl run again <run-id>`. Drain a host before you stop it, and give a long-lived pin a long enough `timeout_seconds`.
 
@@ -415,9 +423,9 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 Reading a failed run takes four steps. Most of them need only the commands from the top of this page.
 
 1. **The run.** `orkctl run get <run-id>` shows the run's own error, `code: message`, and each task's final outcome. The run record keeps only each task's final outcome, so a try that failed and was retried away does not appear here ([CLI.md](./CLI.md), "`orkctl run get`").
-2. **Every try.** `orkctl run attempts <run-id> --task <task>` lists every try, oldest first, with its category and code, its exit status and the Orker that ran it. A try whose Orker died before filing a record shows as `UNREPORTED`. That is missing evidence, not a failure ([UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Task attempts").
-3. **The output.** `orkctl run logs <run-id> --task <task> --attempt <n>` prints what that try wrote ([CLI.md](./CLI.md), "`orkctl run logs`").
-4. **The timing.** `orkctl run timing <run-id> --task <task>` splits each task's time into wait, run and total. A value that cannot be known prints `unavailable` with its reason, never zero ([UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Task timing").
+2. **Every try.** `orkctl run attempts <run-id> -t <task>` lists every try, oldest first, with its category and code, its exit status and the Orker that ran it. A try whose Orker died before filing a record shows as `UNREPORTED`. That is missing evidence, not a failure ([UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Task attempts").
+3. **The output.** `orkctl run logs <run-id> -t <task> --attempt <n>` prints what that try wrote ([CLI.md](./CLI.md), "`orkctl run logs`").
+4. **The timing.** `orkctl run timing <run-id> -t <task>` splits each task's time into wait, run and total. A value that cannot be known prints `unavailable` with its reason, never zero ([UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Task timing").
 
 The UI run page shows the same attempt timeline. Each failed attempt has its own error and a link that pins the log pane to that attempt ([UI_CLI_PARITY.md](./UI_CLI_PARITY.md), "Task attempts"). For scripts, `orkctl run watch` exits `0` when the run succeeded, `2` when it failed and `3` when it was canceled ([CLI.md](./CLI.md), "`orkctl run watch`").
 
@@ -427,8 +435,8 @@ Every terminal failure has a machine-readable code and a human-readable message 
 
 Two commands run a task's pieces locally, through the same code the Orker uses:
 
-- `orkctl task run --from-run <run-id> --task <task> --render-only` renders the task with the run's recorded upstream bytes, and starts no container.
-- `orkctl task run --from-run <run-id> --task <task>` runs the task here. It writes nothing to the deployment, but any external side effect it performs is real ([CLI.md](./CLI.md), "`orkctl task run`").
+- `orkctl task run --from-run <run-id> -t <task> --render-only` renders the task with the run's recorded upstream bytes, and starts no container.
+- `orkctl task run --from-run <run-id> -t <task>` runs the task here. It writes nothing to the deployment, but any external side effect it performs is real ([CLI.md](./CLI.md), "`orkctl task run`").
 - `orkctl activity test <image>` checks an image against the activity contract, with no Orkflow and no Temporal server involved ([CLI.md](./CLI.md), "`orkctl activity test`").
 
 ### `ork` or `orker` stops at boot with "object store credentials: …"
@@ -478,7 +486,7 @@ development stack (`make up`) and many other tools use the same ports.
 UI with the API), `ORKSTACK_TEMPORAL_UI_PORT` or `ORKSTACK_REGISTRY_PORT` in
 `.env` and run `docker compose up --build -d --wait` again.
 
-### `orkctl apply` cannot resolve `127.0.0.1:5002/orkstack/activity-…`
+### `orkctl orkflow create` cannot resolve `127.0.0.1:5002/orkstack/activity-…`
 
 **Cause.** The engine pins each first-party activity by asking the
 quickstart's registry for its digest, at `127.0.0.1:5002` inside the engine's
@@ -546,7 +554,7 @@ development server, so a stopped stack forgets its runs. The object store's
 volume keeps the stored Orkflows and the artifacts, unless you ran
 `docker compose down -v`.
 
-**Fix.** None needed for a local trial: apply and submit again. A deployment
+**Fix.** None needed for a local trial: create and submit again. A deployment
 runs a persistent Temporal ([DEPLOY.md](./DEPLOY.md), "0. Topology — what you
 run, and where state lives").
 

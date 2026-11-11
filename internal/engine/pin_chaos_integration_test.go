@@ -4,7 +4,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net"
 	"net/http"
@@ -33,6 +33,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // This file covers the pin rows of the chaos matrix (AGENTS.md §11) against
@@ -178,20 +180,14 @@ func newPinChaosClusterWithCreationTimeout(t *testing.T, ctx context.Context, ma
 	// data loss (AGENTS.md §11.1).
 	c.workRoot = pinChaosWorkRoot(t, token)
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	commitStore, err := artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	if err := artifacts.ProbeCommitStore(ctx, commitStore); err != nil {
 		infraAbsent(t, "the object store's conditional create is not usable: %v", err)
 	}
 	logStore, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
@@ -300,14 +296,10 @@ func newPinChaosClusterWithCreationTimeout(t *testing.T, ctx context.Context, ma
 	for name, w := range map[string]worker.Worker{
 		"run": runWorker, "event": eventWorker, "gate": gateWorker,
 	} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start the %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start the %s worker", name)
 		t.Cleanup(w.Stop)
 	}
-	if err := c.hostWorker.Start(); err != nil {
-		t.Fatalf("start the pin host worker: %v", err)
-	}
+	must.OKf(t, c.hostWorker.Start(), "start the pin host worker")
 	t.Cleanup(c.stopHost)
 	// Whatever the run did, this suite's pin directories do not outlive it. The
 	// work root is this cluster's own, so the reap can be unconditional.
@@ -339,9 +331,7 @@ func newPinChaosClusterWithCreationTimeout(t *testing.T, ctx context.Context, ma
 		PinCreationTimeout: creationTimeout,
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -431,9 +421,7 @@ func (c *pinChaosCluster) submit(name, version string) string {
 		OrkflowVersion: version,
 		Namespace:      c.orkNS,
 	}))
-	if err != nil {
-		c.t.Fatalf("SubmitRun(%s): %v", name, err)
-	}
+	must.OKf(c.t, err, "SubmitRun(%s)", name)
 	return submitted.Msg.GetRun().GetId()
 }
 
@@ -442,9 +430,7 @@ func (c *pinChaosCluster) run(runID string) *orkstackv1.Run {
 	got, err := c.runClient.GetRun(c.ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
 		RunId: runID, Namespace: c.orkNS,
 	}))
-	if err != nil {
-		c.t.Fatalf("GetRun(%s): %v", runID, err)
-	}
+	must.OKf(c.t, err, "GetRun(%s)", runID)
 	return got.Msg.GetRun()
 }
 
@@ -562,9 +548,7 @@ func (c *pinChaosCluster) sessionCreationEnded(runID string) string {
 func (c *pinChaosCluster) pinDirectories() []string {
 	c.t.Helper()
 	entries, err := os.ReadDir(c.workRoot)
-	if err != nil {
-		c.t.Fatalf("read the work root %s: %v", c.workRoot, err)
-	}
+	must.OKf(c.t, err, "read the work root %s", c.workRoot)
 	var found []string
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), "ork-pin-") {
@@ -931,9 +915,7 @@ func TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep(t *testing.T) {
 			pinRoot, expires)
 	}
 	removed, err := orker.SweepExpiredPinLeases(c.workRoot, time.Now())
-	if err != nil {
-		t.Fatalf("sweep at the current time: %v", err)
-	}
+	must.OKf(t, err, "sweep at the current time")
 	if len(removed) != 0 {
 		t.Fatalf("a sweep at the current time removed %v; the lease runs until %s",
 			removed, expires)
@@ -945,9 +927,7 @@ func TestIntegration_ATerminatedRunLeavesItsPinForTheLeaseSweep(t *testing.T) {
 	// (3) A sweep past the lease removes it. This is the backstop closing.
 	after := expires.Add(time.Second)
 	removed, err = orker.SweepExpiredPinLeases(c.workRoot, after)
-	if err != nil {
-		t.Fatalf("sweep past the lease: %v", err)
-	}
+	must.OKf(t, err, "sweep past the lease")
 	if len(removed) != 1 || removed[0] != pinRoot {
 		t.Fatalf("the expired sweep removed %v, want exactly [%s]", removed, pinRoot)
 	}
@@ -1257,9 +1237,7 @@ func assertArtifactsStillInTheBucket(
 func mustQueueForPool(t *testing.T, pool string) string {
 	t.Helper()
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("QueueForPool(%q): %v", pool, err)
-	}
+	must.OKf(t, err, "QueueForPool(%q)", pool)
 	return queue
 }
 
@@ -1282,18 +1260,12 @@ func pinChaosWorkRoot(t *testing.T, token string) string {
 	base := os.Getenv(orker.WorkRootVar)
 	if base == "" {
 		abs, err := filepath.Abs(filepath.Join("..", "..", ".data", "work"))
-		if err != nil {
-			t.Fatalf("resolve the work root: %v", err)
-		}
+		must.OKf(t, err, "resolve the work root")
 		base = abs
 	}
-	if err := os.MkdirAll(base, 0o755); err != nil {
-		t.Fatalf("create the work root parent %s: %v", base, err)
-	}
+	must.OKf(t, os.MkdirAll(base, 0o755), "create the work root parent %s", base)
 	root, err := os.MkdirTemp(base, proof.WorkRootPattern("pin-chaos-"+token))
-	if err != nil {
-		t.Fatalf("create the work root under %s: %v", base, err)
-	}
+	must.OKf(t, err, "create the work root under %s", base)
 	t.Cleanup(func() {
 		removeSealedTree(t, root)
 	})
@@ -1342,9 +1314,7 @@ func removeSealedTree(t *testing.T, root string) {
 func pinLeaseExpiry(t *testing.T, pinRoot string) time.Time {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(pinRoot, "lease.json"))
-	if err != nil {
-		t.Fatalf("read the pin lease: %v", err)
-	}
+	must.OKf(t, err, "read the pin lease")
 	var lease struct {
 		ExpiresAt string `json:"expiresAt"`
 		RunID     string `json:"runId"`
@@ -1354,9 +1324,7 @@ func pinLeaseExpiry(t *testing.T, pinRoot string) time.Time {
 		t.Fatalf("decode the pin lease %s: %v", raw, err)
 	}
 	expires, err := time.Parse(time.RFC3339Nano, lease.ExpiresAt)
-	if err != nil {
-		t.Fatalf("the lease's expiresAt %q is not RFC 3339: %v", lease.ExpiresAt, err)
-	}
+	must.OKf(t, err, "the lease's expiresAt %q is not RFC 3339", lease.ExpiresAt)
 	return expires
 }
 

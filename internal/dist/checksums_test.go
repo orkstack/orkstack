@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func sha(data string) string {
@@ -30,9 +32,7 @@ func TestSums_IsTheSha256sumFormat(t *testing.T) {
 		"orker-linux-arm64.tar.gz":  []byte("three"),
 		"Z-first.txt":               []byte("upper case sorts before lower"),
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := sha("upper case sorts before lower") + "  Z-first.txt\n" +
 		sha("one") + "  ork-linux-amd64.tar.gz\n" +
 		sha("two") + "  orkctl-linux-amd64.tar.gz\n" +
@@ -74,30 +74,18 @@ func TestSumsDir_ChecksRegularFilesOnly(t *testing.T) {
 		"SHA256SUMS": "stale contents from a previous run",
 	}
 	for name, body := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "bin", "linux-amd64"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "bin", "linux-amd64", "ork"), []byte("binary"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("a.zip", filepath.Join(dir, "link.zip")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(dir, "bin", "linux-amd64"), 0o755))
+	must.OK(t, os.WriteFile(filepath.Join(dir, "bin", "linux-amd64", "ork"), []byte("binary"), 0o755))
+	must.OK(t, os.Symlink("a.zip", filepath.Join(dir, "link.zip")))
 	names, err := dist.WriteSums(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := []string{"a.zip", "b.tar.gz"}; !reflect.DeepEqual(names, want) {
 		t.Fatalf("summed %q, want %q (not SHA256SUMS, bin/ or a symlink)", names, want)
 	}
 	written, err := os.ReadFile(filepath.Join(dir, "SHA256SUMS"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := sha("ay") + "  a.zip\n" + sha("bee") + "  b.tar.gz\n"; string(written) != want {
 		t.Fatalf("SHA256SUMS\n got:\n%s\nwant:\n%s", written, want)
 	}
@@ -138,9 +126,7 @@ func TestSumsDir_IsWhatSha256sumVerifies(t *testing.T) {
 	}
 	dir := t.TempDir()
 	for name, body := range map[string]string{"one.tar.gz": "1", "two.zip": "2"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 	}
 	if _, err := dist.WriteSums(dir); err != nil {
 		t.Fatal(err)
@@ -154,12 +140,8 @@ func TestSumsDir_IsWhatSha256sumVerifies(t *testing.T) {
 		}
 		return err
 	}
-	if err := check(); err != nil {
-		t.Fatalf("sha256sum -c rejected our SHA256SUMS: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "two.zip"), []byte("tampered"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OKf(t, check(), "sha256sum -c rejected our SHA256SUMS")
+	must.OK(t, os.WriteFile(filepath.Join(dir, "two.zip"), []byte("tampered"), 0o644))
 	if err := check(); err == nil {
 		t.Fatal("sha256sum -c accepted a changed asset")
 	}

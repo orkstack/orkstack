@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // stoppingEvents is a Service following a live run in process memory, with one
@@ -198,9 +200,7 @@ func TestRunSocket_AStoppingReplicaDropsTheSocket(t *testing.T) {
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+"/ws/runs/live", &websocket.DialOptions{
 		HTTPHeader: http.Header{"Origin": {server.URL}},
 	})
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	must.OKf(t, err, "dial")
 	defer conn.CloseNow()
 	if _, _, err := conn.Read(ctx); err != nil {
 		t.Fatalf("first frame: %v", err)

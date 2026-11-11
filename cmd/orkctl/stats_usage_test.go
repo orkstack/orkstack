@@ -13,6 +13,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // brokenBodies is the run archiver with one run whose body cannot be read,
@@ -40,9 +42,7 @@ func (b brokenBodies) LoadRun(ctx context.Context, runID string) (*orkstackv1.Ru
 func seedUsage(t *testing.T) *fixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 	attempts := artifacts.NewMemoryAttemptStore()
@@ -57,9 +57,7 @@ func seedUsage(t *testing.T) *fixture {
 		if cpu > 0 {
 			rec.Resources = &orkstackv1.ReservedResources{Cpu: cpu, MemoryBytes: memory}
 		}
-		if err := attempts.PutAttempt(context.Background(), rec); err != nil {
-			t.Fatalf("put attempt: %v", err)
-		}
+		must.OKf(t, attempts.PutAttempt(context.Background(), rec), "put attempt")
 	}
 	archive := func(id, namespace, orkflow string, at time.Time, tasks ...*orkstackv1.TaskRun) {
 		t.Helper()
@@ -67,9 +65,7 @@ func seedUsage(t *testing.T) *fixture {
 			Id: id, Namespace: namespace, OrkflowName: orkflow, Status: orkstackv1.Status_STATUS_SUCCEEDED,
 			CreatedAt: timestamppb.New(at), FinishedAt: timestamppb.New(at.Add(time.Hour)), TaskRuns: tasks,
 		}
-		if err := archiver.Archive(context.Background(), run, nil); err != nil {
-			t.Fatalf("archive %s: %v", id, err)
-		}
+		must.OKf(t, archiver.Archive(context.Background(), run, nil), "archive %s", id)
 	}
 	task := func(id, pool string, attempt int32) *orkstackv1.TaskRun {
 		return &orkstackv1.TaskRun{TaskId: id, Pool: pool, Attempt: attempt, Status: orkstackv1.Status_STATUS_SUCCEEDED}
@@ -173,7 +169,7 @@ func TestStatsUsage_GroupByRefusesFailureDimensions(t *testing.T) {
 
 func TestRunSubmit_RefusedByBudgetNamesTheUsageAndTheFix(t *testing.T) {
 	f := seedUsage(t)
-	f.run("apply", writeOrkflow(t, "backfill", "train"), "-n", "analytics").requireExit(t, exitOK)
+	f.run("orkflow", "create", writeOrkflow(t, "backfill", "train"), "-n", "analytics").requireExit(t, exitOK)
 	submit := f.run("run", "submit", "backfill", "-n", "analytics")
 	if submit.code == exitOK {
 		t.Fatal("a submit into a namespace past its enforced budget succeeded")

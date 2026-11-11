@@ -1,19 +1,18 @@
 package dsl
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
-	"io"
 	"slices"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/types/known/structpb"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // MaxAwaitTimeoutSeconds bounds await.timeout_seconds: 30 days. An awaiting
@@ -65,6 +64,10 @@ func awaitExecutionKeys(td taskDocument) []struct {
 		{"run_as_orker_user", td.RunAsOrkerUser},
 		{"each", td.Each != nil},
 		{"cache", td.Cache != nil},
+		// Unreachable from Compile, which takes a document declaring sleep:
+		// down compileSleepTask first; listed so the editor's schema forbids
+		// it beside await: too.
+		{"sleep", td.Sleep != nil},
 	}
 }
 
@@ -76,6 +79,8 @@ func awaitFieldRefusal(taskID, key string) error {
 		reason = "an await is one resolution, not N"
 	case "cache":
 		reason = "its value comes from whoever resolves it, not from a computation"
+	case "sleep":
+		reason = "an await waits for a resolution, a sleep for a fixed time"
 	}
 	msg := fmt.Sprintf("task %q: an awaited task takes only id, needs, condition, join and await; "+
 		"%q does not apply (%s)", taskID, key, reason)
@@ -240,15 +245,15 @@ func (e *AwaitValuesError) Error() string {
 //
 //	len(raw) > maxBytes                → "", "the values are N bytes, over the M-byte limit"
 //	!utf8.Valid(raw)                   → "", "the values are not valid UTF-8"
-//	!json.Valid(raw)                   → "", "the values are not one valid JSON value"
 //	half of a surrogate pair in a string → "", "the values hold a string that cannot be read as text: …"
+//	not one JSON value, or a key twice → "", "the values are not one valid JSON value: <why>"
 //	top level is not an object         → "", "the values must be a JSON object, not <kind>"
 //	for each schema entry, sorted by name:
 //	  required and absent              → "values.<k>", "is required by the await's schema"
 //	  present and null                 → "values.<k>", "must be a <type>, not null"
 //	  present and of another JSON type → "values.<k>", "must be a <type>, not <kind>"
 //
-// Decoding uses json.Decoder.UseNumber, so a number is type-checked without
+// Decoding uses stablejson.UseNumber, so a number is type-checked without
 // being rounded; raw itself is never re-serialized. Keys the schema does not
 // declare are accepted — the schema says what downstream relies on, not
 // everything a caller may send. A nil spec or empty schema checks only the
@@ -260,22 +265,14 @@ func ValidateAwaitValues(spec *orkstackv1.AwaitSpec, raw []byte, maxBytes int64)
 	if !utf8.Valid(raw) {
 		return &AwaitValuesError{Message: "the values are not valid UTF-8"}
 	}
-	if !json.Valid(raw) {
-		return &AwaitValuesError{Message: "the values are not one valid JSON value"}
-	}
-	// The values are stored byte for byte and read back by Go's decoder,
-	// which turns half of a surrogate pair into U+FFFD.
+	// The values are stored byte for byte; a string that is not text would
+	// not read back as what was sent.
 	if err := CheckJSONText(raw); err != nil {
 		return &AwaitValuesError{Message: "the values hold a string that cannot be read as text: " + err.Error()}
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
 	var top any
-	if err := decoder.Decode(&top); err != nil {
-		return &AwaitValuesError{Message: "the values are not one valid JSON value"}
-	}
-	if _, err := decoder.Token(); err != io.EOF {
-		return &AwaitValuesError{Message: "the values are not one valid JSON value"}
+	if err := json.Unmarshal(raw, &top, stablejson.UseNumber); err != nil {
+		return &AwaitValuesError{Message: "the values are not one valid JSON value: " + stablejson.Explain(err)}
 	}
 	object, ok := top.(map[string]any)
 	if !ok {
@@ -312,7 +309,7 @@ func jsonValueIs(value any, want string) bool {
 		_, ok := value.(string)
 		return ok
 	case "number":
-		_, ok := value.(json.Number)
+		_, ok := value.(stablejson.Number)
 		return ok
 	case "boolean":
 		_, ok := value.(bool)
@@ -335,7 +332,7 @@ func jsonValueKind(value any) string {
 		return "null"
 	case bool:
 		return "a boolean"
-	case json.Number, float64:
+	case stablejson.Number, float64:
 		return "a number"
 	case string:
 		return "a string"

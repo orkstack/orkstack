@@ -2,8 +2,6 @@
 
 Learn what is tested, how a change is checked before it lands, and what is still open. Read this before you trust OrkStack with work that matters.
 
-OrkStack is not yet called production-ready. The repository keeps that label until every required failure and recovery case is proven. Some cases are still open, and they are listed below.
-
 ## What is tested
 
 Each case below has tests that run against a real Temporal cluster and a real S3-compatible object store. Where a test exists, the run ends in a correct stored state, or in a failure with a reason.
@@ -28,9 +26,9 @@ The scale and soak tests run every night on `main`, not on each change. The chec
 
 - **A tag that moves between two attempts** of one task has no end-to-end test yet.
 - **The GitHub rule that requires the full proof** before a pull request lands is not switched on yet. Until it is, a maintainer runs the local merge check before `main` moves.
-- **Some timing budgets** are checked only on the reference host. On a smaller CI runner, a miss of one is recorded as a known gap, not as a failure. It is not a pass.
+- **Some timing budgets** hold exactly only on the reference host. On a smaller CI runner, the run page's 5 s and the live run read's 2 s are held to that bound scaled to the runner's CPUs, so a release proved there rests on the wider bound.
 
-Until every required case is proven, OrkStack is not called production-ready. Read the gaps before you rely on a case.
+Read the gaps before you rely on a case.
 
 ## See also
 

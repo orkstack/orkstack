@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"math"
@@ -26,6 +26,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The task-timing integration scenarios (docs/UI_CLI_PARITY.md "Task timing"): real
@@ -171,9 +173,7 @@ func decodeTiming(t *testing.T, stdout string) *timingDocument {
 func mustTime(t *testing.T, value string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
-		t.Fatalf("parse %q: %v", value, err)
-	}
+	must.OKf(t, err, "parse %q", value)
 	return parsed
 }
 
@@ -184,9 +184,7 @@ func awaitTaskScheduled(ctx context.Context, t *testing.T, replica *engineReplic
 	streamCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
 	stream, err := replica.runs.StreamEvents(streamCtx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 	for stream.Receive() {
 		event := stream.Msg()
@@ -264,9 +262,7 @@ func TestIntegration_QueueWaitIsVisibleWhenNoOrkerIsPolling(t *testing.T) {
 	// scheduledAt IS the TASK_SCHEDULED event's timestamp, as StreamEvents
 	// replays it for the finished run.
 	replayed := newEventCollector()
-	if err := collectStream(ctx, s.replicas[0], runID, 0, replayed); err != nil {
-		t.Fatalf("replay the finished run's events: %v", err)
-	}
+	must.OKf(t, collectStream(ctx, s.replicas[0], runID, 0, replayed), "replay the finished run's events")
 	var replayedScheduled *orkstackv1.Event
 	for _, event := range replayed.events() {
 		if event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED && event.GetTaskId() == "first" {
@@ -338,9 +334,7 @@ func TestIntegration_RetriedTaskTimingSplitsAttempts(t *testing.T) {
 	// No clock and no race decides which attempt fails.
 	var flakyHits atomic.Int32
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	origin := &httptest.Server{Listener: listener, Config: &http.Server{Handler: http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/flaky" && flakyHits.Add(1) == 1 {
@@ -504,17 +498,13 @@ tasks:
 	// The cleanup pass, as internal/archive.Cleaner performs it for one run:
 	// reclaim the run-scoped objects, then retire the execution.
 	archive, err := artifacts.NewRunArchive(s.artifactCfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	namespace := finished.GetNamespace()
 	if namespace == "" {
 		namespace = "default"
 	}
 	reclaimed, err := archive.DeleteRunArtifacts(ctx, namespace, runID)
-	if err != nil {
-		t.Fatalf("DeleteRunArtifacts: %v", err)
-	}
+	must.OKf(t, err, "DeleteRunArtifacts")
 	t.Logf("reclaimed %d objects (%d bytes) of run %s", reclaimed.ObjectsDeleted, reclaimed.BytesReclaimed, runID)
 	if _, err := s.temporal.WorkflowService().DeleteWorkflowExecution(ctx, &workflowservice.DeleteWorkflowExecutionRequest{
 		Namespace:         s.namespace,

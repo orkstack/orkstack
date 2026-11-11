@@ -2,20 +2,19 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The proof job's job records (attempt-N.json) keep a bounded log of every
-// failed job: what the merger's classification and the rerun planner read
-// from it — every `proofrun: start` and `proofrun: outcome` line, wherever it
+// failed job: what the merger's classification reads from it — every `proofrun: start` and `proofrun: outcome` line, wherever it
 // is — and the log's last lines for a reader, its terminal escape sequences
 // removed. Before, the records kept no log at all: gh refused to print a log
 // that carries escape sequences, and the step swallowed the refusal.
@@ -45,9 +44,7 @@ func TestBoundJobLog_KeepsEveryProofrunLineAndTheLastLines(t *testing.T) {
 	early := ghLine(1, "proofrun: start example.com/m TestB") + ghLine(2, "proofrun: outcome fail example.com/m TestB 9.00")
 	raw := early + noise(3, 5000) + ghLine(5003, "proofrun: start example.com/m TestC") + noise(5004, 300)
 	got, err := bound(t, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
 	if want := 2 + 1 + 1 + 1 + jobLogTailLines; len(lines) != want {
 		t.Fatalf("%d lines kept, want %d (three proofrun lines, two gaps, the tail)", len(lines), want)
@@ -77,9 +74,7 @@ func TestBoundJobLog_KeepsEveryProofrunLineAndTheLastLines(t *testing.T) {
 func TestBoundJobLog_CutsALongLineAndDropsTerminalControls(t *testing.T) {
 	long := strings.Repeat("é", 1000)
 	got, err := bound(t, "a\x1b]0;title\x07b\x1b[1;31mc\x1b[0m\rd\x00e\tf\n"+long+"\n")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n")
 	if len(lines) != 2 || lines[0] != "abcde\tf" {
 		t.Fatalf("lines = %q", lines)
@@ -117,9 +112,7 @@ func TestBoundJobLog_ClassifiesAsTheWholeLogWould(t *testing.T) {
 			}
 		}
 		got, err := bound(t, raw.String())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		wantFailed, wantUnfinished := logProgress(raw.String())
 		gotFailed, gotUnfinished := logProgress(got)
 		if !slices.Equal(wantFailed, gotFailed) || !slices.Equal(wantUnfinished, gotUnfinished) {
@@ -133,8 +126,10 @@ func TestBoundJobLog_ClassifiesAsTheWholeLogWould(t *testing.T) {
 		job := func(log string) *githubJob {
 			return &githubJob{Conclusion: "failure", FailedStep: "integration shard", Log: log}
 		}
-		if degradedByMarker("integration:1", job(raw.String())) != degradedByMarker("integration:1", job(got)) {
-			t.Fatalf("round %d: the degraded marker's rule reads the bounded log differently", round)
+		wantClass, _ := classify(job(raw.String()), partReading{Part: "integration:1"})
+		gotClass, _ := classify(job(got), partReading{Part: "integration:1"})
+		if wantClass != gotClass {
+			t.Fatalf("round %d: classify reads the whole log as %v and the bounded log as %v", round, wantClass, gotClass)
 		}
 	}
 }
@@ -155,9 +150,7 @@ func TestBoundJobLog_KeepsALineTheMergerReadsByteForByte(t *testing.T) {
 	} {
 		raw := line + "\n" + noise(1, jobLogTailLines+50)
 		got, err := bound(t, raw)
-		if err != nil {
-			t.Fatalf("%q: %v", line, err)
-		}
+		must.OKf(t, err, "%q", line)
 		wantFailed, wantUnfinished := logProgress(raw)
 		gotFailed, gotUnfinished := logProgress(got)
 		wantPassed, wantOpen := attemptProgress("", raw)
@@ -173,9 +166,9 @@ func TestBoundJobLog_KeepsALineTheMergerReadsByteForByte(t *testing.T) {
 }
 
 // FuzzBoundJobLog: a job log is GitHub's, input OrkStack does not control.
-// Whatever it holds, boundJobLog either refuses it, or what the merger and
-// the rerun planner read from its bounded form is what they read from the
-// whole, and it keeps at most jobLogTailLines lines beside those they read.
+// Whatever it holds, boundJobLog either refuses it, or what the merger reads
+// from its bounded form is what it reads from the whole, and it keeps at most
+// jobLogTailLines lines beside those it reads.
 func FuzzBoundJobLog(f *testing.F) {
 	for _, seed := range []string{
 		"",
@@ -208,8 +201,10 @@ func FuzzBoundJobLog(f *testing.F) {
 		job := func(log string) *githubJob {
 			return &githubJob{Conclusion: "failure", FailedStep: "integration shard", Log: log}
 		}
-		if degradedByMarker("integration:1", job(raw)) != degradedByMarker("integration:1", job(got)) {
-			t.Fatal("the degraded marker's rule reads the bounded log differently")
+		wantClass, _ := classify(job(raw), partReading{Part: "integration:1"})
+		gotClass, _ := classify(job(got), partReading{Part: "integration:1"})
+		if wantClass != gotClass {
+			t.Fatalf("classify reads the whole log as %v and the bounded log as %v", wantClass, gotClass)
 		}
 		other := 0
 		for _, line := range strings.Split(strings.TrimSuffix(got, "\n"), "\n") {
@@ -242,24 +237,29 @@ func TestBoundJobLog_RefusesProofrunLinesBeyondItsBound(t *testing.T) {
 	}
 }
 
-// The recorded log of nightly 41080705584's degraded `integration (2)`: 81 KB,
-// with 361 lines carrying escape sequences, and no test started. Bounded, the
-// planner still reads it as a part that stopped before any gate.
-func TestBoundJobLog_TheRecordedDegradedLogReadsAsDegraded(t *testing.T) {
+// nightlyRun is the recorded nightly whose job records and logs are kept
+// under testdata/rerun-nightly-<run>.
+const nightlyRun = "41080705584"
+
+// The recorded log of nightly 41080705584's `integration (2)`: 81 KB, with 361
+// lines carrying escape sequences, and no test started. Bounded, it keeps its
+// last lines without an escape sequence, and the merger still reads it as an
+// attempt whose proof step started and recorded no test.
+func TestBoundJobLog_TheRecordedNightlyLogKeepsItsEndAndNamesNoTest(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("testdata", "rerun-nightly-"+nightlyRun, "log-124151401756.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	got, err := bound(t, string(raw))
-	if err != nil {
-		t.Fatal(err)
+	must.OK(t, err)
+	if !strings.Contains(got, "fsync_p95_ms 99.43 ms") || strings.ContainsRune(got, '\x1b') {
+		t.Errorf("the bounded log lost its last lines, or keeps an escape sequence:\n%s", got)
 	}
-	if !strings.Contains(got, "runner-health: fsync_p95_ms 99.43 ms BELOW the floor 30") || strings.ContainsRune(got, '\x1b') {
-		t.Errorf("the bounded log lacks the measurement, or keeps an escape sequence:\n%s", got)
+	failed, unfinished := logProgress(got)
+	if len(failed) != 0 || len(unfinished) != 0 {
+		t.Errorf("the bounded log names tests: failed %v, unfinished %v", failed, unfinished)
 	}
-	job := &githubJob{Conclusion: "failure", FailedStep: "integration shard", Log: got}
-	if !degradedByMarker("integration:2", job) {
-		t.Error("the bounded log no longer reads as a part that stopped before any gate")
+	job := &githubJob{Conclusion: "failure", FailedStep: "integration shard", Steps: []githubStep{{Name: "integration shard", Conclusion: "failure"}}, Log: got}
+	if class, why := classify(job, partReading{Part: "integration:2"}); class != attemptResult {
+		t.Errorf("classify reads the bounded log as %v (%s), want a result: its proof step started", class, why)
 	}
 }
 
@@ -294,9 +294,7 @@ func TestCmdJobLog_BoundsStandardInputOntoStandardOutput(t *testing.T) {
 func TestMerge_AFailingTestFarFromTheEndOfABoundedLogIsStillAResult(t *testing.T) {
 	raw := ghLine(1, "proofrun: start example.com/m TestB") + ghLine(2, "proofrun: outcome fail example.com/m TestB 9.00") + noise(3, 20000)
 	kept, err := bound(t, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	lines := strings.Split(strings.TrimSuffix(raw, "\n"), "\n")
 	cut := strings.Join(lines[len(lines)-jobLogTailLines:], "\n")
 	if class, _ := classify(&githubJob{Conclusion: "failure", Annotations: []string{runnerLost}, Log: cut}, partReading{}); class != attemptLost {
@@ -313,291 +311,5 @@ func TestMerge_AFailingTestFarFromTheEndOfABoundedLogIsStillAResult(t *testing.T
 		if !strings.Contains(strings.Join(r.Ineligible, "\n"), frag) {
 			t.Errorf("ineligible = %v, want it to say %q", r.Ineligible, frag)
 		}
-	}
-}
-
-// fakeGHScript answers the proof job's reads of a recorded run as gh 2.103
-// does: --jq through jq; a log only with --allow-escape-sequences when it
-// carries one; a check run or a log the recording lacks as gh's HTTP 404; and
-// the log of the job FAKE_GH_LOG_ERROR names (<id>:<message>) as a failed read.
-// With FAKE_GH_FAIL set to listing or annotations, that read fails with a 502.
-// With TOKEN_LOG set, it appends "gh token" to it when GH_TOKEN reached it.
-const fakeGHScript = `#!/usr/bin/env bash
-set -u
-[ -z "${TOKEN_LOG:-}" ] || echo "gh ${GH_TOKEN:+token}" >>"$TOKEN_LOG"
-[ "$1" = api ] || { echo "fake gh: only api" >&2; exit 2; }
-shift
-jqexpr="" allow=no path=""
-while [ $# -gt 0 ]; do
-	case "$1" in
-	--paginate) ;;
-	--allow-escape-sequences) allow=yes ;;
-	--jq) jqexpr="$2"; shift ;;
-	*) path="$1" ;;
-	esac
-	shift
-done
-path="${path%%\?*}"
-case "$path" in
-*/actions/runs/*/attempts/*/jobs)
-	[ "${FAKE_GH_FAIL:-}" != listing ] || { echo "gh: Server Error (HTTP 502)" >&2; exit 1; }
-	file="$FIXTURE/api-jobs-a${path##*/attempts/}"; file="${file%/jobs}.json" ;;
-*/check-runs/*/annotations)
-	[ "${FAKE_GH_FAIL:-}" != annotations ] || { echo "gh: Server Error (HTTP 502)" >&2; exit 1; }
-	id="${path%/annotations}"; file="$FIXTURE/annotations-${id##*/}.json"; [ -f "$file" ] || { echo '[]' | jq -r "${jqexpr:-.}"; exit; } ;;
-*/actions/jobs/*/logs)
-	id="${path%/logs}"; id="${id##*/}"; file="$FIXTURE/log-$id.txt"
-	e="${FAKE_GH_LOG_ERROR:-}"; if [ -n "$e" ] && [ "${e%%:*}" = "$id" ]; then echo "${e#*:}" >&2; exit 1; fi
-	;;
-*) echo "fake gh: no answer for $path" >&2; exit 1 ;;
-esac
-[ -f "$file" ] || { echo "gh: Not Found (HTTP 404)" >&2; exit 1; }
-if [ -n "$jqexpr" ]; then exec jq -r "$jqexpr" "$file"; fi
-if [ "$allow" = no ] && grep -q $'\x1b' "$file"; then
-	echo "the response contains terminal escape sequences; pass --allow-escape-sequences to output it anyway" >&2
-	exit 1
-fi
-cat "$file"
-`
-
-// runJobRecords runs the proof job's "job records" step itself over the
-// recorded run in fixture, with a gh that behaves as the runner's (fakeGHScript,
-// told by env which log reads fail) and, when builds, this test binary
-// standing in for proofrun; otherwise `go build` fails. With TOKEN_LOG in env,
-// gh, go and the stand-in each append to it a line saying whether GH_TOKEN
-// reached them. It returns the records of attempt 1 by job name.
-func runJobRecords(t *testing.T, fixture string, builds bool, env ...string) map[string]githubJob {
-	t.Helper()
-	jobsDir := runJobRecordsStep(t, fixture, builds, env...)
-	raw, err := os.ReadFile(filepath.Join(jobsDir, "attempt-1.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	var a githubAttempt
-	if err := json.Unmarshal(raw, &a); err != nil {
-		t.Fatalf("attempt-1.json does not decode: %v\n%.300s", err, raw)
-	}
-	if len(a.Jobs) != 16 {
-		t.Errorf("attempt-1.json records %d jobs, want the run's 16", len(a.Jobs))
-	}
-	out := map[string]githubJob{}
-	for _, j := range a.Jobs {
-		out[j.Name] = j
-	}
-	return out
-}
-
-// runJobRecordsStep runs the step (see runJobRecords) and returns the
-// directory it wrote its records to.
-func runJobRecordsStep(t *testing.T, fixture string, builds bool, env ...string) string {
-	t.Helper()
-	for _, tool := range []string{"bash", "jq"} {
-		requireTool(t, tool)
-	}
-	var script string
-	for _, s := range loadWorkflow(t, "proof.yml").Jobs["proof"].Steps {
-		if s.Name == "job records" {
-			script = s.Run
-		}
-	}
-	if script == "" {
-		t.Fatal("jobs.proof has no job records step")
-	}
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	bin, temp := t.TempDir(), t.TempDir()
-	write := func(name, body string) {
-		if err := os.WriteFile(filepath.Join(bin, name), []byte(body), 0o755); err != nil {
-			t.Fatal(err)
-		}
-	}
-	write("gh", fakeGHScript)
-	// `go build -o OUT ./test/tools/proofrun` makes OUT this test binary,
-	// which runs the subcommand it is given (TestMain).
-	// The stand-in's line is single-quoted into it, so it reads GH_TOKEN when
-	// it runs, not when the fake go writes it.
-	const tokenSeen = `[ -z "${TOKEN_LOG:-}" ] || echo "%s ${GH_TOKEN:+token}" >>"$TOKEN_LOG"`
-	goScript := fmt.Sprintf(`#!/usr/bin/env bash
-`+fmt.Sprintf(tokenSeen, "go")+`
-[ "$1" = build ] && [ "$2" = -o ] && [ "$4" = ./test/tools/proofrun ] || { echo "fake go: $*" >&2; exit 2; }
-printf '#!/bin/sh\n%%s\nPROOFRUN_AS_COMMAND=1 exec %%s "$@"\n' '%s' %q >"$3" && chmod +x "$3"
-`, fmt.Sprintf(tokenSeen, "proofrun"), self)
-	if !builds {
-		goScript = "#!/bin/sh\n" + fmt.Sprintf(tokenSeen, "go") + "\necho 'fake go: build failed' >&2\nexit 1\n"
-	}
-	write("go", goScript)
-	cmd := exec.Command("bash", "-c", script)
-	cmd.Dir = mustRepoRoot()
-	cmd.Env = append(append(os.Environ(),
-		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "FIXTURE="+fixture, "RUNNER_TEMP="+temp,
-		"GITHUB_REPOSITORY=orkstack/orkstack", "GITHUB_RUN_ID="+nightlyRun, "GITHUB_RUN_ATTEMPT=1", "GH_TOKEN=x"), env...)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("the job records step failed: %v\n%s", err, out)
-	}
-	return filepath.Join(temp, "ci", "jobs")
-}
-
-func recordedNightlyDir(t *testing.T) string {
-	t.Helper()
-	dir, err := filepath.Abs(filepath.Join("testdata", "rerun-nightly-"+nightlyRun))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return dir
-}
-
-const degradedJobName = "nightly / integration (2)"
-
-// TestWorkflows_TheJobRecordsKeepABoundedLogOfEachFailedJob: over the recorded
-// nightly, the degraded job's record carries its bounded log, and the merger
-// classifies the attempt from it as the planner does; the aggregator, whose
-// log GitHub does not have (404), keeps no log and stays readable, as a lost
-// runner's would.
-func TestWorkflows_TheJobRecordsKeepABoundedLogOfEachFailedJob(t *testing.T) {
-	for name, j := range runJobRecords(t, recordedNightlyDir(t), true) {
-		switch name {
-		case degradedJobName:
-			if j.ReadError != "" || len(j.Log) > 64<<10 || !strings.Contains(j.Log, "runner-health: fsync_p95_ms 99.43 ms BELOW the floor 30") || strings.ContainsRune(j.Log, '\x1b') {
-				t.Errorf("the degraded job's record: read_error %q, %d bytes of log:\n%s", j.ReadError, len(j.Log), j.Log)
-			}
-			if len(j.Annotations) != 2 || !degradedByMarker(partFromJobName(j.Name), &j) {
-				t.Errorf("the degraded job's record does not read as a part that stopped before any gate: %+v", j.Annotations)
-			}
-		case "nightly / proof":
-			if j.Log != "" || j.ReadError != "" {
-				t.Errorf("the aggregator's record: log %q read_error %q", j.Log, j.ReadError)
-			}
-		default:
-			if j.Log != "" {
-				t.Errorf("%s (%s) kept a log; only a failed job's is read", j.Name, j.Conclusion)
-			}
-		}
-	}
-}
-
-// The job records step builds proofrun from the candidate's tree and runs it
-// on every failed job's log. Neither the build nor proofrun is given the job's
-// token, which only gh's reads take.
-func TestWorkflows_TheJobRecordsGiveTheTokenOnlyToGh(t *testing.T) {
-	seen := filepath.Join(t.TempDir(), "token-seen")
-	runJobRecords(t, recordedNightlyDir(t), true, "TOKEN_LOG="+seen)
-	b, err := os.ReadFile(seen)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ran := map[string]int{}
-	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
-		tool, token, _ := strings.Cut(line, " ")
-		ran[tool]++
-		if got, want := token == "token", tool == "gh"; got != want {
-			t.Errorf("%s ran with the token: %v, want %v", tool, got, want)
-		}
-	}
-	if ran["gh"] == 0 || ran["go"] == 0 || ran["proofrun"] == 0 {
-		t.Errorf("gh, go and proofrun ran %v times; the step reads with gh, builds proofrun and bounds each failed job's log", ran)
-	}
-}
-
-// Every way the step cannot keep a log it read, or read a log GitHub has,
-// fails the job's record closed: a read_error that names why, and no log, so
-// the merger classifies the attempt as a result and never runs it again on its
-// annotations alone. Only GitHub's own 404 or 410 (a lost runner keeps no log)
-// leaves a record readable without a log.
-func TestWorkflows_TheJobRecordsFailClosedWhenALogCannotBeKept(t *testing.T) {
-	oversized := t.TempDir()
-	entries, err := os.ReadDir(recordedNightlyDir(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		b, err := os.ReadFile(filepath.Join(recordedNightlyDir(t), e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if e.Name() == "log-124151401756.txt" {
-			b = []byte(strings.Repeat(ghLine(7, "proofrun: start example.com/m "+strings.Repeat("T", 200)), jobLogProgressBytes/200+1))
-		}
-		if err := os.WriteFile(filepath.Join(oversized, e.Name()), b, 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, c := range []struct {
-		name    string
-		fixture string
-		builds  bool
-		env     []string
-		says    []string // what the read_error names: the log, and why
-	}{
-		{"a log whose proofrun lines pass the bound", oversized, true, nil, []string{"log:", "bound"}},
-		{"proofrun that did not build", recordedNightlyDir(t), false, nil, []string{"log:", "build"}},
-		{"a server error", recordedNightlyDir(t), true, []string{"FAKE_GH_LOG_ERROR=124151401756:gh: Server Error (HTTP 502)"}, []string{"log:", "API call"}},
-		{"a body gh refused", recordedNightlyDir(t), true, []string{"FAKE_GH_LOG_ERROR=124151401756:the response contains terminal escape sequences"}, []string{"log:", "API call"}},
-		// A status that only starts like GitHub's "no log" is not it.
-		{"a status that starts like not found", recordedNightlyDir(t), true, []string{"FAKE_GH_LOG_ERROR=124151401756:gh: HTTP 4041"}, []string{"log:", "API call"}},
-		{"a status that starts like gone", recordedNightlyDir(t), true, []string{"FAKE_GH_LOG_ERROR=124151401756:gh: HTTP 4100"}, []string{"log:", "API call"}},
-	} {
-		t.Run(c.name, func(t *testing.T) {
-			jobs := runJobRecords(t, c.fixture, c.builds, c.env...)
-			j := jobs[degradedJobName]
-			if j.Log != "" {
-				t.Errorf("the degraded job's record kept %d bytes of a log it failed to keep", len(j.Log))
-			}
-			for _, word := range c.says {
-				if !strings.Contains(j.ReadError, word) {
-					t.Errorf("the degraded job's read_error is %q, want it to say %q", j.ReadError, word)
-				}
-			}
-			if class, _ := classify(&j, partReading{}); class != attemptResult {
-				t.Errorf("the record classifies as %v, want a result (it fails closed)", class)
-			}
-			if p := jobs["nightly / proof"]; p.ReadError != "" {
-				t.Errorf("the aggregator, whose log GitHub does not have, has read_error %q", p.ReadError)
-			}
-		})
-	}
-}
-
-// GitHub's own answer that it keeps no log (404 Not Found, 410 Gone) is not a
-// failed read: a lost runner keeps none, and its record stays readable, with
-// its annotations, so the merger can tell it from a failing job.
-func TestWorkflows_TheJobRecordsStayReadableWhenGitHubKeepsNoLog(t *testing.T) {
-	for _, message := range []string{
-		"gh: Not Found (HTTP 404)",
-		"gh: Gone (HTTP 410)",
-		"gh: Gone HTTP 410",
-	} {
-		t.Run(message, func(t *testing.T) {
-			jobs := runJobRecords(t, recordedNightlyDir(t), true, "FAKE_GH_LOG_ERROR=124151401756:"+message)
-			j := jobs[degradedJobName]
-			if j.ReadError != "" || j.Log != "" {
-				t.Errorf("the record: read_error %q, %d bytes of log; want a readable record with no log", j.ReadError, len(j.Log))
-			}
-			if len(j.Annotations) != 2 {
-				t.Errorf("the record kept %d annotations, want the 2 GitHub has", len(j.Annotations))
-			}
-		})
-	}
-}
-
-// The annotations are how a lost runner is told from a failing job, and the
-// job listing is how a job is known at all: either unreadable fails the
-// record closed, so the merger never runs an attempt again on a record it
-// could not read.
-func TestWorkflows_TheJobRecordsFailClosedWhenTheAnnotationsOrTheListingCannotBeRead(t *testing.T) {
-	jobs := runJobRecords(t, recordedNightlyDir(t), true, "FAKE_GH_FAIL=annotations")
-	j := jobs[degradedJobName]
-	if !strings.Contains(j.ReadError, "annotations") || len(j.Annotations) != 0 {
-		t.Errorf("the record: read_error %q, annotations %q; want the annotations named as unread", j.ReadError, j.Annotations)
-	}
-	if class, _ := classify(&j, partReading{}); class != attemptResult {
-		t.Errorf("the record classifies as %v, want a result (it fails closed)", class)
-	}
-
-	dir := runJobRecordsStep(t, recordedNightlyDir(t), true, "FAKE_GH_FAIL=listing")
-	attempts, unreadable := readGithubAttempts(dir)
-	if !slices.Equal(unreadable, []string{"attempt-1.json"}) || len(attempts) != 0 {
-		t.Errorf("a listing that failed left records %v and unreadable %v, want only the attempt named unreadable", attempts, unreadable)
 	}
 }

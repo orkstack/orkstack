@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	bin,
@@ -14,6 +14,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -161,7 +162,7 @@ const versionsUrl = `${UI_ORIGIN}/orkflows/${ORKFLOW}?ns=${NS}&tab=versions`;
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# The orkflow page edits ANY version: select it, see ITS',

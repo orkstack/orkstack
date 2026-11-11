@@ -58,7 +58,7 @@ engine:
   # http_addr: :8080
   # ws_allowed_origins: ""           # comma-separated browser origins for /ws/runs/{id}
   # idempotency_ttl: 24h
-  # registry_auth_file: ""           # a docker config.json for manifest GETs at apply time
+  # registry_auth_file: ""           # a docker config.json for manifest GETs when the Orkflow is created
   # stats_cache_ttl: 5s              # 0 switches the GetStats cache off
   limits: {}
     # values_max_bytes: 262144            # 256 KiB
@@ -75,7 +75,7 @@ engine:
     # batch_size: 100
 
 # The activity catalog: catalog name -> registry reference, resolved to a
-# digest at apply time. Re-serializes to ORK_ACTIVITY_CATALOG under the hood
+# digest when the Orkflow is created. Re-serializes to ORK_ACTIVITY_CATALOG under the hood
 # (docs/DEPLOY.md §1). Uncomment to override the built-in
 # shell/http/file/json/git/template entries (ghcr.io/orkstack/activity-*:0.2).
 # An override REPLACES the built-in table, so list every name the deployment

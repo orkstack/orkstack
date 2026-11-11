@@ -7,6 +7,8 @@ import (
 	"time"
 
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestStoreOutageMetrics_ReportEntryExitAndTheCurrentState(t *testing.T) {
@@ -15,9 +17,7 @@ func TestStoreOutageMetrics_ReportEntryExitAndTheCurrentState(t *testing.T) {
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	var active atomic.Bool
 	m, err := NewStoreOutageMetrics(&Providers{Meter: mp}, "orker-a", active.Load, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 
 	if got := metricPoints(t, reader)["ork.orker.store_outage.active"]; len(got) != 1 || got[0].value != 0 || attrOf(got[0], AttrOrkerID) != "orker-a" {
 		t.Fatalf("active before an outage = %+v, want one 0 for orker-a", got)
@@ -45,9 +45,7 @@ func TestStoreOutageMetrics_DisabledIsANoOp(t *testing.T) {
 		t.Error("disabled metrics read the cordon")
 		return false
 	}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	m.StoreOutageEntered()
 	m.StoreOutageLeft(time.Minute)
 }

@@ -11,7 +11,7 @@
 # http://localhost:8080 (ORKSTACK_API_PORT). The browser has one origin to
 # talk to, so nothing is configured for it.
 #
-# An Orkflow pins every task's image by its registry digest at apply time
+# An Orkflow pins every task's image by its registry digest when the Orkflow is created
 # (docs/OCI_ACTIVITY_CONTRACT.md §4.6), so the activities are pushed to a
 # registry of the stack's own. The one address both the host's Docker daemon
 # (which pulls them for the Orker) and the engine (which pins them) reach is
@@ -224,7 +224,7 @@ services:
       timeout: 5s
       retries: 30
 
-  # orkctl without installing it: `docker compose run --rm orkctl apply
+  # orkctl without installing it: `docker compose run --rm orkctl orkflow create
   # examples/each-fan-out.ork.yaml`. `up` builds it and starts nothing
   # (scale 0); it sees this checkout, read-only. It depends on nothing, so a
   # `run` starts no other service (and never repeats the activities step):

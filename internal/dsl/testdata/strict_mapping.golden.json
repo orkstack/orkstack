@@ -1,0 +1,3034 @@
+[
+  {
+    "source": "v: yes\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "yes: v\n",
+    "path": "with.yes",
+    "line": 1,
+    "reason": "the key yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "l: [yes]\nm:\n  k: yes\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "v: on\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "on is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('on') for the string"
+  },
+  {
+    "source": "on: v\n",
+    "path": "with.on",
+    "line": 1,
+    "reason": "the key on is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('on') for the string"
+  },
+  {
+    "source": "l: [on]\nm:\n  k: on\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "on is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('on') for the string"
+  },
+  {
+    "source": "v: 0755\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "0755: v\n",
+    "path": "with.0755",
+    "line": 1,
+    "reason": "the key 0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "l: [0755]\nm:\n  k: 0755\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "v: 1_000\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "1_000: v\n",
+    "path": "with.1_000",
+    "line": 1,
+    "reason": "the key 1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "l: [1_000]\nm:\n  k: 1_000\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "v: 0b101\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "0b101: v\n",
+    "path": "with.0b101",
+    "line": 1,
+    "reason": "the key 0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "l: [0b101]\nm:\n  k: 0b101\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "v: 1:30\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "1:30: v\n",
+    "path": "with.1:30",
+    "line": 1,
+    "reason": "the key 1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "l: [1:30]\nm:\n  k: 1:30\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "v: 2026-01-02\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "2026-01-02 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-01-02') for the string"
+  },
+  {
+    "source": "2026-01-02: v\n",
+    "path": "with.2026-01-02",
+    "line": 1,
+    "reason": "the key 2026-01-02 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-01-02') for the string"
+  },
+  {
+    "source": "l: [2026-01-02]\nm:\n  k: 2026-01-02\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "2026-01-02 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-01-02') for the string"
+  },
+  {
+    "source": "v: .inf\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": ".inf is not a number JSON can hold; quote it ('.inf') for the string"
+  },
+  {
+    "source": ".inf: v\n",
+    "path": "with..inf",
+    "line": 1,
+    "reason": "the key .inf is not a number JSON can hold; quote it ('.inf') for the string"
+  },
+  {
+    "source": "l: [.inf]\nm:\n  k: .inf\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": ".inf is not a number JSON can hold; quote it ('.inf') for the string"
+  },
+  {
+    "source": "v: 9007199254740993\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('9007199254740993') for the string"
+  },
+  {
+    "source": "9007199254740993: v\n",
+    "path": "with.9007199254740993",
+    "line": 1,
+    "reason": "the key 9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('9007199254740993') for the string"
+  },
+  {
+    "source": "l: [9007199254740993]\nm:\n  k: 9007199254740993\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('9007199254740993') for the string"
+  },
+  {
+    "source": "v: 0o17\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0o17 is the number 15 to YAML 1.2 readers and a string to YAML 1.1 readers; write 15 for the number, or quote it ('0o17') for the string"
+  },
+  {
+    "source": "0o17: v\n",
+    "path": "with.0o17",
+    "line": 1,
+    "reason": "the key 0o17 is the number 15 to YAML 1.2 readers and a string to YAML 1.1 readers; write 15 for the number, or quote it ('0o17') for the string"
+  },
+  {
+    "source": "l: [0o17]\nm:\n  k: 0o17\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "0o17 is the number 15 to YAML 1.2 readers and a string to YAML 1.1 readers; write 15 for the number, or quote it ('0o17') for the string"
+  },
+  {
+    "source": "v: 1e3\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1e3 is the number 1000 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1000 for the number, or quote it ('1e3') for the string"
+  },
+  {
+    "source": "1e3: v\n",
+    "path": "with.1e3",
+    "line": 1,
+    "reason": "the key 1e3 is the number 1000 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1000 for the number, or quote it ('1e3') for the string"
+  },
+  {
+    "source": "l: [1e3]\nm:\n  k: 1e3\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "1e3 is the number 1000 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1000 for the number, or quote it ('1e3') for the string"
+  },
+  {
+    "source": "v: 0X1F\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0X1F was the number 31 to earlier OrkStack releases and is a string to YAML 1.2 readers; write 31 for the number, or quote it ('0X1F') for the string"
+  },
+  {
+    "source": "0X1F: v\n",
+    "path": "with.0X1F",
+    "line": 1,
+    "reason": "the key 0X1F was the number 31 to earlier OrkStack releases and is a string to YAML 1.2 readers; write 31 for the number, or quote it ('0X1F') for the string"
+  },
+  {
+    "source": "l: [0X1F]\nm:\n  k: 0X1F\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "0X1F was the number 31 to earlier OrkStack releases and is a string to YAML 1.2 readers; write 31 for the number, or quote it ('0X1F') for the string"
+  },
+  {
+    "source": "v: null\n",
+    "json": "{\"v\":null}"
+  },
+  {
+    "source": "null: v\n",
+    "path": "with.null",
+    "line": 1,
+    "reason": "the key null is null, and a JSON object key is a string; quote it ('null') for the key 'null'"
+  },
+  {
+    "source": "l: [null]\nm:\n  k: null\n",
+    "json": "{\"l\":[null],\"m\":{\"k\":null}}"
+  },
+  {
+    "source": "v: ~\n",
+    "json": "{\"v\":null}"
+  },
+  {
+    "source": "~: v\n",
+    "path": "with.~",
+    "line": 1,
+    "reason": "the key ~ is null, and a JSON object key is a string; quote it ('~') for the key '~'"
+  },
+  {
+    "source": "l: [~]\nm:\n  k: ~\n",
+    "json": "{\"l\":[null],\"m\":{\"k\":null}}"
+  },
+  {
+    "source": "v: \n",
+    "json": "{\"v\":null}"
+  },
+  {
+    "source": "l: []\nm:\n  k: \n",
+    "json": "{\"l\":[],\"m\":{\"k\":null}}"
+  },
+  {
+    "source": "v: true\n",
+    "json": "{\"v\":true}"
+  },
+  {
+    "source": "true: v\n",
+    "json": "{\"true\":\"v\"}"
+  },
+  {
+    "source": "l: [true]\nm:\n  k: true\n",
+    "json": "{\"l\":[true],\"m\":{\"k\":true}}"
+  },
+  {
+    "source": "v: False\n",
+    "json": "{\"v\":false}"
+  },
+  {
+    "source": "False: v\n",
+    "path": "with.False",
+    "line": 1,
+    "reason": "the key False is the boolean false to YAML readers, and a JSON object key is a string; write false, or quote it ('False') for the key 'False'"
+  },
+  {
+    "source": "l: [False]\nm:\n  k: False\n",
+    "json": "{\"l\":[false],\"m\":{\"k\":false}}"
+  },
+  {
+    "source": "v: 0\n",
+    "json": "{\"v\":0}"
+  },
+  {
+    "source": "0: v\n",
+    "json": "{\"0\":\"v\"}"
+  },
+  {
+    "source": "l: [0]\nm:\n  k: 0\n",
+    "json": "{\"l\":[0],\"m\":{\"k\":0}}"
+  },
+  {
+    "source": "v: -0\n",
+    "json": "{\"v\":0}"
+  },
+  {
+    "source": "-0: v\n",
+    "path": "with.-0",
+    "line": 1,
+    "reason": "the key -0 is the number 0 to YAML readers, and a JSON object key is a string; write 0, or quote it ('-0') for the key '-0'"
+  },
+  {
+    "source": "l: [-0]\nm:\n  k: -0\n",
+    "json": "{\"l\":[0],\"m\":{\"k\":0}}"
+  },
+  {
+    "source": "v: +12\n",
+    "json": "{\"v\":12}"
+  },
+  {
+    "source": "+12: v\n",
+    "path": "with.+12",
+    "line": 1,
+    "reason": "the key +12 is the number 12 to YAML readers, and a JSON object key is a string; write 12, or quote it ('+12') for the key '+12'"
+  },
+  {
+    "source": "l: [+12]\nm:\n  k: +12\n",
+    "json": "{\"l\":[12],\"m\":{\"k\":12}}"
+  },
+  {
+    "source": "v: 42\n",
+    "json": "{\"v\":42}"
+  },
+  {
+    "source": "42: v\n",
+    "json": "{\"42\":\"v\"}"
+  },
+  {
+    "source": "l: [42]\nm:\n  k: 42\n",
+    "json": "{\"l\":[42],\"m\":{\"k\":42}}"
+  },
+  {
+    "source": "v: 0x1F\n",
+    "json": "{\"v\":31}"
+  },
+  {
+    "source": "0x1F: v\n",
+    "path": "with.0x1F",
+    "line": 1,
+    "reason": "the key 0x1F is the number 31 to YAML readers, and a JSON object key is a string; write 31, or quote it ('0x1F') for the key '0x1F'"
+  },
+  {
+    "source": "l: [0x1F]\nm:\n  k: 0x1F\n",
+    "json": "{\"l\":[31],\"m\":{\"k\":31}}"
+  },
+  {
+    "source": "v: 1.5\n",
+    "json": "{\"v\":1.5}"
+  },
+  {
+    "source": "1.5: v\n",
+    "path": "with.1.5",
+    "line": 1,
+    "reason": "the key 1.5 is the number 1.5 to YAML readers, and a JSON object key is a string; write 1.5, or quote it ('1.5') for the key '1.5'"
+  },
+  {
+    "source": "l: [1.5]\nm:\n  k: 1.5\n",
+    "json": "{\"l\":[1.5],\"m\":{\"k\":1.5}}"
+  },
+  {
+    "source": "v: .5\n",
+    "json": "{\"v\":0.5}"
+  },
+  {
+    "source": ".5: v\n",
+    "path": "with..5",
+    "line": 1,
+    "reason": "the key .5 is the number 0.5 to YAML readers, and a JSON object key is a string; write 0.5, or quote it ('.5') for the key '.5'"
+  },
+  {
+    "source": "l: [.5]\nm:\n  k: .5\n",
+    "json": "{\"l\":[0.5],\"m\":{\"k\":0.5}}"
+  },
+  {
+    "source": "v: 1.\n",
+    "json": "{\"v\":1}"
+  },
+  {
+    "source": "1.: v\n",
+    "path": "with.1.",
+    "line": 1,
+    "reason": "the key 1. is the number 1 to YAML readers, and a JSON object key is a string; write 1, or quote it ('1.') for the key '1.'"
+  },
+  {
+    "source": "l: [1.]\nm:\n  k: 1.\n",
+    "json": "{\"l\":[1],\"m\":{\"k\":1}}"
+  },
+  {
+    "source": "v: 1.0\n",
+    "json": "{\"v\":1}"
+  },
+  {
+    "source": "1.0: v\n",
+    "path": "with.1.0",
+    "line": 1,
+    "reason": "the key 1.0 is the number 1 to YAML readers, and a JSON object key is a string; write 1, or quote it ('1.0') for the key '1.0'"
+  },
+  {
+    "source": "l: [1.0]\nm:\n  k: 1.0\n",
+    "json": "{\"l\":[1],\"m\":{\"k\":1}}"
+  },
+  {
+    "source": "v: 01.5\n",
+    "json": "{\"v\":1.5}"
+  },
+  {
+    "source": "01.5: v\n",
+    "path": "with.01.5",
+    "line": 1,
+    "reason": "the key 01.5 is the number 1.5 to YAML readers, and a JSON object key is a string; write 1.5, or quote it ('01.5') for the key '01.5'"
+  },
+  {
+    "source": "l: [01.5]\nm:\n  k: 01.5\n",
+    "json": "{\"l\":[1.5],\"m\":{\"k\":1.5}}"
+  },
+  {
+    "source": "v: 1.5e+3\n",
+    "json": "{\"v\":1500}"
+  },
+  {
+    "source": "1.5e+3: v\n",
+    "path": "with.1.5e+3",
+    "line": 1,
+    "reason": "the key 1.5e+3 is the number 1500 to YAML readers, and a JSON object key is a string; write 1500, or quote it ('1.5e+3') for the key '1.5e+3'"
+  },
+  {
+    "source": "l: [1.5e+3]\nm:\n  k: 1.5e+3\n",
+    "json": "{\"l\":[1500],\"m\":{\"k\":1500}}"
+  },
+  {
+    "source": "v: 1.5E-3\n",
+    "json": "{\"v\":0.0015}"
+  },
+  {
+    "source": "1.5E-3: v\n",
+    "path": "with.1.5E-3",
+    "line": 1,
+    "reason": "the key 1.5E-3 is the number 0.0015 to YAML readers, and a JSON object key is a string; write 0.0015, or quote it ('1.5E-3') for the key '1.5E-3'"
+  },
+  {
+    "source": "l: [1.5E-3]\nm:\n  k: 1.5E-3\n",
+    "json": "{\"l\":[0.0015],\"m\":{\"k\":0.0015}}"
+  },
+  {
+    "source": "v: 9007199254740992\n",
+    "json": "{\"v\":9007199254740992}"
+  },
+  {
+    "source": "9007199254740992: v\n",
+    "json": "{\"9007199254740992\":\"v\"}"
+  },
+  {
+    "source": "l: [9007199254740992]\nm:\n  k: 9007199254740992\n",
+    "json": "{\"l\":[9007199254740992],\"m\":{\"k\":9007199254740992}}"
+  },
+  {
+    "source": "v: 1.2.3\n",
+    "json": "{\"v\":\"1.2.3\"}"
+  },
+  {
+    "source": "1.2.3: v\n",
+    "json": "{\"1.2.3\":\"v\"}"
+  },
+  {
+    "source": "l: [1.2.3]\nm:\n  k: 1.2.3\n",
+    "json": "{\"l\":[\"1.2.3\"],\"m\":{\"k\":\"1.2.3\"}}"
+  },
+  {
+    "source": "v: 10.0.0.1\n",
+    "json": "{\"v\":\"10.0.0.1\"}"
+  },
+  {
+    "source": "10.0.0.1: v\n",
+    "json": "{\"10.0.0.1\":\"v\"}"
+  },
+  {
+    "source": "l: [10.0.0.1]\nm:\n  k: 10.0.0.1\n",
+    "json": "{\"l\":[\"10.0.0.1\"],\"m\":{\"k\":\"10.0.0.1\"}}"
+  },
+  {
+    "source": "v: v1\n",
+    "json": "{\"v\":\"v1\"}"
+  },
+  {
+    "source": "v1: v\n",
+    "json": "{\"v1\":\"v\"}"
+  },
+  {
+    "source": "l: [v1]\nm:\n  k: v1\n",
+    "json": "{\"l\":[\"v1\"],\"m\":{\"k\":\"v1\"}}"
+  },
+  {
+    "source": "v: 3d\n",
+    "json": "{\"v\":\"3d\"}"
+  },
+  {
+    "source": "3d: v\n",
+    "json": "{\"3d\":\"v\"}"
+  },
+  {
+    "source": "l: [3d]\nm:\n  k: 3d\n",
+    "json": "{\"l\":[\"3d\"],\"m\":{\"k\":\"3d\"}}"
+  },
+  {
+    "source": "v: inf\n",
+    "json": "{\"v\":\"inf\"}"
+  },
+  {
+    "source": "inf: v\n",
+    "json": "{\"inf\":\"v\"}"
+  },
+  {
+    "source": "l: [inf]\nm:\n  k: inf\n",
+    "json": "{\"l\":[\"inf\"],\"m\":{\"k\":\"inf\"}}"
+  },
+  {
+    "source": "v: nUll\n",
+    "json": "{\"v\":\"nUll\"}"
+  },
+  {
+    "source": "nUll: v\n",
+    "json": "{\"nUll\":\"v\"}"
+  },
+  {
+    "source": "l: [nUll]\nm:\n  k: nUll\n",
+    "json": "{\"l\":[\"nUll\"],\"m\":{\"k\":\"nUll\"}}"
+  },
+  {
+    "source": "v: _1\n",
+    "json": "{\"v\":\"_1\"}"
+  },
+  {
+    "source": "_1: v\n",
+    "json": "{\"_1\":\"v\"}"
+  },
+  {
+    "source": "l: [_1]\nm:\n  k: _1\n",
+    "json": "{\"l\":[\"_1\"],\"m\":{\"k\":\"_1\"}}"
+  },
+  {
+    "source": "v: https://x/y\n",
+    "json": "{\"v\":\"https://x/y\"}"
+  },
+  {
+    "source": "https://x/y: v\n",
+    "json": "{\"https://x/y\":\"v\"}"
+  },
+  {
+    "source": "l: [https://x/y]\nm:\n  k: https://x/y\n",
+    "json": "{\"l\":[\"https://x/y\"],\"m\":{\"k\":\"https://x/y\"}}"
+  },
+  {
+    "source": "v: No\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "No: v\n",
+    "path": "with.No",
+    "line": 1,
+    "reason": "the key No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "l: [No]\nm:\n  k: No\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "v: OFF\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "OFF: v\n",
+    "path": "with.OFF",
+    "line": 1,
+    "reason": "the key OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "l: [OFF]\nm:\n  k: OFF\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "v: y\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "y: v\n",
+    "path": "with.y",
+    "line": 1,
+    "reason": "the key y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "l: [y]\nm:\n  k: y\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "v: n\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "n: v\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "l: [n]\nm:\n  k: n\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: yEs\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "yEs: v\n",
+    "path": "with.yEs",
+    "line": 1,
+    "reason": "the key yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "l: [yEs]\nm:\n  k: yEs\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "v: 2026-1-2\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "2026-1-2: v\n",
+    "path": "with.2026-1-2",
+    "line": 1,
+    "reason": "the key 2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "l: [2026-1-2]\nm:\n  k: 2026-1-2\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "v: -.Inf\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "-.Inf: v\n",
+    "path": "with.-.Inf",
+    "line": 1,
+    "reason": "the key -.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "l: [-.Inf]\nm:\n  k: -.Inf\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "-.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "v: .NaN\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": ".NaN is not a number JSON can hold; quote it ('.NaN') for the string"
+  },
+  {
+    "source": ".NaN: v\n",
+    "path": "with..NaN",
+    "line": 1,
+    "reason": "the key .NaN is not a number JSON can hold; quote it ('.NaN') for the string"
+  },
+  {
+    "source": "l: [.NaN]\nm:\n  k: .NaN\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": ".NaN is not a number JSON can hold; quote it ('.NaN') for the string"
+  },
+  {
+    "source": "v: 1e400\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1e400 is out of range for a JSON number; quote it ('1e400') for the string"
+  },
+  {
+    "source": "1e400: v\n",
+    "path": "with.1e400",
+    "line": 1,
+    "reason": "the key 1e400 is out of range for a JSON number; quote it ('1e400') for the string"
+  },
+  {
+    "source": "l: [1e400]\nm:\n  k: 1e400\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "1e400 is out of range for a JSON number; quote it ('1e400') for the string"
+  },
+  {
+    "source": "v: -9007199254740993\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('-9007199254740993') for the string"
+  },
+  {
+    "source": "-9007199254740993: v\n",
+    "path": "with.-9007199254740993",
+    "line": 1,
+    "reason": "the key -9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('-9007199254740993') for the string"
+  },
+  {
+    "source": "l: [-9007199254740993]\nm:\n  k: -9007199254740993\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "-9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('-9007199254740993') for the string"
+  },
+  {
+    "source": "v: 0x20000000000001\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0x20000000000001 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('0x20000000000001') for the string"
+  },
+  {
+    "source": "0x20000000000001: v\n",
+    "path": "with.0x20000000000001",
+    "line": 1,
+    "reason": "the key 0x20000000000001 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('0x20000000000001') for the string"
+  },
+  {
+    "source": "l: [0x20000000000001]\nm:\n  k: 0x20000000000001\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "0x20000000000001 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('0x20000000000001') for the string"
+  },
+  {
+    "source": "v: 9007199254740993.0\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "9007199254740993.0 is not kept exactly by a JSON number: it would become 9007199254740992; write 9007199254740992 for that number, or quote it ('9007199254740993.0') for the string"
+  },
+  {
+    "source": "9007199254740993.0: v\n",
+    "path": "with.9007199254740993.0",
+    "line": 1,
+    "reason": "the key 9007199254740993.0 is not kept exactly by a JSON number: it would become 9007199254740992; write 9007199254740992 for that number, or quote it ('9007199254740993.0') for the string"
+  },
+  {
+    "source": "l: [9007199254740993.0]\nm:\n  k: 9007199254740993.0\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "9007199254740993.0 is not kept exactly by a JSON number: it would become 9007199254740992; write 9007199254740992 for that number, or quote it ('9007199254740993.0') for the string"
+  },
+  {
+    "source": "v: 0.30000000000000001\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0.30000000000000001 is not kept exactly by a JSON number: it would become 0.3; write 0.3 for that number, or quote it ('0.30000000000000001') for the string"
+  },
+  {
+    "source": "0.30000000000000001: v\n",
+    "path": "with.0.30000000000000001",
+    "line": 1,
+    "reason": "the key 0.30000000000000001 is not kept exactly by a JSON number: it would become 0.3; write 0.3 for that number, or quote it ('0.30000000000000001') for the string"
+  },
+  {
+    "source": "l: [0.30000000000000001]\nm:\n  k: 0.30000000000000001\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "0.30000000000000001 is not kept exactly by a JSON number: it would become 0.3; write 0.3 for that number, or quote it ('0.30000000000000001') for the string"
+  },
+  {
+    "source": "v: 1.0e-400\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1.0e-400 is not kept exactly by a JSON number: it would become 0; write 0 for that number, or quote it ('1.0e-400') for the string"
+  },
+  {
+    "source": "1.0e-400: v\n",
+    "path": "with.1.0e-400",
+    "line": 1,
+    "reason": "the key 1.0e-400 is not kept exactly by a JSON number: it would become 0; write 0 for that number, or quote it ('1.0e-400') for the string"
+  },
+  {
+    "source": "l: [1.0e-400]\nm:\n  k: 1.0e-400\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "1.0e-400 is not kept exactly by a JSON number: it would become 0; write 0 for that number, or quote it ('1.0e-400') for the string"
+  },
+  {
+    "source": "v: 4.9e-324\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "4.9e-324 is not kept exactly by a JSON number: it would become 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005; write 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005 for that number, or quote it ('4.9e-324') for the string"
+  },
+  {
+    "source": "4.9e-324: v\n",
+    "path": "with.4.9e-324",
+    "line": 1,
+    "reason": "the key 4.9e-324 is not kept exactly by a JSON number: it would become 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005; write 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005 for that number, or quote it ('4.9e-324') for the string"
+  },
+  {
+    "source": "l: [4.9e-324]\nm:\n  k: 4.9e-324\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "4.9e-324 is not kept exactly by a JSON number: it would become 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005; write 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005 for that number, or quote it ('4.9e-324') for the string"
+  },
+  {
+    "source": "v: -017\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-017 is the number -15 to YAML 1.1 readers and -17 to YAML 1.2 readers; write the number without a leading zero, or quote it ('-017') for the string"
+  },
+  {
+    "source": "-017: v\n",
+    "path": "with.-017",
+    "line": 1,
+    "reason": "the key -017 is the number -15 to YAML 1.1 readers and -17 to YAML 1.2 readers; write the number without a leading zero, or quote it ('-017') for the string"
+  },
+  {
+    "source": "l: [-017]\nm:\n  k: -017\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "-017 is the number -15 to YAML 1.1 readers and -17 to YAML 1.2 readers; write the number without a leading zero, or quote it ('-017') for the string"
+  },
+  {
+    "source": "v: 12:30\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "12:30 is the number 750 to YAML 1.1 readers and a string to YAML 1.2 readers; write 750 for the number, or quote it ('12:30') for the string"
+  },
+  {
+    "source": "12:30: v\n",
+    "path": "with.12:30",
+    "line": 1,
+    "reason": "the key 12:30 is the number 750 to YAML 1.1 readers and a string to YAML 1.2 readers; write 750 for the number, or quote it ('12:30') for the string"
+  },
+  {
+    "source": "l: [12:30]\nm:\n  k: 12:30\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "12:30 is the number 750 to YAML 1.1 readers and a string to YAML 1.2 readers; write 750 for the number, or quote it ('12:30') for the string"
+  },
+  {
+    "source": "v: -0x1F\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-0x1F is the number -31 to YAML 1.1 readers and a string to YAML 1.2 readers; write -31 for the number, or quote it ('-0x1F') for the string"
+  },
+  {
+    "source": "-0x1F: v\n",
+    "path": "with.-0x1F",
+    "line": 1,
+    "reason": "the key -0x1F is the number -31 to YAML 1.1 readers and a string to YAML 1.2 readers; write -31 for the number, or quote it ('-0x1F') for the string"
+  },
+  {
+    "source": "l: [-0x1F]\nm:\n  k: -0x1F\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "-0x1F is the number -31 to YAML 1.1 readers and a string to YAML 1.2 readers; write -31 for the number, or quote it ('-0x1F') for the string"
+  },
+  {
+    "source": "v: +0x1F\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "+0x1F is the number 31 to YAML 1.1 readers and a string to YAML 1.2 readers; write 31 for the number, or quote it ('+0x1F') for the string"
+  },
+  {
+    "source": "+0x1F: v\n",
+    "path": "with.+0x1F",
+    "line": 1,
+    "reason": "the key +0x1F is the number 31 to YAML 1.1 readers and a string to YAML 1.2 readers; write 31 for the number, or quote it ('+0x1F') for the string"
+  },
+  {
+    "source": "l: [+0x1F]\nm:\n  k: +0x1F\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "+0x1F is the number 31 to YAML 1.1 readers and a string to YAML 1.2 readers; write 31 for the number, or quote it ('+0x1F') for the string"
+  },
+  {
+    "source": "v: 1:30.5\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1:30.5 is the number 90.5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90.5 for the number, or quote it ('1:30.5') for the string"
+  },
+  {
+    "source": "1:30.5: v\n",
+    "path": "with.1:30.5",
+    "line": 1,
+    "reason": "the key 1:30.5 is the number 90.5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90.5 for the number, or quote it ('1:30.5') for the string"
+  },
+  {
+    "source": "l: [1:30.5]\nm:\n  k: 1:30.5\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "1:30.5 is the number 90.5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90.5 for the number, or quote it ('1:30.5') for the string"
+  },
+  {
+    "source": "v: 1.5e3\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1.5e3 is the number 1500 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1500 for the number, or quote it ('1.5e3') for the string"
+  },
+  {
+    "source": "1.5e3: v\n",
+    "path": "with.1.5e3",
+    "line": 1,
+    "reason": "the key 1.5e3 is the number 1500 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1500 for the number, or quote it ('1.5e3') for the string"
+  },
+  {
+    "source": "l: [1.5e3]\nm:\n  k: 1.5e3\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "1.5e3 is the number 1500 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1500 for the number, or quote it ('1.5e3') for the string"
+  },
+  {
+    "source": "v: -.5\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-.5 is the number -0.5 to YAML 1.2 readers and a string to YAML 1.1 readers; write -0.5 for the number, or quote it ('-.5') for the string"
+  },
+  {
+    "source": "-.5: v\n",
+    "path": "with.-.5",
+    "line": 1,
+    "reason": "the key -.5 is the number -0.5 to YAML 1.2 readers and a string to YAML 1.1 readers; write -0.5 for the number, or quote it ('-.5') for the string"
+  },
+  {
+    "source": "l: [-.5]\nm:\n  k: -.5\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "-.5 is the number -0.5 to YAML 1.2 readers and a string to YAML 1.1 readers; write -0.5 for the number, or quote it ('-.5') for the string"
+  },
+  {
+    "source": "v: 08\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "08 is the number 8 to YAML 1.2 readers and a string to YAML 1.1 readers; write 8 for the number, or quote it ('08') for the string"
+  },
+  {
+    "source": "08: v\n",
+    "path": "with.08",
+    "line": 1,
+    "reason": "the key 08 is the number 8 to YAML 1.2 readers and a string to YAML 1.1 readers; write 8 for the number, or quote it ('08') for the string"
+  },
+  {
+    "source": "l: [08]\nm:\n  k: 08\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "08 is the number 8 to YAML 1.2 readers and a string to YAML 1.1 readers; write 8 for the number, or quote it ('08') for the string"
+  },
+  {
+    "source": "v: -0.0\n",
+    "json": "{\"v\":-0}"
+  },
+  {
+    "source": "-0.0: v\n",
+    "path": "with.-0.0",
+    "line": 1,
+    "reason": "the key -0.0 is the number 0 to YAML readers, and a JSON object key is a string; write 0, or quote it ('-0.0') for the key '-0.0'"
+  },
+  {
+    "source": "l: [-0.0]\nm:\n  k: -0.0\n",
+    "json": "{\"l\":[-0],\"m\":{\"k\":-0}}"
+  },
+  {
+    "source": "v: 1.0e+23\n",
+    "json": "{\"v\":1e+23}"
+  },
+  {
+    "source": "1.0e+23: v\n",
+    "path": "with.1.0e+23",
+    "line": 1,
+    "reason": "the key 1.0e+23 is the number 100000000000000000000000 to YAML readers, and a JSON object key is a string; write 100000000000000000000000, or quote it ('1.0e+23') for the key '1.0e+23'"
+  },
+  {
+    "source": "l: [1.0e+23]\nm:\n  k: 1.0e+23\n",
+    "json": "{\"l\":[1e+23],\"m\":{\"k\":1e+23}}"
+  },
+  {
+    "source": "v: 0.1\n",
+    "json": "{\"v\":0.1}"
+  },
+  {
+    "source": "0.1: v\n",
+    "path": "with.0.1",
+    "line": 1,
+    "reason": "the key 0.1 is the number 0.1 to YAML readers, and a JSON object key is a string; write 0.1, or quote it ('0.1') for the key '0.1'"
+  },
+  {
+    "source": "l: [0.1]\nm:\n  k: 0.1\n",
+    "json": "{\"l\":[0.1],\"m\":{\"k\":0.1}}"
+  },
+  {
+    "source": "v: 1.10\n",
+    "json": "{\"v\":1.1}"
+  },
+  {
+    "source": "1.10: v\n",
+    "path": "with.1.10",
+    "line": 1,
+    "reason": "the key 1.10 is the number 1.1 to YAML readers, and a JSON object key is a string; write 1.1, or quote it ('1.10') for the key '1.10'"
+  },
+  {
+    "source": "l: [1.10]\nm:\n  k: 1.10\n",
+    "json": "{\"l\":[1.1],\"m\":{\"k\":1.1}}"
+  },
+  {
+    "source": "v: 123456789012345678901234567890\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "123456789012345678901234567890 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('123456789012345678901234567890') for the string"
+  },
+  {
+    "source": "123456789012345678901234567890: v\n",
+    "path": "with.123456789012345678901234567890",
+    "line": 1,
+    "reason": "the key 123456789012345678901234567890 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('123456789012345678901234567890') for the string"
+  },
+  {
+    "source": "l: [123456789012345678901234567890]\nm:\n  k: 123456789012345678901234567890\n",
+    "path": "with.l[0]",
+    "line": 1,
+    "reason": "123456789012345678901234567890 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('123456789012345678901234567890') for the string"
+  },
+  {
+    "source": "v: yes\nw: .inf\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "yes: .inf\n",
+    "path": "with.yes",
+    "line": 1,
+    "reason": "the key yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "l:\n  - yes\n  - .inf\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "m:\n  yes: 1\n  .inf: 2\n",
+    "path": "with.m.yes",
+    "line": 2,
+    "reason": "the key yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    yes: .inf\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: on\nw: 9007199254740993\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "on is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('on') for the string"
+  },
+  {
+    "source": "on: 9007199254740993\n",
+    "path": "with.on",
+    "line": 1,
+    "reason": "the key on is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('on') for the string"
+  },
+  {
+    "source": "l:\n  - on\n  - 9007199254740993\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "on is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('on') for the string"
+  },
+  {
+    "source": "m:\n  on: 1\n  9007199254740993: 2\n",
+    "path": "with.m.on",
+    "line": 2,
+    "reason": "the key on is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('on') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    on: 9007199254740993\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0755\nw: 0o17\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "0755: 0o17\n",
+    "path": "with.0755",
+    "line": 1,
+    "reason": "the key 0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "l:\n  - 0755\n  - 0o17\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "m:\n  0755: 1\n  0o17: 2\n",
+    "path": "with.m.0755",
+    "line": 2,
+    "reason": "the key 0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    0755: 0o17\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1_000\nw: 1e3\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "1_000: 1e3\n",
+    "path": "with.1_000",
+    "line": 1,
+    "reason": "the key 1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "l:\n  - 1_000\n  - 1e3\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "m:\n  1_000: 1\n  1e3: 2\n",
+    "path": "with.m.1_000",
+    "line": 2,
+    "reason": "the key 1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    1_000: 1e3\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0b101\nw: 0X1F\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "0b101: 0X1F\n",
+    "path": "with.0b101",
+    "line": 1,
+    "reason": "the key 0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "l:\n  - 0b101\n  - 0X1F\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "m:\n  0b101: 1\n  0X1F: 2\n",
+    "path": "with.m.0b101",
+    "line": 2,
+    "reason": "the key 0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    0b101: 0X1F\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1:30\nw: null\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "1:30: null\n",
+    "path": "with.1:30",
+    "line": 1,
+    "reason": "the key 1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "l:\n  - 1:30\n  - null\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "m:\n  1:30: 1\n  null: 2\n",
+    "path": "with.m.1:30",
+    "line": 2,
+    "reason": "the key 1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    1:30: null\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 2026-01-02\nw: ~\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "2026-01-02 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-01-02') for the string"
+  },
+  {
+    "source": "2026-01-02: ~\n",
+    "path": "with.2026-01-02",
+    "line": 1,
+    "reason": "the key 2026-01-02 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-01-02') for the string"
+  },
+  {
+    "source": "l:\n  - 2026-01-02\n  - ~\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "2026-01-02 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-01-02') for the string"
+  },
+  {
+    "source": "m:\n  2026-01-02: 1\n  ~: 2\n",
+    "path": "with.m.2026-01-02",
+    "line": 2,
+    "reason": "the key 2026-01-02 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-01-02') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    2026-01-02: ~\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: .inf\nw: \n",
+    "path": "with.v",
+    "line": 1,
+    "reason": ".inf is not a number JSON can hold; quote it ('.inf') for the string"
+  },
+  {
+    "source": ".inf: \n",
+    "path": "with..inf",
+    "line": 1,
+    "reason": "the key .inf is not a number JSON can hold; quote it ('.inf') for the string"
+  },
+  {
+    "source": "l:\n  - .inf\n  - \n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": ".inf is not a number JSON can hold; quote it ('.inf') for the string"
+  },
+  {
+    "source": "m:\n  .inf: 1\n  : 2\n",
+    "unread": true
+  },
+  {
+    "source": "n:\n  k:\n    .inf: \n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 9007199254740993\nw: true\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('9007199254740993') for the string"
+  },
+  {
+    "source": "9007199254740993: true\n",
+    "path": "with.9007199254740993",
+    "line": 1,
+    "reason": "the key 9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('9007199254740993') for the string"
+  },
+  {
+    "source": "l:\n  - 9007199254740993\n  - true\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('9007199254740993') for the string"
+  },
+  {
+    "source": "m:\n  9007199254740993: 1\n  true: 2\n",
+    "path": "with.m.9007199254740993",
+    "line": 2,
+    "reason": "the key 9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('9007199254740993') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    9007199254740993: true\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0o17\nw: False\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0o17 is the number 15 to YAML 1.2 readers and a string to YAML 1.1 readers; write 15 for the number, or quote it ('0o17') for the string"
+  },
+  {
+    "source": "0o17: False\n",
+    "path": "with.0o17",
+    "line": 1,
+    "reason": "the key 0o17 is the number 15 to YAML 1.2 readers and a string to YAML 1.1 readers; write 15 for the number, or quote it ('0o17') for the string"
+  },
+  {
+    "source": "l:\n  - 0o17\n  - False\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "0o17 is the number 15 to YAML 1.2 readers and a string to YAML 1.1 readers; write 15 for the number, or quote it ('0o17') for the string"
+  },
+  {
+    "source": "m:\n  0o17: 1\n  False: 2\n",
+    "path": "with.m.0o17",
+    "line": 2,
+    "reason": "the key 0o17 is the number 15 to YAML 1.2 readers and a string to YAML 1.1 readers; write 15 for the number, or quote it ('0o17') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    0o17: False\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1e3\nw: 0\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1e3 is the number 1000 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1000 for the number, or quote it ('1e3') for the string"
+  },
+  {
+    "source": "1e3: 0\n",
+    "path": "with.1e3",
+    "line": 1,
+    "reason": "the key 1e3 is the number 1000 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1000 for the number, or quote it ('1e3') for the string"
+  },
+  {
+    "source": "l:\n  - 1e3\n  - 0\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "1e3 is the number 1000 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1000 for the number, or quote it ('1e3') for the string"
+  },
+  {
+    "source": "m:\n  1e3: 1\n  0: 2\n",
+    "path": "with.m.1e3",
+    "line": 2,
+    "reason": "the key 1e3 is the number 1000 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1000 for the number, or quote it ('1e3') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    1e3: 0\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0X1F\nw: -0\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0X1F was the number 31 to earlier OrkStack releases and is a string to YAML 1.2 readers; write 31 for the number, or quote it ('0X1F') for the string"
+  },
+  {
+    "source": "0X1F: -0\n",
+    "path": "with.0X1F",
+    "line": 1,
+    "reason": "the key 0X1F was the number 31 to earlier OrkStack releases and is a string to YAML 1.2 readers; write 31 for the number, or quote it ('0X1F') for the string"
+  },
+  {
+    "source": "l:\n  - 0X1F\n  - -0\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "0X1F was the number 31 to earlier OrkStack releases and is a string to YAML 1.2 readers; write 31 for the number, or quote it ('0X1F') for the string"
+  },
+  {
+    "source": "m:\n  0X1F: 1\n  -0: 2\n",
+    "path": "with.m.0X1F",
+    "line": 2,
+    "reason": "the key 0X1F was the number 31 to earlier OrkStack releases and is a string to YAML 1.2 readers; write 31 for the number, or quote it ('0X1F') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    0X1F: -0\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: null\nw: +12\n",
+    "json": "{\"v\":null,\"w\":12}"
+  },
+  {
+    "source": "null: +12\n",
+    "path": "with.null",
+    "line": 1,
+    "reason": "the key null is null, and a JSON object key is a string; quote it ('null') for the key 'null'"
+  },
+  {
+    "source": "l:\n  - null\n  - +12\n",
+    "json": "{\"l\":[null,12]}"
+  },
+  {
+    "source": "m:\n  null: 1\n  +12: 2\n",
+    "path": "with.m.null",
+    "line": 2,
+    "reason": "the key null is null, and a JSON object key is a string; quote it ('null') for the key 'null'"
+  },
+  {
+    "source": "n:\n  k:\n    null: +12\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: ~\nw: 42\n",
+    "json": "{\"v\":null,\"w\":42}"
+  },
+  {
+    "source": "~: 42\n",
+    "path": "with.~",
+    "line": 1,
+    "reason": "the key ~ is null, and a JSON object key is a string; quote it ('~') for the key '~'"
+  },
+  {
+    "source": "l:\n  - ~\n  - 42\n",
+    "json": "{\"l\":[null,42]}"
+  },
+  {
+    "source": "m:\n  ~: 1\n  42: 2\n",
+    "path": "with.m.~",
+    "line": 2,
+    "reason": "the key ~ is null, and a JSON object key is a string; quote it ('~') for the key '~'"
+  },
+  {
+    "source": "n:\n  k:\n    ~: 42\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: \nw: 0x1F\n",
+    "json": "{\"v\":null,\"w\":31}"
+  },
+  {
+    "source": ": 0x1F\n",
+    "unread": true
+  },
+  {
+    "source": "l:\n  - \n  - 0x1F\n",
+    "json": "{\"l\":[null,31]}"
+  },
+  {
+    "source": "m:\n  : 1\n  0x1F: 2\n",
+    "unread": true
+  },
+  {
+    "source": "n:\n  k:\n    : 0x1F\n",
+    "unread": true
+  },
+  {
+    "source": "v: true\nw: 1.5\n",
+    "json": "{\"v\":true,\"w\":1.5}"
+  },
+  {
+    "source": "true: 1.5\n",
+    "json": "{\"true\":1.5}"
+  },
+  {
+    "source": "l:\n  - true\n  - 1.5\n",
+    "json": "{\"l\":[true,1.5]}"
+  },
+  {
+    "source": "m:\n  true: 1\n  1.5: 2\n",
+    "path": "with.m.1.5",
+    "line": 3,
+    "reason": "the key 1.5 is the number 1.5 to YAML readers, and a JSON object key is a string; write 1.5, or quote it ('1.5') for the key '1.5'"
+  },
+  {
+    "source": "n:\n  k:\n    true: 1.5\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: False\nw: .5\n",
+    "json": "{\"v\":false,\"w\":0.5}"
+  },
+  {
+    "source": "False: .5\n",
+    "path": "with.False",
+    "line": 1,
+    "reason": "the key False is the boolean false to YAML readers, and a JSON object key is a string; write false, or quote it ('False') for the key 'False'"
+  },
+  {
+    "source": "l:\n  - False\n  - .5\n",
+    "json": "{\"l\":[false,0.5]}"
+  },
+  {
+    "source": "m:\n  False: 1\n  .5: 2\n",
+    "path": "with.m.False",
+    "line": 2,
+    "reason": "the key False is the boolean false to YAML readers, and a JSON object key is a string; write false, or quote it ('False') for the key 'False'"
+  },
+  {
+    "source": "n:\n  k:\n    False: .5\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0\nw: 1.\n",
+    "json": "{\"v\":0,\"w\":1}"
+  },
+  {
+    "source": "0: 1.\n",
+    "json": "{\"0\":1}"
+  },
+  {
+    "source": "l:\n  - 0\n  - 1.\n",
+    "json": "{\"l\":[0,1]}"
+  },
+  {
+    "source": "m:\n  0: 1\n  1.: 2\n",
+    "path": "with.m.1.",
+    "line": 3,
+    "reason": "the key 1. is the number 1 to YAML readers, and a JSON object key is a string; write 1, or quote it ('1.') for the key '1.'"
+  },
+  {
+    "source": "n:\n  k:\n    0: 1.\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: -0\nw: 1.0\n",
+    "json": "{\"v\":0,\"w\":1}"
+  },
+  {
+    "source": "-0: 1.0\n",
+    "path": "with.-0",
+    "line": 1,
+    "reason": "the key -0 is the number 0 to YAML readers, and a JSON object key is a string; write 0, or quote it ('-0') for the key '-0'"
+  },
+  {
+    "source": "l:\n  - -0\n  - 1.0\n",
+    "json": "{\"l\":[0,1]}"
+  },
+  {
+    "source": "m:\n  -0: 1\n  1.0: 2\n",
+    "path": "with.m.-0",
+    "line": 2,
+    "reason": "the key -0 is the number 0 to YAML readers, and a JSON object key is a string; write 0, or quote it ('-0') for the key '-0'"
+  },
+  {
+    "source": "n:\n  k:\n    -0: 1.0\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: +12\nw: 01.5\n",
+    "json": "{\"v\":12,\"w\":1.5}"
+  },
+  {
+    "source": "+12: 01.5\n",
+    "path": "with.+12",
+    "line": 1,
+    "reason": "the key +12 is the number 12 to YAML readers, and a JSON object key is a string; write 12, or quote it ('+12') for the key '+12'"
+  },
+  {
+    "source": "l:\n  - +12\n  - 01.5\n",
+    "json": "{\"l\":[12,1.5]}"
+  },
+  {
+    "source": "m:\n  +12: 1\n  01.5: 2\n",
+    "path": "with.m.+12",
+    "line": 2,
+    "reason": "the key +12 is the number 12 to YAML readers, and a JSON object key is a string; write 12, or quote it ('+12') for the key '+12'"
+  },
+  {
+    "source": "n:\n  k:\n    +12: 01.5\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 42\nw: 1.5e+3\n",
+    "json": "{\"v\":42,\"w\":1500}"
+  },
+  {
+    "source": "42: 1.5e+3\n",
+    "json": "{\"42\":1500}"
+  },
+  {
+    "source": "l:\n  - 42\n  - 1.5e+3\n",
+    "json": "{\"l\":[42,1500]}"
+  },
+  {
+    "source": "m:\n  42: 1\n  1.5e+3: 2\n",
+    "path": "with.m.1.5e+3",
+    "line": 3,
+    "reason": "the key 1.5e+3 is the number 1500 to YAML readers, and a JSON object key is a string; write 1500, or quote it ('1.5e+3') for the key '1.5e+3'"
+  },
+  {
+    "source": "n:\n  k:\n    42: 1.5e+3\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0x1F\nw: 1.5E-3\n",
+    "json": "{\"v\":31,\"w\":0.0015}"
+  },
+  {
+    "source": "0x1F: 1.5E-3\n",
+    "path": "with.0x1F",
+    "line": 1,
+    "reason": "the key 0x1F is the number 31 to YAML readers, and a JSON object key is a string; write 31, or quote it ('0x1F') for the key '0x1F'"
+  },
+  {
+    "source": "l:\n  - 0x1F\n  - 1.5E-3\n",
+    "json": "{\"l\":[31,0.0015]}"
+  },
+  {
+    "source": "m:\n  0x1F: 1\n  1.5E-3: 2\n",
+    "path": "with.m.0x1F",
+    "line": 2,
+    "reason": "the key 0x1F is the number 31 to YAML readers, and a JSON object key is a string; write 31, or quote it ('0x1F') for the key '0x1F'"
+  },
+  {
+    "source": "n:\n  k:\n    0x1F: 1.5E-3\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.5\nw: 9007199254740992\n",
+    "json": "{\"v\":1.5,\"w\":9007199254740992}"
+  },
+  {
+    "source": "1.5: 9007199254740992\n",
+    "path": "with.1.5",
+    "line": 1,
+    "reason": "the key 1.5 is the number 1.5 to YAML readers, and a JSON object key is a string; write 1.5, or quote it ('1.5') for the key '1.5'"
+  },
+  {
+    "source": "l:\n  - 1.5\n  - 9007199254740992\n",
+    "json": "{\"l\":[1.5,9007199254740992]}"
+  },
+  {
+    "source": "m:\n  1.5: 1\n  9007199254740992: 2\n",
+    "path": "with.m.1.5",
+    "line": 2,
+    "reason": "the key 1.5 is the number 1.5 to YAML readers, and a JSON object key is a string; write 1.5, or quote it ('1.5') for the key '1.5'"
+  },
+  {
+    "source": "n:\n  k:\n    1.5: 9007199254740992\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: .5\nw: 1.2.3\n",
+    "json": "{\"v\":0.5,\"w\":\"1.2.3\"}"
+  },
+  {
+    "source": ".5: 1.2.3\n",
+    "path": "with..5",
+    "line": 1,
+    "reason": "the key .5 is the number 0.5 to YAML readers, and a JSON object key is a string; write 0.5, or quote it ('.5') for the key '.5'"
+  },
+  {
+    "source": "l:\n  - .5\n  - 1.2.3\n",
+    "json": "{\"l\":[0.5,\"1.2.3\"]}"
+  },
+  {
+    "source": "m:\n  .5: 1\n  1.2.3: 2\n",
+    "path": "with.m..5",
+    "line": 2,
+    "reason": "the key .5 is the number 0.5 to YAML readers, and a JSON object key is a string; write 0.5, or quote it ('.5') for the key '.5'"
+  },
+  {
+    "source": "n:\n  k:\n    .5: 1.2.3\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.\nw: 10.0.0.1\n",
+    "json": "{\"v\":1,\"w\":\"10.0.0.1\"}"
+  },
+  {
+    "source": "1.: 10.0.0.1\n",
+    "path": "with.1.",
+    "line": 1,
+    "reason": "the key 1. is the number 1 to YAML readers, and a JSON object key is a string; write 1, or quote it ('1.') for the key '1.'"
+  },
+  {
+    "source": "l:\n  - 1.\n  - 10.0.0.1\n",
+    "json": "{\"l\":[1,\"10.0.0.1\"]}"
+  },
+  {
+    "source": "m:\n  1.: 1\n  10.0.0.1: 2\n",
+    "path": "with.m.1.",
+    "line": 2,
+    "reason": "the key 1. is the number 1 to YAML readers, and a JSON object key is a string; write 1, or quote it ('1.') for the key '1.'"
+  },
+  {
+    "source": "n:\n  k:\n    1.: 10.0.0.1\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.0\nw: v1\n",
+    "json": "{\"v\":1,\"w\":\"v1\"}"
+  },
+  {
+    "source": "1.0: v1\n",
+    "path": "with.1.0",
+    "line": 1,
+    "reason": "the key 1.0 is the number 1 to YAML readers, and a JSON object key is a string; write 1, or quote it ('1.0') for the key '1.0'"
+  },
+  {
+    "source": "l:\n  - 1.0\n  - v1\n",
+    "json": "{\"l\":[1,\"v1\"]}"
+  },
+  {
+    "source": "m:\n  1.0: 1\n  v1: 2\n",
+    "path": "with.m.1.0",
+    "line": 2,
+    "reason": "the key 1.0 is the number 1 to YAML readers, and a JSON object key is a string; write 1, or quote it ('1.0') for the key '1.0'"
+  },
+  {
+    "source": "n:\n  k:\n    1.0: v1\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 01.5\nw: 3d\n",
+    "json": "{\"v\":1.5,\"w\":\"3d\"}"
+  },
+  {
+    "source": "01.5: 3d\n",
+    "path": "with.01.5",
+    "line": 1,
+    "reason": "the key 01.5 is the number 1.5 to YAML readers, and a JSON object key is a string; write 1.5, or quote it ('01.5') for the key '01.5'"
+  },
+  {
+    "source": "l:\n  - 01.5\n  - 3d\n",
+    "json": "{\"l\":[1.5,\"3d\"]}"
+  },
+  {
+    "source": "m:\n  01.5: 1\n  3d: 2\n",
+    "path": "with.m.01.5",
+    "line": 2,
+    "reason": "the key 01.5 is the number 1.5 to YAML readers, and a JSON object key is a string; write 1.5, or quote it ('01.5') for the key '01.5'"
+  },
+  {
+    "source": "n:\n  k:\n    01.5: 3d\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.5e+3\nw: inf\n",
+    "json": "{\"v\":1500,\"w\":\"inf\"}"
+  },
+  {
+    "source": "1.5e+3: inf\n",
+    "path": "with.1.5e+3",
+    "line": 1,
+    "reason": "the key 1.5e+3 is the number 1500 to YAML readers, and a JSON object key is a string; write 1500, or quote it ('1.5e+3') for the key '1.5e+3'"
+  },
+  {
+    "source": "l:\n  - 1.5e+3\n  - inf\n",
+    "json": "{\"l\":[1500,\"inf\"]}"
+  },
+  {
+    "source": "m:\n  1.5e+3: 1\n  inf: 2\n",
+    "path": "with.m.1.5e+3",
+    "line": 2,
+    "reason": "the key 1.5e+3 is the number 1500 to YAML readers, and a JSON object key is a string; write 1500, or quote it ('1.5e+3') for the key '1.5e+3'"
+  },
+  {
+    "source": "n:\n  k:\n    1.5e+3: inf\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.5E-3\nw: nUll\n",
+    "json": "{\"v\":0.0015,\"w\":\"nUll\"}"
+  },
+  {
+    "source": "1.5E-3: nUll\n",
+    "path": "with.1.5E-3",
+    "line": 1,
+    "reason": "the key 1.5E-3 is the number 0.0015 to YAML readers, and a JSON object key is a string; write 0.0015, or quote it ('1.5E-3') for the key '1.5E-3'"
+  },
+  {
+    "source": "l:\n  - 1.5E-3\n  - nUll\n",
+    "json": "{\"l\":[0.0015,\"nUll\"]}"
+  },
+  {
+    "source": "m:\n  1.5E-3: 1\n  nUll: 2\n",
+    "path": "with.m.1.5E-3",
+    "line": 2,
+    "reason": "the key 1.5E-3 is the number 0.0015 to YAML readers, and a JSON object key is a string; write 0.0015, or quote it ('1.5E-3') for the key '1.5E-3'"
+  },
+  {
+    "source": "n:\n  k:\n    1.5E-3: nUll\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 9007199254740992\nw: _1\n",
+    "json": "{\"v\":9007199254740992,\"w\":\"_1\"}"
+  },
+  {
+    "source": "9007199254740992: _1\n",
+    "json": "{\"9007199254740992\":\"_1\"}"
+  },
+  {
+    "source": "l:\n  - 9007199254740992\n  - _1\n",
+    "json": "{\"l\":[9007199254740992,\"_1\"]}"
+  },
+  {
+    "source": "m:\n  9007199254740992: 1\n  _1: 2\n",
+    "json": "{\"m\":{\"9007199254740992\":1,\"_1\":2}}"
+  },
+  {
+    "source": "n:\n  k:\n    9007199254740992: _1\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.2.3\nw: https://x/y\n",
+    "json": "{\"v\":\"1.2.3\",\"w\":\"https://x/y\"}"
+  },
+  {
+    "source": "1.2.3: https://x/y\n",
+    "json": "{\"1.2.3\":\"https://x/y\"}"
+  },
+  {
+    "source": "l:\n  - 1.2.3\n  - https://x/y\n",
+    "json": "{\"l\":[\"1.2.3\",\"https://x/y\"]}"
+  },
+  {
+    "source": "m:\n  1.2.3: 1\n  https://x/y: 2\n",
+    "json": "{\"m\":{\"1.2.3\":1,\"https://x/y\":2}}"
+  },
+  {
+    "source": "n:\n  k:\n    1.2.3: https://x/y\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 10.0.0.1\nw: No\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "10.0.0.1: No\n",
+    "path": "with.10.0.0.1",
+    "line": 1,
+    "reason": "No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "l:\n  - 10.0.0.1\n  - No\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "m:\n  10.0.0.1: 1\n  No: 2\n",
+    "path": "with.m.No",
+    "line": 3,
+    "reason": "the key No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    10.0.0.1: No\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: v1\nw: OFF\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "v1: OFF\n",
+    "path": "with.v1",
+    "line": 1,
+    "reason": "OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "l:\n  - v1\n  - OFF\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "m:\n  v1: 1\n  OFF: 2\n",
+    "path": "with.m.OFF",
+    "line": 3,
+    "reason": "the key OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    v1: OFF\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 3d\nw: y\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "3d: y\n",
+    "path": "with.3d",
+    "line": 1,
+    "reason": "y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "l:\n  - 3d\n  - y\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "m:\n  3d: 1\n  y: 2\n",
+    "path": "with.m.y",
+    "line": 3,
+    "reason": "the key y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    3d: y\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: inf\nw: n\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "inf: n\n",
+    "path": "with.inf",
+    "line": 1,
+    "reason": "n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "l:\n  - inf\n  - n\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "m:\n  inf: 1\n  n: 2\n",
+    "path": "with.m.n",
+    "line": 3,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    inf: n\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: nUll\nw: yEs\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "nUll: yEs\n",
+    "path": "with.nUll",
+    "line": 1,
+    "reason": "yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "l:\n  - nUll\n  - yEs\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "m:\n  nUll: 1\n  yEs: 2\n",
+    "path": "with.m.yEs",
+    "line": 3,
+    "reason": "the key yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    nUll: yEs\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: _1\nw: 2026-1-2\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "_1: 2026-1-2\n",
+    "path": "with._1",
+    "line": 1,
+    "reason": "2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "l:\n  - _1\n  - 2026-1-2\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "m:\n  _1: 1\n  2026-1-2: 2\n",
+    "path": "with.m.2026-1-2",
+    "line": 3,
+    "reason": "the key 2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    _1: 2026-1-2\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: https://x/y\nw: -.Inf\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "-.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "https://x/y: -.Inf\n",
+    "path": "with.https://x/y",
+    "line": 1,
+    "reason": "-.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "l:\n  - https://x/y\n  - -.Inf\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "-.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "m:\n  https://x/y: 1\n  -.Inf: 2\n",
+    "path": "with.m.-.Inf",
+    "line": 3,
+    "reason": "the key -.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    https://x/y: -.Inf\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: No\nw: .NaN\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "No: .NaN\n",
+    "path": "with.No",
+    "line": 1,
+    "reason": "the key No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "l:\n  - No\n  - .NaN\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "m:\n  No: 1\n  .NaN: 2\n",
+    "path": "with.m.No",
+    "line": 2,
+    "reason": "the key No is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('No') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    No: .NaN\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: OFF\nw: 1e400\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "OFF: 1e400\n",
+    "path": "with.OFF",
+    "line": 1,
+    "reason": "the key OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "l:\n  - OFF\n  - 1e400\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "m:\n  OFF: 1\n  1e400: 2\n",
+    "path": "with.m.OFF",
+    "line": 2,
+    "reason": "the key OFF is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('OFF') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    OFF: 1e400\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: y\nw: -9007199254740993\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "y: -9007199254740993\n",
+    "path": "with.y",
+    "line": 1,
+    "reason": "the key y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "l:\n  - y\n  - -9007199254740993\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "m:\n  y: 1\n  -9007199254740993: 2\n",
+    "path": "with.m.y",
+    "line": 2,
+    "reason": "the key y is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('y') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    y: -9007199254740993\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: n\nw: 0x20000000000001\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "n: 0x20000000000001\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "l:\n  - n\n  - 0x20000000000001\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "m:\n  n: 1\n  0x20000000000001: 2\n",
+    "path": "with.m.n",
+    "line": 2,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    n: 0x20000000000001\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: yEs\nw: 9007199254740993.0\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "yEs: 9007199254740993.0\n",
+    "path": "with.yEs",
+    "line": 1,
+    "reason": "the key yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "l:\n  - yEs\n  - 9007199254740993.0\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "m:\n  yEs: 1\n  9007199254740993.0: 2\n",
+    "path": "with.m.yEs",
+    "line": 2,
+    "reason": "the key yEs is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yEs') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    yEs: 9007199254740993.0\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 2026-1-2\nw: 0.30000000000000001\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "2026-1-2: 0.30000000000000001\n",
+    "path": "with.2026-1-2",
+    "line": 1,
+    "reason": "the key 2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "l:\n  - 2026-1-2\n  - 0.30000000000000001\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "m:\n  2026-1-2: 1\n  0.30000000000000001: 2\n",
+    "path": "with.m.2026-1-2",
+    "line": 2,
+    "reason": "the key 2026-1-2 is a timestamp to some YAML readers, and JSON has no timestamp; quote it ('2026-1-2') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    2026-1-2: 0.30000000000000001\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: -.Inf\nw: 1.0e-400\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "-.Inf: 1.0e-400\n",
+    "path": "with.-.Inf",
+    "line": 1,
+    "reason": "the key -.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "l:\n  - -.Inf\n  - 1.0e-400\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "-.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "m:\n  -.Inf: 1\n  1.0e-400: 2\n",
+    "path": "with.m.-.Inf",
+    "line": 2,
+    "reason": "the key -.Inf is not a number JSON can hold; quote it ('-.Inf') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    -.Inf: 1.0e-400\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: .NaN\nw: 4.9e-324\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": ".NaN is not a number JSON can hold; quote it ('.NaN') for the string"
+  },
+  {
+    "source": ".NaN: 4.9e-324\n",
+    "path": "with..NaN",
+    "line": 1,
+    "reason": "the key .NaN is not a number JSON can hold; quote it ('.NaN') for the string"
+  },
+  {
+    "source": "l:\n  - .NaN\n  - 4.9e-324\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": ".NaN is not a number JSON can hold; quote it ('.NaN') for the string"
+  },
+  {
+    "source": "m:\n  .NaN: 1\n  4.9e-324: 2\n",
+    "path": "with.m..NaN",
+    "line": 2,
+    "reason": "the key .NaN is not a number JSON can hold; quote it ('.NaN') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    .NaN: 4.9e-324\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1e400\nw: -017\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1e400 is out of range for a JSON number; quote it ('1e400') for the string"
+  },
+  {
+    "source": "1e400: -017\n",
+    "path": "with.1e400",
+    "line": 1,
+    "reason": "the key 1e400 is out of range for a JSON number; quote it ('1e400') for the string"
+  },
+  {
+    "source": "l:\n  - 1e400\n  - -017\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "1e400 is out of range for a JSON number; quote it ('1e400') for the string"
+  },
+  {
+    "source": "m:\n  1e400: 1\n  -017: 2\n",
+    "path": "with.m.1e400",
+    "line": 2,
+    "reason": "the key 1e400 is out of range for a JSON number; quote it ('1e400') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    1e400: -017\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: -9007199254740993\nw: 12:30\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('-9007199254740993') for the string"
+  },
+  {
+    "source": "-9007199254740993: 12:30\n",
+    "path": "with.-9007199254740993",
+    "line": 1,
+    "reason": "the key -9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('-9007199254740993') for the string"
+  },
+  {
+    "source": "l:\n  - -9007199254740993\n  - 12:30\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "-9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('-9007199254740993') for the string"
+  },
+  {
+    "source": "m:\n  -9007199254740993: 1\n  12:30: 2\n",
+    "path": "with.m.-9007199254740993",
+    "line": 2,
+    "reason": "the key -9007199254740993 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('-9007199254740993') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    -9007199254740993: 12:30\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0x20000000000001\nw: -0x1F\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0x20000000000001 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('0x20000000000001') for the string"
+  },
+  {
+    "source": "0x20000000000001: -0x1F\n",
+    "path": "with.0x20000000000001",
+    "line": 1,
+    "reason": "the key 0x20000000000001 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('0x20000000000001') for the string"
+  },
+  {
+    "source": "l:\n  - 0x20000000000001\n  - -0x1F\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "0x20000000000001 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('0x20000000000001') for the string"
+  },
+  {
+    "source": "m:\n  0x20000000000001: 1\n  -0x1F: 2\n",
+    "path": "with.m.0x20000000000001",
+    "line": 2,
+    "reason": "the key 0x20000000000001 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('0x20000000000001') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    0x20000000000001: -0x1F\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 9007199254740993.0\nw: +0x1F\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "9007199254740993.0 is not kept exactly by a JSON number: it would become 9007199254740992; write 9007199254740992 for that number, or quote it ('9007199254740993.0') for the string"
+  },
+  {
+    "source": "9007199254740993.0: +0x1F\n",
+    "path": "with.9007199254740993.0",
+    "line": 1,
+    "reason": "the key 9007199254740993.0 is not kept exactly by a JSON number: it would become 9007199254740992; write 9007199254740992 for that number, or quote it ('9007199254740993.0') for the string"
+  },
+  {
+    "source": "l:\n  - 9007199254740993.0\n  - +0x1F\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "9007199254740993.0 is not kept exactly by a JSON number: it would become 9007199254740992; write 9007199254740992 for that number, or quote it ('9007199254740993.0') for the string"
+  },
+  {
+    "source": "m:\n  9007199254740993.0: 1\n  +0x1F: 2\n",
+    "path": "with.m.9007199254740993.0",
+    "line": 2,
+    "reason": "the key 9007199254740993.0 is not kept exactly by a JSON number: it would become 9007199254740992; write 9007199254740992 for that number, or quote it ('9007199254740993.0') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    9007199254740993.0: +0x1F\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0.30000000000000001\nw: 1:30.5\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "0.30000000000000001 is not kept exactly by a JSON number: it would become 0.3; write 0.3 for that number, or quote it ('0.30000000000000001') for the string"
+  },
+  {
+    "source": "0.30000000000000001: 1:30.5\n",
+    "path": "with.0.30000000000000001",
+    "line": 1,
+    "reason": "the key 0.30000000000000001 is not kept exactly by a JSON number: it would become 0.3; write 0.3 for that number, or quote it ('0.30000000000000001') for the string"
+  },
+  {
+    "source": "l:\n  - 0.30000000000000001\n  - 1:30.5\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "0.30000000000000001 is not kept exactly by a JSON number: it would become 0.3; write 0.3 for that number, or quote it ('0.30000000000000001') for the string"
+  },
+  {
+    "source": "m:\n  0.30000000000000001: 1\n  1:30.5: 2\n",
+    "path": "with.m.0.30000000000000001",
+    "line": 2,
+    "reason": "the key 0.30000000000000001 is not kept exactly by a JSON number: it would become 0.3; write 0.3 for that number, or quote it ('0.30000000000000001') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    0.30000000000000001: 1:30.5\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.0e-400\nw: 1.5e3\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1.0e-400 is not kept exactly by a JSON number: it would become 0; write 0 for that number, or quote it ('1.0e-400') for the string"
+  },
+  {
+    "source": "1.0e-400: 1.5e3\n",
+    "path": "with.1.0e-400",
+    "line": 1,
+    "reason": "the key 1.0e-400 is not kept exactly by a JSON number: it would become 0; write 0 for that number, or quote it ('1.0e-400') for the string"
+  },
+  {
+    "source": "l:\n  - 1.0e-400\n  - 1.5e3\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "1.0e-400 is not kept exactly by a JSON number: it would become 0; write 0 for that number, or quote it ('1.0e-400') for the string"
+  },
+  {
+    "source": "m:\n  1.0e-400: 1\n  1.5e3: 2\n",
+    "path": "with.m.1.0e-400",
+    "line": 2,
+    "reason": "the key 1.0e-400 is not kept exactly by a JSON number: it would become 0; write 0 for that number, or quote it ('1.0e-400') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    1.0e-400: 1.5e3\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 4.9e-324\nw: -.5\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "4.9e-324 is not kept exactly by a JSON number: it would become 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005; write 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005 for that number, or quote it ('4.9e-324') for the string"
+  },
+  {
+    "source": "4.9e-324: -.5\n",
+    "path": "with.4.9e-324",
+    "line": 1,
+    "reason": "the key 4.9e-324 is not kept exactly by a JSON number: it would become 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005; write 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005 for that number, or quote it ('4.9e-324') for the string"
+  },
+  {
+    "source": "l:\n  - 4.9e-324\n  - -.5\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "4.9e-324 is not kept exactly by a JSON number: it would become 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005; write 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005 for that number, or quote it ('4.9e-324') for the string"
+  },
+  {
+    "source": "m:\n  4.9e-324: 1\n  -.5: 2\n",
+    "path": "with.m.4.9e-324",
+    "line": 2,
+    "reason": "the key 4.9e-324 is not kept exactly by a JSON number: it would become 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005; write 0.000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000005 for that number, or quote it ('4.9e-324') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    4.9e-324: -.5\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: -017\nw: 08\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-017 is the number -15 to YAML 1.1 readers and -17 to YAML 1.2 readers; write the number without a leading zero, or quote it ('-017') for the string"
+  },
+  {
+    "source": "-017: 08\n",
+    "path": "with.-017",
+    "line": 1,
+    "reason": "the key -017 is the number -15 to YAML 1.1 readers and -17 to YAML 1.2 readers; write the number without a leading zero, or quote it ('-017') for the string"
+  },
+  {
+    "source": "l:\n  - -017\n  - 08\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "-017 is the number -15 to YAML 1.1 readers and -17 to YAML 1.2 readers; write the number without a leading zero, or quote it ('-017') for the string"
+  },
+  {
+    "source": "m:\n  -017: 1\n  08: 2\n",
+    "path": "with.m.-017",
+    "line": 2,
+    "reason": "the key -017 is the number -15 to YAML 1.1 readers and -17 to YAML 1.2 readers; write the number without a leading zero, or quote it ('-017') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    -017: 08\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 12:30\nw: -0.0\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "12:30 is the number 750 to YAML 1.1 readers and a string to YAML 1.2 readers; write 750 for the number, or quote it ('12:30') for the string"
+  },
+  {
+    "source": "12:30: -0.0\n",
+    "path": "with.12:30",
+    "line": 1,
+    "reason": "the key 12:30 is the number 750 to YAML 1.1 readers and a string to YAML 1.2 readers; write 750 for the number, or quote it ('12:30') for the string"
+  },
+  {
+    "source": "l:\n  - 12:30\n  - -0.0\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "12:30 is the number 750 to YAML 1.1 readers and a string to YAML 1.2 readers; write 750 for the number, or quote it ('12:30') for the string"
+  },
+  {
+    "source": "m:\n  12:30: 1\n  -0.0: 2\n",
+    "path": "with.m.12:30",
+    "line": 2,
+    "reason": "the key 12:30 is the number 750 to YAML 1.1 readers and a string to YAML 1.2 readers; write 750 for the number, or quote it ('12:30') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    12:30: -0.0\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: -0x1F\nw: 1.0e+23\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-0x1F is the number -31 to YAML 1.1 readers and a string to YAML 1.2 readers; write -31 for the number, or quote it ('-0x1F') for the string"
+  },
+  {
+    "source": "-0x1F: 1.0e+23\n",
+    "path": "with.-0x1F",
+    "line": 1,
+    "reason": "the key -0x1F is the number -31 to YAML 1.1 readers and a string to YAML 1.2 readers; write -31 for the number, or quote it ('-0x1F') for the string"
+  },
+  {
+    "source": "l:\n  - -0x1F\n  - 1.0e+23\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "-0x1F is the number -31 to YAML 1.1 readers and a string to YAML 1.2 readers; write -31 for the number, or quote it ('-0x1F') for the string"
+  },
+  {
+    "source": "m:\n  -0x1F: 1\n  1.0e+23: 2\n",
+    "path": "with.m.-0x1F",
+    "line": 2,
+    "reason": "the key -0x1F is the number -31 to YAML 1.1 readers and a string to YAML 1.2 readers; write -31 for the number, or quote it ('-0x1F') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    -0x1F: 1.0e+23\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: +0x1F\nw: 0.1\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "+0x1F is the number 31 to YAML 1.1 readers and a string to YAML 1.2 readers; write 31 for the number, or quote it ('+0x1F') for the string"
+  },
+  {
+    "source": "+0x1F: 0.1\n",
+    "path": "with.+0x1F",
+    "line": 1,
+    "reason": "the key +0x1F is the number 31 to YAML 1.1 readers and a string to YAML 1.2 readers; write 31 for the number, or quote it ('+0x1F') for the string"
+  },
+  {
+    "source": "l:\n  - +0x1F\n  - 0.1\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "+0x1F is the number 31 to YAML 1.1 readers and a string to YAML 1.2 readers; write 31 for the number, or quote it ('+0x1F') for the string"
+  },
+  {
+    "source": "m:\n  +0x1F: 1\n  0.1: 2\n",
+    "path": "with.m.+0x1F",
+    "line": 2,
+    "reason": "the key +0x1F is the number 31 to YAML 1.1 readers and a string to YAML 1.2 readers; write 31 for the number, or quote it ('+0x1F') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    +0x1F: 0.1\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1:30.5\nw: 1.10\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1:30.5 is the number 90.5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90.5 for the number, or quote it ('1:30.5') for the string"
+  },
+  {
+    "source": "1:30.5: 1.10\n",
+    "path": "with.1:30.5",
+    "line": 1,
+    "reason": "the key 1:30.5 is the number 90.5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90.5 for the number, or quote it ('1:30.5') for the string"
+  },
+  {
+    "source": "l:\n  - 1:30.5\n  - 1.10\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "1:30.5 is the number 90.5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90.5 for the number, or quote it ('1:30.5') for the string"
+  },
+  {
+    "source": "m:\n  1:30.5: 1\n  1.10: 2\n",
+    "path": "with.m.1:30.5",
+    "line": 2,
+    "reason": "the key 1:30.5 is the number 90.5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90.5 for the number, or quote it ('1:30.5') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    1:30.5: 1.10\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.5e3\nw: 123456789012345678901234567890\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "1.5e3 is the number 1500 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1500 for the number, or quote it ('1.5e3') for the string"
+  },
+  {
+    "source": "1.5e3: 123456789012345678901234567890\n",
+    "path": "with.1.5e3",
+    "line": 1,
+    "reason": "the key 1.5e3 is the number 1500 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1500 for the number, or quote it ('1.5e3') for the string"
+  },
+  {
+    "source": "l:\n  - 1.5e3\n  - 123456789012345678901234567890\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "1.5e3 is the number 1500 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1500 for the number, or quote it ('1.5e3') for the string"
+  },
+  {
+    "source": "m:\n  1.5e3: 1\n  123456789012345678901234567890: 2\n",
+    "path": "with.m.1.5e3",
+    "line": 2,
+    "reason": "the key 1.5e3 is the number 1500 to YAML 1.2 readers and a string to YAML 1.1 readers; write 1500 for the number, or quote it ('1.5e3') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    1.5e3: 123456789012345678901234567890\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: -.5\nw: yes\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "-.5 is the number -0.5 to YAML 1.2 readers and a string to YAML 1.1 readers; write -0.5 for the number, or quote it ('-.5') for the string"
+  },
+  {
+    "source": "-.5: yes\n",
+    "path": "with.-.5",
+    "line": 1,
+    "reason": "the key -.5 is the number -0.5 to YAML 1.2 readers and a string to YAML 1.1 readers; write -0.5 for the number, or quote it ('-.5') for the string"
+  },
+  {
+    "source": "l:\n  - -.5\n  - yes\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "-.5 is the number -0.5 to YAML 1.2 readers and a string to YAML 1.1 readers; write -0.5 for the number, or quote it ('-.5') for the string"
+  },
+  {
+    "source": "m:\n  -.5: 1\n  yes: 2\n",
+    "path": "with.m.-.5",
+    "line": 2,
+    "reason": "the key -.5 is the number -0.5 to YAML 1.2 readers and a string to YAML 1.1 readers; write -0.5 for the number, or quote it ('-.5') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    -.5: yes\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 08\nw: on\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "08 is the number 8 to YAML 1.2 readers and a string to YAML 1.1 readers; write 8 for the number, or quote it ('08') for the string"
+  },
+  {
+    "source": "08: on\n",
+    "path": "with.08",
+    "line": 1,
+    "reason": "the key 08 is the number 8 to YAML 1.2 readers and a string to YAML 1.1 readers; write 8 for the number, or quote it ('08') for the string"
+  },
+  {
+    "source": "l:\n  - 08\n  - on\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "08 is the number 8 to YAML 1.2 readers and a string to YAML 1.1 readers; write 8 for the number, or quote it ('08') for the string"
+  },
+  {
+    "source": "m:\n  08: 1\n  on: 2\n",
+    "path": "with.m.08",
+    "line": 2,
+    "reason": "the key 08 is the number 8 to YAML 1.2 readers and a string to YAML 1.1 readers; write 8 for the number, or quote it ('08') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    08: on\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: -0.0\nw: 0755\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "-0.0: 0755\n",
+    "path": "with.-0.0",
+    "line": 1,
+    "reason": "the key -0.0 is the number 0 to YAML readers, and a JSON object key is a string; write 0, or quote it ('-0.0') for the key '-0.0'"
+  },
+  {
+    "source": "l:\n  - -0.0\n  - 0755\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "0755 is the number 493 to YAML 1.1 readers and 755 to YAML 1.2 readers; write the number without a leading zero, or quote it ('0755') for the string"
+  },
+  {
+    "source": "m:\n  -0.0: 1\n  0755: 2\n",
+    "path": "with.m.-0.0",
+    "line": 2,
+    "reason": "the key -0.0 is the number 0 to YAML readers, and a JSON object key is a string; write 0, or quote it ('-0.0') for the key '-0.0'"
+  },
+  {
+    "source": "n:\n  k:\n    -0.0: 0755\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.0e+23\nw: 1_000\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "1.0e+23: 1_000\n",
+    "path": "with.1.0e+23",
+    "line": 1,
+    "reason": "the key 1.0e+23 is the number 100000000000000000000000 to YAML readers, and a JSON object key is a string; write 100000000000000000000000, or quote it ('1.0e+23') for the key '1.0e+23'"
+  },
+  {
+    "source": "l:\n  - 1.0e+23\n  - 1_000\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "1_000 is the number 1000 to YAML 1.1 readers and a string to YAML 1.2 readers; write 1000 for the number, or quote it ('1_000') for the string"
+  },
+  {
+    "source": "m:\n  1.0e+23: 1\n  1_000: 2\n",
+    "path": "with.m.1.0e+23",
+    "line": 2,
+    "reason": "the key 1.0e+23 is the number 100000000000000000000000 to YAML readers, and a JSON object key is a string; write 100000000000000000000000, or quote it ('1.0e+23') for the key '1.0e+23'"
+  },
+  {
+    "source": "n:\n  k:\n    1.0e+23: 1_000\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 0.1\nw: 0b101\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "0.1: 0b101\n",
+    "path": "with.0.1",
+    "line": 1,
+    "reason": "the key 0.1 is the number 0.1 to YAML readers, and a JSON object key is a string; write 0.1, or quote it ('0.1') for the key '0.1'"
+  },
+  {
+    "source": "l:\n  - 0.1\n  - 0b101\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "0b101 is the number 5 to YAML 1.1 readers and a string to YAML 1.2 readers; write 5 for the number, or quote it ('0b101') for the string"
+  },
+  {
+    "source": "m:\n  0.1: 1\n  0b101: 2\n",
+    "path": "with.m.0.1",
+    "line": 2,
+    "reason": "the key 0.1 is the number 0.1 to YAML readers, and a JSON object key is a string; write 0.1, or quote it ('0.1') for the key '0.1'"
+  },
+  {
+    "source": "n:\n  k:\n    0.1: 0b101\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 1.10\nw: 1:30\n",
+    "path": "with.w",
+    "line": 2,
+    "reason": "1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "1.10: 1:30\n",
+    "path": "with.1.10",
+    "line": 1,
+    "reason": "the key 1.10 is the number 1.1 to YAML readers, and a JSON object key is a string; write 1.1, or quote it ('1.10') for the key '1.10'"
+  },
+  {
+    "source": "l:\n  - 1.10\n  - 1:30\n",
+    "path": "with.l[1]",
+    "line": 3,
+    "reason": "1:30 is the number 90 to YAML 1.1 readers and a string to YAML 1.2 readers; write 90 for the number, or quote it ('1:30') for the string"
+  },
+  {
+    "source": "m:\n  1.10: 1\n  1:30: 2\n",
+    "path": "with.m.1.10",
+    "line": 2,
+    "reason": "the key 1.10 is the number 1.1 to YAML readers, and a JSON object key is a string; write 1.1, or quote it ('1.10') for the key '1.10'"
+  },
+  {
+    "source": "n:\n  k:\n    1.10: 1:30\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "v: 123456789012345678901234567890\nw: 2026-01-02\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "123456789012345678901234567890 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('123456789012345678901234567890') for the string"
+  },
+  {
+    "source": "123456789012345678901234567890: 2026-01-02\n",
+    "path": "with.123456789012345678901234567890",
+    "line": 1,
+    "reason": "the key 123456789012345678901234567890 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('123456789012345678901234567890') for the string"
+  },
+  {
+    "source": "l:\n  - 123456789012345678901234567890\n  - 2026-01-02\n",
+    "path": "with.l[0]",
+    "line": 2,
+    "reason": "123456789012345678901234567890 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('123456789012345678901234567890') for the string"
+  },
+  {
+    "source": "m:\n  123456789012345678901234567890: 1\n  2026-01-02: 2\n",
+    "path": "with.m.123456789012345678901234567890",
+    "line": 2,
+    "reason": "the key 123456789012345678901234567890 is beyond ±2^53, so a JSON number cannot hold it exactly; quote it ('123456789012345678901234567890') for the string"
+  },
+  {
+    "source": "n:\n  k:\n    123456789012345678901234567890: 2026-01-02\n",
+    "path": "with.n",
+    "line": 1,
+    "reason": "the key n is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('n') for the string"
+  },
+  {
+    "source": "a: 1\na: 2\n",
+    "path": "with.a",
+    "line": 2,
+    "reason": "the key \"a\" is written twice (first at line 1)"
+  },
+  {
+    "source": "1: a\n\"1\": b\n",
+    "path": "with.1",
+    "line": 2,
+    "reason": "the key \"1\" is written twice (first at line 1)"
+  },
+  {
+    "source": "a: \u0026x 1\nb: *x\n",
+    "path": "with.a",
+    "line": 1,
+    "reason": "the anchor \u0026x is not allowed in authored data; write the value out where it is used"
+  },
+  {
+    "source": "base: \u0026b {k: 1}\nother:\n  \u003c\u003c: *b\n  j: 2\n",
+    "path": "with.base",
+    "line": 1,
+    "reason": "the anchor \u0026b is not allowed in authored data; write the value out where it is used"
+  },
+  {
+    "source": "a: !!str 1\n",
+    "path": "with.a",
+    "line": 1,
+    "reason": "the tag !!str is not allowed in authored data; write the value plainly, or quote it for a string"
+  },
+  {
+    "source": "a: !custom x\n",
+    "path": "with.a",
+    "line": 1,
+    "reason": "the tag !custom is not allowed in authored data; write the value plainly, or quote it for a string"
+  },
+  {
+    "source": "a: \u0026base {k: 1}\n",
+    "path": "with.a",
+    "line": 1,
+    "reason": "the anchor \u0026base is not allowed in authored data; write the value out where it is used"
+  },
+  {
+    "source": "\u003c\u003c: {k: 1}\n",
+    "path": "with.\u003c\u003c",
+    "line": 1,
+    "reason": "a merge key (\u003c\u003c) is not allowed in authored data; write the keys out"
+  },
+  {
+    "source": "a: \u003c\u003c\n",
+    "path": "with.a",
+    "line": 1,
+    "reason": "a merge key (\u003c\u003c) is not allowed in authored data; write the keys out"
+  },
+  {
+    "source": "a: '-0'\nb: \"0755\"\nc: |\n  yes\n",
+    "json": "{\"a\":\"-0\",\"b\":\"0755\",\"c\":\"yes\\n\"}"
+  },
+  {
+    "source": "? [a]\n: b\n",
+    "path": "with",
+    "line": 1,
+    "reason": "a key must be a string, got a list"
+  },
+  {
+    "source": "~: x\n",
+    "path": "with.~",
+    "line": 1,
+    "reason": "the key ~ is null, and a JSON object key is a string; quote it ('~') for the key '~'"
+  },
+  {
+    "source": "v: !\n",
+    "json": "{\"v\":null}"
+  },
+  {
+    "source": "v: ! x\n",
+    "json": "{\"v\":\"x\"}"
+  },
+  {
+    "source": "v: ! 1\n",
+    "json": "{\"v\":1}"
+  },
+  {
+    "source": "v: ! yes\n",
+    "path": "with.v",
+    "line": 1,
+    "reason": "yes is a boolean to YAML 1.1 readers (yes, no, on, off, y and n, in any casing) and a string to YAML 1.2 readers; write true or false for a boolean, or quote it ('yes') for the string"
+  },
+  {
+    "source": "v: ! -0\n",
+    "json": "{\"v\":0}"
+  },
+  {
+    "source": "! k: v\n",
+    "json": "{\"k\":\"v\"}"
+  },
+  {
+    "source": "! 1: v\n",
+    "json": "{\"1\":\"v\"}"
+  },
+  {
+    "source": "v: ! {a: 1}\n",
+    "json": "{\"v\":{\"a\":1}}"
+  },
+  {
+    "source": "v: ! [1]\n",
+    "json": "{\"v\":[1]}"
+  },
+  {
+    "source": "l:\n  - 0\n  - !\n",
+    "json": "{\"l\":[0,null]}"
+  }
+]

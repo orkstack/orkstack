@@ -6,7 +6,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -23,15 +24,20 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The shipped-examples suite's stack (examples/README.md): one real `ork` built from this tree on S3 with a
@@ -78,9 +84,7 @@ func newExamplesStack(ctx context.Context, t *testing.T, opts examplesOptions) *
 		git:         git,
 		sessions:    filepath.Join(bindableOrkerWorkRoot(t), "task-run-sessions"),
 	}
-	if err := os.MkdirAll(x.sessions, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(x.sessions, 0o755))
 	fmt.Fprintf(&x.transcript, "# shipped examples (%s)\n# OrkStack namespace %s, Temporal namespace %s, services %s\n\n",
 		time.Now().UTC().Format(time.RFC3339), x.ns, s.namespace, services.base)
 	x.mustRun(0, "namespace", "create", x.ns)
@@ -152,20 +156,18 @@ func (x *examplesStack) finish(t *testing.T, scenario string) {
 	x.transcript.Reset()
 }
 
-// apply applies one shipped example (a path under the repository root) or a
+// apply creates one shipped example (a path under the repository root) or a
 // variant file into the stack's namespace.
 func (x *examplesStack) apply(path string) string {
 	x.t.Helper()
-	return x.in("apply", path)
+	return x.in("orkflow", "create", path)
 }
 
 // variantFile writes a variant document and returns its absolute path.
 func (x *examplesStack) variantFile(name string, body []byte) string {
 	x.t.Helper()
 	path := filepath.Join(x.t.TempDir(), name)
-	if err := os.WriteFile(path, body, 0o644); err != nil {
-		x.t.Fatalf("write %s: %v", name, err)
-	}
+	must.OKf(x.t, os.WriteFile(path, body, 0o644), "write %s", name)
 	fmt.Fprintf(&x.transcript, "# variant %s:\n%s\n", name, body)
 	return path
 }
@@ -229,13 +231,13 @@ func (x *examplesStack) runToEnd(name string, extra ...string) *orkstackv1.Run {
 func summarizeRun(run *orkstackv1.Run) string {
 	var parts []string
 	for _, tr := range run.GetTaskRuns() {
-		part := tr.GetTaskId() + "=" + strings.TrimPrefix(tr.GetStatus().String(), "STATUS_")
+		part := tr.GetTaskId() + "=" + enumname.Of(tr.GetStatus())
 		if c := tr.GetCache(); c != nil {
-			part += "(cache " + strings.TrimPrefix(c.GetOutcome().String(), "CACHE_OUTCOME_") + ")"
+			part += "(cache " + enumname.Of(c.GetOutcome()) + ")"
 		}
 		parts = append(parts, part)
 	}
-	return strings.TrimPrefix(run.GetStatus().String(), "STATUS_") + ": " + strings.Join(parts, " ")
+	return enumname.Of(run.GetStatus()) + ": " + strings.Join(parts, " ")
 }
 
 // download fetches one output artifact (of one item, when item >= 0).
@@ -248,9 +250,7 @@ func (x *examplesStack) download(runID, task, name string, item int) []byte {
 	}
 	x.in(args...)
 	body, err := os.ReadFile(path)
-	if err != nil {
-		x.t.Fatalf("read downloaded %s: %v", name, err)
-	}
+	must.OKf(x.t, err, "read downloaded %s", name)
 	return body
 }
 
@@ -297,8 +297,8 @@ func (x *examplesStack) taskRun(args ...string) (string, string, int) {
 func taskRunValues(t *testing.T, stdout string) map[string]any {
 	t.Helper()
 	var report struct {
-		Outcome string          `json:"outcome"`
-		Values  json.RawMessage `json:"values"`
+		Outcome string             `json:"outcome"`
+		Values  stablejson.RawJSON `json:"values"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
 		t.Fatalf("decode task run --json: %v\n%s", err, stdout)
@@ -343,9 +343,7 @@ func newExampleServices(t *testing.T) *exampleServices {
 	t.Helper()
 	s := &exampleServices{statuses: map[string]int{}}
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	s.server = httptest.NewUnstartedServer(http.HandlerFunc(s.serve))
 	s.server.Listener = listener
 	s.server.Start()
@@ -407,10 +405,10 @@ func (s *exampleServices) serve(w http.ResponseWriter, r *http.Request) {
 }
 
 func jsonOrString(body []byte) string {
-	if json.Valid(body) {
+	if jsontext.Value(body).IsValid() {
 		return string(body)
 	}
-	encoded, _ := json.Marshal(string(body))
+	encoded, _ := stablejson.Marshal(string(body))
 	return string(encoded)
 }
 
@@ -561,9 +559,7 @@ func withExampleGitToken(t *testing.T, src []byte) []byte {
 func requiredReleaseVariant(t *testing.T, root string) []byte {
 	t.Helper()
 	src, err := os.ReadFile(filepath.Join(root, "examples", "inputs-and-escaping.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	const shippedName, shippedRelease = "name: inputs-and-escaping\n", "  release:\n    type: string\n    default: \"1.4.2\"\n"
 	if bytes.Count(src, []byte(shippedName)) != 1 || bytes.Count(src, []byte(shippedRelease)) != 1 {
 		t.Fatal("the shipped example no longer has the name and release lines this variant replaces")
@@ -579,9 +575,7 @@ func (x *examplesStack) noInputVariant(t *testing.T, file string) string {
 	t.Helper()
 	const shippedHTTP, shippedRepo = "https://httpbin.org", "https://github.com/octocat/Hello-World.git"
 	shipped, err := os.ReadFile(filepath.Join(x.root, "examples", file))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	repo := x.git.URL(helloWorldRepo)
 	out := bytes.ReplaceAll(shipped, []byte(shippedHTTP), []byte(x.services.base))
 	out = bytes.ReplaceAll(out, []byte(shippedRepo), []byte(repo))
@@ -620,13 +614,9 @@ func scalar(value string) *yaml.Node {
 func requireOnlyGitAccessAdded(t *testing.T, shipped, variant []byte) {
 	t.Helper()
 	want, err := dsl.Compile(shipped)
-	if err != nil {
-		t.Fatalf("compile the shipped document: %v", err)
-	}
+	must.OKf(t, err, "compile the shipped document")
 	got, err := dsl.Compile(variant)
-	if err != nil {
-		t.Fatalf("compile the variant: %v", err)
-	}
+	must.OKf(t, err, "compile the variant")
 	added := 0
 	for _, task := range got.GetTasks() {
 		if task.GetUses() != "git" {
@@ -768,9 +758,7 @@ const customImageRecipe = "examples/custom-image/custom-image.ork.yaml"
 func customImageDocument(t *testing.T, root string) []byte {
 	t.Helper()
 	src, err := os.ReadFile(filepath.Join(root, customImageRecipe))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return withExampleTag(t, withRegistry(t, src, localcatalog.Registry()), localcatalog.Registry())
 }
 

@@ -151,7 +151,8 @@ test('modes: the sidebar marks the page you are on, Operate has its twelve links
 		['/', 'nav-dashboard'],
 		['/runs', 'nav-runs'],
 		[`/orkflows/${FLOW}`, 'nav-orkflows'],
-		['/apply', 'nav-apply']
+		// Create Orkflow is a page of Orkflows, and the sidebar draws no link of its own for it.
+		['/orkflows/+new', 'nav-orkflows']
 	]) {
 		await page.goto(`${UI_ORIGIN}${path}?ns=default`);
 		await expect(page.getByTestId(current)).toHaveAttribute('aria-current', 'page');
@@ -171,15 +172,16 @@ test('modes: the sidebar marks the page you are on, Operate has its twelve links
 	await page.goto(`${UI_ORIGIN}/admin?ns=default`);
 	await expect(page.getByTestId('nav-admin')).toHaveAttribute('aria-current', 'page');
 
-	// From Operate, Runs, Orkflows and Apply are one click away and keep ns.
+	// From Operate, Runs and Orkflows are one click away and keep ns; the
+	// sidebar has no Apply link: Create Orkflow is a button of the Orkflows page.
 	await expect(sidebar(page)).toHaveCount(1);
 	for (const [id, href] of [
 		['nav-runs', '/runs?ns=default'],
-		['nav-orkflows', '/orkflows?ns=default'],
-		['nav-apply', '/apply?ns=default']
+		['nav-orkflows', '/orkflows?ns=default']
 	]) {
 		await expect(page.getByTestId(id)).toHaveAttribute('href', href);
 	}
+	await expect(page.getByTestId('nav-apply')).toHaveCount(0);
 	await page.getByTestId('nav-runs').click();
 	await expect(page).toHaveURL(/\/runs\?ns=default/);
 	await expect(page.getByTestId('nav-runs')).toHaveAttribute('aria-current', 'page');
@@ -209,7 +211,7 @@ test('palette: opens from a page and from a text field, moves, and opens a page,
 	await expect(page.getByTestId('command-palette')).toHaveCount(0);
 
 	// From inside a text field: Apply's YAML editor.
-	await page.goto(`${UI_ORIGIN}/apply?ns=default`);
+	await page.goto(`${UI_ORIGIN}/orkflows/+new?ns=default`);
 	await editorReady(page, 'apply-yaml');
 	await page.getByTestId('apply-yaml').click();
 	await openPalette(page);
@@ -283,7 +285,7 @@ test('palette on an Apple platform: ⌘K opens it, and Ctrl+K is left to the tex
 		Object.defineProperty(Navigator.prototype, 'userAgentData', { get: () => undefined });
 	});
 	const page = await context.newPage();
-	await page.goto(`${UI_ORIGIN}/apply?ns=default`);
+	await page.goto(`${UI_ORIGIN}/orkflows/+new?ns=default`);
 	await expect(page.getByTestId('command-palette-open')).toContainText('⌘K');
 	await editorReady(page, 'apply-yaml');
 	const yaml = page.getByTestId('apply-yaml');

@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeDir is the fake suite's directory, relative to the repository root, as
@@ -51,9 +53,7 @@ func runShardOf(t *testing.T, p *integrationPlan, k int, extra ...string) (int, 
 func captureStderr(t *testing.T, f func()) string {
 	t.Helper()
 	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	prev := os.Stderr
 	os.Stderr = w
 	done := make(chan string)
@@ -74,9 +74,7 @@ func runShardOfStderr(t *testing.T, p *integrationPlan, k int, extra ...string) 
 	quiet(t)
 	dir := t.TempDir()
 	planFile := filepath.Join(dir, "integration-plan.json")
-	if err := writeJSON(planFile, p); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(planFile, p))
 	out := filepath.Join(dir, "out")
 	args := append([]string{"-plan", planFile, "-shard", itoa(k), "-out", out, "-jobs", "1", "-allow", "", "-quarantine", ""}, extra...)
 	var code int
@@ -90,14 +88,10 @@ func runShardOfStderr(t *testing.T, p *integrationPlan, k int, extra ...string) 
 // -test.list run prints them, into dir under name.
 func shippedScript(t *testing.T, dir, name string, names ...string) string {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(dir, 0o755))
 	bin := filepath.Join(dir, name)
 	script := "#!/bin/sh\nprintf '%s\\n' " + strings.Join(names, " ") + " 'ok  \tfake\t0.001s'\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(bin, []byte(script), 0o755))
 	return bin
 }
 
@@ -176,13 +170,11 @@ func compiledFakePlan(t *testing.T) (planPackage, string) {
 	quiet(t)
 	out := t.TempDir()
 	if code := cmdIntegration([]string{"-out", out, "-plan-only", "-jobs", "1", "-costs", "", "-allow", "", "-quarantine", "",
-		"-nightly", "", "-host-speed", "", "./testdata/fakesuite"}); code != 0 {
+		"-nightly", "", "./testdata/fakesuite"}); code != 0 {
 		t.Fatalf("plan-only exit %d", code)
 	}
 	p, err := readPlan(filepath.Join(out, "integration-plan.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(p.Packages) != 1 {
 		t.Fatalf("packages = %+v", p.Packages)
 	}
@@ -216,17 +208,13 @@ func TestIntegrationShard_RecordsACompiledBinarysDigest(t *testing.T) {
 	quiet(t)
 	dir := t.TempDir()
 	planFile := filepath.Join(dir, "integration-plan.json")
-	if err := writeJSON(planFile, twoShardPlan(pkg)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(planFile, twoShardPlan(pkg)))
 	out := filepath.Join(dir, "out")
 	if code := cmdIntegration([]string{"-plan", planFile, "-shard", "2", "-out", out, "-jobs", "1", "-allow", "", "-quarantine", ""}); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "integration-tests.json"), &l))
 	compiled, _ := fileSHA256(filepath.Join(out, "bin", "test", pkg.Binary))
 	got := l.Binaries[fakeSuite]
 	if got.SHA256 == "" || got.SHA256 != compiled || got.ListingSHA256 != pkg.ListingSHA256 {
@@ -283,11 +271,9 @@ func planWithLists(t *testing.T, mode, tree, base string) *integrationPlan {
 	treeFile := filepath.Join(out, "nightly.txt")
 	baseFile := filepath.Join(out, "nightly-base.txt")
 	for f, text := range map[string]string{treeFile: tree, baseFile: base} {
-		if err := os.WriteFile(f, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(f, []byte(text), 0o644))
 	}
-	args := []string{"-out", out, "-plan-only", "-jobs", "1", "-costs", "", "-allow", "", "-quarantine", "", "-host-speed", "",
+	args := []string{"-out", out, "-plan-only", "-jobs", "1", "-costs", "", "-allow", "", "-quarantine", "",
 		"-nightly", treeFile}
 	if mode != "" {
 		args = append(args, "-nightly-mode", mode, "-nightly-base", baseFile)
@@ -296,9 +282,7 @@ func planWithLists(t *testing.T, mode, tree, base string) *integrationPlan {
 		t.Fatalf("plan-only exit %d", code)
 	}
 	p, err := readPlan(filepath.Join(out, "integration-plan.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return p
 }
 
@@ -364,19 +348,15 @@ func TestPlanFile_RoundTripsAndPinsItsInputs(t *testing.T) {
 		"quarantine.txt":      "",
 		"quarantine-base.txt": "# empty\n",
 		"allow.txt":           "integration\t" + fakeSuite + "\tTestAllowedSkip\tan opt-in recorder\n",
-		"host-speed.tsv":      "ui\te2e/a.spec.ts\tt\tlessThan 5000\t5\t16\tnote\n",
-		"host-speed-base.txt": "",
 	}
 	for name, text := range files {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644))
 	}
 	at := func(name string) string { return filepath.Join(dir, name) }
 	o := integrationPlanOptions{
 		out: dir, nightlyFile: at("nightly.txt"), nightlyBase: at("nightly-base.txt"), nightlyMode: nightlyDefer,
 		costsFile: at("costs.tsv"), allowFile: at("allow.txt"), quarantineFile: at("quarantine.txt"), quarantineBase: at("quarantine-base.txt"),
-		hostSpeedFile: at("host-speed.tsv"), hostSpeedBase: at("host-speed-base.txt"), tier: tierFull, baseCommit: "",
+		tier: tierFull, baseCommit: "",
 	}
 	nightly, _ := readNightlyList(o.nightlyFile)
 	base, _ := readNightlyList(o.nightlyBase)
@@ -386,9 +366,7 @@ func TestPlanFile_RoundTripsAndPinsItsInputs(t *testing.T) {
 		t.Fatalf("writePlan exit %d", code)
 	}
 	p, err := readPlan(filepath.Join(dir, "integration-plan.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	sha := func(name string) string { s, _ := fileSHA256(at(name)); return s }
 	for _, c := range []struct{ what, got, want string }{
 		{"costs", p.Costs.SHA256, sha("costs.tsv")},
@@ -397,8 +375,6 @@ func TestPlanFile_RoundTripsAndPinsItsInputs(t *testing.T) {
 		{"quarantine", p.Quarantine.SHA256, sha("quarantine.txt")},
 		{"quarantine base", p.Quarantine.BaseSHA256, sha("quarantine-base.txt")},
 		{"allowlist", p.AllowedSkips.SHA256, sha("allow.txt")},
-		{"host speed", p.HostSpeed.SHA256, sha("host-speed.tsv")},
-		{"host speed base", p.HostSpeed.BaseSHA256, sha("host-speed-base.txt")},
 	} {
 		if c.got == "" || c.got != c.want {
 			t.Errorf("%s sha256 = %q, want %q", c.what, c.got, c.want)
@@ -430,16 +406,12 @@ func TestIntegration_ALocalRunRecordsTheDeferredTestsAsDeferred(t *testing.T) {
 	treeFile := filepath.Join(out, "nightly.txt")
 	baseFile := filepath.Join(out, "nightly-base.txt")
 	for _, f := range []string{treeFile, baseFile} {
-		if err := os.WriteFile(f, []byte(nightlyRow("TestPass", "TestNamespace")), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(f, []byte(nightlyRow("TestPass", "TestNamespace")), 0o644))
 	}
 	cmdIntegration([]string{"-out", out, "-jobs", "1", "-namespace-prefix", "fake", "-costs", "", "-allow", "", "-quarantine", "",
-		"-host-speed", "", "-nightly", treeFile, "-nightly-mode", nightlyDefer, "-nightly-base", baseFile, "./testdata/fakesuite"})
+		"-nightly", treeFile, "-nightly-mode", nightlyDefer, "-nightly-base", baseFile, "./testdata/fakesuite"})
 	var l ledger
-	if err := readJSON(filepath.Join(out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "integration-tests.json"), &l))
 	var deferred *entry
 	for i := range l.Tests {
 		if l.Tests[i].Test == "TestPass" {

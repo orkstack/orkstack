@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runIDNamespace is the Temporal namespace these tests use. AGENTS.md §11.1: a
@@ -117,9 +119,7 @@ func TestIntegration_WithoutTheStartPoliciesACollisionAttachesToAnotherRun(t *te
 	first, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
 		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), rawPlan(queue))
-	if err != nil {
-		t.Fatalf("first start: %v", err)
-	}
+	must.OKf(t, err, "first start")
 	second, err := c.ExecuteWorkflow(ctx,
 		client.StartWorkflowOptions{ID: runID, TaskQueue: queue},
 		engine.RunWorkflowType, runID, twoTaskOrkflow(), (*orkstackv1.Payload)(nil), rawPlan(queue))
@@ -151,9 +151,7 @@ func TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds(t *testing.T) {
 	runID := engine.NewRunID()
 	terminateAll(t, c, runID)
 
-	if err := replicaA.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()); err != nil {
-		t.Fatalf("replica A start: %v", err)
-	}
+	must.OKf(t, replicaA.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()), "replica A start")
 	err := replicaB.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan())
 	if !errors.Is(err, engine.ErrRunIDTaken) {
 		t.Fatalf("replica B start with A's id = %v, want engine.ErrRunIDTaken", err)
@@ -162,9 +160,7 @@ func TestIntegration_StartRunRefusesARunIDTheClusterAlreadyHolds(t *testing.T) {
 	// Single use means for all time, not only while the first run is live: a
 	// closed execution's id must stay refused, or a late retry could resurrect
 	// an id whose history someone already read.
-	if err := c.TerminateWorkflow(ctx, runID, "", "closing the execution for the reuse check"); err != nil {
-		t.Fatalf("terminate %s: %v", runID, err)
-	}
+	must.OKf(t, c.TerminateWorkflow(ctx, runID, "", "closing the execution for the reuse check"), "terminate %s", runID)
 	err = replicaB.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan())
 	if !errors.Is(err, engine.ErrRunIDTaken) {
 		t.Fatalf("start with a closed run's id = %v, want engine.ErrRunIDTaken", err)
@@ -233,9 +229,7 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 	// it, exactly as it would for a real cross-replica collision.
 	taken, reissued := engine.NewRunID(), engine.NewRunID()
 	terminateAll(t, c, taken, reissued)
-	if err := starter.StartRun(ctx, taken, wf, nil, defaultPlan()); err != nil {
-		t.Fatalf("occupy %s: %v", taken, err)
-	}
+	must.OKf(t, starter.StartRun(ctx, taken, wf, nil, defaultPlan()), "occupy %s", taken)
 
 	orkflows := engine.NewMemoryOrkflowStore()
 	if _, _, err := orkflows.Put(ctx, wf, artifacts.NoHeadExpectation()); err != nil {
@@ -257,22 +251,16 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 	resp, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: wf.GetName(),
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun against a taken id: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun against a taken id")
 	if got := resp.Msg.GetRun().GetId(); got != reissued {
 		t.Fatalf("SubmitRun returned %q, want the reissued id %q", got, reissued)
 	}
 
 	// The reissued id names a real execution, and it is not the occupied one.
 	described, err := c.DescribeWorkflowExecution(ctx, reissued, "")
-	if err != nil {
-		t.Fatalf("describe %s: %v", reissued, err)
-	}
+	must.OKf(t, err, "describe %s", reissued)
 	occupied, err := c.DescribeWorkflowExecution(ctx, taken, "")
-	if err != nil {
-		t.Fatalf("describe %s: %v", taken, err)
-	}
+	must.OKf(t, err, "describe %s", taken)
 	reissuedExecution := described.GetWorkflowExecutionInfo().GetExecution().GetRunId()
 	occupiedExecution := occupied.GetWorkflowExecutionInfo().GetExecution().GetRunId()
 	if reissuedExecution == occupiedExecution {
@@ -296,13 +284,9 @@ func TestIntegration_OldAndNewRunIDShapesCoexistOnOneCluster(t *testing.T) {
 	terminateAll(t, c, newShape, oldShape)
 
 	for _, runID := range []string{oldShape, newShape} {
-		if err := replica.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()); err != nil {
-			t.Fatalf("start %s: %v", runID, err)
-		}
+		must.OKf(t, replica.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()), "start %s", runID)
 		described, err := c.DescribeWorkflowExecution(ctx, runID, "")
-		if err != nil {
-			t.Fatalf("describe %s: %v", runID, err)
-		}
+		must.OKf(t, err, "describe %s", runID)
 		if got := described.GetWorkflowExecutionInfo().GetExecution().GetWorkflowId(); got != runID {
 			t.Fatalf("describe %s named %q", runID, got)
 		}

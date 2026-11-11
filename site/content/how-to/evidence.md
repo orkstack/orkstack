@@ -5,10 +5,10 @@ Export one finished run as a single `tar.gz` file. It holds the run's record, it
 ## Export a run
 
 ```bash
-orkctl run evidence export <run-id> --output run.tar.gz
-orkctl run evidence export <run-id> --output run.tar.gz --no-logs --no-artifacts
-orkctl run evidence export <run-id> --task convert --item 2 --output item-2.tar.gz
-orkctl run evidence export <run-id> --json        # prints MANIFEST.json, writes no file
+orkctl run evidence export <run-id> -o run.tar.gz
+orkctl run evidence export <run-id> -o run.tar.gz --no-logs --no-artifacts
+orkctl run evidence export <run-id> -t convert --item 2 -o item-2.tar.gz
+orkctl run evidence export <run-id> -j        # prints MANIFEST.json, writes no file
 ```
 
 - Only a finished run can be exported.
@@ -25,7 +25,7 @@ In the UI, choose **Evidence** on a finished run. The dialog shows the manifest 
 |---|---|
 | `MANIFEST.json` | The first member. Each member's path, size, SHA-256 and state. |
 | `run.jsonl` | The run's archived record and events. |
-| `orkflow/source.yaml` | The Orkflow source, exactly as it was applied. |
+| `orkflow/source.yaml` | The Orkflow source, exactly as it was created. |
 | `tasks/<task>/commit.json` | The task's commit. Present for a task that succeeded. |
 | `tasks/<task>/values.json` | The task's committed values. |
 | `tasks/<task>/artifacts/` | Each output artifact. |

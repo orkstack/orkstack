@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
 # first_party_contract.sh — the per-image contract fixtures of the first-party
-# transform images: activity-json, activity-git and activity-template
-# (docs/ACTIVITY_IMAGES.md).
+# transform images, activity-json, activity-git and activity-template, and of
+# activity-file's scratch (docs/ACTIVITY_IMAGES.md).
 #
 # Like the mandatory Bash fixture (bash_activity_contract.sh, which stays
 # standalone), it runs an image against the ABI with no Orkflow, no Temporal,
@@ -12,7 +12,7 @@
 # A case that stands for a task's `env:` adds `-e NAME=value` — exactly how the
 # Orker passes `env:` to a container.
 #
-#   usage:  bash test/fixtures/first_party_contract.sh <json|git|template> <image>
+#   usage:  bash test/fixtures/first_party_contract.sh <json|git|template|file> <image>
 #   exit:   0 all assertions passed
 #           1 an assertion failed
 #          77 a prerequisite is absent (AGENTS.md §11.1 skip convention);
@@ -25,8 +25,8 @@ set -uo pipefail
 
 NAME=${1:-}
 case "$NAME" in
-  json|git|template) ;;
-  *) printf 'usage: %s <json|git|template> <image>\n' "$0" >&2; exit 1 ;;
+  json|git|template|file) ;;
+  *) printf 'usage: %s <json|git|template|file> <image>\n' "$0" >&2; exit 1 ;;
 esac
 IMAGE=${2:-localhost:5001/orkstack/activity-$NAME:dev}
 
@@ -281,12 +281,14 @@ drun() {
     printf '%s' "$rc"
 }
 
-# run_detached starts the image and echoes the container id.
+# run_detached starts the image and echoes the container id. Arguments after
+# the workspace go to `docker run` (`-e NAME=value` for a task's env:).
 run_detached() {
     local w=$1 args=() cid
+    shift
     seal "$w"
     mapfile -d '' -t args < <(docker_args "$w")
-    cid=$(docker run -d "${args[@]}" "$IMAGE" 2>"$w/run.err")
+    cid=$(docker run -d "${args[@]}" "$@" "$IMAGE" 2>"$w/run.err")
     CONTAINERS+=("$cid")
     printf '%s' "$cid"
 }
@@ -326,10 +328,11 @@ cancel_like_the_orker() {
 
 # sigterm_case starts a workspace detached, waits for <process> to run,
 # cancels the container as the Orker does, and checks it exited 1 inside the
-# grace period.
+# grace period. Arguments after <process> go to `docker run`.
 sigterm_case() {
     local label=$1 w=$2 process=$3 cid started elapsed status
-    cid=$(run_detached "$w")
+    shift 3
+    cid=$(run_detached "$w" "$@")
     if [[ -z "$cid" ]]; then
         fail "$label: container started"
         info "$(cat "$w/run.err" 2>/dev/null)"
@@ -356,6 +359,21 @@ sigterm_case() {
 values() { jq -c "${2:-.}" "$1/output/values.json" 2>/dev/null; }
 artifacts() { find "$1/output/artifacts" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//'; }
 first_line() { head -n 1 "$1/stdout"; }
+
+# scratch_left lists what is directly in <dir>, sorted, on one line.
+scratch_left() { find "$1" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//'; }
+
+# host_empties removes everything in <dir> as the user running the fixture,
+# which is what the Orker's own removal is, and lists what stayed. On rootful
+# Linux the images' uid 65532 is another user than this one, and a directory
+# 65532 made 0755 is one this user can neither write nor chmod
+# (docs/OCI_ACTIVITY_CONTRACT.md §10.1, rule 11). Where the daemon maps
+# ownership (a VM-shared mount) or this user is root, it removes everything
+# whatever the image did.
+host_empties() {
+    find "$1" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+    scratch_left "$1"
+}
 
 bold "First-party image contract — activity-$NAME"
 info "image:     $IMAGE"
@@ -974,9 +992,10 @@ cases_git() {
     w=$(mkws "$(jq -cn --arg r "$GIT_ID" --arg d /orkstack/shared/a/b/src "$clone_dest")" '.paths.shared = "/orkstack/shared"')
     rc=$(drun "$w")
     check "G4 parents: the fetch is the first network command, and fails offline" "1" "$rc"
-    check "G4 parents: /orkstack/shared/a/b/ holds only the staging directory" ".activity-git-src" \
-        "$(find "$w/shared/a/b" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort | tr '\n' ' ' | sed 's/ $//')"
+    check "G4 parents: /orkstack/shared/a/b/ was made, and the failed attempt's staging directory is removed" "" \
+        "$(scratch_left "$w/shared/a/b")"
     check "G4 parents: nothing half-made sits at dest" "absent" "$([[ -e "$w/shared/a/b/src" ]] && echo present || echo absent)"
+    check "G4 parents: the Orker's user removes the parents the image made (the pin's end)" "" "$(host_empties "$w/shared")"
     w=$(mkws "$(jq -cn --arg r "$GIT_ID" --arg d /orkstack/shared/l/src "$clone_dest")" '.paths.shared = "/orkstack/shared"')
     ln -s /orkstack/tmp "$w/shared/l"
     rc=$(drun "$w")
@@ -1169,6 +1188,122 @@ cases_git() {
     rc=$(drun "$w" -e GIT_TRACE_CURL=1 -e GIT_CURL_VERBOSE=1)
     check "G14 tracing itself is honoured" "0" "$rc"
     absent "G14 … the token appears nowhere" "TOKSECRET" "$(cat "$w/container.log")"
+
+    section "G15 nothing is left that the Orker's user cannot remove"
+    # The image runs as 65532 and the Orker as the host's own user. On rootful
+    # Linux those are two users, and the Orker can neither write nor chmod a
+    # 0755 directory 65532 made. So the image removes its scratch on every exit
+    # it takes, and makes every directory it creates under /orkstack/tmp and
+    # /orkstack/shared writable by anyone, for the exit it never gets
+    # (SIGKILL). The remote is a repository mounted read-only: with.url stays
+    # https://, and the task's env: (url.<base>.insteadOf) points git at it,
+    # with no network.
+    local s src_c remote=() hang=() cid
+    s=$(mkws '{}')
+    rc=$(drun "$s" "${ident[@]}" --entrypoint sh -- -c '
+        set -e
+        umask 000
+        cd /orkstack/tmp
+        git init -q src
+        mkdir -p src/d
+        printf "v1\n" > src/VERSION
+        printf "f\n" > src/d/f
+        git -C src add -A
+        git -C src commit -q -m fixture
+        git -C src rev-parse HEAD')
+    src_c=$(tail -n 1 "$s/stdout")
+    check "G15 setup committed the fixture repository" "0" "$rc"
+    remote=(--mount "type=bind,source=$s/tmp/src,destination=/remote,readonly"
+            -e GIT_ALLOW_PROTOCOL=file -e GIT_CONFIG_COUNT=2
+            -e GIT_CONFIG_KEY_0=url.file:///remote/.insteadOf -e GIT_CONFIG_VALUE_0=https://h/r.git
+            -e GIT_CONFIG_KEY_1=safe.directory -e "GIT_CONFIG_VALUE_1=*")
+    # A transport that never answers: git waits on `sleep` for the fetch.
+    hang=(-e GIT_ALLOW_PROTOCOL=ext -e GIT_CONFIG_COUNT=1
+          -e "GIT_CONFIG_KEY_0=url.ext::sleep 600.insteadOf" -e GIT_CONFIG_VALUE_0=https://h/r.git)
+
+    w=$(mkws '{"op":"clone","url":"https://h/r.git"}')
+    rc=$(drun "$w" "${remote[@]}")
+    check "G15(a) a tarball clone of the remote's HEAD exits 0" "0" "$rc"
+    check "G15(a) … and wrote the tarball" "src.tar.gz" "$(artifacts "$w")"
+    check "G15(a) … of the remote's commit" "$src_c" "$(jq -r .commit "$w/output/values.json" 2>/dev/null)"
+    check "G15(a) … and left nothing in /orkstack/tmp" "" "$(scratch_left "$w/tmp")"
+
+    w=$(mkws "$(jq -cn --arg r "$GIT_ID" '{op: "clone", url: "https://h/r.git", ref: $r}')")
+    rc=$(drun "$w" "${remote[@]}")
+    check "G15(b) a clone of a commit the remote lacks exits 1, after git init" "1" "$rc"
+    contains "G15(b) … in the fetch" "fetching '$GIT_ID'" "$(cat "$w/stderr")"
+    check "G15(b) … and left nothing in /orkstack/tmp" "" "$(scratch_left "$w/tmp")"
+
+    w=$(mkws "$(jq -cn --arg r "$GIT_ID" '{op: "clone", url: "https://h/r.git", ref: $r}')")
+    sigterm_case "G15(c) SIGTERM during the fetch" "$w" "sleep 600" "${hang[@]}"
+    check "G15(c) … and left nothing in /orkstack/tmp" "" "$(scratch_left "$w/tmp")"
+
+    w=$(mkws "$(jq -cn --arg r "$GIT_ID" '{op: "clone", url: "https://h/r.git", ref: $r}')")
+    cid=$(run_detached "$w" "${hang[@]}")
+    if [[ -n "$cid" ]] && await_process "$cid" "sleep 600"; then
+        pass "G15(d) the fetch is running"
+        docker kill --signal KILL "$cid" >/dev/null 2>&1
+        docker wait "$cid" >/dev/null 2>&1
+        differs "G15(d) SIGKILL during the fetch leaves the repository behind" "$(scratch_left "$w/tmp")" ""
+        check "G15(d) … and the Orker's user removes all of it" "" "$(host_empties "$w/tmp")"
+    else
+        fail "G15(d) the fetch started within ${DEADLINE}s"
+        info "$(cat "$w/run.err" 2>/dev/null)"
+    fi
+    [[ -n "$cid" ]] && docker rm -f "$cid" >/dev/null 2>&1
+
+    w=$(mkws '{"op":"clone","url":"https://h/r.git","dest":"/orkstack/shared/a/b/src"}' '.paths.shared = "/orkstack/shared"')
+    rc=$(drun "$w" "${remote[@]}")
+    check "G15(e) a pinned checkout into /orkstack/shared/a/b/src exits 0" "0" "$rc"
+    check "G15(e) … the working tree is there" "v1" "$(cat "$w/shared/a/b/src/VERSION" 2>/dev/null)"
+    check "G15(e) … /orkstack/tmp holds nothing" "" "$(scratch_left "$w/tmp")"
+    check "G15(e) … and the Orker's user removes the checkout and its parents (the pin's end)" "" "$(host_empties "$w/shared")"
+}
+
+# ============================================================================
+# activity-file (its scratch; its operations are the integration suites')
+# ============================================================================
+
+cases_file() {
+    local w rc src
+
+    section "F1 tar leaves no staging directory"
+    w=$(mkws '{"op":"tar","srcs":["a","b"],"as":"x.tar.gz"}')
+    put "$w" input/a 'a'
+    put "$w" input/b 'b'
+    rc=$(drun "$w")
+    check "F1 tar of two files exits 0" "0" "$rc"
+    check "F1 … and wrote the archive" "x.tar.gz" "$(artifacts "$w")"
+    check "F1 … and left nothing in /orkstack/tmp" "" "$(scratch_left "$w/tmp")"
+    w=$(mkws '{"op":"tar","srcs":["a","missing"],"as":"x.tar.gz"}')
+    put "$w" input/a 'a'
+    rc=$(drun "$w")
+    check "F1 tar of a missing file exits 1, after staging the first" "1" "$rc"
+    check "F1 … and left nothing in /orkstack/tmp" "" "$(scratch_left "$w/tmp")"
+
+    section "F2 untar leaves no extraction directory"
+    # An archive whose directories are 0500: what tar extracts keeps the
+    # archive's modes, so the image must open them up before removing them.
+    w=$(mkws '{"op":"untar","src":"a.tar.gz","member":"d/sub/f"}')
+    src=$(mktemp -d "$ROOT/src.XXXXXX")
+    mkdir -p "$src/d/sub"
+    printf 'f' > "$src/d/sub/f"
+    chmod 0500 "$src/d/sub" "$src/d"
+    mkdir -p "$w/input"
+    tar -czf "$w/input/a.tar.gz" -C "$src" d
+    chmod -R u+rwX "$src"
+    rc=$(drun "$w")
+    check "F2 untar of a nested member exits 0" "0" "$rc"
+    check "F2 … and wrote it" "f" "$(cat "$w/output/artifacts/f" 2>/dev/null)"
+    check "F2 … and left nothing in /orkstack/tmp" "" "$(scratch_left "$w/tmp")"
+    w=$(mkws '{"op":"untar","src":"a.tar.gz","member":"d"}')
+    chmod 0500 "$src/d/sub" "$src/d"
+    tar -czf "$w/input/a.tar.gz" -C "$src" d
+    chmod -R u+rwX "$src"
+    rc=$(drun "$w")
+    check "F2 untar of a member that is a 0500 directory with children exits 1" "1" "$rc"
+    contains "F2 … in tar, which cannot write into the 0500 directory it made" "activity-file: untar failed" "$(cat "$w/stderr")"
+    check "F2 … and left nothing in /orkstack/tmp" "" "$(scratch_left "$w/tmp")"
 }
 
 "cases_$NAME"

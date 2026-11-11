@@ -21,6 +21,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // pinCreationCapture is a workflow interceptor recording what the replayer
@@ -283,9 +285,7 @@ func TestRunWorkflow_TheCreationTimeoutGateIsAskedOnlyWhereAPinOpens(t *testing.
 		plan.PinCreationTimeoutSeconds = 30
 		h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-pin",
 			compile(t, linearDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-		if err := h.env.GetWorkflowError(); err != nil {
-			t.Fatalf("workflow error: %v", err)
-		}
+		must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 		if asked := capture.versionsAsked(engine.PinCreationTimeoutChange); len(asked) != 0 {
 			t.Errorf("%s asked %v in a run that opens no pin, want no question", engine.PinCreationTimeoutChange, asked)
 		}
@@ -305,9 +305,7 @@ func TestRunWorkflow_TheCreationTimeoutGateIsAskedOnlyWhereAPinOpens(t *testing.
 		plan.PinCreationTimeoutSeconds = 45
 		h.env.ExecuteWorkflow(engine.RunWorkflow, "run-two-pins",
 			compile(t, twoPinsDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-		if err := h.env.GetWorkflowError(); err != nil {
-			t.Fatalf("workflow error: %v", err)
-		}
+		must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 		if got := capture.creationTimeouts(); len(got) != 2 || got[0] != 45*time.Second || got[1] != 45*time.Second {
 			t.Errorf("creation requests waited %v, want two of 45s", got)
 		}

@@ -20,6 +20,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // capsPoller is one poller record of a described channel: identity, whether
@@ -56,9 +58,7 @@ func capsRoutedTo(current, ramping string) *taskqueuepb.TaskQueueVersioningInfo 
 func capsMissing(t *testing.T, cluster *TemporalReleaseCluster, scope CapabilityScope) []string {
 	t.Helper()
 	got, err := cluster.MissingCapability(context.Background(), CapabilityEachItems10k, scope)
-	if err != nil {
-		t.Fatalf("MissingCapability: %v", err)
-	}
+	must.OKf(t, err, "MissingCapability")
 	return got
 }
 
@@ -198,14 +198,10 @@ func typeAwareReleaseCluster(t *testing.T,
 		HostPort: "127.0.0.1:1", Namespace: "caps",
 		ConnectionOptions: client.ConnectionOptions{DialOptions: []grpc.DialOption{grpc.WithUnaryInterceptor(intercept)}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(c.Close)
 	cluster, err := newReleaseCluster(temporalReleaseClient{Client: c, namespace: "caps"}, nil, "orkstack", task.DefaultQueue, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cluster.Now = func() time.Time { return releaseNow }
 	return cluster, &described
 }
@@ -254,9 +250,7 @@ func TestEngineReplicas_CountsDistinctIdentitiesRegardlessOfCapsSuffix(t *testin
 		cluster, fake, _ := newFakeReleaseCluster(t, "")
 		fake.channels[task.DefaultQueue] = &workflowservice.DescribeTaskQueueResponse{Pollers: pollers(identity)}
 		got, err := cluster.engineReplicas(context.Background())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return got
 	}
 	plain := counts(func(s string) string { return s })

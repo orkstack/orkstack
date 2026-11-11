@@ -88,7 +88,7 @@ func newStatsCommand(g *globalFlags) *cobra.Command {
 			return renderStats(cmd.OutOrStdout(), resp.Msg)
 		},
 	}
-	cmd.Flags().StringVar(&since, "since", "",
+	cmd.Flags().StringVarP(&since, "since", "s", "",
 		"how far back to look: a duration such as 6h, or an RFC3339 instant "+
 			"(default: the last 24 hours; with --by, the last 7 days or 24 hours)")
 	cmd.Flags().StringVar(&series.by, "by", "",
@@ -191,7 +191,7 @@ func renderStats(out io.Writer, stats *orkstackv1.GetStatsResponse) error {
 		fmt.Fprintln(failing, "MOST FAILING\tFAILED\tFINISHED")
 		for _, row := range stats.GetMostFailing() {
 			fmt.Fprintf(failing, "%s\t%d\t%d\n",
-				row.GetOrkflowName(), row.GetFailed(), row.GetTotal())
+				ownedLabel(row.GetOrkflowNamespace(), row.GetOrkflowName()), row.GetFailed(), row.GetTotal())
 		}
 		if err := failing.Flush(); err != nil {
 			return fmt.Errorf("write output: %w", err)

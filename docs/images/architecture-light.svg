@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1184 496" width="1184" height="496" role="img" aria-labelledby="architecture-title">
-<title id="architecture-title">An Orkflow is applied through orkctl, the UI or the API to the ork engine; triggers and callbacks also reach it over plain HTTP. The engine starts each run on Temporal, which dispatches tasks to Orkers. An Orker runs the activity’s OCI image, passing files in and out, and writes artifacts and records to object storage.</title>
+<title id="architecture-title">An Orkflow is created through orkctl, the UI or the API to the ork engine; triggers and callbacks also reach it over plain HTTP. The engine starts each run on Temporal, which dispatches tasks to Orkers. An Orker runs the activity’s OCI image, passing files in and out, and writes artifacts and records to object storage.</title>
 <style>.paper{fill:#F6F8FA}.frame{fill:none;stroke:#0E1C28;stroke-width:1px}.band{fill:none;stroke:#E1E6EC;stroke-width:1px}.caption{fill:#3A4C5C;font-family:'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:12px}.node{fill:#F6F8FA;stroke:#0E1C28;stroke-width:1px}.group{fill:none;stroke:#0E1C28;stroke-width:1px;stroke-dasharray:6 4}.name{fill:#0E1C28;font-family:'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;font-size:15px;font-weight:600}.note{fill:#3A4C5C;font-family:'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11.5px}.edge{fill:none;stroke:#0E1C28;stroke-width:1px}.back{fill:none;stroke:#3A4C5C;stroke-width:1px;stroke-dasharray:6 4}.arrow{fill:#0E1C28}.arrow-back{fill:#3A4C5C}.label{fill:#3A4C5C;font-family:'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;paint-order:stroke;stroke:#F6F8FA;stroke-width:4px}.label-fail{fill:#B42F27;font-family:'JetBrains Mono Variable', 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;font-size:11px;font-weight:700;paint-order:stroke;stroke:#F6F8FA;stroke-width:4px}.fail{fill:none;stroke:#B42F27;stroke-width:1.5px}.brace{fill:none;stroke:#3A4C5C;stroke-width:1px}.balloon circle{fill:#F6F8FA;stroke:#0E1C28;stroke-width:1px}.balloon text{fill:#0E1C28;font-family:'Inter Variable', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;font-size:13px;font-weight:700}</style>
 <defs>
 <pattern id="minor" width="8" height="8" patternUnits="userSpaceOnUse"><path d="M8 0H0V8" fill="none" stroke="#E1E6EC" stroke-width="1"/></pattern>
@@ -13,7 +13,7 @@
 <text class="caption" x="12" y="21">How a run flows · ARCHITECTURE.md</text>
 <g transform="translate(0 56)">
 <path class="edge" d="M230 77H330" marker-end="url(#arrow)"/>
-<text class="label" x="280" y="69" text-anchor="middle">apply</text>
+<text class="label" x="280" y="69" text-anchor="middle">create</text>
 <path class="edge" d="M520 77H620" marker-end="url(#arrow)"/>
 <text class="label" x="570" y="69" text-anchor="middle">submit</text>
 <path class="edge" d="M910 77H810" marker-end="url(#arrow)"/>

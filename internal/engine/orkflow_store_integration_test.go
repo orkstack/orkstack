@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // s3Config is the artifact/orkflow storage config for these tests: the repo's
@@ -39,9 +41,7 @@ func newDurableOrkflowStore(t *testing.T) *artifacts.S3OrkflowStore {
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	store, err := artifacts.NewS3OrkflowStore(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("open orkflow store: %v", err)
-	}
+	must.OKf(t, err, "open orkflow store")
 	return store
 }
 
@@ -59,9 +59,7 @@ func probeOrkflowName(t *testing.T, kind string) string {
 func helloYAMLNamed(t *testing.T, name string) string {
 	t.Helper()
 	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	renamed := strings.Replace(string(source), "name: hello-ork\n", "name: "+name+"\n", 1)
 	if renamed == string(source) {
 		t.Fatal("example orkflow no longer declares `name: hello-ork`")
@@ -83,9 +81,7 @@ func serveAPI(
 		Bus:      engine.NewEventBus(),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 
@@ -117,18 +113,14 @@ func TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt(t *testing.T) 
 	applied, err := before.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: helloYAMLNamed(t, name),
 	}))
-	if err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
+	must.OKf(t, err, "Apply")
 	version := applied.Msg.GetOrkflow().GetVersion()
 	if applied.Msg.GetOrkflow().GetName() != name {
 		t.Fatalf("applied %q, want %q", applied.Msg.GetOrkflow().GetName(), name)
 	}
 
 	uri, err := store.URI(artifacts.DefaultNamespace, name, version)
-	if err != nil {
-		t.Fatalf("URI: %v", err)
-	}
+	must.OKf(t, err, "URI")
 	t.Logf("applied orkflow lives at %s", uri)
 	if want := fmt.Sprintf("s3://%s/metadata/orkflows/%s/%s/%s.json", store.Bucket(), artifacts.DefaultNamespace, name, version); uri != want {
 		t.Fatalf("orkflow URI = %q, want %q", uri, want)
@@ -141,9 +133,7 @@ func TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt(t *testing.T) 
 	defer shutdownAfter()
 
 	got, err := after.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: name}))
-	if err != nil {
-		t.Fatalf("GetOrkflow after restart: %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow after restart")
 	reloaded := got.Msg.GetOrkflow()
 	if reloaded.GetVersion() != version {
 		t.Errorf("reloaded version = %q, want %q", reloaded.GetVersion(), version)
@@ -159,9 +149,7 @@ func TestIntegration_AppliedOrkflowOutlivesTheServiceThatStoredIt(t *testing.T) 
 	}
 
 	listed, err := listOrkflowNames(ctx, after)
-	if err != nil {
-		t.Fatalf("ListOrkflows after restart: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflows after restart")
 	found := false
 	for _, listedName := range listed {
 		if listedName == name {
@@ -218,9 +206,7 @@ func TestIntegration_ListOrkflowsReadsTheBucketNotTheProcess(t *testing.T) {
 	}
 
 	listed, err := listOrkflowNames(ctx, client)
-	if err != nil {
-		t.Fatalf("ListOrkflows: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflows")
 	for _, listedName := range listed {
 		if listedName == name {
 			return

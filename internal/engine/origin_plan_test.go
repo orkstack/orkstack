@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -14,7 +13,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestRunOrigin_ProtoIsNilSafeAndTolerant(t *testing.T) {
@@ -59,7 +61,7 @@ func TestRunPlan_EncodesIdenticallyWithoutOrigin(t *testing.T) {
 	const golden = `{"namespace":"payments","routes":{"main":"ork-tasks"},"commit_root":"s3://orkstack-artifacts",` +
 		`"limits":{"values_max_bytes":1,"artifact_max_count":2,"artifact_max_bytes":3,"log_max_bytes":4,"commit_max_bytes":5},` +
 		`"transfer_budget_seconds":60}`
-	out, err := json.Marshal(plan)
+	out, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +70,7 @@ func TestRunPlan_EncodesIdenticallyWithoutOrigin(t *testing.T) {
 	}
 
 	plan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_SUBMIT"}
-	out, err = json.Marshal(plan)
+	out, err = stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,9 +108,7 @@ func snapshotsFor(t *testing.T, runID string, plan engine.RunPlan) []*orkstackv1
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
 	env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, linearDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "workflow error")
 	if len(snapshots) == 0 || len(executed) == 0 {
 		t.Fatalf("the workflow wrote %d snapshots and executed %d tasks", len(snapshots), len(executed))
 	}
@@ -141,9 +141,7 @@ func TestStartRun_StampsOriginMemoAndAttributesFromPlan(t *testing.T) {
 		plan.Origin = origin
 		stored := twoTaskOrkflow()
 		stored.Namespace = "payments"
-		if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil, plan); err != nil {
-			t.Fatalf("StartRun: %v", err)
-		}
+		must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", stored, nil, plan), "StartRun")
 		if got := c.startedPlan(t).Origin; got != origin {
 			t.Fatalf("the plan handed to Temporal carries origin %+v, want %+v", got, origin)
 		}

@@ -34,8 +34,8 @@ ignore:
   # with the user's approval. Each names the vulnerability, the package's
   # exact name, version, type and location, and a reason that opens with the
   # date it is reviewed by, at most 30 days ahead; past that date the waiver
-  # fails TestVulnImages_EveryWaiverIsScopedReasonedAndDated, as a quarantine
-  # entry stops excusing (AGENTS.md §11.2). Remove a waiver once the fix ships.
+  # is renewed or removed (no test enforces the date or the shape). Remove a
+  # waiver once the fix ships.
   - vulnerability: GHSA-mgcc-cww5-fp2q
     reason: >-
       review-by 2026-11-30: go-jose/v4 v4.1.4 is built into gomplate v5.3.1,

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // reasonName is the naming convention a machine-readable reason follows.
@@ -20,7 +22,7 @@ var reasonName = regexp.MustCompile(`^(Reason[A-Za-z0-9_]*|[A-Za-z0-9_]*Code|Adm
 // reasonPackages are the packages whose reason constants reach a client.
 var reasonPackages = []string{
 	"internal/task", "internal/orker", "internal/engine", "internal/dsl",
-	"internal/evidence", "pkg/webhooks",
+	"internal/evidence", "pkg/webhooks", "internal/authz",
 }
 
 type reasonConst struct {
@@ -39,9 +41,7 @@ func scanReasons(t *testing.T) []reasonConst {
 	fset := token.NewFileSet()
 	for _, pkg := range reasonPackages {
 		entries, err := os.ReadDir(filepath.Join(root, pkg))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, e := range entries {
 			name := e.Name()
 			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -49,9 +49,7 @@ func scanReasons(t *testing.T) []reasonConst {
 			}
 			path := filepath.Join(root, pkg, name)
 			file, err := parser.ParseFile(fset, path, nil, 0)
-			if err != nil {
-				t.Fatalf("%s: %v", path, err)
-			}
+			must.OKf(t, err, "%s", path)
 			ast.Inspect(file, func(n ast.Node) bool {
 				spec, ok := n.(*ast.ValueSpec)
 				if !ok {
@@ -140,9 +138,7 @@ func stringLiterals(t *testing.T, dirs []string) map[string]bool {
 	fset := token.NewFileSet()
 	for _, dir := range dirs {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, e := range entries {
 			name := e.Name()
 			if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
@@ -150,9 +146,7 @@ func stringLiterals(t *testing.T, dirs []string) map[string]bool {
 			}
 			path := filepath.Join(root, dir, name)
 			file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
-			if err != nil {
-				t.Fatalf("%s: %v", path, err)
-			}
+			must.OKf(t, err, "%s", path)
 			ast.Inspect(file, func(n ast.Node) bool {
 				if spec, ok := n.(*ast.ValueSpec); ok && dir == eventPackage && isEventSpec(spec) {
 					return false

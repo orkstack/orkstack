@@ -2,7 +2,7 @@ package orker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"os"
@@ -13,6 +13,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // pinSpecRuntime is a ContainerRuntime that records the ContainerSpec it was
@@ -96,9 +98,7 @@ func (r *pinSpecRuntime) recorded(t *testing.T, i int) (ContainerSpec, map[strin
 func newPinDispatcher(t *testing.T, runtime *pinSpecRuntime, workRoot string) *OCIDispatcher {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local artifact store: %v", err)
-	}
+	must.OKf(t, err, "local artifact store")
 	t.Cleanup(func() { _ = store.Close() })
 	return &OCIDispatcher{
 		Runtime:  runtime,
@@ -212,9 +212,7 @@ func TestExecute_AnUnpinnedAttemptIsUNCHANGED(t *testing.T) {
 		t.Errorf("an unpinned task.json carries paths.shared: %v", paths["shared"])
 	}
 	dirs, err := pinDirectories(workRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(dirs) != 0 {
 		t.Errorf("an unpinned attempt left pin directories behind: %v", dirs)
 	}
@@ -278,9 +276,7 @@ func TestExecute_TwoPinnedAttemptsShareOneSharedDirectory(t *testing.T) {
 
 	// One directory, named by the (run, pin, instance) triple.
 	dirs, err := pinDirectories(workRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(dirs) != 1 {
 		t.Fatalf("pin directories = %v, want exactly one for one opening of one pin", dirs)
 	}
@@ -359,9 +355,7 @@ func TestExecute_ARefusedPinInstanceIDFailsTheAttempt(t *testing.T) {
 		t.Errorf("%d container(s) were created for a refused pin", created)
 	}
 	dirs, err := pinDirectories(workRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(dirs) != 0 {
 		t.Errorf("a refused pin instance id still created %v", dirs)
 	}
@@ -376,9 +370,7 @@ func TestDescribeOrker_ReportsTheConfiguredPinCapacity(t *testing.T) {
 	for name, want := range map[string]int32{"no pins": 0, "a pin host": 4} {
 		t.Run(name, func(t *testing.T) {
 			store, err := artifacts.NewLocalStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			t.Cleanup(func() { _ = store.Close() })
 			activities := NewActivitiesWithOptions(store, Options{
 				Runtime:  &reapRecorder{},
@@ -387,9 +379,7 @@ func TestDescribeOrker_ReportsTheConfiguredPinCapacity(t *testing.T) {
 				MaxPins:  want,
 			})
 			result, err := activities.DescribeOrker(context.Background())
-			if err != nil {
-				t.Fatalf("DescribeOrker: %v", err)
-			}
+			must.OKf(t, err, "DescribeOrker")
 			if result.GetMaxConcurrentPins() != want {
 				t.Errorf("max_concurrent_pins = %d, want %d", result.GetMaxConcurrentPins(), want)
 			}
@@ -419,29 +409,19 @@ func TestBoot_ReapsPinDirectoriesWhetherOrNotThisOrkerHostsPins(t *testing.T) {
 			// plain RemoveAll.
 			orkerID := "pin-boot-reap-" + t.Name()
 			stale, err := AcquirePin(workRoot, "ork-previous-life", "build", testInstanceID, 3600, orkerID)
-			if err != nil {
-				t.Fatalf("AcquirePin: %v", err)
-			}
+			must.OKf(t, err, "AcquirePin")
 			locked := filepath.Join(stale.Shared, "locked")
-			if err := os.Mkdir(locked, 0o700); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.Mkdir(locked, 0o700))
 			mustWrite(t, filepath.Join(locked, "build.log"), "from a dead orker")
-			if err := os.Chmod(locked, 0o500); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.Chmod(locked, 0o500))
 
 			store, err := artifacts.NewLocalStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			t.Cleanup(func() { _ = store.Close() })
 			replacement := NewActivitiesWithOptions(store, Options{
 				Runtime: &reapRecorder{}, WorkRoot: workRoot, MaxPins: maxPins, OrkerID: orkerID,
 			})
-			if err := replacement.Boot(context.Background()); err != nil {
-				t.Fatalf("Boot: %v", err)
-			}
+			must.OKf(t, replacement.Boot(context.Background()), "Boot")
 			t.Cleanup(replacement.Close)
 
 			if _, err := os.Stat(stale.Root); !errors.Is(err, os.ErrNotExist) {
@@ -462,19 +442,13 @@ func TestBoot_ReapsPinDirectoriesWhetherOrNotThisOrkerHostsPins(t *testing.T) {
 func TestReleasePinActivity_RemovesTheRightDirectoryAndIsIdempotent(t *testing.T) {
 	workRoot := t.TempDir()
 	target, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600, "")
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
-	}
+	must.OKf(t, err, "AcquirePin")
 	const siblingInstance = "bbbbbbbb-1111-2222-3333-444444444444"
 	bystander, err := AcquirePin(workRoot, "ork-1", "test", siblingInstance, 3600, "")
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
-	}
+	must.OKf(t, err, "AcquirePin")
 
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	activities := NewActivitiesWithOptions(store, Options{
 		Runtime: &reapRecorder{}, WorkRoot: workRoot, MaxPins: 1,
@@ -488,9 +462,7 @@ func TestReleasePinActivity_RemovesTheRightDirectoryAndIsIdempotent(t *testing.T
 		})
 	}
 
-	if err := release(testInstanceID); err != nil {
-		t.Fatalf("ReleasePin: %v", err)
-	}
+	must.OKf(t, release(testInstanceID), "ReleasePin")
 	if _, err := os.Stat(target.Root); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("the pin's directory survived ReleasePin: %v", err)
 	}
@@ -502,9 +474,7 @@ func TestReleasePinActivity_RemovesTheRightDirectoryAndIsIdempotent(t *testing.T
 	// Idempotent: release genuinely races a replacement Orker's boot reap and
 	// the lease sweep, so an absent directory is the expected outcome and not
 	// an error to surface to a coroutine that would only log it.
-	if err := release(testInstanceID); err != nil {
-		t.Fatalf("a repeated ReleasePin failed: %v", err)
-	}
+	must.OKf(t, release(testInstanceID), "a repeated ReleasePin failed")
 
 	// And a malformed id is refused rather than rewritten, with the bystander
 	// still there to prove nothing was removed on the way to the refusal.
@@ -522,9 +492,7 @@ func TestReleasePinActivity_RemovesTheRightDirectoryAndIsIdempotent(t *testing.T
 // it.
 func TestSweepPinLeases_StopsWhenTheProcessDoes(t *testing.T) {
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	activities := NewActivitiesWithOptions(store, Options{
 		Runtime: &reapRecorder{}, WorkRoot: t.TempDir(), MaxPins: 1,

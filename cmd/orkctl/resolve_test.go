@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const awaitedCLIYAML = `apiVersion: orkstack/v1
@@ -94,17 +96,13 @@ func awaitCLIFixture(t *testing.T, gate orkstackv1.Status) (*fixture, *awaitRead
 	t.Helper()
 	reader := &awaitReader{runs: map[string]*orkstackv1.Run{}, starts: map[string]*engine.RunStartRecord{}}
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local store: %v", err)
-	}
+	must.OKf(t, err, "local store")
 	f := newFixtureWith(t, func(cfg *api.Config) {
 		cfg.Reader = reader
 		cfg.ArtifactStore = store
 	})
 	wf, err := dsl.Compile([]byte(awaitedCLIYAML))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	opened := fixedNow.Add(-19 * time.Minute)
 	run := &orkstackv1.Run{
 		Id: "ork-cli-1", OrkflowName: "awaited-cli", OrkflowVersion: "1.0.0",
@@ -193,9 +191,7 @@ func TestRunResolve_ValuesFileIsSentVerbatim(t *testing.T) {
 	f, _, _ := awaitCLIFixture(t, orkstackv1.Status_STATUS_AWAITING)
 	body := "{\r\n    \"model_uri\": \"s3://m\",\r\n    \"n\": 12345678901234567890\r\n}\r\n"
 	path := filepath.Join(t.TempDir(), "values.json")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(body), 0o644))
 	f.run("run", "resolve", "ork-cli-1", "--task", "training", "--values-file", path).requireExit(t, exitOK)
 	if len(f.starter.signals) != 1 || string(f.starter.signals[0].GetValuesJson()) != body {
 		t.Fatalf("delivered %q, want the file's exact bytes %q", f.starter.signals, body)
@@ -210,7 +206,7 @@ var (
 func TestRunSubmitCallbacksGolden(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "awaited.ork.yaml", awaitedCLIYAML)
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	out := f.run("run", "submit", "awaited-cli").requireExit(t, exitOK)
 	if tokens := tokenPattern.FindAllString(out.stdout, -1); len(tokens) != 1 {
 		t.Fatalf("submit printed %d tokens, want exactly one (training): %s", len(tokens), out.stdout)
@@ -234,9 +230,7 @@ func TestRunSubmit_CallbackCommandIsShellSafe(t *testing.T) {
 	url := strings.TrimSuffix(strings.TrimPrefix(lines[0], "  curl -X POST "), " \\")
 	header := strings.TrimSuffix(strings.TrimPrefix(lines[1], "    -H "), " \\")
 	got, err := exec.Command(sh, "-c", "printf '%s\\n' "+url+" "+header).Output()
-	if err != nil {
-		t.Fatalf("sh: %v", err)
-	}
+	must.OKf(t, err, "sh")
 	want := baseURL + path + "\nAuthorization: Bearer " + token + "\n"
 	if string(got) != want {
 		t.Fatalf("the shell read\n%q\nwant\n%q", got, want)
@@ -263,7 +257,7 @@ func TestRunGetAwaitGolden(t *testing.T) {
 func TestRunPlanAwaitGolden(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "awaited.ork.yaml", awaitedCLIYAML)
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	out := f.run("run", "plan", "awaited-cli").requireExit(t, exitOK)
 	requireGolden(t, "run-plan-await.golden", out.stdout)
 }
@@ -271,7 +265,7 @@ func TestRunPlanAwaitGolden(t *testing.T) {
 func TestOrkflowGetAwaitGolden(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "awaited.ork.yaml", awaitedCLIYAML)
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	out := f.run("orkflow", "get", "awaited-cli").requireExit(t, exitOK)
 	requireGolden(t, "orkflow-get-await.golden", out.stdout)
 }
@@ -279,7 +273,7 @@ func TestOrkflowGetAwaitGolden(t *testing.T) {
 func TestRunPlan_AssertRunsAcceptsAnAwait(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "awaited.ork.yaml", awaitedCLIYAML)
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	f.run("run", "plan", "awaited-cli", "--assert-runs", "training", "--assert-runs", "evaluate").requireExit(t, exitOK)
 	f.run("run", "plan", "awaited-cli", "--assert-skipped", "training").requireExit(t, exitPlanAssertionFailed)
 }
@@ -292,15 +286,13 @@ func TestRunTiming_AnAwaitedTaskIsAwaitedNotQueued(t *testing.T) {
 		FinishedAt: timestamppb.New(opened.Add(90 * time.Minute)),
 		Await:      &orkstackv1.TaskAwait{},
 	}}}
-	timing := computeRunTiming(run, nil, timingOptions{AttemptStore: true, Now: fixedNow})
+	timing := computeRunTiming(run, nil, deriveOptions{AttemptStore: true, Now: fixedNow})
 	task := timing.Tasks[0]
 	if !task.Awaited || task.Wait.applies || task.QueueWait.applies || !task.Run.known || task.Run.value != 90*time.Minute {
 		t.Fatalf("timing = %+v", task)
 	}
 	var b strings.Builder
-	if err := renderRunTiming(&b, timing, true); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderRunTiming(&b, timing, true))
 	if !strings.Contains(b.String(), "awaited 1h30m0s") || strings.Contains(b.String(), "attempts:") {
 		t.Fatalf("rendered:\n%s", b.String())
 	}
@@ -319,7 +311,7 @@ func sha256Sum(b []byte) [32]byte { return sha256.Sum256(b) }
 func TestRunSubmitWatchJSON_PrintsTheCallbackOnStderr(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "awaited.ork.yaml", awaitedCLIYAML)
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	f.starter.onStart = func(runID string, _ *orkstackv1.Orkflow, _ *orkstackv1.Payload) {
 		f.finishRun(runID, orkstackv1.Status_STATUS_SUCCEEDED, nil)
 		f.publish(runID, orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,

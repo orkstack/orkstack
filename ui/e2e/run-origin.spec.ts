@@ -27,7 +27,7 @@ import {
 	waitFor,
 	waitForEngine
 } from './harness';
-import { OP, addListFilter } from './uiHelpers';
+import { OP, addListFilter, cliCommand } from './uiHelpers';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('run-origin');
@@ -140,8 +140,8 @@ test('a run submitted from the dialog with an origin reference shows submit, the
 	const reference = 'https://github.com/acme/svc/actions/runs/123';
 	const runId = await submitFromDialog(page, reference, async (dialog) => {
 		await dialog.getByTestId('run-submit-cli-trigger').click();
-		await expect(dialog.getByTestId('run-submit-cli-command')).toContainText(`--origin-ref ${reference}`);
-		await expect(dialog.getByTestId('run-submit-cli-command')).toContainText(`orkctl run submit ${NAME}`);
+		await expect(cliCommand(page, 'run-submit-cli', 'Submit this run')).toContainText(`--origin-ref ${reference}`);
+		await expect(cliCommand(page, 'run-submit-cli', 'Submit this run')).toContainText(`orkctl run submit ${NAME}`);
 		await shot(dialog, 'screenshot-submit-dialog-origin-ref.png');
 		await dialog.getByTestId('run-submit-cli-trigger').click();
 	});
@@ -178,8 +178,8 @@ test('Run again records run-again linked to the source', async ({ page }) => {
 	await expect(page.getByTestId('run-again-dialog')).toBeVisible();
 	await expect(page.getByTestId('run-submit-submit')).toBeEnabled();
 	await page.getByTestId('run-submit-cli-trigger').click();
-	await expect(page.getByTestId('run-submit-cli-command')).toContainText(`orkctl run again ${sourceId}`);
-	await expect(page.getByTestId('run-submit-cli-command')).not.toContainText('run submit');
+	await expect(cliCommand(page, 'run-submit-cli', 'Submit this run')).toContainText(`orkctl run again ${sourceId}`);
+	await expect(cliCommand(page, 'run-submit-cli', 'Submit this run')).not.toContainText('run submit');
 	await page.getByTestId('run-submit-cli-trigger').click();
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL((url) => url.pathname.startsWith('/runs/') && !url.pathname.endsWith(sourceId));

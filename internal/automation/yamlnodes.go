@@ -5,12 +5,12 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-// The helpers below read and build yaml.v3 nodes. The parser walks nodes
+// The helpers below read and build go-yaml nodes. The parser walks nodes
 // rather than decoding into structs because three distinctions it must draw
 // are invisible to a struct decode: an absent section versus {} versus null,
 // an absent settings key versus its zero value, and a scalar input versus a
@@ -19,7 +19,7 @@ import (
 // stringScalar reads a scalar written as a string. A number or a boolean is
 // refused: a description of 12 is a typo, not a label.
 func stringScalar(node *yaml.Node) (string, error) {
-	if node.Kind != yaml.ScalarNode || node.Tag != "!!str" {
+	if !dsl.IsStringScalar(node) {
 		return "", fmt.Errorf("must be a string, got %s", describeNode(node))
 	}
 	return node.Value, nil
@@ -30,7 +30,7 @@ func stringScalar(node *yaml.Node) (string, error) {
 func versionScalar(node *yaml.Node) (string, error) {
 	if node.Kind == yaml.ScalarNode {
 		switch node.Tag {
-		case "!!str", "!!int", "!!float":
+		case "!!str", "!", "!!int", "!!float":
 			return node.Value, nil
 		}
 	}

@@ -110,9 +110,13 @@ func (s *RunStore) Delete(runID string) {
 // filters on it, so a snapshot that omits it does not blank a column — it
 // moves the run into another tenant's listing. Same fold, same rule, as
 // mergeRunSnapshot on the read path.
-func (s *RunStore) Apply(run *orkstackv1.Run) {
+//
+// It returns a copy of what it stored — run with those fields folded in —
+// which is this snapshot's own view whatever another publish of the same run
+// applies a moment later, or nil when run is nil or has no id.
+func (s *RunStore) Apply(run *orkstackv1.Run) *orkstackv1.Run {
 	if run == nil || run.GetId() == "" {
-		return
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -132,6 +136,7 @@ func (s *RunStore) Apply(run *orkstackv1.Run) {
 	}
 	s.runs[run.GetId()] = next
 	s.trackLocked(next)
+	return proto.Clone(next).(*orkstackv1.Run)
 }
 
 // Get returns a clone of the stored run.
@@ -172,7 +177,7 @@ func (s *RunStore) List(filter ListFilter) []*orkstackv1.Run {
 		if filter.Namespace != "" && artifacts.ResolveNamespace(run.GetNamespace()) != artifacts.ResolveNamespace(filter.Namespace) {
 			continue
 		}
-		if filter.OrkflowName != "" && run.GetOrkflowName() != filter.OrkflowName {
+		if filter.OrkflowName != "" && OrkflowKey(run) != filter.OrkflowName {
 			continue
 		}
 		if filter.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != filter.Status {

@@ -3,7 +3,9 @@ name: nightly
 # The nightly tier: the scale and soak tests a merge proof defers, and two
 # lanes of its own, the race repeat and the fuzz lane; the vulnerability
 # scan of the Go module, the JavaScript dependencies and the release images,
-# which needs the network and so is in no proof; the README's Quickstart on a
+# which needs the network and so is in no proof; every published release's
+# notes against its CHANGELOG.md section, which reads GitHub and so is in no
+# proof either; the README's Quickstart on a
 # clone of main, which no proof runs; and every shipped example on that
 # quickstart, which reaches third parties and so holds no release. A red
 # nightly is a regression on main: fixing it, or reverting what broke it, is
@@ -20,8 +22,8 @@ on:
   workflow_dispatch:
     inputs:
       fuzz_budget:
-        description: the fuzz lane's whole time, shared by its Fuzz targets (125m; no more than 125m, because the lane's step is limited to 140m)
-        default: 125m
+        description: the fuzz lane's whole time, shared by its Fuzz targets (130m; no more than 130m, because the lane's step is limited to 145m)
+        default: 130m
 
 permissions:
   contents: read
@@ -43,7 +45,7 @@ jobs:
       base: main
       int_shards: 4
       ui_shards: 1
-      fuzz_budget: ${{ inputs.fuzz_budget || '125m' }}
+      fuzz_budget: ${{ inputs.fuzz_budget || '130m' }}
 
   vuln:
     # govulncheck (`make vuln`), which reports only advisories whose vulnerable
@@ -117,8 +119,7 @@ jobs:
           go-version: "1.27.3"
       # The OCI layouts make release-images writes need a BuildKit builder:
       # release.yml's, pinned by digest (Dependabot does not see an image in
-      # `with:`; TestWorkflows_TheNightlyScansJavaScriptAndImages holds the two
-      # equal).
+      # `with:`; keep the two equal by hand).
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         timeout-minutes: 3
         with:
@@ -126,6 +127,35 @@ jobs:
       - name: vuln-images
         timeout-minutes: 60
         run: make vuln-images
+
+  release-notes:
+    # Every published release's notes, above its image footer, against its
+    # section of this commit's CHANGELOG.md (`make release-notes-check`): a
+    # release body edited by hand, or a released section edited without a
+    # republish, makes the nightly red, naming the version and the first line
+    # that differs; the fix is `make release-notes-publish VERSION=vX.Y.Z`
+    # (docs/PROOFS.md §10). It reads the releases over the network, which is
+    # why it is here and in no proof.
+    if: ${{ github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        timeout-minutes: 5
+        with:
+          go-version: "1.27.3"
+      - name: release-notes
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORK_RELEASE_REPO: ${{ github.repository }}
+        run: make release-notes-check
 
   quickstart:
     # The getting-started path, end to end: the README's Quickstart as
@@ -177,59 +207,3 @@ jobs:
         timeout-minutes: 45
         shell: bash
         run: scripts/quickstart-smoke.sh --examples
-
-  flakes:
-    # The flake budget's evidence (docs/PROOFS.md §6.1): same-tree flips and
-    # suspect failures across the last 30 days of proofs. It never edits a
-    # list; it reports. It waits for `nightly`, whatever its result, so the
-    # window it reads includes tonight's proof; a red nightly is evidence too.
-    needs: nightly
-    if: ${{ always() && (github.event.repository.visibility == 'public' || github.event_name == 'workflow_dispatch') }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 45
-    permissions:
-      contents: read
-      actions: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        timeout-minutes: 3
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        timeout-minutes: 5
-        with:
-          go-version: "1.27.3"
-      - name: download the proofs of the last 30 days
-        timeout-minutes: 15
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/ci/flakes" "$RUNNER_TEMP/ci/zips"
-          since="$(date -u -d '30 days ago' +%Y-%m-%dT%H:%M:%SZ)"
-          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?per_page=100" --paginate \
-            --jq ".artifacts[] | select(.created_at >= \"$since\") | select(.name | startswith(\"proof-\")) | \"\(.id) \(.name)\"" |
-          while read -r id name; do
-            [ -n "$id" ] || continue
-            mkdir -p "$RUNNER_TEMP/ci/flakes/$name"
-            gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" >"$RUNNER_TEMP/ci/zips/$name.zip" || continue
-            unzip -qo "$RUNNER_TEMP/ci/zips/$name.zip" -d "$RUNNER_TEMP/ci/flakes/$name" || true
-          done
-      - name: flakes
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -euo pipefail
-          go run ./test/tools/proofrun flakes -from "$RUNNER_TEMP/ci/flakes/*" -repo . \
-            -out "$RUNNER_TEMP/ci/flakes.tsv" -md "$RUNNER_TEMP/ci/flakes.md"
-          cat "$RUNNER_TEMP/ci/flakes.md" >>"$GITHUB_STEP_SUMMARY"
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        timeout-minutes: 5
-        with:
-          name: flakes-${{ github.run_id }}-a${{ github.run_attempt }}
-          path: |
-            ${{ runner.temp }}/ci/flakes.tsv
-            ${{ runner.temp }}/ci/flakes.md
-          retention-days: 30

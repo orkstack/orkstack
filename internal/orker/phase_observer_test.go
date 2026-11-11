@@ -11,6 +11,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // phaseObserverCtxKey is the value fakePhaseObserver.Begin stamps onto the
@@ -133,9 +135,7 @@ func (r *phaseCapturingRuntime) ctxValues() (create, start any) {
 func newPhaseDispatcher(t *testing.T, runtime *phaseCapturingRuntime, obs PhaseObserver) *OCIDispatcher {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local artifact store: %v", err)
-	}
+	must.OKf(t, err, "local artifact store")
 	return &OCIDispatcher{
 		Runtime:  runtime,
 		Store:    store,
@@ -167,9 +167,7 @@ func TestPhaseObserver_SuccessWalksTheFullSequence(t *testing.T) {
 	in := baseExportInput("phase-success")
 
 	result, err := dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	must.OKf(t, err, "Execute")
 	if result == nil {
 		t.Fatal("Execute returned a nil result on success")
 	}
@@ -240,9 +238,7 @@ func TestPhaseObserver_NilMeansUnchanged(t *testing.T) {
 	in := baseExportInput("phase-nil")
 
 	result, err := dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	must.OKf(t, err, "Execute")
 	if result == nil {
 		t.Fatal("Execute returned a nil result on success")
 	}
@@ -303,9 +299,7 @@ func TestPhaseObserver_PanicStillEndsExactlyOnceAndClosesTheLogs(t *testing.T) {
 	exporter := &recordingTaskLogExporter{}
 	attempts := artifacts.NewMemoryAttemptStore()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local artifact store: %v", err)
-	}
+	must.OKf(t, err, "local artifact store")
 	dispatcher := &OCIDispatcher{
 		Runtime:  panicCreateRuntime{},
 		Store:    store,

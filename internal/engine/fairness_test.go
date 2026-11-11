@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestFairnessKeyFor_FitsTemporalsBoundAndKeepsLongNamesApart(t *testing.T) {
@@ -37,9 +39,7 @@ func TestPoolResolver_PinsTheNamespacesFairnessInThePlan(t *testing.T) {
 	resolver := &engine.PoolResolver{Probe: everyPoolLive{}}
 	_, plan, err := resolver.Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "payments", FairShareWeight: 3}, compile(t, gpuOnlyDocument), false)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if plan.Fairness == nil || plan.Fairness.Key != "payments" || plan.Fairness.Weight != 3 || !plan.Fairness.PinRequests {
 		t.Fatalf("plan.Fairness = %+v, want payments at weight 3, its pin requests keyed too", plan.Fairness)
 	}
@@ -101,9 +101,7 @@ func runCapturingFairness(t *testing.T, plan engine.RunPlan) *fairnessCapture {
 	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fairness",
 		compile(t, linearDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	return capture
 }
 

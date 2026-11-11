@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +27,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/logstream"
@@ -219,9 +220,18 @@ func (c *attemptCleanup) record(
 	if err == nil {
 		return
 	}
-	logger.Warn("attempt cleanup: a directory could not be removed and is left on disk",
+	attrs := []any{
 		"run", in.GetRunId(), "task", in.GetTaskId(), "attempt", attempt,
-		"directory", what, "path", path, "error", err)
+		"directory", what, "path", path, "error", err,
+	}
+	// Which directory refused it, in what mode and whose: the error names a
+	// file, and what refused its unlink is the directory that holds it.
+	refused := removalRefusal(err)
+	if refused != "" {
+		attrs = append(attrs, "refused_by", refused)
+		err = fmt.Errorf("%w; %s", err, refused)
+	}
+	logger.Warn("attempt cleanup: a directory could not be removed and is left on disk", attrs...)
 	c.err = errors.Join(c.err, fmt.Errorf("remove the attempt's %s %s: %w", what, path, err))
 }
 
@@ -811,7 +821,7 @@ func (d *OCIDispatcher) execute(
 	// container would read; STEP 7 then writes that value and does not
 	// render twice.
 	var (
-		eachItem    json.RawMessage
+		eachItem    stablejson.RawJSON
 		rendered    map[string]any
 		preRendered bool
 	)
@@ -1707,7 +1717,7 @@ func verifyLayoutRoot(layout, digest string) (bool, error) {
 				Digest string `json:"digest"`
 			} `json:"manifests"`
 		}
-		if err := json.NewDecoder(io.LimitReader(tr, 4<<20)).Decode(&index); err != nil {
+		if err := json.UnmarshalRead(io.LimitReader(tr, 4<<20), &index); err != nil {
 			return false, fmt.Errorf("decode embedded layout index: %w", err)
 		}
 		for _, descriptor := range index.Manifests {
@@ -2739,7 +2749,7 @@ func (d *OCIDispatcher) render(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,
 	staged *stagedInputs,
-	eachItem json.RawMessage,
+	eachItem stablejson.RawJSON,
 ) (map[string]any, *Failure) {
 	with := map[string]any{}
 	if in.GetWith() != nil {

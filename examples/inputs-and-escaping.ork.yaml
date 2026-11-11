@@ -22,8 +22,8 @@
 #                  filter, and JSON is BUILT by jq, never by string splicing.
 #
 # `note` defaults to a value with a quote and a semicolon in it on purpose.
-#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --assert-runs regional --assert-skipped publish
-#   orkctl run plan --file examples/inputs-and-escaping.ork.yaml --input dry_run=false --assert-runs publish
+#   orkctl run plan -f examples/inputs-and-escaping.ork.yaml --assert-runs regional --assert-skipped publish
+#   orkctl run plan -f examples/inputs-and-escaping.ork.yaml -i dry_run=false --assert-runs publish
 apiVersion: orkstack/v1
 kind: Orkflow
 name: inputs-and-escaping

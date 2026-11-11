@@ -55,8 +55,8 @@ test('an unknown key keeps its sentence and lands on its line', () => {
 	expect(m.message).toBe('unknown key "bogus" in the Orkflow');
 });
 
-test('a decode error with no field is placed on the line yaml.v3 names inside its sentence', () => {
-	const message = 'parse yaml: yaml: unmarshal errors:\n  line 7: cannot unmarshal !!str `abc` into int32';
+test('a decode error with no field is placed on the line go-yaml names inside its sentence', () => {
+	const message = 'parse yaml: yaml: construct errors: line 7: cannot construct !!str `abc` into int32';
 	const [d] = engineFindings(SRC, [issue('', message)]);
 	expect(lineCol(SRC, d.from).line).toBe(7);
 	expect(d.message).toBe(message);

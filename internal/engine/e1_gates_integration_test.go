@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordE1Pair records one gate's gated and legacy fixtures from REAL runs on
@@ -71,9 +73,7 @@ func recordE1Pair(t *testing.T, label, change, document string, plan func(orkerQ
 			proof.Write(t, label, filepath.Base(path), encoded)
 			written := "the proof directory only (ORK_RECORD_GOLDEN_HISTORY unset)"
 			if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") != "" {
-				if err := os.WriteFile(path, encoded, 0o644); err != nil {
-					t.Fatalf("write %s: %v", path, err)
-				}
+				must.OKf(t, os.WriteFile(path, encoded, 0o644), "write %s", path)
 				written = path
 			}
 			t.Logf("recorded %d events of run %s into %s, replayed clean; markers %v",
@@ -99,9 +99,7 @@ func TestIntegration_RecordFairnessPinCreationHistories(t *testing.T) {
 			requireRecordedCreationPriority(t, path, recorded, legacy)
 			runID, _, _, _, _ := startArgs(t, recorded)
 			capture, err := replayCapturingDispatch(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("the history just recorded does not replay against current code: %v", err)
-			}
+			must.OKf(t, err, "the history just recorded does not replay against current code")
 			requireKeyed(t, "pin creation request on replay", capture.of(sessionCreationActivityName), 2, wantCreationPriority(legacy))
 		})
 }
@@ -146,9 +144,7 @@ func TestIntegration_RecordRetryMaxIntervalHistories(t *testing.T) {
 			}
 			runID, _, _, _, _ := startArgs(t, recorded)
 			capture, err := replayCapturingDispatch(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("the history just recorded does not replay against current code: %v", err)
-			}
+			must.OKf(t, err, "the history just recorded does not replay against current code")
 			requireIntervals(t, maximumIntervals(capture), 1, wantRetryMaxInterval(legacy))
 		})
 }
@@ -195,9 +191,7 @@ func TestIntegration_RecordRetryLongInitialHistories(t *testing.T) {
 			}
 			runID, _, _, _, _ := startArgs(t, recorded)
 			capture, err := replayCapturingDispatch(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("the history just recorded does not replay against current code: %v", err)
-			}
+			must.OKf(t, err, "the history just recorded does not replay against current code")
 			requireIntervals(t, maximumIntervals(capture), 1, retryLongInitial)
 		})
 }

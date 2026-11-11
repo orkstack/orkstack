@@ -11,6 +11,8 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The ledger as a state machine, driven through the orders the SDK and the
@@ -80,9 +82,7 @@ func TestCapacity_EveryOrderLeavesNothingReserved(t *testing.T) {
 			p := mustReserve(t, c)
 			c.markUsed(p)
 			a, err := c.admit(true, small)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			wantReserved(t, c, "admit", small)
 			a.ContainerCreated("c1")
 			a.ContainerRemoved(nil)
@@ -370,9 +370,7 @@ func TestDescribeOrker_ReportsCapacityAndTheRequestBounds(t *testing.T) {
 		CapacityCPU: "16", CapacityMemory: "64Gi", TaskQueue: "q",
 	})
 	described, err := activities.DescribeOrker(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := described.GetCapacity(); got.GetCpu() != 16 || got.GetMemoryBytes() != 64<<30 {
 		t.Errorf("capacity = %v", got)
 	}

@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestMain runs this package's integration tests in an object-storage bucket
@@ -52,9 +54,7 @@ func TestIntegration_ThisBinaryOwnsItsObjectStore(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	client, err := s3bucket.Client(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, err := client.HeadBucket(ctx, &s3.HeadBucketInput{Bucket: aws.String(cfg.S3Bucket)}); err != nil {
 		t.Fatalf("this binary's bucket %s does not exist: %v", cfg.S3Bucket, err)
 	}

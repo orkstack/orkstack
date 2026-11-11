@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // slowDockerShim is the real docker CLI behind a shim that makes the daemon
@@ -98,9 +100,7 @@ fi
 exec '` + realDocker + `' "$@"
 `
 	bin := filepath.Join(dir, "docker")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(bin, []byte(script), 0o755))
 	shim := &slowDockerShim{t: t, dir: dir, bin: bin}
 	shim.set("facts", orker.GoodBootProbeFacts(orker.SecurityPolicyFromEnv()))
 	return shim
@@ -108,9 +108,7 @@ exec '` + realDocker + `' "$@"
 
 func (s *slowDockerShim) set(flag, content string) {
 	s.t.Helper()
-	if err := os.WriteFile(filepath.Join(s.dir, flag), []byte(content), 0o644); err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, os.WriteFile(filepath.Join(s.dir, flag), []byte(content), 0o644))
 }
 
 func (s *slowDockerShim) runs() int {
@@ -119,13 +117,9 @@ func (s *slowDockerShim) runs() int {
 	if os.IsNotExist(err) {
 		return 0
 	}
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	n, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	return n
 }
 
@@ -137,9 +131,7 @@ func (s *slowDockerShim) realInspects() int {
 	if os.IsNotExist(err) {
 		return 0
 	}
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	return strings.Count(string(raw), "x")
 }
 
@@ -148,9 +140,7 @@ func (s *slowDockerShim) realInspects() int {
 func (s *slowDockerShim) probeContainers() (ran, removed []string) {
 	s.t.Helper()
 	raw, err := os.ReadFile(filepath.Join(s.dir, "calls"))
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	for _, line := range strings.Split(string(raw), "\n") {
 		fields := strings.Fields(line)
 		switch {
@@ -214,9 +204,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 	defer cancelSetup()
 	requireProbeImage(setup, t, realDocker)
 	workParent := "../../.data/work"
-	if err := os.MkdirAll(workParent, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(workParent, 0o755))
 
 	cases := []struct {
 		name       string
@@ -275,9 +263,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 				shim.set("present", "")
 			}
 			workRoot, err := os.MkdirTemp(workParent, proof.WorkRootPattern("ork-bindprobe"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			// The Orker hands this path to the daemon as a bind source, and
 			// Docker requires it absolute.
 			if workRoot, err = filepath.Abs(workRoot); err != nil {
@@ -285,9 +271,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 			}
 			t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
 			store, err := artifacts.NewLocalStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			t.Cleanup(func() { _ = store.Close() })
 			runtime := &orker.DockerRuntime{Bin: realDocker, BindProbeTimeout: tt.budget}
 			if !tt.realBind {
@@ -301,9 +285,7 @@ func TestIntegration_BootBindProbeSeparatesASlowDaemonFromAnUnbindableRoot(t *te
 				identify, cancelIdentify := context.WithTimeout(context.Background(), time.Minute)
 				_, err := runtime.Describe(identify)
 				cancelIdentify()
-				if err != nil {
-					t.Fatalf("identify the engine on the real daemon: %v", err)
-				}
+				must.OKf(t, err, "identify the engine on the real daemon")
 			}
 			runtime.Bin = shim.bin
 			activities := orker.NewActivitiesWithOptions(store, orker.Options{

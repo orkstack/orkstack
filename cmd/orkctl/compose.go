@@ -12,9 +12,45 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
-// childLabel is a composed task's pinned child, "name@version".
+// childLabel is a composed task's pinned child, "name@version", or
+// "namespace/name@version" for another namespace's Orkflow.
 func childLabel(child *orkstackv1.TaskChild) string {
-	return child.GetOrkflowName() + "@" + child.GetOrkflowVersion()
+	label := child.GetOrkflowName() + "@" + child.GetOrkflowVersion()
+	if ns := child.GetOrkflowNamespace(); ns != "" {
+		label = ns + "/" + label
+	}
+	return label
+}
+
+// runOrkflowLabel is the Orkflow a run ran: its name, or
+// "namespace/name" for a child run of another namespace's shared Orkflow.
+func runOrkflowLabel(run *orkstackv1.Run) string {
+	if ns := run.GetOrkflowNamespace(); ns != "" {
+		return ns + "/" + run.GetOrkflowName()
+	}
+	return run.GetOrkflowName()
+}
+
+// ownedLabel names a grouped row's Orkflow: its name, or "namespace/name"
+// for another namespace's shared Orkflow, whose runs are grouped apart.
+func ownedLabel(namespace, name string) string {
+	if namespace != "" && name != "" {
+		return namespace + "/" + name
+	}
+	return name
+}
+
+// sharedWithLabel is an Orkflow's shared_with, as `orkflow get` shows it.
+func sharedWithLabel(shares []*orkstackv1.OrkflowShare) string {
+	parts := make([]string, 0, len(shares))
+	for _, share := range shares {
+		if ns := share.GetNamespace(); ns != "" {
+			parts = append(parts, "namespace:"+ns)
+		} else {
+			parts = append(parts, "orkflow:"+share.GetOrkflow())
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // composedLine is the one line `run get` prints under the task table for a

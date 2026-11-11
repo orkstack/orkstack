@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -18,6 +18,7 @@ import {
 	repoRoot,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -168,7 +169,7 @@ function holdLogged(runID: string): boolean {
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# A run that carries on into fresh histories: the run page follows it',

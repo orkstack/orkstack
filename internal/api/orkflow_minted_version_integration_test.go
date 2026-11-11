@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // mintedReplicas builds count API replicas sharing one bucket and nothing else:
@@ -37,9 +39,7 @@ func mintedReplicas(t *testing.T, count int) ([]*api.Service, *artifacts.S3Orkfl
 	var first *artifacts.S3OrkflowStore
 	for i := range replicas {
 		store, err := artifacts.NewS3OrkflowStore(ctx, cfg)
-		if err != nil {
-			t.Fatalf("NewS3OrkflowStore: %v", err)
-		}
+		must.OKf(t, err, "NewS3OrkflowStore")
 		if first == nil {
 			first = store
 		}
@@ -67,9 +67,7 @@ func objectETags(t *testing.T, ctx context.Context, raw *s3.Client, bucket, name
 	t.Helper()
 	prefix := artifacts.OrkflowPrefix + "/" + artifacts.DefaultNamespace + "/" + name + "/"
 	out, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix)})
-	if err != nil {
-		t.Fatalf("list %s: %v", prefix, err)
-	}
+	must.OKf(t, err, "list %s", prefix)
 	etags := make(map[string]string, len(out.Contents))
 	for _, object := range out.Contents {
 		etags[aws.ToString(object.Key)] = aws.ToString(object.ETag)
@@ -127,9 +125,7 @@ func TestIntegration_ConcurrentAppliesAcrossReplicasConverge(t *testing.T) {
 			t.Fatalf("round %d: %d replicas reported created=true, want exactly one", round, creators)
 		}
 		catalog, err := store.Versions(ctx, "", name)
-		if err != nil {
-			t.Fatalf("round %d: Versions: %v", round, err)
-		}
+		must.OKf(t, err, "round %d: Versions", round)
 		if len(catalog.All) != 1 || catalog.Head != version {
 			t.Fatalf("round %d: catalog = %d versions, head %q; want one, head %q", round, len(catalog.All), catalog.Head, version)
 		}
@@ -137,9 +133,7 @@ func TestIntegration_ConcurrentAppliesAcrossReplicasConverge(t *testing.T) {
 		if etags := objectETags(t, ctx, raw, cfg.S3Bucket, name); len(etags) != 3 {
 			t.Fatalf("round %d: objects = %v, want 3", round, sortedKeysOf(etags))
 		}
-		if err := store.Delete(ctx, "", name); err != nil {
-			t.Fatalf("round %d: Delete: %v", round, err)
-		}
+		must.OKf(t, store.Delete(ctx, "", name), "round %d: Delete", round)
 	}
 }
 
@@ -163,23 +157,17 @@ func TestIntegration_ReapplyOnAnotherReplicaWritesNothing(t *testing.T) {
 	t.Cleanup(func() { _ = store.Delete(context.Background(), "", name) })
 
 	first, err := replicas[0].ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("first apply: %v", err)
-	}
+	must.OKf(t, err, "first apply")
 	before := objectETags(t, ctx, raw, cfg.S3Bucket, name)
 	for i, replica := range replicas {
 		again, err := replica.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc}))
-		if err != nil {
-			t.Fatalf("re-apply on replica %d: %v", i, err)
-		}
+		must.OKf(t, err, "re-apply on replica %d", i)
 		if again.Msg.GetCreated() || !proto.Equal(again.Msg.GetOrkflow(), first.Msg.GetOrkflow()) {
 			t.Fatalf("re-apply on replica %d = created %v, %v; want the stored %v",
 				i, again.Msg.GetCreated(), again.Msg.GetOrkflow(), first.Msg.GetOrkflow())
 		}
 		validated, err := replica.ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: doc}))
-		if err != nil {
-			t.Fatalf("validate on replica %d: %v", i, err)
-		}
+		must.OKf(t, err, "validate on replica %d", i)
 		if got := validated.Msg.GetOrkflow().GetVersion(); got != first.Msg.GetOrkflow().GetVersion() {
 			t.Fatalf("validate on replica %d reports %q, want %q", i, got, first.Msg.GetOrkflow().GetVersion())
 		}
@@ -207,14 +195,10 @@ func TestIntegration_AStoredSHA256VersionCoexistsWithMintedOnes(t *testing.T) {
 	t.Cleanup(func() { _ = store.Delete(context.Background(), "", name) })
 
 	validated, err := svc.ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("validate: %v", err)
-	}
+	must.OKf(t, err, "validate")
 	wf := proto.Clone(validated.Msg.GetOrkflow()).(*orkstackv1.Orkflow)
 	hash, err := dsl.ContentHash([]byte(doc), wf)
-	if err != nil {
-		t.Fatalf("ContentHash: %v", err)
-	}
+	must.OKf(t, err, "ContentHash")
 	wf.Version = hash
 	if wf.DefinitionDigest, err = dsl.DefinitionDigest(wf); err != nil {
 		t.Fatalf("DefinitionDigest: %v", err)
@@ -230,9 +214,7 @@ func TestIntegration_AStoredSHA256VersionCoexistsWithMintedOnes(t *testing.T) {
 
 	before := objectETags(t, ctx, raw, cfg.S3Bucket, name)
 	again, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("re-apply: %v", err)
-	}
+	must.OKf(t, err, "re-apply")
 	if again.Msg.GetCreated() || again.Msg.GetOrkflow().GetVersion() != legacy.GetVersion() {
 		t.Fatalf("re-apply = created %v, version %q; want no write and %q",
 			again.Msg.GetCreated(), again.Msg.GetOrkflow().GetVersion(), legacy.GetVersion())
@@ -243,16 +225,12 @@ func TestIntegration_AStoredSHA256VersionCoexistsWithMintedOnes(t *testing.T) {
 	}
 
 	edited, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc + "# an edit\n"}))
-	if err != nil {
-		t.Fatalf("edit: %v", err)
-	}
+	must.OKf(t, err, "edit")
 	if !edited.Msg.GetCreated() || !mintedVersionShape.MatchString(edited.Msg.GetOrkflow().GetVersion()) {
 		t.Fatalf("edit = created %v, version %q; want a minted version", edited.Msg.GetCreated(), edited.Msg.GetOrkflow().GetVersion())
 	}
 	catalog, err := store.Versions(ctx, "", name)
-	if err != nil {
-		t.Fatalf("Versions: %v", err)
-	}
+	must.OKf(t, err, "Versions")
 	if len(catalog.All) != 2 || catalog.Head != edited.Msg.GetOrkflow().GetVersion() {
 		t.Fatalf("catalog = %d versions, head %q", len(catalog.All), catalog.Head)
 	}
@@ -275,22 +253,16 @@ func TestIntegration_AClaimLeftByACrashIsAdoptedByTheNextApply(t *testing.T) {
 	t.Cleanup(func() { _ = store.Delete(context.Background(), "", name) })
 
 	validated, err := svc.ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("validate: %v", err)
-	}
+	must.OKf(t, err, "validate")
 	hash, err := dsl.ContentHash([]byte(doc), validated.Msg.GetOrkflow())
-	if err != nil {
-		t.Fatalf("ContentHash: %v", err)
-	}
+	must.OKf(t, err, "ContentHash")
 	const orphan = "01h455vb4pex5vsknk084sn02q"
 	if _, err := store.ClaimDerivedVersion(ctx, "", name, hash, orphan); err != nil {
 		t.Fatalf("claim: %v", err)
 	}
 
 	applied, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("apply: %v", err)
-	}
+	must.OKf(t, err, "apply")
 	if !applied.Msg.GetCreated() || applied.Msg.GetOrkflow().GetVersion() != orphan {
 		t.Fatalf("apply = created %v, version %q; want it stored under %q",
 			applied.Msg.GetCreated(), applied.Msg.GetOrkflow().GetVersion(), orphan)
@@ -311,17 +283,11 @@ func TestIntegration_ADamagedClaimDoesNotBlockApply(t *testing.T) {
 	t.Cleanup(func() { _ = store.Delete(context.Background(), "", name) })
 
 	first, err := replicas[0].ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("first apply: %v", err)
-	}
+	must.OKf(t, err, "first apply")
 	hash, err := dsl.ContentHash([]byte(doc), first.Msg.GetOrkflow())
-	if err != nil {
-		t.Fatalf("ContentHash: %v", err)
-	}
+	must.OKf(t, err, "ContentHash")
 	key, err := artifacts.OrkflowDerivedKey("", name, hash)
-	if err != nil {
-		t.Fatalf("OrkflowDerivedKey: %v", err)
-	}
+	must.OKf(t, err, "OrkflowDerivedKey")
 	if _, err := raw.PutObject(ctx, &s3.PutObjectInput{
 		Bucket: aws.String(cfg.S3Bucket),
 		Key:    aws.String(key),
@@ -331,9 +297,7 @@ func TestIntegration_ADamagedClaimDoesNotBlockApply(t *testing.T) {
 	}
 
 	validated, err := replicas[0].ValidateOrkflow(ctx, connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("validate over a damaged claim: %v", err)
-	}
+	must.OKf(t, err, "validate over a damaged claim")
 	if got := validated.Msg.GetOrkflow().GetVersion(); got != "" {
 		t.Fatalf("validate over a damaged claim reports %q, want none", got)
 	}
@@ -374,18 +338,14 @@ func TestIntegration_ADamagedClaimDoesNotBlockApply(t *testing.T) {
 		t.Fatalf("%d replicas reported created=true, want exactly one", creators)
 	}
 	catalog, err := store.Versions(ctx, "", name)
-	if err != nil {
-		t.Fatalf("Versions: %v", err)
-	}
+	must.OKf(t, err, "Versions")
 	if len(catalog.All) != 2 || catalog.Head != repaired {
 		t.Fatalf("catalog = %d versions, head %q; want the old and the new, head %q", len(catalog.All), catalog.Head, repaired)
 	}
 
 	before := objectETags(t, ctx, raw, cfg.S3Bucket, name)
 	again, err := replicas[1].ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("re-apply: %v", err)
-	}
+	must.OKf(t, err, "re-apply")
 	if again.Msg.GetCreated() || again.Msg.GetOrkflow().GetVersion() != repaired {
 		t.Fatalf("re-apply = created %v, version %q; want no write and %q", again.Msg.GetCreated(), again.Msg.GetOrkflow().GetVersion(), repaired)
 	}

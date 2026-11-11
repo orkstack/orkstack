@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Two acceptances that need real processes: promotion is safe when two
@@ -216,9 +218,7 @@ func TestIntegration_TwoReplicasPromoteConcurrently_OneWinnerNeverDangling(t *te
 	for _, replica := range []*engineReplica{replicaA, replicaB} {
 		listed, err := replica.flows.ListOrkflowVersions(ctx, connect.NewRequest(
 			&orkstackv1.ListOrkflowVersionsRequest{Name: name}))
-		if err != nil {
-			t.Fatalf("ListOrkflowVersions on %s: %v", replica.name, err)
-		}
+		must.OKf(t, err, "ListOrkflowVersions on %s", replica.name)
 		if listed.Msg.GetCurrentVersion() != finalA {
 			t.Errorf("%s lists current %q, want %q",
 				replica.name, listed.Msg.GetCurrentVersion(), finalA)
@@ -301,9 +301,7 @@ func TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion(t *testin
 
 	submitted, err := engineProcess.runs.SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: name}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := submitted.Msg.GetRun().GetId()
 	if got := submitted.Msg.GetRun().GetOrkflowVersion(); got != "1.0.0" {
 		t.Fatalf("the run started on version %q, want the current 1.0.0", got)
@@ -315,9 +313,7 @@ func TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion(t *testin
 	awaitRunning(ctx, t, temporalClient, runID)
 	promoted, err := engineProcess.flows.SetCurrentOrkflowVersion(ctx, connect.NewRequest(
 		&orkstackv1.SetCurrentOrkflowVersionRequest{Name: name, Version: "2.0.0"}))
-	if err != nil {
-		t.Fatalf("SetCurrentOrkflowVersion(2.0.0) mid-run: %v", err)
-	}
+	must.OKf(t, err, "SetCurrentOrkflowVersion(2.0.0) mid-run")
 	if promoted.Msg.GetPreviousVersion() != "1.0.0" {
 		t.Errorf("the promotion replaced %q, want 1.0.0", promoted.Msg.GetPreviousVersion())
 	}
@@ -331,9 +327,7 @@ func TestIntegration_APinnedRunFinishesOnItsOwnVersionAcrossAPromotion(t *testin
 	// A run submitted NOW gets the new version: the pointer really moved.
 	afterPromotion, err := engineProcess.runs.SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: name}))
-	if err != nil {
-		t.Fatalf("SubmitRun after promotion: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun after promotion")
 	if got := afterPromotion.Msg.GetRun().GetOrkflowVersion(); got != "2.0.0" {
 		t.Fatalf("a run submitted after the promotion took version %q, want 2.0.0", got)
 	}
@@ -421,9 +415,7 @@ func currentVersionOn(
 	t.Helper()
 	listed, err := replica.flows.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: name}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions on %s: %v", replica.name, err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions on %s", replica.name)
 	return listed.Msg.GetCurrentVersion()
 }
 

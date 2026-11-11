@@ -23,8 +23,8 @@ In [`examples/decide-and-route.ork.yaml`](https://github.com/orkstack/orkstack/b
 Plan the path before anything runs:
 
 ```bash
-orkctl apply examples/decide-and-route.ork.yaml
-orkctl run plan decide-and-route --output decide='{"result":{"route":"canary","notify":true}}' --assert-runs canary --assert-skipped direct
+orkctl orkflow create examples/decide-and-route.ork.yaml
+orkctl run plan decide-and-route -o decide='{"result":{"route":"canary","notify":true}}' --assert-runs canary --assert-skipped direct
 ```
 
 `orkctl run plan` reports which tasks would run, and which would be skipped and why. `--assert-runs` and `--assert-skipped` exit with status 4 when the plan disagrees with them.

@@ -36,8 +36,8 @@ pins:
 Run it. The pool needs a pin host, which an operator starts with `ORK_ORKER_MAX_PINS` above zero. The quickstart's Orker is one, and so is `make up`'s. The default repository is small and public, so the run needs no input:
 
 ```bash
-orkctl apply examples/pinned-checkout.ork.yaml
-orkctl run submit pinned-checkout --watch
+orkctl orkflow create examples/pinned-checkout.ork.yaml
+orkctl run submit pinned-checkout -w
 ```
 
 ## Send a task to a pool

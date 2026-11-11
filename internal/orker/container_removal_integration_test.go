@@ -4,7 +4,7 @@ package orker_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -19,8 +19,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests answer one question with real containers: when a task ends, or
@@ -63,9 +66,7 @@ func removeByLabel(t *testing.T, label string) {
 func containersLabelled(ctx context.Context, t *testing.T, label string) []string {
 	t.Helper()
 	out, err := exec.CommandContext(ctx, containerCLI(t), "ps", "--all", "--quiet", "--filter", "label="+label).Output()
-	if err != nil {
-		t.Fatalf("list containers labelled %s: %v", label, err)
-	}
+	must.OKf(t, err, "list containers labelled %s", label)
 	return strings.Fields(string(out))
 }
 
@@ -88,9 +89,7 @@ func awaitLabelled(ctx context.Context, t *testing.T, label string) string {
 func containerState(ctx context.Context, t *testing.T, id string) string {
 	t.Helper()
 	out, err := exec.CommandContext(ctx, containerCLI(t), "inspect", "--format", "{{.State.Status}}", id).Output()
-	if err != nil {
-		t.Fatalf("inspect container %s: %v", id, err)
-	}
+	must.OKf(t, err, "inspect container %s", id)
 	return strings.TrimSpace(string(out))
 }
 
@@ -316,9 +315,7 @@ func TestIntegration_ContainerRemoval_ACommitHitAndAMemoHitStartNoContainer(t *t
 		}
 		witness.requireOneCreatedAndRemoved(ctx, t, in.GetRunId())
 		second, err := dispatcher.Execute(ctx, in)
-		if err != nil {
-			t.Fatalf("retry: %v", err)
-		}
+		must.OKf(t, err, "retry")
 		if !second.GetCommitAdopted() {
 			t.Fatal("the retry did not adopt the commit; the case proves nothing")
 		}
@@ -340,9 +337,7 @@ func TestIntegration_ContainerRemoval_ACommitHitAndAMemoHitStartNoContainer(t *t
 			in.IdempotencyKey = "default/" + in.GetRunId() + "/memo"
 			t.Cleanup(func() { removeByLabel(t, "ork.run="+in.GetRunId()) })
 			key, err := artifacts.CommitKey("default", in.GetRunId(), "memo")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			in.CommitUri = "mem://commits/" + key
 			in.OrkflowDefinitionDigest = "sha256:removal"
 			in.Cache = &orkstackv1.CacheContext{Scope: orkstackv1.CacheScope_CACHE_SCOPE_ORKFLOW, TtlSeconds: 3600}
@@ -355,9 +350,7 @@ func TestIntegration_ContainerRemoval_ACommitHitAndAMemoHitStartNoContainer(t *t
 		witness.requireOneCreatedAndRemoved(ctx, t, first.GetRunId())
 		second := cachedRun("memo-second")
 		result, err := dispatcher.Execute(ctx, second)
-		if err != nil {
-			t.Fatalf("second run: %v", err)
-		}
+		must.OKf(t, err, "second run")
 		if got := result.GetCache().GetOutcome(); got != orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT {
 			t.Fatalf("the second run's memo step was %s; the case proves nothing", got)
 		}
@@ -424,10 +417,10 @@ const heldOrkerVar = "ORK_TEST_HELD_ORKER"
 
 // heldOrkerSpec is what the child Orker boots with and runs.
 type heldOrkerSpec struct {
-	OrkerID  string          `json:"orker_id"`
-	WorkRoot string          `json:"work_root"`
-	StoreDir string          `json:"store_dir"`
-	Input    json.RawMessage `json:"input"`
+	OrkerID  string             `json:"orker_id"`
+	WorkRoot string             `json:"work_root"`
+	StoreDir string             `json:"store_dir"`
+	Input    stablejson.RawJSON `json:"input"`
 }
 
 // runHeldOrker is the child: it boots an Orker as a deployment does, claiming
@@ -471,13 +464,9 @@ func runHeldOrker(path string) int {
 // removalWorkRoot is a fresh work root the daemon can bind.
 func removalWorkRoot(t *testing.T, name string) string {
 	t.Helper()
-	if err := os.MkdirAll("../../.data/work", 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll("../../.data/work", 0o755))
 	root, err := os.MkdirTemp("../../.data/work", proof.WorkRootPattern(name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if root, err = filepath.Abs(root); err != nil {
 		t.Fatal(err)
 	}
@@ -492,21 +481,15 @@ func removalWorkRoot(t *testing.T, name string) string {
 func startHeldOrker(ctx context.Context, t *testing.T, orkerID, workRoot string, in *orkstackv1.ExecuteTaskInput) (container string, kill func()) {
 	t.Helper()
 	encoded, err := protojson.Marshal(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body, err := json.Marshal(heldOrkerSpec{OrkerID: orkerID, WorkRoot: workRoot, StoreDir: t.TempDir(), Input: encoded})
+	must.OK(t, err)
+	body, err := stablejson.Marshal(heldOrkerSpec{OrkerID: orkerID, WorkRoot: workRoot, StoreDir: t.TempDir(), Input: encoded})
 	if err != nil {
 		t.Fatal(err)
 	}
 	specPath := filepath.Join(t.TempDir(), "held-orker.json")
-	if err := os.WriteFile(specPath, body, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(specPath, body, 0o600))
 	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cmd := exec.Command(exe)
 	cmd.Env = append(os.Environ(), heldOrkerVar+"="+specPath)
 	output := &boundedOutput{}
@@ -514,9 +497,7 @@ func startHeldOrker(ctx context.Context, t *testing.T, orkerID, workRoot string,
 	// The output is copied through a pipe the two CLIs it starts inherit
 	// nothing of, because they get pipes of their own, so Wait returns with
 	// the child.
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start the Orker: %v", err)
-	}
+	must.OKf(t, cmd.Start(), "start the Orker")
 	exited := make(chan struct{})
 	go func() {
 		_ = cmd.Wait()
@@ -575,18 +556,14 @@ func (b *boundedOutput) String() string {
 func removalLife(ctx context.Context, t *testing.T, orkerID, workRoot string, runtime orker.ContainerRuntime) *orker.Activities {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
 		Runtime: runtime, OrkerID: orkerID, WorkRoot: workRoot,
 		Commits: artifacts.NewMemoryCommitStore(), Refs: artifacts.MemoryRefPredictor{},
 	})
 	orker.SetRemovalRetryEvery(activities, time.Hour)
-	if err := activities.Boot(ctx); err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, activities.Boot(ctx), "Boot")
 	t.Cleanup(activities.Close)
 	return activities
 }
@@ -638,9 +615,7 @@ func TestIntegration_ContainerRemoval_AKilledOrkersContainerRunsUntilItsReplacem
 			// A boot looks for attempt directories under its own work root only
 			// (docs/DEPLOY.md, "What removes a task's container").
 			left, err := filepath.Glob(filepath.Join(workRoot, "ork-"+in.GetRunId()+"-*"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			switch {
 			case tt.anotherRoot && len(left) != 1:
 				t.Errorf("attempt directories under the old work root: %v, want the one no boot looks at", left)
@@ -747,17 +722,13 @@ if [ "$1" = create ] && [ -e '` + g.lateCreate + `' ]; then
 fi
 exec '` + realCLI + `' "$@"
 `
-	if err := os.WriteFile(g.path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(g.path, []byte(script), 0o755))
 	return g
 }
 
 func arm(t *testing.T, path string) {
 	t.Helper()
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, nil, 0o600))
 }
 
 // TestIntegration_ContainerRemoval_ARefusedRemovalIsTriedAgain is the daemon
@@ -790,9 +761,7 @@ func TestIntegration_ContainerRemoval_ARefusedRemovalIsTriedAgain(t *testing.T) 
 		t.Fatalf("containers while the daemon still refuses: %v", left)
 	}
 
-	if err := os.Remove(gate.refuseRm); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Remove(gate.refuseRm))
 	activities.RetryRemovals(ctx)
 	if left := containersLabelled(ctx, t, "ork.run="+in.GetRunId()); len(left) != 0 {
 		t.Fatalf("the retry after the daemon relented left: %v", left)
@@ -820,9 +789,7 @@ func TestIntegration_ContainerRemoval_ABootReapTheDaemonRefusesIsTriedAgain(t *t
 	}
 	// The boot's own probe containers were refused as well, and are owed too.
 	t.Logf("observed: %d containers of this identity after the refused boot", len(containersLabelled(ctx, t, "ork.orker="+id)))
-	if err := os.Remove(gate.refuseRm); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Remove(gate.refuseRm))
 	activities.RetryRemovals(ctx)
 	if left := containersLabelled(ctx, t, "ork.orker="+id); len(left) != 0 {
 		t.Fatalf("the retry after the daemon relented left: %v", left)
@@ -890,22 +857,16 @@ func TestIntegration_ContainerRemoval_TakesAnAnonymousVolumeWithIt(t *testing.T)
 	label := "ork.run=" + removalRunID("volume")
 	t.Cleanup(func() { removeByLabel(t, label) })
 	out, err := exec.CommandContext(ctx, cli, "create", "--label", label, "--volume", "/data", orker.BindProbeImage, "true").Output()
-	if err != nil {
-		t.Fatalf("create a container with an anonymous volume: %v", err)
-	}
+	must.OKf(t, err, "create a container with an anonymous volume")
 	id := strings.TrimSpace(string(out))
 	raw, err := exec.CommandContext(ctx, cli, "inspect", "--format", `{{range .Mounts}}{{.Name}} {{end}}`, id).Output()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	volumes := strings.Fields(string(raw))
 	if len(volumes) != 1 {
 		t.Fatalf("volumes of the container: %v, want one; the case proves nothing", volumes)
 	}
 	t.Cleanup(func() { _ = exec.Command(cli, "volume", "rm", "--force", volumes[0]).Run() })
-	if err := orker.NewDockerRuntime().Remove(ctx, orker.ContainerID(id)); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
+	must.OKf(t, orker.NewDockerRuntime().Remove(ctx, orker.ContainerID(id)), "Remove")
 	if err := exec.CommandContext(ctx, cli, "volume", "inspect", volumes[0]).Run(); err == nil {
 		t.Errorf("anonymous volume %s outlived its container", volumes[0])
 	}
@@ -939,9 +900,7 @@ func nestedDaemon(ctx context.Context, t *testing.T, workRoot string, flags stri
 		_ = cmd.Run()
 	})
 	port, err := exec.CommandContext(ctx, cli, "port", id, "2375/tcp").Output()
-	if err != nil {
-		t.Fatalf("read the nested daemon's port: %v", err)
-	}
+	must.OKf(t, err, "read the nested daemon's port")
 	host = "tcp://" + strings.TrimSpace(strings.Split(string(port), "\n")[0])
 	signalDaemon = func(sig string) {
 		cmd := exec.CommandContext(ctx, cli, "exec", id, "pkill", "-"+sig, "-x", "dockerd")

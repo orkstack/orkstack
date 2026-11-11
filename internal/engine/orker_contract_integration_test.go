@@ -17,11 +17,14 @@ import (
 	"time"
 
 	"archive/tar"
+
 	"connectrpc.com/connect"
 	"go.temporal.io/api/enums/v1"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Two more §11 claims, proven end to end through a real Orker (AGENTS.md §11,
@@ -132,17 +135,11 @@ tasks:
 	// fetches, so read it from produce's commit — a deterministic key, no
 	// dependence on when the projection wrote the snapshot.
 	key, err := artifacts.CommitKey("default", runID, "produce")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	commitStore, err := artifacts.NewCommitStore(ctx, s.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	produced, err := commitStore.Get(ctx, strings.TrimSuffix(plan.CommitRoot, "/")+"/"+key)
-	if err != nil {
-		t.Fatalf("read produce's commit: %v", err)
-	}
+	must.OKf(t, err, "read produce's commit")
 	if len(produced.Commit.GetArtifacts()) == 0 {
 		t.Fatal("produce's commit references no artifact")
 	}
@@ -150,9 +147,7 @@ tasks:
 	stream.waitFor(t, 2*time.Minute, "the gate's await", taskEvent("gate", orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING))
 	s.transcript.step("produce committed %s; the gate is open, so consume has not staged", artifact.GetUri())
 
-	if err := stores.store.Delete(ctx, artifact.GetUri()); err != nil {
-		t.Fatalf("delete the upstream artifact %s: %v", artifact.GetUri(), err)
-	}
+	must.OKf(t, stores.store.Delete(ctx, artifact.GetUri()), "delete the upstream artifact %s", artifact.GetUri())
 	if _, err := stores.store.Get(ctx, artifact.GetUri()); err == nil {
 		t.Fatalf("the upstream artifact %s still reads after the delete", artifact.GetUri())
 	}
@@ -173,17 +168,13 @@ tasks:
 		t.Fatal("the run read no events")
 	}
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := taskRunOfRun(run, "consume").GetError().GetCode(); got != "INPUT_ARTIFACT_UNAVAILABLE" {
 		t.Fatalf("the run's consume row names %s, want INPUT_ARTIFACT_UNAVAILABLE", got)
 	}
 
 	records, err := stores.attempts.ListAttempts(ctx, runID, "consume", artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(records) != 2 {
 		t.Fatalf("%d consume attempts, want 2 (the policy's maximum for an InfrastructureError)", len(records))
 	}
@@ -242,16 +233,12 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 	do := func(method, url, contentType string, body []byte, want int) *http.Response {
 		t.Helper()
 		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
-		if err != nil {
-			t.Fatalf("build %s %s: %v", method, url, err)
-		}
+		must.OKf(t, err, "build %s %s", method, url)
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
 		}
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", method, url, err)
-		}
+		must.OKf(t, err, "%s %s", method, url)
 		defer resp.Body.Close()
 		if resp.StatusCode != want {
 			var text bytes.Buffer
@@ -265,9 +252,7 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 		sum := fmt.Sprintf("sha256:%x", sha256.Sum256(blob))
 		started := do(http.MethodPost, base+"/blobs/uploads/", "", nil, http.StatusAccepted)
 		location, err := started.Location()
-		if err != nil {
-			t.Fatalf("blob upload location: %v", err)
-		}
+		must.OKf(t, err, "blob upload location")
 		query := location.Query()
 		query.Set("digest", sum)
 		location.RawQuery = query.Encode()
@@ -289,14 +274,10 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 
 	// An empty tar, gzipped, is a valid layer.
 	var tarball, layer bytes.Buffer
-	if err := tar.NewWriter(&tarball).Close(); err != nil {
-		t.Fatalf("empty tar: %v", err)
-	}
+	must.OKf(t, tar.NewWriter(&tarball).Close(), "empty tar")
 	zipper := gzip.NewWriter(&layer)
 	_, _ = zipper.Write(tarball.Bytes())
-	if err := zipper.Close(); err != nil {
-		t.Fatalf("gzip layer: %v", err)
-	}
+	must.OKf(t, zipper.Close(), "gzip layer")
 	layerDigest := pushBlob(layer.Bytes())
 	config := []byte(fmt.Sprintf(`{"architecture":"s390x","os":"linux","rootfs":{"type":"layers","diff_ids":["sha256:%x"]},"config":{}}`,
 		sha256.Sum256(tarball.Bytes())))
@@ -364,17 +345,13 @@ func TestIntegration_AFailedImagePullFailsTheTaskPerItsPolicy(t *testing.T) {
 		t.Fatal("the run read no events")
 	}
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := taskRunOfRun(run, "work").GetError().GetCode(); got != "IMAGE_PULL_FAILED" {
 		t.Fatalf("the run's work row names %s, want IMAGE_PULL_FAILED", got)
 	}
 
 	records, err := stores.attempts.ListAttempts(ctx, runID, "work", artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(records) != 2 {
 		t.Fatalf("%d attempts, want exactly the 2 the task's retry: allows", len(records))
 	}

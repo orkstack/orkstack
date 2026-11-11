@@ -70,7 +70,7 @@ it for the text: `version: '1.10'`. An Orkflow's own top-level `version:` is
 not runtime data: it is always read as text, so `version: 1.10` there names
 the version `1.10`.
 
-`orkctl export` writes a schedule's `input:` back as a mapping, quoting every
+`orkctl automation export` writes a schedule's `input:` back as a mapping, quoting every
 string a YAML reader could read as something else, so an export applies
 unchanged.
 
@@ -82,7 +82,7 @@ name already says which enum you are reading. OrkStack strips it on the way out
 and accepts it on the way in.
 
 ```jsonc
-// orkctl run get <id> --json
+// orkctl run get <id> -j
 {
   "run": {
     "id": "ork-01m6qt8vete0691h2jn074a2yk",
@@ -101,7 +101,7 @@ and accepts it on the way in.
 
 | surface | enum spelling | why |
 |---|---|---|
-| `orkctl … --json` (every data command) | short — `SUCCEEDED` | humans and `jq` read it |
+| `orkctl … -j` (every data command) | short — `SUCCEEDED` | humans and `jq` read it |
 | WebSocket bridge `/ws/runs/{id}` | short — `RUNNING` | the browser's realtime feed |
 | Connect JSON **responses** | canonical — `STATUS_SUCCEEDED` | generated clients (protobuf-es `fromJson`) only know declared names and reject anything else |
 | Connect JSON **requests** | **both accepted** | generated clients send the canonical name; hand-written ones may send the short form |
@@ -110,7 +110,7 @@ and accepts it on the way in.
 The proto contract is untouched: `Status` and `EventType` keep their `STATUS_*`
 and `EVENT_TYPE_*` value names. This is a serialization dialect, not a rename.
 
-Whatever `orkctl … --json` prints, it writes no character a terminal could
+Whatever `orkctl … -j` prints, it writes no character a terminal could
 obey: the encoder escapes the C0 controls and U+2028 and U+2029, and `orkctl`
 writes DEL, the C1 controls and the format characters (bidirectional controls,
 zero-width and tag characters) as `\u` escapes too, one past U+FFFF as its
@@ -159,17 +159,63 @@ since one rule reads both.
 
 The tolerant decoder rewrites enum names and nothing else: a request that
 protojson accepts is read as protojson reads it. It refuses, rather than
-repairs, JSON that Go's decoder would alter on the way through — text that is
-not valid UTF-8, or a string holding half of a surrogate pair (`"\ud800"`) —
-so a run's input or a name is never silently stored as something the caller
-did not send. The plain-HTTP doors (the trigger invoke route, the webhook
-registration route and the await callback routes) hold to the same rule, and
-to one JSON value per body: a second value after the first is refused, not
-ignored. A body that is only whitespace is no body; "whitespace" is JSON's own
-four characters (space, tab, line feed, carriage return), so a body wrapped in
-a no-break space is not JSON.
+repairs, JSON that a decoder could read more than one way — text that is not
+valid UTF-8, a string holding half of a surrogate pair (`"\ud800"`), and an
+object that writes a key twice — so a run's input or a name is never silently
+stored as something the caller did not send. The plain-HTTP doors (the trigger
+invoke route, the webhook registration route and the await callback routes)
+hold to the same rule, and to one JSON value per body: a second value after
+the first is refused, not ignored. A body that is only whitespace is no body;
+"whitespace" is JSON's own four characters (space, tab, line feed, carriage
+return), so a body wrapped in a no-break space is not JSON.
+
+The same rules hold for every other JSON OrkStack reads: a container's
+`values.json` (`VALUES_MALFORMED`), an await's resolution values, `orkctl`'s
+`--input`, its config file and JSON files, and every object it reads back from
+storage. That includes a `values.json` committed before this rule: a fan-out
+over it, a composed task's render of it, or a downstream template reading it
+now fails naming the repeated key, and the commit itself stands. The one
+exception is workflow code, which decides from bytes a run's history recorded:
+it reads them as the build that recorded them did, so a replayed run makes
+the decisions it made (`stablejson.DecodeRecorded`). A
+refusal names what it refused and where, as a JSON Pointer:
+
+- a key written twice names the key and the object that holds it:
+  `the key "id" appears twice in the object at /rows/0; a JSON object holds
+  each key once`;
+- a string that is not text names where it is: `the string at /name is not
+  valid UTF-8`, `the string at /name holds half of a surrogate pair, not a
+  character`;
+- anything else is the decoder's own sentence, with its place in the document:
+  `unexpected EOF within "/a" after offset 5`.
+
+A key matches a field exactly, case included. On a plain-HTTP door, and in
+`orkctl`'s config file, a key that names a field only when case is ignored is
+refused, naming both — `the top-level object has the key "URL", which is not
+one it takes: did you mean "url"? (keys match exactly, case included)` —
+rather than read into the field or dropped; a door that takes a fixed envelope (an await rejection's
+`{"reason": "..."}`) refuses every key it does not take. Connect requests are
+protojson's, which accepts a field's JSON name and its proto name and nothing
+else.
 
 ## Implementation
+
+The module reads and writes JSON with `encoding/json/v2` and
+`encoding/json/jsontext` only; `TestModule_ImportsOnlyEncodingJSONv2` refuses an
+`encoding/json` import anywhere in it. `internal/stablejson` holds what v2 needs
+to write the bytes `encoding/json` wrote wherever bytes are hashed, compared,
+stored or read by a container (a definition digest, a memo key, a plan digest,
+an evidence manifest, the workspace context files, a stored record): map keys
+sorted, a nil slice or map as `null`, `<`, `>` and `&` escaped where they were,
+U+2028 and U+2029 escaped, a `time.Duration` as integer nanoseconds. Its
+golden tests hold those bytes to the ones `encoding/json` wrote. A Go struct
+that crosses Temporal is still encoded by the SDK's own `encoding/json`, so a
+raw field in one is a `stablejson.RawJSON`, never a `jsontext.Value`, and none
+carries a v2-only tag option. A `RawJSON` field is tagged `omitzero`, never
+`omitempty`, which in v2 would also drop one holding `{}` or `null`.
+`stablejson.Explain` words every refusal above, and
+`stablejson.RefuseCaseOnlyMatch` is the case check the plain-HTTP doors and
+`orkctl`'s config share.
 
 `internal/enumname` is the one implementation of the short and canonical
 spellings (`Short`, `Proto`, `Prefix`), shared by the JSON codec and the list

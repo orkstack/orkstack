@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -11,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -132,7 +132,7 @@ func renderDeliveries(out io.Writer, req *orkstackv1.ListDeliveriesRequest, resp
 }
 
 func deliveryEventLabel(event orkstackv1.EventType) string {
-	return strings.TrimPrefix(event.String(), "EVENT_TYPE_")
+	return enumname.Of(event)
 }
 
 func yesNo(value bool) string {

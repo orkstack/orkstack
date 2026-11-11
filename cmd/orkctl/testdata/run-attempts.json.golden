@@ -18,7 +18,10 @@
       "finishedAt": "2026-01-02T03:04:06.200Z",
       "orkerId": "orker-a1",
       "pool": "default",
-      "phase": "run"
+      "phase": "run",
+      "timing": {
+        "phasesReason": "NO_PHASES"
+      }
     },
     {
       "schemaVersion": 1,
@@ -30,13 +33,34 @@
       "finishedAt": "2026-01-02T03:04:07.900Z",
       "orkerId": "orker-a1",
       "pool": "default",
-      "phase": "upload"
+      "phase": "upload",
+      "timing": {
+        "phasesReason": "NO_PHASES"
+      }
     },
     {
       "runId": "run-attempts-4",
       "taskId": "build",
       "attempt": 1,
-      "outcome": "UNREPORTED"
+      "outcome": "UNREPORTED",
+      "timing": {
+        "phasesReason": "RECLAIMED"
+      }
+    }
+  ],
+  "timings": [
+    {
+      "taskId": "flaky",
+      "queueWait": {
+        "reason": "PRE_CONTRACT"
+      }
+    },
+    {
+      "taskId": "build",
+      "queueWait": {
+        "reason": "PRE_CONTRACT"
+      },
+      "reclaimed": true
     }
   ]
 }

@@ -40,8 +40,7 @@ const (
 	// the lane by name rather than being skipped quietly.
 	fuzzMinTime = 15 * time.Second
 	// fuzzOverheadEstimate is the overhead the lane assumes for a target
-	// until it has measured fuzzOverheadSamples of them, and the allowance
-	// the budget rule (fuzzbudget_workflow_test.go) holds the target count to.
+	// until it has measured fuzzOverheadSamples of them.
 	// It is conservative: a warm local build is a few seconds, a cold one on a
 	// small runner is tens.
 	fuzzOverheadEstimate = 45 * time.Second
@@ -53,10 +52,6 @@ const (
 	// the build before it and the minimization after a crasher, before the
 	// lane stops it (fuzzDeadline).
 	fuzzTargetTail = 10 * time.Minute
-	// fuzzLaneMargin is the room a lane's step needs beyond its budget: the
-	// last target's tail and the part's own work around the lane. The CI
-	// budget plus this margin must fit the fuzz step's timeout.
-	fuzzLaneMargin = fuzzTargetTail + 5*time.Minute
 )
 
 // fuzzTunables are the numbers the allocation uses; tests lower them.

@@ -9,6 +9,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/triggers"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestVerifyAwaitToken(t *testing.T) {
@@ -39,9 +41,7 @@ func TestVerifyAwaitToken(t *testing.T) {
 	// The comparison is constant time: a timing measurement is not evidence
 	// (docs/ORKFLOW_TRIGGERS.md), so the source is held to it instead.
 	source, err := os.ReadFile("awaits.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !strings.Contains(string(source), "subtle.ConstantTimeCompare(digest, triggers.HashSecret(salt, presented))") {
 		t.Fatal("verifyAwaitToken no longer compares with crypto/subtle.ConstantTimeCompare")
 	}

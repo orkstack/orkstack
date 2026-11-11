@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // writeCounter counts every write any fake below receives. PlanAutomation
@@ -262,9 +264,7 @@ func TestPlanAutomation_WritesNothing(t *testing.T) {
 		t.Fatalf("seed webhook: %v", err)
 	}
 	resp, err := h.plan(t, automationDoc, true)
-	if err != nil {
-		t.Fatalf("PlanAutomation: %v", err)
-	}
+	must.OKf(t, err, "PlanAutomation")
 	if automation.HasErrors(resp.GetIssues()) || len(resp.GetSteps()) == 0 || resp.GetPlanDigest() == "" {
 		t.Fatalf("plan = %v", resp)
 	}
@@ -279,9 +279,7 @@ func TestPlanAutomation_WritesNothing(t *testing.T) {
 func TestPlanAutomation_ParseErrorsReturnIssuesAndNoSteps(t *testing.T) {
 	h := newAutomationHarness(t, nil)
 	resp, err := h.plan(t, "apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\ntriggers:\n", false)
-	if err != nil {
-		t.Fatalf("PlanAutomation: %v", err)
-	}
+	must.OKf(t, err, "PlanAutomation")
 	if len(resp.GetSteps()) != 0 || resp.GetPlanDigest() != "" || !automation.HasErrors(resp.GetIssues()) {
 		t.Fatalf("plan = %v, want issues, no steps and no digest", resp)
 	}
@@ -292,9 +290,7 @@ func TestPlanAutomation_NamespaceMismatchIsAnIssue(t *testing.T) {
 	resp, err := h.svc.PlanAutomation(context.Background(), connect.NewRequest(&orkstackv1.PlanAutomationRequest{
 		Yaml: automationDoc, Namespace: "billing",
 	}))
-	if err != nil {
-		t.Fatalf("PlanAutomation: %v", err)
-	}
+	must.OKf(t, err, "PlanAutomation")
 	requirePlanIssue(t, resp.Msg, "namespace", `the document describes namespace "payments" but this request is for "billing"`)
 	if len(resp.Msg.GetSteps()) != 0 || resp.Msg.GetPlanDigest() != "" {
 		t.Fatalf("a mismatched plan has steps: %v", resp.Msg)
@@ -342,9 +338,7 @@ func TestPlanAutomation_RunsTheTargetRPCsValidators(t *testing.T) {
 	}
 	for _, tc := range cases {
 		resp, err := h.plan(t, header+tc.body, false)
-		if err != nil {
-			t.Fatalf("%s: PlanAutomation: %v", tc.field, err)
-		}
+		must.OKf(t, err, "%s: PlanAutomation", tc.field)
 		requirePlanIssue(t, resp, tc.field, tc.fragment)
 	}
 }
@@ -362,9 +356,7 @@ func TestPlanAutomation_OnlyNamespaceScopedWebhooksAreRead(t *testing.T) {
 		}
 	}
 	resp, err := h.plan(t, "apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\nwebhooks: {}\n", true)
-	if err != nil {
-		t.Fatalf("PlanAutomation: %v", err)
-	}
+	must.OKf(t, err, "PlanAutomation")
 	if len(resp.GetSteps()) != 1 || resp.GetSteps()[0].GetAction() != orkstackv1.AutomationAction_AUTOMATION_ACTION_UNMANAGED ||
 		!strings.HasPrefix(resp.GetSteps()[0].GetSummary(), "https://payments.test/") {
 		t.Fatalf("steps = %v, want only the payments-scoped subscription", resp.GetSteps())
@@ -375,14 +367,10 @@ func TestPlanAutomation_PendingOrkflowsSatisfyReferences(t *testing.T) {
 	h := newAutomationHarness(t, nil)
 	doc := "apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\ntriggers:\n  a:\n    orkflow: deploy\n  b:\n    orkflow: deploy\n    version: 1.4.0\n"
 	resp, err := h.plan(t, doc, false)
-	if err != nil {
-		t.Fatalf("PlanAutomation: %v", err)
-	}
+	must.OKf(t, err, "PlanAutomation")
 	requirePlanIssue(t, resp, "triggers.a.orkflow", `orkflow "deploy" has no stored version`)
 	resp, err = h.plan(t, doc, false, &orkstackv1.PendingOrkflow{Namespace: "payments", Name: "deploy", Version: "1.4.0"})
-	if err != nil {
-		t.Fatalf("PlanAutomation: %v", err)
-	}
+	must.OKf(t, err, "PlanAutomation")
 	if automation.HasErrors(resp.GetIssues()) {
 		t.Fatalf("pending orkflows did not satisfy the references: %v", resp.GetIssues())
 	}
@@ -422,13 +410,9 @@ func TestExportAutomation_NotFoundUnavailableAndDuplicate(t *testing.T) {
 	// Two triggers share a name: the cross-replica race, reproduced by
 	// writing the second one around the store's own check.
 	first, _, err := h.triggers.Store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "hello-ork", Name: "dup"})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	must.OKf(t, err, "seed")
 	second, _, err := h.triggers.Store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "hello-ork"})
-	if err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	must.OKf(t, err, "seed")
 	h.triggers.renamed = map[string]string{second.ID: "dup"}
 	err = export("payments")
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), first.ID) || !strings.Contains(err.Error(), second.ID) {

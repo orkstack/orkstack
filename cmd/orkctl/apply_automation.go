@@ -13,16 +13,17 @@ import (
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
-// applyOptions are apply's flags beyond the global ones.
+// applyOptions are the flags of orkflow create and automation apply beyond
+// the global ones; orkflow create has only dryRun and check.
 type applyOptions struct {
 	dryRun     bool
 	check      bool
@@ -31,7 +32,8 @@ type applyOptions struct {
 	secretsOut string
 }
 
-// documentKind is what a file given to apply turned out to be.
+// documentKind is what a file given to orkflow create or automation apply
+// turned out to be; each command accepts one kind and refuses the other.
 type documentKind int
 
 const (
@@ -39,7 +41,7 @@ const (
 	automationDocument
 )
 
-// applyInput is one file apply read.
+// applyInput is one file orkflow create or automation apply read.
 type applyInput struct {
 	path   string
 	source []byte
@@ -57,7 +59,10 @@ type applyInput struct {
 // YAML document, which the peek would not see. The engine checks each kind's
 // apiVersion; YAML that does not parse is the engine's to explain, with a line,
 // through ValidateOrkflow.
-func classifyDocument(path string, source []byte) (applyInput, error) {
+//
+// accept is the kind the command takes: the other kind is refused by name,
+// pointing at the command that takes it.
+func classifyDocument(path string, source []byte, accept documentKind) (applyInput, error) {
 	if err := refuseSecondDocument(path, source); err != nil {
 		return applyInput{}, err
 	}
@@ -71,9 +76,13 @@ func classifyDocument(path string, source []byte) (applyInput, error) {
 		return in, nil
 	}
 	switch {
+	case peek.Kind == dsl.KindOrkflow && accept != orkflowDocument:
+		return in, &wrongKindFile{path: path, kind: orkflowDocument}
 	case peek.Kind == dsl.KindOrkflow:
 		in.namespace = peek.Namespace
 		return in, nil
+	case peek.Kind == dsl.KindAutomation && accept != automationDocument:
+		return in, &wrongKindFile{path: path, kind: automationDocument}
 	case peek.Kind == dsl.KindAutomation:
 		in.kind = automationDocument
 		in.namespace = peek.Namespace
@@ -96,6 +105,29 @@ func classifyDocument(path string, source []byte) (applyInput, error) {
 	}
 }
 
+// wrongKindFile is a document of the kind the other command takes: an
+// Orkflow given to automation apply, or an automation document given to
+// orkflow create. It is refused by name, in a directory too, so a directory
+// that mixes the two is refused by whichever command receives it.
+type wrongKindFile struct {
+	path string
+	kind documentKind // what the file is
+	dir  string       // the directory it was read from, or ""
+}
+
+func (e *wrongKindFile) Error() string {
+	in := ""
+	if e.dir != "" {
+		in = fmt.Sprintf(" (read from %s: keep Orkflows and automation documents in separate directories)", e.dir)
+	}
+	if e.kind == automationDocument {
+		return fmt.Sprintf("%s: kind: %s is an automation document%s, and orkctl orkflow create takes only Orkflows: "+
+			"apply it with orkctl automation apply %s; nothing was written", e.path, dsl.KindAutomation, in, e.path)
+	}
+	return fmt.Sprintf("%s: kind: %s is an Orkflow%s, and orkctl automation apply takes only automation documents: "+
+		"create it with orkctl orkflow create %s; nothing was written", e.path, dsl.KindOrkflow, in, e.path)
+}
+
 // activityInterfaceFile is a file whose kind is ActivityInterface: an
 // image's with: contract, packed into the image at build time and never
 // applied. A directory skips it; a file named on the command line is
@@ -103,7 +135,7 @@ func classifyDocument(path string, source []byte) (applyInput, error) {
 type activityInterfaceFile struct{ path string }
 
 func (e *activityInterfaceFile) Error() string {
-	return fmt.Sprintf("%s: kind: %s is an activity interface, not a document to apply: pack it into an image's "+
+	return fmt.Sprintf("%s: kind: %s is an activity interface, not an Orkflow or an automation document: pack it into an image's "+
 		"%s, %s and %s labels with orkctl activity interface pack, or build the image with orkctl activity build --interface",
 		e.path, dsl.KindActivityInterface, dsl.InterfaceLabel, dsl.IconLabel, dsl.DocsLabel)
 }
@@ -112,8 +144,9 @@ func (e *activityInterfaceFile) Error() string {
 // regular *.ork.yaml and *.ork.yml files, non-recursively, in lexical order.
 // A directory's activity interfaces are skipped, and returned by path so
 // the caller can say so: an image's interface.ork.yaml may sit beside the
-// Orkflows that use it.
-func expandApplyArgs(args []string) ([]applyInput, []string, error) {
+// Orkflows that use it. A document of the kind the command does not take is
+// refused, in a directory too.
+func expandApplyArgs(args []string, accept documentKind) ([]applyInput, []string, error) {
 	var skippedPaths []string
 	var inputs []applyInput
 	for _, arg := range args {
@@ -146,12 +179,16 @@ func expandApplyArgs(args []string) ([]applyInput, []string, error) {
 			if err != nil {
 				return nil, nil, fmt.Errorf("read %s: %w", path, err)
 			}
-			in, err := classifyDocument(path, source)
+			in, err := classifyDocument(path, source, accept)
 			var notApplied *activityInterfaceFile
 			if info.IsDir() && errors.As(err, &notApplied) {
 				skipped++
 				skippedPaths = append(skippedPaths, path)
 				continue
+			}
+			var wrongKind *wrongKindFile
+			if info.IsDir() && errors.As(err, &wrongKind) {
+				wrongKind.dir = arg
 			}
 			if err != nil {
 				return nil, nil, err
@@ -160,8 +197,12 @@ func expandApplyArgs(args []string) ([]applyInput, []string, error) {
 			applied++
 		}
 		if applied == 0 && skipped > 0 {
-			return nil, nil, fmt.Errorf("%s: no Orkflow or automation document to apply: its *.ork.yaml files are "+
-				"activity interfaces, which are packed into images", arg)
+			what := "no Orkflow to create"
+			if accept == automationDocument {
+				what = "no automation document to apply"
+			}
+			return nil, nil, fmt.Errorf("%s: %s: its *.ork.yaml files are "+
+				"activity interfaces, which are packed into images", arg, what)
 		}
 	}
 	return inputs, skippedPaths, nil
@@ -169,9 +210,12 @@ func expandApplyArgs(args []string) ([]applyInput, []string, error) {
 
 // applyRun is one invocation's state, in the shape `--json` prints.
 type applyRun struct {
-	g      *globalFlags
-	cmd    *cobra.Command
-	opts   applyOptions
+	g    *globalFlags
+	cmd  *cobra.Command
+	opts applyOptions
+	// accept is the command's kind: orkflowDocument is orkflow create,
+	// automationDocument automation apply.
+	accept documentKind
 	report *orkstackv1.ApplyReport
 	// sources are the orkflow documents' bytes by file, sent unchanged.
 	sources map[string][]byte
@@ -187,23 +231,23 @@ type applyRun struct {
 	secretsWritten bool
 }
 
-// runApplyDocuments is apply for anything but the one shape that existed
-// before automation documents: Orkflow documents first, then each
-// namespace's plan, nothing written until every document has been read,
-// validated and planned.
-func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts applyOptions) error {
+// runApplyDocuments is orkflow create (accept orkflowDocument) for anything
+// but one file with no flag, and automation apply (accept
+// automationDocument): nothing is written until every document has been
+// read, validated and planned.
+func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts applyOptions, accept documentKind) error {
 	if opts.check {
 		opts.dryRun = true
 	}
 	if opts.secretsOut != "" && opts.dryRun {
-		return fmt.Errorf("--secrets-out writes the secrets an apply discloses; a dry run discloses none")
+		return fmt.Errorf("--secrets-out writes the secrets an automation apply discloses; a dry run discloses none")
 	}
-	inputs, skipped, err := expandApplyArgs(args)
+	inputs, skipped, err := expandApplyArgs(args, accept)
 	if err != nil {
 		return err
 	}
 	for _, path := range skipped {
-		fmt.Fprintf(cmd.ErrOrStderr(), "skipped %s: kind: %s is packed into an image, not applied\n",
+		fmt.Fprintf(cmd.ErrOrStderr(), "skipped %s: kind: %s is packed into an image, not stored\n",
 			path, dsl.KindActivityInterface)
 	}
 	seen := map[string]string{}
@@ -218,7 +262,7 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 		seen[in.namespace] = in.path
 	}
 
-	run := &applyRun{g: g, cmd: cmd, opts: opts, report: &orkstackv1.ApplyReport{DryRun: opts.dryRun},
+	run := &applyRun{g: g, cmd: cmd, opts: opts, accept: accept, report: &orkstackv1.ApplyReport{DryRun: opts.dryRun},
 		notes: map[int][]string{}, sources: map[string][]byte{}}
 	if err := run.validateOrkflows(inputs); err != nil {
 		return err
@@ -229,7 +273,7 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 	run.checkRefusals()
 	if len(run.refusals) == 0 && !opts.dryRun && opts.secretsOut != "" {
 		// Claim the file before anything is written: a path that cannot be
-		// created must refuse the apply, not lose the secrets after it.
+		// created must refuse the whole command, not lose the secrets after it.
 		f, err := os.OpenFile(opts.secretsOut, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 		if err != nil {
 			run.refusals = append(run.refusals, fmt.Sprintf("--secrets-out %s cannot be created: %v", opts.secretsOut, err))
@@ -252,7 +296,7 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 			}
 			fmt.Fprintln(out, "Nothing was written.")
 		}
-		return &exitCodeError{code: exitError, err: errors.New("apply refused: nothing was written")}
+		return &exitCodeError{code: exitError, err: fmt.Errorf("%s refused: nothing was written", run.commandName())}
 	}
 
 	if opts.dryRun {
@@ -265,7 +309,7 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 			fmt.Fprintln(out, "Dry run: nothing was written.")
 		}
 		if opts.check && run.hasChanges() {
-			return &exitCodeError{code: exitApplyCheckChanges, err: errors.New("apply --check: the documents differ from what is stored")}
+			return &exitCodeError{code: exitApplyCheckChanges, err: fmt.Errorf("%s --check: the documents differ from what is stored", run.commandName())}
 		}
 		return nil
 	}
@@ -304,9 +348,17 @@ func runApplyDocuments(cmd *cobra.Command, g *globalFlags, args []string, opts a
 		return fmt.Errorf("write --secrets-out %s: %w (the secrets printed above are the only copy)", opts.secretsOut, writeErr)
 	}
 	if failed {
-		return &exitCodeError{code: exitError, err: errors.New("apply failed part-way; run apply again: it plans from what now exists")}
+		return &exitCodeError{code: exitError, err: fmt.Errorf("%s failed part-way; run it again: it plans from what now exists", run.commandName())}
 	}
 	return nil
+}
+
+// commandName is the command this run is, as its messages name it.
+func (r *applyRun) commandName() string {
+	if r.accept == orkflowDocument {
+		return "orkctl orkflow create"
+	}
+	return "orkctl automation apply"
 }
 
 // validateOrkflows validates every orkflow document and reads what the store
@@ -323,13 +375,6 @@ func (r *applyRun) validateOrkflows(inputs []applyInput) error {
 		}))
 		cancel()
 		if err != nil {
-			if connect.CodeOf(err) == connect.CodeNotFound {
-				if creator := automationFor(inputs, orkflowTarget(in, r.g.namespace)); creator != "" {
-					return fmt.Errorf("%s: namespace %q does not exist yet, and an orkflow is validated inside an existing "+
-						"namespace; apply %s first (it creates the namespace), then apply the orkflows; nothing was written",
-						in.path, orkflowTarget(in, r.g.namespace), creator)
-				}
-			}
 			return rpcError("validate "+in.path, err)
 		}
 		doc := &orkstackv1.OrkflowDocumentReport{File: in.path, Validated: validated.Msg}
@@ -339,7 +384,7 @@ func (r *applyRun) validateOrkflows(inputs []applyInput) error {
 		}
 		wf := validated.Msg.GetOrkflow()
 		// A document with no version names none because its content was never
-		// applied. An empty version would read as "the current one" below, and
+		// created. An empty version would read as "the current one" below, and
 		// report this document as conflicting with it.
 		if wf.GetVersion() == "" {
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_NEW
@@ -358,35 +403,13 @@ func (r *applyRun) validateOrkflows(inputs []applyInput) error {
 		case bytes.Equal([]byte(stored.Msg.GetOrkflow().GetSourceYaml()), in.source):
 			// The store's own source rule (pkg/artifacts.SameStoredOrkflow):
 			// GetOrkflow returns the stored source verbatim, so this says
-			// identical exactly when the apply would be a no-op on the source.
+			// identical exactly when the create would be a no-op on the source.
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_IDENTICAL
 		default:
 			doc.Stored = orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_CONFLICTING
 		}
 	}
 	return nil
-}
-
-// orkflowTarget is the namespace an orkflow document is applied into: its
-// own namespace:, else the request's, else the default.
-func orkflowTarget(in applyInput, requested string) string {
-	for _, ns := range []string{in.namespace, requested} {
-		if ns != "" {
-			return ns
-		}
-	}
-	return "default"
-}
-
-// automationFor names the automation document of this invocation that
-// describes namespace ns, or "".
-func automationFor(inputs []applyInput, ns string) string {
-	for _, in := range inputs {
-		if in.kind == automationDocument && in.namespace == ns {
-			return in.path
-		}
-	}
-	return ""
 }
 
 // orkflowNamespace is where an orkflow document lands: its own namespace:,
@@ -398,19 +421,9 @@ func orkflowNamespace(wf *orkstackv1.Orkflow, requested string) string {
 	return requested
 }
 
-// planAutomation plans every automation document, telling each plan which
-// orkflow versions this invocation stores first.
+// planAutomation plans every automation document against what its
+// namespace holds: the Orkflows it names must already be created.
 func (r *applyRun) planAutomation(inputs []applyInput) error {
-	var pending []*orkstackv1.PendingOrkflow
-	for _, doc := range r.report.GetOrkflows() {
-		switch doc.GetStored() {
-		case orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_NEW, orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_IDENTICAL:
-			wf := doc.GetValidated().GetOrkflow()
-			pending = append(pending, &orkstackv1.PendingOrkflow{
-				Namespace: orkflowNamespace(wf, r.g.namespace), Name: wf.GetName(), Version: wf.GetVersion(),
-			})
-		}
-	}
 	// The document's namespace: is authoritative; only an -n typed on this
 	// command line is sent, so a saved default never refuses another
 	// namespace's document in a directory.
@@ -424,7 +437,7 @@ func (r *applyRun) planAutomation(inputs []applyInput) error {
 		}
 		ctx, cancel := r.g.unaryContext(r.cmd)
 		planned, err := r.g.automationClient().PlanAutomation(ctx, connect.NewRequest(&orkstackv1.PlanAutomationRequest{
-			Yaml: string(in.source), Namespace: explicit, Prune: r.opts.prune, PendingOrkflows: pending,
+			Yaml: string(in.source), Namespace: explicit, Prune: r.opts.prune,
 		}))
 		cancel()
 		if connect.CodeOf(err) == connect.CodeUnimplemented {
@@ -447,7 +460,7 @@ func (r *applyRun) checkRefusals() {
 		if doc.GetStored() == orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_CONFLICTING {
 			wf := doc.GetValidated().GetOrkflow()
 			r.refusals = append(r.refusals, fmt.Sprintf("%s: version %s of %s is stored with different source; "+
-				"ApplyOrkflow would refuse it — bump version: or drop it", doc.GetFile(), wf.GetVersion(), wf.GetName()))
+				"a version is immutable, so the engine would refuse it — change version: or drop it", doc.GetFile(), wf.GetVersion(), wf.GetName()))
 		}
 	}
 	for _, doc := range r.report.GetAutomation() {
@@ -472,7 +485,7 @@ func (r *applyRun) checkRefusals() {
 			if env == "" || step.GetAction() != orkstackv1.AutomationAction_AUTOMATION_ACTION_CREATE || os.Getenv(env) != "" {
 				continue
 			}
-			message := fmt.Sprintf("webhooks.%s.secret_env: $%s is not set; apply needs it to create the subscription", step.GetName(), env)
+			message := fmt.Sprintf("webhooks.%s.secret_env: $%s is not set; orkctl automation apply needs it to create the subscription", step.GetName(), env)
 			if r.opts.dryRun {
 				r.notes[i] = append(r.notes[i], "note: "+message)
 			} else {
@@ -487,7 +500,7 @@ func (r *applyRun) checkRefusals() {
 	}
 }
 
-// hasChanges reports whether applying would write anything: an actionable
+// hasChanges reports whether the command would write anything: an actionable
 // step, or an orkflow version not stored yet.
 func (r *applyRun) hasChanges() bool {
 	for _, doc := range r.report.GetOrkflows() {
@@ -505,8 +518,8 @@ func (r *applyRun) hasChanges() bool {
 	return false
 }
 
-// applyOrkflows stores each NEW orkflow version exactly as `apply FILE`
-// always has, stopping at the first failure. IDENTICAL ones are skipped: the
+// applyOrkflows stores each NEW orkflow version exactly as
+// `orkflow create FILE` does, stopping at the first failure. IDENTICAL ones are skipped: the
 // engine would write nothing anyway.
 func (r *applyRun) applyOrkflows(out io.Writer) bool {
 	for _, doc := range r.report.GetOrkflows() {
@@ -520,13 +533,12 @@ func (r *applyRun) applyOrkflows(out io.Writer) bool {
 		}))
 		cancel()
 		if err != nil {
-			fmt.Fprintf(r.cmd.ErrOrStderr(), "%v\n", rpcError("apply "+doc.GetFile(), err))
+			fmt.Fprintf(r.cmd.ErrOrStderr(), "%v\n", rpcError("create "+doc.GetFile(), err))
 			return true
 		}
 		doc.Applied = applied.Msg
 		if !r.g.json {
-			wf := applied.Msg.GetOrkflow()
-			fmt.Fprintf(out, "Applied orkflow %s (version %s)\n", wf.GetName(), wf.GetVersion())
+			fmt.Fprintln(out, createdLine(applied.Msg))
 		}
 	}
 	return false
@@ -784,12 +796,20 @@ func (r *applyRun) renderPlan(out io.Writer) {
 }
 
 func (r *applyRun) countsLine() string {
-	created, updated, deleted, stored := 0, 0, 0, 0
-	for _, doc := range r.report.GetOrkflows() {
-		if doc.GetStored() == orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_NEW {
-			stored++
+	if r.accept == orkflowDocument {
+		stored := 0
+		for _, doc := range r.report.GetOrkflows() {
+			if doc.GetStored() == orkstackv1.OrkflowStoredState_ORKFLOW_STORED_STATE_NEW {
+				stored++
+			}
 		}
+		noun := "orkflow versions"
+		if stored == 1 {
+			noun = "orkflow version"
+		}
+		return fmt.Sprintf("Plan: %d %s to store.", stored, noun)
 	}
+	created, updated, deleted := 0, 0, 0
 	for _, doc := range r.report.GetAutomation() {
 		for _, step := range doc.GetPlan().GetSteps() {
 			switch step.GetAction() {
@@ -802,15 +822,7 @@ func (r *applyRun) countsLine() string {
 			}
 		}
 	}
-	line := "Plan: "
-	if len(r.report.GetOrkflows()) > 0 {
-		noun := "orkflow versions"
-		if stored == 1 {
-			noun = "orkflow version"
-		}
-		line += fmt.Sprintf("%d %s to store; ", stored, noun)
-	}
-	return line + fmt.Sprintf("%d to create, %d to update, %d to delete.", created, updated, deleted)
+	return fmt.Sprintf("Plan: %d to create, %d to update, %d to delete.", created, updated, deleted)
 }
 
 // renderAutomationPlan prints one document's plan: its issues, its steps with
@@ -859,7 +871,7 @@ func renderAutomationPlan(out io.Writer, file string, plan *orkstackv1.PlanAutom
 }
 
 // stepLine is one step's line: symbol, kind, name, summary, id, and what
-// happens to an object the apply leaves alone.
+// happens to an object automation apply leaves alone.
 func stepLine(step *orkstackv1.AutomationStep) string {
 	parts := []string{}
 	if summary := step.GetSummary(); summary != "" {
@@ -891,7 +903,7 @@ func severityLabel(severity orkstackv1.ValidationSeverity) string {
 	return "ERROR"
 }
 
-// renderResults prints what an apply did, step by step, then the one-time
+// renderResults prints what the command did, step by step, then the one-time
 // secrets it disclosed.
 func (r *applyRun) renderResults(out io.Writer, disclosed []*orkstackv1.DisclosedSecret) {
 	failed := 0
@@ -946,11 +958,11 @@ func (r *applyRun) renderResults(out io.Writer, disclosed []*orkstackv1.Disclose
 				triggerCurlExample(r.g.baseURL(), secret.GetId(), secret.GetSecret()))
 		default:
 			if r.secretsWritten {
-				fmt.Fprintf(out, "Webhook %s (%s) was registered with a generated signing secret: secret written to %s\n",
+				fmt.Fprintf(out, "Webhook %s (%s) was created with a generated signing secret: secret written to %s\n",
 					secret.GetName(), secret.GetId(), r.opts.secretsOut)
 				continue
 			}
-			fmt.Fprintf(out, "Webhook %s (%s) was registered with a generated signing secret. It is shown once:\n  %s\n",
+			fmt.Fprintf(out, "Webhook %s (%s) was created with a generated signing secret. It is shown once:\n  %s\n",
 				secret.GetName(), secret.GetId(), secret.GetSecret())
 		}
 	}
@@ -959,7 +971,7 @@ func (r *applyRun) renderResults(out io.Writer, disclosed []*orkstackv1.Disclose
 		if failed > 1 {
 			noun = "steps"
 		}
-		fmt.Fprintf(out, "\n%d %s failed. Fix the cause and run apply again: it plans from what now exists.\n", failed, noun)
+		fmt.Fprintf(out, "\n%d %s failed. Fix the cause and run orkctl automation apply again: it plans from what now exists.\n", failed, noun)
 	}
 }
 

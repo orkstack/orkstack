@@ -2,7 +2,7 @@
 
 <!-- Generated from the Cobra tree by `make cli-reference`; do not edit. -->
 
-orkctl drives the OrkStack engine: apply orkflow DSL files, submit runs,
+orkctl drives the OrkStack engine: create orkflows from DSL files, submit runs,
 watch their events live, and inspect runs, orkflows, and activities.
 
 Everything an orkflow or a run belongs to is scoped by a namespace.
@@ -15,7 +15,7 @@ Inspect the activities this deployment can run
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -37,7 +37,7 @@ first-party image is built exactly the way any third-party image is.
 
 Flags:
 
-- `--file STRING` — path to the Dockerfile
+- `-f, --file STRING` — path to the Dockerfile
 - `--interface STRING` — a kind: ActivityInterface document to pack into the image's org.orkstack.activity.interface, org.orkstack.activity.icon and org.orkstack.activity.docs labels (each replaces a LABEL of that key in the Dockerfile; an icon or descriptions the document does not declare are set empty, clearing a base image's)
 - `--platform STRING` — target platform(s), e.g. linux/amd64,linux/arm64
 - `--push` (default `true`) — push after building; --push=false builds only
@@ -45,7 +45,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -69,7 +69,7 @@ never an Orker, and writes nothing.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -80,7 +80,7 @@ Author the with: interface an activity image declares
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -110,7 +110,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -139,11 +139,11 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -182,7 +182,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 
@@ -192,7 +192,7 @@ Inspect the deployment: what it is made of, and what is serving it
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -236,13 +236,13 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 - `--limit INT32` — records per page (0 = server default, 50; at most 200)
 - `--page-token STRING` — page token from a previous listing with the same filters
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -259,7 +259,7 @@ cosign:<key>`) and may never loosen it.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -274,7 +274,7 @@ permitted, as before the policy existed.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -308,7 +308,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -327,7 +327,7 @@ replica took the request.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -343,7 +343,7 @@ inherits it.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -357,7 +357,7 @@ answers the same.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -389,32 +389,42 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 
-## `orkctl apply`
+## `orkctl automation`
 
-Apply orkflow and automation documents
+Apply and export automation documents
 
-apply uploads orkflow DSL documents to the engine, which compiles,
-validates, and stores them. Compilation errors are reported by the engine.
+An automation document (kind: Automation) declares one namespace's
+settings, schedules, triggers and webhooks by name (docs/AUTOMATION.md).
+apply plans it against what the namespace holds and writes the plan;
+export prints the document a namespace's current objects would be applied
+from. Orkflows are created with orkctl orkflow create.
 
-Each file's kind: decides what it is: kind: Orkflow is an orkflow document
-and kind: Automation an automation document; both begin with apiVersion:
-orkstack/v1, and a file with no kind is refused before anything is sent.
+Inherited flags:
 
-It also applies automation documents (kind: Automation): one YAML file per
-namespace declaring its settings, schedules, triggers and webhooks by name
-(docs/AUTOMATION.md). The engine plans; this command sends each planned
-write to the existing RPC it names, in order. A directory is read
-non-recursively for *.ork.yaml and *.ork.yml files; orkflows are applied
-before automation, and nothing is written until every document has been
-validated and planned. A directory's activity interfaces (kind:
-ActivityInterface, packed into images by orkctl activity interface pack)
-are skipped, each named on stderr; one named on the command line is
-refused.
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl automation apply`
+
+Apply automation documents
+
+apply plans each automation document (kind: Automation) against what its
+namespace holds, then sends each planned write to the existing RPC it
+names, in order. Nothing is written until every document has been
+validated and planned. One document describes one namespace.
+
+A directory is read non-recursively for *.ork.yaml and *.ork.yml files.
+Its activity interfaces (kind: ActivityInterface) are skipped, each named
+on stderr. An Orkflow (kind: Orkflow) is refused, in a directory too:
+create Orkflows with orkctl orkflow create first, then apply the
+automation that names them.
 
 An automation document names its own namespace, which is authoritative:
 only an -n given on this command line is checked against it, and
@@ -437,7 +447,28 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl automation export`
+
+Print a namespace's automation as a document
+
+export renders the automation document a namespace's current settings,
+schedules, triggers and webhooks would be applied from (docs/AUTOMATION.md),
+so a namespace managed by hand can start being reviewed in Git:
+
+  orkctl automation export -n payments > automation.ork.yaml
+
+An unnamed trigger or webhook is outside every document. The export lists
+each one in a trailing comment with the command that names it in place —
+keeping its token or secret — and repeats that list on stderr.
+
+Inherited flags:
+
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -452,7 +483,7 @@ whether the next run of a cached task runs its container.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -474,12 +505,12 @@ Flags:
 - `--namespace-scoped` — purge the namespace-scoped memos
 - `--older-than STRING` — keep memos written within this duration, e.g. 72h
 - `--orkflow STRING` — purge this orkflow's orkflow-scoped memos
-- `--task STRING` — narrow --orkflow or --namespace-scoped to one task
+- `-t, --task STRING` — narrow --orkflow or --namespace-scoped to one task
 - `--yes` — do not ask for confirmation (required when standard input is not a terminal)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -491,33 +522,12 @@ Hit rate per cached task over a window, and the memos stored now
 Flags:
 
 - `--orkflow STRING` — only this orkflow's runs and orkflow-scoped memos
-- `--since STRING` — how far back to look: a duration such as 24h, or an RFC3339 instant (default: the last 24 hours)
+- `-s, --since STRING` — how far back to look: a duration such as 24h, or an RFC3339 instant (default: the last 24 hours)
 - `--until STRING` — the window's exclusive end, an RFC3339 instant (default: now)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
-- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
-- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
-- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
-
-## `orkctl export`
-
-Print a namespace's automation as a document
-
-export renders the automation document a namespace's current settings,
-schedules, triggers and webhooks would be applied from (docs/AUTOMATION.md),
-so a namespace managed by hand can start being reviewed in Git:
-
-  orkctl export -n payments > automation.ork.yaml
-
-An unnamed trigger or webhook is outside every document. The export lists
-each one in a trailing comment with the command that names it in place —
-keeping its token or secret — and repeats that list on stderr.
-
-Inherited flags:
-
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -531,7 +541,7 @@ may each hold an orkflow called "deploy" and never see each other's.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -566,7 +576,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -588,7 +598,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -602,7 +612,7 @@ would act in — the --namespace flag, ORK_NAMESPACE, or the saved default.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -631,11 +641,11 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -683,7 +693,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -701,7 +711,7 @@ the user has stopped thinking about.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -723,7 +733,7 @@ already running, and a restarted Orker comes back ready.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -743,7 +753,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -770,11 +780,11 @@ Flags:
 
 - `--reason STRING` — cordon reason; default keeps an existing one, else "orkctl orker drain"
 - `--timeout DURATION` (default `30m0s`) — how long to wait for the Orker to finish its tasks and pins (on this command, not the per-request timeout)
-- `--watch` — print a line each time the running tasks or open pins change
+- `-w, --watch` — print a line each time the running tasks or open pins change
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 
@@ -784,7 +794,7 @@ Show one Orker: its state, load and open pins
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -819,11 +829,11 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -838,22 +848,22 @@ again, then resumes by itself; this command cannot override that.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 
 ## `orkctl orkflow`
 
-Inspect registered orkflows and their versions
+Create and inspect orkflows and their versions
 
-An orkflow's versions are immutable: applying an edit adds a version and
+An orkflow's versions are immutable: creating an edit adds a version and
 never rewrites one. Which version runs is a pointer you move with
 `promote`, and move back the same way.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -876,7 +886,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -900,7 +910,42 @@ verdict; --json's verdict is what a CI job checks.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl orkflow create`
+
+Create orkflow versions from Orkflow documents
+
+create uploads Orkflow documents (kind: Orkflow) to the engine, which
+compiles, validates and stores each one as a version. Compilation errors
+are reported by the engine.
+
+A version is immutable: creating a document whose version is already
+stored with the same source writes nothing, and one stored with different
+source is refused. An edit is a new version; a document with no version:
+is given one when it is first created.
+
+A directory is read non-recursively for *.ork.yaml and *.ork.yml files,
+and nothing is stored until every document has been validated. A
+directory's activity interfaces (kind: ActivityInterface) are skipped,
+each named on stderr; one named on the command line is refused. An
+automation document (kind: Automation) is refused, in a directory too:
+orkctl automation apply applies those.
+
+--dry-run prints what would be stored and writes nothing. --check is a dry
+run that exits 4 when a version is not stored yet.
+
+Flags:
+
+- `--check` — a dry run that exits 4 when a version is not stored yet
+- `--dry-run` — print what would be stored and write nothing
+
+Inherited flags:
+
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -923,7 +968,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -940,7 +985,7 @@ An empty version ("") on either side means the current one, so
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -969,7 +1014,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -984,7 +1029,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1011,13 +1056,13 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 - `--limit INT32` — maximum number of orkflows to return (0 = server default)
 - `--page-token STRING` — page token from a previous list
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1044,7 +1089,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1055,7 +1100,7 @@ Validate an orkflow without storing it
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1070,7 +1115,7 @@ one, or the most recently applied when nothing was ever promoted.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1081,7 +1126,7 @@ Inspect the pools a namespace may dispatch onto
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1126,11 +1171,11 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1151,7 +1196,7 @@ started before any release was current are still executing.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1174,7 +1219,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1194,7 +1239,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1215,7 +1260,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1243,12 +1288,12 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
-- `--watch` — reprint the view whenever it changes, until interrupted
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-w, --watch` — reprint the view whenever it changes, until interrupted
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1274,7 +1319,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 
@@ -1284,7 +1329,7 @@ Submit and observe orkflow runs
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1298,7 +1343,7 @@ Flags:
 - `--allow-empty-pool` — submit even when the selected pool has no live Orkers
 - `--dry-run` — print the exact new submission without starting it
 - `--idempotency-key STRING` — fresh dedupe key for the new run
-- `--input STRINGARRAY` — override source input as key=value (repeatable)
+- `-i, --input STRINGARRAY` — override source input as key=value (repeatable)
 - `--input-json STRING` — JSON object merged into source inputs before --input
 - `--no-cache` — ignore every memo for this run: each cached task runs its container and refreshes its memo
 - `--origin-ref STRING` — correlation reference recorded on the run, e.g. a CI job URL or a ticket; at most 256 bytes
@@ -1306,7 +1351,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1317,7 +1362,7 @@ Read one recorded artifact
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1331,13 +1376,13 @@ Flags:
 - `--item INT32` — the item of the fan-out --task names (required for a fan-out)
 - `--kind STRING` — artifact kind: output, values, stdout, stderr
 - `--name STRING` — exact artifact name returned by run artifacts
-- `--output STRING` — destination file
+- `-o, --output STRING` — destination file
 - `--overwrite` — replace an existing destination file
-- `--task STRING` — task that recorded the artifact
+- `-t, --task STRING` — task that recorded the artifact
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1357,11 +1402,11 @@ Flags:
 - `--item INT32` — the item of the fan-out --task names (required for a fan-out)
 - `--kind STRING` — artifact kind: output, values, stdout, stderr
 - `--name STRING` — exact artifact name returned by run artifacts
-- `--task STRING` — task that recorded the artifact
+- `-t, --task STRING` — task that recorded the artifact
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1373,11 +1418,11 @@ List artifacts recorded for a run
 Flags:
 
 - `--item INT32` — only this item of the fan-out --task names (0-based)
-- `--task STRING` — only artifacts for this task
+- `-t, --task STRING` — only artifacts for this task
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1406,11 +1451,11 @@ so any replica answers — including one that never started the run.
 Flags:
 
 - `--item INT32` — only this item of the fan-out --task names (0-based)
-- `--task STRING` — only this task's attempts, with the full error of every failed one
+- `-t, --task STRING` — only this task's attempts, with the full error of every failed one
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1437,7 +1482,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1467,7 +1512,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1484,7 +1529,7 @@ names each member's origin, size, sha256 and state. See docs/RUN_EVIDENCE.md.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1507,11 +1552,11 @@ Flags:
 - `--no-logs` — leave out every attempt's stdout.log and stderr.log
 - `-o, --output STRING` — destination file (required unless --json)
 - `--overwrite` — replace an existing destination file
-- `--task STRING` — narrow the per-task members to one task
+- `-t, --task STRING` — narrow the per-task members to one task
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1534,7 +1579,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1571,7 +1616,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1608,12 +1653,12 @@ Flags:
 
 - `--interval DURATION` (default `5s`) — poll period under --watch (at least 1s)
 - `--item INT32` — only this item of the fan-out --task names
-- `--task STRING` — only this task
-- `--watch` — poll until the run is terminal
+- `-t, --task STRING` — only this task
+- `-w, --watch` — poll until the run is terminal
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1648,13 +1693,13 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 - `--limit INT32` — maximum number of runs to return, at most 200 (0 = server default, 200)
 - `--page-token STRING` — page token from a previous list
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1704,11 +1749,11 @@ Flags:
 - `--from-attempt INT32` — the attempt --from-seq counts chunks of (0 = the attempt --attempt pins)
 - `--from-seq INT64` — resume after this chunk sequence (0 = from the start of the task's output)
 - `--item INT32` — print this item of the fan-out --task names (0-based)
-- `--task STRING` — print only this task's output
+- `-t, --task STRING` — print only this task's output
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1723,7 +1768,7 @@ start. The engine evaluates every condition with the interpreter's own
 evaluator; nothing is started, stored, or recorded.
 
 Plan a registered orkflow by name (--version pins one; the default is the
-current one), or an unapplied document with --file.
+current one), or a document not yet stored with --file.
 
 A condition that reads an upstream task's output sees an empty output
 unless one is supplied with --output TASK=JSON or --outputs-file PATH.
@@ -1749,16 +1794,16 @@ Flags:
 - `--assert-runs STRINGARRAY` — exit 4 unless this task is planned to run (repeatable)
 - `--assert-skipped STRINGARRAY` — exit 4 unless this task is planned to be skipped (repeatable)
 - `--assume-failed STRINGARRAY` — plan as if this task, when it would run, failed after its retries (repeatable)
-- `-f, --file STRING` — plan an unapplied orkflow document instead of a registered one
-- `--input STRINGARRAY` — run input as key=value (repeatable); values that parse as JSON keep their JSON type
+- `-f, --file STRING` — plan an orkflow document that is not stored instead of a stored version
+- `-i, --input STRINGARRAY` — run input as key=value (repeatable); values that parse as JSON keep their JSON type
 - `--input-json STRING` — run input as a JSON object; merged under --input values
-- `--output STRINGARRAY` — assume a task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file
+- `-o, --output STRINGARRAY` — assume a task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file
 - `--outputs-file STRING` — a JSON object keyed by task id whose values are the assumed values.json objects
 - `--version STRING` — orkflow version (default: the current one)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1782,13 +1827,13 @@ Flags:
 
 - `--reason STRING` — why the await is rejected (with --reject)
 - `--reject` — reject the await instead of completing it
-- `--task STRING` — the awaited task to resolve (required)
+- `-t, --task STRING` — the awaited task to resolve (required)
 - `--values STRING` — the completion's values as one JSON object (default {})
 - `--values-file STRING` — read the completion's values from a file, verbatim (- for stdin)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1806,16 +1851,16 @@ Flags:
 
 - `--allow-empty-pool` — submit even when the selected pool has no live Orkers
 - `--idempotency-key STRING` — dedupe key for repeated submissions, scoped to this namespace
-- `--input STRINGARRAY` — run input as key=value (repeatable); values that parse as JSON keep their JSON type
+- `-i, --input STRINGARRAY` — run input as key=value (repeatable); values that parse as JSON keep their JSON type
 - `--input-json STRING` — run input as a JSON object; merged under --input values
 - `--no-cache` — ignore every memo for this run: each cached task runs its container and refreshes its memo
 - `--origin-ref STRING` — correlation reference recorded on the run, e.g. a CI job URL or a ticket; at most 256 bytes
 - `--version STRING` — orkflow version (default: the current one)
-- `--watch` — stream events until the run reaches a terminal state
+- `-w, --watch` — stream events until the run reaches a terminal state
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1834,8 +1879,8 @@ reclaimed, two clocks that disagree — prints `unavailable`, never 0s. A
 dash means the quantity does not apply: the task was never scheduled or
 has not finished yet.
 
-It reads the run snapshot and the per-attempt records; nothing is
-computed on the server.
+Every quantity is the engine's: it derives them from the run snapshot
+and the per-attempt records, and this command prints them.
 
 --json prints this command's own timing document (the table's data), not a
 response envelope.
@@ -1843,11 +1888,11 @@ response envelope.
 Flags:
 
 - `--item INT32` — only this item of the fan-out --task names, with its attempts
-- `--task STRING` — only this task, with its phases (a fan-out also lists its items)
+- `-t, --task STRING` — only this task, with its phases (a fan-out also lists its items)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1883,7 +1928,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1903,7 +1948,7 @@ is its audit trail.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1925,7 +1970,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1948,7 +1993,7 @@ Flags:
 - `--cron STRINGARRAY` — cron expression (5-7 fields, @daily, "@every 15m"); repeatable, fires at the union
 - `--description STRING` — operator label for this schedule
 - `--end-at STRING` — no fire after this RFC3339 time
-- `--input STRINGARRAY` — input value as key=value, submitted at every fire (repeatable)
+- `-i, --input STRINGARRAY` — input value as key=value, submitted at every fire (repeatable)
 - `--input-json STRING` — input as one JSON object, submitted at every fire
 - `--interval STRING` — fire every DURATION, aligned to the Unix epoch (e.g. 1h, 15m)
 - `--jitter STRING` — delay each fire by a random amount up to DURATION
@@ -1962,7 +2007,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1976,7 +2021,7 @@ continue; they keep their origin.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -1996,7 +2041,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2011,7 +2056,7 @@ started none.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2040,11 +2085,11 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2063,7 +2108,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2074,7 +2119,7 @@ Let a paused schedule fire again
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2099,7 +2144,7 @@ Flags:
 - `--description STRING` — replace the description
 - `--end-at STRING` — no fire after this RFC3339 time
 - `--follow-current` — clear the version pin: follow the current pointer at each fire
-- `--input STRINGARRAY` — replace the input with key=value pairs (repeatable)
+- `-i, --input STRINGARRAY` — replace the input with key=value pairs (repeatable)
 - `--input-json STRING` — replace the input with one JSON object
 - `--interval STRING` — fire every DURATION, aligned to the Unix epoch (e.g. 1h, 15m)
 - `--jitter STRING` — delay each fire by a random amount up to DURATION
@@ -2111,7 +2156,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2144,12 +2189,12 @@ Flags:
 
 - `--buckets INT` — with --by: the last N days or hours, the current one included (default 7 days or 24 hours)
 - `--by STRING` — add a series of the window by day or by hour
-- `--since STRING` — how far back to look: a duration such as 6h, or an RFC3339 instant (default: the last 24 hours; with --by, the last 7 days or 24 hours)
+- `-s, --since STRING` — how far back to look: a duration such as 6h, or an RFC3339 instant (default: the last 24 hours; with --by, the last 7 days or 24 hours)
 - `--timezone STRING` — with --by: the IANA time zone whose days or hours the series counts (default: this machine's zone, else UTC)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2173,15 +2218,15 @@ or --orkflow.
 Flags:
 
 - `--category STRING` — only failures of one category: activity_failed, infrastructure_error, contract_violation, timed_out, cancelled
-- `--group-by STRING` — comma-separated dimensions, in column order: orkflow, task, code, category, image, pool, phase, orker (default: orkflow,task,code,category)
+- `-g, --group-by STRING` — comma-separated dimensions, in column order: orkflow, task, code, category, image, pool, phase, orker (default: orkflow,task,code,category)
 - `--limit INT32` — groups to show, worst first (0: the server's default)
 - `--orkflow STRING` — only this orkflow's failed runs
-- `--since STRING` — how far back to look: a duration such as 6h, or an RFC3339 instant (default: the last 24 hours)
+- `-s, --since STRING` — how far back to look: a duration such as 6h, or an RFC3339 instant (default: the last 24 hours)
 - `--until STRING` — the window's exclusive end, an RFC3339 instant (default: now); a duration --since is measured back from it
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2206,15 +2251,15 @@ from a subset; narrow it with --since, --until or --orkflow.
 
 Flags:
 
-- `--group-by STRING` — comma-separated dimensions, in column order: orkflow, task, image, pool, phase, orker (default: task; orkflow is always a column)
+- `-g, --group-by STRING` — comma-separated dimensions, in column order: orkflow, task, image, pool, phase, orker (default: task; orkflow is always a column)
 - `--limit INT32` — groups to show, flakiest first (0: the server's default)
 - `--orkflow STRING` — only this orkflow's runs
-- `--since STRING` — how far back to look: a duration such as 168h, or an RFC3339 instant (default: the last 24 hours)
+- `-s, --since STRING` — how far back to look: a duration such as 168h, or an RFC3339 instant (default: the last 24 hours)
 - `--until STRING` — the window's exclusive end, an RFC3339 instant (default: now); a duration --since is measured back from it
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2242,13 +2287,13 @@ namespace side by side, one call each.
 
 Flags:
 
-- `--group-by STRING` — comma-separated dimensions, in column order: orkflow, task, pool; or namespace alone, which reports every namespace (default: the namespace total)
-- `--since STRING` — how far back to look: a duration such as 720h, or an RFC3339 instant (default: the last 24 hours)
+- `-g, --group-by STRING` — comma-separated dimensions, in column order: orkflow, task, pool; or namespace alone, which reports every namespace (default: the namespace total)
+- `-s, --since STRING` — how far back to look: a duration such as 720h, or an RFC3339 instant (default: the last 24 hours)
 - `--until STRING` — the window's exclusive end, an RFC3339 instant (default: now); a duration --since is measured back from it
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2259,7 +2304,7 @@ Run one task of an orkflow on this machine
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2274,7 +2319,7 @@ the container starts.
 
 With --from-run RUN, the task's upstream values and artifacts are the run's
 committed bytes, read through the engine's integrity-checked artifact reads. With
---file, an edited, unapplied document is validated by the engine and run instead
+--file, an edited document that is not stored is validated by the engine and run instead
 of the stored definition. --output and --artifact supply an upstream task's
 values.json and output files from local files.
 
@@ -2303,24 +2348,24 @@ command could not run the task.
 Flags:
 
 - `--artifact STRINGARRAY` — supply one output artifact of an upstream task as TASK/NAME=PATH (repeatable)
-- `-f, --file STRING` — run this unapplied orkflow document instead of the stored definition
+- `-f, --file STRING` — run this orkflow document, not stored, instead of the stored definition
 - `--from-run STRING` — replay against this run's recorded upstream bytes
-- `--input STRINGARRAY` — run input as key=value (repeatable); with --from-run, overrides the run's input
+- `-i, --input STRINGARRAY` — run input as key=value (repeatable); with --from-run, overrides the run's input
 - `--input-json STRING` — run input as a JSON object; merged under --input values
 - `--item INT32` — run this item of a fan-out task (required for one)
 - `--keep` — keep the work directory and print its path
 - `--need STRINGARRAY` — a failure handler's direct need and how it ended, TASK=succeeded|failed|skipped|canceled (repeatable); with --from-run it overrides the recorded outcome, without it every direct need must be named
 - `--omit-secret STRINGARRAY` — run without this declared secret (repeatable)
-- `--output STRINGARRAY` — supply an upstream task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file
+- `-o, --output STRINGARRAY` — supply an upstream task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file
 - `--outputs-file STRING` — a JSON object keyed by task id whose values are the supplied values.json objects
 - `--render-only` — stop once the input tree is sealed; start no container
 - `--secret STRINGARRAY` — supply a declared secret as NAME=file:PATH or NAME=env:VAR (repeatable)
 - `--shared STRING` — seed a pinned task's /orkstack/shared from this directory
-- `--task STRING` — the task to run (required)
+- `-t, --task STRING` — the task to run (required)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2340,7 +2385,7 @@ redirected.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2371,7 +2416,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2388,7 +2433,7 @@ is 404 on every replica.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2416,11 +2461,11 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2438,7 +2483,7 @@ unnamed, --follow-current clears the pin, --description "" clears the
 label. A trigger's orkflow cannot change: that is delete then create.
 
 Naming an unnamed trigger is how a hand-made one is brought under an
-automation document (orkctl export) without re-issuing its token.
+automation document (orkctl automation export) without re-issuing its token.
 
 Flags:
 
@@ -2449,7 +2494,7 @@ Flags:
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2460,19 +2505,19 @@ Print the orkctl version
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 
 ## `orkctl webhook`
 
-Register and inspect run-event callbacks
+Create and inspect run-event callbacks
 
 A webhook receives a signed POST when a run or one of its tasks changes
 state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
 RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,
-TASK_RESOLVED, TASK_SUCCEEDED, TASK_FAILED.
+TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED.
 
 Omitting --event means every run transition; task events are opt-in by
 name. Task events are best-effort hints with a short retry budget: a
@@ -2486,18 +2531,52 @@ shows one, `redeliver` sends one again by hand.
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl webhook create`
+
+Create a webhook: a callback URL for run events
+
+Create a webhook that calls a URL. Repeat --event to select transitions;
+omitting it subscribes to every run transition. Task events are opt-in
+and are best-effort hints: reconcile with GetRun if one must not be missed.
+
+Scope defaults to every namespace; only an explicit -n narrows it.
+ORK_NAMESPACE and the saved default do not apply here. --orkflow and
+--task narrow further; each is an exact match, empty means every, and
+--task needs at least one TASK_* event.
+
+--name gives the subscription a handle, unique in its namespace scope,
+by which an automation document addresses it; it needs an explicit -n.
+
+The signing secret is printed once, here. Deliveries carry it as
+an HMAC-SHA256 of the request body in the X-Ork-Signature header.
+
+Flags:
+
+- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--name STRING` — handle an automation document addresses this subscription by (needs -n)
+- `--orkflow STRING` — narrow to runs of this orkflow (exact name; empty means every orkflow)
+- `--secret STRING` — signing secret to use instead of a generated one
+- `-t, --task STRING` — narrow task events to this task (exact id; needs a TASK_* --event)
+
+Inherited flags:
+
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 
 ## `orkctl webhook delete`
 
-Remove a registered webhook
+Delete a webhook
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2528,20 +2607,20 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   run_id       = != =a,b       text
   webhook_id   = != =a,b       text
-  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SUCCEEDED TASK_FAILED
+  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED
   delivered    =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 - `--limit INT32` — records per page (0 = server default, 50; at most 200)
 - `--page-token STRING` — page token from a previous listing with the same filters
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2552,14 +2631,14 @@ Show one delivery record: every attempt, the signature and the body digest
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 
 ## `orkctl webhook list`
 
-List registered webhooks
+List webhooks
 
 list shows the deployment's webhook subscriptions, narrowed by --filter
 (--filter namespace= keeps the deployment-wide ones).
@@ -2578,11 +2657,11 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 Flags:
 
-- `--filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2602,41 +2681,7 @@ receiver did not accept it (after printing it, --json included).
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
-- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
-- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
-- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
-
-## `orkctl webhook register`
-
-Register a callback URL for run events
-
-Register a callback URL. Repeat --event to select transitions;
-omitting it subscribes to every run transition. Task events are opt-in
-and are best-effort hints: reconcile with GetRun if one must not be missed.
-
-Scope defaults to every namespace; only an explicit -n narrows it.
-ORK_NAMESPACE and the saved default do not apply here. --orkflow and
---task narrow further; each is an exact match, empty means every, and
---task needs at least one TASK_* event.
-
---name gives the subscription a handle, unique in its namespace scope,
-by which an automation document addresses it; it needs an explicit -n.
-
-The signing secret is printed once, here. Deliveries carry it as
-an HMAC-SHA256 of the request body in the X-Ork-Signature header.
-
-Flags:
-
-- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SUCCEEDED | TASK_FAILED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
-- `--name STRING` — handle an automation document addresses this subscription by (needs -n)
-- `--orkflow STRING` — narrow to runs of this orkflow (exact name; empty means every orkflow)
-- `--secret STRING` — signing secret to use instead of a generated one
-- `--task STRING` — narrow task events to this task (exact id; needs a TASK_* --event)
-
-Inherited flags:
-
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
@@ -2653,21 +2698,21 @@ Only the flags given change anything: --event replaces the event list,
 --clear-events empties it (every run transition), an explicit -n sets the
 namespace scope and --deployment-wide clears it, --orkflow "" and
 --task "" clear those, --name "" makes the subscription unnamed. A
-name needs a namespace scope. Rotating a secret is delete then register.
+name needs a namespace scope. Rotating a secret is delete then create.
 
 Flags:
 
 - `--clear-events` — empty the event list: every run transition
 - `--deployment-wide` — clear the namespace scope
-- `--event STRINGARRAY` — replace the event list (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SUCCEEDED | TASK_FAILED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — replace the event list (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
 - `--name STRING` — new handle ("" makes the subscription unnamed; needs a namespace scope)
 - `--orkflow STRING` — narrow to runs of this orkflow ("" clears it)
-- `--task STRING` — narrow task events to this task ("" clears it)
+- `-t, --task STRING` — narrow task events to this task ("" clears it)
 - `--url STRING` — new callback URL
 
 Inherited flags:
 
-- `--json` — emit machine-readable JSON instead of human tables
+- `-j, --json` — emit machine-readable JSON instead of human tables
 - `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)

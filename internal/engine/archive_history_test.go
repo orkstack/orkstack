@@ -15,6 +15,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A run the workflow never archived — terminated from outside, or whose
@@ -27,9 +29,7 @@ var archiveClosedAt = readerEpoch.Add(time.Minute)
 func newLocalArchiver(t *testing.T) *RunArchiver {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	return NewRunArchiver(store)
 }
@@ -40,9 +40,7 @@ func withTaskRow(t *testing.T, store *countingSnapshotStore, runID string, seque
 	t.Helper()
 	uri := snapshotURIFor(runID, sequence)
 	run := &orkstackv1.Run{}
-	if err := proto.Unmarshal(store.objects[uri], run); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(store.objects[uri], run))
 	run.TaskRuns = []*orkstackv1.TaskRun{{TaskId: "work", Status: status}}
 	store.objects[uri] = mustMarshalRun(t, run)
 }
@@ -141,30 +139,20 @@ func TestArchiveFromHistory_SaysWhatALiveReadSaid(t *testing.T) {
 			ctx := context.Background()
 			reader, runID := tc.build(t, "ork-from-history")
 			liveRun, err := reader.GetRun(ctx, runID)
-			if err != nil {
-				t.Fatalf("GetRun: %v", err)
-			}
+			must.OKf(t, err, "GetRun")
 			liveEvents, err := reader.Events(ctx, runID, 0)
-			if err != nil {
-				t.Fatalf("Events: %v", err)
-			}
+			must.OKf(t, err, "Events")
 
 			archiver := newLocalArchiver(t)
-			if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err != nil {
-				t.Fatalf("ArchiveFromHistory: %v", err)
-			}
+			must.OKf(t, NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID), "ArchiveFromHistory")
 
 			run, err := archiver.LoadRun(ctx, runID)
-			if err != nil {
-				t.Fatalf("LoadRun: %v", err)
-			}
+			must.OKf(t, err, "LoadRun")
 			if !proto.Equal(run, liveRun) {
 				t.Fatalf("the archive's run differs from the live read:\narchive %v\nlive    %v", run, liveRun)
 			}
 			events, err := archiver.LoadRunEvents(ctx, runID)
-			if err != nil {
-				t.Fatalf("LoadRunEvents: %v", err)
-			}
+			must.OKf(t, err, "LoadRunEvents")
 			if eventTypesOf(events) != eventTypesOf(liveEvents) {
 				t.Fatalf("the archive's events are %s, the live read's %s", eventTypesOf(events), eventTypesOf(liveEvents))
 			}
@@ -191,13 +179,9 @@ func TestArchiveFromHistory_AnArchivedRunIsListed(t *testing.T) {
 	reader, _ := readerOver(events, runID)
 	reader = reader.WithSnapshotStore(store)
 	archiver := newLocalArchiver(t)
-	if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err != nil {
-		t.Fatalf("ArchiveFromHistory: %v", err)
-	}
+	must.OKf(t, NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID), "ArchiveFromHistory")
 	listed, err := archiver.ListRuns(ctx, ArchiveQuery{Status: orkstackv1.Status_STATUS_CANCELED})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed) != 1 || listed[0].GetId() != runID {
 		t.Fatalf("listed %v, want the one run", listed)
 	}
@@ -286,13 +270,9 @@ func TestArchiveFromHistory_StatesWhatItCouldNotRecover(t *testing.T) {
 			reader, _ := readerOver(events, runID)
 			reader = reader.WithSnapshotStore(store)
 			archiver := newLocalArchiver(t)
-			if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err != nil {
-				t.Fatalf("ArchiveFromHistory: %v", err)
-			}
+			must.OKf(t, NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID), "ArchiveFromHistory")
 			run, err := archiver.LoadRun(ctx, runID)
-			if err != nil {
-				t.Fatalf("LoadRun: %v", err)
-			}
+			must.OKf(t, err, "LoadRun")
 			said := run.GetError().GetMessage() + " " + run.GetError().GetDetails()
 			if run.GetStatus() != tc.status || run.GetError().GetCode() != tc.code || !strings.Contains(said, tc.says) ||
 				len(run.GetTaskRuns()) != tc.tasks {
@@ -305,9 +285,7 @@ func TestArchiveFromHistory_StatesWhatItCouldNotRecover(t *testing.T) {
 				t.Fatalf("run is called %q, created %v, finished %v", run.GetOrkflowName(), run.GetCreatedAt(), run.GetFinishedAt())
 			}
 			archived, err := archiver.LoadRunEvents(ctx, runID)
-			if err != nil {
-				t.Fatalf("LoadRunEvents: %v", err)
-			}
+			must.OKf(t, err, "LoadRunEvents")
 			if got := eventTypesOf(archived); got != tc.events {
 				t.Fatalf("archived events = %s, want %s", got, tc.events)
 			}
@@ -323,22 +301,16 @@ func TestArchiveFromHistory_KeepsWhatTheRunsErrorAlreadySaid(t *testing.T) {
 	events, store := helloRunEndingWith(t, runID, terminatedClose())
 	uri := snapshotURIFor(runID, 2)
 	run := &orkstackv1.Run{}
-	if err := proto.Unmarshal(store.objects[uri], run); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(store.objects[uri], run))
 	run.Error = &orkstackv1.Error{Code: "RUN_FAILED", Message: "exit 1", Details: `task "work"`}
 	store.objects[uri] = mustMarshalRun(t, run)
 	delete(store.objects, snapshotURIFor(runID, 3))
 	reader, _ := readerOver(events, runID)
 	reader = reader.WithSnapshotStore(store)
 	archiver := newLocalArchiver(t)
-	if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err != nil {
-		t.Fatalf("ArchiveFromHistory: %v", err)
-	}
+	must.OKf(t, NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID), "ArchiveFromHistory")
 	got, err := archiver.LoadRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("LoadRun: %v", err)
-	}
+	must.OKf(t, err, "LoadRun")
 	if details := got.GetError().GetDetails(); !strings.Contains(details, `task "work"`) || !strings.Contains(details, "as of an earlier event") {
 		t.Fatalf("details = %q, want both what it said and what was lost", details)
 	}
@@ -355,13 +327,9 @@ func TestArchiveFromHistory_AnOverlayThatIsGoneIsLost(t *testing.T) {
 	reader, _ := readerOver(events, runID)
 	reader = reader.WithSnapshotStore(store)
 	archiver := newLocalArchiver(t)
-	if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err != nil {
-		t.Fatalf("ArchiveFromHistory: %v", err)
-	}
+	must.OKf(t, NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID), "ArchiveFromHistory")
 	run, err := archiver.LoadRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("LoadRun: %v", err)
-	}
+	must.OKf(t, err, "LoadRun")
 	if len(run.GetTaskRuns()) != 1 || !strings.Contains(run.GetError().GetDetails(), "as of an earlier event") {
 		t.Fatalf("run = %v, want its tasks as of an earlier event", run)
 	}
@@ -379,17 +347,13 @@ func withOverlayURI(t *testing.T, events []*historypb.HistoryEvent, sequence int
 			continue
 		}
 		var event *orkstackv1.Event
-		if err := dc.FromPayload(attrs.GetInput().GetPayloads()[0], &event); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, dc.FromPayload(attrs.GetInput().GetPayloads()[0], &event))
 		if event.GetSequence() != sequence {
 			out = append(out, e)
 			continue
 		}
 		overlayKey, err := artifacts.RunSnapshotOverlayKey("default", runID, sequence)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		out = append(out, publishEventWithURI(t, e.GetEventId(), event, "s3://test/"+overlayKey))
 	}
 	return out
@@ -418,9 +382,7 @@ func TestArchiveFromHistory_AStoreThatIsDownWritesNothing(t *testing.T) {
 	const runID = "ork-store-down"
 	down := errors.New("object storage is down")
 	overlayKey, err := artifacts.RunSnapshotOverlayKey("default", runID, 3)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, tc := range []struct {
 		name    string
 		overlay bool
@@ -460,9 +422,7 @@ func TestArchiveFromHistory_ALostSegmentIsAGap(t *testing.T) {
 	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 2, closeWith: terminated()})
 	delete(f.store.objects, f.carry.GetSegments()[0].GetObject().GetUri())
 	archiver := newLocalArchiver(t)
-	if err := NewHistoryArchiver(f.reader, archiver).ArchiveFromHistory(ctx, f.runID); err != nil {
-		t.Fatalf("ArchiveFromHistory: %v", err)
-	}
+	must.OKf(t, NewHistoryArchiver(f.reader, archiver).ArchiveFromHistory(ctx, f.runID), "ArchiveFromHistory")
 	events, err := archiver.LoadRunEvents(ctx, f.runID)
 	var lost *ArchivedEventsLostError
 	if !errors.As(err, &lost) || len(lost.Gaps) != 1 || lost.Gaps[0].First != 1 || lost.Gaps[0].Last != 5 || lost.Gaps[0].Unpublished() {
@@ -496,18 +456,14 @@ func TestArchiveFromHistory_ACarryNamingAnotherRunsObjectIsNotRead(t *testing.T)
 	f.client.generations[f.runID][f.current].events[0] = f.started(carry)
 
 	archiver := newLocalArchiver(t)
-	if err := NewHistoryArchiver(f.reader, archiver).ArchiveFromHistory(ctx, f.runID); err != nil {
-		t.Fatalf("ArchiveFromHistory: %v", err)
-	}
+	must.OKf(t, NewHistoryArchiver(f.reader, archiver).ArchiveFromHistory(ctx, f.runID), "ArchiveFromHistory")
 	for _, uri := range f.store.reads {
 		if strings.Contains(uri, other) {
 			t.Fatalf("the store was read at another run's object: %s", uri)
 		}
 	}
 	run, err := archiver.LoadRun(ctx, f.runID)
-	if err != nil {
-		t.Fatalf("LoadRun: %v", err)
-	}
+	must.OKf(t, err, "LoadRun")
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || !strings.Contains(run.GetError().GetDetails(), "not shown") {
 		t.Fatalf("run = %v, want CANCELED with its tasks stated as lost", run)
 	}

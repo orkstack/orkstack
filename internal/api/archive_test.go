@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // archiveHarness is one engine process: a run store and event bus that die with
@@ -35,9 +37,7 @@ type archiveHarness struct {
 func newArchiver(t *testing.T) *engine.RunArchiver {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewLocalRunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewLocalRunArchive")
 	t.Cleanup(func() { _ = store.Close() })
 	return engine.NewRunArchiver(store)
 }
@@ -51,9 +51,7 @@ func boot(t *testing.T, archive *engine.RunArchiver, prefix string, now func() t
 	runs := engine.NewRunStore()
 	starter := &fakeStarter{}
 	snapshotStore, err := artifacts.NewLocalRunSnapshotStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("snapshot store: %v", err)
-	}
+	must.OKf(t, err, "snapshot store")
 	t.Cleanup(func() { _ = snapshotStore.Close() })
 	var counter int
 	svc := api.NewService(api.Config{
@@ -89,9 +87,7 @@ func (h *archiveHarness) apply(t *testing.T, yaml string) {
 func (h *archiveHarness) snapshotURI(t *testing.T, run *orkstackv1.Run) string {
 	t.Helper()
 	uri, err := h.snapshots.WriteSnapshot(context.Background(), run, time.Now().UnixNano())
-	if err != nil {
-		t.Fatalf("WriteSnapshot: %v", err)
-	}
+	must.OKf(t, err, "WriteSnapshot")
 	return uri
 }
 
@@ -103,9 +99,7 @@ func (h *archiveHarness) submit(t *testing.T, name string) string {
 	t.Helper()
 	resp, err := h.svc.SubmitRun(context.Background(),
 		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	run := resp.Msg.GetRun()
 	if err := h.activities.PublishEvent(context.Background(), &orkstackv1.Event{
 		RunId:     run.GetId(),
@@ -147,9 +141,7 @@ func (h *archiveHarness) finish(t *testing.T, runID string, status orkstackv1.St
 		RunId: runID, Type: eventType, Status: status,
 		Message: "run " + status.String(), Timestamp: timestamppb.New(finishedAt),
 	}
-	if err := h.activities.PublishEvent(context.Background(), event, h.snapshotURI(t, snapshot), runID+"#terminal"); err != nil {
-		t.Fatalf("PublishEvent(terminal): %v", err)
-	}
+	must.OKf(t, h.activities.PublishEvent(context.Background(), event, h.snapshotURI(t, snapshot), runID+"#terminal"), "PublishEvent(terminal)")
 }
 
 func (h *archiveHarness) get(t *testing.T, runID string) (*orkstackv1.Run, error) {
@@ -165,9 +157,7 @@ func (h *archiveHarness) get(t *testing.T, runID string) (*orkstackv1.Run, error
 func (h *archiveHarness) list(t *testing.T, req *orkstackv1.ListRunsRequest) []*orkstackv1.Run {
 	t.Helper()
 	resp, err := h.svc.ListRuns(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	return resp.Msg.GetRuns()
 }
 
@@ -222,9 +212,7 @@ func TestEngineRestart_RunHistorySurvivesANewProcess(t *testing.T) {
 	}
 
 	recovered, err := second.get(t, succeeded)
-	if err != nil {
-		t.Fatalf("GetRun after restart: %v", err)
-	}
+	must.OKf(t, err, "GetRun after restart")
 	if recovered.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("recovered status = %s, want SUCCEEDED", recovered.GetStatus())
 	}
@@ -375,9 +363,7 @@ func TestGetRun_PrefersTheLiveSnapshotOverTheArchive(t *testing.T) {
 		Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_CANCELED,
 	})
 	run, err := harness.get(t, runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
 		t.Fatalf("GetRun returned %s, want the live snapshot CANCELED", run.GetStatus())
 	}
@@ -427,9 +413,7 @@ func TestListRuns_WithoutAnArchiveIsUnchanged(t *testing.T) {
 	})
 	resp, err := svc.ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{Filters: filters(t, "status=SUCCEEDED")}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if got := listedIDs(resp.Msg.GetRuns()); !sameIDs(got, "ork-1") {
 		t.Fatalf("listed %v, want [ork-1]", got)
 	}
@@ -444,9 +428,7 @@ func TestListRuns_WithoutAnArchiveIsUnchanged(t *testing.T) {
 func serve(t *testing.T, h *archiveHarness) (string, *http.Client) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(h.svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 
@@ -483,18 +465,14 @@ func TestStreamEvents_ReplaysAnArchivedRunAfterRestart(t *testing.T) {
 	stream, err := client.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: runID,
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	var replayed []*orkstackv1.Event
 	for stream.Receive() {
 		replayed = append(replayed, stream.Msg())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("stream error: %v", err)
-	}
+	must.OKf(t, stream.Err(), "stream error")
 	if len(replayed) != 2 {
 		t.Fatalf("replayed %d events, want the archived RUN_CREATED and RUN_SUCCEEDED", len(replayed))
 	}
@@ -508,9 +486,7 @@ func TestStreamEvents_ReplaysAnArchivedRunAfterRestart(t *testing.T) {
 	resumed, err := client.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: runID, FromSequence: 1,
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents(from_sequence=1): %v", err)
-	}
+	must.OKf(t, err, "StreamEvents(from_sequence=1)")
 	defer resumed.Close()
 	var tail []*orkstackv1.Event
 	for resumed.Receive() {
@@ -552,9 +528,7 @@ func TestWebSocketBridge_ReplaysAnArchivedRunAfterRestart(t *testing.T) {
 	defer cancel()
 
 	conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(baseURL, "http")+"/ws/runs/"+runID, nil)
-	if err != nil {
-		t.Fatalf("websocket dial: %v", err)
-	}
+	must.OKf(t, err, "websocket dial")
 	defer conn.CloseNow()
 
 	var replayed []*orkstackv1.Event
@@ -567,9 +541,7 @@ func TestWebSocketBridge_ReplaysAnArchivedRunAfterRestart(t *testing.T) {
 			t.Fatalf("frame type = %v, want text", typ)
 		}
 		var event orkstackv1.Event
-		if err := api.UnmarshalJSON(data, &event); err != nil {
-			t.Fatalf("decode frame %q: %v", data, err)
-		}
+		must.OKf(t, api.UnmarshalJSON(data, &event), "decode frame %q", data)
 		replayed = append(replayed, &event)
 	}
 	if len(replayed) != 2 {

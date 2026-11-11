@@ -3,6 +3,7 @@ import type { Budget } from './gen/orkstack/v1/namespace_pb';
 import { FailureGroupBy, type GetUsageResponse, type UsageRow } from './gen/orkstack/v1/stats_pb';
 import { shellWord } from './flakes';
 import { DASH, groupBySpelling, timestampMs } from './stats';
+import { ownedLabel } from './sharing';
 
 // ---- namespace usage and budgets ---------------------------------------------
 //
@@ -196,7 +197,7 @@ export function usageFooter(resp: GetUsageResponse): string[] {
 /** usageCell renders one keyed dimension of one row; empty is a dash. */
 export function usageCell(row: UsageRow, dim: FailureGroupBy): string {
 	switch (dim) {
-		case FailureGroupBy.ORKFLOW: return row.orkflowName || DASH;
+		case FailureGroupBy.ORKFLOW: return ownedLabel(row.orkflowNamespace, row.orkflowName) || DASH;
 		case FailureGroupBy.TASK: return row.taskId || DASH;
 		case FailureGroupBy.POOL: return row.pool || DASH;
 		default: return DASH;
@@ -208,12 +209,12 @@ export function usageCell(row: UsageRow, dim: FailureGroupBy): string {
  * the namespace always stated, --group-by only when dimensions are.
  */
 export function usageCli(namespace: string, window: string, dims: FailureGroupBy[] = []): string {
-	const parts = ['orkctl', '--namespace', shellWord(namespace || 'default'), 'stats', 'usage', '--since', shellWord(window)];
-	if (dims.length) parts.push('--group-by', shellWord(dims.map(groupBySpelling).join(',')));
+	const parts = ['orkctl', '-n', shellWord(namespace || 'default'), 'stats', 'usage', '-s', shellWord(window)];
+	if (dims.length) parts.push('-g', shellWord(dims.map(groupBySpelling).join(',')));
 	return parts.join(' ');
 }
 
 /** adminUsageCli is Admin → Usage's command: every namespace side by side. */
 export function adminUsageCli(window: string): string {
-	return `orkctl stats usage --group-by namespace --since ${shellWord(window)}`;
+	return `orkctl stats usage -g namespace -s ${shellWord(window)}`;
 }

@@ -74,7 +74,7 @@ running keeps its address until `make down`.
 `TestDevStack_EngineListensOnlyOnLoopback` holds the default.
 
 `make status` shows what is running, and `make logs` tails the engine, Orker
-and UI logs. Then `./bin/orkctl apply examples/each-fan-out.ork.yaml` and the
+and UI logs. Then `./bin/orkctl orkflow create examples/each-fan-out.ork.yaml` and the
 rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,
 with `./bin/orkctl` for `orkctl`.
 
@@ -298,20 +298,6 @@ run, with its own `ork` and `orker`, and stops them when it ends.
   network and is in no proof; the nightly workflow runs it too, with
   `make vuln-js` and `make vuln-images`, and a vulnerability any of them
   reports makes that night's run red.
-- **`feature`** — optional: the feature tier, run only with the `ci:feature`
-  label, on a push to `validate/feature/**`, or by dispatch. It runs the fast
-  gates, the tests and specs that prove your change, and its regression set,
-  and gates nothing: the `proof` check does. Name evidence the selection
-  cannot find in your PR description:
-
-  ```text
-  Proof-tests: internal/engine:TestIntegration_X
-  Proof-specs: ui/e2e/x.spec.ts
-  ```
-
-  These are the same values as `make proof-feature TESTS=… SPECS=…`. A change
-  to a path only the full proof covers (`scripts/`, `.github/`, the Makefiles,
-  `test/tools/proofrun/`, …) skips this job; the `proof` check proves it.
 - **`pr-title`** — refuses a pull request title that is not a Conventional
   Commit, because your pull request lands as one squash commit whose subject is
   its title and whose body is its description. A required check, beside
@@ -367,24 +353,18 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    screenshots (`make site-media`) when they would show it. It records a stack
    started as a release, because the sidebar shows the engine's version on every
    frame: `make down && VERSION=vX.Y.Z ORK_ORKER_ID=orker-example make up`.
-7. Optionally, check the change's evidence with a feature proof that names the
-   tests and specs proving it:
-   `make proof-feature TESTS='internal/engine:TestIntegration_X' SPECS='ui/e2e/x.spec.ts'`.
-   It writes `proof/<name>-feature/`, gitignored, and refuses (exit 2) a
-   change it cannot account for. It gates nothing; the full proof does.
-8. Commit with a Conventional Commit that names the tests and specs that
-   prove the change (and quotes the feature proof, if you ran one); keep
-   `main` buildable. A branch may hold several: what lands is one squash
-   commit.
-9. Open a pull request whose title is that Conventional Commit, such as
+7. Commit with a Conventional Commit that names the tests and specs that
+   prove the change; keep `main` buildable. A branch may hold several: what
+   lands is one squash commit.
+8. Open a pull request whose title is that Conventional Commit, such as
    `fix(orker): keep the shared directory on a retry`, and whose description
    names the tests and specs: the title becomes the subject of the squash
    commit and the description its body. The types are `feat`, `fix`, `docs`,
    `chore`, `test`, `ci`, `refactor`, `perf`, `build`, `style` and `revert`; the
    scope and a breaking change's `!` are optional.
-10. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate, and
-    `pr-title` holds the title; a local `make proof` is the equivalent path for
-    a maintainer, who lands the squash commit by hand.
+9. Merge through AGENTS.md §11.3. CI's `proof` check is the merge gate, and
+   `pr-title` holds the title; a local `make proof` is the equivalent path for
+   a maintainer, who lands the squash commit by hand.
 
 ## The changelog
 
@@ -401,11 +381,23 @@ vulnerable dependency's bump among them even when they see nothing change, a
 dependency bump that changes what they see, a deprecation, a breaking change)
 adds an entry under `## [Unreleased]` in the same pull request, in the
 subsection of its kind (`### Added`, `### Changed`, `### Deprecated`,
-`### Removed`, `### Fixed` or `### Security`). An entry is always in one
-format: a sentence or two on what changed and what they must do about it, if
-anything; an absolute link to the doc, where one holds more detail; and, once
-changes land through pull requests, a link to its pull request. A breaking
-change's entry is marked **BREAKING** (AGENTS.md §11.1, step 7). Write it for
+`### Removed`, `### Fixed` or `### Security`), once it passes one test: would
+a person who runs or uses OrkStack care about this at all? Keep what changes
+what they type, configure, see or depend on, or needs action from them, and
+always every **BREAKING** change and security fix; leave out internal minutiae,
+such as a removed example, the quickstart's internals, a reworded message
+nobody scripts against or a metric label only an internal dashboard sees. An
+entry is always in one
+format: one line in plain words on what changed for them and what they must do
+about it, if anything, at most 200 characters before its closing links; then,
+in one closing parenthesis, an absolute link to the doc that holds the detail,
+and, once changes land through pull requests, a link to its pull request. Leave
+field names, flags and edge cases to the doc it links. A breaking change's
+entry is marked **BREAKING** and listed first in its subsection. A version's
+section opens with `### Features`, a short list of its headline items, closed
+by one `**Upgrading:**` line on what to read before upgrading; the
+subsections after it stay the full record, so a headline item has its own
+entry there too (AGENTS.md §11.1, step 7). Write it for
 the people who read the release: at a release the `[Unreleased]` section becomes
 the version's own,
 `## [X.Y.Z] - YYYY-MM-DD`, with an empty `[Unreleased]` above it, and that
@@ -413,8 +405,8 @@ section's text is the GitHub release's notes, word for word, above a footer
 the release adds with each image's digest. Link to a document by its absolute
 URL: a relative link does not resolve on the release page. The page, footer
 included, must stay within GitHub's 125,000 characters, or the release is
-refused before anything is built. `make check` refuses a heading or a subsection of any other shape
-(`internal/docscheck`), and `release.yml` refuses a release while entries are
+refused before anything is built. `make check` refuses a heading or a subsection of any other shape, and an
+entry over the limit or on more than one line (`internal/docscheck`), and `release.yml` refuses a release while entries are
 still under `[Unreleased]`; docs/PROOFS.md §10, "Write the release notes", is
 the release's side of it. 0.1.0, the first release, says only "First
 release.".
@@ -432,8 +424,7 @@ go test -run='^$' -fuzz='^FuzzParse_AcceptedTextIsAFilterThatFormatsBackToItself
 go test -list '^Fuzz' ./...     # every target
 ```
 
-A target is a test to the feature proof: a changed one is evidence, and
-`make proof-feature TESTS='internal/listfilter:FuzzParse.*'` names it.
+Its seeds run in every unit gate, so the full proof runs a changed target too.
 `make fuzz` runs them all, sharing `FUZZ_BUDGET` between them.
 
 A failing input is written under `testdata/fuzz/<FuzzName>/`. Fix the code the
@@ -455,8 +446,7 @@ OrkStack. Done is judged by the merge gate: the few scale tests listed in
 failure there is a regression on `main`: fixing it, or reverting what broke
 it, is the next work, but it holds no other merge, and no release is tagged
 until the pre-release proof, which runs them all, passes; `release.yml` also
-refuses a commit whose own nightly did not pass. A feature proof means "ready
-for the merge proof", never "done". No proof, not done.
+refuses a commit whose own nightly did not pass. No proof, not done.
 
 ## Style
 

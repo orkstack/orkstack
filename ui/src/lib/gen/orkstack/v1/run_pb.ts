@@ -4,8 +4,8 @@
 
 import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
-import type { Timestamp } from "@bufbuild/protobuf/wkt";
-import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { Duration, Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_duration, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { CacheResult, CommitRef, ImageRef, JoinPolicy } from "./activity_pb";
 import { file_orkstack_v1_activity } from "./activity_pb";
 import type { ArtifactRef, Error, Payload, Status } from "./common_pb";
@@ -18,7 +18,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/run.proto.
  */
 export const file_orkstack_v1_run: GenFile = /*@__PURE__*/
-  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIisKCFRhc2tFYWNoEhAKCGV4cGFuZGVkGAEgASgIEg0KBWNvdW50GAIgASgFIm0KCVRhc2tDaGlsZBIUCgxvcmtmbG93X25hbWUYASABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAIgASgJEiEKGW9ya2Zsb3dfZGVmaW5pdGlvbl9kaWdlc3QYAyABKAkSDgoGcnVuX2lkGAQgASgJIuMGCgdUYXNrUnVuEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAMgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEg8KB2F0dGVtcHQYBCABKAUSJAoGb3V0cHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIrCglhcnRpZmFjdHMYBiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIhCgVlcnJvchgHIAEoCzISLm9ya3N0YWNrLnYxLkVycm9yEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIMCgRwb29sGAogASgJEiwKCnZhbHVlc19yZWYYCyABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhImCgZjb21taXQYDCABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSEQoJZXhpdF9jb2RlGA0gASgFEjIKEHN5c3RlbV9hcnRpZmFjdHMYDiADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIsCgtyZXRyeV9zdGF0ZRgPIAEoDjIXLm9ya3N0YWNrLnYxLlJldHJ5U3RhdGUSCwoDcGluGBAgASgJEhAKCG9ya2VyX2lkGBEgASgJEjAKDHNjaGVkdWxlZF9hdBgSIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASJQoFYXdhaXQYEyABKAsyFi5vcmtzdGFjay52MS5UYXNrQXdhaXQSIwoEZWFjaBgUIAEoCzIVLm9ya3N0YWNrLnYxLlRhc2tFYWNoEiMKBWl0ZW1zGBUgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIRCgRpdGVtGBYgASgFSACIAQESJQoFY2hpbGQYFyABKAsyFi5vcmtzdGFjay52MS5UYXNrQ2hpbGQSJwoFY2FjaGUYGCABKAsyGC5vcmtzdGFjay52MS5DYWNoZVJlc3VsdBIlCgRqb2luGBkgASgOMhcub3Jrc3RhY2sudjEuSm9pblBvbGljeUIHCgVfaXRlbUoECAIQA1IGcGx1Z2luIpUBCglUYXNrQXdhaXQSEAoIY2FsbGJhY2sYASABKAgSLAoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjMKDHJlc29sdmVkX3ZpYRgDIAEoDjIdLm9ya3N0YWNrLnYxLkF3YWl0UmVzb2x2ZWRWaWESEwoLcmVzb2x2ZWRfYnkYBCABKAkivAEKC0F3YWl0U2lnbmFsEg8KB3Rhc2tfaWQYASABKAkSDgoGcmVqZWN0GAIgASgIEg4KBnJlYXNvbhgDIAEoCRIoCgZ2YWx1ZXMYBCABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhITCgt2YWx1ZXNfanNvbhgFIAEoDBIqCgN2aWEYBiABKA4yHS5vcmtzdGFjay52MS5Bd2FpdFJlc29sdmVkVmlhEhEKCXByaW5jaXBhbBgHIAEoCSJ7CglQaGFzZVNwYW4SDQoFcGhhc2UYASABKAkSLgoKc3RhcnRlZF9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIjYKEVJlc2VydmVkUmVzb3VyY2VzEgsKA2NwdRgBIAEoARIUCgxtZW1vcnlfYnl0ZXMYAiABKAMi7wQKC1Rhc2tBdHRlbXB0EhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEg4KBnJ1bl9pZBgCIAEoCRIPCgd0YXNrX2lkGAMgASgJEg8KB2F0dGVtcHQYBCABKAUSLAoHb3V0Y29tZRgFIAEoDjIbLm9ya3N0YWNrLnYxLkF0dGVtcHRPdXRjb21lEiEKBWVycm9yGAYgASgLMhIub3Jrc3RhY2sudjEuRXJyb3ISEQoJZXhpdF9jb2RlGAcgASgFEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgKIAEoCRIMCgRwb29sGAsgASgJEg0KBXBoYXNlGAwgASgJEiQKBWltYWdlGA0gASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgOIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEhYKDmNvbW1pdF9hZG9wdGVkGA8gASgIEhAKCGJ1aWxkX2lkGBAgASgJEiYKBnBoYXNlcxgRIAMoCzIWLm9ya3N0YWNrLnYxLlBoYXNlU3BhbhIxCglyZXNvdXJjZXMYEiABKAsyHi5vcmtzdGFjay52MS5SZXNlcnZlZFJlc291cmNlcxIRCgRpdGVtGBMgASgFSACIAQESJwoFY2FjaGUYFCABKAsyGC5vcmtzdGFjay52MS5DYWNoZVJlc3VsdEIHCgVfaXRlbSK0BAoDUnVuEgoKAmlkGAEgASgJEhQKDG9ya2Zsb3dfbmFtZRgCIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YAyABKAkSIwoGc3RhdHVzGAQgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEiMKBWlucHV0GAUgASgLMhQub3Jrc3RhY2sudjEuUGF5bG9hZBIkCgZvdXRwdXQYBiABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiEKBWVycm9yGAcgASgLMhIub3Jrc3RhY2sudjEuRXJyb3ISJwoJdGFza19ydW5zGAggAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgLIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAwgASgJEiEKGW9ya2Zsb3dfZGVmaW5pdGlvbl9kaWdlc3QYDSABKAkSMgoJdGVsZW1ldHJ5GA4gASgLMh8ub3Jrc3RhY2sudjEuVGVsZW1ldHJ5U2VsZWN0aW9uEiYKBm9yaWdpbhgPIAEoCzIWLm9ya3N0YWNrLnYxLlJ1bk9yaWdpbhITCgtjYW5jZWxlZF9ieRgQIAEoCSI1ChBSdW5DYW5jZWxSZXF1ZXN0Eg4KBmZvcm1hdBgBIAEoBRIRCglwcmluY2lwYWwYAiABKAkikQEKCVJ1bk9yaWdpbhIoCgRraW5kGAEgASgOMhoub3Jrc3RhY2sudjEuUnVuT3JpZ2luS2luZBIKCgJpZBgCIAEoCRIRCglyZWZlcmVuY2UYAyABKAkSEwoLZGVzY3JpcHRpb24YBCABKAkSEQoJcHJpbmNpcGFsGAUgASgJEhMKC3Jvb3RfcnVuX2lkGAYgASgJIoUCCgVFdmVudBIOCgZydW5faWQYASABKAkSEAoIc2VxdWVuY2UYAiABKAMSJAoEdHlwZRgDIAEoDjIWLm9ya3N0YWNrLnYxLkV2ZW50VHlwZRIPCgd0YXNrX2lkGAQgASgJEiMKBnN0YXR1cxgFIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdtZXNzYWdlGAYgASgJEiIKBGRhdGEYByABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEi0KCXRpbWVzdGFtcBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoEaXRlbRgJIAEoBUgAiAEBQgcKBV9pdGVtKnMKEEF3YWl0UmVzb2x2ZWRWaWESIgoeQVdBSVRfUkVTT0xWRURfVklBX1VOU1BFQ0lGSUVEEAASGgoWQVdBSVRfUkVTT0xWRURfVklBX0FQSRABEh8KG0FXQUlUX1JFU09MVkVEX1ZJQV9DQUxMQkFDSxACKqoBCg5BdHRlbXB0T3V0Y29tZRIfChtBVFRFTVBUX09VVENPTUVfVU5TUEVDSUZJRUQQABIdChlBVFRFTVBUX09VVENPTUVfU1VDQ0VFREVEEAESGgoWQVRURU1QVF9PVVRDT01FX0ZBSUxFRBACEhwKGEFUVEVNUFRfT1VUQ09NRV9DQU5DRUxFRBADEh4KGkFUVEVNUFRfT1VUQ09NRV9VTlJFUE9SVEVEEAQqggIKClJldHJ5U3RhdGUSGwoXUkVUUllfU1RBVEVfVU5TUEVDSUZJRUQQABIlCiFSRVRSWV9TVEFURV9OT05fUkVUUllBQkxFX0ZBSUxVUkUQARIXChNSRVRSWV9TVEFURV9USU1FT1VUEAISKAokUkVUUllfU1RBVEVfTUFYSU1VTV9BVFRFTVBUU19SRUFDSEVEEAMSJAogUkVUUllfU1RBVEVfUkVUUllfUE9MSUNZX05PVF9TRVQQBBIgChxSRVRSWV9TVEFURV9DQU5DRUxfUkVRVUVTVEVEEAUSJQohUkVUUllfU1RBVEVfSU5URVJOQUxfU0VSVkVSX0VSUk9SEAYqxgEKDVJ1bk9yaWdpbktpbmQSHwobUlVOX09SSUdJTl9LSU5EX1VOU1BFQ0lGSUVEEAASGgoWUlVOX09SSUdJTl9LSU5EX1NVQk1JVBABEhsKF1JVTl9PUklHSU5fS0lORF9UUklHR0VSEAISHAoYUlVOX09SSUdJTl9LSU5EX1NDSEVEVUxFEAMSHgoaUlVOX09SSUdJTl9LSU5EX1BBUkVOVF9SVU4QBBIdChlSVU5fT1JJR0lOX0tJTkRfUlVOX0FHQUlOEAUqnAMKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKEhwKGEVWRU5UX1RZUEVfVEFTS19BV0FJVElORxALEhwKGEVWRU5UX1RZUEVfVEFTS19SRVNPTFZFRBAMEhkKFUVWRU5UX1RZUEVfU1RSRUFNX0dBUBANQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
+  fileDesc("ChVvcmtzdGFjay92MS9ydW4ucHJvdG8SC29ya3N0YWNrLnYxIisKCFRhc2tFYWNoEhAKCGV4cGFuZGVkGAEgASgIEg0KBWNvdW50GAIgASgFIogBCglUYXNrQ2hpbGQSFAoMb3JrZmxvd19uYW1lGAEgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgCIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAMgASgJEg4KBnJ1bl9pZBgEIAEoCRIZChFvcmtmbG93X25hbWVzcGFjZRgFIAEoCSKzBwoHVGFza1J1bhIPCgd0YXNrX2lkGAEgASgJEiMKBnN0YXR1cxgDIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdhdHRlbXB0GAQgASgFEiQKBm91dHB1dBgFIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKwoJYXJ0aWZhY3RzGAYgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchIuCgpzdGFydGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEcG9vbBgKIAEoCRIsCgp2YWx1ZXNfcmVmGAsgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSJgoGY29tbWl0GAwgASgLMhYub3Jrc3RhY2sudjEuQ29tbWl0UmVmEhEKCWV4aXRfY29kZRgNIAEoBRIyChBzeXN0ZW1fYXJ0aWZhY3RzGA4gAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSLAoLcmV0cnlfc3RhdGUYDyABKA4yFy5vcmtzdGFjay52MS5SZXRyeVN0YXRlEgsKA3BpbhgQIAEoCRIQCghvcmtlcl9pZBgRIAEoCRIwCgxzY2hlZHVsZWRfYXQYEiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEiUKBWF3YWl0GBMgASgLMhYub3Jrc3RhY2sudjEuVGFza0F3YWl0EiMKBGVhY2gYFCABKAsyFS5vcmtzdGFjay52MS5UYXNrRWFjaBIjCgVpdGVtcxgVIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SEQoEaXRlbRgWIAEoBUgAiAEBEiUKBWNoaWxkGBcgASgLMhYub3Jrc3RhY2sudjEuVGFza0NoaWxkEicKBWNhY2hlGBggASgLMhgub3Jrc3RhY2sudjEuQ2FjaGVSZXN1bHQSJQoEam9pbhgZIAEoDjIXLm9ya3N0YWNrLnYxLkpvaW5Qb2xpY3kSJwoGdGltaW5nGBogASgLMhcub3Jrc3RhY2sudjEuVGFza1RpbWluZxIlCgVzbGVlcBgbIAEoCzIWLm9ya3N0YWNrLnYxLlRhc2tTbGVlcEIHCgVfaXRlbUoECAIQA1IGcGx1Z2luImgKDlRpbWluZ1F1YW50aXR5EisKCGR1cmF0aW9uGAEgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEikKBnJlYXNvbhgCIAEoDjIZLm9ya3N0YWNrLnYxLlRpbWluZ1JlYXNvbiLsAQoKVGFza1RpbWluZxIRCglzY2hlZHVsZWQYASABKAgSFAoMcHJlX2NvbnRyYWN0GAIgASgIEikKBHdhaXQYAyABKAsyGy5vcmtzdGFjay52MS5UaW1pbmdRdWFudGl0eRIoCgNydW4YBCABKAsyGy5vcmtzdGFjay52MS5UaW1pbmdRdWFudGl0eRIqCgV0b3RhbBgFIAEoCzIbLm9ya3N0YWNrLnYxLlRpbWluZ1F1YW50aXR5EjQKD3NpbmNlX3NjaGVkdWxlZBgGIAEoCzIbLm9ya3N0YWNrLnYxLlRpbWluZ1F1YW50aXR5ItEBCglSdW5UaW1pbmcSLAoHZWxhcHNlZBgBIAEoCzIbLm9ya3N0YWNrLnYxLlRpbWluZ1F1YW50aXR5Ei0KCHdhaXRfc3VtGAIgASgLMhsub3Jrc3RhY2sudjEuVGltaW5nUXVhbnRpdHkSFgoOd2FpdF9zdW1fdGFza3MYAyABKAUSHgoWd2FpdF91bmF2YWlsYWJsZV90YXNrcxgEIAEoBRIvCgtjb21wdXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAiVgoNQXR0ZW1wdFRpbWluZxITCgtpbl9wcm9ncmVzcxgBIAEoCBIwCg1waGFzZXNfcmVhc29uGAIgASgOMhkub3Jrc3RhY2sudjEuVGltaW5nUmVhc29uIpUBCglUYXNrQXdhaXQSEAoIY2FsbGJhY2sYASABKAgSLAoIZGVhZGxpbmUYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEjMKDHJlc29sdmVkX3ZpYRgDIAEoDjIdLm9ya3N0YWNrLnYxLkF3YWl0UmVzb2x2ZWRWaWESEwoLcmVzb2x2ZWRfYnkYBCABKAkiSQoJVGFza1NsZWVwEg8KB3NlY29uZHMYASABKAUSKwoHd2FrZV9hdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAivAEKC0F3YWl0U2lnbmFsEg8KB3Rhc2tfaWQYASABKAkSDgoGcmVqZWN0GAIgASgIEg4KBnJlYXNvbhgDIAEoCRIoCgZ2YWx1ZXMYBCABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhITCgt2YWx1ZXNfanNvbhgFIAEoDBIqCgN2aWEYBiABKA4yHS5vcmtzdGFjay52MS5Bd2FpdFJlc29sdmVkVmlhEhEKCXByaW5jaXBhbBgHIAEoCSKqAQoJUGhhc2VTcGFuEg0KBXBoYXNlGAEgASgJEi4KCnN0YXJ0ZWRfYXQYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBItCghkdXJhdGlvbhgEIAEoCzIbLm9ya3N0YWNrLnYxLlRpbWluZ1F1YW50aXR5IjYKEVJlc2VydmVkUmVzb3VyY2VzEgsKA2NwdRgBIAEoARIUCgxtZW1vcnlfYnl0ZXMYAiABKAMimwUKC1Rhc2tBdHRlbXB0EhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEg4KBnJ1bl9pZBgCIAEoCRIPCgd0YXNrX2lkGAMgASgJEg8KB2F0dGVtcHQYBCABKAUSLAoHb3V0Y29tZRgFIAEoDjIbLm9ya3N0YWNrLnYxLkF0dGVtcHRPdXRjb21lEiEKBWVycm9yGAYgASgLMhIub3Jrc3RhY2sudjEuRXJyb3ISEQoJZXhpdF9jb2RlGAcgASgFEi4KCnN0YXJ0ZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgKIAEoCRIMCgRwb29sGAsgASgJEg0KBXBoYXNlGAwgASgJEiQKBWltYWdlGA0gASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgOIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEhYKDmNvbW1pdF9hZG9wdGVkGA8gASgIEhAKCGJ1aWxkX2lkGBAgASgJEiYKBnBoYXNlcxgRIAMoCzIWLm9ya3N0YWNrLnYxLlBoYXNlU3BhbhIxCglyZXNvdXJjZXMYEiABKAsyHi5vcmtzdGFjay52MS5SZXNlcnZlZFJlc291cmNlcxIRCgRpdGVtGBMgASgFSACIAQESJwoFY2FjaGUYFCABKAsyGC5vcmtzdGFjay52MS5DYWNoZVJlc3VsdBIqCgZ0aW1pbmcYFSABKAsyGi5vcmtzdGFjay52MS5BdHRlbXB0VGltaW5nQgcKBV9pdGVtIvcECgNSdW4SCgoCaWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIjCgZzdGF0dXMYBCABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSIwoFaW5wdXQYBSABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEiQKBm91dHB1dBgGIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSIQoFZXJyb3IYByABKAsyEi5vcmtzdGFjay52MS5FcnJvchInCgl0YXNrX3J1bnMYCCADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEi4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi4KCnN0YXJ0ZWRfYXQYCiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAsgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYDCABKAkSIQoZb3JrZmxvd19kZWZpbml0aW9uX2RpZ2VzdBgNIAEoCRIyCgl0ZWxlbWV0cnkYDiABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJgoGb3JpZ2luGA8gASgLMhYub3Jrc3RhY2sudjEuUnVuT3JpZ2luEhMKC2NhbmNlbGVkX2J5GBAgASgJEhkKEW9ya2Zsb3dfbmFtZXNwYWNlGBEgASgJEiYKBnRpbWluZxgSIAEoCzIWLm9ya3N0YWNrLnYxLlJ1blRpbWluZyI1ChBSdW5DYW5jZWxSZXF1ZXN0Eg4KBmZvcm1hdBgBIAEoBRIRCglwcmluY2lwYWwYAiABKAkikQEKCVJ1bk9yaWdpbhIoCgRraW5kGAEgASgOMhoub3Jrc3RhY2sudjEuUnVuT3JpZ2luS2luZBIKCgJpZBgCIAEoCRIRCglyZWZlcmVuY2UYAyABKAkSEwoLZGVzY3JpcHRpb24YBCABKAkSEQoJcHJpbmNpcGFsGAUgASgJEhMKC3Jvb3RfcnVuX2lkGAYgASgJIoUCCgVFdmVudBIOCgZydW5faWQYASABKAkSEAoIc2VxdWVuY2UYAiABKAMSJAoEdHlwZRgDIAEoDjIWLm9ya3N0YWNrLnYxLkV2ZW50VHlwZRIPCgd0YXNrX2lkGAQgASgJEiMKBnN0YXR1cxgFIAEoDjITLm9ya3N0YWNrLnYxLlN0YXR1cxIPCgdtZXNzYWdlGAYgASgJEiIKBGRhdGEYByABKAsyFC5vcmtzdGFjay52MS5QYXlsb2FkEi0KCXRpbWVzdGFtcBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoEaXRlbRgJIAEoBUgAiAEBQgcKBV9pdGVtKogCCgxUaW1pbmdSZWFzb24SHQoZVElNSU5HX1JFQVNPTl9VTlNQRUNJRklFRBAAEiAKHFRJTUlOR19SRUFTT05fTk9fT1JLRVJfU1RBUlQQARIcChhUSU1JTkdfUkVBU09OX0NMT0NLX1NLRVcQAhIeChpUSU1JTkdfUkVBU09OX1BSRV9DT05UUkFDVBADEhsKF1RJTUlOR19SRUFTT05fUkVDTEFJTUVEEAQSGwoXVElNSU5HX1JFQVNPTl9OT19SRUNPUkQQBRIbChdUSU1JTkdfUkVBU09OX05PX1BIQVNFUxAGEiIKHlRJTUlOR19SRUFTT05fTk9fQVRURU1QVF9TVE9SRRAHKnMKEEF3YWl0UmVzb2x2ZWRWaWESIgoeQVdBSVRfUkVTT0xWRURfVklBX1VOU1BFQ0lGSUVEEAASGgoWQVdBSVRfUkVTT0xWRURfVklBX0FQSRABEh8KG0FXQUlUX1JFU09MVkVEX1ZJQV9DQUxMQkFDSxACKqoBCg5BdHRlbXB0T3V0Y29tZRIfChtBVFRFTVBUX09VVENPTUVfVU5TUEVDSUZJRUQQABIdChlBVFRFTVBUX09VVENPTUVfU1VDQ0VFREVEEAESGgoWQVRURU1QVF9PVVRDT01FX0ZBSUxFRBACEhwKGEFUVEVNUFRfT1VUQ09NRV9DQU5DRUxFRBADEh4KGkFUVEVNUFRfT1VUQ09NRV9VTlJFUE9SVEVEEAQqggIKClJldHJ5U3RhdGUSGwoXUkVUUllfU1RBVEVfVU5TUEVDSUZJRUQQABIlCiFSRVRSWV9TVEFURV9OT05fUkVUUllBQkxFX0ZBSUxVUkUQARIXChNSRVRSWV9TVEFURV9USU1FT1VUEAISKAokUkVUUllfU1RBVEVfTUFYSU1VTV9BVFRFTVBUU19SRUFDSEVEEAMSJAogUkVUUllfU1RBVEVfUkVUUllfUE9MSUNZX05PVF9TRVQQBBIgChxSRVRSWV9TVEFURV9DQU5DRUxfUkVRVUVTVEVEEAUSJQohUkVUUllfU1RBVEVfSU5URVJOQUxfU0VSVkVSX0VSUk9SEAYqxgEKDVJ1bk9yaWdpbktpbmQSHwobUlVOX09SSUdJTl9LSU5EX1VOU1BFQ0lGSUVEEAASGgoWUlVOX09SSUdJTl9LSU5EX1NVQk1JVBABEhsKF1JVTl9PUklHSU5fS0lORF9UUklHR0VSEAISHAoYUlVOX09SSUdJTl9LSU5EX1NDSEVEVUxFEAMSHgoaUlVOX09SSUdJTl9LSU5EX1BBUkVOVF9SVU4QBBIdChlSVU5fT1JJR0lOX0tJTkRfUlVOX0FHQUlOEAUqugMKCUV2ZW50VHlwZRIaChZFVkVOVF9UWVBFX1VOU1BFQ0lGSUVEEAASGgoWRVZFTlRfVFlQRV9SVU5fQ1JFQVRFRBABEhoKFkVWRU5UX1RZUEVfUlVOX1NUQVJURUQQAhIdChlFVkVOVF9UWVBFX1RBU0tfU0NIRURVTEVEEAMSGwoXRVZFTlRfVFlQRV9UQVNLX1NUQVJURUQQBBIXChNFVkVOVF9UWVBFX1RBU0tfTE9HEAUSHQoZRVZFTlRfVFlQRV9UQVNLX1NVQ0NFRURFRBAGEhoKFkVWRU5UX1RZUEVfVEFTS19GQUlMRUQQBxIcChhFVkVOVF9UWVBFX1JVTl9TVUNDRUVERUQQCBIZChVFVkVOVF9UWVBFX1JVTl9GQUlMRUQQCRIbChdFVkVOVF9UWVBFX1JVTl9DQU5DRUxFRBAKEhwKGEVWRU5UX1RZUEVfVEFTS19BV0FJVElORxALEhwKGEVWRU5UX1RZUEVfVEFTS19SRVNPTFZFRBAMEhkKFUVWRU5UX1RZUEVfU1RSRUFNX0dBUBANEhwKGEVWRU5UX1RZUEVfVEFTS19TTEVFUElORxAOQqQBCg9jb20ub3Jrc3RhY2sudjFCCFJ1blByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_common, file_orkstack_v1_telemetry]);
 
 /**
  * TaskEach is a fan-out task's own state on the run snapshot. It is SET for
@@ -89,6 +89,16 @@ export type TaskChild = Message<"orkstack.v1.TaskChild"> & {
    * @generated from field: string run_id = 4;
    */
   runId: string;
+
+  /**
+   * orkflow_namespace is the namespace that owns the child Orkflow when it is
+   * not the namespace the run executes in: a child composed from another
+   * namespace through shared_with. Empty for a child of the run's own
+   * namespace.
+   *
+   * @generated from field: string orkflow_namespace = 5;
+   */
+  orkflowNamespace: string;
 };
 
 /**
@@ -365,6 +375,25 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
    * @generated from field: orkstack.v1.JoinPolicy join = 25;
    */
   join: JoinPolicy;
+
+  /**
+   * timing is where this task's time went, derived from scheduled_at,
+   * started_at and finished_at above (TaskTiming). It is DERIVED ON READ:
+   * GetRun sets it on every row, a fan-out's items included, and nothing
+   * stores it — the engine never writes it, and a copy read back from
+   * anywhere else is not one GetRun answered.
+   *
+   * @generated from field: orkstack.v1.TaskTiming timing = 26;
+   */
+  timing?: TaskTiming | undefined;
+
+  /**
+   * sleep is this task's sleep state, set for a task whose definition
+   * declares `sleep:` and unset otherwise (see TaskSleep).
+   *
+   * @generated from field: orkstack.v1.TaskSleep sleep = 27;
+   */
+  sleep?: TaskSleep | undefined;
 };
 
 /**
@@ -373,6 +402,196 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
  */
 export const TaskRunSchema: GenMessage<TaskRun> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_run, 2);
+
+/**
+ * TimingQuantity is one derived duration in one of three states, never
+ * collapsed into each other:
+ *
+ *   - the message UNSET: it does not apply (the task was never scheduled, or
+ *     has not finished);
+ *   - set with no duration: it happened and cannot be known, and reason says
+ *     why — UNSPECIFIED only on a sum whose every term is unavailable
+ *     (RunTiming.wait_sum);
+ *   - set with duration: two instants some process recorded, the later minus
+ *     the earlier.
+ *
+ * A zero duration is only ever a value somebody measured.
+ *
+ * @generated from message orkstack.v1.TimingQuantity
+ */
+export type TimingQuantity = Message<"orkstack.v1.TimingQuantity"> & {
+  /**
+   * @generated from field: google.protobuf.Duration duration = 1;
+   */
+  duration?: Duration | undefined;
+
+  /**
+   * @generated from field: orkstack.v1.TimingReason reason = 2;
+   */
+  reason: TimingReason;
+};
+
+/**
+ * Describes the message orkstack.v1.TimingQuantity.
+ * Use `create(TimingQuantitySchema)` to create a new message.
+ */
+export const TimingQuantitySchema: GenMessage<TimingQuantity> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 3);
+
+/**
+ * TaskTiming is the task-timing derivation over one TaskRun
+ * (docs/UI_CLI_PARITY.md "Task timing"), with S = scheduled_at, B = started_at
+ * and F = finished_at:
+ *
+ *   wait = B − S      run = F − B      total = F − S
+ *
+ * A fan-out's own row reads S as its expansion and B as its earliest item's
+ * start; a composed task's reads S as its child run's request, B as its
+ * confirmed start and F as its end, so wait is the child's start latency and
+ * applies only once a child started; an awaited task's run and total are the
+ * time it awaited, and wait does not apply.
+ *
+ * @generated from message orkstack.v1.TaskTiming
+ */
+export type TaskTiming = Message<"orkstack.v1.TaskTiming"> & {
+  /**
+   * scheduled is false for a task that never reached schedule() (an awaited
+   * task: never started awaiting); every quantity is then unset.
+   *
+   * @generated from field: bool scheduled = 1;
+   */
+  scheduled: boolean;
+
+  /**
+   * pre_contract marks a snapshot written before scheduled_at existed:
+   * started_at holds the dispatch instant, wait and run are unavailable, and
+   * total is dispatch to finish.
+   *
+   * @generated from field: bool pre_contract = 2;
+   */
+  preContract: boolean;
+
+  /**
+   * wait, run and total are set once the task is terminal.
+   *
+   * @generated from field: orkstack.v1.TimingQuantity wait = 3;
+   */
+  wait?: TimingQuantity | undefined;
+
+  /**
+   * @generated from field: orkstack.v1.TimingQuantity run = 4;
+   */
+  run?: TimingQuantity | undefined;
+
+  /**
+   * @generated from field: orkstack.v1.TimingQuantity total = 5;
+   */
+  total?: TimingQuantity | undefined;
+
+  /**
+   * since_scheduled is set while the task is RUNNING in a run that has not
+   * ended: RunTiming.computed_at − scheduled_at. A row a terminated run left
+   * RUNNING has none.
+   *
+   * @generated from field: orkstack.v1.TimingQuantity since_scheduled = 6;
+   */
+  sinceScheduled?: TimingQuantity | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.TaskTiming.
+ * Use `create(TaskTimingSchema)` to create a new message.
+ */
+export const TaskTimingSchema: GenMessage<TaskTiming> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 4);
+
+/**
+ * RunTiming is the run's half of the derivation. Like TaskRun.timing it is
+ * derived on read by GetRun and never stored.
+ *
+ * @generated from message orkstack.v1.RunTiming
+ */
+export type RunTiming = Message<"orkstack.v1.RunTiming"> & {
+  /**
+   * elapsed is Run.finished_at − Run.started_at, set once the run finished.
+   *
+   * @generated from field: orkstack.v1.TimingQuantity elapsed = 1;
+   */
+  elapsed?: TimingQuantity | undefined;
+
+  /**
+   * wait_sum is every task's wait summed, over the wait_sum_tasks tasks whose
+   * wait is known; wait_unavailable_tasks counts the tasks whose wait applies
+   * and cannot be known. Unset when no task's wait applies; set with no
+   * duration when every one is unavailable. A fan-out's items are not
+   * counted: its own row is.
+   *
+   * @generated from field: orkstack.v1.TimingQuantity wait_sum = 2;
+   */
+  waitSum?: TimingQuantity | undefined;
+
+  /**
+   * @generated from field: int32 wait_sum_tasks = 3;
+   */
+  waitSumTasks: number;
+
+  /**
+   * @generated from field: int32 wait_unavailable_tasks = 4;
+   */
+  waitUnavailableTasks: number;
+
+  /**
+   * computed_at is the server's clock when it derived this, the instant every
+   * since_scheduled is measured against. Set only while the run has not
+   * ended and a task (or item) is RUNNING, so a finished run answers the same
+   * bytes every time.
+   *
+   * @generated from field: google.protobuf.Timestamp computed_at = 5;
+   */
+  computedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.RunTiming.
+ * Use `create(RunTimingSchema)` to create a new message.
+ */
+export const RunTimingSchema: GenMessage<RunTiming> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 5);
+
+/**
+ * AttemptTiming is the derivation over one TaskAttempt, set on every row
+ * ListTaskAttempts answers and never stored.
+ *
+ * @generated from message orkstack.v1.AttemptTiming
+ */
+export type AttemptTiming = Message<"orkstack.v1.AttemptTiming"> & {
+  /**
+   * in_progress marks the newest attempt of a task that has not finished: it
+   * has no record yet because a record is written when an attempt ENDS, and
+   * calling it unreported would say its Orker crashed. phases_reason is then
+   * unset.
+   *
+   * @generated from field: bool in_progress = 1;
+   */
+  inProgress: boolean;
+
+  /**
+   * phases_reason is set when this attempt's phases cannot be listed:
+   * NO_RECORD (UNREPORTED), RECLAIMED (UNREPORTED, and the task's records
+   * were reclaimed), NO_PHASES (a record with none). Each PhaseSpan
+   * otherwise carries its own duration.
+   *
+   * @generated from field: orkstack.v1.TimingReason phases_reason = 2;
+   */
+  phasesReason: TimingReason;
+};
+
+/**
+ * Describes the message orkstack.v1.AttemptTiming.
+ * Use `create(AttemptTimingSchema)` to create a new message.
+ */
+export const AttemptTimingSchema: GenMessage<AttemptTiming> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 6);
 
 /**
  * TaskAwait is an awaited task's own state on the run snapshot. It is SET for
@@ -424,7 +643,41 @@ export type TaskAwait = Message<"orkstack.v1.TaskAwait"> & {
  * Use `create(TaskAwaitSchema)` to create a new message.
  */
 export const TaskAwaitSchema: GenMessage<TaskAwait> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 3);
+  messageDesc(file_orkstack_v1_run, 7);
+
+/**
+ * TaskSleep is a sleeping task's own state on the run snapshot. It is SET for
+ * every task whose definition declares `sleep:` — from the run's first
+ * snapshot, while the task is still PENDING — and UNSET for every other task,
+ * so a snapshot of a run with no sleep is byte-identical to what it was
+ * before this message existed. Its presence is how a client tells a sleeping
+ * task from a container task without reading the definition.
+ *
+ * @generated from message orkstack.v1.TaskSleep
+ */
+export type TaskSleep = Message<"orkstack.v1.TaskSleep"> & {
+  /**
+   * seconds mirrors SleepSpec.seconds: how long the task sleeps.
+   *
+   * @generated from field: int32 seconds = 1;
+   */
+  seconds: number;
+
+  /**
+   * wake_at is when the task wakes and succeeds, on the workflow's clock.
+   * Unset until the task starts sleeping.
+   *
+   * @generated from field: google.protobuf.Timestamp wake_at = 2;
+   */
+  wakeAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.TaskSleep.
+ * Use `create(TaskSleepSchema)` to create a new message.
+ */
+export const TaskSleepSchema: GenMessage<TaskSleep> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_run, 8);
 
 /**
  * AwaitSignal is ENGINE-INTERNAL: the argument of the Temporal Signal that
@@ -485,7 +738,7 @@ export type AwaitSignal = Message<"orkstack.v1.AwaitSignal"> & {
  * Use `create(AwaitSignalSchema)` to create a new message.
  */
 export const AwaitSignalSchema: GenMessage<AwaitSignal> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 4);
+  messageDesc(file_orkstack_v1_run, 9);
 
 /**
  * PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
@@ -519,6 +772,15 @@ export type PhaseSpan = Message<"orkstack.v1.PhaseSpan"> & {
    * @generated from field: google.protobuf.Timestamp finished_at = 3;
    */
   finishedAt?: Timestamp | undefined;
+
+  /**
+   * duration is finished_at − started_at, derived on read by
+   * ListTaskAttempts; never written by an Orker. Unavailable with NO_RECORD
+   * when an end is missing, CLOCK_SKEW when the ends are inverted.
+   *
+   * @generated from field: orkstack.v1.TimingQuantity duration = 4;
+   */
+  duration?: TimingQuantity | undefined;
 };
 
 /**
@@ -526,7 +788,7 @@ export type PhaseSpan = Message<"orkstack.v1.PhaseSpan"> & {
  * Use `create(PhaseSpanSchema)` to create a new message.
  */
 export const PhaseSpanSchema: GenMessage<PhaseSpan> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 5);
+  messageDesc(file_orkstack_v1_run, 10);
 
 /**
  * ReservedResources is what an Orker granted one attempt: the cpu and memory
@@ -562,7 +824,7 @@ export type ReservedResources = Message<"orkstack.v1.ReservedResources"> & {
  * Use `create(ReservedResourcesSchema)` to create a new message.
  */
 export const ReservedResourcesSchema: GenMessage<ReservedResources> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 6);
+  messageDesc(file_orkstack_v1_run, 11);
 
 /**
  * TaskAttempt is the immutable record of ONE Temporal attempt of one task,
@@ -741,6 +1003,14 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
    * @generated from field: orkstack.v1.CacheResult cache = 20;
    */
   cache?: CacheResult | undefined;
+
+  /**
+   * timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker
+   * never writes it.
+   *
+   * @generated from field: orkstack.v1.AttemptTiming timing = 21;
+   */
+  timing?: AttemptTiming | undefined;
 };
 
 /**
@@ -748,7 +1018,7 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
  * Use `create(TaskAttemptSchema)` to create a new message.
  */
 export const TaskAttemptSchema: GenMessage<TaskAttempt> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 7);
+  messageDesc(file_orkstack_v1_run, 12);
 
 /**
  * Run is one execution of an Orkflow.
@@ -823,8 +1093,10 @@ export type Run = Message<"orkstack.v1.Run"> & {
   finishedAt?: Timestamp | undefined;
 
   /**
-   * namespace is the namespace of the orkflow this run executed. Empty means
-   * the built-in "default" namespace. It is a coordinate of the run, not a
+   * namespace is the namespace this run executed in, whose rules it
+   * followed. It is also the namespace of the orkflow it ran unless
+   * orkflow_namespace says otherwise. Empty means the built-in "default"
+   * namespace. It is a coordinate of the run, not a
    * lookup: the archive indexes runs under it, so listing one namespace's runs
    * is a single prefix scan.
    *
@@ -885,6 +1157,25 @@ export type Run = Message<"orkstack.v1.Run"> & {
    * @generated from field: string canceled_by = 16;
    */
   canceledBy: string;
+
+  /**
+   * orkflow_namespace is set only on a child run of an Orkflow another
+   * namespace shared through composition: the namespace that owns the
+   * definition it ran. Empty means the orkflow is namespace's own. A run whose
+   * orkflow belongs to another namespace is always a child run: nothing else
+   * starts one.
+   *
+   * @generated from field: string orkflow_namespace = 17;
+   */
+  orkflowNamespace: string;
+
+  /**
+   * timing is the run's half of the task-timing derivation (RunTiming), set
+   * by GetRun and never stored; each TaskRun carries its own half.
+   *
+   * @generated from field: orkstack.v1.RunTiming timing = 18;
+   */
+  timing?: RunTiming | undefined;
 };
 
 /**
@@ -892,7 +1183,7 @@ export type Run = Message<"orkstack.v1.Run"> & {
  * Use `create(RunSchema)` to create a new message.
  */
 export const RunSchema: GenMessage<Run> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 8);
+  messageDesc(file_orkstack_v1_run, 13);
 
 /**
  * RunCancelRequest is ENGINE-INTERNAL: the record CancelRun writes as the
@@ -929,7 +1220,7 @@ export type RunCancelRequest = Message<"orkstack.v1.RunCancelRequest"> & {
  * Use `create(RunCancelRequestSchema)` to create a new message.
  */
 export const RunCancelRequestSchema: GenMessage<RunCancelRequest> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 9);
+  messageDesc(file_orkstack_v1_run, 14);
 
 /**
  * RunOrigin is the immutable record of what started a run. It is decided
@@ -1013,7 +1304,7 @@ export type RunOrigin = Message<"orkstack.v1.RunOrigin"> & {
  * Use `create(RunOriginSchema)` to create a new message.
  */
 export const RunOriginSchema: GenMessage<RunOrigin> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 10);
+  messageDesc(file_orkstack_v1_run, 15);
 
 /**
  * Event is a single realtime update for a run, delivered over the
@@ -1089,7 +1380,84 @@ export type Event = Message<"orkstack.v1.Event"> & {
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema: GenMessage<Event> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_run, 11);
+  messageDesc(file_orkstack_v1_run, 16);
+
+/**
+ * TimingReason is why one timing quantity cannot be known. Each names a cause
+ * an operator can act on, never a generic "unknown" (docs/UI_CLI_PARITY.md
+ * "Task timing"). The comment on each is the words both clients print.
+ *
+ * @generated from enum orkstack.v1.TimingReason
+ */
+export enum TimingReason {
+  /**
+   * @generated from enum value: TIMING_REASON_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * "no orker reported a start": the task ended and no Orker reported the
+   * start of the attempt that decided it (TaskRun.started_at unset).
+   *
+   * @generated from enum value: TIMING_REASON_NO_ORKER_START = 1;
+   */
+  NO_ORKER_START = 1,
+
+  /**
+   * "clock skew": the later of two instants reads before the earlier, so the
+   * two clocks that recorded them disagree.
+   *
+   * @generated from enum value: TIMING_REASON_CLOCK_SKEW = 2;
+   */
+  CLOCK_SKEW = 2,
+
+  /**
+   * "recorded before scheduled time existed": a snapshot with started_at and
+   * no scheduled_at, whose started_at holds the dispatch instant.
+   *
+   * @generated from enum value: TIMING_REASON_PRE_CONTRACT = 3;
+   */
+  PRE_CONTRACT = 3,
+
+  /**
+   * "attempt records reclaimed": the snapshot proves an Orker reported on the
+   * task, and no record it filed is left.
+   *
+   * @generated from enum value: TIMING_REASON_RECLAIMED = 4;
+   */
+  RECLAIMED = 4,
+
+  /**
+   * "no attempt record": this attempt has no record (UNREPORTED, or a phase
+   * with an end missing).
+   *
+   * @generated from enum value: TIMING_REASON_NO_RECORD = 5;
+   */
+  NO_RECORD = 5,
+
+  /**
+   * "record predates phase spans": the record was written before
+   * TaskAttempt.phases existed.
+   *
+   * @generated from enum value: TIMING_REASON_NO_PHASES = 6;
+   */
+  NO_PHASES = 6,
+
+  /**
+   * "no task attempt store": the engine has no attempt store at all. No
+   * response carries it — ListTaskAttempts answers FailedPrecondition then —
+   * and a client prints it for the quantities only records could give.
+   *
+   * @generated from enum value: TIMING_REASON_NO_ATTEMPT_STORE = 7;
+   */
+  NO_ATTEMPT_STORE = 7,
+}
+
+/**
+ * Describes the enum orkstack.v1.TimingReason.
+ */
+export const TimingReasonSchema: GenEnum<TimingReason> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_run, 0);
 
 /**
  * AwaitResolvedVia names the door an await's resolution came through.
@@ -1122,7 +1490,7 @@ export enum AwaitResolvedVia {
  * Describes the enum orkstack.v1.AwaitResolvedVia.
  */
 export const AwaitResolvedViaSchema: GenEnum<AwaitResolvedVia> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 0);
+  enumDesc(file_orkstack_v1_run, 1);
 
 /**
  * AttemptOutcome is how one Temporal attempt of a task ended.
@@ -1172,7 +1540,7 @@ export enum AttemptOutcome {
  * Describes the enum orkstack.v1.AttemptOutcome.
  */
 export const AttemptOutcomeSchema: GenEnum<AttemptOutcome> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 1);
+  enumDesc(file_orkstack_v1_run, 2);
 
 /**
  * RetryState is why Temporal stopped retrying a task. It mirrors
@@ -1227,7 +1595,7 @@ export enum RetryState {
  * Describes the enum orkstack.v1.RetryState.
  */
 export const RetryStateSchema: GenEnum<RetryState> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 2);
+  enumDesc(file_orkstack_v1_run, 3);
 
 /**
  * RunOriginKind is WHAT started a run. It is decided by the process that
@@ -1296,7 +1664,7 @@ export enum RunOriginKind {
  * Describes the enum orkstack.v1.RunOriginKind.
  */
 export const RunOriginKindSchema: GenEnum<RunOriginKind> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 3);
+  enumDesc(file_orkstack_v1_run, 4);
 
 /**
  * EventType classifies a run event on the realtime stream.
@@ -1391,11 +1759,20 @@ export enum EventType {
    * @generated from enum value: EVENT_TYPE_STREAM_GAP = 13;
    */
   STREAM_GAP = 13,
+
+  /**
+   * TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING;
+   * the message names the wake-up time. TASK_SUCCEEDED follows when it
+   * wakes; a run that ends first records the task CANCELED.
+   *
+   * @generated from enum value: EVENT_TYPE_TASK_SLEEPING = 14;
+   */
+  TASK_SLEEPING = 14,
 }
 
 /**
  * Describes the enum orkstack.v1.EventType.
  */
 export const EventTypeSchema: GenEnum<EventType> = /*@__PURE__*/
-  enumDesc(file_orkstack_v1_run, 4);
+  enumDesc(file_orkstack_v1_run, 5);
 

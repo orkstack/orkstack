@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The reach of a run's fairness (docs/DEPLOY.md "Fair dispatch across
@@ -115,9 +117,7 @@ func TestRunWorkflow_SchedulesEveryItemWithThePlansFairness(t *testing.T) {
 	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fair-items",
 		compile(t, spreadDocument), spreadInput(t, 6), fairPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if items := len(itemsDispatched(h)); items != 6 {
 		t.Fatalf("%d items ran, want 6", items)
 	}
@@ -204,9 +204,7 @@ func runPinned(t *testing.T, document string, plan engine.RunPlan) *dispatchCapt
 	}))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fair-pinned",
 		compile(t, document), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	return capture
 }
 

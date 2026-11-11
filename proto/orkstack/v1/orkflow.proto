@@ -28,8 +28,11 @@ message Pin {
   int32 timeout_seconds = 2;
 }
 
-// OrkflowRef names one immutable Orkflow version in the referencing
-// definition's OWN namespace — a composition never crosses a namespace.
+// OrkflowRef names one immutable Orkflow version: in the referencing
+// definition's own namespace, or in the namespace `namespace` names when the
+// author wrote `uses: orkflow:<namespace>/<name>@<version>`. Composition is the
+// one path that crosses a namespace, and only to a version whose shared_with
+// admits the composing Orkflow (docs/DSL.md "Sharing across namespaces").
 message OrkflowRef {
   string name = 1;
   string version = 2;
@@ -37,6 +40,23 @@ message OrkflowRef {
   // stamped at apply. Empty only in a message the compiler produced before
   // internal/api resolved it; a stored definition never carries an empty one.
   string definition_digest = 3;
+  // namespace is the namespace that owns the referenced Orkflow, as the author
+  // wrote it. Empty means the referencing definition's own namespace. Part of
+  // canonicalOrkflow(Task) only when set, so every existing digest is
+  // unchanged.
+  string namespace = 4;
+}
+
+// OrkflowShare is one entry of Orkflow.shared_with: who in ANOTHER namespace
+// may compose this Orkflow version through `uses:`. Exactly one field is set.
+// Calls within one namespace never need an entry.
+message OrkflowShare {
+  // namespace admits every Orkflow of that namespace. "*" admits every
+  // Orkflow of every namespace.
+  string namespace = 1;
+  // orkflow admits one Orkflow, written "<namespace>/<name>": that Orkflow, in
+  // any of its versions, and nothing else of its namespace.
+  string orkflow = 2;
 }
 
 // Task is a single node in the orkflow DAG. It maps to exactly one activity
@@ -116,7 +136,8 @@ message Task {
 
   // orkflow is the apply-time resolution of `uses: orkflow:<name>@<version>`,
   // the analogue of image for a container task. A composed task starts a
-  // CHILD RUN of exactly that definition, in this Orkflow's namespace, and
+  // CHILD RUN of exactly that definition, in the namespace this run executes
+  // in (even when the definition is another namespace's), and
   // reaches no Orker: it carries no image, pool, pin, retry, timeout or other
   // execution field (docs/DSL.md rules 26–27). Part of canonicalOrkflow(Task)
   // only when set (see pin), so this Orkflow's digest pins the child's.
@@ -134,6 +155,13 @@ message Task {
   // ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry
   // each or carry cache (docs/DSL.md rule 39).
   JoinPolicy join = 24;
+
+  // sleep makes this a sleeping task: it starts no container, reaches no
+  // Orker, and succeeds once its fixed time has passed. Mutually exclusive
+  // with uses, await and every field that shapes a container (docs/DSL.md
+  // rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin),
+  // so a definition with no sleep keeps its digest.
+  SleepSpec sleep = 25;
 }
 
 // CacheSpec opts ONE task into memoization across runs (docs/DSL.md
@@ -196,6 +224,17 @@ message AwaitSpec {
   google.protobuf.Struct schema = 3;
 }
 
+// SleepSpec makes a Task a sleeping task: the run waits a fixed time on its
+// own timer and the task then succeeds, with no values and no artifacts
+// (docs/DSL.md "Sleeping tasks"). Part of canonicalOrkflow(Task), emitted
+// ONLY when set (see Task.pin).
+message SleepSpec {
+  // seconds is how long the task sleeps, from the moment it starts
+  // sleeping. Required: 1 to 2592000 (30 days), the bound
+  // AwaitSpec.timeout_seconds has, for the same reason.
+  int32 seconds = 1;
+}
+
 // Orkflow is the compiled, validated form of a DSL document.
 message Orkflow {
   string name = 1;                       // unique identifier (slug)
@@ -249,4 +288,20 @@ message Orkflow {
   // values of the tasks no other task needs, and a composing parent's task
   // receives {}. Part of canonicalOrkflow only when non-empty (see pins).
   map<string, string> outputs = 12;
+
+  // shared_with is who in other namespaces may compose this version through
+  // `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing across
+  // namespaces"). Empty means nobody: an Orkflow is closed to every other
+  // namespace unless its definition says otherwise. Composition is the only
+  // door — a submit, a schedule or a trigger runs only its own namespace's
+  // Orkflows. It is part of the definition, so a new version changes who may
+  // call it, and part of canonicalOrkflow only when non-empty (see pins).
+  repeated OrkflowShare shared_with = 13;
+
+  // definition_namespace is set ONLY on a run's planned copy of an Orkflow
+  // that another namespace's Orkflow composed: the namespace that owns the
+  // stored definition, while namespace names the namespace the child run
+  // executes in and whose rules it follows. Never stored, never applied and
+  // not part of canonicalOrkflow: definition_digest is the owner's.
+  string definition_namespace = 14;
 }

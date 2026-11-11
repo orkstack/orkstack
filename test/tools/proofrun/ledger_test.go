@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func ev(action, pkg, test string, elapsed float64) event {
@@ -144,9 +146,7 @@ ok  	github.com/x/two	0.2s
 ?   	github.com/x/three	[no test files]
 `
 	lines, err := costsFromGoTestLog(strings.NewReader(log))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var got []string
 	for _, l := range lines {
 		got = append(got, l.Package+"."+l.Test)
@@ -155,12 +155,12 @@ ok  	github.com/x/two	0.2s
 		t.Errorf("got %v", got)
 	}
 	var sb strings.Builder
-	writeSlowList(&sb, lines, 10, "proof/x (commit abc)")
-	if !strings.Contains(sb.String(), "github.com/x/one\tTestA\t12.50\n") || strings.Contains(sb.String(), "TestC") {
-		t.Errorf("slow list:\n%s", sb.String())
+	writeCosts(&sb, lines, "proof/x (commit abc)")
+	if !strings.Contains(sb.String(), "github.com/x/one\tTestA\t12.50\n") || !strings.Contains(sb.String(), "github.com/x/two\tTestC\t0.10\n") {
+		t.Errorf("costs:\n%s", sb.String())
 	}
 	if !strings.Contains(sb.String(), "# source: proof/x (commit abc)") {
-		t.Errorf("slow list names no source:\n%s", sb.String())
+		t.Errorf("costs name no source:\n%s", sb.String())
 	}
 }
 

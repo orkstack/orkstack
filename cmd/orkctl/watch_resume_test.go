@@ -3,7 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"net/http"
@@ -19,6 +20,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // `run watch` resumes a stream the engine ended as unavailable — the answer a
@@ -249,9 +252,7 @@ func jsonSequences(t *testing.T, stdout string) []int64 {
 	var seqs []int64
 	for _, e := range doc.Events {
 		seq, err := strconv.ParseInt(e.Sequence, 10, 64)
-		if err != nil {
-			t.Fatalf("event sequence %q: %v", e.Sequence, err)
-		}
+		must.OKf(t, err, "event sequence %q", e.Sequence)
 		seqs = append(seqs, seq)
 	}
 	return seqs
@@ -437,7 +438,7 @@ func TestRunWatch_LiveRunResumeIsBounded(t *testing.T) {
 	if want := "Error: watch run: the stream ended with the run still RUNNING"; !strings.Contains(outcome.stderr, want) {
 		t.Fatalf("stderr = %q, want %q", outcome.stderr, want)
 	}
-	if !json.Valid([]byte(outcome.stdout)) {
+	if !jsontext.Value([]byte(outcome.stdout)).IsValid() {
 		t.Fatalf("stdout does not parse:\n%s", outcome.stdout)
 	}
 }

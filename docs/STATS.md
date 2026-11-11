@@ -7,9 +7,9 @@ so that aggregating cannot introduce a second version of the truth.
 ```bash
 orkctl stats                       # the default namespace, the last 24 hours
 orkctl -n payments stats           # one namespace
-orkctl -n payments stats --since 6h
-orkctl -n payments stats --since 2026-05-01T09:00:00Z
-orkctl -n payments stats --json    # the same answer, for a machine
+orkctl -n payments stats -s 6h
+orkctl -n payments stats -s 2026-05-01T09:00:00Z
+orkctl -n payments stats -j    # the same answer, for a machine
 orkctl -n payments stats --by day  # and runs created each day, the last 7 days (§2)
 orkctl -n payments stats --by hour --buckets 6 --timezone Europe/Lisbon
 orkctl -n payments stats failures  # the window's failed runs, grouped (§6)
@@ -34,6 +34,14 @@ read, `orkctl run timing` (`docs/UI_CLI_PARITY.md`, "Task timing").
 | `duration_coverage_since` | the window, held against how long executions are kept | — |
 | `pools[]` | the Orkers polling for each pool's work, live | — |
 | `buckets[]` | the same index keys, and the same live runs | created in the bucket (§2, "A series") |
+
+A child run of another namespace's shared Orkflow (`docs/DSL.md`, "Sharing
+across namespaces") counts in the namespace it ran in, and every grouping by
+Orkflow — `most_failing[]`, failure fingerprints, the flake index, usage and
+cache usage — keys it by its owner and name: its row names the owner in
+`orkflow_namespace` (`orkctl` and the UI print `platform/deploy`), apart from
+the namespace's own Orkflow of the same name. An `orkflow_name` filter
+selects the namespace's own Orkflow.
 
 **There is no counter and no write path.** Every number is derived when it is
 asked for. A stored counter would be a third record of facts two records
@@ -88,7 +96,7 @@ on: the archive index stamps a run by `created_at`
 (`internal/engine/archive.go`, `RunIndexTime`) and the cluster's execution
 index carries its start. Selecting the percentiles by CLOSE time instead
 would make one answer hold two different sets of runs with nothing saying so —
-`orkctl stats --since 15m` over hour-long runs would report
+`orkctl stats -s 15m` over hour-long runs would report
 `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished
 runs`. `TestExecutions_SamplesTheSameRunsTheArchiveCounts` puts one corpus
 through both records and requires the two counts to match.
@@ -107,7 +115,7 @@ the last day" can then label its own numbers without knowing the default's
 name — which is why `orkctl stats` prints the namespace the *server* named
 rather than the one it was asked to act in.
 
-`orkctl stats --since 6h` sends the **duration**, not an instant. One clock
+`orkctl stats -s 6h` sends the **duration**, not an instant. One clock
 then decides both ends of the window — the server's, which is the clock every
 stored time is compared against. A client that resolved "six hours ago" itself
 would be pairing its clock with the server's, and a client running a few
@@ -130,7 +138,7 @@ population, per bucket — with the same four status keys always present.
 orkctl stats --by day                           # the last 7 days, today included
 orkctl stats --by hour                          # the last 24 hours, this hour included
 orkctl stats --by day --buckets 30 --timezone UTC
-orkctl stats --by day --since 2026-10-01T00:00:00-07:00   # a stated window, cut
+orkctl stats --by day -s 2026-10-01T00:00:00-07:00   # a stated window, cut
 ```
 
 **The zone's wall clock draws the buckets.** `timezone` names an IANA zone
@@ -284,9 +292,9 @@ dimensions a caller names, worst first.
 
 ```bash
 orkctl -n payments stats failures                       # orkflow, task, code, category
-orkctl -n payments stats failures --since 6h --group-by task,code,image,phase
-orkctl -n payments stats failures --category infrastructure_error --json
-orkctl -n payments stats failures --since 2026-09-22T04:00:00Z --until 2026-09-22T11:00:00Z --orkflow reconcile
+orkctl -n payments stats failures -s 6h -g task,code,image,phase
+orkctl -n payments stats failures --category infrastructure_error -j
+orkctl -n payments stats failures -s 2026-09-22T04:00:00Z --until 2026-09-22T11:00:00Z --orkflow reconcile
 ```
 
 The dashboard offers the same answer as a disclosure under **Recent failures**
@@ -398,8 +406,8 @@ happened, flakiest first.
 
 ```bash
 orkctl -n payments stats flakes                              # orkflow, task
-orkctl -n payments stats flakes --since 168h --group-by task,orker
-orkctl -n payments stats flakes --orkflow reconcile --group-by phase --json
+orkctl -n payments stats flakes -s 168h -g task,orker
+orkctl -n payments stats flakes --orkflow reconcile -g phase -j
 ```
 
 The dashboard offers the same answer as a **Stability** disclosure
@@ -517,8 +525,8 @@ one the admission gate itself makes for an enforced budget
 
 ```bash
 orkctl -n analytics stats usage                               # the namespace total, last 24h
-orkctl -n analytics stats usage --since 720h --group-by pool  # the budget's own window, per pool
-orkctl stats usage --since 720h --group-by namespace          # every namespace, one call each
+orkctl -n analytics stats usage -s 720h -g pool  # the budget's own window, per pool
+orkctl stats usage -s 720h -g namespace          # every namespace, one call each
 ```
 
 The dashboard's **Usage** section and **Admin → Usage** render the same answers

@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_ArtifactProvenanceIsAnsweredByAReplicaThatNeverStartedTheRun
@@ -89,16 +91,10 @@ func TestIntegration_ArtifactProvenanceIsAnsweredByAReplicaThatNeverStartedTheRu
 
 	// ---- 2. the bytes vanish; the reference does not -----------------------
 	store, err := artifacts.NewS3Store(ctx, artifactCfg)
-	if err != nil {
-		t.Fatalf("NewS3Store: %v", err)
-	}
-	if err := store.Delete(ctx, held.GetArtifact().GetUri()); err != nil {
-		t.Fatalf("delete %s: %v", held.GetArtifact().GetUri(), err)
-	}
+	must.OKf(t, err, "NewS3Store")
+	must.OKf(t, store.Delete(ctx, held.GetArtifact().GetUri()), "delete %s", held.GetArtifact().GetUri())
 	gone, err := askProvenance(ctx, replicaA, first)
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance on replica A after the delete: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance on replica A after the delete")
 	if gone.GetBytesPresent() {
 		t.Fatalf("replica A reports bytes present after the object was deleted from the bucket")
 	}
@@ -134,9 +130,7 @@ func TestIntegration_ArtifactProvenanceIsAnsweredByAReplicaThatNeverStartedTheRu
 func submitAndFinish(ctx context.Context, t *testing.T, a, b *engineReplica, orkflowName string) string {
 	t.Helper()
 	submitted, err := a.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: orkflowName}))
-	if err != nil {
-		t.Fatalf("SubmitRun on replica A: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun on replica A")
 	runID := submitted.Msg.GetRun().GetId()
 	finished := awaitTerminalOnB(ctx, t, b, runID)
 	if finished.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {

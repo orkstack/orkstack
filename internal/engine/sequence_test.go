@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The event sequence is the producer's, not the bus's.
@@ -65,9 +67,7 @@ func TestRunWorkflow_NumbersItsOwnEvents(t *testing.T) {
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "workflow error")
 
 	if len(publishedURIs) != len(emitted) || publishedURIs[0] == "" {
 		t.Fatalf("PublishEvent received URI references %v for %d events", publishedURIs, len(emitted))
@@ -128,9 +128,7 @@ func TestRunWorkflow_SnapshotCarriesCreatedAt(t *testing.T) {
 	)
 
 	env.ExecuteWorkflow(engine.RunWorkflow, "ork-seq-2", compile(t, linearDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "workflow error")
 	if len(snapshots) == 0 {
 		t.Fatal("the workflow published no run snapshot")
 	}

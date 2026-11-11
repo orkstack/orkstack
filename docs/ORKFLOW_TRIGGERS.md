@@ -38,7 +38,7 @@ A per-trigger bearer token was chosen over request signing as the boring API
 | --- | --- |
 | `id` | Opaque, `trg-{16 hex}` (8 bytes from `crypto/rand`). Nothing parses it or derives a namespace or Orkflow from it. Trigger ids are not confidential; only tokens are. |
 | `namespace` | A coordinate, never a filter. Empty is `default` on the wire. |
-| `orkflow_name` | Fixed at creation. Rebinding is delete then create. |
+| `orkflow_name` | An Orkflow of the trigger's own namespace, fixed at creation; another namespace's (`<namespace>/<name>`) is refused, because only composition crosses a namespace ([DSL.md](DSL.md#sharing-across-namespaces)). Rebinding is delete then create. |
 | `orkflow_version` | Empty follows the current pointer at each invoke (rendered `current`); a pin never falls through to current. |
 | `description` | Optional operator label. It becomes the started run's `origin.description`. |
 | `name` | Optional handle: a slug (`^[a-z][a-z0-9-]*$`, at most 200 bytes), unique among the named triggers of its namespace. It is how an automation document addresses the trigger ([AUTOMATION.md](AUTOMATION.md)); it is not part of the invoke URL and never selects what a run starts. |
@@ -201,7 +201,7 @@ run, and nothing is left to deliver later.
 
 ```text
 orkctl trigger create --orkflow NAME [--version V] [--description TEXT] [--name NAME] [-n NS]
-orkctl trigger list   [--filter F ...] [-n NS]
+orkctl trigger list   [-F F ...] [-n NS]
 orkctl trigger update ID [--name NAME] [--version V | --follow-current] [--description TEXT] [-n NS]
 orkctl trigger delete ID [-n NS]
 ```

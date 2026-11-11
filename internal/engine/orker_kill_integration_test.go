@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The three §11 kill tests (AGENTS.md §11, docs/PROOFS.md §12):
@@ -115,9 +117,7 @@ func realTaskPlan(t *testing.T, s *chaosStack, realQueue string) engine.RunPlan 
 	plan, _ := s.tcPlan()
 	plan.Routes["real"] = realQueue
 	root, err := artifacts.CommitRoot(s.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan.CommitRoot = root
 	plan.Limits = engine.DefaultLimits()
 	plan.TransferBudgetSeconds = 300
@@ -129,9 +129,7 @@ func realTaskPlan(t *testing.T, s *chaosStack, realQueue string) engine.RunPlan 
 func commitObjectCount(t *testing.T, cfg artifacts.Config, runID string) int {
 	t.Helper()
 	prefix, err := artifacts.RunCommitPrefix("default", runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	raw := newRawS3ClientForCommitE2E(t, cfg)
 	n := 0
 	pager := s3.NewListObjectsV2Paginator(raw, &s3.ListObjectsV2Input{
@@ -139,9 +137,7 @@ func commitObjectCount(t *testing.T, cfg artifacts.Config, runID string) int {
 	})
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(context.Background())
-		if err != nil {
-			t.Fatalf("list %s: %v", prefix, err)
-		}
+		must.OKf(t, err, "list %s", prefix)
 		for _, object := range page.Contents {
 			if strings.HasSuffix(aws.ToString(object.Key), "/commit.json") {
 				n++
@@ -160,14 +156,10 @@ func requireCommitObjectsIntact(t *testing.T, ctx context.Context, store artifac
 			t.Fatalf("the commit references no %s", kind)
 		}
 		reader, err := store.Get(ctx, ref.GetUri())
-		if err != nil {
-			t.Fatalf("the commit's %s at %s does not exist: %v", kind, ref.GetUri(), err)
-		}
+		must.OKf(t, err, "the commit's %s at %s does not exist", kind, ref.GetUri())
 		data, err := io.ReadAll(reader)
 		_ = reader.Close()
-		if err != nil {
-			t.Fatalf("read the commit's %s: %v", kind, err)
-		}
+		must.OKf(t, err, "read the commit's %s", kind)
 		sum := sha256.Sum256(data)
 		if got := hex.EncodeToString(sum[:]); got != ref.GetSha256() {
 			t.Fatalf("the commit's %s hashes to %s, and the commit records %s", kind, got, ref.GetSha256())
@@ -258,9 +250,7 @@ func (f *orkerKillFixture) requireRetriedAndCommitted(taskID string) *orkstackv1
 	f.s.requireOneRunRead(f.runID, f.stream, orkstackv1.Status_STATUS_SUCCEEDED, "")
 
 	records, err := f.stores.attempts.ListAttempts(f.ctx, f.runID, taskID, artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(records) != 1 {
 		t.Fatalf("%d attempt records, want the one the retry wrote (attempt 1 died before its record)", len(records))
 	}
@@ -274,21 +264,15 @@ func (f *orkerKillFixture) requireRetriedAndCommitted(taskID string) *orkstackv1
 		t.Fatalf("%d commit.json objects under the run's prefix, want exactly one", n)
 	}
 	run, err := f.s.reader.GetRun(f.ctx, f.runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	uri := taskRunOfRun(run, taskID).GetCommit().GetUri()
 	if uri == "" {
 		t.Fatal("the run's task row names no commit")
 	}
 	commitStore, err := artifacts.NewCommitStore(f.ctx, f.s.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	stored, err := commitStore.Get(f.ctx, uri)
-	if err != nil {
-		t.Fatalf("read the commit at %s: %v", uri, err)
-	}
+	must.OKf(t, err, "read the commit at %s", uri)
 	requireCommitObjectsIntact(t, f.ctx, f.stores.store, stored.Commit)
 	f.s.transcript.figure("attempt_records", len(records))
 	f.s.transcript.figure("commit_objects", 1)
@@ -501,9 +485,7 @@ func TestIntegration_AnOrkerCommitDuringAStorageOutageNeverSucceedsSilently(t *t
 				t.Fatalf("the store refused %d writes, want at least two: the window must be crossed by real attempts", refusals)
 			}
 			records, err := stores.attempts.ListAttempts(ctx, runID, "work", artifacts.NoItem)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if len(records) != 3 {
 				t.Fatalf("%d attempt records, want 3 (two refused and retried, one committed)", len(records))
 			}

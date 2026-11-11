@@ -43,7 +43,7 @@ tasks:
 
 | Word | What it means |
 |---|---|
-| **Orkflow** | A YAML document that lists tasks and the order they run in. Applying it stores an immutable version. |
+| **Orkflow** | A YAML document that lists tasks and the order they run in. Creating it stores an immutable version. |
 | **Task** | One step of an Orkflow. Its `id:` names it, and `needs:` lists the tasks that must finish first. |
 | **Activity** | The container image a task runs, named by `uses:`. It reads files, writes files and exits. `shell` is a first-party activity. |
 | **Artifact** | A file a task writes to `/orkstack/output/artifacts/`. Later tasks receive it as a file. |
@@ -67,9 +67,9 @@ The quickstart's development Temporal keeps run history in memory. Stopping that
 
 ## Next
 
-- [Your first Orkflow](/docs/get-started/first-orkflow/): apply this kind of document, run it and read the results.
+- [Your first Orkflow](/docs/get-started/first-orkflow/): create this kind of document, run it and read the results.
 - [Inputs and outputs](/docs/build/inputs-and-outputs/): how `inputs:` and `outputs:` work.
-- [Write your own](/docs/get-started/first-orkflow/#7-write-your-own): save the `greet` example above, apply it, run it and read a task's log.
+- [Write your own](/docs/get-started/first-orkflow/#7-write-your-own): save the `greet` example above, create it, run it and read a task's log.
 
 ## See also
 

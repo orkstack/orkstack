@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -13,6 +13,8 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // An Orker stopped with SIGTERM (a pod deletion, `systemctl stop`, `docker
@@ -91,9 +93,7 @@ func runningContainers(t *testing.T, runID string) []string {
 	t.Helper()
 	out, err := exec.Command("docker", "ps", "--filter", "label=ork.run="+runID,
 		"--filter", "status=running", "--format", "{{.Names}}").Output()
-	if err != nil {
-		t.Fatalf("docker ps for run %s: %v", runID, err)
-	}
+	must.OKf(t, err, "docker ps for run %s", runID)
 	return strings.Fields(string(out))
 }
 
@@ -152,9 +152,7 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 
 			exited := make(chan error, 1)
 			go func() { exited <- orker.Wait() }()
-			if err := orker.Process.Signal(syscall.SIGTERM); err != nil {
-				t.Fatalf("SIGTERM the orker: %v", err)
-			}
+			must.OKf(t, orker.Process.Signal(syscall.SIGTERM), "SIGTERM the orker")
 			stoppedAt := time.Now()
 			select {
 			case err := <-exited:

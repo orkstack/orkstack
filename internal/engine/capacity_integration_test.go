@@ -3,7 +3,7 @@
 package engine_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"sort"
@@ -17,6 +17,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // An Orker that declares a capacity admits no task beyond it (docs/DEPLOY.md
@@ -88,9 +90,7 @@ func TestIntegration_ACapacityAdmitsAFanOutWithinItAndSubmitRefusesARequestNoOrk
 	d.storeOrkflow("big-"+d.token, pool, capacityTooLargeYAML, 0)
 	reader := engine.NewTemporalRunReader(d.temporal)
 	before, err := reader.ListRuns(ctx, engine.RunQuery{})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	_, refused := d.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "big-" + d.token, Namespace: d.orkNS}))
 	d.transcript.line("a 3-cpu task: %v", refused)
@@ -99,9 +99,7 @@ func TestIntegration_ACapacityAdmitsAFanOutWithinItAndSubmitRefusesARequestNoOrk
 		t.Fatalf("submit of a 3-cpu task onto a 2-cpu-cap pool = %v; want RESOURCES_UNSATISFIABLE naming train", refused)
 	}
 	after, err := reader.ListRuns(ctx, engine.RunQuery{})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(after) != len(before) {
 		t.Fatalf("the refused submit left %d runs behind", len(after)-len(before))
 	}
@@ -113,14 +111,10 @@ func TestIntegration_ACapacityAdmitsAFanOutWithinItAndSubmitRefusesARequestNoOrk
 		items[i] = i
 	}
 	data, err := structpb.NewStruct(map[string]any{"items": items})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	resp, err := d.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "fan-" + d.token, Namespace: d.orkNS, Input: &orkstackv1.Payload{Data: data}}))
-	if err != nil {
-		t.Fatalf("SubmitRun(fan-out): %v", err)
-	}
+	must.OKf(t, err, "SubmitRun(fan-out)")
 	runID := resp.Msg.GetRun().GetId()
 	run := d.await(runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
@@ -133,15 +127,16 @@ func TestIntegration_ACapacityAdmitsAFanOutWithinItAndSubmitRefusesARequestNoOrk
 	o.mu.Unlock()
 	for _, result := range results {
 		reader, err := d.store.Get(ctx, result.GetValuesRef().GetUri())
-		if err != nil {
-			t.Fatalf("read an item's values: %v", err)
-		}
+		must.OKf(t, err, "read an item's values")
 		body, err := io.ReadAll(reader)
 		_ = reader.Close()
-		if err != nil {
-			t.Fatalf("read an item's values: %v", err)
+		must.OKf(t, err, "read an item's values")
+		// encoding/json/v2 matches a key to a field exactly, so the tags
+		// name the lowercase keys the item writes.
+		var values struct {
+			Start float64 `json:"start"`
+			End   float64 `json:"end"`
 		}
-		var values struct{ Start, End float64 }
 		if err := json.Unmarshal(body, &values); err != nil {
 			t.Fatalf("an item's values %q: %v", body, err)
 		}

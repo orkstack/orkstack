@@ -60,6 +60,10 @@ const (
 	// them. Absent on a run with no root recorded. It selects nothing: it has
 	// no search attribute, and it is on the memo only for the listing row.
 	MemoOriginRootRunID = "orkflow_origin_root_run_id"
+	// MemoOrkflowOwner is the namespace that owns a shared child's definition
+	// (Run.orkflow_namespace), beside MemoNamespace, the namespace it runs
+	// in. Absent on every run of its own namespace's Orkflow.
+	MemoOrkflowOwner = "orkflow_owner_namespace"
 	// MemoCreatedAt carries a run's created_at, an RFC 3339 nano UTC string,
 	// once the run has continued as new: a generation's own StartTime is not
 	// the run's. The first switch upserts it, so it merges into generation
@@ -1538,6 +1542,7 @@ func (r *TemporalRunReader) startedRun(
 			run.OrkflowName = wf.GetName()
 			run.OrkflowVersion = wf.GetVersion()
 			run.Namespace = wf.GetNamespace()
+			run.OrkflowNamespace = wf.GetDefinitionNamespace()
 		}
 	}
 	if len(payloads) > 2 {
@@ -1582,6 +1587,7 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
 	run.OrkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
 	run.Namespace = r.memoString(info.GetMemo(), MemoNamespace)
+	run.OrkflowNamespace = r.memoString(info.GetMemo(), MemoOrkflowOwner)
 	// A listing row carries the origin's kind, id and root from the memo; the whole
 	// origin comes from GetRun, which reads the snapshot. A memo with no kind
 	// (a run started before origins existed) leaves Origin unset.
@@ -1628,7 +1634,9 @@ func matchesRunQuery(run *orkstackv1.Run, q RunQuery) bool {
 	if q.Namespace != "" && artifacts.ResolveNamespace(run.GetNamespace()) != artifacts.ResolveNamespace(q.Namespace) {
 		return false
 	}
-	if q.OrkflowName != "" && run.GetOrkflowName() != q.OrkflowName {
+	// The name is keyed as the archive indexes it (OrkflowKey): "deploy" is
+	// this namespace's own, "platform/deploy" a shared child's.
+	if q.OrkflowName != "" && OrkflowKey(run) != q.OrkflowName {
 		return false
 	}
 	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && run.GetStatus() != q.Status {

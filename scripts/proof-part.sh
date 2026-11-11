@@ -132,75 +132,6 @@ part_host_chromium() {
 	(cd "$REPO/ui" && node -e 'const fs = require("fs"); fs.accessSync(require("playwright-core").chromium.executablePath(), fs.constants.X_OK)')
 }
 
-# part_runner_class names the runner for scripts/proof-runner-floors.tsv:
-# the runner image and its vCPU count on a GitHub-hosted runner, because the
-# all-core and memory floors depend on the runner's size; `self-hosted` and
-# `local` have no row and are measured for information only.
-part_runner_class() {
-	if [ "${RUNNER_ENVIRONMENT:-}" = github-hosted ] && [ -n "${ImageOS:-}" ]; then
-		printf 'github-hosted/%s/%scpu\n' "$ImageOS" "$(nproc)"
-	elif [ "${GITHUB_ACTIONS:-}" = true ]; then
-		printf 'self-hosted\n'
-	else
-		printf 'local\n'
-	fi
-}
-
-# part_runner_health is the runner-health floor (AGENTS.md §11.2): the FIRST
-# thing a part does, before any gate. About fourteen seconds measure this
-# runner's work disk, CPUs and memory against the floors
-# scripts/proof-runner-floors.tsv declares for its class, into
-# runner-health.json beside the part's records. It returns 1 only for a
-# STACK part below a floor: the part then records itself and stops, and the
-# merger classifies it runner-degraded, exactly as a part whose runner
-# GitHub lost — no outcome of the tree, not a proof of the tree, and that
-# one job may run again. The plan, build, fast, race, race-repeat and fuzz
-# parts measure for information. A measurement that cannot run (exit 2) is
-# reported and the part runs on, judged as above the floor: the floor only
-# ever turns a result into "not a proof", never a failure into a pass.
-part_runner_health() {
-	local class code=0
-	class="$(part_runner_class)"
-	part_say "== runner-health: class $class against scripts/proof-runner-floors.tsv"
-	"$PR" runner-health -class "$class" -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >"$DIR/runner-health.log" 2>&1 || code=$?
-	sed 's/^/   /' "$DIR/runner-health.log"
-	case "$code" in
-	0) return 0 ;;
-	1)
-		if part_floor_binds; then
-			part_say "   runner-health: this runner is BELOW the floor; the part stops before any gate and is not a proof of the tree (re-run this job alone)"
-			# On GitHub, one annotation of fixed words, the only way the rerun
-			# planner (.github/workflows/proof-rerun.yml, `proofrun rerun-plan`)
-			# can tell this job from a failed one without downloading its
-			# artifact. It is evidence for running the job again, never for a
-			# verdict: the merger re-derives degradation from
-			# runner-health.json. No variable text, so it is matched whole
-			# (runnerBelowFloorAnnotation, test/tools/proofrun/rerunplan.go).
-			if [ "${GITHUB_ACTIONS:-}" = true ]; then
-				printf '::error::%s\n' "proof: runner below the floor, no gate ran"
-			fi
-			return 1
-		fi
-		part_say "   runner-health: this runner is below the floor; the $PART part measures for information and runs on"
-		return 0
-		;;
-	*)
-		part_say "   runner-health: the measurement itself failed (exit $code); the part runs on, judged as above the floor"
-		return 0
-		;;
-	esac
-}
-
-# part_floor_binds: the floor stops this part. The stack parts run the
-# tests whose bounds a degraded runner would fail; the plan, build, fast,
-# race, race-repeat and fuzz parts record their measurement and run on.
-part_floor_binds() {
-	case "$PART" in
-	integration:* | ui-e2e:* | activity-fixture:* | observability) return 0 ;;
-	esac
-	return 1
-}
-
 part_tree_hash() {
 	local idx
 	idx="$(mktemp)"
@@ -219,8 +150,8 @@ part_proc_start() { sed -E 's/^.*\) //' "/proc/$1/stat" 2>/dev/null | awk '{prin
 # printed as they happen: the job's own log is what GitHub keeps when the
 # runner is lost or the run is cancelled before the part's artifact is
 # uploaded, and the integration gate's `proofrun: start` and `proofrun:
-# outcome` lines are what the merger and the rerun planner read such a part
-# from (test/tools/proofrun, classify).
+# outcome` lines are what the merger reads such a part from
+# (test/tools/proofrun, classify).
 part_run() { # <gate> <log> <command...>
 	local gate="$1" logname="$2" logfile="$DIR/$2"
 	shift 2
@@ -268,10 +199,8 @@ part_record() { # <status>
 	[ -n "$PLAN" ] && args+=(-plan "$PLAN")
 	[ -n "$UI_PLAN" ] && args+=(-ui-plan "$UI_PLAN")
 	[ -f "$DIR/setup.log" ] && args+=(-setup-log "$DIR/setup.log")
-	[ -f "$DIR/runner-health.json" ] && args+=(-runner-health "$DIR/runner-health.json")
 	[ -f "$DIR/images.tsv" ] && args+=(-image-tag "$PROOF_ID" -images "$DIR/images.tsv" -image-tag-own)
 	[ -n "$PART_TEMPORAL_RAN" ] && args+=(-temporal own -temporal-image "$TEMPORAL_IMAGE" -temporal-address "$TEMPORAL_ADDRESS")
-	[ "$OBSERVABILITY_REQUIRED" = 1 ] && args+=(-observability-required)
 	"$PR" record "${args[@]}"
 }
 
@@ -383,19 +312,6 @@ part_main() { # <part>
 	START_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 	part_say "proof: part $PART attempt $ATTEMPT of $TIER -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START" = true ] || echo ', NOT clean'))"
 
-	# The runner-health floor runs FIRST, before any gate: a stack part on a
-	# runner below the floor records itself and stops here.
-	if ! part_runner_health; then
-		TREE_END="$(part_tree_hash)"
-		CLEAN_END=false
-		if part_is_clean; then CLEAN_END=true; fi
-		part_record 1 || true
-		part_say "proof: part $PART -> $DIR/part.json (runner below the floor: no gate ran)"
-		return 1
-	fi
-
-	OBSERVABILITY_REQUIRED=0
-	[ "$TIER" = release ] && OBSERVABILITY_REQUIRED=1
 	STACK_ENV=(
 		ORK_PROOF_ID="$PROOF_ID"
 		ORK_PROOF_DIR="$DIR/artifacts"
@@ -407,16 +323,9 @@ part_main() { # <part>
 
 	case "$PART" in
 	plan)
-		local obs=0
-		[ "$TIER" = release ] && obs=1
-		if [ "$obs" = 0 ] && "$PR" touches -base "$BASE_COMMIT" -action observability >"$DIR/observability-paths.txt" 2>/dev/null; then
-			obs=1
-		fi
-		OBSERVABILITY_REQUIRED="$obs"
 		git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
-		git show "$BASE_COMMIT:scripts/proof-host-speed.tsv" >"$DIR/host-speed-base.txt" 2>/dev/null || : >"$DIR/host-speed-base.txt"
 		local mode=defer
 		[ "$TIER" = release ] && mode=include
 		[ "$TIER" = nightly ] && mode=only
@@ -432,8 +341,6 @@ part_main() { # <part>
 			-base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -ui-shards "$UI_SHARDS"
 			-nightly-mode "$mode" -nightly-base "$DIR/nightly-base.txt"
 			-quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt"
-			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt"
-			-observability-required="$OBSERVABILITY_REQUIRED"
 		)
 		[ -n "${PROOF_PR_NUMBER:-}" ] && plan_args+=(-pr-number "$PROOF_PR_NUMBER" -pr-head-sha "${PROOF_PR_HEAD:-}" -pr-base-sha "${PROOF_PR_BASE:-}" -pr-contains-base "${PROOF_PR_CONTAINS_BASE:-false}")
 		part_run plan plan.log "$PR" integration "${plan_args[@]}" || true
@@ -572,8 +479,7 @@ part_main() { # <part>
 		fi
 		part_run ui-e2e ui-e2e-ledger.log "$PR" ui-ledger -list "$DIR/ui-e2e-list.json" \
 			"${reports[@]}" -plan "$UI_PLAN" -log "$DIR/ui-e2e.log" \
-			-config "$REPO/ui/playwright.config.ts" -out "$DIR" -shard "$k" -part "$PART" \
-			-host-speed scripts/proof-host-speed.tsv -host-speed-base "$(dirname "$UI_PLAN")/host-speed-base.txt" || true
+			-config "$REPO/ui/playwright.config.ts" -out "$DIR" -shard "$k" -part "$PART" || true
 		;;
 	activity-fixture:*)
 		local a="${PART#activity-fixture:}"

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -16,6 +16,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -166,7 +167,7 @@ function cardAttr(page: Page, taskId: string, attribute: string): Promise<string
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# Task pins on the run detail page: Pin and Orker per task, one',
@@ -250,28 +251,37 @@ test('a pinned task states its pin and its orker, and one pin means one orker', 
 	await shot(page, 'screenshot-run-pins.png');
 
 	// 1. Each member of `build` says which pin it is in, in the author's own
-	//    word, beside the pool it was routed to.
-	await expect(page.getByTestId('task-write-pin')).toHaveText(/Pin build/);
-	await expect(page.getByTestId('task-read-pin')).toHaveText(/Pin build/);
-	await expect(page.getByTestId('task-stamp-pin')).toHaveText(/Pin verify/);
-
+	//    word, on its panel; its row says it with its tint and hidden words.
 	// 2. THE PROOF. Both members name an Orker, and it is the SAME one. This
 	//    is measured against a real dispatch, so a scheduler regression that
 	//    put the members on different hosts fails here.
-	const writeOrker = await page.getByTestId('task-write-orker').textContent();
-	const readOrker = await page.getByTestId('task-read-orker').textContent();
-	// (The row's sub-line leads each fact with a dot: `· Orker <id>`.)
-	expect(writeOrker?.trim()).toMatch(/Orker \S+/);
-	expect(readOrker?.trim()).toBe(writeOrker?.trim());
-	note(`pin build held on ${writeOrker?.trim()}`);
+	const panelOf = async (id: string) => {
+		await selectTask(page, id);
+		const panel = page.getByTestId('task-panel');
+		return {
+			pin: (await panel.getByTestId(`task-${id}-pin`).textContent())?.trim(),
+			orker: (await panel.getByTestId(`task-${id}-card-orker`).textContent())?.trim()
+		};
+	};
+	const writePanel = await panelOf('write');
+	const readPanel = await panelOf('read');
+	const stampPanel = await panelOf('stamp');
+	expect(writePanel.pin).toBe('build');
+	expect(readPanel.pin).toBe('build');
+	expect(stampPanel.pin).toBe('verify');
+	expect(writePanel.orker).toMatch(/^\S+$/);
+	expect(readPanel.orker).toBe(writePanel.orker);
+	note(`pin build held on ${writePanel.orker}`);
+	for (const id of ['write', 'read', 'stamp']) {
+		await expect(page.getByTestId(`task-${id}`)).not.toContainText('Orker');
+	}
 
 	// 3. The unpinned task shows NO pin, and its row stays minimal: orker_id is
 	//    populated for every task that reached one, and its panel says it.
-	await expect(page.getByTestId('task-checksum-pin')).toHaveCount(0);
-	await expect(page.getByTestId('task-checksum-orker')).toHaveCount(0);
 	await selectTask(page, 'checksum');
+	await expect(page.getByTestId('task-checksum-pin')).toHaveCount(0);
 	await expect(page.getByTestId('task-checksum-card-orker')).not.toBeEmpty();
-	await expect(page.getByTestId('task-checksum')).not.toContainText('Pin ');
+	await expect(page.getByTestId('task-checksum')).not.toContainText('pin ');
 
 	// 4. GROUPING. The members of one pin carry one accent; the task in the
 	//    OTHER pin carries a different one, and the unpinned task carries

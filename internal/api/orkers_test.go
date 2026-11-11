@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // stubFleet states the facts an OrkerFleet would read from the cluster and
@@ -99,9 +101,7 @@ func threeOrkerFleet() *stubFleet {
 func listOrkers(t *testing.T, svc *api.Service, req *orkstackv1.ListOrkersRequest) []*orkstackv1.Orker {
 	t.Helper()
 	resp, err := svc.ListOrkers(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("ListOrkers: %v", err)
-	}
+	must.OKf(t, err, "ListOrkers")
 	return resp.Msg.GetOrkers()
 }
 
@@ -308,9 +308,7 @@ func TestCordonOrker_ReturnsThePostStateRow(t *testing.T) {
 	svc := api.NewService(api.Config{Fleet: fleet})
 	resp, err := svc.CordonOrker(context.Background(), connect.NewRequest(&orkstackv1.CordonOrkerRequest{
 		OrkerId: "orker-7f3a", Cordoned: true, Reason: "CVE-2026-1234 runtime patch"}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	row := resp.Msg.GetOrker()
 	if !row.GetCordoned() || row.GetCordonReason() != "CVE-2026-1234 runtime patch" || row.GetCordonedAt() == nil ||
 		!row.GetLastSeen().AsTime().Equal(fleetSeen) || row.GetRunningTasks() != 2 || row.GetPool() != "build" {

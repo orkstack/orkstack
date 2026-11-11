@@ -2,7 +2,7 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -19,8 +19,13 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // eachReads is the fan-out read fixture: the evidence fixture's production
@@ -57,9 +62,7 @@ func newEachReads(t *testing.T) *eachReads {
 			SchemaVersion: artifacts.CommitSchemaVersion, Namespace: "default", RunId: eachRunID, TaskId: "convert",
 			OrkflowDefinitionDigest: f.digest, Values: values, Artifacts: []*orkstackv1.ArtifactRef{part},
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		attempt := int32(1)
 		if i == 1 {
 			attempt = 2
@@ -78,9 +81,7 @@ func newEachReads(t *testing.T) *eachReads {
 			SchemaVersion: artifacts.AttemptSchemaVersion, RunId: eachRunID, TaskId: "convert",
 			Attempt: attempt, Item: proto.Int32(i), Outcome: orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED,
 		}
-		if err := f.attempts.PutAttempt(context.Background(), record); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, f.attempts.PutAttempt(context.Background(), record))
 		logs.write(artifacts.LogRef{RunID: eachRunID, TaskID: "convert", Item: artifacts.ItemAt(i), Attempt: attempt}, 1,
 			fmt.Sprintf("item %d says hello\n", i))
 	}
@@ -151,18 +152,14 @@ func TestItemSelectorRules(t *testing.T) {
 			err := c("convert", nil)
 			switch name {
 			case "ListRunArtifacts", "ListTaskAttempts":
-				if err != nil {
-					t.Fatalf("rule 5 (every item): %v", err)
-				}
+				must.OKf(t, err, "rule 5 (every item)")
 			default:
 				if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), "fan-out of 3 items") {
 					t.Fatalf("rule 5 (name one): %v", err)
 				}
 			}
 			// And a real item answers.
-			if err := c("convert", item(1)); err != nil {
-				t.Fatalf("item 1: %v", err)
-			}
+			must.OKf(t, c("convert", item(1)), "item 1")
 		})
 	}
 }
@@ -170,9 +167,7 @@ func TestItemSelectorRules(t *testing.T) {
 func TestListRunArtifacts_EveryItemCarriesItsItem(t *testing.T) {
 	e := newEachReads(t)
 	resp, err := e.client.ListRunArtifacts(context.Background(), connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{RunId: eachRunID, TaskId: "convert"}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var outputs []string
 	for _, a := range resp.Msg.GetArtifacts() {
 		if a.Item == nil {
@@ -186,9 +181,7 @@ func TestListRunArtifacts_EveryItemCarriesItsItem(t *testing.T) {
 		t.Fatalf("outputs = %v, want items ascending with their own attempts", outputs)
 	}
 	one, err := e.client.ListRunArtifacts(context.Background(), connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{RunId: eachRunID, TaskId: "convert", Item: item(2)}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, a := range one.Msg.GetArtifacts() {
 		if a.GetItem() != 2 {
 			t.Fatalf("item 2 listed %v", a)
@@ -223,9 +216,7 @@ func TestReadArtifact_FanOutNeedsAnItem(t *testing.T) {
 func TestStreamTaskLogs_StreamsOneItemAndEchoesIt(t *testing.T) {
 	e := newEachReads(t)
 	stream, err := e.client.StreamTaskLogs(context.Background(), connect.NewRequest(&orkstackv1.StreamTaskLogsRequest{RunId: eachRunID, TaskId: "convert", Item: item(1)}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var body strings.Builder
 	for stream.Receive() {
 		chunk := stream.Msg()
@@ -237,9 +228,7 @@ func TestStreamTaskLogs_StreamsOneItemAndEchoesIt(t *testing.T) {
 		}
 		body.Write(chunk.GetData())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, stream.Err())
 	if body.String() != "item 1 says hello\n" {
 		t.Fatalf("body = %q", body.String())
 	}
@@ -250,18 +239,12 @@ func TestStreamTaskLogs_StreamsOneItemAndEchoesIt(t *testing.T) {
 	defer cancel()
 	url := strings.Replace(server, "http://", "ws://", 1) + "/ws/runs/" + eachRunID + "/tasks/convert/logs?item=2"
 	conn, _, err := websocket.Dial(ctx, url, nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	must.OKf(t, err, "dial")
 	defer conn.CloseNow()
 	_, payload, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read: %v", err)
-	}
+	must.OKf(t, err, "read")
 	chunk := &orkstackv1.TaskLogChunk{}
-	if err := protojson.Unmarshal(payload, chunk); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, protojson.Unmarshal(payload, chunk))
 	if chunk.GetItem() != 2 || string(chunk.GetData()) != "item 2 says hello\n" {
 		t.Fatalf("socket chunk = %v", chunk)
 	}
@@ -281,16 +264,14 @@ func httpServerFor(t *testing.T, svc *api.Service) string {
 func TestListTaskAttempts_OneTimelinePerItemInIndexOrder(t *testing.T) {
 	e := newEachReads(t)
 	resp, err := e.client.ListTaskAttempts(context.Background(), connect.NewRequest(&orkstackv1.ListTaskAttemptsRequest{RunId: eachRunID, TaskId: "convert"}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var rows []string
 	for _, a := range resp.Msg.GetAttempts() {
 		if a.Item == nil {
 			t.Fatalf("an item record carries no item: %v", a)
 		}
 		rows = append(rows, fmt.Sprintf("%d#%d=%s", a.GetItem(), a.GetAttempt(),
-			strings.TrimPrefix(a.GetOutcome().String(), "ATTEMPT_OUTCOME_")))
+			enumname.Of(a.GetOutcome())))
 	}
 	want := "[0#1=SUCCEEDED 1#1=UNREPORTED 1#2=SUCCEEDED 2#1=SUCCEEDED]"
 	if fmt.Sprint(rows) != want {
@@ -301,9 +282,7 @@ func TestListTaskAttempts_OneTimelinePerItemInIndexOrder(t *testing.T) {
 func TestGetRun_CarriesItems(t *testing.T) {
 	e := newEachReads(t)
 	resp, err := e.client.GetRun(context.Background(), connect.NewRequest(&orkstackv1.GetRunRequest{RunId: eachRunID}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, task := range resp.Msg.GetRun().GetTaskRuns() {
 		if task.GetTaskId() == "convert" && len(task.GetItems()) != 3 {
 			t.Fatalf("GetRun carries %d items", len(task.GetItems()))
@@ -314,9 +293,7 @@ func TestGetRun_CarriesItems(t *testing.T) {
 func TestListRuns_CarriesNoItems(t *testing.T) {
 	e := newEachReads(t)
 	resp, err := e.client.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	found := false
 	for _, run := range resp.Msg.GetRuns() {
 		for _, task := range run.GetTaskRuns() {
@@ -348,7 +325,7 @@ func TestWebhookNotifier_BodyCarriesNoItems(t *testing.T) {
 		Type: orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, Status: orkstackv1.Status_STATUS_SUCCEEDED}, run)
 	body, _ := f.awaitDelivery(t)
 	var payload struct {
-		Run json.RawMessage `json:"run"`
+		Run stablejson.RawJSON `json:"run"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatal(err)
@@ -374,9 +351,7 @@ func TestInspectRun_ItemAttempts(t *testing.T) {
 	}}
 	f := newInspectFixture(t, run, live, nil)
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var order []string
 	for _, a := range resp.GetAttempts() {
 		order = append(order, fmt.Sprintf("%s%v", a.GetTaskId(), itemSuffix(a.Item)))
@@ -412,9 +387,7 @@ func TestDiffRuns_ComparesItemsPairwise(t *testing.T) {
 	e.reader.setRun(other)
 	resp, err := e.client.DiffRuns(context.Background(), connect.NewRequest(&orkstackv1.DiffRunsRequest{
 		FromRunId: eachRunID, ToRunId: other.GetId(), Only: []string{"status", "error", "attempt", "orker"}}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var rows []string
 	for _, d := range resp.Msg.GetDifferences() {
 		rows = append(rows, fmt.Sprintf("%s%s.%s", d.GetTaskId(), itemSuffix(d.Item), d.GetField()))
@@ -447,9 +420,7 @@ func TestGetArtifactProvenance_ItemReference(t *testing.T) {
 	}
 	res, err := f.askReq(&orkstackv1.GetArtifactProvenanceRequest{RunId: run.GetId(), TaskId: "convert", Item: item(1),
 		Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "part.txt"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if res.GetArtifact().GetSha256() != part1.GetSha256() {
 		t.Fatalf("selected %v, want item 1's object", res.GetArtifact())
 	}
@@ -513,9 +484,7 @@ func TestValidateOrkflow_DeploymentCapBelowTheDeclaredTotalIsAnIssue(t *testing.
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), EachMaxItems: 200})
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
 		Yaml: fmt.Sprintf(eachValidateDoc, 100, "x")}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	issues := resp.Msg.GetIssues()
 	if len(issues) != 1 || issues[0].GetField() != "tasks[0].each.max_items" ||
 		issues[0].GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR ||
@@ -534,9 +503,7 @@ func TestValidateOrkflow_EachWithOverTheItemBoundIsAnError(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()})
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
 		Yaml: fmt.Sprintf(eachValidateDoc, 400, strings.Repeat("y", 20000))}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	issues := resp.Msg.GetIssues()
 	if len(issues) != 1 || issues[0].GetField() != "tasks[1].with" ||
 		!strings.Contains(issues[0].GetMessage(), `every item of "render" would carry at least`) ||

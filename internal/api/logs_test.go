@@ -19,6 +19,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // memoryLogStore is the shared bucket, as far as these tests are concerned:
@@ -244,9 +246,7 @@ func TestStreamTaskLogs_FollowsChunksWrittenAfterTheReaderConnected(t *testing.T
 	defer cancel()
 	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
 		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "build", Follow: true}))
-	if err != nil {
-		t.Fatalf("StreamTaskLogs: %v", err)
-	}
+	must.OKf(t, err, "StreamTaskLogs")
 	defer stream.Close()
 
 	if !stream.Receive() {
@@ -320,9 +320,7 @@ func TestStreamTaskLogs_WithoutFollowReplaysWhatIsStoredWhileTheTaskKeepsWriting
 	defer cancel()
 	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
 		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "build"}))
-	if err != nil {
-		t.Fatalf("StreamTaskLogs: %v", err)
-	}
+	must.OKf(t, err, "StreamTaskLogs")
 	defer stream.Close()
 
 	var chunks []*orkstackv1.TaskLogChunk
@@ -350,9 +348,7 @@ func TestStreamTaskLogs_WithoutFollowReplaysWhatIsStoredWhileTheTaskKeepsWriting
 	defer cancelFollow()
 	following, err := fixture.runClient().StreamTaskLogs(followCtx, connect.NewRequest(
 		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "build", Follow: true}))
-	if err != nil {
-		t.Fatalf("StreamTaskLogs(follow): %v", err)
-	}
+	must.OKf(t, err, "StreamTaskLogs(follow)")
 	defer following.Close()
 	for following.Receive() {
 		if following.Msg().GetLast() {
@@ -486,9 +482,7 @@ func TestStreamTaskLogs_FollowsTheTaskOntoItsNextAttempt(t *testing.T) {
 	defer cancel()
 	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
 		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "flaky", Follow: true}))
-	if err != nil {
-		t.Fatalf("StreamTaskLogs: %v", err)
-	}
+	must.OKf(t, err, "StreamTaskLogs")
 	defer stream.Close()
 
 	if !stream.Receive() {
@@ -570,9 +564,7 @@ func TestStreamTaskLogs_APinnedAttemptDoesNotFollowARetry(t *testing.T) {
 		&orkstackv1.StreamTaskLogsRequest{
 			RunId: run.GetId(), TaskId: "flaky", Attempt: 1, Follow: true,
 		}))
-	if err != nil {
-		t.Fatalf("StreamTaskLogs: %v", err)
-	}
+	must.OKf(t, err, "StreamTaskLogs")
 	defer stream.Close()
 	if !stream.Receive() {
 		t.Fatalf("no first chunk: %v", stream.Err())
@@ -660,9 +652,7 @@ func TestStreamTaskLogs_AChattyTaskDoesNotReplayItsRunsHistoryPerPoll(t *testing
 	defer cancel()
 	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(
 		&orkstackv1.StreamTaskLogsRequest{RunId: run.GetId(), TaskId: "chatter", Follow: true}))
-	if err != nil {
-		t.Fatalf("StreamTaskLogs: %v", err)
-	}
+	must.OKf(t, err, "StreamTaskLogs")
 	defer stream.Close()
 
 	chunks := 0
@@ -833,9 +823,7 @@ func TestWebSocketTaskLogs_ReplaysAndFollowsTheSameStream(t *testing.T) {
 	url := fmt.Sprintf("%s/ws/runs/%s/tasks/%s/logs?follow=true",
 		strings.Replace(fixture.baseURL, "http://", "ws://", 1), run.GetId(), "build")
 	conn, _, err := websocket.Dial(ctx, url, nil)
-	if err != nil {
-		t.Fatalf("dial %s: %v", url, err)
-	}
+	must.OKf(t, err, "dial %s", url)
 	defer conn.CloseNow()
 
 	first := readLogFrame(t, ctx, conn)
@@ -877,9 +865,7 @@ func TestWebSocketTaskLogs_ResumesFromSeq(t *testing.T) {
 	url := fmt.Sprintf("%s/ws/runs/%s/tasks/%s/logs?from_seq=2",
 		strings.Replace(fixture.baseURL, "http://", "ws://", 1), run.GetId(), "build")
 	conn, _, err := websocket.Dial(ctx, url, nil)
-	if err != nil {
-		t.Fatalf("dial: %v", err)
-	}
+	must.OKf(t, err, "dial")
 	defer conn.CloseNow()
 
 	frame := readLogFrame(t, ctx, conn)
@@ -917,9 +903,7 @@ func collectLogChunks(
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	stream, err := fixture.runClient().StreamTaskLogs(ctx, connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("StreamTaskLogs: %v", err)
-	}
+	must.OKf(t, err, "StreamTaskLogs")
 	defer stream.Close()
 	var chunks []*orkstackv1.TaskLogChunk
 	for stream.Receive() {
@@ -949,13 +933,9 @@ func readLogFrame(
 ) *orkstackv1.TaskLogChunk {
 	t.Helper()
 	_, payload, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read log frame: %v", err)
-	}
+	must.OKf(t, err, "read log frame")
 	chunk := &orkstackv1.TaskLogChunk{}
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(payload, chunk); err != nil {
-		t.Fatalf("decode log frame %s: %v", payload, err)
-	}
+	must.OKf(t, (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(payload, chunk), "decode log frame %s", payload)
 	return chunk
 }
 

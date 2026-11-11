@@ -12,6 +12,8 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // prefixOfComponents reports whether the "/"-separated components of prefix
@@ -144,13 +146,9 @@ func FuzzParseSigner(f *testing.F) {
 // what is accepted fingerprints the same after being written out again.
 func FuzzParseSigningKey(f *testing.F) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	good := pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der})
 	f.Add(good)
 	f.Add(append(append([]byte(nil), good...), good...))
@@ -177,9 +175,7 @@ func FuzzParseSigningKey(f *testing.F) {
 			t.Fatalf("fingerprint %q", fingerprint)
 		}
 		der, err := x509.MarshalPKIXPublicKey(parsed)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		again, err := ParseSigningKey(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: der}))
 		if err != nil || SigningKeyFingerprint(again) != fingerprint {
 			t.Fatalf("a key written out again fingerprints %q, %v; want %q", SigningKeyFingerprint(again), err, fingerprint)

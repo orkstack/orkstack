@@ -8,6 +8,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const telemetryDocument = `
@@ -41,9 +43,7 @@ func planTelemetry(t *testing.T, ns *orkstackv1.Namespace, document string) (*en
 // were before this field existed.
 func TestPoolResolver_PlanTelemetry_NilWithNoPolicyAndNoLabels(t *testing.T) {
 	telemetry, err := planTelemetry(t, &orkstackv1.Namespace{}, telemetryDocument)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if telemetry != nil {
 		t.Fatalf("telemetry = %+v, want nil", telemetry)
 	}
@@ -61,9 +61,7 @@ func TestPoolResolver_PlanTelemetry_PolicyOnly(t *testing.T) {
 		},
 	}
 	telemetry, err := planTelemetry(t, ns, telemetryDocument)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if telemetry == nil {
 		t.Fatal("telemetry = nil, want the namespace's policy")
 	}
@@ -94,9 +92,7 @@ tasks:
     with: {command: "echo work"}
 `
 	telemetry, err := planTelemetry(t, &orkstackv1.Namespace{}, document)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if telemetry == nil {
 		t.Fatal("telemetry = nil, want a selection carrying the orkflow's label")
 	}
@@ -132,9 +128,7 @@ tasks:
     with: {command: "echo work"}
 `
 	telemetry, err := planTelemetry(t, ns, document)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if telemetry == nil {
 		t.Fatal("telemetry = nil, want a selection")
 	}
@@ -169,9 +163,7 @@ tasks:
 `, labelLines.String())
 
 	telemetry, err := planTelemetry(t, &orkstackv1.Namespace{}, document)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if telemetry == nil {
 		t.Fatal("telemetry = nil, want a selection carrying 32 of the orkflow's 40 labels")
 	}
@@ -208,9 +200,7 @@ tasks:
     with: {command: "echo work"}
 `
 	telemetry, err := planTelemetry(t, &orkstackv1.Namespace{}, document)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if got, want := telemetry.Attributes["ork.label.team"], "payments"; got != want {
 		t.Errorf(`attributes["ork.label.team"] = %q, want %q`, got, want)
 	}
@@ -237,9 +227,7 @@ tasks:
     with: {command: "echo work"}
 `
 	telemetry, err := planTelemetry(t, &orkstackv1.Namespace{}, document)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if got, want := telemetry.Attributes["ork.label.team"], "from-Team"; got != want {
 		t.Errorf(`attributes["ork.label.team"] = %q, want %q (from the sorted-first key "Team")`, got, want)
 	}
@@ -261,9 +249,7 @@ tasks:
     with: {command: "echo work"}
 `
 	telemetry, err := planTelemetry(t, &orkstackv1.Namespace{}, document)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if got, want := telemetry.Attributes["ork.label.note"], "paymentsdrop table"; got != want {
 		t.Errorf(`attributes["ork.label.note"] = %q, want %q`, got, want)
 	}

@@ -121,8 +121,8 @@ Defined in `proto/orkstack/v1/orkflow_service.proto`.
 
 | Method | Request | Response | Description |
 |---|---|---|---|
-| `ValidateOrkflow` | [`ValidateOrkflowRequest`](#validateorkflowrequest) | [`ValidateOrkflowResponse`](#validateorkflowresponse) | ValidateOrkflow performs the same non-mutating preparation as apply. |
-| `ApplyOrkflow` | [`ApplyOrkflowRequest`](#applyorkflowrequest) | [`ApplyOrkflowResponse`](#applyorkflowresponse) | ApplyOrkflow validates and stores an orkflow from raw DSL YAML.<br><br>It never rewrites a stored version: identical YAML under an existing version is a no-op that writes nothing, and DIFFERENT YAML under an existing version is refused (AlreadyExists). An edit therefore always arrives as a new version — which is what lets a run pinned to a version keep reading the bytes it pinned. |
+| `ValidateOrkflow` | [`ValidateOrkflowRequest`](#validateorkflowrequest) | [`ValidateOrkflowResponse`](#validateorkflowresponse) | ValidateOrkflow performs the same non-mutating preparation as ApplyOrkflow. |
+| `ApplyOrkflow` | [`ApplyOrkflowRequest`](#applyorkflowrequest) | [`ApplyOrkflowResponse`](#applyorkflowresponse) | ApplyOrkflow validates and stores an orkflow version from raw DSL YAML: what `orkctl orkflow create` and the UI's Create Orkflow page send.<br><br>It never rewrites a stored version: identical YAML under an existing version is a no-op that writes nothing, and DIFFERENT YAML under an existing version is refused (AlreadyExists). An edit therefore always arrives as a new version — which is what lets a run pinned to a version keep reading the bytes it pinned. |
 | `GetOrkflow` | [`GetOrkflowRequest`](#getorkflowrequest) | [`GetOrkflowResponse`](#getorkflowresponse) |  |
 | `ListOrkflows` | [`ListOrkflowsRequest`](#listorkflowsrequest) | [`ListOrkflowsResponse`](#listorkflowsresponse) |  |
 | `ListOrkflowVersions` | [`ListOrkflowVersionsRequest`](#listorkflowversionsrequest) | [`ListOrkflowVersionsResponse`](#listorkflowversionsresponse) | ListOrkflowVersions lists every stored version of one orkflow, newest applied first, marking the one an empty version resolves to. |
@@ -368,7 +368,7 @@ encoding (lowerCamel names), verbatim.
 | `yaml` | `string` | raw DSL document |
 | `namespace` | `string` | namespace selects where the document is applied. Empty honours the document's own `namespace:` (itself empty = "default"); a non-empty value must EQUAL the document's namespace, or the document names none and is applied INTO this one. The two are never allowed to disagree silently: a file that says `namespace: payments` applied with -n staging is a mistake one of the two made, and guessing which would store the definition somewhere its author cannot find it. |
 | `base_version` | `string` | base_version is the stored version this edit was derived from — its PROVENANCE and the anchor a diff is taken against, not the concurrency token. ANY stored version is a valid base: editing an old one is how a user forks forward from it, and the apply lands as the new head with the `current` pointer untouched. A non-empty value that names no stored version is NotFound, naming it.<br><br>It is a VERSION token rather than a content hash. Both name where an edit came from; only the token names something the user can act on — `orkctl orkflow diff <name> <base_version> <head>` shows exactly what arrived underneath the edit. A hash names nothing. |
-| `expected_head_version` | `string` | expected_head_version is the optimistic-concurrency token: the head version the editor observed when it fetched. Non-empty and different from the stored head is refused (FailedPrecondition) naming both, WHATEVER base was chosen — so an edit made while somebody else applied is reported instead of landing beside a newer version nobody looked at.<br><br>Empty with an empty base_version is unchecked, which is what a plain `orkctl apply file.yaml` sends. Empty with a non-empty base_version is InvalidArgument naming both fields: a base is provenance, not a head claim, and an editor that read a base also read the head it was under.<br><br>Two fields because there are two facts. With one, the server cannot tell "derived from an old version on purpose" from "derived from a head that has since moved", and the first is the whole point of this contract. |
+| `expected_head_version` | `string` | expected_head_version is the optimistic-concurrency token: the head version the editor observed when it fetched. Non-empty and different from the stored head is refused (FailedPrecondition) naming both, WHATEVER base was chosen — so an edit made while somebody else applied is reported instead of landing beside a newer version nobody looked at.<br><br>Empty with an empty base_version is unchecked, which is what a plain `orkctl orkflow create file.yaml` sends. Empty with a non-empty base_version is InvalidArgument naming both fields: a base is provenance, not a head claim, and an editor that read a base also read the head it was under.<br><br>Two fields because there are two facts. With one, the server cannot tell "derived from an old version on purpose" from "derived from a head that has since moved", and the first is the whole point of this contract. |
 
 ### ApplyOrkflowResponse
 
@@ -417,6 +417,16 @@ recorded the same object under two tasks yields two references.
 | `run_status` | [`Status`](#status) |  |
 | `run_created_at` | `google.protobuf.Timestamp` |  |
 | `item` | optional `int32` | item is set when the referencing run recorded the object under one item. |
+
+### AttemptTiming
+
+AttemptTiming is the derivation over one TaskAttempt, set on every row
+ListTaskAttempts answers and never stored.
+
+| Field | Type | Description |
+|---|---|---|
+| `in_progress` | `bool` | in_progress marks the newest attempt of a task that has not finished: it has no record yet because a record is written when an attempt ENDS, and calling it unreported would say its Orker crashed. phases_reason is then unset. |
+| `phases_reason` | [`TimingReason`](#timingreason) | phases_reason is set when this attempt's phases cannot be listed: NO_RECORD (UNREPORTED), RECLAIMED (UNREPORTED, and the task's records were reclaimed), NO_PHASES (a record with none). Each PhaseSpan otherwise carries its own duration. |
 
 ### AuditRecord
 
@@ -536,7 +546,7 @@ nothing can disagree with the records tomorrow.
 |---|---|---|
 | `cpu_seconds` | `int64` | cpu_seconds bounds reserved cpu × held time, in cpu-seconds. 0 means this dimension is not bounded. At least one of cpu_seconds and gib_seconds is above 0; a budget that bounds nothing is refused — clear it instead. |
 | `gib_seconds` | `int64` | gib_seconds bounds reserved memory × held time, in GiB-seconds (memory bytes ÷ 2^30 × seconds). 0 means this dimension is not bounded. |
-| `period` | `google.protobuf.Duration` | period is the rolling window a budget is held against, ending at the moment of the question. Required; at least 1h and at most 744h (31 days). A longer question is a report — `orkctl stats usage --since` — not a budget evaluated at every submit. |
+| `period` | `google.protobuf.Duration` | period is the rolling window a budget is held against, ending at the moment of the question. Required; at least 1h and at most 744h (31 days). A longer question is a report — `orkctl stats usage -s` — not a budget evaluated at every submit. |
 | `enforce` | `bool` | enforce turns the budget from an observation into an admission rule. False — the default — reports usage against the budget on every read and never refuses anything, and costs nothing at submit. True refuses every new run of the namespace with FAILED_PRECONDITION while measured usage over the trailing period is at or above any bounded dimension. Either way an accepted run is never touched (AGENTS.md §15). |
 
 ### CacheInventoryRow
@@ -615,6 +625,7 @@ runs: every TaskRun (and fan-out item) whose cache.outcome is set.
 | `hit_rate` | `double` | hit_rate is hits / (hits + misses); bypassed runs asked not to look and are not in it. hit_rate_defined is false when hits + misses is 0: a rate over nothing is unavailable, never 0. |
 | `hit_rate_defined` | `bool` |  |
 | `reused` | `google.protobuf.Duration` | reused is the sum, over hits, of the source attempt's duration (source.finished_at - source.started_at): the producing attempts' time these hits did not spend again. Stated as that, never as "saved". |
+| `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
 
 ### CancelRunRequest
 
@@ -825,6 +836,7 @@ receiver answered, and nothing about what the receiver did with it.
 | `created_at` | `google.protobuf.Timestamp` |  |
 | `settled_at` | `google.protobuf.Timestamp` |  |
 | `redelivery_of` | `string` | redelivery_of names the delivery this one repeats, when an operator asked for it through RedeliverWebhook. Empty for a delivery the engine made on its own. |
+| `sequence` | `int64` | sequence is the run event's sequence, as the body's "sequence" and X-Ork-Sequence carried it: the order the run emitted its events in, which a receiver orders deliveries by. A redelivery keeps the original's. Zero on a record written before deliveries carried it. |
 
 ### DeliveryAttempt
 
@@ -1045,6 +1057,7 @@ existed). Clients render the first as `unavailable` and the second as `-`.
 | `last_seen` | `google.protobuf.Timestamp` |  |
 | `example_run_ids` | repeated `string` | example_run_ids holds at most 3 of the group's runs, newest created first. Ids are never compared with each other (AGENTS.md §7). |
 | `attempt_evidence_missing` | `int64` | attempt_evidence_missing counts this group's runs whose attempt record could not be read, so image and phase were unavailable for them. It is only ever nonzero when the response's attempt_evidence_read is true. |
+| `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
 
 ### FieldFilter
 
@@ -1054,7 +1067,7 @@ FieldFilter is one predicate over one field of the listed object.
 |---|---|---|
 | `field` | `string` | field is a path the request's (filterable) option declares: proto field names of the listed message, dotted through a nested message ("origin.kind"), or "labels.&lt;key>" for one key of a labels map, the key verbatim after the first "labels." (it may contain dots). |
 | `op` | [`FilterOperator`](#filteroperator) |  |
-| `values` | repeated `string` | values in the spelling `orkctl --json` prints: text verbatim, an enum value's short name ("FAILED"), true/false, an RFC 3339 instant with a zone. docs/UI_CLI_PARITY.md "Filtering lists" states the matching rules. |
+| `values` | repeated `string` | values in the spelling `orkctl -j` prints: text verbatim, an enum value's short name ("FAILED"), true/false, an RFC 3339 instant with a zone. docs/UI_CLI_PARITY.md "Filtering lists" states the matching rules. |
 
 ### FieldSchema
 
@@ -1117,6 +1130,7 @@ in runs_evidence_missing instead.
 | `dominant_count` | `int64` |  |
 | `last_retried_at` | `google.protobuf.Timestamp` | last_retried_at is the creation time of the newest run in runs_retried — the coordinate the window is measured in. Unset when runs_retried is 0. |
 | `example_run_ids` | repeated `string` | example_run_ids holds at most 3 of the group's retried runs, newest created first, so a row leads to a run page whose attempt timeline shows the retries. Ids are never compared with each other (AGENTS.md §7). |
+| `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
 
 ### GetArtifactProvenanceRequest
 
@@ -1335,7 +1349,7 @@ not name the namespace that the id exists.
 
 | Field | Type | Description |
 |---|---|---|
-| `runs_by_status` | map&lt;`string`, `int64`&gt; | ONE WINDOW, ONE POPULATION. Every number below is about the same set of runs: the runs this namespace CREATED between window_since (inclusive) and window_until (exclusive). A run is counted in the window it was submitted in, whenever it happens to end, because that is the only instant both sources agree on — the archive index stamps a run by its creation time (internal/engine/archive.go, RunIndexTime) and the cluster's execution index carries its start.<br><br>The alternative — counting a run in the window it FINISHED in — was what the percentiles used to do, and one answer carrying both is a lie no field could correct: `orkctl stats --since 15m` over hour-long runs reported `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished runs`, two populations printed as one.<br><br>The one exception is `running`, and it is stated where it is declared: it is a fact about NOW rather than about the window.<br><br>runs_by_status counts the window's runs. Keys are the lowercase, unprefixed status names: "running", "succeeded", "failed", "canceled". All four are always present, so a client renders a real zero rather than a blank.<br><br>There is deliberately no "pending" key. A run that has been accepted but has not started its first task is still one executing entry in the cluster's index, and telling the two apart means reading that run's history — one read per run, which is the cost this whole service is built to avoid. "running" therefore means "accepted and not finished", and the `running` list below is exactly the same set. A key that could only ever be answered by guessing is not reported at all. |
+| `runs_by_status` | map&lt;`string`, `int64`&gt; | ONE WINDOW, ONE POPULATION. Every number below is about the same set of runs: the runs this namespace CREATED between window_since (inclusive) and window_until (exclusive). A run is counted in the window it was submitted in, whenever it happens to end, because that is the only instant both sources agree on — the archive index stamps a run by its creation time (internal/engine/archive.go, RunIndexTime) and the cluster's execution index carries its start.<br><br>The alternative — counting a run in the window it FINISHED in — was what the percentiles used to do, and one answer carrying both is a lie no field could correct: `orkctl stats -s 15m` over hour-long runs reported `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished runs`, two populations printed as one.<br><br>The one exception is `running`, and it is stated where it is declared: it is a fact about NOW rather than about the window.<br><br>runs_by_status counts the window's runs. Keys are the lowercase, unprefixed status names: "running", "succeeded", "failed", "canceled". All four are always present, so a client renders a real zero rather than a blank.<br><br>There is deliberately no "pending" key. A run that has been accepted but has not started its first task is still one executing entry in the cluster's index, and telling the two apart means reading that run's history — one read per run, which is the cost this whole service is built to avoid. "running" therefore means "accepted and not finished", and the `running` list below is exactly the same set. A key that could only ever be answered by guessing is not reported at all. |
 | `success_rate` | `double` | success_rate is succeeded / finished, between 0 and 1, over the window's runs that have finished. Canceled runs count as finished: a client that cancels half its runs has not succeeded at them, and hiding them would make the rate rise when things go wrong. |
 | `success_rate_defined` | `bool` | success_rate_defined is false when the window finished no runs at all. A rate over nothing is not 0 — it is unanswerable, and 0 is the most alarming number a dashboard can show. Render "no data", never zero. |
 | `p50_duration` | `google.protobuf.Duration` | p50_duration and p95_duration are the median and 95th percentile of how long the window's finished runs took, by nearest rank over the samples duration_sample_count reports.<br><br>"The window's finished runs" is the SAME set success_rate is a rate over: runs created inside the window that have since ended. A run created before the window and closed inside it is neither counted nor sampled, and one created inside it and still going is counted as running and sampled by neither. |
@@ -1753,6 +1767,7 @@ and is not one of them.
 | Field | Type | Description |
 |---|---|---|
 | `attempts` | repeated [`TaskAttempt`](#taskattempt) | attempts is every attempt of every selected task: tasks in the order Run.task_runs lists them, and within a task ascending by attempt with no gaps — an attempt number the store has no record for is present as ATTEMPT_OUTCOME_UNREPORTED rather than absent. |
+| `timings` | repeated [`TaskAttemptsTiming`](#taskattemptstiming) | timings is one entry per task or fan-out item whose wait for an Orker applies — a container task that was scheduled, or an item of one — in the order attempts lists them. Derived on read and never stored. |
 
 ### ListTelemetrySinksRequest
 
@@ -1941,6 +1956,8 @@ Orkflow is the compiled, validated form of a DSL document.
 | `definition_digest` | `string` | definition_digest is the canonical digest of THIS document's definition (§4.4): "sha256:" + hex(sha256(canonicalOrkflow(wf))).<br><br>It is computed at APPLY, after image resolution, and stamped here — "the version document is the pin", which is what AGENTS.md §7.2 requires of a run. Workflow code READS it and never computes it, so a run records the digest of the definition it actually pinned rather than one derived from whatever a later reader happened to reconstruct.<br><br>It is NOT part of canonicalOrkflow. The canonical form enumerates its fields and this one is not among them, so stamping the digest into the document it describes does not change that digest: the value is stable under re-canonicalization, and pkg/artifacts.sameStoredOrkflow still sees a re-apply of an unchanged document as equal.<br><br>Added after the original wire freeze, deliberately and ADDITIVELY: fields 1-9 are untouched, so `buf breaking` WIRE and WIRE_JSON stay clean and an older reader simply does not see it. The alternative was to populate orkflow_definition_digest from workflow code, which changes recorded activity-payload bytes and would force re-recording the base replay fixture, which is never re-recorded. |
 | `pins` | repeated [`Pin`](#pin) | pins declares every Pin a task may name, sorted by name at compile so one document always compiles to one message. Part of canonicalOrkflow, emitted ONLY when non-empty (see Task.pin). |
 | `outputs` | map&lt;`string`, `string`&gt; | outputs is this Orkflow's declared return contract: output name to a template over .inputs and .tasks.&lt;id>.output, rendered ONCE, by the engine, when a run succeeds; every value renders to a string. When non-empty the rendered map IS Run.output, and is what a composing parent's task receives as its values. When empty, Run.output is the values of the tasks no other task needs, and a composing parent's task receives {}. Part of canonicalOrkflow only when non-empty (see pins). |
+| `shared_with` | repeated [`OrkflowShare`](#orkflowshare) | shared_with is who in other namespaces may compose this version through `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing across namespaces"). Empty means nobody: an Orkflow is closed to every other namespace unless its definition says otherwise. Composition is the only door — a submit, a schedule or a trigger runs only its own namespace's Orkflows. It is part of the definition, so a new version changes who may call it, and part of canonicalOrkflow only when non-empty (see pins). |
+| `definition_namespace` | `string` | definition_namespace is set ONLY on a run's planned copy of an Orkflow that another namespace's Orkflow composed: the namespace that owns the stored definition, while namespace names the namespace the child run executes in and whose rules it follows. Never stored, never applied and not part of canonicalOrkflow: definition_digest is the owner's. |
 
 ### OrkflowCaller
 
@@ -1975,17 +1992,33 @@ failures out of four is an outage; three out of three thousand is Tuesday.
 | `orkflow_name` | `string` |  |
 | `failed` | `int64` |  |
 | `total` | `int64` |  |
+| `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
 
 ### OrkflowRef
 
-OrkflowRef names one immutable Orkflow version in the referencing
-definition's OWN namespace — a composition never crosses a namespace.
+OrkflowRef names one immutable Orkflow version: in the referencing
+definition's own namespace, or in the namespace `namespace` names when the
+author wrote `uses: orkflow:<namespace>/<name>@<version>`. Composition is the
+one path that crosses a namespace, and only to a version whose shared_with
+admits the composing Orkflow (docs/DSL.md "Sharing across namespaces").
 
 | Field | Type | Description |
 |---|---|---|
 | `name` | `string` |  |
 | `version` | `string` |  |
 | `definition_digest` | `string` | definition_digest is the referenced version's Orkflow.definition_digest, stamped at apply. Empty only in a message the compiler produced before internal/api resolved it; a stored definition never carries an empty one. |
+| `namespace` | `string` | namespace is the namespace that owns the referenced Orkflow, as the author wrote it. Empty means the referencing definition's own namespace. Part of canonicalOrkflow(Task) only when set, so every existing digest is unchanged. |
+
+### OrkflowShare
+
+OrkflowShare is one entry of Orkflow.shared_with: who in ANOTHER namespace
+may compose this Orkflow version through `uses:`. Exactly one field is set.
+Calls within one namespace never need an entry.
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | namespace admits every Orkflow of that namespace. "*" admits every Orkflow of every namespace. |
+| `orkflow` | `string` | orkflow admits one Orkflow, written "&lt;namespace>/&lt;name>": that Orkflow, in any of its versions, and nothing else of its namespace. |
 
 ### OrkflowVersion
 
@@ -2055,6 +2088,7 @@ read a phase it has never heard of.
 | `phase` | `string` |  |
 | `started_at` | `google.protobuf.Timestamp` |  |
 | `finished_at` | `google.protobuf.Timestamp` |  |
+| `duration` | [`TimingQuantity`](#timingquantity) | duration is finished_at − started_at, derived on read by ListTaskAttempts; never written by an Orker. Unavailable with NO_RECORD when an end is missing, CLOCK_SKEW when the ends are inverted. |
 
 ### Pin
 
@@ -2084,7 +2118,7 @@ implements it is internal, as a pool's routing is (AGENTS.md §7).
 | `managed` | repeated [`AutomationObjectKind`](#automationobjectkind) | managed lists the sections the document declares, in the order NAMESPACE (settings), SCHEDULE, TRIGGER, WEBHOOK. |
 | `steps` | repeated [`AutomationStep`](#automationstep) | steps, in execution order (docs/AUTOMATION.md "Step order"): actionable steps first — namespace, creates, updates, deletes — then the rest. |
 | `issues` | repeated [`ValidationIssue`](#validationissue) | issues: any ERROR means no step may be executed, and every client refuses to execute any. A document that failed to parse has issues and no steps. |
-| `plan_digest` | `string` | plan_digest is "sha256:&lt;64 lowercase hex>" over the namespace and the actionable steps (action, kind, name, id, changes) — what a reviewer pins with `orkctl apply --expect-plan`. It excludes the carried requests, so a no-op rewrite of the namespace (a new etag) does not move it; it excludes UNCHANGED, UNDECLARED and UNMANAGED steps, which write nothing. Defined even when nothing is actionable ("no changes" is pinnable); empty exactly when nothing was planned (the document did not parse, or names another namespace than the request). |
+| `plan_digest` | `string` | plan_digest is "sha256:&lt;64 lowercase hex>" over the namespace and the actionable steps (action, kind, name, id, changes) — what a reviewer pins with `orkctl automation apply --expect-plan`. It excludes the carried requests, so a no-op rewrite of the namespace (a new etag) does not move it; it excludes UNCHANGED, UNDECLARED and UNMANAGED steps, which write nothing. Defined even when nothing is actionable ("no changes" is pinnable); empty exactly when nothing was planned (the document did not parse, or names another namespace than the request). |
 
 ### PlanRunRequest
 
@@ -2128,6 +2162,7 @@ and stored nowhere.
 | `assumed_failed` | `int32` | count of ASSUMED_FAILED |
 | `unused_assume_failed` | repeated `string` | unused_assume_failed lists request entries whose task is not ASSUMED_FAILED (it was SKIPPED or UNREACHED), in request order. |
 | `fails_at` | `string` | fails_at is the task at which the planned run starts failing — the first FAILS or ASSUMED_FAILED in decision order — or empty when nothing fails. The run is planned FAILED exactly when it is set; each UNREACHED task names its own cause in PlanTask.unreached_by. |
+| `sleeps` | `int32` | count of SLEEPS |
 
 ### PlanTask
 
@@ -2152,10 +2187,11 @@ order, the order readyTasks scans them in.
 | `cache` | [`CacheSpec`](#cachespec) | cache is the task's CacheSpec, set for a cached task whatever its outcome. A plan never predicts a hit: that is decided on the Orker, from the rendered config and the input digests, when the run reaches it. |
 | `join` | [`JoinPolicy`](#joinpolicy) | join is the task's join policy, set whatever its outcome when the definition declares one other than all_succeeded. |
 | `unreached_by` | `string` | unreached_by is, for UNREACHED, the task whose failure leaves this one unreached: the first decision-time failure (a FAILS) decided before it, or else the first ASSUMED_FAILED task of its needs closure in declaration order. Empty for every other outcome. |
+| `sleep` | [`SleepSpec`](#sleepspec) | sleep is the task's SleepSpec, set for a sleeping task whatever its outcome, so a reader sees how long it would sleep. |
 
 ### PlanWave
 
-PlanWave lists the RUNS, AWAITS and ASSUMED_FAILED tasks of one wave, in
+PlanWave lists the RUNS, AWAITS, SLEEPS and ASSUMED_FAILED tasks of one wave, in
 declaration order. There is one entry per wave from 1 to wave_count;
 SKIPPED tasks are not members.
 
@@ -2422,11 +2458,13 @@ Run is one execution of an Orkflow.
 | `created_at` | `google.protobuf.Timestamp` |  |
 | `started_at` | `google.protobuf.Timestamp` |  |
 | `finished_at` | `google.protobuf.Timestamp` |  |
-| `namespace` | `string` | namespace is the namespace of the orkflow this run executed. Empty means the built-in "default" namespace. It is a coordinate of the run, not a lookup: the archive indexes runs under it, so listing one namespace's runs is a single prefix scan. |
+| `namespace` | `string` | namespace is the namespace this run executed in, whose rules it followed. It is also the namespace of the orkflow it ran unless orkflow_namespace says otherwise. Empty means the built-in "default" namespace. It is a coordinate of the run, not a lookup: the archive indexes runs under it, so listing one namespace's runs is a single prefix scan. |
 | `orkflow_definition_digest` | `string` | orkflow_definition_digest is the canonical digest of the definition this run pinned (§4.4). A run that started before a pointer moved is still explainable by the exact bytes it ran. |
 | `telemetry` | [`TelemetrySelection`](#telemetryselection) | telemetry is the selection this run was pinned with (see ExecuteTaskInput.telemetry). Unset when none was configured. |
 | `origin` | [`RunOrigin`](#runorigin) | origin is what started this run (RunOrigin). Unset only on a run recorded before origins existed; every run started since carries at least a kind. It is present on every snapshot the run writes, on the archived run, and therefore in every webhook payload's embedded run. |
 | `canceled_by` | `string` | canceled_by is what the deployment's gateway asserted in the Ork-Principal request header on the CancelRun request that canceled this run — recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8 replaced, as RunOrigin.principal is, and NEVER authenticated: the same assertion as RunOrigin.principal and AuditRecord.principal. Every rendering says it was asserted.<br><br>It is set only on a run whose status is CANCELED with error code RUN_CANCELED, when a CancelRun carrying the header was accepted before the run recorded its own end. That is the request that canceled it, or — if the run was already ending canceled for another cause, such as a composed task's child run canceled from outside — the request that arrived while it ended, which is named too. It is empty for every other run: a CancelRun with no header; a run canceled with its parent run, or by any other cause; a run that succeeded, failed or was terminated (RUN_TERMINATED); a run canceled before this field existed. A client then shows nothing rather than a blank that could be mistaken for a name.<br><br>It is on GetRun, on the archived run, on ListRuns rows answered from the archive and in the embedded run of a RUN_CANCELED webhook delivery. |
+| `orkflow_namespace` | `string` | orkflow_namespace is set only on a child run of an Orkflow another namespace shared through composition: the namespace that owns the definition it ran. Empty means the orkflow is namespace's own. A run whose orkflow belongs to another namespace is always a child run: nothing else starts one. |
+| `timing` | [`RunTiming`](#runtiming) | timing is the run's half of the task-timing derivation (RunTiming), set by GetRun and never stored; each TaskRun carries its own half. |
 
 ### RunArtifact
 
@@ -2473,6 +2511,19 @@ in OrkStack reads it to decide anything.
 | `description` | `string` | description is the originating object's own human label at the moment of submit — Trigger.description for TRIGGER, the schedule's name for SCHEDULE — copied so a run stays explainable after the trigger is deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256 bytes by truncation. |
 | `principal` | `string` | principal is what the deployment's gateway asserted in the Ork-Principal request header on the submitting request — the trigger invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes by truncation, and NEVER authenticated: it is the same assertion, on the same terms, as AuditRecord.principal. Empty when no header was present; a client then omits the line entirely rather than showing a blank that could be mistaken for a name. |
 | `root_run_id` | `string` | root_run_id is the id of the run at the top of this run's composed chain: the run that started the chain, which id names only for a direct child. Set on a PARENT_RUN origin and empty on every other kind, so a run-again of a child, a new top-level run, has none. An empty value names no root. Opaque, like id. |
+
+### RunTiming
+
+RunTiming is the run's half of the derivation. Like TaskRun.timing it is
+derived on read by GetRun and never stored.
+
+| Field | Type | Description |
+|---|---|---|
+| `elapsed` | [`TimingQuantity`](#timingquantity) | elapsed is Run.finished_at − Run.started_at, set once the run finished. |
+| `wait_sum` | [`TimingQuantity`](#timingquantity) | wait_sum is every task's wait summed, over the wait_sum_tasks tasks whose wait is known; wait_unavailable_tasks counts the tasks whose wait applies and cannot be known. Unset when no task's wait applies; set with no duration when every one is unavailable. A fan-out's items are not counted: its own row is. |
+| `wait_sum_tasks` | `int32` |  |
+| `wait_unavailable_tasks` | `int32` |  |
+| `computed_at` | `google.protobuf.Timestamp` | computed_at is the server's clock when it derived this, the instant every since_scheduled is measured against. Set only while the run has not ended and a task (or item) is RUNNING, so a finished run answers the same bytes every time. |
 
 ### Schedule
 
@@ -2567,6 +2618,17 @@ appears in a proto message, in Temporal history, or in the archive.
 | `updated_at` | `google.protobuf.Timestamp` |  |
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is the promoted version's declared interface compared with compared_version — what ran when no version was named, until now. UNSPECIFIED, with compared_version empty, when the promotion did not change what runs. BREAKING here means the request acknowledged it. |
 | `compared_version` | `string` |  |
+
+### SleepSpec
+
+SleepSpec makes a Task a sleeping task: the run waits a fixed time on its
+own timer and the task then succeeds, with no values and no artifacts
+(docs/DSL.md "Sleeping tasks"). Part of canonicalOrkflow(Task), emitted
+ONLY when set (see Task.pin).
+
+| Field | Type | Description |
+|---|---|---|
+| `seconds` | `int32` | seconds is how long the task sleeps, from the moment it starts sleeping. Required: 1 to 2592000 (30 days), the bound AwaitSpec.timeout_seconds has, for the same reason. |
 
 ### StatsBucket
 
@@ -2676,9 +2738,10 @@ execution on an Orker, and an activity is an OCI image.
 | `pin` | `string` | pin names the Pin this task belongs to, or is empty. Every task of one pin runs on one Orker process and sees the same /orkstack/shared. It changes what runs and where, so it is part of canonicalOrkflow(Task) — emitted ONLY when set, so a definition with no pin keeps its digest. |
 | `await` | [`AwaitSpec`](#awaitspec) | await makes this an awaited task. Mutually exclusive with uses and with every field that shapes a container (docs/DSL.md rules 6 and 15): an awaited task has no image, no pool, and no timeout_seconds of its own. |
 | `each` | [`EachSpec`](#eachspec) | each makes this task a fan-out. A fan-out has uses:, like any container task; it may not name a pin (docs/DSL.md rule 23) and an awaited task may not carry it (rule 15). |
-| `orkflow` | [`OrkflowRef`](#orkflowref) | orkflow is the apply-time resolution of `uses: orkflow:<name>@<version>`, the analogue of image for a container task. A composed task starts a CHILD RUN of exactly that definition, in this Orkflow's namespace, and reaches no Orker: it carries no image, pool, pin, retry, timeout or other execution field (docs/DSL.md rules 26–27). Part of canonicalOrkflow(Task) only when set (see pin), so this Orkflow's digest pins the child's. |
+| `orkflow` | [`OrkflowRef`](#orkflowref) | orkflow is the apply-time resolution of `uses: orkflow:<name>@<version>`, the analogue of image for a container task. A composed task starts a CHILD RUN of exactly that definition, in the namespace this run executes in (even when the definition is another namespace's), and reaches no Orker: it carries no image, pool, pin, retry, timeout or other execution field (docs/DSL.md rules 26–27). Part of canonicalOrkflow(Task) only when set (see pin), so this Orkflow's digest pins the child's. |
 | `cache` | [`CacheSpec`](#cachespec) | cache opts this container task into memoization across runs. It may not name a pin (docs/DSL.md rule 36), and an awaited or composed task may not carry it (rules 15, 27). |
 | `join` | [`JoinPolicy`](#joinpolicy) | join is when this task may start, decided from how its needs ended (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no join keeps its digest. A task whose join is ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry each or carry cache (docs/DSL.md rule 39). |
+| `sleep` | [`SleepSpec`](#sleepspec) | sleep makes this a sleeping task: it starts no container, reaches no Orker, and succeeds once its fixed time has passed. Mutually exclusive with uses, await and every field that shapes a container (docs/DSL.md rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no sleep keeps its digest. |
 
 ### TaskAttempt
 
@@ -2716,6 +2779,19 @@ change what the attempt itself reported.
 | `resources` | [`ReservedResources`](#reservedresources) | resources is what this Orker reserved for the attempt. Set on every record whose request the Orker's policy admitted — including an attempt that adopted a commit or failed before its container started, because the Orker's slot was committed to it either way. Unset when the request was refused (RESOURCE_REQUEST_REFUSED), on a record written before this field existed, and on a synthesized UNREPORTED row. A reader never treats unset as zero: usage counts such an attempt's held time and reports it as carrying no reservation. schema_version stays 1: the field is additive and UnmarshalAttempt discards unknown fields. |
 | `item` | optional `int32` | item is set when this attempt ran one item of a fan-out task: that item's 0-based index. The record then lives under the item's own key (metadata/attempts/{run}/{task}/{item}/{attempt}.json). schema_version stays 1: the field is additive and UnmarshalAttempt discards unknown fields. |
 | `cache` | [`CacheResult`](#cacheresult) | cache is this attempt's memo decision, key_components included. Set only for an attempt of a cached task that reached the memo step; a HIT records outcome SUCCEEDED, phase "memo", exit_code 0, no system_artifacts (it uploaded none) and image equal to the input's pinned ImageRef with no platform (it pulled nothing). |
+| `timing` | [`AttemptTiming`](#attempttiming) | timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker never writes it. |
+
+### TaskAttemptsTiming
+
+TaskAttemptsTiming is the derivation over one task's (or one item's) whole
+timeline (docs/UI_CLI_PARITY.md "Task timing").
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `item` | optional `int32` |  |
+| `queue_wait` | [`TimingQuantity`](#timingquantity) | queue_wait is how long the task waited for an Orker of its pool: attempt 1's started_at − TaskRun.scheduled_at. Unavailable with PRE_CONTRACT, RECLAIMED, NO_RECORD (attempt 1 has no record) or CLOCK_SKEW. |
+| `reclaimed` | `bool` | reclaimed is true when every record of this timeline was reclaimed: the task ended with no row at all, or an Orker reported its start and every row is UNREPORTED. |
 
 ### TaskAwait
 
@@ -2747,6 +2823,7 @@ was before this message existed.
 | `orkflow_version` | `string` |  |
 | `orkflow_definition_digest` | `string` |  |
 | `run_id` | `string` | run_id is the child run, set once its start is CONFIRMED and never before: an id whose start was refused names no run. The child run's own Run.origin is {PARENT_RUN, &lt;this run's id>}. |
+| `orkflow_namespace` | `string` | orkflow_namespace is the namespace that owns the child Orkflow when it is not the namespace the run executes in: a child composed from another namespace through shared_with. Empty for a child of the run's own namespace. |
 
 ### TaskEach
 
@@ -2807,6 +2884,45 @@ TaskRun is the execution record of a single Task within a Run.
 | `child` | [`TaskChild`](#taskchild) | child is set for a composed task (TaskChild). Such a task reaches no Orker: pool, pin, orker_id, attempt, exit_code, commit, artifacts and system_artifacts stay unset, and values_ref addresses the child's declared outputs as stored for THIS run. |
 | `cache` | [`CacheResult`](#cacheresult) | cache is the memo decision of the attempt that produced this task's outcome (CacheResult, key_components never set here). Set only for a cached task that SUCCEEDED on an Orker that implements caching; unset for every other row — so a snapshot of a run with no cached task is byte-identical — and for a cached task that failed, whose attempts carry what each memo step decided. On a fan-out it is set on the items, never on the fan-out's own row. |
 | `join` | [`JoinPolicy`](#joinpolicy) | join is the task's join policy, set from the run's first snapshot for every task whose definition declares one other than all_succeeded, and UNSET otherwise — so a snapshot of a run with no join is byte-identical to what it was before this field existed. Its presence is how a client tells a failure handler from an ordinary task without reading the definition (the precedent of TaskRun.await, .each and .child). |
+| `timing` | [`TaskTiming`](#tasktiming) | timing is where this task's time went, derived from scheduled_at, started_at and finished_at above (TaskTiming). It is DERIVED ON READ: GetRun sets it on every row, a fan-out's items included, and nothing stores it — the engine never writes it, and a copy read back from anywhere else is not one GetRun answered. |
+| `sleep` | [`TaskSleep`](#tasksleep) | sleep is this task's sleep state, set for a task whose definition declares `sleep:` and unset otherwise (see TaskSleep). |
+
+### TaskSleep
+
+TaskSleep is a sleeping task's own state on the run snapshot. It is SET for
+every task whose definition declares `sleep:` — from the run's first
+snapshot, while the task is still PENDING — and UNSET for every other task,
+so a snapshot of a run with no sleep is byte-identical to what it was
+before this message existed. Its presence is how a client tells a sleeping
+task from a container task without reading the definition.
+
+| Field | Type | Description |
+|---|---|---|
+| `seconds` | `int32` | seconds mirrors SleepSpec.seconds: how long the task sleeps. |
+| `wake_at` | `google.protobuf.Timestamp` | wake_at is when the task wakes and succeeds, on the workflow's clock. Unset until the task starts sleeping. |
+
+### TaskTiming
+
+TaskTiming is the task-timing derivation over one TaskRun
+(docs/UI_CLI_PARITY.md "Task timing"), with S = scheduled_at, B = started_at
+and F = finished_at:
+
+  wait = B − S      run = F − B      total = F − S
+
+A fan-out's own row reads S as its expansion and B as its earliest item's
+start; a composed task's reads S as its child run's request, B as its
+confirmed start and F as its end, so wait is the child's start latency and
+applies only once a child started; an awaited task's run and total are the
+time it awaited, and wait does not apply.
+
+| Field | Type | Description |
+|---|---|---|
+| `scheduled` | `bool` | scheduled is false for a task that never reached schedule() (an awaited task: never started awaiting); every quantity is then unset. |
+| `pre_contract` | `bool` | pre_contract marks a snapshot written before scheduled_at existed: started_at holds the dispatch instant, wait and run are unavailable, and total is dispatch to finish. |
+| `wait` | [`TimingQuantity`](#timingquantity) | wait, run and total are set once the task is terminal. |
+| `run` | [`TimingQuantity`](#timingquantity) |  |
+| `total` | [`TimingQuantity`](#timingquantity) |  |
+| `since_scheduled` | [`TimingQuantity`](#timingquantity) | since_scheduled is set while the task is RUNNING in a run that has not ended: RunTiming.computed_at − scheduled_at. A row a terminated run left RUNNING has none. |
 
 ### TelemetryPolicy
 
@@ -2835,6 +2951,26 @@ an endpoint, never a credential.
 | `sink` | `string` |  |
 | `task_logs` | [`TaskLogExport`](#tasklogexport) |  |
 | `attributes` | map&lt;`string`, `string`&gt; |  |
+
+### TimingQuantity
+
+TimingQuantity is one derived duration in one of three states, never
+collapsed into each other:
+
+  - the message UNSET: it does not apply (the task was never scheduled, or
+    has not finished);
+  - set with no duration: it happened and cannot be known, and reason says
+    why — UNSPECIFIED only on a sum whose every term is unavailable
+    (RunTiming.wait_sum);
+  - set with duration: two instants some process recorded, the later minus
+    the earlier.
+
+A zero duration is only ever a value somebody measured.
+
+| Field | Type | Description |
+|---|---|---|
+| `duration` | `google.protobuf.Duration` |  |
+| `reason` | [`TimingReason`](#timingreason) |  |
 
 ### Trigger
 
@@ -2979,6 +3115,7 @@ grouped by". The total row has every key empty.
 | `attempts_without_resources` | `int64` | attempts_without_resources counts recorded attempts with a usable interval and no reservation — written before TaskAttempt.resources existed, by an Orker of an older release, or refused before a reservation was resolved. Their held time IS in task_seconds; they add nothing to cpu_seconds or gib_seconds, which are lower bounds whenever this is nonzero. |
 | `attempts_unmeasured` | `int64` | attempts_unmeasured counts recorded attempts missing started_at or finished_at, or finishing before they started. They contribute to no sum. No Orker of this tree writes one; the count exists so a record from another writer is visible instead of silently zero. |
 | `unreported_attempts` | `int64` | unreported_attempts counts attempts numbered below a task's highest that have no record — the Orker running them died or lost its heartbeat before filing one. Their consumption is unknown and not counted. |
+| `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
 
 ### ValidateOrkflowRequest
 
@@ -3121,6 +3258,7 @@ EventType classifies a run event on the realtime stream.
 | `EVENT_TYPE_TASK_AWAITING` | 11 | TASK_AWAITING: an awaited task started waiting. Status AWAITING; the message names the deadline. |
 | `EVENT_TYPE_TASK_RESOLVED` | 12 | TASK_RESOLVED: an awaited task was resolved from outside the run. Status is the outcome it decided — SUCCEEDED for a completion, FAILED for a rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same status, so a reader that only knows the older task events still sees the task end. |
 | `EVENT_TYPE_STREAM_GAP` | 13 | STREAM_GAP: numbers of the run's event sequence hold no event, because the run used them without publishing one (an event whose record object storage refused). Its sequence is the last of those numbers and its message names them all; no run or task changed state. Only a live read of the stream serves it, and the read goes on to the run's terminal event. It is part of the read, not of the run's events: the run's archive records the same numbers as a gap in its stream instead, and a read over that gap ends DataLoss. |
+| `EVENT_TYPE_TASK_SLEEPING` | 14 | TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING; the message names the wake-up time. TASK_SUCCEEDED follows when it wakes; a run that ends first records the task CANCELED. |
 
 ### FailureCategory
 
@@ -3317,6 +3455,7 @@ request's assumption, never a prediction that the task fails.
 | `PLAN_OUTCOME_UNREACHED` | 4 | UNREACHED: a task that is not a failure handler and is certainly never started: it transitively needs an ASSUMED_FAILED task, or a FAILS of a task that is not a failure handler was decided before it (unreached_by names which); only present when fails_at is set. |
 | `PLAN_OUTCOME_AWAITS` | 5 | AWAITS: the task is an awaited task the interpreter would open: it takes a wave as RUNS does and starts no activity. |
 | `PLAN_OUTCOME_ASSUMED_FAILED` | 6 | ASSUMED_FAILED: the request's assume_failed names this task and it would run; it is planned as having run and FAILED. It takes a wave as RUNS does, contributes no output, and is where the planned run starts failing unless an earlier task already did. |
+| `PLAN_OUTCOME_SLEEPS` | 7 | SLEEPS: the task is a sleeping task the interpreter would start: it takes a wave as RUNS does, starts no activity, and succeeds with no values once its time has passed. |
 
 ### ReferenceState
 
@@ -3439,6 +3578,7 @@ Status is the lifecycle state shared by runs and task runs.
 | `STATUS_CANCELED` | 5 |  |
 | `STATUS_SKIPPED` | 6 |  |
 | `STATUS_AWAITING` | 7 | AWAITING is a TASK status only, like SKIPPED: the task is waiting to be resolved from outside the run. A run with an awaiting task is RUNNING. |
+| `STATUS_SLEEPING` | 8 | SLEEPING is a TASK status only, like AWAITING: a sleeping task is waiting out its fixed time on the run's own timer, and nothing outside the run can end it early. A run with a sleeping task is RUNNING. |
 
 ### TaskLogExport
 
@@ -3451,6 +3591,23 @@ ORK_ORKER_TASK_LOG_EXPORT default is.
 | `TASK_LOG_EXPORT_UNSPECIFIED` | 0 | Inherits the Orker's own default. This is the value an unset namespace policy carries, and the value an ExecuteTaskInput carries when no namespace or run ever set an override. |
 | `TASK_LOG_EXPORT_ENABLED` | 1 |  |
 | `TASK_LOG_EXPORT_DISABLED` | 2 |  |
+
+### TimingReason
+
+TimingReason is why one timing quantity cannot be known. Each names a cause
+an operator can act on, never a generic "unknown" (docs/UI_CLI_PARITY.md
+"Task timing"). The comment on each is the words both clients print.
+
+| Value | Number | Description |
+|---|---|---|
+| `TIMING_REASON_UNSPECIFIED` | 0 |  |
+| `TIMING_REASON_NO_ORKER_START` | 1 | "no orker reported a start": the task ended and no Orker reported the start of the attempt that decided it (TaskRun.started_at unset). |
+| `TIMING_REASON_CLOCK_SKEW` | 2 | "clock skew": the later of two instants reads before the earlier, so the two clocks that recorded them disagree. |
+| `TIMING_REASON_PRE_CONTRACT` | 3 | "recorded before scheduled time existed": a snapshot with started_at and no scheduled_at, whose started_at holds the dispatch instant. |
+| `TIMING_REASON_RECLAIMED` | 4 | "attempt records reclaimed": the snapshot proves an Orker reported on the task, and no record it filed is left. |
+| `TIMING_REASON_NO_RECORD` | 5 | "no attempt record": this attempt has no record (UNREPORTED, or a phase with an end missing). |
+| `TIMING_REASON_NO_PHASES` | 6 | "record predates phase spans": the record was written before TaskAttempt.phases existed. |
+| `TIMING_REASON_NO_ATTEMPT_STORE` | 7 | "no task attempt store": the engine has no attempt store at all. No response carries it — ListTaskAttempts answers FailedPrecondition then — and a client prints it for the quantities only records could give. |
 
 ### ValidationSeverity
 

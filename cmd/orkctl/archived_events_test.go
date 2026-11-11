@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 type fakeArchivedEventStream struct {
@@ -63,9 +65,7 @@ func TestReadArchivedEventTextReturnsCompleteStream(t *testing.T) {
 	}
 
 	got, err := readArchivedEventText(stream)
-	if err != nil {
-		t.Fatalf("readArchivedEventText: %v", err)
-	}
+	must.OKf(t, err, "readArchivedEventText")
 	if !strings.Contains(got, "complete") {
 		t.Fatalf("text = %q, want the complete event", got)
 	}

@@ -29,6 +29,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // This file is orker-cordon-drain's engine acceptance, against real
@@ -129,20 +131,14 @@ func newCordonDeployment(t *testing.T, ctx context.Context, name string, pools .
 	})
 
 	d.store, err = artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	d.commits, err = artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	if err := artifacts.ProbeCommitStore(ctx, d.commits); err != nil {
 		infraAbsent(t, "the object store's conditional create is not usable: %v", err)
 	}
 	d.logs, err = artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	refs, ok := d.store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", d.store)
@@ -168,9 +164,7 @@ func newCordonDeployment(t *testing.T, ctx context.Context, name string, pools .
 		engine.NewEventActivities(bus, runs).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for label, w := range map[string]worker.Worker{"run": runWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", label, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", label)
 		t.Cleanup(w.Stop)
 	}
 
@@ -202,9 +196,7 @@ func newCordonDeployment(t *testing.T, ctx context.Context, name string, pools .
 func (d *cordonDeployment) serve(t *testing.T, svc *api.Service) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -252,9 +244,7 @@ func (d *cordonDeployment) orker(id, pool string, opts pinOrkerConfig) *pinOrker
 func (d *cordonDeployment) list(req *orkstackv1.ListOrkersRequest) []*orkstackv1.Orker {
 	d.t.Helper()
 	resp, err := d.activities.ListOrkers(d.ctx, connect.NewRequest(req))
-	if err != nil {
-		d.t.Fatalf("ListOrkers(%v): %v", req, err)
-	}
+	must.OKf(d.t, err, "ListOrkers(%v)", req)
 	return resp.Msg.GetOrkers()
 }
 
@@ -266,6 +256,19 @@ func (d *cordonDeployment) one(id string) *orkstackv1.Orker {
 		return nil
 	}
 	return rows[0]
+}
+
+// awaitAnswering waits until ListOrkers lists the Orker and it answered on its
+// own control channel, which is the channel a cordon is delivered on. An Orker
+// whose task worker serves its pool is not yet that: its control channel's
+// first poll may not have reached the cluster, and a cordon sent then is
+// refused, NotFound, as for an Orker that is not running.
+func (d *cordonDeployment) awaitAnswering(id string) *orkstackv1.Orker {
+	d.t.Helper()
+	return d.awaitFleet(orkersWhere("orker_id", id), time.Minute, id+" listed and answering on its own channel",
+		func(rows []*orkstackv1.Orker) bool {
+			return len(rows) == 1 && rows[0].GetUnavailableReason() == ""
+		})[0]
 }
 
 // awaitFleet polls ListOrkers until want(rows) holds, against a deadline.
@@ -294,18 +297,14 @@ func (d *cordonDeployment) cordon(id, reason string) *orkstackv1.Orker {
 	d.t.Helper()
 	resp, err := d.activities.CordonOrker(d.ctx, connect.NewRequest(&orkstackv1.CordonOrkerRequest{
 		OrkerId: id, Cordoned: true, Reason: reason}))
-	if err != nil {
-		d.t.Fatalf("CordonOrker(%s): %v", id, err)
-	}
+	must.OKf(d.t, err, "CordonOrker(%s)", id)
 	return resp.Msg.GetOrker()
 }
 
 func (d *cordonDeployment) uncordon(id string) *orkstackv1.Orker {
 	d.t.Helper()
 	resp, err := d.activities.CordonOrker(d.ctx, connect.NewRequest(&orkstackv1.CordonOrkerRequest{OrkerId: id}))
-	if err != nil {
-		d.t.Fatalf("uncordon %s: %v", id, err)
-	}
+	must.OKf(d.t, err, "uncordon %s", id)
 	return resp.Msg.GetOrker()
 }
 
@@ -315,18 +314,14 @@ func (d *cordonDeployment) storeOrkflow(name, pool, template string, hold int) {
 	d.t.Helper()
 	dep := &pinDeployment{pool: pool, namespace: d.orkNS, image: d.image, orkflows: d.orkflows}
 	source := strings.NewReplacer("__HOLD_SECONDS__", fmt.Sprint(hold)).Replace(template)
-	if err := dep.storeOrkflow(d.ctx, name, source); err != nil {
-		d.t.Fatalf("store %s: %v", name, err)
-	}
+	must.OKf(d.t, dep.storeOrkflow(d.ctx, name, source), "store %s", name)
 }
 
 func (d *cordonDeployment) submit(orkflow string) string {
 	d.t.Helper()
 	resp, err := d.runs.SubmitRun(d.ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: orkflow, Namespace: d.orkNS}))
-	if err != nil {
-		d.t.Fatalf("SubmitRun(%s): %v", orkflow, err)
-	}
+	must.OKf(d.t, err, "SubmitRun(%s)", orkflow)
 	return resp.Msg.GetRun().GetId()
 }
 
@@ -512,6 +507,43 @@ func TestIntegration_ListOrkersListsEveryLiveOrkerWithItsLoad(t *testing.T) {
 		stopped.id, time.Since(started).Round(time.Second))
 }
 
+// TestIntegration_CordonOrker_IsNotFoundUntilTheOrkerPollsItsOwnChannel: a
+// cordon is delivered on the Orker's own control channel, so an Orker whose
+// task worker already serves its pool, but whose own channels the cluster has
+// not seen polled, is refused NotFound — and ListOrkers does not list it
+// either, so an operator reads one answer from both. The gap is held open by
+// a gate (channelsStart), not timed: it is the one a loaded host opened
+// between an Orker's "Started Worker" lines and the cluster listing it, which
+// a test that waited only for its pool to be served then cordoned into. Once
+// the Orker is listed and answering, the same cordon lands.
+func TestIntegration_CordonOrker_IsNotFoundUntilTheOrkerPollsItsOwnChannel(t *testing.T) {
+	ctx := cordonContext(t, 3*time.Minute)
+	pool := fmt.Sprintf("unlisted-%d", time.Now().UnixNano()%1_000_000)
+	d := newCordonDeployment(t, ctx, "unlisted", pool)
+	gate := make(chan struct{})
+	o := d.orker("orker-late-"+d.token, pool, pinOrkerConfig{channelsStart: gate, hostsNoPins: true})
+	awaitPoolServedBy(t, ctx, engine.NewTemporalPoolProbe(d.temporal), pool, o.queue, 1)
+
+	const reason = "runtime patch"
+	_, err := d.activities.CordonOrker(ctx, connect.NewRequest(&orkstackv1.CordonOrkerRequest{
+		OrkerId: o.id, Cordoned: true, Reason: reason}))
+	if connect.CodeOf(err) != connect.CodeNotFound || !strings.Contains(err.Error(), "is polling") {
+		t.Fatalf("CordonOrker of an Orker serving its pool, before its own channel is polled = %v, want NotFound", err)
+	}
+	if row := d.one(o.id); row != nil {
+		t.Fatalf("ListOrkers lists the Orker before its own channels are polled: %v", row)
+	}
+	d.transcript.line("serving its pool, own channels not yet polled: cordon NotFound, not listed")
+
+	close(gate)
+	d.awaitAnswering(o.id)
+	if row := d.cordon(o.id, reason); !row.GetCordoned() || row.GetCordonReason() != reason {
+		t.Fatalf("the cordon once the Orker answers on its own channel: %v", row)
+	}
+	d.transcript.line("listed and answering: the same cordon lands")
+	t.Logf("EVIDENCE cordon: NotFound and unlisted while only the pool's channel was polled; landed once listed")
+}
+
 func TestIntegration_ACordonedOrkerTakesNoNewTaskWhileItsSiblingDoes(t *testing.T) {
 	ctx := cordonContext(t, 12*time.Minute)
 	pool := fmt.Sprintf("cordon-%d", time.Now().UnixNano()%1_000_000)
@@ -519,6 +551,8 @@ func TestIntegration_ACordonedOrkerTakesNoNewTaskWhileItsSiblingDoes(t *testing.
 	a := d.orker("orker-a-"+d.token, pool, pinOrkerConfig{})
 	b := d.orker("orker-b-"+d.token, pool, pinOrkerConfig{})
 	awaitPoolServedBy(t, ctx, engine.NewTemporalPoolProbe(d.temporal), pool, a.queue, 2)
+	d.awaitAnswering(a.id)
+	d.awaitAnswering(b.id)
 	d.storeOrkflow("echo-"+d.token, pool, cordonEchoYAML, 0)
 
 	const reason = "CVE-2026-1234 runtime patch"
@@ -768,9 +802,7 @@ func TestIntegration_ACordonedOrkerStillAnswersOnItsOwnChannelBesideItsSibling(t
 	d.cordon(a.id, "probe check")
 
 	resp, err := d.namespaces.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{Namespace: d.orkNS}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	var count int32 = -1
 	for _, p := range resp.Msg.GetPools() {
 		if p.GetName() == pool {
@@ -782,9 +814,7 @@ func TestIntegration_ACordonedOrkerStillAnswersOnItsOwnChannelBesideItsSibling(t
 		t.Fatalf("pool %s reports %d live Orkers inside the freshness window; want 2", pool, count)
 	}
 	orkers, err := engine.ReadFleet(ctx, d.starter)
-	if err != nil {
-		t.Fatalf("read the orker inventory: %v", err)
-	}
+	must.OKf(t, err, "read the orker inventory")
 	cordoned := map[string]bool{}
 	for _, o := range orkers {
 		if o.Err == nil && o.Described.GetPool() == pool {

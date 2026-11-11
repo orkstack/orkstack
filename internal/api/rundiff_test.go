@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe DiffRuns from a replica that started neither run: the
@@ -193,9 +195,7 @@ func (f *diffFixture) diff(from, to, namespace string, only ...string) (*orkstac
 func (f *diffFixture) mustDiff(t *testing.T, from, to string, only ...string) *orkstackv1.DiffRunsResponse {
 	t.Helper()
 	res, err := f.diff(from, to, "", only...)
-	if err != nil {
-		t.Fatalf("DiffRuns(%s, %s, only=%v): %v", from, to, only, err)
-	}
+	must.OKf(t, err, "DiffRuns(%s, %s, only=%v)", from, to, only)
 	return res
 }
 
@@ -226,9 +226,7 @@ func (f *diffFixture) record(t *testing.T, runID, taskID string, attempt int32, 
 	for _, e := range edit {
 		e(record)
 	}
-	if err := f.attempts.PutAttempt(context.Background(), record); err != nil {
-		t.Fatalf("put attempt: %v", err)
-	}
+	must.OKf(t, f.attempts.PutAttempt(context.Background(), record), "put attempt")
 }
 
 func mapKeys(m map[string]string) func(func(string) bool) {
@@ -262,9 +260,7 @@ func diffTask(id string, edit ...func(*orkstackv1.TaskRun)) *orkstackv1.TaskRun 
 func diffInput(t *testing.T, values map[string]any) *orkstackv1.Payload {
 	t.Helper()
 	data, err := structpb.NewStruct(values)
-	if err != nil {
-		t.Fatalf("NewStruct: %v", err)
-	}
+	must.OKf(t, err, "NewStruct")
 	return &orkstackv1.Payload{Data: data}
 }
 

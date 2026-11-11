@@ -9,6 +9,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestGetSystemInfo_ReportsTheConfigurationItWasWiredWith is the whole
@@ -36,9 +38,7 @@ func TestGetSystemInfo_ReportsTheConfigurationItWasWiredWith(t *testing.T) {
 
 	resp, err := svc.GetSystemInfo(context.Background(),
 		connect.NewRequest(&orkstackv1.GetSystemInfoRequest{}))
-	if err != nil {
-		t.Fatalf("GetSystemInfo: %v", err)
-	}
+	must.OKf(t, err, "GetSystemInfo")
 	info := resp.Msg
 
 	for _, field := range []struct {
@@ -86,9 +86,7 @@ func TestGetSystemInfo_ReportsVersioningOffWithoutABuildID(t *testing.T) {
 
 	resp, err := svc.GetSystemInfo(context.Background(),
 		connect.NewRequest(&orkstackv1.GetSystemInfoRequest{}))
-	if err != nil {
-		t.Fatalf("GetSystemInfo: %v", err)
-	}
+	must.OKf(t, err, "GetSystemInfo")
 	if resp.Msg.GetVersioningActive() {
 		t.Error("versioning_active is true with no build id configured")
 	}
@@ -131,9 +129,7 @@ func TestGetSystemInfo_AnswersFromAServiceThatHoldsNoRunState(t *testing.T) {
 		t.Helper()
 		resp, err := svc.GetSystemInfo(context.Background(),
 			connect.NewRequest(&orkstackv1.GetSystemInfoRequest{}))
-		if err != nil {
-			t.Fatalf("GetSystemInfo: %v", err)
-		}
+		must.OKf(t, err, "GetSystemInfo")
 		return resp.Msg
 	}
 	from, to := got(busy), got(idle)

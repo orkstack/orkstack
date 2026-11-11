@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ownedLabel } from '#lib/sharing.ts';
 	// What this namespace reserved over the last 7 days, and against what budget.
 	// Usage is reservation multiplied by how long an Orker held it, derived on
 	// read (StatsService.GetUsage), never measured use. Every chart prints its
@@ -54,7 +55,7 @@
 	const fmtHours = (h: number) => (h >= 10 ? Math.round(h).toLocaleString('en-US') : h >= 0.1 ? h.toFixed(1) : h > 0 ? '<0.1' : '0');
 	const rows = $derived.by(() => {
 		const sorted = [...(week?.rows ?? [])].sort((a, b) => b.cpuSeconds - a.cpuSeconds);
-		const top = sorted.slice(0, SHOWN).map((row) => ({ name: row.orkflowName || 'Unnamed', h: hours(row.cpuSeconds) }));
+		const top = sorted.slice(0, SHOWN).map((row) => ({ name: ownedLabel(row.orkflowNamespace, row.orkflowName) || 'Unnamed', h: hours(row.cpuSeconds) }));
 		const rest = sorted.slice(SHOWN);
 		if (rest.length) top.push({ name: `${rest.length} ${rest.length === 1 ? 'other' : 'others'}`, h: hours(rest.reduce((sum, row) => sum + row.cpuSeconds, 0)) });
 		return top;

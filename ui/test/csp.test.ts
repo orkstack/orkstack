@@ -11,13 +11,13 @@ test('a test that left no refusal passes', () => {
 test('each refusal left fails the test, named once however often it was reported', () => {
 	// One refused script under the header and the meta policy is two reports.
 	const err = violationsError([
-		'/apply: script-src-elem inline',
-		'/apply: script-src-elem inline',
+		'/orkflows/+new: script-src-elem inline',
+		'/orkflows/+new: script-src-elem inline',
 		'/runs: img-src https://elsewhere.example/x.png'
 	]);
 	expect(err?.message).toBe(
 		'the content security policy refused 2 thing(s) a page tried, which the spec did not expect:\n' +
-			'  /apply: script-src-elem inline\n' +
+			'  /orkflows/+new: script-src-elem inline\n' +
 			'  /runs: img-src https://elsewhere.example/x.png'
 	);
 });
@@ -25,11 +25,11 @@ test('each refusal left fails the test, named once however often it was reported
 test('a refusal the test declared is kept apart, and only that one', () => {
 	const watch = new CspWatch();
 	watch.record('/: style-src-elem inline');
-	watch.expect(/^\/apply: script-src-elem inline$/g);
-	for (const what of ['/apply: script-src-elem inline', '/apply: script-src-elem inline', '/apply: img-src data:']) {
+	watch.expect(/^\/orkflows\/\+new: script-src-elem inline$/g);
+	for (const what of ['/orkflows/+new: script-src-elem inline', '/orkflows/+new: script-src-elem inline', '/orkflows/+new: img-src data:']) {
 		watch.record(what);
 	}
-	expect(watch.expected).toEqual(['/apply: script-src-elem inline', '/apply: script-src-elem inline']);
-	expect(watch.unexpected).toEqual(['/: style-src-elem inline', '/apply: img-src data:']);
+	expect(watch.expected).toEqual(['/orkflows/+new: script-src-elem inline', '/orkflows/+new: script-src-elem inline']);
+	expect(watch.unexpected).toEqual(['/: style-src-elem inline', '/orkflows/+new: img-src data:']);
 	expect(violationsError(watch.unexpected)).not.toBeNull();
 });

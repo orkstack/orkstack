@@ -8,7 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const testDigest = "sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3"
@@ -88,9 +90,7 @@ func TestRegistryImageFrom(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("registryImageFrom: %v", err)
-			}
+			must.OKf(t, err, "registryImageFrom")
 			if got != tt.want {
 				t.Errorf("registryImageFrom = %q, want %q", got, tt.want)
 			}
@@ -100,17 +100,11 @@ func TestRegistryImageFrom(t *testing.T) {
 
 func TestComposePath_WalksUpToTheModuleRoot(t *testing.T) {
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example\n"), 0o644))
 	nested := filepath.Join(root, "internal", "orker")
-	if err := os.MkdirAll(nested, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(nested, 0o755))
 	got, err := composePath(nested)
-	if err != nil {
-		t.Fatalf("composePath: %v", err)
-	}
+	must.OKf(t, err, "composePath")
 	if want := filepath.Join(root, "deploy", "docker-compose.yml"); got != want {
 		t.Errorf("composePath = %q, want %q", got, want)
 	}
@@ -127,22 +121,16 @@ func TestComposePath_WalksUpToTheModuleRoot(t *testing.T) {
 // helper once ran would reach Docker Hub at test time).
 func TestRegistryImage_IsTheStacksDigestPin(t *testing.T) {
 	got, err := RegistryImage()
-	if err != nil {
-		t.Fatalf("RegistryImage: %v", err)
-	}
+	must.OKf(t, err, "RegistryImage")
 	if !regexp.MustCompile(`^registry:3@sha256:[0-9a-f]{64}$`).MatchString(got) {
 		t.Fatalf("RegistryImage = %q, want registry:3 pinned by a sha256 digest", got)
 	}
 	// Read the pin a second way, from the file itself, so a defect in the
 	// function under test cannot agree with itself.
 	path, err := composePath(".")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var doc map[string]any
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatal(err)

@@ -30,6 +30,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestContinuation_ReachedIsEitherDimension(t *testing.T) {
@@ -202,7 +204,7 @@ func TestRestoreHistoryBound(t *testing.T) {
 func TestRunState_EveryFieldIsClassified(t *testing.T) {
 	seen := map[string]bool{}
 	for _, typ := range []reflect.Type{
-		reflect.TypeFor[runState](), reflect.TypeFor[eachState](), reflect.TypeFor[awaitState](), reflect.TypeFor[pinState](),
+		reflect.TypeFor[runState](), reflect.TypeFor[eachState](), reflect.TypeFor[awaitState](), reflect.TypeFor[sleepState](), reflect.TypeFor[pinState](),
 	} {
 		for i := 0; i < typ.NumField(); i++ {
 			key := typ.Name() + "." + typ.Field(i).Name
@@ -224,18 +226,14 @@ func engineSources(t *testing.T) (*token.FileSet, map[string]*ast.File) {
 	t.Helper()
 	fset := token.NewFileSet()
 	paths, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	files := map[string]*ast.File{}
 	for _, path := range paths {
 		if strings.HasSuffix(path, "_test.go") {
 			continue
 		}
 		file, err := parser.ParseFile(fset, path, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		files[path] = file
 	}
 	return fset, files
@@ -306,9 +304,7 @@ func TestContinuation_CarryAtMaxGenerationsFitsThePayloadBound(t *testing.T) {
 	root := "s3://" + strings.Repeat("b", 63) + "/"
 	uri := func(generation int64, kind, sha string) string {
 		key, err := artifacts.RunContinuationKey(namespace, runID, generation, kind, sha)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return root + key
 	}
 	object := func(generation int64, kind string) *orkstackv1.ContinuationObject {
@@ -336,9 +332,7 @@ func TestContinuation_CarryAtMaxGenerationsFitsThePayloadBound(t *testing.T) {
 		})
 	}
 	size, err := task.PayloadSize(carry)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if size >= task.MaxActivityInputBytes {
 		t.Fatalf("the carry at the generation ceiling is %d bytes, at or over %d", size, task.MaxActivityInputBytes)
 	}
@@ -371,9 +365,7 @@ func typicalRow(t testing.TB, id string, workload int, output *orkstackv1.Payloa
 
 func smallOutput(t testing.TB) *orkstackv1.Payload {
 	data, err := structpb.NewStruct(map[string]any{"ok": true, "digest": hexSHA(t)[:16]})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.Payload{Data: data}
 }
 
@@ -383,9 +375,7 @@ func randomOutput(t testing.TB, n int) *orkstackv1.Payload {
 		t.Fatal(err)
 	}
 	data, err := structpb.NewStruct(map[string]any{"blob": base64.StdEncoding.EncodeToString(raw)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.Payload{Data: data}
 }
 
@@ -415,9 +405,7 @@ func sizedRun(t testing.TB, tasks, items, taskArtifacts, itemArtifacts int, outp
 func checkpointSize(t testing.TB, run *orkstackv1.Run) int64 {
 	a := NewSnapshotActivities(newMemSnapshotStore())
 	obj, err := a.WriteCheckpoint(context.Background(), run, 0, 1<<40, ContinuationObservationInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return obj.GetSizeBytes()
 }
 
@@ -506,13 +494,9 @@ func cappedRestore(t *testing.T, n int) (*orkstackv1.Orkflow, *memSnapshotStore,
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
 	checkpoint, err := a.WriteCheckpoint(context.Background(), run, 0, DefaultContinuationBytes, ContinuationObservationInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	snapshot, err := a.WriteSwitchSnapshot(context.Background(), run, "team-a", 0, ContinuationObservationInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	carry := &orkstackv1.RunContinuation{
 		Version: 1, Generation: 1, EventSequence: int64(2*n + 2), CreatedAt: run.GetCreatedAt(), StartedAt: run.GetStartedAt(),
 		Checkpoint: checkpoint, Snapshot: snapshot,
@@ -528,9 +512,7 @@ func cappedRestore(t *testing.T, n int) (*orkstackv1.Orkflow, *memSnapshotStore,
 func segmentObjectForTest(t testing.TB, namespace, runID string) *orkstackv1.ContinuationObject {
 	sha := hexSHA(t)
 	key, err := artifacts.RunContinuationKey(namespace, runID, 0, artifacts.ContinuationKindEvents, sha)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.ContinuationObject{Uri: "s3://test/" + key, Sha256: sha, SizeBytes: 1, RawBytes: 1}
 }
 
@@ -557,9 +539,7 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	started := time.Now()
 	h.env.ExecuteWorkflow(RunWorkflowType, "", wf, (*orkstackv1.Payload)(nil), refusalRoutedPlan(t), carry)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("restoring %d bytes failed: %v", size, err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "restoring %d bytes failed", size)
 	elapsed := time.Since(started)
 
 	data, _ := store.get(carry.GetCheckpoint().GetUri())
@@ -568,15 +548,14 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	}}
 	// The decode is bounded on its thread's CPU time (passClock), so a host
 	// loaded by other processes cannot move it; a slower decode still does.
-	clock := &passClock{}
+	clock := newPassClock(t)
 	var worst time.Duration
 	for off := 0; off < len(data); off += int(DefaultContinuationChunksPerTask * DefaultContinuationChunkBytes) {
 		end := min(len(data), off+int(DefaultContinuationChunksPerTask*DefaultContinuationChunkBytes))
+		clock.between()
 		begin := clock.now()
 		for chunk := off; chunk < end; chunk += int(DefaultContinuationChunkBytes) {
-			if err := decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]))
 		}
 		worst = max(worst, clock.now()-begin)
 	}
@@ -602,9 +581,15 @@ func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 // newRefusalHarnessOver is newRefusalHarness over an existing store, with
 // an ExecuteTask that succeeds.
 func newRefusalHarnessOver(t *testing.T, store *memSnapshotStore) *refusalHarness {
+	var suite testsuite.WorkflowTestSuite
+	return newRefusalHarnessIn(t, store, &suite)
+}
+
+// newRefusalHarnessIn is newRefusalHarnessOver in suite, so a test can give
+// the workflow a logger of its own.
+func newRefusalHarnessIn(t *testing.T, store *memSnapshotStore, suite *testsuite.WorkflowTestSuite) *refusalHarness {
 	h := newRefusalHarness(t)
 	h.store = store
-	var suite testsuite.WorkflowTestSuite
 	h.env = generousDeadlock(suite.NewTestWorkflowEnvironment())
 	h.env.SetTestTimeout(120 * time.Second)
 	h.env.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
@@ -618,6 +603,11 @@ func newRefusalHarnessOver(t *testing.T, store *memSnapshotStore) *refusalHarnes
 	h.env.RegisterActivityWithOptions(func(_ context.Context, event *orkstackv1.Event, uri, _ string) error {
 		h.mu.Lock()
 		defer h.mu.Unlock()
+		if h.failPublish != nil {
+			if err := h.failPublish(event); err != nil {
+				return err
+			}
+		}
 		h.events = append(h.events, event)
 		h.uris = append(h.uris, uri)
 		return nil
@@ -637,9 +627,7 @@ func newRefusalHarnessOver(t *testing.T, store *memSnapshotStore) *refusalHarnes
 func refusalRoutedPlan(t *testing.T) RunPlan {
 	plan := refusalPlan()
 	route, err := task.RouteForPool(task.DefaultPool, task.DefaultQueue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan.Routes = map[string]string{route.Pool: route.Queue}
 	return plan
 }

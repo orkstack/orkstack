@@ -26,6 +26,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // versioningNamespace isolates this suite. AGENTS.md §11.1: a namespace is a hard
@@ -252,9 +254,7 @@ func newReplicaWith(
 	)
 
 	for name, w := range map[string]worker.Worker{"run": r.run, "event": r.events} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker of %s: %v", name, deployment, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker of %s", name, deployment)
 	}
 	r.startOrker(t)
 	return r
@@ -299,9 +299,7 @@ func (r *replica) startOrker(t *testing.T) {
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	if err := r.orker.Start(); err != nil {
-		t.Fatalf("start orker worker of %s: %v", r.deployment, err)
-	}
+	must.OKf(t, r.orker.Start(), "start orker worker of %s", r.deployment)
 }
 
 // stopOrker stops this release's Orker and leaves the rest of it running,
@@ -391,9 +389,7 @@ func TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn(t *testi
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
 	pinnedRun := "ork-rollout-pinned-" + suffix
-	if err := starter.StartRun(ctx, pinnedRun, gatedOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("start the run that must stay on v1: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, pinnedRun, gatedOrkflow(), nil, rawPlan(orkerQueue)), "start the run that must stay on v1")
 	transcript.step("submitted run " + pinnedRun + " while v1 was current")
 
 	select {
@@ -416,20 +412,14 @@ func TestIntegration_PinnedRunFinishesOnItsOwnVersionWhileNewRunsMoveOn(t *testi
 	transcript.step("stopped v1's projection worker; only v2's remains")
 
 	newRun := "ork-rollout-current-" + suffix
-	if err := starter.StartRun(ctx, newRun, plainOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("start the run that must use v2: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, newRun, plainOrkflow(), nil, rawPlan(orkerQueue)), "start the run that must use v2")
 	transcript.step("submitted run " + newRun + " after the switch")
 
 	releaseGate()
 	transcript.step("released the gate task")
 
-	if err := c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the pinned run %s did not complete on v1: %v", pinnedRun, err)
-	}
-	if err := c.GetWorkflow(ctx, newRun, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run submitted after the switch (%s) did not complete: %v", newRun, err)
-	}
+	must.OKf(t, c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, nil), "the pinned run %s did not complete on v1", pinnedRun)
+	must.OKf(t, c.GetWorkflow(ctx, newRun, "").Get(ctx, nil), "the run submitted after the switch (%s) did not complete", newRun)
 	transcript.step("both runs completed")
 
 	// --- 1. the in-flight run is pinned to v1 -----------------------------
@@ -485,9 +475,7 @@ func assertRunVersion(
 ) {
 	t.Helper()
 	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatalf("describe %s: %v", runID, err)
-	}
+	must.OKf(t, err, "describe %s", runID)
 	info := described.GetWorkflowExecutionInfo().GetVersioningInfo()
 	if info == nil {
 		t.Fatalf("run %s carries no versioning info: it was executed by an unversioned worker", runID)
@@ -649,9 +637,7 @@ func runHistory(t *testing.T, ctx context.Context, c client.Client, runID string
 	iter := c.GetWorkflowHistory(ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history of %s: %v", runID, err)
-		}
+		must.OKf(t, err, "read history of %s", runID)
 		events = append(events, event)
 	}
 	if len(events) == 0 {
@@ -664,9 +650,7 @@ func runHistory(t *testing.T, ctx context.Context, c client.Client, runID string
 func executeTaskIDFrom(t *testing.T, payloads *commonpb.Payloads) string {
 	t.Helper()
 	var in *orkstackv1.ExecuteTaskInput
-	if err := converter.GetDefaultDataConverter().FromPayloads(payloads, &in); err != nil {
-		t.Fatalf("decode ExecuteTask input from history: %v", err)
-	}
+	must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(payloads, &in), "decode ExecuteTask input from history")
 	return in.TaskId
 }
 
@@ -675,9 +659,7 @@ func executeTaskIDFrom(t *testing.T, payloads *commonpb.Payloads) string {
 func executeTaskStampFrom(t *testing.T, payloads *commonpb.Payloads) (string, string) {
 	t.Helper()
 	result := &orkstackv1.ExecuteTaskResult{}
-	if err := converter.GetDefaultDataConverter().FromPayloads(payloads, result); err != nil {
-		t.Fatalf("decode ExecuteTask result from history: %v", err)
-	}
+	must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(payloads, result), "decode ExecuteTask result from history")
 	// The stamp is inside the workload's values.json bytes, not a structured
 	// field: ExecuteTaskResult carries the workload's EXACT bytes so the
 	// committed sha256 is the sha256 of what the workload wrote (§3.4).

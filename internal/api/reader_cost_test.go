@@ -11,6 +11,8 @@ import (
 	"github.com/coder/websocket"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func (f *fakeReader) costs() (runStarts, runReads, streams int) {
@@ -28,9 +30,7 @@ func TestWebSocketBridge_ASocketOpenReadsTheStartEventOnceAndTheHistoryOnce(t *t
 	defer cancel()
 
 	conn, _, err := websocket.Dial(ctx, strings.Replace(f.baseURL, "http://", "ws://", 1)+"/ws/runs/ork-foreign-1", nil)
-	if err != nil {
-		t.Fatalf("dial websocket: %v", err)
-	}
+	must.OKf(t, err, "dial websocket")
 	defer conn.CloseNow()
 	frames := 0
 	for {
@@ -92,9 +92,7 @@ func TestTaskIsTerminal_ConcurrentQuietFollowersShareOneRunRead(t *testing.T) {
 	}
 	wg.Wait()
 	for _, err := range errs {
-		if err != nil {
-			t.Fatalf("taskIsTerminal: %v", err)
-		}
+		must.OKf(t, err, "taskIsTerminal")
 	}
 	if _, reads, _ := f.reader.costs(); reads != 1 {
 		t.Fatalf("ten concurrent followers made %d whole-run reads, want 1", reads)

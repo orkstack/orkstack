@@ -5,7 +5,8 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"strings"
@@ -22,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestAudit_TwoReplicas_WriteOnOneListedOnOther drives the audit trail against
@@ -96,21 +99,15 @@ func TestAudit_TwoReplicas_WriteOnOneListedOnOther(t *testing.T) {
 
 	// ---- 3. the object in MinIO: content type, create-only -----------------
 	key, err := artifacts.AuditKey(rec)
-	if err != nil {
-		t.Fatalf("AuditKey: %v", err)
-	}
+	must.OKf(t, err, "AuditKey")
 	raw := auditRawS3Client(t, artifactCfg)
 	head, err := raw.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(artifactCfg.S3Bucket), Key: aws.String(key)})
-	if err != nil {
-		t.Fatalf("HeadObject(%s): %v", key, err)
-	}
+	must.OKf(t, err, "HeadObject(%s)", key)
 	if got := aws.ToString(head.ContentType); got != artifacts.AuditContentType {
 		t.Errorf("content type = %q, want %q", got, artifacts.AuditContentType)
 	}
 	store, err := artifacts.NewS3AuditStore(ctx, artifactCfg)
-	if err != nil {
-		t.Fatalf("NewS3AuditStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3AuditStore")
 	forged := &orkstackv1.AuditRecord{
 		SchemaVersion: artifacts.AuditSchemaVersion, Id: rec.GetId(), At: rec.GetAt(),
 		Principal: "forger", Action: "namespace.delete", Target: name,
@@ -194,14 +191,14 @@ func TestAudit_TwoEngines_DeploymentWideRecordsByEmptyNamespace(t *testing.T) {
 	// same principal. The webhook is scoped to the namespace this test owns,
 	// which runs nothing, so it is never delivered to.
 	auditCLI(t, replicaA, principal, "namespace", "create", name)
-	registered := auditCLI(t, replicaA, principal, "--json", "webhook", "register", "http://127.0.0.1:1/never", "-n", name)
+	registered := auditCLI(t, replicaA, principal, "--json", "webhook", "create", "http://127.0.0.1:1/never", "-n", name)
 	var hook struct {
 		Webhook struct {
 			ID string `json:"id"`
 		} `json:"webhook"`
 	}
 	if err := json.Unmarshal([]byte(registered), &hook); err != nil || hook.Webhook.ID == "" {
-		t.Fatalf("webhook register --json = %v:\n%s", err, registered)
+		t.Fatalf("webhook create --json = %v:\n%s", err, registered)
 	}
 	// A deferred call, not t.Cleanup: the replicas run under ctx, which the
 	// earlier `defer cancel()` ends as this function returns — before any
@@ -294,7 +291,7 @@ func auditCLI(t *testing.T, replica *engineReplica, principal string, args ...st
 	if code != exitOK {
 		t.Fatalf("orkctl %s against %s exited %d: %s", strings.Join(args, " "), replica.name, code, stderr.String())
 	}
-	if json.Valid(stdout.Bytes()) {
+	if jsontext.Value(stdout.Bytes()).IsValid() {
 		return strings.TrimSpace(stdout.String())
 	}
 	return stdout.String()
@@ -309,9 +306,7 @@ func auditRawS3Client(t *testing.T, cfg artifacts.Config) *s3.Client {
 		awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3SessionToken)),
 	)
-	if err != nil {
-		t.Fatalf("load aws config: %v", err)
-	}
+	must.OKf(t, err, "load aws config")
 	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if cfg.S3Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.S3Endpoint)

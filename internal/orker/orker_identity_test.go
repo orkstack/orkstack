@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // reapRecorder is a ContainerRuntime that only remembers what it was asked to
@@ -52,9 +54,7 @@ func (r *reapRecorder) Reap(_ context.Context, orkerID string) (int, error) {
 func newLife(t *testing.T, workRoot string, runtime ContainerRuntime) *Activities {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	return NewActivitiesWithOptions(store, Options{Runtime: runtime, WorkRoot: workRoot})
 }
@@ -92,9 +92,7 @@ func TestDefaultOrkerID_SurvivesARestartSoTheReaperCanMatch(t *testing.T) {
 		t.Fatalf("identity changed across a restart: life one %q, life two %q; "+
 			"the replacement cannot recognise its predecessor's containers", orphanOwner, got)
 	}
-	if err := second.Boot(context.Background()); err != nil {
-		t.Fatalf("replacement Boot: %v", err)
-	}
+	must.OKf(t, second.Boot(context.Background()), "replacement Boot")
 	if len(runtime.labelled) != 0 {
 		t.Fatalf("the predecessor's container survived the replacement's boot: %v; "+
 			"reap was asked for %v", runtime.labelled, runtime.asked)
@@ -110,9 +108,7 @@ func TestDefaultOrkerID_SurvivesARestartSoTheReaperCanMatch(t *testing.T) {
 		host = "orker"
 	}
 	abs, err := filepath.Abs(workRoot)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if canonical, evalErr := filepath.EvalSymlinks(abs); evalErr == nil {
 		abs = canonical
 	}
@@ -142,9 +138,7 @@ func TestDefaultOrkerID_DistinguishesTwoOrkersOnOneHost(t *testing.T) {
 	// The live one holds its containers; the other's boot must not touch them.
 	live := &reapRecorder{labelled: map[string]int{a.Dispatcher().OrkerID: 2}}
 	other := newLife(t, t.TempDir(), live)
-	if err := other.Boot(context.Background()); err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, other.Boot(context.Background()), "Boot")
 	if live.labelled[a.Dispatcher().OrkerID] != 2 {
 		t.Fatalf("a peer Orker's boot reaped a live Orker's containers: %v", live.labelled)
 	}
@@ -160,9 +154,7 @@ func TestBoot_RefusesASecondLiveOrkerOnOneIdentity(t *testing.T) {
 	runtime := &reapRecorder{labelled: map[string]int{}}
 
 	live := newLife(t, workRoot, runtime)
-	if err := live.Boot(context.Background()); err != nil {
-		t.Fatalf("first Boot: %v", err)
-	}
+	must.OKf(t, live.Boot(context.Background()), "first Boot")
 
 	second := newLife(t, workRoot, &reapRecorder{labelled: map[string]int{live.Dispatcher().OrkerID: 3}})
 	err := second.Boot(context.Background())
@@ -178,9 +170,7 @@ func TestBoot_RefusesASecondLiveOrkerOnOneIdentity(t *testing.T) {
 	// Releasing the identity lets a genuine replacement take over.
 	live.Close()
 	replacement := newLife(t, workRoot, &reapRecorder{labelled: map[string]int{live.Dispatcher().OrkerID: 3}})
-	if err := replacement.Boot(context.Background()); err != nil {
-		t.Fatalf("replacement Boot after the predecessor released: %v", err)
-	}
+	must.OKf(t, replacement.Boot(context.Background()), "replacement Boot after the predecessor released")
 	replacement.Close()
 }
 
@@ -192,9 +182,7 @@ func TestDefaultOrkerID_ResolvesSymlinkedWorkRoot(t *testing.T) {
 	realRoot := t.TempDir()
 	linkParent := t.TempDir()
 	linkRoot := filepath.Join(linkParent, "work")
-	if err := os.Symlink(realRoot, linkRoot); err != nil {
-		t.Fatalf("symlink work root: %v", err)
-	}
+	must.OKf(t, os.Symlink(realRoot, linkRoot), "symlink work root")
 
 	realID := defaultOrkerID(realRoot)
 	linkID := defaultOrkerID(linkRoot)
@@ -213,9 +201,7 @@ func TestBoot_RefusesOneExplicitIdentityAcrossDifferentWorkRoots(t *testing.T) {
 
 	newExplicitLife := func(root string) *Activities {
 		store, err := artifacts.NewLocalStore(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		t.Cleanup(func() { _ = store.Close() })
 		return NewActivitiesWithOptions(store, Options{
 			Runtime:  runtime,
@@ -225,9 +211,7 @@ func TestBoot_RefusesOneExplicitIdentityAcrossDifferentWorkRoots(t *testing.T) {
 	}
 
 	first := newExplicitLife(t.TempDir())
-	if err := first.Boot(context.Background()); err != nil {
-		t.Fatalf("first Boot: %v", err)
-	}
+	must.OKf(t, first.Boot(context.Background()), "first Boot")
 	t.Cleanup(first.Close)
 	runtime.labelled[id] = 2
 

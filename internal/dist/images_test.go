@@ -13,6 +13,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dist"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeDigest is a well-formed digest that differs for every name.
@@ -34,15 +36,9 @@ func indexOf(digests ...string) string {
 func writeLayout(t *testing.T, dir, name, index string) {
 	t.Helper()
 	layout := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Join(layout, "blobs", "sha256"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(layout, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(layout, "index.json"), []byte(index), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(layout, "blobs", "sha256"), 0o755))
+	must.OK(t, os.WriteFile(filepath.Join(layout, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644))
+	must.OK(t, os.WriteFile(filepath.Join(layout, "index.json"), []byte(index), 0o644))
 }
 
 // layoutsOf writes a layout for each name, each with its fakeDigest.
@@ -101,9 +97,7 @@ func TestImages_ActivitiesAreTheBuiltinCatalog(t *testing.T) {
 	}
 	for name, reference := range dsl.BuiltinActivityCatalog() {
 		ref, err := dsl.ParseReference(reference)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if want := dist.ImageNamespace + "/" + dist.ActivityPrefix + name; ref.Registry != "ghcr.io" || ref.Repository != want {
 			t.Errorf("the catalog resolves %s to %s/%s, but the release publishes ghcr.io/%s", name, ref.Registry, ref.Repository, want)
 		}
@@ -133,9 +127,7 @@ func TestDigests_ReadEachLayoutsSingleIndexEntry(t *testing.T) {
 	t.Parallel()
 	dir := layoutsOf(t, dist.Images())
 	got, err := dist.ReadLayouts(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(got) != len(dist.Images()) {
 		t.Fatalf("read %d images, want %d: %v", len(got), len(dist.Images()), got)
 	}
@@ -152,9 +144,7 @@ func TestDigests_AreSortedByName(t *testing.T) {
 	names := dist.Images()
 	slices.Reverse(names)
 	got, err := dist.ReadLayouts(layoutsOf(t, names))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var order []string
 	for _, image := range got {
 		order = append(order, image.Name)
@@ -271,9 +261,7 @@ func TestDigests_RefuseABrokenDirectory(t *testing.T) {
 	t.Run("a layout without an index", func(t *testing.T) {
 		t.Parallel()
 		dir := layoutsOf(t, dist.Images())
-		if err := os.Remove(filepath.Join(dir, "orker", "index.json")); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Remove(filepath.Join(dir, "orker", "index.json")))
 		if _, err := dist.ReadLayouts(dir); err == nil || !strings.Contains(err.Error(), "orker") {
 			t.Errorf("error %v; want a refusal naming orker", err)
 		}
@@ -281,9 +269,7 @@ func TestDigests_RefuseABrokenDirectory(t *testing.T) {
 	t.Run("a stray file beside the layouts", func(t *testing.T) {
 		t.Parallel()
 		dir := layoutsOf(t, dist.Images())
-		if err := os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("x"), 0o644))
 		if _, err := dist.ReadLayouts(dir); err == nil || !strings.Contains(err.Error(), "notes.txt") {
 			t.Errorf("error %v; want a refusal naming notes.txt", err)
 		}
@@ -292,9 +278,7 @@ func TestDigests_RefuseABrokenDirectory(t *testing.T) {
 		t.Parallel()
 		dir := layoutsOf(t, dist.Images())
 		elsewhere := layoutsOf(t, []string{"ork"})
-		if err := os.RemoveAll(filepath.Join(dir, "ork")); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.RemoveAll(filepath.Join(dir, "ork")))
 		if err := os.Symlink(filepath.Join(elsewhere, "ork"), filepath.Join(dir, "ork")); err != nil {
 			t.Skipf("no symbolic links here: %v", err)
 		}
@@ -311,9 +295,7 @@ func TestDigests_RefuseABrokenDirectory(t *testing.T) {
 	t.Run("a file, not a directory", func(t *testing.T) {
 		t.Parallel()
 		file := filepath.Join(t.TempDir(), "layouts")
-		if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(file, []byte("x"), 0o644))
 		if _, err := dist.ReadLayouts(file); err == nil {
 			t.Error("want an error")
 		}
@@ -329,9 +311,7 @@ func TestParseImages_ReadsWhatDigestsPrints(t *testing.T) {
 		images = append(images, dist.Image{Name: name, Digest: fmt.Sprintf("sha256:%064x", i)})
 	}
 	got, err := dist.ParseImages([]byte(dist.FormatImages(images)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !slices.Equal(got, images) {
 		t.Fatalf("ParseImages = %v, want %v", got, images)
 	}

@@ -16,6 +16,8 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The interface label a released engine reads.
@@ -40,20 +42,14 @@ const releasedInterfaceDescriptorSHA256 = "d55be74f04bbdf980672515a4e214e0789848
 func releasedInterfaceReader(t *testing.T) func(label string) error {
 	t.Helper()
 	raw, err := os.ReadFile(releasedInterfaceDescriptor)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != releasedInterfaceDescriptorSHA256 {
 		t.Fatalf("%s is not the descriptor v0.1.0 shipped", releasedInterfaceDescriptor)
 	}
 	file := &descriptorpb.FileDescriptorProto{}
-	if err := proto.Unmarshal(raw, file); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(raw, file))
 	descriptor, err := protodesc.NewFile(file, protoregistry.GlobalFiles)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	message := descriptor.Messages().ByName("ActivityInterface")
 	if message == nil {
 		t.Fatal("the released descriptor holds no ActivityInterface")
@@ -89,13 +85,9 @@ func TestReleasedEngine_ReadsEveryInterfaceThisTreePacks(t *testing.T) {
 	read := releasedInterfaceReader(t)
 	for path, source := range interfaceDocuments(t) {
 		decl, err := ParseActivityDocument(source)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
+		must.OKf(t, err, "%s", path)
 		label, err := PackInterfaceLabel(decl.Interface)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
+		must.OKf(t, err, "%s", path)
 		if err := read(label); err != nil {
 			t.Errorf("%s: a v0.1.0 engine cannot read its interface label: %v", path, err)
 		}
@@ -107,9 +99,7 @@ func TestReleasedEngine_ReadsEveryInterfaceThisTreePacks(t *testing.T) {
 // interface label — each cost a v0.1.0 engine the whole interface.
 func TestReleasedEngine_RefusesTheRejectedAlternatives(t *testing.T) {
 	read := releasedInterfaceReader(t)
-	if err := read(`{"schemaVersion":1,"fields":{"url":{"type":"string"}}}`); err != nil {
-		t.Fatalf("the released reader refuses a plain interface: %v", err)
-	}
+	must.OKf(t, read(`{"schemaVersion":1,"fields":{"url":{"type":"string"}}}`), "the released reader refuses a plain interface")
 	for _, tc := range []struct{ name, label, want string }{
 		{"a description in the interface label", `{"schemaVersion":1,"fields":{"url":{"type":"string","description":"x"}}}`,
 			`unknown field "description"`},

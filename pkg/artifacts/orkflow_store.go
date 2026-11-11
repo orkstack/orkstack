@@ -3,7 +3,6 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +18,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // OrkflowStore is the system of record for orkflow definitions. Runs live in
@@ -51,7 +51,7 @@ type OrkflowStore interface {
 	// expectation is a compare-and-SET, not a check: the version lands only
 	// while the head is still the version named, and an apply that loses that
 	// race is refused with an error matching ErrHeadMoved. Passing
-	// NoHeadExpectation() is the unchecked apply — `orkctl apply file.yaml`,
+	// NoHeadExpectation() is the unchecked apply — `orkctl orkflow create file.yaml`,
 	// which claims nothing and so cannot be told it was wrong.
 	Put(ctx context.Context, wf *orkstackv1.Orkflow, expected HeadExpectation) (*orkstackv1.Orkflow, bool, error)
 	// Get returns one orkflow version from one namespace. An empty version
@@ -298,7 +298,7 @@ func marshalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 		return nil, fmt.Errorf("artifacts: encode orkflow %q: %w", wf.GetName(), err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode orkflow %q: %w", wf.GetName(), err)
 	}
 	out.WriteByte('\n')
@@ -373,12 +373,12 @@ func resolveByName(scan orkflowScan) []*orkstackv1.Orkflow {
 // pinnedOrkflow returns the named version out of one orkflow's versions, or
 // nil when the pointer is unset or names a version this scan did not see.
 //
-// A pointer that names nothing present cannot happen through this store —
-// SetCurrentVersion validates the target, and the one path that deletes a
-// version object (Put, rolling back a version it wrote and could not commit)
-// deletes a version nobody was ever handed — so falling back to the head here
-// is not a policy about dangling pointers; it is what keeps a listing
-// answerable when a version arrives between the LIST and the pointer's write.
+// A pointer that names nothing present happens through this store only for
+// the moment a rollback (Put, removing a version it wrote and could not
+// commit) races a pointer moved onto that version, until one side reads the
+// other back and repairs it (Get says how). Falling back to the head here is
+// not a policy about dangling pointers; it is what keeps a listing answerable
+// then, and when a version arrives between the LIST and the pointer's write.
 // Get is stricter, because Get is the read a run is started from.
 func pinnedOrkflow(versions []*orkstackv1.Orkflow, version string) *orkstackv1.Orkflow {
 	if version == "" {
@@ -526,21 +526,116 @@ func (s *S3OrkflowStore) Put(
 	incoming := namespacedOrkflow(wf)
 	namespace, name := incoming.GetNamespace(), incoming.GetName()
 
-	stored, created, err := s.commitVersion(ctx, key, namespace, name, incoming, expected)
+	stored, document, created, known, err := s.commitVersion(ctx, key, namespace, name, incoming, expected)
 	if err == nil {
 		return stored, created, nil
 	}
-	if !created {
+	var deleted *deletedAsAppliedError
+	if !created || errors.As(err, &deleted) {
+		// A Delete that beat this apply took its version too: there is nothing
+		// to roll back, and nothing more to say.
 		return nil, false, err
 	}
-	if removeErr := s.removeVersion(ctx, key); removeErr != nil {
+	if !known {
+		// The create's answer was lost and only a read found this exact
+		// document there — this apply's, or an identical apply's that may
+		// already be the head — or the head swap's outcome is unknown, so the
+		// head may name it. Removing it could leave a head naming nothing, so
+		// this apply leaves it as it is and says so; applying the document
+		// again completes its commit (commitVersion). An identical apply that
+		// is refused decides for itself what it wrote.
+		return nil, false, fmt.Errorf(
+			"%w (this apply left the version it wrote at %s as it is: its create or its head swap lost "+
+				"its answer, so the version may be an identical apply's, or the head's)", err, s.uri(key))
+	}
+	// A refused apply leaves nothing stored: its version is not addressable,
+	// listed or promotable, and a retargeted retry of the same document
+	// creates it afresh. Except that a version a pointer names — the head, or
+	// the current pointer a promotion of the listed version moved — is never
+	// removed, nor one whose pointers cannot be read.
+	version := incoming.GetVersion()
+	switch names, readErr := s.pointersName(ctx, namespace, name, version); {
+	case readErr != nil:
+		return nil, false, fmt.Errorf(
+			"%w (the version stays stored at %s: its pointers could not be read, so whether one names it "+
+				"is not known: %v)", err, s.uri(key), readErr)
+	case names:
+		return nil, false, fmt.Errorf(
+			"%w (the version stays stored at %s: the head or the current pointer names it)", err, s.uri(key))
+	}
+	written, raw, etag, readErr := s.readRaw(ctx, key)
+	switch {
+	case errors.Is(readErr, ErrNotFound):
+		// A Delete of the orkflow took it first: nothing is stored.
+		return nil, false, err
+	case readErr != nil:
+		return nil, false, fmt.Errorf("%w (the version stays stored at %s: it could not be read: %v)",
+			err, s.uri(key), readErr)
+	case !bytes.Equal(raw, document):
+		// Not the document this apply wrote: a Delete of the orkflow removed
+		// it, and another apply created this version afresh, whose own commit
+		// decides it. Its document carries its own apply's instant to the
+		// nanosecond, so equal bytes would be this apply's.
+		return nil, false, fmt.Errorf(
+			"%w (another document is stored under this version at %s now, and is left alone: a Delete "+
+				"removed the one this apply wrote, and another apply created it again)", err, s.uri(key))
+	}
+	if removeErr := s.removeVersion(ctx, key, etag); removeErr != nil {
 		// The refusal is still the caller's answer — it is what happened —
 		// but the residue it was supposed to clean up is back, so say so.
 		return nil, false, fmt.Errorf(
 			"%w (and the version this apply wrote could not be removed from %s: %v)",
 			err, s.uri(key), removeErr)
 	}
+	// The read above and the removal are two requests. An identical apply that
+	// found this version stored ahead of the head may move the head onto it,
+	// and a promotion of the listed version may move the current pointer onto
+	// it, at any point: before the read, which keeps the version; between the
+	// read and the re-read below, which puts it back; or after the re-read,
+	// when that apply's or promotion's own check puts it back (ensureHeadVersion,
+	// confirmPromoted). Each restore is the same bytes, created only if absent,
+	// so whichever lands first the other finds there. Until then a reader can find a
+	// pointer naming a version that is not there, and is told so. A pointer
+	// that cannot be read is not guessed at — putting the version back then
+	// could undo a Delete of the whole orkflow — and the caller is told. (An
+	// identical apply that answered "already stored" with the head past this
+	// version can still find it gone, as with every rollback: explicitly not
+	// found, never another version. A Delete landing between a re-read and its
+	// restore can leave one version object behind it, and the orkflow then
+	// reappears with that version until it is deleted again.)
+	names, readErr := s.pointersName(ctx, namespace, name, version)
+	if readErr != nil {
+		return nil, false, fmt.Errorf(
+			"%w (the version this apply wrote was removed from %s, and its pointers could not be read "+
+				"afterwards: %v; if one names this version, applying this document again against the head as "+
+				"it is now stores it again)",
+			err, s.uri(key), readErr)
+	}
+	if names {
+		if restoreErr := s.restoreVersion(ctx, key, raw, written); restoreErr != nil {
+			return nil, false, fmt.Errorf(
+				"%w (a pointer names the version this apply removed from %s, and putting it back "+
+					"failed: %v; applying this document again against the head as it is now stores it again)",
+				err, s.uri(key), restoreErr)
+		}
+		return nil, false, fmt.Errorf(
+			"%w (the version stays stored at %s: an identical apply made it the head, or a promotion "+
+				"made it current)", err, s.uri(key))
+	}
 	return nil, false, err
+}
+
+// pointersName reports whether the head or the current pointer names version.
+func (s *S3OrkflowStore) pointersName(ctx context.Context, namespace, name, version string) (bool, error) {
+	head, _, err := s.readHead(ctx, namespace, name)
+	if err != nil {
+		return false, err
+	}
+	current, err := s.CurrentVersion(ctx, namespace, name)
+	if err != nil {
+		return false, err
+	}
+	return head.Version == version || current == version, nil
 }
 
 // commitVersion is Put's body: write the version object, then move the head
@@ -548,32 +643,85 @@ func (s *S3OrkflowStore) Put(
 //
 // It reports whether THIS call created the version object on every path,
 // error paths included, because that is what tells Put whether there is
-// anything to remove.
+// anything to remove, and whether it knows it did (writeVersion), with the
+// bytes it wrote, so the removal takes only that document.
 func (s *S3OrkflowStore) commitVersion(
 	ctx context.Context,
 	key, namespace, name string,
 	incoming *orkstackv1.Orkflow,
 	expected HeadExpectation,
-) (*orkstackv1.Orkflow, bool, error) {
+) (*orkstackv1.Orkflow, []byte, bool, bool, error) {
 	var (
-		stored  *orkstackv1.Orkflow
-		created bool
+		stored         *orkstackv1.Orkflow
+		raw            []byte
+		created, known bool
+		// The incarnation of the first head pointer this apply read. A later
+		// round that finds another incarnation's head read an orkflow a Delete
+		// removed; one that finds no head at all after a refused swap — which
+		// proves a head existed — read one a Delete took.
+		seenPresent bool
+		seenSince   time.Time
+		looped      bool
+		// Whether the first read found a head pointer: only then can a later
+		// round's incarnation be the one this apply's version was read under.
+		sawPointerFirst bool
 	)
-	for range headSwapAttempts {
+	for attempt := range headSwapAttempts {
 		pointer, etag, err := s.effectiveHead(ctx, namespace, name)
 		if err != nil {
-			return nil, created, err
+			return nil, raw, created, known, err
+		}
+		if attempt == 0 {
+			sawPointerFirst = etag != ""
+		}
+		switch {
+		case looped && etag == "":
+			return nil, raw, created, known, fmt.Errorf("artifacts: orkflow %q in namespace %q was deleted as "+
+				"version %q was applied, or a Delete of it stopped part way (deleting it again finishes it): %w",
+				name, ResolveNamespace(namespace), incoming.GetVersion(), ErrNotFound)
+		case seenPresent && !pointer.Since.IsZero() && !pointer.Since.Equal(seenSince):
+			return nil, raw, created, known, fmt.Errorf("artifacts: orkflow %q in namespace %q was deleted as "+
+				"version %q was applied, and another apply has re-created it since: %w",
+				name, ResolveNamespace(namespace), incoming.GetVersion(), ErrNotFound)
+		case !seenPresent && etag != "":
+			seenPresent, seenSince = true, pointer.Since
 		}
 		if !expected.SatisfiedBy(pointer.Version) {
-			return nil, created, headMoved(namespace, name, expected, pointer.Version)
+			return nil, raw, created, known, headMoved(namespace, name, expected, pointer.Version)
 		}
 		if stored == nil {
-			if stored, created, err = s.writeVersion(ctx, key,
+			if stored, raw, created, known, err = s.writeVersion(ctx, key,
 				stampedOrkflow(incoming, pointer.AppliedAt)); err != nil {
-				return nil, false, err
+				return nil, nil, false, false, err
 			}
-			if !created {
-				return stored, false, nil
+			if !created && !stored.GetCreatedAt().AsTime().After(pointer.AppliedAt) {
+				// The repeat it looks like: the version is stored, and the
+				// head is at it or past it.
+				return stored, raw, false, false, nil
+			}
+			// Created now, or stored ahead of the head by an apply whose head
+			// swap never landed — it lost the swap after a create whose answer
+			// was lost, or its process ended between the two writes. This
+			// apply of the same document completes that commit; it stored no
+			// version, so it still reports created=false.
+		}
+		// After a refused swap, this apply's version is read again before
+		// anything else: a Delete — or, for a version it does not know it
+		// created, a refused apply's rollback — may have taken it. Gone, the apply is
+		// refused without touching the head, which may be another apply's
+		// that re-created the orkflow; only a version a rollback removed
+		// within this incarnation goes on, for the swap to put it back.
+		rolledBack := false
+		if looped {
+			var err error
+			// The incarnation is the one this apply read before its refused
+			// swap only when that read was a pointer head with the since this
+			// round finds.
+			sameIncarnation := sawPointerFirst && etag != "" && !pointer.Since.IsZero() &&
+				pointer.Since.Equal(seenSince)
+			if rolledBack, err = s.versionStillStored(ctx, namespace, name, key, stored, known, pointer,
+				sameIncarnation); err != nil {
+				return nil, raw, created, known, err
 			}
 		}
 		applied := stored.GetCreatedAt().AsTime()
@@ -581,44 +729,314 @@ func (s *S3OrkflowStore) commitVersion(
 			// Somebody else's apply is stamped after ours and is already the
 			// head. Theirs IS the newer apply; leaving the pointer where they
 			// put it is what keeps the head and the catalog's order one
-			// answer.
-			return stored, created, nil
+			// answer. A version a rollback removed is then not this apply's
+			// to put back: no pointer will name it.
+			if rolledBack {
+				return nil, raw, created, known, removedSinceFound(namespace, name, stored.GetVersion())
+			}
+			return stored, raw, created, known, nil
+		}
+		// A head swapped in from nothing begins an incarnation; every swap
+		// after copies its since, or copies none from a head without one.
+		since := pointer.Since
+		if etag == "" {
+			since = applied
 		}
 		switch err := s.swapHead(ctx, namespace, name, etag, headPointer{
 			Version:   stored.GetVersion(),
 			AppliedAt: applied,
+			Since:     since,
 		}); {
+		case err == nil && etag == "":
+			// A head swapped in from nothing: a Delete of the orkflow may have
+			// taken the head this apply read as absent, and then its version.
+			if err := s.confirmHeadFromNothing(ctx, namespace, name, key, stored, applied, known); err != nil {
+				return nil, raw, created, known, err
+			}
+			return stored, raw, created, known, nil
+		case err == nil && !known:
+			// This apply moved the head onto a version it does not know it
+			// created — one it found stored, or one only a read showed landed:
+			// the refused apply that did create it may be rolling it back. Its
+			// re-read of the head covers a move that lands before that read;
+			// this check covers a move that lands after it.
+			if err := s.ensureHeadVersion(ctx, namespace, name, key, stored, raw); err != nil {
+				return nil, nil, false, false, err
+			}
+			return stored, raw, created, known, nil
+		case err == nil && looped:
+			// A swap after a refused one: a Delete in between may have taken
+			// this apply's version, and the head would then name nothing.
+			if err := s.confirmHeadFromNothing(ctx, namespace, name, key, stored, applied, known); err != nil {
+				return nil, raw, created, known, err
+			}
+			return stored, raw, created, known, nil
 		case err == nil:
-			return stored, created, nil
+			return stored, raw, created, known, nil
 		case errors.Is(err, ErrPreconditionFailed):
 			if expected.Stated() {
-				head, _, readErr := s.effectiveHead(ctx, namespace, name)
+				// The head pointer itself, never one derived from the catalog,
+				// which would list this apply's own uncommitted version.
+				head, headETag, readErr := s.readHead(ctx, namespace, name)
 				if readErr != nil {
-					return nil, created, readErr
+					return nil, raw, created, known, readErr
 				}
-				return nil, created, headMoved(namespace, name, expected, head.Version)
+				if headETag != "" && head.Version == stored.GetVersion() && head.AppliedAt.Equal(applied) {
+					// An identical apply moved the head onto exactly this
+					// version at this stamp first: this apply's commit landed.
+					return stored, raw, created, known, nil
+				}
+				return nil, raw, created, known, headMoved(namespace, name, expected, head.Version)
 			}
+			if errors.Is(err, errHeadGone) {
+				// The head this apply read is gone, and only a Delete of the
+				// orkflow removes it: this apply lost to it. Going round again
+				// would derive the head from this apply's own uncommitted
+				// version and report a commit that never moved a head, for a
+				// version the Delete may then remove. Its rollback removes it.
+				return nil, raw, created, known, fmt.Errorf("artifacts: orkflow %q in namespace %q was deleted "+
+					"as version %q was applied, or a Delete of it stopped part way (deleting it again finishes it): %w",
+					name, ResolveNamespace(namespace), stored.GetVersion(), ErrNotFound)
+			}
+			looped = true
 		default:
-			return nil, created, err
+			// Not a refusal: the swap may have landed (errOutcomeUnknown, or
+			// an error a lost answer left), so the version is not known to
+			// be removable.
+			return nil, raw, created, false, err
 		}
 	}
-	return nil, created, fmt.Errorf(
+	return nil, raw, created, known, fmt.Errorf(
 		"artifacts: orkflow %q in namespace %q: another apply moved the head on each of "+
 			"%d attempts to publish version %q: %w",
 		name, namespace, headSwapAttempts, incoming.GetVersion(), ErrPreconditionFailed)
 }
 
-// removeVersion deletes one version object. It is called on exactly one path —
-// Put rolling back the object it just created and could not commit — and the
-// comment on Put is where the reasoning lives.
-func (s *S3OrkflowStore) removeVersion(ctx context.Context, key string) error {
-	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
-		Bucket: aws.String(s.bucket),
-		Key:    aws.String(key),
-	}); err != nil {
-		return fmt.Errorf("artifacts: remove orkflow %q: %w", s.uri(key), err)
+// ensureHeadVersion makes sure a version the head was just moved onto is still
+// stored, as the document this apply read: when it is gone and the head still
+// names it, its exact bytes are put back (restoreVersion). A head that has
+// moved on, or been deleted with the whole orkflow, needs nothing, and nothing
+// is put back for it. Another document under this version — created afresh
+// after a refused apply removed it — is never reported as this one.
+func (s *S3OrkflowStore) ensureHeadVersion(
+	ctx context.Context,
+	namespace, name, key string,
+	stored *orkstackv1.Orkflow,
+	raw []byte,
+) error {
+	switch found, _, _, err := s.readRaw(ctx, key); {
+	case err == nil:
+		if !SameStoredOrkflow(found, stored) {
+			return fmt.Errorf("artifacts: the head of orkflow %q names %q, and the document stored under it "+
+				"now is another (%s): %w", name, stored.GetVersion(), s.uri(key), ErrVersionExists)
+		}
+		return nil
+	case !errors.Is(err, ErrNotFound):
+		return fmt.Errorf("artifacts: the head of orkflow %q names %q, which could not be read back: %w",
+			name, stored.GetVersion(), err)
+	}
+	head, _, err := s.readHead(ctx, namespace, name)
+	if err != nil {
+		return fmt.Errorf("artifacts: the head of orkflow %q was moved onto %q, which is gone, "+
+			"and the head could not be read again: %w", name, stored.GetVersion(), err)
+	}
+	if head.Version != stored.GetVersion() {
+		return nil
+	}
+	if err := s.restoreVersion(ctx, key, raw, stored); err != nil {
+		return fmt.Errorf("artifacts: the head of orkflow %q names %q, which a refused apply removed, "+
+			"and putting it back failed: %w", name, stored.GetVersion(), err)
 	}
 	return nil
+}
+
+// confirmHeadFromNothing reads back the version an apply just made the head of:
+// after a swap onto an orkflow that had no head pointer, created only if
+// absent, and after a swap that followed a refused one. A Delete of the
+// orkflow races either — one that took the head before this apply read it, or
+// between its swaps, and this version after, leaves the head this swap wrote
+// naming nothing — and for a version this apply did not create, so does the
+// rollback of the refused apply that did, which this apply cannot tell from a
+// Delete and is told neutrally. The apply loses to the Delete: its own head is removed,
+// under that head's etag, nothing is put back, and the apply is refused as the
+// orkflow deleted — or, when another apply's head is there instead, as the
+// orkflow re-created since. Another document under the version is reported,
+// as ensureHeadVersion reports it.
+func (s *S3OrkflowStore) confirmHeadFromNothing(
+	ctx context.Context,
+	namespace, name, key string,
+	stored *orkstackv1.Orkflow,
+	applied time.Time,
+	known bool,
+) error {
+	switch found, _, _, err := s.readRaw(ctx, key); {
+	case err == nil && SameStoredOrkflow(found, stored):
+		return nil
+	case err == nil:
+		return fmt.Errorf("artifacts: the head of orkflow %q names %q, and the document stored under it "+
+			"now is another (%s): %w", name, stored.GetVersion(), s.uri(key), ErrVersionExists)
+	case !errors.Is(err, ErrNotFound):
+		return fmt.Errorf("artifacts: the head of orkflow %q names %q, which could not be read back: %w",
+			name, stored.GetVersion(), err)
+	}
+	head, etag, err := s.readHead(ctx, namespace, name)
+	if err != nil {
+		return fmt.Errorf("artifacts: the head of orkflow %q was moved onto %q, which is gone, and the head "+
+			"could not be read again: %w", name, stored.GetVersion(), err)
+	}
+	if !known {
+		if etag != "" && head.Version == stored.GetVersion() && head.AppliedAt.Equal(applied) {
+			if err := s.removeOwnHead(ctx, namespace, name, etag); err != nil {
+				return err
+			}
+		}
+		return removedSinceFound(namespace, name, stored.GetVersion())
+	}
+	if etag != "" && (head.Version != stored.GetVersion() || !head.AppliedAt.Equal(applied)) {
+		// Another apply's head: it re-created the orkflow since, and this
+		// version is gone with the orkflow it was applied to.
+		return &deletedAsAppliedError{fmt.Errorf("artifacts: orkflow %q in namespace %q was deleted as version "+
+			"%q was applied, and another apply has re-created the orkflow since; this version is gone: %w",
+			name, ResolveNamespace(namespace), stored.GetVersion(), ErrNotFound)}
+	}
+	if etag != "" {
+		if err := s.removeOwnHead(ctx, namespace, name, etag); err != nil {
+			return err
+		}
+	}
+	return &deletedAsAppliedError{fmt.Errorf("artifacts: orkflow %q in namespace %q was deleted as version %q was "+
+		"applied, or a Delete of it stopped part way (deleting it again finishes it): %w",
+		name, ResolveNamespace(namespace), stored.GetVersion(), ErrNotFound)}
+}
+
+// removeOwnHead removes the head this apply wrote, under that head's etag:
+// one another writer has moved since is theirs, and is left alone.
+func (s *S3OrkflowStore) removeOwnHead(ctx context.Context, namespace, name, etag string) error {
+	headKey, err := OrkflowHeadKey(namespace, name)
+	if err != nil {
+		return err
+	}
+	if _, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket),
+		Key: aws.String(headKey), IfMatch: aws.String(etag)}); err != nil && !isPreconditionFailed(err) &&
+		!isNotFound(err) {
+		return &deletedAsAppliedError{fmt.Errorf("artifacts: the version orkflow %q in namespace %q was applied "+
+			"with is gone, and removing this apply's head failed, so it still names the removed version (apply "+
+			"again or delete the orkflow to clear it): %w", name, ResolveNamespace(namespace), err)}
+	}
+	return nil
+}
+
+// versionStillStored reads an apply's version back before a round that
+// follows a refused swap: gone, the apply is refused without touching the
+// head; another document under it is reported. An apply that knows it created
+// its version knows only a Delete removes it. One that does not — it found the
+// identical document a refused apply created, or its own create's answer was
+// lost — goes on only when the head it now reads is of the incarnation it read
+// a pointer head of before its refused swap, and the version was created
+// within it: that is the refused apply's rollback, and its swap puts the
+// version back (ensureHeadVersion); rolledBack says so. Otherwise — a first
+// read with no head pointer, another incarnation, or a head that records none
+// — it cannot tell a rollback from a Delete, and is refused saying so.
+func (s *S3OrkflowStore) versionStillStored(
+	ctx context.Context,
+	namespace, name, key string,
+	stored *orkstackv1.Orkflow,
+	known bool,
+	head headPointer,
+	sameIncarnation bool,
+) (rolledBack bool, err error) {
+	switch found, _, _, err := s.readRaw(ctx, key); {
+	case err == nil && SameStoredOrkflow(found, stored):
+		return false, nil
+	case err == nil:
+		return false, fmt.Errorf("artifacts: version %q of orkflow %q, which this apply was committing, is "+
+			"another document now (%s): %w", stored.GetVersion(), name, s.uri(key), ErrVersionExists)
+	case !errors.Is(err, ErrNotFound):
+		return false, fmt.Errorf("artifacts: version %q of orkflow %q, which this apply was committing, could "+
+			"not be read back: %w", stored.GetVersion(), name, err)
+	case !known && sameIncarnation && !stored.GetCreatedAt().AsTime().Before(head.Since):
+		return true, nil
+	case !known:
+		return false, removedSinceFound(namespace, name, stored.GetVersion())
+	}
+	return false, &deletedAsAppliedError{fmt.Errorf("artifacts: orkflow %q in namespace %q was deleted as version %q was "+
+		"applied, or another apply has re-created it since; this version is gone: %w",
+		name, ResolveNamespace(namespace), stored.GetVersion(), ErrNotFound)}
+}
+
+// removedSinceFound is an apply that does not know it created its version —
+// it found it stored, ahead of the head, or its own create's answer was lost —
+// refused because the version is gone: the rollback of a refused apply that
+// created it, or a Delete, which it cannot tell apart.
+func removedSinceFound(namespace, name, version string) error {
+	return &deletedAsAppliedError{fmt.Errorf("artifacts: version %q of orkflow %q in namespace %q, which this "+
+		"apply did not know it created, was removed since — a refused apply's rollback, or a Delete; apply "+
+		"again: %w", version, name, ResolveNamespace(namespace), ErrNotFound)}
+}
+
+// deletedAsAppliedError is an apply that lost to a Delete of its orkflow: its
+// version is gone, and Put has nothing to roll back.
+type deletedAsAppliedError struct{ err error }
+
+func (e *deletedAsAppliedError) Error() string { return e.err.Error() }
+func (e *deletedAsAppliedError) Unwrap() error { return e.err }
+
+// restoreVersion puts back the exact bytes of a version object a rollback took
+// away, created only if absent. A version already there is read: the same
+// document (an identical apply's fresh create) is as good, and another one is
+// reported, never taken for this one.
+func (s *S3OrkflowStore) restoreVersion(ctx context.Context, key string, raw []byte, written *orkstackv1.Orkflow) error {
+	// Equal bytes after a lost answer (putConfirmed) are this restore or the
+	// same version object.
+	_, err := putConfirmed(ctx, s.client, &s3.PutObjectInput{
+		Bucket:        aws.String(s.bucket),
+		Key:           aws.String(key),
+		Body:          bytes.NewReader(raw),
+		ContentLength: aws.Int64(int64(len(raw))),
+		ContentType:   aws.String(orkflowContentType),
+		IfNoneMatch:   aws.String("*"),
+	}, raw)
+	switch {
+	case err == nil:
+		return nil
+	case !isPreconditionFailed(err):
+		return fmt.Errorf("artifacts: restore orkflow %q: %w", s.uri(key), err)
+	}
+	found, readErr := s.read(ctx, key)
+	if readErr != nil {
+		return fmt.Errorf("artifacts: restore orkflow %q: a version is there, and reading it failed: %w",
+			s.uri(key), readErr)
+	}
+	if !SameStoredOrkflow(found, written) {
+		return fmt.Errorf("artifacts: restore orkflow %q: another document is stored under this version: %w",
+			s.uri(key), ErrVersionExists)
+	}
+	return nil
+}
+
+// removeVersion deletes one version object. It is called on exactly one path —
+// Put rolling back the object it just created and could not commit — and the
+// comment on Put is where the reasoning lives. The rollback calls it only once
+// the bytes it read are exactly the document its apply wrote, and the delete
+// is held to the etag that read returned (If-Match): a Delete of the orkflow
+// and a fresh create of this version with other content between that read and
+// this removal leave the new object alone. Every Orker and every engine asks
+// the store at boot whether it honours that condition, and refuses to start on
+// one that does not (probeConditionalAnswers; docs/STORAGE.md).
+func (s *S3OrkflowStore) removeVersion(ctx context.Context, key, etag string) error {
+	input := &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}
+	if etag != "" {
+		input.IfMatch = aws.String(etag)
+	}
+	_, err := s.client.DeleteObject(ctx, input)
+	switch {
+	case err == nil, isNotFound(err):
+		return nil
+	case isPreconditionFailed(err):
+		return fmt.Errorf("artifacts: remove orkflow %q: another object is there now, and is left alone: %w",
+			s.uri(key), ErrPreconditionFailed)
+	}
+	return fmt.Errorf("artifacts: remove orkflow %q: %w", s.uri(key), err)
 }
 
 // stampedOrkflow returns wf carrying the stamp its apply lands with: its own,
@@ -640,25 +1058,34 @@ func stampedOrkflow(wf *orkstackv1.Orkflow, head time.Time) *orkstackv1.Orkflow 
 }
 
 // writeVersion creates one version's object and reports whether this call
-// created it. A version already stored is settled on the immutability rule.
+// created it, and whether it knows it did. A version already stored is
+// settled on the immutability rule.
+//
+// A create whose answer was lost and which a read found landed (putConfirmed)
+// is reported created, so the apply goes on to move the head, but not known:
+// two applies of one document behind the same head can be stamped alike —
+// when neither caller's stamp is after the head's, each gets the head's plus
+// 1 ns (AppliedStamp) — so the equal bytes may be the other apply's, and Put
+// never removes a version it does not know it wrote.
 func (s *S3OrkflowStore) writeVersion(
 	ctx context.Context,
 	key string,
 	incoming *orkstackv1.Orkflow,
-) (*orkstackv1.Orkflow, bool, error) {
+) (*orkstackv1.Orkflow, []byte, bool, bool, error) {
 	document, err := marshalOrkflow(incoming)
 	if err != nil {
-		return nil, false, err
+		return nil, nil, false, false, err
 	}
-	switch stored, err := s.read(ctx, key); {
+	switch stored, raw, _, err := s.readRaw(ctx, key); {
 	case err == nil:
-		return s.settle(stored, incoming, key)
+		stored, created, err := s.settle(stored, incoming, key)
+		return stored, raw, created, false, err
 	case errors.Is(err, ErrNotFound):
 		// Nothing there: create it below.
 	default:
-		return nil, false, err
+		return nil, nil, false, false, err
 	}
-	if _, err := s.client.PutObject(ctx, &s3.PutObjectInput{
+	outcome, err := putConfirmed(ctx, s.client, &s3.PutObjectInput{
 		Bucket:        aws.String(s.bucket),
 		Key:           aws.String(key),
 		Body:          bytes.NewReader(document),
@@ -666,21 +1093,23 @@ func (s *S3OrkflowStore) writeVersion(
 		ContentType:   aws.String(orkflowContentType),
 		// "*" is the S3 spelling of "only if nothing is there".
 		IfNoneMatch: aws.String("*"),
-	}); err != nil {
+	}, document)
+	if err != nil {
 		if isPreconditionFailed(err) {
 			// Another writer created this version between the read and the
 			// write. Whatever they wrote is now the stored document, and the
 			// immutability rule decides this call exactly as it would have
 			// decided a second apply a minute later.
-			stored, readErr := s.read(ctx, key)
+			stored, raw, _, readErr := s.readRaw(ctx, key)
 			if readErr != nil {
-				return nil, false, readErr
+				return nil, nil, false, false, readErr
 			}
-			return s.settle(stored, incoming, key)
+			stored, created, err := s.settle(stored, incoming, key)
+			return stored, raw, created, false, err
 		}
-		return nil, false, fmt.Errorf("artifacts: put orkflow %q: %w", s.uri(key), err)
+		return nil, nil, false, false, fmt.Errorf("artifacts: put orkflow %q: %w", s.uri(key), err)
 	}
-	return incoming, true, nil
+	return incoming, document, true, !outcome.ReadBack, nil
 }
 
 // settle answers a Put whose version is already stored: an identical document
@@ -704,13 +1133,14 @@ func (s *S3OrkflowStore) settle(
 // applied version when none is — never into another namespace.
 //
 // A pointer naming a version that is not stored is an ERROR here, not a quiet
-// fall back to the head. Nothing in this store can produce that state
-// (SetCurrentVersion validates its target, and the only path that deletes a
-// version — Put rolling back a version it could not commit — deletes one that
-// was never promotable because nobody was told it existed), so reaching it
-// means the bucket was edited underneath the engine — and silently running a
-// different version than the pointer names is the one answer nobody could
-// debug.
+// fall back to the head. The one path that deletes a version — Put rolling
+// back a version it could not commit — can race a pointer moved onto that
+// version (an identical apply, a promotion of the listed version); it and the
+// pointer's writer each read the other back and put the version back, or move
+// the pointer back, so the state lasts only until one of them has, and outside
+// that it means the bucket was edited underneath the engine. Either way,
+// silently running a different version than the pointer names is the one
+// answer nobody could debug.
 func (s *S3OrkflowStore) Get(ctx context.Context, namespace, name, version string) (*orkstackv1.Orkflow, error) {
 	if version == "" {
 		current, err := s.CurrentVersion(ctx, namespace, name)
@@ -931,24 +1361,32 @@ func (s *S3OrkflowStore) readPrefix(ctx context.Context, prefix string) (orkflow
 }
 
 func (s *S3OrkflowStore) read(ctx context.Context, key string) (*orkstackv1.Orkflow, error) {
+	wf, _, _, err := s.readRaw(ctx, key)
+	return wf, err
+}
+
+// readRaw is read with the exact bytes stored and their etag: a rollback puts
+// back those bytes, never a re-encoding, which a decode that discards unknown
+// fields (a newer release's) would change.
+func (s *S3OrkflowStore) readRaw(ctx context.Context, key string) (*orkstackv1.Orkflow, []byte, string, error) {
 	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
 		if isNotFound(err) {
-			return nil, fmt.Errorf("artifacts: get orkflow %q: %w", s.uri(key), ErrNotFound)
+			return nil, nil, "", fmt.Errorf("artifacts: get orkflow %q: %w", s.uri(key), ErrNotFound)
 		}
-		return nil, fmt.Errorf("artifacts: get orkflow %q: %w", s.uri(key), err)
+		return nil, nil, "", fmt.Errorf("artifacts: get orkflow %q: %w", s.uri(key), err)
 	}
 	defer object.Body.Close()
 	document, err := io.ReadAll(object.Body)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: get orkflow %q: read body: %w", s.uri(key), err)
+		return nil, nil, "", fmt.Errorf("artifacts: get orkflow %q: read body: %w", s.uri(key), err)
 	}
 	wf, err := unmarshalOrkflow(document)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: get orkflow %q: %w", s.uri(key), err)
+		return nil, nil, "", fmt.Errorf("artifacts: get orkflow %q: %w", s.uri(key), err)
 	}
-	return wf, nil
+	return wf, document, aws.ToString(object.ETag), nil
 }

@@ -1,7 +1,7 @@
 # OrkStack Orkflow DSL (apiVersion: orkstack/v1)
 
 An orkflow is a YAML document compiled into the `orkstack.v1.Orkflow` proto and
-applied to the `ork` engine with `orkctl apply`.
+stored in the `ork` engine with `orkctl orkflow create`.
 
 ## Top-level fields
 
@@ -11,15 +11,17 @@ applied to the `ork` engine with `orkctl apply`.
 | `kind`        | yes      | Exactly `Orkflow`; an automation document says `Automation`. |
 | `namespace`   | no       | Slug scope; absent means the built-in `default`.        |
 | `name`        | yes      | Slug identifier, unique within its namespace.           |
-| `version`     | no       | Author-pinned version; absent, the first apply assigns one. |
+| `version`     | no       | Author-pinned version; absent, the first create assigns one. |
 | `description` | no       | Human description.                                     |
 | `labels`      | no       | Free-form `map[string]string` for organization and filtering (see "Labels"). |
 | `inputs`      | no       | Declared input parameters (see below).                 |
 | `outputs`     | no       | Declared return contract: name to template (see below). |
 | `pins`        | no       | Declared task pins (see below).                        |
+| `shared_with` | no       | Other namespaces' Orkflows that may compose this one (see "Sharing across namespaces"). |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
-`orkctl apply` reads each file's `kind:`: `Orkflow` is this document, `Automation`
+`orkctl orkflow create` and `orkctl automation apply` each read a file's `kind:`
+and refuse the other's kind: `Orkflow` is this document, `Automation`
 an **automation document** — one file per namespace declaring its settings,
 schedules, triggers and webhooks by name
 ([`docs/AUTOMATION.md`](AUTOMATION.md)). A file with no `kind` is refused.
@@ -41,10 +43,11 @@ the source derives. `kind` says what the document is: `Orkflow`,
 `Automation` for an [automation document](AUTOMATION.md), or
 `ActivityInterface` for an image's [activity
 interface](ACTIVITY_IMAGES.md#declaring-the-interface), which is packed into
-the image rather than applied; all use the same `apiVersion`. `orkctl apply`
-reads `kind` to decide what a file is, and refuses a file with none.
+the image rather than created or applied; all use the same `apiVersion`.
+`orkctl orkflow create` and `orkctl automation apply` each read `kind` to decide
+what a file is, and refuse a file with none.
 
-A document without the header is refused at validate, apply and plan
+A document without the header is refused at validate, create and plan
 (`INVALID_ARGUMENT`, on `apiVersion`), naming the two lines to add. Another
 `apiVersion` is refused naming `orkstack/v1`; another `kind` is refused naming
 the kinds there are, and `kind: Automation` or `kind: ActivityInterface` says
@@ -54,7 +57,7 @@ Write the two lines as the document's first YAML lines. Comments may stand
 above or below them; the compiler accepts the two keys anywhere at the top
 level, quoted or not.
 
-The header is part of the source. The check that decides whether an apply
+The header is part of the source. The check that decides whether a create
 repeats a stored version, and whether an unpinned document already has one, covers
 it, so moving or reformatting it is an edit like any other: an unpinned document
 gets a new version, and a pinned one is refused as a rewrite.
@@ -84,8 +87,8 @@ the namespace's [automation document](AUTOMATION.md). Four reasons:
   different inputs, several callers may each hold a trigger of their own, and a
   webhook may listen to one task, one Orkflow, a namespace or the whole
   deployment — none of it an edit to the Orkflow.
-- **One file, many environments.** The same document is applied to staging and
-  to production, and each namespace's automation document binds it its own
+- **One file, many environments.** The same document is created in staging and
+  in production, and each namespace's automation document binds it its own
   way; the file stays one file.
 
 ### Editor support
@@ -130,21 +133,20 @@ secrets and image policy.
 
 A key the compiler reads as text takes a number or a boolean too (`cpu: 2`,
 `PORT: 8080`): it compiles to the text as written. The schema is deliberately
-stricter in five places, each a misspelling or a defect more often than a
+stricter in four places, each a misspelling or a defect more often than a
 choice:
 
 | Class | The schema refuses | The compiler |
 |---|---|---|
 | V | a `version:` that is a number or a boolean | reads its text (`version: 1.10` is `"1.10"`); write it quoted |
 | N | a key written with no value (`env: ~`) | reads the key as not written |
-| I | a non-integral number for an integer key (`timeout_seconds: 1.5`) | truncates it toward zero |
 | B | a YAML 1.1 word for a boolean key (`run_as_orker_user: yes`) | reads it as `true` |
 | D | an `inputs:` declaration key or `type` word it does not know | ignores the key, compares the word as written |
 
 A first-party `with:` value of an undeclared type is an error in the editor
 and a warning at validate.
 
-The UI's YAML editor — the Apply page, an Orkflow's Edit tab and
+The UI's YAML editor — the Create Orkflow page, an Orkflow's Edit tab and
 Admin → Automation — uses the same Orkflow and Automation schemas, which the
 generator also writes to `ui/src/lib/schemas/` (the UI is built from `ui/`
 alone; `TestSchemas_AreGenerated` refuses a stale copy and
@@ -157,7 +159,12 @@ engine (`ValidateOrkflow`, or a plan for an automation document) once typing
 pauses, for everything the schema cannot express — the strict YAML-to-JSON
 rules among them; the editor does not decide those itself. Only the engine's
 answer says a document has no problems; once the engine has found none, the
-schema's stricter findings above are shown as warnings.
+schema's stricter findings above are shown as warnings. On the Create Orkflow
+page and the Edit tab, a panel beside the editor shows the activity of the
+task the cursor is in, read from its image's declared interface and
+descriptions (`docs/ACTIVITY_IMAGES.md`, "Describing the activity"): its op,
+the keys that op takes and which of them the task sets, and the values it
+returns.
 
 The docs site will serve the schemas at `/schemas/orkflow/v1.json`,
 `/schemas/automation/v1.json`, `/schemas/activityinterface/v1.json` and
@@ -166,7 +173,9 @@ The docs site will serve the schemas at `/schemas/orkflow/v1.json`,
 ### `namespace`
 
 A namespace is a scope: an orkflow name is unique *within* one, so two
-namespaces may each hold a `deploy` and never see each other's. Definitions and
+namespaces may each hold a `deploy` and never see each other's. The one way
+across is composition of an Orkflow whose own definition shares it (see
+"Sharing across namespaces"). Definitions and
 runs are stored and indexed under it, and every read is scoped by it —
 `orkctl orkflow list`, `orkctl orkflow get`, `orkctl run list` and run
 submission all answer for one namespace and never for another's documents.
@@ -182,11 +191,11 @@ authority over somebody else's tenant.
 There are two ways to say which, and they must agree:
 
 ```bash
-orkctl apply payments.ork.yaml              # the document's own `namespace:`
-orkctl apply portable.ork.yaml -n payments  # a document that names none
+orkctl orkflow create payments.ork.yaml        # the document's own `namespace:`
+orkctl orkflow create portable.ork.yaml -n payments  # a document that names none
 ```
 
-A document that names `payments` applied with `-n staging` is refused: one of
+A document that names `payments` is refused when the Orkflow is created with `-n staging`: one of
 the two is a mistake, and guessing which would store the definition where its
 author will not look for it.
 
@@ -201,42 +210,42 @@ tasks run (see `pool` below). They are set with
 
 ### `version`
 
-A version is a name for one document, and it is **immutable**: applying an edit
+A version is a name for one document, and it is **immutable**: creating an edited file
 adds a version and never rewrites one, because a run pinned to a version reads
-its definition long after it was applied.
+its definition long after it was created.
 
 ```bash
-orkctl apply deploy.ork.yaml     # unchanged file: no new version, nothing written
-orkctl apply deploy.ork.yaml     # edited file:    a new version
+orkctl orkflow create deploy.ork.yaml     # unchanged file: no new version, nothing written
+orkctl orkflow create deploy.ork.yaml     # edited file:    a new version
 ```
 
-`version:` is optional. When a document pins none, its first apply assigns one:
+`version:` is optional. When a document pins none, its first create assigns one:
 a UUIDv7 in lowercase base32, 26 characters such as
-`01h455vb4pex5vsknk084sn02q`. So editing and applying produces a new version without anybody inventing a number,
-and re-applying an unchanged file lands on the version it already has and writes
+`01h455vb4pex5vsknk084sn02q`. So editing and creating produces a new version without anybody inventing a number,
+and creating an unchanged file again lands on the version it already has and writes
 nothing, from any replica, because the version is found by a hash of the document
-and the images it resolved to. Two applies of one new file at the same moment end
+and the images it resolved to. Two creates of one new file at the same moment end
 on one version. A version names the document a reader opens, comments and header
 included — a comment-only edit, or a moved header, is a new version, because what
 is stored changed. A version an earlier release stored as a sha256 hash stays
-valid: re-applying its file still writes nothing, and an edit lands a new version
+valid: creating its file again still writes nothing, and an edit lands a new version
 beside it.
 
 Validating or planning a file stores nothing, so it reports the version the file
-already has, and none when the file was never applied: `orkctl orkflow validate`
-prints `new version, assigned when applied`, and `version` and
+already has, and none when the file was never created: `orkctl orkflow validate`
+prints `new version, assigned when created`, and `version` and
 `definition_digest` are empty in its JSON and in `run plan --file --json`. A
-container needs both, so `orkctl task run --file` of such a file runs under the
+container needs both, so `orkctl task run -f` of such a file runs under the
 document's content hash and the digest that covers it, and stores nothing.
 
 `docs/STORAGE.md`, "Invariants the layout carries", names the three cases where
 the same content can hold two versions.
 
-Pinning one takes that decision back: the number is yours, and applying a
+Pinning one takes that decision back: the number is yours, and creating a
 **changed** document under a version that is already stored is refused
 (`already_exists`), because a run pinned to it is still reading those bytes.
 The fix is a new version rather than a force — bump `version:`, or drop it and
-let the apply assign one.
+let the create assign one.
 
 ### Which version runs
 
@@ -250,13 +259,13 @@ orkctl orkflow promote deploy 1.3.0     # roll back: the same command
 orkctl orkflow diff deploy 1.3.0 1.4.0  # what changed between two versions
 orkctl orkflow compat deploy 1.4.0      # what promoting 1.4.0 breaks (inputs: and outputs:)
 orkctl orkflow callers deploy           # what starts or composes deploy, and what it pins
-orkctl orkflow edit deploy              # $EDITOR round trip, applied as a new version
+orkctl orkflow edit deploy              # $EDITOR round trip, created as a new version
 orkctl orkflow edit deploy --version 1.3.0   # start from an older version
 orkctl orkflow edit deploy --editor "code --wait"   # instead of $ORK_EDITOR, $VISUAL, $EDITOR
 ```
 
-Until somebody promotes, an orkflow runs its **most recently applied** version.
-Promoting to a version that was never applied is refused, so a pointer
+Until somebody promotes, an orkflow runs its **most recently created** version.
+Promoting to a version that was never created is refused, so a pointer
 never names a version that is not there.
 
 A promotion decides what STARTS, never what is already running: a run in flight
@@ -265,21 +274,21 @@ whichever way the pointer moves under it. `--version` on `orkctl run submit`
 pins one run explicitly and ignores the pointer.
 
 Two questions are reported separately, because they are two questions: the
-**current** version is what runs, and the **newest applied** version — the
+**current** version is what runs, and the **newest created** version — the
 head — is where the edit lineage tips. `orkctl orkflow edit` starts from the
 head by default; `--version` starts from any stored version instead.
 
 Editing an old version is not a mistake to be prevented: it is how you fork
-forward from it. The result is applied as a NEW version and becomes the newest
-applied one — a stored version is never rewritten — and the **current** pointer
+forward from it. The result is created as a NEW version and becomes the newest
+created one — a stored version is never rewritten — and the **current** pointer
 does not move, so what runs is unchanged until you promote. That is the whole
-of it: applying is authoring, promoting is releasing.
+of it: creating is authoring, promoting is releasing.
 
-Whichever version you start from, the apply carries the head your editor saw.
-If somebody applies while your editor is open, the apply is refused
+Whichever version you start from, the create carries the head your editor saw.
+If somebody creates while your editor is open, the create is refused
 (`failed_precondition`, naming the head that was fetched and the head that
 replaced it) instead of landing beside a version nobody looked at, and your
-edit is kept in a file the refusal names. Re-read, diff, re-apply.
+edit is kept in a file the refusal names. Re-read, diff, create again.
 
 #### Promoting compares declared interfaces
 
@@ -322,12 +331,12 @@ only while it still names the version the comparison was made against: a
 promotion that raced another one is refused rather than landed across a
 comparison it never made.
 
-**Applying is never refused** for a consumer's sake. A breaking version is
+**Creating is never refused** for a consumer's sake. A breaking version is
 stored, with warnings at the exact fields (`inputs.region`, `outputs.url`) and
-one at `version` saying what applying does; `orkctl orkflow validate` reports
+one at `version` saying what creating does; `orkctl orkflow validate` reports
 the same warnings and still exits `0`. For an orkflow **nobody ever promoted**
-applying *is* a release — it runs its newest applied version — and the warning
-says so: promote the version you want to keep running before applying.
+creating *is* a release — it runs its newest created version — and the warning
+says so: promote the version you want to keep running before creating.
 
 `orkctl orkflow compat NAME [FROM] TO` prints the findings (two arguments
 compare from the current version; it exits `0` whatever it finds — `--json`'s
@@ -337,7 +346,7 @@ in the namespace that references it, with the version each pins — or
 `current`, for the triggers and schedules a promotion moves. A composing
 orkflow always pins a version (`uses: orkflow:<name>@<version>`), so it meets a
 breaking change only when its author bumps the pin, and rule 32 then refuses
-that apply on the exact field.
+that create on the exact field.
 
 ## Inputs
 
@@ -457,7 +466,7 @@ tasks:
     with:                 # image-specific config, rendered into config.json
       op: get
       url: https://example.test/health
-    # each:, await: — see "Fan-out" and "Awaited tasks"
+    # each:, await:, sleep: — see "Fan-out", "Awaited tasks" and "Sleeping tasks"
 ```
 
 `needs:` is the only thing that orders tasks. Declaration order sequences
@@ -476,11 +485,11 @@ are refused (rule 47).
 The 60 s is decided when the run is submitted and kept for the whole run: a
 run submitted by a release before v0.2.0 keeps the 100 s it started with.
 
-`uses:` is the only image selector. A catalog name is resolved at apply time;
-a registry tag or digest may be written directly. In every case the applied
+`uses:` is the only image selector. A catalog name is resolved when the Orkflow is created;
+a registry tag or digest may be written directly. In every case the created
 definition records an immutable digest, so a moved tag never changes a stored
 version. `uses:` cannot be templated: an image chosen at run time could not be
-pinned at apply.
+pinned at create.
 
 An image is also subject to the deployment's image policy (`orkctl admin
 image-policy get`): `require_digest` refuses a registry reference written as a
@@ -488,12 +497,12 @@ tag (a catalog name is exempt — the catalog is the operator's own
 configuration), `allowed_registries` bounds where images may come from, and a
 namespace may require a cosign signature (`require_signed_by`, shown by
 `orkctl namespace get`). An image outside the policy is refused at validate
-and apply on `tasks[i].uses`, again at submit, and by the Orker before it
+and create on `tasks[i].uses`, again at submit, and by the Orker before it
 pulls (`IMAGE_NOT_PERMITTED`, `IMAGE_NOT_SIGNED`, `IMAGE_SIGNATURE_INVALID`).
 See `docs/DEPLOY.md`, "Image supply-chain policy".
 
 When the resolved image declares its `with:` interface (the
-`org.orkstack.activity.interface` label), validate and apply check `with:`
+`org.orkstack.activity.interface` label), validate and create check `with:`
 against it (rule 14): a missing required key or an undeclared `op` is an
 error, an undeclared key or a literal of the wrong type a warning, and a
 templated value is never typed. An image without the label is not checked.
@@ -505,7 +514,7 @@ as files. Each `secrets` item names the file exposed under
 Secret values never enter this YAML or Temporal history. A namespace may bound
 which `source:` values its tasks may name (`allowed_secrets`, shown by
 `orkctl namespace get`), and a source outside that bound is refused at
-validate, apply and submit. The Orker that runs the task refuses at dispatch,
+validate, create and submit. The Orker that runs the task refuses at dispatch,
 after the commit check and a cached task's memo step and before the image is
 pulled, with `SECRET_NOT_PERMITTED`:
 
@@ -522,7 +531,7 @@ Name a source the operator set aside for tasks, such as a file under a
 directory the floor lists.
 
 `resources` uses `cpu` and `memory` request strings in the Kubernetes spelling
-(`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and apply when they do
+(`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and create when they do
 not read as a limit (rule 6d). A request is reserved for the task's lifetime and
 is also its limit. Orker policy may refuse a request above its cap but never
 silently raises or clamps it; a submit refuses a task whose request is above
@@ -554,7 +563,7 @@ and deep lanes of at most 380 tasks, all plain tasks with small outputs, each
 completed within its measured history, snapshot, in-flight, workflow-code,
 read-latency and run-page thresholds. A deployment that raises it runs
 unmeasured, and the engine says so at boot. A document over the ceiling is
-refused `invalid_argument` at validate, apply and `orkctl run plan --file`,
+refused `invalid_argument` at validate, create and `orkctl run plan -f`,
 anchored at the first task past it, with a message naming the count, the
 limit and the setting:
 
@@ -564,7 +573,7 @@ tasks[4000]: orkflow declares 4001 tasks; this deployment allows at most 4000
 composed with uses: orkflow:, or move a repeated task into a fan-out (each:)
 ```
 
-A stored version above a ceiling that was lowered after it was applied is
+A stored version above a ceiling that was lowered after it was created is
 refused at submit, `failed_precondition`, before any run id is minted.
 
 What counts is every entry of `tasks:`, whatever its kind — container,
@@ -576,7 +585,7 @@ tasks that start together share one history, which must also keep back what
 its failure path would need for every task not yet started:
 
 - **A stage of more than X plain tasks that start together may stop
-  `RUN_HISTORY_LIMIT`** in its first history, explicitly. X is 4,222 at the
+  `RUN_HISTORY_LIMIT`** in its first history, explicitly. X is 4,389 at the
   default settings and moves with the deployment's history, continuation and
   in-flight settings (`docs/DEPLOY.md` §5, "Task ceiling and the flat-stage
   bound"); the engine warns at boot when its ceiling is above X. At or below
@@ -595,11 +604,11 @@ its failure path would need for every task not yet started:
   a document both bounds were written to admit.
 - **A composed task counts once**, however many tasks its child declares.
   The child is a separate run with its own history, and its own definition
-  met this ceiling when it was applied; the whole composition tree is further
+  met this ceiling when it was created; the whole composition tree is further
   bounded by its 256 KiB plan (rule 31).
 - **A deep pipeline is bounded on its own.** A task's input carries one
   upstream reference per ancestor whose success its running implies, so a
-  long default-join chain is refused at apply past about 1,500 plain tasks,
+  long default-join chain is refused at create past about 1,500 plain tasks,
   and a task more than about 300 such ancestors down may fail
   `INPUT_TOO_LARGE` when it is dispatched (rule 44). Split such a pipeline
   into composed Orkflows.
@@ -636,7 +645,7 @@ travels by reference instead (`engine.definition_by_reference`, on by
 default, `docs/DEPLOY.md` §1), unchanged for the author: the run copies it
 into its own history in bounded chunks, up to a quarter of the deployment's
 `engine.continuation.bytes`, compressed (2 MiB at the default). Above that it
-is refused at apply, `invalid_argument` at `tasks`, and at submit,
+is refused at create, `invalid_argument` at `tasks`, and at submit,
 `failed_precondition`: "… compressed, over the … a run may carry forward;
 split it into composed Orkflows". A deployment that turns the setting off
 refuses a definition over 256 KiB at submit, `failed_precondition`, naming its
@@ -647,7 +656,7 @@ which still limits how many awaits and composed tasks one run tree holds
 **When a ready task starts.** A ready task normally starts at once, but two
 things can make it wait, `PENDING`, exactly as it would on a saturated pool:
 a run keeps at most `engine.run_max_in_flight` tasks, fan-out items, child
-runs and pins in flight (1,000 by default), and starts more as they finish;
+runs and pins in flight (500 by default), and starts more as they finish;
 and a run whose history nears its hold line holds new tasks until the running
 ones finish, so it can carry on into a fresh history (on by default; a
 deployment may turn it off, `engine.continuation.enabled`). Neither ever stops running work, and neither changes what a
@@ -867,7 +876,7 @@ was skipped is absent from `.tasks`. Reading it — `.tasks.canary.output.x`,
 `index .tasks "canary" "output" "x"`, or `artifact "canary/…"` — fails the
 task. Guard the read: `{{ with index .tasks "canary" }}{{ .output.x }}{{ end }}`
 (or `{{ if index .tasks "canary" }}…{{ end }}`; the body runs only when the
-task is present, never the `else`). Apply warns, never refuses, about every
+task is present, never the `else`). Creating an Orkflow warns, never refuses, about every
 unguarded read of an ancestor a join can leave absent (`tasks[i].condition`,
 `tasks[i].with…`). Only those two exact pipelines are recognised as a guard:
 `{{ if and (index .tasks "a") … }}` still warns — a known false positive. For
@@ -1014,7 +1023,7 @@ already applies to a task's external side effects, now applied to the host's
 own disk. Do not copy a secret into `/orkstack/shared`: that puts it on disk
 for the pin's lifetime, the same warning that applies to `output/`.
 
-Validate and apply warn (field `pins.<name>`) about a pin whose every task
+Validate and create warn (field `pins.<name>`) about a pin whose every task
 leaves `run_as_orker_user` false: each member then keeps its image's own
 `USER`, and rule 11 cannot compare UIDs that come from the images rather than
 the document.
@@ -1136,7 +1145,7 @@ refuse. A resolution is accepted only while the task is `AWAITING`: one sent
 while it is still `PENDING` is refused, and the caller retries once it is
 awaiting.
 
-- `orkctl run resolve <run> --task <await> [--values JSON | --values-file
+- `orkctl run resolve <run> -t <await> [--values JSON | --values-file
   PATH | --reject --reason TEXT]`, the run page's Resolve and Reject actions,
   or any Connect client calling `RunService.ResolveAwait`. It is scoped to a
   namespace exactly as `orkctl run cancel` is, and works for every await,
@@ -1171,6 +1180,68 @@ not set `callback: true` on an approval whose approver must differ from
 whoever submits the run: the submitter receives the token.
 
 See `examples/approval-gate.ork.yaml`.
+
+## Sleeping tasks
+
+A **sleeping task** declares `sleep:` instead of `uses:`. It starts no
+container, holds no pool slot and reaches no Orker: when the run reaches it,
+the task becomes **`SLEEPING`** and the run waits — inside Temporal, on one
+timer — for a fixed time, and then the task **succeeds**. Nothing outside the
+run ends a sleep early: there is no resolve, no callback and no signal, and an
+operator's cancel ends it `CANCELED` with its run.
+
+```yaml
+tasks:
+  - id: deploy-canary
+    uses: ghcr.io/acme/deploy:v3
+  - id: soak
+    needs:
+      - deploy-canary
+    sleep:
+      seconds: 900                    # required, 1 s … 30 days
+  - id: promote
+    needs:
+      - soak
+    uses: ghcr.io/acme/deploy:v3
+```
+
+`sleep:` takes one key:
+
+- `seconds` — **required**, from 1 second to 30 days. The sleep counts from
+  the moment the task starts sleeping, and the task wakes at that instant plus
+  `seconds` on the run's own clock: a run that carries on in a new history
+  keeps the original wake-up time. The cap is 30 days for the reason
+  `await.timeout_seconds` has one: a sleeping run is a live execution pinned
+  to the release that started it (`docs/DEPLOY.md` §2). A longer wait is two
+  runs, or a schedule.
+
+A sleeping task takes only `id`, `needs`, `condition`, `join` and `sleep`.
+`uses` and `await` are refused as another kind of task (rule 6), and every key
+that shapes a container (`with`, `command`, `env`, `secrets`, `resources`,
+`network`, `pool`, `pin`, `retry`, `timeout_seconds`,
+`cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
+`cache`) is refused by name (rule 49). While a task sleeps, its run is
+`RUNNING`; `SLEEPING` is a task status only. Its `TASK_SLEEPING` event names
+the wake-up time, which the run's snapshot also carries
+(`TaskRun.sleep.wake_at`), and `TASK_SUCCEEDED` follows when it wakes.
+
+A sleeping task produces **no values and no artifacts**: nothing is written to
+object storage for it, and a downstream container is handed nothing from it.
+A template, an `outputs:` entry or an `each.over` that reads one
+(`.tasks.<sleep>…`, `artifact "<sleep>/…"`) is refused at validate (rule 51):
+a task that runs after a sleep names it in `needs:` and reads nothing from it.
+A `condition:` on a sleep is evaluated before it starts, and an upstream skip
+propagates through it like any task.
+
+A sleep starts nothing, so it is never counted against the run's in-flight
+cap, and a run holding new dispatch still starts one. It may be a failure
+handler (`join: all_done`: "wait a minute, then clean up"); in a failing run
+it sleeps out its time as any handler runs to its own outcome, unless an
+operator cancels the run. A sleep is not a way to poll: a task that waits for
+something outside the run is an await, resolved when the thing happens, or a
+container with its own retry policy.
+
+See `examples/bake-then-verify.ork.yaml`.
 
 ## Fan-out (`each:`)
 
@@ -1261,7 +1332,7 @@ N items have no single value to substitute.
 
 **Per-item bounds.** With `S` the Orkflow's declared total (the sum of its
 `max_items`), every item is held to bounds derived from `S` alone, so they are
-known at apply and identical on replay:
+known at create and identical on replay:
 
 | Bound | Value | At S = 1000 | At S ≤ 64 | More than 1,024 items (floor applies) |
 | --- | --- | --- | --- | --- |
@@ -1274,7 +1345,7 @@ The 16 KiB floor is pinned by a run that carries on into fresh histories
 fan-outs to 16,384 workload artifacts in total, however many items they
 declare.
 
-Apply refuses a fan-out whose own `with:`, `env`, `secrets` and resources
+Creating an Orkflow refuses a fan-out whose own `with:`, `env`, `secrets` and resources
 already exceed the input bound; the run input and upstream references are
 checked per item when the run reaches it (`INPUT_TOO_LARGE`, naming the item).
 
@@ -1343,12 +1414,16 @@ tasks:
 
 - **One pinned version.** `orkflow:<name>@<version>` — the version is
   required (`orkflow:<name>` alone is refused, naming the versions that exist);
-  it is resolved at apply **in this Orkflow's own namespace**, and its
+  it is resolved at create **in this Orkflow's own namespace**, and its
   definition digest is stamped into this Orkflow's definition, so this
   version pins the child's exact bytes and, through them, every descendant's.
   A version pointer never moves a running parent; `uses:` cannot be a
-  template — a child is never chosen by input. Composition never crosses
-  namespaces: one team's apply must not be able to break another team's run.
+  template — a child is never chosen by input.
+  `orkflow:<namespace>/<name>@<version>` composes another namespace's
+  Orkflow, and only one whose `shared_with:` admits this Orkflow (see
+  "Sharing across namespaces"). The pinned digest is what keeps one team's
+  create from breaking another team's run: a new version of a shared Orkflow
+  changes nothing for a parent that pinned an older one.
 - **What it may carry:** `id`, `needs`, `condition`, `join`, `uses` and `with`.
   `command`, `env`, `secrets`, `resources`, `network`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
@@ -1361,14 +1436,14 @@ tasks:
   strings from templates. It reads `.inputs.<declared>` and its `needs:`
   closure like any `with:`, but the Orker's helpers (`artifact`, `env`, `sh`)
   are refused — a child run receives values, never files; pass a reference it
-  can fetch (a registry digest, a URL). Apply checks it against the child's
+  can fetch (a registry digest, a URL). Creating the Orkflow checks it against the child's
   declared `inputs:`: a required input missing is an error, an undeclared key
   or a literal of the wrong type a warning.
 - **The task's values are the child's declared outputs** (`outputs:`), every
   value a string, stored as this task's `values.json` — so a downstream
   container reads them exactly as it reads any upstream's, at
   `/orkstack/input/upstream/<id>/values.json`. A child that declares none
-  gives `{}`. Apply refuses a read of an output the child does not declare.
+  gives `{}`. Creating the Orkflow refuses a read of an output the child does not declare.
 - **Failure and cancellation.** A failed child fails the composed task with
   `CHILD_RUN_FAILED` and the child's own failure category, naming the child
   run; a child cancelled on its own cancels the parent; a cancelled parent
@@ -1400,15 +1475,101 @@ tasks:
   would fail a run already accepted. Children do count toward `max_running`,
   and their attempts are usage of the namespace.
 - A child's callback awaits get tokens that are disclosed to no one: resolve
-  them with `orkctl run resolve <child-run> --task <task>` or on the child
+  them with `orkctl run resolve <child-run> -t <task>` or on the child
   run's page.
 
 `orkctl run get <run> --tree` prints every child run under its parent, and
-`orkctl run list --filter origin.kind=PARENT_RUN --filter origin.id=<run>`
+`orkctl run list -F origin.kind=PARENT_RUN -F origin.id=<run>`
 lists one parent's children; a
 child is read, watched and cancelled on its own id. `orkctl run logs` points a
 composed task at its child's logs, and `orkctl task run` refuses one by name.
 See `examples/notify-block.ork.yaml` and `examples/approval-gate.ork.yaml`.
+
+### Sharing across namespaces
+
+An Orkflow is closed to every other namespace unless its own definition says
+otherwise. `shared_with:` lists who in other namespaces may compose this
+version, and composition is the only way across: a submit, a schedule and a
+trigger run only their own namespace's Orkflows.
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+namespace: platform
+name: deploy
+version: 1.2.3
+shared_with:
+  - namespace: "*"            # every Orkflow of that namespace, or `"*"` for every namespace
+  - namespace: payments
+  - orkflow: search/release   # one Orkflow of another namespace, written `<namespace>/<name>`
+tasks:
+  - id: ship
+    uses: ghcr.io/acme/deploy@sha256:...
+```
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+namespace: search
+name: release
+tasks:
+  - id: deploy
+    uses: orkflow:platform/deploy@1.2.3
+```
+
+- **Three levels.** `namespace: "*"` admits every Orkflow of every namespace;
+  `namespace: <ns>` every Orkflow of that namespace; `orkflow: <ns>/<name>`
+  that one Orkflow, in any of its versions, and nothing else of its
+  namespace. Each entry has exactly one key, and a call within one namespace
+  never needs one.
+- **Part of the version.** `shared_with:` is in the definition digest, so a
+  version is shared exactly as it was created, and a new version is how its
+  owner changes who may call it. A parent pins the version it composes, so
+  its own create and every one of its submits read that version's list. A
+  namespace is named, not bound: a namespace deleted and created again under
+  the same name is admitted as before.
+- **Who the caller is.** The caller is the Orkflow that writes the `uses:`,
+  at every depth. A child that composes further is checked against each of
+  its own children's lists, and an unqualified `uses:` inside a shared
+  Orkflow resolves in that Orkflow's own namespace, where it needs no entry.
+- **Where it is checked.** At validate and create, with the composing file in
+  hand (`tasks[i].uses`, `ORKFLOW_NOT_SHARED`), and again at every submit
+  that plans the child, before a run id is minted (`ORKFLOW_NOT_SHARED`).
+  The decision — which entry admitted the call — is pinned in the child's
+  plan.
+- **Whose rules a child follows.** A child run of a shared Orkflow runs in
+  the parent's namespace, and under that namespace's pools, secret policy,
+  image policy, retention, telemetry and fairness, exactly as its own
+  Orkflows do. It is listed, counted and archived there; `orkctl run get` and
+  the run page say which namespace the Orkflow is from. Because a shared
+  Orkflow was written for another namespace's secrets, a namespace whose
+  `allowed_secrets` is empty (unrestricted) refuses one that names any
+  secret (`FOREIGN_SECRETS_UNBOUNDED`): list the sources it may read first.
+  Its cached tasks never share a memo with the owner's own runs, nor with
+  an Orkflow of the same name in the parent's namespace.
+- **Who uses it.** `orkctl orkflow callers` reads one namespace, so it lists
+  no caller of another namespace; there is no index to read across them.
+  Deleting a shared Orkflow is never refused for a caller's sake: a parent
+  that composed it is refused at its next submit, naming the child and its
+  namespace. Its runs are another matter: `orkctl orkflow delete` reads every
+  namespace a stored version was shared with (every namespace for
+  `namespace: "*"`) and is refused while a child run of it there is active or
+  finished within the last 24 hours, as it is for the owner's own runs, naming
+  each namespace and its count.
+- **How its runs are counted.** A child run of a shared Orkflow is counted in
+  the namespace it ran in, and stats, failure fingerprints, the flake index,
+  usage and cache usage group it by owner and name (`platform/deploy`), apart
+  from that namespace's own Orkflow of the same name ([STATS.md](STATS.md)).
+  A run list's `orkflow_name` filter selects the namespace's own Orkflow.
+- **Running it again.** A child run of a shared Orkflow is run again through
+  its root run: running the child itself again is refused
+  (`SHARED_ORKFLOW_NOT_ROOT`), because nothing starts another namespace's
+  Orkflow as a root run.
+
+Until OrkStack authenticates its callers, `shared_with:` is a guardrail
+between cooperating teams, not access control: it is checked against what
+the composing definition says it is, and a principal is asserted, never
+verified ([SECURITY_MODEL.md](SECURITY_MODEL.md)).
 
 ## Caching (`cache:`)
 
@@ -1464,7 +1625,10 @@ and is given. It looks for a **memo** under that key: a small pointer to a
 | `item`, `item_as`, `item_index`, `item_count` | for one item of a fan-out: its value, the name it is bound to, its position and the array's length |
 
 The key document also names the namespace, the scope, the task id and — under
-`orkflow` scope — the Orkflow's name.
+`orkflow` scope — the Orkflow's name. A task of a shared Orkflow composed from
+another namespace adds the namespace that owns it (`orkflow_namespace`), so it
+never shares a memo with the owner's own runs or with an Orkflow of the same
+name in the running namespace; for every other task the document is unchanged.
 
 | Not in the key | Why |
 |---|---|
@@ -1474,7 +1638,7 @@ The key document also names the namespace, the scope, the task id and — under
 | `timeout_seconds`, `cancellation_grace_period_seconds`, `retry`, `needs`, `condition`, `pool`, `cache:` itself | they decide whether, where, how long and how often a task runs, not what it computes |
 | `limits` | deployment configuration; a source that no longer fits is refused at hit time (`SOURCE_OVER_LIMITS`) |
 | resources, platform, delivery | facts about the host that ran it |
-| secret **values** | a value never enters a key; rotating a secret does not invalidate a memo (apply warns, and says how to purge) |
+| secret **values** | a value never enters a key; rotating a secret does not invalidate a memo (creating the Orkflow warns, and says how to purge) |
 | upstream artifact **URIs** | a URI names the producing run; the digest is what the workload reads |
 
 Three consequences, stated rather than discovered:
@@ -1619,6 +1783,7 @@ How each node reads:
 | a task that runs or is skipped | `runs`, `skipped` | the skip sentence a run would record; `pin <name>` for a pinned task |
 | a task with a `join:` | as above | prefixed `join <word>` |
 | awaited | `awaits`: takes a wave, counted apart from `runs` | `await ≤ <deadline>`, plus `callback`; an `--output` for it is its resolution |
+| sleeping | `sleeps`: takes a wave, counted apart from `runs` | `sleep <duration>`; it has no output, so an `--output` for it is unused |
 | fan-out | one row, `runs` | `each over <ref>: N items (≤ max_items, P at a time)` when the array is countable — an input, or a stubbed source — otherwise `counted when the run reaches it`; a fan-out whose source does not run, or whose array is too long, `fails` with its `EACH_*` code |
 | composed | one row, `runs` | `orkflow <name>@<version> as a child run`: the plan never recurses — plan the child with `orkctl run plan <name> --version <version>` |
 | cached | `runs` | the TTL and scope; a plan never predicts a hit, which the Orker decides |
@@ -1635,9 +1800,9 @@ How each node reads:
 3. Task ids unique and slug-formatted.
 4. Every `needs` entry references an existing task id.
 5. The `needs` graph is acyclic (DAG).
-6. A task has exactly one of `uses:` and `await:`. `uses` is a non-empty
-   catalog activity name or OCI registry reference; an awaited task runs no
-   image. A `uses:` beginning with `orkflow:` is a composed task (rule 26) and
+6. A task has exactly one of `uses:`, `await:` and `sleep:`. `uses` is a
+   non-empty catalog activity name or OCI registry reference; an awaited or
+   sleeping task runs no image. A `uses:` beginning with `orkflow:` is a composed task (rule 26) and
    skips the catalog check — it would otherwise be taken for a registry
    reference because it contains `:` and `@`. `network:`, when present, is
    `default` or `none` (6b). Every secret has a `name` matching
@@ -1666,7 +1831,7 @@ How each node reads:
     declares a default op); an undeclared key or a literal whose type
     disagrees is reported as a warning, never refused, and a templated value
     is never typed.
-    Enforced by `internal/api` at validate and apply, after resolution — the
+    Enforced by `internal/api` at validate and create, after resolution — the
     compiler has no registry to ask (`docs/ACTIVITY_IMAGES.md`, "Declaring the
     interface"). An image without the label is not checked.
 15. An awaited task carries nothing but `id`, `needs`, `condition`, `join`
@@ -1692,7 +1857,7 @@ How each node reads:
     at most 10000; the error names every contributor. The deployment's
     setting, `engine.each_max_items` (`ORK_EACH_MAX_ITEMS`, 1000 by
     default; a deployment lowers it, or raises it up to 10000 with
-    continuation on), bounds the sum, enforced at validate, apply and submit
+    continuation on), bounds the sum, enforced at validate, create and submit
     by `internal/api`.
 22. `each.max_parallel` is not negative and not above `max_items`; `0` and
     absent are one value (no bound of the task's own).
@@ -1705,10 +1870,12 @@ How each node reads:
     form) is legal only in the `with:` of a task that declares `each:`;
     never in a `condition:`, and no other key of `.each` exists.
 26. A `uses:` beginning with `orkflow:` is a composed task: it parses as
-    `orkflow:<name>@<version>` (name a slug, version
-    `^[A-Za-z0-9][A-Za-z0-9._-]*$` of at most 200 bytes, no template), and
-    the compiled `Task.orkflow` agrees with it; such a task carries no image.
-    It skips rule 6's catalog check.
+    `orkflow:<name>@<version>` or `orkflow:<namespace>/<name>@<version>`
+    (namespace and name slugs, version `^[A-Za-z0-9][A-Za-z0-9._-]*$` of at
+    most 200 bytes, no template), and the compiled `Task.orkflow` agrees with
+    it; such a task carries no image. It skips rule 6's catalog check. A
+    namespace that is the composing Orkflow's own is refused at create: write
+    the unqualified form.
 27. A composed task carries nothing but `id`, `needs`, `condition`, `join`,
     `uses`, `with` (and its compiled `orkflow`): every execution field — `command`,
     `env`, `secrets`, `resources`, `network`, `pool`, `pin`, `retry`,
@@ -1727,7 +1894,7 @@ How each node reads:
     pinned digest still holds, its tree is acyclic and at most
     `ORK_COMPOSE_MAX_DEPTH` levels deep, the namespace's pool and secret
     policy allow every descendant, and every definition of the tree fits a
-    run's 256 KiB plan. Enforced by `internal/api` at validate and apply, and
+    run's 256 KiB plan. Enforced by `internal/api` at validate and create, and
     again at submit; a descendant that declares callback awaits is a warning.
 32. A composed task honours its child's interface: every input the child
     requires (with no default) is supplied, and every
@@ -1771,13 +1938,13 @@ How each node reads:
 43. An Orkflow declares at most `ORK_ORKFLOW_MAX_TASKS` tasks (default
     4,000, the largest size measured; field `tasks[<limit>]`, the first task
     past it). A fan-out and a composed task each count once. A stage of more
-    than X plain tasks that start together (4,222 at the default settings)
+    than X plain tasks that start together (4,389 at the default settings)
     may stop `RUN_HISTORY_LIMIT`; staying within X is necessary, not
     sufficient. With continuation off the default is at most
     `history.max_events / 50`. The plan bounds awaits and composed tasks,
     large inline outputs bound the saved state, and rule 44 bounds a deep
     pipeline ("How many tasks an Orkflow may declare"). Enforced by
-    `internal/api` at validate, apply and plan, and again at submit — the
+    `internal/api` at validate, create and plan, and again at submit — the
     compiler has no deployment configuration to read.
 44. A task's required ancestors — its needs through default joins, a
     fan-out only as a direct need, none behind a join policy or a failure
@@ -1793,7 +1960,7 @@ How each node reads:
     the definition is accepted, but a task whose real upstream references
     (about 800 B each, with a deployment's store and one artifact) exceed the
     bound fails `INPUT_TOO_LARGE` when it is dispatched. Checked wherever a
-    document is compiled — validate, apply and `orkctl run plan --file` — and
+    document is compiled — validate, create and `orkctl run plan -f` — and
     never at submit: a version stored before this rule keeps starting.
 45. The document begins with the header `apiVersion: orkstack/v1` and
     `kind: Orkflow` (see "The document header"), checked first, before any
@@ -1805,7 +1972,7 @@ How each node reads:
     file holds one YAML document: a second, even one that is empty or does not
     parse, is refused before this, naming its line, and `orkctl` names the file
     too. No read path compiles a stored source, so the rule applies when a
-    document is applied, never again.
+    document is created, never again.
 46. `inputs`, every `tasks[i].with` and every `tasks[i].await.schema` are
     authored data, converted to JSON by the strict mapping (`docs/JSON.md`,
     "Data written in an authored document"): each is a mapping (or absent, or
@@ -1829,14 +1996,31 @@ How each node reads:
     scheduled, so a run that retried the task would be stuck; a negative
     interval and a coefficient that is negative or not finite have no meaning
     as a wait. Checked wherever a document is compiled — validate reports it
-    as an error at the field, apply and `orkctl run plan --file` refuse it as
-    an invalid argument — and on a hand-built request. A version applied
+    as an error at the field, create and `orkctl run plan -f` refuse it as
+    an invalid argument — and on a hand-built request. A version created
     before this rule keeps starting: its task is scheduled with the nearest
     policy the cluster accepts, the maximum raised to the initial interval and
     a coefficient between 0 and 1 raised to 1, and, in a run submitted from
     v0.2.0 on, a coefficient that is not a number read as the default 2.0 (a
     negative coefficient reads as the default too, a negative initial interval as 1 s and a negative maximum as
     unset, as they always have).
+48. Each `shared_with` entry has exactly one key: `namespace`, which is `"*"`
+    or a slug, or `orkflow`, written `<namespace>/<name>` with both halves
+    slugs (field `shared_with[i].namespace` or `shared_with[i].orkflow`). An
+    entry appears once, a list holds at most 256 entries, and an entry naming
+    the Orkflow's own namespace is refused, because a call within one
+    namespace needs none (checked by the compiler when the document names its
+    namespace, and at create against the namespace it is created into).
+49. A sleeping task carries nothing but `id`, `needs`, `condition`, `join`
+    and `sleep`: `uses` and `await` are refused as another kind of task (rule
+    6), and every field that shapes a container — and `each` and `cache` — by
+    name, on the compiled message as well as in YAML, so a hand-built request
+    meets the same rule.
+50. `sleep.seconds` is present and between 1 and 2592000 (30 days).
+51. No template — a `with:`, a `condition:`, an `outputs:` entry — and no
+    `each.over` reads a sleeping task, which produces no values and no
+    artifacts: `.tasks.<sleep>…`, `index .tasks "<sleep>"` and
+    `artifact "<sleep>/…"` are refused.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that
@@ -1848,6 +2032,14 @@ document are counted after the first, and the first ten of them named with
 their lines (`(and 1 more unknown key: "sorce" at line 14)`); a key a merge
 (`<<:`) delivered, which no path of the document holds, is named by its line
 alone (`line 7: unknown key "bogus" in the Orkflow`).
+
+A merge stands only as a `<<:` key. An explicit `!!merge` tag, on a key or a
+value, and `<<` written as a value that is not text (`timeout_seconds: <<`)
+are refused at the field path and line, where the YAML reader would otherwise
+drop the value: `line 7: tasks[0].timeout_seconds: the tag !!merge is not
+allowed; write the key or value without it, and a merge as <<: *anchor`. `<<`
+for a text key is the text `<<`. A value tagged with the non-specific `!`
+(`apiVersion: ! orkstack/v1`) is a string, as YAML reads it.
 
 A slug is at most **200 bytes**, in every position above. The bound is half the
 rule and not a detail of it: a namespace, an orkflow name and a version are

@@ -6,12 +6,14 @@ import (
 	"crypto/elliptic"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"encoding/pem"
 	"strings"
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/testsupport/cosigntest"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fuzzSigningKey is a fixed P-256 key, so a crasher kept under testdata/fuzz
@@ -19,17 +21,11 @@ import (
 func fuzzSigningKey(tb testing.TB) *cosigntest.Key {
 	tb.Helper()
 	private, err := ecdsa.ParseRawPrivateKey(elliptic.P256(), bytes.Repeat([]byte{0x2a}, 32))
-	if err != nil {
-		tb.Fatal(err)
-	}
+	must.OK(tb, err)
 	der, err := x509.MarshalECPrivateKey(private)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	must.OK(tb, err)
 	key, err := cosigntest.ParsePrivateKey(pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: der}))
-	if err != nil {
-		tb.Fatal(err)
-	}
+	must.OK(tb, err)
 	return key
 }
 
@@ -47,9 +43,7 @@ func bundleSeeds(tb testing.TB, key, other *cosigntest.Key, digest string) []bun
 	tb.Helper()
 	sign := func(k *cosigntest.Key, payloadType string, payload []byte) []byte {
 		b, err := k.BundleOver(payloadType, payload)
-		if err != nil {
-			tb.Fatal(err)
-		}
+		must.OK(tb, err)
 		return b
 	}
 	good := sign(key, cosigntest.InTotoPayloadType, cosigntest.Statement(digest))
@@ -65,9 +59,7 @@ func bundleSeeds(tb testing.TB, key, other *cosigntest.Key, digest string) []bun
 	}
 	sig := envelope.DSSEEnvelope.Signatures[0].Sig
 	raw, err := base64.StdEncoding.DecodeString(sig)
-	if err != nil {
-		tb.Fatal(err)
-	}
+	must.OK(tb, err)
 	statement := cosigntest.Statement(digest)
 	urlSafe := strings.NewReplacer(
 		base64.StdEncoding.EncodeToString(statement), base64.RawURLEncoding.EncodeToString(statement),
@@ -92,9 +84,7 @@ func bundleSeeds(tb testing.TB, key, other *cosigntest.Key, digest string) []bun
 func TestBundleVerifies_ReadsEveryBytesEncodingProtobufJSONWrites(t *testing.T) {
 	key := fuzzSigningKey(t)
 	other, err := cosigntest.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	digest := cosigntest.Digest([]byte("the index"))
 	for i, seed := range bundleSeeds(t, key, other, digest) {
 		if got := bundleVerifies(&key.Private.PublicKey, digest, seed.bundle); got != seed.accept {
@@ -113,9 +103,7 @@ func TestBundleVerifies_ReadsEveryBytesEncodingProtobufJSONWrites(t *testing.T) 
 func FuzzBundleVerifies(f *testing.F) {
 	key := fuzzSigningKey(f)
 	other, err := cosigntest.GenerateKey()
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	digest := cosigntest.Digest([]byte("the index"))
 	for _, seed := range bundleSeeds(f, key, other, digest) {
 		f.Add(seed.bundle)
@@ -151,9 +139,7 @@ func FuzzBundleReferrers(f *testing.F) {
 	key := fuzzSigningKey(f)
 	digest := cosigntest.Digest([]byte("the index"))
 	bundle, err := key.Bundle(digest)
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	manifest := cosigntest.BundleManifest(bundle, digest, 1024)
 	for _, seed := range [][]byte{
 		cosigntest.ReferrersIndex(cosigntest.BundleReferrer(manifest)),

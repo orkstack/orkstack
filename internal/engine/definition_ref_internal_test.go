@@ -24,6 +24,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // largeDefinition is a definition of n tasks whose `with:` carries
@@ -39,9 +41,7 @@ func largeDefinition(t testing.TB, n, noteBytes int) *orkstackv1.Orkflow {
 			t.Fatal(err)
 		}
 		with, err := structpb.NewStruct(map[string]any{"op": "exec", "note": hex.EncodeToString(note)})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		task := &orkstackv1.Task{Id: fmt.Sprintf("t%04d", i), Image: &orkstackv1.ImageRef{Reference: "alpine"}, With: with}
 		if i > 0 {
 			task.Needs = []string{fmt.Sprintf("t%04d", i-1)}
@@ -61,9 +61,7 @@ func largeDefinition(t testing.TB, n, noteBytes int) *orkstackv1.Orkflow {
 func TestDefinitionObject_PartsMergeToTheDefinition(t *testing.T) {
 	planned := largeDefinition(t, 600, 4000)
 	data, ref, err := EncodeDefinitionObject(planned)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	again, _, err := EncodeDefinitionObject(planned)
 	if err != nil || !bytes.Equal(data, again) {
 		t.Fatalf("encoding twice gave different bytes (%v)", err)
@@ -81,25 +79,17 @@ func TestDefinitionObject_PartsMergeToTheDefinition(t *testing.T) {
 	}
 	// One multistream unmarshal.
 	reader, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plain, err := io.ReadAll(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	whole := &orkstackv1.Orkflow{}
-	if err := proto.Unmarshal(plain, whole); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(plain, whole))
 	if !proto.Equal(whole, planned) {
 		t.Fatal("the concatenated parts do not merge back into the definition")
 	}
 	// Part 0 holds no task; every later part holds tasks and nothing else.
 	first, err := gunzipBounded(data[:ref.Parts[0].SizeBytes], ref.Parts[0].RawBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	header := &orkstackv1.Orkflow{}
 	if err := proto.Unmarshal(first, header); err != nil || len(header.GetTasks()) != 0 || header.GetName() != "large" {
 		t.Fatalf("part 0 = %d tasks, name %q (%v); want the header with no task", len(header.GetTasks()), header.GetName(), err)
@@ -135,9 +125,7 @@ func definitionPlan(t *testing.T, ref DefinitionRef) RunPlan {
 func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 	planned := largeDefinition(t, 120, 32<<10)
 	data, ref, err := EncodeDefinitionObject(planned)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	limit := DefaultContinuationBytes / 4
 	if ref.SizeBytes > limit || ref.SizeBytes < limit*3/4 {
 		t.Fatalf("the definition is %d bytes stored, want close to and within the %d bound", ref.SizeBytes, limit)
@@ -170,15 +158,14 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 	}}
 	batch := int(DefaultContinuationChunksPerTask * DefaultContinuationChunkBytes)
 	// Bounded on the decode thread's CPU time (passClock), as the restore is.
-	clock := &passClock{}
+	clock := newPassClock(t)
 	var worst time.Duration
 	for off := 0; off < len(data); off += batch {
 		end := min(len(data), off+batch)
+		clock.between()
 		begin := clock.now()
 		for chunk := off; chunk < end; chunk += int(DefaultContinuationChunkBytes) {
-			if err := decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, decoder.feed(data[chunk:min(end, chunk+int(DefaultContinuationChunkBytes))]))
 		}
 		worst = max(worst, clock.now()-begin)
 	}
@@ -211,9 +198,7 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 func TestLoadDefinition_NeverPanicsOnAMalformedPlan(t *testing.T) {
 	planned := largeDefinition(t, 3, 64)
 	_, good, err := EncodeDefinitionObject(planned)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, tc := range []struct {
 		name string
 		edit func(p *RunPlan)

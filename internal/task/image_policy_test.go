@@ -15,6 +15,8 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestImagePolicy_RegistryVectors(t *testing.T) {
@@ -91,9 +93,7 @@ func TestValidRegistryPrefixes_BoundsAndDuplicates(t *testing.T) {
 	for i := 0; i < MaxAllowedRegistries; i++ {
 		entries = append(entries, fmt.Sprintf("ghcr.io/team%d/", i))
 	}
-	if err := ValidRegistryPrefixes(entries); err != nil {
-		t.Fatalf("64 entries: %v", err)
-	}
+	must.OKf(t, ValidRegistryPrefixes(entries), "64 entries")
 	entries = append(entries, "ghcr.io/one-more/")
 	if err := ValidRegistryPrefixes(entries); err == nil || !strings.Contains(err.Error(), "65 entries") {
 		t.Fatalf("65 entries: %v, want a refusal naming the count", err)
@@ -114,9 +114,7 @@ func TestParseSigningKey_AcceptsCosignPubAndRefusesTheRest(t *testing.T) {
 		t.Fatalf("P-256 PKIX PEM: %v", err)
 	}
 	rsaKey, err := rsa.GenerateKey(rand.Reader, 1024)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	rsaDER, _ := x509.MarshalPKIXPublicKey(&rsaKey.PublicKey)
 	p384, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	p384DER, _ := x509.MarshalPKIXPublicKey(&p384.PublicKey)
@@ -125,9 +123,7 @@ func TestParseSigningKey_AcceptsCosignPubAndRefusesTheRest(t *testing.T) {
 	template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "x"},
 		NotBefore: time.Unix(0, 0), NotAfter: time.Unix(1<<31, 0)}
 	certDER, err := x509.CreateCertificate(rand.Reader, template, template, &p256.PublicKey, p256)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cases := []struct {
 		name, want string
 		pem        []byte
@@ -150,9 +146,7 @@ func TestParseSigningKey_AcceptsCosignPubAndRefusesTheRest(t *testing.T) {
 
 func TestSigningKeyFingerprint_IsSha256OverDER(t *testing.T) {
 	key, err := ParseSigningKey([]byte(FixedSigningKeyPEM))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := SigningKeyFingerprint(key); got != FixedSigningKeyFingerprint {
 		t.Fatalf("fingerprint = %s, want %s", got, FixedSigningKeyFingerprint)
 	}
@@ -166,9 +160,7 @@ func TestValidSigningKeys_BoundsNamesAndPEM(t *testing.T) {
 	for i := 0; i < MaxSigningKeys; i++ {
 		keys[fmt.Sprintf("key-%d", i)] = FixedSigningKeyPEM
 	}
-	if err := ValidSigningKeys(keys); err != nil {
-		t.Fatalf("16 keys: %v", err)
-	}
+	must.OKf(t, ValidSigningKeys(keys), "16 keys")
 	keys["key-16"] = FixedSigningKeyPEM
 	if err := ValidSigningKeys(keys); err == nil || !strings.Contains(err.Error(), "17 entries") {
 		t.Fatalf("17 keys: %v", err)
@@ -218,9 +210,7 @@ func TestSelection_CarriesTheNamedKeyPEM(t *testing.T) {
 		SigningKeys:       map[string]string{"release": FixedSigningKeyPEM},
 	}
 	sel, err := Selection(policy, &orkstackv1.Namespace{Name: "prod", RequireSignedBy: "cosign:release"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if sel.GetRequireSignedBy() != "cosign:release" || sel.GetSigningKeyPem() != FixedSigningKeyPEM ||
 		len(sel.GetAllowedRegistries()) != 1 {
 		t.Fatalf("selection = %v", sel)
@@ -277,9 +267,7 @@ func TestCheckOrkflow_NilSelectionWalksNoTask(t *testing.T) {
 	// A nil orkflow would panic nowhere, but a nil selection must not even
 	// look: the orkflow here carries an image every selection would refuse.
 	wf := orkflowOf(&orkstackv1.ImageRef{Reference: "docker.io/x/y:latest", Registry: "docker.io", Repository: "x/y"})
-	if err := CheckOrkflow(nil, wf); err != nil {
-		t.Fatalf("nil selection: %v", err)
-	}
+	must.OKf(t, CheckOrkflow(nil, wf), "nil selection")
 	if refusal := CheckImage(nil, 0, "x", wf.GetTasks()[0].GetImage()); refusal != nil {
 		t.Fatalf("nil selection CheckImage: %v", refusal)
 	}
@@ -288,9 +276,7 @@ func TestCheckOrkflow_NilSelectionWalksNoTask(t *testing.T) {
 func TestCheckOrkflow_SkipsAnUnresolvedImage(t *testing.T) {
 	sel := &orkstackv1.ImagePolicySelection{RequireDigest: true, AllowedRegistries: []string{"ghcr.io/acme/"}}
 	wf := &orkstackv1.Orkflow{Tasks: []*orkstackv1.Task{{Id: "a", Uses: "docker.io/x/y:1"}}}
-	if err := CheckOrkflow(sel, wf); err != nil {
-		t.Fatalf("unresolved image: %v", err)
-	}
+	must.OKf(t, CheckOrkflow(sel, wf), "unresolved image")
 }
 
 func TestImagePolicyVectors_AreExportedForTheBoundaries(t *testing.T) {

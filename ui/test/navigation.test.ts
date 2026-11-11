@@ -25,8 +25,8 @@ test('every admin page has exactly one Operate entry and a palette command', () 
 	expect(new Set(OPERATE_PAGES.map((p) => p.id)).size).toBe(OPERATE_PAGES.length);
 });
 
-test('every Build entry is a route, and Build is the dashboard, Runs, Orkflows and Apply', () => {
-	expect(BUILD_PAGES.map((p) => p.href)).toEqual(['/', '/runs', '/orkflows', '/apply']);
+test('every Build entry is a route, and Build is the dashboard, Runs, Orkflows and Create Orkflow', () => {
+	expect(BUILD_PAGES.map((p) => p.href)).toEqual(['/', '/runs', '/orkflows', '/orkflows/+new']);
 	for (const p of BUILD_PAGES) {
 		const dir = p.href === '/' ? routes : `${routes}${p.href}`;
 		expect(readdirSync(dir).includes('+page.svelte')).toBe(true);
@@ -41,7 +41,8 @@ test('a path belongs to exactly one mode and one page', () => {
 		['/runs/ork-1-2/compare', 'build', 'runs'],
 		['/orkflows', 'build', 'orkflows'],
 		['/orkflows/deploy', 'build', 'orkflows'],
-		['/apply', 'build', 'apply'],
+		// Create Orkflow is a page of Orkflows: the sidebar marks Orkflows on it.
+		['/orkflows/+new', 'build', 'orkflows'],
 		['/admin', 'operate', 'overview'],
 		['/admin/namespaces', 'operate', 'namespaces'],
 		['/admin/image-policy', 'operate', 'image-policy'],
@@ -65,4 +66,20 @@ test('the root layout imports no run or Orkflow client statically (the palette l
 		expect(/clients\/(runs|orkflows)|palette\/(sources|CommandPalette)|CommandPalette/.test(from)).toBe(false);
 	}
 	expect(/import\(\s*['"]#lib\/components\/CommandPalette\.svelte['"]\s*\)/.test(layout)).toBe(true);
+});
+
+test('Create Orkflow sits on a segment no Orkflow name can take, so /orkflows/new is an Orkflow', () => {
+	// An Orkflow name is ^[a-z][a-z0-9-]*$ (docs/DSL.md, validation rule 2);
+	// the create page's segment must fail it, or an Orkflow of that name
+	// could never be opened.
+	const slug = /^[a-z][a-z0-9-]*$/;
+	const create = BUILD_PAGES.find((p) => p.id === 'create-orkflow');
+	expect(create?.href).toBe('/orkflows/+new');
+	expect(slug.test(create!.href.split('/').pop()!)).toBe(false);
+	// Every static directory beside [name] is one no Orkflow name matches.
+	for (const dir of readdirSync(`${routes}/orkflows`)) {
+		if (dir.startsWith('[') || dir.startsWith('+page') || dir.includes('.')) continue;
+		expect(`${dir}: ${slug.test(dir) ? 'shadows an Orkflow name' : 'ok'}`).toBe(`${dir}: ok`);
+	}
+	expect(pageOf('/orkflows/new')?.id).toBe('orkflows');
 });

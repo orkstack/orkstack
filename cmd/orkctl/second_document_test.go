@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const secondDocumentOrkflow = "apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    await:\n      timeout_seconds: 60\n"
@@ -24,13 +26,13 @@ func TestAuthoredFile_ASecondDocumentIsRefusedBeforeItIsSent(t *testing.T) {
 		line   string
 		args   func(path string) []string
 	}{
-		{"apply", secondDocumentOrkflow + "---\n" + secondDocumentOrkflow, "line 8", func(path string) []string { return []string{"apply", path} }},
-		{"apply, the second not parsing", secondDocumentOrkflow + "---\nname: [unclosed\n", "line 8", func(path string) []string { return []string{"apply", path} }},
-		{"apply, the second tripping the first read", secondDocumentOrkflow + "---\n\tname: a\n", "line 8", func(path string) []string { return []string{"apply", path} }},
-		{"apply, an empty second", secondDocumentOrkflow + "---\n", "line 8", func(path string) []string { return []string{"apply", path} }},
-		{"apply --dry-run", secondDocumentOrkflow + "---\n" + secondDocumentOrkflow, "line 8", func(path string) []string { return []string{"apply", "--dry-run", path} }},
-		{"apply of a directory", secondDocumentOrkflow + "---\n" + secondDocumentOrkflow, "line 8", func(path string) []string { return []string{"apply", filepath.Dir(path)} }},
-		{"apply of an automation document", automation + "---\n" + automation, "line 4", func(path string) []string { return []string{"apply", path} }},
+		{"orkflow create", secondDocumentOrkflow + "---\n" + secondDocumentOrkflow, "line 8", func(path string) []string { return []string{"orkflow", "create", path} }},
+		{"orkflow create, the second not parsing", secondDocumentOrkflow + "---\nname: [unclosed\n", "line 8", func(path string) []string { return []string{"orkflow", "create", path} }},
+		{"orkflow create, the second tripping the first read", secondDocumentOrkflow + "---\n\tname: a\n", "line 8", func(path string) []string { return []string{"orkflow", "create", path} }},
+		{"orkflow create, an empty second", secondDocumentOrkflow + "---\n", "line 8", func(path string) []string { return []string{"orkflow", "create", path} }},
+		{"orkflow create --dry-run", secondDocumentOrkflow + "---\n" + secondDocumentOrkflow, "line 8", func(path string) []string { return []string{"orkflow", "create", "--dry-run", path} }},
+		{"orkflow create of a directory", secondDocumentOrkflow + "---\n" + secondDocumentOrkflow, "line 8", func(path string) []string { return []string{"orkflow", "create", filepath.Dir(path)} }},
+		{"automation apply", automation + "---\n" + automation, "line 4", func(path string) []string { return []string{"automation", "apply", path} }},
 		{"orkflow validate", secondDocumentOrkflow + "---\nname: [unclosed\n", "line 8", func(path string) []string { return []string{"orkflow", "validate", path} }},
 		{"run plan --file", secondDocumentOrkflow + "---\nname: [unclosed\n", "line 8", func(path string) []string { return []string{"run", "plan", "--file", path} }},
 		{"task run --file", secondDocumentOrkflow + "---\nname: [unclosed\n", "line 8", func(path string) []string { return []string{"task", "run", "--file", path, "--task", "t"} }},
@@ -47,9 +49,7 @@ func TestAuthoredFile_ASecondDocumentIsRefusedBeforeItIsSent(t *testing.T) {
 			t.Cleanup(engine.Close)
 
 			path := filepath.Join(t.TempDir(), "two.ork.yaml")
-			if err := os.WriteFile(path, []byte(tc.source), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(path, []byte(tc.source), 0o644))
 			var stdout, stderr bytes.Buffer
 			code := Execute(append(tc.args(path), "--server", engine.URL), &stdout, &stderr)
 			if code != exitError {
@@ -69,9 +69,7 @@ func TestAuthoredFile_ASecondDocumentIsRefusedBeforeItIsSent(t *testing.T) {
 func TestActivityInterfacePack_ASecondDocumentNamesTheFileAndTheLine(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "interface.ork.yaml")
 	const source = "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields:\n  src:\n    type: string\n---\nfields: [unclosed\n"
-	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(source), 0o644))
 	_, err := packDocumentFile(path)
 	want := path + ": line 6: one activity interface per file: a second YAML document begins here"
 	if err == nil || !strings.Contains(err.Error(), want) {

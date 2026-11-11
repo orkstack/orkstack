@@ -1,7 +1,7 @@
 package hostpolicy
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // engine is the API listener's settings, as internal/api names them.
@@ -19,9 +21,7 @@ var engine = Listener{Name: "engine", AddrVar: "ORK_HTTP_ADDR", AllowedVar: "ORK
 func mustNew(t testing.TB, listen string, allowed ...string) Policy {
 	t.Helper()
 	policy, err := New(engine, listen, allowed)
-	if err != nil {
-		t.Fatalf("New(%q, %q): %v", listen, allowed, err)
-	}
+	must.OKf(t, err, "New(%q, %q)", listen, allowed)
 	return policy
 }
 
@@ -382,8 +382,11 @@ func TestPolicy_GuardRefusesAForeignHostBeforeAnyHandler(t *testing.T) {
 	admitted := reached
 
 	connectRes := request(http.MethodPost, "/orkstack.v1.RunService/ListRuns", "evil.example:8080")
-	var connectErr struct{ Code, Message string }
-	if err := json.NewDecoder(connectRes.Body).Decode(&connectErr); err != nil {
+	var connectErr struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	if err := json.UnmarshalRead(connectRes.Body, &connectErr); err != nil {
 		t.Fatalf("decode the Connect error: %v", err)
 	}
 	if connectRes.StatusCode != http.StatusForbidden || connectRes.Header.Get("Content-Type") != "application/json" ||

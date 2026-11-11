@@ -3,12 +3,13 @@ package webhooks_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"os"
 	"strings"
 	"testing"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -124,7 +125,7 @@ func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.
 	want := []webhooks.Event{
 		webhooks.EventRunStarted,
 		webhooks.EventTaskScheduled, webhooks.EventTaskStarted,
-		webhooks.EventTaskAwaiting, webhooks.EventTaskResolved,
+		webhooks.EventTaskAwaiting, webhooks.EventTaskResolved, webhooks.EventTaskSleeping,
 		webhooks.EventTaskSucceeded, webhooks.EventTaskFailed,
 		webhooks.EventRunSucceeded, webhooks.EventRunFailed, webhooks.EventRunCanceled,
 	}
@@ -261,7 +262,7 @@ func TestDelivery_BodyCarriesTaskIdAndAttemptOnlyForTaskEvents(t *testing.T) {
 		t.Fatalf("Body: %v", err)
 	}
 	want := `{"runId":"ork-1755302400123456789-1","orkflowName":"hello-ork","status":"SUCCEEDED",` +
-		`"timestamp":"2025-08-16T00:00:00Z","taskId":"extract","attempt":2,` +
+		`"timestamp":"2025-08-16T00:00:00Z","sequence":7,"taskId":"extract","attempt":2,` +
 		`"run":{"id":"ork-1755302400123456789-1","status":"SUCCEEDED"}}`
 	if string(body) != want {
 		t.Errorf("task body =\n%s\nwant\n%s", body, want)
@@ -276,7 +277,7 @@ func TestDelivery_BodyCarriesTaskIdAndAttemptOnlyForTaskEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Body: %v", err)
 	}
-	var decoded map[string]json.RawMessage
+	var decoded map[string]stablejson.RawJSON
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -299,13 +300,16 @@ func TestDelivery_BodyCarriesTaskIdAndAttemptOnlyForTaskEvents(t *testing.T) {
 func TestDelivery_RunTransitionBodyIsByteIdenticalToBeforeScope(t *testing.T) {
 	// The golden was written by the encoder as it stood before the scope and
 	// task fields existed; a run delivery must still produce those bytes, or
-	// every receiver verifying a stored signature would break.
+	// every receiver verifying a stored signature would break. sequence came
+	// later and is the one key a run delivery adds; one with none renders
+	// exactly the golden.
 	golden, err := os.ReadFile("testdata/run-succeeded-body.golden")
 	if err != nil {
 		t.Fatalf("read golden: %v", err)
 	}
 	delivery := sampleDelivery()
 	delivery.Namespace = "default" // match-only: must not reach the body
+	delivery.Sequence = 0
 	body, err := delivery.Body()
 	if err != nil {
 		t.Fatalf("Body: %v", err)

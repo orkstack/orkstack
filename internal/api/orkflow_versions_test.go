@@ -12,6 +12,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // versionedService wires a Service over the in-memory catalog for the version
@@ -51,9 +53,7 @@ func apply(t *testing.T, svc *api.Service, document string) *orkstackv1.ApplyOrk
 	t.Helper()
 	resp, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: document}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow")
 	return resp.Msg
 }
 
@@ -72,9 +72,7 @@ func TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt(t *testing.T) {
 	// says the pointer was never set.
 	listed, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	if got := listed.Msg.GetCurrentVersion(); got != "" {
 		t.Errorf("current_version before any promotion = %q, want \"\"", got)
 	}
@@ -89,9 +87,7 @@ func TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt(t *testing.T) {
 	// Promote the older version: the pointer decides, not the apply order.
 	promoted, err := svc.SetCurrentOrkflowVersion(ctx, connect.NewRequest(
 		&orkstackv1.SetCurrentOrkflowVersionRequest{Name: "deploy", Version: "1.0.0"}))
-	if err != nil {
-		t.Fatalf("SetCurrentOrkflowVersion(1.0.0): %v", err)
-	}
+	must.OKf(t, err, "SetCurrentOrkflowVersion(1.0.0)")
 	if promoted.Msg.GetPreviousVersion() != "" || promoted.Msg.GetCurrentVersion() != "1.0.0" {
 		t.Errorf("promotion reported %q -> %q, want \"\" -> 1.0.0",
 			promoted.Msg.GetPreviousVersion(), promoted.Msg.GetCurrentVersion())
@@ -100,9 +96,7 @@ func TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt(t *testing.T) {
 
 	listed, err = svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	if got := versionRows(listed.Msg.GetVersions()); got != "2.0.0,1.0.0*" {
 		t.Errorf("versions after promotion = %s, want 2.0.0,1.0.0*", got)
 	}
@@ -115,9 +109,7 @@ func TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt(t *testing.T) {
 	// while submit runs the promoted version would report a version this
 	// deployment does not run.
 	catalog, err := svc.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
-	if err != nil {
-		t.Fatalf("ListOrkflows: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflows")
 	if len(catalog.Msg.GetOrkflows()) != 1 ||
 		catalog.Msg.GetOrkflows()[0].GetVersion() != "1.0.0" {
 		t.Errorf("ListOrkflows reports %v, want deploy@1.0.0",
@@ -128,9 +120,7 @@ func TestOrkflowVersions_PointerDecidesWhatRunsAndListsIt(t *testing.T) {
 	// single command rather than a lookup and a guess.
 	rolled, err := svc.SetCurrentOrkflowVersion(ctx, connect.NewRequest(
 		&orkstackv1.SetCurrentOrkflowVersionRequest{Name: "deploy", Version: "2.0.0"}))
-	if err != nil {
-		t.Fatalf("SetCurrentOrkflowVersion(2.0.0): %v", err)
-	}
+	must.OKf(t, err, "SetCurrentOrkflowVersion(2.0.0)")
 	if rolled.Msg.GetPreviousVersion() != "1.0.0" {
 		t.Errorf("rollback replaced %q, want 1.0.0", rolled.Msg.GetPreviousVersion())
 	}
@@ -192,9 +182,7 @@ func TestApplyOrkflow_NeverRewritesAStoredVersion(t *testing.T) {
 	}
 	listed, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	if len(listed.Msg.GetVersions()) != 1 {
 		t.Fatalf("a repeat created a version: %s", versionRows(listed.Msg.GetVersions()))
 	}
@@ -210,9 +198,7 @@ func TestApplyOrkflow_NeverRewritesAStoredVersion(t *testing.T) {
 	}
 	stored, err := svc.GetOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: "1.0.0"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(1.0.0): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(1.0.0)")
 	if !strings.Contains(stored.Msg.GetOrkflow().GetSourceYaml(), "echo one") {
 		t.Fatalf("the refused apply changed the stored version:\n%s",
 			stored.Msg.GetOrkflow().GetSourceYaml())
@@ -227,9 +213,7 @@ func TestApplyOrkflow_NeverRewritesAStoredVersion(t *testing.T) {
 	for version, marker := range map[string]string{"1.0.0": "echo one", "2.0.0": "echo two"} {
 		got, err := svc.GetOrkflow(ctx, connect.NewRequest(
 			&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: version}))
-		if err != nil {
-			t.Fatalf("GetOrkflow(%s): %v", version, err)
-		}
+		must.OKf(t, err, "GetOrkflow(%s)", version)
 		if !strings.Contains(got.Msg.GetOrkflow().GetSourceYaml(), marker) {
 			t.Errorf("version %s does not carry %q:\n%s",
 				version, marker, got.Msg.GetOrkflow().GetSourceYaml())
@@ -273,9 +257,7 @@ tasks:
 	}
 	listed, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	if len(listed.Msg.GetVersions()) != 2 {
 		t.Fatalf("two documents produced %d versions: %s",
 			len(listed.Msg.GetVersions()), versionRows(listed.Msg.GetVersions()))
@@ -331,9 +313,7 @@ tasks:
 	} {
 		got, err := svc.GetOrkflow(ctx, connect.NewRequest(
 			&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: version}))
-		if err != nil {
-			t.Fatalf("GetOrkflow(%s): %v", version, err)
-		}
+		must.OKf(t, err, "GetOrkflow(%s)", version)
 		if has := strings.Contains(
 			got.Msg.GetOrkflow().GetSourceYaml(), "# remind me why this exists"); has != want {
 			t.Errorf("version %s carries the comment = %v, want %v:\n%s",
@@ -349,9 +329,7 @@ tasks:
 	}
 	listed, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	if len(listed.Msg.GetVersions()) != 2 {
 		t.Fatalf("want the two documents that were applied: %s",
 			versionRows(listed.Msg.GetVersions()))
@@ -418,7 +396,7 @@ func TestApplyOrkflow_DetectsAnEditDerivedFromAStaleVersion(t *testing.T) {
 		t.Fatalf("an edit derived from the head was refused after a rollback: %v", err)
 	}
 
-	// Empty tokens stay unchecked: a plain `orkctl apply file.yaml` keeps
+	// Empty tokens stay unchecked: a plain `orkctl orkflow create file.yaml` keeps
 	// working with no knowledge of versions at all.
 	if _, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: versionedDocument("deploy", "5.0.0", "five"),
@@ -439,9 +417,7 @@ func TestDiffOrkflowVersions_ShowsWhatChangedBetweenTwoVersions(t *testing.T) {
 		&orkstackv1.DiffOrkflowVersionsRequest{
 			Name: "deploy", FromVersion: "1.0.0", ToVersion: "2.0.0",
 		}))
-	if err != nil {
-		t.Fatalf("DiffOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "DiffOrkflowVersions")
 	unified := diff.Msg.GetUnifiedDiff()
 	for _, want := range []string{
 		"--- a/deploy@1.0.0", "+++ b/deploy@2.0.0",
@@ -462,9 +438,7 @@ func TestDiffOrkflowVersions_ShowsWhatChangedBetweenTwoVersions(t *testing.T) {
 		&orkstackv1.DiffOrkflowVersionsRequest{
 			Name: "deploy", FromVersion: "1.0.0", ToVersion: "1.0.0",
 		}))
-	if err != nil {
-		t.Fatalf("DiffOrkflowVersions(same): %v", err)
-	}
+	must.OKf(t, err, "DiffOrkflowVersions(same)")
 	if same.Msg.GetUnifiedDiff() != "" {
 		t.Errorf("a version against itself diffed as:\n%s", same.Msg.GetUnifiedDiff())
 	}
@@ -478,9 +452,7 @@ func TestDiffOrkflowVersions_ShowsWhatChangedBetweenTwoVersions(t *testing.T) {
 	}
 	againstCurrent, err := svc.DiffOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.DiffOrkflowVersionsRequest{Name: "deploy", ToVersion: "2.0.0"}))
-	if err != nil {
-		t.Fatalf("DiffOrkflowVersions(current -> 2.0.0): %v", err)
-	}
+	must.OKf(t, err, "DiffOrkflowVersions(current -> 2.0.0)")
 	if againstCurrent.Msg.GetFromVersion() != "1.0.0" {
 		t.Errorf("an empty from_version resolved to %q, want the current 1.0.0",
 			againstCurrent.Msg.GetFromVersion())
@@ -522,14 +494,10 @@ func TestOrkflowVersionOperations_AreScopedToOneNamespace(t *testing.T) {
 
 	alpha, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy", Namespace: "alpha"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions(alpha): %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions(alpha)")
 	bravo, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy", Namespace: "bravo"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions(bravo): %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions(bravo)")
 	if alpha.Msg.GetCurrentVersion() != "1.0.0" {
 		t.Errorf("alpha's current version = %q, want 1.0.0", alpha.Msg.GetCurrentVersion())
 	}
@@ -543,9 +511,7 @@ func TestOrkflowVersionOperations_AreScopedToOneNamespace(t *testing.T) {
 		&orkstackv1.DiffOrkflowVersionsRequest{
 			Name: "deploy", FromVersion: "1.0.0", ToVersion: "2.0.0", Namespace: "bravo",
 		}))
-	if err != nil {
-		t.Fatalf("DiffOrkflowVersions(bravo): %v", err)
-	}
+	must.OKf(t, err, "DiffOrkflowVersions(bravo)")
 	if !strings.Contains(diff.Msg.GetUnifiedDiff(), "bravo-2.0.0") ||
 		strings.Contains(diff.Msg.GetUnifiedDiff(), "alpha") {
 		t.Errorf("bravo's diff is not bravo's documents:\n%s", diff.Msg.GetUnifiedDiff())
@@ -615,18 +581,14 @@ func TestSubmitRun_ExecutesTheCurrentVersion(t *testing.T) {
 
 	unpinned, err := svc.SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: "deploy"}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	if got := unpinned.Msg.GetRun().GetOrkflowVersion(); got != "1.0.0" {
 		t.Errorf("an unpinned submission ran version %q, want the promoted 1.0.0", got)
 	}
 
 	pinned, err := svc.SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: "deploy", OrkflowVersion: "2.0.0"}))
-	if err != nil {
-		t.Fatalf("SubmitRun(2.0.0): %v", err)
-	}
+	must.OKf(t, err, "SubmitRun(2.0.0)")
 	if got := pinned.Msg.GetRun().GetOrkflowVersion(); got != "2.0.0" {
 		t.Errorf("a submission pinned to 2.0.0 ran %q", got)
 	}
@@ -643,9 +605,7 @@ func TestSubmitRun_ExecutesTheCurrentVersion(t *testing.T) {
 	// it).
 	for i, want := range []string{"echo one", "echo two"} {
 		encoded, err := protojson.Marshal(&orkstackv1.Orkflow{Tasks: starter.orkflows[i].GetTasks()})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !strings.Contains(string(encoded), want) {
 			t.Errorf("run %d carried the wrong definition, want %q in its tasks:\n%s", i, want, encoded)
 		}
@@ -660,9 +620,7 @@ func requireResolvedVersion(t *testing.T, svc *api.Service, name, want, when str
 	t.Helper()
 	got, err := svc.GetOrkflow(context.Background(), connect.NewRequest(
 		&orkstackv1.GetOrkflowRequest{Name: name}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(resolved) %s: %v", when, err)
-	}
+	must.OKf(t, err, "GetOrkflow(resolved) %s", when)
 	if got.Msg.GetOrkflow().GetVersion() != want {
 		t.Fatalf("an empty version resolves to %q %s, want %q",
 			got.Msg.GetOrkflow().GetVersion(), when, want)

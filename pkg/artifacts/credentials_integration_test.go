@@ -4,7 +4,6 @@ package artifacts_test
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -136,14 +136,14 @@ func TestIntegration_DefaultChainAsksTheInstanceMetadataService(t *testing.T) {
 			_, _ = io.WriteString(w, role)
 		case r.URL.Path == "/latest/meta-data/iam/security-credentials/"+role:
 			asked.Add(1)
-			_ = json.NewEncoder(w).Encode(map[string]string{
+			_ = stablejson.Encode(w, map[string]string{
 				"Code":            "Success",
 				"Type":            "AWS-HMAC",
 				"AccessKeyId":     s3bucket.DevAccessKey,
 				"SecretAccessKey": s3bucket.DevSecretKey,
 				"Expiration":      time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
 				"LastUpdated":     time.Now().UTC().Format(time.RFC3339),
-			})
+			}, stablejson.Options)
 		default:
 			http.NotFound(w, r)
 		}

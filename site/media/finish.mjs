@@ -17,8 +17,8 @@ const manifestPath = path.join(siteRoot, 'src', 'assets', 'media', 'manifest.jso
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 const words = {
 	'cli-quickstart': {
-		alt: 'A terminal recording: orkctl applies each-fan-out, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.',
-		caption: 'orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack: the run finishes with status SUCCEEDED, and the merge task’s log lists the four parts, a to d.',
+		alt: 'A terminal recording: orkctl creates the each-fan-out Orkflow, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.',
+		caption: 'orkctl orkflow create, run plan, run submit -w and run logs, recorded against the local stack: the run finishes with status SUCCEEDED, and the merge task’s log lists the four parts, a to d.',
 	},
 	'cli-activity-test': {
 		alt: 'A terminal recording: orkctl activity test runs the first-party shell image through the six contract checks, and all six pass.',

@@ -18,9 +18,10 @@ option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1"
 // empty version resolves to, and moving it is the only mutation this service
 // performs on an existing orkflow.
 service OrkflowService {
-  // ValidateOrkflow performs the same non-mutating preparation as apply.
+  // ValidateOrkflow performs the same non-mutating preparation as ApplyOrkflow.
   rpc ValidateOrkflow(ValidateOrkflowRequest) returns (ValidateOrkflowResponse);
-  // ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+  // ApplyOrkflow validates and stores an orkflow version from raw DSL YAML:
+  // what `orkctl orkflow create` and the UI's Create Orkflow page send.
   //
   // It never rewrites a stored version: identical YAML under an existing
   // version is a no-op that writes nothing, and DIFFERENT YAML under an
@@ -133,7 +134,7 @@ message ApplyOrkflowRequest {
   // instead of landing beside a newer version nobody looked at.
   //
   // Empty with an empty base_version is unchecked, which is what a plain
-  // `orkctl apply file.yaml` sends. Empty with a non-empty base_version is
+  // `orkctl orkflow create file.yaml` sends. Empty with a non-empty base_version is
   // InvalidArgument naming both fields: a base is provenance, not a head
   // claim, and an editor that read a base also read the head it was under.
   //
@@ -407,6 +408,10 @@ enum PlanOutcome {
   // does, contributes no output, and is where the planned run starts failing
   // unless an earlier task already did.
   PLAN_OUTCOME_ASSUMED_FAILED = 6;
+  // SLEEPS: the task is a sleeping task the interpreter would start: it
+  // takes a wave as RUNS does, starts no activity, and succeeds with no
+  // values once its time has passed.
+  PLAN_OUTCOME_SLEEPS = 7;
 }
 
 // PlanTask is one task's planned outcome. Tasks are listed in declaration
@@ -478,9 +483,12 @@ message PlanTask {
   // or else the first ASSUMED_FAILED task of its needs closure in declaration
   // order. Empty for every other outcome.
   string unreached_by = 16;
+  // sleep is the task's SleepSpec, set for a sleeping task whatever its
+  // outcome, so a reader sees how long it would sleep.
+  SleepSpec sleep = 17;
 }
 
-// PlanWave lists the RUNS, AWAITS and ASSUMED_FAILED tasks of one wave, in
+// PlanWave lists the RUNS, AWAITS, SLEEPS and ASSUMED_FAILED tasks of one wave, in
 // declaration order. There is one entry per wave from 1 to wave_count;
 // SKIPPED tasks are not members.
 message PlanWave {
@@ -524,6 +532,7 @@ message PlanRunResponse {
   // The run is planned FAILED exactly when it is set; each UNREACHED task
   // names its own cause in PlanTask.unreached_by.
   string fails_at = 16;
+  int32 sleeps = 17;                     // count of SLEEPS
 }
 
 // InterfaceVerdict is how one version's DECLARED interface — its inputs:

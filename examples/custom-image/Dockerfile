@@ -14,7 +14,7 @@ FROM scratch
 COPY --from=build /out/report /report
 # never root
 USER 65532:65532
-# The with: contract, read by validate and apply, and the icon and
+# The with: contract, read by validate and create, and the icon and
 # descriptions clients show (docs/ACTIVITY_IMAGES.md, "Declaring the
 # interface"); the container never reads them. Generated from
 # interface.ork.yaml by `go run ./internal/schemas/cmd/genschemas`; outside

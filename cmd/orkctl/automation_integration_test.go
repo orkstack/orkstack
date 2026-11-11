@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,8 +24,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // automationStack is the origin stack — two real `ork` replicas and one
@@ -95,9 +98,7 @@ func (r *webhookReceiver) await(t *testing.T, path, runID string) receivedPost {
 func (s *automationStack) write(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(s.dir, name)
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(content), 0o644), "write %s", path)
 	fmt.Fprintf(&s.transcript, "$ cat %s\n%s\n", name, content)
 	return path
 }
@@ -110,7 +111,7 @@ func (s *automationStack) doc(body string) string {
 // applyReport runs `apply --json ARGS` on a replica and decodes the report.
 func (s *automationStack) applyReport(t *testing.T, replica *engineReplica, want int, args ...string) *orkstackv1.ApplyReport {
 	t.Helper()
-	out := s.cli(t, replica, want, append([]string{"--json", "apply"}, args...)...)
+	out := s.cli(t, replica, want, append([]string{"--json", "automation", "apply"}, args...)...)
 	var report orkstackv1.ApplyReport
 	if err := api.UnmarshalJSON([]byte(out), &report); err != nil {
 		t.Fatalf("decode ApplyReport: %v\n%s", err, out)
@@ -123,15 +124,11 @@ func (s *automationStack) invoke(ctx context.Context, t *testing.T, replica *eng
 	t.Helper()
 	url := "http://" + replica.addr + strings.Replace(api.TriggerInvokePath, "{id}", id, 1)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("POST %s: %v", url, err)
-	}
+	must.OKf(t, err, "POST %s", url)
 	defer response.Body.Close()
 	body, _ := io.ReadAll(response.Body)
 	fmt.Fprintf(&s.transcript, "$ curl -X POST %s -H 'Authorization: Bearer <token>' -d '{}'\n%s(HTTP %d)\n\n", url, body, response.StatusCode)
@@ -142,9 +139,7 @@ func (s *automationStack) invoke(ctx context.Context, t *testing.T, replica *eng
 func (s *automationStack) triggerByName(t *testing.T, replica *engineReplica, name string) *orkstackv1.Trigger {
 	t.Helper()
 	var listed orkstackv1.ListTriggersResponse
-	if err := api.UnmarshalJSON([]byte(s.cli(t, replica, exitOK, "--json", "trigger", "list")), &listed); err != nil {
-		t.Fatalf("decode trigger list: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(s.cli(t, replica, exitOK, "--json", "trigger", "list")), &listed), "decode trigger list")
 	for _, trigger := range listed.GetTriggers() {
 		if trigger.GetName() == name {
 			return trigger
@@ -178,23 +173,17 @@ func (s *automationStack) metadataSnapshot(ctx context.Context, t *testing.T) []
 		pager := s3.NewListObjectsV2Paginator(raw, &s3.ListObjectsV2Input{Bucket: aws.String(s.artifactCfg.S3Bucket), Prefix: aws.String(prefix)})
 		for pager.HasMorePages() {
 			page, err := pager.NextPage(ctx)
-			if err != nil {
-				t.Fatalf("list %s: %v", prefix, err)
-			}
+			must.OKf(t, err, "list %s", prefix)
 			for _, object := range page.Contents {
 				out = append(out, aws.ToString(object.Key)+" "+aws.ToString(object.ETag))
 			}
 		}
 	}
 	iter, err := s.temporal.ScheduleClient().List(ctx, client.ScheduleListOptions{})
-	if err != nil {
-		t.Fatalf("list schedules: %v", err)
-	}
+	must.OKf(t, err, "list schedules")
 	for iter.HasNext() {
 		entry, err := iter.Next()
-		if err != nil {
-			t.Fatalf("list schedules: %v", err)
-		}
+		must.OKf(t, err, "list schedules")
 		out = append(out, "schedule "+entry.ID)
 	}
 	sort.Strings(out)
@@ -265,7 +254,7 @@ func TestIntegration_ApplyAutomationCreatesAndReapplyIsANoOp(t *testing.T) {
 	s := newAutomationStack(ctx, t, "noop")
 	doc := s.write(t, "automation.ork.yaml", s.summaryDoc())
 
-	s.cli(t, s.a, exitOK, "apply", doc, "--dry-run")
+	s.cli(t, s.a, exitOK, "automation", "apply", doc, "--dry-run")
 	first := s.applyReport(t, s.a, exitOK, doc)
 	end := time.Now()
 	for _, result := range first.GetAutomation()[0].GetResults() {
@@ -302,7 +291,7 @@ func TestIntegration_ApplyDryRunWritesNothing(t *testing.T) {
 	s := newAutomationStack(ctx, t, "dryrun")
 	doc := s.write(t, "automation.ork.yaml", s.summaryDoc())
 	before := s.metadataSnapshot(ctx, t)
-	s.cli(t, s.a, exitOK, "apply", doc, "--dry-run", "--prune")
+	s.cli(t, s.a, exitOK, "automation", "apply", doc, "--dry-run", "--prune")
 	after := s.metadataSnapshot(ctx, t)
 	if strings.Join(before, "\n") != strings.Join(after, "\n") {
 		t.Fatalf("a dry run changed the store or the cluster:\nbefore:\n%s\nafter:\n%s", strings.Join(before, "\n"), strings.Join(after, "\n"))
@@ -315,16 +304,28 @@ func TestIntegration_ApplyDirectoryAppliesOrkflowsBeforeAutomation(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	s := newAutomationStack(ctx, t, "dir")
-	s.write(t, "rollback.ork.yaml", originOrkflowYAML("rollback"))
-	s.write(t, "automation.ork.yaml", s.doc("triggers:\n  undo:\n    orkflow: rollback\n    version: 0.1.0\n"))
-	out := s.cli(t, s.a, exitOK, "apply", s.dir, "--dry-run")
+	orkflows := filepath.Join(s.dir, "orkflows")
+	automationDir := filepath.Join(s.dir, "automation")
+	must.OK(t, os.MkdirAll(orkflows, 0o755))
+	must.OK(t, os.MkdirAll(automationDir, 0o755))
+	s.write(t, "orkflows/rollback.ork.yaml", originOrkflowYAML("rollback"))
+	s.write(t, "automation/automation.ork.yaml", s.doc("triggers:\n  undo:\n    orkflow: rollback\n    version: 0.1.0\n"))
+	// The automation names a version not created yet: its plan refuses it.
+	refused := s.cli(t, s.a, exitError, "automation", "apply", automationDir, "--dry-run")
+	if !strings.Contains(refused, "Nothing was written.") {
+		t.Fatalf("an automation document naming an uncreated version was not refused:\n%s", refused)
+	}
+	created := s.cli(t, s.a, exitOK, "--json", "orkflow", "create", orkflows)
+	var createdReport orkstackv1.ApplyReport
+	must.OKf(t, api.UnmarshalJSON([]byte(created), &createdReport), "decode %s", created)
+	if createdReport.GetOrkflows()[0].GetApplied() == nil {
+		t.Fatal("the orkflow was not created")
+	}
+	out := s.cli(t, s.a, exitOK, "automation", "apply", automationDir, "--dry-run")
 	if strings.Contains(out, "ERROR") {
-		t.Fatalf("a pending orkflow did not satisfy the trigger:\n%s", out)
+		t.Fatalf("the created orkflow did not satisfy the trigger:\n%s", out)
 	}
-	report := s.applyReport(t, s.a, exitOK, s.dir)
-	if report.GetOrkflows()[0].GetApplied() == nil {
-		t.Fatal("the orkflow was not applied")
-	}
+	report := s.applyReport(t, s.a, exitOK, automationDir)
 	id, token := disclosed(t, report, "undo")
 	if status, body := s.invoke(ctx, t, s.b, id, token); status != http.StatusCreated {
 		t.Fatalf("invoke = %d: %s", status, body)
@@ -344,7 +345,7 @@ func TestIntegration_ApplyTriggerTokenIsShownOnceAndInvokes(t *testing.T) {
 		t.Fatalf("invoke with the apply's token = %d, want 201", status)
 	}
 	t.Logf("EVIDENCE apply_token_invoke=%d", status)
-	if out := s.cli(t, s.a, exitOK, "apply", doc); strings.Contains(out, token) || strings.Contains(out, "shown once") {
+	if out := s.cli(t, s.a, exitOK, "automation", "apply", doc); strings.Contains(out, token) || strings.Contains(out, "shown once") {
 		t.Fatalf("a re-apply printed a token:\n%s", out)
 	}
 	proof.Write(t, "orkctl", "automation-token.txt", []byte(s.transcript.String()))
@@ -357,7 +358,7 @@ func TestIntegration_TriggerTokenSurvivesInPlaceUpdateByApply(t *testing.T) {
 	report := s.applyReport(t, s.a, exitOK, s.write(t, "v1.ork.yaml", s.doc(fmt.Sprintf("triggers:\n  github-deploy:\n    orkflow: %s\n", s.orkflow))))
 	id, token := disclosed(t, report, "github-deploy")
 	second := strings.Replace(originOrkflowYAML(s.orkflow), `version: "0.1.0"`, `version: "0.2.0"`, 1)
-	s.cli(t, s.a, exitOK, "apply", s.write(t, "deploy.ork.yaml", second))
+	s.cli(t, s.a, exitOK, "orkflow", "create", s.write(t, "deploy.ork.yaml", second))
 	updated := s.applyReport(t, s.b, exitOK, s.write(t, "v2.ork.yaml",
 		s.doc(fmt.Sprintf("triggers:\n  github-deploy:\n    orkflow: %s\n    version: 0.2.0\n    description: pinned\n", s.orkflow))))
 	step := updated.GetAutomation()[0].GetPlan().GetSteps()[0]
@@ -387,7 +388,7 @@ func TestIntegration_WebhookUpdateKeepsItsSecret(t *testing.T) {
 		return s.doc(fmt.Sprintf("webhooks:\n  etl-loader:\n    url: %s/etl\n    orkflow: %s\n    events: [RUN_SUCCEEDED]\n    secret_env: ETL_WEBHOOK_SECRET\n",
 			s.receiver.server.URL, orkflow))
 	}
-	s.cli(t, s.a, exitOK, "apply", s.write(t, "v1.ork.yaml", entry("other-orkflow")))
+	s.cli(t, s.a, exitOK, "automation", "apply", s.write(t, "v1.ork.yaml", entry("other-orkflow")))
 	report := s.applyReport(t, s.b, exitOK, s.write(t, "v2.ork.yaml", entry(s.orkflow)))
 	if step := report.GetAutomation()[0].GetPlan().GetSteps()[0]; step.GetAction() != orkstackv1.AutomationAction_AUTOMATION_ACTION_UPDATE {
 		t.Fatalf("the scope change planned %v, want UPDATE", step.GetAction())
@@ -408,10 +409,8 @@ func TestIntegration_ApplyPruneDeletesOnlyNamedUndeclaredObjects(t *testing.T) {
 	s := newAutomationStack(ctx, t, "prune")
 	s.cli(t, s.a, exitOK, "trigger", "create", "--orkflow", s.orkflow, "--name", "manual-hook")
 	var unnamed orkstackv1.CreateTriggerResponse
-	if err := api.UnmarshalJSON([]byte(s.cli(t, s.a, exitOK, "--json", "trigger", "create", "--orkflow", s.orkflow)), &unnamed); err != nil {
-		t.Fatal(err)
-	}
-	s.cli(t, s.a, exitOK, "webhook", "register", s.receiver.server.URL+"/named", "--name", "old-hook")
+	must.OK(t, api.UnmarshalJSON([]byte(s.cli(t, s.a, exitOK, "--json", "trigger", "create", "--orkflow", s.orkflow)), &unnamed))
+	s.cli(t, s.a, exitOK, "webhook", "create", s.receiver.server.URL+"/named", "--name", "old-hook")
 	s.cli(t, s.a, exitOK, "schedule", "create", "old-schedule", "--orkflow", s.orkflow, "--cron", "0 4 * * *")
 	var wide struct {
 		Webhook struct {
@@ -420,7 +419,7 @@ func TestIntegration_ApplyPruneDeletesOnlyNamedUndeclaredObjects(t *testing.T) {
 	}
 	t.Setenv(serverEnvVar, "")
 	var stdout, stderr bytes.Buffer
-	if code := Execute([]string{"--json", "webhook", "register", s.receiver.server.URL + "/everyone", "--server", "http://" + s.a.addr}, &stdout, &stderr); code != exitOK {
+	if code := Execute([]string{"--json", "webhook", "create", s.receiver.server.URL + "/everyone", "--server", "http://" + s.a.addr}, &stdout, &stderr); code != exitOK {
 		t.Fatalf("deployment-wide register: %s", stderr.String())
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &wide); err != nil {
@@ -431,7 +430,7 @@ func TestIntegration_ApplyPruneDeletesOnlyNamedUndeclaredObjects(t *testing.T) {
 	})
 
 	doc := s.write(t, "automation.ork.yaml", s.doc("schedules: {}\ntriggers: {}\nwebhooks: {}\n"))
-	out := s.cli(t, s.a, exitOK, "apply", doc, "--prune")
+	out := s.cli(t, s.a, exitOK, "automation", "apply", doc, "--prune")
 	for _, fragment := range []string{"- schedule   old-schedule", "- trigger    manual-hook", "- webhook    old-hook"} {
 		if !strings.Contains(out, fragment) {
 			t.Fatalf("the --prune output does not name %q:\n%s", fragment, out)
@@ -456,7 +455,7 @@ func TestIntegration_ApplyOmittedSectionIsUntouchedByPrune(t *testing.T) {
 	defer cancel()
 	s := newAutomationStack(ctx, t, "omitted")
 	s.cli(t, s.a, exitOK, "trigger", "create", "--orkflow", s.orkflow, "--name", "kept-hook")
-	s.cli(t, s.a, exitOK, "apply", s.write(t, "automation.ork.yaml", s.doc("schedules: {}\n")), "--prune")
+	s.cli(t, s.a, exitOK, "automation", "apply", s.write(t, "automation.ork.yaml", s.doc("schedules: {}\n")), "--prune")
 	if s.triggerByName(t, s.b, "kept-hook") == nil {
 		t.Fatal("--prune of a document without a triggers section deleted a trigger")
 	}
@@ -469,9 +468,9 @@ func TestIntegration_ExportThenCheckIsClean(t *testing.T) {
 	s := newAutomationStack(ctx, t, "export")
 	s.cli(t, s.a, exitOK, "trigger", "create", "--orkflow", s.orkflow, "--name", "hand-made", "--description", "by hand")
 	s.cli(t, s.a, exitOK, "schedule", "create", "hand-schedule", "--orkflow", s.orkflow, "--interval", "1h", "--paused")
-	s.cli(t, s.a, exitOK, "webhook", "register", s.receiver.server.URL+"/x", "--name", "hand-hook", "--event", "RUN_FAILED")
-	exported := s.cli(t, s.b, exitOK, "export")
-	s.cli(t, s.a, exitOK, "apply", s.write(t, "exported.ork.yaml", exported), "--check")
+	s.cli(t, s.a, exitOK, "webhook", "create", s.receiver.server.URL+"/x", "--name", "hand-hook", "--event", "RUN_FAILED")
+	exported := s.cli(t, s.b, exitOK, "automation", "export")
+	s.cli(t, s.a, exitOK, "automation", "apply", s.write(t, "exported.ork.yaml", exported), "--check")
 	t.Logf("EVIDENCE export_then_check_exit=0")
 	proof.Write(t, "orkctl", "automation-export-check.txt", []byte(s.transcript.String()))
 }
@@ -481,19 +480,17 @@ func TestIntegration_ExportAdoptsHandMadeObjectsWithoutReissuingSecrets(t *testi
 	defer cancel()
 	s := newAutomationStack(ctx, t, "adopt")
 	var created orkstackv1.CreateTriggerResponse
-	if err := api.UnmarshalJSON([]byte(s.cli(t, s.a, exitOK, "--json", "trigger", "create", "--orkflow", s.orkflow)), &created); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, api.UnmarshalJSON([]byte(s.cli(t, s.a, exitOK, "--json", "trigger", "create", "--orkflow", s.orkflow)), &created))
 	var hook struct {
 		Webhook struct {
 			ID     string `json:"id"`
 			Secret string `json:"secret"`
 		} `json:"webhook"`
 	}
-	if err := json.Unmarshal([]byte(s.cli(t, s.a, exitOK, "--json", "webhook", "register", s.receiver.server.URL+"/adopt", "--event", "RUN_SUCCEEDED")), &hook); err != nil {
+	if err := json.Unmarshal([]byte(s.cli(t, s.a, exitOK, "--json", "webhook", "create", s.receiver.server.URL+"/adopt", "--event", "RUN_SUCCEEDED")), &hook); err != nil {
 		t.Fatal(err)
 	}
-	first := s.cli(t, s.a, exitOK, "export")
+	first := s.cli(t, s.a, exitOK, "automation", "export")
 	for _, fragment := range []string{"orkctl trigger update " + created.GetTrigger().GetId(), "orkctl webhook update " + hook.Webhook.ID} {
 		if !strings.Contains(first, fragment) {
 			t.Fatalf("the export does not name %q:\n%s", fragment, first)
@@ -501,11 +498,11 @@ func TestIntegration_ExportAdoptsHandMadeObjectsWithoutReissuingSecrets(t *testi
 	}
 	s.cli(t, s.a, exitOK, "trigger", "update", created.GetTrigger().GetId(), "--name", "adopted-hook")
 	s.cli(t, s.a, exitOK, "webhook", "update", hook.Webhook.ID, "--name", "adopted-webhook")
-	second := s.cli(t, s.b, exitOK, "export")
+	second := s.cli(t, s.b, exitOK, "automation", "export")
 	if !strings.Contains(second, "adopted-hook:") || !strings.Contains(second, "adopted-webhook:") {
 		t.Fatalf("the adopted objects are not entries:\n%s", second)
 	}
-	s.cli(t, s.a, exitOK, "apply", s.write(t, "adopted.ork.yaml", second), "--check")
+	s.cli(t, s.a, exitOK, "automation", "apply", s.write(t, "adopted.ork.yaml", second), "--check")
 	status, body := s.invoke(ctx, t, s.b, created.GetTrigger().GetId(), created.GetSecret())
 	if status != http.StatusCreated {
 		t.Fatalf("the adopted trigger's original token = %d", status)
@@ -526,7 +523,7 @@ func TestIntegration_ApplyExpectPlanRefusesAfterDrift(t *testing.T) {
 	doc := s.write(t, "automation.ork.yaml", s.doc(fmt.Sprintf("triggers:\n  github-deploy:\n    orkflow: %s\n", s.orkflow)))
 	reviewed := s.applyReport(t, s.a, exitOK, doc, "--dry-run", "--prune").GetAutomation()[0].GetPlan().GetPlanDigest()
 	s.cli(t, s.b, exitOK, "trigger", "create", "--orkflow", s.orkflow, "--name", "between-review-and-merge")
-	out := s.cli(t, s.a, exitError, "apply", doc, "--prune", "--expect-plan", reviewed)
+	out := s.cli(t, s.a, exitError, "automation", "apply", doc, "--prune", "--expect-plan", reviewed)
 	if !strings.Contains(out, "the plan differs from the one reviewed") || !strings.Contains(out, "between-review-and-merge") {
 		t.Fatalf("the refusal does not print the new plan:\n%s", out)
 	}
@@ -548,7 +545,7 @@ func TestIntegration_ApplyPartialFailureReportsAndReapplyConverges(t *testing.T)
 	report := s.applyReport(t, s.a, exitError, s.write(t, "broken.ork.yaml", body("61 25 * * *")))
 	var outcomes []string
 	for _, result := range report.GetAutomation()[0].GetResults() {
-		outcomes = append(outcomes, strings.TrimPrefix(result.GetOutcome().String(), "AUTOMATION_STEP_OUTCOME_"))
+		outcomes = append(outcomes, enumname.Of(result.GetOutcome()))
 	}
 	if strings.Join(outcomes, ",") != "APPLIED,FAILED,NOT_RUN" {
 		t.Fatalf("outcomes = %v, want APPLIED,FAILED,NOT_RUN", outcomes)
@@ -572,13 +569,11 @@ func TestIntegration_ApplyNeverReleasesAHold(t *testing.T) {
 	s.cli(t, s.a, exitOK, "namespace", "update", s.namespace, "--hold", "Q3 close")
 	readHold := func() (string, string) {
 		var got orkstackv1.GetNamespaceResponse
-		if err := api.UnmarshalJSON([]byte(s.cli(t, s.b, exitOK, "--json", "namespace", "get", s.namespace)), &got); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, api.UnmarshalJSON([]byte(s.cli(t, s.b, exitOK, "--json", "namespace", "get", s.namespace)), &got))
 		return got.GetNamespace().GetHold().GetReason(), got.GetNamespace().GetHold().GetSince().AsTime().String()
 	}
 	reason, since := readHold()
-	out := s.cli(t, s.a, exitOK, "apply", s.write(t, "automation.ork.yaml", s.doc("settings:\n  run_retention: 24h\n")))
+	out := s.cli(t, s.a, exitOK, "automation", "apply", s.write(t, "automation.ork.yaml", s.doc("settings:\n  run_retention: 24h\n")))
 	if !strings.Contains(out, "on hold since") {
 		t.Fatalf("the plan does not note the hold:\n%s", out)
 	}
@@ -593,11 +588,11 @@ func TestIntegration_CheckDetectsDrift(t *testing.T) {
 	defer cancel()
 	s := newAutomationStack(ctx, t, "drift")
 	doc := s.write(t, "automation.ork.yaml", s.doc(fmt.Sprintf("triggers:\n  github-deploy:\n    orkflow: %s\n    description: from git\n", s.orkflow)))
-	s.cli(t, s.a, exitOK, "apply", doc)
-	s.cli(t, s.a, exitOK, "apply", doc, "--check")
+	s.cli(t, s.a, exitOK, "automation", "apply", doc)
+	s.cli(t, s.a, exitOK, "automation", "apply", doc, "--check")
 	trigger := s.triggerByName(t, s.a, "github-deploy")
 	s.cli(t, s.b, exitOK, "trigger", "update", trigger.GetId(), "--description", "edited by hand")
-	out := s.cli(t, s.a, exitApplyCheckChanges, "apply", doc, "--check")
+	out := s.cli(t, s.a, exitApplyCheckChanges, "automation", "apply", doc, "--check")
 	if !strings.Contains(out, "~ trigger    github-deploy") || !strings.Contains(out, `description: "edited by hand" → "from git"`) {
 		t.Fatalf("--check does not name the drift:\n%s", out)
 	}
@@ -611,9 +606,9 @@ func TestIntegration_AutomationTwoReplicasAgree(t *testing.T) {
 	s := newAutomationStack(ctx, t, "replicas")
 	doc := s.write(t, "automation.ork.yaml", s.summaryDoc())
 	planned := s.applyReport(t, s.a, exitOK, doc, "--dry-run").GetAutomation()[0].GetPlan().GetPlanDigest()
-	s.cli(t, s.b, exitOK, "apply", doc, "--expect-plan", planned)
-	onA := s.cli(t, s.a, exitOK, "export")
-	onB := s.cli(t, s.b, exitOK, "export")
+	s.cli(t, s.b, exitOK, "automation", "apply", doc, "--expect-plan", planned)
+	onA := s.cli(t, s.a, exitOK, "automation", "export")
+	onB := s.cli(t, s.b, exitOK, "automation", "export")
 	if onA != onB {
 		t.Fatalf("the replicas export different documents:\nA:\n%s\nB:\n%s", onA, onB)
 	}
@@ -641,7 +636,7 @@ func TestIntegration_EachAppliedStepIsAudited(t *testing.T) {
 	defer cancel()
 	s := newAutomationStack(ctx, t, "audit")
 	start := time.Now()
-	s.cli(t, s.a, exitOK, "apply", s.write(t, "automation.ork.yaml", s.summaryDoc()))
+	s.cli(t, s.a, exitOK, "automation", "apply", s.write(t, "automation.ork.yaml", s.summaryDoc()))
 	want := []string{"namespace.update", "schedule.create", "trigger.create", "webhook.register"}
 	var got []string
 	deadline := time.Now().Add(30 * time.Second)

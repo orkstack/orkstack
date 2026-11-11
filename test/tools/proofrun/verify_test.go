@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // passingRelease is a release proof of commit c1 (tree t1) that every rule
@@ -15,7 +17,7 @@ func passingRelease(mutate func(*proofRecord), extraIneligible ...string) proofR
 		mutate(&r)
 	}
 	r.Ineligible = append(r.Ineligible, extraIneligible...)
-	verdict(&r, 0, true, map[string]bool{"integration": true})
+	verdict(&r, 0, map[string]bool{"integration": true})
 	return r
 }
 
@@ -74,7 +76,7 @@ func TestVerify_ReleaseRefusesEveryIdentityProblem(t *testing.T) {
 // cannot tag: the merger's identity rule reaches verify -release.
 func TestVerify_ReleaseRefusesAMergedProofWithADigestMismatch(t *testing.T) {
 	f := newMergeFixture(t, tierRelease, true)
-	f.plan.PartsExpected = partsExpected(tierRelease, false, 2, 1, false)
+	f.plan.PartsExpected = partsExpected(tierRelease, false, 2, 1)
 	f.save()
 	f.writeCI()
 	for _, part := range append([]string{"observability"}, func() []string {
@@ -119,10 +121,8 @@ func nightlyProof(t *testing.T, mutate func(*proofRecord)) string {
 	if mutate != nil {
 		mutate(&r)
 	}
-	verdict(&r, 0, false, map[string]bool{"integration": true})
-	if err := writeJSON(filepath.Join(dir, "proof.json"), r); err != nil {
-		t.Fatal(err)
-	}
+	verdict(&r, 0, map[string]bool{"integration": true})
+	must.OK(t, writeJSON(filepath.Join(dir, "proof.json"), r))
 	return dir
 }
 

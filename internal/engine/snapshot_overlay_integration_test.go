@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The snapshot-overlay integration evidence (E6): snapshot overlays on a real cluster
@@ -75,9 +77,7 @@ func regionsInput(t *testing.T, n int) *orkstackv1.Payload {
 		regions[i] = fmt.Sprintf("r%d", i)
 	}
 	data, err := structpb.NewStruct(map[string]any{"regions": regions})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.Payload{Data: data}
 }
 
@@ -100,9 +100,7 @@ func publishedURIs(t *testing.T, h *historypb.History) []publishedURI {
 			published *orkstackv1.Event
 			uri, key  string
 		)
-		if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &published, &uri, &key); err != nil {
-			t.Fatalf("decode a recorded publish: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &published, &uri, &key), "decode a recorded publish")
 		out = append(out, publishedURI{published, uri})
 	}
 	return out
@@ -132,12 +130,8 @@ func TestIntegration_RecordSnapshotOverlayHistory(t *testing.T) {
 	plan := s.plan(engine.DefaultHistoryMaxEvents, nil)
 	policy := snapshotOverlayFixturePolicy
 	plan.SnapshotOverlay = &policy
-	if err := s.starter.StartRun(ctx, runID, wf, regionsInput(t, 24), plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, runID, wf, regionsInput(t, 24), plan), "StartRun")
+	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the run failed")
 	recorded := s.history(runID, "")
 	if versionMarkersOf(t, recorded)[engine.SnapshotOverlayChange] == 0 {
 		t.Fatal("the recording carries no snapshot-overlay marker")
@@ -147,9 +141,7 @@ func TestIntegration_RecordSnapshotOverlayHistory(t *testing.T) {
 	read := func(uri string) []byte {
 		t.Helper()
 		data, err := s.snapshots.ReadSnapshot(ctx, uri)
-		if err != nil {
-			t.Fatalf("read %s back from MinIO: %v", uri, err)
-		}
+		must.OKf(t, err, "read %s back from MinIO", uri)
 		objects[path.Base(uri)] = data
 		return data
 	}
@@ -183,18 +175,14 @@ func TestIntegration_RecordSnapshotOverlayHistory(t *testing.T) {
 		t.Fatalf("%d item-fresh overlays, %d emit overlays, %d full snapshots: want at least 1, 1 and 2",
 			itemOverlays, emitOverlays, fulls)
 	}
-	if err := replayRecorded(recorded, runID); err != nil {
-		t.Fatalf("the recording does not replay against current code: %v", err)
-	}
+	must.OKf(t, replayRecorded(recorded, runID), "the recording does not replay against current code")
 	files := map[string][]byte{snapshotOverlayFixture: encodeHistory(t, recorded)}
 	for name, data := range objects {
 		files[filepath.Join(snapshotOverlayObjectsDir, name)] = data
 	}
 	if write {
 		// The objects directory holds exactly this recording's objects.
-		if err := os.RemoveAll(snapshotOverlayObjectsDir); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.RemoveAll(snapshotOverlayObjectsDir))
 	}
 	for p, data := range files {
 		if strings.HasSuffix(p, ".json") {
@@ -202,20 +190,12 @@ func TestIntegration_RecordSnapshotOverlayHistory(t *testing.T) {
 		} else if dir := proof.Dir(); dir != "" {
 			// Binary objects are written, never logged.
 			target := filepath.Join(dir, "snapshot-overlay", "objects", filepath.Base(p))
-			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(target, data, 0o644); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(filepath.Dir(target), 0o755))
+			must.OK(t, os.WriteFile(target, data, 0o644))
 		}
 		if write {
-			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(p, data, 0o644); err != nil {
-				t.Fatalf("write %s: %v", p, err)
-			}
+			must.OK(t, os.MkdirAll(filepath.Dir(p), 0o755))
+			must.OKf(t, os.WriteFile(p, data, 0o644), "write %s", p)
 		}
 	}
 	written := "the proof directory only (ORK_RECORD_GOLDEN_HISTORY unset)"

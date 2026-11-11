@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // countingDocker is a stand-in docker CLI that appends every invocation to a
@@ -233,9 +235,7 @@ case "$1" in
 esac
 `
 	bin := filepath.Join(dir, "docker")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(bin, []byte(script), 0o755))
 	fake := &countingDocker{t: t, dir: dir, bin: bin}
 	fake.set("facts", GoodBootProbeFacts(SecurityPolicyFromEnv()))
 	return fake
@@ -243,9 +243,7 @@ esac
 
 func (c *countingDocker) set(flag, content string) {
 	c.t.Helper()
-	if err := os.WriteFile(filepath.Join(c.dir, flag), []byte(content), 0o644); err != nil {
-		c.t.Fatal(err)
-	}
+	must.OK(c.t, os.WriteFile(filepath.Join(c.dir, flag), []byte(content), 0o644))
 }
 
 func (c *countingDocker) clear(flag string) {
@@ -291,9 +289,7 @@ func TestDockerRuntime_PullOfACachedImageInspectsOnce(t *testing.T) {
 	fake.set("present", "")
 	runtime := &DockerRuntime{Bin: fake.bin}
 	info, err := runtime.Pull(context.Background(), countingPinned)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	calls := fake.calls()
 	if got := countPrefix(calls, "image inspect"); got != 1 {
 		t.Fatalf("image inspects = %d; want 1: %q", got, calls)
@@ -312,9 +308,7 @@ func TestDockerRuntime_PullOfAnAbsentImageReinspectsAfterThePull(t *testing.T) {
 	fake := newCountingDocker(t)
 	runtime := &DockerRuntime{Bin: fake.bin}
 	info, err := runtime.Pull(context.Background(), countingPinned)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	calls := fake.calls()
 	if countPrefix(calls, "image inspect") != 2 || countPrefix(calls, "pull") != 1 {
 		t.Fatalf("calls = %q; want inspect, pull, inspect", calls)
@@ -355,9 +349,7 @@ func TestDockerRuntime_StartBacksOffWhileTheContainerIsCreated(t *testing.T) {
 		fake.clear("created")
 	}()
 	var stdout, stderr bytes.Buffer
-	if err := runtime.Start(context.Background(), "c-slow", &stdout, &stderr); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, runtime.Start(context.Background(), "c-slow", &stdout, &stderr))
 	polls := countPrefix(fake.calls(), "inspect --format {{.State.Status}}")
 	// A fixed 20 ms poll is ~35 observations in 700 ms; 20 ms doubling to
 	// 200 ms is under ten.
@@ -422,9 +414,7 @@ func TestBoot_APartialReapIsLoggedNotFatal(t *testing.T) {
 		t.Cleanup(a.Close)
 		return a
 	}
-	if err := newBooting("orker-partial-reap-" + strings.ReplaceAll(t.Name(), "/", "-")).Boot(context.Background()); err != nil {
-		t.Fatalf("Boot with one unremovable orphan: %v", err)
-	}
+	must.OKf(t, newBooting("orker-partial-reap-"+strings.ReplaceAll(t.Name(), "/", "-")).Boot(context.Background()), "Boot with one unremovable orphan")
 	if !strings.Contains(logs.String(), "c2") || !strings.Contains(logs.String(), "orphan") {
 		t.Fatalf("the unremovable orphan was not logged:\n%s", logs.String())
 	}

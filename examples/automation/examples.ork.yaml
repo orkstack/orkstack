@@ -6,13 +6,15 @@
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Declare what surrounds your Orkflows"
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Repeat without loops"
 #
-# A schedule or trigger must name an Orkflow version that is stored or applied
-# by the same command, and approval-gate composes notify-block, which must be
-# stored before that command, in one of its own:
-#   orkctl apply examples/notify-block.ork.yaml
-#   orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml --dry-run
-#   orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml
-#   orkctl apply examples/automation/examples.ork.yaml --check     # exits 0: nothing drifted
+# A schedule or trigger must name an Orkflow version that is already created,
+# and approval-gate composes notify-block, which must be created before this
+# document is planned, in a command of its own. Create the Orkflows first, then
+# plan and apply the document:
+#   orkctl orkflow create examples/notify-block.ork.yaml
+#   orkctl orkflow create examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml
+#   orkctl automation apply examples/automation/examples.ork.yaml --dry-run
+#   orkctl automation apply examples/automation/examples.ork.yaml
+#   orkctl automation apply examples/automation/examples.ork.yaml --check     # exits 0: nothing drifted
 #   orkctl schedule fire poll-exports                              # one fire now, as if its time had come
 #
 # It declares `default`, the namespace that always exists, and sets only its

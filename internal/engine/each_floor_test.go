@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
-	"go.temporal.io/sdk/testsuite"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestEachBounds_ReplayNeutralForRecordedSizes: every committed fixture's
@@ -85,8 +86,7 @@ func TestLocalItemInput_AcceptsWhatTheEngineAccepts(t *testing.T) {
 	}{{"12KiB", 12 << 10, false}, {"17KiB", 17 << 10, true}} {
 		t.Run(tc.name, func(t *testing.T) {
 			wf := compile(t, flooredFanOutDocument(tc.pad))
-			var suite testsuite.WorkflowTestSuite
-			h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				return itemResult(in), nil
 			})
 			h.env.SetTestTimeout(time.Minute)
@@ -122,9 +122,7 @@ func TestLocalItemInput_AcceptsWhatTheEngineAccepts(t *testing.T) {
 			if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 				t.Fatalf("engine: run %v %v", run.GetStatus(), run.GetError())
 			}
-			if err != nil {
-				t.Fatalf("local: %v", err)
-			}
+			must.OKf(t, err, "local")
 			var scheduled *orkstackv1.ExecuteTaskInput
 			for _, in := range h.invocations() {
 				if in.GetEach().GetIndex() == index {

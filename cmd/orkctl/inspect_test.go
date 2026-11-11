@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // inspectFrame is what the cluster answers for one poll: the run snapshot
@@ -323,9 +325,7 @@ func TestRunInspect_EveryReasonValueIsPrintedByAGolden(t *testing.T) {
 	}
 	for _, path := range matches {
 		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		union.Write(body)
 	}
 	for number, name := range orkstackv1.HeartbeatUnavailableReason_name {

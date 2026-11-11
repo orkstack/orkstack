@@ -14,7 +14,7 @@ package schemas
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -24,6 +24,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // Dir is where the schemas live, relative to the repository root.
@@ -252,10 +253,7 @@ func dispatcher(orkflow, auto, iface map[string]any) map[string]any {
 // escaping, a trailing newline. Deterministic.
 func Encode(schema map[string]any) ([]byte, error) {
 	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(schema); err != nil {
+	if err := stablejson.Encode(&buf, schema, stablejson.Unescaped, jsontext.WithIndent("  ")); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil

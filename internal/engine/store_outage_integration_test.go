@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The store-outage cordon's acceptance, against real Temporal, real object
@@ -58,24 +60,16 @@ func storeOutageOrker(d *cordonDeployment, id, pool string) (*pinOrker, *faultpr
 	cfg.S3Endpoint = "http://" + proxy.Addr()
 
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open the Orker's artifact store: %v", err)
-	}
+	must.OKf(t, err, "open the Orker's artifact store")
 	commits, err := artifacts.NewCommitStore(d.ctx, cfg)
-	if err != nil {
-		t.Fatalf("open the Orker's commit store: %v", err)
-	}
+	must.OKf(t, err, "open the Orker's commit store")
 	logs, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open the Orker's log store: %v", err)
-	}
+	must.OKf(t, err, "open the Orker's log store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
 	}
-	if err := artifacts.ProbeCommitStore(d.ctx, commits); err != nil {
-		t.Fatalf("the boot probe through the proxy: %v", err)
-	}
+	must.OKf(t, artifacts.ProbeCommitStore(d.ctx, commits), "the boot probe through the proxy")
 	o := newPinOrker(t, d.ctx, pinOrkerConfig{
 		id: id, pool: pool, queue: mustQueueForPool(t, pool),
 		store: store, commits: commits, logs: logs, refs: refs,
@@ -98,6 +92,9 @@ func storeOutageOrker(d *cordonDeployment, id, pool string) (*pinOrker, *faultpr
 	// only just started polling may not be in that answer yet, so a test that
 	// submits at once would be refused for an empty pool.
 	awaitPoolServedBy(t, d.ctx, engine.NewTemporalPoolProbe(d.temporal), pool, o.queue, 1)
+	// A cordon is delivered on the Orker's own channel, and a step that
+	// reads its row needs the row: neither is the pool's channel.
+	d.awaitAnswering(id)
 	return o, proxy, checks
 }
 
@@ -208,9 +205,7 @@ func TestIntegration_StoreOutage_TasksWaitWithNoAttemptUsedAndCompleteWhenTheSto
 		t.Fatalf("the task crossed pools: %v", control.ranFor(runID))
 	}
 	mid, err := d.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID, Namespace: d.orkNS}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if status := mid.Msg.GetRun().GetStatus(); status == orkstackv1.Status_STATUS_SUCCEEDED || status == orkstackv1.Status_STATUS_FAILED {
 		t.Fatalf("the run ended %v during the outage", status)
 	}
@@ -226,9 +221,7 @@ func TestIntegration_StoreOutage_TasksWaitWithNoAttemptUsedAndCompleteWhenTheSto
 	waitDeadline := time.Now().Add(30 * time.Second)
 	for outageWait == nil && time.Now().Before(waitDeadline) {
 		inspected, err := d.runs.InspectRun(ctx, connect.NewRequest(&orkstackv1.InspectRunRequest{RunId: runID, Namespace: d.orkNS}))
-		if err != nil {
-			t.Fatalf("InspectRun: %v", err)
-		}
+		must.OKf(t, err, "InspectRun")
 		for _, attempt := range inspected.Msg.GetAttempts() {
 			outageWait = attempt.GetStoreOutageWait()
 		}

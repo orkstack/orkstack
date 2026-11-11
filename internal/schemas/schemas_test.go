@@ -2,7 +2,7 @@ package schemas_test
 
 import (
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +13,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/schemas"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const root = "../.."
@@ -22,14 +24,10 @@ const root = "../.."
 // editor is built from (ui/src/lib/yaml/schemas.ts).
 func TestSchemas_AreGenerated(t *testing.T) {
 	files, err := schemas.Files(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for dir, want := range map[string]int{schemas.Dir: 4, schemas.UIDir: len(schemas.UIFiles)} {
 		committed, err := filepath.Glob(filepath.Join(root, dir, "*.json"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if len(committed) != want {
 			t.Errorf("%s holds %d files, the generator writes %d", dir, len(committed), want)
 		}
@@ -50,14 +48,10 @@ func TestSchemas_AreGenerated(t *testing.T) {
 func TestSchemas_ValidatorsAreCurrent(t *testing.T) {
 	for _, generated := range []string{"validators.gen.ts", "conditions.gen.ts"} {
 		code, err := os.ReadFile(filepath.Join(root, "ui", "src", "lib", "yaml", generated))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, file := range schemas.UIFiles {
 			schema, err := os.ReadFile(filepath.Join(root, schemas.Dir, file))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			line := fmt.Sprintf("// schema %s sha256:%x\n", file, sha256.Sum256(schema))
 			if !strings.Contains(string(code), line) {
 				t.Errorf("%s was not compiled from this %s: run cd ui && bun run gen:validators", generated, file)
@@ -70,9 +64,7 @@ func TestSchemas_ValidatorsAreCurrent(t *testing.T) {
 // docs/schemas/ file itself, byte for byte, never a second rendering of it.
 func TestSchemas_UICopyIsTheReference(t *testing.T) {
 	files, err := schemas.Files(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(schemas.UIFiles) != 2 {
 		t.Fatalf("UIFiles = %v, want the two kinds' schemas", schemas.UIFiles)
 	}
@@ -92,13 +84,9 @@ func TestSchemas_UICopyIsTheReference(t *testing.T) {
 // packs from it — the first-party images and the examples alike.
 func TestInterfaces_LabelsAreGenerated(t *testing.T) {
 	files, err := schemas.Dockerfiles(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	documents, err := filepath.Glob(filepath.Join(root, "*", "*", "interface.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(files) != len(documents) || len(files) != 8 {
 		t.Errorf("the generator writes %d Dockerfiles, the tree holds %d interface documents; want eight", len(files), len(documents))
 	}
@@ -112,14 +100,10 @@ func TestInterfaces_LabelsAreGenerated(t *testing.T) {
 	// from a document: a hand-written label here has no source to drift from.
 	for _, parent := range []string{"images", "examples"} {
 		dockerfiles, err := filepath.Glob(filepath.Join(root, parent, "*", "Dockerfile"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, dockerfile := range dockerfiles {
 			raw, err := os.ReadFile(dockerfile)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			rel, _ := filepath.Rel(root, dockerfile)
 			if _, generated := files[filepath.ToSlash(rel)]; strings.Contains(string(raw), "LABEL "+dsl.InterfaceLabel) && !generated {
 				t.Errorf("%s carries an interface LABEL with no %s beside it", rel, schemas.InterfaceDocument)
@@ -150,9 +134,7 @@ func interfaceDocumentPacking(t *testing.T, size int) string {
 	}
 	packed := func(source string) int {
 		iface, err := dsl.ParseInterfaceDocument([]byte(source))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		label, err := dsl.PackInterfaceLabel(iface)
 		if err != nil {
 			return 1 << 30
@@ -198,24 +180,18 @@ func TestInterfaces_TheGeneratorRefusesALineBuildKitCannotRead(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			image := filepath.Join(dir, "images", "activity-x")
-			if err := os.MkdirAll(image, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(image, 0o755))
 			files := map[string]string{
 				"interface.ork.yaml": interfaceDocumentPacking(t, tc.label),
 				"Dockerfile": "FROM scratch\nLABEL " + dsl.InterfaceLabel + "='{}'\nLABEL " + dsl.IconLabel + "=''\nLABEL " +
 					dsl.DocsLabel + "=''\n",
 			}
 			for name, content := range files {
-				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.WriteFile(filepath.Join(image, name), []byte(content), 0o644))
 			}
 			out, err := schemas.Dockerfiles(dir)
 			if tc.err == "" {
-				if err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, err)
 				if line := strings.Split(string(out["images/activity-x/Dockerfile"]), "\n")[1]; len(line) != schemas.MaxDockerfileLine {
 					t.Fatalf("the LABEL line is %d bytes, want %d", len(line), schemas.MaxDockerfileLine)
 				}
@@ -259,13 +235,9 @@ func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLines(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			image := filepath.Join(dir, "images", "activity-x")
-			if err := os.MkdirAll(image, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(image, 0o755))
 			for name, content := range map[string]string{"interface.ork.yaml": tc.document, "Dockerfile": tc.dockerfile} {
-				if err := os.WriteFile(filepath.Join(image, name), []byte(content), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.WriteFile(filepath.Join(image, name), []byte(content), 0o644))
 			}
 			files, err := schemas.Dockerfiles(dir)
 			if tc.err != "" {
@@ -274,9 +246,7 @@ func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLines(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got := string(files["images/activity-x/Dockerfile"]); got != tc.want {
 				t.Fatalf("Dockerfile\n%s\nwant\n%s", got, tc.want)
 			}
@@ -287,16 +257,12 @@ func TestInterfaces_TheGeneratorReplacesOnlyTheLabelLines(t *testing.T) {
 func trees(t *testing.T) map[string]map[string]any {
 	t.Helper()
 	trees, err := schemas.Trees(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// Round-trip through JSON, so the tests read what the files hold.
 	out := map[string]map[string]any{}
 	for name, tree := range trees {
 		encoded, err := schemas.Encode(tree)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		var decoded map[string]any
 		if err := json.Unmarshal(encoded, &decoded); err != nil {
 			t.Fatal(err)
@@ -366,9 +332,7 @@ func stringsOf(list any) []string {
 // default op — what CheckWith judges a with: by.
 func TestSchemas_FirstPartyWithIsTheLabel(t *testing.T) {
 	interfaces, err := schemas.FirstPartyInterfaces(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defs := definitions(trees(t)[schemas.OrkflowFile])
 	for name, iface := range interfaces {
 		def := defs["orkflow.with."+name].(map[string]any)

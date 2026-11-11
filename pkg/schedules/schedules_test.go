@@ -3,13 +3,13 @@ package schedules
 import (
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestNewID_ShapeAndValidID(t *testing.T) {
 	id, err := NewID()
-	if err != nil {
-		t.Fatalf("NewID: %v", err)
-	}
+	must.OKf(t, err, "NewID")
 	if !strings.HasPrefix(id, "sch-") || len(id) != len("sch-")+16 {
 		t.Fatalf("NewID() = %q, want sch-{16 hex}", id)
 	}
@@ -17,9 +17,7 @@ func TestNewID_ShapeAndValidID(t *testing.T) {
 		t.Fatalf("ValidID(%q) = false for a generated id", id)
 	}
 	other, err := NewID()
-	if err != nil {
-		t.Fatalf("NewID: %v", err)
-	}
+	must.OKf(t, err, "NewID")
 	if other == id {
 		t.Fatalf("two NewID calls returned the same id %q", id)
 	}

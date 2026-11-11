@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // gappedFixture is the fixture bundle of a run that lost events 1201–2400
@@ -18,13 +20,9 @@ func gappedFixture() fixtureBundle {
 func TestParseManifest_AcceptsSchemaTwoOnlyWithEventGaps(t *testing.T) {
 	f := gappedFixture()
 	document, err := f.manifest.MarshalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	parsed, err := ParseManifest(document)
-	if err != nil {
-		t.Fatalf("ParseManifest(schema 2 with gaps): %v", err)
-	}
+	must.OKf(t, err, "ParseManifest(schema 2 with gaps)")
 	if len(parsed.EventGaps) != 1 || parsed.EventGaps[0].First != 1201 {
 		t.Fatalf("parsed gaps = %+v", parsed.EventGaps)
 	}
@@ -47,9 +45,7 @@ func TestParseManifest_SchemaOneForbidsEventGaps(t *testing.T) {
 	f := gappedFixture()
 	f.manifest.SchemaVersion = SchemaVersion
 	document, err := f.manifest.MarshalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, err := ParseManifest(document); err == nil || !strings.Contains(err.Error(), "carries event_gaps") {
 		t.Fatalf("schema 1 with gaps = %v, want a refusal", err)
 	}
@@ -57,9 +53,7 @@ func TestParseManifest_SchemaOneForbidsEventGaps(t *testing.T) {
 
 func TestVerify_ReportsEventGapsAsANotice(t *testing.T) {
 	report, err := Verify(bytes.NewReader(writeFixture(t, gappedFixture())))
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
+	must.OKf(t, err, "Verify")
 	if !report.OK() {
 		t.Fatalf("a gapped bundle failed verification: %+v", report.Failures)
 	}

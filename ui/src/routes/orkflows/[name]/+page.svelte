@@ -1,5 +1,6 @@
 <script lang="ts">
 	import OrkflowDelete from '#lib/components/OrkflowDelete.svelte';
+	import { sharedWithLabel } from '#lib/sharing.ts';
 	import VersionText from '#lib/components/VersionText.svelte';
 	import { shortVersion, versionTip } from '#lib/version.ts';
 	import type { Snippet } from 'svelte';
@@ -101,8 +102,8 @@
 	const cli = $derived.by<CliCommand[]>(() => {
 		const base = `orkctl -n ${shellQuote(namespaceLabel(data.namespace))}`;
 		if (data.tab === 'overview') return [{ label: 'This Orkflow', command: `${base} orkflow get ${data.name}` }];
-		if (data.tab === 'schedules') return [{ label: 'Its schedules', command: `${base} schedule list --filter orkflow_name=${data.name}` }];
-		if (data.tab === 'triggers') return [{ label: 'Its triggers', command: `${base} trigger list --filter orkflow_name=${data.name}` }];
+		if (data.tab === 'schedules') return [{ label: 'Its schedules', command: `${base} schedule list -F orkflow_name=${data.name}` }];
+		if (data.tab === 'triggers') return [{ label: 'Its triggers', command: `${base} trigger list -F orkflow_name=${data.name}` }];
 		if (data.tab !== 'versions') return [];
 		return [
 			{ label: 'Its versions', command: `${base} orkflow versions ${data.name}` },
@@ -198,14 +199,15 @@
 		{#if wf}
 			{#snippet version()}<span data-testid="orkflow-version"><Plate key="version" value={wf.version} /></span>{/snippet}
 			{#snippet digest()}{#if wf.definitionDigest}<Plate key="digest" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12).replace(/(.{4})(?=.)/g, '$1 ')} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
-			{#snippet appliedAt()}<TimeAgo at={wf.createdAt} />{/snippet}
-			<FactsStrip facts={[{ label: 'Current', value: version }, { label: 'Definition', value: digest }, { label: 'Applied', value: appliedAt }]} />
+			{#snippet createdAt()}<TimeAgo at={wf.createdAt} />{/snippet}
+			{#snippet sharedWith()}<span data-testid="orkflow-shared-with">{sharedWithLabel(wf.sharedWith).join(' · ')}</span>{/snippet}
+			<FactsStrip facts={[{ label: 'Current', value: version }, { label: 'Definition', value: digest }, { label: 'Created', value: createdAt }, ...(wf.sharedWith.length > 0 ? [{ label: 'Shared with', value: sharedWith }] : [])]} />
 			{#if wf.description && data.tab !== 'edit'}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}
 		{/if}
 	{/snippet}
 	{#snippet actions()}
 		{#if data.tab === 'edit' && editorActions}
-			<!-- The Edit tab's one orange action is Apply version, with Validate and its command line. -->
+			<!-- The Edit tab's one orange action is Create version, with Validate and its command line. -->
 			{@render editorActions()}
 		{:else if wf}
 			<button type="button" data-testid="orkflow-submit-run" onclick={() => (submitDialogOpen = true)} class="btn btn-primary"
@@ -271,7 +273,7 @@
 						<thead>
 							<tr>
 								<th scope="col">Version</th>
-								<th scope="col">Applied</th>
+								<th scope="col">Created</th>
 							</tr>
 						</thead>
 						<tbody>

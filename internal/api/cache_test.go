@@ -3,7 +3,6 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -21,7 +20,10 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const cachedYAML = `
@@ -60,9 +62,7 @@ func submitPlan(t *testing.T, svc *api.Service, starter *fakeStarter, req *orkst
 func applyYAML(t *testing.T, svc *api.Service, yaml string) *orkstackv1.ApplyOrkflowResponse {
 	t.Helper()
 	resp, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: yaml}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow")
 	return resp.Msg
 }
 
@@ -79,7 +79,7 @@ func TestSubmitRun_PlanCarriesCacheOnlyWhenDeclared(t *testing.T) {
 	if plain.Cache != nil {
 		t.Fatalf("an uncached Orkflow's plan carries cache: %+v", plain.Cache)
 	}
-	encoded, err := json.Marshal(plain)
+	encoded, err := stablejson.Marshal(plain)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,8 +110,8 @@ func TestSubmitRun_NoCacheOnAnUncachedOrkflowChangesNothing(t *testing.T) {
 	applyYAML(t, svc, uncachedYAML)
 	without := submitPlan(t, svc, starter, &orkstackv1.SubmitRunRequest{OrkflowName: "plain"})
 	with := submitPlan(t, svc, starter, &orkstackv1.SubmitRunRequest{OrkflowName: "plain", NoCache: true})
-	a, _ := json.Marshal(without)
-	b, _ := json.Marshal(with)
+	a, _ := stablejson.Marshal(without)
+	b, _ := stablejson.Marshal(with)
 	if !bytes.Equal(a, b) {
 		t.Fatalf("no_cache changed an uncached plan:\n%s\n%s", a, b)
 	}
@@ -176,9 +176,7 @@ func TestSubmitRun_PoolWithoutCacheSupportIsFailedPreconditionAndMintsNothing(t 
 func warningsFor(t *testing.T, svc *api.Service, yaml string) []*orkstackv1.ValidationIssue {
 	t.Helper()
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: yaml}))
-	if err != nil {
-		t.Fatalf("ValidateOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ValidateOrkflow")
 	return resp.Msg.GetIssues()
 }
 
@@ -265,9 +263,7 @@ func (f *breakdownFixture) cacheRun(t *testing.T, namespace, orkflow string, at 
 	for _, task := range ids {
 		run.TaskRuns = append(run.TaskRuns, &orkstackv1.TaskRun{TaskId: task, Status: orkstackv1.Status_STATUS_SUCCEEDED, Cache: tasks[task]})
 	}
-	if err := engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive run %s: %v", id, err)
-	}
+	must.OKf(t, engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil), "archive run %s", id)
 	return id
 }
 
@@ -326,9 +322,7 @@ func cacheStatsReq(orkflow string) *orkstackv1.GetCacheStatsRequest {
 func (f *cacheFixture) stats(t *testing.T, h *api.CacheHandler, req *orkstackv1.GetCacheStatsRequest) *orkstackv1.GetCacheStatsResponse {
 	t.Helper()
 	resp, err := h.GetCacheStats(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("GetCacheStats: %v", err)
-	}
+	must.OKf(t, err, "GetCacheStats")
 	return resp.Msg
 }
 
@@ -603,9 +597,7 @@ func TestPurgeCache_StopsAtTheBoundWithMore(t *testing.T) {
 func TestPurgeCache_TouchesNothingButMemos(t *testing.T) {
 	dir := t.TempDir()
 	memos, err := artifacts.NewLocalMemoStore(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer memos.Close()
 	others := map[string]string{
 		"metadata/commits/ml/ork-1/featurize/commit.json":   `{"schemaVersion":1}`,
@@ -616,12 +608,8 @@ func TestPurgeCache_TouchesNothingButMemos(t *testing.T) {
 	}
 	for path, content := range others {
 		full := filepath.Join(dir, filepath.FromSlash(path))
-		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Dir(full), 0o755))
+		must.OK(t, os.WriteFile(full, []byte(content), 0o644))
 	}
 	putTestMemo(t, memos, orkstackv1.CacheScope_CACHE_SCOPE_ORKFLOW, "p", "t", '1')
 	putTestMemo(t, memos, orkstackv1.CacheScope_CACHE_SCOPE_NAMESPACE, "p", "u", '2')

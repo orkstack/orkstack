@@ -29,7 +29,7 @@ callback, SDK, sidecar protocol, message queue, custom RPC framework, or
 application-specific worker daemon.
 
 ```text
-YAML Orkflow ──apply──> ork ──compile──> Temporal ──dispatch──> Orker
+YAML Orkflow ──create─> ork ──compile──> Temporal ──dispatch──> Orker
                                                                     │
                                                                OCI image
                                                                     │
@@ -87,8 +87,8 @@ An Orkflow keeps its existing user-facing `name` and `version` identity, but
 its canonical definition also has a SHA-256 digest. The immutable definition is
 addressed by that digest, and every execution records both the pinned version
 and the definition digest. A document that pins no `version:` is given one when
-first applied, a UUIDv7 in lowercase base32; a write-once object beside its
-versions maps the document's content to it, so re-applying the document stays a
+first created, a UUIDv7 in lowercase base32; a write-once object beside its
+versions maps the document's content to it, so creating the document again stays a
 no-op on every replica (`docs/STORAGE.md`). That object is a record, never a
 lock, and a version stored under its content hash by an earlier release answers
 the same lookup.
@@ -129,7 +129,7 @@ semantics. Artifacts remain opaque.
 
 Structured runtime data — `values.json`, a run's submitted input, and its
 recorded output — is always JSON on the wire, never YAML: it is the one format
-the Temporal payload, the Connect API, `orkctl --json` and the UI's typed input
+the Temporal payload, the Connect API, `orkctl -j` and the UI's typed input
 editor share (`docs/JSON.md`), so a copied CLI command reproduces exactly what
 was submitted, and it has none of YAML's silent coercions (`no`, `on`,
 octal-looking numbers). Documents a person authors — an Orkflow, an automation
@@ -276,8 +276,8 @@ A running execution must never silently switch images because a tag moved.
 
 The deployment's image policy (`orkctl admin image-policy`: `require_digest`,
 `allowed_registries`, cosign public `signing_keys`) is a floor; a namespace may
-only tighten it (`require_signed_by`), never loosen it. It is enforced at
-apply, at submit, and by the Orker at dispatch against the policy selection
+only tighten it (`require_signed_by`), never loosen it. It is enforced when
+an Orkflow is created, at submit, and by the Orker at dispatch against the policy selection
 the run pinned at submit, so every attempt of a task is judged by one rule.
 Only `cosign:` exists; it is a closed set, not an extension point (§13).
 
@@ -387,7 +387,7 @@ interpolate untrusted input without the templating layer's escaping. An `env:`
 value is stored in the definition, so it is configuration and never a secret;
 no `env:` value grants a credential, privilege or host access. Which
 secret sources a task may name is bounded by its namespace's
-`allowed_secrets` (checked at apply and again at submit) intersected with each
+`allowed_secrets` (checked when an Orkflow is created and again at submit) intersected with each
 Orker's `ORK_ORKER_SECRET_ALLOW` floor (checked at dispatch); both bound names
 and never store or compare a value. No floor admits the Orker's own sources —
 its `ORK_*` and `OTEL_*` settings, its process and devices, its work root, its
@@ -422,7 +422,7 @@ One definition limit is accepted (2026-10-11; raised with continue-as-new,
 §7.3): an Orkflow declares at most `engine.orkflow_max_tasks`
 (`ORK_ORKFLOW_MAX_TASKS`) tasks — 4000 by default — a deployment-configurable
 default that a deployment lowers or raises, refused `INVALID_ARGUMENT` at
-validate, apply and plan, naming the count, the limit and the setting, and
+validate, create and plan, naming the count, the limit and the setting, and
 re-checked at submit (`FAILED_PRECONDITION`). Every entry of `tasks:` counts
 once; a fan-out's items (bounded by `max_items`) and a composed child's tasks
 (a separate run) do not. A run's history is bounded per generation, but each
@@ -441,7 +441,7 @@ chains of plain tasks with small outputs — completed within the measured
 per-generation history, snapshot, in-flight, workflow-code, read-latency and
 run-page thresholds; it is the largest measured value, is not raised without
 re-running that evidence — that evidence is the task soak, a deferred test
-(§11), so a change that raises the default quotes a feature proof naming it —
+(§11), so a change that raises the default quotes a nightly-tier proof that ran it —
 and above it a deployment runs unmeasured, warned at
 boot. With continuation off a run has one history: the default is then at
 most the declared history event limit divided by 50, and an explicit value
@@ -498,11 +498,25 @@ internal never appears on any of those surfaces.
   It starts a **child run** of that Orkflow and waits for it; the run that
   started it is the **parent run**. **Outputs** are an Orkflow's declared
   return contract (`outputs:`).
+- **Shared Orkflow** means an Orkflow whose definition lists, in
+  `shared_with:`, other namespaces or other namespaces' Orkflows that may
+  compose it (`uses: orkflow:<namespace>/<name>@<version>`); the namespace
+  that owns it is its **owner**. Composition is the only way a run uses
+  another namespace's Orkflow: its child run executes in the parent's
+  namespace under that namespace's rules, and a submit, schedule or trigger
+  never starts another namespace's Orkflow. The decision is
+  `internal/authz.Authorize`'s alone, the seam later authentication and RBAC
+  wrap.
 - **Awaited task** means a task declaring `await:`: it runs no container and
   waits until it is **resolved** from outside the run (completed with values
   or rejected with a reason) or its deadline passes. A **callback token** is
   the one-time bearer credential an `await:` with `callback: true` is issued
   at submit.
+- **Sleeping task** means a task declaring `sleep:`: it runs no container and
+  waits a fixed time on the run's own Temporal timer, then succeeds with no
+  values; nothing outside the run resolves it. It is `SLEEPING` while it
+  waits, and like an await it crosses a continuation with its absolute
+  wake-up time.
 - **Cached task** means a task declaring `cache:` with `enabled: true`. A
   **memo** is one stored pointer from a memo key to a `SUCCEEDED` commit
   (§4.1); a memo step's outcome is a **hit**, **miss** or **bypassed**.
@@ -531,7 +545,7 @@ internal never appears on any of those surfaces.
 - **Automation document** means one authored YAML file
   (`kind: Automation`) declaring a namespace's settings, schedules, triggers
   and webhooks by name (`docs/AUTOMATION.md`). Its plan
-  (`apply --dry-run`) is unrelated to `orkctl run plan`, which simulates one
+  (`orkctl automation apply --dry-run`) is unrelated to `orkctl run plan`, which simulates one
   run's DAG.
 - **Activity interface** means what an image declares about its `with:`
   block: the `org.orkstack.activity.interface` label, which is the ABI the
@@ -712,7 +726,7 @@ CLI help, or in the UI.
 
 ### 7.2 Versioning
 
-An Orkflow version is immutable. Applying an edit creates a new version; runs
+An Orkflow version is immutable. Creating an edited document stores a new version; runs
 pin the version and its definition digest. A run continues on the definition it
 started with even if the current pointer moves. The current pointer controls
 new runs only. Moving the pointer across a breaking change to the declared
@@ -721,7 +735,8 @@ explicitly acknowledged (`--acknowledge-breaking`).
 
 One Worker Deployment spans `ork` and `orker` for a release. They share
 `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` and are released together. With
-versioning enabled, `RunWorkflow` and `ScheduleFireWorkflow` are Pinned,
+versioning enabled, `RunWorkflow`, `ScheduleFireWorkflow` and
+`WebhookDeliveryWorkflow` are Pinned,
 `IdempotencyClaimWorkflow` is AutoUpgrade, and the projection worker on
 `ork-engine-events` is unversioned. A child run started by a Pinned parent
 inherits the parent's version, so its plan is interpreted by the release that
@@ -755,8 +770,10 @@ submitting engine sets together with a `workflow.GetVersion` gate asked lazily
 where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
 `snapshot-overlay`, `fairness-keys`, `pin-creation-timeout`,
-`fairness-pin-creation`, `retry-max-interval`), so a history recorded
-before the gate replays its `DefaultVersion` branch; each new command path
+`fairness-pin-creation`, `retry-max-interval`, `task-publish-window`,
+`emit-past-cancel`), so a
+history recorded before the gate replays its `DefaultVersion` branch; each
+new command path
 gets its own
 recorded history fixture. Every tunable number that decides whether, which,
 how many or where workflow code issues a command — a history ceiling or
@@ -781,8 +798,8 @@ refused, so every Orker of one pool must run one release.
 A run whose plan carries a continuation budget continues as new into a new
 generation once its history has grown past that budget, at its next moment
 with nothing of it in flight: no activity, child run, pin (opening, open or
-closing) or event publish. Open awaits may cross; their deadlines are absolute
-instants. The run id, the event sequence counter, `created_at`, `started_at`, a
+closing) or event publish. Open awaits and sleeps may cross; their deadlines
+and wake-up times are absolute instants. The run id, the event sequence counter, `created_at`, `started_at`, a
 reference to an immutable full snapshot of its state at the switch and every
 version decision cross in the carry (`orkstack.v1.RunContinuation`, at most
 256 KiB), and no event is emitted for the crossing. A continuation is not a
@@ -831,9 +848,13 @@ future time. Do not add a custom scheduler, event bus, task queue, state
 machine, or expression runtime for these operations. An awaited task
 (`await:`) is the DSL form of a Signal wait, manual approval and external
 completion: a Temporal Timer for its deadline and a Signal for its resolution,
-and no container. A schedule is a Temporal Schedule; a composed task is a
-Temporal child workflow of the same `RunWorkflow` interpreter; a fan-out's
-items are ordinary activities in the interpreter's own in-flight set.
+and no container. A sleeping task (`sleep:`) is the DSL form of wait / sleep:
+one Temporal Timer and no Signal. A schedule is a Temporal Schedule; a
+composed task is a Temporal child workflow of the same `RunWorkflow`
+interpreter; a fan-out's
+items are ordinary activities in the interpreter's own in-flight set; a webhook
+delivery is a short workflow of its own whose one-`POST` activity Temporal
+retries under the ladder pinned into it, never a loop in the engine.
 
 Fair dispatch across namespaces is Temporal's task-queue fairness, keyed
 by namespace and pinned in the plan; it is never an OrkStack queue.
@@ -985,26 +1006,26 @@ recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
 
-The merge gate's absolute wall-clock budgets — the soaks' `GetRun` p95, the run
-page's 5 s — were calibrated on the 16-CPU reference host and are enforced in
-every local proof of any tier. On a CI runner with fewer CPUs, in the merge
-gate, the nightly and the pre-release gate alike, a miss of one is a recorded
-known gap, never a pass and never a widened bound (accepted 2026-10-27; for
-the pre-release gate 2026-10-28, so a release never waits for a runner as
-large as the reference): only under a row of `scripts/proof-host-speed.tsv`
-that the user approved and the base carries identically, and for a Go test
-only up to the bound scaled by the reference's CPUs over the runner's. A tag
-proved on CI therefore does not rest on budgets that held on the reference
-class; only a proof run on the reference host enforces them. The merger derives
-each excusal itself from the part's own records (docs/PROOFS.md §12). A count,
-a size, a history share, a deadlock-detector trip, a correctness assertion, or
-a failure beside the timing miss gets no row and fails the proof wherever it
-runs. What stays visible where a budget is excused is a bound on what the
-soaks' live `GetRun` reads, which holds on every host: at most one pass over
-the generation's history, in events and in bytes, and a bounded number of
-saved-state objects. It bounds what is read, not what reading it costs: a
-slower decode shows only in the wall-clock numbers, which a proof on the
-reference host enforces, and the run page's 5 s has no such counterpart.
+The merge gate's absolute wall-clock budgets — the soaks' live `GetRun` p95,
+the run page's and the item list's 5 s — were calibrated on the 16-CPU
+reference host. Each is checked by the test that measures it, against its
+reference bound scaled by the reference's 16 CPUs over the host's own when the
+host has fewer, never below the reference bound
+(`internal/testsupport/proof.Timing.Check`, and its twin `ui/e2e/budget.ts`;
+decided 2026-11-09); the host's count is the larger of the CPUs the process
+may use and the host's online CPUs, so restricting a proof to fewer cores
+never widens a bound, and the test's output names the measured value and the
+bound it was held to. A proof on a host of at least 16 CPUs therefore enforces
+the reference budgets exactly, and a tag proved on a smaller CI runner rests
+only on the scaled bound. Every other wall-clock bound of a test is held to its
+reference on every host. A budget's reference bound changes only with the
+user's approval. No table excuses a miss, and the merger reads no timing
+record. A count, a size, a history share, a deadlock-detector trip and every
+correctness assertion are never scaled and fail wherever they run. What bounds
+the soaks' live `GetRun` on every host besides its budget is what it reads: at
+most one pass over the generation's history, in events and in bytes, and a
+bounded number of saved-state objects. It bounds what is read, not what reading
+it costs: a slower decode shows only in the wall-clock numbers.
 
 The nightly of `main` is GitHub's: `nightly.yml` runs the nightly tier on
 `main` every day (05:17 UTC) and by dispatch. No local `make proof-nightly`
@@ -1024,10 +1045,14 @@ nightly failure; the fix is to bump the module, package or base image to the
 version the report names. It runs the README's Quickstart on a clone of the
 commit (`scripts/quickstart-smoke.sh`) as a job of its own too, because no
 proof runs the getting-started path: a stack that no longer builds or starts
-from a clone fails that run like any other nightly failure. `release.yml`
+from a clone fails that run like any other nightly failure. It holds every
+published release's notes to its section of the commit's CHANGELOG.md
+(`make release-notes-check`) as a job of its own too, because it reads the
+releases over the network: a release that differs fails that run, naming the
+version and the first line that differs. `release.yml`
 runs the same smoke itself before it publishes anything, so for a release
 that one is a check, not a rule. It runs every shipped example on such a stack
-as a job of its own (`scripts/quickstart-smoke.sh --examples`): applied, submitted
+as a job of its own (`scripts/quickstart-smoke.sh --examples`): created, submitted
 with no inputs, ending where `examples/README.md` says. Those examples reach
 `httpbin.org` and `github.com`, so no proof runs that job and `release.yml` does
 not require it: the merge gate runs them against stand-ins
@@ -1047,30 +1072,25 @@ its release the same way. The pre-release proof runs neither the nightly's own
 lanes nor its vulnerability scan (`vuln`, `vuln-js` and `vuln-images`), so a
 release is not tagged while either is red, and `release.yml` checks it: before
 it asks for the approval, it refuses a commit whose latest completed nightly on
-`main` did not pass (its proof, each of the scan's three jobs and
-`quickstart`), or that no nightly measured, waiting a bounded time for one
+`main` did not pass (its proof, each of the scan's three jobs,
+`release-notes` and `quickstart`), or that no nightly measured, waiting a bounded time for one
 still running. (`make
 release-tag`, which publishes nothing, leaves it a rule.) A nightly's verdict
 is its `proof.json`,
-not the run's colour (docs/PROOFS.md §10, §12). A nightly part whose runner measured below the
-runner-health floor (`scripts/proof-runner-floors.tsv`) before any test ran is
-a runner failure, not a regression: the proof records that part as
-`runner-degraded`, is not a proof of the tree, and that one part runs again as
-a new part of the same tree (§11.2); a part above the floor that fails is a
-regression on `main`. The race, race-repeat and fuzz parts are measured for
-information and no floor binds them, so a failure there is a regression on
-`main`. A
+not the run's colour (docs/PROOFS.md §10, §12). A nightly part that fails is a
+regression on `main`; only a part attempt that recorded no result (§11.2) runs
+again, as a new part of the same tree. A
 change that raises a
 default the deferred tests measured (`engine.orkflow_max_tasks`, the fan-out
 item maximum, or a continuation, history or in-flight default) quotes a
-feature proof that names those tests with `--tests`. A regression that only a
+nightly-tier proof of the change (`make proof-nightly`, or `nightly.yml`
+dispatched on its branch), which runs those tests. A regression that only a
 deferred test can see is found by the next nightly run rather than at merge.
 That is the accepted cost (2026-10-15).
 
 Every execution must eventually reach either a correct durable state or an
 explicit actionable failure. There is no documented third state such as stuck,
-half-completed, unknown, or needing database surgery. Do not call OrkStack
-production-ready until required failure and recovery scenarios are proven.
+half-completed, unknown, or needing database surgery.
 
 OpenTelemetry (`internal/telemetry`) is the only telemetry API in the
 codebase — no per-vendor code anywhere else. Exporters are selected by the
@@ -1145,12 +1165,34 @@ Every code change follows this order:
    name only changes that may affect them: behaviour, the DSL, the CLI, the
    API and its error reasons, configuration, the activity contract, storage
    layout, what a release publishes and any security fix to it, a
-   deprecation, a breaking change. Such a change adds an entry under
+   deprecation, a breaking change. Every entry first passes one test: would a
+   person who runs or uses OrkStack care about this at all? It stays if it
+   changes what they type, configure, see or depend on, or needs action from
+   them, and every **BREAKING** change and security fix always stays; internal
+   minutiae (a removed example, the quickstart's internals, a reworded message
+   nobody scripts against, a metric label only an internal dashboard sees, a
+   glitch no user would have noticed) get no entry, in the changelog or the
+   release notes. Such a change adds an entry under
    CHANGELOG.md's `[Unreleased]` section (Keep a Changelog 1.1.0), always in
-   one format: a sentence or two on what changed and what they must do about
-   it, if anything; an absolute link to the doc, where one holds more detail;
-   and, once changes land through pull requests, a link to its pull request. A
-   breaking change's entry is marked **BREAKING**. A change that cannot affect
+   one format: one line, in plain words a user of OrkStack understands, on what
+   changed for them and what they must do about it, if anything, at most 200
+   characters before its closing links, and naming no internal type or field a
+   user never types; then, in one closing parenthesis, an absolute link to the
+   doc that holds the detail, where one does, and, once changes land through
+   pull requests, a link to its pull request. One user-facing change is one
+   entry, however many commits made it. A breaking change's entry is marked
+   **BREAKING** and stands first in its subsection. A version's section opens
+   with `### Features`, a short list of its headline items, a few words each,
+   closed by one `**Upgrading:**` line on what to read before upgrading, since
+   it opens the release's notes; Added, Changed and the rest after it stay the
+   full record. `TestChangelog_EntriesAreOneShortLine`
+   (`internal/docscheck`) refuses an entry or an Upgrading line over the
+   limit, counted without its bullet, its mark and its closing links, and an
+   entry that runs on to a second line. A released version's section and its
+   release notes on GitHub must match: to change what a released version
+   says, edit its section, then republish it with `make release-notes-publish
+   VERSION=vX.Y.Z`, and never edit a release body by hand (docs/PROOFS.md
+   §10). A change that cannot affect
    them gets no entry, however large: documentation edits; CI, workflows and the
    proof harness, unless the change alters what a release publishes; tests;
    refactors; a cosmetic change to the UI; internal tooling, such as the
@@ -1159,18 +1201,12 @@ Every code change follows this order:
    gets one, and so does every security fix to what a release publishes, a
    vulnerable dependency's bump among them, even when they see nothing change.
    A change with no entry still updates the reference doc that describes it.
-8. Optionally, check the change's evidence with
-   `make proof-feature TESTS='PKG:REGEX …' SPECS='FILE …'` (§11.2). It is a
-   scoped check on the branch and gates nothing (decided 2026-10-28): the
-   fast loop is step 6, and the gate is the full proof of step 10. A change
-   that raises a default the deferred tests measured still quotes a feature
-   proof that names them (§11).
-9. Commit with a Conventional Commit that names the tests and specs that
+8. Commit with a Conventional Commit that names the tests and specs that
    prove the change. A branch may hold several; what lands on `main` is one
    squash commit (§11.3), whose subject is a Conventional Commit and whose body
    names those tests and specs.
-10. Merge through §11.3. The full proof of the merged tree is what makes the
-    change done.
+9. Merge through §11.3. The full proof of the merged tree is what makes the
+   change done.
 
 Unit tests are pure and table-driven. A parser of input OrkStack does not
 control (a request body, a flag, an authored document, an object read back from
@@ -1222,8 +1258,7 @@ work root, because an identity is host-wide: Boot locks it and reaps by it);
 the binaries it runs (`internal/testsupport/testbin`: `ORK_TEST_BIN_DIR`, or a
 directory it built into itself, never `bin/`); and the image tags it pushes
 (only tags carrying its own process token). A test builds a binary only
-through `testbin.Path` with a literal package path, which is how a feature
-proof knows which packages a suite exercises. The first-party activity images
+through `testbin.Path`. The first-party activity images
 are pushed once per proof under `ORK_TEST_IMAGE_TAG`; tests and specs only
 resolve that tag. A test never asserts on host-wide state: it counts
 containers by `label=ork.orker=` or `label=ork.run=`, never with an unfiltered
@@ -1253,8 +1288,8 @@ process's pid, as an integration test's are (`orkerEnv` in
 `ui/e2e/harness.ts`). Each spec still listens on fixed ports — unique across
 files, not across proofs — so at most one
 proof runs Playwright specs on a host at a time: the Playwright gate takes a
-host-wide lock, so a feature proof's specs wait for a full proof's, and never
-run beside them. Specs run by hand (`cd ui && bun run test`) take no lock; do
+host-wide lock, so one proof's specs wait for another's, and never run beside
+them. Specs run by hand (`cd ui && bun run test`) take no lock; do
 not run them while a proof's Playwright gate runs. The observability gate is
 the other exception: its Prometheus scrape targets are fixed ports, so it runs
 under a host-wide lock of its own. A test that proves something did NOT happen within a
@@ -1303,11 +1338,9 @@ describes what changed says the new thing, with a CHANGELOG.md `[Unreleased]`
 entry for a change that may affect the people who run or use OrkStack
 (§11.1, step 7). Done is judged by the merge gate; a deferred test's
 regression is a regression on `main`, found by the nightly or the pre-release
-proof (§11). A feature proof means "ready for the merge proof", never "done".
+proof (§11).
 
-**The four tiers.** A **full proof** is the merge gate. A **feature proof**
-is an optional, scoped check of a change on its branch and never merge
-evidence. The **nightly
+**The three tiers.** A **full proof** is the merge gate. The **nightly
 tier** runs only the tests `scripts/proof-nightly-tests.txt` lists and the
 spec files `scripts/proof-nightly-specs.txt` lists, and two lanes of its own
 — the race repeat (the concurrency-heavy packages' unit suites under the race
@@ -1315,43 +1348,27 @@ detector, several times in one run) and the fuzz lane (every Fuzz target,
 sharing one time budget for the whole lane, a crasher failing it and its input
 kept) — and is never merge
 evidence. The pre-release gate is the full tier with nothing
-deferred, and it runs the observability gate unconditionally. A release tag
+deferred. A release tag
 requires a passing pre-release proof of the exact commit. docs/PROOFS.md is
 the reference for what each tier runs.
 
 **Rules for every proof.**
 
 - Never rerun a failing test, and never partially rerun a shard that produced
-  a result. Only three kinds of part attempt may run again, none of which
-  recorded a result: one whose runner GitHub annotated as lost; one whose own
-  runner-health measurement at its start was below the floor
-  (`scripts/proof-runner-floors.tsv`; the part is classified
-  `runner-degraded`, and `proof.json` records the part, the metric, the
-  measured value and the floor); and one whose job failed in a fetch or install
-  step before its proof step started (`setup-failed`: the failed step is on
-  the per-kind allowlist `setupStepNames` in `test/tools/proofrun/merge.go`,
-  the plan and the build have no entry, and `proof.json` records the part, the
-  attempt and the step). Such a part runs again whole, as a new part of the
-  same tree, never a failed test in isolation, and `proof.json` records the
-  rerun; any other second attempt makes the proof ineligible. Reruns of the
-  three classes may be issued automatically (`.github/workflows/proof-rerun.yml`,
-  off unless the repository enables it, at most two per run), by a planner that
-  reuses the merger's classification and reruns only when every failed job is
-  the `proof` job or a part of those classes. "Re-run failed jobs" is
-  permitted when every failed part is eligible, and is never an answer to a
-  part that recorded a result; the merger stays the only authority, so a
-  rerun the planner got wrong makes a proof ineligible and never passes one.
-  A degraded part's tests have no outcome of the tree, and a proof holding one
-  with no later attempt is not a proof of the tree; a part above the floor
-  whose tests fail is a test failure. The floor is measured once, before any
-  gate: a runner that degrades later is not seen, and its failures stay test
-  failures.
-- Never edit the costs file, the slow list, the nightly list, the quarantine
-  list, the host-speed table, the runner-health floors or the allowed skips to
-  get a proof through. The nightly and quarantine lists, and the rows of the
-  host-speed table, change only with the user's approval.
-- A new top-level path needs a `scripts/proof-scope.tsv` row, and a path the
-  table does not map refuses the feature tier.
+  a result. Only a part attempt that recorded no result may run again: one
+  whose runner GitHub annotated as lost, and one, of any part but `plan` and
+  `build`, whose job failed before its proof step started (`setup-failed`;
+  `proof.json` records the part, the attempt and the step). Such a part runs
+  again whole, as a new part of the same tree, never a failed test in
+  isolation, and `proof.json` records the rerun; any other second attempt
+  makes the proof ineligible. "Re-run failed jobs" is permitted when every
+  failed part is one of those two, and is never an answer to a part that
+  recorded a result. The merger is the only authority: a rerun it does not
+  accept makes a proof ineligible and never passes one. A test that fails on a
+  slow runner is a test failure, fixed at its root or quarantined.
+- Never edit the costs file, the nightly list, the quarantine list or the
+  allowed skips to get a proof through. The nightly and quarantine lists change
+  only with the user's approval.
 - Read `proof.json`, never the README, for a verdict.
 - A quarantined test still runs; its failure is recorded as
   `quarantined-fail`, never as a pass, and its entry carries an owner, a
@@ -1377,70 +1394,6 @@ the reference for what each tier runs.
   arguments and prerequisites are checked. Exit status: `0` pass, `1` a gate
   failed, `2` an invalid invocation, `77` a missing prerequisite.
 
-**Feature proof** (`make proof-feature`;
-`scripts/proof.sh --tier feature [--base REF] [--tests PKG:REGEX]... [--specs FILE]...`)
-is an optional, scoped check of a change on its branch: it gates nothing, and
-what follows is what it requires when it runs. Its directory is
-`proof/<name>-feature/`. Its change set is the diff from the merge base with
-`--base` (default `main`) to the working tree, untracked files included.
-Every changed path must match a rule in `scripts/proof-scope.tsv`. A path that
-no rule matches, or whose rule is `full` (`go.mod`, `go.sum`, the Makefiles,
-`buf.yaml`, `buf.gen.yaml`, `.github/`, `deploy/` other than the generated
-defaults, the example configuration and the observability profile, `scripts/`
-other than the observability gate and the three measurement files
-(`scripts/proof-slow-tests.txt`, `scripts/proof-test-costs.tsv` and
-`scripts/proof-ui-costs.tsv`), `internal/testsupport/`, and
-`test/tools/proofrun/`), refuses the feature tier. A feature proof always runs
-lint, build, the unit suites and `go vet -tags=integration`, and it runs the UI
-type-check and unit suites when `ui/` or `proto/` changed or a spec runs, the
-site's check and build when a path the site reads changed, and the race gate
-over the Go packages the change touches when it touches any. It then runs:
-
-- the change's **evidence**: every test whose source the diff changes,
-  including every test that reaches a changed or deleted helper, type,
-  variable or `TestMain` through its package's declarations (comment-only
-  changes are no change) — except that a test which is evidence only because
-  it reaches a changed helper, type or variable is held to the slow list, as
-  the regression set is, and the merge proof runs it; when every such test of
-  a package is slow, the cheapest stays, and a changed `TestMain` still runs
-  the whole package; every test `--tests` names, where `REGEX` must match
-  whole test names; every spec the diff changes or `--specs` names (a file
-  under `ui/test/` names a UI unit test); every spec when the Playwright
-  harness, its config or the UI's dependencies changed; the activity contract
-  fixture when `images/` or `test/fixtures/` changed; the tests that read a
-  changed example, and the examples spec, when `examples/` changed; the tests
-  and specs that run a changed `test/tools/` tool, found by searching their
-  sources; the observability gate when a telemetry path changed; and the site
-  gate when a changed path's scope row names `site` (the site itself, the
-  documentation and markdown, the examples, the generated defaults, `proto/`,
-  and the UI's design tokens, icons and dependencies);
-- the **regression set**: in every integration package whose test binary
-  depends on a changed package — through its imports, or through a binary its
-  suite builds (an `images/` change counts as a change to `internal/orker`) —
-  every test declared in an integration-tagged file, except those on the slow
-  list (`scripts/proof-slow-tests.txt`, regenerated from a full proof's ledger
-  by `make proof-slow-list FROM=proof/<name>`), which also holds back the
-  evidence that only reaches a changed declaration. A test whose own source
-  changed, and every `--tests` name, runs whatever the slow list says.
-
-The regression set is never evidence. Every changed package with a change
-outside its tests and its comments needs at least one evidence test whose
-binary depends on it, and that test must be an integration test when
-`scripts/proof-scope.tsv` marks the package as Temporal- or storage-facing. A
-changed file under `ui/src/` needs an evidence spec, except that a change only
-to `ui/src/lib/**/*.ts` may be proven by a changed or named UI unit test.
-Missing evidence, a `--tests` pattern that matches no test or only allowed
-skips, and a `--specs` file that does not exist are invalid invocations. A
-feature proof passes only if every evidence test and spec ran and passed; a
-skip, even an allowed one, is not evidence, so a test
-`scripts/proof-allowed-skips.txt` names is never made evidence: the README
-lists each one a rule reached as not evidence, with the list's reason. The README opens with
-`SCOPED FEATURE PROOF — NOT MERGE EVIDENCE`. It lists the evidence that ran
-for each changed package and path, and it names every gate, package, slow test
-and spec it did not run, each with the reason. When Go packages the UI suite
-exercises changed, it says that no spec ran for them. Its result line reads
-`Result: **FEATURE PASS — not merge evidence**`.
-
 **Full proof** (`make proof`; `make proof-ui` is the same) is the merge gate,
 and it runs everything except the tests `scripts/proof-nightly-tests.txt`
 lists, which its integration ledger records as `deferred` with their list
@@ -1452,12 +1405,11 @@ differs from its unit build, except the deferred ones, against real Temporal
 and SeaweedFS with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run
 on those images; the UI type-check and unit suites; the site's check and
 build; the race gate (the unit suites under the race detector, `-short`);
-every Playwright spec; and the observability gate, whenever the tree
-differs from `main` in a telemetry path. That diff-conditioned observability
-gate is the only diff-conditioned part of the full proof, and its base is not
-a choice: the full tier refuses `--base`, a full proof whose recorded base is
-not `main` is not merge-eligible, and `merge-check PROOF=` requires that base
-to be `main`'s current tip. Concurrency is how the full proof is fast, never a
+every Playwright spec; and the observability gate. Its base is not a choice:
+the gate lists are anchored to `main` (an entry the change itself adds excuses
+nothing and defers nothing), a full proof whose recorded base is not `main` is
+not merge-eligible, and `merge-check PROOF=` requires that base to be `main`'s
+current tip. Concurrency is how the full proof is fast, never a
 reason to run less: the fast gates (lint, build, unit, vet, the UI type-check
 and unit suites, the site's check and build and the race gate) run first and
 alone, and a failure there or in any later gate stops a local proof
@@ -1585,12 +1537,14 @@ internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
 internal/archive/      Run retirement, the archive sweep and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
+internal/authz/        The one decision whether an Orkflow may compose another namespace's (shared_with)
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
 internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
+internal/stablejson/   The JSON bytes OrkStack hashes, stores or hands a container, written with encoding/json/v2
 internal/typeid/       The time-ordered ids a run id and a minted Orkflow version are made of
 internal/docscheck/    Documentation drift checks (test-only)
 internal/apidocs/      docs/API.md, the client-facing API reference, generated from the proto comments
@@ -1615,7 +1569,7 @@ docs/                  Reference material (indexed in README.md; `CLI.md` is gen
 test/                  Activity contract fixtures and test-only helper tools
 scripts/               Development helpers (`make up`, `make reset`) and the proof harness
                        (`proof.sh`, the gate lists)
-.github/               CI: fast check, feature tier, sharded merge gate, title check, nightly, release
+.github/               CI: fast check, sharded merge gate, title check, nightly, release
 ```
 
 Use Go 1.27, one module `github.com/orkstack/orkstack`, `gofmt`, `go vet`, and

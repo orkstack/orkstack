@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // overlayFanOut declares items fan-out items: items+1 declared rows.
@@ -115,9 +117,7 @@ func TestIntegration_EngineWritesSnapshotOverlaysWhenConfigured(t *testing.T) {
 	}
 	ns := fmt.Sprintf("%s-ovl-%d-%d", base, os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	configFile := filepath.Join(t.TempDir(), "ork.yaml")
-	if err := os.WriteFile(configFile, []byte("engine:\n  snapshot_overlays: true\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(configFile, []byte("engine:\n  snapshot_overlays: true\n"), 0o644))
 	address, orkflows, log := bootEngine(ctx, t, buildOrk(t), temporal, "engine-overlays",
 		"ORK_TEMPORAL_NAMESPACE="+ns, "ORK_CONFIG_FILE="+configFile)
 	if !strings.Contains(log.String(), "snapshot overlays") || !strings.Contains(log.String(), "snapshot_overlays=true") {
@@ -125,9 +125,7 @@ func TestIntegration_EngineWritesSnapshotOverlaysWhenConfigured(t *testing.T) {
 	}
 	pid := engines["engine-overlays"].cmd.Process.Pid
 	control, err := client.DialContext(ctx, client.Options{HostPort: temporal, Namespace: ns, Identity: "overlay-control"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer control.Close()
 	ours := func(p *taskqueuepb.PollerInfo) bool {
 		return strings.HasPrefix(p.GetIdentity(), fmt.Sprint(pid)+"@") &&
@@ -149,14 +147,10 @@ func TestIntegration_EngineWritesSnapshotOverlaysWhenConfigured(t *testing.T) {
 			t.Fatalf("apply %s: %v", name, err)
 		}
 		data, err := structpb.NewStruct(map[string]any{"parts": []any{"a", "b"}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		resp, err := runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: name, OrkflowVersion: version, Input: &orkstackv1.Payload{Data: data}, AllowEmptyPool: true}))
-		if err != nil {
-			t.Fatalf("submit %s: %v", name, err)
-		}
+		must.OKf(t, err, "submit %s", name)
 		runID := resp.Msg.GetRun().GetId()
 		t.Cleanup(func() { _ = control.TerminateWorkflow(context.Background(), runID, "", "test cleanup") })
 		return runID, startHistory(t, ctx, control, runID, func(h *historypb.History) bool {

@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_RecordHistoryGuardLookaheadHistory records the guard
@@ -66,16 +68,12 @@ func TestIntegration_RecordHistoryGuardLookaheadHistory(t *testing.T) {
 	if last := published[len(published)-1]; last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED || last.GetTaskId() != "" {
 		t.Fatalf("the recorded run ended %v owned by %q", last.GetType(), last.GetTaskId())
 	}
-	if err := replayRecorded(recorded, runID); err != nil {
-		t.Fatalf("the history just recorded does not replay against current code: %v", err)
-	}
+	must.OKf(t, replayRecorded(recorded, runID), "the history just recorded does not replay against current code")
 	encoded := encodeHistory(t, recorded)
 	proof.Write(t, "history-guard-lookahead", filepath.Base(historyGuardLookaheadFixture), encoded)
 	written := "the proof directory only (ORK_RECORD_GOLDEN_HISTORY unset)"
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") != "" {
-		if err := os.WriteFile(historyGuardLookaheadFixture, encoded, 0o644); err != nil {
-			t.Fatalf("write %s: %v", historyGuardLookaheadFixture, err)
-		}
+		must.OKf(t, os.WriteFile(historyGuardLookaheadFixture, encoded, 0o644), "write %s", historyGuardLookaheadFixture)
 		written = historyGuardLookaheadFixture
 	}
 	t.Logf("recorded %d events of run %s into %s (deployment %s), replayed clean; %d events published, contiguous",

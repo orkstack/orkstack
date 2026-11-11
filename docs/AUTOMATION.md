@@ -5,7 +5,9 @@ declares, by name, everything that surrounds that namespace's Orkflows — what
 an Orkflow itself does not declare
 ([DSL.md](DSL.md#what-an-orkflow-does-not-declare)): its settings, its
 schedules, its triggers and its webhooks. It lives in Git beside
-the Orkflow documents; `orkctl apply` applies both.
+the Orkflow documents. `orkctl orkflow create` creates the Orkflows, and
+`orkctl automation apply` applies the document; each command refuses the other's
+kind, so a directory that holds both must be split.
 
 ```yaml
 # environments/prod/automation.ork.yaml
@@ -45,11 +47,17 @@ webhooks:
 ```
 
 ```bash
-orkctl apply environments/prod/ --dry-run     # plans every document, writes nothing
-orkctl apply environments/prod/               # applies: Orkflows first, then each namespace's plan
-orkctl apply automation.ork.yaml --prune      # also deletes named objects the document no longer declares
-orkctl export -n payments > automation.ork.yaml   # a hand-managed namespace, as a document
+orkctl orkflow create environments/prod/orkflows/   # creates the Orkflow versions first
+orkctl automation apply environments/prod/automation.ork.yaml --dry-run   # plans it, writes nothing
+orkctl automation apply environments/prod/automation.ork.yaml             # applies the plan
+orkctl automation apply environments/prod/automation.ork.yaml --prune     # also deletes named objects the document no longer declares
+orkctl automation export -n payments > automation.ork.yaml   # a hand-managed namespace, as a document
 ```
+
+A layout that keeps the Orkflows and the automation document in one directory
+must split them, for example `environments/prod/orkflows/` for the Orkflows and
+`environments/prod/automation.ork.yaml` for the document: each command refuses
+the other's kind, in a directory too.
 
 **The engine plans; the client executes.** `AutomationService.PlanAutomation`
 parses the document, reads what the namespace holds, and answers with an
@@ -62,11 +70,11 @@ CI job, every write is the same validated, audited call a person could make by
 hand, and re-running it against an unchanged namespace plans nothing.
 
 "Plan" here is unrelated to `orkctl run plan`, which simulates one run's DAG
-(`PlanRun`); the automation plan is `PlanAutomation`, shown by `apply
+(`PlanRun`); the automation plan is `PlanAutomation`, shown by `orkctl automation apply
 --dry-run`.
 
 What this is not (`AGENTS.md` §13): not a reconciliation loop, a controller or
-a drift watcher — drift is found by `orkctl apply --check`, run by a person or
+a drift watcher — drift is found by `orkctl automation apply --check`, run by a person or
 a CI job; not a desired-state store — no document, plan, digest or
 "last-applied" record is stored anywhere, and no object carries a
 "managed-by" marker; not a templating language — no variables, includes or
@@ -77,7 +85,7 @@ interpolation, and per-environment differences are separate documents.
 | Key | Required | Meaning |
 | --- | --- | --- |
 | `apiVersion` | yes | Exactly `orkstack/v1`. |
-| `kind` | yes | Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl apply` dispatches on it. |
+| `kind` | yes | Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl automation apply` refuses any other kind, as `orkctl orkflow create` refuses this one. |
 | `namespace` | yes | The one namespace the document describes, a slug. Required and authoritative: never inferred from `-n`, `ORK_NAMESPACE` or a saved default, so a document that prunes can never land in the wrong namespace by accident of a shell. |
 | `settings` | no | The namespace's settings, as an overlay. |
 | `schedules`, `triggers`, `webhooks` | no | `name: entry` mappings. |
@@ -92,7 +100,8 @@ and "leave alone" are opposites: write `triggers: {}` or remove the key.
 
 Parsing is strict: an unknown key at any level is an error naming the keys
 allowed there; a second YAML document (`---`), even an empty one or one that
-does not parse, a duplicate key, and anchors or aliases are errors. Entry names are slugs (`^[a-z][a-z0-9-]*$`, at most 200
+does not parse, a duplicate key, and anchors, aliases and merges (a `<<:` key, `<<` as a value, or a
+`!!merge` tag) are errors. A value tagged with the non-specific `!` is a string, and `-0` for an integer is 0. Entry names are slugs (`^[a-z][a-z0-9-]*$`, at most 200
 bytes). Every problem is a `ValidationIssue` with a dot-separated field path —
 `settings.run_retention`, `schedules.nightly-reconcile.cron[1]`,
 `webhooks.etl-loader.events[0]` — and a message beginning `line N:` when the
@@ -130,7 +139,7 @@ or unmanaged before it ships; a test walks the descriptor and fails otherwise.
 
 | Key | Value | Absent means |
 | --- | --- | --- |
-| `orkflow` | slug, **required**, fixed at creation | — |
+| `orkflow` | slug of this namespace's Orkflow, **required**, fixed at creation | — |
 | `version` | string | the current pointer at each fire |
 | `description` | string, ≤ 256 bytes, no control characters | `""` |
 | `cron` | string, or list of strings | none |
@@ -147,7 +156,7 @@ There is no `paused` key — pause is operational, shown as a note, never
 changed — and no magic `version` word: `version: current` pins a version
 named `current`. Run input is JSON on the wire; in this document it is written
 as a YAML mapping and converted by the strict mapping (`AGENTS.md` §3.1,
-`docs/JSON.md`), so `apply --dry-run` shows exactly the JSON each fire submits.
+`docs/JSON.md`), so `orkctl automation apply --dry-run` shows exactly the JSON each fire submits.
 A string is refused (a JSON object written as a string was the shape before
 this release), and `{}` is recorded as unset. Cron syntax is the
 cluster's alone: an expression it cannot parse fails that step of the apply.
@@ -156,11 +165,18 @@ cluster's alone: an expression it cannot parse fails that step of the apply.
 
 | Key | Value | Absent means |
 | --- | --- | --- |
-| `orkflow` | slug, **required**, fixed at creation | — |
+| `orkflow` | slug of this namespace's Orkflow, **required**, fixed at creation | — |
 | `version` | string | the current pointer at each invoke |
 | `description` | string | `""` |
 
 The entry's name is `Trigger.name`. The token is never in the document.
+
+A schedule and a trigger start only their own namespace's Orkflows: an
+`orkflow: <namespace>/<name>` is refused, naming the rule. Another namespace's
+Orkflow runs only as a child, composed by one of this namespace's Orkflows
+(`uses: orkflow:<namespace>/<name>@<version>`) when its `shared_with:` admits
+that Orkflow ([DSL.md](DSL.md#sharing-across-namespaces), "Sharing across
+namespaces").
 
 ### `webhooks`
 
@@ -196,11 +212,11 @@ secret, never change. That is what lets a hand-made object be brought under a
 document without re-issuing its credential:
 
 ```bash
-orkctl export -n payments                      # unnamed objects are listed in a trailing comment
+orkctl automation export -n payments                      # unnamed objects are listed in a trailing comment
 orkctl trigger update trg-4a1c… -n payments --name github-deploy
 orkctl webhook update wh-9f2e… --name etl-loader
-orkctl export -n payments > automation.ork.yaml    # now they are entries
-orkctl apply automation.ork.yaml --check          # exits 0
+orkctl automation export -n payments > automation.ork.yaml    # now they are entries
+orkctl automation apply automation.ork.yaml --check          # exits 0
 ```
 
 Name uniqueness is checked by the store immediately before the write. It is
@@ -240,8 +256,8 @@ offers no command; it says what the new key costs instead — the old schedule
 keeps firing until it is deleted (or `--prune` deletes it, its run history
 staying under the old name), and a paused one's hold is not carried over.
 
-Every schedule and trigger entry's `(orkflow, version)` must be stored — or be
-an Orkflow version the same invocation applies first. The plan also runs the
+Every schedule and trigger entry's `(orkflow, version)` must already be created:
+`orkctl orkflow create` stores it before the document is planned. The plan also runs the
 target RPCs' own validators over the carried requests — the retention
 ceiling, a declared telemetry sink, the namespace's pool and policy shape, a
 schedule spec's rules — so an apply fails at plan time, before any write,
@@ -278,88 +294,83 @@ it), not UNCHANGED, UNDECLARED or UNMANAGED steps, not notes or issues. It is
 defined even when nothing is actionable — "no changes" is pinnable — and
 empty exactly when nothing was planned; an empty digest never matches.
 
-## `orkctl apply`
+## `orkctl automation apply`
 
 ```text
-orkctl apply <file|dir>... [--dry-run | --check] [--prune]
-             [--expect-plan sha256:HEX] [--secrets-out PATH] [-n NS] [--json]
+orkctl automation apply <file|dir>... [--dry-run | --check] [--prune]
+                        [--expect-plan sha256:HEX] [--secrets-out PATH] [-n NS] [-j]
 ```
 
-One Orkflow file with none of the automation flags behaves as a plain Orkflow
-apply (`--json` prints `ApplyOrkflowResponse`). Otherwise each argument is a file, or a directory read non-recursively for
-`*.ork.yaml` and `*.ork.yml` in lexical order. A file's `kind:` decides:
-`kind: Orkflow` is an Orkflow, `kind: Automation` an automation document, and
-a file with no `kind`, or any other, is refused before anything is sent. An
-activity interface (`kind: ActivityInterface`) is packed into an image, never
-applied: one named as a file is refused, and one in a directory is skipped
-and named on stderr. Two automation documents naming one namespace are
-refused. Only an `-n` typed on the command line is checked against a
-document's namespace; `ORK_NAMESPACE` and the saved default never apply to
-it.
+Each argument is an automation document, or a directory read non-recursively
+for `*.ork.yaml` and `*.ork.yml` in lexical order. A file's `kind:` decides: a
+file with `kind: Automation` is planned, and a file with no `kind`, or any
+other, is refused before anything is sent. A `kind: Orkflow` document is
+refused, in a directory too: create Orkflows with `orkctl orkflow create` first,
+then apply the automation that names them. An activity interface
+(`kind: ActivityInterface`) is packed into an image, never applied: one named as
+a file is refused, and one in a directory is skipped and named on stderr. Two
+automation documents naming one namespace are refused. Only an `-n` typed on the
+command line is checked against a document's namespace; `ORK_NAMESPACE` and the
+saved default never apply to it.
 
 Nothing is written until every document has been read, validated and planned:
 
-1. Each Orkflow document is validated, and its compiled name and version
-   looked up: **new**, **identical** (stored with the same source bytes,
-   header included, so a moved header is a change like any other;
-   `docs/DSL.md`, "The document header") or **conflicting** (stored with
-   different source — an error).
-2. Each automation document is planned, told which Orkflow versions this
-   invocation stores first.
-3. The invocation is **refused** — everything printed, exit 1, nothing
-   written — on any Orkflow error or conflict, any plan error, an
-   `--expect-plan` with other than one automation document or a different
-   digest (the fresh plan is printed), a `secret_env` variable that is unset
-   (a printed note on `--dry-run`), or a `--secrets-out` file that exists
-   or cannot be created. The `--secrets-out` file is created (exclusively,
-   mode 0600) here, before the first write, so a path apply cannot write
-   refuses the apply instead of losing a secret after it.
-4. `--dry-run` prints and exits 0; `--check` is a dry run that exits **4**
-   when anything would change.
-5. New Orkflow versions are applied, then each document's actionable steps
-   run in order. A DELETE whose object is already gone is `already gone`; any
-   other failure stops everything after it. A partial apply is reported, not
-   rolled back: running apply again plans from what now exists and finishes.
+1. Each automation document is planned against the namespace as it holds it, and
+   against the Orkflow versions already created: a schedule or trigger that names
+   a version nothing has stored is an error, not a wait.
+2. The invocation is **refused** — everything printed, exit 1, nothing written —
+   on any plan error, an `--expect-plan` with other than one automation document
+   or a different digest (the fresh plan is printed), a `secret_env` variable that
+   is unset (a printed note on `--dry-run`), or a `--secrets-out` file that exists
+   or cannot be created. The `--secrets-out` file is created (exclusively, mode
+   0600) here, before the first write, so a path the apply cannot write refuses
+   the apply instead of losing a secret after it.
+3. `--dry-run` prints and exits 0; `--check` is a dry run that exits **4** when
+   anything would change.
+4. Each document's actionable steps run in order. A DELETE whose object is already
+   gone is `already gone`; any other failure stops everything after it. A partial
+   apply is reported, not rolled back: running apply again plans from what now
+   exists and finishes.
 
-A trigger token, or a webhook secret the engine generated, is printed once
-with the trigger's runnable `curl` — or, with `--secrets-out PATH`, written to
-a new mode-0600 file as a `DisclosedSecrets` document and named in place of
-each value. Should that final write still fail, the file is removed and the
-secrets are printed (and carried in the `--json` report) instead, and apply
-exits 1. A re-apply prints no secret: nothing is created.
+A trigger token, or a webhook secret the engine generated, is printed once with
+the trigger's runnable `curl` — or, with `--secrets-out PATH`, written to a new
+mode-0600 file as a `DisclosedSecrets` document and named in place of each value.
+Should that final write still fail, the file is removed and the secrets are
+printed (and carried in the `-j` report) instead, and apply exits 1. A re-apply
+prints no secret: nothing is created.
 
-`--json` prints one `ApplyReport` (`proto/orkstack/v1/automation.proto`): the
-Orkflow reports, each automation document's plan, and the results of an
-apply.
+`-j` prints one `ApplyReport` (`proto/orkstack/v1/automation.proto`): each
+automation document's plan, and the results of an apply.
 
-An Orkflow is validated inside an existing namespace, so a namespace that
-only this invocation would create must be created first: apply the
-automation document that creates it, then the Orkflows. `apply` says so
-rather than failing obscurely.
+A namespace that only this invocation would create must be created first, because
+an Orkflow is validated inside an existing namespace: `orkctl orkflow create`
+says so rather than failing obscurely, and an automation document that creates the
+namespace is applied before the Orkflows that use it.
 
-## `orkctl export`
+## `orkctl automation export`
 
-`orkctl export -n NS` prints the document a namespace's current automation
-would be applied from — every setting at its live value, every section (even
-empty), entries sorted by name — so that `export` then `apply --check` exits
-0. It is deterministic. It refuses rather than omits: a schedule the cluster
-could not describe, or two objects sharing a name, fails the export, because
-an export missing an object would delete it when applied with `--prune`. A
-trailing comment lists each unnamed object with the command that names it,
-repeated on stderr.
+`orkctl automation export -n NS` prints the document a namespace's current
+automation would be applied from — every setting at its live value, every section
+(even empty), entries sorted by name — so that `export` then `automation apply --check`
+exits 0. It is deterministic. It refuses rather than omits: a schedule the cluster
+could not describe, or two objects sharing a name, fails the export, because an
+export missing an object would delete it when applied with `--prune`. A trailing
+comment lists each unnamed object with the command that names it, repeated on
+stderr.
 
 ## CI recipes
 
 ```bash
 # Pull request: post the plan as a comment.
-orkctl apply environments/prod/ --dry-run
+orkctl automation apply environments/prod/automation.ork.yaml --dry-run
 
-# Merge: apply exactly the plan that was reviewed.
-orkctl apply environments/prod/automation.ork.yaml --prune \
+# Merge: create the Orkflows, then apply exactly the plan that was reviewed.
+orkctl orkflow create environments/prod/orkflows/
+orkctl automation apply environments/prod/automation.ork.yaml --prune \
   --expect-plan sha256:3f9a… --secrets-out "$RUNNER_TEMP/secrets.json"
 
 # Nightly: find drift; a non-zero exit is a person's decision to act on.
-orkctl apply environments/prod/ --check
+orkctl automation apply environments/prod/automation.ork.yaml --check
 ```
 
 `--expect-plan` is what keeps a `--prune` from deleting something created
@@ -392,7 +403,7 @@ name, pin, URL, events and scope, never a secret.
 - `--dry-run`, `--check`, `PlanAutomation` and `ExportAutomation` write
   nothing: `metadata/` and the cluster's schedules are byte-identical before
   and after.
-- Re-applying an unchanged document against an unchanged namespace makes zero
+- Re-applying an unchanged automation document against an unchanged namespace makes zero
   write calls.
 - Only `--prune` deletes, only named objects of sections the document
   declares, and never an unnamed object, a deployment-wide subscription, an
@@ -417,5 +428,5 @@ name, pin, URL, events and scope, never a secret.
 | A name-to-id map stored beside the objects, or a "managed-by" marker | Two writes and a crash window per create, an orphan state, and a last-applied record — a second state machine (`AGENTS.md` §2.2). The name is a field on the object. |
 | Deriving an object's id from its name | An existing object could never be adopted without re-issuing its URL, and a deleted trigger's URL would come back to life under a new token. |
 | Delete-and-recreate to make a field true | Re-issues the trigger token or webhook secret the integration depends on. |
-| Planning in each client | The plan is served by one planner so `apply --dry-run` and Admin → Automation can never disagree about what an apply would do; only the writes are client-side. |
+| Planning in each client | The plan is served by one planner so `automation apply --dry-run` and Admin → Automation can never disagree about what an apply would do; only the writes are client-side. |
 | A JSON object written as a string for schedule `input` (the shape before this release) | The document is YAML; a JSON string inside it is a second syntax with its own quoting, and a reader cannot see the input's shape. The mapping is converted by the strict mapping — never a lenient decode — so `yes`, `0755` or a date is refused rather than coerced, and run input stays JSON on the wire (`AGENTS.md` §3.1). |

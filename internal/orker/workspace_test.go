@@ -3,7 +3,7 @@ package orker
 import (
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +15,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func testLimits() *orkstackv1.WorkspaceLimits {
@@ -30,13 +32,9 @@ func testLimits() *orkstackv1.WorkspaceLimits {
 func newTestWorkspace(t *testing.T) *Workspace {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.Chmod(root, ModeAttempt); err != nil {
-		t.Fatalf("chmod attempt root: %v", err)
-	}
+	must.OKf(t, os.Chmod(root, ModeAttempt), "chmod attempt root")
 	ws, err := NewWorkspace(root)
-	if err != nil {
-		t.Fatalf("NewWorkspace: %v", err)
-	}
+	must.OKf(t, err, "NewWorkspace")
 	// Through Workspace.Remove, which is the only thing that CAN delete a
 	// sealed tree — t.TempDir's own RemoveAll cannot, and that is how the
 	// missing unseal was found in the first place.
@@ -51,9 +49,7 @@ func newTestWorkspace(t *testing.T) *Workspace {
 func modeOf(t *testing.T, path string) os.FileMode {
 	t.Helper()
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat %s: %v", path, err)
-	}
+	must.OKf(t, err, "stat %s", path)
 	return info.Mode().Perm() | (info.Mode() & os.ModeSticky)
 }
 
@@ -96,15 +92,9 @@ func TestWorkspace_PermissionsMatchTheLayout(t *testing.T) {
 // after the pull would make a sealed file mutable during setup.
 func TestWorkspace_SealMakesInputReadOnlyBeforeTheContainerStarts(t *testing.T) {
 	ws := newTestWorkspace(t)
-	if err := ws.WriteConfigJSON(map[string]any{"command": "echo hi"}); err != nil {
-		t.Fatalf("WriteConfigJSON: %v", err)
-	}
-	if err := ws.WriteRunJSON(map[string]any{"url": "https://example.invalid"}); err != nil {
-		t.Fatalf("WriteRunJSON: %v", err)
-	}
-	if err := ws.Seal(); err != nil {
-		t.Fatalf("Seal: %v", err)
-	}
+	must.OKf(t, ws.WriteConfigJSON(map[string]any{"command": "echo hi"}), "WriteConfigJSON")
+	must.OKf(t, ws.WriteRunJSON(map[string]any{"url": "https://example.invalid"}), "WriteRunJSON")
+	must.OKf(t, ws.Seal(), "Seal")
 
 	if got := modeOf(t, ws.Input); got != ModeInputDir {
 		t.Errorf("input/ is %04o, want %04o", got, ModeInputDir)
@@ -134,9 +124,7 @@ const testInstanceID = "3f9c1a2e-7b40-4d51-9a6f-2c8e5b71d0aa"
 func TestPinWorkspace_PermissionsMatchTheLayout(t *testing.T) {
 	workRoot := t.TempDir()
 	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600, "")
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
-	}
+	must.OKf(t, err, "AcquirePin")
 	t.Cleanup(func() { _ = removeSealedTree(pin.Root) })
 
 	if got := modeOf(t, pin.Root); got != ModeAttempt {
@@ -172,14 +160,10 @@ func TestAcquirePin_IsIdempotentAcrossAttempts(t *testing.T) {
 	first := time.Date(2026, 3, 1, 12, 0, 0, 0, time.UTC)
 
 	clone, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, "", first)
-	if err != nil {
-		t.Fatalf("first AcquirePin: %v", err)
-	}
+	must.OKf(t, err, "first AcquirePin")
 	t.Cleanup(func() { _ = removeSealedTree(clone.Root) })
 	leaseAfterFirst, err := os.ReadFile(clone.LeasePath)
-	if err != nil {
-		t.Fatalf("read lease.json: %v", err)
-	}
+	must.OKf(t, err, "read lease.json")
 
 	// A file the first member wrote is what the second member is entitled to
 	// find. It survives the second Acquire, which is the sharing itself.
@@ -188,9 +172,7 @@ func TestAcquirePin_IsIdempotentAcrossAttempts(t *testing.T) {
 	// Two more arrivals an hour apart: a concurrent sibling and a retry.
 	for i, at := range []time.Time{first.Add(time.Minute), first.Add(time.Hour)} {
 		again, err := acquirePinAt(workRoot, "ork-1", "build", testInstanceID, 3600, "", at)
-		if err != nil {
-			t.Fatalf("AcquirePin %d: %v", i+2, err)
-		}
+		must.OKf(t, err, "AcquirePin %d", i+2)
 		if again.Root != clone.Root || again.Shared != clone.Shared {
 			t.Fatalf("arrival %d got %+v, want the first arrival's %+v", i+2, again, clone)
 		}
@@ -208,9 +190,7 @@ func TestAcquirePin_IsIdempotentAcrossAttempts(t *testing.T) {
 	// The lease is anchored to the FIRST arrival, not re-armed per call: it must
 	// never outlive a session Temporal has already declared dead.
 	leaseAfterThird, err := os.ReadFile(clone.LeasePath)
-	if err != nil {
-		t.Fatalf("read lease.json: %v", err)
-	}
+	must.OKf(t, err, "read lease.json")
 	if string(leaseAfterThird) != string(leaseAfterFirst) {
 		t.Errorf("lease.json moved on a later arrival:\nfirst: %s\nthird: %s\n"+
 			"the lease is anchored to when the pin OPENED, because the session's own "+
@@ -252,9 +232,7 @@ func TestAcquirePin_RejectsAnInstanceIDItCannotTrust(t *testing.T) {
 				t.Fatalf("AcquirePin accepted instance id %q and built %s", id, pin.Root)
 			}
 			entries, err := os.ReadDir(workRoot)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if len(entries) != 0 {
 				t.Errorf("a refused instance id still touched the filesystem: %v", entries)
 			}
@@ -274,25 +252,17 @@ func TestAcquirePin_RejectsAnInstanceIDItCannotTrust(t *testing.T) {
 func TestReleasePinDirectory_RemovesOnceAndThenSaysNothingHappened(t *testing.T) {
 	workRoot := t.TempDir()
 	pin, err := AcquirePin(workRoot, "ork-1", "build", testInstanceID, 3600, "")
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
-	}
+	must.OKf(t, err, "AcquirePin")
 	// A 0500 directory under shared/ is what a workload can genuinely leave
 	// behind, and it is why removal is the chmod-then-RemoveAll walk rather
 	// than a plain RemoveAll.
 	locked := filepath.Join(pin.Shared, "locked")
-	if err := os.Mkdir(locked, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(locked, 0o700))
 	mustWrite(t, filepath.Join(locked, "artifact"), "bytes")
-	if err := os.Chmod(locked, 0o500); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Chmod(locked, 0o500))
 
 	removed, err := ReleasePinDirectory(workRoot, "ork-1", "build", testInstanceID)
-	if err != nil {
-		t.Fatalf("ReleasePinDirectory: %v", err)
-	}
+	must.OKf(t, err, "ReleasePinDirectory")
 	if removed != pin.Root {
 		t.Errorf("removed %q, want %q", removed, pin.Root)
 	}
@@ -301,9 +271,7 @@ func TestReleasePinDirectory_RemovesOnceAndThenSaysNothingHappened(t *testing.T)
 	}
 
 	removed, err = ReleasePinDirectory(workRoot, "ork-1", "build", testInstanceID)
-	if err != nil {
-		t.Fatalf("a repeated release is an error: %v", err)
-	}
+	must.OKf(t, err, "a repeated release is an error")
 	if removed != "" {
 		t.Errorf("a repeated release reported removing %q; nothing was there", removed)
 	}
@@ -322,31 +290,21 @@ func TestReapPinDirectories_RemovesThisIdentitysAndNothingElse(t *testing.T) {
 	acquire := func(run, owner string, n int) *PinWorkspace {
 		t.Helper()
 		pin, err := AcquirePin(workRoot, run, "build", instance(n), 3600, owner)
-		if err != nil {
-			t.Fatalf("AcquirePin: %v", err)
-		}
+		must.OKf(t, err, "AcquirePin")
 		return pin
 	}
 	own := []*PinWorkspace{acquire("ork-1", orkerID, 1), acquire("ork-2", orkerID, 2)}
 	peer := acquire("ork-3", "orker-b", 3)
 	noOwner := acquire("ork-4", "", 4)
 	torn := acquire("ork-5", orkerID, 5)
-	if err := os.WriteFile(torn.LeasePath, []byte(`{"expiresAt":`), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(torn.LeasePath, []byte(`{"expiresAt":`), 0o600))
 	noLease := acquire("ork-6", orkerID, 6)
-	if err := os.Remove(noLease.LeasePath); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Remove(noLease.LeasePath))
 	attemptDir := filepath.Join(workRoot, "ork-run1-build-1-XXXX")
-	if err := os.Mkdir(attemptDir, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(attemptDir, 0o700))
 
 	report, err := ReapPinDirectories(workRoot, orkerID)
-	if err != nil {
-		t.Fatalf("ReapPinDirectories: %v", err)
-	}
+	must.OKf(t, err, "ReapPinDirectories")
 	if len(report.Removed) != len(own) {
 		t.Errorf("reaped %v, want this identity's two", report.Removed)
 	}
@@ -374,9 +332,7 @@ func TestReapPinDirectories_RemovesThisIdentitysAndNothingElse(t *testing.T) {
 	// The lease is what collects them, whoever opened them and whether or not
 	// anything says so: past its expiry the session is over.
 	swept, err := SweepExpiredPinLeases(workRoot, time.Now().Add(2*time.Hour))
-	if err != nil {
-		t.Fatalf("SweepExpiredPinLeases: %v", err)
-	}
+	must.OKf(t, err, "SweepExpiredPinLeases")
 	if len(swept) != len(stays) {
 		t.Errorf("swept %v, want all %d of them", swept, len(stays))
 	}
@@ -397,45 +353,31 @@ func TestSweepExpiredPinLeases_RemovesOnlyWhatIsDead(t *testing.T) {
 
 	// Alive: opened a minute ago with an hour's budget.
 	alive, err := acquirePinAt(workRoot, "ork-1", "alive", testInstanceID, 3600, "", now.Add(-time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// Dead: opened two hours ago with a minute's budget.
 	dead, err := acquirePinAt(workRoot, "ork-2", "dead",
 		"bbbbbbbb-1111-2222-3333-444444444444", 60, "", now.Add(-2*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// No lease, just created: the race window. Must survive.
 	fresh := filepath.Join(workRoot, "ork-pin-ork-3-fresh-cccccccc-1111-2222-3333-444444444444")
-	if err := os.Mkdir(fresh, ModeAttempt); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(fresh, ModeAttempt))
 	// No lease, and old: abandoned by an attempt that died between the mkdir
 	// and the lease write. Nothing will ever repair it, so the sweep collects
 	// it rather than leaking it until the next restart.
 	orphan := filepath.Join(workRoot, "ork-pin-ork-4-orphan-dddddddd-1111-2222-3333-444444444444")
-	if err := os.Mkdir(orphan, ModeAttempt); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(orphan, ModeAttempt))
 	// An UNDECODABLE lease, and old: a torn write. Treated exactly as a
 	// missing one.
 	torn := filepath.Join(workRoot, "ork-pin-ork-5-torn-eeeeeeee-1111-2222-3333-444444444444")
-	if err := os.Mkdir(torn, ModeAttempt); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(torn, ModeAttempt))
 	mustWrite(t, filepath.Join(torn, "lease.json"), `{"expiresAt": "not-a-`)
 	for _, dir := range []string{orphan, torn} {
 		old := now.Add(-time.Hour)
-		if err := os.Chtimes(dir, old, old); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Chtimes(dir, old, old))
 	}
 
 	removed, err := SweepExpiredPinLeases(workRoot, now)
-	if err != nil {
-		t.Fatalf("SweepExpiredPinLeases: %v", err)
-	}
+	must.OKf(t, err, "SweepExpiredPinLeases")
 	gone := map[string]bool{}
 	for _, path := range removed {
 		gone[path] = true
@@ -510,9 +452,7 @@ func TestWorkspace_TaskJSONCarriesThePinOnlyWhenPinned(t *testing.T) {
 	read := func(t *testing.T, ws *Workspace) (task, paths map[string]any) {
 		t.Helper()
 		raw, err := os.ReadFile(filepath.Join(ws.Input, "task.json"))
-		if err != nil {
-			t.Fatalf("read task.json: %v", err)
-		}
+		must.OKf(t, err, "read task.json")
 		var doc map[string]any
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("task.json is not valid JSON: %v\n%s", err, raw)
@@ -525,9 +465,7 @@ func TestWorkspace_TaskJSONCarriesThePinOnlyWhenPinned(t *testing.T) {
 	t.Run("unpinned omits both keys", func(t *testing.T) {
 		ws := newTestWorkspace(t)
 		in, tc := base()
-		if err := ws.WriteTaskJSON(in, tc); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(in, tc), "WriteTaskJSON")
 		task, paths := read(t, ws)
 		if _, present := task["pin"]; present {
 			t.Errorf("task.pin is present for an unpinned task: %v", task["pin"])
@@ -544,9 +482,7 @@ func TestWorkspace_TaskJSONCarriesThePinOnlyWhenPinned(t *testing.T) {
 		tc.Pin = &orkstackv1.PinContext{
 			Name: "build", InstanceId: testInstanceID, TimeoutSeconds: 3600,
 		}
-		if err := ws.WriteTaskJSON(in, tc); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(in, tc), "WriteTaskJSON")
 		task, paths := read(t, ws)
 		pin, _ := task["pin"].(map[string]any)
 		if pin["name"] != "build" || pin["instanceId"] != testInstanceID {
@@ -594,9 +530,7 @@ func TestWorkspace_TaskJSONMatchesTheSchema(t *testing.T) {
 	}
 
 	raw, err := os.ReadFile(filepath.Join(ws.Input, "task.json"))
-	if err != nil {
-		t.Fatalf("read task.json: %v", err)
-	}
+	must.OKf(t, err, "read task.json")
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatalf("task.json is not valid JSON: %v\n%s", err, raw)
@@ -726,9 +660,7 @@ func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
 	readDoc := func(t *testing.T, ws *Workspace) map[string]any {
 		t.Helper()
 		raw, err := os.ReadFile(filepath.Join(ws.Input, "task.json"))
-		if err != nil {
-			t.Fatalf("read task.json: %v", err)
-		}
+		must.OKf(t, err, "read task.json")
 		var doc map[string]any
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("decode: %v", err)
@@ -738,9 +670,7 @@ func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
 
 	t.Run("nil map means absent", func(t *testing.T) {
 		ws := newTestWorkspace(t)
-		if err := ws.WriteTaskJSON(baseInput(), baseTC(nil)); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(baseInput(), baseTC(nil)), "WriteTaskJSON")
 		if _, present := readDoc(t, ws)["trace"]; present {
 			t.Error("trace is present with a nil Trace map; want absent")
 		}
@@ -748,9 +678,7 @@ func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
 
 	t.Run("empty traceparent means absent", func(t *testing.T) {
 		ws := newTestWorkspace(t)
-		if err := ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": ""})); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": ""})), "WriteTaskJSON")
 		if _, present := readDoc(t, ws)["trace"]; present {
 			t.Error("trace is present with an empty traceparent; want absent")
 		}
@@ -762,9 +690,7 @@ func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
 			"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
 			"tracestate":  "congo=t61rcWkgMzE",
 		}
-		if err := ws.WriteTaskJSON(baseInput(), baseTC(want)); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(baseInput(), baseTC(want)), "WriteTaskJSON")
 		trace, _ := readDoc(t, ws)["trace"].(map[string]any)
 		if trace == nil {
 			t.Fatal("trace is absent with a real traceparent supplied")
@@ -780,9 +706,7 @@ func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
 	t.Run("a traceparent with no tracestate omits it", func(t *testing.T) {
 		ws := newTestWorkspace(t)
 		want := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
-		if err := ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": want})); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": want})), "WriteTaskJSON")
 		trace, _ := readDoc(t, ws)["trace"].(map[string]any)
 		if trace == nil {
 			t.Fatal("trace is absent with a real traceparent supplied")
@@ -798,9 +722,7 @@ func TestWorkspace_TaskJSONTraceIsOptionalAndNonABI(t *testing.T) {
 	// schemaVersion is untouched: trace is additive, never a version bump.
 	t.Run("schemaVersion is unchanged", func(t *testing.T) {
 		ws := newTestWorkspace(t)
-		if err := ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": "x"})); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(baseInput(), baseTC(map[string]string{"traceparent": "x"})), "WriteTaskJSON")
 		if got := readDoc(t, ws)["schemaVersion"]; got != float64(TaskJSONSchemaVersion) {
 			t.Errorf("schemaVersion = %v, want %v", got, TaskJSONSchemaVersion)
 		}
@@ -879,9 +801,7 @@ func TestScanOutputArtifacts_EnforcesTheOutputRules(t *testing.T) {
 		{
 			name: "a nested directory is refused rather than walked",
 			build: func(t *testing.T, dir string) {
-				if err := os.MkdirAll(filepath.Join(dir, "nested"), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.MkdirAll(filepath.Join(dir, "nested"), 0o755))
 			},
 			wantReason: ReasonArtifactNotAFile,
 		},
@@ -889,9 +809,7 @@ func TestScanOutputArtifacts_EnforcesTheOutputRules(t *testing.T) {
 			name: "a symlink is refused",
 			build: func(t *testing.T, dir string) {
 				mustWrite(t, filepath.Join(dir, "real"), "x")
-				if err := os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "link")); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Symlink(filepath.Join(dir, "real"), filepath.Join(dir, "link")))
 			},
 			wantReason: ReasonArtifactNotAFile,
 		},
@@ -906,9 +824,7 @@ func TestScanOutputArtifacts_EnforcesTheOutputRules(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := filepath.Join(t.TempDir(), "artifacts")
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(dir, 0o755))
 			tc.build(t, dir)
 
 			found, failure := openTestOutput(t, filepath.Dir(dir)).ScanArtifacts(testLimits())
@@ -941,9 +857,7 @@ func TestScanOutputArtifacts_EnforcesTheOutputRules(t *testing.T) {
 func TestScanOutputArtifacts_EnforcesTheLimits(t *testing.T) {
 	t.Run("too many artifacts", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "artifacts")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(dir, 0o755))
 		for i := range 5 {
 			mustWrite(t, filepath.Join(dir, string(rune('a'+i))), "x")
 		}
@@ -958,9 +872,7 @@ func TestScanOutputArtifacts_EnforcesTheLimits(t *testing.T) {
 
 	t.Run("one artifact over the per-artifact size", func(t *testing.T) {
 		dir := filepath.Join(t.TempDir(), "artifacts")
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(dir, 0o755))
 		mustWrite(t, filepath.Join(dir, "big"), strings.Repeat("x", 100))
 		limits := testLimits()
 		limits.ArtifactMaxBytes = 10
@@ -1030,6 +942,24 @@ func TestReadValues_EnforcesTheValuesContract(t *testing.T) {
 // A Struct round trip reorders keys and SILENTLY CORRUPTS an integer outside
 // float64's exact range (§14.9). Returning the file's bytes is what makes the
 // committed digest mean anything.
+// TestReadValues_RefusesAKeyWrittenTwiceNamingIt: encoding/json kept the
+// last of two values for one key; values.json is kept byte for byte, so which
+// one a downstream reader saw would depend on its decoder. It is a contract
+// violation that names the key and the object holding it.
+func TestReadValues_RefusesAKeyWrittenTwiceNamingIt(t *testing.T) {
+	for _, tc := range []struct{ content, want string }{
+		{`{"a":1,"a":2}`, `values.json is not valid JSON: the key "a" appears twice in the top-level object`},
+		{`{"out":{"rows":[{"id":1,"id":2}]}}`, `values.json is not valid JSON: the key "id" appears twice in the object at /out/rows/0`},
+	} {
+		path := filepath.Join(t.TempDir(), "values.json")
+		mustWrite(t, path, tc.content)
+		_, failure := openTestOutput(t, filepath.Dir(path)).ReadValues(testLimits())
+		if failure == nil || failure.Reason != ReasonValuesMalformed || !strings.Contains(failure.Message, tc.want) {
+			t.Errorf("ReadValues(%s) = %+v, want %s naming %q", tc.content, failure, ReasonValuesMalformed, tc.want)
+		}
+	}
+}
+
 func TestReadValues_PreservesKeyOrderAndLargeIntegersExactly(t *testing.T) {
 	const exact = `{"zebra":1,"alpha":2,"big":12345678901234567890}`
 	path := filepath.Join(t.TempDir(), "values.json")
@@ -1059,14 +989,10 @@ func TestScanArtifacts_AnUnreadableArtifactFailsAlone(t *testing.T) {
 		t.Skip("running as root, which can open any mode; the check is about a non-root Orker")
 	}
 	output := t.TempDir()
-	if err := os.Mkdir(filepath.Join(output, "artifacts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(filepath.Join(output, "artifacts"), 0o755))
 	mustWrite(t, filepath.Join(output, "artifacts", "core"), "dump")
 	mustWrite(t, filepath.Join(output, "artifacts", "report.txt"), "report")
-	if err := os.Chmod(filepath.Join(output, "artifacts", "core"), 0o000); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
+	must.OKf(t, os.Chmod(filepath.Join(output, "artifacts", "core"), 0o000), "chmod")
 
 	scanned, failure := openTestOutput(t, output).ScanArtifacts(testLimits())
 	if failure != nil || len(scanned) != 2 {
@@ -1122,13 +1048,9 @@ func TestOutputTree_AnUnreadableFileNamesItsModeAndTheFix(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			output := t.TempDir()
 			path := filepath.Join(output, tc.path)
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(filepath.Dir(path), 0o755))
 			mustWrite(t, path, `{}`)
-			if err := os.Chmod(path, 0o000); err != nil {
-				t.Fatalf("chmod: %v", err)
-			}
+			must.OKf(t, os.Chmod(path, 0o000), "chmod")
 
 			failure := tc.read(openTestOutput(t, output))
 			if failure == nil {
@@ -1245,14 +1167,10 @@ func TestSniffFileContentType_AgreesWithWhatTheStoreWouldRecord(t *testing.T) {
 			mustWrite(t, path, tc.content)
 
 			file, err := os.Open(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			defer func() { _ = file.Close() }()
 			got, err := sniffContentType(file)
-			if err != nil {
-				t.Fatalf("sniffContentType: %v", err)
-			}
+			must.OKf(t, err, "sniffContentType")
 			if got == "" {
 				t.Fatal("an empty content type is exactly the defect: RefFor would " +
 					"project \"\" while Put records a sniffed type")
@@ -1261,15 +1179,11 @@ func TestSniffFileContentType_AgreesWithWhatTheStoreWouldRecord(t *testing.T) {
 			// What the store actually records for the same bytes, with no
 			// explicit type — the value the projection has to match.
 			store, err := artifacts.NewLocalStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			defer func() { _ = store.Close() }()
 			ref, err := store.Put(context.Background(), tc.name,
 				strings.NewReader(tc.content), artifacts.PutOptions{})
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got != ref.ContentType {
 				t.Fatalf("projection would carry %q but the store recorded %q; "+
 					"the step-4 bound is not the thing step 8 commits", got, ref.ContentType)

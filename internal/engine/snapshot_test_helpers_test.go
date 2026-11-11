@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 type testSnapshotStore struct {
@@ -99,17 +101,13 @@ func (s *testSnapshotStore) ReadContinuationRange(_ context.Context, uri string,
 func (s *testSnapshotStore) putRun(t *testing.T, run *orkstackv1.Run) string {
 	t.Helper()
 	data, err := proto.Marshal(run)
-	if err != nil {
-		t.Fatalf("marshal run snapshot: %v", err)
-	}
+	must.OKf(t, err, "marshal run snapshot")
 	s.mu.Lock()
 	s.next++
 	sequence := s.next
 	s.mu.Unlock()
 	uri, err := s.WriteSnapshot(context.Background(), run.GetNamespace(), run.GetId(), sequence, data)
-	if err != nil {
-		t.Fatalf("WriteSnapshot: %v", err)
-	}
+	must.OKf(t, err, "WriteSnapshot")
 	return uri
 }
 

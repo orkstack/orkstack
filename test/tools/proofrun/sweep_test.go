@@ -12,6 +12,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // sweepFixture is a runner whose jobs left buckets behind: one file per label,
@@ -28,9 +30,7 @@ func newSweepFixture(t *testing.T, buckets map[string]string, sweepable ...strin
 	f := &sweepFixture{log: &strings.Builder{}, dir: dir}
 	f.r = &runner{sweep: true, jobDir: dir, log: f.log, sweepable: map[string]bool{}}
 	for label, bucket := range buckets {
-		if err := os.WriteFile(f.r.bucketFile(label), []byte(bucket+"\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(f.r.bucketFile(label), []byte(bucket+"\n"), 0o644))
 	}
 	for _, label := range sweepable {
 		f.r.sweepable[label] = true
@@ -42,9 +42,7 @@ func newSweepFixture(t *testing.T, buckets map[string]string, sweepable ...strin
 func (f *sweepFixture) files(t *testing.T) []string {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(f.dir, "*.bucket"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var labels []string
 	for _, m := range matches {
 		labels = append(labels, strings.TrimSuffix(filepath.Base(m), ".bucket"))
@@ -251,9 +249,7 @@ func TestSweepBuckets_RemovesSeveralAtOnceAndNoMoreThanTheLimit(t *testing.T) {
 // sweepable and hands it to the sweepers.
 func passes(t *testing.T, ctx context.Context, r *runner, label, bucket string) {
 	t.Helper()
-	if err := os.WriteFile(r.bucketFile(label), []byte(bucket+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(r.bucketFile(label), []byte(bucket+"\n"), 0o644))
 	c := newCollector()
 	c.results[testKey{"p", "TestA"}] = &entry{Outcome: outcomePass}
 	r.noteSweepable(job{ID: label, Package: "p", Tests: []string{"TestA"}}, nil, c)
@@ -560,9 +556,7 @@ func runBucketSweepSuite(t *testing.T, fail bool) (code int, swept, onTheSlot, f
 	quiet(t)
 	out := t.TempDir()
 	costs := filepath.Join(out, "costs.tsv")
-	if err := os.WriteFile(costs, []byte(bucketSweepSuite+"\tTestPasses\t5\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(costs, []byte(bucketSweepSuite+"\tTestPasses\t5\n"), 0o644))
 	markers := t.TempDir()
 	t.Setenv("BUCKETSWEEP_DIR", markers)
 	if fail {
@@ -632,13 +626,11 @@ func TestIntegrationShard_SweepsPassingProcessesBucketsAfterItsJobs(t *testing.T
 	quiet(t)
 	planned := t.TempDir()
 	if code := cmdIntegration([]string{"-out", planned, "-plan-only", "-jobs", "1", "-costs", "", "-allow", "", "-quarantine", "",
-		"-nightly", "", "-host-speed", "", "./testdata/bucketsweep"}); code != 0 {
+		"-nightly", "", "./testdata/bucketsweep"}); code != 0 {
 		t.Fatalf("plan-only exit %d", code)
 	}
 	p, err := readPlan(filepath.Join(planned, "integration-plan.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	stubTree(t, p.Tree)
 
 	markers := t.TempDir()

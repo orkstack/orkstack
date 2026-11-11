@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // docRow is one row of docs/DEPLOY.md's "## 1. Configuration" table: the
@@ -19,9 +21,7 @@ type docRow struct {
 func parseDeployDocTable(t *testing.T) []docRow {
 	t.Helper()
 	data, err := os.ReadFile("../../docs/DEPLOY.md")
-	if err != nil {
-		t.Fatalf("read docs/DEPLOY.md: %v", err)
-	}
+	must.OKf(t, err, "read docs/DEPLOY.md")
 	lines := strings.Split(string(data), "\n")
 
 	start := -1
@@ -317,9 +317,7 @@ func TestSchemaCompleteness(t *testing.T) {
 	// documented as such. A reworded DEPLOY.md that drops the phrase would
 	// otherwise switch this check off silently.
 	data, err := os.ReadFile("../../docs/DEPLOY.md")
-	if err != nil {
-		t.Fatalf("read docs/DEPLOY.md: %v", err)
-	}
+	must.OKf(t, err, "read docs/DEPLOY.md")
 	lower := strings.ToLower(string(data))
 	if !strings.Contains(lower, "environment only") && !strings.Contains(lower, "environment-only") {
 		t.Errorf("docs/DEPLOY.md no longer says \"environment only\"; the env-only-family documentation check cannot run")

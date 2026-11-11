@@ -15,7 +15,10 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // planTaskOf returns id's PlanTask, failing the test when the plan has none.
@@ -33,9 +36,7 @@ func planTaskOf(t *testing.T, plan *orkstackv1.PlanRunResponse, id string) *orks
 func simulate(t *testing.T, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, assumed map[string]*orkstackv1.Payload) *orkstackv1.PlanRunResponse {
 	t.Helper()
 	plan, err := engine.Simulate(wf, input, assumed, nil)
-	if err != nil {
-		t.Fatalf("Simulate: %v", err)
-	}
+	must.OKf(t, err, "Simulate")
 	return plan
 }
 
@@ -225,7 +226,7 @@ func assertAgreement(t *testing.T, label string, plan *orkstackv1.PlanRunRespons
 	var summary []string
 	for _, task := range plan.GetTasks() {
 		summary = append(summary, fmt.Sprintf("%s=%s/%s", task.GetTaskId(),
-			strings.TrimPrefix(task.GetOutcome().String(), "PLAN_OUTCOME_"), statusOf(run, task.GetTaskId())))
+			enumname.Of(task.GetOutcome()), statusOf(run, task.GetTaskId())))
 	}
 	t.Logf("agreement %s: %s", label, strings.Join(summary, " "))
 }
@@ -319,9 +320,7 @@ tasks:
 func compileExample(t *testing.T, name string) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.CompileFile("../../examples/" + name)
-	if err != nil {
-		t.Fatalf("compile %s: %v", name, err)
-	}
+	must.OKf(t, err, "compile %s", name)
 	return wf
 }
 
@@ -332,9 +331,7 @@ const orkflowFixtures = "../../internal/dsl/testdata/orkflows"
 func compileFixture(t *testing.T, name string) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.CompileFile(orkflowFixtures + "/" + name)
-	if err != nil {
-		t.Fatalf("compile %s: %v", name, err)
-	}
+	must.OKf(t, err, "compile %s", name)
 	return wf
 }
 

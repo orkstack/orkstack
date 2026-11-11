@@ -17,6 +17,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // strandedWindow is how long the pinned run is watched making no progress. It
@@ -220,9 +222,7 @@ func executionStatus(
 ) enums.WorkflowExecutionStatus {
 	t.Helper()
 	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatalf("describe %s: %v", runID, err)
-	}
+	must.OKf(t, err, "describe %s", runID)
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }
 

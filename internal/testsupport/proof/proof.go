@@ -12,11 +12,12 @@
 package proof
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // EnvDir names the directory evidence is written under.
@@ -83,7 +84,7 @@ func Write(t testing.TB, group, name string, body []byte) {
 // WriteJSON records value, pretty-printed, as <ORK_PROOF_DIR>/<group>/<name>.
 func WriteJSON(t testing.TB, group, name string, value any) {
 	t.Helper()
-	body, err := json.MarshalIndent(value, "", "  ")
+	body, err := stablejson.MarshalIndent(value, "  ")
 	if err != nil {
 		t.Logf("proof: cannot encode %s/%s: %v", group, name, err)
 		return

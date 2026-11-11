@@ -1,10 +1,13 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func quarantineLine(suite, pkg, test, owner, since, review, reason string) string {
@@ -15,9 +18,7 @@ func TestParseQuarantine_AcceptsTheApprovedShape(t *testing.T) {
 	const p = "github.com/orkstack/orkstack/internal/engine"
 	text := quarantineLine("unit", p, "TestPin/a_pin", "Daniel Santos <danlsgiga@gmail.com>", "2026-10-19", "2026-11-18", "known flake")
 	entries, err := parseQuarantine(strings.NewReader(text), "q")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(entries) != 1 {
 		t.Fatalf("entries = %d", len(entries))
 	}
@@ -163,19 +164,13 @@ func TestBuildLedgerQ_AnUnquarantinedTopLevelFailureIsNeverExcused(t *testing.T)
 func declaredGoTests(t *testing.T, root, pkg string) map[string]bool {
 	t.Helper()
 	dir := filepath.Join(root, strings.TrimPrefix(pkg, modulePath+"/"))
-	files, err := readDirGo(dir)
-	if err != nil {
+	if _, err := os.Stat(dir); err != nil {
 		t.Errorf("read %s: %v", pkg, err)
 		return map[string]bool{}
 	}
 	out := map[string]bool{}
-	for _, f := range files {
-		if !strings.HasSuffix(f.Name, "_test.go") {
-			continue
-		}
-		for _, name := range parseGo(f).Tests {
-			out[name] = true
-		}
+	for name := range testKinds(dir) {
+		out[name] = true
 	}
 	return out
 }
@@ -186,13 +181,9 @@ func declaredGoTests(t *testing.T, root, pkg string) map[string]bool {
 // test is itself on the list (plan §4).
 func TestRepositoryNightlyList_CoveringTestsExistAndAreNotListed(t *testing.T) {
 	root, err := repoRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	entries, err := readNightlyList(filepath.Join(root, "scripts/proof-nightly-tests.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(entries) == 0 {
 		t.Fatalf("the nightly list names no test; if the tier is gone, say so in PROOFS.md")
 	}
@@ -221,17 +212,11 @@ func TestRepositoryNightlyList_CoveringTestsExistAndAreNotListed(t *testing.T) {
 // calendar, so only a proof judges it (plan §6.3).
 func TestRepositoryQuarantine_NamesListedTests(t *testing.T) {
 	root, err := repoRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	entries, err := readQuarantine(filepath.Join(root, "scripts/proof-quarantine.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	allows, err := readAllowlist(filepath.Join(root, "scripts/proof-allowed-skips.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	allowed := map[testKey]bool{}
 	for _, a := range allows {
 		allowed[testKey{a.Package, a.Test}] = true

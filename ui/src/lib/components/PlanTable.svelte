@@ -37,6 +37,7 @@
 		[PlanOutcome.FAILS]: 'border-failed-border bg-failed-bg text-failed-fg',
 		[PlanOutcome.UNREACHED]: 'border-dashed border-red bg-paper text-red-strong',
 		[PlanOutcome.AWAITS]: 'border-awaiting-border bg-awaiting-bg text-awaiting-fg',
+		[PlanOutcome.SLEEPS]: 'border-sleeping-border bg-sleeping-bg text-sleeping-fg',
 		// The request's assumption, not a prediction: drawn dashed, in the
 		// failure palette.
 		[PlanOutcome.ASSUMED_FAILED]: 'border-dashed border-failed-border bg-failed-bg text-failed-fg'

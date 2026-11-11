@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"io"
 	"net/url"
 	"path"
@@ -23,7 +24,7 @@ type ArtifactRef struct {
 	Name        string            `json:"name"`
 	URI         string            `json:"uri"`
 	ContentType string            `json:"content_type,omitempty"`
-	SizeBytes   int64             `json:"size_bytes,omitempty"`
+	SizeBytes   int64             `json:"size_bytes,omitzero"`
 	SHA256      string            `json:"sha256,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
@@ -89,7 +90,8 @@ var (
 	ErrInvalidURI = errors.New("invalid artifact URI")
 	// ErrUnsupported reports an operation the backend cannot perform.
 	ErrUnsupported = errors.New("operation unsupported by artifact backend")
-	// ErrUnknownBackend reports an unregistered ORK_ARTIFACT_BACKEND value.
+	// ErrUnknownBackend reports an ORK_ARTIFACT_BACKEND value that is neither
+	// BackendLocal nor BackendS3.
 	ErrUnknownBackend = errors.New("unknown artifact backend")
 )
 
@@ -214,3 +216,24 @@ func splitKey(key string) (name, sha string, ok bool) {
 	}
 	return name, sha, true
 }
+
+// New builds the Store named by cfg.Backend. An empty backend means
+// DefaultBackend. A backend that is neither BackendLocal nor BackendS3
+// returns an error matching ErrUnknownBackend.
+func New(cfg Config) (Store, error) {
+	switch name := cfg.Backend; name {
+	case "", BackendLocal:
+		return NewLocalStore(localDir(cfg))
+	case BackendS3:
+		store, err := NewS3Store(context.Background(), cfg)
+		if err != nil {
+			return nil, fmt.Errorf("artifacts: backend %q: %w", name, err)
+		}
+		return store, nil
+	default:
+		return nil, fmt.Errorf("artifacts: backend %q: %w (want %q or %q)", name, ErrUnknownBackend, BackendLocal, BackendS3)
+	}
+}
+
+// NewFromEnv builds the Store described by the ORK_* environment.
+func NewFromEnv() (Store, error) { return New(ConfigFromEnv()) }

@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // sealedAttemptDir builds what a killed attempt leaves: the whole workspace
@@ -21,27 +23,15 @@ import (
 func sealedAttemptDir(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) string {
 	t.Helper()
 	dir, err := d.makeAttemptDir(in, 1)
-	if err != nil {
-		t.Fatalf("makeAttemptDir: %v", err)
-	}
+	must.OKf(t, err, "makeAttemptDir")
 	// A sealed tree is one t.TempDir's own cleanup cannot remove.
 	t.Cleanup(func() { _ = removeSealedTree(dir) })
 	ws, err := NewWorkspace(dir)
-	if err != nil {
-		t.Fatalf("NewWorkspace: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(ws.Secrets, "db"), []byte("hunter2"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ws.Input, "task.json"), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := ws.Seal(); err != nil {
-		t.Fatalf("Seal: %v", err)
-	}
-	if err := ws.SealSecrets(); err != nil {
-		t.Fatalf("SealSecrets: %v", err)
-	}
+	must.OKf(t, err, "NewWorkspace")
+	must.OK(t, os.WriteFile(filepath.Join(ws.Secrets, "db"), []byte("hunter2"), 0o600))
+	must.OK(t, os.WriteFile(filepath.Join(ws.Input, "task.json"), []byte("{}"), 0o644))
+	must.OKf(t, ws.Seal(), "Seal")
+	must.OKf(t, ws.SealSecrets(), "SealSecrets")
 	return dir
 }
 
@@ -94,32 +84,22 @@ func TestReapAttemptDirectories_RemovesWhatThisIdentityLeftAndNothingElse(t *tes
 		"ork-x-y-1-" + attemptOwner("orker-a") + "-",
 	} {
 		path := filepath.Join(root, name)
-		if err := os.Mkdir(path, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Mkdir(path, 0o700))
 		stays = append(stays, path)
 	}
 	// A file and a link named as this identity's directory: neither is a
 	// directory it made, and a link's target is never reached.
 	elsewhere := t.TempDir()
 	keep := filepath.Join(elsewhere, "keep")
-	if err := os.WriteFile(keep, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(keep, []byte("x"), 0o600))
 	file := filepath.Join(root, "ork-file-task-1-"+attemptOwner("orker-a")+"-5")
-	if err := os.WriteFile(file, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(file, nil, 0o600))
 	link := filepath.Join(root, "ork-link-task-1-"+attemptOwner("orker-a")+"-6")
-	if err := os.Symlink(elsewhere, link); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(elsewhere, link))
 	stays = append(stays, file, link, keep)
 
 	report, err := ReapAttemptDirectories(root, "orker-a")
-	if err != nil {
-		t.Fatalf("ReapAttemptDirectories: %v", err)
-	}
+	must.OKf(t, err, "ReapAttemptDirectories")
 
 	slices.Sort(own)
 	slices.Sort(report.Removed)
@@ -160,9 +140,7 @@ func TestReapAttemptDirectories_NoIdentityRemovesNothing(t *testing.T) {
 	d := &OCIDispatcher{WorkRoot: root}
 	dir := sealedAttemptDir(t, d, attemptInput("ork-one", "build"))
 	report, err := ReapAttemptDirectories(root, "")
-	if err != nil {
-		t.Fatalf("ReapAttemptDirectories: %v", err)
-	}
+	must.OKf(t, err, "ReapAttemptDirectories")
 	if len(report.Removed) != 0 {
 		t.Errorf("removed %v with no identity", report.Removed)
 	}
@@ -198,9 +176,7 @@ func TestAttemptOwner_DiffersBetweenIdentities(t *testing.T) {
 func bootWithLog(t *testing.T, workRoot, id string, runtime ContainerRuntime) (*Activities, *bytes.Buffer, error) {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	var logged bytes.Buffer
 	activities := NewActivitiesWithOptions(store, Options{
@@ -224,9 +200,7 @@ func TestBoot_ReapsThisIdentitysAttemptDirectories(t *testing.T) {
 	peer := sealedAttemptDir(t, &OCIDispatcher{WorkRoot: root, OrkerID: id + "-peer"}, attemptInput("ork-one", "build"))
 
 	_, logged, err := bootWithLog(t, root, id, &reapRecorder{labelled: map[string]int{}})
-	if err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, err, "Boot")
 	if _, err := os.Lstat(dead); !os.IsNotExist(err) {
 		t.Errorf("the predecessor's attempt directory survived the boot: %v", err)
 	}
@@ -249,9 +223,7 @@ func TestBoot_ARefusedIdentityRemovesNoDirectory(t *testing.T) {
 	root := t.TempDir()
 	id := "attempt-reap-" + t.Name()
 	live, _, err := bootWithLog(t, root, id, &reapRecorder{labelled: map[string]int{}})
-	if err != nil {
-		t.Fatalf("first Boot: %v", err)
-	}
+	must.OKf(t, err, "first Boot")
 	running := sealedAttemptDir(t, live.Dispatcher(), attemptInput("ork-one", "build"))
 
 	if _, _, err := bootWithLog(t, root, id, &reapRecorder{labelled: map[string]int{}}); err == nil {
@@ -280,24 +252,16 @@ func TestBoot_AnotherIdentitysBootLeavesALiveOrkersPinAndScratch(t *testing.T) {
 	liveID := "scratch-reap-live-" + t.Name()
 	otherID := "scratch-reap-other-" + t.Name()
 	live, _, err := bootWithLog(t, root, liveID, &reapRecorder{labelled: map[string]int{}})
-	if err != nil {
-		t.Fatalf("the live Orker's Boot: %v", err)
-	}
+	must.OKf(t, err, "the live Orker's Boot")
 	writeIn := func(dir, name string) string {
 		t.Helper()
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(dir, 0o700))
 		path := filepath.Join(dir, name)
-		if err := os.WriteFile(path, []byte("in use"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(path, []byte("in use"), 0o600))
 		return path
 	}
 	pin, err := AcquirePin(root, "ork-one", "build", testInstanceID, 3600, liveID)
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
-	}
+	must.OKf(t, err, "AcquirePin")
 	stays := []string{
 		writeIn(pin.Shared, "held"),
 		writeIn(live.Dispatcher().spoolDir(), "upload"),
@@ -307,9 +271,7 @@ func TestBoot_AnotherIdentitysBootLeavesALiveOrkersPinAndScratch(t *testing.T) {
 	// The second identity's dead predecessor left the same three.
 	predecessor := &OCIDispatcher{WorkRoot: root, OrkerID: otherID}
 	otherPin, err := AcquirePin(root, "ork-two", "build", "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee", 3600, otherID)
-	if err != nil {
-		t.Fatalf("AcquirePin: %v", err)
-	}
+	must.OKf(t, err, "AcquirePin")
 	goes := []string{
 		writeIn(otherPin.Shared, "held"),
 		writeIn(predecessor.spoolDir(), "upload"),
@@ -317,9 +279,7 @@ func TestBoot_AnotherIdentitysBootLeavesALiveOrkersPinAndScratch(t *testing.T) {
 	}
 
 	_, logged, err := bootWithLog(t, root, otherID, &reapRecorder{labelled: map[string]int{}})
-	if err != nil {
-		t.Fatalf("the other Orker's Boot: %v", err)
-	}
+	must.OKf(t, err, "the other Orker's Boot")
 	for _, path := range stays {
 		if _, err := os.Stat(path); err != nil {
 			t.Errorf("another identity's boot took the live Orker's %s: %v", path, err)
@@ -343,16 +303,10 @@ func TestBoot_ScratchFromBeforeIdentitiesStays(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			root := t.TempDir()
 			old := filepath.Join(root, name, "from-an-earlier-release")
-			if err := os.MkdirAll(filepath.Dir(old), 0o700); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(old, []byte("x"), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(filepath.Dir(old), 0o700))
+			must.OK(t, os.WriteFile(old, []byte("x"), 0o600))
 			_, logged, err := bootWithLog(t, root, "scratch-old-"+t.Name(), &reapRecorder{labelled: map[string]int{}})
-			if err != nil {
-				t.Fatalf("Boot: %v", err)
-			}
+			must.OKf(t, err, "Boot")
 			if _, err := os.Stat(old); err != nil {
 				t.Errorf("the boot took a file nothing says is its own: %v", err)
 			}

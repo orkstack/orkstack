@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // joinDoc is a two-branch document whose last task carries the given join
@@ -37,13 +39,9 @@ tasks:
 
 func TestCompile_JoinAllSucceededCompilesToNoJoin(t *testing.T) {
 	absent, err := dsl.Compile(joinDoc(""))
-	if err != nil {
-		t.Fatalf("compile without join: %v", err)
-	}
+	must.OKf(t, err, "compile without join")
 	written, err := dsl.Compile(joinDoc("    join: all_succeeded\n"))
-	if err != nil {
-		t.Fatalf("compile with join: all_succeeded: %v", err)
-	}
+	must.OKf(t, err, "compile with join: all_succeeded")
 	if got := written.GetTasks()[2].GetJoin(); got != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
 		t.Fatalf("join: all_succeeded compiled to %v, want UNSPECIFIED", got)
 	}
@@ -73,9 +71,7 @@ func TestCompile_JoinWordsMapToThePolicy(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.word, func(t *testing.T) {
 			wf, err := dsl.Compile(joinDoc("    join: " + tc.word + "\n"))
-			if err != nil {
-				t.Fatalf("compile: %v", err)
-			}
+			must.OKf(t, err, "compile")
 			if got := wf.GetTasks()[2].GetJoin(); got != tc.want {
 				t.Fatalf("join = %v, want %v", got, tc.want)
 			}
@@ -321,9 +317,7 @@ tasks:
     join: all_done
     uses: orkflow:rollback-block@1.0.0
 `))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	if got := wf.GetTasks()[1].GetJoin(); got != orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED {
 		t.Fatalf("awaited join = %v", got)
 	}
@@ -415,9 +409,7 @@ tasks:
     join: all_done
     with: {op: exec}
 `))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	sure := dsl.SureAncestors(wf)
 	want := map[string][]string{
 		"decide":   {},
@@ -439,9 +431,7 @@ tasks:
 func TestSureAncestors_IsTheClosureWithoutJoins(t *testing.T) {
 	for _, path := range examplesAndFixtures(t) {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatalf("compile %s: %v", path, err)
-		}
+		must.OKf(t, err, "compile %s", path)
 		// The sure set is the needs closure only when no task joins: a
 		// join narrows it by design (TestSureAncestors_FollowsJoins).
 		if hasAnyJoin(wf) {
@@ -475,9 +465,7 @@ func TestSureAncestors_IsTheClosureWithoutJoins(t *testing.T) {
 func TestJoinWarnings_EveryShippedExampleHasNone(t *testing.T) {
 	for _, path := range examplesAndFixtures(t) {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatalf("compile %s: %v", path, err)
-		}
+		must.OKf(t, err, "compile %s", path)
 		if issues := dsl.JoinWarnings(wf); len(issues) != 0 {
 			t.Errorf("%s: JoinWarnings = %v, want none", filepath.Base(path), issues)
 		}
@@ -527,9 +515,7 @@ func TestTaskReads_KindsPathsAndGuards(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := dsl.TaskReads(tc.text)
-			if err != nil {
-				t.Fatalf("TaskReads: %v", err)
-			}
+			must.OKf(t, err, "TaskReads")
 			if !reflect.DeepEqual(got, tc.want) {
 				t.Fatalf("TaskReads(%s) = %+v, want %+v", tc.text, got, tc.want)
 			}
@@ -541,9 +527,7 @@ func TestTaskReads_KindsPathsAndGuards(t *testing.T) {
 func warningsOf(t *testing.T, doc string) []string {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	var out []string
 	for _, issue := range dsl.JoinWarnings(wf) {
 		if issue.GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING {
@@ -687,9 +671,7 @@ tasks:
 
 func TestJoinWarnings_TheShippedExampleHasNone(t *testing.T) {
 	wf, err := dsl.CompileFile("testdata/orkflows/branch-and-recover.ork.yaml")
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	if issues := dsl.JoinWarnings(wf); len(issues) != 0 {
 		t.Fatalf("branch-and-recover warnings = %v, want none", issues)
 	}

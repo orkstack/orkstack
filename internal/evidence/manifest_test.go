@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var updateGolden = flag.Bool("update", false, "rewrite testdata goldens")
@@ -15,19 +17,13 @@ var updateGolden = flag.Bool("update", false, "rewrite testdata goldens")
 func TestManifest_JSONKeysAndDialectAreTheContract(t *testing.T) {
 	f := newFixture()
 	got, err := f.manifest.MarshalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	golden := filepath.Join("testdata", "manifest.golden.json")
 	if *updateGolden {
-		if err := os.WriteFile(golden, got, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(golden, got, 0o644))
 	}
 	want, err := os.ReadFile(golden)
-	if err != nil {
-		t.Fatalf("read golden (run with -update to create): %v", err)
-	}
+	must.OKf(t, err, "read golden (run with -update to create)")
 	if !bytes.Equal(got, want) {
 		t.Fatalf("MANIFEST.json differs from %s:\n%s", golden, got)
 	}
@@ -49,16 +45,12 @@ func TestManifest_JSONKeysAndDialectAreTheContract(t *testing.T) {
 	}
 
 	parsed, err := ParseManifest(got)
-	if err != nil {
-		t.Fatalf("ParseManifest: %v", err)
-	}
+	must.OKf(t, err, "ParseManifest")
 	if !reflect.DeepEqual(parsed, f.manifest) {
 		t.Fatalf("ParseManifest does not round-trip:\n got %+v\nwant %+v", parsed, f.manifest)
 	}
 	fromBundle, err := ReadManifest(bytes.NewReader(writeFixture(t, f)))
-	if err != nil {
-		t.Fatalf("ReadManifest: %v", err)
-	}
+	must.OKf(t, err, "ReadManifest")
 	if !reflect.DeepEqual(fromBundle, f.manifest) {
 		t.Fatal("ReadManifest of a written bundle does not round-trip")
 	}

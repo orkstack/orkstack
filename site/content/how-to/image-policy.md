@@ -43,13 +43,13 @@ A namespace requires one key. It can tighten the deployment's policy and cannot 
 
 ## When it is checked
 
-- **Apply and validate:** an image that breaks the policy is reported on the task's `uses:`.
+- **Create and validate:** an image that breaks the policy is reported on the task's `uses:`.
 - **Submit:** the policy is checked before a run exists, so a definition stored before the policy tightened is refused at its next submit.
 - **Dispatch:** the Orker checks each attempt against the policy the run pinned at submit, before it builds the workspace or pulls the image.
 
 A run keeps the policy and the key it was submitted under. Tightening the policy later does not stop a run already accepted. Stop it with `orkctl run cancel`.
 
-A registry that cannot be asked is never treated as a pass. Apply and submit report it as `unavailable`. An Orker retries it under the task's policy.
+A registry that cannot be asked is never treated as a pass. Creating an Orkflow and submitting a run report it as `unavailable`. An Orker retries it under the task's policy.
 
 ## Refusals
 

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The fuzz lane (AGENTS.md §11.2, docs/PROOFS.md §2.1) runs every Fuzz target
@@ -52,12 +54,8 @@ func fuzzModuleDir(t *testing.T, files map[string]string) string {
 	files["go.mod"] = fuzzModule
 	for name, text := range files {
 		p := filepath.Join(dir, name)
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		must.OK(t, os.WriteFile(p, []byte(text), 0o644))
 	}
 	prev := fuzzWorkDir
 	fuzzWorkDir = dir
@@ -148,9 +146,7 @@ func TestFuzzRunner_APassingTargetAndACrashingOne(t *testing.T) {
 		t.Fatalf("exit %d, want 1: FuzzCrash has a crasher", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "fuzz-tests.json"), &l); err != nil {
-		t.Fatalf("the lane's ledger is fuzz-tests.json: %v", err)
-	}
+	must.OKf(t, readJSON(filepath.Join(out, "fuzz-tests.json"), &l), "the lane's ledger is fuzz-tests.json")
 	if l.Suite != suiteFuzz || l.Summary.Expected != 2 || l.Summary.Pass != 1 || l.Summary.Fail != 1 {
 		t.Fatalf("ledger = %+v", l)
 	}
@@ -228,9 +224,7 @@ func TestFuzzRunner_NoTargetIsAProblemNotAPass(t *testing.T) {
 		t.Fatalf("exit %d, want 1: a lane that fuzzed nothing proves nothing", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "fuzz-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "fuzz-tests.json"), &l))
 	if l.ok() || !strings.Contains(strings.Join(l.Problems, "\n"), "no Fuzz target") {
 		t.Errorf("ledger = %+v", l)
 	}

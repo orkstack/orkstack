@@ -1,4 +1,4 @@
-import { expect, type Page } from '@playwright/test';
+import { expect, type Locator, type Page } from '@playwright/test';
 
 // The page interactions more than one spec performs, in one place.
 //
@@ -205,7 +205,15 @@ export async function inspectTask(page: Page, id: string): Promise<void> {
  * its label, once a click on page-cli-trigger has opened it.
  */
 export function pageCli(page: Page, label: string) {
-	return page.getByTestId('page-cli-popover').locator(`[data-cli-label="${label}"]`);
+	return cliCommand(page, 'page-cli', label);
+}
+
+/**
+ * One command in a surface's one terminal icon (a CliPopover drawn with
+ * `testid`), by its label, once a click on its trigger has opened it.
+ */
+export function cliCommand(page: Page, testid: string, label: string) {
+	return page.getByTestId(`${testid}-popover`).locator(`[data-cli-label="${label}"]`);
 }
 
 /**
@@ -215,4 +223,35 @@ export function pageCli(page: Page, label: string) {
 export async function openNamespacePage(page: Page, name: string): Promise<void> {
 	await page.getByTestId(`namespace-edit-${name}`).click();
 	await expect(page.getByTestId('namespace-facts')).toBeVisible();
+}
+
+/**
+ * Asserts that an editor's shut docs rail, in one column (EditorLayout), is
+ * HELD at the viewport's foot rather than merely ending near it: at a short
+ * window its place in the page is below the window, it shows at the window's
+ * foot, and scrolling moves the editor card while the bar stays put. A bar
+ * that lost `position: sticky; bottom: 0` would sit below the window, or move
+ * with the page. The window is left at 600 px high, scrolled to the top.
+ */
+export async function expectDocsBarHeldAtFoot(page: Page, card: Locator): Promise<void> {
+	const height = 600;
+	const step = 40;
+	await page.setViewportSize({ width: page.viewportSize()!.width, height });
+	await page.evaluate(() => window.scrollTo(0, 0));
+	const bar = page.getByTestId('editor-docs');
+	await expect(bar).toHaveClass(/\bcollapsed\b/);
+	const foot = async () => {
+		const box = (await bar.boundingBox())!;
+		return Math.round(box.y + box.height);
+	};
+	// Its own place, the foot of the editor's grid, is further down than the scroll below.
+	const placed = await bar.evaluate((el) => el.closest('.ed-grid')!.getBoundingClientRect().bottom);
+	expect(placed).toBeGreaterThan(height + step);
+	await expect.poll(foot).toBe(height);
+	const cardTop = (await card.boundingBox())!.y;
+	await page.evaluate((by) => window.scrollBy(0, by), step);
+	await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(step);
+	expect(Math.round((await card.boundingBox())!.y)).toBe(Math.round(cardTop - step));
+	expect(await foot()).toBe(height);
+	await page.evaluate(() => window.scrollTo(0, 0));
 }

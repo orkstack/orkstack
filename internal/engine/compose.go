@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -22,6 +22,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/typeid"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -101,7 +102,7 @@ type ChildRunPlan struct {
 	// Orkflow is the child's PLANNED definition (pools resolved by
 	// PoolResolver.Plan) as compact protojson, with source_yaml cleared: the
 	// source is not what runs, and the stored version keeps it.
-	Orkflow json.RawMessage `json:"orkflow"`
+	Orkflow stablejson.RawJSON `json:"orkflow"`
 	// Plan is the child's own plan — Routes, CommitRoot, Limits,
 	// TransferBudgetSeconds, Telemetry (from the CHILD's labels), ImagePolicy
 	// (the parent's selection: one for the tree), Awaits and Children. Origin
@@ -111,8 +112,8 @@ type ChildRunPlan struct {
 	// The engine's boot answers (TemporalStarter.IndexAnswers) at submit, so
 	// the child is stamped exactly as a top-level run is
 	// (RunStartSearchAttributes).
-	NamespaceIndexed bool `json:"namespace_indexed,omitempty"`
-	OriginIndexed    bool `json:"origin_indexed,omitempty"`
+	NamespaceIndexed bool `json:"namespace_indexed,omitzero"`
+	OriginIndexed    bool `json:"origin_indexed,omitzero"`
 }
 
 // NewChildRunPlan builds one from a planned definition: clones it, clears
@@ -131,11 +132,11 @@ func NewChildRunPlan(planned *orkstackv1.Orkflow, plan RunPlan, namespaceIndexed
 		return nil, fmt.Errorf("child run plan: encode %s@%s: %w", planned.GetName(), planned.GetVersion(), err)
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
+	if err := stablejson.Compact(&compact, raw); err != nil {
 		return nil, fmt.Errorf("child run plan: compact %s@%s: %w", planned.GetName(), planned.GetVersion(), err)
 	}
 	return &ChildRunPlan{
-		Orkflow:          json.RawMessage(compact.Bytes()),
+		Orkflow:          stablejson.RawJSON(compact.Bytes()),
 		Plan:             plan,
 		NamespaceIndexed: namespaceIndexed,
 		OriginIndexed:    originIndexed,
@@ -280,11 +281,11 @@ func composeLocalContext(ctx workflow.Context) workflow.Context {
 // renderRequest builds one render: templates as JSON, the run input, and
 // every upstream the templates read whose values are addressable.
 func (s *runState) renderRequest(label, prefix string, templates any, readable map[string]bool) (ComposeRenderRequest, error) {
-	encodedTemplates, err := json.Marshal(templates)
+	encodedTemplates, err := stablejson.Marshal(templates)
 	if err != nil {
 		return ComposeRenderRequest{}, fmt.Errorf("encode templates: %w", err)
 	}
-	encodedInputs, err := json.Marshal(s.inputs)
+	encodedInputs, err := stablejson.Marshal(s.inputs)
 	if err != nil {
 		return ComposeRenderRequest{}, fmt.Errorf("encode run input: %w", err)
 	}
@@ -453,7 +454,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
 			fmt.Sprintf("task %q: the child run's input could not be rendered: %v", id, err), "")
 	}
-	var rendered json.RawMessage
+	var rendered stablejson.RawJSON
 	if composeStartWithoutRender {
 		// TEST-ONLY: the raw with:, never rendered and never recorded.
 		rendered = req.Templates
@@ -518,14 +519,19 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 	return future, nil
 }
 
-// payloadOfJSON decodes a rendered JSON object (UseNumber, so an integer
-// keeps its digits until structpb stores it) into a Payload.
+// payloadOfJSON decodes a rendered JSON object into a Payload. structpb holds
+// every number as a float64, which DecodeRecorded gives. It runs in workflow
+// code on the bytes a local activity's marker recorded, so it reads them as
+// the build that recorded them did, and a replayed decision is the recorded
+// one.
 func payloadOfJSON(raw []byte) (*orkstackv1.Payload, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var object map[string]any
-	if err := decoder.Decode(&object); err != nil {
+	decoded, err := stablejson.DecodeRecorded(raw)
+	if err != nil {
 		return nil, fmt.Errorf("the rendered input is not a JSON object: %w", err)
+	}
+	object, ok := decoded.(map[string]any)
+	if !ok && decoded != nil {
+		return nil, errors.New("the rendered input is not a JSON object")
 	}
 	if len(object) == 0 {
 		return &orkstackv1.Payload{}, nil
@@ -551,13 +557,7 @@ func (e *childCanceledError) Unwrap() error { return e.cause }
 // canonicalValuesJSON renders a composed task's values: keys sorted, no HTML
 // escaping, no trailing newline — the bytes stored as its values.json.
 func canonicalValuesJSON(values map[string]any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(values); err != nil {
-		return nil, err
-	}
-	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+	return json.Marshal(values, stablejson.Unescaped)
 }
 
 // collectChild records a composed task's outcome from its child's result.
@@ -763,7 +763,7 @@ func (s *runState) renderOutputs(ctx workflow.Context) (*orkstackv1.Payload, *or
 		return nil, fail(OutputsRenderFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, err.Error())
 	}
 	localCtx := composeLocalContext(ctx)
-	var rendered json.RawMessage
+	var rendered stablejson.RawJSON
 	if err := workflow.ExecuteLocalActivity(localCtx, ActivityRenderComposedValues, req).Get(localCtx, &rendered); err != nil {
 		code, category, message := renderFailure(renderPrefixOutputs, err)
 		return nil, fail(code, category, message)
@@ -874,12 +874,12 @@ func NewComposeActivities(store ComposeStore) *ComposeActivities {
 // ComposeRenderRequest is plain JSON (encoding/json), never a proto message
 // nesting a Struct — the reason RunPlan is plain Go.
 type ComposeRenderRequest struct {
-	Label      string            `json:"label"`
-	CodePrefix string            `json:"code_prefix"` // "CHILD_INPUT" | "OUTPUTS"
-	Templates  json.RawMessage   `json:"templates"`
-	Inputs     json.RawMessage   `json:"inputs"`
-	Upstream   []ComposeUpstream `json:"upstream"`
-	MaxBytes   int64             `json:"max_bytes"`
+	Label      string             `json:"label"`
+	CodePrefix string             `json:"code_prefix"` // "CHILD_INPUT" | "OUTPUTS"
+	Templates  stablejson.RawJSON `json:"templates"`
+	Inputs     stablejson.RawJSON `json:"inputs"`
+	Upstream   []ComposeUpstream  `json:"upstream"`
+	MaxBytes   int64              `json:"max_bytes"`
 }
 
 // ComposeUpstream is one upstream values.json a render reads.
@@ -896,16 +896,15 @@ func composeActivityError(code string, category orkstackv1.FailureCategory, mess
 		&orkstackv1.ActivityFailureDetail{ReasonCode: code, Category: category})
 }
 
-// decodeJSONNumbers decodes one JSON value with UseNumber.
+// decodeJSONNumbers decodes one JSON value, every number kept as its text.
+// A key written twice is refused, naming it.
 func decodeJSONNumbers(raw []byte) (any, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil, nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
 	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
+	if err := json.Unmarshal(raw, &value, stablejson.UseNumber); err != nil {
+		return nil, stablejson.Explained(err)
 	}
 	return value, nil
 }
@@ -913,12 +912,12 @@ func decodeJSONNumbers(raw []byte) (any, error) {
 // RenderComposedValues reads each upstream values.json (at most MaxBytes+1
 // bytes; bytes whose sha256 is not the recorded one are refused — the store
 // contradicts the commit, non-retryable <prefix>_UNAVAILABLE), decodes with
-// json.Decoder.UseNumber, and returns dsl.RenderValues(...) encoded as a JSON
+// stablejson.UseNumber, and returns dsl.RenderValues(...) encoded as a JSON
 // object. A render error is NonRetryable(msg, ContractViolation,
 // ActivityFailureDetail{ReasonCode: <prefix>_RENDER_FAILED}); a result over
 // MaxBytes is <prefix>_TOO_LARGE likewise; a read error is returned as-is and
 // retried by the local activity's policy.
-func (a *ComposeActivities) RenderComposedValues(ctx context.Context, req ComposeRenderRequest) (json.RawMessage, error) {
+func (a *ComposeActivities) RenderComposedValues(ctx context.Context, req ComposeRenderRequest) (stablejson.RawJSON, error) {
 	prefix := req.CodePrefix
 	if prefix == "" {
 		prefix = renderPrefixChildInput
@@ -989,30 +988,27 @@ func (a *ComposeActivities) RenderComposedValues(ctx context.Context, req Compos
 		return nil, composeActivityError(prefix+"_RENDER_FAILED",
 			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, err.Error())
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(rendered); err != nil {
+	out, err := json.Marshal(rendered, stablejson.Unescaped)
+	if err != nil {
 		return nil, composeActivityError(prefix+"_RENDER_FAILED",
 			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
 			fmt.Sprintf("%s: encode the rendered values: %v", req.Label, err))
 	}
-	out := bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
 	if int64(len(out)) > maxBytes {
 		return nil, composeActivityError(prefix+"_TOO_LARGE",
 			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
 			fmt.Sprintf("%s: the rendered values are %d bytes, over the %d-byte values limit",
 				req.Label, len(out), maxBytes))
 	}
-	return json.RawMessage(out), nil
+	return stablejson.RawJSON(out), nil
 }
 
 // ComposeStoreRequest is one composed task's values, to be stored.
 type ComposeStoreRequest struct {
-	Orkflow string          `json:"orkflow"`
-	RunID   string          `json:"run_id"`
-	TaskID  string          `json:"task_id"`
-	Values  json.RawMessage `json:"values"`
+	Orkflow string             `json:"orkflow"`
+	RunID   string             `json:"run_id"`
+	TaskID  string             `json:"task_id"`
+	Values  stablejson.RawJSON `json:"values"`
 }
 
 // StoreComposedValues writes Values as the task's values.json:

@@ -101,11 +101,13 @@ export function safeIcon(icon: DeclaredIcon | undefined): { attrs: Record<string
 }
 
 /**
- * The drawing the UI owns for a task: a composed task, an awaited task, and
- * the default for any image (which its own declared icon replaces).
+ * The drawing the UI owns for a task: a composed task, an awaited task, a
+ * sleeping task, and the default for any image (which its own declared icon
+ * replaces).
  */
-export function activityKind(uses: string | undefined, opts: { awaited?: boolean } = {}): ActivityKind {
+export function activityKind(uses: string | undefined, opts: { awaited?: boolean; slept?: boolean } = {}): ActivityKind {
 	if (opts.awaited) return 'await';
+	if (opts.slept) return 'sleep';
 	if (uses?.startsWith('orkflow:')) return 'orkflow';
 	return 'default';
 }
@@ -117,6 +119,8 @@ export function activityKindWords(kind: ActivityKind): string {
 			return 'Composed task';
 		case 'await':
 			return 'Awaited task';
+		case 'sleep':
+			return 'Sleeping task';
 		case 'default':
 			return 'Activity image';
 		default:

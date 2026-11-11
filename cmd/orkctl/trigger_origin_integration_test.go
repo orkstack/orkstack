@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_TriggerInvokeRecordsOriginEndToEnd creates a trigger on
@@ -46,17 +48,13 @@ func TestIntegration_TriggerInvokeRecordsOriginEndToEnd(t *testing.T) {
 	const ref = "https://github.com/acme/svc/actions/runs/123"
 	url := "http://" + s.a.addr + strings.Replace(api.TriggerInvokePath, "{id}", triggerID, 1)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	request.Header.Set("Authorization", "Bearer "+trigger.Secret)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(api.OriginReferenceHeader, ref)
 	request.Header.Set(api.AuditPrincipalHeader, "ci-github")
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("POST %s: %v", url, err)
-	}
+	must.OKf(t, err, "POST %s", url)
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	fmt.Fprintf(&s.transcript, "$ curl -X POST %s -H 'Authorization: Bearer <secret>' -H '%s: %s' -H '%s: ci-github' -d '{}'    # via ork-A\n%s(HTTP %d)\n\n",
@@ -88,9 +86,7 @@ func TestIntegration_TriggerInvokeRecordsOriginEndToEnd(t *testing.T) {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.artifactCfg.S3Bucket), Prefix: aws.String(prefix)})
-		if err != nil {
-			t.Fatalf("list %s: %v", prefix, err)
-		}
+		must.OKf(t, err, "list %s", prefix)
 		keys = keys[:0]
 		for _, object := range page.Contents {
 			keys = append(keys, aws.ToString(object.Key))

@@ -8,10 +8,12 @@ import (
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/proto"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const describedDocument = `apiVersion: orkstack/v1
@@ -54,9 +56,7 @@ values:
 
 func TestParseActivityDocument_ReadsTheIconAndEveryDescription(t *testing.T) {
 	decl, err := ParseActivityDocument([]byte(describedDocument))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	wantIcon := &orkstackv1.ActivityIcon{Attributes: attrs("stroke", "currentColor"), Elements: []*orkstackv1.IconElement{
 		{Name: "path", Attributes: attrs("d", "M4 7h8")},
 		{Name: "rect", Attributes: attrs("x", "2", "y", "2", "width", "12", "height", "12", "fill", "none")}}}
@@ -76,9 +76,7 @@ func TestParseActivityDocument_ReadsTheIconAndEveryDescription(t *testing.T) {
 		t.Fatalf("docs = %v, want %v", decl.Docs, wantDocs)
 	}
 	iface, err := ParseInterfaceDocument([]byte(describedDocument))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !proto.Equal(iface, decl.Interface) {
 		t.Fatalf("ParseInterfaceDocument = %v, want ParseActivityDocument's interface %v", iface, decl.Interface)
 	}
@@ -89,9 +87,7 @@ func TestParseActivityDocument_ReadsTheIconAndEveryDescription(t *testing.T) {
 
 func TestParseActivityDocument_DeclaresNoIconOrDocsWithoutThem(t *testing.T) {
 	decl, err := ParseActivityDocument([]byte("apiVersion: orkstack/v1\nkind: ActivityInterface\nfields:\n  a:\n    type: string\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if decl.Icon != nil || decl.Docs != nil {
 		t.Fatalf("icon = %v, docs = %v; want neither", decl.Icon, decl.Docs)
 	}
@@ -145,9 +141,7 @@ func interfaceDocuments(t *testing.T) map[string][]byte {
 	var paths []string
 	for _, parent := range []string{"images", "examples"} {
 		matches, err := filepath.Glob(filepath.Join("..", "..", parent, "*", "interface.ork.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		paths = append(paths, matches...)
 	}
 	if len(paths) < 8 {
@@ -156,9 +150,7 @@ func interfaceDocuments(t *testing.T) map[string][]byte {
 	out := map[string][]byte{}
 	for _, path := range paths {
 		source, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		out[filepath.ToSlash(strings.TrimPrefix(path, filepath.Join("..", "..")+string(filepath.Separator)))] = source
 	}
 	return out
@@ -224,27 +216,19 @@ func TestInterfaceLabel_IsUnchangedByAnIconOrDescriptions(t *testing.T) {
 	for path, source := range interfaceDocuments(t) {
 		t.Run(path, func(t *testing.T) {
 			described, err := ParseActivityDocument(source)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if strings.HasPrefix(path, "images/") && (described.Icon == nil || described.Docs == nil) {
 				t.Fatalf("%s declares no icon or no descriptions; every first-party image declares both", path)
 			}
 			bare, err := ParseActivityDocument(stripDescribed(t, source))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if bare.Icon != nil || bare.Docs != nil {
 				t.Fatal("stripping left an icon or a description behind")
 			}
 			got, err := PackInterfaceLabel(described.Interface)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			want, err := PackInterfaceLabel(bare.Interface)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got != want {
 				t.Fatalf("the interface label changes with descriptions:\n%s\nwithout them:\n%s", got, want)
 			}
@@ -261,9 +245,7 @@ func TestFirstPartyImages_DescribeEveryOpAndKey(t *testing.T) {
 			continue
 		}
 		decl, err := ParseActivityDocument(source)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
+		must.OKf(t, err, "%s", path)
 		iface, docs := decl.Interface, decl.Docs
 		var missing []string
 		if docs.GetDescription() == "" {
@@ -310,13 +292,9 @@ func TestFirstPartyImages_IconSourceIsAlreadyCanonical(t *testing.T) {
 			t.Fatal(err)
 		}
 		decl, err := ParseActivityDocument(source)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
+		must.OKf(t, err, "%s", path)
 		label, err := PackIconLabel(decl.Icon)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
+		must.OKf(t, err, "%s", path)
 		if label == "" || label != strings.TrimSpace(raw.Icon) {
 			t.Errorf("%s: the icon packs to\n%s\nnot its source\n%s", path, label, raw.Icon)
 		}
@@ -361,9 +339,7 @@ func TestParseActivityDocument_HoldsTheIconToTheBoundOfWhatItPacksTo(t *testing.
 	}
 	_, atSource := iconPackingTo(t, MaxIconLabelBytes)
 	decl, err := ParseActivityDocument(document(atSource))
-	if err != nil {
-		t.Fatalf("an icon packing to exactly %d bytes: %v", MaxIconLabelBytes, err)
-	}
+	must.OKf(t, err, "an icon packing to exactly %d bytes", MaxIconLabelBytes)
 	if label, err := PackIconLabel(decl.Icon); err != nil || len(label) != MaxIconLabelBytes {
 		t.Fatalf("it packs to %d bytes (%v)", len(label), err)
 	}
@@ -384,9 +360,7 @@ func TestParseActivityDocument_HoldsTheIconToTheBoundOfWhatItPacksTo(t *testing.
 func TestStripDescribed_KeepsAKeyNamedDescription(t *testing.T) {
 	source := []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\ndescription: x\nfields:\n  description:\n    type: string\n    description: y\n")
 	decl, err := ParseActivityDocument(stripDescribed(t, source))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if decl.Docs != nil || decl.Interface.GetFields()["description"] == nil {
 		t.Fatalf("stripped to docs %v and fields %v; want no docs and the key named description kept", decl.Docs, decl.Interface.GetFields())
 	}

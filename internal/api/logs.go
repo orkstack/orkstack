@@ -238,6 +238,10 @@ func (s *Service) streamRunTaskLogs(
 		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"task %q of run %q is an awaited task: it runs no container and writes no logs", q.TaskID, q.RunID))
 	}
+	if taskRun.GetSleep() != nil {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"task %q of run %q is a sleeping task: it runs no container and writes no logs", q.TaskID, q.RunID))
+	}
 	// A composed task starts a child run; its logs are the child's.
 	if err := composedTaskLogRefusal(q.RunID, taskRun); err != nil {
 		return err

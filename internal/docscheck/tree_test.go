@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // markdownFiles returns the repository's documentation: markdownFilesUnder at
@@ -66,9 +68,7 @@ func markdownFilesUnder(t *testing.T, root string) []string {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	sort.Strings(out)
 	return out
 }
@@ -114,13 +114,9 @@ func treeFiles(t *testing.T, root string) map[string]bool {
 		return string(out)
 	}
 	top, err := filepath.EvalSymlinks(filepath.FromSlash(strings.TrimSpace(git("rev-parse", "--show-toplevel"))))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if top != want {
 		t.Fatalf("%s is not the top of its own git work tree (git's top is %s): the documentation checks read a whole tree, by its own ignore rules", root, top)
 	}
@@ -129,9 +125,7 @@ func treeFiles(t *testing.T, root string) map[string]bool {
 		index = filepath.Join(root, index)
 	}
 	f, err := os.Open(index)
-	if err != nil {
-		t.Fatalf("opening the index so the test cache keys on it: %v", err)
-	}
+	must.OKf(t, err, "opening the index so the test cache keys on it")
 	f.Close()
 	files := map[string]bool{}
 	for _, p := range strings.Split(git("ls-files", "-z", "--cached", "--others", "--exclude-standard"), "\x00") {
@@ -154,9 +148,7 @@ func isolateGit(t *testing.T) {
 	t.Setenv("GIT_CONFIG_SYSTEM", os.DevNull)
 	for _, k := range []string{"GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"} {
 		t.Setenv(k, "") // restored when the test ends
-		if err := os.Unsetenv(k); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Unsetenv(k))
 	}
 }
 
@@ -181,12 +173,8 @@ func TestMarkdownFiles_ReadExactlyTheTree(t *testing.T) {
 	write := func(rel, text string) {
 		t.Helper()
 		p := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		must.OK(t, os.WriteFile(p, []byte(text), 0o644))
 	}
 
 	git(root, "init", "-q")
@@ -226,9 +214,7 @@ func TestMarkdownFiles_ReadExactlyTheTree(t *testing.T) {
 	var got []string
 	for _, p := range markdownFilesUnder(t, root) {
 		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		got = append(got, filepath.ToSlash(rel))
 	}
 	if want := "README.md dist/KEPT.md docs/GUIDE.md docs/NEW.md internal/dist/README.md site/content/how-to/x.md"; strings.Join(got, " ") != want {
@@ -247,9 +233,7 @@ func TestMarkdownFiles_ReadTheRepositorysDocuments(t *testing.T) {
 	read := map[string]bool{}
 	for _, p := range markdownFiles(t) {
 		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		read[filepath.ToSlash(rel)] = true
 	}
 	want := []string{"README.md", "AGENTS.md", "CHANGELOG.md", ".github/SUPPORT.md",
@@ -257,9 +241,7 @@ func TestMarkdownFiles_ReadTheRepositorysDocuments(t *testing.T) {
 	cmd := exec.Command("git", "ls-files", "-z", "--cached", "--", "*.md")
 	cmd.Dir = root
 	out, err := cmd.Output()
-	if err != nil {
-		t.Fatalf("git ls-files --cached: %v", err)
-	}
+	must.OKf(t, err, "git ls-files --cached")
 	for _, p := range strings.Split(string(out), "\x00") {
 		if p == "" {
 			continue

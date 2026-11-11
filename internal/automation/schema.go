@@ -24,7 +24,7 @@ import (
 // (TestAutomationSchema_DescriptionsAreAutomationText holds each part there).
 var automationDescriptions = map[string]string{
 	"apiVersion": "Exactly `orkstack/v1`.",
-	"kind":       "Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl apply` dispatches on it.",
+	"kind":       "Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl automation apply` refuses any other kind, as `orkctl orkflow create` refuses this one.",
 	"namespace": "The one namespace the document describes, a slug. Required and authoritative: never inferred from " +
 		"`-n`, `ORK_NAMESPACE` or a saved default, so a document that prunes can never land in the wrong namespace by accident of a shell.",
 	"settings":  "The namespace's settings, as an overlay.",
@@ -44,7 +44,7 @@ var automationDescriptions = map[string]string{
 	"settings.require_signed_by": "string",
 	"settings.budget":            "mapping: `cpu_seconds`, `gib_seconds` (integers ≥ 0), `period` (Go duration), `enforce` (boolean) — the `--budget-*` flags",
 
-	"schedules.*.orkflow":          "slug, **required**, fixed at creation",
+	"schedules.*.orkflow":          "slug of this namespace's Orkflow, **required**, fixed at creation",
 	"schedules.*.version":          "string — absent means the current pointer at each fire",
 	"schedules.*.description":      "string, ≤ 256 bytes, no control characters",
 	"schedules.*.cron":             "string, or list of strings — absent means none",
@@ -58,7 +58,7 @@ var automationDescriptions = map[string]string{
 	"schedules.*.pause_on_failure": "boolean — absent means `false`",
 	"schedules.*.input":            "a YAML mapping, converted to JSON by the strict mapping (`docs/JSON.md`) — absent means none",
 
-	"triggers.*.orkflow":     "slug, **required**, fixed at creation",
+	"triggers.*.orkflow":     "slug of this namespace's Orkflow, **required**, fixed at creation",
 	"triggers.*.version":     "string — absent means the current pointer at each invoke",
 	"triggers.*.description": "string",
 
@@ -147,7 +147,7 @@ func scalarSchema(fd protoreflect.FieldDescriptor) (map[string]any, error) {
 		if message.FullName() == "google.protobuf.Duration" {
 			// The one well-known type a document writes, as text.
 			return map[string]any{"type": "string",
-				"description": "A Go duration such as 168h, which `orkctl apply` checks."}, nil
+				"description": "A Go duration such as 168h, which `orkctl automation apply` checks."}, nil
 		}
 		properties := map[string]any{}
 		for i := 0; i < message.Fields().Len(); i++ {
@@ -288,7 +288,7 @@ func Schema() (map[string]any, error) {
 		"$comment": dsl.SchemaComment,
 		"title":    "OrkStack automation document (" + dsl.APIVersion + ")",
 		"description": "One namespace's settings, schedules, triggers and webhooks, declared by name (docs/AUTOMATION.md). " +
-			"`orkctl apply --dry-run` plans it against what the namespace holds; a schema checks only its shape.",
+			"`orkctl automation apply --dry-run` plans it against what the namespace holds; a schema checks only its shape.",
 		"type": "object", "additionalProperties": false, "properties": properties,
 		"required":    []any{"apiVersion", "kind", "namespace"},
 		"definitions": definitions,

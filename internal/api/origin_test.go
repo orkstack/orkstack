@@ -3,7 +3,7 @@ package api_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -20,8 +20,11 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // countingOrkflows is the memory orkflow store with its reads counted, so a
@@ -101,9 +104,7 @@ func TestSubmitRun_RecordsSubmitOriginWithReferenceAndPrincipal(t *testing.T) {
 	h := newOriginHarness(t)
 	const ref = "https://github.com/acme/svc/actions/runs/123"
 	run, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", OriginReference: ref}, "ci-github")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	want := &orkstackv1.RunOrigin{
 		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, Reference: ref, Principal: "ci-github",
 	}
@@ -119,9 +120,7 @@ func TestSubmitRun_RecordsSubmitOriginWithReferenceAndPrincipal(t *testing.T) {
 func TestSubmitRun_NoPrincipalRecordsEmptyNotUnattributed(t *testing.T) {
 	h := newOriginHarness(t)
 	run, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"}, "")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	if got := run.GetOrigin().GetPrincipal(); got != "" {
 		t.Fatalf("principal = %q, want empty: no header means no assertion, never a word standing in for one", got)
 	}
@@ -159,9 +158,7 @@ func TestSubmitRun_ReferenceIsValidatedNotSanitized(t *testing.T) {
 		h := newOriginHarness(t)
 		ref := strings.Repeat("é", 128) // 256 bytes
 		run, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", OriginReference: ref}, "")
-		if err != nil {
-			t.Fatalf("SubmitRun: %v", err)
-		}
+		must.OKf(t, err, "SubmitRun")
 		if run.GetOrigin().GetReference() != ref {
 			t.Fatalf("reference = %q, want it verbatim", run.GetOrigin().GetReference())
 		}
@@ -185,9 +182,7 @@ func TestSubmitRun_PrincipalAndDescriptionAreBoundedByTruncation(t *testing.T) {
 	h := newOriginHarness(t)
 	long := strings.Repeat("p", 400)
 	run, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"}, long)
-	if err != nil {
-		t.Fatalf("SubmitRun with a 400-byte principal: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun with a 400-byte principal")
 	got := run.GetOrigin().GetPrincipal()
 	if len(got) > 256 || !strings.HasSuffix(got, artifacts.AttemptTruncationMarker) {
 		t.Fatalf("principal = %d bytes %q, want at most 256 ending in the truncation marker", len(got), got)
@@ -218,9 +213,7 @@ func TestSubmitRun_RunAgainRecordsSourceRunAndChecksIt(t *testing.T) {
 		Status: orkstackv1.Status_STATUS_SUCCEEDED})
 
 	run, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", SourceRunId: "ork-source", OriginReference: "INC-9"}, "ops")
-	if err != nil {
-		t.Fatalf("run again: %v", err)
-	}
+	must.OKf(t, err, "run again")
 	want := &orkstackv1.RunOrigin{
 		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN, Id: "ork-source", Reference: "INC-9", Principal: "ops",
 	}
@@ -261,9 +254,7 @@ func TestSubmitRun_RunAgainOfAChildIsANewTopLevelRun(t *testing.T) {
 			Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root",
 		}})
 	run, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", SourceRunId: "ork-leaf"}, "")
-	if err != nil {
-		t.Fatalf("run again: %v", err)
-	}
+	must.OKf(t, err, "run again")
 	want := &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN, Id: "ork-leaf"}
 	if !proto.Equal(run.GetOrigin(), want) {
 		t.Fatalf("origin = %v, want %v", run.GetOrigin(), want)
@@ -293,9 +284,7 @@ func TestSubmitRun_RequestCannotClaimAKind(t *testing.T) {
 		{OrkflowName: "hello-ork", IdempotencyKey: "k"},
 	} {
 		run, err := h.submit(msg, "")
-		if err != nil {
-			t.Fatalf("SubmitRun(%v): %v", msg, err)
-		}
+		must.OKf(t, err, "SubmitRun(%v)", msg)
 		switch run.GetOrigin().GetKind() {
 		case orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN:
 		default:
@@ -307,13 +296,9 @@ func TestSubmitRun_RequestCannotClaimAKind(t *testing.T) {
 func TestSubmitRun_KeyedRepeatReturnsTheFirstOrigin(t *testing.T) {
 	h := newOriginHarness(t)
 	first, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", IdempotencyKey: "nightly", OriginReference: "first"}, "")
-	if err != nil {
-		t.Fatalf("first submit: %v", err)
-	}
+	must.OKf(t, err, "first submit")
 	second, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", IdempotencyKey: "nightly", OriginReference: "second"}, "")
-	if err != nil {
-		t.Fatalf("keyed repeat: %v", err)
-	}
+	must.OKf(t, err, "keyed repeat")
 	if second.GetId() != first.GetId() {
 		t.Fatalf("keyed repeat answered %s, want %s", second.GetId(), first.GetId())
 	}
@@ -344,9 +329,7 @@ func TestSubmitRun_FailedStartArchivesTheOrigin(t *testing.T) {
 	archived, err := h.archive.ListRuns(context.Background(), engine.ArchiveQuery{
 		Namespace: "default", OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT,
 	})
-	if err != nil {
-		t.Fatalf("archive list by origin: %v", err)
-	}
+	must.OKf(t, err, "archive list by origin")
 	if len(archived) != 1 || archived[0].GetId() != stored[0].GetId() ||
 		archived[0].GetOrigin().GetReference() != "INC-7" {
 		t.Fatalf("archived by origin = %v, want the failed start with its origin", archived)
@@ -419,9 +402,7 @@ func TestTriggerInvoke_MalformedReferenceIs400AndStartsNothing(t *testing.T) {
 		t.Fatalf("started %v", got)
 	}
 	listed, err := f.runClient().ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed.Msg.GetRuns()) != 0 {
 		t.Fatalf("ListRuns shows %d runs after a refused invoke", len(listed.Msg.GetRuns()))
 	}
@@ -456,9 +437,7 @@ func TestListRuns_OriginFilterMergesLiveAndArchive(t *testing.T) {
 		run("ork-a3", 3, orkstackv1.Status_STATUS_SUCCEEDED, &orkstackv1.RunOrigin{Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT}),
 		run("ork-legacy", 4, orkstackv1.Status_STATUS_SUCCEEDED, nil),
 	} {
-		if err := archiver.Archive(context.Background(), archived, nil); err != nil {
-			t.Fatalf("Archive(%s): %v", archived.GetId(), err)
-		}
+		must.OKf(t, archiver.Archive(context.Background(), archived, nil), "Archive(%s)", archived.GetId())
 	}
 	reader := &fakeReader{runs: map[string]*orkstackv1.Run{}}
 	// Two live runs of the trigger, and one finished run visibility still
@@ -472,9 +451,7 @@ func TestListRuns_OriginFilterMergesLiveAndArchive(t *testing.T) {
 	list := func(req *orkstackv1.ListRunsRequest) []string {
 		t.Helper()
 		resp, err := svc.ListRuns(context.Background(), connect.NewRequest(req))
-		if err != nil {
-			t.Fatalf("ListRuns(%v): %v", req, err)
-		}
+		must.OKf(t, err, "ListRuns(%v)", req)
 		ids := []string{}
 		for _, r := range resp.Msg.GetRuns() {
 			ids = append(ids, r.GetId())
@@ -521,9 +498,7 @@ func TestListRuns_RootFilterMergesLiveAndArchive(t *testing.T) {
 		run("ork-older-child", 4, orkstackv1.Status_STATUS_SUCCEEDED, "ork-root", ""),
 		run("ork-stranger", 5, orkstackv1.Status_STATUS_SUCCEEDED, "ork-other", "ork-other"),
 	} {
-		if err := archiver.Archive(context.Background(), archived, nil); err != nil {
-			t.Fatalf("Archive(%s): %v", archived.GetId(), err)
-		}
+		must.OKf(t, archiver.Archive(context.Background(), archived, nil), "Archive(%s)", archived.GetId())
 	}
 	reader := &fakeReader{runs: map[string]*orkstackv1.Run{}}
 	reader.setRun(run("ork-both", 3, orkstackv1.Status_STATUS_SUCCEEDED, "ork-mid", "ork-root"))
@@ -534,9 +509,7 @@ func TestListRuns_RootFilterMergesLiveAndArchive(t *testing.T) {
 	list := func(filterTexts ...string) []string {
 		t.Helper()
 		resp, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{Filters: filters(t, filterTexts...)}))
-		if err != nil {
-			t.Fatalf("ListRuns(%v): %v", filterTexts, err)
-		}
+		must.OKf(t, err, "ListRuns(%v)", filterTexts)
 		ids := []string{}
 		for _, r := range resp.Msg.GetRuns() {
 			ids = append(ids, r.GetId())
@@ -587,9 +560,7 @@ func TestListRuns_RootFilterMergesLiveAndArchive(t *testing.T) {
 	first, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{
 		PageSize: 1, Filters: filters(t, "origin.root_run_id=ork-root"),
 	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if first.Msg.GetNextPageToken() == "" {
 		t.Fatal("a one-run page of a three-run chain has no next page")
 	}
@@ -633,7 +604,7 @@ func TestListRuns_CursorBindsOriginFilter(t *testing.T) {
 	// A version-1 token — the typed filters' shape — is refused, never read
 	// as an unfiltered position.
 	legacy := map[string]any{"v": 1, "n": "default", "o": "", "s": 0, "c": at.Format(time.RFC3339Nano), "i": "ork-c"}
-	raw, err := json.Marshal(legacy)
+	raw, err := stablejson.Marshal(legacy)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -678,9 +649,7 @@ func TestJSON_OriginKindRendersShort(t *testing.T) {
 		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-parent",
 	}}
 	encoded, err := api.MarshalJSON(run)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !strings.Contains(string(encoded), `"kind":"PARENT_RUN"`) {
 		t.Fatalf("encoded %s, want the short enum", encoded)
 	}
@@ -689,17 +658,13 @@ func TestJSON_OriginKindRendersShort(t *testing.T) {
 	}
 	for _, spelling := range []string{`"PARENT_RUN"`, `"RUN_ORIGIN_KIND_PARENT_RUN"`} {
 		decoded := &orkstackv1.Run{}
-		if err := api.UnmarshalJSON([]byte(`{"id":"ork-1","origin":{"kind":`+spelling+`,"id":"ork-parent"}}`), decoded); err != nil {
-			t.Fatalf("UnmarshalJSON(%s): %v", spelling, err)
-		}
+		must.OKf(t, api.UnmarshalJSON([]byte(`{"id":"ork-1","origin":{"kind":`+spelling+`,"id":"ork-parent"}}`), decoded), "UnmarshalJSON(%s)", spelling)
 		if !proto.Equal(decoded, run) {
 			t.Fatalf("UnmarshalJSON(%s) = %v, want %v", spelling, decoded, run)
 		}
 	}
 	legacy, err := api.MarshalJSON(&orkstackv1.Run{Id: "ork-2"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.Contains(string(legacy), "origin") {
 		t.Fatalf("a run with no origin encodes %s, want no origin object", legacy)
 	}

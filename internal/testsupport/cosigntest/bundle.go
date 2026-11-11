@@ -6,9 +6,10 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"strings"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // cosign 3's default layout, restated from internal/dsl/signature.go for the
@@ -43,7 +44,7 @@ func Statement(digest string) []byte {
 // StatementWith is Statement with another predicate type: an attestation
 // rather than a signature.
 func StatementWith(digest, predicateType string) []byte {
-	body, _ := json.Marshal(map[string]any{
+	body, _ := stablejson.Marshal(map[string]any{
 		"_type": StatementType,
 		"subject": []map[string]any{{
 			"digest":      map[string]string{"sha256": strings.TrimPrefix(digest, "sha256:")},
@@ -85,7 +86,7 @@ func EnvelopeBundle(hint, payloadType string, payload []byte, signatures ...stri
 	for _, s := range signatures {
 		sigs = append(sigs, map[string]string{"sig": s})
 	}
-	body, _ := json.Marshal(map[string]any{
+	body, _ := stablejson.Marshal(map[string]any{
 		"mediaType": BundleType,
 		"verificationMaterial": map[string]any{
 			"publicKey": map[string]string{"hint": hint},
@@ -145,7 +146,7 @@ func BundleManifest(bundle []byte, subject string, subjectSize int) []byte {
 		Subject:      descriptor{MediaType: OCIIndexType, Size: subjectSize, Digest: subject},
 		ArtifactType: BundleType,
 	}
-	body, _ := json.Marshal(m)
+	body, _ := stablejson.Marshal(m)
 	return body
 }
 
@@ -188,6 +189,6 @@ func ReferrersIndex(referrers ...Referrer) []byte {
 			Annotations: annotations, ArtifactType: r.ArtifactType,
 		})
 	}
-	body, _ := json.Marshal(index)
+	body, _ := stablejson.Marshal(index)
 	return body
 }

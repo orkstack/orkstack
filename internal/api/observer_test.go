@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingObserver stands in for the telemetry seam this service announces
@@ -60,9 +62,7 @@ func newFixtureWithObserver(t *testing.T, observer engine.EventObserver) *fixtur
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 
 	transport := &http.Transport{}

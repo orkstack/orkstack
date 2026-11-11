@@ -49,7 +49,7 @@ export function resolveCli({
 	reject?: boolean;
 	reason?: string;
 }): string {
-	const args = ['run', 'resolve', runId, '--task', taskId];
+	const args = ['run', 'resolve', runId, '-t', taskId];
 	if (reject) args.push('--reject', '--reason', reason ?? '');
 	else if (valuesJson !== undefined && valuesJson.trim() !== '' && valuesJson.trim() !== '{}') {
 		args.push('--values', valuesJson);

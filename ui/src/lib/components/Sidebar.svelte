@@ -1,6 +1,6 @@
 <script lang="ts">
 	// The light sidebar (248 px): the brand, the namespace switch, Runs (with
-	// how many runs are going now), Orkflows and Apply, then Operate, a static
+	// how many runs are going now) and Orkflows, then Operate, a static
 	// group of the deployment's pages; the OrkStack plate and the appearance
 	// switch at its foot. The active page is a navy pill. Below 900 px it is
 	// the drawer the menu button opens (the layout owns that state).
@@ -27,7 +27,7 @@
 
 	let { pathname, link, running, counts = {}, version, picker, themeSwitch, drawer, onclose }: Props = $props();
 
-	const [, runs, orkflows, apply] = BUILD_PAGES;
+	const [, runs, orkflows] = BUILD_PAGES;
 	const build = $derived(buildPageOf(pathname)?.id);
 	const operate = $derived(operatePageOf(pathname)?.id);
 	const current = (on: boolean) => (on ? 'page' : undefined);
@@ -49,9 +49,6 @@
 	>
 	<a class="nav" href={link(orkflows.href)} data-testid="nav-orkflows" data-n={counts.orkflows} aria-current={current(build === 'orkflows')}
 		><Icon name="flow" />Orkflows</a
-	>
-	<a class="nav" href={link(apply.href)} data-testid="nav-apply" aria-current={current(build === 'apply')}
-		><Icon name="apply" />Apply</a
 	>
 
 	<span class="side-h" id="side-operate">Operate</span>

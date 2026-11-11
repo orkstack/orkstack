@@ -13,9 +13,11 @@ const clockThreadCPUTimeID = 3
 
 // threadCPU is the CPU time the calling OS thread has consumed. Unlike the
 // wall clock it does not advance while the thread waits for a CPU, so a host
-// loaded by other processes cannot move it; only work done on this thread —
-// the code under test and the garbage-collection assists it pays for — can.
-// A caller measuring a goroutine locks it to its thread first
+// loaded by other processes cannot add its waits to it. It does count all
+// the work done on this thread — the code under test and the collector's
+// work the runtime hands it, which passClock holds off — and that work takes
+// longer on a core whose pipeline and caches other threads share
+// (leastOfRuns). A caller measuring a goroutine locks it to its thread first
 // (runtime.LockOSThread), or a migration would read another thread's clock.
 func threadCPU() (time.Duration, bool) {
 	var ts syscall.Timespec

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -11,8 +10,10 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -33,6 +34,7 @@ func composeMaxDepthOf(configured int32) int {
 type composeNode struct {
 	TaskID   string                 // the composing task, in its parent
 	Ref      *orkstackv1.OrkflowRef // as the parent pinned it
+	Owner    string                 // the namespace that owns the child, resolved
 	Orkflow  *orkstackv1.Orkflow    // the stored version it resolved to
 	Path     []string               // "name@version" from the root, this node last
 	Children []*composeNode         // declaration order
@@ -43,7 +45,7 @@ type composeNode struct {
 type composeProblem struct {
 	TaskIndex int      // the ROOT composing task's index, where apply anchors
 	Path      []string // "name@version" from the root
-	Kind      string   // "missing" | "digest" | "cycle" | "depth"
+	Kind      string   // "missing" | "digest" | "cycle" | "depth" | "own-namespace" | "not-shared"
 	Message   string
 }
 
@@ -68,14 +70,13 @@ func pathNames(path []string) []string {
 }
 
 // checkComposeNode is the four checks every node of a tree is held to, in this
-// order — depth (depth+1 > maxDepth), cycle (name@version already on path),
+// order — depth (depth+1 > maxDepth), cycle (key already on path; treeKey),
 // existence (stored is nil: the store answered NotFound), pinned digest
 // (stored.definition_digest != ref.definition_digest, skipped only for a root
 // ref being stamped at apply). Pure. loadComposeTree (apply) and
 // planChildren (submit) both call it, so the two doors cannot disagree about
 // what a tree may be. path is the composing definition's own path.
-func checkComposeNode(ref *orkstackv1.OrkflowRef, stored *orkstackv1.Orkflow, path []string, depth, maxDepth int, stamping bool) *composeProblem {
-	key := composeKey(ref.GetName(), ref.GetVersion())
+func checkComposeNode(ref *orkstackv1.OrkflowRef, key string, stored *orkstackv1.Orkflow, path []string, depth, maxDepth int, stamping bool) *composeProblem {
 	full := append(append([]string(nil), path...), key)
 	if depth+1 > maxDepth {
 		return &composeProblem{Path: full, Kind: "depth", Message: fmt.Sprintf(
@@ -98,8 +99,8 @@ func checkComposeNode(ref *orkstackv1.OrkflowRef, stored *orkstackv1.Orkflow, pa
 			parent = path[len(path)-1]
 		}
 		return &composeProblem{Path: full, Kind: "digest", Message: fmt.Sprintf(
-			"%s pins %s as %s, but the stored %s is %s — it was deleted and re-applied with other "+
-				"content; apply %s as a new version to re-pin it",
+			"%s pins %s as %s, but the stored %s is %s — it was deleted and created again with other "+
+				"content; create %s as a new version to re-pin it",
 			parent, key, ref.GetDefinitionDigest(), key, stored.GetDefinitionDigest(),
 			pathNames([]string{parent})[0])}
 	}
@@ -107,21 +108,20 @@ func checkComposeNode(ref *orkstackv1.OrkflowRef, stored *orkstackv1.Orkflow, pa
 }
 
 // composeReader memoizes one call's reads: one read per distinct
-// name@version.
+// namespace/name@version.
 type composeReader struct {
 	s     *Service
-	ns    string
 	cache map[string]*orkstackv1.Orkflow
 	seen  map[string]bool
 }
 
-// get reads one version; nil, nil is NotFound.
-func (r *composeReader) get(ctx context.Context, name, version string) (*orkstackv1.Orkflow, error) {
-	key := composeKey(name, version)
+// get reads one version of owner's; nil, nil is NotFound.
+func (r *composeReader) get(ctx context.Context, owner, name, version string) (*orkstackv1.Orkflow, error) {
+	key := owner + "/" + composeKey(name, version)
 	if r.seen[key] {
 		return r.cache[key], nil
 	}
-	stored, err := r.s.orkflows.Get(ctx, r.ns, name, version)
+	stored, err := r.s.orkflows.Get(ctx, owner, name, version)
 	if err != nil && !errors.Is(err, artifacts.ErrNotFound) {
 		return nil, err
 	}
@@ -141,12 +141,17 @@ func (r *composeReader) get(ctx context.Context, name, version string) (*orkstac
 // store outage only. With stampRoot, a root-level ref with an empty digest is
 // stamped from the stored document.
 func (s *Service) loadComposeTree(ctx context.Context, ns string, wf *orkstackv1.Orkflow, stampRoot bool) ([]*composeNode, []composeProblem, error) {
-	reader := &composeReader{s: s, ns: ns, cache: map[string]*orkstackv1.Orkflow{}, seen: map[string]bool{}}
+	reader := &composeReader{s: s, cache: map[string]*orkstackv1.Orkflow{}, seen: map[string]bool{}}
+	rootNS := artifacts.ResolveNamespace(ns)
 	root := []string{composeKey(wf.GetName(), wf.GetVersion())}
 	var problems []composeProblem
 	var walk func(def *orkstackv1.Orkflow, path []string, depth, rootIndex int, rootTask string) ([]*composeNode, error)
 	walk = func(def *orkstackv1.Orkflow, path []string, depth, rootIndex int, rootTask string) ([]*composeNode, error) {
 		var nodes []*composeNode
+		composer := rootNS
+		if depth > 0 {
+			composer = engine.DefinitionOwner(def)
+		}
 		for i, t := range def.GetTasks() {
 			ref := t.GetOrkflow()
 			if ref == nil {
@@ -156,15 +161,29 @@ func (s *Service) loadComposeTree(ctx context.Context, ns string, wf *orkstackv1
 			if depth == 0 {
 				index, task = i, t.GetId()
 			}
-			stored, err := reader.get(ctx, ref.GetName(), ref.GetVersion())
+			owner := refOwner(composer, ref)
+			key := treeKey(rootNS, owner, ref.GetName(), ref.GetVersion())
+			report := func(problem *composeProblem) {
+				problem.TaskIndex = index
+				if depth > 0 {
+					problem.Message = fmt.Sprintf("%s: %s",
+						strings.Join(append([]string{task}, problem.Path[1:]...), " → "), problem.Message)
+				}
+				problems = append(problems, *problem)
+			}
+			if err := ownNamespaceRef(composer, ref); err != nil {
+				report(&composeProblem{Path: append(append([]string(nil), path...), key), Kind: "own-namespace", Message: err.Error()})
+				continue
+			}
+			stored, err := reader.get(ctx, owner, ref.GetName(), ref.GetVersion())
 			if err != nil {
 				return nil, err
 			}
 			stamping := stampRoot && depth == 0 && ref.GetDefinitionDigest() == ""
-			if problem := checkComposeNode(ref, stored, path, depth, s.composeMaxDepth, stamping); problem != nil {
+			if problem := checkComposeNode(ref, key, stored, path, depth, s.composeMaxDepth, stamping); problem != nil {
 				problem.TaskIndex = index
 				if problem.Kind == "missing" {
-					problem.Message = s.missingChildSentence(ctx, ns, ref)
+					problem.Message = s.missingChildSentence(ctx, owner, ref)
 				}
 				if depth > 0 {
 					problem.Message = fmt.Sprintf("%s: %s",
@@ -173,14 +192,23 @@ func (s *Service) loadComposeTree(ctx context.Context, ns string, wf *orkstackv1
 				problems = append(problems, *problem)
 				continue
 			}
+			// Sharing: another namespace's Orkflow is composed only when the
+			// pinned version's shared_with admits the Orkflow writing uses:.
+			if owner != composer {
+				if _, err := authorizeChild(composer, def.GetName(), owner, ref, stored); err != nil {
+					report(&composeProblem{Path: append(append([]string(nil), path...), key), Kind: "not-shared", Message: err.Error()})
+					continue
+				}
+			}
 			if stamping {
 				ref.DefinitionDigest = stored.GetDefinitionDigest()
 			}
 			node := &composeNode{
 				TaskID:  t.GetId(),
 				Ref:     ref,
+				Owner:   owner,
 				Orkflow: stored,
-				Path:    append(append([]string(nil), path...), composeKey(ref.GetName(), ref.GetVersion())),
+				Path:    append(append([]string(nil), path...), key),
 			}
 			children, err := walk(stored, node.Path, depth+1, index, task)
 			if err != nil {
@@ -279,6 +307,11 @@ func composeIssue(field, message string, severity orkstackv1.ValidationSeverity)
 // document with no composed task returns (nil, nil) without touching the
 // store.
 func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) ([]*orkstackv1.ValidationIssue, error) {
+	// Rule 48 against the namespace the document is applied into.
+	var shareIssues []*orkstackv1.ValidationIssue
+	if issue := sharedWithIssue(ns, wf); issue != nil {
+		shareIssues = append(shareIssues, issue)
+	}
 	composes := false
 	for _, t := range wf.GetTasks() {
 		if t.GetOrkflow() != nil {
@@ -287,7 +320,7 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 		}
 	}
 	if !composes {
-		return nil, nil
+		return shareIssues, nil
 	}
 	nodes, problems, err := s.loadComposeTree(ctx, ns.GetName(), wf, true)
 	if err != nil {
@@ -324,6 +357,9 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 			rule31 = append(rule31, composeIssue(usesField(rootIndex), prefix+err.Error(), errorSeverity))
 		}
 		if err := engine.CheckAllowedSecrets(ns, node.Orkflow); err != nil {
+			rule31 = append(rule31, composeIssue(usesField(rootIndex), prefix+err.Error(), errorSeverity))
+		}
+		if err := engine.CheckForeignSecrets(ns, node.Owner, node.Orkflow); err != nil {
 			rule31 = append(rule31, composeIssue(usesField(rootIndex), prefix+err.Error(), errorSeverity))
 		}
 		// Item 6: the definition as the plan will carry it.
@@ -394,7 +430,7 @@ func (s *Service) resolveComposition(ctx context.Context, ns *orkstackv1.Namespa
 			}
 		}
 	}
-	return append(rule31, rule32...), nil
+	return append(append(shareIssues, rule31...), rule32...), nil
 }
 
 func kib(n int) int { return (n + 1023) / 1024 }
@@ -483,7 +519,7 @@ func literalJSONType(value any) string {
 	switch value.(type) {
 	case string:
 		return "string"
-	case float64, json.Number:
+	case float64, stablejson.Number:
 		return "number"
 	case bool:
 		return "boolean"
@@ -557,23 +593,29 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 	if len(path) == 0 {
 		path = []string{composeKey(parent.GetName(), parent.GetVersion())}
 	}
-	ns := r.ns.GetName()
+	root := artifacts.ResolveNamespace(r.ns.GetName())
+	composer := engine.DefinitionOwner(parent)
 	for _, t := range parent.GetTasks() {
 		ref := t.GetOrkflow()
 		if ref == nil {
 			continue
 		}
 		name, version := ref.GetName(), ref.GetVersion()
-		// 1. The stored child.
-		child, err := s.orkflows.Get(ctx, ns, name, version)
+		owner := refOwner(composer, ref)
+		if err := ownNamespaceRef(composer, ref); err != nil {
+			return childRefusal(err, ref, t.GetId())
+		}
+		// 1. The stored child, read from the namespace that owns it.
+		child, err := s.orkflows.Get(ctx, owner, name, version)
 		if err != nil && !errors.Is(err, artifacts.ErrNotFound) {
-			return orkflowStoreError(err, "child orkflow %s@%s of task %q in namespace %q", name, version, t.GetId(), ns)
+			return orkflowStoreError(err, "child orkflow %s@%s of task %q in namespace %q", name, version, t.GetId(), owner)
 		}
 		if err != nil {
 			child = nil
 		}
+		key := treeKey(root, owner, name, version)
 		// 2. The tree's shape, by the same rule apply holds it to.
-		if problem := checkComposeNode(ref, child, path, depth, s.composeMaxDepth, false); problem != nil {
+		if problem := checkComposeNode(ref, key, child, path, depth, s.composeMaxDepth, false); problem != nil {
 			message := problem.Message
 			switch problem.Kind {
 			case "depth":
@@ -583,9 +625,22 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 			case "missing":
 				message = fmt.Sprintf("child orkflow %s@%s of task %q no longer exists in namespace %q; apply "+
 					"it again, or submit a version of %s that composes an existing one",
-					name, version, t.GetId(), ns, pathNames(path[len(path)-1:])[0])
+					name, version, t.GetId(), owner, pathNames(path[len(path)-1:])[0])
 			}
 			return connect.NewError(connect.CodeFailedPrecondition, errors.New(message))
+		}
+		// 2b. Sharing, against the pinned version's own shared_with. The
+		// planned copy of another namespace's Orkflow runs in this run's
+		// namespace, under its rules, and names its owner.
+		var decision authz.Decision
+		if owner != composer {
+			if decision, err = authorizeChild(composer, parent.GetName(), owner, ref, child); err != nil {
+				return childRefusal(err, ref, t.GetId())
+			}
+		}
+		child = plannedInRunNamespace(child, r.ns.GetName(), owner)
+		if err := foreignSecretsRefusal(r.ns, owner, child); err != nil {
+			return childRefusal(err, ref, t.GetId())
 		}
 		// 3. The ordinary pool plan over the child: secret policy, the
 		// allow-list, the liveness probe, pin hosts, fan-out support and the
@@ -593,6 +648,9 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		childPlanned, childPlan, err := r.resolver.Plan(ctx, r.ns, child, r.allowEmpty)
 		if err != nil {
 			return childRefusal(poolPlanError(err), ref, t.GetId())
+		}
+		if owner != composer {
+			childPlan.Shared = &decision
 		}
 		// Fairness is a run-tree value: the child inherits the parent's at
 		// start (childStartPlan), so the nested plan carries none of its
@@ -616,7 +674,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		// 6b. The child's caching plan, under the parent's no_cache.
 		childPlan.Cache = s.cachePlanFor(childPlanned, r.noCache)
 		// 7. Its own children.
-		childPath := append(append([]string(nil), path...), composeKey(name, version))
+		childPath := append(append([]string(nil), path...), key)
 		if err := s.planChildren(ctx, r, childPlanned, &childPlan, depth+1, childPath); err != nil {
 			return err
 		}
@@ -659,7 +717,7 @@ func (s *Service) mintChildren(planned *orkstackv1.Orkflow, plan *engine.RunPlan
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("prepare the child runs: %w", err))
 	}
-	encoded, err := json.Marshal(plan)
+	encoded, err := stablejson.Marshal(plan)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run's plan: %w", err))
 	}

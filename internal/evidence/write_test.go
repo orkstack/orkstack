@@ -9,15 +9,15 @@ import (
 	"io"
 	"reflect"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestWrite_MembersAppearInManifestOrderWithManifestFirst(t *testing.T) {
 	f := newFixture()
 	bundle := writeFixture(t, f)
 	gz, err := gzip.NewReader(bytes.NewReader(bundle))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !gz.ModTime.Equal(fixtureExportedAt) {
 		t.Errorf("gzip header time = %v, want exported_at %v", gz.ModTime, fixtureExportedAt)
 	}
@@ -28,9 +28,7 @@ func TestWrite_MembersAppearInManifestOrderWithManifestFirst(t *testing.T) {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		names = append(names, h.Name)
 		if h.Typeflag != tar.TypeReg || h.Mode != 0o644 || !h.ModTime.Equal(fixtureExportedAt) || h.Uid != 0 || h.Gid != 0 || h.Uname != "" || h.Gname != "" {
 			t.Errorf("entry %s: type %c mode %o mtime %v uid %d gid %d uname %q", h.Name, h.Typeflag, h.Mode, h.ModTime, h.Uid, h.Gid, h.Uname)

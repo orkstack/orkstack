@@ -4,7 +4,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"math/rand"
 	"net/http"
@@ -27,9 +27,12 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The definition-by-reference integration evidence (E5): a definition passed by reference on a
@@ -69,13 +72,9 @@ func storeDefinitionIn(t *testing.T, ctx context.Context, store engine.SnapshotS
 		wf.Namespace = "default"
 	}
 	data, ref, err := engine.EncodeDefinitionObject(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	uri, err := store.WriteContinuation(ctx, wf.GetNamespace(), runID, 0, artifacts.ContinuationKindDefinition, data)
-	if err != nil {
-		t.Fatalf("write the definition object: %v", err)
-	}
+	must.OKf(t, err, "write the definition object")
 	plan.Definition = &ref
 	return engine.DefinitionStub(wf), plan, uri
 }
@@ -127,12 +126,8 @@ func TestIntegration_RecordDefinitionRefHistory(t *testing.T) {
 	if chunks := (plan.Definition.SizeBytes + 1023) / 1024; chunks < 3 {
 		t.Fatalf("the definition object is %d bytes: too few chunks (%d) to batch", plan.Definition.SizeBytes, chunks)
 	}
-	if err := s.starter.StartRun(ctx, runID, stub, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, runID, stub, nil, plan), "StartRun")
+	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the run failed")
 	recorded := s.history(runID, "")
 	if markers := versionMarkersOf(t, recorded); markers[engine.DefinitionByReferenceChange] == 0 {
 		t.Fatal("the recording carries no definition-by-reference marker")
@@ -141,9 +136,7 @@ func TestIntegration_RecordDefinitionRefHistory(t *testing.T) {
 	if most > int(budget.ChunksPerTask) || total < 3 {
 		t.Fatalf("%d chunk markers, at most %d per workflow task: want at least 3, at most %d per task", total, most, budget.ChunksPerTask)
 	}
-	if err := replayRecorded(recorded, runID); err != nil {
-		t.Fatalf("the recording does not replay against current code: %v", err)
-	}
+	must.OKf(t, replayRecorded(recorded, runID), "the recording does not replay against current code")
 	object, err := s.snapshots.ReadSnapshot(ctx, uri)
 	if err != nil || artifacts.ContinuationSHA256(object) != plan.Definition.SHA256 {
 		t.Fatalf("read the definition back from MinIO: %v", err)
@@ -156,12 +149,8 @@ func TestIntegration_RecordDefinitionRefHistory(t *testing.T) {
 	for path, data := range files {
 		proof.Write(t, "definition-by-reference", filepath.Base(path), data)
 		if write {
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, data, 0o644); err != nil {
-				t.Fatalf("write %s: %v", path, err)
-			}
+			must.OK(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			must.OKf(t, os.WriteFile(path, data, 0o644), "write %s", path)
 		}
 	}
 	if write {
@@ -199,9 +188,7 @@ func (s *chaosStack) definitionAPI(t *testing.T, cfg api.Config) *chaosAPI {
 	t.Helper()
 	cluster, err := engine.NewTemporalReleaseCluster(s.control, s.reader, s.namespace, task.DefaultDeploymentName,
 		s.runQueue, s.orkerQueue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cfg.ContinuationEnabled, cfg.DefinitionByReference = true, true
 	cfg.DefinitionObjects, cfg.Capabilities = s.store, cluster
 	return s.serveAPI(cfg)
@@ -275,12 +262,8 @@ func TestIntegration_ThreeThousandTaskDefinitionRuns(t *testing.T) {
 	first := histories[0].GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
 	var stub *orkstackv1.Orkflow
 	var plan engine.RunPlan
-	if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[1], &stub); err != nil {
-		t.Fatal(err)
-	}
-	if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[1], &stub))
+	must.OK(t, converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan))
 	if len(stub.GetTasks()) != 0 || plan.Definition == nil || plan.Continuation == nil {
 		t.Fatalf("the run started with %d tasks and definition %v: want the stub, by reference", len(stub.GetTasks()), plan.Definition)
 	}
@@ -310,9 +293,7 @@ func TestIntegration_ThreeThousandTaskDefinitionRuns(t *testing.T) {
 				"task, within the %d cap", i, total, most, copied, plan.Continuation.ChunksPerTask, cap)
 		}
 		replayStart := time.Now()
-		if err := replayRecorded(h, runID); err != nil {
-			t.Fatalf("generation %d does not replay: %v", i, err)
-		}
+		must.OKf(t, replayRecorded(h, runID), "generation %d does not replay", i)
 		generations = append(generations, generation{Execution: chain[i], Events: len(h.GetEvents()), ChunkMarkers: total,
 			MostPerTask: most, CopiedBytes: copied, ReplaySeconds: time.Since(replayStart).String()})
 	}
@@ -326,7 +307,7 @@ func TestIntegration_ThreeThousandTaskDefinitionRuns(t *testing.T) {
 		"generations": generations, "took": took.String(),
 	}
 	proof.WriteJSON(t, "definition-by-reference", "three-thousand.json", report)
-	encoded, _ := json.Marshal(report)
+	encoded, _ := stablejson.Marshal(report)
 	s.transcript.step("E5: %s", encoded)
 	t.Logf("E5: 3000 tasks by reference: object %d B (≤ %d), %d generations, ≤ %d chunk markers per workflow task (≤ %d), "+
 		"largest copy within %d, in %s", plan.Definition.SizeBytes, cap/4, len(generations), mostOverall,
@@ -360,9 +341,7 @@ func TestIntegration_DefinitionObjectLostBeforeStartFailsExplicitly(t *testing.T
 	}
 	uri, err := s.store.ContinuationURI(start.Orkflow.GetNamespace(), runID, 0, artifacts.ContinuationKindDefinition,
 		start.Plan.Definition.SHA256)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	raw := newRawS3ClientForCommitE2E(t, s.cfg)
 	bucket, key := s3Key(t, uri)
 	if _, err := raw.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(bucket), Key: aws.String(key)}); err != nil {
@@ -450,9 +429,7 @@ func TestIntegration_ScheduledFireOfALargeDefinitionRuns(t *testing.T) {
 		t.Fatalf("create the schedule: %v", err)
 	}
 	t.Cleanup(func() { _ = scheduler.Delete(context.Background(), "default", name) })
-	if err := scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED); err != nil {
-		t.Fatalf("fire: %v", err)
-	}
+	must.OKf(t, scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED), "fire")
 	var prep *orkstackv1.ScheduledRunPreparation
 	select {
 	case prep = <-prepared:

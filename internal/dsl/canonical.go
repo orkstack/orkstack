@@ -4,16 +4,16 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"fmt"
 	"math"
 	"sort"
 	"strconv"
-	"strings"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // The canonical form of an Orkflow, and the two digests derived from it (§4.4).
@@ -61,14 +61,15 @@ func CanonicalInputJSON(s *structpb.Struct) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(tree); err != nil {
+	out, err := canonicalJSON(tree)
+	if err != nil {
 		return "", err
 	}
-	return strings.TrimSuffix(buf.String(), "\n"), nil
+	indented := jsontext.Value(out)
+	if err := indented.Indent(jsontext.WithIndent("  ")); err != nil {
+		return "", err
+	}
+	return string(indented), nil
 }
 
 // CanonicalInputLine renders a run input (or any Struct payload) as ONE line
@@ -131,6 +132,20 @@ func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	if len(wf.GetOutputs()) > 0 {
 		out["outputs"] = canonicalStringMap(wf.GetOutputs())
 	}
+	// sharedWith is emitted ONLY when non-empty — the canonicalPins exception
+	// again: an Orkflow that shares nothing keeps its digest. It is in the
+	// digest at all because who may compose a version is part of that
+	// version: a new version is how an owner changes it. Order is the
+	// author's, so the digest is too.
+	if shares := wf.GetSharedWith(); len(shares) > 0 {
+		entries := make([]any, 0, len(shares))
+		for _, share := range shares {
+			entries = append(entries, map[string]any{"namespace": share.GetNamespace(), "orkflow": share.GetOrkflow()})
+		}
+		out["sharedWith"] = entries
+	}
+	// definition_namespace is NOT here: it is set only on a run's planned
+	// copy, never on a stored definition, and the digest is the owner's.
 	return canonicalJSON(out)
 }
 
@@ -243,6 +258,11 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 			"schema":         schema,
 		}
 	}
+	// sleep is emitted ONLY when set — the same exception, for the same
+	// reason, as `pin`: a document with no sleep keeps the digest it had.
+	if sl := t.GetSleep(); sl != nil {
+		out["sleep"] = map[string]any{"seconds": int64(sl.GetSeconds())}
+	}
 	// orkflow is emitted ONLY when set — the same exception, for the same
 	// reason, as `pin`. The digest is included: it is what runs, stamped at
 	// apply exactly as `image` is, so the parent's digest pins the child's
@@ -333,7 +353,7 @@ func canonicalImages(wf *orkstackv1.Orkflow) ([]byte, error) {
 		}
 		// Only for a composed task, so a document with none hashes as it always
 		// did, and one content hash still names one definition when a child
-		// version was deleted and re-applied with other content.
+		// version was deleted and created again with other content.
 		if o := canonicalOrkflowRef(t.GetOrkflow()); o != nil {
 			entry["orkflow"] = o
 		}
@@ -348,11 +368,16 @@ func canonicalOrkflowRef(o *orkstackv1.OrkflowRef) map[string]any {
 	if o == nil {
 		return nil
 	}
-	return map[string]any{
+	ref := map[string]any{
 		"name":             o.GetName(),
 		"version":          o.GetVersion(),
 		"definitionDigest": o.GetDefinitionDigest(),
 	}
+	// namespace ONLY when set, so every existing composed digest is unchanged.
+	if ns := o.GetNamespace(); ns != "" {
+		ref["namespace"] = ns
+	}
+	return ref
 }
 
 // contentHashSeparator is the 0x1F unit separator of §4.4. It cannot occur in
@@ -394,25 +419,75 @@ func ContentHash(sourceYAML []byte, wf *orkstackv1.Orkflow) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// canonicalJSON marshals v with no insignificant whitespace and object keys
+// canonicalJSON writes v with no insignificant whitespace and object keys
 // sorted by UTF-8 byte sequence.
 //
-// encoding/json already does both for map[string]any: it emits no whitespace,
-// and it sorts map keys with a plain string comparison, which in Go IS a
-// byte-sequence comparison. What it does NOT do safely is numbers, so every
-// number reaching this function has already been converted to an int64 or a
-// json.Number by canonicalNumber. HTML escaping is turned off because it would
-// rewrite `<`, `>` and `&` inside a `with:` string into \u sequences, making
-// the digest depend on an encoder default rather than on the document.
+// It writes the tree itself, token by token, rather than handing a map to an
+// encoder: encoding/json/v2 sorts map keys only under its Deterministic
+// option, which promises the same bytes within one build and not across
+// toolchains, and a definition digest is a contract across releases. The
+// tree holds only what canonicalValue and its siblings build — maps, lists,
+// strings, booleans, null, int64 and stablejson.Number — and any other type
+// is refused rather than encoded some other way. Every number has already
+// been converted by canonicalNumber. `<`, `>` and `&` are written as they
+// are, so the digest does not depend on an encoder's HTML escaping; U+2028
+// and U+2029 are escaped and text that is not valid UTF-8 is written with
+// U+FFFD, as the encoder the canonical form was first defined with did.
 func canonicalJSON(v any) ([]byte, error) {
 	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
+	enc := jsontext.NewEncoder(&buf, jsontext.EscapeForJS(true), jsontext.AllowInvalidUTF8(true))
+	if err := writeCanonical(enc, v); err != nil {
 		return nil, err
 	}
-	// Encode appends a newline; the canonical form has no trailing byte.
+	// The encoder ends a top-level value with a newline; the canonical form
+	// has no trailing byte.
 	return bytes.TrimSuffix(buf.Bytes(), []byte("\n")), nil
+}
+
+// writeCanonical writes one value of the canonical tree.
+func writeCanonical(enc *jsontext.Encoder, v any) error {
+	switch v := v.(type) {
+	case nil:
+		return enc.WriteToken(jsontext.Null)
+	case bool:
+		return enc.WriteToken(jsontext.Bool(v))
+	case string:
+		return enc.WriteToken(jsontext.String(v))
+	case int64:
+		return enc.WriteToken(jsontext.Int(v))
+	case stablejson.Number:
+		return enc.WriteValue(jsontext.Value(v))
+	case []any:
+		if err := enc.WriteToken(jsontext.BeginArray); err != nil {
+			return err
+		}
+		for _, item := range v {
+			if err := writeCanonical(enc, item); err != nil {
+				return err
+			}
+		}
+		return enc.WriteToken(jsontext.EndArray)
+	case map[string]any:
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys) // a Go string comparison IS a byte-sequence comparison
+		if err := enc.WriteToken(jsontext.BeginObject); err != nil {
+			return err
+		}
+		for _, key := range keys {
+			if err := enc.WriteToken(jsontext.String(key)); err != nil {
+				return err
+			}
+			if err := writeCanonical(enc, v[key]); err != nil {
+				return err
+			}
+		}
+		return enc.WriteToken(jsontext.EndObject)
+	default:
+		return fmt.Errorf("canonical form: a %T has no canonical encoding", v)
+	}
 }
 
 // canonicalNumber renders a float64 without exponent or fraction where it is
@@ -430,14 +505,14 @@ func canonicalNumber(f float64) any {
 		// digest is still a function of the value rather than failing to be
 		// one; a document cannot actually carry these — YAML .nan/.inf do not
 		// survive structpb.NewStruct.
-		return json.Number(strconv.FormatUint(math.Float64bits(f), 10))
+		return stablejson.Number(strconv.FormatUint(math.Float64bits(f), 10))
 	}
 	if f == math.Trunc(f) && math.Abs(f) < 1<<53 {
 		return int64(f)
 	}
 	// 'f' format never uses an exponent; -1 precision is the shortest
 	// round-trippable rendering, so the value survives a decode unchanged.
-	return json.Number(strconv.FormatFloat(f, 'f', -1, 64))
+	return stablejson.Number(strconv.FormatFloat(f, 'f', -1, 64))
 }
 
 // canonicalStruct converts a structpb.Struct to the plain Go shape
@@ -498,8 +573,8 @@ func canonicalStrings(in []string) []any {
 }
 
 // canonicalStringMap renders a map field. The keys are sorted by byte sequence
-// at emit time; this exists only to give encoding/json a map[string]any it
-// will sort, and to make nil and empty render identically.
+// at emit time (writeCanonical); this exists only to give it a map[string]any,
+// and to make nil and empty render identically.
 func canonicalStringMap(in map[string]string) map[string]any {
 	out := make(map[string]any, len(in))
 	keys := make([]string, 0, len(in))

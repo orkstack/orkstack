@@ -3,7 +3,7 @@ package engine_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // gappedEvents is a stream whose events 3–5 were lost: 1, 2, then 6, 7.
@@ -29,9 +31,7 @@ func TestMarshalRunArchive_WritesGapLinesInSequenceOrder(t *testing.T) {
 	run := sampleRun(t, "ork-gap", orkstackv1.Status_STATUS_SUCCEEDED, at(t, "2026-10-01T00:00:00Z"))
 	body, err := engine.MarshalRunArchive(run, gappedEvents("ork-gap"),
 		engine.EventGap{First: 3, Last: 5, Reason: "segment object missing"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var kinds []string
 	for _, line := range bytes.Split(bytes.TrimSpace(body), []byte("\n")) {
 		var record struct {
@@ -67,9 +67,7 @@ func TestMarshalRunArchive_WritesGapLinesInSequenceOrder(t *testing.T) {
 func TestUnmarshalRunArchive_SkipsGapLines(t *testing.T) {
 	run := sampleRun(t, "ork-gap", orkstackv1.Status_STATUS_SUCCEEDED, at(t, "2026-10-01T00:00:00Z"))
 	body, err := engine.MarshalRunArchive(run, gappedEvents("ork-gap"), engine.EventGap{First: 3, Last: 5, Reason: "x"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	loaded, events, err := engine.UnmarshalRunArchive(body)
 	if err != nil || loaded.GetId() != "ork-gap" || len(events) != 4 {
 		t.Fatalf("UnmarshalRunArchive = %v, %d events, %v", loaded.GetId(), len(events), err)
@@ -83,17 +81,13 @@ func TestUnmarshalRunArchiveGaps(t *testing.T) {
 	run := sampleRun(t, "ork-gap", orkstackv1.Status_STATUS_SUCCEEDED, at(t, "2026-10-01T00:00:00Z"))
 	gaps := []engine.EventGap{{First: 3, Last: 5, Reason: "segment object missing"}, {First: 8, Last: 9, Reason: "segment failed verification"}}
 	body, err := engine.MarshalRunArchive(run, gappedEvents("ork-gap"), gaps...)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	got, err := engine.UnmarshalRunArchiveGaps(body)
 	if err != nil || len(got) != 2 || got[0] != gaps[0] || got[1] != gaps[1] {
 		t.Fatalf("gaps = %+v, %v; want %+v", got, err, gaps)
 	}
 	whole, err := engine.MarshalRunArchive(run, gappedEvents("ork-gap"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got, err := engine.UnmarshalRunArchiveGaps(whole); err != nil || got != nil {
 		t.Fatalf("an ungapped body = %+v, %v; want none", got, err)
 	}
@@ -132,13 +126,9 @@ func publishTerminal(t *testing.T, source *gapSource) (*artifacts.LocalRunArchiv
 func TestPublishEvent_ArchivesWithAGapWhenASegmentIsLost(t *testing.T) {
 	store, archiver, err := publishTerminal(t, &gapSource{events: gappedEvents("ork-gap"),
 		gaps: []engine.EventGap{{First: 3, Last: 5, Reason: "segment object missing"}}})
-	if err != nil {
-		t.Fatalf("PublishEvent: %v", err)
-	}
+	must.OKf(t, err, "PublishEvent")
 	body, err := store.GetRun(context.Background(), "ork-gap")
-	if err != nil {
-		t.Fatalf("the run was not archived: %v", err)
-	}
+	must.OKf(t, err, "the run was not archived")
 	gaps, err := engine.UnmarshalRunArchiveGaps(body)
 	if err != nil || len(gaps) != 1 || gaps[0].First != 3 {
 		t.Fatalf("archived gaps = %+v, %v", gaps, err)

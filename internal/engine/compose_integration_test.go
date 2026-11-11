@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The composed-orkflows integration suite (docs/DSL.md "Composition"): real
@@ -100,9 +102,7 @@ func (e *eachE2E) composedParent(name string, child *orkstackv1.Orkflow) *orksta
 func stampDigest(t *testing.T, wf *orkstackv1.Orkflow) {
 	t.Helper()
 	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	wf.DefinitionDigest = digest
 }
 
@@ -111,16 +111,12 @@ func stampDigest(t *testing.T, wf *orkstackv1.Orkflow) {
 func (e *eachE2E) startComposed(runID string, parent, child *orkstackv1.Orkflow) string {
 	e.t.Helper()
 	cp, err := engine.NewChildRunPlan(child, e.plan(), false, false)
-	if err != nil {
-		e.t.Fatal(err)
-	}
+	must.OK(e.t, err)
 	cp.RunID = runID + "-child"
 	plan := e.plan()
 	plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
 	starter := engine.NewTemporalStarterWithOrkerQueue(e.temporal, e.runQueue, e.orkerQueue)
-	if err := starter.StartRun(e.ctx, runID, parent, nil, plan); err != nil {
-		e.t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(e.t, starter.StartRun(e.ctx, runID, parent, nil, plan), "StartRun")
 	return cp.RunID
 }
 
@@ -264,9 +260,7 @@ func TestIntegration_CancelParentCancelsTheChildsContainer(t *testing.T) {
 	childID := e.startComposed(runID, parent, child)
 	e.awaitTaskStatus(childID, "sign", orkstackv1.Status_STATUS_RUNNING, 3*time.Minute)
 	e.awaitTaskLog(childID, "sign", "sleeping", time.Minute)
-	if err := e.temporal.CancelWorkflow(e.ctx, runID, ""); err != nil {
-		t.Fatalf("cancel parent: %v", err)
-	}
+	must.OKf(t, e.temporal.CancelWorkflow(e.ctx, runID, ""), "cancel parent")
 	run := e.wait(runID)
 	childRun := e.wait(childID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || childRun.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
@@ -291,9 +285,7 @@ func TestIntegration_CancelChildCancelsItsParent(t *testing.T) {
 	runID := fmt.Sprintf("ork-compose-i4-%d", time.Now().UnixNano())
 	childID := e.startComposed(runID, parent, child)
 	e.awaitTaskStatus(childID, "sign", orkstackv1.Status_STATUS_RUNNING, 3*time.Minute)
-	if err := e.temporal.CancelWorkflow(e.ctx, childID, ""); err != nil {
-		t.Fatalf("cancel child: %v", err)
-	}
+	must.OKf(t, e.temporal.CancelWorkflow(e.ctx, childID, ""), "cancel child")
 	run := e.wait(runID)
 	release := taskRunNamed(run, "release")
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || release.GetError().GetCode() != engine.ChildRunCanceledCode ||
@@ -313,9 +305,7 @@ func TestIntegration_TerminatedParentCancelsItsChild(t *testing.T) {
 	childID := e.startComposed(runID, parent, child)
 	e.awaitTaskStatus(childID, "sign", orkstackv1.Status_STATUS_RUNNING, 3*time.Minute)
 	e.awaitTaskLog(childID, "sign", "sleeping", time.Minute)
-	if err := e.temporal.TerminateWorkflow(e.ctx, runID, "", "composed-orkflows I5"); err != nil {
-		t.Fatalf("terminate parent: %v", err)
-	}
+	must.OKf(t, e.temporal.TerminateWorkflow(e.ctx, runID, "", "composed-orkflows I5"), "terminate parent")
 	childRun := e.wait(childID)
 	if childRun.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
 		t.Fatalf("child = %v %v", childRun.GetStatus(), childRun.GetError())
@@ -325,9 +315,7 @@ func TestIntegration_TerminatedParentCancelsItsChild(t *testing.T) {
 		t.Fatalf("the child's container did not record SIGTERM: %q", logged)
 	}
 	described, err := e.temporal.DescribeWorkflowExecution(e.ctx, childID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if status := described.GetWorkflowExecutionInfo().GetStatus(); status == enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
 		t.Fatal("the child is still running after its parent was terminated")
 	}
@@ -373,9 +361,7 @@ func TestIntegration_ChildArchivedWithItsOwnIndexAndOrigin(t *testing.T) {
 		t.Fatalf("parent %v child %v", run.GetStatus(), childRun.GetStatus())
 	}
 	store, err := artifacts.NewRunArchive(e.cfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	archiver := engine.NewRunArchiver(store)
 	// Each run is archived by its own terminal event's snapshot, as the
 	// projection does.
@@ -384,9 +370,7 @@ func TestIntegration_ChildArchivedWithItsOwnIndexAndOrigin(t *testing.T) {
 		if !ok {
 			t.Fatalf("no snapshot of %s", id)
 		}
-		if err := archiver.Archive(e.ctx, snapshot, e.bus.Events(id, 0)); err != nil {
-			t.Fatalf("archive %s: %v", id, err)
-		}
+		must.OKf(t, archiver.Archive(e.ctx, snapshot, e.bus.Events(id, 0)), "archive %s", id)
 	}
 	children, err := archiver.ListRuns(e.ctx, engine.ArchiveQuery{
 		OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, OriginID: runID,
@@ -400,9 +384,7 @@ func TestIntegration_ChildArchivedWithItsOwnIndexAndOrigin(t *testing.T) {
 		t.Fatalf("the composed task's values ref %s has no object id", ref.GetUri())
 	}
 	holders, err := archiver.ObjectReferences(e.ctx, objectID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	found := false
 	for _, holder := range holders {
 		found = found || holder == runID
@@ -464,9 +446,7 @@ func TestIntegration_ComposedSubmitRefusalsMintNothing(t *testing.T) {
 	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: i9-gone\nversion: \"1\"\ntasks:\n  - id: leaf\n    uses: orkflow:i9-leaf@1\n")
 
 	before, err := reader.ListRuns(ctx, engine.RunQuery{})
-	if err != nil {
-		t.Fatalf("list runs: %v", err)
-	}
+	must.OKf(t, err, "list runs")
 	var lines []string
 	submit := func(svc *api.Service, name string, code connect.Code, want string) {
 		t.Helper()
@@ -481,14 +461,10 @@ func TestIntegration_ComposedSubmitRefusalsMintNothing(t *testing.T) {
 	// A child pool with no Orkers.
 	submit(service(0, emptyGPU{}), "i9-pool", connect.CodeFailedPrecondition, "child orkflow i9-gpu@1")
 	// A deleted child.
-	if err := store.Delete(ctx, "", "i9-leaf"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, store.Delete(ctx, "", "i9-leaf"))
 	submit(full, "i9-gone", connect.CodeFailedPrecondition, "no longer exists")
 	after, err := reader.ListRuns(ctx, engine.RunQuery{})
-	if err != nil {
-		t.Fatalf("list runs: %v", err)
-	}
+	must.OKf(t, err, "list runs")
 	if len(after) != len(before) {
 		t.Fatalf("refused submissions left %d runs behind", len(after)-len(before))
 	}
@@ -562,9 +538,7 @@ func TestIntegration_RecordComposedRunHistory(t *testing.T) {
 		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orkerWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 	setCurrentVersion(t, ctx, temporalClient, deployment, runQueue, orkerQueue)
@@ -577,37 +551,25 @@ func TestIntegration_RecordComposedRunHistory(t *testing.T) {
 	childPlan := rawPlan(orkerQueue)
 	childPlan.CommitRoot = "mem://commits"
 	cp, err := engine.NewChildRunPlan(child, childPlan, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cp.RunID = runID + "-child"
 	plan := rawPlan(orkerQueue)
 	plan.CommitRoot = "mem://commits"
 	plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, runQueue, orkerQueue)
-	if err := starter.StartRun(ctx, runID, parent, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("fixture run %s did not succeed: %v", runID, err)
-	}
+	must.OKf(t, starter.StartRun(ctx, runID, parent, nil, plan), "StartRun")
+	must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "fixture run %s did not succeed", runID)
 	for path, id := range map[string]string{composedParentHistory: runID, composedChildHistory: cp.RunID} {
 		recorded := &history.History{}
 		iter := temporalClient.GetWorkflowHistory(ctx, id, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 		for iter.HasNext() {
 			event, err := iter.Next()
-			if err != nil {
-				t.Fatalf("read history of %s: %v", id, err)
-			}
+			must.OKf(t, err, "read history of %s", id)
 			recorded.Events = append(recorded.Events, event)
 		}
 		encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
-		if err != nil {
-			t.Fatalf("encode history: %v", err)
-		}
-		if err := os.WriteFile(path, append(encoded, '\n'), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
+		must.OKf(t, err, "encode history")
+		must.OKf(t, os.WriteFile(path, append(encoded, '\n'), 0o644), "write %s", path)
 		t.Logf("recorded %d history events for run %s into %s (deployment version %s)",
 			len(recorded.Events), id, path, deployment)
 	}

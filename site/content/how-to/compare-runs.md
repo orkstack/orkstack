@@ -7,7 +7,7 @@ See every difference between two runs, field by field. Use it to answer a questi
 ```bash
 orkctl run diff <from-run-id> <to-run-id>
 orkctl run diff <from-run-id> <to-run-id> --only status,image,error
-orkctl run diff <from-run-id> <to-run-id> --json
+orkctl run diff <from-run-id> <to-run-id> -j
 ```
 
 The comparison covers:

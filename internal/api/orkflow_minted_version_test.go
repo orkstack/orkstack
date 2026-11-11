@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // mintedVersionShape is a UUIDv7 in lowercase base32: 26 characters, no prefix.
@@ -47,9 +49,7 @@ func applyMintedDoc(t *testing.T, svc *api.Service, doc string) *orkstackv1.Appl
 	t.Helper()
 	resp, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow")
 	return resp.Msg
 }
 
@@ -57,9 +57,7 @@ func applyMintedDoc(t *testing.T, svc *api.Service, doc string) *orkstackv1.Appl
 func contentHashOf(t *testing.T, svc *api.Service, doc string) string {
 	t.Helper()
 	hash, err := dsl.ContentHash([]byte(doc), validate(t, svc, doc).GetOrkflow())
-	if err != nil {
-		t.Fatalf("ContentHash: %v", err)
-	}
+	must.OKf(t, err, "ContentHash")
 	return hash
 }
 
@@ -75,9 +73,7 @@ func TestApplyOrkflow_AnUnpinnedDocumentGetsAMintedVersion(t *testing.T) {
 	}
 	// The digest covers the version, so it has to be the digest of what landed.
 	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		t.Fatalf("DefinitionDigest: %v", err)
-	}
+	must.OKf(t, err, "DefinitionDigest")
 	if digest != wf.GetDefinitionDigest() {
 		t.Fatalf("stored digest %q is not the digest of the stored document (%q)", wf.GetDefinitionDigest(), digest)
 	}
@@ -102,9 +98,7 @@ func TestApplyOrkflow_ReapplyingAnUnchangedDocumentIsANoOp(t *testing.T) {
 		}
 	}
 	catalog, err := store.Versions(context.Background(), "", "minted")
-	if err != nil {
-		t.Fatalf("Versions: %v", err)
-	}
+	must.OKf(t, err, "Versions")
 	if len(catalog.All) != 1 || catalog.Head != first.GetVersion() {
 		t.Fatalf("catalog = %d versions, head %q; want one, head %q", len(catalog.All), catalog.Head, first.GetVersion())
 	}
@@ -129,9 +123,7 @@ func TestApplyOrkflow_AnEditMintsANewVersionThatSortsAfterTheOld(t *testing.T) {
 			back.GetCreated(), back.GetOrkflow().GetVersion(), first)
 	}
 	catalog, err := store.Versions(context.Background(), "", "minted")
-	if err != nil {
-		t.Fatalf("Versions: %v", err)
-	}
+	must.OKf(t, err, "Versions")
 	if len(catalog.All) != 2 || catalog.Head != second.GetOrkflow().GetVersion() {
 		t.Fatalf("catalog = %d versions, head %q", len(catalog.All), catalog.Head)
 	}
@@ -147,16 +139,12 @@ func TestApplyOrkflow_APinnedVersionAndItsDigestAreUnchanged(t *testing.T) {
 		t.Fatalf("version = %q, want the pinned 1.2.3", wf.GetVersion())
 	}
 	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		t.Fatalf("DefinitionDigest: %v", err)
-	}
+	must.OKf(t, err, "DefinitionDigest")
 	if digest != wf.GetDefinitionDigest() || !strings.HasPrefix(digest, "sha256:") {
 		t.Fatalf("digest = %q, want the document's own %q", wf.GetDefinitionDigest(), digest)
 	}
 	hash, err := dsl.ContentHash([]byte(pinnedDoc), wf)
-	if err != nil {
-		t.Fatalf("ContentHash: %v", err)
-	}
+	must.OKf(t, err, "ContentHash")
 	if found, err := store.FindDerivedVersion(context.Background(), "", "minted", hash); err != nil || found != "" {
 		t.Fatalf("FindDerivedVersion after a pinned apply = %q, %v; want no claim", found, err)
 	}
@@ -174,9 +162,7 @@ func TestValidateOrkflow_ReportsOnlyAVersionThatExists(t *testing.T) {
 		t.Fatalf("before any apply: version %q, digest %q; want both empty", before.GetVersion(), before.GetDefinitionDigest())
 	}
 	hash, err := dsl.ContentHash([]byte(unpinnedDoc), before)
-	if err != nil {
-		t.Fatalf("ContentHash: %v", err)
-	}
+	must.OKf(t, err, "ContentHash")
 	if found, err := store.FindDerivedVersion(ctx, "", "minted", hash); err != nil || found != "" {
 		t.Fatalf("validation wrote a claim: %q, %v", found, err)
 	}
@@ -201,9 +187,7 @@ func TestValidateOrkflow_ReportsOnlyAVersionThatExists(t *testing.T) {
 func TestPlanRun_AnUnappliedDocumentHasNoVersion(t *testing.T) {
 	svc, _ := mintedService(t)
 	plan, err := svc.PlanRun(context.Background(), connect.NewRequest(&orkstackv1.PlanRunRequest{Yaml: unpinnedDoc}))
-	if err != nil {
-		t.Fatalf("PlanRun: %v", err)
-	}
+	must.OKf(t, err, "PlanRun")
 	if plan.Msg.GetOrkflowVersion() != "" || plan.Msg.GetDefinitionDigest() != "" {
 		t.Fatalf("plan version %q, digest %q; want both empty", plan.Msg.GetOrkflowVersion(), plan.Msg.GetDefinitionDigest())
 	}
@@ -221,14 +205,10 @@ func seedLegacyVersion(t *testing.T, svc *api.Service, store *engine.MemoryOrkfl
 	t.Helper()
 	wf := proto.Clone(validate(t, svc, doc).GetOrkflow()).(*orkstackv1.Orkflow)
 	hash, err := dsl.ContentHash([]byte(doc), wf)
-	if err != nil {
-		t.Fatalf("ContentHash: %v", err)
-	}
+	must.OKf(t, err, "ContentHash")
 	wf.Version = hash
 	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		t.Fatalf("DefinitionDigest: %v", err)
-	}
+	must.OKf(t, err, "DefinitionDigest")
 	wf.DefinitionDigest = digest
 	wf.CreatedAt = timestamppb.New(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC))
 	stored, created, err := store.Put(context.Background(), wf, artifacts.NoHeadExpectation())
@@ -262,9 +242,7 @@ func TestApplyOrkflow_AStoredSHA256VersionStaysValidAndCoexists(t *testing.T) {
 		t.Fatalf("edit landed as %q, want a minted version", edited.GetVersion())
 	}
 	catalog, err := store.Versions(ctx, "", "minted")
-	if err != nil {
-		t.Fatalf("Versions: %v", err)
-	}
+	must.OKf(t, err, "Versions")
 	if len(catalog.All) != 2 || catalog.Head != edited.GetVersion() {
 		t.Fatalf("catalog = %d versions, head %q; want both, head %q", len(catalog.All), catalog.Head, edited.GetVersion())
 	}
@@ -318,9 +296,7 @@ func TestApplyOrkflow_ConcurrentAppliesOfOneNewDocumentConverge(t *testing.T) {
 		t.Fatalf("%d appliers reported created=true, want exactly one", creators)
 	}
 	catalog, err := store.Versions(context.Background(), "", "minted")
-	if err != nil {
-		t.Fatalf("Versions: %v", err)
-	}
+	must.OKf(t, err, "Versions")
 	if len(catalog.All) != 1 {
 		t.Fatalf("%d versions stored, want one", len(catalog.All))
 	}
@@ -332,9 +308,7 @@ func TestApplyOrkflow_ADeletedOrkflowStartsOver(t *testing.T) {
 	svc, store := mintedService(t)
 	ctx := context.Background()
 	first := applyMintedDoc(t, svc, unpinnedDoc).GetOrkflow().GetVersion()
-	if err := store.Delete(ctx, "", "minted"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
+	must.OKf(t, store.Delete(ctx, "", "minted"), "Delete")
 	again := applyMintedDoc(t, svc, unpinnedDoc)
 	if !again.GetCreated() || again.GetOrkflow().GetVersion() == first {
 		t.Fatalf("apply after Delete = created %v, version %q; want a new version, not %q",

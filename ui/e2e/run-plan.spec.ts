@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -16,6 +16,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -125,7 +126,7 @@ async function runsOfFlow(): Promise<number> {
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# The submit dialog Plan action: a plan per draft, cleared when the',
@@ -248,9 +249,9 @@ test('Plan answers per draft, starts nothing, and a real run agrees with it', as
 	await shot(page, 'plan-runs.png');
 
 	// P3: the plan's CLI equivalent.
-	await page.getByTestId('run-submit-plan-cli-trigger').click();
-	const command = page.getByTestId('run-submit-plan-cli-command');
-	await expect(command).toContainText(`orkctl run plan ${FLOW} --namespace ${NS}`);
+	await page.getByTestId('run-submit-cli-trigger').click();
+	const command = page.getByTestId('run-submit-cli-popover').locator('[data-cli-label="Plan this run"]');
+	await expect(command).toContainText(`orkctl run plan ${FLOW} -n ${NS}`);
 	await expect(command).toContainText(`'{"deploy":true}' > input.json`);
 	// The Orkflow page's dialog pins the version the page shows, so the copied
 	// command plans exactly that version rather than whatever `current` is.

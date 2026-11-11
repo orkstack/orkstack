@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -23,6 +22,9 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // heavyOrkflowDoc is an Orkflow of n tasks, each written as heavily as an
@@ -108,9 +110,7 @@ func largeAutomationDoc(n int) string {
 func requestSizes(t *testing.T, request proto.Message) map[string]int64 {
 	t.Helper()
 	asJSON, err := protojson.Marshal(request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return map[string]int64{"JSON": int64(len(asJSON)), "proto": int64(proto.Size(request))}
 }
 
@@ -179,9 +179,7 @@ func serveCapped(t *testing.T, svc *api.Service, requestMaxBytes int64) (string,
 	t.Helper()
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{RequestMaxBytes: requestMaxBytes}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{Protocols: new(http.Protocols)}
 	transport.Protocols.SetUnencryptedHTTP2(true)
@@ -214,7 +212,7 @@ func TestNewMux_ARequestOverTheReadCapIsResourceExhausted(t *testing.T) {
 		// is deliberately unstable.
 		body := func(size int) []byte {
 			envelope := func(yaml string) []byte {
-				encoded, err := json.Marshal(map[string]string{"yaml": yaml})
+				encoded, err := stablejson.Marshal(map[string]string{"yaml": yaml})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -231,9 +229,7 @@ func TestNewMux_ARequestOverTheReadCapIsResourceExhausted(t *testing.T) {
 		post := func(payload []byte) (int, string) {
 			request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 				baseURL+orkstackv1connect.OrkflowServiceValidateOrkflowProcedure, bytes.NewReader(payload))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			request.Header.Set("Content-Type", "application/json")
 			request.Header.Set("Connect-Protocol-Version", "1")
 			response, err := client.Do(request)
@@ -242,9 +238,7 @@ func TestNewMux_ARequestOverTheReadCapIsResourceExhausted(t *testing.T) {
 			}
 			defer func() { _ = response.Body.Close() }()
 			answer, err := io.ReadAll(response.Body)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			return response.StatusCode, string(answer)
 		}
 		if status, answer := post(body(limit)); status != http.StatusOK {
@@ -297,18 +291,14 @@ func TestDefaultRequestMaxBytes_AdmitsAnApplyAtTheTaskCeilingOverTheWire(t *test
 	http1 := &http.Client{Transport: &http.Transport{}}
 	applied, err := orkstackv1connect.NewOrkflowServiceClient(http1, baseURL, connect.WithProtoJSON()).ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: heavyOrkflowDoc("heavy", int(engine.DefaultOrkflowMaxTasks))}))
-	if err != nil {
-		t.Fatalf("apply of %d heavy tasks under the default cap: %v", engine.DefaultOrkflowMaxTasks, err)
-	}
+	must.OKf(t, err, "apply of %d heavy tasks under the default cap", engine.DefaultOrkflowMaxTasks)
 	if got := len(applied.Msg.GetOrkflow().GetTasks()); got != int(engine.DefaultOrkflowMaxTasks) {
 		t.Fatalf("applied %d tasks, want %d", got, engine.DefaultOrkflowMaxTasks)
 	}
 
 	planned, err := orkstackv1connect.NewAutomationServiceClient(h2c, baseURL).PlanAutomation(ctx,
 		connect.NewRequest(&orkstackv1.PlanAutomationRequest{Yaml: largeAutomationDoc(1000)}))
-	if err != nil {
-		t.Fatalf("plan of a large automation document under the default cap: %v", err)
-	}
+	must.OKf(t, err, "plan of a large automation document under the default cap")
 	if issues := planned.Msg.GetIssues(); len(issues) != 0 {
 		t.Fatalf("plan issues: %v", issues)
 	}
@@ -351,9 +341,7 @@ func TestNewMux_AnEndlessBodyIsCutAtTwiceTheCap(t *testing.T) {
 	} {
 		t.Run(procedure+" over HTTP/1.1", func(t *testing.T) {
 			conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			defer conn.Close()
 			if _, err := io.WriteString(conn, "POST "+procedure+" HTTP/1.1\r\nHost: "+addr+
 				"\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n"); err != nil {
@@ -376,13 +364,9 @@ func TestNewMux_AnEndlessBodyIsCutAtTwiceTheCap(t *testing.T) {
 			_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 			reader := bufio.NewReader(conn)
 			res, err := http.ReadResponse(reader, nil)
-			if err != nil {
-				t.Fatalf("no answer to an endless body within 15s (%d bytes sent): %v", sent.Load(), err)
-			}
+			must.OKf(t, err, "no answer to an endless body within 15s (%d bytes sent)", sent.Load())
 			body, err := io.ReadAll(res.Body)
-			if err != nil {
-				t.Fatalf("read the answer: %v", err)
-			}
+			must.OKf(t, err, "read the answer")
 			if res.StatusCode != http.StatusTooManyRequests || !strings.Contains(string(body), "resource_exhausted") {
 				t.Fatalf("an endless body: %s %q, want 429 and a resource_exhausted Connect error", res.Status, body)
 			}
@@ -404,14 +388,10 @@ func TestNewMux_AnEndlessBodyIsCutAtTwiceTheCap(t *testing.T) {
 		body := &endlessReader{}
 		request, err := http.NewRequestWithContext(ctx, http.MethodPost,
 			baseURL+orkstackv1connect.OrkflowServiceValidateOrkflowProcedure, body)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		request.Header.Set("Content-Type", "application/json")
 		res, err := h2c.Do(request)
-		if err != nil {
-			t.Fatalf("no answer to an endless body over h2c (%d bytes sent): %v", body.given.Load(), err)
-		}
+		must.OKf(t, err, "no answer to an endless body over h2c (%d bytes sent)", body.given.Load())
 		answer, err := io.ReadAll(res.Body)
 		_ = res.Body.Close()
 		if err != nil || res.ProtoMajor != 2 || res.StatusCode != http.StatusTooManyRequests ||

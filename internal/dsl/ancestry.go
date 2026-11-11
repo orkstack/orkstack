@@ -55,6 +55,9 @@ const (
 	// RefFanOut is a fan-out: its task id and an empty fan-out marker, and
 	// only on the input of a direct dependant.
 	RefFanOut
+	// RefNone is a sleeping task: it contributes no reference at all — it has
+	// no values, no artifacts and no commit (rule 51).
+	RefNone
 )
 
 // refKindOf classifies t.
@@ -62,6 +65,8 @@ func refKindOf(t *orkstackv1.Task) RefKind {
 	switch {
 	case t.GetEach() != nil:
 		return RefFanOut
+	case t.GetSleep() != nil:
+		return RefNone
 	case t.GetAwait() != nil, t.GetOrkflow() != nil:
 		return RefNoCommit
 	}
@@ -74,9 +79,12 @@ func refKindOf(t *orkstackv1.Task) RefKind {
 // since a real one always carries at least these fields with at least these
 // values. A plain task's commit uri is built with an empty store root and
 // the shortest run id, exactly as the engine composes it (store root + "/" +
-// metadata/commits/{namespace}/{run}/{task}/commit.json). Pure.
+// metadata/commits/{namespace}/{run}/{task}/commit.json). Pure. RefNone has
+// no reference: it is nil.
 func MinimalUpstreamRef(kind RefKind, namespace, id string) *orkstackv1.UpstreamRef {
 	switch kind {
+	case RefNone:
+		return nil
 	case RefFanOut:
 		return &orkstackv1.UpstreamRef{TaskId: id, Each: &orkstackv1.EachUpstream{}}
 	case RefNoCommit:
@@ -243,12 +251,21 @@ func (g *ancestryGraph) weigh(namespace string) error {
 	g.weight = make([]int64, len(g.tasks))
 	g.base = make([]int64, len(g.tasks))
 	for i, t := range g.tasks {
-		ref := MinimalUpstreamRef(g.kinds[i], namespace, t.GetId())
+		kind := g.kinds[i]
+		if kind == RefNone {
+			// Weightless: only its base is measured, with the shortest
+			// reference standing in for the list a dependant may still carry.
+			kind = RefFanOut
+		}
+		ref := MinimalUpstreamRef(kind, namespace, t.GetId())
 		marginal, err := refMarginal(ref)
 		if err != nil {
 			return fmt.Errorf("task %q: measure its upstream reference: %w", t.GetId(), err)
 		}
 		g.weight[i] = marginal
+		if g.kinds[i] == RefNone {
+			g.weight[i] = 0
+		}
 		// The input of a task whose id is t's own, with one reference: the
 		// largest such base bounds every task's own id plus the list's frame.
 		base, err := task.PayloadSize(&orkstackv1.ExecuteTaskInput{TaskId: t.GetId(),
@@ -302,7 +319,7 @@ func (g *ancestryGraph) minimalInputBytes(i int) (size int64, required int, err 
 			word &^= 1 << b
 			a := w*64 + b
 			required++
-			if g.kinds[a] == RefFanOut && !direct[a] {
+			if g.kinds[a] == RefNone || g.kinds[a] == RefFanOut && !direct[a] {
 				continue
 			}
 			refs++

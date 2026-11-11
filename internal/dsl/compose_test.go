@@ -1,33 +1,37 @@
 package dsl_test
 
 import (
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestParseOrkflowUses(t *testing.T) {
 	hex64 := strings.Repeat("ab", 32)
 	long := strings.Repeat("v", 200)
 	accepted := []struct {
-		uses, name, version string
+		uses, namespace, name, version string
 	}{
-		{"orkflow:release-block@2.1.0", "release-block", "2.1.0"},
-		{"orkflow:x@" + hex64, "x", hex64},
-		{"orkflow:x@" + long, "x", long},
+		{"orkflow:release-block@2.1.0", "", "release-block", "2.1.0"},
+		{"orkflow:x@" + hex64, "", "x", hex64},
+		{"orkflow:x@" + long, "", "x", long},
+		{"orkflow:team-a/deploy@1.2.3", "team-a", "deploy", "1.2.3"},
+		{"orkflow:default/x@1", "default", "x", "1"},
 	}
 	for _, tc := range accepted {
-		name, version, ok, err := dsl.ParseOrkflowUses(tc.uses)
-		if err != nil || !ok || name != tc.name || version != tc.version {
-			t.Errorf("ParseOrkflowUses(%q) = %q, %q, %v, %v", tc.uses, name, version, ok, err)
+		ref, ok, err := dsl.ParseOrkflowUses(tc.uses)
+		if err != nil || !ok || ref.Namespace != tc.namespace || ref.Name != tc.name || ref.Version != tc.version {
+			t.Errorf("ParseOrkflowUses(%q) = %+v, %v, %v", tc.uses, ref, ok, err)
 		}
 	}
 	for _, uses := range []string{"shell", "ghcr.io/acme/x:1", "orkflow.example:5000/app"} {
-		_, _, ok, err := dsl.ParseOrkflowUses(uses)
+		_, ok, err := dsl.ParseOrkflowUses(uses)
 		if ok || err != nil {
 			t.Errorf("ParseOrkflowUses(%q) = ok %v, err %v; want not a composition", uses, ok, err)
 		}
@@ -43,9 +47,13 @@ func TestParseOrkflowUses(t *testing.T) {
 		{"orkflow:x@-1", "must match"},
 		{"orkflow:x@" + long + "v", "exceeds the 200-byte limit"},
 		{"orkflow:{{ .inputs.n }}@1", "cannot be a template"},
+		{"orkflow:/x@1", "names no namespace"},
+		{"orkflow:a/@1", "names no orkflow"},
+		{"orkflow:Team/x@1", "namespace"},
+		{"orkflow:a/b/c@1", "not a slug"},
 	}
 	for _, tc := range refused {
-		_, _, ok, err := dsl.ParseOrkflowUses(tc.uses)
+		_, ok, err := dsl.ParseOrkflowUses(tc.uses)
 		if !ok || err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("ParseOrkflowUses(%q) = ok %v, err %v; want an error naming %q", tc.uses, ok, err, tc.want)
 			continue
@@ -56,9 +64,42 @@ func TestParseOrkflowUses(t *testing.T) {
 	}
 }
 
+func TestParseOrkflowUses_AQualifiedRefWithNoVersionNamesItsNamespace(t *testing.T) {
+	_, ok, err := dsl.ParseOrkflowUses("orkflow:team-a/deploy")
+	var missing *dsl.ComposeVersionRequiredError
+	if !ok || !errors.As(err, &missing) || missing.Name != "deploy" || missing.Namespace != "team-a" {
+		t.Fatalf("ParseOrkflowUses = %v, %v; want *ComposeVersionRequiredError for team-a/deploy", ok, err)
+	}
+	if !strings.Contains(err.Error(), "orkctl orkflow versions deploy -n team-a") {
+		t.Fatalf("message %q does not say how to list team-a's versions", err)
+	}
+}
+
+func TestCompile_AQualifiedUsesRecordsTheOwnerNamespace(t *testing.T) {
+	wf, err := dsl.Compile([]byte(`
+apiVersion: orkstack/v1
+kind: Orkflow
+namespace: team-b
+name: release
+tasks:
+  - id: deploy
+    uses: orkflow:team-a/deploy@1.2.3
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := wf.GetTasks()[0].GetOrkflow()
+	if ref.GetNamespace() != "team-a" || ref.GetName() != "deploy" || ref.GetVersion() != "1.2.3" {
+		t.Fatalf("compiled ref = %v", ref)
+	}
+	if got := dsl.ComposedLabel(ref); got != "team-a/deploy@1.2.3" {
+		t.Fatalf("ComposedLabel = %q", got)
+	}
+}
+
 func TestParseOrkflowUses_RequiresOnePinnedVersion(t *testing.T) {
 	for _, uses := range []string{"orkflow:release-block", "orkflow:release-block@"} {
-		_, _, ok, err := dsl.ParseOrkflowUses(uses)
+		_, ok, err := dsl.ParseOrkflowUses(uses)
 		var missing *dsl.ComposeVersionRequiredError
 		if !ok || !errors.As(err, &missing) || missing.Name != "release-block" {
 			t.Fatalf("ParseOrkflowUses(%q) = %v, %v; want *ComposeVersionRequiredError", uses, ok, err)
@@ -117,9 +158,7 @@ tasks:
 
 func TestCompile_ComposedTaskCompiles(t *testing.T) {
 	wf, err := dsl.Compile([]byte(composedCaller))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	release := wf.GetTasks()[1]
 	ref := release.GetOrkflow()
 	if ref.GetName() != "release-block" || ref.GetVersion() != "0.1.0" || ref.GetDefinitionDigest() != "" {
@@ -317,9 +356,7 @@ tasks:
 		t.Errorf("undeclared input: %v", err)
 	}
 	wf, err := dsl.Compile([]byte(strings.Replace(doc(""), "outputs:\n", "outputs: {}\n", 1)))
-	if err != nil {
-		t.Fatalf("outputs: {}: %v", err)
-	}
+	must.OKf(t, err, "outputs: {}")
 	if wf.GetOutputs() != nil {
 		t.Fatalf("outputs: {} compiled to %v, want none", wf.GetOutputs())
 	}
@@ -347,25 +384,23 @@ tasks:
 }
 
 func TestRenderValues(t *testing.T) {
-	inputs := map[string]any{"image": "ghcr.io/acme/app:1", "n": json.Number("12345678901234567890")}
+	inputs := map[string]any{"image": "ghcr.io/acme/app:1", "n": stablejson.Number("12345678901234567890")}
 	outputs := map[string]map[string]any{"build": {"value": "sha256:abc", "null": nil}}
 	value := map[string]any{
 		"image":           "{{ .tasks.build.output.value }}",
 		"big":             "{{ .inputs.n }}",
-		"count":           json.Number("3"),
+		"count":           stablejson.Number("3"),
 		"flag":            true,
 		"none":            nil,
 		"{{ .inputs.x }}": "key never templated",
 		"list":            []any{"{{ .inputs.image }}", 2.5},
 	}
 	got, err := dsl.RenderValues(`task "release": with`, value, inputs, outputs)
-	if err != nil {
-		t.Fatalf("RenderValues: %v", err)
-	}
+	must.OKf(t, err, "RenderValues")
 	want := map[string]any{
 		"image":           "sha256:abc",
 		"big":             "12345678901234567890",
-		"count":           json.Number("3"),
+		"count":           stablejson.Number("3"),
 		"flag":            true,
 		"none":            nil,
 		"{{ .inputs.x }}": "key never templated",
@@ -395,9 +430,7 @@ func TestReferencedUpstreamIn(t *testing.T) {
 		"b": []any{`{{ index .tasks "sign-it" "output" "x" }}`, "{{ $.tasks.build.output.w }}"},
 		"c": "plain",
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !reflect.DeepEqual(got, []string{"build", "sign-it"}) {
 		t.Fatalf("got %v", got)
 	}
@@ -432,13 +465,9 @@ tasks:
       body: '{{ index .tasks "release" "output" "url" }} {{ index .tasks.release.output .inputs.k }}'
       command: ["echo", "{{ .tasks.release.output.digets }}"]
 `))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	got, err := dsl.OutputReferences(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := []dsl.OutputReference{
 		{Field: "tasks[1].condition", TaskID: "release", Key: "ok"},
 		{Field: "tasks[1].with.body", TaskID: "release", Key: "url"},

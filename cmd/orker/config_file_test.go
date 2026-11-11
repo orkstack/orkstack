@@ -13,6 +13,8 @@ import (
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/telemetry"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // writeTempConfig writes content to a temp file under t.TempDir() and
@@ -20,9 +22,7 @@ import (
 func writeTempConfig(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(content), 0o600), "write %s", path)
 	return path
 }
 
@@ -47,9 +47,7 @@ func setenvT(t *testing.T) func(string, string) error {
 func unsetenvT(t *testing.T, key string) {
 	t.Helper()
 	t.Setenv(key, "") // registers the restore of the original value
-	if err := os.Unsetenv(key); err != nil {
-		t.Fatalf("unset %s: %v", key, err)
-	}
+	must.OKf(t, os.Unsetenv(key), "unset %s", key)
 }
 
 func TestApplyConfigFile_FileValueReachesLoadConfig(t *testing.T) {
@@ -58,9 +56,7 @@ func TestApplyConfigFile_FileValueReachesLoadConfig(t *testing.T) {
 
 	doc, gotPath, check, set, err := applyConfigFile(
 		[]string{"--config", path}, cfgfile.BinaryOrker, os.LookupEnv, setenvT(t))
-	if err != nil {
-		t.Fatalf("applyConfigFile: %v", err)
-	}
+	must.OKf(t, err, "applyConfigFile")
 	if doc == nil || gotPath != path || check {
 		t.Fatalf("applyConfigFile = (doc=%v, path=%q, check=%v), want a document, %q, false", doc, gotPath, check, path)
 	}
@@ -80,9 +76,7 @@ func TestApplyConfigFile_EnvironmentWinsOverFile(t *testing.T) {
 
 	_, _, _, set, err := applyConfigFile(
 		[]string{"--config", path}, cfgfile.BinaryOrker, os.LookupEnv, setenvT(t))
-	if err != nil {
-		t.Fatalf("applyConfigFile: %v", err)
-	}
+	must.OKf(t, err, "applyConfigFile")
 	for _, e := range set {
 		if e == "ORK_TEMPORAL_NAMESPACE" {
 			t.Errorf("applyConfigFile set = %v, ORK_TEMPORAL_NAMESPACE was already in the environment", set)
@@ -101,9 +95,7 @@ func TestApplyConfigFile_PerBinaryAdminAddr(t *testing.T) {
 
 	_, _, _, _, err := applyConfigFile(
 		[]string{"--config", path}, cfgfile.BinaryOrker, os.LookupEnv, setenvT(t))
-	if err != nil {
-		t.Fatalf("applyConfigFile: %v", err)
-	}
+	must.OKf(t, err, "applyConfigFile")
 	if got, ok := os.LookupEnv("ORK_ADMIN_ADDR"); !ok || got != "127.0.0.1:9465" {
 		t.Errorf("ORK_ADMIN_ADDR = %q, %v; want 127.0.0.1:9465, true (this binary's own side of the pair)", got, ok)
 	}
@@ -117,9 +109,7 @@ func TestApplyConfigFile_Check(t *testing.T) {
 
 	doc, _, check, set, err := applyConfigFile(
 		[]string{"--config", path, "--check"}, cfgfile.BinaryOrker, os.LookupEnv, setenvT(t))
-	if err != nil {
-		t.Fatalf("applyConfigFile: %v", err)
-	}
+	must.OKf(t, err, "applyConfigFile")
 	if !check || doc == nil {
 		t.Fatalf("applyConfigFile = (doc=%v, check=%v), want a document and check=true", doc, check)
 	}
@@ -186,9 +176,7 @@ func TestOrkerOptions_TheConfigurationsFilesAreTheOrkersOwn(t *testing.T) {
 	sinkKey := filepath.Join(dir, "sink-key")
 	sibling := filepath.Join(dir, "task-secret")
 	for _, path := range []string{secret, sinkKey, sibling} {
-		if err := os.WriteFile(path, []byte("x\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(path, []byte("x\n"), 0o600))
 	}
 	path := writeTempConfig(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secret+"}\n")
 	t.Setenv(telemetry.SinksVar, "sinks:\n  vendor:\n    endpoint: http://127.0.0.1:1\n    headers:\n"+

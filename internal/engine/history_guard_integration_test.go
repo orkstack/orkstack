@@ -4,7 +4,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -25,9 +24,12 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // guardStack is one engine replica and one pin-hosting Orker over a private
@@ -69,9 +71,7 @@ func startGuardStack(t *testing.T, ctx context.Context, behavior guardBehavior) 
 		snapshots:  newTestSnapshotStore(),
 	}
 	local, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("local run archive: %v", err)
-	}
+	must.OKf(t, err, "local run archive")
 	s.archive = engine.NewRunArchiver(local)
 	s.reader = engine.NewTemporalRunReader(c).WithSnapshotStore(s.snapshots)
 	s.starter = engine.NewTemporalStarterWithOrkerQueue(c, s.runQueue, s.orkerQueue)
@@ -111,9 +111,7 @@ func startGuardStack(t *testing.T, ctx context.Context, behavior guardBehavior) 
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orker, "events": events} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		t.Cleanup(w.Stop)
 	}
 	return s
@@ -134,9 +132,7 @@ func (s *guardStack) startAndWait(runID, document string, input *orkstackv1.Payl
 
 func (s *guardStack) startDefinitionAndWait(runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, plan engine.RunPlan) error {
 	s.t.Helper()
-	if err := s.starter.StartRun(s.ctx, runID, wf, input, plan); err != nil {
-		s.t.Fatalf("StartRun %s: %v", runID, err)
-	}
+	must.OKf(s.t, s.starter.StartRun(s.ctx, runID, wf, input, plan), "StartRun %s", runID)
 	return s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil)
 }
 
@@ -150,15 +146,13 @@ type closedRun struct {
 	FailureType string                       `json:"failure_type,omitempty"`
 	Blockers    string                       `json:"blockers,omitempty"`
 	Crossing    engine.HistoryCrossingDetail `json:"crossing"`
-	MarkerEvent int64                        `json:"guard_marker_event_id,omitempty"`
+	MarkerEvent int64                        `json:"guard_marker_event_id,omitzero"`
 }
 
 func (s *guardStack) describeClosed(runID string) closedRun {
 	s.t.Helper()
 	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
-	if err != nil {
-		s.t.Fatalf("describe %s: %v", runID, err)
-	}
+	must.OKf(s.t, err, "describe %s", runID)
 	info := described.GetWorkflowExecutionInfo()
 	out := closedRun{
 		Status:    info.GetStatus().String(),
@@ -182,9 +176,7 @@ func (s *guardStack) describeClosed(runID string) closedRun {
 		app := attrs.GetFailure().GetApplicationFailureInfo()
 		out.FailureType = app.GetType()
 		if out.FailureType == engine.RunHistoryLimitCode {
-			if err := converter.GetDefaultDataConverter().FromPayloads(app.GetDetails(), &out.Blockers, &out.Crossing); err != nil {
-				s.t.Fatalf("decode the guard's failure details: %v", err)
-			}
+			must.OKf(s.t, converter.GetDefaultDataConverter().FromPayloads(app.GetDetails(), &out.Blockers, &out.Crossing), "decode the guard's failure details")
 		}
 	}
 	return out
@@ -196,9 +188,7 @@ func (s *guardStack) fullHistory(runID string) *historypb.History {
 	iter := s.client.GetWorkflowHistory(s.ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			s.t.Fatalf("read history of %s: %v", runID, err)
-		}
+		must.OKf(s.t, err, "read history of %s", runID)
 		recorded.Events = append(recorded.Events, event)
 	}
 	return recorded
@@ -296,20 +286,14 @@ func TestIntegration_RunHistoryLimitFailsExplicitly(t *testing.T) {
 	c := s.requireStoppedByTheGuard(runID, plan.History)
 
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || run.GetError().GetCode() != engine.RunHistoryLimitCode {
 		t.Fatalf("GetRun = %v / %v, want FAILED %s", run.GetStatus(), run.GetError(), engine.RunHistoryLimitCode)
 	}
 	body, err := s.archive.LoadRunBody(ctx, runID)
-	if err != nil {
-		t.Fatalf("archive body: %v", err)
-	}
+	must.OKf(t, err, "archive body")
 	archived, archivedEvents, err := engine.UnmarshalRunArchive(body)
-	if err != nil {
-		t.Fatalf("decode archive: %v", err)
-	}
+	must.OKf(t, err, "decode archive")
 	last := archivedEvents[len(archivedEvents)-1]
 	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED || archived.GetError().GetCode() != engine.RunHistoryLimitCode {
 		t.Fatalf("archive ends %v with error %v, want RUN_FAILED with %s", last.GetType(), archived.GetError(),
@@ -319,12 +303,10 @@ func TestIntegration_RunHistoryLimitFailsExplicitly(t *testing.T) {
 		t.Fatal("the cluster terminated the run")
 	}
 	encoded, err := protojson.Marshal(run)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	proof.WriteJSON(t, "history-limit", "run.json", map[string]any{
 		"run_id":          runID,
-		"run":             json.RawMessage(encoded),
+		"run":             stablejson.RawJSON(encoded),
 		"temporal_status": "Failed",
 		"closed":          c,
 		"archive_last":    last.GetType().String(),
@@ -367,9 +349,7 @@ func composeChild(t *testing.T, s *guardStack, plan *engine.RunPlan, taskID, chi
 	child.DefinitionDigest = shapeChildDigest
 	childPlan := rawPlan(s.orkerQueue)
 	cp, err := engine.NewChildRunPlan(child, childPlan, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cp.RunID = fmt.Sprintf("ork-%d-%s", time.Now().UnixNano(), taskID)
 	if plan.Children == nil {
 		plan.Children = map[string]*engine.ChildRunPlan{}
@@ -606,18 +586,12 @@ func TestIntegration_ServerReportsHistorySize(t *testing.T) {
 	w.RegisterWorkflowWithOptions(historySizeProbe, workflow.RegisterOptions{Name: "HistorySizeProbe"})
 	w.RegisterActivityWithOptions(func(context.Context, int) error { return nil },
 		activity.RegisterOptions{Name: "HistorySizeProbeStep"})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Start())
 	defer w.Stop()
 	run, err := c.ExecuteWorkflow(ctx, client.StartWorkflowOptions{TaskQueue: queue}, "HistorySizeProbe")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var size int64
-	if err := run.Get(ctx, &size); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, run.Get(ctx, &size))
 	if size <= 0 {
 		t.Fatalf("the server reported a history size of %d after three activities: the guard's bytes "+
 			"dimension cannot see history growth on this cluster", size)
@@ -638,9 +612,7 @@ func TestIntegration_LargeRunResultIsCompact(t *testing.T) {
 		fmt.Fprintf(&doc, "  - id: t%03d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}
 	runID := fmt.Sprintf("ork-compact-%d", time.Now().UnixNano())
-	if err := s.startAndWait(runID, doc.String(), nil, s.limitedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes)); err != nil {
-		t.Fatalf("the 200-task run failed: %v", err)
-	}
+	must.OKf(t, s.startAndWait(runID, doc.String(), nil, s.limitedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes)), "the 200-task run failed")
 	var resultBytes int
 	for _, event := range s.fullHistory(runID).GetEvents() {
 		if attrs := event.GetWorkflowExecutionCompletedEventAttributes(); attrs != nil {
@@ -724,9 +696,7 @@ func TestIntegration_RecordHistoryLimitRunHistory(t *testing.T) {
 		engine.NewEventActivities(engine.NewEventBus(), runs).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orkerWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 	setCurrentVersion(t, ctx, c, deployment, runQueue, orkerQueue)
@@ -750,25 +720,17 @@ func TestIntegration_RecordHistoryLimitRunHistory(t *testing.T) {
 
 	recorded := s.fullHistory(runID)
 	encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
-	if err != nil {
-		t.Fatalf("encode history: %v", err)
-	}
+	must.OKf(t, err, "encode history")
 	encoded = append(encoded, '\n')
 	proof.Write(t, "history-limit", "recorded-history.json", encoded)
 	recording := filepath.Join(t.TempDir(), "recorded-history.json")
-	if err := os.WriteFile(recording, encoded, 0o644); err != nil {
-		t.Fatalf("write %s: %v", recording, err)
-	}
+	must.OKf(t, os.WriteFile(recording, encoded, 0o644), "write %s", recording)
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
-	if err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, recording); err != nil {
-		t.Fatalf("the history just recorded does not replay against current code: %v", err)
-	}
+	must.OKf(t, replayer.ReplayWorkflowHistoryFromJSONFile(nil, recording), "the history just recorded does not replay against current code")
 	written := "the proof directory only (ORK_RECORD_GOLDEN_HISTORY unset)"
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") != "" {
-		if err := os.WriteFile(historyLimitFixture, encoded, 0o644); err != nil {
-			t.Fatalf("write %s: %v", historyLimitFixture, err)
-		}
+		must.OKf(t, os.WriteFile(historyLimitFixture, encoded, 0o644), "write %s", historyLimitFixture)
 		written = historyLimitFixture
 	}
 	t.Logf("recorded %d history events for run %s into %s (deployment version %s), replayed clean; crossing %+v; blockers %q",

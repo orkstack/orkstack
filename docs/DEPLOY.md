@@ -55,12 +55,12 @@ scale by adding processes and both survive losing one.
 
 | state | where it lives | code |
 |---|---|---|
-| orkflow definitions | the bucket | `artifacts.S3OrkflowStore`, opened at boot by `openOrkflowStore` (`cmd/ork/main.go`). It keeps no cache, so an `apply` on one replica is visible to every other |
+| orkflow definitions | the bucket | `artifacts.S3OrkflowStore`, opened at boot by `openOrkflowStore` (`cmd/ork/main.go`). It keeps no cache, so a create on one replica is visible to every other |
 | live runs — status, task state, event stream | Temporal history | `engine.TemporalRunReader` (`internal/engine/reader.go`), handed to the API as `Binding.Reader` by `engine.NamespaceRouter` (`internal/engine/router.go`) |
 | finished runs, past retention | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `engine.NewRunArchiver` over `artifacts.NewRunArchive`, written by the terminal `PublishEvent`. The default backend is `local`: a directory on each host, so replicated it is one archive per replica (§1) |
 | idempotency keys | Temporal | `engine.IdempotencyClaimWorkflow` (`internal/engine/claim.go`), held for `ORK_IDEMPOTENCY_TTL` |
 | artifacts | the bucket — **once `ORK_ARTIFACT_BACKEND=s3`** | `pkg/artifacts`; events and payloads carry refs, never bytes. Same default, same consequence: on `local` an Orker writes to its own disk and no other host can read the bytes back |
-| the in-process `RunStore` / `EventBus` | one process, and only that one | **write side only**: the candidate run a submission creates, the stream of a run whose start failed, and the archive + webhook write path. Behind a wired reader they are never read (`internal/api/service.go`, `LookupRun`) |
+| the in-process `RunStore` / `EventBus` | one process, and only that one | **write side only**: the candidate run a submission creates, the stream of a run whose start failed, and the archive + webhook write path. Behind a wired reader they are never read (`internal/api/service.go`, `LookupRun`). Its live feed hands each subscriber a run's events in sequence order without a gap, though publishes land in any order: an event waits until every number before it has arrived, a number the run never published is served as a `STREAM_GAP` event once the run's terminal event arrives, and a number still missing after a minute ends the stream `unavailable`, naming it (`internal/engine/bus.go`) |
 
 So a replica owns nothing. Kill one and you lose its in-flight HTTP
 connections and nothing else: its runs keep executing on another replica's
@@ -346,7 +346,7 @@ or hold, and never how long an answer takes (`internal/api/server.go`,
   request, never on how large an Orkflow may be, so it follows
   `engine.orkflow_max_tasks`: 1 MiB, plus 4 KiB a task. The heaviest task
   measured (a comment, needs, retry, resources, environment and an inline
-  script) adds about 920 bytes to an apply, so an apply at the ceiling
+  script) adds about 920 bytes to a create request, so a create request at the ceiling
   whose tasks average four times that fits, in either encoding: at the
   default 4,000 tasks, 3.8 MB as JSON against a cap of 17.4 MB. The 1 MiB
   holds a run's input at its own 256 KiB bound, and the plan of an
@@ -503,7 +503,7 @@ reached by is not answered here, and the other way round.
   `invalid_argument` it would send every client off to fix a request with
   nothing wrong with it for as long as the cluster was unwell.
 - **A namespace's `allowed_pools` bounds what it may dispatch onto**, and it is
-  enforced on the server at both apply and submit, so no client can skip it.
+  enforced on the server at both create and submit, so no client can skip it.
   An empty list means no restriction.
 
   The list is read in the same vocabulary as the dispatch — the collapsed name
@@ -567,7 +567,9 @@ naming its full path, and so is an integer, boolean or duration that is not
 one once the space around it is trimmed (the daemons are handed the bare
 value: not every reader trims, and a padded one would quietly use the
 default) and a value holding a NUL byte, which an environment variable cannot
-carry. Any scalar leaf may instead be a mapping with `ork:` and `orker:` keys,
+carry. In `ORK_TELEMETRY_SINKS` and `ORK_ACTIVITY_CATALOG` a `!!merge` tag on a
+key or a value, and `<<` written as a value that is not text, are refused at
+boot naming the line and the path, where the YAML reader would drop the value. Any scalar leaf may instead be a mapping with `ork:` and `orker:` keys,
 to give the two binaries different values from one file — the shape
 `telemetry.admin_addr` needs — and a plain scalar still applies to both. Any
 string leaf may instead be a mapping with a single `file:` key naming a path,
@@ -615,8 +617,8 @@ then the variable it becomes.
 | `temporal.namespace` | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
 | `pool.name` | `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
 | `pool.queue` | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
-| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.2` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest at apply time. `make up` points it at the local registry |
-| `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during apply-time resolution; grants no push and no execution |
+| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.2` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest when the Orkflow is created. `make up` points it at the local registry |
+| `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during create-time resolution; grants no push and no execution |
 | `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes of UTF-8, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
 | `orker.docker.bin` | `ORK_DOCKER_BIN` | `docker` on `PATH` | `orker` | the container CLI; `podman` on `PATH` when `orker.docker.cli` is `podman` |
@@ -655,19 +657,19 @@ then the variable it becomes.
 | `engine.ui.enabled` | `ORK_UI_ENABLED` | `true` | `ork` | serve the web UI at `/` on the API listener, beside the Connect API and the WebSocket bridge; `false` leaves the listener the API alone (§ "The web UI") |
 | `engine.ui.dir` | `ORK_UI_DIR` | *(empty: the build compiled into `ork`)* | `ork` | serve the UI build in this directory (`ui/build`, written by `cd ui && bun run build`) instead of the one compiled into `ork`; refused at boot if it holds no `index.html`, or if `ORK_UI_ENABLED=false` |
 | `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
-| `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Default 1000. Lowers it, or raises it up to the built-in 10,000; above 1,000 it needs `engine.continuation.enabled` (refused at boot otherwise, naming both keys). Checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value. A submit that needs more than 1,000 items is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs a release older than the one that raised the maximum; a draining older build does not block it (§5, "Engine capabilities and the fleet check"). Before rolling back below that release, lower it to 1,000 and wait for such runs (§4) |
-| `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `4000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, apply and plan, and again at submit, so lowering it refuses new runs of an Orkflow applied above the new value. A deployment lowers or raises it. The default is the largest size the task soak measured (its per-generation history, snapshot, in-flight, workflow-code, read-latency and run-page thresholds, with plain tasks and small outputs); above it a deployment runs unmeasured, and the boot warns naming the measured size. The task soak runs in the nightly and pre-release proofs, not in every merge proof (docs/PROOFS.md). Independently, a stage of more than X plain tasks that start together may stop `RUN_HISTORY_LIMIT` in its first history, explicitly, and the boot warns when this is above X. X is a size to stay within, not a promise: at or below it a flat stage of plain tasks cannot reach that limit before it carries on, and other limits still apply. X is 4,222 at the defaults and moves with `engine.history.max_events`, `engine.continuation.events`, `engine.continuation.bytes`, `engine.continuation.restore_timeout` and `engine.run_max_in_flight`; §5, "Task ceiling and the flat-stage bound", gives its closed form. With `engine.continuation.enabled` off a run has one history: an unset key defaults to the smaller of 4,000 and `engine.history.max_events / 50` (1,024 at the default limit; the boot logs the effective value), and an explicit value above that quotient is refused at boot, naming the three keys |
-| `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
+| `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Default 1000. Lowers it, or raises it up to the built-in 10,000; above 1,000 it needs `engine.continuation.enabled` (refused at boot otherwise, naming both keys). Checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value. A submit that needs more than 1,000 items is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs a release older than the one that raised the maximum; a draining older build does not block it (§5, "Engine capabilities and the fleet check"). Before rolling back below that release, lower it to 1,000 and wait for such runs (§4) |
+| `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `4000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, create and plan, and again at submit, so lowering it refuses new runs of an Orkflow created above the new value. A deployment lowers or raises it. The default is the largest size the task soak measured (its per-generation history, snapshot, in-flight, workflow-code, read-latency and run-page thresholds, with plain tasks and small outputs); above it a deployment runs unmeasured, and the boot warns naming the measured size. The task soak runs in the nightly and pre-release proofs, not in every merge proof (docs/PROOFS.md). Independently, a stage of more than X plain tasks that start together may stop `RUN_HISTORY_LIMIT` in its first history, explicitly, and the boot warns when this is above X. X is a size to stay within, not a promise: at or below it a flat stage of plain tasks cannot reach that limit before it carries on, and other limits still apply. X is 4,389 at the defaults and moves with `engine.history.max_events`, `engine.continuation.events`, `engine.continuation.bytes`, `engine.continuation.restore_timeout` and `engine.run_max_in_flight`; §5, "Task ceiling and the flat-stage bound", gives its closed form. With `engine.continuation.enabled` off a run has one history: an unset key defaults to the smaller of 4,000 and `engine.history.max_events / 50` (1,024 at the default limit; the boot logs the effective value), and an explicit value above that quotient is refused at boot, naming the three keys |
+| `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage with every task running. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
 | `engine.history.max_bytes` | `ORK_HISTORY_MAX_BYTES` | `50 MiB` | `ork` | the same, for history size. Before each dispatch the run also counts that dispatch's own command (a task's input, up to `engine.limits.values_max_bytes`), so it never records one its failure path could not follow. The reserve assumes completion results of ≤ 8 KiB each; a run whose failure path lands many larger results at once can still reach the cluster's size limit and be terminated by the cluster; this is the guard's one known gap, and such a run is still reported `RUN_HISTORY_LIMIT` (the reader maps the cluster's history-limit termination, "Workflow history count/size exceeds limit.", to it), never `RUN_TERMINATED`. At least 64 KiB; anything else is refused at boot. Read at submit, so a change applies to new runs. Both limits are carried once per run tree, on the top-level run's plan (about 0.4 KB), so a run whose plan is already within that much of its 256 KiB bound is refused at submit (`FAILED_PRECONDITION`, naming the size) |
 | `engine.continuation.enabled` | `ORK_CONTINUATION_ENABLED` | `true` | `ork` | runs carry on into a fresh history once theirs has grown past the budget below, at their next moment with nothing running, so a large or long-lived run is bounded per history rather than stopped `RUN_HISTORY_LIMIT` (see §5, "A run that pauses new tasks", and §2, "Runs that span several executions"). On by default since the release after the one that first carried runs on (§4, "Rolling back"). The three keys below are validated only when this is true, so a deployment that lowers `engine.history.max_events` below 32,768 or `engine.history.max_bytes` below 40 MiB must lower `engine.continuation.events` or `.bytes` with it, or turn this off: it is refused at boot otherwise, naming the keys. Read at submit, so a change applies to new runs |
 | `engine.continuation.events` | `ORK_CONTINUATION_EVENTS` | `8192` | `ork` | history growth (events) after which a run carries on at its next moment with nothing running. A run with no such moment pauses new tasks once its history plus what its failure path still needs reaches 60% of the limit, and carries on once what was running finishes. At least 50, at most a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled. Read at submit, so a change applies to new runs |
 | `engine.continuation.bytes` | `ORK_CONTINUATION_BYTES` | `8 MiB` | `ork` | the same, for history bytes; also the most a run copies into any one of its histories (the one bounded copy AGENTS.md §2.2 allows into history): the saved state it carries forward, plus its definition when that is passed by reference (`engine.definition_by_reference`, below), which may take at most a quarter of it, compressed. A run whose saved state is larger carries on in its current history instead, and may stop `RUN_HISTORY_LIMIT` naming the size. At least 16 KiB, at most a fifth of `engine.history.max_bytes`; anything else is refused at boot when continuation is enabled |
 | `engine.continuation.restore_timeout` | `ORK_CONTINUATION_RESTORE_TIMEOUT` | `1h` | `ork` | how long a run that carried on waits for object storage to return its saved state before it fails `RUN_STATE_UNAVAILABLE`, explicitly. Each read is retried with a backoff doubling from 1 s to at most 1 minute, and a retry that would start past the timeout is not made, so the run stops at its last read inside the window — up to one backoff early (31 s into a 1m timeout, within the last minute of the default hour). 1m to 8h, and its worst-case history — about `128 + 3 per 8 s` events at the default bytes (1,478 at 1h, 10,928 at 8h)— must fit in a quarter of `engine.history.max_events`; anything else is refused at boot when continuation is enabled, naming this key, `engine.continuation.bytes` and `engine.history.max_events`. Each await still open when a run carries on adds one more event to that restore (its deadline timer, recreated), which the run's history guard counts like any other |
-| `engine.definition_by_reference` | `ORK_DEFINITION_BY_REFERENCE` | `true` | `ork` | a top-level run whose planned definition is over the 256 KiB a run's start may carry travels by reference instead: the start carries a stub naming it, and the run copies the definition into its own history in bounded chunks, sharing the copy bound below (`engine.continuation.bytes`), of which it may take at most a quarter, compressed (2 MiB at the default); a larger one is refused at submit and at apply, "split it into composed Orkflows" (`docs/DSL.md`, "How many tasks an Orkflow may declare"). Needs `engine.continuation.enabled`: an explicit `true` without it is refused at boot, naming both keys, and when neither the configuration file nor the environment sets this key it is on only where the built-in default is on and continuation is (the boot logs the effective value). A submit that needs it is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs an older release (§5, "Engine capabilities and the fleet check"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below that release (§4, R3) |
+| `engine.definition_by_reference` | `ORK_DEFINITION_BY_REFERENCE` | `true` | `ork` | a top-level run whose planned definition is over the 256 KiB a run's start may carry travels by reference instead: the start carries a stub naming it, and the run copies the definition into its own history in bounded chunks, sharing the copy bound below (`engine.continuation.bytes`), of which it may take at most a quarter, compressed (2 MiB at the default); a larger one is refused at submit and at create, "split it into composed Orkflows" (`docs/DSL.md`, "How many tasks an Orkflow may declare"). Needs `engine.continuation.enabled`: an explicit `true` without it is refused at boot, naming both keys, and when neither the configuration file nor the environment sets this key it is on only where the built-in default is on and continuation is (the boot logs the effective value). A submit that needs it is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs an older release (§5, "Engine capabilities and the fleet check"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below that release (§4, R3) |
 | `engine.snapshot_overlays` | `ORK_SNAPSHOT_OVERLAYS` | `true` | `ork` | a run that declares more than 256 rows — its tasks plus every fan-out's `max_items` — writes, for each event before its last, only the rows that changed since its last full snapshot (a snapshot overlay, `docs/STORAGE.md`), and a full snapshot at least every 64 events and whenever more than 256 rows changed; its last event's snapshot is always full. Decided per run, so a small child of a large parent keeps full snapshots. Read at submit, so a change applies to new runs. While any `ork` process polling `ork-engine-events` runs an older release (a draining build's included), or a process of a build that new runs start on does, new runs write full snapshots instead, and the engine logs why at most once a minute (§5, "Snapshot overlays"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below the release that has it (§4) |
-| `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `1000` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs |
+| `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `500` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs. Raising it is allowed, but it lowers the flat-stage bound X (`engine.orkflow_max_tasks`, §5): above about 700, X is below the 4,000-task default and the boot warns |
 | `engine.pin_creation_timeout` | `ORK_PIN_CREATION_TIMEOUT` | `5m` | `ork` | how long a pin waits for some pin host of its pool to have a free slot (`ORK_ORKER_MAX_PINS`) before the task whose readiness asked for it fails `PIN_UNAVAILABLE`. A duration of whole seconds, `1s` to `24h`; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only: a run already accepted keeps the wait it started with, and so does a child run of it. A pool whose pin hosts are all cordoned fails a pin after about five minutes whatever this says (§5, "Removing an Orker safely: cordon and drain") |
-| `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate/apply and again at submit, so lowering it refuses new runs of an Orkflow applied under the old value |
+| `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
 | `engine.limits.artifact_max_count` | `ORK_ARTIFACT_MAX_COUNT` | `256` | `ork` | contract limit: output artifacts per attempt |
@@ -865,7 +867,7 @@ live Orker, the cost of one `orkctl orker list` — and each engine replica
 shares one reading among every caller: a read in flight is joined by every
 answer that asks meanwhile, and a whole reading, one every live Orker
 answered, answers for five seconds from when its read began, the run page's
-and `orkctl run inspect --watch`'s own poll period. A read ends at two
+and `orkctl run inspect -w`'s own poll period. A read ends at two
 seconds whether or not the Orkers have answered, so no answer waits longer.
 However many pages and watches are open, while its reads are whole a replica
 asks the Orkers at most once every five seconds for them, and nothing once no
@@ -963,10 +965,10 @@ works with an ordinary rolling update, versioned or not.
 **To widen** (raise a cap, allow another scheme or source):
 
 1. Roll every Orker of the pool to the wider setting, and let the rollout
-   finish (`orkctl orker list --filter pool=<pool>` lists the pool's live
+   finish (`orkctl orker list -F pool=<pool>` lists the pool's live
    Orkers).
-2. Only then apply and promote the Orkflow version that needs it
-   (`orkctl apply`, `orkctl orkflow promote <name> <version>`).
+2. Only then create and promote the Orkflow version that needs it
+   (`orkctl orkflow create`, `orkctl orkflow promote <name> <version>`).
 
 During the rollout no task asks for more than the old setting allows, so
 Orkers that still differ are harmless.
@@ -985,7 +987,7 @@ Orkers that still differ are harmless.
    otherwise.
 3. Wait until the runs that may still need the wider setting have finished:
    in every namespace whose runs use the pool,
-   `orkctl run list --filter 'status=PENDING,RUNNING' --filter 'created_at<T'`
+   `orkctl run list -F 'status=PENDING,RUNNING' -F 'created_at<T'`
    lists none, with `T` the instant of the last repoint in step 2, an RFC 3339
    instant with a zone such as `2026-10-30T12:00:00Z`. A schedule or trigger
    still pinned to an older version can start a run until it is repointed,
@@ -1137,9 +1139,18 @@ export ORK_S3_SECRET_KEY=…
 export ORK_S3_PATH_STYLE=true     # the dev store needs path style; AWS S3 does not
 ```
 
-The store must support conditional `PutObject` (`If-None-Match`/`If-Match`):
+The store must support conditional `PutObject` (`If-None-Match`/`If-Match`,
+an `If-Match` on a missing key refused with 404 or 412) and conditional
+`DeleteObject` (`If-Match`, a wrong etag refused with 412):
 commits, Orkflow pointers and registry documents are arbitrated by it, and
-every Orker probes it at boot and refuses to start on a store that cannot. Any
+every Orker probes each of these answers at boot and refuses to start with
+`COMMIT_STORE_NOT_CONDITIONAL` on a store that gets one wrong; every engine
+asks the two Orkflow rollbacks rely on before its API accepts an apply, and
+refuses to start naming the answer it got. Put
+nothing between OrkStack and the store that resends a request on its own (a
+retrying load balancer or proxy): OrkStack takes the store's refusal of a
+conditional write's only send as final, and a silent resend of a write that
+landed would be refused by that write itself (docs/STORAGE.md). Any
 S3-compatible store with that primitive works; the production default is AWS
 S3. The local development stack uses **SeaweedFS** (Apache-2.0, pinned by
 digest in `deploy/docker-compose.yml`, S3 API on `localhost:9000`), because
@@ -1418,6 +1429,7 @@ under a running run fail its dependents' input staging):
 | `orkflows/`, `objects/` | artifact bytes; references stay, `bytes_present` turns false |
 | `metadata/audit/` | the control-plane audit trail (`orkctl admin audit`); no setting shortens it |
 | `metadata/deliveries/` | webhook delivery records (`orkctl webhook deliveries`); a log, never a queue |
+| `metadata/delivery-bodies/` | bodies of webhook deliveries still being sent; each delivery deletes its own when it settles, so a rule only reclaims those of a delivery stopped from outside. Keep it at a day or more: a shorter rule can expire a body before its last attempt, which then records the body as gone |
 | `metadata/memo/` | cached-task memos; keep the rule no shorter than `ORK_CACHE_MAX_TTL` (a memo past it can never be reused anyway) |
 
 Do not expire the other prefixes: `metadata/orkflows/`, `metadata/namespaces/`,
@@ -1566,9 +1578,9 @@ one misconfiguration to watch for. Check both boot lines print the same
 
 | worker | queue | versioned | behaviour |
 |---|---|---|---|
-| run worker (`ork`) | `ork-tasks` — **fixed** | yes | `RunWorkflow` = **Pinned**, `ScheduleFireWorkflow` = **Pinned**, `IdempotencyClaimWorkflow` = **AutoUpgrade** |
+| run worker (`ork`) | `ork-tasks` — **fixed** | yes | `RunWorkflow` = **Pinned**, `ScheduleFireWorkflow` = **Pinned**, `WebhookDeliveryWorkflow` = **Pinned**, `IdempotencyClaimWorkflow` = **AutoUpgrade** |
 | Orker (`orker`) | `ORK_ORKER_QUEUE` (default `ork-tasks`) | yes | task activities only; must match the engine |
-| projection worker (`ork`) | `ork-engine-events` | **no** | `PublishEvent` |
+| projection worker (`ork`) | `ork-engine-events` | **no** | `PublishEvent`, and a webhook delivery's `SendWebhookAttempt` and `SettleWebhookDelivery` |
 
 **`ORK_ORKER_QUEUE` does not move the engine.** It names the queue Orkers poll
 and the queue the engine dispatches task activities to. The queue that hosts
@@ -1615,6 +1627,17 @@ does not already hold open, and its child run is pinned to the same version. A
 fire opened before a rollout finishes, with its run, on the version that
 opened it; a fire started after the switch runs on the new version
 (`internal/engine/schedule_integration_test.go`).
+
+**Why a webhook delivery is Pinned.** `WebhookDeliveryWorkflow` is one
+delivery: an activity that makes one `POST`, retried by its policy, and one
+that records the delivery ([WEBHOOKS.md](WEBHOOKS.md), "Attempts and
+retries"). It lives about a minute at the default policy, so it holds its
+version open no longer than the runs whose transitions queued it, and its
+history never replays on a build it did not start on. Its activities run on
+the unversioned `ork-engine-events`, so while engines of a release older than
+the one that queued a delivery still poll it, an attempt can reach one that has
+no such activity; that attempt fails and counts against the delivery's four.
+Finish a rollout's engines before relying on delivery during it.
 
 **Why the claim workflow is AutoUpgrade.** Its history is one update and one
 timer, its command stream is independent of run semantics, and it lives for
@@ -1874,10 +1897,10 @@ inventory, and leaves the cluster's guards on underneath.
 
 ### Releases that add Orkflow constructs
 
-A stored Orkflow version outlives the release that applied it. An older
-engine refuses to *apply* a construct it does not know, but asked to *run* an
+A stored Orkflow version outlives the release that created it. An older
+engine refuses to *create* a construct it does not know, but asked to *run* an
 already-stored version it decodes the definition with unknown fields dropped.
-So, during a ramp, apply a document that uses a construct only once the
+So, during a ramp, create a document that uses a construct only once the
 release that introduced it is Current (versioned) or on every replica
 (unversioned); and before rolling back past it, stop submitting versions that
 use it. What an older release does with each:
@@ -2042,7 +2065,7 @@ on the older release can record the marker too. So:
   since 0.2.0. For each namespace that takes runs:
   1. hold it: `orkctl namespace update NS --hold "rolling back"`;
   2. wait until
-     `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run.
+     `orkctl run list -n NS -F 'status=PENDING,RUNNING'` lists no run.
      A run waiting on an await stays open until the await is resolved or its
      deadline passes, which may be hours: resolve it
      (`orkctl run resolve`) or cancel it (`orkctl run cancel`) rather than
@@ -2052,6 +2075,23 @@ on the older release can record the marker too. So:
 - an unversioned fleet that mixes older and 0.2.0 engines meets the same
   failure whenever an older engine picks up such a run, so replace every
   engine replica together when rolling forward to 0.2.0.
+
+**Rolling back below 0.3.0, the release whose runs no longer wait for each
+task's start events to be published**, is one-way for the runs it started. A
+run that a 0.3.0 engine submitted pins a publish window in its plan and
+records the `task-publish-window` marker at its first plain task (§5, "A run
+that pauses new tasks"); it then schedules several tasks' publishes in one
+workflow task. Every run a 0.3.0 engine starts also records the
+`emit-past-cancel` marker at its first event, and an older engine cannot
+replay that either. An older engine replays such a history with every publish
+awaited, so its commands differ from the recorded ones: it fails the run's
+workflow task on every attempt, and the run stays `RUNNING`, making no
+progress, until an engine of 0.3.0 or later picks it up again. A run submitted
+by an older engine pins no window and keeps the awaited path on every build.
+So the rules are 0.2.0's: with versioning on, roll back as above; with
+versioning off, roll back below 0.3.0 only when no run is open, through the
+same hold; and replace every engine replica together when rolling forward to
+0.3.0.
 
 **A release that lets runs carry on into a fresh history** ships after the
 release that reads them (below), and the default turns on only in a release
@@ -2257,7 +2297,7 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   recently used first out, never a failure, never a tag. Any API caller can
   fill it, and it stays bounded. A replica that restarts reads each digest
   once more. Without `allow_cached` (`orkctl activity inspect`, the Admin
-  page's inspect form) every inspect reads the registry, as apply does.
+  page's inspect form) every inspect reads the registry, as creating an Orkflow does.
 - **Run ids** are `ork-` and a UUIDv7 in lowercase base32, 30 characters, and
   single-use for all time; a run started by an earlier release keeps
   `ork-{timestamp}-{sequence}`, and both stay valid. Nothing may parse one or
@@ -2451,7 +2491,7 @@ other first-party names by the tag of its release line, for example
 each patch release of the line. To pin the exact release instead, set
 `ORK_ACTIVITY_CATALOG` to the images by tag and digest. (The quickstart's
 catalog names the activities it built and pushed to its own registry, by tag;
-each apply pins the digest the tag names then.)
+each Orkflow created pins the digest the tag names then.)
 
 ### Running on Podman
 
@@ -2882,10 +2922,10 @@ that answered.
 | read | CLI | where the answer comes from |
 |---|---|---|
 | system information | `orkctl admin info` | **this replica's own build and configuration** |
-| activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests at apply time |
+| activity catalog | `orkctl activity list` | **this replica's own configuration** (`ORK_ACTIVITY_CATALOG`), resolved to pinned digests when the Orkflow is created |
 | maximum run retention | `orkctl admin retention get \| set` | `metadata/settings/retention-policy.json`; writable |
 | image policy | `orkctl admin image-policy get \| set` | `metadata/settings/image-policy.json`; writable |
-| namespaces | `orkctl namespace list [--filter F…] \| get \| create \| update \| delete` | the registry in the bucket, including each namespace's retention, admission, budget and policies; Admin → Namespaces pages and filters it, and a page filtered by name alone reads only the documents on screen |
+| namespaces | `orkctl namespace list [-F F…] \| get \| create \| update \| delete` | the registry in the bucket, including each namespace's retention, admission, budget and policies; Admin → Namespaces pages and filters it, and a page filtered by name alone reads only the documents on screen |
 | pool health | `orkctl pool list -n <ns>` | the cluster's poller information, plus the Orkers themselves |
 | Orker inventory | `orkctl orker list \| get \| cordon \| uncordon \| drain` | the cluster's poller information, plus each Orker itself; nothing stores an Orker |
 | releases | `orkctl release status \| ramp \| promote \| rollback \| wait` | the cluster's routing, drain verdict and run index, plus the Orker inventory; writable (ramp, promote, rollback). Needs the worker-deployment permissions (§4, "Underneath") |
@@ -2990,8 +3030,8 @@ deployment's default route, namespace allow-lists, and pools named by any
 stored orkflow version. A pool that no namespace or stored version names cannot
 be inferred from this API. The pools a namespace's stored versions name are
 remembered by each replica for 30 seconds, because collecting them reads every
-stored orkflow's version catalog: an apply or delete through a replica is seen
-by that replica at once, and a pool named only by an orkflow applied through
+stored orkflow's version catalog: a create or delete through a replica is seen
+by that replica at once, and a pool named only by an orkflow created through
 ANOTHER replica appears in this replica's pool list (and its stats scope) within
 30 seconds. A namespace whose catalog could not be read is asked again on the
 next call, never remembered. Temporal's task-queue description call requires a
@@ -3011,13 +3051,13 @@ same. `orkctl orker` is the supported way to take one host out of service
 without inflicting that:
 
 ```bash
-orkctl orker list --filter pool=build
+orkctl orker list -F pool=build
 orkctl orker cordon orker-7f3a --reason "CVE-2026-1234 runtime patch"
-orkctl orker drain  orker-7f3a --timeout 4h --watch
+orkctl orker drain  orker-7f3a --timeout 4h -w
 ```
 
 ```text
-$ orkctl orker drain orker-7f3a --timeout 4h --watch
+$ orkctl orker drain orker-7f3a --timeout 4h -w
 cordoned orker-7f3a: "orkctl orker drain"
 waiting for 2 tasks and 1 pin to finish…
   09:15:40  2 tasks, 1 pin     pin "build" of run ork-01m6qt8v…  expires in 2h11m
@@ -3180,7 +3220,7 @@ removes them:
 | Under the work root | What removes it |
 |---|---|
 | A directory naming this Orker's identity, found by its boot | the boot, secrets first; a removal that fails is logged, and the next boot tries again |
-| A file in one that a workload left and the Orker cannot remove, because the workload ran as another user | **you**. The boot removes everything else, secrets included, and logs what stayed |
+| A file in one that a workload left and the Orker cannot remove, because the workload ran as another user and made its directory writable only by itself | **you**. The boot removes everything else, secrets included, and logs what stayed. The Orker logged it when the attempt ended (`attempt cleanup: a directory could not be removed`), naming the directory that refused it, its mode and owner (`refused_by`). First-party images leave none ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), §10.1 rule 11) |
 | A directory naming another identity, which may be a live Orker's on this work root | never the boot. It logs them (`attempt directories under this work root are not this identity's`); once that Orker is gone, **you** |
 | A directory named `ork-<run>-<task>-<attempt>-<digits>`, with no owner, from a release before 0.3.0 | **you**: nothing says whose it is |
 | A pin directory, `ork-pin-*`, whose `lease.json` names this Orker's identity, found by its boot | the boot |
@@ -3541,16 +3581,16 @@ the Orker held it. They are reservations, never measured utilization
 (`docs/STATS.md` §8).
 
 ```bash
-orkctl stats usage --since 720h --group-by namespace          # who reserved what, this month
+orkctl stats usage -s 720h -g namespace          # who reserved what, this month
 orkctl namespace update analytics --budget-cpu-seconds 5000000 --budget-period 720h          # soft: reported only
-orkctl -n analytics stats usage --since 720h                  # the gate's own question: does it answer?
+orkctl -n analytics stats usage -s 720h                  # the gate's own question: does it answer?
 orkctl namespace update analytics --budget-enforce            # now it refuses
 orkctl namespace update analytics --budget-enforce=false      # back to reporting
 orkctl namespace update analytics --clear-budget              # unbounded
 ```
 
 - **Soft (the default) costs nothing at submit.** It is reported on every
-  read — `orkctl stats usage --since <period>`, the dashboard Usage section, Admin
+  read — `orkctl stats usage -s <period>`, the dashboard Usage section, Admin
   → Usage — and never refuses anything.
 - **Enforced** is the third reason inside the one admission gate, after the
   hold and the cap: a submit measures the namespace's usage over the trailing
@@ -3707,10 +3747,10 @@ places; a source must pass **both**:
   stops the Orker at boot.
 - **The tenant's list, per namespace:** `orkctl namespace update NAME
   --allow-secret 'env:SANDBOX_*'` (or Admin → Namespaces). It is enforced by
-  the engine at validate and apply, as an issue on
+  the engine at validate and create, as an issue on
   `tasks[i].secrets[j].source`, and again at every submit — `run submit`,
   `run again`, the UI, a trigger invoke, a schedule fire — before a run id is
-  minted, so a definition applied before the list existed is refused at its
+  minted, so a definition created before the list existed is refused at its
   next submit. It is never retroactive: a run already accepted finishes on
   the definition it pinned; stop one with `orkctl run cancel`. Empty (or
   `--clear-allowed-secrets`) means unrestricted. The list never travels to
@@ -3758,7 +3798,7 @@ replicas that know it; the Orker floor is unaffected by the rollout.
 ### Image supply-chain policy
 
 By default any `uses:` a document names is pulled and run: the engine pins it
-to a digest at apply, which answers "did the image change under us?" and
+to a digest at create, which answers "did the image change under us?" and
 never "should this image run here at all?". Two halves bound that, and an
 image must pass both:
 
@@ -3781,7 +3821,7 @@ image must pass both:
   namespace names cannot be removed from the floor until the namespace is
   cleared (`--clear-require-signed-by`).
 
-The policy is checked at three doors: at validate and apply (an issue on
+The policy is checked at three doors: at validate and create (an issue on
 `tasks[i].uses`), at every submit — `run submit`, `run again`, the UI, a
 trigger invoke, a schedule fire — before a run id is minted (`failed_precondition`, so a
 definition stored before the policy tightened is refused at its next
@@ -3807,8 +3847,8 @@ own registry client: `orker.registry_auth_file` /
 `ORK_ORKER_REGISTRY_AUTH_FILE` is a docker `config.json` used only for the
 signature's manifest, referrers and blob GETs (empty is anonymous, which
 public registries allow); the engine uses `ORK_REGISTRY_AUTH_FILE` for the
-same GETs at apply. A registry that cannot
-be asked is never a pass: `unavailable` at apply and submit, and a retried
+same GETs at create. A registry that cannot
+be asked is never a pass: `unavailable` at create and submit, and a retried
 `IMAGE_SIGNATURE_UNAVAILABLE` at the Orker. A missing signature is
 `IMAGE_NOT_SIGNED`, a signature by another key or over another digest
 `IMAGE_SIGNATURE_INVALID`, an image outside the floor `IMAGE_NOT_PERMITTED`
@@ -3883,13 +3923,24 @@ that is the audit read, and nothing new is written for it.
 Two things make a run hold NEW tasks — never running ones — exactly as a
 saturated pool would:
 
-- **The in-flight cap** (`engine.run_max_in_flight`, 1,000 by default): a run
+- **The in-flight cap** (`engine.run_max_in_flight`, 500 by default): a run
   keeps at most that many activities, fan-out items, child runs and pins
   pending, and starts more as they finish. It never holds while nothing is in
   flight, and an open pin's own needs are exempt below an absolute 1,900, so it
   can never stall a run. Without it, a run above the cluster's 2,000 pending
   activities per execution would fail every workflow task — stuck. A run that
-  keeps more than 1,000 activities pending at once now waits at 1,000.
+  keeps more than 500 activities pending at once now waits at 500.
+
+A run does not wait for each task's `TASK_SCHEDULED` and `TASK_STARTED`
+publishes before dispatching the next task: it leaves at most 32 publishes
+outstanding and sends at most 1 MiB of task input per workflow task (a
+fan-out's items have their own 2 MiB, so one workflow task stays under 3 MiB),
+both pinned in its plan at submit, and every publish is still awaited before
+the run ends or carries on. An outstanding publish keeps 5 events back from
+the history limit (its start, its completion and a workflow task to collect
+it), pinned too, and a completed one keeps none. A stage of 300 tasks that start together reaches its
+cap in seconds; it took about a minute when each publish was awaited, two
+cluster round trips per task.
 - **Carrying on into a fresh history** (`engine.continuation.*`, on by
   default). Past its budget (8,192 events or 8 MiB of growth)
   a run carries on at its next moment with nothing running — the usual case
@@ -3908,7 +3959,10 @@ carry on into a fresh history at its next idle point`, `run pausing new tasks
 so it can carry on into a fresh history`, `run resumed new tasks: it cannot
 reach a moment with nothing running`, `run carried on into a fresh history`
 (with `hold_seconds`) and `run restored its saved state`, each once per
-decision with `run_id`, `history_events`, `history_bytes` and `in_flight`;
+decision with `run_id`, `history_events`, `history_bytes` and `in_flight`
+(the first also with `reserve_events` and `hold_line_events`: what the run's
+failure path still needs and the line its history plus that reserve must
+reach before it pauses, so a run that never pauses shows how far off it was);
 the `ork.run.continuation*` metrics (§7); and `orkctl run inspect`, which
 shows a held task with no attempt. A composed child that awaits for days holds
 its parent's new tasks for that long if the parent pauses meanwhile.
@@ -3959,15 +4013,25 @@ continuation budget's events (8,192), B a generation's base — the bootstrap's
 worst case (`RestoreHistoryBound`, 1,478 at the defaults, because generation 0
 too reads its definition from the store) plus 24 for generation 0's own start
 — and d, c and u the measured events of one plain task's
-dispatch (14), completion (12) and the part of a completion recorded when it
-lands before the run collects it (5):
+dispatch, completion (12) and the part of a completion recorded when it
+lands before the run collects it (5). A run publishes a plain task's
+`TASK_SCHEDULED` and `TASK_STARTED` without waiting for them, at most P = 32
+outstanding (the window a run pins). Each outstanding publish is reserved
+e = 5 events, the history it can still append: its start and the event that
+closes it, and a workflow task of its own to collect it. A publish that has
+completed is no longer counted. A dispatch records
+between d₀ = 8 events (the snapshot marker, the task's scheduling event and
+its two publishes) and d₁ = 14 (each publish waking a workflow task of its
+own, the cost before the detached path). X is the least over that range,
+because a cheaper dispatch puts more tasks in flight before the budget is
+due:
 
 ```
-r₁ = d + f − p = 22        a dispatch: history plus reserve
-r₂ = d + c − p = 18        a completion and the dispatch it unblocks
-Δ(W) = (r₁ + u)·⌈G/d⌉                          when d·W ≥ G
-Δ(W) = r₁·W + r₂·⌈(G − d·W)/(d + c)⌉ + u·W     otherwise
-X(W) = ⌊(L − 1 − B − F − Δ(W)) / p⌋
+r₁ = d + f − p             a dispatch: history plus reserve (22 at d₁)
+r₂ = d + c − p             a completion and the dispatch it unblocks
+Δ(W) = (r₁ + u)·⌈G/d⌉ + P·e                          when d·W ≥ G
+Δ(W) = r₁·W + r₂·⌈(G − d·W)/(d + c)⌉ + u·W + P·e     otherwise
+X(W) = min over d₀ ≤ d ≤ d₁ of ⌊(L − 1 − B − F − Δ(W)) / p⌋
 ```
 
 W is the most tasks the shape keeps in flight (at most `engine.run_max_in_flight`).
@@ -3976,18 +4040,21 @@ and collects completions only afterwards, so with short tasks every running
 task's completion can land, uncollected, during the last dispatch before the
 budget is due. At the defaults:
 
-| Shape | W | Δ(W) | X |
-|---|---|---|---|
-| flat: every task needs nothing | 1,000 | 15,822 | **4,222** |
-| staged: 250 lanes | 250 | 10,008 | 4,949 |
-| deep: lanes of at most 380 | 15 | 5,931 | 5,458 |
-| one chain | 1 | 5,697 | 5,488 (but rule 44 and `INPUT_TOO_LARGE` bound a chain far sooner) |
+| Shape | W | binding d | Δ(W) | X |
+|---|---|---|---|---|
+| flat: every task needs nothing | 500 | 14 | 14,488 | **4,389** |
+| flat, `engine.run_max_in_flight` 1,000 | 1,000 | 8 | 21,280 | 3,540 |
+| staged: 250 lanes | 250 | 14 | 10,168 | 4,929 |
+| deep: lanes of at most 380 | 15 | 14 | 6,091 | 5,438 |
+| one chain | 1 | 14 | 5,857 | 5,468 (but rule 44 and `INPUT_TOO_LARGE` bound a chain far sooner) |
 
-Any shape at least ⌈G/d⌉ = 586 wide has the flat bound, so the flat stage
-binds: X is 4,222 at the defaults. It moves with the settings:
-`engine.continuation.events` at its maximum `max_events/4` (12,800) gives
-3,112; `engine.run_max_in_flight` 300 gives 4,841;
-`engine.continuation.restore_timeout` at 8 h gives 3,041. The boot computes X
+X never rises with W, so the flat stage at the in-flight cap binds: X is 4,389
+at the defaults. A wider cap lowers it: `engine.run_max_in_flight` above about
+700 puts X below the 4,000 default of `engine.orkflow_max_tasks`, and the boot
+warns. It moves with the other settings too: `engine.continuation.events` at
+its maximum `max_events/4` (12,800) gives 3,988; `engine.run_max_in_flight`
+300 gives 4,821; `engine.continuation.restore_timeout` at 8 h gives 3,207.
+The boot computes X
 for the configured settings and warns when `engine.orkflow_max_tasks` is above
 it, naming `engine.history.max_events`, `engine.continuation.events`,
 `engine.continuation.bytes`, `engine.continuation.restore_timeout` and
@@ -3997,8 +4064,8 @@ What X does not cover: it counts plain tasks only — awaits (24 reserved each,
 outside the in-flight cap), pins, fan-outs, composed tasks and failure
 handlers keep more back and trip the guard far below X; and it is a bound in
 events only. The bytes form of the same arithmetic is derived, not measured,
-and above the events form at the defaults (6,491 for 16 KiB dispatches in a
-flat stage, 8,389 for 256 KiB in a deep one). A run within X can still stop,
+and above the events form at the defaults (6,175 for 16 KiB dispatches in a
+flat stage, 8,369 for 256 KiB in a deep one). A run within X can still stop,
 explicitly, on history bytes, on its saved state's size (a saved state holds
 every task's inline output: at 4,000 tasks it fits 8 MiB while tasks average
 about 2,368 bytes of inline values or less), or on large inline outputs. X is a
@@ -4187,12 +4254,24 @@ both are asked lazily, so a history recorded before them replays their
 `DefaultVersion` branch, and a later generation never asks a decision its
 carry already holds. Every number that decides one of these commands — the
 budget, the hold line, the chunk and batch sizes of the next history's read,
-the restore policy, the cap — is pinned in the run's plan at submit, never
-read from a code constant, so a release that changes a default moves only new
-runs. The fixtures `run-continued-g0-v1.json` and `run-continued-g1-v1.json`
+the restore policy, the cap, the publish window, what each outstanding
+publish reserves and the per-workflow-task input budget — is pinned in the run's plan at submit, never read from a code
+constant, so a release that changes a default moves only new runs. A run whose
+plan pins the publish window records `task-publish-window` before its first
+plain task's `TASK_SCHEDULED`; a plan from before it pins none and never asks.
+A run records `emit-past-cancel` at its first event: from then on an
+operator's cancel never stops the write or the publish of an event that
+records what already happened (a task's outcome, the run's own end), and the
+run announces no dispatch once it is canceled, so a task that finished as the
+cancel arrived keeps its `TASK_SUCCEEDED` in the stream and the archive. A
+history recorded before it has no marker and keeps its old commands.
+The fixtures `run-continued-g0-v1.json` and `run-continued-g1-v1.json`
 (one run recorded across a switch, with the three objects it wrote) and
 `run-in-flight-cap-v1.json` guard them, each with its command, payload and
-negative tests (`internal/engine/testdata/history/README.md`); a carried
+negative tests, and the `run-task-publish-window` and `run-emit-past-cancel`
+pairs guard the publish window and the emit past a cancel with their command
+and negative tests
+(`internal/engine/testdata/history/README.md`); a carried
 generation is replayed as the execution of the run's own workflow id, which
 is where it reads its run id from.
 
@@ -4355,7 +4434,7 @@ own initial interval: the cluster refuses that policy by failing the workflow
 task over and over, so no recorded history holds one, and every earlier build
 left such a run stuck. The same holds for an explicit maximum below the
 initial interval and a backoff coefficient between 0 and 1, which a version
-applied before DSL rule 47 may carry: the task is scheduled with the maximum
+created before DSL rule 47 may carry: the task is scheduled with the maximum
 raised to the initial interval and the coefficient raised to 1, with no gate,
 because no recorded history holds the refused command
 (`TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled`). A stored
@@ -4628,7 +4707,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
-| `ork.orker.workspace_cleanup_failures` | — | Orker, once per attempt whose own directory or secrets could not be removed when it ended and are left on disk (typically files a workload wrote as a uid the Orker cannot remove); the Orker logs the path and the error |
+| `ork.orker.workspace_cleanup_failures` | — | Orker, once per attempt whose own directory or secrets could not be removed when it ended and are left on disk (typically a directory a workload made as a uid other than the Orker's, which the Orker can neither write nor chmod); the Orker logs the path, the error and the directory that refused the removal with its mode and owner (`refused_by`) |
 | `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold, `max_running` or enforced budget refused (`namespace_held`, `max_running_reached`, `budget_exceeded`, `budget_unmeasurable`); not a run, not counted on `ork.runs` |
 | `ork.run.continuations` | `ork.namespace`, `outcome` | engine, once per run carried on into a fresh history: `written` (its saved state written), `write_failed` (object storage refused it; the run tries again after more growth), `over_cap` (its saved state is over `engine.continuation.bytes`; it never carries on), `restored` (the next history read it back), or a `RUN_STATE_*` code (the next history could not) |
 | `ork.run.continuation.state.bytes` | `ork.namespace`, `kind` | engine, the stored size of what a switch wrote: `checkpoint` (the saved state), `events` (the earlier history's events), `snapshot` (the full state at the switch) |
@@ -4652,6 +4731,19 @@ by the same name derivation as every other counter here. Under high
 cardinality it also carries `ork.orkflow.name` and the namespace's
 `ork.ns.*` / orkflow's `ork.label.*` selection attributes — never
 `ork.run_id`, because a refused submission has none.
+
+Beside the metrics, the engine logs one `run event` record per event it
+publishes — at Info when the run's sink has logs on, Debug otherwise, and
+always Debug for `TASK_LOG` — carrying `run_id`, `sequence`, `event_type`,
+`status`, `task_id` for a task event, `namespace` and `orkflow`, the
+namespace's selection attributes, and the trace context. `sequence` is the
+event's number in its run's stream, the one `StreamEvents` and the archive
+order by. These records, like the projection's other per-event work, can reach
+a collector out of order: a retried publish arrives late, and a run does not
+wait for some publishes before it goes on — a fan-out's item events (so since
+v0.2.0) and, from 0.3.0, a plain task's `TASK_SCHEDULED` and `TASK_STARTED` —
+so two can be in flight at once and complete in either order. A consumer that
+needs a run's order sorts its records by `sequence`.
 
 `ORK_TELEMETRY_HIGH_CARDINALITY=true` additionally puts `ork.run_id` and
 `ork.task_id` (and, on the engine's, `ork.orkflow.name`/`.version`) on the ones

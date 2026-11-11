@@ -18,6 +18,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The example conventions (examples/README.md): every example
@@ -62,9 +64,9 @@ const (
 
 var (
 	patternLine = regexp.MustCompile(`^# Pattern: docs/ORKFLOW_PATTERNS\.md, "([^"]+)"$`)
-	planPrefix  = "orkctl run plan --file "
+	planPrefix  = "orkctl run plan -f "
 	planFlags   = map[string]bool{
-		"--input": true, "--output": true, "--assume-failed": true,
+		"-i": true, "-o": true, "--assume-failed": true,
 		"--assert-runs": true, "--assert-skipped": true,
 	}
 )
@@ -116,9 +118,7 @@ func examplesAndFixtures(t *testing.T) []string {
 func automationExamples(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(examplesDir, "automation", "*.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	sort.Strings(paths)
 	return paths
 }
@@ -127,9 +127,7 @@ func automationExamples(t *testing.T) []string {
 func imageDirs(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob(filepath.Join(examplesDir, "custom-image*"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var dirs []string
 	for _, p := range paths {
 		if info, err := os.Stat(p); err == nil && info.IsDir() {
@@ -144,9 +142,7 @@ func imageDirs(t *testing.T) []string {
 func header(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var lines []string
 	scanner := bufio.NewScanner(bytes.NewReader(raw))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
@@ -253,7 +249,7 @@ func TestExamples_HeadersFollowTheConvention(t *testing.T) {
 			rest := args[5:]
 			for i := 0; i < len(rest); i += 2 {
 				if !planFlags[rest[i]] || i+1 >= len(rest) {
-					t.Errorf("plan line %q: argument %q is not one of --input, --output, --assume-failed, --assert-runs, --assert-skipped with a value", line, rest[i])
+					t.Errorf("plan line %q: argument %q is not one of -i, -o, --assume-failed, --assert-runs, --assert-skipped with a value", line, rest[i])
 					break
 				}
 				if rest[i] == "--assert-runs" || rest[i] == "--assert-skipped" {
@@ -274,9 +270,7 @@ func TestExamples_HeadersFollowTheConvention(t *testing.T) {
 	for _, path := range shippedOrkflows(t) {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			wf, err := dsl.CompileFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			check(t, path, orkflowFirstLine, wf)
 		})
 	}
@@ -298,9 +292,7 @@ var (
 func tableLinks(t *testing.T, doc, heading string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	in := false
 	var links []string
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -325,17 +317,11 @@ func tableLinks(t *testing.T, doc, heading string) []string {
 func repoRelative(t *testing.T, doc, target string) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	abs, err := filepath.Abs(filepath.Join(filepath.Dir(doc), target))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	rel, err := filepath.Rel(root, abs)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	rel = filepath.ToSlash(rel)
 	if strings.HasSuffix(target, "/") {
 		rel += "/"
@@ -368,9 +354,7 @@ func TestExamples_AreIndexed(t *testing.T) {
 	// repository root.
 	for _, doc := range []string{readmePath, guidePath} {
 		raw, err := os.ReadFile(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		var cited []string
 		for _, m := range markdownLink.FindAllStringSubmatch(string(raw), -1) {
 			if strings.HasPrefix(m[1], "http://") || strings.HasPrefix(m[1], "https://") {
@@ -418,9 +402,7 @@ func TestExamples_AreIndexed(t *testing.T) {
 		t.Errorf("%s is not indexed: add it to examples/README.md's table (and docs/ORKFLOW_PATTERNS.md's Examples index)", rel)
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 }
 
 // An example of the gallery asks nothing of a reader: they apply it, submit it
@@ -466,7 +448,8 @@ func exampleURLs(t *testing.T, value *structpb.Value, into map[string]bool) {
 func exampleNeeds(name string, hosts map[string]bool) string {
 	var needs []string
 	if block, ok := composesFirst[name]; ok {
-		needs = append(needs, fmt.Sprintf("`%s` applied first", block))
+		needs = append(needs, fmt.Sprintf("`%s` created first", block))
+
 	}
 	var sorted []string
 	for host := range hosts {
@@ -487,9 +470,7 @@ func exampleNeeds(name string, hosts map[string]bool) string {
 func needsColumn(t *testing.T, path string) map[string]string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cells := map[string]string{}
 	row := regexp.MustCompile(`^\| \[([a-z0-9-]+)\]\([^)]*\) \|.*\| ([^|]+) \|$`)
 	for _, line := range strings.Split(string(raw), "\n") {
@@ -508,20 +489,14 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 	const sitePath = "../../site/content/examples.md"
 	readmeNeeds, siteNeeds := needsColumn(t, readmePath), needsColumn(t, sitePath)
 	readme, err := os.ReadFile(readmePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	site, err := os.ReadFile(sitePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	composing, pinned := map[string]string{}, false
 	for _, path := range orkflowExamples(t) {
 		file := filepath.Base(path)
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatalf("%s: %v", file, err)
-		}
+		must.OKf(t, err, "%s", file)
 		name := wf.GetName()
 
 		hosts := map[string]bool{}
@@ -573,10 +548,8 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 		// section both tables point to.
 		if block, ok := composesFirst[name]; ok {
 			source, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			for _, command := range []string{"orkctl apply examples/" + block + ".ork.yaml", "orkctl apply examples/" + file} {
+			must.OK(t, err)
+			for _, command := range []string{"orkctl orkflow create examples/" + block + ".ork.yaml", "orkctl orkflow create examples/" + file} {
 				if !bytes.Contains(source, []byte("#   "+command+"\n")) {
 					t.Errorf("%s: the header does not state %q", file, command)
 				}
@@ -599,15 +572,13 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 	// The recipe states its steps in its own header, and the docs that teach
 	// building an image link it, because the gallery no longer shows it.
 	recipe, err := os.ReadFile(customImageRecipe)
-	if err != nil {
-		t.Fatalf("the custom-image recipe: %v", err)
-	}
+	must.OKf(t, err, "the custom-image recipe")
 	for _, step := range []string{
 		"THIS IS A RECIPE",
 		"an orkctl on your own machine",
 		"orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev",
 		"orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev",
-		"orkctl apply examples/custom-image/custom-image.ork.yaml",
+		"orkctl orkflow create examples/custom-image/custom-image.ork.yaml",
 	} {
 		if !bytes.Contains(recipe, []byte(step)) {
 			t.Errorf("the custom-image recipe's header does not state %q", step)
@@ -622,9 +593,7 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 		"../../site/content/tutorials/first-activity.md",
 	} {
 		raw, err := os.ReadFile(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !bytes.Contains(raw, []byte("custom-image/custom-image.ork.yaml")) {
 			t.Errorf("%s teaches building an image and does not link the recipe", doc)
 		}
@@ -640,9 +609,7 @@ func TestExamples_AskNothingOfAReader(t *testing.T) {
 		"../../scripts/stack.sh": "max_concurrent: 1",
 	} {
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !bytes.Contains(raw, []byte(setting)) {
 			t.Errorf("%s does not make its Orker a pin host (%s), so a pinned example is refused there", path, setting)
 		}
@@ -653,9 +620,7 @@ func TestExamples_ComputeTasksDeclareNoNetwork(t *testing.T) {
 	compute := map[string]bool{"json": true, "template": true, "file": true}
 	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, task := range wf.GetTasks() {
 			if compute[task.GetUses()] && task.GetNetwork() != orkstackv1.NetworkMode_NETWORK_MODE_NONE {
 				t.Errorf("%s: task %q uses %s and does not set network: none", filepath.Base(path), task.GetId(), task.GetUses())
@@ -668,9 +633,7 @@ func TestExamples_CachedTasksSetATTLAndMountNoSecret(t *testing.T) {
 	cached := 0
 	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, task := range wf.GetTasks() {
 			if task.GetCache() == nil {
 				continue
@@ -705,9 +668,7 @@ func TestExamples_UseUserFacingVocabulary(t *testing.T) {
 	internalWord := regexp.MustCompile(`(?i)\b(queues?|sessions?|search attributes?|worker deployments?)\b`)
 	for _, doc := range append(userFacingDocs(t), orkflowFixtures(t)...) {
 		raw, err := os.ReadFile(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for i, line := range strings.Split(string(raw), "\n") {
 			if m := internalWord.FindString(line); m != "" {
 				t.Errorf("%s:%d names %q, an internal term (AGENTS.md §7.1): %s", doc, i+1, m, line)
@@ -718,9 +679,7 @@ func TestExamples_UseUserFacingVocabulary(t *testing.T) {
 
 func TestOrkflowPatterns_HasItsSections(t *testing.T) {
 	raw, err := os.ReadFile(guidePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var got []string
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.HasPrefix(line, "## ") {
@@ -734,9 +693,7 @@ func TestOrkflowPatterns_HasItsSections(t *testing.T) {
 
 func TestOrkflowPatterns_StatesTheAgreedRules(t *testing.T) {
 	raw, err := os.ReadFile(guidePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// Markdown wraps lines; a sentence is compared with its whitespace
 	// collapsed, and with the emphasis markers removed.
 	text := strings.Join(strings.Fields(strings.ReplaceAll(string(raw), "**", "")), " ")
@@ -774,9 +731,7 @@ func TestOrkflowPatterns_CitesNoCodeAnchors(t *testing.T) {
 	}
 	for _, doc := range docs {
 		raw, err := os.ReadFile(doc)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for i, line := range strings.Split(string(raw), "\n") {
 			if codePath.MatchString(line) {
 				t.Errorf("%s:%d cites a code path: %s", doc, i+1, line)
@@ -805,9 +760,7 @@ func TestCustomImages_FollowTheDockerfileContract(t *testing.T) {
 	for _, dir := range dirs {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			raw, err := os.ReadFile(filepath.Join(dir, "Dockerfile"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			var labels []string
 			user, entrypoint := false, false
 			for _, line := range strings.Split(string(raw), "\n") {
@@ -858,9 +811,7 @@ func TestCustomImages_FollowTheDockerfileContract(t *testing.T) {
 				t.Errorf("label =\n%s\nwant\n%s", labels[0], customImageLabel)
 			}
 			readme, err := os.ReadFile(filepath.Join(dir, "README.md"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			// The README points at the interface's one source and copies
 			// nothing that could drift from it.
 			m := readmeInterface.FindSubmatch(readme)
@@ -883,17 +834,13 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 	labelLine := regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`)
 	ifaceOf := func(t *testing.T, dockerfile string) *orkstackv1.ActivityInterface {
 		raw, err := os.ReadFile(dockerfile)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		m := labelLine.FindSubmatch(raw)
 		if m == nil {
 			t.Fatalf("%s declares no interface label", dockerfile)
 		}
 		iface, err := dsl.ParseInterfaceLabel(string(m[1]))
-		if err != nil {
-			t.Fatalf("%s: %v", dockerfile, err)
-		}
+		must.OKf(t, err, "%s", dockerfile)
 		return iface
 	}
 	catalog := dsl.BuiltinActivityCatalog()
@@ -901,9 +848,7 @@ func TestExamples_WithMatchesTheImageInterfaces(t *testing.T) {
 	checked := 0
 	for _, path := range examplesAndFixtures(t) {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for i, task := range wf.GetTasks() {
 			var dockerfile string
 			switch uses := task.GetUses(); {
@@ -937,19 +882,13 @@ func TestExamples_KeepTheirDefinitionDigests(t *testing.T) {
 	var got strings.Builder
 	for _, path := range shippedOrkflows(t) {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatalf("%s: %v", path, err)
-		}
+		must.OKf(t, err, "%s", path)
 		digest, err := dsl.DefinitionDigest(wf)
-		if err != nil {
-			t.Fatalf("%s: digest: %v", path, err)
-		}
+		must.OKf(t, err, "%s: digest", path)
 		fmt.Fprintf(&got, "%s %s %s\n", filepath.Base(path), digest, wf.GetVersion())
 	}
 	if *updateCompat {
-		if err := os.WriteFile(golden, []byte(got.String()), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(golden, []byte(got.String()), 0o644))
 	}
 	want, err := os.ReadFile(golden)
 	if err != nil {
@@ -966,17 +905,13 @@ func TestExamples_KeepTheirDefinitionDigests(t *testing.T) {
 // document about those objects links it.
 func TestDocs_LinkWhatAnOrkflowDoesNotDeclare(t *testing.T) {
 	reference, err := os.ReadFile("../../docs/DSL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !strings.Contains(string(reference), "\n### What an Orkflow does not declare\n") {
 		t.Fatal(`docs/DSL.md has no "### What an Orkflow does not declare" section`)
 	}
 	for _, doc := range []string{"ORKFLOW_SCHEDULES.md", "ORKFLOW_TRIGGERS.md", "AUTOMATION.md", "ORKFLOW_PATTERNS.md"} {
 		raw, err := os.ReadFile(filepath.Join("../../docs", doc))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !strings.Contains(string(raw), "(DSL.md#what-an-orkflow-does-not-declare)") {
 			t.Errorf("docs/%s does not link DSL.md#what-an-orkflow-does-not-declare", doc)
 		}

@@ -29,6 +29,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The server facts the continue-as-new design relies on (T1
@@ -99,9 +101,7 @@ func (k *canContract) start(id string, switches int, wait bool) client.WorkflowR
 	k.t.Helper()
 	run, err := k.c.ExecuteWorkflow(k.ctx, client.StartWorkflowOptions{ID: id, TaskQueue: k.queue},
 		canProbeType, id, 0, switches, wait)
-	if err != nil {
-		k.t.Fatalf("start %s: %v", id, err)
-	}
+	must.OKf(k.t, err, "start %s", id)
 	return run
 }
 
@@ -133,9 +133,7 @@ func (k *canContract) eventually(what string, cond func() (bool, error)) {
 	deadline := time.Now().Add(60 * time.Second)
 	for {
 		ok, err := cond()
-		if err != nil {
-			k.t.Fatalf("%s: %v", what, err)
-		}
+		must.OKf(k.t, err, "%s", what)
 		if ok {
 			return
 		}
@@ -181,9 +179,7 @@ func TestIntegration_ContinueAsNewServerContract(t *testing.T) {
 		queue: fmt.Sprintf("ork-can-contract-%d-%d", os.Getpid(), time.Now().UnixNano())}
 	w := worker.New(c, k.queue, worker.Options{DisableRegistrationAliasing: true})
 	w.RegisterWorkflowWithOptions(canProbe, workflow.RegisterOptions{Name: canProbeType})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Start())
 	defer w.Stop()
 	dc := converter.GetDefaultDataConverter()
 
@@ -224,9 +220,7 @@ func TestIntegration_ContinueAsNewServerContract(t *testing.T) {
 	var seen []switchSeen
 	var maxLag time.Duration
 	for gen := 0; gen < canSwitches; gen++ {
-		if err := c.SignalWorkflow(ctx, id, "", canProbeNext, nil); err != nil {
-			t.Fatalf("signal generation %d: %v", gen, err)
-		}
+		must.OKf(t, c.SignalWorkflow(ctx, id, "", canProbeNext, nil), "signal generation %d", gen)
 		closing := executions[gen]
 		var successor string
 		k.eventually(fmt.Sprintf("generation %d's successor started", gen+1), func() (bool, error) {
@@ -294,9 +288,7 @@ func TestIntegration_ContinueAsNewServerContract(t *testing.T) {
 	// argument is empty and the workflow id is kept; (k) the 10 s workflow
 	// task timeout.
 	newest, err := k.firstEvent(id, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	attrs := newest.GetWorkflowExecutionStartedEventAttributes()
 	var first string
 	var generation int
@@ -304,12 +296,8 @@ func TestIntegration_ContinueAsNewServerContract(t *testing.T) {
 	if len(payloads) != 4 {
 		t.Fatalf("the newest start carries %d arguments", len(payloads))
 	}
-	if err := dc.FromPayload(payloads[0], &first); err != nil {
-		t.Fatal(err)
-	}
-	if err := dc.FromPayload(payloads[1], &generation); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, dc.FromPayload(payloads[0], &first))
+	must.OK(t, dc.FromPayload(payloads[1], &generation))
 	if generation != canSwitches || attrs.GetContinuedExecutionRunId() != executions[canSwitches-1] {
 		t.Fatalf("(a) GetWorkflowHistory(id, \"\") started generation %d continued from %s; want %d from %s",
 			generation, attrs.GetContinuedExecutionRunId(), canSwitches, executions[canSwitches-1])
@@ -319,17 +307,13 @@ func TestIntegration_ContinueAsNewServerContract(t *testing.T) {
 		t.Fatalf("(i) the successor's first argument = %q, want empty", first)
 	}
 	current, err := k.current(id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if current.GetExecution().GetWorkflowId() != id {
 		t.Fatalf("(i) the chain's workflow id is %q, want %q", current.GetExecution().GetWorkflowId(), id)
 	}
 	k.record("i", "a continue-as-new with an empty first argument started the successor with payload 0 \"\" under the same workflow id", nil)
 	gen0, err := k.firstEvent(id, executions[0])
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for name, event := range map[string]*historypb.HistoryEvent{"generation 0": gen0, "the newest generation": newest} {
 		if timeout := event.GetWorkflowExecutionStartedEventAttributes().GetWorkflowTaskTimeout().AsDuration(); timeout != 10*time.Second {
 			t.Fatalf("(k) %s's workflow_task_timeout = %s, want 10s", name, timeout)
@@ -397,9 +381,7 @@ func TestIntegration_ContinueAsNewServerContract(t *testing.T) {
 	if info, err := k.current(id); err != nil || info.GetCloseTime() != nil {
 		t.Fatalf("(d) the current generation after deleting generation 0: %v, %v", info, err)
 	}
-	if err := c.SignalWorkflow(ctx, id, "", canProbeNext, nil); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, c.SignalWorkflow(ctx, id, "", canProbeNext, nil))
 	var last int
 	if err := c.GetWorkflow(ctx, id, "").Get(ctx, &last); err != nil || last != canSwitches {
 		t.Fatalf("the chain ended with %d, %v; want generation %d", last, err, canSwitches)
@@ -427,9 +409,7 @@ func TestIntegration_ContinueAsNewServerContract(t *testing.T) {
 		chains[i] = k.start(ids[i], 1, false)
 	}
 	for i, chain := range chains {
-		if err := chain.Get(ctx, nil); err != nil {
-			t.Fatalf("chain %s: %v", ids[i], err)
-		}
+		must.OKf(t, chain.Get(ctx, nil), "chain %s", ids[i])
 	}
 	quoted := make([]string, len(ids))
 	for i, x := range ids {
@@ -491,9 +471,7 @@ func (k *canContract) historyLimitReason(t *testing.T) {
 		return
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	// timeout(1) bounds the server's life even if this process dies before
@@ -532,9 +510,7 @@ func (k *canContract) historyLimitReason(t *testing.T) {
 	queue := fmt.Sprintf("ork-can-hog-%d", os.Getpid())
 	w := worker.New(c, queue, worker.Options{})
 	w.RegisterWorkflowWithOptions(canHistoryHog, workflow.RegisterOptions{Name: "ContinueAsNewContractHistoryHog"})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Start())
 	defer w.Stop()
 	var run client.WorkflowRun
 	for {
@@ -548,17 +524,13 @@ func (k *canContract) historyLimitReason(t *testing.T) {
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
-	if err != nil {
-		t.Fatalf("(h) start the history hog: %v", err)
-	}
+	must.OKf(t, err, "(h) start the history hog")
 	_ = run.Get(k.ctx, nil)
 	iter := c.GetWorkflowHistory(k.ctx, run.GetID(), run.GetRunID(), false, enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT)
 	var reason string
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if attrs := event.GetWorkflowExecutionTerminatedEventAttributes(); attrs != nil {
 			reason = attrs.GetReason()
 		}

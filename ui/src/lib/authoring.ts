@@ -83,7 +83,7 @@ export function submitCli(args: {
 }): string {
 	const namespace = args.namespace || 'default';
 	const flags = [
-		`--namespace ${shellQuote(namespace)}`,
+		`-n ${shellQuote(namespace)}`,
 		`--version ${shellQuote(args.version)}`,
 		'--input-json "$(cat input.json)"'
 	];
@@ -109,7 +109,7 @@ export function planCli(args: {
 	assumeFailed?: readonly string[];
 }): string {
 	const namespace = args.namespace || 'default';
-	const flags = [`--namespace ${shellQuote(namespace)}`];
+	const flags = [`-n ${shellQuote(namespace)}`];
 	if (args.version) flags.push(`--version ${shellQuote(args.version)}`);
 	flags.push('--input-json "$(cat input.json)"');
 	const lines = [`printf '%s\\n' ${shellQuote(JSON.stringify(args.input))} > input.json`];

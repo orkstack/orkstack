@@ -32,6 +32,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The run-diff integration scenarios (docs/UI_CLI_PARITY.md "Run diff"): two
@@ -90,15 +92,11 @@ func newDiffStack(ctx context.Context, t *testing.T) (*timingStack, string) {
 func submitOnA(t *testing.T, s *timingStack, name string, input map[string]any) string {
 	t.Helper()
 	data, err := structpb.NewStruct(input)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	submitted, err := s.replicas[0].runs.SubmitRun(s.ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: name, Input: &orkstackv1.Payload{Data: data},
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun on replica A: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun on replica A")
 	return submitted.Msg.GetRun().GetId()
 }
 
@@ -123,9 +121,7 @@ func diffOnB(t *testing.T, s *timingStack, from, to string, only ...string) *ork
 	res, err := s.replicas[1].runs.DiffRuns(s.ctx, connect.NewRequest(&orkstackv1.DiffRunsRequest{
 		FromRunId: from, ToRunId: to, Only: only,
 	}))
-	if err != nil {
-		t.Fatalf("DiffRuns(%s, %s, only=%v) on replica B: %v", from, to, only, err)
-	}
+	must.OKf(t, err, "DiffRuns(%s, %s, only=%v) on replica B", from, to, only)
 	return res.Msg
 }
 
@@ -174,13 +170,9 @@ func requireRow(t *testing.T, res *orkstackv1.DiffRunsResponse, want string) {
 func outcomeRecords(t *testing.T, s *timingStack, runID, taskID string) []*orkstackv1.TaskAttempt {
 	t.Helper()
 	store, err := artifacts.NewAttemptStore(s.artifactCfg)
-	if err != nil {
-		t.Fatalf("open attempt store: %v", err)
-	}
+	must.OKf(t, err, "open attempt store")
 	records, err := store.ListAttempts(s.ctx, runID, taskID, artifacts.NoItem)
-	if err != nil {
-		t.Fatalf("ListAttempts(%s, %s): %v", runID, taskID, err)
-	}
+	must.OKf(t, err, "ListAttempts(%s, %s)", runID, taskID)
 	return records
 }
 
@@ -189,9 +181,7 @@ func outcomeRecords(t *testing.T, s *timingStack, runID, taskID string) []*orkst
 func deleteAttemptRecord(t *testing.T, s *timingStack, runID, taskID string, attempt int32) {
 	t.Helper()
 	key, err := artifacts.AttemptKey(artifacts.AttemptRef{RunID: runID, TaskID: taskID, Attempt: attempt})
-	if err != nil {
-		t.Fatalf("AttemptKey: %v", err)
-	}
+	must.OKf(t, err, "AttemptKey")
 	cfg := s.artifactCfg
 	awsCfg, err := awsconfig.LoadDefaultConfig(s.ctx,
 		awsconfig.WithRegion(cfg.S3Region),
@@ -200,9 +190,7 @@ func deleteAttemptRecord(t *testing.T, s *timingStack, runID, taskID string, att
 		awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
 			cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3SessionToken)),
 	)
-	if err != nil {
-		t.Fatalf("load aws config: %v", err)
-	}
+	must.OKf(t, err, "load aws config")
 	client := s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if cfg.S3Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.S3Endpoint)
@@ -389,20 +377,14 @@ func runAdoptionAttempt(ctx context.Context, t *testing.T, s *timingStack, activ
 		}
 		return activities.ExecuteTask(actx, in)
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := w.Start(); err != nil {
-		t.Fatalf("start the replacement attempt's worker: %v", err)
-	}
+	must.OKf(t, w.Start(), "start the replacement attempt's worker")
 	defer w.Stop()
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	probe, err := s.temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: queue, TaskQueue: queue}, adoptionProbeWorkflow, in)
-	if err != nil {
-		t.Fatalf("start the replacement attempt: %v", err)
-	}
+	must.OKf(t, err, "start the replacement attempt")
 	var adopted *orkstackv1.ExecuteTaskResult
-	if err := probe.Get(ctx, &adopted); err != nil {
-		t.Fatalf("replacement attempt: %v", err)
-	}
+	must.OKf(t, probe.Get(ctx, &adopted), "replacement attempt")
 	return adopted
 }
 
@@ -413,17 +395,13 @@ func scheduledInput(t *testing.T, s *timingStack, runID, taskID string) *orkstac
 	iter := s.temporal.GetWorkflowHistory(s.ctx, runID, "", false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history of %s: %v", runID, err)
-		}
+		must.OKf(t, err, "read history of %s", runID)
 		attrs := event.GetActivityTaskScheduledEventAttributes()
 		if attrs == nil || attrs.GetActivityType().GetName() != task.ActivityExecuteTask {
 			continue
 		}
 		var in orkstackv1.ExecuteTaskInput
-		if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &in); err != nil {
-			t.Fatalf("decode ExecuteTaskInput: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &in), "decode ExecuteTaskInput")
 		if in.GetTaskId() == taskID {
 			return &in
 		}
@@ -439,9 +417,7 @@ func scheduledInput(t *testing.T, s *timingStack, runID, taskID string) *orkstac
 func containersOf(t *testing.T, orkerID string) int {
 	t.Helper()
 	out, err := exec.Command("docker", "ps", "--all", "--quiet", "--filter", "label=ork.orker="+orkerID).Output()
-	if err != nil {
-		t.Fatalf("docker ps: %v", err)
-	}
+	must.OKf(t, err, "docker ps")
 	return len(strings.Fields(string(out)))
 }
 
@@ -466,21 +442,13 @@ func TestIntegration_RunDiffReadsTheAdopterWhenTheCommittingRecordIsGone(t *test
 	// The real Orker's dispatcher against the real bucket.
 	cfg := s.artifactCfg
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	commits, err := artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	logs, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	attemptStore, err := artifacts.NewAttemptStore(cfg)
-	if err != nil {
-		t.Fatalf("open attempt store: %v", err)
-	}
+	must.OKf(t, err, "open attempt store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict references", store)

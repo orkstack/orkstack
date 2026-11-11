@@ -11,6 +11,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_BootWarning_NamesOtherIdentitiesContainersAndTouchesNone: a
@@ -50,9 +52,7 @@ func TestIntegration_BootWarning_NamesOtherIdentitiesContainersAndTouchesNone(t 
 	// Through the real CLI, what the warning is made from. The line itself names
 	// at most a bounded few, which other proofs' containers may crowd.
 	listed, err := orker.NewDockerRuntime().OtherOrkersContainers(ctx, bootingID)
-	if err != nil {
-		t.Fatalf("OtherOrkersContainers: %v", err)
-	}
+	must.OKf(t, err, "OtherOrkersContainers")
 	for _, want := range []orker.OtherOrkerContainer{
 		{ID: deadContainer, State: "running", Orker: deadID},
 		{ID: stoppedContainer, State: "exited", Orker: stoppedID},

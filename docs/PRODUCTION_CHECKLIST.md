@@ -1,6 +1,6 @@
 # Production checklist
 
-[AGENTS.md](../AGENTS.md) §11 forbids calling OrkStack production-ready until its required failure and recovery scenarios are proven. This checklist is how to run OrkStack carefully while that proof is incomplete. It is not a readiness claim.
+This checklist lists what to set up and check before a deployment carries real work, and while it does.
 
 Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because several items below work around one of its limits. Each item names the reference that holds the detail, and the commands are the ones those references give.
 
@@ -17,7 +17,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 ## Object storage
 
 - [ ] Use one S3-compatible bucket for every `ork` and every `orker`. Set `ORK_ARTIFACT_BACKEND=s3` and the same `ORK_S3_*` values on both binaries, because the `local` default is one directory per process ([DEPLOY.md](./DEPLOY.md), "The bucket stops being optional at the second replica").
-- [ ] Use a store that implements conditional `PutObject`. Each Orker probes it at boot and refuses to start with `COMMIT_STORE_NOT_CONDITIONAL` on a store that cannot ([DEPLOY.md](./DEPLOY.md), "The bucket stops being optional at the second replica").
+- [ ] Use a store that implements conditional `PutObject` and conditional `DeleteObject`. Each Orker probes both at boot and refuses to start with `COMMIT_STORE_NOT_CONDITIONAL` on a store that cannot, and each engine refuses to start on one that answers a conditional delete wrongly ([DEPLOY.md](./DEPLOY.md), "The bucket stops being optional at the second replica").
 - [ ] Choose the object store's credentials: both `ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY`, or neither to use the default credential chain, such as an instance or pod role, kept out of reach of tasks. No key has a default, and a boot with nothing to sign with stops. Any `storage.s3.*` secret can be read from a file by a mapping with a single `file:` key naming its path ([DEPLOY.md](./DEPLOY.md), "The object store's credentials").
 - [ ] Set `ORK_S3_PATH_STYLE` for your store. It defaults to `true`, which the development store needs, and AWS S3 does not ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 - [ ] Confirm that the store supports `DeleteObjects`. Run cleanup empties each run's prefixes with it ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").
@@ -49,7 +49,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Set `orker.resources.max_cpu` and `orker.resources.max_memory` to what one task may take on that host. A request above the cap is refused, never clamped, and no task receives unlimited resources ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "9.3 Resource policy").
 - [ ] Give every task that matters an explicit `timeout_seconds` and, where a retry is safe, a `retry:`. A task makes one attempt by default, with a 300-second timeout, and a container that times out is not retried ([DSL.md](./DSL.md), "Tasks"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md), "8.1 The five categories").
 - [ ] Write `network: none` on every task that needs no network. Only `default` and `none` exist ([DSL.md](./DSL.md), "Tasks").
-- [ ] Keep `engine.run_max_in_flight` at its default of 1,000 unless you know your cluster's pending-activity limit. A run above the cluster's limit would stall ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks").
+- [ ] Keep `engine.run_max_in_flight` at its default of 500 unless you know your cluster's pending-activity limit. A run above the cluster's limit would stall, and above about 700 a stage of 4,000 plain tasks that start together may stop `RUN_HISTORY_LIMIT`; the boot warns ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks", "Task ceiling and the flat-stage bound").
 - [ ] Set `engine.history.max_events` and `engine.history.max_bytes` to the cluster's real limits, if an operator changed them. A value above the real limit defeats the guard ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 - [ ] Keep `engine.orkflow_max_tasks` at 4,000 unless you accept that the deployment runs unmeasured above it. The boot warns when you exceed it ([DEPLOY.md](./DEPLOY.md), "Task ceiling and the flat-stage bound").
 - [ ] Keep `engine.each_max_items` at 1,000 unless a fan-out needs more. Above 1,000 it needs `engine.continuation.enabled` ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
@@ -68,7 +68,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 - [ ] Set `ORK_ORKER_SECRET_ALLOW` on every Orker of a shared pool. It is the operator's floor, and it is checked by the Orker at dispatch. An Orker with no floor still refuses its own settings, process files and credential files, and logs a warning at boot ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool"; [SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources").
 - [ ] Put the values tasks read under sources of their own, such as a directory the floor names. No floor admits the Orker's own: its `ORK_*` and `OTEL_*` settings, `/proc`, `/run/secrets`, its work root, or its configuration and credential files ([SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources").
-- [ ] Set each namespace's `allowed_secrets` with `orkctl namespace update NAME --allow-secret 'env:SANDBOX_*'`. It is checked at apply and at every submit, and it can only narrow the floor ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
+- [ ] Set each namespace's `allowed_secrets` with `orkctl namespace update NAME --allow-secret 'env:SANDBOX_*'`. It is checked at create and at every submit, and it can only narrow the floor ([DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
 - [ ] Keep secret values out of definitions. A secret reaches a task as a read-only file, and an `env:` value is stored in the definition, so it is configuration and never a secret ([DSL.md](./DSL.md), "Tasks"; [ORKFLOW_PATTERNS.md](./ORKFLOW_PATTERNS.md), "Environment variables are configuration").
 - [ ] Check `orker.secret_schemes` (default `env,file`) against the sources your tasks name ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 - [ ] Keep `ORK_PPROF_ENABLED` off unless you are profiling. An Orker's heap holds resolved secret bytes ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
@@ -95,7 +95,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 - [ ] Use a namespace hold for an incident. `orkctl namespace update NS --hold "REASON"` refuses new runs and never cancels a run already accepted ([DEPLOY.md](./DEPLOY.md), "Namespace admission: `hold` and `max_running`").
 - [ ] Treat `--max-running` as a guard, not a semaphore. Submits racing across replicas can each be admitted, so a burst can land a few runs over the cap ([DEPLOY.md](./DEPLOY.md), "Namespace admission: `hold` and `max_running`").
-- [ ] Check that `orkctl stats usage --since <period>` answers before you set `--budget-enforce`. An enforced budget that cannot be measured refuses new runs ([DEPLOY.md](./DEPLOY.md), "Namespace budgets: reserved consumption, soft or enforced").
+- [ ] Check that `orkctl stats usage -s <period>` answers before you set `--budget-enforce`. An enforced budget that cannot be measured refuses new runs ([DEPLOY.md](./DEPLOY.md), "Namespace budgets: reserved consumption, soft or enforced").
 - [ ] Use a soft budget for reporting. It notifies nothing, so put any alert on the threshold in your telemetry pipeline ([DEPLOY.md](./DEPLOY.md), "Namespace budgets: reserved consumption, soft or enforced").
 - [ ] Read usage as a reservation multiplied by held time, not as measured utilisation or cost ([STATS.md](./STATS.md), "8. Usage").
 
@@ -112,7 +112,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 ## Draining and removing Orkers
 
-- [ ] Drain an Orker before you stop it if it may host pins. `orkctl orker cordon ID --reason "REASON"`, then `orkctl orker drain ID --timeout 4h --watch` ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
+- [ ] Drain an Orker before you stop it if it may host pins. `orkctl orker cordon ID --reason "REASON"`, then `orkctl orker drain ID --timeout 4h -w` ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Stop the process only when `orkctl orker drain` exits 0. Exit 4 means the timeout passed with work still on the host, and stopping then fails the runs whose pins it holds with `PIN_HOST_LOST` ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Remember that a cordon is a flag in the Orker process, so a restarted Orker comes back ready ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Alert on `ork.orker.store_outage.active`. An Orker cordons itself while object storage does not answer it and resumes by itself, and tasks wait for it meanwhile ([DEPLOY.md](./DEPLOY.md), "When object storage goes away").

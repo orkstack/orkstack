@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var admissionSince = time.Date(2026, 9, 22, 2, 14, 7, 0, time.UTC)
@@ -126,9 +128,7 @@ tasks:
 		}
 	}
 	_, plan, err := (&engine.PoolResolver{Probe: everyPoolLive{}}).Plan(context.Background(), ns, wf, false)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if !proto.Equal(got, plan.Telemetry.Proto()) {
 		t.Errorf("RefusalTelemetry = %v, Plan's = %v; a refusal must be stamped as the run would have been",
 			got, plan.Telemetry.Proto())

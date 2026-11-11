@@ -7,6 +7,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func eachDocInternal(task string) []byte {
@@ -37,12 +39,8 @@ func TestValidate_HandBuiltEachSourceMustMatchOver(t *testing.T) {
     each: {over: "{{ .tasks.list.output.parts }}", max_items: 3}
     with: {op: exec}
 `))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
-	if err := validate(wf, Options{}); err != nil {
-		t.Fatalf("the compiled message fails Validate: %v", err)
-	}
+	must.OKf(t, err, "compile")
+	must.OKf(t, validate(wf, Options{}), "the compiled message fails Validate")
 	wf.Tasks[1].Each.Source = &orkstackv1.EachSource{TaskId: "list", Path: []string{"other"}}
 	err = validate(wf, Options{})
 	if err == nil || internalFieldOf(err) != "tasks[1].each.source" {

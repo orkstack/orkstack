@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeDockerContainer is one container the fake docker lists: its name and
@@ -39,7 +43,7 @@ func (v fakeDockerView) Label(key string) string { return v.labels[key] }
 // refuse is refused. `stop NAME...` prints each name.
 func fakeToolMain(program string, args []string) int {
 	if path := os.Getenv("FAKE_TOOL_LOG"); path != "" {
-		line, _ := json.Marshal(append([]string{program}, args...))
+		line, _ := stablejson.Marshal(append([]string{program}, args...))
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "fake tool:", err)
@@ -142,7 +146,7 @@ type fakeTools struct {
 // fakeToolMain), and returns the tools it was installed with.
 func installFakeDocker(t *testing.T, containers []fakeDockerContainer) *fakeTools {
 	t.Helper()
-	raw, err := json.Marshal(containers)
+	raw, err := stablejson.Marshal(containers)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,14 +164,10 @@ func installFakeDocker(t *testing.T, containers []fakeDockerContainer) *fakeTool
 func (f *fakeTools) recorder(name string) string {
 	f.t.Helper()
 	self, err := os.Executable()
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, err)
 	path := filepath.Join(f.dir, name)
 	script := fmt.Sprintf("#!/bin/sh\nexec env -u PROOFRUN_AS_COMMAND PROOFRUN_AS_FAKE_TOOL=%s %q \"$@\"\n", name, self)
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, os.WriteFile(path, []byte(script), 0o755))
 	return path
 }
 
@@ -179,9 +179,7 @@ func (f *fakeTools) calls() [][]string {
 	if os.IsNotExist(err) {
 		return nil
 	}
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, err)
 	var out [][]string
 	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
 		var call []string

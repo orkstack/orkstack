@@ -33,42 +33,6 @@ type compiledPackage struct {
 
 const compiledFormat = 1
 
-// integrationPackageSet is the packages a run compiles: a selection's
-// (chosen holds the tests of each package it names test by test, whole the
-// packages it runs whole), or every integration package the patterns match.
-// `proofrun compile` and `proofrun integration` both decide it here, so the
-// binaries one builds are exactly the set the other plans.
-func integrationPackageSet(sel *selection, patterns []string) (pkgs []pkgInfo, chosen map[string][]string, whole map[string]bool, err error) {
-	whole = map[string]bool{}
-	if sel == nil {
-		pkgs, err = integrationPackages(patterns)
-		return pkgs, nil, whole, err
-	}
-	chosen = map[string][]string{}
-	var names []string
-	for p, ps := range sel.Integration {
-		if ps.Whole != "" {
-			whole[p] = true
-			names = append(names, p)
-		} else if tests := ps.run(); len(tests) > 0 {
-			chosen[p] = tests
-			names = append(names, p)
-		}
-	}
-	sort.Strings(names)
-	if len(names) == 0 {
-		return nil, chosen, whole, nil
-	}
-	dirs, err := packageDirs("integration", names)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	for _, n := range names {
-		pkgs = append(pkgs, pkgInfo{ImportPath: n, Dir: dirs[n]})
-	}
-	return pkgs, chosen, whole, nil
-}
-
 // cmdCompile is `proofrun compile`: compile and list the integration test
 // binaries a later `proofrun integration -bin DIR` plans, so a proof can
 // build them while its Temporal starts and its images push, rather than
@@ -77,21 +41,12 @@ func integrationPackageSet(sel *selection, patterns []string) (pkgs []pkgInfo, c
 func cmdCompile(args []string) int {
 	fs := flag.NewFlagSet("compile", flag.ContinueOnError)
 	out := fs.String("out", "", "directory to compile the integration test binaries into, with their manifest compiled.json (required; proofrun integration's -bin)")
-	selectFile := fs.String("select", "", "a feature selection (proofrun select): compile only the packages it runs, as proofrun integration -select plans them")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun compile: -out is required")
 		return 2
-	}
-	var sel *selection
-	if *selectFile != "" {
-		sel = &selection{}
-		if err := readJSON(*selectFile, sel); err != nil {
-			fmt.Fprintln(os.Stderr, "proofrun compile:", err)
-			return 2
-		}
 	}
 	patterns := fs.Args()
 	if len(patterns) == 0 {
@@ -107,7 +62,7 @@ func cmdCompile(args []string) int {
 		fmt.Fprintln(os.Stderr, "proofrun compile:", err)
 		return 2
 	}
-	pkgs, _, _, err := integrationPackageSet(sel, patterns)
+	pkgs, err := integrationPackages(patterns)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun compile:", err)
 		return 2

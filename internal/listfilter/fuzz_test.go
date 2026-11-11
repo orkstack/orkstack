@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The properties below are the ones docs/UI_CLI_PARITY.md "Filtering lists"
@@ -44,9 +46,7 @@ func FuzzParse_AcceptedTextIsAFilterThatFormatsBackToItself(f *testing.F) {
 		requireParseProducible(t, text, parsed)
 		formatted := listfilter.Format(parsed)
 		back, err := listfilter.Parse(formatted)
-		if err != nil {
-			t.Fatalf("Parse(%q) = %v, but Parse(Format(it)) = Parse(%q) was refused: %v", text, parsed, formatted, err)
-		}
+		must.OKf(t, err, "Parse(%q) = %v, but Parse(Format(it)) = Parse(%q) was refused", text, parsed, formatted)
 		if !proto.Equal(parsed, back) {
 			t.Fatalf("Parse(%q) = %v, Parse(Format(it)) = Parse(%q) = %v", text, parsed, formatted, back)
 		}
@@ -116,9 +116,7 @@ func FuzzFormat_ParsesBackToTheSameFilter(f *testing.F) {
 		want := &orkstackv1.FieldFilter{Field: field, Op: op, Values: values}
 		text := listfilter.Format(want)
 		got, err := listfilter.Parse(text)
-		if err != nil {
-			t.Fatalf("Format(%v) = %q, which Parse refused: %v", want, text, err)
-		}
+		must.OKf(t, err, "Format(%v) = %q, which Parse refused", want, text)
 		if !proto.Equal(got, want) {
 			t.Fatalf("Format(%v) = %q, which Parse read as %v", want, text, got)
 		}
@@ -212,15 +210,11 @@ func FuzzCompile_ACompiledSetIsCanonicalAndTheOrderOfItsFiltersDoesNotMatter(f *
 		var again []*orkstackv1.FieldFilter
 		for _, text := range canonical {
 			parsed, err := listfilter.Parse(text)
-			if err != nil {
-				t.Fatalf("%v compiled to %q, which does not parse: %v", texts(filters), text, err)
-			}
+			must.OKf(t, err, "%v compiled to %q, which does not parse", texts(filters), text)
 			again = append(again, parsed)
 		}
 		recompiled, err := spec.Compile(again)
-		if err != nil {
-			t.Fatalf("%v compiled to %q, which does not compile again: %v", texts(filters), canonical, err)
-		}
+		must.OKf(t, err, "%v compiled to %q, which does not compile again", texts(filters), canonical)
 		if recompiled.Key() != set.Key() || !slices.Equal(recompiled.Texts(), canonical) {
 			t.Fatalf("%v compiled to %q, which compiles to %q", texts(filters), canonical, recompiled.Texts())
 		}
@@ -289,9 +283,7 @@ func FuzzCompile_WireFiltersAreRefusedByNameNeverByPanic(f *testing.F) {
 			t.Fatalf("Compile(%v) kept %d filters, want 1", filters, set.Len())
 		}
 		parsed, err := listfilter.Parse(set.Texts()[0])
-		if err != nil {
-			t.Fatalf("Compile(%v) = %q, which does not parse: %v", filters, set.Texts()[0], err)
-		}
+		must.OKf(t, err, "Compile(%v) = %q, which does not parse", filters, set.Texts()[0])
 		if _, err := spec.Compile([]*orkstackv1.FieldFilter{parsed}); err != nil {
 			t.Fatalf("Compile(%v) = %q, which does not compile again: %v", filters, set.Texts()[0], err)
 		}
@@ -357,9 +349,7 @@ func holds(t *testing.T, f *orkstackv1.FieldFilter, row *orkstackv1.Namespace) b
 			return false
 		}
 		bound, err := time.Parse(time.RFC3339Nano, values[0])
-		if err != nil {
-			t.Fatalf("canonical time %q does not parse: %v", values[0], err)
-		}
+		must.OKf(t, err, "canonical time %q does not parse", values[0])
 		if f.GetOp() == orkstackv1.FilterOperator_FILTER_OPERATOR_AT_OR_AFTER {
 			return micros >= bound.UnixMicro()
 		}

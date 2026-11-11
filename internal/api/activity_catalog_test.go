@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -17,6 +16,9 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // movableRegistry serves a manifest whose bytes the test can change, which is
@@ -92,18 +94,14 @@ type testImage struct{ config, manifest []byte }
 // newTestImage builds an image whose config carries labels (nil: none).
 func newTestImage(t *testing.T, labels map[string]string) testImage {
 	t.Helper()
-	config, err := json.Marshal(map[string]any{"architecture": "amd64", "os": "linux",
+	config, err := stablejson.Marshal(map[string]any{"architecture": "amd64", "os": "linux",
 		"config": map[string]any{"Labels": labels}})
-	if err != nil {
-		t.Fatalf("config: %v", err)
-	}
-	manifest, err := json.Marshal(map[string]any{"schemaVersion": 2, "mediaType": dsl.MediaTypeOCIManifest,
+	must.OKf(t, err, "config")
+	manifest, err := stablejson.Marshal(map[string]any{"schemaVersion": 2, "mediaType": dsl.MediaTypeOCIManifest,
 		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json",
 			"digest": digestOf(config), "size": len(config)},
 		"layers": []any{}})
-	if err != nil {
-		t.Fatalf("manifest: %v", err)
-	}
+	must.OKf(t, err, "manifest")
 	return testImage{config: config, manifest: manifest}
 }
 
@@ -119,14 +117,12 @@ func (img testImage) index(t *testing.T, platforms ...string) []byte {
 			"platform":  map[string]any{"os": parts[0], "architecture": parts[1]},
 		})
 	}
-	body, err := json.Marshal(map[string]any{
+	body, err := stablejson.Marshal(map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     dsl.MediaTypeOCIIndex,
 		"manifests":     manifests,
 	})
-	if err != nil {
-		t.Fatalf("index: %v", err)
-	}
+	must.OKf(t, err, "index")
 	return body
 }
 
@@ -182,9 +178,7 @@ func applyOnce(t *testing.T, svc *api.Service, yaml string) *orkstackv1.ApplyOrk
 	t.Helper()
 	resp, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: yaml}))
-	if err != nil {
-		t.Fatalf("apply: %v", err)
-	}
+	must.OKf(t, err, "apply")
 	return resp.Msg
 }
 
@@ -287,9 +281,7 @@ func TestApplyOrkflow_AMovedTagDoesNotRewriteTheStoredVersion(t *testing.T) {
 			Name:    "pinned",
 			Version: before.GetOrkflow().GetVersion(),
 		}))
-	if err != nil {
-		t.Fatalf("get the original version: %v", err)
-	}
+	must.OKf(t, err, "get the original version")
 	got := stored.Msg.GetOrkflow().GetTasks()[0].GetImage().GetIndexDigest()
 	if got != pinned {
 		t.Fatalf("the stored version's pin changed under it: %q -> %q", pinned, got)
@@ -334,9 +326,7 @@ func TestListActivities_ReportsTheCatalogOrderedByName(t *testing.T) {
 
 	resp, err := svc.ListActivities(context.Background(),
 		connect.NewRequest(&orkstackv1.ListActivitiesRequest{}))
-	if err != nil {
-		t.Fatalf("list activities: %v", err)
-	}
+	must.OKf(t, err, "list activities")
 	got := resp.Msg.GetActivities()
 	want := []string{"file", "http", "shell"}
 	if len(got) != len(want) {
@@ -361,9 +351,7 @@ func TestListActivities_SurvivesAnUnresolvableEntry(t *testing.T) {
 	lister := &api.CatalogLister{Catalog: catalog, Resolver: dsl.NewResolver("")}
 
 	activities, err := lister.ListActivities(context.Background())
-	if err != nil {
-		t.Fatalf("list activities: %v", err)
-	}
+	must.OKf(t, err, "list activities")
 	if len(activities) != 1 {
 		t.Fatalf("got %d activities, want the entry to survive", len(activities))
 	}

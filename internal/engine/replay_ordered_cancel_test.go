@@ -9,6 +9,8 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"google.golang.org/protobuf/proto"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // orderedCancelFixture is a run canceled by its operator while two awaits
@@ -94,9 +96,7 @@ func TestRunWorkflow_ReplaysCommittedOrderedCancelHistory(t *testing.T) {
 	recorded := loadHistoryFile(t, orderedCancelFixture)
 	requireOrderedCancel(t, orderedCancelFixture, recorded)
 	runID, _, _, _, _ := startArgs(t, recorded)
-	if err := replayAs(t, recorded, runID); err != nil {
-		t.Fatalf("replaying %s against current code failed: %v", orderedCancelFixture, err)
-	}
+	must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", orderedCancelFixture)
 }
 
 // TestOrderedCancelHistory_CatchesTheCancelsReordered is the negative test:

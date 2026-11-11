@@ -1,10 +1,10 @@
 import { expect, test, type Page } from './test';
-import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
+import { execFileSync, type ChildProcess } from 'node:child_process';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild, uiEnv } from './harness';
+import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, spawnLogged as spawnLoggedAt, startTranscript, temporalAddress, temporalNamespace, temporalReachable, uiEnv } from './harness';
 import { selectNamespace, selectTask, pageCli } from './uiHelpers';
 import { fillYaml } from './yaml';
 
@@ -118,22 +118,9 @@ function note(line: string): void {
 	appendFileSync(outPath(TRANSCRIPT), `${new Date().toISOString()}  ${line}\n`);
 }
 
-function spawnLogged(
-	name: string,
-	command: string,
-	args: string[],
-	env: NodeJS.ProcessEnv,
-	cwd: string = repoRoot
-): ChildProcess {
-	const out = createWriteStream(outPath(name), { flags: 'w' });
-	const child = spawn(command, args, {
-		cwd,
-		env: { ...process.env, ...env },
-		stdio: ['ignore', 'pipe', 'pipe']
-	});
-	child.stdout?.pipe(out);
-	child.stderr?.pipe(out);
-	return trackChild(child);
+/** The harness's spawnLogged, its log named inside this spec's directory. */
+function spawnLogged(name: string, command: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess {
+	return spawnLoggedAt(outPath(name), command, args, env);
 }
 
 async function waitFor(
@@ -326,7 +313,7 @@ async function lineNumbers(page: Page, taskId: string, prefix: string): Promise<
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# One live composition: two namespaces, two pools, an edit and a',
@@ -646,8 +633,8 @@ test('a chatty task keeps a bounded scrollback and leaves the tab responsive', a
 	});
 	const renderedIn = Date.now() - openedAt;
 
-	// Bounded: the pane holds the tail, says how much it dropped, and points at
-	// the command that still has all of it.
+	// Bounded: the pane holds the tail, says how much it dropped, and the run's
+	// icon holds the command that still has all of it.
 	const rendered = await page
 		.getByTestId('task-log-chatter')
 		.getByTestId('task-log-line')
@@ -655,8 +642,11 @@ test('a chatty task keeps a bounded scrollback and leaves the tab responsive', a
 	expect(rendered).toBeLessThanOrEqual(SCROLLBACK);
 	const dropped = page.getByTestId('task-log-dropped-chatter');
 	await expect(dropped).toBeVisible();
-	await page.getByTestId('task-log-dropped-cli-chatter-trigger').click();
-	await expect(page.getByTestId('task-log-dropped-cli-chatter-command')).toContainText('orkctl run logs');
+	// Its command is in the run's one terminal icon, with the namespace it runs in:
+	// the notice draws no icon of its own (ui/DESIGN.md, the Shell Icon Rule).
+	await expect(page.getByTestId('task-log-notices-chatter').locator('[data-cli-icon]')).toHaveCount(0);
+	await page.getByTestId('run-inspect-cli-trigger').click();
+	await expect(page.getByTestId('run-inspect-cli-popover').locator('[data-cli-label="Its log"]')).toContainText(`orkctl -n ${ALPHA} run logs`);
 	await page.keyboard.press('Escape');
 
 	// The tail is the END of the output, not the beginning: a cap that kept the
@@ -958,7 +948,7 @@ test('the recent-failures section expands into fingerprints that name the task a
 	await page.getByTestId('page-cli-trigger').click();
 	const command = (await pageCli(page, 'The same failures, grouped').innerText()).trim();
 	expect(command).toContain('stats failures');
-	expect(command).toContain('--group-by orkflow,task,code,category,image');
+	expect(command).toContain('-g orkflow,task,code,category,image');
 	note(`fingerprint CLI equivalent: ${command}`);
 	await page.keyboard.press('Escape');
 	await shot(page, 'screenshot-dashboard-fingerprints.png');
@@ -1075,7 +1065,7 @@ test("the dashboard's stability section names the task that retried, its rate an
 	await page.getByTestId('page-cli-trigger').click();
 	const command = (await pageCli(page, 'Tasks that needed a retry').innerText()).trim();
 	expect(command).toContain('stats flakes');
-	expect(command).toContain('--group-by task,orker');
+	expect(command).toContain('-g task,orker');
 	note(`stability CLI equivalent: ${command}`);
 	await page.keyboard.press('Escape');
 	await shot(page, 'screenshot-dashboard-stability.png');

@@ -87,7 +87,7 @@ func TestHoldDispatch_TheHardStopCountsTheBlockingPublish(t *testing.T) {
 		if !s.holdDispatch(ctx, "a", inFlight(hardStop-1)) {
 			t.Errorf("did not hold with %d in flight plus the blocking publish, at the hard stop of %d", hardStop-1, hardStop)
 		}
-		s.pendingItemPublishes = append(s.pendingItemPublishes, nil)
+		s.pendingItemPublishes = append(s.pendingItemPublishes, detachedPublish{})
 		if !s.holdDispatch(ctx, "a", inFlight(hardStop-2)) {
 			t.Errorf("did not hold with %d in flight, a detached publish and the blocking one", hardStop-2)
 		}

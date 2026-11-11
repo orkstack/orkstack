@@ -3,9 +3,10 @@ package engine
 import (
 	"context"
 	"errors"
-	commonpb "go.temporal.io/api/common/v1"
 	"testing"
 	"time"
+
+	commonpb "go.temporal.io/api/common/v1"
 
 	namespacepb "go.temporal.io/api/namespace/v1"
 	"go.temporal.io/api/serviceerror"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeWorkflowServiceAdmin stands in for Temporal's WorkflowService, narrowed
@@ -131,9 +134,7 @@ func TestNamespaceRetention_ReadsTheClustersCurrentValue(t *testing.T) {
 	reader := readerWithRetention(fake)
 
 	got, err := reader.NamespaceRetention(context.Background(), "ork-main")
-	if err != nil {
-		t.Fatalf("NamespaceRetention: %v", err)
-	}
+	must.OKf(t, err, "NamespaceRetention")
 	if got != 72*time.Hour {
 		t.Errorf("retention = %s, want 72h", got)
 	}
@@ -164,9 +165,7 @@ func TestSetNamespaceRetention_WritesThroughUpdateNamespaceAndReturnsWhatTempora
 	reader := readerWithRetention(fake)
 
 	got, err := reader.SetNamespaceRetention(context.Background(), "ork-main", 168*time.Hour)
-	if err != nil {
-		t.Fatalf("SetNamespaceRetention: %v", err)
-	}
+	must.OKf(t, err, "SetNamespaceRetention")
 	if got != 168*time.Hour {
 		t.Errorf("confirmed retention = %s, want 168h", got)
 	}

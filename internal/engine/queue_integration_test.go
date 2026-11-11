@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // privateOrkerQueue names a task queue no other process on this cluster polls.
@@ -178,9 +180,7 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	for name, w := range map[string]worker.Worker{
 		"run": runWorker, "orker": orkerWorker, "event": eventWorker,
 	} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -206,9 +206,7 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 
@@ -225,9 +223,7 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 	}()
 
 	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	if strings.Contains(string(source), "pool:") {
 		t.Fatalf("the example now pins a pool; this test needs an orkflow that names none")
 	}
@@ -254,17 +250,13 @@ func TestIntegration_TasksRunOnTheQueueTheEnginesOrkersPoll(t *testing.T) {
 		submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: orkflowName,
 		}))
-		if err != nil {
-			t.Fatalf("%s: SubmitRun: %v", label, err)
-		}
+		must.OKf(t, err, "%s: SubmitRun", label)
 		runID := submitted.Msg.GetRun().GetId()
 
 		stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 			RunId: runID,
 		}))
-		if err != nil {
-			t.Fatalf("%s: StreamEvents: %v", label, err)
-		}
+		must.OKf(t, err, "%s: StreamEvents", label)
 		defer stream.Close()
 
 		var scheduled []string
@@ -365,9 +357,7 @@ tasks:
 	// Orkers" about a pool this engine dispatches to and accepts
 	// submissions into — one process, one second, two answers.
 	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	var main *orkstackv1.Pool
 	for _, pool := range pools.Msg.GetPools() {
 		if pool.GetName() == task.DefaultPool {

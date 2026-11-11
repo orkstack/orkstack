@@ -2,11 +2,11 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 
 	"connectrpc.com/connect"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
@@ -78,7 +78,7 @@ func (c jsonCodec) MarshalStable(message any) ([]byte, error) {
 		return nil, err
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, encoded); err != nil {
+	if err := stablejson.Compact(&compact, encoded); err != nil {
 		return nil, fmt.Errorf("compact json: %w", err)
 	}
 	return compact.Bytes(), nil

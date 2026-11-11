@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 const overlapPolicyPrefix = "OVERLAP_POLICY_"
@@ -247,7 +247,7 @@ func newScheduleCreateCommand(g *globalFlags) *cobra.Command {
 	spec.register(cmd, "pause the schedule when a fire fails or is refused")
 	cmd.Flags().StringVar(&orkflow, "orkflow", "", "orkflow every fire starts (required)")
 	cmd.Flags().StringVar(&version, "version", "", "orkflow version to pin (default: the current one at each fire)")
-	cmd.Flags().StringArrayVar(&inputs, "input", nil, "input value as key=value, submitted at every fire (repeatable)")
+	cmd.Flags().StringArrayVarP(&inputs, "input", "i", nil, "input value as key=value, submitted at every fire (repeatable)")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "", "input as one JSON object, submitted at every fire")
 	cmd.Flags().StringVar(&description, "description", "", "operator label for this schedule")
 	cmd.Flags().BoolVar(&paused, "paused", false, "create the schedule paused")
@@ -400,7 +400,7 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 	spec.register(cmd, "pause the schedule when a fire fails or is refused (--pause-on-failure=false turns it off)")
 	cmd.Flags().StringVar(&version, "version", "", "pin this orkflow version")
 	cmd.Flags().BoolVar(&followCurrent, "follow-current", false, "clear the version pin: follow the current pointer at each fire")
-	cmd.Flags().StringArrayVar(&inputs, "input", nil, "replace the input with key=value pairs (repeatable)")
+	cmd.Flags().StringArrayVarP(&inputs, "input", "i", nil, "replace the input with key=value pairs (repeatable)")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "", "replace the input with one JSON object")
 	cmd.Flags().BoolVar(&clearInput, "clear-input", false, "clear the input")
 	cmd.Flags().StringVar(&description, "description", "", "replace the description")
@@ -740,7 +740,7 @@ func inputLabel(input *orkstackv1.Payload) string {
 	if input.GetData() == nil || len(input.GetData().GetFields()) == 0 {
 		return dash
 	}
-	encoded, err := json.Marshal(input.GetData().AsMap())
+	encoded, err := stablejson.Marshal(input.GetData().AsMap())
 	if err != nil {
 		return dash
 	}

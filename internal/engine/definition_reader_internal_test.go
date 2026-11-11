@@ -18,6 +18,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // byReferenceStart is a run's start event when its definition travels by
@@ -27,9 +29,7 @@ func byReferenceStart(t *testing.T, runID string) (*historypb.HistoryEvent, *ork
 	t.Helper()
 	planned := largeDefinition(t, 40, 2000)
 	data, ref, err := EncodeDefinitionObject(planned)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan := awaitPlanForTest()
 	plan.Definition = &ref
 	budget := validBudget()
@@ -45,9 +45,7 @@ func byReferenceStart(t *testing.T, runID string) (*historypb.HistoryEvent, *ork
 	}
 	store := &countingSnapshotStore{objects: map[string][]byte{}}
 	uri, err := store.ContinuationURI(planned.GetNamespace(), runID, 0, artifacts.ContinuationKindDefinition, ref.SHA256)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	store.objects[uri] = data
 	return started, planned, data, store
 }
@@ -66,9 +64,7 @@ func TestRunStart_ReadsOneEventAndNoObject(t *testing.T) {
 	reader := newRunReader(counting, converter.GetDefaultDataConverter())
 	reader.WithSnapshotStore(store)
 	record, err := reader.RunStart(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("RunStart: %v", err)
-	}
+	must.OKf(t, err, "RunStart")
 	if !record.ByReference || len(record.Orkflow.GetTasks()) != 0 || !proto.Equal(record.Orkflow, DefinitionStub(planned)) {
 		t.Fatalf("RunStart = %v (by reference %t), want the stub, by reference", record.Orkflow, record.ByReference)
 	}
@@ -94,9 +90,7 @@ func TestRunDefinition_ResolvesTheReference(t *testing.T) {
 	reader.WithSnapshotStore(store)
 	ctx := context.Background()
 	record, err := reader.RunStart(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	wf, err := reader.RunDefinition(ctx, runID, record)
 	if err != nil || !proto.Equal(wf, planned) {
 		t.Fatalf("RunDefinition = %v; want the planned definition", err)

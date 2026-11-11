@@ -46,7 +46,7 @@ import { fillYaml } from './yaml';
 //   apply      validation issues carry .severity-error / .severity-warning;
 //              the examples are a ruled list, each with its name and Use;
 //   screens    both themes, desktop and 390 px; axe (WCAG 2.2 AA) on the
-//              dashboard, /orkflows, every tab of an Orkflow page and /apply.
+//              dashboard, /orkflows, every tab of an Orkflow page and /orkflows/+new.
 //
 // Isolation (AGENTS.md §11.1): its own Temporal namespace, bucket and ports;
 // it ends only the processes it started.
@@ -264,7 +264,7 @@ test('dashboard: a namespace where nothing finished says unavailable, in the mut
 	await axe(page, 'dashboard, nothing finished (light)');
 });
 
-test('orkflows: a register of Name, Version, Digest, Applied, labels under the name, with exactly one link per row', async ({ page }) => {
+test('orkflows: a register of Name, Version, Digest, Created, labels under the name, with exactly one link per row', async ({ page }) => {
 	await page.goto(`${UI_ORIGIN}/orkflows?ns=default`);
 	await expect(page.getByTestId(`orkflow-row-${SAGA}`)).toBeVisible();
 	const rows = page.locator('tr[data-testid^="orkflow-row-"]');
@@ -273,7 +273,7 @@ test('orkflows: a register of Name, Version, Digest, Applied, labels under the n
 	for (let i = 0; i < count; i++) await expect(rows.nth(i).getByRole('link')).toHaveCount(1);
 	const hex = sagaDigest.slice(sagaDigest.indexOf(':') + 1);
 	await expect(page.getByTestId(`orkflow-digest-${SAGA}`)).toHaveText(hex.slice(0, 8));
-	await expect(page.getByTestId('orkflow-list').locator('thead th')).toHaveText(['Name', 'Version', 'Digest', 'Applied']);
+	await expect(page.getByTestId('orkflow-list').locator('thead th')).toHaveText(['Name', 'Version', 'Digest', 'Created']);
 	await expect(page.getByTestId(`orkflow-labels-${SAGA}`).locator('.tag')).toContainText(['team=payments']);
 	await expect(page.getByTestId(`orkflow-row-${SAGA}`)).toContainText('0.2.0');
 	await page.screenshot({ path: out('screenshot-orkflows-light-1280.png') });
@@ -383,10 +383,14 @@ test('palette: on an Orkflow page, Submit a run opens the page’s dialog and se
 	note('palette on the Orkflow page: Submit a run opened the dialog with no SubmitRun or PlanRun; task jumps landed on their rows');
 });
 
-test('apply: issues carry their severity classes; the examples are a ruled list', async ({ page }) => {
-	await page.goto(`${UI_ORIGIN}/apply?ns=default`);
-	// Exactly one link whose name contains "Orkflows" on this page (the nav's).
-	await expect(page.getByRole('link', { name: 'Orkflows' })).toHaveCount(1);
+test('create orkflow: issues carry their severity classes; the examples are a ruled list', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/orkflows/+new?ns=default`);
+	// Create Orkflow is a page of Orkflows: the two links whose name contains
+	// "Orkflows" are the sidebar's and the breadcrumb's way back, and the
+	// breadcrumb names this page.
+	await expect(page.getByRole('link', { name: 'Orkflows' })).toHaveCount(2);
+	await expect(page.getByTestId('breadcrumb').getByRole('link', { name: 'Orkflows' })).toHaveCount(1);
+	await expect(page.getByTestId('breadcrumb-current')).toHaveText('Create Orkflow');
 	await expect(page.locator('main header').getByTestId('apply-submit')).toBeVisible();
 	await expect(page.locator('main header').getByTestId('apply-validate')).toBeVisible();
 	const examples = page.getByTestId('apply-examples');
@@ -409,7 +413,7 @@ test('apply: issues carry their severity classes; the examples are a ruled list'
 	await expect(error).toHaveClass(/severity-error/);
 	await expect(warning).toHaveClass(/severity-warning/);
 	await page.screenshot({ path: out('screenshot-apply-issues-light-1280.png'), fullPage: true });
-	await axe(page, '/apply with issues (light)');
+	await axe(page, '/orkflows/+new with issues (light)');
 	note(`apply: ${n} examples as list items; error and warning issues carry their severity classes`);
 });
 
@@ -418,7 +422,7 @@ test('screens: both themes, desktop and 390 px, with axe', async ({ page }) => {
 		['dashboard', `${UI_ORIGIN}/?ns=default`, 'dashboard-counts'],
 		['orkflows', `${UI_ORIGIN}/orkflows?ns=default`, 'orkflow-list'],
 		['orkflow', sagaUrl(), 'orkflow-dag'],
-		['apply', `${UI_ORIGIN}/apply?ns=default`, 'apply-examples']
+		['apply', `${UI_ORIGIN}/orkflows/+new?ns=default`, 'apply-examples']
 	];
 	for (const theme of ['light', 'dark'] as const) {
 		await page.setViewportSize({ width: 1440, height: 900 });
@@ -450,4 +454,24 @@ test('screens: both themes, desktop and 390 px, with axe', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 720 });
 	await page.goto(`${UI_ORIGIN}/?ns=default`);
 	await page.getByTestId('theme-system').click();
+});
+
+// Create Orkflow lives at /orkflows/+new, a segment no Orkflow name can be
+// (`+` fails ^[a-z][a-z0-9-]*$), so an Orkflow called new keeps /orkflows/new.
+test('an Orkflow named new opens its own page; Create Orkflow is at /orkflows/+new', async ({ page }) => {
+	const ns = `sheets-new-${STAMP}`;
+	await rpc('NamespaceService/CreateNamespace', { namespace: { name: ns } });
+	await rpc('OrkflowService/ApplyOrkflow', { namespace: ns, yaml: quiet().replace(`name: ${QUIET}`, 'name: new') });
+
+	await page.goto(`${UI_ORIGIN}/orkflows/new?ns=${ns}`);
+	await expect(page.getByTestId('breadcrumb-current')).toHaveText('new');
+	await expect(page.getByTestId('orkflow-version')).toBeVisible();
+	await expect(page.getByTestId('apply-form')).toHaveCount(0);
+
+	await page.goto(`${UI_ORIGIN}/orkflows?ns=${ns}`);
+	await page.getByTestId('orkflows-create').click();
+	await expect(page).toHaveURL(new RegExp(`/orkflows/\\+new\\?ns=${ns}$`));
+	await expect(page.getByTestId('breadcrumb-current')).toHaveText('Create Orkflow');
+	await expect(page.getByTestId('apply-form')).toBeVisible();
+	note('an Orkflow named new opened /orkflows/new as its own page; the Orkflows page links Create Orkflow at /orkflows/+new');
 });

@@ -17,6 +17,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // canceledByDocument is one task, held by the stack's Orker until its run is
@@ -55,9 +57,7 @@ func TestIntegration_CancelRunRecordsWhoAskedOnTheRun(t *testing.T) {
 	named := s.newRunID() + "-named"
 	s.start(named, compile(t, canceledByDocument("hold")), nil, plan)
 	g.waitEntered(t, "hold", 2*time.Minute)
-	if err := s.starter.CancelRun(ctx, named, engine.CancelRequest{Reason: "stuck", Principal: "dana@acme"}); err != nil {
-		t.Fatalf("CancelRun as dana@acme: %v", err)
-	}
+	must.OKf(t, s.starter.CancelRun(ctx, named, engine.CancelRequest{Reason: "stuck", Principal: "dana@acme"}), "CancelRun as dana@acme")
 	// Someone else asks too. Whatever the cluster answers, it must not
 	// replace the name of the request that took effect.
 	second := s.starter.CancelRun(ctx, named, engine.CancelRequest{Principal: "eve@acme"})
@@ -81,9 +81,7 @@ func TestIntegration_CancelRunRecordsWhoAskedOnTheRun(t *testing.T) {
 	}
 
 	run, err := s.reader.GetRun(ctx, named)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_CANCELED" ||
 		run.GetCanceledBy() != "dana@acme" {
 		t.Fatalf("GetRun = %s/%s by %q, want CANCELED/RUN_CANCELED by dana@acme",
@@ -113,9 +111,7 @@ func TestIntegration_CancelRunRecordsWhoAskedOnTheRun(t *testing.T) {
 		time.Sleep(500 * time.Millisecond)
 	}
 	retired, err := surface.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: named}))
-	if err != nil {
-		t.Fatalf("GetRun of the retired run: %v", err)
-	}
+	must.OKf(t, err, "GetRun of the retired run")
 	if got := retired.Msg.GetRun(); got.GetStatus() != orkstackv1.Status_STATUS_CANCELED || got.GetCanceledBy() != "dana@acme" {
 		t.Fatalf("the retired run reads %s by %q, want CANCELED by dana@acme", got.GetStatus(), got.GetCanceledBy())
 	}
@@ -124,9 +120,7 @@ func TestIntegration_CancelRunRecordsWhoAskedOnTheRun(t *testing.T) {
 	nobody := s.newRunID() + "-nobody"
 	s.start(nobody, compile(t, canceledByDocument("wait")), nil, plan)
 	g.waitEntered(t, "wait", 2*time.Minute)
-	if err := s.starter.CancelRun(ctx, nobody, engine.CancelRequest{Reason: "stuck"}); err != nil {
-		t.Fatalf("CancelRun with no principal: %v", err)
-	}
+	must.OKf(t, s.starter.CancelRun(ctx, nobody, engine.CancelRequest{Reason: "stuck"}), "CancelRun with no principal")
 	if status, _ := s.wait(nobody, 2*time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_CANCELED {
 		t.Fatalf("run %s closed %v, want Canceled", nobody, status)
 	}

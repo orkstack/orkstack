@@ -5,7 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +17,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // Local store layout, rooted at the configured directory:
@@ -288,7 +290,7 @@ func metadataKey(key string) string {
 }
 
 func (s *LocalStore) writeSidecar(key string, ref ArtifactRef) error {
-	data, err := json.Marshal(sidecar{ContentType: ref.ContentType, Metadata: ref.Metadata})
+	data, err := stablejson.Marshal(sidecar{ContentType: ref.ContentType, Metadata: ref.Metadata})
 	if err != nil {
 		return fmt.Errorf("artifacts: local put %q: encode sidecar: %w", ref.Name, err)
 	}

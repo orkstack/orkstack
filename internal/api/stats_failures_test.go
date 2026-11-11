@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe the one stats read that opens run BODIES, and every
@@ -147,9 +149,7 @@ func withAttempts(store artifacts.AttemptStore) breakdownOption {
 func newBreakdownFixture(t *testing.T, at time.Time, namespaces []string, opts ...breakdownOption) *breakdownFixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 	docs := registry{"default": {Name: "default"}}
 	for _, name := range namespaces {
@@ -216,9 +216,7 @@ func (f *breakdownFixture) archive(
 			}}
 		}
 	}
-	if err := engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive run %s: %v", id, err)
-	}
+	must.OKf(t, engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil), "archive run %s", id)
 	return id
 }
 
@@ -247,9 +245,7 @@ func (f *breakdownFixture) breakdown(
 ) *orkstackv1.GetFailureBreakdownResponse {
 	t.Helper()
 	got, err := handler.GetFailureBreakdown(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("GetFailureBreakdown(%s): %v", req.GetNamespace(), err)
-	}
+	must.OKf(t, err, "GetFailureBreakdown(%s)", req.GetNamespace())
 	return got.Msg
 }
 
@@ -311,9 +307,7 @@ func TestGetFailureBreakdown_ReconcilesWithGetStatsFailedCount(t *testing.T) {
 	stats, err := handler.GetStats(context.Background(), connect.NewRequest(&orkstackv1.GetStatsRequest{
 		Namespace: "payments", Since: timestamppb.New(since), Until: timestamppb.New(until),
 	}))
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
+	must.OKf(t, err, "GetStats")
 	got := fixture.breakdown(t, handler, breakdownRequest("payments", since, until))
 
 	failed := stats.Msg.GetRunsByStatus()["failed"]
@@ -783,9 +777,7 @@ func TestGetStats_WindowResolutionIsSharedWithTheBreakdown(t *testing.T) {
 			stats, err := handler.GetStats(context.Background(), connect.NewRequest(&orkstackv1.GetStatsRequest{
 				Namespace: "alpha", Since: window.since, Until: window.until, Lookback: window.lookback,
 			}))
-			if err != nil {
-				t.Fatalf("GetStats: %v", err)
-			}
+			must.OKf(t, err, "GetStats")
 			breakdown := fixture.breakdown(t, handler, &orkstackv1.GetFailureBreakdownRequest{
 				Namespace: "alpha", Since: window.since, Until: window.until, Lookback: window.lookback,
 			})

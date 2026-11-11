@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -221,7 +221,7 @@ func (c *awaitCLI) post(i int, path, token, body string) (int, string) {
 func TestIntegration_CLISubmitCallbackAndWatchAnAwaitedRun(t *testing.T) {
 	c := newAwaitCLI(t, 1, true)
 	example := filepath.Join(c.repoRoot, orkflowFixtures, "awaited-approval.ork.yaml")
-	c.must(0, "apply", example)
+	c.must(0, "orkflow", "create", example)
 	var submitted submitJSON
 	if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "awaited-approval", "--json")), &submitted); err != nil {
 		t.Fatalf("decode submit: %v", err)
@@ -282,7 +282,7 @@ func TestIntegration_AwaitResolvedOnASecondEngineReplica(t *testing.T) {
 	if err := os.WriteFile(path, []byte(twoAwaitsYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c.must(0, "apply", path)
+	c.must(0, "orkflow", "create", path)
 	var submitted submitJSON
 	if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "two-awaits", "--json")), &submitted); err != nil {
 		t.Fatalf("decode submit: %v", err)
@@ -329,7 +329,7 @@ tasks:
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c.must(0, "apply", path)
+	c.must(0, "orkflow", "create", path)
 	var submitted submitJSON
 	if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "refusals", "--json")), &submitted); err != nil {
 		t.Fatalf("decode submit: %v", err)

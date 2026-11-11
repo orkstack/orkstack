@@ -121,7 +121,7 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 			"unnamed, --follow-current clears the pin, --description \"\" clears the\n" +
 			"label. A trigger's orkflow cannot change: that is delete then create.\n\n" +
 			"Naming an unnamed trigger is how a hand-made one is brought under an\n" +
-			"automation document (orkctl export) without re-issuing its token.",
+			"automation document (orkctl automation export) without re-issuing its token.",
 		Example: "  orkctl trigger update trg-4a1c0e2b7d3f8156 -n payments --name github-deploy\n" +
 			"  orkctl trigger update trg-4a1c0e2b7d3f8156 --version 1.4.0",
 		Args: cobra.ExactArgs(1),

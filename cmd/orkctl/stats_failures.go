@@ -92,14 +92,14 @@ func newStatsFailuresCommand(g *globalFlags) *cobra.Command {
 			return renderFailureBreakdown(cmd.OutOrStdout(), resp.Msg, req.GetCategory())
 		},
 	}
-	cmd.Flags().StringVar(&since, "since", "",
+	cmd.Flags().StringVarP(&since, "since", "s", "",
 		"how far back to look: a duration such as 6h, or an RFC3339 instant "+
 			"(default: the last 24 hours)")
 	cmd.Flags().StringVar(&until, "until", "",
 		"the window's exclusive end, an RFC3339 instant (default: now); a duration "+
 			"--since is measured back from it")
 	cmd.Flags().StringVar(&orkflow, "orkflow", "", "only this orkflow's failed runs")
-	cmd.Flags().StringVar(&groupBy, "group-by", "",
+	cmd.Flags().StringVarP(&groupBy, "group-by", "g", "",
 		"comma-separated dimensions, in column order: "+strings.Join(groupBySpellings(), ", ")+
 			" (default: orkflow,task,code,category)")
 	cmd.Flags().StringVar(&category, "category", "",
@@ -213,7 +213,7 @@ func failureCell(group *orkstackv1.FailureGroup, dim orkstackv1.FailureGroupBy) 
 	var value string
 	switch dim {
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKFLOW:
-		value = group.GetOrkflowName()
+		value = ownedLabel(group.GetOrkflowNamespace(), group.GetOrkflowName())
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK:
 		value = group.GetTaskId()
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_CODE:

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { execFileSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -19,6 +19,7 @@ import {
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
+	startTranscript,
 	tcpOpen,
 	temporalAddress,
 	temporalReachable,
@@ -205,7 +206,7 @@ let mainOrkerProc: ChildProcess | undefined;
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# The Admin section: namespaces, pool health, activities, system info.',

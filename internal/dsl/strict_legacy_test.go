@@ -3,23 +3,60 @@ package dsl_test
 import (
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
-// The previous decode of a data position, kept verbatim for
+// The previous decode of a data position, kept for
 // TestStrictJSON_AgreesWithThePreviousDecodeOrRefuses: yaml.v3 into a
 // map[string]any, as the old `With map[string]any` field decoded (yaml.v3's
-// duplicate-key check included), then the deleted normalizeMap.
+// duplicate-key check included), then the deleted normalizeMap. It decodes
+// with go-yaml v4 and undoes the two ways v4 reads a plain scalar differently
+// that the strict mapping accepts (asV3). A third, an integer past 64 bits
+// written with + (+18446744073709551615, a float to yaml.v3 and an integer to
+// v4), is out of range for the strict mapping either way.
 func legacyDecode(source string) (map[string]any, error) {
+	var root yaml.Node
+	if err := yaml.Unmarshal([]byte(source), &root); err != nil {
+		return nil, err
+	}
+	asV3(&root)
 	var in map[string]any
-	if err := yaml.Unmarshal([]byte(source), &in); err != nil {
+	if err := root.Decode(&in); err != nil {
 		return nil, err
 	}
 	if in == nil {
 		return nil, fmt.Errorf("not a mapping")
 	}
 	return normalizeMap(in), nil
+}
+
+// asV3 gives back yaml.v3's reading of the two things go-yaml v4 reads
+// differently. A text v4 reads as a float that yaml.v3's integer rule
+// (strconv.ParseInt in base 0, underscores removed) reads as an integer: the
+// zeros written with a sign, -0 among them, which v4 reads as the float -0
+// and yaml.v3 read as the integer 0. And the non-specific tag (! x), which
+// yaml.v3 dropped, resolving the node as if it were untagged, and v4 keeps,
+// reading a scalar so tagged as a string.
+func asV3(node *yaml.Node) {
+	if node.Tag == "!" {
+		node.Tag = ""
+	}
+	if node.Kind == yaml.ScalarNode && node.Style == 0 {
+		if n, err := strconv.ParseInt(strings.ReplaceAll(node.Value, "_", ""), 0, 64); err == nil {
+			var v any
+			plain := yaml.Node{Kind: yaml.ScalarNode, Tag: node.Tag, Value: node.Value}
+			err := plain.Decode(&v)
+			if _, float := v.(float64); err == nil && float {
+				node.Tag, node.Value = "!!int", strconv.FormatInt(n, 10)
+			}
+		}
+	}
+	for _, child := range node.Content {
+		asV3(child)
+	}
 }
 
 // normalizeMap converts a YAML-decoded value into the JSON-compatible shape

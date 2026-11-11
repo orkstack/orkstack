@@ -111,7 +111,7 @@ func newReleaseStatusCommand(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.Flags().BoolVar(&watch, "watch", false, "reprint the view whenever it changes, until interrupted")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "reprint the view whenever it changes, until interrupted")
 	filterTexts = addFilterFlag(cmd, &orkstackv1.ListReleasesRequest{})
 	return cmd
 }

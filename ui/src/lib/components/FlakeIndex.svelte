@@ -219,7 +219,7 @@
 							</thead>
 							<tbody>
 								{#each result.groups as group, i (i)}
-									{@const href = rowHref(group.orkflowName)}
+									{@const href = rowHref(group.orkflowNamespace ? '' : group.orkflowName)}
 									{@const rate = fmtRetryRate(group)}
 									{@const flaky = group.retryRateDefined && group.retryRate > 0}
 									<tr

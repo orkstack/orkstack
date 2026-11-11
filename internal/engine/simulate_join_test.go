@@ -9,6 +9,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The plan half of join policies (docs/DSL.md "Joins and failure handlers"): Simulate decides a
@@ -20,9 +22,7 @@ func simulateAssuming(t *testing.T, wf *orkstackv1.Orkflow, input *orkstackv1.Pa
 ) *orkstackv1.PlanRunResponse {
 	t.Helper()
 	plan, err := engine.Simulate(wf, input, assumed, assumeFailed)
-	if err != nil {
-		t.Fatalf("Simulate: %v", err)
-	}
+	must.OKf(t, err, "Simulate")
 	return plan
 }
 

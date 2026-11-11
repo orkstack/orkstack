@@ -4,8 +4,8 @@
 // title block, so a page renamed here is renamed everywhere at once.
 //
 // Two modes, because the people who use this app arrive with two jobs:
-//   Build   — author and apply Orkflows, see what is running and why it
-//             ended: the dashboard, Runs, Orkflows and Apply;
+//   Build   — author and create Orkflows, see what is running and why it
+//             ended: the dashboard, Runs and Orkflows (whose page creates one);
 //   Operate — run the deployment: every page under /admin.
 
 import type { IconName } from './icons';
@@ -25,12 +25,15 @@ export interface NavPage {
 	icon: IconName;
 }
 
-/** Build: the dashboard and the three daily surfaces. */
+/** Build: the dashboard, the two daily surfaces, and Create Orkflow (a page of Orkflows). */
 export const BUILD_PAGES: readonly NavPage[] = [
 	{ id: 'overview', href: '/', label: 'Overview', title: 'Overview', mode: 'build', icon: 'home' },
 	{ id: 'runs', href: '/runs', label: 'Runs', title: 'Runs', mode: 'build', icon: 'runs' },
 	{ id: 'orkflows', href: '/orkflows', label: 'Orkflows', title: 'Orkflows', mode: 'build', icon: 'flow' },
-	{ id: 'apply', href: '/apply', label: 'Apply', title: 'Apply an Orkflow', mode: 'build', icon: 'apply' }
+	// A page of Orkflows, reached from its Create Orkflow button: listed after
+	// Orkflows, which owns its path, so the sidebar marks Orkflows on it. Jump
+	// offers it; the sidebar does not draw it.
+	{ id: 'create-orkflow', href: '/orkflows/+new', label: 'Create Orkflow', title: 'Create Orkflow', mode: 'build', icon: 'apply' }
 ];
 
 /** Operate: the deployment's own pages, in the order the sidebar shows them. */

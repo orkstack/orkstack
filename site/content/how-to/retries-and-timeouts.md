@@ -28,8 +28,8 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 Run it. By default the status endpoint is a public test service that answers 503 or 200 at random, so about half of all runs show failed attempts in `run attempts` before the one that succeeded, and the others succeed at once:
 
 ```bash
-orkctl apply examples/poll-until-ready.ork.yaml
-orkctl run submit poll-until-ready --watch
+orkctl orkflow create examples/poll-until-ready.ork.yaml
+orkctl run submit poll-until-ready -w
 orkctl run attempts <run-id>
 ```
 

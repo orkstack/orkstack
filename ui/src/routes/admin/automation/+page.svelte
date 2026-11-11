@@ -3,7 +3,7 @@
 	// document — its settings, schedules, triggers and webhooks, declared by
 	// name (docs/AUTOMATION.md).
 	//
-	// The engine PLANS and writes nothing. This page, like `orkctl apply`,
+	// The engine PLANS and writes nothing. This page, like `orkctl automation apply`,
 	// EXECUTES: Apply sends each actionable step's carried request to the
 	// existing RPC it names (src/lib/automation.ts executeStep), so every write
 	// is the same validated, audited call the rest of Admin makes. Nothing is
@@ -583,7 +583,7 @@
 							<CliEquivalent
 								command={curl(secret.id, secret.secret)}
 								testid="automation-secret-cli-{secret.name}"
-								label="Runnable invocation of this trigger, with its token"
+								label="Runnable invocation of trigger {secret.name}, with its token"
 							/>
 						{/if}
 					</div>

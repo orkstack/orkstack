@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // harness wires a TestWorkflowEnvironment with a mocked ExecuteTask activity
@@ -124,8 +126,13 @@ func newHarnessOver(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots 
 // newHarnessShared is newHarnessOver sharing a values store as well: every
 // generation of one run reads the values its earlier generations' tasks
 // committed, as they all read one bucket.
+//
+// A nil suite is a fresh one, for a test that never reads its suite again.
 func newHarnessShared(t *testing.T, suite *testsuite.WorkflowTestSuite, snapshots *testSnapshotStore, values *memValues, behavior func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error)) *harness {
 	t.Helper()
+	if suite == nil {
+		suite = &testsuite.WorkflowTestSuite{}
+	}
 	h := &harness{
 		env:           generousDeadlock(suite.NewTestWorkflowEnvironment()),
 		bus:           engine.NewEventBus(),
@@ -382,6 +389,13 @@ func heldUntilLost(held string, running chan struct{}) func(*orkstackv1.ExecuteT
 }
 
 // startedActivities is every activity type the environment started, in order.
+// start runs RunWorkflow for runID over the compiled doc, with input as the
+// run's input, the default plan and no continuation: a first generation.
+func (h *harness) start(t *testing.T, runID, doc string, input map[string]any) {
+	t.Helper()
+	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), payload(t, input), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+}
+
 func (h *harness) startedActivities() []string {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -438,9 +452,7 @@ func (h *harness) queueFor(taskID string) (string, bool) {
 func compile(t *testing.T, document string) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(document))
-	if err != nil {
-		t.Fatalf("compile test workflow: %v", err)
-	}
+	must.OKf(t, err, "compile test workflow")
 	return wf
 }
 
@@ -450,9 +462,7 @@ func payload(t *testing.T, values map[string]any) *orkstackv1.Payload {
 		return &orkstackv1.Payload{}
 	}
 	data, err := structpb.NewStruct(values)
-	if err != nil {
-		t.Fatalf("build payload: %v", err)
-	}
+	must.OKf(t, err, "build payload")
 	return &orkstackv1.Payload{Data: data}
 }
 
@@ -500,8 +510,7 @@ tasks:
 // The engine rejects an empty orkflow, and the run error names the entity the
 // user authored — an orkflow, not a "workflow".
 func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		t.Fatalf("ExecuteTask called for %q, want no dispatch", in.TaskId)
 		return &orkstackv1.ExecuteTaskResult{}, nil
 	})
@@ -522,22 +531,19 @@ func TestRunWorkflow_RejectsAnOrkflowWithNoTasks(t *testing.T) {
 }
 
 func TestRunWorkflow_ExecutesLinearNeedsInOrder(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{
 			TaskId:     in.TaskId,
 			ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId}),
 		}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-linear", compile(t, linearDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-linear", linearDocument, nil)
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	got := h.taskOrder()
 	want := []string{"alpha", "beta", "gamma"}
@@ -636,14 +642,12 @@ func TestRunWorkflow_FansOutIndependentTasks(t *testing.T) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-fanout", compile(t, fanOutDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-fanout", fanOutDocument, nil)
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	order := h.taskOrder()
 	if len(order) != 3 {
 		t.Fatalf("executed tasks = %v, want left, right and join", order)
@@ -674,8 +678,7 @@ tasks:
 `
 
 func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		switch in.TaskId {
 		case "fetch":
 			result := succeeded("fetch", map[string]any{"status": float64(200)})
@@ -692,11 +695,9 @@ func TestRunWorkflow_PassesUpstreamOutputAndArtifactsDownstream(t *testing.T) {
 		}
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-upstream", compile(t, upstreamDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-upstream", upstreamDocument, nil)
 
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	transform, ok := h.inputFor("transform")
 	if !ok {
@@ -774,17 +775,14 @@ tasks:
 `
 
 func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition",
 		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if order := h.taskOrder(); fmt.Sprint(order) != fmt.Sprint([]string{"always"}) {
 		t.Fatalf("executed tasks = %v, want only [always]", order)
 	}
@@ -830,17 +828,14 @@ func TestRunWorkflow_SkipsTaskWithUnmetCondition(t *testing.T) {
 }
 
 func TestRunWorkflow_RunsTaskWithMetCondition(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId, ValuesJson: valuesJSON(map[string]any{"stdout": in.TaskId})}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition-true",
 		compile(t, conditionDocument), payload(t, map[string]any{"enabled": true}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if order := h.taskOrder(); fmt.Sprint(order) != fmt.Sprint([]string{"always", "maybe", "after"}) {
 		t.Fatalf("executed tasks = %v, want all three", order)
 	}
@@ -883,7 +878,7 @@ func TestRunWorkflow_RetriesPerPolicyThenFailsRun(t *testing.T) {
 			return &orkstackv1.ExecuteTaskResult{}, errors.New("workload exited 1")
 		}).Times(3)
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry", compile(t, retryDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-retry", retryDocument, nil)
 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
@@ -1015,7 +1010,7 @@ tasks:
 		return &orkstackv1.ExecuteTaskResult{}, errors.New("boom")
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-retry", compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-no-retry", document, nil)
 
 	if h.env.GetWorkflowError() == nil {
 		t.Fatal("workflow error = nil, want failure")
@@ -1042,15 +1037,12 @@ tasks:
     with:
       url: "{{ .inputs.url }}"
 `
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-default-input", compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	h.start(t, "run-default-input", document, nil)
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	input, ok := h.inputFor("fetch")
 	if !ok {
 		t.Fatal("fetch task was not executed")
@@ -1093,11 +1085,9 @@ tasks:
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-readiness", compile(t, document), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-readiness", document, nil)
 
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if _, ok := h.inputFor("child"); !ok {
 		t.Fatal("child was not scheduled after fast completed")
 	}
@@ -1111,9 +1101,7 @@ tasks:
 func mustWorkflowResult(t *testing.T, env *testsuite.TestWorkflowEnvironment) *orkstackv1.Run {
 	t.Helper()
 	var run orkstackv1.Run
-	if err := env.GetWorkflowResult(&run); err != nil {
-		t.Fatalf("workflow result: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowResult(&run), "workflow result")
 	return &run
 }
 
@@ -1137,8 +1125,7 @@ func mustFinalRun(t *testing.T, store *engine.RunStore, runID string) *orkstackv
 // snapshot returned as the workflow's result — unchanged, since workflow code
 // only carries what the plan already decided (§2.1).
 func TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
 	})
 
@@ -1150,9 +1137,7 @@ func TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot(t *testin
 	}
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-set", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	in, ok := h.inputFor("build")
 	if !ok {
@@ -1178,8 +1163,7 @@ func TestRunWorkflow_CarriesThePlanTelemetryOntoTheInputAndTheSnapshot(t *testin
 // with no policy and an orkflow with no labels today — produces NO telemetry
 // field on either the input or the snapshot, not a zero-value message.
 func TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
 	})
 
@@ -1187,9 +1171,7 @@ func TestRunWorkflow_LeavesTelemetryUnsetWithNoPlanSelection(t *testing.T) {
 	plan.Telemetry = nil
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-telemetry-unset", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	in, ok := h.inputFor("build")
 	if !ok {
@@ -1508,9 +1490,7 @@ func TestRunWorkflow_SchedulesEveryPinnedTaskOnOnePinSessionAndReleasesIt(t *tes
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	prep, ok := h.inputFor("prep")
 	if !ok {
@@ -1640,9 +1620,7 @@ tasks:
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pinned-skipped",
 		compile(t, document), payload(t, map[string]any{"enabled": false}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if h.startedActivity(sessionCreationActivityName) {
 		t.Errorf("a session was created for a pin whose every task was skipped: %v",
 			h.startedActivities())
@@ -1730,9 +1708,7 @@ tasks:
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if got := h.taskOrder(); len(got) != 2 || got[0] != "elsewhere" {
 		t.Fatalf("dispatch order = %v, want the unpinned sibling first, while the pin opened", got)
 	}
@@ -1789,9 +1765,7 @@ tasks:
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	left, ok := h.inputFor("left")
 	if !ok {
 		t.Fatal("left was never dispatched")
@@ -2217,9 +2191,7 @@ func TestRunWorkflow_ClosesAPinAsSoonAsItsOwnMembersAreDone(t *testing.T) {
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-closes-early",
 		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	mu.Lock()
 	defer mu.Unlock()
 	if !releasedBeforePublish {
@@ -2254,9 +2226,7 @@ func TestRunWorkflow_DoesNotReturnBeforeItsPinHasFinishedClosing(t *testing.T) {
 		compile(t, pinnedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
 	returned := time.Now()
 
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	mu.Lock()
 	finished := releaseFinished
 	mu.Unlock()
@@ -2350,8 +2320,7 @@ tasks:
     uses: shell
     with: {command: "exit 4"}
 `
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return nil, temporal.NewNonRetryableApplicationError(
 			"workload exited 4", task.CategoryActivityFailed, nil,
 			&orkstackv1.ActivityFailureDetail{

@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe GetUsage as a handler: the namespace and window it
@@ -63,9 +65,7 @@ func (f *usageFixture) held(t *testing.T, namespace string, status orkstackv1.St
 	}); err != nil {
 		t.Fatalf("PutAttempt: %v", err)
 	}
-	if err := engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive run %s: %v", id, err)
-	}
+	must.OKf(t, engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil), "archive run %s", id)
 	return id
 }
 
@@ -109,9 +109,7 @@ func TestGetUsage_GroupByAcceptsOrkflowTaskPoolAndPrependsOrkflowForTask(t *test
 	req := lookback(24 * time.Hour)
 	req.GroupBy = []orkstackv1.FailureGroupBy{orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK}
 	got, err := f.usage(req)
-	if err != nil {
-		t.Fatalf("GetUsage([TASK]): %v", err)
-	}
+	must.OKf(t, err, "GetUsage([TASK])")
 	want := []orkstackv1.FailureGroupBy{orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKFLOW, orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK}
 	if fmt.Sprint(got.GetGroupBy()) != fmt.Sprint(want) {
 		t.Fatalf("group_by echo = %v, want %v", got.GetGroupBy(), want)
@@ -149,15 +147,11 @@ func TestGetUsage_PopulationReconcilesWithGetStats(t *testing.T) {
 	stats, err := f.handler.GetStats(context.Background(), connect.NewRequest(&orkstackv1.GetStatsRequest{
 		Namespace: "analytics", Since: since, Until: until,
 	}))
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
+	must.OKf(t, err, "GetStats")
 	byStatus := stats.Msg.GetRunsByStatus()
 	finished := byStatus["succeeded"] + byStatus["failed"] + byStatus["canceled"]
 	got, err := f.usage(&orkstackv1.GetUsageRequest{Namespace: "analytics", Since: since, Until: until})
-	if err != nil {
-		t.Fatalf("GetUsage: %v", err)
-	}
+	must.OKf(t, err, "GetUsage")
 	if finished != 3 || got.GetRunsInWindow() != finished {
 		t.Fatalf("runs_in_window = %d, GetStats finished = %d; want both 3", got.GetRunsInWindow(), finished)
 	}
@@ -172,9 +166,7 @@ func TestGetUsage_BudgetWindowOnlyForTheExactTrailingPeriod(t *testing.T) {
 	f.held(t, "analytics", orkstackv1.Status_STATUS_SUCCEEDED, usageAt.Add(-time.Hour), 100*time.Second, 1)
 	f.setBudget(&orkstackv1.Budget{CpuSeconds: 50, Period: durationpb.New(720 * time.Hour), Enforce: true})
 	exact, err := f.usage(lookback(720 * time.Hour))
-	if err != nil {
-		t.Fatalf("GetUsage: %v", err)
-	}
+	must.OKf(t, err, "GetUsage")
 	if !exact.GetBudgetWindow() || !exact.GetBudgetReached() || exact.GetBudget().GetCpuSeconds() != 50 {
 		t.Fatalf("lookback = period: window=%v reached=%v budget=%v", exact.GetBudgetWindow(), exact.GetBudgetReached(), exact.GetBudget())
 	}
@@ -185,9 +177,7 @@ func TestGetUsage_BudgetWindowOnlyForTheExactTrailingPeriod(t *testing.T) {
 		"until set": {Namespace: "analytics", Lookback: durationpb.New(720 * time.Hour), Until: timestamppb.New(usageAt)},
 	} {
 		got, err := f.usage(req)
-		if err != nil {
-			t.Fatalf("%s: GetUsage: %v", name, err)
-		}
+		must.OKf(t, err, "%s: GetUsage", name)
 		if got.GetBudgetWindow() || got.GetBudgetReached() || got.GetBudget() == nil {
 			t.Errorf("%s: window=%v reached=%v budget=%v; want the budget stamped and no share", name,
 				got.GetBudgetWindow(), got.GetBudgetReached(), got.GetBudget())
@@ -207,9 +197,7 @@ func TestGetUsage_BudgetReachedIsTheGatesDecision(t *testing.T) {
 		budget := &orkstackv1.Budget{CpuSeconds: bound, Period: durationpb.New(time.Hour * 2)}
 		f.setBudget(budget)
 		got, err := f.usage(lookback(2 * time.Hour))
-		if err != nil {
-			t.Fatalf("GetUsage: %v", err)
-		}
+		must.OKf(t, err, "GetUsage")
 		want := engine.BudgetReached(budget, engine.BudgetUsage{CPUSeconds: got.GetTotal().GetCpuSeconds(), GiBSeconds: got.GetTotal().GetGibSeconds()})
 		if got.GetBudgetReached() != want {
 			t.Errorf("bound %d: budget_reached = %v, engine.BudgetReached = %v", bound, got.GetBudgetReached(), want)
@@ -222,15 +210,11 @@ func TestGetUsage_ABudgetEditIsVisibleBeforeTheMeasurementExpires(t *testing.T) 
 	f.held(t, "analytics", orkstackv1.Status_STATUS_SUCCEEDED, usageAt.Add(-time.Hour), 100*time.Second, 1)
 	f.setBudget(&orkstackv1.Budget{CpuSeconds: 5000, Period: durationpb.New(720 * time.Hour)})
 	first, err := f.usage(lookback(720 * time.Hour))
-	if err != nil {
-		t.Fatalf("GetUsage: %v", err)
-	}
+	must.OKf(t, err, "GetUsage")
 	edited := &orkstackv1.Budget{CpuSeconds: 50, Period: durationpb.New(720 * time.Hour), Enforce: true}
 	f.setBudget(edited)
 	second, err := f.usage(lookback(720 * time.Hour))
-	if err != nil {
-		t.Fatalf("GetUsage: %v", err)
-	}
+	must.OKf(t, err, "GetUsage")
 	if !proto.Equal(first.GetComputedAt(), second.GetComputedAt()) {
 		t.Fatalf("computed_at moved (%v -> %v): the second answer should be the cached measurement",
 			first.GetComputedAt().AsTime(), second.GetComputedAt().AsTime())

@@ -4,7 +4,7 @@ Start runs without a person in the loop. A **schedule** starts runs of one Orkfl
 
 ## Run on a schedule
 
-Apply the Orkflow first. Then create a schedule that runs `poll-until-ready` once a day. It starts paused, so you can check the next fire times first:
+Create the Orkflow first. Then create a schedule that runs `poll-until-ready` once a day. It starts paused, so you can check the next fire times first:
 
 ```bash
 orkctl schedule create poll-exports --orkflow poll-until-ready \
@@ -61,7 +61,7 @@ orkctl schedule resume poll-exports
 To list every run a schedule started, filter by origin:
 
 ```bash
-orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=<schedule-id>
+orkctl run list -F origin.kind=SCHEDULE -F origin.id=<schedule-id>
 ```
 
 <!-- site-media: cli-schedules-triggers -->

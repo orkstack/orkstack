@@ -1,9 +1,16 @@
 <script lang="ts" module>
 	import type { ActivityInfo } from '#lib/gen/orkstack/v1/activity_service_pb.ts';
 
+	type Answer = { info: ActivityInfo | null; error: string };
+
 	// One answer per reference for the page's life: a rail that follows the
-	// caret asks about each `uses:` once, never per keystroke.
-	const answers = new Map<string, Promise<{ info: ActivityInfo | null; error: string }>>();
+	// caret asks about each `uses:` once, never per keystroke. A failed read is
+	// kept a short while too, so a reference that does not resolve — usual
+	// while a `uses:` is being typed — is not asked again, and does not flash
+	// "Reading…", at every rest of the caret; the first rest after that asks
+	// again.
+	const RETRY_FAILED_AFTER_MS = 10_000;
+	const answers = new Map<string, { answer: Promise<Answer>; failedAt: number | null }>();
 </script>
 
 <script lang="ts">
@@ -29,22 +36,21 @@
 
 	let { task, open, ontoggle }: Props = $props();
 
-	function inspect(reference: string) {
-		let p = answers.get(reference);
-		if (!p) {
-			p = activityClient(fetch)
-				.inspectActivity({ reference })
-				.then(
-					(res) => ({ info: res.activity ?? null, error: '' }),
-					(err) => {
-						// A failure is not remembered: the next rest of the caret asks again.
-						answers.delete(reference);
-						return { info: null, error: errorMessage(err) };
-					}
-				);
-			answers.set(reference, p);
-		}
-		return p;
+	function inspect(reference: string): Promise<Answer> {
+		const known = answers.get(reference);
+		if (known && (known.failedAt === null || Date.now() - known.failedAt < RETRY_FAILED_AFTER_MS)) return known.answer;
+		const entry: { answer: Promise<Answer>; failedAt: number | null } = { answer: Promise.resolve({ info: null, error: '' }), failedAt: null };
+		entry.answer = activityClient(fetch)
+			.inspectActivity({ reference })
+			.then(
+				(res) => ({ info: res.activity ?? null, error: '' }),
+				(err) => {
+					entry.failedAt = Date.now();
+					return { info: null, error: errorMessage(err) };
+				}
+			);
+		answers.set(reference, entry);
+		return entry.answer;
 	}
 
 	// The caret rests before the rail asks: moving through a document does
@@ -58,18 +64,28 @@
 
 	// The header's icon and count follow the answer the body has drawn.
 	let answered = $state<{ uses: string; info: ActivityInfo } | null>(null);
+	// The task's activity, when it names one: nothing else has an image to read.
+	const reference = $derived(settled?.kind === 'activity' ? settled.uses : '');
+	// Asked at every rest of the caret, which is what lets a failed read be
+	// tried again once its while has passed; until then it is the same answer,
+	// so nothing is drawn again.
+	const answer = $derived.by(() => {
+		void settled;
+		return reference ? inspect(reference) : null;
+	});
 	$effect(() => {
-		const uses = settled?.uses;
-		if (!uses) return;
+		const uses = reference;
+		const asked = answer;
+		if (!uses || !asked) return;
 		let live = true;
-		void inspect(uses).then((answer) => {
-			if (live && answer.info) answered = { uses, info: answer.info };
+		void asked.then((a) => {
+			if (live && a.info) answered = { uses, info: a.info };
 		});
 		return () => {
 			live = false;
 		};
 	});
-	const shownInfo = $derived(answered && answered.uses === settled?.uses ? answered.info : null);
+	const shownInfo = $derived(answered && answered.uses === reference ? answered.info : null);
 	function keysOf(info: ActivityInfo | null, op: string): string[] {
 		const iface = info?.interface;
 		if (!iface) return [];
@@ -95,12 +111,15 @@
 
 <aside class="rail" class:collapsed={!open} aria-label="Activity docs" data-testid="editor-docs">
 	<div class="rail-head">
-		{#if settled?.uses}
+		{#if settled && reference}
 			<p class="rail-title">
-				<ActivityIcon kind={activityKind(settled.uses)} icon={shownInfo?.icon} class="size-4.5 text-navy-text" />
-				<span class="min-w-0"><b>{settled.id || 'This task'}</b> uses <b class="font-mono">{settled.uses}</b></span>
+				<ActivityIcon kind={activityKind(reference)} icon={shownInfo?.icon} class="size-4.5 text-navy-text" />
+				<span class="min-w-0"><b>{settled.id || 'This task'}</b> uses <b class="font-mono">{reference}</b></span>
 			</p>
 			<p class="rail-sub" data-testid="editor-docs-sub">line {settled.line}{#if headKeys.length}{' · '}<span data-testid="editor-docs-set">{settled.set.filter((k) => headKeys.includes(k)).length} of {headKeys.length} set</span>{/if}</p>
+		{:else if settled}
+			<p class="rail-title"><b class="min-w-0">{settled.id || 'This task'}</b></p>
+			<p class="rail-sub" data-testid="editor-docs-sub">line {settled.line}</p>
 		{:else}
 			<p class="rail-title"><span>Activity docs</span></p>
 		{/if}
@@ -126,9 +145,9 @@
 		aria-label="Docs for {settled?.id || 'the task at the caret'}"
 		tabindex={overflows ? 0 : undefined}
 	>
-		{#if settled?.uses}
-			{#await inspect(settled.uses)}
-				<p class="rail-note">Reading {settled.uses}…</p>
+		{#if settled && answer}
+			{#await answer}
+				<p class="rail-note">Reading {reference}…</p>
 			{:then answer}
 				{#if answer.error}
 					<p class="rail-note" data-testid="editor-docs-error">Its interface could not be read: {answer.error}</p>
@@ -191,6 +210,20 @@
 					{/if}
 				{/if}
 			{/await}
+		{:else if settled}
+			{@const who = settled.id || 'This task'}
+			<!-- The caret is in a task that has no image to read: say which kind, never "place the caret in a task". -->
+			<p class="rail-note" data-testid="editor-docs-none" data-kind={settled.kind}>
+				{#if settled.kind === 'await'}
+					<b>{who}</b> waits to be resolved from outside the run, so it runs no activity.
+				{:else if settled.kind === 'sleep'}
+					<b>{who}</b> sleeps for a set time, so it runs no activity.
+				{:else if settled.kind === 'orkflow'}
+					<b>{who}</b> starts a child run of <code>{settled.uses.slice('orkflow:'.length)}</code>, so it runs no activity of its own.
+				{:else}
+					<b>{who}</b> names no activity yet: its <code>uses:</code> says which one runs it.
+				{/if}
+			</p>
 		{:else}
 			<p class="rail-note" data-testid="editor-docs-empty">Place the caret in a task to see what its activity takes.</p>
 		{/if}

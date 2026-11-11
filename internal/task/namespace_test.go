@@ -8,6 +8,8 @@ import (
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	"google.golang.org/grpc"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeNamespaceService records the calls EnsureNamespace makes and replays
@@ -51,9 +53,7 @@ func (f *fakeNamespaceService) RegisterNamespace(
 func TestEnsureNamespace_RegistersAMissingNamespace(t *testing.T) {
 	svc := &fakeNamespaceService{describeErr: serviceerror.NewNamespaceNotFound(DefaultNamespace)}
 
-	if err := ensureNamespace(context.Background(), svc, DefaultNamespace); err != nil {
-		t.Fatalf("ensureNamespace: %v", err)
-	}
+	must.OKf(t, ensureNamespace(context.Background(), svc, DefaultNamespace), "ensureNamespace")
 	if len(svc.registeredNames) != 1 || svc.registeredNames[0] != DefaultNamespace {
 		t.Fatalf("registered = %v, want [%s]", svc.registeredNames, DefaultNamespace)
 	}
@@ -62,9 +62,7 @@ func TestEnsureNamespace_RegistersAMissingNamespace(t *testing.T) {
 func TestEnsureNamespace_ExistingNamespaceIsNotReRegistered(t *testing.T) {
 	svc := &fakeNamespaceService{}
 
-	if err := ensureNamespace(context.Background(), svc, DefaultNamespace); err != nil {
-		t.Fatalf("ensureNamespace: %v", err)
-	}
+	must.OKf(t, ensureNamespace(context.Background(), svc, DefaultNamespace), "ensureNamespace")
 	if len(svc.registeredNames) != 0 {
 		t.Fatalf("registered = %v, want none", svc.registeredNames)
 	}
@@ -77,9 +75,7 @@ func TestEnsureNamespace_ToleratesAConcurrentRegistration(t *testing.T) {
 		registerErr: serviceerror.NewNamespaceAlreadyExists("already exists"),
 	}
 
-	if err := ensureNamespace(context.Background(), svc, DefaultNamespace); err != nil {
-		t.Fatalf("ensureNamespace: %v", err)
-	}
+	must.OKf(t, ensureNamespace(context.Background(), svc, DefaultNamespace), "ensureNamespace")
 }
 
 func TestEnsureNamespace_ReportsAnUnexpectedDescribeFailure(t *testing.T) {

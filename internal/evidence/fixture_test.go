@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var fixtureExportedAt = time.Date(2026, 9, 22, 10, 51, 49, 0, time.UTC)
@@ -122,9 +124,7 @@ func (s mapSource) Open(_ context.Context, m Member) (io.ReadCloser, error) {
 func writeFixture(t *testing.T, f fixtureBundle) []byte {
 	t.Helper()
 	var out bytes.Buffer
-	if err := Write(context.Background(), &out, f.manifest, mapSource{bytes: f.bytes}); err != nil {
-		t.Fatalf("Write: %v", err)
-	}
+	must.OKf(t, Write(context.Background(), &out, f.manifest, mapSource{bytes: f.bytes}), "Write")
 	return out.Bytes()
 }
 
@@ -152,21 +152,15 @@ func buildTar(t *testing.T, entries []tarEntry) []byte {
 		} else if flag == tar.TypeSymlink {
 			h.Linkname = "/etc/passwd"
 		}
-		if err := tw.WriteHeader(h); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, tw.WriteHeader(h))
 		if flag == tar.TypeReg {
 			if _, err := tw.Write(e.body); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gz.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, tw.Close())
+	must.OK(t, gz.Close())
 	return out.Bytes()
 }
 
@@ -174,9 +168,7 @@ func buildTar(t *testing.T, entries []tarEntry) []byte {
 func fixtureEntries(t *testing.T, f fixtureBundle) []tarEntry {
 	t.Helper()
 	document, err := f.manifest.MarshalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	entries := []tarEntry{{name: ManifestPath, body: document}}
 	for _, m := range f.manifest.Members {
 		if m.State == StatePresent {

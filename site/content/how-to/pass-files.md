@@ -41,7 +41,7 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 List the artifacts of one task:
 
 ```bash
-orkctl run artifacts <run-id> --task fetch
+orkctl run artifacts <run-id> -t fetch
 ```
 
 `captureBodyAs` saves the exact response bytes. `artifact "fetch/export.json"` gives `summarize` the path to that file.
@@ -77,7 +77,7 @@ orkctl run artifacts <run-id> --task fetch
 | Code | Cause | Retried under `retry:` |
 |---|---|---|
 | `VALUES_MISSING` | The task exited 0 and wrote no `values.json`. | no |
-| `VALUES_MALFORMED` | `values.json` is not one JSON object, or is a link or not a regular file. | no |
+| `VALUES_MALFORMED` | `values.json` is not one JSON object, writes a key twice, or is a link or not a regular file. | no |
 | `VALUES_TOO_LARGE` | `values.json` is over 256 KiB. | no |
 | `ARTIFACT_NOT_A_FILE` | A directory, symlink, device, socket or named pipe is in `output/artifacts/`, or `output/artifacts` is not a directory. | no |
 | `ARTIFACT_LIMIT_EXCEEDED` | Too many artifacts, or one is too large. | no |

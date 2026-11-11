@@ -2,7 +2,7 @@ package automation
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,10 +12,10 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/types/known/durationpb"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -138,12 +138,12 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 	// refused key by key.
 	for i := 0; i+1 < len(body.Content); i += 2 {
 		key, value := body.Content[i], body.Content[i+1]
-		if key.Value != "kind" || value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+		if key.Value != "kind" || !dsl.IsStringScalar(value) {
 			continue
 		}
 		switch value.Value {
 		case dsl.KindOrkflow:
-			p.errorAt("kind", value, "kind: %s is an Orkflow, not an automation document: apply it with orkctl apply or the Apply page", dsl.KindOrkflow)
+			p.errorAt("kind", value, "kind: %s is an Orkflow, not an automation document: create it with orkctl orkflow create or the Create Orkflow page", dsl.KindOrkflow)
 			return nil, p.issues
 		case dsl.KindActivityInterface:
 			p.errorAt("kind", value, "kind: %s is an activity interface, not an automation document: "+
@@ -328,7 +328,7 @@ func (p *parser) schedule(name string, node *yaml.Node) (ScheduleEntry, bool) {
 		at := field + "." + key
 		switch key {
 		case "orkflow":
-			entry.Orkflow = p.slug(at, "orkflow", value)
+			entry.Orkflow = p.target(at, "schedule", value)
 		case "version":
 			version, err := versionScalar(value)
 			if err != nil {
@@ -498,7 +498,7 @@ func (p *parser) duration(field, key string, node *yaml.Node) (time.Duration, bo
 }
 
 func (p *parser) timestamp(field, key string, node *yaml.Node) *timestamppb.Timestamp {
-	if node.Kind != yaml.ScalarNode || (node.Tag != "!!str" && node.Tag != "!!timestamp") {
+	if !dsl.IsStringScalar(node) && (node.Kind != yaml.ScalarNode || node.Tag != "!!timestamp") {
 		p.errorAt(field, node, "%s must be an RFC 3339 time such as 2026-01-02T03:04:05Z, got %s", key, describeNode(node))
 		return nil
 	}
@@ -520,7 +520,7 @@ func (p *parser) input(field string, node *yaml.Node) *orkstackv1.Payload {
 	case isNull(node):
 		p.errorAt(field, node, "input is null: write the run input as a mapping, or remove the key")
 		return nil
-	case node.Kind == yaml.ScalarNode && node.Tag == "!!str":
+	case dsl.IsStringScalar(node):
 		var object map[string]any
 		if json.Unmarshal([]byte(node.Value), &object) == nil && object != nil {
 			example := strings.TrimSpace(node.Value)
@@ -575,6 +575,20 @@ func (p *parser) slug(field, kind string, node *yaml.Node) string {
 	return value
 }
 
+// target is the Orkflow a schedule or trigger starts: its own namespace's,
+// held to dsl.ValidOrkflowTarget, which refuses another namespace's by name.
+func (p *parser) target(field, starter string, node *yaml.Node) string {
+	value, err := stringScalar(node)
+	if err != nil {
+		p.errorAt(field, node, "orkflow %v", err)
+		return ""
+	}
+	if err := dsl.ValidOrkflowTarget(starter, value); err != nil {
+		p.errorAt(field, node, "%v", err)
+	}
+	return value
+}
+
 func (p *parser) trigger(name string, node *yaml.Node) (TriggerEntry, bool) {
 	field := "triggers." + name
 	before := len(p.issues)
@@ -588,7 +602,7 @@ func (p *parser) trigger(name string, node *yaml.Node) (TriggerEntry, bool) {
 		at := field + "." + key
 		switch key {
 		case "orkflow":
-			entry.Orkflow = p.slug(at, "orkflow", value)
+			entry.Orkflow = p.target(at, "trigger", value)
 		case "version":
 			version, err := versionScalar(value)
 			if err != nil {

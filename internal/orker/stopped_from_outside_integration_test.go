@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests hold the line E47 draws on a real engine: a number says nothing
@@ -233,32 +235,24 @@ func TestIntegration_ContainerExit_AStreamThatConnectsLateStillHearsTheStop(t *t
 	cli := containerCLI(t)
 	wrapper := filepath.Join(t.TempDir(), "late-stream-cli")
 	script := "#!/bin/sh\nif [ \"$1\" = events ]; then sleep 2; fi\nexec " + cli + " \"$@\"\n"
-	if err := os.WriteFile(wrapper, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(wrapper, []byte(script), 0o755))
 	label := "ork.run=" + removalRunID("late-stream")
 	t.Cleanup(func() { removeByLabel(t, label) })
 	out, err := exec.CommandContext(ctx, cli, "create", "--label", label, orker.BindProbeImage,
 		"sleep", "300").Output()
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
+	must.OKf(t, err, "create")
 	id := orker.ContainerID(strings.TrimSpace(string(out)))
 
 	runtime := &orker.DockerRuntime{Bin: wrapper}
 	if filepath.Base(cli) == orker.CLIPodman {
 		runtime.CLI = orker.CLIPodman
 	}
-	if err := runtime.Start(ctx, id, io.Discard, io.Discard); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	must.OKf(t, runtime.Start(ctx, id, io.Discard, io.Discard), "Start")
 	if out, err := exec.CommandContext(ctx, cli, "stop", "--time", "1", string(id)).CombinedOutput(); err != nil {
 		t.Fatalf("stop: %v: %s", err, out)
 	}
 	status, err := runtime.Wait(ctx, id)
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	must.OKf(t, err, "Wait")
 	heard := status.StoppedFromOutside && !status.StopCauseUnknown && !status.StopCauseUnrecorded
 	if socket {
 		unrecorded := !status.StoppedFromOutside && status.StopCauseUnknown && status.StopCauseUnrecorded

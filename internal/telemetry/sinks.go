@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/orker"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // SinksVar names every OTLP destination an operator has, once, so a
@@ -104,6 +104,9 @@ func ParseSinks(raw []byte) (SinkTable, error) {
 			"move every sink under one sinks:, and delete the ---", SinksVar, line)
 	}
 	var doc sinksDocument
+	if err := dsl.RefuseMergeTags(raw, doc); err != nil {
+		return SinkTable{}, fmt.Errorf("%s: %w", SinksVar, err)
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(raw))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {

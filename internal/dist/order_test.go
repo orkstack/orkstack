@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestReleaseOrder: a release is the latest only when no release tag is
@@ -35,9 +37,7 @@ func TestReleaseOrder(t *testing.T) {
 		{version: "v0.1.0", tags: []string{"v0.1.1", "v0.2.0"}, refused: "v0.1.1"},
 	} {
 		version, err := dist.ParseVersion(tc.version)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		latest, err := dist.ReleaseOrder(version, tc.tags)
 		if tc.refused != "" {
 			if err == nil || !strings.Contains(err.Error(), tc.refused) || !strings.Contains(err.Error(), ":"+version.Series()) {

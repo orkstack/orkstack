@@ -16,6 +16,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_LiveOriginFilterUsesTheIndex lists live runs by origin
@@ -67,9 +69,7 @@ func TestIntegration_LiveOriginFilterUsesTheIndex(t *testing.T) {
 			Routes:    map[string]string{task.DefaultPool: task.DefaultQueue},
 			Origin:    origin,
 		}
-		if err := starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
-			t.Fatalf("StartRun(%s): %v", runID, err)
-		}
+		must.OKf(t, starter.StartRun(ctx, runID, wf, nil, plan), "StartRun(%s)", runID)
 	}
 	stamp := time.Now().UnixNano()
 	triggerA := &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_TRIGGER", ID: "trg-a"}
@@ -88,14 +88,10 @@ func TestIntegration_LiveOriginFilterUsesTheIndex(t *testing.T) {
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		response, err := temporalClient.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{Query: query})
-		if err != nil {
-			t.Fatalf("ListWorkflow(%s): %v", query, err)
-		}
+		must.OKf(t, err, "ListWorkflow(%s)", query)
 		all, err := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(true).
 			ListRuns(ctx, engine.RunQuery{Namespace: "alpha", Limit: 10})
-		if err != nil {
-			t.Fatalf("ListRuns(alpha): %v", err)
-		}
+		must.OKf(t, err, "ListRuns(alpha)")
 		if len(response.GetExecutions()) == 1 && len(all) == 4 {
 			t.Logf("EVIDENCE query=%s executions=%d", query, len(response.GetExecutions()))
 			break
@@ -110,9 +106,7 @@ func TestIntegration_LiveOriginFilterUsesTheIndex(t *testing.T) {
 	indexedReader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(true).WithOriginIndex(true)
 	byTriggerA := runListQuery(t, "alpha", 10, "origin.kind=TRIGGER", "origin.id=trg-a")
 	runs, err := indexedReader.ListRuns(ctx, byTriggerA)
-	if err != nil {
-		t.Fatalf("indexed ListRuns(trigger:trg-a): %v", err)
-	}
+	must.OKf(t, err, "indexed ListRuns(trigger:trg-a)")
 	if got := runIDs(runs); len(got) != 1 || got[0] != wantA {
 		t.Fatalf("indexed trigger:trg-a = %v, want only %s: the cluster applied the predicate, "+
 			"so the memo-only run %s is not selected", got, wantA, unindexed)
@@ -123,9 +117,7 @@ func TestIntegration_LiveOriginFilterUsesTheIndex(t *testing.T) {
 
 	walkingReader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(true)
 	runs, err = walkingReader.ListRuns(ctx, byTriggerA)
-	if err != nil {
-		t.Fatalf("walking ListRuns(trigger:trg-a): %v", err)
-	}
+	must.OKf(t, err, "walking ListRuns(trigger:trg-a)")
 	got := runIDs(runs)
 	sort.Strings(got)
 	want := []string{wantA, unindexed}

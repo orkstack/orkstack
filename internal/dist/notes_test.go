@@ -7,6 +7,8 @@ import (
 	"unicode/utf16"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const sampleChangelog = `# Changelog
@@ -59,9 +61,7 @@ func notesFor(t *testing.T, changelog, version string) (string, error) {
 func TestReleaseNotes_ExtractsOnlyThatVersionsSection(t *testing.T) {
 	t.Parallel()
 	got, err := notesFor(t, sampleChangelog, "v1.2.3")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := "### Added\n\n- The 1.2.3 feature.\n\n### Fixed\n\n- The 1.2.3 fix.\n"
 	if got != want {
 		t.Fatalf("notes\n got: %q\nwant: %q", got, want)
@@ -139,9 +139,7 @@ func TestReleaseNotes_KeepsAFencedHeadingInside(t *testing.T) {
 		"- after the fence\n\n" +
 		"## [0.9.0]\n\n- old\n"
 	got, err := notesFor(t, changelog, "v1.0.0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, want := range []string{"## [9.9.9] - never released", "- after the fence"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("notes %q lost %q", got, want)
@@ -166,9 +164,7 @@ func TestReleaseNotes_NestedFences(t *testing.T) {
 		"- after the fences\n\n" +
 		"## [0.9.0]\n\n- old\n"
 	got, err := notesFor(t, changelog, "v1.0.0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, want := range []string{"## [9.9.9] - inside", "## [9.9.8] - still inside", "## [9.9.7]", "- after the fences"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("notes %q lost %q", got, want)
@@ -184,19 +180,21 @@ func TestReleaseNotes_LineEndings(t *testing.T) {
 	t.Parallel()
 	crlf := strings.ReplaceAll(sampleChangelog, "\n", "\r\n")
 	want, err := notesFor(t, sampleChangelog, "v1.2.3")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	got, err := notesFor(t, crlf, "v1.2.3")
 	if err != nil || got != want {
 		t.Fatalf("CRLF notes %q (%v), want %q", got, err, want)
 	}
 }
 
-// laterSection is a release section as a later release writes it: Keep a
-// Changelog's subsections, a **BREAKING** entry, a nested list, a second
-// paragraph, a link and a code fence. The notes are exactly these bytes.
-const laterSection = "### Added\n\n" +
+// laterSection is a release section as a later release writes it: its
+// Features and their Upgrading line, Keep a Changelog's subsections, a
+// **BREAKING** entry, a nested list, a second paragraph, a link and a code
+// fence. The notes are exactly these bytes.
+const laterSection = "### Features\n\n" +
+	"- Run tailing.\n\n" +
+	"**Upgrading:** read the **BREAKING** entries first ([UPGRADING.md](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md)).\n\n" +
+	"### Added\n\n" +
 	"- `orkctl run tail` follows a run's events ([docs/CLI.md](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md)).\n" +
 	"  - It resumes by sequence from any replica.\n\n" +
 	"### Changed\n\n" +
@@ -317,9 +315,7 @@ func TestReleasePage_EndsWithEachImageAndHowToVerifyIt(t *testing.T) {
 	notes := "### Added\n\n- The 1.2.3 feature.\n"
 	images := releaseImages()
 	page, err := dist.ReleasePage(notes, mustVersion(t, "v1.2.3"), images)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !strings.HasPrefix(page, notes+"\n---\n") {
 		t.Fatalf("the page does not open with the notes and a rule:\n%s", page)
 	}
@@ -356,13 +352,9 @@ func TestReleasePage_EndsWithEachImageAndHowToVerifyIt(t *testing.T) {
 func TestReleasePage_BeforeTheImagesExistIsAsLongAsAfter(t *testing.T) {
 	t.Parallel()
 	before, err := dist.ReleasePage("- x.\n", mustVersion(t, "v1.2.3"), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	after, err := dist.ReleasePage("- x.\n", mustVersion(t, "v1.2.3"), releaseImages())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(before) != len(after) || strings.Count(before, "sha256:"+strings.Repeat("0", 64)) != 2*len(dist.Images()) {
 		t.Fatalf("before the images: %d bytes, after: %d; the placeholders do not stand in for every digest:\n%s",
 			len(before), len(after), before)
@@ -379,9 +371,7 @@ func TestReleasePage_RefusesAPageOverGitHubsLimit(t *testing.T) {
 	t.Parallel()
 	version := mustVersion(t, "v1.2.3")
 	footer, err := dist.ReleasePage("", version, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	units := func(s string) int { return len(utf16.Encode([]rune(s))) }
 	room := dist.MaxReleaseBody - units(footer)
 	fill := func(n int, r string) string { return strings.Repeat(r, n-1) + "\n" }

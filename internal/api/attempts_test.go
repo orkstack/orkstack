@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"slices"
-	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +12,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe the replica that did not run the task.
@@ -67,9 +69,7 @@ func (f *attemptFixture) list(
 // write files one record, the way the Orker that ran the attempt would.
 func (f *attemptFixture) write(t *testing.T, record *orkstackv1.TaskAttempt) {
 	t.Helper()
-	if err := f.attempts.PutAttempt(context.Background(), record); err != nil {
-		t.Fatalf("put attempt record %d of %q: %v", record.GetAttempt(), record.GetTaskId(), err)
-	}
+	must.OKf(t, f.attempts.PutAttempt(context.Background(), record), "put attempt record %d of %q", record.GetAttempt(), record.GetTaskId())
 }
 
 // attemptRecord is one stored attempt, with the fields every record carries.
@@ -128,7 +128,7 @@ func outcomesOf(attempts []*orkstackv1.TaskAttempt) []string {
 	for _, attempt := range attempts {
 		out = append(out, fmt.Sprintf("%s#%d=%s",
 			attempt.GetTaskId(), attempt.GetAttempt(),
-			strings.TrimPrefix(attempt.GetOutcome().String(), "ATTEMPT_OUTCOME_")))
+			enumname.Of(attempt.GetOutcome())))
 	}
 	return out
 }
@@ -147,9 +147,7 @@ func TestListTaskAttempts_OrdersOneTasksAttemptsAscending(t *testing.T) {
 	}
 
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	want := []string{"flaky#1=FAILED", "flaky#2=FAILED", "flaky#3=SUCCEEDED"}
 	if got := outcomesOf(attempts); !slices.Equal(got, want) {
 		t.Fatalf("timeline = %v, want %v", got, want)
@@ -172,9 +170,7 @@ func TestListTaskAttempts_KeepsRunTaskOrderAcrossTasks(t *testing.T) {
 	fixture.write(t, attemptRecord(run.GetId(), "zulu", 1, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED))
 
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	want := []string{"zulu#1=SUCCEEDED", "alpha#1=FAILED", "alpha#2=SUCCEEDED"}
 	if got := outcomesOf(attempts); !slices.Equal(got, want) {
 		t.Fatalf("timeline = %v, want %v", got, want)
@@ -194,9 +190,7 @@ func TestListTaskAttempts_TaskSelectorNarrowsToOneTask(t *testing.T) {
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{
 		RunId: run.GetId(), TaskId: "alpha",
 	})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	want := []string{"alpha#1=SUCCEEDED"}
 	if got := outcomesOf(attempts); !slices.Equal(got, want) {
 		t.Fatalf("timeline = %v, want %v", got, want)
@@ -212,9 +206,7 @@ func TestListTaskAttempts_SynthesizesUnreportedAttemptsForMissingRecords(t *test
 	fixture.write(t, attemptRecord(run.GetId(), "flaky", 3, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED))
 
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	want := []string{"flaky#1=FAILED", "flaky#2=UNREPORTED", "flaky#3=SUCCEEDED"}
 	if got := outcomesOf(attempts); !slices.Equal(got, want) {
 		t.Fatalf("timeline = %v, want %v", got, want)
@@ -237,9 +229,7 @@ func TestListTaskAttempts_RecordsExtendATimelineTheSnapshotUndercounts(t *testin
 	fixture.write(t, attemptRecord(run.GetId(), "flaky", 2, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED))
 
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	want := []string{"flaky#1=UNREPORTED", "flaky#2=FAILED"}
 	if got := outcomesOf(attempts); !slices.Equal(got, want) {
 		t.Fatalf("timeline = %v, want %v", got, want)
@@ -257,9 +247,7 @@ func TestListTaskAttempts_LogStoreWidensTheTimelinePastTheLastRecord(t *testing.
 	fixture.logs.write(artifacts.LogRef{RunID: run.GetId(), TaskID: "flaky", Attempt: 2}, 1, "trying again\n")
 
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	want := []string{"flaky#1=FAILED", "flaky#2=UNREPORTED"}
 	if got := outcomesOf(attempts); !slices.Equal(got, want) {
 		t.Fatalf("timeline = %v, want %v", got, want)
@@ -276,9 +264,7 @@ func TestListTaskAttempts_TaskWithNoAttemptsIsEmptyNotAnError(t *testing.T) {
 
 	fixture := newAttemptFixture(t, run)
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	if len(attempts) != 0 {
 		t.Fatalf("a task that never ran reported %v", outcomesOf(attempts))
 	}
@@ -360,9 +346,7 @@ func TestListTaskAttempts_PassesPhasesThroughAndSynthesizedRowsHaveNone(t *testi
 	fixture.write(t, attemptRecord(run.GetId(), "flaky", 3, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED))
 
 	attempts, err := fixture.list(t, &orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	if len(attempts) != 3 {
 		t.Fatalf("timeline = %v", outcomesOf(attempts))
 	}

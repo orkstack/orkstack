@@ -90,7 +90,7 @@ test.afterAll(async () => {
 
 test('the header is required, shown and offered by every authoring surface', async ({ page }) => {
 	// 1. The Apply page's placeholder is a document that validates and applies.
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await editorReady(page, 'apply-yaml');
 	await expect(page.getByTestId('apply-yaml')).toHaveAttribute('aria-placeholder', ORKFLOW_PLACEHOLDER);
 	await fillYaml(page, 'apply-yaml', ORKFLOW_PLACEHOLDER);
@@ -107,7 +107,7 @@ test('the header is required, shown and offered by every authoring surface', asy
 
 	// 2. A document without the header is refused on apiVersion, at validate
 	//    and at apply, and nothing is stored.
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', HEADERLESS);
 	await page.getByTestId('apply-validate').click();
 	const issue = page.getByTestId('apply-validation-issue');
@@ -127,7 +127,7 @@ test('the header is required, shown and offered by every authoring surface', asy
 	await page.getByTestId('apply-validate').click();
 	await expect(issue).toHaveAttribute('data-field', 'kind');
 	await expect(issue).toContainText(
-		'kind: Automation is an automation document, not an Orkflow: apply it with orkctl apply or Admin → Automation (docs/AUTOMATION.md); an Orkflow says kind: Orkflow'
+		'kind: Automation is an automation document, not an Orkflow: apply it with orkctl automation apply or Admin → Automation (docs/AUTOMATION.md); an Orkflow says kind: Orkflow'
 	);
 
 	// 4. The applied version's editor opens on its stored source, header first.

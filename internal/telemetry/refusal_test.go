@@ -12,6 +12,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // refusalPoints is every ork.runs.refused data point the reader holds.
@@ -119,9 +121,7 @@ func TestObserveRefusal_FollowsTheSelectionsSink(t *testing.T) {
 
 	observer, err := NewEngineObserverForSinks(newSinksForTest(def, map[string]*Providers{"b": b}),
 		slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil)))
-	if err != nil {
-		t.Fatalf("NewEngineObserverForSinks: %v", err)
-	}
+	must.OKf(t, err, "NewEngineObserverForSinks")
 	observer.ObserveRefusal(context.Background(), "payments",
 		&orkstackv1.TelemetrySelection{Sink: "b"}, "reconcile", "NAMESPACE_HELD")
 
@@ -178,9 +178,7 @@ func TestObserveRefusal_SelectionAttrsRideOnlyHighAndOnlyPrefixed(t *testing.T) 
 
 func TestNewEngineInstruments_RunsRefusedIsANoOpOnNilProviders(t *testing.T) {
 	inst, err := NewEngineInstruments(nil)
-	if err != nil {
-		t.Fatalf("NewEngineInstruments(nil): %v", err)
-	}
+	must.OKf(t, err, "NewEngineInstruments(nil)")
 	if inst.RunsRefused == nil {
 		t.Fatal("RunsRefused is nil on disabled Providers, want a no-op instrument")
 	}

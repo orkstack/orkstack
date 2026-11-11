@@ -526,10 +526,14 @@ func mostFailing(tally engine.RunTally) []*orkstackv1.OrkflowFailures {
 		if per.Failed == 0 {
 			continue
 		}
+		// The tally keys a shared child's runs "<owner>/<name>" (the index's
+		// key, engine.OrkflowKey), apart from the namespace's own Orkflow.
+		owner, orkflow := engine.SplitOrkflowKey(name)
 		rows = append(rows, &orkstackv1.OrkflowFailures{
-			OrkflowName: name,
-			Failed:      per.Failed,
-			Total:       per.Total,
+			OrkflowName:      orkflow,
+			OrkflowNamespace: owner,
+			Failed:           per.Failed,
+			Total:            per.Total,
 		})
 	}
 	sort.Slice(rows, func(i, j int) bool {
@@ -539,7 +543,10 @@ func mostFailing(tally engine.RunTally) []*orkstackv1.OrkflowFailures {
 		if rows[i].GetTotal() != rows[j].GetTotal() {
 			return rows[i].GetTotal() > rows[j].GetTotal()
 		}
-		return rows[i].GetOrkflowName() < rows[j].GetOrkflowName()
+		if rows[i].GetOrkflowName() != rows[j].GetOrkflowName() {
+			return rows[i].GetOrkflowName() < rows[j].GetOrkflowName()
+		}
+		return rows[i].GetOrkflowNamespace() < rows[j].GetOrkflowNamespace()
 	})
 	if len(rows) > MostFailingLimit {
 		rows = rows[:MostFailingLimit]

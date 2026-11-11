@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/cosigntest"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // shellRepo is the first-party shell image's repository in every registry
@@ -57,9 +59,7 @@ func shellInput(t *testing.T, taskID string, image *orkstackv1.ImageRef) *orksta
 	in.Image = image
 	in.Command = nil
 	with, err := structpb.NewStruct(map[string]any{"op": "exec", "command": []any{"true"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	in.With = with
 	return in
 }
@@ -115,9 +115,7 @@ func imagePolicyContractRows(t *testing.T) {
 	t.Run("a signer with no .sig in the registry", func(t *testing.T) {
 		_, image := privateShell(t)
 		key, err := cosigntest.GenerateKey()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		dispatcher, _ := newDispatcher(t)
 		counting := &countingRuntime{ContainerRuntime: dispatcher.Runtime}
 		dispatcher.Runtime = counting
@@ -149,15 +147,11 @@ func TestIntegration_ACommittedAttemptIsAdoptedAfterItsSignatureIsRemoved(t *tes
 	requireDocker(t)
 	registry, image := privateShell(t)
 	key, err := cosigntest.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	client := &cosigntest.Client{}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	if err := client.Sign(ctx, key, registry.Host, shellRepo, image.GetIndexDigest()); err != nil {
-		t.Fatalf("sign: %v", err)
-	}
+	must.OKf(t, client.Sign(ctx, key, registry.Host, shellRepo, image.GetIndexDigest()), "sign")
 
 	// The private registry is plain HTTP on a port chosen at run time. Docker
 	// trusts a loopback registry by itself; Podman trusts one only by name in
@@ -189,9 +183,7 @@ func TestIntegration_ACommittedAttemptIsAdoptedAfterItsSignatureIsRemoved(t *tes
 	}
 
 	first, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("first Execute: %v", err)
-	}
+	must.OKf(t, err, "first Execute")
 	if first.GetCommitAdopted() {
 		t.Fatal("the first attempt adopted a commit that did not exist")
 	}
@@ -201,16 +193,12 @@ func TestIntegration_ACommittedAttemptIsAdoptedAfterItsSignatureIsRemoved(t *tes
 	logf("attempt 1: signed image %s ran, committed=%v adopted=%v, .sig GETs=%d",
 		image.GetPinned(), first.GetValuesRef() != nil, first.GetCommitAdopted(), counter.n())
 
-	if err := client.Unsign(ctx, registry.Host, shellRepo, image.GetIndexDigest()); err != nil {
-		t.Fatalf("unsign: %v", err)
-	}
+	must.OKf(t, client.Unsign(ctx, registry.Host, shellRepo, image.GetIndexDigest()), "unsign")
 	logf("signature removed from %s: %s/%s:%s now answers 404", registry.Host, registry.Host, shellRepo,
 		cosigntest.SignatureTag(image.GetIndexDigest()))
 
 	second, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("the retry of a committed attempt was judged again: %v", err)
-	}
+	must.OKf(t, err, "the retry of a committed attempt was judged again")
 	if !second.GetCommitAdopted() {
 		t.Fatal("the retry did not adopt the committed result")
 	}

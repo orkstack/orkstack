@@ -3,7 +3,7 @@ package orker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,8 +16,11 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // eachRuntime records, at Create, the spec and every file of the sealed input
@@ -111,9 +114,7 @@ type eachHarness struct {
 func newEachHarness(t *testing.T) *eachHarness {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local store: %v", err)
-	}
+	must.OKf(t, err, "local store")
 	t.Cleanup(func() { _ = store.Close() })
 	h := &eachHarness{
 		runtime:  &eachRuntime{},
@@ -141,9 +142,7 @@ func newEachHarness(t *testing.T) *eachHarness {
 func (h *eachHarness) put(t *testing.T, name string, data []byte) *orkstackv1.ArtifactRef {
 	t.Helper()
 	ref, err := h.store.Put(context.Background(), name, bytes.NewReader(data), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatalf("put %s: %v", name, err)
-	}
+	must.OKf(t, err, "put %s", name)
 	return refPtr(ref)
 }
 
@@ -229,7 +228,7 @@ func TestExecute_ItemOfAnInputSource(t *testing.T) {
 
 func TestRender_EachRoot(t *testing.T) {
 	each, err := eachRenderData(&orkstackv1.EachContext{Index: 4, Count: 9, As: "part"},
-		json.RawMessage(`{"uri":"s3://x","big":12345678901234567890}`))
+		stablejson.RawJSON(`{"uri":"s3://x","big":12345678901234567890}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,9 +239,7 @@ func TestRender_EachRoot(t *testing.T) {
 		"c": "{{ .each.index }}/{{ .each.count }}",
 		"d": "{{ .each.part.big }}",
 	})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	if got["a"] != "s3://x" || got["b"] != "s3://x" || got["c"] != "4/9" || got["d"] != "12345678901234567890" {
 		t.Fatalf("rendered = %v", got)
 	}
@@ -343,9 +340,7 @@ func TestExecute_ItemSourceMismatchIsEachItemUnavailable(t *testing.T) {
 func (h *eachHarness) writeItemCommit(t *testing.T, root string, index int32, mutate func(*orkstackv1.ActivityCommit)) {
 	t.Helper()
 	key, err := artifacts.ItemCommitKey("default", eachRunID, "convert", index)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	commit := &orkstackv1.ActivityCommit{
 		SchemaVersion:           artifacts.CommitSchemaVersion,
 		Namespace:               "default",
@@ -458,15 +453,11 @@ func TestStageInputs_EachUpstreamZeroItemsCreatesTheDirectories(t *testing.T) {
 
 func TestDescribeOrker_ReportsEachSupported(t *testing.T) {
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	activities := NewActivitiesWithOptions(store, Options{Runtime: &reapRecorder{}, WorkRoot: t.TempDir()})
 	result, err := activities.DescribeOrker(context.Background())
-	if err != nil {
-		t.Fatalf("DescribeOrker: %v", err)
-	}
+	must.OKf(t, err, "DescribeOrker")
 	if !result.GetEachSupported() {
 		t.Fatal("this build implements fan-out items and must say so")
 	}

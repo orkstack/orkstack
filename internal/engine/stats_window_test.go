@@ -20,6 +20,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ONE WINDOW, ONE POPULATION.
@@ -357,9 +359,7 @@ func statsIndexOver(t *testing.T, corpus []statsCorpusRun) *statsIndex {
 	dc := converter.GetDefaultDataConverter()
 	payload := func(value string) *commonpb.Payload {
 		encoded, err := dc.ToPayload(value)
-		if err != nil {
-			t.Fatalf("encode memo %q: %v", value, err)
-		}
+		must.OKf(t, err, "encode memo %q", value)
 		return encoded
 	}
 	index := &statsIndex{}
@@ -399,9 +399,7 @@ func TestExecutions_SamplesTheDurationsOfRunsTheWindowCREATED(t *testing.T) {
 		Since:     statsWindowStart,
 		Until:     statsWindowEnd,
 	})
-	if err != nil {
-		t.Fatalf("Executions: %v", err)
-	}
+	must.OKf(t, err, "Executions")
 
 	// ork-inside took 30 minutes; ork-late took an hour. ork-earlier's two
 	// hours are absent: it belongs to the window that created it.
@@ -459,9 +457,7 @@ func TestExecutions_SamplesTheDurationsOfRunsTheWindowCREATED(t *testing.T) {
 func TestExecutions_SamplesTheSameRunsTheArchiveCounts(t *testing.T) {
 	corpus := statsCorpus()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 
 	// The archive holds what an engine archives: a run, once it has finished.
@@ -478,9 +474,7 @@ func TestExecutions_SamplesTheSameRunsTheArchiveCounts(t *testing.T) {
 			CreatedAt:   timestamppb.New(run.createdAt),
 			FinishedAt:  timestamppb.New(run.closedAt),
 		}, nil)
-		if err != nil {
-			t.Fatalf("archive %s: %v", run.id, err)
-		}
+		must.OKf(t, err, "archive %s", run.id)
 	}
 
 	window := StatsWindow{
@@ -493,14 +487,10 @@ func TestExecutions_SamplesTheSameRunsTheArchiveCounts(t *testing.T) {
 		Since:     window.Since,
 		Until:     window.Until,
 	})
-	if err != nil {
-		t.Fatalf("TallyRuns: %v", err)
-	}
+	must.OKf(t, err, "TallyRuns")
 	reader := newRunReader(statsIndexOver(t, corpus), converter.GetDefaultDataConverter())
 	executions, err := reader.Executions(context.Background(), window)
-	if err != nil {
-		t.Fatalf("Executions: %v", err)
-	}
+	must.OKf(t, err, "Executions")
 
 	if got, want := tally.Finished(), int64(len(executions.Durations)); got != want {
 		t.Fatalf("the archive counts %d finished runs in this window and the cluster "+

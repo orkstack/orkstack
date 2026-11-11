@@ -69,9 +69,10 @@ const (
 
 // OrkflowServiceClient is a client for the orkstack.v1.OrkflowService service.
 type OrkflowServiceClient interface {
-	// ValidateOrkflow performs the same non-mutating preparation as apply.
+	// ValidateOrkflow performs the same non-mutating preparation as ApplyOrkflow.
 	ValidateOrkflow(context.Context, *connect.Request[v1.ValidateOrkflowRequest]) (*connect.Response[v1.ValidateOrkflowResponse], error)
-	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+	// ApplyOrkflow validates and stores an orkflow version from raw DSL YAML:
+	// what `orkctl orkflow create` and the UI's Create Orkflow page send.
 	//
 	// It never rewrites a stored version: identical YAML under an existing
 	// version is a no-op that writes nothing, and DIFFERENT YAML under an
@@ -307,9 +308,10 @@ func (c *orkflowServiceClient) ListOrkflowCallers(ctx context.Context, req *conn
 
 // OrkflowServiceHandler is an implementation of the orkstack.v1.OrkflowService service.
 type OrkflowServiceHandler interface {
-	// ValidateOrkflow performs the same non-mutating preparation as apply.
+	// ValidateOrkflow performs the same non-mutating preparation as ApplyOrkflow.
 	ValidateOrkflow(context.Context, *connect.Request[v1.ValidateOrkflowRequest]) (*connect.Response[v1.ValidateOrkflowResponse], error)
-	// ApplyOrkflow validates and stores an orkflow from raw DSL YAML.
+	// ApplyOrkflow validates and stores an orkflow version from raw DSL YAML:
+	// what `orkctl orkflow create` and the UI's Create Orkflow page send.
 	//
 	// It never rewrites a stored version: identical YAML under an existing
 	// version is a no-op that writes nothing, and DIFFERENT YAML under an

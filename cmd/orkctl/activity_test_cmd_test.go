@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The six §10.3 assertion names, exactly as activitySuite reports them.
@@ -55,9 +57,7 @@ func sixAssertions() []assertion {
 func TestAssertionNamesMatchTheImplementation(t *testing.T) {
 	t.Parallel()
 	source, err := os.ReadFile("activity_test_cmd.go")
-	if err != nil {
-		t.Fatalf("read the implementation: %v", err)
-	}
+	must.OKf(t, err, "read the implementation")
 	for _, name := range []string{
 		nameStartsAndWritesValues,
 		nameInputIsReadOnly,
@@ -377,9 +377,7 @@ func TestActivityInterfaceReport_SaysWhatTheLabelDeclares(t *testing.T) {
 		},
 	}
 	packed, err := dsl.PackInterfaceLabel(iface)
-	if err != nil {
-		t.Fatalf("pack the label: %v", err)
-	}
+	must.OKf(t, err, "pack the label")
 	image := &orkstackv1.ImageRef{IndexDigest: "sha256:" + strings.Repeat("a", 64)}
 	tests := []struct {
 		name        string
@@ -468,9 +466,7 @@ func TestActivityTestReport_ShowsTheInterface(t *testing.T) {
 	}
 
 	var encoded bytes.Buffer
-	if err := writeGoJSON(&encoded, report); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeGoJSON(&encoded, report))
 	var decoded struct {
 		OK        bool `json:"ok"`
 		Interface struct {
@@ -501,9 +497,7 @@ func TestActivitySuite_HoldsItsWorkRootAsItsOwn(t *testing.T) {
 			return &dsl.Resolution{Image: pinned}, nil
 		},
 	}
-	if err := suite.build(t.Context()); err != nil {
-		t.Fatalf("build: %v", err)
-	}
+	must.OKf(t, suite.build(t.Context()), "build")
 	work := suite.dispatcher.WorkRoot
 	if work == "" {
 		t.Fatal("the suite's dispatcher has no work root of its own")

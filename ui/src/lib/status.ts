@@ -10,7 +10,8 @@ export const STATUS_LABEL: Record<Status, string> = {
 	[Status.FAILED]: 'Failed',
 	[Status.CANCELED]: 'Canceled',
 	[Status.SKIPPED]: 'Skipped',
-	[Status.AWAITING]: 'Awaiting'
+	[Status.AWAITING]: 'Awaiting',
+	[Status.SLEEPING]: 'Sleeping'
 };
 
 export const STATUS_CLASSES: Record<Status, string> = {
@@ -21,7 +22,8 @@ export const STATUS_CLASSES: Record<Status, string> = {
 	[Status.FAILED]: 'bg-failed-bg text-failed-fg',
 	[Status.CANCELED]: 'bg-canceled-bg text-canceled-fg',
 	[Status.SKIPPED]: 'pill-outline bg-skipped-bg text-skipped-fg',
-	[Status.AWAITING]: 'bg-awaiting-bg text-awaiting-fg'
+	[Status.AWAITING]: 'bg-awaiting-bg text-awaiting-fg',
+	[Status.SLEEPING]: 'bg-sleeping-bg text-sleeping-fg'
 };
 
 export function statusLabel(status: Status | undefined): string {
@@ -98,7 +100,8 @@ export const EVENT_TYPE_LABEL: Record<EventType, string> = {
 	[EventType.RUN_CANCELED]: 'RUN_CANCELED',
 	[EventType.TASK_AWAITING]: 'TASK_AWAITING',
 	[EventType.TASK_RESOLVED]: 'TASK_RESOLVED',
-	[EventType.STREAM_GAP]: 'STREAM_GAP'
+	[EventType.STREAM_GAP]: 'STREAM_GAP',
+	[EventType.TASK_SLEEPING]: 'TASK_SLEEPING'
 };
 
 export function eventTypeLabel(t: EventType | undefined): string {

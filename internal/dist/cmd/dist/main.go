@@ -68,6 +68,14 @@ commands:
                                   commands that verify them; without -images each digest is a
                                   placeholder of a digest's length. Refuse a page over GitHub's
                                   limit of 125000 characters
+  notes-check -version vX.Y.Z -body FILE
+                                  refuse a published release whose body FILE, above its image
+                                  footer, is not the "## [X.Y.Z]" section of CHANGELOG.md, naming
+                                  the first line that differs
+  notes-republish -version vX.Y.Z -body FILE
+                                  print the body a republish sends: the "## [X.Y.Z]" section, then
+                                  the image footer of the published body FILE, byte for byte;
+                                  refuse a body with no footer
   digests -layouts DIR            print "<image><TAB><digest>" for each of the nine OCI image layouts
                                   in DIR, sorted: the digest skopeo pushes each under
 
@@ -93,6 +101,10 @@ func run(args []string, env runEnv) int {
 		return env.sums(args[1:])
 	case "notes":
 		return env.notes(args[1:])
+	case "notes-check":
+		return env.notesSync(args[1:], false)
+	case "notes-republish":
+		return env.notesSync(args[1:], true)
 	case "digests":
 		return env.digests(args[1:])
 	}
@@ -270,6 +282,55 @@ func (e runEnv) notes(args []string) int {
 		}
 	}
 	page, err := dist.ReleasePage(notes, version, images)
+	if err != nil {
+		return e.failure(err)
+	}
+	fmt.Fprint(e.stdout, page)
+	return 0
+}
+
+// notesSync holds a published release's body to its CHANGELOG section:
+// notes-check refuses one whose notes are not the section, and
+// notes-republish prints the body a republish sends, the section above the
+// published footer.
+func (e runEnv) notesSync(args []string, republish bool) int {
+	name := "notes-check"
+	if republish {
+		name = "notes-republish"
+	}
+	set := e.flags(name)
+	raw, root := versionFlags(set)
+	bodyFile := set.String("body", "", "the release's published body, as `gh release view --json body` gives it (required)")
+	if code, done := e.parse(set, args, 0); done {
+		return code
+	}
+	version, code := e.parseVersion(*raw)
+	if code != 0 {
+		return code
+	}
+	if *bodyFile == "" {
+		return e.usageError("-body is required: the file holding the release's published body")
+	}
+	body, err := os.ReadFile(*bodyFile)
+	if err != nil {
+		return e.failure(fmt.Errorf("read the release body: %w", err))
+	}
+	changelog, err := os.ReadFile(filepath.Join(*root, dist.ChangelogFile))
+	if err != nil {
+		return e.failure(fmt.Errorf("read %s: %w", dist.ChangelogFile, err))
+	}
+	notes, err := dist.ReleaseNotes(changelog, version)
+	if err != nil {
+		return e.failure(err)
+	}
+	if !republish {
+		if err := dist.CheckReleaseNotesInSync(version, string(body), notes); err != nil {
+			return e.failure(err)
+		}
+		fmt.Fprintf(e.stdout, "%s: the release notes match the %q section of %s\n", version, "## ["+version.Plain()+"]", dist.ChangelogFile)
+		return 0
+	}
+	page, err := dist.RepublishedBody(version, string(body), notes)
 	if err != nil {
 		return e.failure(err)
 	}

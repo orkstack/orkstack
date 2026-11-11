@@ -109,16 +109,16 @@ test('callerHref keeps the namespace for all three kinds', () => {
 
 test('the three commands state the namespace and quote every argument', () => {
 	expect(compatCommand('', "it's", '2.1.0', '3.0.0')).toBe(
-		`orkctl --namespace default orkflow compat 'it'"'"'s' 2.1.0 3.0.0`
+		`orkctl -n default orkflow compat 'it'"'"'s' 2.1.0 3.0.0`
 	);
 	expect(callersCommand('payments', 'release-block', true)).toBe(
-		`orkctl --namespace payments orkflow callers release-block --all-versions`
+		`orkctl -n payments orkflow callers release-block --all-versions`
 	);
 	expect(callersCommand('payments', 'release-block', false)).toBe(
-		`orkctl --namespace payments orkflow callers release-block`
+		`orkctl -n payments orkflow callers release-block`
 	);
 	expect(promoteCommand('payments', "o'k", '3.0.0', true)).toBe(
-		`orkctl --namespace payments orkflow promote 'o'"'"'k' 3.0.0 --acknowledge-breaking`
+		`orkctl -n payments orkflow promote 'o'"'"'k' 3.0.0 --acknowledge-breaking`
 	);
 	expect(promoteCommand('payments', 'release-block', '3.0.0', false)).not.toContain('acknowledge');
 });

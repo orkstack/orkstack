@@ -321,7 +321,7 @@ export type PlanAutomationResponse = Message<"orkstack.v1.PlanAutomationResponse
   /**
    * plan_digest is "sha256:<64 lowercase hex>" over the namespace and the
    * actionable steps (action, kind, name, id, changes) — what a reviewer pins
-   * with `orkctl apply --expect-plan`. It excludes the carried requests, so a
+   * with `orkctl automation apply --expect-plan`. It excludes the carried requests, so a
    * no-op rewrite of the namespace (a new etag) does not move it; it excludes
    * UNCHANGED, UNDECLARED and UNMANAGED steps, which write nothing. Defined
    * even when nothing is actionable ("no changes" is pinnable); empty exactly
@@ -500,9 +500,9 @@ export const AutomationDocumentReportSchema: GenMessage<AutomationDocumentReport
   messageDesc(file_orkstack_v1_automation, 9);
 
 /**
- * ApplyReport is what `orkctl apply --json` prints for any invocation except
- * the one that existed before this contract — a single orkflow file with no
- * new flag — which keeps printing ApplyOrkflowResponse byte for byte.
+ * ApplyReport is what `orkctl automation apply --json` prints, and what
+ * `orkctl orkflow create --json` prints for any invocation but one file with
+ * no flag, which prints ApplyOrkflowResponse.
  *
  * @generated from message orkstack.v1.ApplyReport
  */
@@ -531,7 +531,7 @@ export const ApplyReportSchema: GenMessage<ApplyReport> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_automation, 10);
 
 /**
- * DisclosedSecret is one entry of the file `orkctl apply --secrets-out PATH`
+ * DisclosedSecret is one entry of the file `orkctl automation apply --secrets-out PATH`
  * writes (DisclosedSecrets).
  *
  * @generated from message orkstack.v1.DisclosedSecret
@@ -580,7 +580,7 @@ export const DisclosedSecretSchema: GenMessage<DisclosedSecret> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_automation, 11);
 
 /**
- * DisclosedSecrets is the file `orkctl apply --secrets-out PATH` writes.
+ * DisclosedSecrets is the file `orkctl automation apply --secrets-out PATH` writes.
  *
  * @generated from message orkstack.v1.DisclosedSecrets
  */
@@ -760,14 +760,14 @@ export enum OrkflowStoredState {
   UNSPECIFIED = 0,
 
   /**
-   * not stored: applying stores a version
+   * not stored: creating stores a version
    *
    * @generated from enum value: ORKFLOW_STORED_STATE_NEW = 1;
    */
   NEW = 1,
 
   /**
-   * stored with byte-identical source: applying writes nothing
+   * stored with byte-identical source: creating writes nothing
    *
    * @generated from enum value: ORKFLOW_STORED_STATE_IDENTICAL = 2;
    */

@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // canceledSource is a RunEventSource whose archive read names who canceled
@@ -86,9 +88,7 @@ func TestPublishEvent_ACanceledRunNamesWhoCanceledIt(t *testing.T) {
 	source := &canceledSource{events: []*orkstackv1.Event{{RunId: "ork-canceled", Sequence: 3,
 		Type: orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED}}, canceledBy: "dana@acme", changing: true}
 	activities, uri, store, notifier, runs := publishCanceled(t, source)
-	if err := activities.PublishEvent(context.Background(), canceledEvent(t), uri, "ork-canceled#3"); err != nil {
-		t.Fatalf("PublishEvent: %v", err)
-	}
+	must.OKf(t, activities.PublishEvent(context.Background(), canceledEvent(t), uri, "ork-canceled#3"), "PublishEvent")
 	if len(source.answered) == 0 {
 		t.Fatal("the run's record was never read, so no name could be known")
 	}
@@ -100,9 +100,7 @@ func TestPublishEvent_ACanceledRunNamesWhoCanceledIt(t *testing.T) {
 		t.Fatalf("webhook runs = %v, want one naming the first read's %q", notifier.runs, first)
 	}
 	body, err := store.GetRun(context.Background(), "ork-canceled")
-	if err != nil {
-		t.Fatalf("the run was not archived: %v", err)
-	}
+	must.OKf(t, err, "the run was not archived")
 	archived, _, err := engine.UnmarshalRunArchive(body)
 	if err != nil || archived.GetCanceledBy() != first {
 		t.Fatalf("archived canceled_by = %q, %v; want the first read's %q", archived.GetCanceledBy(), err, first)
@@ -129,16 +127,12 @@ func TestPublishEvent_AnUnreadableRecordStillAnnouncesTheEnd(t *testing.T) {
 	}
 	// The activity's retry: the bus has the event already, so nothing is
 	// announced twice, and the archive gets the name.
-	if err := activities.PublishEvent(context.Background(), canceledEvent(t), uri, "ork-canceled#3"); err != nil {
-		t.Fatalf("retried PublishEvent: %v", err)
-	}
+	must.OKf(t, activities.PublishEvent(context.Background(), canceledEvent(t), uri, "ork-canceled#3"), "retried PublishEvent")
 	if len(notifier.runs) != 1 {
 		t.Fatalf("the retry announced the end again: %d deliveries", len(notifier.runs))
 	}
 	body, err := store.GetRun(context.Background(), "ork-canceled")
-	if err != nil {
-		t.Fatalf("the retry did not archive the run: %v", err)
-	}
+	must.OKf(t, err, "the retry did not archive the run")
 	if archived, _, err := engine.UnmarshalRunArchive(body); err != nil || archived.GetCanceledBy() != "dana@acme" {
 		t.Fatalf("archived canceled_by = %q, %v; want dana@acme", archived.GetCanceledBy(), err)
 	}
@@ -267,13 +261,9 @@ func runCanceledUnderTestEnv(t *testing.T, source *canceledSource) (stored, arch
 		t.Fatalf("stored run = %v / %v, want CANCELED / RUN_CANCELED", run.GetStatus(), run.GetError())
 	}
 	body, err := archive.GetRun(context.Background(), "ork-canceled-env")
-	if err != nil {
-		t.Fatalf("the run was not archived: %v", err)
-	}
+	must.OKf(t, err, "the run was not archived")
 	archivedRun, _, err := engine.UnmarshalRunArchive(body)
-	if err != nil {
-		t.Fatalf("decode the archived run: %v", err)
-	}
+	must.OKf(t, err, "decode the archived run")
 	deliveries := 0
 	for i, event := range notifier.events {
 		if event.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
@@ -293,9 +283,7 @@ func runCanceledUnderTestEnv(t *testing.T, source *canceledSource) (stored, arch
 	snapshots.mu.Unlock()
 	for uri, data := range written {
 		var snapshot orkstackv1.Run
-		if err := proto.Unmarshal(data, &snapshot); err != nil {
-			t.Fatalf("snapshot %s: %v", uri, err)
-		}
+		must.OKf(t, proto.Unmarshal(data, &snapshot), "snapshot %s", uri)
 		if snapshot.GetCanceledBy() != "" {
 			t.Fatalf("the run wrote canceled_by %q into %s; only the projection may", snapshot.GetCanceledBy(), uri)
 		}

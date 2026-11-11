@@ -38,6 +38,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry is the
@@ -75,9 +77,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	head, err := raw.HeadObject(ctx, &s3.HeadObjectInput{
 		Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key),
 	})
-	if err != nil {
-		t.Fatalf("no object in MinIO at %s: %v", key, err)
-	}
+	must.OKf(t, err, "no object in MinIO at %s", key)
 	t.Logf("EVIDENCE minio_object bucket=%s key=%s bytes=%d etag=%s",
 		cfg.S3Bucket, key, aws.ToInt64(head.ContentLength), aws.ToString(head.ETag))
 
@@ -91,9 +91,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 	//     "a durably committed activity result cannot become pending again".
 	before := runningContainerCountForCommitE2E(t, e.orkerID)
 	adopted, err := activities.ExecuteTask(ctx, in)
-	if err != nil {
-		t.Fatalf("replacement attempt: %v", err)
-	}
+	must.OKf(t, err, "replacement attempt")
 	if !adopted.GetCommitAdopted() {
 		t.Fatal("the replacement attempt re-ran the container instead of adopting the durable commit")
 	}
@@ -123,9 +121,7 @@ func TestIntegration_ProductionSubmitPathCommitsDurablyAndAdoptsOnRetry(t *testi
 		t.Errorf("adopted attempt phases = %v, want [start commit-check]", phaseNames)
 	}
 	commitRecord, err := commitStore.Get(ctx, wantURI)
-	if err != nil {
-		t.Fatalf("read commit.json: %v", err)
-	}
+	must.OKf(t, err, "read commit.json")
 	commitStart := commitRecord.Commit.GetStartedAt()
 	if commitStart == nil || taskRun.GetStartedAt() == nil ||
 		!taskRun.GetStartedAt().AsTime().Equal(commitStart.AsTime()) {
@@ -177,13 +173,9 @@ func TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly(t *testing.T) {
 	}
 
 	runArchive, err := artifacts.NewS3RunArchive(ctx, e.cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	archiver := engine.NewRunArchiver(runArchive)
-	if err := archiver.Archive(ctx, e.run, nil); err != nil {
-		t.Fatalf("archive run: %v", err)
-	}
+	must.OKf(t, archiver.Archive(ctx, e.run, nil), "archive run")
 	evidenceSvc := api.NewService(api.Config{
 		Orkflows:      e.orkflows,
 		Runs:          e.runs,
@@ -197,9 +189,7 @@ func TestIntegration_RunEvidenceCarriesAnAdoptedCommitHonestly(t *testing.T) {
 	defer evidenceServer.Close()
 	exported, err := orkstackv1connect.NewRunServiceClient(evidenceServer.Client(), evidenceServer.URL).ExportRunEvidence(ctx,
 		connect.NewRequest(&orkstackv1.ExportRunEvidenceRequest{RunId: e.runID}))
-	if err != nil {
-		t.Fatalf("ExportRunEvidence: %v", err)
-	}
+	must.OKf(t, err, "ExportRunEvidence")
 	var bundle bytes.Buffer
 	last := false
 	for exported.Receive() {
@@ -281,20 +271,14 @@ func runAdoptionAttemptForCommitE2E(t *testing.T, e *commitE2E) *orkstackv1.Exec
 		}
 		return e.activities.ExecuteTask(actx, in)
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := w.Start(); err != nil {
-		t.Fatalf("start the replacement attempt's worker: %v", err)
-	}
+	must.OKf(t, w.Start(), "start the replacement attempt's worker")
 	defer w.Stop()
 	ctx, cancel := context.WithTimeout(e.ctx, 2*time.Minute)
 	defer cancel()
 	probe, err := e.temporal.ExecuteWorkflow(ctx, client.StartWorkflowOptions{ID: queue, TaskQueue: queue}, evidenceAdoptionProbeWorkflow, e.in)
-	if err != nil {
-		t.Fatalf("start the replacement attempt: %v", err)
-	}
+	must.OKf(t, err, "start the replacement attempt")
 	var adopted *orkstackv1.ExecuteTaskResult
-	if err := probe.Get(ctx, &adopted); err != nil {
-		t.Fatalf("replacement attempt: %v", err)
-	}
+	must.OKf(t, probe.Get(ctx, &adopted), "replacement attempt")
 	return adopted
 }
 
@@ -339,28 +323,20 @@ func startCommitE2E(t *testing.T) *commitE2E {
 	orkerQueue := "ork-commit-e2e-" + token
 
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	commitStore, err := artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	if err := artifacts.ProbeCommitStore(ctx, commitStore); err != nil {
 		infraAbsent(t, "the object store's conditional create is not usable: %v", err)
 	}
 	logStore, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
 	}
 	attemptStore, err := artifacts.NewAttemptStore(cfg)
-	if err != nil {
-		t.Fatalf("open attempt store: %v", err)
-	}
+	must.OKf(t, err, "open attempt store")
 	// A tap on the real attempt store: every record still lands in MinIO, and
 	// the test also keeps the last one written, which is how it reads the
 	// adopted attempt's record below without it being overwritten by key.
@@ -431,9 +407,7 @@ func startCommitE2E(t *testing.T) *commitE2E {
 	for name, w := range map[string]worker.Worker{
 		"run": runWorker, "task": taskWorker, "event": eventWorker,
 	} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		t.Cleanup(w.Stop)
 	}
 
@@ -468,9 +442,7 @@ func startCommitE2E(t *testing.T) *commitE2E {
 		Limits:    engine.DefaultLimits(),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -489,28 +461,20 @@ func startCommitE2E(t *testing.T) *commitE2E {
 		OrkflowName:    orkflowName,
 		OrkflowVersion: definition.GetVersion(),
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("EVIDENCE run_id=%s", runID)
 
 	// Drain the event stream rather than sleeping: it closes when the run ends.
 	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	for stream.Receive() {
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("event stream: %v", err)
-	}
+	must.OKf(t, stream.Err(), "event stream")
 	stream.Close()
 
 	got, err := runClient.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	run := got.Msg.GetRun()
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run status = %v, want SUCCEEDED (error: %v)", run.GetStatus(), run.GetError())
@@ -523,9 +487,7 @@ func startCommitE2E(t *testing.T) *commitE2E {
 		t.Fatal("the build task never reached the Orker")
 	}
 	key, err := artifacts.CommitKey("default", runID, "build")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &commitE2E{
 		ctx: ctx, cfg: cfg, orkflows: orkflows, store: store, commitStore: commitStore,
 		attemptStore: attemptStore, attempts: attempts, activities: activities,
@@ -696,14 +658,10 @@ func bindableWorkRootForCommitE2E(t *testing.T) string {
 	parent := os.Getenv(orker.WorkRootVar)
 	if parent == "" {
 		abs, err := filepath.Abs(filepath.Join("..", "..", ".data", "work"))
-		if err != nil {
-			t.Fatalf("resolve work root: %v", err)
-		}
+		must.OKf(t, err, "resolve work root")
 		parent = abs
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		t.Fatalf("create work root parent %s: %v", parent, err)
-	}
+	must.OKf(t, os.MkdirAll(parent, 0o755), "create work root parent %s", parent)
 	safe := strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
@@ -716,9 +674,7 @@ func bindableWorkRootForCommitE2E(t *testing.T) string {
 		safe = safe[:80]
 	}
 	root, err := os.MkdirTemp(parent, proof.WorkRootPattern(safe))
-	if err != nil {
-		t.Fatalf("create work root under %s: %v", parent, err)
-	}
+	must.OKf(t, err, "create work root under %s", parent)
 	commitE2ERoots[t.Name()] = root
 	name := t.Name()
 	t.Cleanup(func() {
@@ -744,9 +700,7 @@ var (
 func runningContainerCountForCommitE2E(t *testing.T, orkerID string) int {
 	t.Helper()
 	out, err := exec.Command("docker", "ps", "--quiet", "--filter", "label=ork.orker="+orkerID).Output()
-	if err != nil {
-		t.Fatalf("docker ps: %v", err)
-	}
+	must.OKf(t, err, "docker ps")
 	return len(strings.Fields(string(out)))
 }
 
@@ -785,9 +739,7 @@ func newRawS3ClientForCommitE2E(t *testing.T, cfg artifacts.Config) *s3.Client {
 		awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3SessionToken)),
 	)
-	if err != nil {
-		t.Fatalf("load aws config: %v", err)
-	}
+	must.OKf(t, err, "load aws config")
 	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if cfg.S3Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.S3Endpoint)

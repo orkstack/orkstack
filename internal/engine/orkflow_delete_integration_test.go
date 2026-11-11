@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func applyDeletionTestOrkflow(
@@ -29,9 +31,7 @@ func applyDeletionTestOrkflow(
 	response, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: helloYAMLNamed(t, name),
 	}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow(%s): %v", name, err)
-	}
+	must.OKf(t, err, "ApplyOrkflow(%s)", name)
 	return response.Msg.GetOrkflow()
 }
 
@@ -67,9 +67,7 @@ func waitForDeletionBlocker(
 			OrkflowName: orkflowName,
 			Limit:       engine.DefaultRunPageSize,
 		})
-		if err != nil {
-			t.Fatalf("TemporalRunReader.ListRuns: %v", err)
-		}
+		must.OKf(t, err, "TemporalRunReader.ListRuns")
 		for _, run := range listed {
 			if isNonTerminalRun(run, runID) {
 				return

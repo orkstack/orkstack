@@ -9,6 +9,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // readScriptedCommitStore is a memory commit store whose Get answers come from a
@@ -89,14 +91,10 @@ func newAdoptHarness(t *testing.T) *adoptHarness {
 func (h *adoptHarness) replant(t *testing.T, edit func(*orkstackv1.ActivityCommit)) {
 	t.Helper()
 	record, err := h.store.MemoryCommitStore.Get(context.Background(), h.in.GetCommitUri())
-	if err != nil {
-		t.Fatalf("read the seeded commit: %v", err)
-	}
+	must.OKf(t, err, "read the seeded commit")
 	edit(record.Commit)
 	document, err := artifacts.MarshalCommit(record.Commit)
-	if err != nil {
-		t.Fatalf("marshal the edited commit: %v", err)
-	}
+	must.OKf(t, err, "marshal the edited commit")
 	h.store.PutRaw(h.in.GetCommitUri(), document)
 }
 
@@ -190,9 +188,7 @@ func TestExecute_AnUndecodableCommitIsReadOnceMore(t *testing.T) {
 		h.store.script = append(h.store.script, undecodable)
 
 		result, err := h.d.Execute(context.Background(), h.in)
-		if err != nil {
-			t.Fatalf("Execute: %v", err)
-		}
+		must.OKf(t, err, "Execute")
 		if !result.GetCommitAdopted() || string(result.GetValuesJson()) != string(h.seeded.GetValuesJson()) {
 			t.Fatalf("result = %v, want the committed result adopted", result)
 		}

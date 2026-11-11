@@ -25,7 +25,7 @@
 	import { defaultsForInputs, inputSpecs, parseInputObject, planCli, submitCli } from '#lib/authoring.ts';
 	import { parseAssumeFailed, parseAssumedOutputs } from '#lib/plan.ts';
 	import AwaitCallbacks from './AwaitCallbacks.svelte';
-	import CliEquivalent from './CliEquivalent.svelte';
+	import CliPopover, { type CliCommand } from './CliPopover.svelte';
 	import DeclaredInputs from './DeclaredInputs.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 	import HoldBanner from './HoldBanner.svelte';
@@ -34,7 +34,7 @@
 	import { PayloadSchema } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { NamespaceHold } from '#lib/gen/orkstack/v1/namespace_pb.ts';
 	import type { Orkflow } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
-	import { namespaceLabel } from '#lib/namespace.ts';
+	import { namespaceLabel, releaseHoldCli } from '#lib/namespace.ts';
 	import type { OrkflowVersion, PlanRunResponse } from '#lib/gen/orkstack/v1/orkflow_service_pb.ts';
 import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	import type { Payload } from '#lib/gen/orkstack/v1/common_pb.ts';
@@ -298,6 +298,13 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 				})
 			: ''
 	);
+	// The panel's one terminal icon (ui/DESIGN.md, the Shell Icon Rule): every
+	// command it can show, each carrying the form's current values.
+	const cliCommands = $derived<CliCommand[]>([
+		...(cli ? [{ label: 'Submit this run', command: cli }] : []),
+		...(planCommand ? [{ label: 'Plan this run', command: planCommand }] : []),
+		...(hold ? [{ label: 'Release the hold', command: releaseHoldCli(namespaceLabel(namespace)) }] : [])
+	]);
 
 	async function runPlan() {
 		planError = '';
@@ -620,7 +627,7 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 	{/if}
 
 	{#if hold}
-		<HoldBanner namespace={namespaceLabel(namespace)} {hold} testid="submit-hold-banner" cli />
+		<HoldBanner namespace={namespaceLabel(namespace)} {hold} testid="submit-hold-banner" />
 	{/if}
 
 	<div class="flex flex-wrap items-center justify-between gap-3">
@@ -653,18 +660,16 @@ import type { AwaitCallback } from '#lib/gen/orkstack/v1/run_service_pb.ts';
 				{submitting ? 'Submitting…' : 'Submit run'}
 			</button>
 		</div>
-		{#if cli}
-			<div class="flex items-center gap-2">
-				<CliEquivalent command={cli} testid="run-submit-cli" label="CLI equivalent of this submission" />
-				{#if planCommand}
-					<CliEquivalent command={planCommand} testid="run-submit-plan-cli" label="CLI equivalent of this plan" />
-				{/if}
-			</div>
-		{:else}
-			<span data-testid="run-submit-cli-unavailable" class="text-xs text-ink-secondary">
-				Fix the input JSON to export a CLI command.
-			</span>
-		{/if}
+		<div class="flex items-center gap-2">
+			{#if !cli}
+				<span data-testid="run-submit-cli-unavailable" class="text-xs text-ink-secondary">
+					Fix the input JSON to list its submit and plan commands.
+				</span>
+			{/if}
+			{#if cliCommands.length > 0}
+				<CliPopover testid="run-submit-cli" title="Command line: this submission" commands={cliCommands} />
+			{/if}
+		</div>
 	</div>
 </form>
 {/if}

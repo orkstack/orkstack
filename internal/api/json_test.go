@@ -1,8 +1,10 @@
 package api_test
 
 import (
-	"encoding/json"
-	"fmt"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -12,6 +14,9 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------------------
@@ -26,9 +31,7 @@ func TestMarshalJSON_WritesStatusWithoutItsEnumPrefix(t *testing.T) {
 	}
 
 	encoded, err := api.MarshalJSON(run)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	var decoded struct {
 		ID     string `json:"id"`
 		Status string `json:"status"`
@@ -56,9 +59,7 @@ func TestMarshalJSON_WritesEventTypeAndStatusWithoutPrefixes(t *testing.T) {
 	}
 
 	encoded, err := api.MarshalJSON(event)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	var decoded struct {
 		RunID    string `json:"runId"`
 		Sequence string `json:"sequence"`
@@ -92,9 +93,7 @@ func TestMarshalJSON_StripsPrefixesInNestedMessagesAndLists(t *testing.T) {
 	}
 
 	encoded, err := api.MarshalJSON(run)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	var decoded struct {
 		Status   string `json:"status"`
 		TaskRuns []struct {
@@ -127,9 +126,7 @@ func TestMarshalJSON_LeavesUserPayloadStringsAlone(t *testing.T) {
 		"type":   "EVENT_TYPE_RUN_FAILED",
 		"note":   "a <b> & c",
 	})
-	if err != nil {
-		t.Fatalf("build struct: %v", err)
-	}
+	must.OKf(t, err, "build struct")
 	run := &orkstackv1.Run{
 		Id:     "ork-1",
 		Status: orkstackv1.Status_STATUS_SUCCEEDED,
@@ -137,9 +134,7 @@ func TestMarshalJSON_LeavesUserPayloadStringsAlone(t *testing.T) {
 	}
 
 	encoded, err := api.MarshalJSON(run)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	var decoded struct {
 		Status string `json:"status"`
 		Output struct {
@@ -183,13 +178,9 @@ func TestMarshalJSON_ChangesNothingButTheEnumValues(t *testing.T) {
 	}
 
 	canonical, err := protojson.Marshal(run)
-	if err != nil {
-		t.Fatalf("protojson.Marshal: %v", err)
-	}
+	must.OKf(t, err, "protojson.Marshal")
 	clean, err := api.MarshalJSON(run)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 
 	if got, want := jsonKeyOrder(t, clean), jsonKeyOrder(t, canonical); got != want {
 		t.Errorf("field order changed:\n got %s\nwant %s", got, want)
@@ -221,9 +212,7 @@ func TestUnmarshalJSON_AcceptsShortAndPrefixedEnumNames(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			run := &orkstackv1.Run{}
-			if err := api.UnmarshalJSON([]byte(tc.body), run); err != nil {
-				t.Fatalf("UnmarshalJSON(%s): %v", tc.body, err)
-			}
+			must.OKf(t, api.UnmarshalJSON([]byte(tc.body), run), "UnmarshalJSON(%s)", tc.body)
 			if run.GetStatus() != tc.want {
 				t.Errorf("status = %v, want %v", run.GetStatus(), tc.want)
 			}
@@ -237,9 +226,7 @@ func TestUnmarshalJSON_AcceptsShortAndPrefixedEnumNames(t *testing.T) {
 func TestUnmarshalJSON_AcceptsShortEventTypes(t *testing.T) {
 	event := &orkstackv1.Event{}
 	body := `{"runId":"ork-1","sequence":"4","type":"RUN_FAILED","status":"FAILED"}`
-	if err := api.UnmarshalJSON([]byte(body), event); err != nil {
-		t.Fatalf("UnmarshalJSON: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(body), event), "UnmarshalJSON")
 	if event.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
 		t.Errorf("type = %v, want EVENT_TYPE_RUN_FAILED", event.GetType())
 	}
@@ -287,9 +274,7 @@ func TestUnmarshalJSON_NamesTextTheDecoderWouldAlter(t *testing.T) {
 
 func TestMarshalJSON_RoundTripsThroughUnmarshalJSON(t *testing.T) {
 	data, err := structpb.NewStruct(map[string]any{"url": "https://example.com", "retries": 3})
-	if err != nil {
-		t.Fatalf("build struct: %v", err)
-	}
+	must.OKf(t, err, "build struct")
 	run := &orkstackv1.Run{
 		Id:          "ork-1",
 		OrkflowName: "hello-ork",
@@ -302,13 +287,9 @@ func TestMarshalJSON_RoundTripsThroughUnmarshalJSON(t *testing.T) {
 	}
 
 	encoded, err := api.MarshalJSON(run)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	decoded := &orkstackv1.Run{}
-	if err := api.UnmarshalJSON(encoded, decoded); err != nil {
-		t.Fatalf("UnmarshalJSON: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON(encoded, decoded), "UnmarshalJSON")
 	if !proto.Equal(run, decoded) {
 		t.Errorf("round trip lost data:\n got %v\nwant %v", decoded, run)
 	}
@@ -328,9 +309,7 @@ func TestMarshalJSON_LeavesMapKeysAndValuesAlone(t *testing.T) {
 	}
 
 	encoded, err := api.MarshalJSON(taskRun)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	var decoded struct {
 		Status    string `json:"status"`
 		Artifacts []struct {
@@ -355,46 +334,23 @@ func TestMarshalJSON_LeavesMapKeysAndValuesAlone(t *testing.T) {
 // jsonKeyOrder renders every object key, in document order, as a flat string.
 func jsonKeyOrder(t *testing.T, encoded []byte) string {
 	t.Helper()
-	decoder := json.NewDecoder(strings.NewReader(string(encoded)))
+	decoder := jsontext.NewDecoder(strings.NewReader(string(encoded)))
 	var keys []string
-	var walk func() error
-	walk = func() error {
-		token, err := decoder.Token()
+	for {
+		token, err := decoder.ReadToken()
+		if errors.Is(err, io.EOF) {
+			break
+		}
 		if err != nil {
-			return err
+			t.Fatalf("scan json keys: %v", err)
 		}
-		delim, ok := token.(json.Delim)
-		if !ok {
-			return nil
-		}
-		switch delim {
-		case '{':
-			for decoder.More() {
-				key, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				name, ok := key.(string)
-				if !ok {
-					return fmt.Errorf("object key %v is not a string", key)
-				}
-				keys = append(keys, name)
-				if err := walk(); err != nil {
-					return err
-				}
-			}
-		case '[':
-			for decoder.More() {
-				if err := walk(); err != nil {
-					return err
-				}
+		// A string token whose parent is an object and that sits at an odd
+		// position within it is a key.
+		if token.Kind() == '"' {
+			if kind, length := decoder.StackIndex(decoder.StackDepth()); kind == '{' && length%2 == 1 {
+				keys = append(keys, token.String())
 			}
 		}
-		_, err = decoder.Token() // closing delimiter
-		return err
-	}
-	if err := walk(); err != nil {
-		t.Fatalf("scan json keys: %v", err)
 	}
 	return strings.Join(keys, ",")
 }
@@ -405,7 +361,7 @@ func compactJSON(t *testing.T, encoded []byte) string {
 	if err := json.Unmarshal(encoded, &value); err != nil {
 		t.Fatalf("compact: %v", err)
 	}
-	out, err := json.Marshal(value)
+	out, err := stablejson.Marshal(value)
 	if err != nil {
 		t.Fatalf("compact: %v", err)
 	}

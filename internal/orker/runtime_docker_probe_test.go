@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // probeBudget is the per-attempt budget a scenario gives a bind probe that is
@@ -26,13 +28,9 @@ func (c *countingDocker) runs() int {
 	if errors.Is(err, os.ErrNotExist) {
 		return 0
 	}
-	if err != nil {
-		c.t.Fatal(err)
-	}
+	must.OK(c.t, err)
 	n, err := strconv.Atoi(strings.TrimSpace(string(raw)))
-	if err != nil {
-		c.t.Fatalf("the stand-in's run counter %q: %v", raw, err)
-	}
+	must.OKf(c.t, err, "the stand-in's run counter %q", raw)
 	return n
 }
 
@@ -57,15 +55,11 @@ func waitForFile(t *testing.T, path string) {
 func probeSpecUnder(t *testing.T, root string) ContainerSpec {
 	t.Helper()
 	ws, err := NewWorkspace(filepath.Join(root, "ork-bindprobe-test"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	mustWrite(t, filepath.Join(ws.Input, bootProbeNonceFile), "host-nonce")
 	d := &OCIDispatcher{Policy: DefaultSecurityPolicy()}
 	spec, err := d.bootProbeSpec(ws, "container-nonce")
-	if err != nil {
-		t.Fatalf("bootProbeSpec: %v", err)
-	}
+	must.OKf(t, err, "bootProbeSpec")
 	return spec
 }
 
@@ -183,9 +177,7 @@ func TestDockerRuntime_RunBootProbeClassifiesTheRun(t *testing.T) {
 			root := t.TempDir()
 			if tt.rootName != "" {
 				root = filepath.Join(root, tt.rootName)
-				if err := os.Mkdir(root, 0o755); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Mkdir(root, 0o755))
 			}
 
 			run, err := runtime.RunBootProbe(context.Background(), probeSpecUnder(t, root))

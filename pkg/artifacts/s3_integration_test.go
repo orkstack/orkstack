@@ -942,3 +942,12 @@ func recordProofLines(t *testing.T, file string, lines []string) {
 	t.Helper()
 	proof.Write(t, "artifacts", file, []byte(strings.Join(lines, "\n")+"\n"))
 }
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}

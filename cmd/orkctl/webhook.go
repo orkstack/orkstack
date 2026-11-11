@@ -26,11 +26,11 @@ type webhookListEnvelope struct {
 func newWebhookCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "webhook",
-		Short: "Register and inspect run-event callbacks",
+		Short: "Create and inspect run-event callbacks",
 		Long: "A webhook receives a signed POST when a run or one of its tasks changes\n" +
 			"state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,\n" +
 			"RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,\n" +
-			"TASK_RESOLVED, TASK_SUCCEEDED, TASK_FAILED.\n\n" +
+			"TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED.\n\n" +
 			"Omitting --event means every run transition; task events are opt-in by\n" +
 			"name. Task events are best-effort hints with a short retry budget: a\n" +
 			"subscriber that must not miss one reconciles with GetRun.\n\n" +
@@ -40,7 +40,7 @@ func newWebhookCommand(g *globalFlags) *cobra.Command {
 			"shows one, `redeliver` sends one again by hand.",
 	}
 	cmd.AddCommand(
-		newWebhookRegisterCommand(g),
+		newWebhookCreateCommand(g),
 		newWebhookListCommand(g),
 		newWebhookUpdateCommand(g),
 		newWebhookDeleteCommand(g),
@@ -51,7 +51,7 @@ func newWebhookCommand(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
+func newWebhookCreateCommand(g *globalFlags) *cobra.Command {
 	var (
 		events      []string
 		secret      string
@@ -60,9 +60,9 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 		name        string
 	)
 	cmd := &cobra.Command{
-		Use:   "register <url>",
-		Short: "Register a callback URL for run events",
-		Long: "Register a callback URL. Repeat --event to select transitions;\n" +
+		Use:   "create <url>",
+		Short: "Create a webhook: a callback URL for run events",
+		Long: "Create a webhook that calls a URL. Repeat --event to select transitions;\n" +
 			"omitting it subscribes to every run transition. Task events are opt-in\n" +
 			"and are best-effort hints: reconcile with GetRun if one must not be missed.\n\n" +
 			"Scope defaults to every namespace; only an explicit -n narrows it.\n" +
@@ -73,8 +73,8 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			"by which an automation document addresses it; it needs an explicit -n.\n\n" +
 			"The signing secret is printed once, here. Deliveries carry it as\n" +
 			"an HMAC-SHA256 of the request body in the " + webhooks.SignatureHeader + " header.",
-		Example: "  orkctl webhook register https://example.test/hooks --event RUN_SUCCEEDED --event RUN_FAILED\n" +
-			"  orkctl webhook register https://example.test/load -n analytics --orkflow nightly-etl \\\n" +
+		Example: "  orkctl webhook create https://example.test/hooks --event RUN_SUCCEEDED --event RUN_FAILED\n" +
+			"  orkctl webhook create https://example.test/load -n analytics --orkflow nightly-etl \\\n" +
 			"      --task extract --event TASK_SUCCEEDED",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -127,7 +127,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeGoJSON(cmd.OutOrStdout(), webhookEnvelope{Webhook: hook})
 			}
-			return renderWebhookRegistered(cmd.OutOrStdout(), hook)
+			return renderWebhookCreated(cmd.OutOrStdout(), hook)
 		},
 	}
 	cmd.Flags().StringArrayVar(&events, "event", nil,
@@ -136,7 +136,7 @@ func newWebhookRegisterCommand(g *globalFlags) *cobra.Command {
 		"signing secret to use instead of a generated one")
 	cmd.Flags().StringVar(&orkflowName, "orkflow", "",
 		"narrow to runs of this orkflow (exact name; empty means every orkflow)")
-	cmd.Flags().StringVar(&taskID, "task", "",
+	cmd.Flags().StringVarP(&taskID, "task", "t", "",
 		"narrow task events to this task (exact id; needs a TASK_* --event)")
 	cmd.Flags().StringVar(&name, "name", "",
 		"handle an automation document addresses this subscription by (needs -n)")
@@ -163,7 +163,7 @@ func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
 			"--clear-events empties it (every run transition), an explicit -n sets the\n" +
 			"namespace scope and --deployment-wide clears it, --orkflow \"\" and\n" +
 			"--task \"\" clear those, --name \"\" makes the subscription unnamed. A\n" +
-			"name needs a namespace scope. Rotating a secret is delete then register.",
+			"name needs a namespace scope. Rotating a secret is delete then create.",
 		Example: "  orkctl webhook update wh-9f2e07c1a4b3d58e --name etl-loader\n" +
 			"  orkctl webhook update wh-9f2e07c1a4b3d58e --url https://hooks.example.test/v2",
 		Args: cobra.ExactArgs(1),
@@ -221,7 +221,7 @@ func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
 			if clearEvents {
 				req.Events = nil
 			}
-			// Only an explicit -n sets the scope, as on register: a saved or
+			// Only an explicit -n sets the scope, as on create: a saved or
 			// environment namespace must never re-scope a subscription.
 			if cmd.Flags().Changed("namespace") {
 				req.Namespace = g.namespace
@@ -270,7 +270,7 @@ func newWebhookUpdateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().BoolVar(&clearEvents, "clear-events", false, "empty the event list: every run transition")
 	cmd.Flags().BoolVar(&deploymentWide, "deployment-wide", false, "clear the namespace scope")
 	cmd.Flags().StringVar(&orkflowName, "orkflow", "", "narrow to runs of this orkflow (\"\" clears it)")
-	cmd.Flags().StringVar(&taskID, "task", "", "narrow task events to this task (\"\" clears it)")
+	cmd.Flags().StringVarP(&taskID, "task", "t", "", "narrow task events to this task (\"\" clears it)")
 	return cmd
 }
 
@@ -294,7 +294,7 @@ func newWebhookListCommand(g *globalFlags) *cobra.Command {
 	var filterTexts *[]string
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List registered webhooks",
+		Short: "List webhooks",
 		Long: "list shows the deployment's webhook subscriptions, narrowed by --filter\n" +
 			"(--filter namespace= keeps the deployment-wide ones).",
 		Args: cobra.NoArgs,
@@ -331,7 +331,7 @@ func newWebhookListCommand(g *globalFlags) *cobra.Command {
 func newWebhookDeleteCommand(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "delete <id>",
-		Short: "Remove a registered webhook",
+		Short: "Delete a webhook",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
@@ -371,8 +371,8 @@ func webhookFromProto(hook *orkstackv1.Webhook) webhooks.Webhook {
 	}
 }
 
-func renderWebhookRegistered(out io.Writer, hook webhooks.Webhook) error {
-	fmt.Fprintf(out, "Registered webhook %s\n", hook.ID)
+func renderWebhookCreated(out io.Writer, hook webhooks.Webhook) error {
+	fmt.Fprintf(out, "Created webhook %s\n", hook.ID)
 	table := newTable(out)
 	if hook.Name != "" {
 		fmt.Fprintf(table, "NAME\t%s\n", hook.Name)

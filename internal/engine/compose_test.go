@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,8 +25,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // memComposeStore is memValues with the Put a composed task's values need.
@@ -126,7 +128,7 @@ func newComposeHarness(t *testing.T, behavior func(*composeHarness, *orkstackv1.
 	h.env.RegisterActivityWithOptions(engine.NewEachActivities(h.values).CountEachItems,
 		activity.RegisterOptions{Name: engine.ActivityCountEachItems})
 	compose := engine.NewComposeActivities(h.values)
-	h.env.RegisterActivityWithOptions(func(ctx context.Context, req engine.ComposeRenderRequest) (json.RawMessage, error) {
+	h.env.RegisterActivityWithOptions(func(ctx context.Context, req engine.ComposeRenderRequest) (stablejson.RawJSON, error) {
 		h.mu.Lock()
 		h.renders = append(h.renders, req)
 		h.mu.Unlock()
@@ -219,13 +221,9 @@ func (h *composeHarness) snapshotAt(t *testing.T, eventType orkstackv1.EventType
 	for _, p := range h.published {
 		if p.event.GetType() == eventType && p.event.GetTaskId() == taskID {
 			data, err := h.snapshots.ReadSnapshot(context.Background(), p.snapshotURI)
-			if err != nil {
-				t.Fatalf("read snapshot %s: %v", p.snapshotURI, err)
-			}
+			must.OKf(t, err, "read snapshot %s", p.snapshotURI)
 			run := &orkstackv1.Run{}
-			if err := proto.Unmarshal(data, run); err != nil {
-				t.Fatalf("decode snapshot: %v", err)
-			}
+			must.OKf(t, proto.Unmarshal(data, run), "decode snapshot")
 			return run
 		}
 	}
@@ -299,9 +297,7 @@ func composedFixture(t *testing.T, childDoc string) (*orkstackv1.Orkflow, engine
 	childPlan := defaultPlan()
 	childPlan.CommitRoot = "mem://commits"
 	cp, err := engine.NewChildRunPlan(child, childPlan, true, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cp.RunID = "ork-1758790021000000000-4081623940183294"
 	plan := defaultPlan()
 	plan.CommitRoot = "mem://commits"
@@ -334,9 +330,7 @@ func TestRunWorkflow_ComposedTaskStartsOneChildRun(t *testing.T) {
 		return childOutputs(t, map[string]any{"digest": "sha256:abc", "url": "https://r/abc"}), nil
 	})
 	h.run("ork-parent", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	starts := h.startedChildren()
 	if len(starts) != 1 {
@@ -357,8 +351,8 @@ func TestRunWorkflow_ComposedTaskStartsOneChildRun(t *testing.T) {
 	}
 	wantPlan := cp.Plan
 	wantPlan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_PARENT_RUN", ID: "ork-parent"}
-	gotJSON, _ := json.Marshal(got.plan)
-	wantJSON, _ := json.Marshal(wantPlan)
+	gotJSON, _ := stablejson.Marshal(got.plan)
+	wantJSON, _ := stablejson.Marshal(wantPlan)
 	if !bytes.Equal(gotJSON, wantJSON) {
 		t.Fatalf("child plan:\n got %s\nwant %s", gotJSON, wantJSON)
 	}
@@ -439,9 +433,7 @@ func TestRunWorkflow_ChildInputIsRenderedFromFullUpstreamValues(t *testing.T) {
 		return childOutputs(t, map[string]any{"digest": "d", "url": "u"}), nil
 	})
 	h.run("ork-parent", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	starts := h.startedChildren()
 	if len(starts) != 1 || starts[0].input.GetData().AsMap()["image"] != big {
 		t.Fatalf("the child did not receive the full 10 KiB value")
@@ -491,9 +483,7 @@ func TestRunWorkflow_ChildWithoutOutputsGivesEmptyValues(t *testing.T) {
 		return childOutputs(t, map[string]any{"sign": map[string]any{"value": "x"}}), nil
 	})
 	h.run("ork-parent", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if len(h.stores) != 1 || string(h.stores[0].Values) != `{}` {
 		t.Fatalf("stored %+v; want {}", h.stores)
 	}
@@ -642,9 +632,7 @@ func TestRunWorkflow_SkippedComposedTaskStartsNoChild(t *testing.T) {
 		return childOutputs(t, nil), nil
 	})
 	h.run("ork-parent", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	run, _ := h.store.Get("ork-parent")
 	row := taskRunOfRun(run, "release")
 	if row.GetStatus() != orkstackv1.Status_STATUS_SKIPPED || row.GetChild().GetRunId() != "" || row.GetScheduledAt() != nil {
@@ -663,7 +651,7 @@ func TestRunWorkflow_ComposedTaskWithoutAPlannedChildIsInvalidComposition(t *tes
 		"nil entry": func(plan *engine.RunPlan) { plan.Children = nil },
 		"undecodable definition": func(plan *engine.RunPlan) {
 			cp := *plan.Children["release"]
-			cp.Orkflow = json.RawMessage(`{"tasks":"not a list"}`)
+			cp.Orkflow = stablejson.RawJSON(`{"tasks":"not a list"}`)
 			plan.Children = map[string]*engine.ChildRunPlan{"release": &cp}
 		},
 		"digest mismatch": func(plan *engine.RunPlan) {
@@ -719,9 +707,7 @@ func TestRunWorkflow_DeclaredOutputsBecomeRunOutput(t *testing.T) {
 	h := newComposeHarness(t, defaultBehavior)
 	plan := defaultPlan()
 	h.run("ork-outputs", compile(t, outputsDocument), payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	run := mustFinalRun(t, h.store, "ork-outputs")
 	got := run.GetOutput().GetData().AsMap()
 	if len(got) != 3 || got["digest"] != "img@sign" || got["image"] != "img" || got["const"] != "fixed" {
@@ -777,9 +763,7 @@ func TestRunWorkflow_NoOutputsKeepsEndTaskValues(t *testing.T) {
 	doc := strings.Replace(outputsDocument,
 		"outputs:\n  digest: '{{ .tasks.sign.output.value }}'\n  image: '{{ .inputs.image }}'\n  const: fixed\n", "", 1)
 	h.run("ork-end-tasks", compile(t, doc), payload(t, nil), defaultPlan())
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	run := mustFinalRun(t, h.store, "ork-end-tasks")
 	got := run.GetOutput().GetData().AsMap()
 	end, _ := got["end"].(map[string]any)
@@ -796,9 +780,7 @@ func TestRunWorkflow_ChildRunReturnsACompactResult(t *testing.T) {
 	plan := defaultPlan()
 	plan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_PARENT_RUN", ID: "ork-parent"}
 	h.run("ork-child", compile(t, outputsDocument), payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	run := mustWorkflowResult(t, h.env)
 	if len(run.GetTaskRuns()) != 0 || run.GetInput() != nil || run.GetCreatedAt() != nil {
 		t.Fatalf("a child result carried more than it should: %v", run)
@@ -833,9 +815,7 @@ func TestRunWorkflow_ChildResultCarriesOnlyDeclaredOutputs(t *testing.T) {
 			plan := defaultPlan()
 			plan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_PARENT_RUN", ID: "ork-parent"}
 			h.run("ork-child", compile(t, c.doc), payload(t, nil), plan)
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatalf("workflow error: %v", err)
-			}
+			must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 			run := mustWorkflowResult(t, h.env)
 			if got := run.GetOutput() != nil; got != c.wantOutput {
 				t.Fatalf("child result output present = %v, want %v: %v", got, c.wantOutput, run.GetOutput())
@@ -865,14 +845,10 @@ func TestRunWorkflow_TopLevelResultIsCompact(t *testing.T) {
 	}
 	h := newComposeHarness(t, defaultBehavior)
 	h.run("ork-top", compile(t, doc.String()), payload(t, nil), defaultPlan())
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	run := mustWorkflowResult(t, h.env)
 	payload, err := converter.GetDefaultDataConverter().ToPayload(run)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if size := len(payload.GetData()); size >= 2048 {
 		t.Fatalf("the top-level result is %d bytes for 1,000 tasks, want under 2 KiB", size)
 	}
@@ -896,9 +872,7 @@ func TestRunWorkflow_RealChildInTheTestEnvironment(t *testing.T) {
 	h.realChild()
 	parent, plan, _ := composedFixture(t, composedChildDocument)
 	h.run("ork-parent", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	cp := plan.Children["release"]
 	child, ok := h.store.Get(cp.RunID)
 	if !ok {
@@ -928,15 +902,13 @@ func TestComposeActivities_RenderComposedValues(t *testing.T) {
 	a := engine.NewComposeActivities(store)
 	req := engine.ComposeRenderRequest{
 		Label: `task "release": with`, CodePrefix: "CHILD_INPUT",
-		Templates: json.RawMessage(`{"image":"{{ .tasks.build.output.value }}","n":"{{ .tasks.build.output.n }}","k":7}`),
-		Inputs:    json.RawMessage(`{}`),
+		Templates: stablejson.RawJSON(`{"image":"{{ .tasks.build.output.value }}","n":"{{ .tasks.build.output.n }}","k":7}`),
+		Inputs:    stablejson.RawJSON(`{}`),
 		Upstream:  []engine.ComposeUpstream{{TaskID: "build", URI: ref.GetUri(), SHA256: ref.GetSha256()}},
 		MaxBytes:  1024,
 	}
 	out, err := a.RenderComposedValues(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if string(out) != `{"image":"sha256:x","k":7,"n":"12345678901234567890"}` {
 		t.Fatalf("rendered %s", out)
 	}
@@ -963,14 +935,14 @@ func TestComposeActivities_RenderComposedValues(t *testing.T) {
 	}
 	tooLarge := req
 	tooLarge.Upstream = nil
-	tooLarge.Templates = json.RawMessage(`{"x":"` + strings.Repeat("z", 100) + `"}`)
+	tooLarge.Templates = stablejson.RawJSON(`{"x":"` + strings.Repeat("z", 100) + `"}`)
 	tooLarge.MaxBytes = 50
 	tooLarge.CodePrefix = "OUTPUTS"
 	if code, _ := codeOf(func() error { _, err := a.RenderComposedValues(context.Background(), tooLarge); return err }()); code != "OUTPUTS_TOO_LARGE" {
 		t.Fatalf("over-bound result = %q", code)
 	}
 	failing := req
-	failing.Templates = json.RawMessage(`{"x":"{{ .tasks.build.output.nope }}"}`)
+	failing.Templates = stablejson.RawJSON(`{"x":"{{ .tasks.build.output.nope }}"}`)
 	if code, _ := codeOf(func() error { _, err := a.RenderComposedValues(context.Background(), failing); return err }()); code != "CHILD_INPUT_RENDER_FAILED" {
 		t.Fatalf("render failure = %q", code)
 	}
@@ -989,11 +961,9 @@ func TestComposeActivities_RenderComposedValues(t *testing.T) {
 func TestComposeActivities_StoreComposedValues(t *testing.T) {
 	store := &memComposeStore{memValues: &memValues{objects: map[string][]byte{}}}
 	a := engine.NewComposeActivities(store)
-	req := engine.ComposeStoreRequest{Orkflow: "parent", RunID: "ork-p", TaskID: "release", Values: json.RawMessage(`{"digest":"d"}`)}
+	req := engine.ComposeStoreRequest{Orkflow: "parent", RunID: "ork-p", TaskID: "release", Values: stablejson.RawJSON(`{"digest":"d"}`)}
 	ref, err := a.StoreComposedValues(context.Background(), req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	sum := sha256.Sum256([]byte(`{"digest":"d"}`))
 	if ref.GetSha256() != hex.EncodeToString(sum[:]) || ref.GetName() != "values.json" || ref.GetContentType() != "application/json" ||
 		ref.GetSizeBytes() != int64(len(`{"digest":"d"}`)) {
@@ -1014,9 +984,7 @@ func TestChildRunPlan_RoundTrip(t *testing.T) {
 	child := compile(t, composedChildDocument)
 	child.DefinitionDigest = childDigest
 	cp, err := engine.NewChildRunPlan(child, defaultPlan(), true, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if cp.RunID != "" || !cp.NamespaceIndexed || cp.OriginIndexed {
 		t.Fatalf("plan = %+v", cp)
 	}
@@ -1024,9 +992,7 @@ func TestChildRunPlan_RoundTrip(t *testing.T) {
 		t.Fatalf("not compact: %s", cp.Orkflow)
 	}
 	got, err := cp.Definition()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := proto.Clone(child).(*orkstackv1.Orkflow)
 	want.SourceYaml = ""
 	if got.GetSourceYaml() != "" || !proto.Equal(got, want) {
@@ -1042,7 +1008,7 @@ func TestChildRunPlan_RoundTrip(t *testing.T) {
 // matching.
 func TestRunPlan_EncodesIdenticallyWithoutChildren(t *testing.T) {
 	plan := engine.RunPlan{Namespace: "default", Routes: map[string]string{"main": "ork-tasks"}, CommitRoot: "s3://b"}
-	got, err := json.Marshal(plan)
+	got, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1202,9 +1168,7 @@ func TestPoolResolverPlan_SkipsComposedTasks(t *testing.T) {
 	t.Run("a composed-only definition plans with empty routes and no probe", func(t *testing.T) {
 		resolver := &engine.PoolResolver{Probe: failingProbe{t}}
 		planned, plan, err := resolver.Plan(context.Background(), nil, compile(t, composedOnlyDocument), false)
-		if err != nil {
-			t.Fatalf("Plan: %v", err)
-		}
+		must.OKf(t, err, "Plan")
 		if len(plan.Routes) != 0 || planned.GetTasks()[0].GetPool() != "" {
 			t.Fatalf("routes = %v, pool %q; want none", plan.Routes, planned.GetTasks()[0].GetPool())
 		}
@@ -1212,9 +1176,7 @@ func TestPoolResolverPlan_SkipsComposedTasks(t *testing.T) {
 	t.Run("a mixed definition routes only the container task", func(t *testing.T) {
 		resolver := &engine.PoolResolver{Probe: everyPoolLive{}}
 		planned, plan, err := resolver.Plan(context.Background(), nil, compile(t, mixedComposedDocument), false)
-		if err != nil {
-			t.Fatalf("Plan: %v", err)
-		}
+		must.OKf(t, err, "Plan")
 		if len(plan.Routes) != 1 || plan.Routes["gpu"] == "" || planned.GetTasks()[1].GetPool() != "" {
 			t.Fatalf("routes = %v, composed pool %q", plan.Routes, planned.GetTasks()[1].GetPool())
 		}
@@ -1224,9 +1186,7 @@ func TestPoolResolverPlan_SkipsComposedTasks(t *testing.T) {
 func TestCheckAllowedPools_SkipsComposedTasks(t *testing.T) {
 	ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"batch"}}
 	resolver := &engine.PoolResolver{}
-	if err := resolver.CheckAllowedPools(ns, compile(t, composedOnlyDocument)); err != nil {
-		t.Fatalf("CheckAllowedPools refused a composed-only orkflow: %v", err)
-	}
+	must.OKf(t, resolver.CheckAllowedPools(ns, compile(t, composedOnlyDocument)), "CheckAllowedPools refused a composed-only orkflow")
 }
 
 const simulateComposedDocument = `
@@ -1283,9 +1243,7 @@ func TestSimulate_AgreesWithTheInterpreterOverAComposedTask(t *testing.T) {
 				return childOutputs(t, map[string]any{"digest": digest, "url": "u"}), nil
 			})
 			h.run("ork-plan-composed", wf, payload(t, nil), runPlan)
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatalf("workflow error: %v", err)
-			}
+			must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 			run, _ := h.store.Get("ork-plan-composed")
 			for _, task := range plan.GetTasks() {
 				want := orkstackv1.Status_STATUS_SUCCEEDED

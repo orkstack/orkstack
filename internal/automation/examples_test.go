@@ -10,6 +10,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestParse_TheShippedAutomationExample: the automation document under
@@ -17,9 +19,7 @@ import (
 // and names only Orkflows that are shipped examples.
 func TestParse_TheShippedAutomationExample(t *testing.T) {
 	source, err := os.ReadFile("../../examples/automation/examples.ork.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	doc, issues := automation.Parse(source)
 	if len(issues) != 0 {
 		t.Fatalf("Parse issues = %v, want none", issues)
@@ -61,9 +61,7 @@ func TestParse_TheShippedAutomationExample(t *testing.T) {
 	}
 	for _, path := range paths {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatalf("compile %s: %v", path, err)
-		}
+		must.OKf(t, err, "compile %s", path)
 		shipped[wf.GetName()] = true
 	}
 	for name, s := range doc.Schedules {

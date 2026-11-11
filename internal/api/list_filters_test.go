@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // orkflowYAML is a minimal orkflow named name, labelled team=team.
@@ -39,9 +41,7 @@ func listOrkflowsPage(t *testing.T, svc *api.Service, size int32, token string, 
 	resp, err := svc.ListOrkflows(context.Background(), connect.NewRequest(&orkstackv1.ListOrkflowsRequest{
 		PageSize: size, PageToken: token, Filters: filters(t, texts...),
 	}))
-	if err != nil {
-		t.Fatalf("ListOrkflows(size=%d filters=%q): %v", size, texts, err)
-	}
+	must.OKf(t, err, "ListOrkflows(size=%d filters=%q)", size, texts)
 	return resp.Msg
 }
 
@@ -141,9 +141,7 @@ func TestListWebhooks_FiltersAndEmptyNamespaceSelectsDeploymentWide(t *testing.T
 	urls := func(texts ...string) string {
 		t.Helper()
 		resp, err := f.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{Filters: filters(t, texts...)}))
-		if err != nil {
-			t.Fatalf("ListWebhooks(%q): %v", texts, err)
-		}
+		must.OKf(t, err, "ListWebhooks(%q)", texts)
 		var out []string
 		for _, hook := range resp.Msg.GetWebhooks() {
 			out = append(out, strings.Split(strings.TrimPrefix(hook.GetUrl(), "https://"), ".")[0])
@@ -187,9 +185,7 @@ func TestListTriggers_FiltersWithinTheNamespace(t *testing.T) {
 		t.Helper()
 		resp, err := f.triggerClient().ListTriggers(ctx, connect.NewRequest(&orkstackv1.ListTriggersRequest{
 			Namespace: namespace, Filters: filters(t, texts...)}))
-		if err != nil {
-			t.Fatalf("ListTriggers(%q): %v", texts, err)
-		}
+		must.OKf(t, err, "ListTriggers(%q)", texts)
 		var out []string
 		for _, trigger := range resp.Msg.GetTriggers() {
 			out = append(out, trigger.GetNamespace()+"/"+trigger.GetName())
@@ -219,9 +215,7 @@ func TestListTriggers_FiltersWithinTheNamespace(t *testing.T) {
 func listSchedules(t *testing.T, h *scheduleHarness, texts ...string) []*orkstackv1.Schedule {
 	t.Helper()
 	resp, err := h.svc.ListSchedules(context.Background(), connect.NewRequest(&orkstackv1.ListSchedulesRequest{Filters: filters(t, texts...)}))
-	if err != nil {
-		t.Fatalf("ListSchedules(%q): %v", texts, err)
-	}
+	must.OKf(t, err, "ListSchedules(%q)", texts)
 	return resp.Msg.GetSchedules()
 }
 
@@ -285,9 +279,7 @@ func TestListPools_Filters(t *testing.T) {
 	pools := func(texts ...string) string {
 		t.Helper()
 		resp, err := svc.ListPools(context.Background(), connect.NewRequest(&orkstackv1.ListPoolsRequest{Filters: filters(t, texts...)}))
-		if err != nil {
-			t.Fatalf("ListPools(%q): %v", texts, err)
-		}
+		must.OKf(t, err, "ListPools(%q)", texts)
 		if resp.Msg.GetDefaultPool() != task.DefaultPool {
 			t.Errorf("default_pool = %q; a filter never narrows it", resp.Msg.GetDefaultPool())
 		}
@@ -328,9 +320,7 @@ func TestListActivities_Filters(t *testing.T) {
 	names := func(texts ...string) string {
 		t.Helper()
 		resp, err := svc.ListActivities(context.Background(), connect.NewRequest(&orkstackv1.ListActivitiesRequest{Filters: filters(t, texts...)}))
-		if err != nil {
-			t.Fatalf("ListActivities(%q): %v", texts, err)
-		}
+		must.OKf(t, err, "ListActivities(%q)", texts)
 		var out []string
 		for _, a := range resp.Msg.GetActivities() {
 			out = append(out, a.GetName())

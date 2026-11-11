@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_TwoNamespacesStayDisjointThroughTheCLI is the end-to-end
@@ -65,9 +67,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 
 	pool := privateTaskPool()
 	taskQueue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map test pool: %v", err)
-	}
+	must.OKf(t, err, "map test pool")
 
 	repoRoot := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
@@ -145,10 +145,10 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 	const orkflowName = "deploy"
 	alphaDoc := writeNamespacedOrkflow(t, orkflowName, pool, "build")
 	bravoDoc := writeNamespacedOrkflow(t, orkflowName, pool, "ship")
-	if stdout, stderr, code = cli("apply", alphaDoc, "-n", alpha); code != 0 {
+	if stdout, stderr, code = cli("orkflow", "create", alphaDoc, "-n", alpha); code != 0 {
 		t.Fatalf("apply into %s exit = %d\nstdout:\n%s\nstderr:\n%s", alpha, code, stdout, stderr)
 	}
-	if stdout, stderr, code = cli("apply", bravoDoc, "-n", bravo); code != 0 {
+	if stdout, stderr, code = cli("orkflow", "create", bravoDoc, "-n", bravo); code != 0 {
 		t.Fatalf("apply into %s exit = %d\nstdout:\n%s\nstderr:\n%s", bravo, code, stdout, stderr)
 	}
 
@@ -251,9 +251,7 @@ func TestIntegration_TwoNamespacesStayDisjointThroughTheCLI(t *testing.T) {
 			alpha, code, stdout, stderr)
 	}
 	saved, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("read the saved config: %v", err)
-	}
+	must.OKf(t, err, "read the saved config")
 	if !strings.Contains(string(saved), alpha) {
 		t.Fatalf("the config file does not name %s:\n%s", alpha, saved)
 	}
@@ -375,9 +373,7 @@ tasks:
       op: exec
       command: ["sh", "-c", "echo %s"]
 `, name, taskID, pool, taskID)
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write orkflow %s: %v", name, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write orkflow %s", name)
 	return path
 }
 

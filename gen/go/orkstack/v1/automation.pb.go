@@ -205,8 +205,8 @@ type OrkflowStoredState int32
 
 const (
 	OrkflowStoredState_ORKFLOW_STORED_STATE_UNSPECIFIED OrkflowStoredState = 0
-	OrkflowStoredState_ORKFLOW_STORED_STATE_NEW         OrkflowStoredState = 1 // not stored: applying stores a version
-	OrkflowStoredState_ORKFLOW_STORED_STATE_IDENTICAL   OrkflowStoredState = 2 // stored with byte-identical source: applying writes nothing
+	OrkflowStoredState_ORKFLOW_STORED_STATE_NEW         OrkflowStoredState = 1 // not stored: creating stores a version
+	OrkflowStoredState_ORKFLOW_STORED_STATE_IDENTICAL   OrkflowStoredState = 2 // stored with byte-identical source: creating writes nothing
 	OrkflowStoredState_ORKFLOW_STORED_STATE_CONFLICTING OrkflowStoredState = 3 // stored with DIFFERENT source: ApplyOrkflow would refuse (AlreadyExists)
 )
 
@@ -781,7 +781,7 @@ type PlanAutomationResponse struct {
 	Issues []*ValidationIssue `protobuf:"bytes,4,rep,name=issues,proto3" json:"issues,omitempty"`
 	// plan_digest is "sha256:<64 lowercase hex>" over the namespace and the
 	// actionable steps (action, kind, name, id, changes) — what a reviewer pins
-	// with `orkctl apply --expect-plan`. It excludes the carried requests, so a
+	// with `orkctl automation apply --expect-plan`. It excludes the carried requests, so a
 	// no-op rewrite of the namespace (a new etag) does not move it; it excludes
 	// UNCHANGED, UNDECLARED and UNMANAGED steps, which write nothing. Defined
 	// even when nothing is actionable ("no changes" is pinnable); empty exactly
@@ -1164,9 +1164,9 @@ func (x *AutomationDocumentReport) GetResults() []*AutomationStepResult {
 	return nil
 }
 
-// ApplyReport is what `orkctl apply --json` prints for any invocation except
-// the one that existed before this contract — a single orkflow file with no
-// new flag — which keeps printing ApplyOrkflowResponse byte for byte.
+// ApplyReport is what `orkctl automation apply --json` prints, and what
+// `orkctl orkflow create --json` prints for any invocation but one file with
+// no flag, which prints ApplyOrkflowResponse.
 type ApplyReport struct {
 	state         protoimpl.MessageState      `protogen:"open.v1"`
 	DryRun        bool                        `protobuf:"varint,1,opt,name=dry_run,json=dryRun,proto3" json:"dry_run,omitempty"`
@@ -1227,7 +1227,7 @@ func (x *ApplyReport) GetAutomation() []*AutomationDocumentReport {
 	return nil
 }
 
-// DisclosedSecret is one entry of the file `orkctl apply --secrets-out PATH`
+// DisclosedSecret is one entry of the file `orkctl automation apply --secrets-out PATH`
 // writes (DisclosedSecrets).
 type DisclosedSecret struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1313,7 +1313,7 @@ func (x *DisclosedSecret) GetInvokeUrl() string {
 	return ""
 }
 
-// DisclosedSecrets is the file `orkctl apply --secrets-out PATH` writes.
+// DisclosedSecrets is the file `orkctl automation apply --secrets-out PATH` writes.
 type DisclosedSecrets struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Secrets       []*DisclosedSecret     `protobuf:"bytes,1,rep,name=secrets,proto3" json:"secrets,omitempty"`

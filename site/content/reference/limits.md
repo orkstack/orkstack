@@ -14,7 +14,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Durable log, per stream, per attempt | 16 MiB | `ORK_LOG_MAX_BYTES` |
 | Live log, per attempt | 16 MiB, then one truncation notice | `ORK_ORKER_LOG_MAX_BYTES` |
 | Serialized completion commit | 4 MiB | `ORK_COMMIT_MAX_BYTES` |
-| One API request, as sent and once decompressed | 1 MiB plus 4 KiB a task of the task ceiling: about 17.4 MB at the default 4,000. It rises with the ceiling, so it never limits how large an Orkflow may be. An apply at the default ceiling is about 4 MB | `ORK_REQUEST_MAX_BYTES`, never under what the ceiling needs |
+| One API request, as sent and once decompressed | 1 MiB plus 4 KiB a task of the task ceiling: about 17.4 MB at the default 4,000. It rises with the ceiling, so it never limits how large an Orkflow may be. Creating an Orkflow at the default ceiling is about 4 MB | `ORK_REQUEST_MAX_BYTES`, never under what the ceiling needs |
 | Request headers | 64 KiB, sent within 10 seconds over HTTP/1.1 | Fixed |
 | Request `Host` names | An IP address, `localhost` and names under it, a name without a dot, and the host the listener's address names. Any other is refused, on the API and the admin listener | `ORK_ALLOWED_HOSTS`; `ORK_ADMIN_ALLOWED_HOSTS` |
 | An idle keep-alive connection to the API | 15 minutes. A live stream is never idle | `ORK_HTTP_IDLE_TIMEOUT` |
@@ -29,11 +29,11 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 | Tasks per Orkflow | 4,000. Above it, the deployment runs unmeasured and the boot warns | `ORK_ORKFLOW_MAX_TASKS` |
 | Fan-out items per Orkflow | 1,000 in total, the sum of every `max_items` | `ORK_EACH_MAX_ITEMS`. Up to 10,000. Above 1,000 needs continuation on |
 | `max_items` of one fan-out | 1 to 10,000 | `each.max_items` on the task |
-| Activities, child runs and pins pending at once, per run | 1,000. Allowed range 16 to 1,800 | `ORK_RUN_MAX_IN_FLIGHT` |
+| Activities, child runs and pins pending at once, per run | 500. Allowed range 16 to 1,800 | `ORK_RUN_MAX_IN_FLIGHT` |
 | Levels of child runs | 4 | `ORK_COMPOSE_MAX_DEPTH`. Can only be lowered |
 | Await deadline | 1 second to 30 days | `timeout_seconds` on the `await:` |
-| Plain tasks in one stage that start together | More than about 4,222 may stop with `RUN_HISTORY_LIMIT` in their first history. Staying under it is not a guarantee | History, continuation and in-flight settings |
-| Chain of plain tasks joined by default | About 1,500, refused at apply | Fixed |
+| Plain tasks in one stage that start together | More than about 4,389 may stop with `RUN_HISTORY_LIMIT` in their first history. Staying under it is not a guarantee | History, continuation and in-flight settings |
+| Chain of plain tasks joined by default | About 1,500, refused at create | Fixed |
 
 ## Run history and saved state
 

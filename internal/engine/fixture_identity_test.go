@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The recorded histories under testdata/history are real Temporal histories,
@@ -57,18 +59,21 @@ func TestScrubHostIdentity(t *testing.T) {
 
 func TestFixtures_CarryNoHostIdentity(t *testing.T) {
 	paths, err := filepath.Glob("testdata/history/*.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(paths) == 0 {
 		t.Fatal("no fixtures under testdata/history")
 	}
+	// The fixtures of the engine's other workflow types sit one directory
+	// down, away from the globs that read every RunWorkflow fixture.
+	others, err := filepath.Glob("testdata/history/*/*.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	paths = append(paths, others...)
 	scrub := os.Getenv("ORK_SCRUB_FIXTURES") == "1"
 	for _, p := range paths {
 		raw, err := os.ReadFile(p)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		scrubbed := scrubHostIdentity(raw)
 		if bytes.Equal(raw, scrubbed) {
 			continue
@@ -77,9 +82,7 @@ func TestFixtures_CarryNoHostIdentity(t *testing.T) {
 			t.Errorf("%s names the host that recorded it; ORK_SCRUB_FIXTURES=1 go test ./internal/engine/ -run TestFixtures_CarryNoHostIdentity scrubs it", p)
 			continue
 		}
-		if err := os.WriteFile(p, scrubbed, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(p, scrubbed, 0o644))
 		t.Logf("scrubbed %s", p)
 	}
 }

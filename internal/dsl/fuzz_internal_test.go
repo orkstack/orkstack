@@ -15,7 +15,9 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // FuzzCheckSecretSource: the hand-written matcher behind a namespace's
@@ -48,9 +50,7 @@ func FuzzCheckSecretSource(f *testing.F) {
 		}
 		err := CheckSecretSource(patterns, source)
 		if len(patterns) == 0 {
-			if err != nil {
-				t.Fatalf("an empty list refused %q: %v", source, err)
-			}
+			must.OKf(t, err, "an empty list refused %q", source)
 			return
 		}
 		scheme, locator, found := strings.Cut(source, ":")
@@ -220,6 +220,7 @@ func FuzzParseCatalog(f *testing.F) {
 		"activities:\n  a: [x]\n", "activities:\n  a: ghcr.io/x/y:1\nextra: 1\n",
 		"activities: {}\n---\nactivities: {}\n", "activities: {}\n---\nactivities: [\n", "activities: {}\n---\n\tx: 1\n", "activities: {}\n---\n",
 		"---\nactivities: {}\n", "activities: {}\n...\n",
+		"activities:\n  shell: !!merge ghcr.io/x/y:1\n", "activities:\n  <<: {shell: ghcr.io/x/y:1}\n", "!!merge activities: {}\n",
 	} {
 		f.Add([]byte(seed))
 	}
@@ -295,7 +296,7 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 		f.Add([]byte(seed.source), seed.iface)
 	}
 	// The key may hold a line break, so the pattern is (?s).
-	declared := regexp.MustCompile(`(?s)^line (\d+): field (.*) not found in type \S+$`)
+	declared := regexp.MustCompile(`(?s)^field (.*) not found in type \S+$`)
 	// A quoted key, which may say anything the author wrote.
 	quoted := regexp.MustCompile(`"(?:[^"\\]|\\.)*"`)
 	type refused struct {
@@ -315,19 +316,18 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 		}
 		refusal := strictDecodeError(source, typ, kind, err)
 		var keys []refused
-		var typeErr *yaml.TypeError
-		if errors.As(err, &typeErr) {
+		var loadErrs *yaml.LoadErrors
+		if errors.As(err, &loadErrs) {
 			seen := map[refused]bool{}
-			for _, entry := range typeErr.Errors {
-				m := declared.FindStringSubmatch(entry)
+			for _, entry := range loadErrs.Errors {
+				m := declared.FindStringSubmatch(entry.Message)
 				if m == nil {
 					continue
 				}
-				line, convErr := strconv.Atoi(m[1])
-				if convErr != nil {
-					t.Fatalf("the decoder's line %q is not a number", m[1])
+				if entry.Mark.Line <= 0 {
+					t.Fatalf("the decoder refused the key %q at no line", m[1])
 				}
-				if k := (refused{line, m[2]}); !seen[k] {
+				if k := (refused{entry.Mark.Line, m[1]}); !seen[k] {
 					seen[k] = true
 					keys = append(keys, k)
 				}
@@ -388,7 +388,7 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 		}
 		if !ok {
 			t.Fatalf("%q is placed at %q, not at the path of %q, the first key the decoder refused (%q)",
-				message, validation.Field, first.key, typeErr.Errors)
+				message, validation.Field, first.key, loadErrs)
 		}
 		if !strings.Contains(unquoted, kind) || (parent != "" && !strings.Contains(message, parent)) {
 			t.Fatalf("refusal %q does not say where %q stands: %q of the %s", message, first.key, parent, kind)

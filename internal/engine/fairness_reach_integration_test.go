@@ -13,6 +13,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_PinsAndCarriedGenerationsCarryTheFairnessKey: on a real
@@ -30,16 +32,10 @@ func TestIntegration_PinsAndCarriedGenerationsCarryTheFairnessKey(t *testing.T) 
 	plan.Fairness = &engine.FairnessSelection{Key: "e1-reach", Weight: 2, PinRequests: true}
 	want := temporal.Priority{FairnessKey: "e1-reach", FairnessWeight: 2}
 	runID := fmt.Sprintf("ork-fair-reach-%d", time.Now().UnixNano())
-	if err := s.starter.StartRun(ctx, runID, compile(t, carriedFairDocument), spreadInput(t, 8), plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, runID, compile(t, carriedFairDocument), spreadInput(t, 8), plan), "StartRun")
+	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the run failed")
 	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {
 		t.Fatalf("%d generations, want the run to carry on", len(chain))
@@ -65,9 +61,7 @@ func TestIntegration_PinsAndCarriedGenerationsCarryTheFairnessKey(t *testing.T) 
 				carriedCreations++
 			}
 		}
-		if err := replayRecorded(recorded, runID); err != nil {
-			t.Fatalf("generation %d does not replay: %v", generation, err)
-		}
+		must.OKf(t, replayRecorded(recorded, runID), "generation %d does not replay", generation)
 	}
 	// a, gap, b, and eight items; two pins.
 	if tasks != 11 || creations != 2 {

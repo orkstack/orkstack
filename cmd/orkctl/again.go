@@ -54,7 +54,7 @@ func newRunAgainCommand(g *globalFlags) *cobra.Command {
 		return renderSubmitted(cmd.OutOrStdout(), g.baseURL(), response.Msg)
 	}}
 	cmd.Flags().StringVar(&version, "version", "", "override the source run's pinned orkflow version")
-	cmd.Flags().StringArrayVar(&inputs, "input", nil, "override source input as key=value (repeatable)")
+	cmd.Flags().StringArrayVarP(&inputs, "input", "i", nil, "override source input as key=value (repeatable)")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "", "JSON object merged into source inputs before --input")
 	cmd.Flags().StringVar(&key, "idempotency-key", "", "fresh dedupe key for the new run")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "print the exact new submission without starting it")
@@ -83,7 +83,11 @@ func againInput(source *orkstackv1.Payload, pairs []string, rawJSON string) (*or
 		if !ok || key == "" {
 			return nil, fmt.Errorf("invalid --input %q: expected key=value", pair)
 		}
-		values[key] = parseInputValue(raw)
+		value, err := parseInputValue(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --input %q: %w", pair, err)
+		}
+		values[key] = value
 	}
 	if len(values) == 0 {
 		return nil, nil

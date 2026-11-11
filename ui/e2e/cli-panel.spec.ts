@@ -180,7 +180,7 @@ const PAGES: { name: string; url: string; ready: string }[] = [
 	{ name: 'versions', url: `/orkflows/${NAME}?ns=${NS}&tab=versions`, ready: 'page-cli-trigger' },
 	{ name: 'namespaces', url: `/admin/namespaces?ns=${NS}`, ready: 'namespace-list' },
 	{ name: 'pools', url: `/admin/pools?ns=${NS}`, ready: 'pools-cli-trigger' },
-	{ name: 'releases', url: `/admin/releases?ns=${NS}`, ready: `release-cli-promote-${BUILD}-trigger` },
+	{ name: 'releases', url: `/admin/releases?ns=${NS}`, ready: `release-cli-${BUILD}-trigger` },
 	{ name: 'audit', url: `/admin/audit?ns=${NS}`, ready: 'audit-scope' },
 	{ name: 'webhooks', url: `/admin/webhooks?ns=${NS}`, ready: 'webhook-list' },
 	{ name: 'usage', url: `/admin/usage?ns=${NS}`, ready: 'usage-admin-scope' },
@@ -196,6 +196,17 @@ test('every CLI icon opens one width of panel, hung off its trigger, with its wh
 		await expect(page.getByTestId(ready).first()).toBeVisible();
 		const ids = await page.locator('[data-cli-icon]').evaluateAll((els) => els.map((e) => e.getAttribute('data-testid')!));
 		expect(ids.length, `${name} has a CLI icon to open`).toBeGreaterThan(0);
+		// One icon per surface (cli-icon-rule.spec.ts holds every route to it); here
+		// too, because only this engine is versioned, so only here are release rows drawn.
+		const crowded = await page.locator('[data-cli-icon]').evaluateAll((els) => {
+			const icons = new Map<Element | null, string[]>();
+			for (const el of els) {
+				const owner = el.closest('tr, li, dialog, [data-cli-surface]');
+				icons.set(owner, [...(icons.get(owner) ?? []), el.getAttribute('data-testid')!]);
+			}
+			return [...icons.values()].filter((own) => own.length > 1).map((own) => own.join(' + '));
+		});
+		expect(crowded, `${name}: a surface with more than one icon`).toEqual([]);
 		for (const id of ids) {
 			await page.getByTestId(id).scrollIntoViewIfNeeded();
 			const m = await open(page, id);
@@ -213,7 +224,7 @@ test('every CLI icon opens one width of panel, hung off its trigger, with its wh
 
 test('an icon in a table row is not clipped by the table, scrolled or not', async ({ page }) => {
 	await page.goto(`${UI}/admin/releases?ns=${NS}`);
-	const id = `release-cli-promote-${BUILD}-trigger`;
+	const id = `release-cli-${BUILD}-trigger`;
 	await expect(page.getByTestId(id)).toBeVisible();
 
 	// The control: the table's frame really does clip what hangs out of it.

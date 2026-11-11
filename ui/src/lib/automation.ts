@@ -19,7 +19,7 @@ import { shellQuote } from './runDetail';
 // are unit-tested and cannot drift from orkctl's (cmd/orkctl/apply_automation.go).
 //
 // The engine PLANS (AutomationService.PlanAutomation) and writes nothing; this
-// page, like `orkctl apply`, EXECUTES: it sends each actionable step's carried
+// page, like `orkctl automation apply`, EXECUTES: it sends each actionable step's carried
 // request to the existing RPC it names, in order, so every write is the same
 // validated, audited call a person could make by hand.
 
@@ -50,7 +50,7 @@ export function automationSectionKey(kind: AutomationObjectKind): string {
 	return '';
 }
 
-/** The plan's one-character column, the one `orkctl apply --dry-run` prints. */
+/** The plan's one-character column, the one `orkctl automation apply --dry-run` prints. */
 export function automationActionSymbol(action: AutomationAction): string {
 	switch (action) {
 		case AutomationAction.CREATE:
@@ -103,7 +103,7 @@ export function planHasErrors(plan: Pick<PlanAutomationResponse, 'issues'>): boo
 }
 
 /**
- * Whether Apply's fresh re-plan must stop the apply — `orkctl apply
+ * Whether Apply's fresh re-plan must stop the apply — `orkctl automation apply
  * --expect-plan`'s refusal: no digest, a digest other than the one shown, or
  * any ERROR. The digest covers the actionable steps only, so an ERROR that
  * appeared since the plan was shown (a referenced Orkflow deleted, say) leaves
@@ -195,24 +195,24 @@ export async function executeStep(
 
 const DOCUMENT = 'automation.ork.yaml';
 
-/** `orkctl apply automation.ork.yaml --dry-run -n NS [--prune]`. */
+/** `orkctl automation apply automation.ork.yaml --dry-run -n NS [--prune]`. */
 export function automationPlanCli(namespace: string, prune: boolean): string {
-	return ['orkctl', 'apply', DOCUMENT, '--dry-run', '-n', shellQuote(namespace || 'default')]
+	return ['orkctl', 'automation', 'apply', DOCUMENT, '--dry-run', '-n', shellQuote(namespace || 'default')]
 		.concat(prune ? ['--prune'] : [])
 		.join(' ');
 }
 
 /** The apply the page just performed, pinned to the plan it showed. */
 export function automationApplyCli(namespace: string, prune: boolean, digest: string): string {
-	return ['orkctl', 'apply', DOCUMENT, '-n', shellQuote(namespace || 'default')]
+	return ['orkctl', 'automation', 'apply', DOCUMENT, '-n', shellQuote(namespace || 'default')]
 		.concat(prune ? ['--prune'] : [])
 		.concat(['--expect-plan', shellQuote(digest)])
 		.join(' ');
 }
 
-/** `orkctl export -n NS > automation.ork.yaml`: the adoption command. */
+/** `orkctl automation export -n NS > automation.ork.yaml`: the adoption command. */
 export function automationExportCli(namespace: string): string {
-	return `orkctl export -n ${shellQuote(namespace || 'default')} > ${DOCUMENT}`;
+	return `orkctl automation export -n ${shellQuote(namespace || 'default')} > ${DOCUMENT}`;
 }
 
 /** The edit a trigger dialog makes, as `orkctl trigger update`. */
@@ -247,6 +247,6 @@ export function webhookUpdateCli(
 	for (const event of edit.events) args.push('--event', shellQuote(EventType[event]));
 	if (edit.namespace) args.push('-n', shellQuote(edit.namespace));
 	else args.push('--deployment-wide');
-	args.push('--orkflow', shellQuote(edit.orkflowName), '--task', shellQuote(edit.taskId));
+	args.push('--orkflow', shellQuote(edit.orkflowName), '-t', shellQuote(edit.taskId));
 	return args.join(' ');
 }

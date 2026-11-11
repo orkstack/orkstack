@@ -30,6 +30,9 @@ func (s *Service) CreateTrigger(
 	if name == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("orkflow_name is required"))
 	}
+	if err := ownNamespaceTarget("trigger", name); err != nil {
+		return nil, err
+	}
 	// The trigger's own name is checked before anything is resolved: a name
 	// no automation document could address is a bad request whatever the
 	// namespace holds.

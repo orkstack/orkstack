@@ -4,7 +4,7 @@ import { exampleHref, exampleResponse, exampleSources, gallery, galleryHref } fr
 
 // F-ui-perf-5: the gallery carries names and descriptions, never documents;
 // a document is served one at a time, byte for byte, from examples/. Both
-// are written into the static build as files (routes/apply/examples*), which
+// are written into the static build as files (routes/orkflows/+new/examples*), which
 // the engine serves as it serves any file of the build.
 const dir = `${import.meta.dir}/../../examples`;
 const files = readdirSync(dir).filter((name) => name.endsWith('.ork.yaml'));
@@ -44,8 +44,8 @@ test('an unknown file is 404, never another example', async () => {
 });
 
 test('the page asks for the files the build writes', () => {
-	expect(galleryHref).toBe('/apply/examples.json');
-	for (const source of sources) expect(exampleHref(source.slug)).toBe(`/apply/examples/${source.file}`);
+	expect(galleryHref).toBe('/orkflows/+new/examples.json');
+	for (const source of sources) expect(exampleHref(source.slug)).toBe(`/orkflows/+new/examples/${source.file}`);
 });
 
 test('only server code reads examples/ into the bundle', () => {

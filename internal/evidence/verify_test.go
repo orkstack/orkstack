@@ -7,14 +7,14 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestVerify_AcceptsWhatWriteProduced(t *testing.T) {
 	f := newFixture()
 	report, err := Verify(bytes.NewReader(writeFixture(t, f)))
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
+	must.OKf(t, err, "Verify")
 	if len(report.Failures) != 0 {
 		t.Fatalf("failures: %+v", report.Failures)
 	}
@@ -89,9 +89,7 @@ func TestVerify_FailsByName(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			report, err := Verify(bytes.NewReader(buildTar(t, tc.mutate(fixtureEntries(t, f)))))
-			if err != nil {
-				t.Fatalf("Verify: %v", err)
-			}
+			must.OKf(t, err, "Verify")
 			if len(report.Failures) != len(tc.want) {
 				t.Fatalf("failures = %+v, want %+v", report.Failures, tc.want)
 			}
@@ -161,9 +159,7 @@ func TestVerify_FailsByName(t *testing.T) {
 				}
 			}
 			report, err := Verify(bytes.NewReader(buildTar(t, entries)))
-			if err != nil {
-				t.Fatalf("Verify: %v", err)
-			}
+			must.OKf(t, err, "Verify")
 			if len(report.Failures) != 1 || report.Failures[0].Path != path || report.Failures[0].Reason != tc.reason {
 				t.Fatalf("failures = %+v, want one %s %q", report.Failures, path, tc.reason)
 			}

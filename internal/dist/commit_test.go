@@ -3,7 +3,7 @@ package dist_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const (
@@ -106,9 +108,7 @@ func TestRelease_OneCommitBuildsOneBinary(t *testing.T) {
 	target := hostTarget(t, dist.Orkctl)
 	read := func(commit string) []byte {
 		b, err := os.ReadFile(releaseBuild(t, target, commit))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return b
 	}
 	first := read(testCommit)
@@ -187,9 +187,7 @@ func releaseBuild(t *testing.T, target dist.Target, commit string) string {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
 	out := filepath.Join(t.TempDir(), target.Executable())
-	if err := dist.GoBuilder(ctx, repoRoot(t), target, "v1.2.3", commit, out); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, dist.GoBuilder(ctx, repoRoot(t), target, "v1.2.3", commit, out))
 	return out
 }
 

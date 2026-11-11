@@ -17,6 +17,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // claimNamespace is the Temporal namespace these tests use. AGENTS.md §11.1: a
@@ -94,9 +96,7 @@ func startClaimWorker(t *testing.T, c client.Client, queue string) {
 		LocalActivityWorkerOnly:     true,
 	})
 	engine.RegisterWorkflows(w)
-	if err := w.Start(); err != nil {
-		t.Fatalf("start claim worker: %v", err)
-	}
+	must.OKf(t, w.Start(), "start claim worker")
 	t.Cleanup(w.Stop)
 }
 
@@ -153,9 +153,7 @@ func TestIntegration_ConcurrentClaimsConvergeOnOneRun(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range failures {
-		if err != nil {
-			t.Fatalf("caller %d: %v", i, err)
-		}
+		must.OKf(t, err, "caller %d", i)
 	}
 	winner := winners[0]
 	for i, got := range winners {
@@ -184,9 +182,7 @@ func TestIntegration_ConcurrentClaimsConvergeOnOneRun(t *testing.T) {
 		Claim(ctx, key, func() (engine.Claim, error) {
 			return engine.Claim{RunID: engine.NewRunID()}, nil
 		})
-	if err != nil {
-		t.Fatalf("repeat claim: %v", err)
-	}
+	must.OKf(t, err, "repeat claim")
 	if repeat.RunID != winner.RunID {
 		t.Errorf("a later claim got %q, want the holder %q", repeat.RunID, winner.RunID)
 	}
@@ -224,15 +220,11 @@ func TestIntegration_ClaimFollowsAReissuedRunID(t *testing.T) {
 	}
 
 	reissued := engine.NewRunID()
-	if err := idempotency.Rebind(ctx, key, engine.Claim{RunID: reissued}, held); err != nil {
-		t.Fatalf("rebind: %v", err)
-	}
+	must.OKf(t, idempotency.Rebind(ctx, key, engine.Claim{RunID: reissued}, held), "rebind")
 	after, err := idempotency.Claim(ctx, key, func() (engine.Claim, error) {
 		return engine.Claim{RunID: engine.NewRunID()}, nil
 	})
-	if err != nil {
-		t.Fatalf("claim after rebind: %v", err)
-	}
+	must.OKf(t, err, "claim after rebind")
 	if after.RunID != reissued {
 		t.Errorf("the key names %q, want the reissued run %q", after.RunID, reissued)
 	}
@@ -253,9 +245,7 @@ func countExecutions(ctx context.Context, t *testing.T, c client.Client, query s
 				Query:         query,
 				NextPageToken: token,
 			})
-			if err != nil {
-				t.Fatalf("ListWorkflow(%s): %v", query, err)
-			}
+			must.OKf(t, err, "ListWorkflow(%s)", query)
 			total += len(resp.GetExecutions())
 			token = resp.GetNextPageToken()
 			if len(token) == 0 {

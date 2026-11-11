@@ -126,6 +126,24 @@ export function releaseCommand(verb: ReleaseVerb, build: string, percent?: numbe
 	return `orkctl release ${verb} ${shellQuote(build)}`;
 }
 
+/**
+ * A release row's one terminal icon (ui/DESIGN.md, the Shell Icon Rule): what
+ * its buttons do, the wait that says when a previous release's processes may
+ * stop, and the drain of each of its Orkers that hosts an open pin, once each.
+ */
+export function releaseRowCommands(release: Release): { label: string; command: string }[] {
+	const build = release.buildId;
+	const pinHosts = [...new Set(release.orkers.filter((orker) => orker.pins.length > 0).map((orker) => orker.orkerId))];
+	return [
+		...(canPromote(release) ? [{ label: 'Promote it', command: releaseCommand('promote', build) }] : []),
+		...(canRollBack(release) ? [{ label: 'Roll back to it', command: releaseCommand('rollback', build) }] : []),
+		...(canRamp(release) ? [{ label: 'Ramp it', command: releaseCommand('ramp', build, 10) }] : []),
+		...(release.role === ReleaseRole.RAMPING ? [{ label: 'Stop the ramp', command: releaseCommand('ramp', build, 0) }] : []),
+		...(release.role === ReleaseRole.PREVIOUS ? [{ label: 'Wait for it to drain', command: `orkctl release wait ${shellQuote(build)}` }] : []),
+		...pinHosts.map((orker) => ({ label: `Drain ${orker}, which hosts an open pin`, command: `orkctl orker drain ${shellQuote(orker)}` }))
+	];
+}
+
 /** What still holds a release that takes no new runs: "3 runs, 1 open pin", or "". */
 export function holdsSummary(release: Release): string {
 	const pins = openPinCount(release);

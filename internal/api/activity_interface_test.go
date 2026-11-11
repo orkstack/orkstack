@@ -17,6 +17,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fileLabel is the label images/activity-file ships, read from its
@@ -24,9 +26,7 @@ import (
 func fileLabel(t *testing.T) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "images", "activity-file", "Dockerfile"))
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
+	must.OKf(t, err, "read Dockerfile")
 	match := regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`).FindSubmatch(raw)
 	if match == nil {
 		t.Fatal("images/activity-file/Dockerfile carries no interface label")
@@ -86,9 +86,7 @@ func validate(t *testing.T, svc *api.Service, yaml string) *orkstackv1.ValidateO
 	t.Helper()
 	resp, err := svc.ValidateOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: yaml}))
-	if err != nil {
-		t.Fatalf("validate: %v", err)
-	}
+	must.OKf(t, err, "validate")
 	return resp.Msg
 }
 
@@ -213,9 +211,7 @@ tasks:
 	for _, applied := range []*orkstackv1.ApplyOrkflowResponse{plain, labelled} {
 		stored := applied.GetOrkflow()
 		digest, err := dsl.DefinitionDigest(stored)
-		if err != nil {
-			t.Fatalf("digest: %v", err)
-		}
+		must.OKf(t, err, "digest")
 		if digest != stored.GetDefinitionDigest() {
 			t.Fatalf("definition digest %q is not the stored document's own %q", stored.GetDefinitionDigest(), digest)
 		}
@@ -279,9 +275,7 @@ func TestListActivities_CarriesTheInterfaceAndItsError(t *testing.T) {
 		Activities: &api.CatalogLister{Catalog: catalog, Resolver: dsl.NewResolver("")},
 	})
 	resp, err := svc.ListActivities(context.Background(), connect.NewRequest(&orkstackv1.ListActivitiesRequest{}))
-	if err != nil {
-		t.Fatalf("list: %v", err)
-	}
+	must.OKf(t, err, "list")
 	got := resp.Msg.GetActivities()
 	if len(got) != 3 || got[0].GetName() != "labelled" || got[1].GetName() != "malformed" || got[2].GetName() != "unlabelled" {
 		t.Fatalf("activities = %v, want ordered by name", got)
@@ -302,15 +296,11 @@ func TestInspectActivity_ResolvesACatalogNameOrAReference(t *testing.T) {
 
 	byName, err := svc.InspectActivity(context.Background(),
 		connect.NewRequest(&orkstackv1.InspectActivityRequest{Reference: "file"}))
-	if err != nil {
-		t.Fatalf("inspect file: %v", err)
-	}
+	must.OKf(t, err, "inspect file")
 	reference := host + "/orkstack/activity-file:dev"
 	byReference, err := svc.InspectActivity(context.Background(),
 		connect.NewRequest(&orkstackv1.InspectActivityRequest{Reference: reference}))
-	if err != nil {
-		t.Fatalf("inspect reference: %v", err)
-	}
+	must.OKf(t, err, "inspect reference")
 	a, b := byName.Msg.GetActivity(), byReference.Msg.GetActivity()
 	if a.GetName() != "file" || b.GetName() != "" {
 		t.Fatalf("names = %q / %q, want the catalog key and then empty", a.GetName(), b.GetName())

@@ -2,12 +2,14 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
 	"regexp"
 	"strings"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // A ledger is the evidence that a suite ran what it claims to have run: one
@@ -37,7 +39,7 @@ type event struct {
 	Action  string  `json:"Action"`
 	Package string  `json:"Package,omitempty"`
 	Test    string  `json:"Test,omitempty"`
-	Elapsed float64 `json:"Elapsed,omitempty"`
+	Elapsed float64 `json:"Elapsed,omitzero"`
 	Output  string  `json:"Output,omitempty"`
 }
 
@@ -60,7 +62,7 @@ type entry struct {
 	// the target (go test -fuzztime), of the Seconds it took with its build
 	// and any minimization; empty for a target given an iteration count, and
 	// in every other ledger.
-	FuzzSeconds float64 `json:"fuzz_seconds,omitempty"`
+	FuzzSeconds float64 `json:"fuzz_seconds,omitzero"`
 	// Reason says why an entry is a failure the test itself did not report:
 	// its binary crashed while it ran, or nothing ever reported it.
 	Reason string `json:"reason,omitempty"`
@@ -366,7 +368,7 @@ type binaryRecord struct {
 // ledger is the checked result of one suite.
 type ledger struct {
 	Suite      string                  `json:"suite"`
-	Shard      int                     `json:"shard,omitempty"`
+	Shard      int                     `json:"shard,omitzero"`
 	PlanSHA256 string                  `json:"plan_sha256,omitempty"`
 	Binaries   map[string]binaryRecord `json:"binaries,omitempty"`
 	Tests      []entry                 `json:"tests"`
@@ -375,7 +377,7 @@ type ledger struct {
 	// Short is set on a race ledger whose run had -short: only then is a skip
 	// no allowed-skip entry names recorded rather than refused (race.go), and
 	// the merger accepts such a skip only from a ledger that says so.
-	Short bool `json:"short,omitempty"`
+	Short bool `json:"short,omitzero"`
 }
 
 type summary struct {
@@ -601,7 +603,7 @@ func parseListing(out string) []string {
 }
 
 func writeJSON(path string, v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
+	b, err := stablejson.MarshalIndent(v, "  ")
 	if err != nil {
 		return err
 	}

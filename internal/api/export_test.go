@@ -44,3 +44,6 @@ const (
 func (s *Service) SetInventoryTimerForTest(afterFunc func(d time.Duration, f func()) (stop func() bool)) {
 	s.inventory.afterFunc = afterFunc
 }
+
+// MostFailingForTest is GetStats' most-failing table, from a tally.
+var MostFailingForTest = mostFailing

@@ -10,6 +10,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A run's saved state, its earlier events and a definition passed by
@@ -141,9 +143,7 @@ func FuzzDecodeDefinitionObject(f *testing.F) {
 		planned := largeDefinition(t, int(tasks%5)+1, 64)
 		planned.Tasks[0].With, _ = structpb.NewStruct(map[string]any{"op": "exec"})
 		data, ref, err := EncodeDefinitionObject(planned)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		stub := DefinitionStub(planned)
 		delta |= 1
 		switch mode % 5 {

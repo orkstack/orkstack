@@ -408,7 +408,7 @@ import type { Trigger } from '#lib/gen/orkstack/v1/trigger_service_pb.ts';
 	{#if shownSecret}
 		<div
 			data-testid="trigger-secret-once"
-			data-cli-own
+			data-cli-surface="panel"
 			class="note mt-4 max-w-3xl border-ink p-3 text-sm"
 		>
 			<p class="font-semibold">Copy this bearer token now. It will not be shown again.</p>

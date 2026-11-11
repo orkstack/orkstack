@@ -9,6 +9,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/telemetry"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // writeTemp writes content to a fresh file under t.TempDir() and returns its
@@ -16,9 +18,7 @@ import (
 func writeTemp(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(content), 0o600), "write %s", path)
 	return path
 }
 
@@ -158,9 +158,7 @@ telemetry:
 func TestLoad_HappyPath_Ork(t *testing.T) {
 	path := fullFixture(t)
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 
 	want := map[string]string{
 		"ORK_TEMPORAL_ADDRESS":       "temporal.internal:7233",
@@ -206,9 +204,7 @@ func TestLoad_HappyPath_Ork(t *testing.T) {
 
 	// activities re-serializes to a document dsl.ParseCatalog accepts.
 	catalog, err := dsl.ParseCatalog([]byte(doc.values["ORK_ACTIVITY_CATALOG"].value))
-	if err != nil {
-		t.Fatalf("dsl.ParseCatalog(re-serialized activities): %v", err)
-	}
+	must.OKf(t, err, "dsl.ParseCatalog(re-serialized activities)")
 	if catalog["shell"] != "ghcr.io/orkstack/activity-shell:0.2" {
 		t.Errorf("catalog[shell] = %q", catalog["shell"])
 	}
@@ -219,9 +215,7 @@ func TestLoad_HappyPath_Ork(t *testing.T) {
 	// telemetry.sinks re-serializes to a document telemetry.ParseSinks
 	// accepts, including its {source: file:...} header.
 	sinks, err := telemetry.ParseSinks([]byte(doc.values["ORK_TELEMETRY_SINKS"].value))
-	if err != nil {
-		t.Fatalf("telemetry.ParseSinks(re-serialized sinks): %v", err)
-	}
+	must.OKf(t, err, "telemetry.ParseSinks(re-serialized sinks)")
 	if !sinks.Has("default") || !sinks.Has("grafana") {
 		t.Errorf("sinks: want default and grafana, got names %v", sinks.Names())
 	}
@@ -230,9 +224,7 @@ func TestLoad_HappyPath_Ork(t *testing.T) {
 func TestLoad_HappyPath_Orker(t *testing.T) {
 	path := fullFixture(t)
 	doc, err := Load(path, BinaryOrker)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 
 	want := map[string]string{
 		"ORK_ORKER_ID":                  "orker-1",
@@ -323,9 +315,7 @@ func TestLoad_ATypedValueIsAppliedTrimmed(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeTemp(t, "padded.yaml", tc.yaml)
 			doc, err := Load(path, BinaryOrk)
-			if err != nil {
-				t.Fatalf("Load refused a padded value: %v", err)
-			}
+			must.OKf(t, err, "Load refused a padded value")
 			if got := doc.values[tc.env].value; got != tc.want {
 				t.Errorf("%s = %q, want the bare %q", tc.env, got, tc.want)
 			}
@@ -378,17 +368,13 @@ func TestLoad_PerBinaryLeaf(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  admin_addr:\n    ork: \":9464\"\n    orker: \":9465\"\n")
 
 	orkDoc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load(ork): %v", err)
-	}
+	must.OKf(t, err, "Load(ork)")
 	if got := orkDoc.values["ORK_ADMIN_ADDR"].value; got != ":9464" {
 		t.Errorf("ork ORK_ADMIN_ADDR = %q, want :9464", got)
 	}
 
 	orkerDoc, err := Load(path, BinaryOrker)
-	if err != nil {
-		t.Fatalf("Load(orker): %v", err)
-	}
+	must.OKf(t, err, "Load(orker)")
 	if got := orkerDoc.values["ORK_ADMIN_ADDR"].value; got != ":9465" {
 		t.Errorf("orker ORK_ADMIN_ADDR = %q, want :9465", got)
 	}
@@ -398,9 +384,7 @@ func TestLoad_ScalarLeafAppliesToBothBinaries(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  log_level: debug\n")
 	for _, b := range []Binary{BinaryOrk, BinaryOrker} {
 		doc, err := Load(path, b)
-		if err != nil {
-			t.Fatalf("Load(%s): %v", b, err)
-		}
+		must.OKf(t, err, "Load(%s)", b)
 		if got := doc.values["ORK_LOG_LEVEL"].value; got != "debug" {
 			t.Errorf("Load(%s) ORK_LOG_LEVEL = %q, want debug", b, got)
 		}
@@ -432,9 +416,7 @@ func TestLoad_SecretFile_TrimsOneTrailingLineEnding(t *testing.T) {
 			secretFile := writeTemp(t, "secret", tc.file)
 			path := writeTemp(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: {file: "+secretFile+"}\n")
 			doc, err := Load(path, BinaryOrk)
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
+			must.OKf(t, err, "Load")
 			if got := doc.values["ORK_S3_SECRET_KEY"].value; got != tc.want {
 				t.Errorf("secret_key from %q = %q, want %q", tc.file, got, tc.want)
 			}
@@ -445,9 +427,7 @@ func TestLoad_SecretFile_TrimsOneTrailingLineEnding(t *testing.T) {
 func TestLoad_List_CommaJoined(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "orker:\n  secret_schemes:\n    - env\n    - file\n    - vault\n")
 	doc, err := Load(path, BinaryOrker)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	if got := doc.values["ORK_ORKER_SECRET_SCHEMES"].value; got != "env,file,vault" {
 		t.Errorf("secret_schemes = %q, want env,file,vault", got)
 	}
@@ -462,9 +442,7 @@ func TestLoad_Map_PercentEncoding(t *testing.T) {
     withpercent: "50%"
 `)
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	got := doc.values["OTEL_RESOURCE_ATTRIBUTES"].value
 	for _, want := range []string{"plain=value", "withcomma=a%2Cb", "withequals=a%3Db", "withpercent=50%25"} {
 		if !strings.Contains(got, want) {
@@ -476,9 +454,7 @@ func TestLoad_Map_PercentEncoding(t *testing.T) {
 func TestLoad_EmptyFile(t *testing.T) {
 	path := writeTemp(t, "empty.yaml", "")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load(empty file): %v", err)
-	}
+	must.OKf(t, err, "Load(empty file)")
 	if len(doc.values) != 0 {
 		t.Errorf("Load(empty file): values = %v, want none", doc.values)
 	}
@@ -510,9 +486,7 @@ func TestPercentEncode_RoundTripsWithQueryUnescape(t *testing.T) {
 	for _, want := range cases {
 		encoded := percentEncode(want)
 		got, err := url.QueryUnescape(encoded)
-		if err != nil {
-			t.Fatalf("percentEncode(%q) = %q, QueryUnescape: %v", want, encoded, err)
-		}
+		must.OKf(t, err, "percentEncode(%q) = %q, QueryUnescape", want, encoded)
 		if got != want {
 			t.Errorf("QueryUnescape(percentEncode(%q)) = %q, want %q (encoded: %q)", want, got, want, encoded)
 		}
@@ -522,9 +496,7 @@ func TestPercentEncode_RoundTripsWithQueryUnescape(t *testing.T) {
 func TestLoad_Map_PlusEncodedAsPercent2B(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  resource_attributes:\n    withplus: \"a+b\"\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	got := doc.values["OTEL_RESOURCE_ATTRIBUTES"].value
 	if !strings.Contains(got, "withplus=a%2Bb") {
 		t.Errorf("OTEL_RESOURCE_ATTRIBUTES = %q, want it to contain withplus=a%%2Bb", got)
@@ -538,31 +510,21 @@ func TestLoad_Map_PlusEncodedAsPercent2B(t *testing.T) {
 // happens to be launched from.
 func TestLoad_SecretFile_RelativeToConfigDir(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "s3-secret"), []byte("relative-secret\n"), 0o600); err != nil {
-		t.Fatalf("write secret file: %v", err)
-	}
+	must.OKf(t, os.WriteFile(filepath.Join(dir, "s3-secret"), []byte("relative-secret\n"), 0o600), "write secret file")
 	configPath := filepath.Join(dir, "orkstack.yaml")
-	if err := os.WriteFile(configPath, []byte("storage:\n  s3:\n    secret_key: {file: s3-secret}\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	must.OKf(t, os.WriteFile(configPath, []byte("storage:\n  s3:\n    secret_key: {file: s3-secret}\n"), 0o600), "write config")
 
 	// Run from an unrelated working directory so a bug that resolved the
 	// path against the process cwd instead of the config file's directory
 	// would fail loudly rather than by accident matching.
 	elsewhere := t.TempDir()
 	origWD, err := os.Getwd()
-	if err != nil {
-		t.Fatalf("Getwd: %v", err)
-	}
-	if err := os.Chdir(elsewhere); err != nil {
-		t.Fatalf("Chdir: %v", err)
-	}
+	must.OKf(t, err, "Getwd")
+	must.OKf(t, os.Chdir(elsewhere), "Chdir")
 	defer os.Chdir(origWD)
 
 	doc, err := Load(configPath, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	if got := doc.values["ORK_S3_SECRET_KEY"].value; got != "relative-secret" {
 		t.Errorf("ORK_S3_SECRET_KEY = %q, want relative-secret", got)
 	}
@@ -573,9 +535,7 @@ func TestLoad_SecretFile_RelativeToConfigDir(t *testing.T) {
 func TestLoad_SecretFile_MissingFile_NamesResolvedPath(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "orkstack.yaml")
-	if err := os.WriteFile(configPath, []byte("storage:\n  s3:\n    secret_key: {file: no-such-secret}\n"), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	must.OKf(t, os.WriteFile(configPath, []byte("storage:\n  s3:\n    secret_key: {file: no-such-secret}\n"), 0o600), "write config")
 	_, err := Load(configPath, BinaryOrk)
 	if err == nil {
 		t.Fatal("Load: want an error for a missing relative secret file")
@@ -595,9 +555,7 @@ func TestLoad_NullScalar_MeansAbsent(t *testing.T) {
 		t.Run(spelling, func(t *testing.T) {
 			path := writeTemp(t, "cfg.yaml", "storage:\n  s3:\n    session_token: "+spelling+"\n")
 			doc, err := Load(path, BinaryOrk)
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
+			must.OKf(t, err, "Load")
 			if rv, ok := doc.values["ORK_S3_SESSION_TOKEN"]; ok {
 				t.Errorf("ORK_S3_SESSION_TOKEN = %+v, want absent (fall through to env/default)", rv)
 			}
@@ -655,9 +613,7 @@ func TestLoad_ExplicitEmpty_AcceptedAgainstPlaceholderDefault(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeTemp(t, "cfg.yaml", tc.yaml)
 			doc, err := Load(path, BinaryOrker)
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
+			must.OKf(t, err, "Load")
 			rv, ok := doc.values[tc.wantEnv]
 			if !ok {
 				t.Fatalf("%s: not set by Load", tc.wantEnv)
@@ -701,31 +657,23 @@ func TestLoad_DuplicateKey_Refused(t *testing.T) {
 func TestLoad_FilesNamesTheDocumentAndEveryFileItRead(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"s3-secret", "otlp-header"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		must.OKf(t, os.WriteFile(filepath.Join(dir, name), []byte("x\n"), 0o600), "write %s", name)
 	}
 	configPath := filepath.Join(dir, "orkstack.yaml")
 	body := "storage:\n  s3:\n    secret_key: {file: s3-secret}\n" +
 		"telemetry:\n  otlp:\n    headers:\n      x-api-key: {file: " + filepath.Join(dir, "otlp-header") + "}\n"
-	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	must.OKf(t, os.WriteFile(configPath, []byte(body), 0o600), "write config")
 	t.Chdir(dir)
 
 	doc, err := Load("orkstack.yaml", BinaryOrker)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	want := []string{configPath, filepath.Join(dir, "s3-secret"), filepath.Join(dir, "otlp-header")}
 	if got := doc.Files(); strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("Files() = %q, want %q", got, want)
 	}
 
 	empty, err := Load(writeTemp(t, "empty.yaml", "# nothing\n"), BinaryOrker)
-	if err != nil {
-		t.Fatalf("Load empty: %v", err)
-	}
+	must.OKf(t, err, "Load empty")
 	if got := empty.Files(); len(got) != 1 || !filepath.IsAbs(got[0]) {
 		t.Fatalf("Files() of an empty document = %q, want the document alone", got)
 	}
@@ -738,12 +686,8 @@ func TestLoad_FilesNamesTheDocumentAndEveryFileItRead(t *testing.T) {
 func TestLoad_FilesAreTheFilesItOpened(t *testing.T) {
 	dir := t.TempDir()
 	deep := filepath.Join(dir, "a", "b")
-	if err := os.MkdirAll(deep, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(deep, filepath.Join(dir, "link")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(deep, 0o755))
+	must.OK(t, os.Symlink(deep, filepath.Join(dir, "link")))
 	read := filepath.Join(dir, "a", "cfg.yaml")
 	secret := filepath.Join(dir, "a", "secret")
 	body := "storage:\n  s3:\n    secret_key: {file: " + filepath.Join(dir, "link") + "/../secret}\n"
@@ -752,29 +696,21 @@ func TestLoad_FilesAreTheFilesItOpened(t *testing.T) {
 		// What the cleaned names name: other files.
 		filepath.Join(dir, "cfg.yaml"): "# another file\n", filepath.Join(dir, "secret"): "y\n",
 	} {
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(path, []byte(content), 0o600))
 	}
 	t.Chdir(dir)
 	for _, path := range []string{filepath.Join(dir, "link") + "/../cfg.yaml", "link/../cfg.yaml"} {
 		doc, err := Load(path, BinaryOrker)
-		if err != nil {
-			t.Fatalf("Load(%q): %v", path, err)
-		}
+		must.OKf(t, err, "Load(%q)", path)
 		got := doc.Files()
 		if len(got) != 2 {
 			t.Fatalf("Load(%q).Files() = %q, want the document and its secret", path, got)
 		}
 		for i, want := range []string{read, secret} {
 			named, err := os.Stat(got[i])
-			if err != nil {
-				t.Fatalf("Load(%q).Files()[%d] = %q: %v", path, i, got[i], err)
-			}
+			must.OKf(t, err, "Load(%q).Files()[%d] = %q", path, i, got[i])
 			opened, err := os.Stat(want)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if !filepath.IsAbs(got[i]) || !os.SameFile(named, opened) {
 				t.Errorf("Load(%q).Files()[%d] = %q, want an absolute name of %s, the file Load read", path, i, got[i], want)
 			}
@@ -795,9 +731,7 @@ func TestLoad_RefusesASecondDocument(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "ork.yaml")
-			if err := os.WriteFile(path, []byte(first+rest), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(path, []byte(first+rest), 0o600))
 			for _, binary := range []Binary{BinaryOrk, BinaryOrker} {
 				doc, err := Load(path, binary)
 				want := "config: " + path + ": line 3: a second YAML document begins here"
@@ -814,9 +748,7 @@ func TestLoad_RefusesASecondDocument(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "ork.yaml")
-			if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(path, []byte(source), 0o600))
 			if _, err := Load(path, BinaryOrk); err != nil {
 				t.Fatalf("Load refused one document: %v", err)
 			}

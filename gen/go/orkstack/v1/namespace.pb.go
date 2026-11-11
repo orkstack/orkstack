@@ -432,7 +432,7 @@ type Budget struct {
 	GibSeconds int64 `protobuf:"varint,2,opt,name=gib_seconds,json=gibSeconds,proto3" json:"gib_seconds,omitempty"`
 	// period is the rolling window a budget is held against, ending at the
 	// moment of the question. Required; at least 1h and at most 744h (31 days).
-	// A longer question is a report — `orkctl stats usage --since` — not a
+	// A longer question is a report — `orkctl stats usage -s` — not a
 	// budget evaluated at every submit.
 	Period *durationpb.Duration `protobuf:"bytes,3,opt,name=period,proto3" json:"period,omitempty"`
 	// enforce turns the budget from an observation into an admission rule.

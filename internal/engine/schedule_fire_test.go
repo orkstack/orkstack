@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -24,7 +23,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fireCapture records what ScheduleFireWorkflow asked of the SDK: the memo it
@@ -105,7 +107,7 @@ func firePlan() engine.RunPlan {
 }
 
 func firePreparation(t testing.TB, runID string) *orkstackv1.ScheduledRunPreparation {
-	plan, err := json.Marshal(firePlan())
+	plan, err := stablejson.Marshal(firePlan())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,9 +189,7 @@ func TestScheduleFireWorkflow_StartsChildRunWithScheduleOrigin(t *testing.T) {
 	})
 
 	h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("fire failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "fire failed")
 	if !proto.Equal(gotRec, fireRecord()) || !gotAt.Equal(nightly) {
 		t.Fatalf("prepare got %v at %v; want the record at %v", gotRec, gotAt, nightly)
 	}
@@ -287,9 +287,7 @@ func TestScheduleFireWorkflow_InfrastructureErrorRetriesThenFails(t *testing.T) 
 			return nil
 		})
 		h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
-		if err := h.env.GetWorkflowError(); err != nil {
-			t.Fatalf("fire failed after a transient outage: %v", err)
-		}
+		must.OKf(t, h.env.GetWorkflowError(), "fire failed after a transient outage")
 		if calls != 4 || len(h.capture.childOpts) != 1 {
 			t.Fatalf("calls %d, children %d; want 4, 1", calls, len(h.capture.childOpts))
 		}
@@ -375,9 +373,7 @@ func TestScheduleFireWorkflow_ChildOutcomeIsTheFireOutcome(t *testing.T) {
 			h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
 			err := h.env.GetWorkflowError()
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("fire failed although its run succeeded: %v", err)
-				}
+				must.OKf(t, err, "fire failed although its run succeeded")
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {

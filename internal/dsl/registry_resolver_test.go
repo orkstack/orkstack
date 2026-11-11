@@ -2,7 +2,6 @@ package dsl
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +12,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // stubObject is one content-addressed object a registryStub serves.
@@ -33,28 +35,24 @@ type testImage struct {
 // newTestImage builds an image whose config carries labels (nil: none).
 func newTestImage(t *testing.T, labels map[string]string) testImage {
 	t.Helper()
-	config, err := json.Marshal(map[string]any{
+	config, err := stablejson.Marshal(map[string]any{
 		"architecture": "amd64", "os": "linux",
 		"config": map[string]any{"Labels": labels},
 	})
-	if err != nil {
-		t.Fatalf("config: %v", err)
-	}
+	must.OKf(t, err, "config")
 	return newTestImageWithConfig(t, config)
 }
 
 func newTestImageWithConfig(t *testing.T, config []byte) testImage {
 	t.Helper()
-	manifest, err := json.Marshal(map[string]any{
+	manifest, err := stablejson.Marshal(map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     MediaTypeOCIManifest,
 		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json",
 			"digest": digestOf(config), "size": len(config)},
 		"layers": []any{},
 	})
-	if err != nil {
-		t.Fatalf("manifest: %v", err)
-	}
+	must.OKf(t, err, "manifest")
 	attestation := []byte(`{"schemaVersion":2,"mediaType":"` + MediaTypeOCIManifest + `","config":{"digest":"sha256:` +
 		strings.Repeat("0", 64) + `"},"layers":[]}`)
 	return testImage{config: config, manifest: manifest, attestation: attestation}
@@ -80,14 +78,12 @@ func (img testImage) index(t *testing.T, entries ...string) []byte {
 		manifests = append(manifests, map[string]any{"mediaType": MediaTypeOCIManifest,
 			"digest": digestOf(img.manifest), "platform": platform})
 	}
-	body, err := json.Marshal(map[string]any{
+	body, err := stablejson.Marshal(map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     MediaTypeOCIIndex,
 		"manifests":     manifests,
 	})
-	if err != nil {
-		t.Fatalf("index: %v", err)
-	}
+	must.OKf(t, err, "index")
 	return body
 }
 
@@ -201,9 +197,7 @@ func TestResolve_PinsTheIndexDigestAndPlatforms(t *testing.T) {
 	resolver, reference := newStubResolver(t, stub)
 
 	image, err := resolver.Resolve(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	must.OKf(t, err, "resolve")
 
 	if stub.gotMethod != http.MethodGet {
 		t.Fatalf("method = %s, want GET — platforms live in the body (§4.3 step 2)", stub.gotMethod)
@@ -247,9 +241,7 @@ func TestResolve_SingleManifestLeavesPlatformsEmpty(t *testing.T) {
 	resolver, reference := newStubResolver(t, stub)
 
 	image, err := resolver.Resolve(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	must.OKf(t, err, "resolve")
 	if len(image.GetPlatforms()) != 0 {
 		t.Fatalf("platforms = %v, want empty for a single manifest (§2.2)", image.GetPlatforms())
 	}
@@ -286,9 +278,7 @@ func TestResolve_PinnedReferenceMustMatchWhatTheRegistryServes(t *testing.T) {
 		resolver := NewResolver("")
 		image, err := resolver.Resolve(context.Background(), "x",
 			host+"/acme/migrate@"+digestOf(body))
-		if err != nil {
-			t.Fatalf("resolve: %v", err)
-		}
+		must.OKf(t, err, "resolve")
 		if image.GetIndexDigest() != digestOf(body) {
 			t.Fatalf("digest = %q", image.GetIndexDigest())
 		}
@@ -351,9 +341,7 @@ func TestResolve_CompletesTheBearerTokenHandshake(t *testing.T) {
 
 	host := strings.TrimPrefix(server.URL, "http://")
 	image, err := NewResolver("").Resolve(context.Background(), "migrate", host+"/acme/migrate:v3")
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	must.OKf(t, err, "resolve")
 	if image.GetIndexDigest() != digestOf(body) {
 		t.Fatalf("digest = %q", image.GetIndexDigest())
 	}
@@ -379,7 +367,7 @@ func bearerRegistry(t *testing.T, stub *registryStub) (*httptest.Server, *regist
 	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
 		tokens.hits++
 		tokens.scope = r.URL.Query().Get("scope")
-		json.NewEncoder(w).Encode(map[string]string{"token": "issued-token"})
+		_ = stablejson.Encode(w, map[string]string{"token": "issued-token"}, stablejson.Options)
 	})
 	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer issued-token" {
@@ -404,9 +392,7 @@ func TestInspect_ReusesTheBearerTokenForTheBlobGet(t *testing.T) {
 
 	host := strings.TrimPrefix(server.URL, "http://")
 	res, err := NewResolver("").Inspect(context.Background(), "migrate", host+"/acme/migrate:v3")
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
-	}
+	must.OKf(t, err, "inspect")
 	if res.Interface == nil {
 		t.Fatalf("interface not read: %+v", res)
 	}
@@ -460,9 +446,7 @@ func TestResolveOrkflow_ResolvesEachDistinctUsesOnce(t *testing.T) {
 	catalog := Catalog{"shell": host + "/orkstack/activity-shell:dev"}
 
 	resolutions, err := NewResolver("").ResolveOrkflow(context.Background(), catalog, wf)
-	if err != nil {
-		t.Fatalf("resolve orkflow: %v", err)
-	}
+	must.OKf(t, err, "resolve orkflow")
 	// One distinct image is one tag GET, one platform-manifest GET and one
 	// config-blob GET — not three of each.
 	if got := stub.tagRequests(); got != 1 {
@@ -499,9 +483,7 @@ func TestParseReference(t *testing.T) {
 	} {
 		t.Run(tc.in, func(t *testing.T) {
 			got, err := ParseReference(tc.in)
-			if err != nil {
-				t.Fatalf("parse: %v", err)
-			}
+			must.OKf(t, err, "parse")
 			if got.Registry != tc.registry || got.Repository != tc.repository ||
 				got.Tag != tc.tag || got.Digest != tc.digest {
 				t.Fatalf("parse(%q) = %+v, want registry=%q repository=%q tag=%q digest=%q",
@@ -512,9 +494,7 @@ func TestParseReference(t *testing.T) {
 
 	t.Run("a port is not a tag", func(t *testing.T) {
 		got, err := ParseReference("localhost:5001/x/y")
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
+		must.OKf(t, err, "parse")
 		if got.Registry != "localhost:5001" || got.Tag != "latest" {
 			t.Fatalf("parse = %+v; a registry port was read as a tag", got)
 		}
@@ -561,9 +541,7 @@ func TestInspect_ReadsTheLabelFromASingleManifestConfig(t *testing.T) {
 	resolver, reference := newStubResolver(t, singleManifestStub(t, img))
 
 	res, err := resolver.Inspect(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
-	}
+	must.OKf(t, err, "inspect")
 	if res.InterfaceError != "" {
 		t.Fatalf("interface error = %q", res.InterfaceError)
 	}
@@ -571,9 +549,7 @@ func TestInspect_ReadsTheLabelFromASingleManifestConfig(t *testing.T) {
 		t.Fatalf("interface = %v, want the label's copy.src", res.Interface)
 	}
 	image, err := resolver.Resolve(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	must.OKf(t, err, "resolve")
 	if !proto.Equal(image, res.Image) {
 		t.Fatalf("Inspect's image %v differs from Resolve's %v", res.Image, image)
 	}
@@ -587,9 +563,7 @@ func TestInspect_SelectsTheFirstRunnablePlatformOfAnIndex(t *testing.T) {
 	resolver, reference := newStubResolver(t, stub)
 
 	res, err := resolver.Inspect(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
-	}
+	must.OKf(t, err, "inspect")
 	if res.Interface == nil {
 		t.Fatalf("interface not read (error %q)", res.InterfaceError)
 	}
@@ -627,9 +601,7 @@ func TestInspect_AnIndexWithNoRunnablePlatformReportsItAsUnreadable(t *testing.T
 func TestInspect_NoLabelMeansNoInterface(t *testing.T) {
 	resolver, reference := newStubResolver(t, indexStub(t))
 	res, err := resolver.Inspect(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
-	}
+	must.OKf(t, err, "inspect")
 	if res.Interface != nil || res.InterfaceError != "" {
 		t.Fatalf("an unlabelled image declared %v / %q, want nothing", res.Interface, res.InterfaceError)
 	}
@@ -640,9 +612,7 @@ func TestInspect_AMalformedLabelNeverFailsResolution(t *testing.T) {
 	resolver, reference := newStubResolver(t, singleManifestStub(t, img))
 
 	res, err := resolver.Inspect(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatalf("inspect: %v", err)
-	}
+	must.OKf(t, err, "inspect")
 	if res.Interface != nil {
 		t.Fatalf("interface = %v, want nil", res.Interface)
 	}
@@ -719,9 +689,7 @@ func TestResolve_IsUnchangedByTheLabel(t *testing.T) {
 		resolver, reference := newStubResolver(t, &registryStub{t: t, body: body, mediaType: MediaTypeOCIIndex,
 			sendDigest: digestOf(body), objects: img.objects()})
 		image, err := resolver.Resolve(context.Background(), "migrate", reference)
-		if err != nil {
-			t.Fatalf("resolve: %v", err)
-		}
+		must.OKf(t, err, "resolve")
 		images = append(images, image)
 	}
 	// The two indexes differ (they name different manifests), so the digest
@@ -746,9 +714,7 @@ func TestResolveOrkflow_SkipsAnAwaitedTask(t *testing.T) {
 	}}
 	catalog := Catalog{"shell": host + "/orkstack/activity-shell:dev"}
 	resolutions, err := NewResolver("").ResolveOrkflow(context.Background(), catalog, wf)
-	if err != nil {
-		t.Fatalf("resolve orkflow: %v", err)
-	}
+	must.OKf(t, err, "resolve orkflow")
 	if len(resolutions) != 1 || resolutions[""] != nil {
 		t.Fatalf("resolutions = %v, want only the container task's image", resolutions)
 	}

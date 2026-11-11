@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runFilterCorpus is one namespace's runs split across BOTH halves ListRuns
@@ -68,9 +70,7 @@ func newRunFilterCorpus(t *testing.T, ctx context.Context) *runFilterCorpus {
 	}
 
 	store, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	archiver := engine.NewRunArchiver(store)
 
 	stamp := time.Now().UnixNano()
@@ -91,9 +91,7 @@ func newRunFilterCorpus(t *testing.T, ctx context.Context) *runFilterCorpus {
 			Routes:    map[string]string{task.DefaultPool: task.DefaultQueue},
 			Origin:    origin,
 		}
-		if err := starter.StartRun(ctx, c.ids[label], wf, nil, plan); err != nil {
-			t.Fatalf("StartRun(%s): %v", label, err)
-		}
+		must.OKf(t, starter.StartRun(ctx, c.ids[label], wf, nil, plan), "StartRun(%s)", label)
 		t.Cleanup(func() {
 			_ = temporalClient.TerminateWorkflow(context.Background(), c.ids[label], "", "run filter integration test cleanup")
 		})
@@ -103,9 +101,7 @@ func newRunFilterCorpus(t *testing.T, ctx context.Context) *runFilterCorpus {
 	start("ended", "deploy-api", trgA)
 	start("live1", "deploy-api", &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_SUBMIT"})
 	start("live2", "build-web", trgA)
-	if err := temporalClient.TerminateWorkflow(ctx, c.ids["ended"], "", "run filter integration test: end one"); err != nil {
-		t.Fatalf("TerminateWorkflow(ended): %v", err)
-	}
+	must.OKf(t, temporalClient.TerminateWorkflow(ctx, c.ids["ended"], "", "run filter integration test: end one"), "TerminateWorkflow(ended)")
 
 	reader := engine.NewTemporalRunReader(temporalClient).WithNamespaceIndex(true).WithOriginIndex(true)
 	c.svc = api.NewService(api.Config{Reader: reader, Runs: engine.NewRunStore(), Archive: archiver})
@@ -114,9 +110,7 @@ func newRunFilterCorpus(t *testing.T, ctx context.Context) *runFilterCorpus {
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		runs, err := reader.ListRuns(ctx, engine.RunQuery{Namespace: artifacts.DefaultNamespace, Limit: 10})
-		if err != nil {
-			t.Fatalf("reader.ListRuns: %v", err)
-		}
+		must.OKf(t, err, "reader.ListRuns")
 		closed := false
 		for _, run := range runs {
 			if run.GetId() == c.ids["ended"] && run.GetStatus() == orkstackv1.Status_STATUS_CANCELED {
@@ -148,9 +142,7 @@ func newRunFilterCorpus(t *testing.T, ctx context.Context) *runFilterCorpus {
 			Status: status, CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Second)),
 			Origin: origin,
 		}
-		if err := archiver.Archive(ctx, run, nil); err != nil {
-			t.Fatalf("Archive(%s): %v", label, err)
-		}
+		must.OKf(t, archiver.Archive(ctx, run, nil), "Archive(%s)", label)
 		c.times[label] = engine.RunIndexTime(run)
 	}
 	trigger := func(id string) *orkstackv1.RunOrigin {
@@ -173,9 +165,7 @@ func (c *runFilterCorpus) filters(t *testing.T, texts ...string) []*orkstackv1.F
 	out := make([]*orkstackv1.FieldFilter, 0, len(texts))
 	for _, text := range texts {
 		f, err := listfilter.Parse(text)
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", text, err)
-		}
+		must.OKf(t, err, "Parse(%q)", text)
 		out = append(out, f)
 	}
 	return out
@@ -234,9 +224,7 @@ func TestIntegration_RunFiltersAnswerAlikeLiveAndArchived(t *testing.T) {
 		{[]string{"origin.kind=submit", "orkflow_name=deploy-api"}, []string{"live1", "arch1"}},
 	} {
 		resp, err := c.svc.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{Filters: c.filters(t, tc.filters...)}))
-		if err != nil {
-			t.Fatalf("ListRuns(%q): %v", tc.filters, err)
-		}
+		must.OKf(t, err, "ListRuns(%q)", tc.filters)
 		got := c.labels(t, resp.Msg.GetRuns())
 		if !reflect.DeepEqual(got, tc.want) {
 			t.Errorf("ListRuns(%q) = %v, want %v", tc.filters, got, tc.want)
@@ -274,9 +262,7 @@ func TestIntegration_RunFilterPagesVisitEveryMatchOnce(t *testing.T) {
 				t.Fatalf("%q did not end after %d pages: %v", tc.filters, page, visited)
 			}
 			resp, err := c.svc.ListRuns(ctx, connect.NewRequest(req))
-			if err != nil {
-				t.Fatalf("ListRuns(%q) page %d: %v", tc.filters, page+1, err)
-			}
+			must.OKf(t, err, "ListRuns(%q) page %d", tc.filters, page+1)
 			visited = append(visited, c.labels(t, resp.Msg.GetRuns())...)
 			if resp.Msg.GetNextPageToken() == "" {
 				break
@@ -313,15 +299,11 @@ func runListQuery(t *testing.T, namespace string, limit int, texts ...string) en
 	wire := make([]*orkstackv1.FieldFilter, 0, len(texts))
 	for _, text := range texts {
 		f, err := listfilter.Parse(text)
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", text, err)
-		}
+		must.OKf(t, err, "Parse(%q)", text)
 		wire = append(wire, f)
 	}
 	set, err := listfilter.MustSpec(&orkstackv1.ListRunsRequest{}).Compile(wire)
-	if err != nil {
-		t.Fatalf("Compile(%q): %v", texts, err)
-	}
+	must.OKf(t, err, "Compile(%q)", texts)
 	q := engine.RunListPlan(set)
 	q.Namespace, q.Limit = namespace, limit
 	return q

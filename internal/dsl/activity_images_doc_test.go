@@ -6,15 +6,15 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // docSection is one "### title" section of docs/ACTIVITY_IMAGES.md.
 func docSection(t *testing.T, title string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "ACTIVITY_IMAGES.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	section := regexp.MustCompile(`(?s)\n### ` + regexp.QuoteMeta(title) + `\n(.*?)(\n## |\n### |\z)`).FindStringSubmatch(string(raw))
 	if section == nil {
 		t.Fatalf("docs/ACTIVITY_IMAGES.md has no section %q", title)
@@ -50,18 +50,14 @@ func TestActivityImagesDoc_ExamplesPackToTheLabelsShown(t *testing.T) {
 				document = "apiVersion: orkstack/v1\nkind: ActivityInterface\n" + document
 			}
 			decl, err := ParseActivityDocument([]byte(document))
-			if err != nil {
-				t.Fatalf("%q: %v", tc.section, err)
-			}
+			must.OKf(t, err, "%q", tc.section)
 			var value string
 			if tc.label == IconLabel {
 				value, err = PackIconLabel(decl.Icon)
 			} else {
 				value, err = PackDocsLabel(decl.Docs, decl.Interface)
 			}
-			if err != nil {
-				t.Fatalf("%q: %v", tc.section, err)
-			}
+			must.OKf(t, err, "%q", tc.section)
 			packed["LABEL "+tc.label+"='"+value+"'\n"] = true
 		}
 		for _, line := range dockerfiles {
@@ -81,16 +77,12 @@ func TestActivityImagesDoc_TheDefaultIconIsOneTheEngineReads(t *testing.T) {
 		t.Fatalf("the default icon section shows %d YAML blocks, want one", len(yamls))
 	}
 	decl, err := ParseActivityDocument([]byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n" + yamls[0]))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if decl.Icon == nil {
 		t.Fatal("the default icon section declares no icon")
 	}
 	label, err := PackIconLabel(decl.Icon)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, err := ParseIconLabel(label); err != nil {
 		t.Fatalf("the engine refuses the default icon: %v", err)
 	}

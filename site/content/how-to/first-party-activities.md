@@ -27,11 +27,11 @@ An excerpt from [`examples/http-post.ork.yaml`](https://github.com/orkstack/orks
       as: response.json
 ```
 
-Apply the file and run it:
+Create the Orkflow from the file, then run it:
 
 ```bash
-orkctl apply examples/http-post.ork.yaml
-orkctl run submit http-post --watch
+orkctl orkflow create examples/http-post.ork.yaml
+orkctl run submit http-post -w
 ```
 
 The example posts to `httpbin.org`. Pass `--input url=<your URL>` to use another endpoint.
@@ -53,7 +53,7 @@ Each name maps to one image in the deployment's catalog. `orkctl activity list` 
 
 `http` defaults to `get`, and `shell` defaults to `exec`. The other four need `op:` in every task.
 
-Apply checks each task's `with:` keys against the image's label. It refuses a missing required key, a missing `op` where there is no default, and an unknown `op`. The keys for each name are in the [first-party reference](/docs/reference/first-party-activities/).
+`orkctl orkflow create` checks each task's `with:` keys against the image's label. It refuses a missing required key, a missing `op` where there is no default, and an unknown `op`. The keys for each name are in the [first-party reference](/docs/reference/first-party-activities/).
 
 ## Read the outputs
 

@@ -8,7 +8,7 @@
 	// shown from a partial stream: a manifest, or a bundle, exists only once the
 	// engine's final `last` chunk has arrived (docs/RUN_EVIDENCE.md).
 	import { onDestroy, untrack } from 'svelte';
-	import CliEquivalent from './CliEquivalent.svelte';
+	import CliPopover from './CliPopover.svelte';
 	import Dialog from './Dialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
 	import { errorMessage } from '#lib/client.ts';
@@ -217,18 +217,18 @@
 					class="rounded-sm border border-rule-strong bg-paper-sunken px-3 py-2 text-sm text-ink-secondary"
 				>
 					<p>{overLimit.message}</p>
-					<div class="mt-2 flex items-start gap-2">
-						<pre
-							data-testid="run-evidence-too-large-command"
-							class="min-w-0 flex-1 overflow-x-auto rounded-sm bg-paper-sunken p-2 font-mono text-xs text-ink">{overLimit.command}</pre>
-						<CliEquivalent command={overLimit.command} testid="run-evidence-too-large-cli" label="Copy the export command" />
-					</div>
 				</div>
 			{/if}
 
 			<div class="flex items-center justify-end gap-2">
-				<CliEquivalent {command} testid="run-evidence-cli" label="Copy CLI" />
-				<CliEquivalent command="orkctl run evidence verify evidence.tar.gz" testid="run-evidence-verify-cli" label="Verify a bundle from the CLI" />
+				<CliPopover
+					testid="run-evidence-cli"
+					title="Command line: this bundle"
+					commands={[
+						{ label: 'Export the bundle', command },
+						{ label: 'Verify a bundle', command: 'orkctl run evidence verify evidence.tar.gz' }
+					]}
+				/>
 				<button
 					type="button"
 					data-testid="run-evidence-download"

@@ -270,7 +270,7 @@ test('R1: status in and not equals through the enum controls', async ({ page }) 
 	await page.getByTestId('run-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['status=FAILED,CANCELED']);
 	await expect.poll(() => rowStatuses(page)).toEqual(Array(FAILED_RUNS).fill('Failed'));
-	expect(await cliCommand(page)).toBe(`orkctl -n ${NS} run list --filter status=FAILED,CANCELED`);
+	expect(await cliCommand(page)).toBe(`orkctl -n ${NS} run list -F status=FAILED,CANCELED`);
 	await page.screenshot({ path: out('screenshot-runs-status-in.png'), fullPage: true });
 
 	// not equals: one value from the enum Select. The draft was refilled from
@@ -324,7 +324,7 @@ test('R3: a created_at window through datetime-local, and its CLI equivalent in 
 	await page.getByTestId('run-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual([`created_at<${untilUtc}`, `created_at>=${sinceUtc}`]);
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(RUNS + FAILED_RUNS);
-	expect(await cliCommand(page)).toBe(`orkctl -n ${NS} run list --filter 'created_at<${untilUtc}' --filter 'created_at>=${sinceUtc}'`);
+	expect(await cliCommand(page)).toBe(`orkctl -n ${NS} run list -F 'created_at<${untilUtc}' -F 'created_at>=${sinceUtc}'`);
 	await page.screenshot({ path: out('screenshot-runs-created-window.png'), fullPage: true });
 
 	// A window that closed before the runs existed keeps none.
@@ -444,6 +444,6 @@ test('dashboard presets and custom since are visible, addressable, and export a 
 	await expect(page.getByTestId('dashboard-window-custom-since')).toHaveValue(since);
 	await page.keyboard.press('Escape');
 	await page.getByTestId('page-cli-trigger').click();
-	await expect(pageCli(page, 'The numbers on this page')).toContainText('orkctl --namespace');
+	await expect(pageCli(page, 'The numbers on this page')).toContainText('orkctl -n');
 	await page.screenshot({ path: out('screenshot-dashboard-window.png'), fullPage: true });
 });

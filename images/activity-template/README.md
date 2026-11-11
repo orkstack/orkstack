@@ -340,7 +340,7 @@ failure.
 The image declares its `with:` contract in
 [`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
-"Declaring the interface"), so `orkctl orkflow validate` and apply check a
+"Declaring the interface"), so `orkctl orkflow validate` and `orkctl orkflow create` check a
 task's `with:` before anything runs: a missing `src` or an unknown `op` is an
 error, an undeclared key a warning. One op, no default op (an unknown or
 missing `op` exits `2`), and the three `values.json` keys of Output. The

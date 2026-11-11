@@ -493,8 +493,8 @@
 	/* ---- Status pill: the mark, the word, then the colour -------------- */
 	/* Statuses differ by mark shape, never by hue alone (WCAG 1.4.1): a
 	   circle running, a square succeeded, a triangle failed, a ring waiting,
-	   a diamond awaiting, a slashed square canceled, an outlined square
-	   pending. The mark is CSS on the pill itself (no element), because a
+	   a diamond awaiting, a half-filled circle sleeping, a slashed square
+	   canceled, an outlined square pending. The mark is CSS on the pill itself (no element), because a
 	   run page holds thousands of pills; #lib/statusMarks.ts names each. */
 	.stamp {
 		display: inline-flex;
@@ -523,6 +523,7 @@
 	.mark-dash::before,
 	.mark-hollow::before,
 	.mark-dotted::before,
+	.mark-half::before,
 	.mark-dot,
 	.mark-ring,
 	.mark-diamond,
@@ -579,6 +580,12 @@
 		border: var(--rule-frame) solid var(--color-await);
 		transform: rotate(45deg);
 	}
+	/* Sleeping: a ring in awaiting's violet with its left half filled. */
+	.mark-half::before {
+		border: var(--rule-frame) solid var(--color-await);
+		border-radius: var(--radius-full);
+		background-image: linear-gradient(90deg, var(--color-await) 50%, transparent 50%);
+	}
 	.pill-wait {
 		background-color: var(--color-wait-tint);
 		color: var(--color-wait);
@@ -623,6 +630,7 @@
 		.mark-dash::before,
 		.mark-hollow::before,
 		.mark-dotted::before,
+		.mark-half::before,
 		.mark-dot,
 		.mark-ring,
 		.mark-diamond,

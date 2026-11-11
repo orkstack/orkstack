@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_DescribeOrkerTravelsThroughTemporalToTheRealOrkerActivity
@@ -39,9 +41,7 @@ func TestIntegration_DescribeOrkerTravelsThroughTemporalToTheRealOrkerActivity(t
 
 	pool := fmt.Sprintf("describe-%d", os.Getpid())
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("QueueForPool: %v", err)
-	}
+	must.OKf(t, err, "QueueForPool")
 	policy := orker.DefaultSecurityPolicy()
 	activities := orker.NewActivitiesWithOptions(nil, orker.Options{
 		Runtime:       orker.NewDockerRuntime(),
@@ -53,13 +53,9 @@ func TestIntegration_DescribeOrkerTravelsThroughTemporalToTheRealOrkerActivity(t
 	})
 
 	control, presence, err := orker.NewChannelWorkers(c, activities)
-	if err != nil {
-		t.Fatalf("channel workers: %v", err)
-	}
+	must.OKf(t, err, "channel workers")
 	for _, w := range []worker.Worker{control, presence} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start Orker channel worker: %v", err)
-		}
+		must.OKf(t, w.Start(), "start Orker channel worker")
 		defer w.Stop()
 	}
 
@@ -69,9 +65,7 @@ func TestIntegration_DescribeOrkerTravelsThroughTemporalToTheRealOrkerActivity(t
 	var result *orkstackv1.DescribeOrkerResult
 	for deadline := time.Now().Add(time.Minute); result == nil; {
 		orkers, err := engine.ReadFleet(ctx, starter)
-		if err != nil {
-			t.Fatalf("read the orker inventory: %v", err)
-		}
+		must.OKf(t, err, "read the orker inventory")
 		for _, o := range orkers {
 			if o.Presence.Identity != "orker-describe-proof" {
 				continue
@@ -116,9 +110,7 @@ func TestIntegration_DescribeOrkerTravelsThroughTemporalToTheRealOrkerActivity(t
 func startStandInOrker(t *testing.T, c client.Client, queue string, described *orkstackv1.DescribeOrkerResult) {
 	t.Helper()
 	control, err := task.QueueForOrker(described.GetOrkerId())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	describe := func(context.Context) (*orkstackv1.DescribeOrkerResult, error) { return described, nil }
 	for _, channel := range []string{queue, task.OrkersQueue, control} {
 		w := worker.New(c, channel, worker.Options{
@@ -133,9 +125,7 @@ func startStandInOrker(t *testing.T, c client.Client, queue string, described *o
 					"an older Orker would fail to decode this input", "ActivityFailed", nil)
 			}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 		}
-		if err := w.Start(); err != nil {
-			t.Fatalf("start stand-in Orker on %s: %v", channel, err)
-		}
+		must.OKf(t, w.Start(), "start stand-in Orker on %s", channel)
 		t.Cleanup(w.Stop)
 	}
 }

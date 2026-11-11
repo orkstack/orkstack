@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeCapabilities answers the fleet check: lacking is every identity it
@@ -99,9 +101,7 @@ func TestApplyOrkflow_AcceptsFiveThousandItemsWhenTheDeploymentAllowsThem(t *tes
 	if err != nil || len(resp.Msg.GetIssues()) != 0 {
 		t.Fatalf("validate at 5,000 = %v, %v; want accepted", resp.Msg.GetIssues(), err)
 	}
-	if err := applyDoc(t, raised, doc); err != nil {
-		t.Fatalf("apply at 5,000: %v", err)
-	}
+	must.OKf(t, applyDoc(t, raised, doc), "apply at 5,000")
 
 	store := engine.NewMemoryOrkflowStore()
 	defaulted := itemsService(t, store, &fakeStarter{}, 1000, &fakeCapabilities{}, nil)
@@ -120,12 +120,8 @@ func TestSubmitRun_AcceptsFiveThousandItemsWhenTheDeploymentAllowsThem(t *testin
 	starter := &fakeStarter{}
 	caps := &fakeCapabilities{}
 	svc := itemsService(t, orkflows, starter, 5000, caps, nil)
-	if err := applyDoc(t, svc, fanOutDoc("wide", 5000, 1)); err != nil {
-		t.Fatal(err)
-	}
-	if err := submitName(svc, "wide"); err != nil {
-		t.Fatalf("submit at 5,000: %v", err)
-	}
+	must.OK(t, applyDoc(t, svc, fanOutDoc("wide", 5000, 1)))
+	must.OKf(t, submitName(svc, "wide"), "submit at 5,000")
 	if len(starter.startedRuns()) != 1 || caps.questions() != 1 {
 		t.Fatalf("started %v after %d fleet questions; want one run after one", starter.startedRuns(), caps.questions())
 	}
@@ -161,9 +157,7 @@ func TestSubmitRun_RefusesManyItemsWhileAnOlderEngineProcessPolls(t *testing.T) 
 	starter := &fakeStarter{}
 	caps := &fakeCapabilities{lacking: []string{"77@old@"}}
 	svc := itemsService(t, engine.NewMemoryOrkflowStore(), starter, 5000, caps, nil)
-	if err := applyDoc(t, svc, fanOutDoc("wide", 5000, 1)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, fanOutDoc("wide", 5000, 1)))
 	err := submitName(svc, "wide")
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("submit = %v; want failed_precondition", err)
@@ -186,9 +180,7 @@ func TestSubmitRun_RefusalNamesACountNotAnIdentity(t *testing.T) {
 	var logs bytes.Buffer
 	caps := &fakeCapabilities{lacking: []string{"123@host-a@ ork-caps=", "456@host-b@"}}
 	svc := itemsService(t, engine.NewMemoryOrkflowStore(), &fakeStarter{}, 5000, caps, &logs)
-	if err := applyDoc(t, svc, fanOutDoc("wide", 5000, 1)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, fanOutDoc("wide", 5000, 1)))
 	err := submitName(svc, "wide")
 	if err == nil || !strings.Contains(err.Error(), "2 engine processes") {
 		t.Fatalf("refusal %v; want it to count 2 engine processes", err)
@@ -214,18 +206,14 @@ func TestSubmitRun_ManyItemsCheckFailsClosed(t *testing.T) {
 	starter := &fakeStarter{}
 	svc := itemsService(t, engine.NewMemoryOrkflowStore(), starter, 5000,
 		&fakeCapabilities{err: errors.New("describe: unavailable")}, nil)
-	if err := applyDoc(t, svc, fanOutDoc("wide", 5000, 1)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, fanOutDoc("wide", 5000, 1)))
 	err := submitName(svc, "wide")
 	if connect.CodeOf(err) != connect.CodeUnavailable || strings.Contains(err.Error(), "describe: unavailable") {
 		t.Fatalf("submit with an unreadable fleet = %v; want unavailable, without the cluster's own text", err)
 	}
 	// No checker wired at all is the same unanswered question.
 	unwired := itemsService(t, engine.NewMemoryOrkflowStore(), starter, 5000, nil, nil)
-	if err := applyDoc(t, unwired, fanOutDoc("wide", 5000, 1)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, unwired, fanOutDoc("wide", 5000, 1)))
 	if err := submitName(unwired, "wide"); connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("submit with no checker = %v; want unavailable", err)
 	}
@@ -238,9 +226,7 @@ func TestSubmitRun_FewItemsSkipTheFleetCheck(t *testing.T) {
 	starter := &fakeStarter{}
 	caps := &fakeCapabilities{lacking: []string{"77@old@"}, err: errors.New("never asked")}
 	svc := itemsService(t, engine.NewMemoryOrkflowStore(), starter, 5000, caps, nil)
-	if err := applyDoc(t, svc, fanOutDoc("small", 1000, 1)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, fanOutDoc("small", 1000, 1)))
 	if err := submitName(svc, "small"); err != nil {
 		t.Fatalf("a 1,000-item submit = %v; want it to start whatever the fleet runs", err)
 	}

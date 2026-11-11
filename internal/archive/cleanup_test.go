@@ -16,6 +16,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var errInjected = errors.New("injected")
@@ -329,9 +331,7 @@ func TestRunOnce_RetiresAFoundClosedExecutionPastItsNamespaceRetention(t *testin
 	cluster.closeTime["retire-me"] = old
 
 	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if cluster.deleteCalls["retire-me"] != 1 {
 		t.Fatalf("DeleteWorkflow calls = %d, want 1", cluster.deleteCalls["retire-me"])
 	}
@@ -353,9 +353,7 @@ func TestRunOnce_ReclaimsStorageWithNoDeleteCallWhenAlreadyGone(t *testing.T) {
 	cluster := newFakeCluster() // found defaults to false
 
 	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if cluster.deleteCalls["already-gone"] != 0 {
 		t.Fatalf("DeleteWorkflow was called for an execution already absent: %d", cluster.deleteCalls["already-gone"])
 	}
@@ -377,9 +375,7 @@ func TestRunOnce_SkipsAFoundExecutionNotYetPastItsNamespaceRetention(t *testing.
 	cluster.closeTime["long-runner"] = now.Add(-time.Hour) // closed 1h ago, well inside 72h retention
 
 	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if cluster.deleteCalls["long-runner"] != 0 || store.deletes["long-runner"] != 0 {
 		t.Fatalf("a run inside its namespace's retention was retired: deletes=%d cluster_deletes=%d",
 			store.deletes["long-runner"], cluster.deleteCalls["long-runner"])
@@ -445,9 +441,7 @@ func TestRunOnce_UsesEachNamespacesOwnRetention(t *testing.T) {
 	}}
 
 	stats, err := testCleaner(store, cluster, namespaces, 72*time.Hour, now).RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if stats.RunsCleaned != 2 {
 		t.Fatalf("runs cleaned = %d, want 2 (tight-expired, inherit-expired): stats=%+v", stats.RunsCleaned, stats)
 	}
@@ -553,9 +547,7 @@ func TestRunOnce_IsIdempotent(t *testing.T) {
 		t.Fatalf("first = %+v, %v", first, err)
 	}
 	second, err := cleaner.RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("second: %v", err)
-	}
+	must.OKf(t, err, "second")
 	if second.RunsCleaned != 0 || second.ObjectsDeleted != 0 || store.deletes["gone"] != 1 {
 		t.Fatalf("second = %+v, deletes=%v", second, store.deletes)
 	}
@@ -717,9 +709,7 @@ func TestRunOnce_WholeIterationEnumeratesTheIndexOnce(t *testing.T) {
 		store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 
 	stats, err := cleaner.RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if stats.RunsScanned != runs {
 		t.Fatalf("runs scanned = %d, want every eligible run visited once (%d)", stats.RunsScanned, runs)
 	}
@@ -737,9 +727,7 @@ func TestRunOnce_WholeIterationEnumeratesTheIndexOnce(t *testing.T) {
 	pages := 0
 	for until := now.Add(-72 * time.Hour); ; pages++ {
 		page, err := newestFirst.ListRuns(context.Background(), artifacts.RunQuery{Until: until, Limit: 200})
-		if err != nil {
-			t.Fatalf("newest-first page: %v", err)
-		}
+		must.OKf(t, err, "newest-first page")
 		if len(page) < 200 {
 			break
 		}
@@ -768,9 +756,7 @@ func TestRunOnce_RechecksRetentionAgainstEachReturnedEntry(t *testing.T) {
 	store.ignoreUntil = true // a backend that honours every filter except Until
 	cluster := newFakeCluster()
 	stats, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if store.deletes["still-retained"] != 0 {
 		t.Fatalf("a run inside the retention window was deleted: %#v", store.deletes)
 	}
@@ -913,9 +899,7 @@ func TestRunOnce_CancellationStopsPromptlyAndLeavesStateConsistent(t *testing.T)
 	// idempotence, and it must not corrupt anything.
 	store.afterDelete = nil
 	resumed, err := testCleaner(store, cluster, nil, 72*time.Hour, now).RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("resume: %v", err)
-	}
+	must.OKf(t, err, "resume")
 	if resumed.RunsCleaned != len(entries)-1 {
 		t.Fatalf("resume cleaned %d of %d remaining", resumed.RunsCleaned, len(entries)-1)
 	}
@@ -974,9 +958,7 @@ func TestRunOnce_AbsurdBatchSizeStillAsksForABoundedPage(t *testing.T) {
 	}, store, cluster, &fakeNamespaces{}, retention, testLogger()).WithClock(func() time.Time { return now })
 
 	stats, err := cleaner.RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if stats.RunsCleaned != 1 {
 		t.Fatalf("RunOnce = %+v, want the one expired run cleaned", stats)
 	}

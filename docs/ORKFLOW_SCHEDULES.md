@@ -61,8 +61,8 @@ silently diverge from. One store cannot disagree with itself.
   unique within a namespace atomically: the cluster refuses a second create.
   A schedule of another namespace is NotFound.
 - A schedule's `id` (`sch-{16 hex}`) is opaque. It survives an update and
-  changes on delete-then-create, so `orkctl run list --filter
-  origin.kind=SCHEDULE --filter origin.id=<id>` names one schedule's lifetime.
+  changes on delete-then-create, so `orkctl run list -F
+  origin.kind=SCHEDULE -F origin.id=<id>` names one schedule's lifetime.
 - Overlap, catch-up, jitter, pause, note, backfill and manual fire are the
   cluster's own. OrkStack never computes a next fire time, never decides
   whether a fire overlaps, never buffers or retries a fire, and never retries
@@ -130,7 +130,7 @@ refusal's own message, recorded as the fire's `refusal` and shown by `orkctl
 schedule get` and the Schedules tab. With `pause_on_failure` the cluster then
 pauses the schedule and writes why into its note. "Did last night's reconcile
 run, and if not, why?" is answered by `orkctl schedule get`; the run it did
-start by `orkctl run list --filter origin.kind=SCHEDULE --filter
+start by `orkctl run list -F origin.kind=SCHEDULE -F
 origin.id=<id>`.
 
 A recent fire reads one of: a run id, `refused` with its reason, `preparing`
@@ -151,7 +151,7 @@ orkctl schedule create NAME --orkflow NAME [--version V]
     [--overlap skip|buffer-one|buffer-all|cancel-other|allow-all]
     [--catchup-window DUR] [--pause-on-failure]
     [--input KEY=VALUE ...] [--input-json JSON] [--description TEXT] [--paused]
-orkctl schedule list [--filter F ...]
+orkctl schedule list [-F F ...]
 orkctl schedule get NAME
 orkctl schedule update NAME [--version V | --follow-current] [spec flags]
     [--input KEY=VALUE ...] [--input-json JSON] [--clear-input] [--description TEXT]
@@ -161,6 +161,12 @@ orkctl schedule fire NAME [--overlap POLICY]
 orkctl schedule backfill NAME --start RFC3339 --end RFC3339 [--overlap POLICY]
 orkctl schedule delete NAME
 ```
+
+`--orkflow` names an Orkflow of the schedule's own namespace. Another
+namespace's (`<namespace>/<name>`) is refused by name: a schedule never starts
+another namespace's Orkflow, which runs only as a child composed through
+`uses:` ([DSL.md](DSL.md#sharing-across-namespaces), "Sharing across
+namespaces").
 
 Every subcommand takes `--json`. `create` checks the namespace and the
 Orkflow (and pinned version) exist before the cluster is asked; a refused

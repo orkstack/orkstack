@@ -12,6 +12,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runFilters compiles CLI-grammar filters against ListRunsRequest's
@@ -21,15 +23,11 @@ func runFilters(t *testing.T, texts ...string) listfilter.Set {
 	wire := make([]*orkstackv1.FieldFilter, 0, len(texts))
 	for _, text := range texts {
 		f, err := listfilter.Parse(text)
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", text, err)
-		}
+		must.OKf(t, err, "Parse(%q)", text)
 		wire = append(wire, f)
 	}
 	set, err := listfilter.MustSpec(&orkstackv1.ListRunsRequest{}).Compile(wire)
-	if err != nil {
-		t.Fatalf("Compile(%q): %v", texts, err)
-	}
+	must.OKf(t, err, "Compile(%q)", texts)
 	return set
 }
 
@@ -198,9 +196,7 @@ func (c *countingArchive) GetRun(ctx context.Context, runID string) ([]byte, err
 
 func TestRunArchiver_KeepSeesTheIndexProjection(t *testing.T) {
 	local, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = local.Close() })
 	counting := &countingArchive{RunArchive: local}
 	archiver := NewRunArchiver(counting)
@@ -214,9 +210,7 @@ func TestRunArchiver_KeepSeesTheIndexProjection(t *testing.T) {
 			Id: "ork-" + string(rune('a'+i)), Namespace: "default", OrkflowName: "deploy", OrkflowVersion: "1.0.0",
 			Status: status, CreatedAt: timestamppb.New(at.Add(time.Duration(i) * time.Minute)), Origin: trigger,
 		}
-		if err := archiver.Archive(context.Background(), run, nil); err != nil {
-			t.Fatalf("Archive(%s): %v", run.GetId(), err)
-		}
+		must.OKf(t, archiver.Archive(context.Background(), run, nil), "Archive(%s)", run.GetId())
 	}
 
 	var seen []*orkstackv1.Run
@@ -228,9 +222,7 @@ func TestRunArchiver_KeepSeesTheIndexProjection(t *testing.T) {
 			return plan.Keep(view)
 		},
 	})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if ids := runIDs(runs); !slices.Equal(ids, []string{"ork-c", "ork-a"}) {
 		t.Fatalf("status!=FAILED listed %v, want [ork-c ork-a]", ids)
 	}
@@ -265,9 +257,7 @@ func TestRunArchiver_KeepSeesTheIndexProjection(t *testing.T) {
 			return plan.Keep(view)
 		},
 	})
-	if err != nil {
-		t.Fatalf("ListRuns(origin): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(origin)")
 	if ids := runIDs(runs); !slices.Equal(ids, []string{"ork-c"}) {
 		t.Fatalf("origin filters listed %v, want [ork-c]", ids)
 	}

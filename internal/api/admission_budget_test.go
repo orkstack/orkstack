@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe the third reason inside the one admission gate: an
@@ -62,9 +64,7 @@ type budgetFixture struct {
 func newBudgetFixture(t *testing.T, ttl time.Duration, configure ...func(*api.Config)) *budgetFixture {
 	t.Helper()
 	local, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = local.Close() })
 	f := &budgetFixture{
 		bodies:   &listCountingBodies{countingBodies: newCountingBodies(local)},
@@ -100,9 +100,7 @@ func (f *budgetFixture) spend(t *testing.T, seconds float64) {
 		CreatedAt: timestamppb.New(at), FinishedAt: timestamppb.New(at.Add(time.Minute)),
 		TaskRuns: []*orkstackv1.TaskRun{{TaskId: "work", Pool: "main", Attempt: 1, Status: orkstackv1.Status_STATUS_SUCCEEDED}},
 	}
-	if err := engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive %s: %v", id, err)
-	}
+	must.OKf(t, engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil), "archive %s", id)
 }
 
 func (f *budgetFixture) setBudget(t *testing.T, cpu int64, enforce bool) {
@@ -127,9 +125,7 @@ func TestSubmitRun_RefusedByBudgetLeavesNothingBehind(t *testing.T) {
 	f.assertNothingBehind(t, 0)
 	listed, err := f.runClient().ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{Namespace: "payments"}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	for _, run := range listed.Msg.GetRuns() {
 		if !strings.HasPrefix(run.GetId(), "ork-spent-") {
 			t.Errorf("ListRuns(payments) lists %s: a refusal must record nothing", run.GetId())
@@ -234,9 +230,7 @@ func TestSubmitRun_AKeyedRepeatDuringABudgetRefusalIsRefusedNotAnswered(t *testi
 	f := newBudgetFixture(t, 0)
 	f.setBudget(t, 10, true)
 	first, err := f.submit("order-42", false)
-	if err != nil {
-		t.Fatalf("keyed submit under budget: %v", err)
-	}
+	must.OKf(t, err, "keyed submit under budget")
 	f.spend(t, 12)
 	_, err = f.submit("order-42", false)
 	requireRefusal(t, err, connect.CodeFailedPrecondition, budgetSentence)
@@ -254,9 +248,7 @@ func TestSubmitRun_ABudgetNeverCancelsAnAcceptedRun(t *testing.T) {
 	f := newBudgetFixture(t, 0)
 	f.setBudget(t, 10, true)
 	run, err := f.submit("", false)
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	must.OKf(t, err, "submit")
 	f.spend(t, 12)
 	if _, err := f.submit("", false); connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("submit over budget = %v, want FailedPrecondition", err)
@@ -283,9 +275,7 @@ func TestSubmitRun_TheGateAndGetUsageShareOneMeasurement(t *testing.T) {
 	resp, err := stats.GetUsage(context.Background(), connect.NewRequest(&orkstackv1.GetUsageRequest{
 		Namespace: "payments", Lookback: durationpb.New(time.Hour),
 	}))
-	if err != nil {
-		t.Fatalf("GetUsage: %v", err)
-	}
+	must.OKf(t, err, "GetUsage")
 	if got := f.bodies.count(); got != listings {
 		t.Errorf("GetUsage listed the index again (%d -> %d): it should share the gate's measurement", listings, got)
 	}

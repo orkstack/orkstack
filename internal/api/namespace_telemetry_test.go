@@ -10,6 +10,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // telemetryService builds a Service the same way namespacedService does, but
@@ -38,9 +40,7 @@ func TestListTelemetrySinks_AlwaysIncludesDefault(t *testing.T) {
 	svc := telemetryService(t, newFakeRegistry())
 	resp, err := svc.ListTelemetrySinks(context.Background(),
 		connect.NewRequest(&orkstackv1.ListTelemetrySinksRequest{}))
-	if err != nil {
-		t.Fatalf("ListTelemetrySinks: %v", err)
-	}
+	must.OKf(t, err, "ListTelemetrySinks")
 	if got := resp.Msg.GetNames(); len(got) != 1 || got[0] != "default" {
 		t.Errorf("names = %v, want [default]", got)
 	}
@@ -51,9 +51,7 @@ func TestListTelemetrySinks_ReportsTheConfiguredTableSortedAndDeduplicated(t *te
 	svc := telemetryService(t, newFakeRegistry(), "datadog", "default", "honeycomb")
 	resp, err := svc.ListTelemetrySinks(context.Background(),
 		connect.NewRequest(&orkstackv1.ListTelemetrySinksRequest{}))
-	if err != nil {
-		t.Fatalf("ListTelemetrySinks: %v", err)
-	}
+	must.OKf(t, err, "ListTelemetrySinks")
 	want := []string{"datadog", "default", "honeycomb"}
 	got := resp.Msg.GetNames()
 	if len(got) != len(want) {
@@ -79,9 +77,7 @@ func TestCreateNamespace_AcceptsAKnownTelemetrySink(t *testing.T) {
 			Telemetry: &orkstackv1.TelemetryPolicy{Sink: "datadog"},
 		},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace")
 	if got := resp.Msg.GetNamespace().GetTelemetry().GetSink(); got != "datadog" {
 		t.Errorf("stored sink = %q, want datadog", got)
 	}
@@ -201,9 +197,7 @@ func TestUpdateNamespace_RefusesAnUnknownTelemetrySink(t *testing.T) {
 	created, err := svc.CreateNamespace(context.Background(), connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "payments"},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace")
 	edited := created.Msg.GetNamespace()
 	edited.Telemetry = &orkstackv1.TelemetryPolicy{Sink: "honeycomb"}
 	_, err = svc.UpdateNamespace(context.Background(),
@@ -232,9 +226,7 @@ func TestUpdateNamespace_ToleratesAStoredSinkTheDeploymentNoLongerDeclares(t *te
 			Telemetry: &orkstackv1.TelemetryPolicy{Sink: "datadog"},
 		},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace")
 	// The operator removes "datadog" from ORK_TELEMETRY_SINKS: reopen the
 	// service with a table that no longer declares it, sharing the same
 	// registry so the stored document (still naming "datadog") survives.
@@ -244,9 +236,7 @@ func TestUpdateNamespace_ToleratesAStoredSinkTheDeploymentNoLongerDeclares(t *te
 	edited.Description = "now paged to #payments-oncall"
 	resp, err := svc.UpdateNamespace(context.Background(),
 		connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: edited}))
-	if err != nil {
-		t.Fatalf("updating a namespace whose stored sink is no longer declared: %v", err)
-	}
+	must.OKf(t, err, "updating a namespace whose stored sink is no longer declared")
 	if got := resp.Msg.GetNamespace().GetDescription(); got != "now paged to #payments-oncall" {
 		t.Errorf("description = %q, want the edit to have taken", got)
 	}
@@ -268,9 +258,7 @@ func TestUpdateNamespace_RefusesChangingToAnotherUnknownSink(t *testing.T) {
 			Telemetry: &orkstackv1.TelemetryPolicy{Sink: "datadog"},
 		},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace")
 	svc = telemetryService(t, reg)
 
 	edited := created.Msg.GetNamespace()
@@ -358,9 +346,7 @@ func TestCreateNamespace_IsIdempotentWithAnUnsetTelemetryPolicy(t *testing.T) {
 	resp, err := svc.CreateNamespace(context.Background(), connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "payments"},
 	}))
-	if err != nil {
-		t.Fatalf("repeat create: %v", err)
-	}
+	must.OKf(t, err, "repeat create")
 	if resp.Msg.GetCreated() {
 		t.Error("the repeated create reports created=true; nothing was written")
 	}

@@ -37,9 +37,10 @@ const (
 	// unreachable". It shares the number with drain's timeout because the
 	// two belong to different commands and neither can return the other.
 	exitPlanAssertionFailed = 4
-	// exitApplyCheckChanges is `orkctl apply --check` finding that applying
-	// would change something: the documents and what is stored differ. It
-	// is that command's own negative verdict, on the terms above.
+	// exitApplyCheckChanges is `orkctl orkflow create --check` or
+	// `orkctl automation apply --check` finding that running it would change
+	// something: the documents and what is stored differ. It is those
+	// commands' own negative verdict, on the terms above.
 	exitApplyCheckChanges = 4
 	// exitInterrupted is SIGINT or SIGTERM ending the command: the shell's
 	// own 128+SIGINT, so a script can tell "stopped" from "failed".
@@ -148,7 +149,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 	root := &cobra.Command{
 		Use:   "orkctl",
 		Short: "Control and observe OrkStack orkflows",
-		Long: "orkctl drives the OrkStack engine: apply orkflow DSL files, submit runs,\n" +
+		Long: "orkctl drives the OrkStack engine: create orkflows from DSL files, submit runs,\n" +
 			"watch their events live, and inspect runs, orkflows, and activities.\n\n" +
 			"Everything an orkflow or a run belongs to is scoped by a namespace.\n" +
 			"--namespace picks one for a single command; `orkctl namespace use`\n" +
@@ -187,16 +188,15 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 	root.PersistentFlags().StringVarP(&g.namespace, "namespace", "n", "",
 		"namespace to act in (env "+namespaceEnvVar+
 			", then the one saved by 'orkctl namespace use'; default \"default\")")
-	root.PersistentFlags().BoolVar(&g.json, "json", false,
+	root.PersistentFlags().BoolVarP(&g.json, "json", "j", false,
 		"emit machine-readable JSON instead of human tables")
 	root.PersistentFlags().DurationVar(&g.timeout, "timeout", 30*time.Second,
 		"timeout for each API request (0 disables it)")
 
 	root.AddCommand(
 		newAdminCommand(g),
-		newApplyCommand(g),
+		newAutomationCommand(g),
 		newCacheCommand(g),
-		newExportCommand(g),
 		newNamespaceCommand(g),
 		newOrkflowCommand(g),
 		newOrkerCommand(g),

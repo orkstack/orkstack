@@ -12,6 +12,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests cover the API's use of the orkflow store: apply writes through to
@@ -104,9 +106,7 @@ func (u unreachableStore) SetCurrentVersion(context.Context, string, string, str
 func exampleYAML(t *testing.T) string {
 	t.Helper()
 	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	return string(source)
 }
 
@@ -118,9 +118,7 @@ func TestApplyOrkflow_WritesTheCompiledOrkflowThroughToTheStore(t *testing.T) {
 	applied, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: exampleYAML(t),
 	}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow")
 	if len(store.puts) != 1 {
 		t.Fatalf("store received %d writes, want 1", len(store.puts))
 	}
@@ -226,9 +224,7 @@ tasks:
 	applied, err := svc.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: document,
 	}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow(namespace: payments): %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow(namespace: payments)")
 	if got := applied.Msg.GetOrkflow().GetNamespace(); got != "payments" {
 		t.Errorf("applied namespace = %q, want payments", got)
 	}

@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The browser is the only client of the WebSocket bridge, and a browser always
@@ -58,9 +60,7 @@ func wsBridge(t *testing.T, allowed []string) (*httptest.Server, string) {
 func handshake(t *testing.T, server *httptest.Server, runID, origin string) int {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, server.URL+"/ws/runs/"+runID+"?from_sequence=0", nil)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	req.Header.Set("Connection", "Upgrade")
 	req.Header.Set("Upgrade", "websocket")
 	req.Header.Set("Sec-WebSocket-Version", "13")
@@ -69,9 +69,7 @@ func handshake(t *testing.T, server *httptest.Server, runID, origin string) int 
 		req.Header.Set("Origin", origin)
 	}
 	resp, err := server.Client().Transport.RoundTrip(req)
-	if err != nil {
-		t.Fatalf("handshake: %v", err)
-	}
+	must.OKf(t, err, "handshake")
 	defer resp.Body.Close()
 	return resp.StatusCode
 }
@@ -109,15 +107,11 @@ func TestWebSocketBridge_DeliversEventsToTheBrowsersOrigin(t *testing.T) {
 	// nothing, which is indistinguishable from the bug being fixed here.
 	conn, _, err := websocket.Dial(ctx, server.URL+"/ws/runs/"+runID+"?from_sequence=0",
 		&websocket.DialOptions{HTTPHeader: http.Header{"Origin": []string{uiOrigin}}})
-	if err != nil {
-		t.Fatalf("dial as the browser: %v", err)
-	}
+	must.OKf(t, err, "dial as the browser")
 	defer conn.CloseNow()
 
 	typ, payload, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("read first frame: %v", err)
-	}
+	must.OKf(t, err, "read first frame")
 	if typ != websocket.MessageText {
 		t.Fatalf("frame type = %v, want text", typ)
 	}

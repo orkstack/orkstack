@@ -9,17 +9,22 @@ import (
 	"encoding/base64"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The transform-image scenarios (docs/ACTIVITY_IMAGES.md):
@@ -93,10 +98,8 @@ func (x *transformStack) finish(t *testing.T, scenario string) {
 func (x *transformStack) applyCLI(t *testing.T, yaml string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "orkflow.ork.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
-		t.Fatalf("write document: %v", err)
-	}
-	return x.mustCLI(0, "apply", path)
+	must.OKf(t, os.WriteFile(path, []byte(yaml), 0o644), "write document")
+	return x.mustCLI(0, "orkflow", "create", path)
 }
 
 // runToEnd submits name with a JSON input and waits for a terminal status.
@@ -137,6 +140,75 @@ func taskOutput(t *testing.T, run *orkstackv1.Run, id string) map[string]any {
 	return taskRunOf(t, run, id).GetOutput().GetData().AsMap()
 }
 
+// requireNothingLeftOnDisk checks that the Orker's work root holds nothing of
+// these runs once they have ended: every attempt's directory and every pin's
+// directory is gone. The first-party images run as 65532 and the Orker as this
+// test's user, and on rootful Linux a directory the image left 0755 is one the
+// Orker can neither write nor chmod, so it stays behind
+// (docs/OCI_ACTIVITY_CONTRACT.md §10.1, rule 11). A run's attempts and its pins
+// are removed before it ends, so nothing here waits.
+func requireNothingLeftOnDisk(t *testing.T, runs ...*orkstackv1.Run) {
+	t.Helper()
+	root := bindableOrkerWorkRoot(t)
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatalf("read the Orker's work root %s: %v", root, err)
+	}
+	for _, entry := range entries {
+		for _, run := range runs {
+			if strings.Contains(entry.Name(), run.GetId()) {
+				t.Errorf("run %s left %s under the Orker's work root %s; the first of what stayed:\n%s",
+					run.GetId(), entry.Name(), root, describeLeftovers(filepath.Join(root, entry.Name())))
+			}
+		}
+	}
+}
+
+// nothingLeftOnDisk is requireNothingLeftOnDisk's question without its
+// verdict, for a caller that waits on it.
+func nothingLeftOnDisk(t *testing.T, runs ...*orkstackv1.Run) bool {
+	t.Helper()
+	entries, err := os.ReadDir(bindableOrkerWorkRoot(t))
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		for _, run := range runs {
+			if strings.Contains(entry.Name(), run.GetId()) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// describeLeftovers lists the first entries of a directory the Orker did not
+// remove, with each one's mode and owner.
+func describeLeftovers(dir string) string {
+	var lines []string
+	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
+		if len(lines) >= 12 {
+			return filepath.SkipAll
+		}
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("  %s: %v", path, err))
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil {
+			lines = append(lines, fmt.Sprintf("  %s: %v", path, err))
+			return nil
+		}
+		owner := ""
+		if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+			owner = fmt.Sprintf(" owner=%d:%d", stat.Uid, stat.Gid)
+		}
+		lines = append(lines, fmt.Sprintf("  %s mode=%v%s", path, info.Mode(), owner))
+		return nil
+	})
+	return strings.Join(lines, "\n")
+}
+
 func requireTaskStatus(t *testing.T, run *orkstackv1.Run, id string, want orkstackv1.Status) {
 	t.Helper()
 	if got := taskRunOf(t, run, id).GetStatus(); got != want {
@@ -167,18 +239,14 @@ func (x *transformStack) download(t *testing.T, runID, task, name string) []byte
 	path := filepath.Join(t.TempDir(), name)
 	x.mustCLI(0, "run", "artifact", "download", runID, "--task", task, "--kind", "output", "--name", name, "--output", path)
 	body, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read downloaded %s: %v", name, err)
-	}
+	must.OKf(t, err, "read downloaded %s", name)
 	return body
 }
 
 func (x *transformStack) attempts(t *testing.T, runID, task string) []*orkstackv1.TaskAttempt {
 	t.Helper()
 	var resp orkstackv1.ListTaskAttemptsResponse
-	if err := api.UnmarshalJSON([]byte(x.mustCLI(0, "--json", "run", "attempts", runID, "--task", task)), &resp); err != nil {
-		t.Fatalf("decode run attempts --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(x.mustCLI(0, "--json", "run", "attempts", runID, "--task", task)), &resp), "decode run attempts --json")
 	return resp.GetAttempts()
 }
 
@@ -412,6 +480,9 @@ func TestIntegration_TransformImages_GitResolveCloneRenderCached(t *testing.T) {
 	if run1Requests <= 0 {
 		t.Fatalf("run 1 made no authenticated request: the token was never exercised")
 	}
+	// The clone ran as the image's own uid and fetched a repository into
+	// /orkstack/tmp: the Orker removed all of it.
+	requireNothingLeftOnDisk(t, run1)
 
 	// Run 2, same input — the uncached comparison.
 	before = x.git.AuthenticatedRequests("private/app.git")
@@ -622,6 +693,53 @@ tasks:
 	}
 }
 
+// ============================================================== file
+
+// TestIntegration_TransformImages_FileScratchIsRemoved: activity-file's untar
+// and tar make directories in /orkstack/tmp as the image's own uid, and the
+// Orker removes every attempt's directory all the same. The archive's
+// directories are 0500, which tar keeps for a directory it extracts, and the
+// member's parents are directories tar makes itself.
+func TestIntegration_TransformImages_FileScratchIsRemoved(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	x := startTransformStack(ctx, t, false)
+	defer x.finish(t, "X10")
+	name := transformName("x10")
+	// The archive is built in the container's own /tmp, which is not on the
+	// host, so the shell task leaves nothing of its own behind.
+	x.applyCLI(t, fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
+version: "0.1.0"
+tasks:
+  - id: make
+    uses: shell
+    network: none
+    with:
+      op: exec
+      command: [sh, -c, "cd /tmp && mkdir -p d/sub && printf f > d/sub/f && chmod 0500 d/sub d && tar -czf /orkstack/output/artifacts/a.tar.gz d"]
+  - id: unpack
+    uses: file
+    needs: [make]
+    network: none
+    with: {op: untar, src: '{{ artifact "make/a.tar.gz" }}', member: d/sub/f}
+  - id: pack
+    uses: file
+    needs: [unpack]
+    network: none
+    with: {op: tar, srcs: ['{{ artifact "unpack/f" }}'], as: f.tar.gz}
+`, name))
+
+	run := x.runToEnd(ctx, t, name, "")
+	requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+	if got := string(x.download(t, run.GetId(), "unpack", "f")); got != "f" {
+		t.Fatalf("unpack's f = %q, want the archive member's bytes", got)
+	}
+	requireNothingLeftOnDisk(t, run)
+	x.note("make: a.tar.gz with 0500 directories; unpack: d/sub/f; pack: f.tar.gz; nothing left under the work root")
+}
+
 // ============================================================== pin
 
 func TestIntegration_TransformImages_GitCheckoutIntoAPin(t *testing.T) {
@@ -640,7 +758,6 @@ tasks:
   - id: checkout
     uses: git
     pin: build
-    run_as_orker_user: true
     retry: {maximum_attempts: 2, initial_interval_seconds: 1}
 %s    with:
       op: clone
@@ -652,7 +769,6 @@ tasks:
   - id: read
     uses: shell
     pin: build
-    run_as_orker_user: true
     needs: [checkout]
     with:
       op: exec
@@ -682,6 +798,11 @@ tasks:
 	if got := string(x.download(t, run.GetId(), "read", "version.txt")); got != "flaky-1\n" {
 		t.Fatalf("version.txt = %q, want the repository's VERSION", got)
 	}
+	// Both members ran as their images' own uid (no run_as_orker_user), so
+	// the working tree, its parents and attempt 1's staging directory are
+	// 65532's: the pin's end and each attempt's cleanup removed them all the
+	// same.
+	requireNothingLeftOnDisk(t, run)
 	x.note("checkout: attempt 1 FAILED (500), attempt 2 SUCCEEDED into /orkstack/shared/work/src; read: VERSION=flaky-1")
 }
 
@@ -702,17 +823,11 @@ func (x *transformStack) requireNoToken(t *testing.T, run *orkstackv1.Run) {
 	bundle := filepath.Join(t.TempDir(), "evidence.tar.gz")
 	x.mustCLI(0, "run", "evidence", "export", run.GetId(), "-o", bundle)
 	raw, err := os.ReadFile(bundle)
-	if err != nil {
-		t.Fatalf("read bundle: %v", err)
-	}
+	must.OKf(t, err, "read bundle")
 	zr, err := gzip.NewReader(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatalf("bundle is not gzip: %v", err)
-	}
+	must.OKf(t, err, "bundle is not gzip")
 	decompressed, err := io.ReadAll(zr)
-	if err != nil {
-		t.Fatalf("decompress bundle: %v", err)
-	}
+	must.OKf(t, err, "decompress bundle")
 	places["the evidence bundle"] = string(decompressed)
 	for place, body := range places {
 		for _, form := range tokenForms(x.git.originalToken()) {
@@ -824,9 +939,9 @@ func TestIntegration_TransformImages_GitVerifiesTLSUnlessTheTaskSaysOtherwise(t 
 		outcomes[doc.label] = x.runToEnd(ctx, t, name, "")
 	}
 	x.note("tls default=%s caFile=%s GIT_SSL_NO_VERIFY=%s",
-		strings.TrimPrefix(outcomes["default"].GetStatus().String(), "STATUS_"),
-		strings.TrimPrefix(outcomes["caFile"].GetStatus().String(), "STATUS_"),
-		strings.TrimPrefix(outcomes["GIT_SSL_NO_VERIFY"].GetStatus().String(), "STATUS_"))
+		enumname.Of(outcomes["default"].GetStatus()),
+		enumname.Of(outcomes["caFile"].GetStatus()),
+		enumname.Of(outcomes["GIT_SSL_NO_VERIFY"].GetStatus()))
 
 	requireRunStatus(t, outcomes["default"], orkstackv1.Status_STATUS_FAILED)
 	if logs := x.taskLogs(outcomes["default"].GetId(), "resolve", 0); !strings.Contains(logs, "certificate") {
@@ -889,6 +1004,15 @@ tasks:
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+	// A cancelled run ends before its attempt does: the attempt removes its
+	// directory once its container is gone. The image was stopped in the
+	// fetch, with a repository already in /orkstack/tmp, and the Orker
+	// removes it all the same.
+	deadline = time.Now().Add(30 * time.Second)
+	for !nothingLeftOnDisk(t, run) && time.Now().Before(deadline) {
+		time.Sleep(250 * time.Millisecond)
+	}
+	requireNothingLeftOnDisk(t, run)
 }
 
 // ============================================================== failures
@@ -930,9 +1054,7 @@ func TestIntegration_TransformImages_FailuresAreExplicit(t *testing.T) {
 	requireTaskStatus(t, run, "render", orkstackv1.Status_STATUS_FAILED)
 	x.mustCLI(0, "run", "artifacts", run.GetId(), "--task", "render")
 	var listed orkstackv1.ListRunArtifactsResponse
-	if err := api.UnmarshalJSON([]byte(x.mustCLI(0, "--json", "run", "artifacts", run.GetId(), "--task", "render")), &listed); err != nil {
-		t.Fatalf("(b) decode run artifacts --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(x.mustCLI(0, "--json", "run", "artifacts", run.GetId(), "--task", "render")), &listed), "(b) decode run artifacts --json")
 	for _, artifact := range listed.GetArtifacts() {
 		if artifact.GetKind() == orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT {
 			t.Fatalf("(b) the failed render published an output artifact: %v", artifact)
@@ -982,9 +1104,7 @@ func TestIntegration_TransformImages_FailuresAreExplicit(t *testing.T) {
 	}
 	path := filepath.Join(t.TempDir(), "unescaped.ork.yaml")
 	unescaped := "apiVersion: orkstack/v1\nkind: Orkflow\nname: unescaped\nversion: \"0.1.0\"\ntasks:\n  - id: q\n    uses: json\n    network: none\n    with: {op: query, nullInput: true, filter: '\"{{name}}\"'}\n"
-	if err := os.WriteFile(path, []byte(unescaped), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(unescaped), 0o644))
 	stdout, stderr, code := x.cli(0, "orkflow", "validate", path)
 	if code == 0 || !strings.Contains(stdout+stderr, "with.filter") {
 		t.Fatalf("(e) validate of the unescaped filter exited %d:\n%s%s", code, stdout, stderr)

@@ -78,7 +78,7 @@ unknown or missing `op` exits `2`.
 The image declares its `with:` contract in
 [`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
-"Declaring the interface"), so `orkctl orkflow validate` and apply check a
+"Declaring the interface"), so `orkctl orkflow validate` and `orkctl orkflow create` check a
 task's `with:` before anything runs: a missing required key or an unknown
 `op` is an error, an undeclared key a warning. Seven ops, no default op (an
 unknown or missing `op` exits `2`), and the three `values.json` keys of
@@ -96,6 +96,17 @@ show.
 The real work runs in the background under a TERM trap (the OCI Activity
 Contract's §10.1 rule 2a), so a long `tar` is interrupted within the
 cancellation grace period.
+
+## Scratch
+
+`tar` stages its sources in `/orkstack/tmp/tar-stage`, and `untar` extracts
+into `/orkstack/tmp/untar`. Every exit the script takes, a cancelled `tar`
+included, empties `/orkstack/tmp`, first giving its owner write on any
+directory an archive extracted read-only. `untar` extracts under `umask 000`,
+so the directories tar creates for a member's path are removable by the Orker
+after an exit that runs no trap, such as the grace period's SIGKILL (the OCI
+Activity Contract's §10.1 rule 11). The staging directory keeps `0755`, because
+the archive records it as `./`, so only the trap removes it.
 
 ## Environment
 

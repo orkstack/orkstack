@@ -2,17 +2,18 @@ package webhooks_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -25,27 +26,28 @@ func sampleDelivery() webhooks.Delivery {
 		OrkflowName: "hello-ork",
 		Status:      "SUCCEEDED",
 		Timestamp:   time.Unix(1755302400, 0).UTC(),
-		Run:         json.RawMessage(`{"id":"ork-1755302400123456789-1","status":"SUCCEEDED"}`),
+		Sequence:    7,
+		Run:         stablejson.RawJSON(`{"id":"ork-1755302400123456789-1","status":"SUCCEEDED"}`),
 	}
 }
 
-func TestDelivery_BodyCarriesRunIdOrkflowNameStatusTimestampAndRun(t *testing.T) {
+func TestDelivery_BodyCarriesRunIdOrkflowNameStatusTimestampSequenceAndRun(t *testing.T) {
 	body, err := sampleDelivery().Body()
 	if err != nil {
 		t.Fatalf("Body: %v", err)
 	}
 
-	var decoded map[string]json.RawMessage
+	var decoded map[string]stablejson.RawJSON
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("body is not JSON: %v (%s)", err, body)
 	}
-	for _, field := range []string{"runId", "orkflowName", "status", "timestamp", "run"} {
+	for _, field := range []string{"runId", "orkflowName", "status", "timestamp", "sequence", "run"} {
 		if _, ok := decoded[field]; !ok {
 			t.Errorf("payload has no %q field: %s", field, body)
 		}
 	}
-	if len(decoded) != 5 {
-		t.Errorf("payload has %d fields, want exactly the five in the contract: %s", len(decoded), body)
+	if len(decoded) != 6 {
+		t.Errorf("payload has %d fields, want exactly the six in the contract: %s", len(decoded), body)
 	}
 
 	var flat struct {
@@ -53,6 +55,7 @@ func TestDelivery_BodyCarriesRunIdOrkflowNameStatusTimestampAndRun(t *testing.T)
 		OrkflowName string `json:"orkflowName"`
 		Status      string `json:"status"`
 		Timestamp   string `json:"timestamp"`
+		Sequence    int64  `json:"sequence"`
 		Run         struct {
 			ID     string `json:"id"`
 			Status string `json:"status"`
@@ -72,6 +75,9 @@ func TestDelivery_BodyCarriesRunIdOrkflowNameStatusTimestampAndRun(t *testing.T)
 	}
 	if flat.Timestamp != "2025-08-16T00:00:00Z" {
 		t.Errorf("timestamp = %q, want RFC3339 in UTC", flat.Timestamp)
+	}
+	if flat.Sequence != 7 {
+		t.Errorf("sequence = %d, want the run event's sequence 7", flat.Sequence)
 	}
 	if flat.Run.ID != flat.RunID || flat.Run.Status != "SUCCEEDED" {
 		t.Errorf("run = %+v, want the full run the transition produced", flat.Run)
@@ -122,26 +128,6 @@ func (r *receiver) request(i int) ([]byte, http.Header) {
 	return r.bodies[i], r.headers[i]
 }
 
-// recordingSleeper stands in for the backoff wait so the retry ladder is
-// observable without spending real time.
-type recordingSleeper struct {
-	mu       sync.Mutex
-	recorded []time.Duration
-}
-
-func (s *recordingSleeper) sleep(_ context.Context, d time.Duration) error {
-	s.mu.Lock()
-	s.recorded = append(s.recorded, d)
-	s.mu.Unlock()
-	return nil
-}
-
-func (s *recordingSleeper) durations() []time.Duration {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]time.Duration{}, s.recorded...)
-}
-
 func TestDispatcher_SignsTheBodyItPostsAndLabelsTheDelivery(t *testing.T) {
 	rec := newReceiver(t, http.StatusOK)
 	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s3cr3t"}
@@ -173,6 +159,7 @@ func TestDispatcher_SignsTheBodyItPostsAndLabelsTheDelivery(t *testing.T) {
 		webhooks.RunHeader:       delivery.RunID,
 		webhooks.TimestampHeader: "2025-08-16T00:00:00Z",
 		webhooks.AttemptHeader:   "1",
+		webhooks.SequenceHeader:  "7",
 	} {
 		if got := headers.Get(header); got != expected {
 			t.Errorf("header %s = %q, want %q", header, got, expected)
@@ -197,168 +184,164 @@ func TestDispatcher_OmitsTheSignatureWhenTheSubscriptionHasNoSecret(t *testing.T
 	}
 }
 
-func TestDispatcher_RetriesA5xxWithExponentialBackoffAndGivesUpAfterThree(t *testing.T) {
+// The dispatcher makes ONE request and never retries: a retry is Temporal's
+// (internal/engine, WebhookDeliveryWorkflow), so a crash cannot lose one.
+func TestDispatcher_MakesOneAttemptAndNeverRetries(t *testing.T) {
 	rec := newReceiver(t, http.StatusInternalServerError)
-	sleeper := &recordingSleeper{}
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Sleep: sleeper.sleep})
-
-	result, err := dispatcher.Deliver(context.Background(),
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).Deliver(context.Background(),
 		webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}, sampleDelivery())
-	if err == nil {
-		t.Fatal("Deliver reported success against a receiver that only ever answered 500")
+	if err == nil || result.Delivered {
+		t.Fatalf("Deliver = %+v, %v; want a failure against a 500", result, err)
 	}
-	if result.Delivered {
-		t.Error("result claims delivery against a receiver that only ever answered 500")
+	if rec.count() != 1 || len(result.Attempts) != 1 {
+		t.Fatalf("receiver saw %d requests and %d attempts were recorded, want exactly 1", rec.count(), len(result.Attempts))
 	}
-	// One attempt plus the three retries the contract allows.
-	if rec.count() != 4 {
-		t.Errorf("receiver saw %d requests, want 4 (1 attempt + %d retries)",
-			rec.count(), webhooks.DefaultMaxRetries)
-	}
-	if len(result.Attempts) != 4 {
-		t.Fatalf("recorded %d attempts, want 4: %+v", len(result.Attempts), result.Attempts)
-	}
-	want := []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
-	got := sleeper.durations()
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Errorf("backoff ladder = %v, want exponential %v", got, want)
-	}
-	for i, attempt := range result.Attempts {
-		if attempt.Number != i+1 {
-			t.Errorf("attempt %d numbered %d", i, attempt.Number)
-		}
-		if attempt.StatusCode != http.StatusInternalServerError {
-			t.Errorf("attempt %d status = %d, want 500", i+1, attempt.StatusCode)
-		}
-	}
-	// Every attempt sends the identical signed body, and says which try it is.
-	firstBody, _ := rec.request(0)
-	for i := 1; i < rec.count(); i++ {
-		body, headers := rec.request(i)
-		if string(body) != string(firstBody) {
-			t.Errorf("retry %d changed the body, which would invalidate the signature", i+1)
-		}
-		if headers.Get(webhooks.AttemptHeader) != strconv.Itoa(i+1) {
-			t.Errorf("retry %d reported attempt %q", i+1, headers.Get(webhooks.AttemptHeader))
-		}
-		if headers.Get(webhooks.DeliveryHeader) != "dlv-1" {
-			t.Errorf("retry %d changed the delivery id, so a receiver cannot deduplicate", i+1)
-		}
+	if attempt := result.Attempts[0]; attempt.Number != 1 || attempt.StatusCode != http.StatusInternalServerError || !attempt.Retryable() {
+		t.Errorf("attempt = %+v, want number 1, status 500, retryable", attempt)
 	}
 }
 
-func TestDispatcher_StopsRetryingOnceTheReceiverAccepts(t *testing.T) {
-	rec := newReceiver(t, http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusNoContent)
-	sleeper := &recordingSleeper{}
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Sleep: sleeper.sleep})
-
-	result, err := dispatcher.Deliver(context.Background(),
-		webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}, sampleDelivery())
-	if err != nil {
-		t.Fatalf("Deliver: %v", err)
-	}
-	if !result.Delivered {
-		t.Error("result does not record the delivery the receiver accepted")
-	}
-	if rec.count() != 3 {
-		t.Errorf("receiver saw %d requests, want 3: two rejections then the acceptance", rec.count())
-	}
-	if got := result.LastAttempt().StatusCode; got != http.StatusNoContent {
-		t.Errorf("last attempt status = %d, want 204", got)
-	}
-	if len(sleeper.durations()) != 2 {
-		t.Errorf("backed off %d times, want 2", len(sleeper.durations()))
-	}
-}
-
-func TestDispatcher_DoesNotRetryARejectionTheSenderCaused(t *testing.T) {
-	for _, status := range []int{
-		http.StatusBadRequest, http.StatusUnauthorized, http.StatusForbidden,
-		http.StatusNotFound, http.StatusGone,
+// Retryable is the one rule a retry policy keys on: a transport failure and a
+// 5xx are retried, a 2xx is delivered, and anything else — a 4xx — is the
+// sender's fault and never retried.
+func TestAttempt_RetryableOnlyForTransportFailuresAndServerErrors(t *testing.T) {
+	for _, tc := range []struct {
+		attempt   webhooks.Attempt
+		delivered bool
+		retryable bool
+	}{
+		{attempt: webhooks.Attempt{StatusCode: http.StatusOK}, delivered: true},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusNoContent}, delivered: true},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusInternalServerError}, retryable: true},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusBadGateway}, retryable: true},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusServiceUnavailable}, retryable: true},
+		{attempt: webhooks.Attempt{Error: "connection refused"}, retryable: true},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusBadRequest}},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusUnauthorized}},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusForbidden}},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusNotFound}},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusGone}},
+		{attempt: webhooks.Attempt{StatusCode: http.StatusFound}},
 	} {
-		rec := newReceiver(t, status)
-		sleeper := &recordingSleeper{}
-		dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Sleep: sleeper.sleep})
-
-		result, err := dispatcher.Deliver(context.Background(),
-			webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}, sampleDelivery())
-		if err == nil {
-			t.Errorf("status %d: Deliver reported success", status)
+		if got := tc.attempt.Delivered(); got != tc.delivered {
+			t.Errorf("%+v Delivered = %v, want %v", tc.attempt, got, tc.delivered)
 		}
-		if rec.count() != 1 {
-			t.Errorf("status %d: receiver saw %d requests, want 1 (a 4xx is the sender's fault)",
-				status, rec.count())
-		}
-		if len(result.Attempts) != 1 {
-			t.Errorf("status %d: recorded %d attempts, want 1", status, len(result.Attempts))
-		}
-		if len(sleeper.durations()) != 0 {
-			t.Errorf("status %d: backed off before giving up on an unretryable answer", status)
+		if got := tc.attempt.Retryable(); got != tc.retryable {
+			t.Errorf("%+v Retryable = %v, want %v", tc.attempt, got, tc.retryable)
 		}
 	}
 }
 
-func TestDispatcher_RetriesAReceiverItCannotReach(t *testing.T) {
+func TestDispatcher_RecordsAReceiverItCannotReach(t *testing.T) {
 	// A port nothing listens on: the request fails in transport, with no status.
 	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	url := closed.URL
 	closed.Close()
 
-	sleeper := &recordingSleeper{}
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{
-		Sleep:          sleeper.sleep,
-		RequestTimeout: 2 * time.Second,
-	})
-	result, err := dispatcher.Deliver(context.Background(),
-		webhooks.Webhook{ID: "wh-1", URL: url}, sampleDelivery())
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{RequestTimeout: 2 * time.Second}).
+		Deliver(context.Background(), webhooks.Webhook{ID: "wh-1", URL: url}, sampleDelivery())
 	if err == nil {
 		t.Fatal("Deliver reported success against a receiver that is not listening")
 	}
-	if len(result.Attempts) != 4 {
-		t.Fatalf("recorded %d attempts, want 4: a transport failure is retryable", len(result.Attempts))
+	attempt := result.LastAttempt()
+	if attempt.Error == "" || attempt.StatusCode != 0 || !attempt.Retryable() {
+		t.Errorf("attempt = %+v, want a transport error, no status, retryable", attempt)
 	}
-	for _, attempt := range result.Attempts {
-		if attempt.Error == "" {
-			t.Errorf("attempt %d recorded no error", attempt.Number)
+}
+
+// Send numbers the attempt it is told to, so a retry Temporal schedules says
+// which try it is, over the same body and delivery id.
+func TestDispatcher_SendNumbersTheAttemptAndKeepsTheBody(t *testing.T) {
+	rec := newReceiver(t, http.StatusInternalServerError)
+	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}
+	delivery := sampleDelivery()
+	body, err := delivery.Body()
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature := webhooks.Sign(hook.Secret, body)
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	for n := 1; n <= 3; n++ {
+		if attempt := dispatcher.Send(context.Background(), hook, delivery, body, signature, n); attempt.Number != n || attempt.At.IsZero() {
+			t.Fatalf("Send(%d) = %+v", n, attempt)
 		}
-		if attempt.StatusCode != 0 {
-			t.Errorf("attempt %d recorded status %d, but no response arrived", attempt.Number, attempt.StatusCode)
+	}
+	for i := 0; i < rec.count(); i++ {
+		got, headers := rec.request(i)
+		if string(got) != string(body) {
+			t.Errorf("attempt %d changed the body, which would invalidate the signature", i+1)
+		}
+		if headers.Get(webhooks.AttemptHeader) != strconv.Itoa(i+1) {
+			t.Errorf("attempt %d reported attempt %q", i+1, headers.Get(webhooks.AttemptHeader))
+		}
+		if headers.Get(webhooks.DeliveryHeader) != delivery.ID {
+			t.Errorf("attempt %d changed the delivery id, so a receiver cannot deduplicate", i+1)
+		}
+		if headers.Get(webhooks.SequenceHeader) != "7" {
+			t.Errorf("attempt %d sent sequence %q, want the event's 7 on every attempt", i+1, headers.Get(webhooks.SequenceHeader))
 		}
 	}
 }
 
-func TestDispatcher_HonoursACanceledContextMidLadder(t *testing.T) {
-	rec := newReceiver(t, http.StatusInternalServerError)
-	ctx, cancel := context.WithCancel(context.Background())
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{
-		Sleep: func(context.Context, time.Duration) error {
-			cancel()
-			return context.Canceled
-		},
-	})
-
-	result, err := dispatcher.Deliver(ctx,
-		webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}, sampleDelivery())
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("Deliver error = %v, want context.Canceled", err)
+// A delivery whose event carried no sequence — a redelivery of a record
+// written before deliveries carried one — says nothing about order rather
+// than claiming 0.
+func TestDispatcher_OmitsASequenceTheEventDidNotCarry(t *testing.T) {
+	rec := newReceiver(t, http.StatusOK)
+	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}
+	delivery := sampleDelivery()
+	delivery.Sequence = 0
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).Deliver(context.Background(), hook, delivery)
+	if err != nil {
+		t.Fatalf("Deliver: %v", err)
 	}
-	if rec.count() != 1 {
-		t.Errorf("receiver saw %d requests, want the one sent before cancellation", rec.count())
+	body, headers := rec.request(0)
+	var decoded map[string]stablejson.RawJSON
+	if err := json.Unmarshal(body, &decoded); err != nil {
+		t.Fatalf("body is not JSON: %v (%s)", err, body)
 	}
-	if result.Delivered {
-		t.Error("a canceled delivery reported success")
+	if raw, present := decoded["sequence"]; present {
+		t.Errorf("body carries sequence %s for an event that had none: %s", raw, body)
+	}
+	if _, present := headers[http.CanonicalHeaderKey(webhooks.SequenceHeader)]; present {
+		t.Errorf("header %s sent for an event that had none: %q", webhooks.SequenceHeader, headers.Get(webhooks.SequenceHeader))
+	}
+	if result.Sequence != 0 {
+		t.Errorf("result records sequence %d, want none", result.Sequence)
 	}
 }
 
-func TestDispatcher_ARetryBudgetOfZeroSendsOnce(t *testing.T) {
-	rec := newReceiver(t, http.StatusInternalServerError)
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{MaxRetries: -1})
-
-	if _, err := dispatcher.Deliver(context.Background(),
-		webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}, sampleDelivery()); err == nil {
-		t.Fatal("Deliver reported success against a 500")
+// The engine's delivery workflow carries a Delivery in its input. A zero
+// sequence is omitted there, so an input queued before deliveries carried one
+// encodes exactly as its history recorded it.
+func TestDelivery_InputEncodingCarriesASequenceOnlyWhenItHasOne(t *testing.T) {
+	delivery := sampleDelivery()
+	delivery.Run = nil
+	encoded, err := stablejson.Marshal(delivery)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if rec.count() != 1 {
-		t.Errorf("receiver saw %d requests, want exactly 1", rec.count())
+	var decoded webhooks.Delivery
+	if err := json.Unmarshal(encoded, &decoded); err != nil || decoded.Sequence != 7 {
+		t.Fatalf("decoded sequence %d (%v) from %s, want 7", decoded.Sequence, err, encoded)
+	}
+	delivery.Sequence = 0
+	encoded, err = stablejson.Marshal(delivery)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "Sequence") {
+		t.Errorf("a delivery with no sequence encodes one: %s", encoded)
+	}
+}
+
+func TestNewResult_RecordsTheDeliverysSequence(t *testing.T) {
+	delivery := sampleDelivery()
+	result := webhooks.NewResult(webhooks.Webhook{ID: "wh-1", URL: "https://example.test/hook"}, delivery, []byte("{}"))
+	if result.Sequence != 7 {
+		t.Fatalf("result records sequence %d, want the delivery's 7", result.Sequence)
+	}
+	if unqueued := webhooks.NotQueued(webhooks.Webhook{ID: "wh-1"}, delivery, errors.New("store down")); unqueued.Sequence != 7 {
+		t.Errorf("a delivery that could not be queued records sequence %d, want the delivery's 7", unqueued.Sequence)
 	}
 }

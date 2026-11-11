@@ -16,7 +16,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The workflow half of a definition passed by reference (spec 5.2): every
@@ -31,9 +34,7 @@ const definitionRunID = "ork-1700000000-77"
 func storeDefinition(t *testing.T, store *testSnapshotStore, runID string, wf *orkstackv1.Orkflow, plan engine.RunPlan) (*orkstackv1.Orkflow, engine.RunPlan) {
 	t.Helper()
 	data, ref, err := engine.EncodeDefinitionObject(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, err := store.WriteContinuation(context.Background(), wf.GetNamespace(), runID, 0,
 		artifacts.ContinuationKindDefinition, data); err != nil {
 		t.Fatal(err)
@@ -46,9 +47,7 @@ func storeDefinition(t *testing.T, store *testSnapshotStore, runID string, wf *o
 func definitionURI(t *testing.T, store *testSnapshotStore, wf *orkstackv1.Orkflow, runID string, plan engine.RunPlan) string {
 	t.Helper()
 	uri, err := store.ContinuationURI(wf.GetNamespace(), runID, 0, artifacts.ContinuationKindDefinition, plan.Definition.SHA256)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return uri
 }
 
@@ -71,7 +70,7 @@ func definedChain(t *testing.T) *orkstackv1.Orkflow {
 func definitionEventTypes(events []*orkstackv1.Event) []string {
 	out := make([]string, 0, len(events))
 	for _, e := range events {
-		out = append(out, fmt.Sprintf("%d:%s", e.GetSequence(), strings.TrimPrefix(e.GetType().String(), "EVENT_TYPE_")))
+		out = append(out, fmt.Sprintf("%d:%s", e.GetSequence(), enumname.Of(e.GetType())))
 	}
 	return out
 }
@@ -93,17 +92,14 @@ func applicationType(err error) string {
 // the definition.
 func TestRunWorkflow_LoadsAndVerifiesTheDefinitionReference(t *testing.T) {
 	wf := definedChain(t)
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, okBehavior)
+	h := newHarnessCtx(t, nil, okBehavior)
 	plan := smallChunkPlan(1<<20, 4)
 	plan.Continuation.Bytes = 1 << 40 // never due: one generation
 	stub, plan := storeDefinition(t, h.snapshots, definitionRunID, wf, plan)
 	r := recordCommands(h)
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: definitionRunID})
 	h.env.ExecuteWorkflow(engine.RunWorkflowType, definitionRunID, stub, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "the run failed")
 	run := mustFinalRun(t, h.store, definitionRunID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || len(run.GetTaskRuns()) != 5 {
 		t.Fatalf("run = %v with %d tasks, want SUCCEEDED with 5", run.GetStatus(), len(run.GetTaskRuns()))
@@ -168,8 +164,7 @@ func TestRunWorkflow_DefinitionIdentityMismatchFailsCorrupt(t *testing.T) {
 		{name: "altered bytes", alter: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			h := newHarnessCtx(t, &suite, okBehavior)
+			h := newHarnessCtx(t, nil, okBehavior)
 			wf := definedChain(t)
 			stored := definedChain(t)
 			if tc.object != nil {
@@ -177,16 +172,12 @@ func TestRunWorkflow_DefinitionIdentityMismatchFailsCorrupt(t *testing.T) {
 			}
 			// The object is written where the stub's run reads it.
 			data, ref, err := engine.EncodeDefinitionObject(stored)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if tc.alter {
 				data[len(data)/2] ^= 0xff
 			}
 			key, err := artifacts.RunContinuationKey(wf.GetNamespace(), definitionRunID, 0, artifacts.ContinuationKindDefinition, ref.SHA256)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			h.snapshots.put("s3://test/"+key, data)
 			plan := continuedPlan(1 << 20)
 			plan.Definition = &ref
@@ -224,8 +215,7 @@ func TestRunWorkflow_DefinitionIdentityMismatchFailsCorrupt(t *testing.T) {
 // its rows those of the switch snapshot.
 func TestRunWorkflow_UnreadableDefinitionFailsUnavailableWithATerminalEvent(t *testing.T) {
 	t.Run("generation 0", func(t *testing.T) {
-		var suite testsuite.WorkflowTestSuite
-		h := newHarnessCtx(t, &suite, okBehavior)
+		h := newHarnessCtx(t, nil, okBehavior)
 		wf := definedChain(t)
 		stub, plan := storeDefinition(t, h.snapshots, definitionRunID, wf, continuedPlan(1<<20))
 		h.snapshots.remove(definitionURI(t, h.snapshots, wf, definitionRunID, plan))
@@ -350,8 +340,7 @@ func runGenerationsWithArgs(t *testing.T, runID string, first func(h *harness) [
 // cancels Temporal's retrying of them and ends the run RUN_CANCELED, never
 // RUN_DEFINITION_*: RUN_CREATED and RUN_CANCELED at sequences 1 and 2.
 func TestRunWorkflow_CancelDuringDefinitionLoadEndsCanceled(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, okBehavior)
+	h := newHarnessCtx(t, nil, okBehavior)
 	wf := definedChain(t)
 	stub, plan := storeDefinition(t, h.snapshots, definitionRunID, wf, continuedPlan(1<<20))
 	h.snapshots.remove(definitionURI(t, h.snapshots, wf, definitionRunID, plan))

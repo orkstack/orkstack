@@ -1,11 +1,13 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------------------
@@ -171,8 +173,8 @@ func TestNamespaceFlag_ScopesApplyListGetAndSubmit(t *testing.T) {
 
 	alpha := writeOrkflow(t, "deploy", "build")
 	bravo := writeOrkflow(t, "deploy", "ship")
-	f.run("apply", alpha, "-n", "alpha").requireExit(t, exitOK)
-	f.run("apply", bravo, "-n", "bravo").requireExit(t, exitOK)
+	f.run("orkflow", "create", alpha, "-n", "alpha").requireExit(t, exitOK)
+	f.run("orkflow", "create", bravo, "-n", "bravo").requireExit(t, exitOK)
 
 	f.run("orkflow", "get", "deploy", "-n", "alpha").
 		requireExit(t, exitOK).
@@ -221,9 +223,7 @@ func TestNamespaceUse_PersistsTheDefaultAndTheFlagStillWins(t *testing.T) {
 
 	// The file is real, and holds what was selected.
 	raw, err := os.ReadFile(f.configPath)
-	if err != nil {
-		t.Fatalf("read the saved config: %v", err)
-	}
+	must.OKf(t, err, "read the saved config")
 	var saved struct {
 		Namespace string `json:"namespace"`
 	}
@@ -235,7 +235,7 @@ func TestNamespaceUse_PersistsTheDefaultAndTheFlagStillWins(t *testing.T) {
 	}
 
 	// A later command with no -n acts in it.
-	f.run("apply", writeOrkflow(t, "deploy", "build")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeOrkflow(t, "deploy", "build")).requireExit(t, exitOK)
 	f.run("orkflow", "list").requireExit(t, exitOK).requireContains(t, "deploy")
 	f.run("orkflow", "get", "deploy", "-n", "payments").requireExit(t, exitOK)
 
@@ -288,7 +288,7 @@ func TestSubmitIntoAMissingNamespace_NamesItAndListsTheOnesThatExist(t *testing.
 func TestNamespaceDelete_RefusesWhileItHoldsOrkflowsAndNamesThem(t *testing.T) {
 	f := newFixture(t)
 	f.run("namespace", "create", "payments").requireExit(t, exitOK)
-	f.run("apply", writeOrkflow(t, "nightly-close", "settle"), "-n", "payments").
+	f.run("orkflow", "create", writeOrkflow(t, "nightly-close", "settle"), "-n", "payments").
 		requireExit(t, exitOK)
 
 	outcome := f.run("namespace", "delete", "payments", "--yes")
@@ -326,11 +326,9 @@ func TestApply_RefusesASelectorThatContradictsTheDocument(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deploy.ork.yaml")
 	document := "apiVersion: orkstack/v1\nkind: Orkflow\nnamespace: payments\nname: deploy\nversion: 1.0.0\ntasks:\n" +
 		"  - id: build\n    uses: shell\n    with: {command: \"echo build\"}\n"
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write orkflow: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write orkflow")
 
-	outcome := f.run("apply", path, "-n", "staging")
+	outcome := f.run("orkflow", "create", path, "-n", "staging")
 	if outcome.code == exitOK {
 		t.Fatalf("applying a payments document into staging succeeded:\n%s", outcome.stdout)
 	}
@@ -349,9 +347,7 @@ func writeOrkflow(t *testing.T, name, taskID string) string {
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
 	document := "apiVersion: orkstack/v1\nkind: Orkflow\nname: " + name + "\nversion: 1.0.0\ntasks:\n" +
 		"  - id: " + taskID + "\n    uses: shell\n    with: {command: \"echo hi\"}\n"
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write orkflow %s: %v", name, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write orkflow %s", name)
 	return path
 }
 
@@ -368,9 +364,7 @@ func exfilDocument(t *testing.T) string {
 		"  - id: grab\n    uses: shell\n" +
 		"    secrets:\n      - name: db\n        source: env:PROD_DB_PASSWORD\n" +
 		"    with: {command: \"cat /orkstack/input/secrets/db\"}\n"
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write exfil: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write exfil")
 	return path
 }
 
@@ -438,7 +432,7 @@ func TestOrkflowValidate_PrintsTheSecretIssueOnItsFieldPath(t *testing.T) {
 	}
 
 	// apply is refused with the same sentence and stores nothing.
-	apply := f.run("apply", path, "-n", "sandbox")
+	apply := f.run("orkflow", "create", path, "-n", "sandbox")
 	if apply.code == exitOK {
 		t.Fatal("apply of a forbidden secret succeeded")
 	}
@@ -449,7 +443,7 @@ func TestOrkflowValidate_PrintsTheSecretIssueOnItsFieldPath(t *testing.T) {
 func TestRunSubmit_RefusedByASecretPolicyNamesTheSourceAndTheList(t *testing.T) {
 	f := newFixture(t)
 	f.run("namespace", "create", "sandbox").requireExit(t, exitOK)
-	f.run("apply", exfilDocument(t), "-n", "sandbox").requireExit(t, exitOK)
+	f.run("orkflow", "create", exfilDocument(t), "-n", "sandbox").requireExit(t, exitOK)
 	f.run("namespace", "update", "sandbox", "--allow-secret", "env:SANDBOX_*").requireExit(t, exitOK)
 
 	submit := f.run("run", "submit", "exfil", "-n", "sandbox")

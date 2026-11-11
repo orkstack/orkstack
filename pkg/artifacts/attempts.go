@@ -3,7 +3,6 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -15,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // Temporal owns activity retries, so a workflow only ever learns a task's FINAL
@@ -333,7 +333,7 @@ func marshalAttemptExact(attempt *orkstackv1.TaskAttempt) ([]byte, error) {
 			attempt.GetRunId(), attempt.GetTaskId(), attempt.GetAttempt(), err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode task attempt for run %q task %q attempt %d: %w",
 			attempt.GetRunId(), attempt.GetTaskId(), attempt.GetAttempt(), err)
 	}
@@ -443,83 +443,20 @@ func utf8Boundary(s string, i int) bool {
 	return s[i]&0xC0 != 0x80
 }
 
-// AttemptStoreFactory builds an AttemptStore from a Config. A backend that can
-// hold attempt records registers one, mirroring Factory, ArchiveFactory and
-// LogStoreFactory.
-type AttemptStoreFactory func(cfg Config) (AttemptStore, error)
-
-var attemptStoreRegistry = map[string]AttemptStoreFactory{}
-
-// RegisterAttemptStore adds an attempt-store factory under name.
-func RegisterAttemptStore(name string, f AttemptStoreFactory) error {
-	if name == "" {
-		return fmt.Errorf("artifacts: register attempt store: empty name")
-	}
-	if f == nil {
-		return fmt.Errorf("artifacts: register attempt store %q: nil factory", name)
-	}
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	if _, exists := attemptStoreRegistry[name]; exists {
-		return fmt.Errorf("artifacts: register attempt store %q: already registered", name)
-	}
-	attemptStoreRegistry[name] = f
-	return nil
-}
-
-// AttemptStoreBackends lists the backends that can hold attempt records, sorted.
-func AttemptStoreBackends() []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	names := make([]string, 0, len(attemptStoreRegistry))
-	for name := range attemptStoreRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // NewAttemptStore builds the AttemptStore named by cfg.Backend, so one
 // ORK_ARTIFACT_BACKEND selects where artifacts, run history, task logs,
 // snapshots and attempt records all live. There is no setting of its own.
 func NewAttemptStore(cfg Config) (AttemptStore, error) {
-	name := cfg.Backend
-	if name == "" {
-		name = DefaultBackend
-		cfg.Backend = name
-	}
-	registryMu.RLock()
-	f, ok := attemptStoreRegistry[name]
-	registryMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("artifacts: attempt store backend %q: %w (registered: %v)",
-			name, ErrUnknownBackend, AttemptStoreBackends())
-	}
-	store, err := f(cfg)
+	b, err := openBlobs(context.Background(), cfg, "attempt store", AttemptPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: attempt store backend %q: %w", name, err)
+		return nil, err
 	}
-	return store, nil
+	return &BlobAttemptStore{blobBase{b}}, nil
 }
 
 // NewAttemptStoreFromEnv builds the AttemptStore described by the ORK_*
 // environment.
 func NewAttemptStoreFromEnv() (AttemptStore, error) { return NewAttemptStore(ConfigFromEnv()) }
-
-func init() {
-	mustRegisterAttemptStore(BackendLocal, func(cfg Config) (AttemptStore, error) {
-		return NewLocalAttemptStore(localDir(cfg))
-	})
-	mustRegisterAttemptStore(BackendS3, func(cfg Config) (AttemptStore, error) {
-		return NewS3AttemptStore(context.Background(), cfg)
-	})
-}
-
-func mustRegisterAttemptStore(name string, f AttemptStoreFactory) {
-	if err := RegisterAttemptStore(name, f); err != nil {
-		panic(err)
-	}
-}
 
 // MemoryAttemptStore is an in-memory AttemptStore for tests. It bounds and
 // encodes records exactly as the durable backends do, so a test that asserts a

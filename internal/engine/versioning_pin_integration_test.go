@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Task pinning under Worker Deployment Versioning (docs/DEPLOY.md "Pins on a
@@ -200,9 +202,7 @@ func newPinVersionReplica(
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
 
 	for name, w := range map[string]worker.Worker{"run": r.run, "orker": r.orker, "event": r.events} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker of %s: %v", name, deployment, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker of %s", name, deployment)
 	}
 	t.Cleanup(r.stop)
 	return r
@@ -359,9 +359,7 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
 	pinnedRun := "ork-pinver-open-" + suffix
-	if err := starter.StartRun(ctx, pinnedRun, pinVersionOrkflow(true), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("start the run whose pin must stay on v1: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, pinnedRun, pinVersionOrkflow(true), nil, rawPlan(orkerQueue)), "start the run whose pin must stay on v1")
 	transcript.step("submitted run " + pinnedRun + " (one pin, two members) while v1 was current")
 
 	select {
@@ -384,9 +382,7 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 	// rather than an idle process, which is what makes "v2 ran none of the first
 	// run's members" a routing result.
 	currentRun := "ork-pinver-current-" + suffix
-	if err := starter.StartRun(ctx, currentRun, pinVersionOrkflow(false), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("start the pinned run that must open its pin on v2: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, currentRun, pinVersionOrkflow(false), nil, rawPlan(orkerQueue)), "start the pinned run that must open its pin on v2")
 	if err := c.GetWorkflow(ctx, currentRun, "").Get(ctx, nil); err != nil {
 		t.Fatalf("the pinned run submitted after the switch (%s) did not complete: %v\n\n"+
 			"a pin cannot be opened on the CURRENT version of a versioned deployment", currentRun, err)
@@ -396,9 +392,7 @@ func TestIntegration_AnOpenPinStaysOnItsHostAcrossAVersionRollout(t *testing.T) 
 	releaseGate()
 	transcript.step("released the gate member, so " + pinVersionAfter + " is scheduled with v2 current")
 
-	if err := c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run with the open pin (%s) did not complete on v1: %v", pinnedRun, err)
-	}
+	must.OKf(t, c.GetWorkflow(ctx, pinnedRun, "").Get(ctx, nil), "the run with the open pin (%s) did not complete on v1", pinnedRun)
 	// The run's last published snapshot: the workflow's result carries no
 	// task rows. The terminal event is published before the run completes.
 	pinnedResult, _ := runs.Get(pinnedRun)
@@ -896,9 +890,7 @@ func pinVersionOrkflow(gate bool) *orkstackv1.Orkflow {
 func pinVersionInputFrom(t *testing.T, payloads *commonpb.Payloads) (string, string, string) {
 	t.Helper()
 	var in *orkstackv1.ExecuteTaskInput
-	if err := converter.GetDefaultDataConverter().FromPayloads(payloads, &in); err != nil {
-		t.Fatalf("decode ExecuteTask input from history: %v", err)
-	}
+	must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(payloads, &in), "decode ExecuteTask input from history")
 	return in.GetTaskId(), in.GetPin().GetName(), in.GetPin().GetInstanceId()
 }
 
@@ -907,9 +899,7 @@ func pinVersionInputFrom(t *testing.T, payloads *commonpb.Payloads) (string, str
 func pinVersionOrkerStampFrom(t *testing.T, payloads *commonpb.Payloads) string {
 	t.Helper()
 	result := &orkstackv1.ExecuteTaskResult{}
-	if err := converter.GetDefaultDataConverter().FromPayloads(payloads, result); err != nil {
-		t.Fatalf("decode ExecuteTask result from history: %v", err)
-	}
+	must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(payloads, result), "decode ExecuteTask result from history")
 	orkerID, _ := decodeValuesJSON(t, result.GetValuesJson())["executed_by_orker"].(string)
 	return orkerID
 }

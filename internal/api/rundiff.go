@@ -14,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -421,7 +422,7 @@ func diffRow(taskID, field string, from, to diffValue) *orkstackv1.RunFieldDiff 
 func (s *Service) taskField(ctx context.Context, field string, side *diffSide, task *orkstackv1.TaskRun) (diffValue, error) {
 	switch field {
 	case "status":
-		return valueOf(strings.TrimPrefix(task.GetStatus().String(), "STATUS_")), nil
+		return valueOf(enumname.Of(task.GetStatus())), nil
 	case "attempt":
 		return valueOf(strconv.Itoa(int(task.GetAttempt()))), nil
 	case "pool":
@@ -474,7 +475,7 @@ func errorLabel(e *orkstackv1.Error) string {
 	if e.GetCategory() == orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED {
 		return e.GetCode()
 	}
-	return e.GetCode() + " (" + strings.TrimPrefix(e.GetCategory().String(), "FAILURE_CATEGORY_") + ")"
+	return e.GetCode() + " (" + enumname.Of(e.GetCategory()) + ")"
 }
 
 // durationOf is the span the snapshot recorded, in Go's own spelling.

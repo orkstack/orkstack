@@ -307,6 +307,10 @@ func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, clos
 					"task %q: each.over: %q is a composed task; its values are the child's declared "+
 						"outputs, which are strings and never an array", id, producer))
 			}
+			// Rule 51: a sleeping task has no values to fan out over.
+			if byID[producer].GetSleep() != nil {
+				return validationError(at("each.over"), sleepReadRefusal(id, "each.over", producer))
+			}
 			if _, ok := closures[id][producer]; !ok {
 				return validationError(at("each.over"), fmt.Errorf(
 					"task %q: each.over: template references task %q which is not in its needs closure",

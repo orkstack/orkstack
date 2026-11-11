@@ -4,6 +4,8 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // lookupOf builds the (string) (string, bool) lookup configFrom wants from a
@@ -17,9 +19,7 @@ func lookupOf(env map[string]string) func(string) (string, bool) {
 
 func TestConfigFromZeroEnv(t *testing.T) {
 	cfg, err := configFrom(ServiceOrker, lookupOf(nil))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if cfg.ServiceName != ServiceOrker {
 		t.Errorf("ServiceName = %q, want %q", cfg.ServiceName, ServiceOrker)
 	}
@@ -75,9 +75,7 @@ func TestConfigFromMetricsExporters(t *testing.T) {
 		MetricsExporterVar: "prometheus,otlp,none",
 		AdminAddrVar:       "127.0.0.1:9090",
 	}))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if !cfg.PrometheusEnabled() || !cfg.OTLPMetricsEnabled() {
 		t.Errorf("expected both exporters, got %+v", cfg.MetricsExporters)
 	}
@@ -112,9 +110,7 @@ func TestConfigFromUnsupportedMetricsExporter(t *testing.T) {
 
 func TestConfigFromLogFormat(t *testing.T) {
 	cfg, err := configFrom(ServiceOrker, lookupOf(map[string]string{LogFormatVar: "JSON"}))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if cfg.LogFormat != LogFormatJSON {
 		t.Errorf("LogFormat = %q, want json (case-insensitive)", cfg.LogFormat)
 	}
@@ -127,9 +123,7 @@ func TestConfigFromLogFormat(t *testing.T) {
 
 func TestConfigFromLogLevel(t *testing.T) {
 	cfg, err := configFrom(ServiceOrker, lookupOf(map[string]string{LogLevelVar: "debug"}))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if cfg.LogLevel != slog.LevelDebug {
 		t.Errorf("LogLevel = %v, want debug", cfg.LogLevel)
 	}
@@ -149,9 +143,7 @@ func TestConfigFromPprofEnabledInvalid(t *testing.T) {
 
 func TestConfigFromHighCardinality(t *testing.T) {
 	cfg, err := configFrom(ServiceOrker, lookupOf(map[string]string{HighCardinalityVar: "true"}))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if !cfg.HighCardinality {
 		t.Errorf("HighCardinality = false, want true")
 	}
@@ -159,9 +151,7 @@ func TestConfigFromHighCardinality(t *testing.T) {
 
 func TestConfigFromServiceNameOverride(t *testing.T) {
 	cfg, err := configFrom(ServiceOrker, lookupOf(map[string]string{ServiceNameVar: "custom-orker"}))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if cfg.ServiceName != "custom-orker" {
 		t.Errorf("ServiceName = %q, want custom-orker", cfg.ServiceName)
 	}
@@ -169,9 +159,7 @@ func TestConfigFromServiceNameOverride(t *testing.T) {
 
 func TestConfigFromTracesExporter(t *testing.T) {
 	cfg, err := configFrom(ServiceEngine, lookupOf(map[string]string{TracesExporterVar: "otlp"}))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if !cfg.TracesEnabled() {
 		t.Errorf("TracesEnabled() = false, want true")
 	}
@@ -203,9 +191,7 @@ sinks:
       X-Scope-OrgID: { value: "tenant-a" }
 `,
 	}))
-	if err != nil {
-		t.Fatalf("configFrom: %v", err)
-	}
+	must.OKf(t, err, "configFrom")
 	if !cfg.Sinks.Has("datadog") {
 		t.Fatalf("Sinks.Has(datadog) = false, want true; names=%v", cfg.Sinks.Names())
 	}

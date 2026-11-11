@@ -10,6 +10,8 @@ import (
 	"go.temporal.io/api/operatorservice/v1"
 	"go.temporal.io/api/serviceerror"
 	"google.golang.org/grpc"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeOperator is a Temporal OperatorService in a map: what the namespace
@@ -59,9 +61,7 @@ func TestEnsureRunSearchAttributes_RegistersTheRunIndex(t *testing.T) {
 	svc := &fakeOperator{}
 
 	indexed, err := ensureRunSearchAttributes(context.Background(), svc, DefaultNamespace)
-	if err != nil {
-		t.Fatalf("ensureRunSearchAttributes: %v", err)
-	}
+	must.OKf(t, err, "ensureRunSearchAttributes")
 	if !indexed {
 		t.Fatal("the registration succeeded but reported the index unusable")
 	}
@@ -82,9 +82,7 @@ func TestEnsureRunSearchAttributes_LeavesAnExistingIndexAlone(t *testing.T) {
 	}}
 
 	indexed, err := ensureRunSearchAttributes(context.Background(), svc, DefaultNamespace)
-	if err != nil {
-		t.Fatalf("ensureRunSearchAttributes: %v", err)
-	}
+	must.OKf(t, err, "ensureRunSearchAttributes")
 	if !indexed {
 		t.Fatal("an existing index reported unusable")
 	}
@@ -103,9 +101,7 @@ func TestEnsureRunSearchAttributes_ToleratesAConcurrentRegistration(t *testing.T
 	svc.custom[SearchAttrOrkflowNamespace] = enumspb.INDEXED_VALUE_TYPE_KEYWORD
 
 	indexed, err := ensureRunSearchAttributes(context.Background(), svc, DefaultNamespace)
-	if err != nil {
-		t.Fatalf("ensureRunSearchAttributes: %v", err)
-	}
+	must.OKf(t, err, "ensureRunSearchAttributes")
 	if !indexed {
 		t.Fatal("a namespace that already has the index reported unusable")
 	}

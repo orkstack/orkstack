@@ -50,6 +50,12 @@ message CacheUsageRow {
   // (source.finished_at - source.started_at): the producing attempts' time
   // these hits did not spend again. Stated as that, never as "saved".
   google.protobuf.Duration reused = 8;
+  // orkflow_namespace is set when the row's runs ran another namespace's
+  // shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+  // namespaces"): the namespace that owns it. Such runs are grouped apart from
+  // this namespace's own Orkflow of the same name. Empty for the namespace's
+  // own.
+  string orkflow_namespace = 9;
 }
 
 // CacheInventoryRow is one group of stored memos, from a listing of keys:

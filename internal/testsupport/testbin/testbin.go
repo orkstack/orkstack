@@ -10,11 +10,9 @@
 // to the repository's bin/, which every worktree's dev stack and every
 // concurrent proof would otherwise share (AGENTS.md §11.1).
 //
-// Path takes a LITERAL package path ("./cmd/ork", "./test/tools/cosign-sign"):
-// test/tools/proofrun reads those literals to know which binaries a suite
-// runs, which is how a feature proof knows that an orkctl integration test
-// exercises internal/engine although it never imports it. A Go binary built
-// any other way in a test is refused by that scan.
+// Path takes a package path relative to the module root ("./cmd/ork",
+// "./test/tools/cosign-sign"). A test builds a binary only through Path
+// (AGENTS.md §11.1).
 package testbin
 
 import (

@@ -7,6 +7,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The run detail task table says WHERE a task ran, not only how it ended:
@@ -117,9 +119,7 @@ func TestRenderRun_TaskTableSaysPoolPinAndOrker(t *testing.T) {
 				Id: "run-001", OrkflowName: "pinned-build", OrkflowVersion: "0.1.0",
 				Status: orkstackv1.Status_STATUS_SUCCEEDED, TaskRuns: test.taskRuns,
 			}
-			if err := renderRun(&out, run); err != nil {
-				t.Fatalf("renderRun: %v", err)
-			}
+			must.OKf(t, renderRun(&out, run), "renderRun")
 			rows := taskTableRows(t, out.String())
 			if len(rows) != len(test.wantRows)+1 {
 				t.Fatalf("task table has %d rows, want %d (header + %d tasks):\n%s",

@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The interface compatibility gate against real processes
@@ -80,19 +82,15 @@ func (s *compatStack) cli(t *testing.T, replica *engineReplica, want int, args .
 func (s *compatStack) applyFile(t *testing.T, replica *engineReplica, document string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "doc.ork.yaml")
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write document: %v", err)
-	}
-	stdout, _ := s.cli(t, replica, exitOK, "apply", path)
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write document")
+	stdout, _ := s.cli(t, replica, exitOK, "orkflow", "create", path)
 	return stdout
 }
 
 func resolvedOn(ctx context.Context, t *testing.T, replica *engineReplica, name string) string {
 	t.Helper()
 	got, err := replica.flows.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: name}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(%s) on %s: %v", name, replica.name, err)
-	}
+	must.OKf(t, err, "GetOrkflow(%s) on %s", name, replica.name)
 	return got.Msg.GetOrkflow().GetVersion()
 }
 

@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI is the
@@ -50,9 +52,7 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 
 	pool := privateTaskPool()
 	taskQueue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map test pool: %v", err)
-	}
+	must.OKf(t, err, "map test pool")
 	root := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
 	enginePath := testbin.Path(t, "./cmd/ork")
@@ -92,9 +92,9 @@ func TestIntegration_EditingTheCurrentVersionForksItForwardThroughTheCLI(t *test
 	name := fmt.Sprintf("forked-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000)
 
 	// ---- 1. two versions ---------------------------------------------------
-	requireCLI(t, cli, "apply 1.0.0", "apply",
+	requireCLI(t, cli, "apply 1.0.0", "orkflow", "create",
 		writeVersionScopedOrkflow(t, name, "1.0.0", pool, "one"))
-	requireCLI(t, cli, "apply 2.0.0", "apply",
+	requireCLI(t, cli, "apply 2.0.0", "orkflow", "create",
 		writeVersionScopedOrkflow(t, name, "2.0.0", pool, "two"))
 
 	// ---- 2. promote the OLDER one -----------------------------------------
@@ -170,7 +170,7 @@ sed -i.bak -e 's/echo one/echo forked/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 	// underneath the edit.
 	competing := writeVersionScopedOrkflow(t, name, "3.0.0", pool, "competing")
 	racing := writeCLIEditor(t, fmt.Sprintf(
-		`%q --server %q apply %q >/dev/null; `+
+		`%q --server %q orkflow create %q >/dev/null; `+
 			`sed -i.bak -e 's/echo one/echo mine/' -e 's/1\.0\.0/1\.9\.0/' "$1"`,
 		orkctlPath, "http://"+engineAddr, competing))
 	stdout, stderr, code := cli("orkflow", "edit", name, "--version", "1.0.0", "--editor", racing)
@@ -224,9 +224,7 @@ tasks:
       op: exec
       command: ["sh", "-c", "echo %s"]
 `, name, version, version, pool, marker)
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write %s@%s: %v", name, version, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write %s@%s", name, version)
 	return path
 }
 

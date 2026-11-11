@@ -10,6 +10,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestParseEachOver(t *testing.T) {
@@ -96,9 +98,7 @@ tasks:
 
 func TestCompile_EachCompiles(t *testing.T) {
 	wf, err := dsl.CompileFile("../../examples/each-fan-out.ork.yaml")
-	if err != nil {
-		t.Fatalf("compile the example: %v", err)
-	}
+	must.OKf(t, err, "compile the example")
 	var convert *orkstackv1.Task
 	for _, task := range wf.GetTasks() {
 		if task.GetId() == "convert" {
@@ -121,9 +121,7 @@ func TestCompile_EachCompiles(t *testing.T) {
     each: {over: "{{ .tasks.list.output.parts }}", max_items: 5}
     with: {op: exec, x: "{{ .each.item }}"}
 `))
-	if err != nil {
-		t.Fatalf("compile without as: %v", err)
-	}
+	must.OKf(t, err, "compile without as")
 	explicit, err := dsl.Compile(eachDoc(`
   - id: convert
     uses: shell
@@ -131,9 +129,7 @@ func TestCompile_EachCompiles(t *testing.T) {
     each: {over: "{{ .tasks.list.output.parts }}", max_items: 5, as: item}
     with: {op: exec, x: "{{ .each.item }}"}
 `))
-	if err != nil {
-		t.Fatalf("compile with as: item: %v", err)
-	}
+	must.OKf(t, err, "compile with as: item")
 	if got := absent.GetTasks()[1].GetEach().GetAs(); got != dsl.DefaultEachAs {
 		t.Fatalf("as = %q, want %q", got, dsl.DefaultEachAs)
 	}

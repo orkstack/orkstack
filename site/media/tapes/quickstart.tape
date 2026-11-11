@@ -29,7 +29,7 @@ Enter
 Sleep 500ms
 Show
 
-Type "orkctl apply examples/each-fan-out.ork.yaml"
+Type "orkctl orkflow create examples/each-fan-out.ork.yaml"
 Sleep 500ms
 Enter
 Sleep 2.5s
@@ -42,7 +42,7 @@ Sleep 3s
 # The run takes about ten seconds on the local stack. (Wait+Screen stalled
 # the recording in VHS 0.12.1, so this is a fixed pause; the hidden step
 # below waits for the run to end before its logs are read.)
-Type "orkctl run submit each-fan-out --watch"
+Type "orkctl run submit each-fan-out -w"
 Sleep 500ms
 Enter
 Sleep 18s
@@ -54,12 +54,12 @@ Screenshot out/poster.png
 Sleep 2s
 
 Hide
-Type "RUN=$(orkctl run list --limit 1 --json | grep -o 'ork-[0-9]*-[0-9]*' | head -1) && orkctl run watch $RUN >/dev/null 2>&1; clear"
+Type "RUN=$(orkctl run list --limit 1 -j | grep -o 'ork-[0-9]*-[0-9]*' | head -1) && orkctl run watch $RUN >/dev/null 2>&1; clear"
 Enter
 Sleep 2s
 Show
 
-Type "orkctl run logs $RUN --task merge"
+Type "orkctl run logs $RUN -t merge"
 Sleep 500ms
 Enter
 Sleep 4s

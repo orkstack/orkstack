@@ -16,7 +16,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
@@ -24,6 +23,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
@@ -97,9 +97,9 @@ func main() {
 		}
 		_ = f.Close()
 	}
-	if err := json.NewEncoder(os.Stdout).Encode(map[string]int{
+	if err := stablejson.Encode(os.Stdout, map[string]int{
 		"executions": executions, "continued": continued, "holds": holds,
-	}); err != nil {
+	}, stablejson.Options); err != nil {
 		log.Fatal(err)
 	}
 }

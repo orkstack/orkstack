@@ -7,6 +7,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // FuzzApplyInputDefaults: the declared defaults fill what the caller omitted
@@ -23,9 +25,7 @@ func FuzzApplyInputDefaults(f *testing.F) {
 		"name":    map[string]any{"type": "string", "required": true},
 		"broken":  "not a declaration",
 	})
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	wf := &orkstackv1.Orkflow{Inputs: declared}
 	for _, input := range []map[string]any{
 		nil, {}, {"url": "https://other.test"}, {"retries": nil}, {"flag": true, "extra": []any{1.0, "x"}}, {"name": "n", "nulled": "v"},
@@ -33,15 +33,11 @@ func FuzzApplyInputDefaults(f *testing.F) {
 		payload := &orkstackv1.Payload{}
 		if input != nil {
 			data, err := structpb.NewStruct(input)
-			if err != nil {
-				f.Fatal(err)
-			}
+			must.OK(f, err)
 			payload.Data = data
 		}
 		wire, err := proto.Marshal(payload)
-		if err != nil {
-			f.Fatal(err)
-		}
+		must.OK(f, err)
 		f.Add(wire, true)
 		f.Add(wire, false)
 	}

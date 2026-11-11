@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeRetentionAdmin stands in for engine.TemporalRunReader's admin seam —
@@ -98,9 +100,7 @@ func TestGetRetentionPolicy_ReadsTheStoredMaximum(t *testing.T) {
 
 	resp, err := svc.GetRetentionPolicy(context.Background(),
 		connect.NewRequest(&orkstackv1.GetRetentionPolicyRequest{}))
-	if err != nil {
-		t.Fatalf("GetRetentionPolicy: %v", err)
-	}
+	must.OKf(t, err, "GetRetentionPolicy")
 	if got := resp.Msg.GetPolicy().GetMaxRunRetention().AsDuration(); got != 72*time.Hour {
 		t.Errorf("max_run_retention = %s, want 72h", got)
 	}
@@ -116,9 +116,7 @@ func TestGetRetentionPolicy_ReportsWhetherNamespaceRetentionIsEnforced(t *testin
 
 	resp, err := svc.GetRetentionPolicy(context.Background(),
 		connect.NewRequest(&orkstackv1.GetRetentionPolicyRequest{}))
-	if err != nil {
-		t.Fatalf("GetRetentionPolicy: %v", err)
-	}
+	must.OKf(t, err, "GetRetentionPolicy")
 	if !resp.Msg.GetNamespaceRetentionEnforced() {
 		t.Error("namespace_retention_enforced = false, want true")
 	}
@@ -168,9 +166,7 @@ func TestUpdateRetentionPolicy_WritesThroughAndReconcilesTheBackstop(t *testing.
 		connect.NewRequest(&orkstackv1.UpdateRetentionPolicyRequest{
 			MaxRunRetention: durationpb.New(168 * time.Hour),
 		}))
-	if err != nil {
-		t.Fatalf("UpdateRetentionPolicy: %v", err)
-	}
+	must.OKf(t, err, "UpdateRetentionPolicy")
 	if got := resp.Msg.GetPolicy().GetMaxRunRetention().AsDuration(); got != 168*time.Hour {
 		t.Errorf("max_run_retention = %s, want 168h", got)
 	}
@@ -323,9 +319,7 @@ func TestUpdateRetentionPolicy_LoweringWithOnlyInheritingNamespacesSucceeds(t *t
 		connect.NewRequest(&orkstackv1.UpdateRetentionPolicyRequest{
 			MaxRunRetention: durationpb.New(24 * time.Hour),
 		}))
-	if err != nil {
-		t.Fatalf("UpdateRetentionPolicy: %v", err)
-	}
+	must.OKf(t, err, "UpdateRetentionPolicy")
 	if got := resp.Msg.GetPolicy().GetMaxRunRetention().AsDuration(); got != 24*time.Hour {
 		t.Errorf("max_run_retention = %s, want 24h", got)
 	}

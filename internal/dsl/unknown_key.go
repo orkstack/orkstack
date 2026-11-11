@@ -6,25 +6,24 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
-// unknownFieldRefusal is yaml.v3's sentence for a key a struct does not
-// declare. The key may hold any character, a line break or " not found in
+// unknownFieldRefusal is the YAML decoder's message for a key a struct does
+// not declare. The key may hold any character, a line break or " not found in
 // type " included, so it is everything between "field " and the last word,
 // which is the Go type.
-var unknownFieldRefusal = regexp.MustCompile(`(?s)^line (\d+): field (.*) not found in type \S+$`)
+var unknownFieldRefusal = regexp.MustCompile(`(?s)^field (.*) not found in type \S+$`)
 
 // moreUnknownKeysNamed is how many of the other unknown keys the sentence
 // names after the first: a document of another shape can hold thousands,
 // and the answer is read by a person.
 const moreUnknownKeysNamed = 10
 
-// strictDecodeError words a strict decode's refusal for the author. yaml.v3
-// refuses a key the schema does not define as "field X not found in type
+// strictDecodeError words a strict decode's refusal for the author. The
+// decoder refuses a key the schema does not define as "field X not found in type
 // dsl.taskDocument", naming the Go type the key would have decoded into
 // (AGENTS.md §7: nothing internal on a user surface). Every key it refused
 // that way is reworded from the decoder's own line and key. The first, in
@@ -40,11 +39,11 @@ const moreUnknownKeysNamed = 10
 // doc is the struct the strict decode decoded into; kind names the document
 // in the sentence ("Orkflow", "activity interface").
 func strictDecodeError(source []byte, doc reflect.Type, kind string, err error) error {
-	var typeErr *yaml.TypeError
-	if !errors.As(err, &typeErr) {
+	var loadErrs *yaml.LoadErrors
+	if !errors.As(err, &loadErrs) {
 		return fmt.Errorf("parse yaml: %w", err)
 	}
-	refusals := refusedKeys(typeErr)
+	refusals := refusedKeys(loadErrs)
 	if len(refusals) == 0 {
 		return fmt.Errorf("parse yaml: %w", err)
 	}
@@ -108,19 +107,15 @@ type refusedKey struct {
 // refusal, in line order and each once: a key under an anchor is refused
 // again at every alias that repeats it. The decoder names a key by its line
 // and name alone, so two keys of one name on one line are one key here.
-func refusedKeys(typeErr *yaml.TypeError) []refusedKey {
+func refusedKeys(loadErrs *yaml.LoadErrors) []refusedKey {
 	var out []refusedKey
 	seen := map[refusedKey]bool{}
-	for _, message := range typeErr.Errors {
-		m := unknownFieldRefusal.FindStringSubmatch(message)
-		if m == nil {
+	for _, refusal := range loadErrs.Errors {
+		m := unknownFieldRefusal.FindStringSubmatch(refusal.Message)
+		if m == nil || refusal.Mark.Line <= 0 {
 			continue
 		}
-		line, err := strconv.Atoi(m[1])
-		if err != nil {
-			continue
-		}
-		r := refusedKey{line: line, key: m[2]}
+		r := refusedKey{line: refusal.Mark.Line, key: m[1]}
 		if !seen[r] {
 			seen[r] = true
 			out = append(out, r)
@@ -254,7 +249,7 @@ func (w *unknownKeyWalk) structKeys(t reflect.Type) structKeys {
 	return keys
 }
 
-// plainKey is a mapping key as yaml.v3 reads it — an alias resolved to the
+// plainKey is a mapping key as the decoder reads it — an alias resolved to the
 // scalar it names — or false for a merge key or a key that is not a scalar,
 // which the walk leaves to the decoder.
 func plainKey(node *yaml.Node) (string, bool) {
@@ -268,7 +263,7 @@ func plainKey(node *yaml.Node) (string, bool) {
 }
 
 // yamlFields maps each key a document struct declares to its field's type,
-// as yaml.v3 reads the struct: the tag's name, or the lowercased field name
+// as the decoder reads the struct: the tag's name, or the lowercased field name
 // when the tag gives none; "-" and unexported fields take no key.
 func yamlFields(t reflect.Type) map[string]reflect.Type {
 	fields := make(map[string]reflect.Type, t.NumField())

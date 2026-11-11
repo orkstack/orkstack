@@ -7,7 +7,8 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -38,9 +39,9 @@ type taskContext struct {
 // eachContext is task.json's `each` object, present only for one item of a
 // fan-out. Item is kept as its exact JSON text.
 type eachContext struct {
-	Index int             `json:"index"`
-	Count int             `json:"count"`
-	Item  json.RawMessage `json:"item"`
+	Index int            `json:"index"`
+	Count int            `json:"count"`
+	Item  jsontext.Value `json:"item"`
 }
 
 // config is the task's rendered `with:` block. There is no `op`: that is a
@@ -65,8 +66,8 @@ type values struct {
 	Label          string       `json:"label,omitempty"`
 	Source         string       `json:"source,omitempty"`
 	Artifact       string       `json:"artifact,omitempty"`
-	Stats          *textStats   `json:"stats,omitempty"`
-	Each           *eachContext `json:"each,omitempty"`
+	Stats          *textStats   `json:"stats,omitzero"`
+	Each           *eachContext `json:"each,omitzero"`
 }
 
 func main() {
@@ -163,13 +164,11 @@ func readJSON(path string, into any) error {
 // compactJSON encodes v on one line without HTML escaping, so `<`, `>` and
 // `&` in an argument read as themselves, as jq -c prints them.
 func compactJSON(v any) (string, error) {
-	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(v); err != nil {
+	encoded, err := json.Marshal(v, json.Deterministic(true))
+	if err != nil {
 		return "", fmt.Errorf("encode JSON: %w", err)
 	}
-	return strings.TrimSuffix(buf.String(), "\n"), nil
+	return string(encoded), nil
 }
 
 // labelOf is `with.label` when set; otherwise a fan-out item that is a JSON

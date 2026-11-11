@@ -18,6 +18,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The spacing between a task's retries (docs/DSL.md "Tasks"): a `retry:` that
@@ -61,9 +63,7 @@ func runRetrySpacing(t *testing.T, retry string, plan engine.RunPlan) *dispatchC
 	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-retry-spacing",
 		compile(t, retrySpacingDocument(retry)), spreadInput(t, 2), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	return capture
 }
 
@@ -399,9 +399,7 @@ func TestRunWorkflow_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 			h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-stored-before-rule-47",
 				storedBeforeRule47(t, tc.retry), spreadInput(t, 2), retryPlan(tc.planned), (*orkstackv1.RunContinuation)(nil))
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatalf("workflow error: %v", err)
-			}
+			must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 			requireIntervals(t, maximumIntervals(capture), 3, tc.maximum)
 			for _, options := range capture.of(task.ActivityExecuteTask) {
 				policy := options.RetryPolicy

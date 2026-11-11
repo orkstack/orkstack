@@ -5,11 +5,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The race gate runs the unit suites under the race detector (AGENTS.md
@@ -320,9 +321,7 @@ func TestUnitRunner_TheRaceGateFailsOnADataRaceAndNamesTheTest(t *testing.T) {
 		t.Fatalf("exit %d, want 1: the suite has a deliberate data race", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "race-tests.json"), &l); err != nil {
-		t.Fatalf("the race gate's ledger is race-tests.json: %v", err)
-	}
+	must.OKf(t, readJSON(filepath.Join(out, "race-tests.json"), &l), "the race gate's ledger is race-tests.json")
 	if l.Suite != suiteRace {
 		t.Errorf("suite = %q", l.Suite)
 	}
@@ -373,9 +372,7 @@ func TestUnitRunner_TheRaceGatePassesACleanPackage(t *testing.T) {
 		t.Fatalf("exit %d, want 0", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "race-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "race-tests.json"), &l))
 	if l.Summary.Expected != 1 || l.Summary.Pass != 1 || !l.ok() {
 		t.Errorf("ledger = %+v", l)
 	}
@@ -393,9 +390,7 @@ func TestUnitRunner_ARepeatedRaceRunFailsATestThatFailsOnlyOnce(t *testing.T) {
 		t.Fatalf("exit %d, want 1: TestFailsOnTheSecondRun fails once in three", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "race-repeat-tests.json"), &l); err != nil {
-		t.Fatalf("a repeated race run's ledger is race-repeat-tests.json: %v", err)
-	}
+	must.OKf(t, readJSON(filepath.Join(out, "race-repeat-tests.json"), &l), "a repeated race run's ledger is race-repeat-tests.json")
 	if l.Suite != suiteRaceRepeat {
 		t.Errorf("suite = %q", l.Suite)
 	}
@@ -475,9 +470,7 @@ func TestUnitRunner_TheRaceTimeoutSpansEveryRepeat(t *testing.T) {
 				t.Fatalf("exit %d, want 0", code)
 			}
 			events, err := os.ReadFile(filepath.Join(out, unitSuiteName(true, c.count)+".events.jsonl"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			want := fmt.Sprintf("timeout-minutes=%d", c.minutes)
 			if !strings.Contains(string(events), want) {
 				t.Errorf("the test binary was not given a %d-minute -timeout for %d run(s): no %q in its events:\n%s", c.minutes, c.count, want, events)
@@ -497,47 +490,13 @@ func TestUnitRunner_ThePlainGateGivesEachBinaryItsHangGuard(t *testing.T) {
 		t.Fatalf("exit %d, want 0", code)
 	}
 	events, err := os.ReadFile(filepath.Join(out, unitSuiteName(false, 1)+".events.jsonl"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := fmt.Sprintf("timeout-minutes=%d", int(unitTimeout.Minutes()))
 	if !strings.Contains(string(events), want) {
 		t.Errorf("the unit gate did not give the binary its %s -timeout: no %q in its events:\n%s", unitTimeout, want, events)
 	}
 	if unitTimeout <= 10*time.Minute {
 		t.Errorf("unitTimeout = %s: no more room than go test's default", unitTimeout)
-	}
-}
-
-// make test-race is the gate's go test without its ledger: the same flags,
-// the timeout included, for the same repeat count.
-func TestMakefile_TestRaceGivesGoTestTheGatesTimeout(t *testing.T) {
-	timeoutFlag := regexp.MustCompile(`-timeout (\S+)`)
-	for _, count := range []int{1, 3} {
-		t.Run(fmt.Sprintf("RACE_COUNT=%d", count), func(t *testing.T) {
-			out, err := exec.Command("make", "-n", "-s", "-C", mustRepoRoot(), "test-race",
-				fmt.Sprintf("RACE_COUNT=%d", count), "RACE_PACKAGES=./pkg/triggers").CombinedOutput()
-			if err != nil {
-				t.Fatalf("make -n test-race: %v\n%s", err, out)
-			}
-			m := timeoutFlag.FindStringSubmatch(string(out))
-			if m == nil {
-				t.Fatalf("make test-race runs go test with no -timeout, so the default ten minutes bound a repeat of the engine's suite:\n%s", out)
-			}
-			got, err := time.ParseDuration(m[1])
-			if err != nil {
-				t.Fatalf("-timeout %q: %v", m[1], err)
-			}
-			want, _ := time.ParseDuration(raceTimeoutFor(count))
-			if got != want {
-				t.Errorf("make test-race RACE_COUNT=%d gives -timeout %s, the gate gives %s", count, got, want)
-			}
-			for _, flag := range []string{"-race", "-short", fmt.Sprintf("-count=%d", count)} {
-				if !strings.Contains(string(out), flag) {
-					t.Errorf("make test-race lacks %s:\n%s", flag, out)
-				}
-			}
-		})
 	}
 }
 
@@ -597,9 +556,7 @@ func TestUnitRunner_TheLedgerSaysWhetherTheRunHadShort(t *testing.T) {
 				t.Fatalf("exit %d, want 0", code)
 			}
 			var l ledger
-			if err := readJSON(filepath.Join(out, "race-tests.json"), &l); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, readJSON(filepath.Join(out, "race-tests.json"), &l))
 			if l.Short != short {
 				t.Errorf("ledger short = %v, want %v", l.Short, short)
 			}
@@ -656,9 +613,7 @@ func TestUnitRunner_ARepeatThatEndsTheBinaryNamesItsTest(t *testing.T) {
 		t.Fatalf("exit %d, want 1: the binary ends in the second run", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "race-repeat-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "race-repeat-tests.json"), &l))
 	problems := strings.Join(l.Problems, "\n")
 	if !strings.Contains(problems, "TestDiesOnTheSecondRun no outcome") {
 		t.Errorf("the test whose repeat never reported is not named:\n%s", problems)

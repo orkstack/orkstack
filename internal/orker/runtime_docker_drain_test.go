@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A docker CLI that exits 0 succeeded, even when its output pipe stays open a
@@ -20,9 +22,7 @@ func TestRunWithin_AnOutputPipeHeldPastExitIsStillASuccess(t *testing.T) {
 	// The background subshell inherits stdout and holds it for half a second
 	// after the CLI itself has printed its answer and exited 0.
 	script := "#!/bin/sh\necho c0ffee\n( sleep 0.5 ) &\nexit 0\n"
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(bin, []byte(script), 0o755))
 	d := &DockerRuntime{Bin: bin}
 	answer, overran, err := d.runWithin(context.Background(), time.Minute, "create", "busybox")
 	if err != nil || answer.code != 0 || overran {

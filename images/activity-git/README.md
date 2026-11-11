@@ -164,7 +164,15 @@ checkout step of a pin whose later members build what this one checked out.
   `<parent>/.activity-git-<name>` — a reserved name; a previous attempt's
   leftovers there are removed — and renamed into place only when complete. So
   `dest` exists only after a complete checkout, and a pinned retry that sees
-  what a failed attempt left in `/orkstack/shared` still succeeds.
+  what a failed attempt left in `/orkstack/shared` still succeeds. An attempt
+  that fails removes its own staging directory before it exits.
+- The checkout, `.git` included, and the parents this image creates are
+  writable by others (`umask 000`): the image runs as uid 65532, and the
+  Orker, which removes the pin's directory when the pin ends, can neither
+  write nor chmod a directory another user made `0755` (the OCI Activity
+  Contract's §10.1 rule 11). Every member of the pin can therefore change the
+  working tree, whatever its uid, and a later member that archives it records
+  `0777` directories and `0666` files, unless it sets the modes it wants.
 
 A pinned task is never cached. Give the pin `run_as_orker_user: true` (the
 DSL's own recommendation), which also keeps git's ownership check quiet for any
@@ -348,7 +356,7 @@ whether to try again.
 The image declares its `with:` contract in
 [`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
-"Declaring the interface"), so `orkctl orkflow validate` and apply check a
+"Declaring the interface"), so `orkctl orkflow validate` and `orkctl orkflow create` check a
 task's `with:` before anything runs: a missing `url` or an unknown `op` is an
 error, an undeclared key a warning. Five keys shared by both ops, two ops, no
 default op (an unknown or missing `op` exits `2`).
@@ -364,6 +372,15 @@ show.
 background under a TERM trap (the OCI Activity Contract's §10.1 rule 2a), so
 cancelling a run interrupts a slow fetch within the grace period rather than
 being escalated to SIGKILL.
+
+## Scratch
+
+`clone` with `as` fetches into `/orkstack/tmp/repo` and archives from there.
+Every exit the script takes, a cancelled fetch included, empties
+`/orkstack/tmp` and removes a pinned checkout's staging directory, and the
+repository is created writable by others, so the Orker can remove it after an
+exit that runs no trap, such as the grace period's SIGKILL (the OCI Activity
+Contract's §10.1 rule 11). The tarball itself is written under `umask 022`.
 
 ## What this image does not do
 

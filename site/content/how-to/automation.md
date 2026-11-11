@@ -1,6 +1,6 @@
 # Manage schedules, triggers and webhooks in a file
 
-Write one automation document for each namespace. It names the namespace's schedules, triggers and webhooks, and its settings. `orkctl apply` makes the namespace match the file.
+Write one automation document for each namespace. It names the namespace's schedules, triggers and webhooks, and its settings. `orkctl automation apply` makes the namespace match the file.
 
 ## Example
 
@@ -29,15 +29,16 @@ triggers:
     description: "CI submits a change for assessment and, when risky, approval"
 ```
 
-The schedule and the trigger name Orkflows. Each one must be stored, or applied in the same command. `approval-gate` composes `notify-block`, so that block is stored first, in a command of its own. The [examples guide](https://github.com/orkstack/orkstack/blob/main/examples/README.md#the-automation-document) lists the steps in order.
+The schedule and the trigger name Orkflows. Each one must already be created: `orkctl automation apply` plans only the Orkflow versions that are stored. `approval-gate` composes `notify-block`, so that block is created first, in a command of its own. The [examples guide](https://github.com/orkstack/orkstack/blob/main/examples/README.md#the-automation-document) lists the steps in order.
 
-Store the block, preview the plan, apply it, then check for drift:
+Create the Orkflows, preview the plan, apply it, then check for drift:
 
 ```bash
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml --dry-run
-orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml
-orkctl apply examples/automation/examples.ork.yaml --check
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml
+orkctl automation apply examples/automation/examples.ork.yaml --dry-run
+orkctl automation apply examples/automation/examples.ork.yaml
+orkctl automation apply examples/automation/examples.ork.yaml --check
 ```
 
 The schedule fires once a day and pauses itself after a failure. Delete it when you are done with it: `orkctl schedule delete poll-exports`.
@@ -80,14 +81,15 @@ The plan has a digest, `sha256:…`. Pass it to `--expect-plan` to apply only th
 ## Apply
 
 ```bash
-orkctl apply environments/prod/ --dry-run
-orkctl apply environments/prod/
-orkctl apply automation.ork.yaml --prune --expect-plan sha256:…
+orkctl orkflow create environments/prod/orkflows/ --dry-run
+orkctl orkflow create environments/prod/orkflows/
+orkctl automation apply environments/prod/automation.ork.yaml --dry-run
+orkctl automation apply environments/prod/automation.ork.yaml --prune --expect-plan sha256:…
 ```
 
-A directory is read for `*.ork.yaml` and `*.ork.yml` files. Orkflows are applied before automation. Only `--prune` deletes, and only named objects in the sections the document declares.
+Create the Orkflows first, in a command of their own, then apply the automation that names them. A directory is read for `*.ork.yaml` and `*.ork.yml` files. `orkctl orkflow create` refuses an automation document, and `orkctl automation apply` refuses an Orkflow, in a directory too, so a layout that holds both must keep them apart. Do not mix them in one command. Only `--prune` deletes, and only named objects in the sections the document declares.
 
-`orkctl apply --check` runs a dry run and exits `4` when anything would change. Run it on a schedule to find drift.
+`orkctl automation apply --check` runs a dry run and exits `4` when anything would change. Run it on a schedule to find drift.
 
 ## Secrets are shown once
 
@@ -100,13 +102,13 @@ For a webhook, `secret_env` names an environment variable that holds the secret.
 Objects created by hand have no name, so no document manages them. Name them in place. Their tokens and secrets stay the same:
 
 ```bash
-orkctl export -n payments > automation.ork.yaml
+orkctl automation export -n payments > automation.ork.yaml
 orkctl trigger update trg-… -n payments --name github-deploy
 orkctl webhook update wh-… --name etl-loader
-orkctl apply automation.ork.yaml --check
+orkctl automation apply automation.ork.yaml --check
 ```
 
-`export` prints the namespace as a document. It lists each unnamed object in a comment at the end, with the command that names it. A webhook must already be scoped to a namespace before it can take a name. After you name them, `apply --check` exits `0`.
+`export` prints the namespace as a document. It lists each unnamed object in a comment at the end, with the command that names it. A webhook must already be scoped to a namespace before it can take a name. After you name them, `automation apply --check` exits `0`.
 
 ## When an apply fails
 
@@ -126,5 +128,5 @@ orkctl apply automation.ork.yaml --check
 
 - [Declarative automation contract](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md): the full document rules and the plan
 - [The plan](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#the-plan): the symbols and the digest
-- [`orkctl apply`](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#orkctl-apply): the flags and the order of an apply
+- [`orkctl automation apply`](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#orkctl-automation-apply): the flags and the order of an apply
 - [Schedules](/docs/run/schedules-and-triggers/), [Triggers](/docs/run/schedules-and-triggers/) and [Webhooks](/docs/run/webhooks/): the objects a document declares

@@ -36,7 +36,7 @@ export type FieldFilter = Message<"orkstack.v1.FieldFilter"> & {
   op: FilterOperator;
 
   /**
-   * values in the spelling `orkctl --json` prints: text verbatim, an enum
+   * values in the spelling `orkctl -j` prints: text verbatim, an enum
    * value's short name ("FAILED"), true/false, an RFC 3339 instant with a
    * zone. docs/UI_CLI_PARITY.md "Filtering lists" states the matching rules.
    *

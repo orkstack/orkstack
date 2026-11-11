@@ -286,19 +286,22 @@
 		{#if artifacts.length > 0}
 			<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-artifacts-{task.id}">
 				<h4 class="caps text-ink-muted">Artifacts</h4>
+				<!-- A list, so each artifact is a row whose provenance icon is its own (ui/DESIGN.md, the Shell Icon Rule). -->
+				<ul>
 				{#each artifacts as record (record.kind + ':' + (record.artifact?.name ?? ''))}
 					{#if record.artifact}
 						{@const key = `${record.taskId}:${record.kind}:${record.artifact.name}`}
-						<div class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule-faint py-2 text-xs last:border-b-0">
+						<li class="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-rule-faint py-2 text-xs last:border-b-0">
 							<span class="font-medium text-ink">{ArtifactKind[record.kind] ?? 'UNSPECIFIED'}</span>
 							<span class="font-mono break-all text-ink-secondary">{record.artifact.name}</span>
 							<span class="text-ink-muted">{artifactContentTypeLabel(record.artifact)} · {record.artifact.sizeBytes.toString()} bytes</span>
 							<button type="button" data-testid="download-artifact-{task.id}-{record.artifact.name}" onclick={() => onDownload(record)} disabled={downloading === key} class="link ml-auto font-medium disabled:opacity-50">{downloading === key ? 'Downloading…' : 'Download'}</button>
 							<ArtifactProvenance runId={runId} namespace={namespace} taskId={task.id} kind={record.kind} name={record.artifact.name} />
 							<details class="w-full min-w-0 text-ink-muted"><summary>Metadata</summary><pre class="mt-1 overflow-auto font-mono">{JSON.stringify(artifactMetadata(record.artifact), null, 2)}</pre></details>
-						</div>
+						</li>
 					{/if}
 				{/each}
+				</ul>
 			</div>
 		{/if}
 	

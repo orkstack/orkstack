@@ -182,7 +182,7 @@ test('the Schedules tab creates a schedule and shows its next fire times', async
 		expect(text.trim()).toMatch(/^\d{4}-\d{2}-\d{2}T0[12]:00:00Z$/);
 	}
 	await page.getByTestId('schedule-cli-nightly-trigger').click();
-	await expect(page.getByTestId('schedule-cli-nightly-command')).toContainText(
+	await expect(page.getByTestId('schedule-cli-nightly-popover').locator('[data-cli-label="Recreate it"]')).toContainText(
 		`orkctl schedule create nightly --orkflow ${NAME} --cron '0 2 * * *' --timezone Europe/Lisbon --overlap skip --paused`
 	);
 	note(`created nightly from the tab: paused, ${await fires.count()} next fire times, first ${(await fires.first().textContent())?.trim()}`);

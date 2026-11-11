@@ -33,8 +33,8 @@ In [`examples/each-fan-out.ork.yaml`](https://github.com/orkstack/orkstack/blob/
 Run the whole file:
 
 ```bash
-orkctl apply examples/each-fan-out.ork.yaml
-orkctl run submit each-fan-out --watch
+orkctl orkflow create examples/each-fan-out.ork.yaml
+orkctl run submit each-fan-out -w
 ```
 
 `convert` runs four items, two at a time. The run page shows each one:
@@ -79,7 +79,7 @@ item order:
 
 ```bash
 orkctl run get <run-id> --expand convert          # a row per item
-orkctl run logs <run-id> --task convert --item 2  # one item's log
+orkctl run logs <run-id> -t convert --item 2  # one item's log
 ```
 
 The run page shows the items as they run, and opens one with a click:

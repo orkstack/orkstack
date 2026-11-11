@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe the flake index: the one stats read that opens EVERY
@@ -148,14 +150,10 @@ func (f *flakeFixture) run(t *testing.T, namespace, orkflow string, status orkst
 			record := proto.Clone(record).(*orkstackv1.TaskAttempt)
 			record.SchemaVersion = artifacts.AttemptSchemaVersion
 			record.RunId, record.TaskId = id, task.id
-			if err := f.store.PutAttempt(context.Background(), record); err != nil {
-				t.Fatalf("put attempt: %v", err)
-			}
+			must.OKf(t, f.store.PutAttempt(context.Background(), record), "put attempt")
 		}
 	}
-	if err := engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive run %s: %v", id, err)
-	}
+	must.OKf(t, engine.NewRunArchiver(f.bodies.inner).Archive(context.Background(), run, nil), "archive run %s", id)
 	return id
 }
 
@@ -168,9 +166,7 @@ func flakeRequest(namespace string, since, until time.Time, dims ...orkstackv1.F
 func (f *flakeFixture) flakes(t *testing.T, handler *api.StatsHandler, req *orkstackv1.GetFlakeIndexRequest) *orkstackv1.GetFlakeIndexResponse {
 	t.Helper()
 	got, err := handler.GetFlakeIndex(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("GetFlakeIndex(%s): %v", req.GetNamespace(), err)
-	}
+	must.OKf(t, err, "GetFlakeIndex(%s)", req.GetNamespace())
 	return got.Msg
 }
 
@@ -220,9 +216,7 @@ func TestGetFlakeIndex_PopulationIsEveryFinishedRunTheWindowCreated(t *testing.T
 	stats, err := handler.GetStats(context.Background(), connect.NewRequest(&orkstackv1.GetStatsRequest{
 		Namespace: "payments", Since: timestamppb.New(since), Until: timestamppb.New(until),
 	}))
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
+	must.OKf(t, err, "GetStats")
 	byStatus := stats.Msg.GetRunsByStatus()
 	finished := byStatus["succeeded"] + byStatus["failed"] + byStatus["canceled"]
 	got := fixture.flakes(t, handler, flakeRequest("payments", since, until))
@@ -257,9 +251,7 @@ func TestGetFlakeIndex_ASucceededRunWithARetriedTaskIsCountedRetried(t *testing.
 	stats, err := handler.GetStats(context.Background(), connect.NewRequest(&orkstackv1.GetStatsRequest{
 		Namespace: "payments", Since: timestamppb.New(since), Until: timestamppb.New(until),
 	}))
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
+	must.OKf(t, err, "GetStats")
 	if stats.Msg.GetRunsByStatus()["succeeded"] != 1 || stats.Msg.GetRunsByStatus()["failed"] != 0 {
 		t.Fatalf("GetStats sees %v; the retry must be invisible there", stats.Msg.GetRunsByStatus())
 	}
@@ -618,9 +610,7 @@ func TestGetFlakeIndex_WindowResolutionIsSharedWithGetStatsAndTheBreakdown(t *te
 			stats, err := handler.GetStats(context.Background(), connect.NewRequest(&orkstackv1.GetStatsRequest{
 				Namespace: "alpha", Since: window.since, Until: window.until, Lookback: window.lookback,
 			}))
-			if err != nil {
-				t.Fatalf("GetStats: %v", err)
-			}
+			must.OKf(t, err, "GetStats")
 			breakdown := fixture.breakdown(t, handler, &orkstackv1.GetFailureBreakdownRequest{
 				Namespace: "alpha", Since: window.since, Until: window.until, Lookback: window.lookback,
 			})

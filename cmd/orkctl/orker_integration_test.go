@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Cordon and drain's CLI acceptance (docs/DEPLOY.md "Removing an Orker
@@ -141,10 +143,8 @@ tasks:
       command: ["sh", "-c", "sleep %d"]
 `, name, seconds)
 	path := filepath.Join(s.t.TempDir(), name+".ork.yaml")
-	if err := os.WriteFile(path, []byte(source), 0o644); err != nil {
-		s.t.Fatal(err)
-	}
-	if _, stderr, code := s.cli(0, "apply", path); code != 0 {
+	must.OK(s.t, os.WriteFile(path, []byte(source), 0o644))
+	if _, stderr, code := s.cli(0, "orkflow", "create", path); code != 0 {
 		s.t.Fatalf("apply exit %d: %s", code, stderr)
 	}
 	stdout, stderr, code := s.cli(0, "run", "submit", name)
@@ -181,9 +181,7 @@ func TestIntegration_DrainWaitsForTheLastTaskThenExitsZero(t *testing.T) {
 		t.Fatalf("run get exit %d", code)
 	}
 	resp := &orkstackv1.GetRunResponse{}
-	if err := api.UnmarshalJSON([]byte(got), resp); err != nil {
-		t.Fatalf("run get --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(got), resp), "run get --json")
 	run := resp.GetRun()
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || len(run.GetTaskRuns()) != 1 ||
 		run.GetTaskRuns()[0].GetOrkerId() != s.orkerID {
@@ -225,9 +223,7 @@ func TestIntegration_ListOrkersIsAnsweredByAReplicaThatCordonedNothing(t *testin
 		t.Fatalf("list through B exit %d", code)
 	}
 	resp := &orkstackv1.ListOrkersResponse{}
-	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
-		t.Fatalf("list --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(listed), resp), "list --json")
 	var row *orkstackv1.Orker
 	for _, r := range resp.GetOrkers() {
 		if r.GetOrkerId() == s.orkerID {
@@ -260,9 +256,7 @@ func TestIntegration_ListOrkersIsAnsweredByAReplicaThatCordonedNothing(t *testin
 		t.Fatalf("list --filter pool=%s through B exit %d: %s", row.GetPool(), code, stderr)
 	}
 	pooled := &orkstackv1.ListOrkersResponse{}
-	if err := api.UnmarshalJSON([]byte(byPool), pooled); err != nil {
-		t.Fatalf("list --filter --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(byPool), pooled), "list --filter --json")
 	found := false
 	for _, r := range pooled.GetOrkers() {
 		found = found || r.GetOrkerId() == s.orkerID
@@ -294,9 +288,7 @@ func TestIntegration_CordonIsAudited(t *testing.T) {
 		t.Fatalf("admin audit exit %d", code)
 	}
 	resp := &orkstackv1.ListAuditRecordsResponse{}
-	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
-		t.Fatalf("admin audit --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(listed), resp), "admin audit --json")
 	var rec *orkstackv1.AuditRecord
 	for _, r := range resp.GetRecords() {
 		if r.GetAction() == "orker.cordon" && r.GetTarget() == s.orkerID {

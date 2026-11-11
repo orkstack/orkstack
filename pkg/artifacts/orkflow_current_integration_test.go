@@ -153,7 +153,7 @@ func TestS3OrkflowStore_ReApplyingIdenticalYAMLChurnsNothing(t *testing.T) {
 	beforeStamp := objectModified(t, ctx, raw, cfg.S3Bucket, key)
 
 	// Re-apply the SAME definition, a moment later and with a later created_at
-	// — which is exactly what a second `orkctl apply` of an unchanged file
+	// — which is exactly what a second `orkctl orkflow create` of an unchanged file
 	// sends, because the API stamps the time of the apply.
 	time.Sleep(1100 * time.Millisecond) // S3 LastModified has second resolution
 	again := testOrkflow(t, name, "1.0.0", time.Now().UTC().Truncate(time.Millisecond))
@@ -515,8 +515,11 @@ func TestS3OrkflowStore_ConditionalPromotionRefusesAMovedPointer(t *testing.T) {
 // TestS3OrkflowStore_ConcurrentConditionalPromotionsReplaceWhatTheyRead is I2:
 // the concurrent test's shape — two stores, readers throughout — with every
 // writer reading the pointer and promoting with ExpectCurrent(read). Every
-// success replaced exactly the value its writer read; every failure is
-// ErrCurrentMoved; no reader sees an unstored version.
+// success replaced exactly the value its writer read; every failure is a
+// refusal — ErrCurrentMoved when the pointer moved off the version its
+// writer read, or ErrPreconditionFailed alone when other writers' rewrites of
+// that same version outlasted its retry (contention: its expectation still
+// held, and it never landed); no reader sees an unstored version.
 func TestS3OrkflowStore_ConcurrentConditionalPromotionsReplaceWhatTheyRead(t *testing.T) {
 	store, cfg := newS3OrkflowStore(t)
 	ctx := context.Background()
@@ -598,7 +601,7 @@ func TestS3OrkflowStore_ConcurrentConditionalPromotionsReplaceWhatTheyRead(t *te
 	close(stop)
 	readers.Wait()
 
-	landed, refused := 0, 0
+	landed, refused, contended := 0, 0, 0
 	for i, result := range results {
 		switch {
 		case result.err == nil:
@@ -610,6 +613,8 @@ func TestS3OrkflowStore_ConcurrentConditionalPromotionsReplaceWhatTheyRead(t *te
 			}
 		case errors.Is(result.err, artifacts.ErrCurrentMoved):
 			refused++
+		case errors.Is(result.err, artifacts.ErrPreconditionFailed):
+			contended++
 		default:
 			t.Fatalf("promotion %d failed for an unexpected reason: %v", i, result.err)
 		}
@@ -626,8 +631,9 @@ func TestS3OrkflowStore_ConcurrentConditionalPromotionsReplaceWhatTheyRead(t *te
 		t.Fatal("no conditional promotion landed at all")
 	}
 	line := fmt.Sprintf("%d conditional promotions: %d landed, each replacing exactly the "+
-		"pointer its writer read; %d refused with ErrCurrentMoved; %d reads saw only stored versions\n",
-		len(results), landed, refused, len(observations))
+		"pointer its writer read; %d refused with ErrCurrentMoved; %d refused for contention "+
+		"(ErrPreconditionFailed); %d reads saw only stored versions\n",
+		len(results), landed, refused, contended, len(observations))
 	t.Log(line)
 	proof.Write(t, "artifacts", "conditional-promotions.txt", []byte(line))
 }

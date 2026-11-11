@@ -50,6 +50,11 @@ var ErrUpdateContention = errors.New("webhooks: the subscription kept changing w
 // rounds, as pkg/triggers.UpdateAttempts does for triggers.
 const UpdateAttempts = 8
 
+// CreateAttempts bounds how many fresh ids a durable Register tries before it
+// reports a repeated collision, as pkg/triggers.CreateAttempts does for
+// triggers. An id is 64 random bits, so a second attempt is already rare.
+const CreateAttempts = 8
+
 // Event names a transition a subscriber can ask for: one of the run's own
 // transitions, or a task outcome. The values are the lifecycle event types
 // without their proto prefix, which is how every other OrkStack JSON surface
@@ -71,6 +76,8 @@ const (
 	// EventTaskResolved is an awaited task resolved from outside its run:
 	// SUCCEEDED for a completion, FAILED for a rejection.
 	EventTaskResolved Event = "TASK_RESOLVED"
+	// EventTaskSleeping is a sleeping task that started its fixed wait.
+	EventTaskSleeping Event = "TASK_SLEEPING"
 	// EventTaskSucceeded is a task's committed success.
 	EventTaskSucceeded Event = "TASK_SUCCEEDED"
 	// EventTaskFailed is a task's final failure, after Temporal stopped
@@ -92,7 +99,7 @@ func KnownEvents() []Event {
 	return []Event{
 		EventRunStarted,
 		EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
-		EventTaskSucceeded, EventTaskFailed,
+		EventTaskSleeping, EventTaskSucceeded, EventTaskFailed,
 		EventRunSucceeded, EventRunFailed, EventRunCanceled,
 	}
 }
@@ -114,7 +121,7 @@ func isRunEvent(event Event) bool {
 func isTaskEvent(event Event) bool {
 	switch event {
 	case EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
-		EventTaskSucceeded, EventTaskFailed:
+		EventTaskSleeping, EventTaskSucceeded, EventTaskFailed:
 		return true
 	}
 	return false

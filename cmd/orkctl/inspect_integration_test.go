@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +20,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The live-attempt-introspection integration scenarios (docs/UI_CLI_PARITY.md
@@ -57,9 +59,7 @@ func startOrkerWith(ctx context.Context, t *testing.T,
 	var log strings.Builder
 	cmd.Stdout = &log
 	cmd.Stderr = &log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start orker: %v", err)
-	}
+	must.OKf(t, cmd.Start(), "start orker")
 	t.Cleanup(func() {
 		_ = cmd.Process.Signal(os.Interrupt)
 		done := make(chan struct{})
@@ -493,9 +493,7 @@ func scrapeOrkerMetrics(ctx context.Context, t *testing.T, admin string, ready f
 	var body string
 	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+admin+"/metrics", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if resp, err := scrapeClient.Do(req); err == nil {
 			raw, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
@@ -575,18 +573,14 @@ tasks:
 
 	// Temporal itself still holds attempt 1's detail for the pending activity.
 	described, err := s.temporal.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatalf("DescribeWorkflowExecution: %v", err)
-	}
+	must.OKf(t, err, "DescribeWorkflowExecution")
 	var carried *task.HeartbeatProgress
 	for _, pa := range described.GetPendingActivities() {
 		if pa.GetActivityType().GetName() != task.ActivityExecuteTask {
 			continue
 		}
 		var progress task.HeartbeatProgress
-		if err := converter.GetDefaultDataConverter().FromPayloads(pa.GetHeartbeatDetails(), &progress); err != nil {
-			t.Fatalf("decode the cluster's heartbeat detail: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(pa.GetHeartbeatDetails(), &progress), "decode the cluster's heartbeat detail")
 		carried = &progress
 		t.Logf("I3 Temporal's pending activity: attempt=%d state=%s heartbeat_details=%+v last_heartbeat=%s last_started=%s",
 			pa.GetAttempt(), pa.GetState(), progress, pa.GetLastHeartbeatTime().AsTime().Format(time.RFC3339Nano),
@@ -653,9 +647,7 @@ func TestIntegration_InspectRunMarksALostOrkerStale(t *testing.T) {
 				}
 				time.Sleep(250 * time.Millisecond)
 			}
-			if err := orker.Process.Signal(syscall.SIGKILL); err != nil {
-				t.Fatalf("SIGKILL the orker: %v", err)
-			}
+			must.OKf(t, orker.Process.Signal(syscall.SIGKILL), "SIGKILL the orker")
 			killedAt := time.Now()
 			t.Logf("I4 (%s) SIGKILLed orker pid %d holding container %s", variant.name, orker.Process.Pid, live.ContainerID)
 

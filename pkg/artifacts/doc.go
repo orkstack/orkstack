@@ -40,13 +40,9 @@
 //	ref, err := store.Put(ctx, "task-1/report.txt", f, artifacts.PutOptions{})
 //	rc, err := store.Get(ctx, ref.URI)
 //
-// Adding a provider: implement Store and register a Factory from an init
-// function. Nothing else in the codebase changes; the new name becomes a valid
-// ORK_ARTIFACT_BACKEND value.
-//
-//	func init() {
-//		_ = artifacts.Register("gcs", func(cfg artifacts.Config) (artifacts.Store, error) {
-//			return newGCSStore(cfg)
-//		})
-//	}
+// Every record store (run archive, task logs, attempt records, snapshots,
+// memos, audit trail, delivery records, triggers and webhooks) is written once,
+// over one small object interface that the bucket and a local directory each
+// implement (blob.go), so the two backends keep identical keys and identical
+// conditional-write semantics.
 package artifacts

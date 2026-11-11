@@ -16,8 +16,8 @@
 # Pattern: docs/ORKFLOW_PATTERNS.md, "Pass values as data, never as code"
 # Pattern: docs/ORKFLOW_PATTERNS.md, "A non-2xx answer is data"
 #
-#   orkctl run plan --file examples/http-post.ork.yaml --output publish='{"status":200}' --assert-runs summarize
-#   orkctl run plan --file examples/http-post.ork.yaml --output publish='{"status":503}' --assert-skipped summarize
+#   orkctl run plan -f examples/http-post.ork.yaml -o publish='{"status":200}' --assert-runs summarize
+#   orkctl run plan -f examples/http-post.ork.yaml -o publish='{"status":503}' --assert-skipped summarize
 apiVersion: orkstack/v1
 kind: Orkflow
 name: http-post

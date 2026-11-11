@@ -18,6 +18,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The live-attempt read is tested against a synthesized describe and a
@@ -69,9 +71,7 @@ func fitInput() *orkstackv1.ExecuteTaskInput {
 func detailsOf(t *testing.T, values ...any) *commonpb.Payloads {
 	t.Helper()
 	encoded, err := converter.GetDefaultDataConverter().ToPayloads(values...)
-	if err != nil {
-		t.Fatalf("encode heartbeat details: %v", err)
-	}
+	must.OKf(t, err, "encode heartbeat details")
 	return encoded
 }
 
@@ -255,9 +255,7 @@ func TestLiveAttempts_DerivesEveryScenarioOfTheTable(t *testing.T) {
 			fake := liveFixture([]*workflowpb.PendingActivityInfo{row.pending},
 				scheduledExecuteTask(t, 5, "5", fitInput()))
 			live, err := newRunReader(fake, nil).LiveAttempts(context.Background(), liveRunID, row.now)
-			if err != nil {
-				t.Fatalf("LiveAttempts: %v", err)
-			}
+			must.OKf(t, err, "LiveAttempts")
 			if live.Closed || len(live.Attempts) != 1 {
 				t.Fatalf("live = %+v, want one open attempt", live)
 			}
@@ -325,9 +323,7 @@ func TestLiveAttempts_MapsPendingActivitiesToTasksThroughTheSchedulingEvent(t *t
 		scheduledOther(11, "11", task.ActivityReleasePin),
 	)
 	live, err := newRunReader(fake, nil).LiveAttempts(context.Background(), liveRunID, time.Now())
-	if err != nil {
-		t.Fatalf("LiveAttempts: %v", err)
-	}
+	must.OKf(t, err, "LiveAttempts")
 	if len(live.Attempts) != 2 {
 		t.Fatalf("attempts = %d, want the two ExecuteTask activities only", len(live.Attempts))
 	}
@@ -363,9 +359,7 @@ func TestLiveAttempts_DecodesOnlyThePendingActivitiesInputs(t *testing.T) {
 	)
 	counting := &countingConverter{DataConverter: converter.GetDefaultDataConverter()}
 	live, err := newRunReader(fake, counting).LiveAttempts(context.Background(), liveRunID, time.Now())
-	if err != nil {
-		t.Fatalf("LiveAttempts: %v", err)
-	}
+	must.OKf(t, err, "LiveAttempts")
 	if len(live.Attempts) != 1 || live.Attempts[0].GetTaskId() != "c" {
 		t.Fatalf("attempts = %v, want task c", live.Attempts)
 	}
@@ -380,9 +374,7 @@ func TestLiveAttempts_AClosedExecutionReadsNoHistory(t *testing.T) {
 	fake := liveFixture(nil)
 	fake.describes[liveRunID].WorkflowExecutionInfo.CloseTime = ts(readerEpoch)
 	live, err := newRunReader(fake, nil).LiveAttempts(context.Background(), liveRunID, time.Now())
-	if err != nil {
-		t.Fatalf("LiveAttempts: %v", err)
-	}
+	must.OKf(t, err, "LiveAttempts")
 	if !live.Closed || len(live.Attempts) != 0 {
 		t.Fatalf("live = %+v, want closed and empty", live)
 	}
@@ -398,9 +390,7 @@ func TestLiveAttempts_NothingPendingReadsNoHistory(t *testing.T) {
 		ActivityId: "3", ActivityType: &commonpb.ActivityType{Name: ActivityPublishEvent},
 	}})
 	live, err := newRunReader(fake, nil).LiveAttempts(context.Background(), liveRunID, time.Now())
-	if err != nil {
-		t.Fatalf("LiveAttempts: %v", err)
-	}
+	must.OKf(t, err, "LiveAttempts")
 	if live.Closed || len(live.Attempts) != 0 {
 		t.Fatalf("live = %+v, want open and empty", live)
 	}

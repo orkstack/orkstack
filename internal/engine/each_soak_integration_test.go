@@ -41,6 +41,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The fan-out soak (spec T4/E4): one fan-out at the item ceiling, submitted
@@ -125,9 +127,7 @@ func soakAlone(t *testing.T, ctx context.Context) {
 func holdLock(t *testing.T, ctx context.Context, path string) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		t.Fatalf("open the soak lock: %v", err)
-	}
+	must.OKf(t, err, "open the soak lock")
 	locked := make(chan error, 1)
 	start := time.Now()
 	go func() { locked <- syscall.Flock(int(file.Fd()), syscall.LOCK_EX) }()
@@ -144,9 +144,6 @@ func holdLock(t *testing.T, ctx context.Context, path string) {
 	}
 	t.Logf("holding the soak lock %s (waited %s for another soak)", path,
 		time.Since(start).Round(time.Millisecond))
-	// Silent, and it cannot fail the test: it may run after the timing
-	// helper's report without disturbing the failure output the proof's merger
-	// reads (proof.TimingBounds).
 	t.Cleanup(func() {
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
@@ -168,7 +165,7 @@ type eachSoak struct {
 	inflight   map[string]map[string]bool
 	// document, when set, is the soak's Orkflow instead of soakDocument.
 	document func(name string, items, maxParallel int) string
-	// timing reports the soak's wall-clock checks (proof.TimingBounds), and
+	// timing checks the soak's wall-clock budgets (proof.TimingBounds), and
 	// reads counts what the API's reader pulled from the cluster and the
 	// object store, beside each GetRun it times.
 	timing *proof.Timing
@@ -259,26 +256,18 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 	configure func(s *chaosStack, cfg *api.Config),
 ) *eachSoak {
 	t.Helper()
-	// Before the stack, so its cleanup runs after the stack's own teardown:
-	// nothing that teardown says follows the helper's report. The one cleanup
-	// registered earlier is the soak lock's release (soakAlone), which is
-	// silent and cannot fail (proof.TimingBounds).
 	timing := proof.TimingBounds(t)
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("run archive: %v", err)
-	}
+	must.OKf(t, err, "run archive")
 	s := newChaosStackWith(t, ctx, scenario, cfg, runArchive)
 	env, err := localcatalog.CatalogEnv()
 	if err != nil {
 		infraAbsent(t, "%v", err)
 	}
 	catalog, err := dsl.ParseCatalog([]byte(strings.TrimPrefix(env, "ORK_ACTIVITY_CATALOG=")))
-	if err != nil {
-		t.Fatalf("parse the local catalog: %v", err)
-	}
+	must.OKf(t, err, "parse the local catalog")
 	stores := s.realStores()
 	e := &eachSoak{chaosStack: s, items: items, stores: stores, realIDs: map[string]string{},
 		inflight: map[string]map[string]bool{}, timing: timing}
@@ -307,9 +296,7 @@ func startEachSoakWith(t *testing.T, ctx context.Context, scenario string, items
 
 	cluster, err := engine.NewTemporalReleaseCluster(s.control, s.reader, s.namespace, task.DefaultDeploymentName,
 		s.runQueue, s.orkerQueue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	apiConfig := api.Config{
 		EachMaxItems: int32(items), ContinuationEnabled: true, Capabilities: cluster,
 		Catalog: catalog, Resolver: dsl.NewResolver(""),
@@ -372,7 +359,7 @@ type soakGeneration struct {
 	Bytes              int64    `json:"history_bytes"`
 	PeakPending        int      `json:"peak_pending_activities"`
 	PeakPendingItems   int      `json:"peak_pending_items"`
-	CheckpointBytes    int64    `json:"checkpoint_bytes,omitempty"`
+	CheckpointBytes    int64    `json:"checkpoint_bytes,omitzero"`
 	ItemsCompleted     int      `json:"items_completed"`
 	ReplaySeconds      float64  `json:"replay_seconds"`
 	PendingLimitFailed int      `json:"pending_activities_limit_exceeded"`
@@ -451,9 +438,7 @@ func (e *eachSoak) getRunTimes(t *testing.T, ctx context.Context, runID string, 
 		}
 		start := time.Now()
 		resp, err := e.api.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
-		if err != nil {
-			t.Fatalf("GetRun %s: %v", runID, err)
-		}
+		must.OKf(t, err, "GetRun %s", runID)
 		out = append(out, time.Since(start))
 		last = resp.Msg.GetRun()
 	}
@@ -504,18 +489,14 @@ func soakSnapshotBytes(t *testing.T, ctx context.Context, runID string) (int64, 
 	cfg := s3Config()
 	raw := newRawS3ClientForCommitE2E(t, cfg)
 	prefix, err := artifacts.RunSnapshotPrefix("default", runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var total int64
 	var objects int
 	var token *string
 	for {
 		page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(cfg.S3Bucket),
 			Prefix: aws.String(prefix), ContinuationToken: token})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, object := range page.Contents {
 			total += aws.ToInt64(object.Size)
 			objects++
@@ -570,9 +551,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	// Events(0), the stream opened at submit, and the archive.
 	readStart := time.Now()
 	events, err := e.reader.Events(ctx, runID, 0)
-	if err != nil {
-		t.Fatalf("Events(0): %v", err)
-	}
+	must.OKf(t, err, "Events(0)")
 	rec.EventsReadSeconds = time.Since(readStart).Seconds()
 	requireContiguous(t, events)
 	streamed := stream.result(t, 5*time.Minute)
@@ -584,9 +563,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	// Every item SUCCEEDED, and its activity completed exactly once across
 	// the generations.
 	run, err := e.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := itemsSucceeded(run, "spread"); got != e.items || run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run %v with %d of %d items SUCCEEDED", run.GetStatus(), got, e.items)
 	}
@@ -594,9 +571,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	completions := map[string]int{}
 	for i, h := range histories {
 		info, err := e.control.DescribeWorkflowExecution(ctx, runID, chain[i])
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		g := soakGeneration{Execution: chain[i], Events: len(h.GetEvents()),
 			Bytes: info.GetWorkflowExecutionInfo().GetHistorySizeBytes()}
 		g.PeakPendingItems, g.PeakPending = pendingPeaks(h)
@@ -617,9 +592,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 			g.CheckpointBytes = continuedCarryOf(t, h).GetCheckpoint().GetSizeBytes()
 		}
 		replayStart := time.Now()
-		if err := replayRecorded(h, runID); err != nil {
-			t.Fatalf("generation %d does not replay (deadlock detection on): %v", i, err)
-		}
+		must.OKf(t, replayRecorded(h, runID), "generation %d does not replay (deadlock detection on)", i)
 		g.ReplaySeconds = math.Round(time.Since(replayStart).Seconds()*1000) / 1000
 		rec.Generations = append(rec.Generations, g)
 		rec.PeakPending = max(rec.PeakPending, g.PeakPending)
@@ -710,21 +683,22 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 		miss("%d live deadlock-detector trips", rec.DeadlockTrips)
 	}
 	// The wall-clock bounds, last, through the timing helper: a miss fails
-	// the test when it ends, and is a known gap on a runner below the
-	// reference (docs/PROOFS.md §12). The bounds are the same.
+	// the test, against the bound this host is held to (docs/PROOFS.md §12).
 	e.checkReadTimings(shape, rec.GetRunLiveP95, rec.GetRunArchiveP95, rec.EventsReadSeconds, rec.SlowestReplaySeconds)
 	return rec, events
 }
 
 // checkReadTimings reports E4 and E7's four wall-clock bounds, which the
 // fan-out and the task soaks share: GetRun's p95 live and from the archive,
-// the Events(0) read and the slowest generation's replay. Each id is the one
-// a scripts/proof-host-speed.tsv row names.
+// the Events(0) read and the slowest generation's replay. The live GetRun p95
+// is held to its bound scaled to the host (proof.Timing.Check), as the
+// approved runner-size rows excused it; the other three hold on every host
+// and are held to the reference bound everywhere.
 func (e *eachSoak) checkReadTimings(label string, getRunLiveP95, getRunArchiveP95, eventsRead, slowestReplay float64) {
 	e.timing.Check("getrun-live-p95", getRunLiveP95, soakGetRunP95Max.Seconds(), label)
-	e.timing.Check("getrun-archive-p95", getRunArchiveP95, soakGetRunP95Max.Seconds(), label)
-	e.timing.Check("events0-read", eventsRead, soakEventsReadMax.Seconds(), label)
-	e.timing.Check("replay-slowest", slowestReplay, soakReplayMax.Seconds(), label)
+	e.timing.CheckReference("getrun-archive-p95", getRunArchiveP95, soakGetRunP95Max.Seconds(), label)
+	e.timing.CheckReference("events0-read", eventsRead, soakEventsReadMax.Seconds(), label)
+	e.timing.CheckReference("replay-slowest", slowestReplay, soakReplayMax.Seconds(), label)
 }
 
 // describeReads is what the live GetRuns read, for the transcript: the
@@ -896,9 +870,7 @@ func TestIntegration_SoakItemCeilingByReferenceWithOverlays(t *testing.T) {
 	rec, _ := e.soakRun(t, ctx, "by-reference", 0, func(runID string) {
 		_, histories := e.histories(runID)
 		first := histories[0].GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
-		if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan); err != nil {
-			t.Fatalf("decode the run's plan: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan), "decode the run's plan")
 	})
 	if plan.Definition == nil || plan.SnapshotOverlay == nil {
 		rec.Missed = append(rec.Missed, fmt.Sprintf("the run did not start with its definition by reference and overlays: definition by reference %t, overlays %t",
@@ -944,9 +916,7 @@ func decodeRunPlan(t *testing.T, e *eachSoak, runID string) *engine.RunPlan {
 	plan := &engine.RunPlan{}
 	_, histories := e.histories(runID)
 	first := histories[0].GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
-	if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], plan); err != nil {
-		t.Fatalf("decode the run's plan: %v", err)
-	}
+	must.OKf(t, converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], plan), "decode the run's plan")
 	return plan
 }
 

@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface proves the
@@ -82,9 +84,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 
 	pool := privateTaskPool()
 	channel, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map test pool: %v", err)
-	}
+	must.OKf(t, err, "map test pool")
 	// A second pool this deployment does NOT route by default. Its Orker is
 	// reachable only by naming the pool, which is the case the admin reads
 	// have to cover: an inventory that fails, or a pool list that refuses,
@@ -92,9 +92,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// deployment that has more than one pool.
 	auxPool := pool + "-aux"
 	auxChannel, err := task.QueueForPool(auxPool, "")
-	if err != nil {
-		t.Fatalf("map aux test pool: %v", err)
-	}
+	must.OKf(t, err, "map aux test pool")
 	root := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
 	enginePath := testbin.Path(t, "./cmd/ork")
@@ -108,9 +106,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	// three Orkers under one root would be one Orker and two refusals.
 	startOrkerOn := func(name, queue string) {
 		workRoot := filepath.Join(bindableOrkerWorkRoot(t), name)
-		if err := os.MkdirAll(workRoot, 0o755); err != nil {
-			t.Fatalf("create work root for %s: %v", name, err)
-		}
+		must.OKf(t, os.MkdirAll(workRoot, 0o755), "create work root for %s", name)
 		startProcess(ctx, t, name, orkerPath,
 			"ORK_TEMPORAL_ADDRESS="+address,
 			"ORK_TEMPORAL_NAMESPACE="+temporalNamespace,
@@ -194,7 +190,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 		"--allow-pool", pool,
 		"--allow-pool", auxPool,
 		"--allow-pool", "cold")
-	requireCLI(t, onA, "A applies an orkflow into it", "apply",
+	requireCLI(t, onA, "A applies an orkflow into it", "orkflow", "create",
 		writeAdminProbeOrkflow(t, orkflowName, pool), "-n", namespace)
 
 	// ---- system information, from the replica that started nothing --------
@@ -418,9 +414,7 @@ func TestIntegration_AReplicaThatStartedNothingAnswersTheAdminSurface(t *testing
 	namespaces := orkstackv1connect.NewNamespaceServiceClient(h2cClient(t), "http://"+addrB)
 	before, err := namespaces.GetNamespace(ctx, connect.NewRequest(
 		&orkstackv1.GetNamespaceRequest{Name: namespace}))
-	if err != nil {
-		t.Fatalf("read %s from B: %v", namespace, err)
-	}
+	must.OKf(t, err, "read %s from B", namespace)
 	stale := before.Msg.GetNamespace()
 	requireCLI(t, onA, "A updates the namespace, moving its etag",
 		"namespace", "update", namespace, "--description", "changed by A")
@@ -641,9 +635,7 @@ tasks:
       op: exec
       command: ["sh", "-c", "echo admin"]
 `, name, pool)
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write %s", name)
 	return path
 }
 

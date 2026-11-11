@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto, invalidateAll } from '$app/navigation';
 	import { onMount, tick } from 'svelte';
+	import { runOrkflowLabel } from '#lib/sharing.ts';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import FactsStrip, { type Fact } from '#lib/components/FactsStrip.svelte';
@@ -80,7 +81,7 @@
 	const submitHref = $derived(
 		withNamespace(orkflowName ? `/orkflows/${encodeURIComponent(orkflowName)}` : '/orkflows', data.namespace)
 	);
-	const applyHref = $derived(withNamespace('/apply', data.namespace));
+	const createHref = $derived(withNamespace('/orkflows/+new', data.namespace));
 
 	let retrying = $state(false);
 	async function retry() {
@@ -238,9 +239,9 @@
 	const command = $derived(['orkctl', '-n', shellQuote(ns), 'run', 'list']);
 	const cliCommands = $derived([
 		{ label: data.applied.length ? 'List these runs' : 'List the runs', command: [...command, ...filterFlags(data.applied)].join(' ') },
-		{ label: 'The numbers below, for 7 days', command: `orkctl -n ${shellQuote(ns)} stats --since 168h` },
-		{ label: 'Failures by reason', command: `orkctl -n ${shellQuote(ns)} stats failures --since 168h --group-by code,category` },
-		{ label: 'Tasks that needed a retry', command: `orkctl -n ${shellQuote(ns)} stats flakes --since 168h --group-by orkflow,task` }
+		{ label: 'The numbers below, for 7 days', command: `orkctl -n ${shellQuote(ns)} stats -s 168h` },
+		{ label: 'Failures by reason', command: `orkctl -n ${shellQuote(ns)} stats failures -s 168h -g code,category` },
+		{ label: 'Tasks that needed a retry', command: `orkctl -n ${shellQuote(ns)} stats flakes -s 168h -g orkflow,task` }
 	]);
 
 	// ---- The 24-hour tiles: they filter the list by status ----
@@ -360,7 +361,7 @@
 			</div>
 		</div>
 		<div class="actions">
-			<a href={applyHref} class="btn" data-testid="runs-apply">Apply an Orkflow</a>
+			<a href={createHref} class="btn" data-testid="runs-create">Create an Orkflow</a>
 			<a href={submitHref} data-testid="runs-submit-run" class="btn btn-primary"><Icon name="play" />Submit a run</a>
 			<CliPopover testid="runs-cli" title="Command line: runs" commands={cliCommands} />
 		</div>
@@ -525,7 +526,7 @@
 										><span class="sr">{run.id}</span><span aria-hidden="true">{shortRunId(run.id)}</span></a
 									>
 								</th>
-								<td class="wf"><span class="mb-1 block font-semibold">{run.orkflowName}</span><Plate key="version" value={run.orkflowVersion} small /></td>
+								<td class="wf"><span class="mb-1 block font-semibold">{runOrkflowLabel(run)}</span><Plate key="version" value={run.orkflowVersion} small /></td>
 								<td>
 									<StatusPill {status} testid="run-row-status-{run.id}" />
 									{#if reason?.kind === 'fail'}

@@ -17,6 +17,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // switched is a run's generation 0, ended by its first switch: the shared
@@ -33,8 +35,7 @@ type switched struct {
 // firstSwitch runs generation 0 until it continues as new.
 func firstSwitch(t *testing.T, runID, doc string, input *orkstackv1.Payload, plan engine.RunPlan) *switched {
 	t.Helper()
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, itemBehavior)
+	h := newHarnessCtx(t, nil, itemBehavior)
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: runID})
 	h.env.ExecuteWorkflow(engine.RunWorkflowType, runID, compile(t, doc), input, plan, (*orkstackv1.RunContinuation)(nil))
 	var can *workflow.ContinueAsNewError
@@ -42,9 +43,7 @@ func firstSwitch(t *testing.T, runID, doc string, input *orkstackv1.Payload, pla
 		t.Fatalf("generation 0 ended %v, want a switch", h.env.GetWorkflowError())
 	}
 	out := &switched{store: h.snapshots}
-	if err := converter.GetDefaultDataConverter().FromPayloads(can.Input, &out.runID, &out.wf, &out.input, &out.plan, &out.carry); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, converter.GetDefaultDataConverter().FromPayloads(can.Input, &out.runID, &out.wf, &out.input, &out.plan, &out.carry))
 	out.runID = runID
 	return out
 }

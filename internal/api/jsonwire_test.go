@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------------------
@@ -29,15 +31,11 @@ func TestWebSocketFramesCarryEnumValuesWithoutTheirPrefix(t *testing.T) {
 	defer cancel()
 	wsURL := "ws" + strings.TrimPrefix(f.baseURL, "http") + "/ws/runs/run-ws-json"
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("websocket dial: %v", err)
-	}
+	must.OKf(t, err, "websocket dial")
 	defer conn.CloseNow()
 
 	_, frame, err := conn.Read(ctx)
-	if err != nil {
-		t.Fatalf("websocket read: %v", err)
-	}
+	must.OKf(t, err, "websocket read")
 	text := string(frame)
 
 	if !strings.Contains(text, `"status":"RUNNING"`) {
@@ -52,9 +50,7 @@ func TestWebSocketFramesCarryEnumValuesWithoutTheirPrefix(t *testing.T) {
 
 	// The short names still decode back to the right enum members.
 	event := &orkstackv1.Event{}
-	if err := api.UnmarshalJSON(frame, event); err != nil {
-		t.Fatalf("decode frame: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON(frame, event), "decode frame")
 	if event.GetStatus() != orkstackv1.Status_STATUS_RUNNING {
 		t.Errorf("status = %v, want STATUS_RUNNING", event.GetStatus())
 	}
@@ -71,21 +67,15 @@ func TestWebSocketFramesCarryEnumValuesWithoutTheirPrefix(t *testing.T) {
 func (f *fixture) postJSON(t *testing.T, procedure, body string) (int, string) {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodPost, f.baseURL+procedure, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Connect-Protocol-Version", "1")
 
 	response, err := f.client.Do(request)
-	if err != nil {
-		t.Fatalf("post %s: %v", procedure, err)
-	}
+	must.OKf(t, err, "post %s", procedure)
 	defer response.Body.Close()
 	payload, err := io.ReadAll(response.Body)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
+	must.OKf(t, err, "read response")
 	return response.StatusCode, string(payload)
 }
 
@@ -116,9 +106,7 @@ func TestConnectJSONInputAcceptsShortAndPrefixedEnumNames(t *testing.T) {
 				t.Fatalf("status = %d, want 200\nbody: %s", code, body)
 			}
 			listed := &orkstackv1.ListRunsResponse{}
-			if err := api.UnmarshalJSON([]byte(body), listed); err != nil {
-				t.Fatalf("decode response %q: %v", body, err)
-			}
+			must.OKf(t, api.UnmarshalJSON([]byte(body), listed), "decode response %q", body)
 			if len(listed.GetRuns()) != 1 || listed.GetRuns()[0].GetId() != "run-a" {
 				t.Fatalf("filtered runs = %v, want just run-a", listed.GetRuns())
 			}

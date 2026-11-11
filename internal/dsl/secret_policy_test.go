@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // check runs one vector through CheckSecretSource: a Pattern of "" is an
@@ -226,9 +228,7 @@ func TestValidSecretPatterns_BoundsAndDuplicates(t *testing.T) {
 	for i := 0; i < MaxSecretPatterns; i++ {
 		entries = append(entries, fmt.Sprintf("env:P%d_*", i))
 	}
-	if err := ValidSecretPatterns(entries); err != nil {
-		t.Fatalf("%d entries: %v", len(entries), err)
-	}
+	must.OKf(t, ValidSecretPatterns(entries), "%d entries", len(entries))
 	entries = append(entries, "env:ONE_TOO_MANY")
 	if err := ValidSecretPatterns(entries); err == nil || !strings.Contains(err.Error(), "33") {
 		t.Fatalf("33 entries: %v, want a refusal naming the count", err)
@@ -242,9 +242,7 @@ func TestValidSecretPatterns_BoundsAndDuplicates(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "1") || !strings.Contains(err.Error(), `"file:/a/../b"`) {
 		t.Fatalf("malformed: %v, want the index and the entry", err)
 	}
-	if err := ValidSecretPatterns(nil); err != nil {
-		t.Fatalf("nil: %v", err)
-	}
+	must.OKf(t, ValidSecretPatterns(nil), "nil")
 }
 
 func TestSecretPolicy_EmptyListPermitsEverything(t *testing.T) {

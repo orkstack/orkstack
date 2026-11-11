@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"runtime/debug"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestResolve(t *testing.T) {
@@ -38,9 +40,7 @@ func TestResolve(t *testing.T) {
 func TestWrite_NamesTheBinaryAndItsCommit(t *testing.T) {
 	t.Parallel()
 	var out bytes.Buffer
-	if err := Write(&out, "ork", "v1.2.3", "abc123"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, Write(&out, "ork", "v1.2.3", "abc123"))
 	for _, line := range []string{`(?m)^ork:\s+v1\.2\.3$`, `(?m)^commit:\s+abc123$`, `(?m)^go:\s+go`, `(?m)^platform:\s+\S+/\S+$`} {
 		if !regexp.MustCompile(line).MatchString(out.String()) {
 			t.Errorf("Write printed\n%s\nwith no line matching %s", out.String(), line)

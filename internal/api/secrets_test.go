@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // exfilOrkflow names a secret source the sandbox namespace's list does not
@@ -78,9 +80,7 @@ func secretPolicyService(
 func tighten(t *testing.T, reg *fakeRegistry, allowed ...string) {
 	t.Helper()
 	ns, err := reg.Get(context.Background(), "sandbox")
-	if err != nil {
-		t.Fatalf("Get sandbox: %v", err)
-	}
+	must.OKf(t, err, "Get sandbox")
 	next := proto.Clone(ns).(*orkstackv1.Namespace)
 	next.AllowedSecrets = allowed
 	if _, err := reg.Put(context.Background(), next, artifacts.PutConditions{IfMatch: ns.GetEtag()}); err != nil {
@@ -95,9 +95,7 @@ func TestValidateOrkflow_ReportsAForbiddenSecretOnItsFieldPath(t *testing.T) {
 
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(
 		&orkstackv1.ValidateOrkflowRequest{Yaml: exfilOrkflow, Namespace: "sandbox"}))
-	if err != nil {
-		t.Fatalf("ValidateOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ValidateOrkflow")
 	issues := resp.Msg.GetIssues()
 	if len(issues) != 1 {
 		t.Fatalf("issues = %v, want exactly one", issues)
@@ -235,9 +233,7 @@ func TestSubmitRun_AnAcceptedRunIsNotRevisitedWhenTheListTightens(t *testing.T) 
 	accepted, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "exfil", Namespace: "sandbox",
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun while unrestricted: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun while unrestricted")
 	tighten(t, reg, "env:SANDBOX_*")
 
 	got, err := svc.GetRun(context.Background(), connect.NewRequest(&orkstackv1.GetRunRequest{
@@ -264,9 +260,7 @@ func TestUpdateNamespace_RefusesAMalformedAllowedSecret(t *testing.T) {
 	created, err := svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "sandbox", AllowedSecrets: []string{"env:SANDBOX_*"}},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace")
 	next := proto.Clone(created.Msg.GetNamespace()).(*orkstackv1.Namespace)
 	next.AllowedSecrets = []string{"file:/a/../b"}
 	_, err = svc.UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: next}))
@@ -274,9 +268,7 @@ func TestUpdateNamespace_RefusesAMalformedAllowedSecret(t *testing.T) {
 		t.Fatalf("UpdateNamespace(file:/a/../b) = %v, want InvalidArgument naming the entry", err)
 	}
 	got, err := svc.GetNamespace(ctx, connect.NewRequest(&orkstackv1.GetNamespaceRequest{Name: "sandbox"}))
-	if err != nil {
-		t.Fatalf("GetNamespace: %v", err)
-	}
+	must.OKf(t, err, "GetNamespace")
 	if ns := got.Msg.GetNamespace(); ns.GetEtag() != created.Msg.GetNamespace().GetEtag() ||
 		strings.Join(ns.GetAllowedSecrets(), ",") != "env:SANDBOX_*" {
 		t.Fatalf("a refused update changed the document: %v", ns)

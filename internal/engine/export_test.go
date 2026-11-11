@@ -4,6 +4,10 @@ import (
 	"context"
 	"time"
 
+	historypb "go.temporal.io/api/history/v1"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
+
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
@@ -208,6 +212,23 @@ func DisableRetryMaxIntervalGateForTest() (restore func()) {
 	return func() { retryMaxIntervalGateDisabledForTest.Store(false) }
 }
 
+// DisableTaskPublishGateForTest makes every plain task take the awaited
+// publish path without asking TaskPublishChange, the command sequence of the
+// builds before it, until restore is called.
+func DisableTaskPublishGateForTest() (restore func()) {
+	taskPublishGateDisabledForTest.Store(true)
+	return func() { taskPublishGateDisabledForTest.Store(false) }
+}
+
+// DisableEmitPastCancelGateForTest makes every emit take the path of the
+// builds before EmitPastCancelChange WITHOUT asking its version, until the
+// returned func restores it: a recorder writes the legacy fixture with it, and
+// the negative replay test proves the gated fixture needs the gate.
+func DisableEmitPastCancelGateForTest() (restore func()) {
+	emitPastCancelGateDisabledForTest.Store(true)
+	return func() { emitPastCancelGateDisabledForTest.Store(false) }
+}
+
 // WithCancelClockForTest puts CancelRun's retry on a clock the test drives:
 // bound makes the context that ends with the retry budget (given the caller's
 // context and the budget), and wait the channel that fires after a spacing.
@@ -218,4 +239,37 @@ func (s *TemporalStarter) WithCancelClockForTest(
 ) *TemporalStarter {
 	s.cancelBound, s.cancelWait = bound, wait
 	return s
+}
+
+// UnsentWebhookResultForTest is unsentWebhookResult, for the external test
+// that holds the record of a delivery whose last attempt never reported.
+var UnsentWebhookResultForTest = unsentWebhookResult
+
+// ReplayWebhookDeliveryHistory replays a recorded delivery history against
+// the current WebhookDeliveryWorkflow, as the command half of its fixture
+// test does.
+func ReplayWebhookDeliveryHistory(recorded *historypb.History) error {
+	return replayWebhookDeliveryWith(recorded, WebhookDeliveryWorkflow)
+}
+
+// ReplayWebhookDeliveryHistoryWith replays it against another function
+// registered under the workflow's name, for the negative test.
+func ReplayWebhookDeliveryHistoryWith(recorded *historypb.History, fn func(workflow.Context, WebhookDeliveryInput) error) error {
+	return replayWebhookDeliveryWith(recorded, fn)
+}
+
+func replayWebhookDeliveryWith(recorded *historypb.History, fn func(workflow.Context, WebhookDeliveryInput) error) error {
+	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{})
+	if err != nil {
+		return err
+	}
+	replayer.RegisterWorkflowWithOptions(fn, workflow.RegisterOptions{Name: WebhookDeliveryWorkflowType})
+	return replayer.ReplayWorkflowHistory(nil, recorded)
+}
+
+// DisableCrossNamespaceGateForTest makes decideSharedOwner take the
+// cross-namespace gate's DefaultVersion branch without asking.
+func DisableCrossNamespaceGateForTest() (restore func()) {
+	crossNamespaceGateDisabledForTest.Store(true)
+	return func() { crossNamespaceGateDisabledForTest.Store(false) }
 }

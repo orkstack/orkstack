@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The release view (docs/DEPLOY.md §3): the one reverse translation it needs, beside
@@ -39,9 +41,7 @@ func TestPoolForChannel_NamesTheDefaultRouteByItsPool(t *testing.T) {
 
 func TestIndexedVersion_SpellsDeploymentColonBuild(t *testing.T) {
 	got, err := task.IndexedVersion("orkstack", "2026.08.16-a1b2c3d")
-	if err != nil {
-		t.Fatalf("IndexedVersion: %v", err)
-	}
+	must.OKf(t, err, "IndexedVersion")
 	if want := "orkstack:2026.08.16-a1b2c3d"; got != want {
 		t.Fatalf("IndexedVersion = %q, want %q", got, want)
 	}

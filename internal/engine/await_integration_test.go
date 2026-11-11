@@ -30,6 +30,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // awaitStack is a real engine on a real cluster and bucket: the run worker,
@@ -86,9 +88,7 @@ func newAwaitStack(t *testing.T, opts awaitStackOptions) *awaitStack {
 	awaitNamespaceReadyForCommitE2E(t, ctx, temporalClient, namespace)
 
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	s := &awaitStack{
 		t: t, ctx: ctx, client: temporalClient, namespace: namespace,
@@ -107,9 +107,7 @@ func newAwaitStack(t *testing.T, opts awaitStackOptions) *awaitStack {
 	eventWorker.RegisterActivityWithOptions(
 		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(s.snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	if err := eventWorker.Start(); err != nil {
-		t.Fatalf("start event worker: %v", err)
-	}
+	must.OKf(t, eventWorker.Start(), "start event worker")
 	t.Cleanup(eventWorker.Stop)
 
 	if !opts.noOrker {
@@ -125,9 +123,7 @@ func newAwaitStack(t *testing.T, opts awaitStackOptions) *awaitStack {
 				return &orkstackv1.ExecuteTaskResult{TaskId: in.GetTaskId(), ValuesJson: []byte(`{}`)}, nil
 			},
 			activity.RegisterOptions{Name: task.ActivityExecuteTask})
-		if err := orkerWorker.Start(); err != nil {
-			t.Fatalf("start orker worker: %v", err)
-		}
+		must.OKf(t, orkerWorker.Start(), "start orker worker")
 		t.Cleanup(orkerWorker.Stop)
 	}
 
@@ -154,9 +150,7 @@ func (s *awaitStack) startRunWorker() {
 	engine.RegisterWorkflows(w)
 	w.RegisterActivityWithOptions(engine.NewSnapshotActivities(s.snapshots).WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
-	if err := w.Start(); err != nil {
-		s.t.Fatalf("start run worker: %v", err)
-	}
+	must.OKf(s.t, w.Start(), "start run worker")
 	s.runWorker = w
 	s.t.Cleanup(func() {
 		if s.runWorker != nil {
@@ -173,9 +167,7 @@ func (s *awaitStack) stopRunWorker() {
 
 func (s *awaitStack) serve() {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		s.t.Fatalf("listen: %v", err)
-	}
+	must.OKf(s.t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(s.svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -206,9 +198,7 @@ func (s *awaitStack) apply(yaml string) {
 func (s *awaitStack) submit(name string) *orkstackv1.SubmitRunResponse {
 	s.t.Helper()
 	resp, err := s.runs().SubmitRun(s.ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name}))
-	if err != nil {
-		s.t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(s.t, err, "SubmitRun")
 	s.t.Cleanup(func() {
 		_ = s.client.TerminateWorkflow(context.Background(), resp.Msg.GetRun().GetId(), "", "await integration cleanup")
 	})
@@ -244,24 +234,18 @@ func (s *awaitStack) waitRun(runID string) *orkstackv1.Run {
 	s.t.Helper()
 	_ = s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil)
 	run, err := s.reader.GetRun(s.ctx, runID)
-	if err != nil {
-		s.t.Fatalf("read run %s: %v", runID, err)
-	}
+	must.OKf(s.t, err, "read run %s", runID)
 	return run
 }
 
 func (s *awaitStack) post(path, token, body string) (int, []byte) {
 	s.t.Helper()
 	req, err := http.NewRequestWithContext(s.ctx, http.MethodPost, s.baseURL+path, strings.NewReader(body))
-	if err != nil {
-		s.t.Fatalf("build request: %v", err)
-	}
+	must.OKf(s.t, err, "build request")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := s.http.Do(req)
-	if err != nil {
-		s.t.Fatalf("POST %s: %v", path, err)
-	}
+	must.OKf(s.t, err, "POST %s", path)
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, out
@@ -279,9 +263,7 @@ func taskRunNamed(run *orkstackv1.Run, id string) *orkstackv1.TaskRun {
 func eventsOfRun(t *testing.T, s *awaitStack, runID string) []*orkstackv1.Event {
 	t.Helper()
 	events, err := s.reader.Events(s.ctx, runID, 0)
-	if err != nil {
-		t.Fatalf("read events of %s: %v", runID, err)
-	}
+	must.OKf(t, err, "read events of %s", runID)
 	return events
 }
 
@@ -367,9 +349,7 @@ func TestIntegration_AwaitResolvedFeedsItsValuesDownstream(t *testing.T) {
 		t.Fatalf("evaluate's upstream for training = %v, want %v", ref, training.GetValuesRef())
 	}
 	reader, err := s.store.Get(s.ctx, training.GetValuesRef().GetUri())
-	if err != nil {
-		t.Fatalf("read the stored values: %v", err)
-	}
+	must.OKf(t, err, "read the stored values")
 	stored, _ := io.ReadAll(reader)
 	_ = reader.Close()
 	if !bytes.Equal(stored, []byte(body)) {
@@ -386,9 +366,7 @@ func TestIntegration_AwaitTimesOutAndFailsTheRunExplicitly(t *testing.T) {
 		{Id: "gate", Await: &orkstackv1.AwaitSpec{TimeoutSeconds: 2}},
 	}}
 	runID := engine.NewRunID()
-	if err := s.starter.StartRun(s.ctx, runID, wf, nil, engine.RunPlan{Namespace: "default", Routes: map[string]string{}}); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(s.ctx, runID, wf, nil, engine.RunPlan{Namespace: "default", Routes: map[string]string{}}), "StartRun")
 	run := s.waitRun(runID)
 	gate := taskRunNamed(run, "gate")
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || gate.GetError().GetCode() != engine.AwaitTimedOutCode ||
@@ -427,13 +405,9 @@ func TestIntegration_RunCanceledWhileAwaitingEndsCanceled(t *testing.T) {
 		{Id: "gate", Await: &orkstackv1.AwaitSpec{TimeoutSeconds: 3600}},
 	}}
 	runID := engine.NewRunID()
-	if err := s.starter.StartRun(s.ctx, runID, wf, nil, engine.RunPlan{Namespace: "default", Routes: map[string]string{}}); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(s.ctx, runID, wf, nil, engine.RunPlan{Namespace: "default", Routes: map[string]string{}}), "StartRun")
 	s.waitTask(runID, "gate", orkstackv1.Status_STATUS_AWAITING)
-	if err := s.starter.CancelRun(s.ctx, runID, engine.CancelRequest{Reason: "operator"}); err != nil {
-		t.Fatalf("CancelRun: %v", err)
-	}
+	must.OKf(t, s.starter.CancelRun(s.ctx, runID, engine.CancelRequest{Reason: "operator"}), "CancelRun")
 	run := s.waitRun(runID)
 	gate := taskRunNamed(run, "gate")
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || gate.GetStatus() != orkstackv1.Status_STATUS_CANCELED ||
@@ -595,9 +569,7 @@ func TestIntegration_RecordAwaitedRunHistories(t *testing.T) {
 		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orkerWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 	setCurrentVersion(t, ctx, temporalClient, deployment, runQueue, orkerQueue)
@@ -609,18 +581,12 @@ func TestIntegration_RecordAwaitedRunHistories(t *testing.T) {
 		iter := temporalClient.GetWorkflowHistory(ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 		for iter.HasNext() {
 			event, err := iter.Next()
-			if err != nil {
-				t.Fatalf("read history: %v", err)
-			}
+			must.OKf(t, err, "read history")
 			recorded.Events = append(recorded.Events, event)
 		}
 		encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
-		if err != nil {
-			t.Fatalf("encode history: %v", err)
-		}
-		if err := os.WriteFile(path, append(encoded, '\n'), 0o644); err != nil {
-			t.Fatalf("write %s: %v", path, err)
-		}
+		must.OKf(t, err, "encode history")
+		must.OKf(t, os.WriteFile(path, append(encoded, '\n'), 0o644), "write %s", path)
 		t.Logf("recorded %d history events for run %s into %s (deployment version %s)",
 			len(recorded.Events), runID, path, deployment)
 	}
@@ -628,9 +594,7 @@ func TestIntegration_RecordAwaitedRunHistories(t *testing.T) {
 	// The resolved run: a → await b (callback, schema) → c, completed with a
 	// small inline body.
 	resolvedRunID := fmt.Sprintf("ork-awaited-resolved-%d", time.Now().UnixNano())
-	if err := starter.StartRun(ctx, resolvedRunID, awaitedFixtureOrkflow(3600), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, resolvedRunID, awaitedFixtureOrkflow(3600), nil, rawPlan(orkerQueue)), "StartRun")
 	deadline := time.Now().Add(60 * time.Second)
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
@@ -656,16 +620,12 @@ func TestIntegration_RecordAwaitedRunHistories(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("SignalAwait: %v", err)
 	}
-	if err := temporalClient.GetWorkflow(ctx, resolvedRunID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("resolved run %s did not succeed: %v", resolvedRunID, err)
-	}
+	must.OKf(t, temporalClient.GetWorkflow(ctx, resolvedRunID, "").Get(ctx, nil), "resolved run %s did not succeed", resolvedRunID)
 	record(awaitedResolvedFixture, resolvedRunID)
 
 	// The timeout run: the same shape, a two-second deadline, never resolved.
 	timeoutRunID := fmt.Sprintf("ork-awaited-timeout-%d", time.Now().UnixNano())
-	if err := starter.StartRun(ctx, timeoutRunID, awaitedFixtureOrkflow(2), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, timeoutRunID, awaitedFixtureOrkflow(2), nil, rawPlan(orkerQueue)), "StartRun")
 	err := temporalClient.GetWorkflow(ctx, timeoutRunID, "").Get(ctx, nil)
 	if err == nil || !strings.Contains(err.Error(), engine.AwaitTimedOutCode) {
 		t.Fatalf("timeout run %s ended with %v, want %s", timeoutRunID, err, engine.AwaitTimedOutCode)

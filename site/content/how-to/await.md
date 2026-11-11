@@ -25,19 +25,19 @@ In [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob
 The default change is not risky, so a run with no inputs opens no approval and finishes by itself. To see the approval, submit a risky change. Do not use `--watch`, because the run waits for the approval:
 
 ```bash
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/approval-gate.ork.yaml
-orkctl run submit approval-gate --input 'changes=[{"service":"payments","setting":"replicas","value":"3"}]'
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/approval-gate.ork.yaml
+orkctl run submit approval-gate -i 'changes=[{"service":"payments","setting":"replicas","value":"3"}]'
 orkctl run get <run-id>
 ```
 
 A change to `payments` or `auth`, or more than five changes, is risky. The `approval` task shows `AWAITING` until someone resolves it. Then resolve it:
 
 ```bash
-orkctl run resolve <run-id> --task approval --values '{"approved":true,"approver":"dana"}'
+orkctl run resolve <run-id> -t approval --values '{"approved":true,"approver":"dana"}'
 ```
 
-`notify-block` is applied first because `approval-gate` composes it.
+`notify-block` is created first because `approval-gate` composes it.
 
 ## Resolve the task
 
@@ -80,13 +80,32 @@ Set `callback: true` to let a system outside OrkStack resolve the task. Submitti
 
 An await has no retries. Its failure handlers run as they do for any task. An approval can have a handler with `join: any_failed` that tells the requester. See [Handle a failed run](/docs/build/handle-failure/).
 
+## Wait a fixed time instead
+
+To wait a set time rather than for an answer, add `sleep:` to a task. It runs no container, holds no Orker, and succeeds when its time is up:
+
+```yaml
+  - id: soak
+    needs:
+      - deploy-canary
+    sleep:
+      seconds: 900
+```
+
+- `seconds` is required, from 1 second to 30 days.
+- The task shows `SLEEPING` with its wake-up time, then `SUCCEEDED`. Nothing resolves it early. Cancelling the run ends it.
+- A sleep returns no values. Name it in `needs:` and read nothing from it.
+
+[`examples/bake-then-verify.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/bake-then-verify.ork.yaml) makes a change, bakes it for five seconds, then verifies it.
+
 ## Limits
 
-- An await takes only `id`, `needs`, `condition`, `join` and `await`. A `uses:`, `with:`, `pool:` or `retry:` key fails validation.
+- An await takes only `id`, `needs`, `condition`, `join` and `await`. A `uses:`, `with:`, `pool:` or `retry:` key fails validation. A sleep takes only `id`, `needs`, `condition`, `join` and `sleep`.
 - A completion's values follow the values limit, 256 KiB by default.
 
 ## See also
 
 - [DSL reference, “Awaited tasks”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#awaited-tasks): every rule and the resolution doors
+- [DSL reference, “Sleeping tasks”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#sleeping-tasks): the rules for a fixed wait
 - [ORKFLOW_PATTERNS, “Wait for a person or a system”](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_PATTERNS.md#wait-for-a-person-or-a-system): the pattern this example shows
 - [`examples/approval-gate.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/approval-gate.ork.yaml): the whole example, with its plan checks

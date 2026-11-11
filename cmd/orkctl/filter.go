@@ -29,7 +29,7 @@ import (
 func addFilterFlag(cmd *cobra.Command, request proto.Message) *[]string {
 	var texts []string
 	spec := listfilter.MustSpec(request)
-	cmd.Flags().StringArrayVar(&texts, "filter", nil,
+	cmd.Flags().StringArrayVarP(&texts, "filter", "F", nil,
 		"keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)")
 	cmd.Long = strings.TrimRight(cmd.Long, "\n") + "\n\n" + strings.TrimRight(spec.Help(), "\n")
 	run := cmd.RunE

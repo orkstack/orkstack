@@ -3,7 +3,7 @@
 // The `yaml` package reads YAML 1.2, as every editor and language server
 // does, and keeps each node's source range — what places a finding on the
 // key or value a person would point at. It is NOT the engine's reader: the
-// engine decodes with yaml.v3 and then applies the strict YAML-to-JSON
+// engine decodes with go-yaml and then applies the strict YAML-to-JSON
 // mapping (docs/JSON.md), so `yes` here is a string that the engine refuses
 // in a data position. The editor never decides that; the engine's answer
 // does (./engine.ts).

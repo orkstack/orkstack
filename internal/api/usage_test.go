@@ -18,6 +18,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe the usage meter: what one measurement reads, what it
@@ -190,9 +192,7 @@ func (w *usageWorld) run(t *testing.T, ns, id, orkflow string, at time.Time, tas
 			if r.cpu > 0 {
 				record.Resources = &orkstackv1.ReservedResources{Cpu: r.cpu, MemoryBytes: r.gib << 30}
 			}
-			if err := w.attempts.PutAttempt(context.Background(), record); err != nil {
-				t.Fatalf("PutAttempt: %v", err)
-			}
+			must.OKf(t, w.attempts.PutAttempt(context.Background(), record), "PutAttempt")
 		}
 	}
 	w.bodies.runs[id] = run
@@ -218,9 +218,7 @@ func measureDay(t *testing.T, m *UsageMeter, groupBy ...orkstackv1.FailureGroupB
 	window, _ := lastDay()
 	resp, err := m.Measure(context.Background(), window, groupBy,
 		usageKeyFor("analytics", nil, nil, durationpb.New(24*time.Hour), groupBy))
-	if err != nil {
-		t.Fatalf("Measure: %v", err)
-	}
+	must.OKf(t, err, "Measure")
 	return resp
 }
 
@@ -381,9 +379,7 @@ func TestUsageMeter_AnUnreadableBodyOrListingFailsTheMeasurement(t *testing.T) {
 		w := newUsageWorld(t)
 		delete(w.bodies.runs, "ork-1-2")
 		resp, err := w.meter(0).Measure(context.Background(), window, nil, key)
-		if err != nil {
-			t.Fatalf("Measure: %v", err)
-		}
+		must.OKf(t, err, "Measure")
 		if resp.GetRunsScanned() != 2 || resp.GetRunsInWindow() != 3 {
 			t.Fatalf("scanned %d of %d, want 2 of 3", resp.GetRunsScanned(), resp.GetRunsInWindow())
 		}

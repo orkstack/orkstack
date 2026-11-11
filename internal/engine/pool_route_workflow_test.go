@@ -4,8 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	"go.temporal.io/sdk/testsuite"
-
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 )
@@ -88,11 +86,9 @@ func TestRunWorkflow_ARefusedRouteIsRecordedOnceInTheRowAndTheStream(t *testing.
 		{name: "a failure handler in the definition", document: refusedRouteHandlerDocument, handler: "rollback"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			h := newHarness(t, &suite, okTask)
+			h := newHarness(t, nil, okTask)
 			const runID = "run-refused-route"
-			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, tc.document),
-				payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+			h.start(t, runID, tc.document, nil)
 			if err := h.env.GetWorkflowError(); err == nil || !strings.Contains(err.Error(), engine.ReasonInvalidPool) {
 				t.Fatalf("workflow error %v, want the run to fail with %s", err, engine.ReasonInvalidPool)
 			}

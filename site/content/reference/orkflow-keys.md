@@ -22,7 +22,7 @@ tasks:
 | `apiVersion` | yes | Always `orkstack/v1`. |
 | `kind` | yes | Always `Orkflow`. |
 | `name` | yes | Unique within its namespace: lowercase letters, digits and `-`, starting with a letter. |
-| `version` | no | Your version label. Absent: the first apply assigns one. |
+| `version` | no | Your version label. Absent: one is assigned when the Orkflow is first created. |
 | `namespace` | no | Absent: `default`. |
 | `description` | no | Shown in the UI and by `orkctl`. |
 | `labels` | no | A map of strings, for filtering. |
@@ -135,7 +135,7 @@ In `with:` and `condition:`, a template reads only the tasks in `needs:`, direct
 
 ## Check a document as you write it
 
-The UI's YAML editor checks an Orkflow as you type. It is on the Apply page and
+The UI's YAML editor checks an Orkflow as you type. It is on the Create Orkflow page and
 on an Orkflow's Edit tab; Admin → Automation uses it for automation documents.
 
 - **Keys and types, at once.** An unknown key, a wrong type or a missing key is
@@ -147,6 +147,12 @@ on an Orkflow's Edit tab; Admin → Automation uses it for automation documents.
   task, pools, secrets and image policy.
 - **Only the engine says a document has no problems.** The line under the
   editor says so only after the engine has checked exactly the text on screen.
+- **The docs of the task you are in.** On both Orkflow pages, a panel beside
+  the editor shows the activity of the task under the cursor: what it does,
+  the keys its op takes and which ones the task sets, and the values it
+  returns, as its image
+  [describes them](https://github.com/orkstack/orkstack/blob/main/docs/ACTIVITY_IMAGES.md#describing-the-activity).
+  Below 1280 px it starts closed; its arrow opens it.
 
 <!-- site-media: ui-editor -->
 

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"os"
@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const (
@@ -34,17 +36,13 @@ const (
 func firstPartyInterface(t *testing.T, image string) *orkstackv1.ActivityInterface {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "images", image, "Dockerfile"))
-	if err != nil {
-		t.Fatalf("read Dockerfile: %v", err)
-	}
+	must.OKf(t, err, "read Dockerfile")
 	match := regexp.MustCompile(`(?m)^LABEL ` + regexp.QuoteMeta(dsl.InterfaceLabel) + `='([^']*)'$`).FindSubmatch(raw)
 	if match == nil {
 		t.Fatalf("images/%s/Dockerfile carries no interface label", image)
 	}
 	iface, err := dsl.ParseInterfaceLabel(string(match[1]))
-	if err != nil {
-		t.Fatalf("parse %s label: %v", image, err)
-	}
+	must.OKf(t, err, "parse %s label", image)
 	return iface
 }
 
@@ -53,13 +51,9 @@ func firstPartyInterface(t *testing.T, image string) *orkstackv1.ActivityInterfa
 func declarationOf(t *testing.T, name string) *dsl.ActivityDeclaration {
 	t.Helper()
 	source, err := os.ReadFile(filepath.Join("testdata", name))
-	if err != nil {
-		t.Fatalf("read %s: %v", name, err)
-	}
+	must.OKf(t, err, "read %s", name)
 	decl, err := dsl.ParseActivityDocument(source)
-	if err != nil {
-		t.Fatalf("parse %s: %v", name, err)
-	}
+	must.OKf(t, err, "parse %s", name)
 	return decl
 }
 
@@ -99,9 +93,7 @@ func requireTerminalSafeOutput(t *testing.T, what, out string) {
 func hostileActivity(t *testing.T, text string) (described, unreadable *dsl.Resolution, listed *orkstackv1.ActivityInfo) {
 	t.Helper()
 	value, err := structpb.NewValue(text)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	digest := "sha256:" + strings.Repeat("f", 64)
 	image := &orkstackv1.ImageRef{Registry: "ghcr.io", Repository: "acme/hostile", IndexDigest: digest,
 		Pinned: "ghcr.io/acme/hostile@" + digest, MediaType: text, Platforms: []string{text}}
@@ -220,9 +212,7 @@ func TestActivityInspect_CollapsesAndCutsDescriptions(t *testing.T) {
 		Docs: &orkstackv1.ActivityDocs{SchemaVersion: 1, Description: "a\n\tb  c",
 			Fields: map[string]string{"k": "d\n\te  f", "long": long}}}
 	var out strings.Builder
-	if err := renderActivityInspect(&out, info); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderActivityInspect(&out, info))
 	for _, want := range []string{"Description a b c\n", " d e f\n", strings.Repeat("a", maxCellRunes-2) + `\u202e` + "…\n"} {
 		if !strings.Contains(out.String(), want) {
 			t.Fatalf("inspect lacks %q:\n%s", want, out.String())
@@ -237,9 +227,7 @@ func TestActivityInspect_AnUnresolvedReferenceDeclaresNothing(t *testing.T) {
 	var out strings.Builder
 	info := &orkstackv1.ActivityInfo{Name: "migrate", Reference: "ghcr.io/acme/migrate:v3",
 		Docs: &orkstackv1.ActivityDocs{SchemaVersion: 1, Description: "never read"}, DocsError: "never read either"}
-	if err := renderActivityInspect(&out, info); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderActivityInspect(&out, info))
 	if strings.Contains(out.String(), "Description") || !strings.Contains(out.String(), "Icon        -\n") {
 		t.Fatalf("inspect of an unresolved reference:\n%s", out.String())
 	}
@@ -359,9 +347,7 @@ func TestActivityList_RendersTheInterfaceColumn(t *testing.T) {
 
 func TestActivityInspect_RendersDeclaredNoneAndMalformed(t *testing.T) {
 	keysOnly, err := dsl.ParseInterfaceLabel(`{"schemaVersion":1,"fields":{"target":{"type":"string","required":true},"dryRun":{"type":"boolean","default":false},"region":{"type":"string","default":"eu-west-1"}},"values":{"deployed":{"type":"boolean"}}}`)
-	if err != nil {
-		t.Fatalf("keys-only label: %v", err)
-	}
+	must.OKf(t, err, "keys-only label")
 	described := declarationOf(t, "activity-described.ork.yaml")
 	plainImage := func(repository string) *orkstackv1.ImageRef {
 		digest := "sha256:" + strings.Repeat("e", 64)
@@ -445,9 +431,7 @@ func TestActivityInspect_ReportsTheServerError(t *testing.T) {
 	mux.Handle(path, handler)
 	server := api.NewServer("127.0.0.1:0", mux)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -495,9 +479,7 @@ tasks:
 func writeDocument(t *testing.T, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "deploy.ork.yaml")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write document: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(body), 0o644), "write document")
 	return path
 }
 
@@ -517,28 +499,28 @@ func TestOrkflowValidate_ExitStatusFollowsSeverity(t *testing.T) {
 	}
 }
 
-// TestOrkflowValidate_SaysAnUnappliedDocumentHasNoVersionYet: validation stores
+// TestOrkflowValidate_SaysAnUncreatedDocumentHasNoVersionYet: validation stores
 // nothing and a version is minted by the apply that stores it, so it reports none
 // until then, and the version that landed afterwards.
-func TestOrkflowValidate_SaysAnUnappliedDocumentHasNoVersionYet(t *testing.T) {
+func TestOrkflowValidate_SaysAnUncreatedDocumentHasNoVersionYet(t *testing.T) {
 	f := interfaceFixture(t, stubResolver{fileReference: fileResolution(t)})
 	path := writeDocument(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: unpinned-doc\ntasks:\n  - id: one\n    uses: file\n    with:\n      op: copy\n      src: a\n")
 
 	before := f.run("orkflow", "validate", path).requireExit(t, exitOK)
-	if want := "Valid orkflow unpinned-doc (new version, assigned when applied)\n"; before.stdout != want {
+	if want := "Valid orkflow unpinned-doc (new version, assigned when created)\n"; before.stdout != want {
 		t.Fatalf("before apply: %q, want %q", before.stdout, want)
 	}
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	after := f.run("orkflow", "validate", path).requireExit(t, exitOK)
 	if !regexp.MustCompile(`^Valid orkflow unpinned-doc \(version [0-7][0-9a-hjkmnp-tv-z]{25}\)\n$`).MatchString(after.stdout) {
 		t.Fatalf("after apply: %q, want the minted version", after.stdout)
 	}
 }
 
-func TestApply_PrintsInterfaceWarnings(t *testing.T) {
+func TestOrkflowCreate_PrintsInterfaceWarnings(t *testing.T) {
 	f := interfaceFixture(t, stubResolver{fileReference: fileResolution(t)})
-	applied := f.run("apply", writeDocument(t, validateWarningsDocument)).requireExit(t, exitOK)
-	requireGolden(t, "apply-warnings.golden", applied.stdout)
+	applied := f.run("orkflow", "create", writeDocument(t, validateWarningsDocument)).requireExit(t, exitOK)
+	requireGolden(t, "orkflow-create-warnings.golden", applied.stdout)
 	if !strings.Contains(applied.stdout, "Warnings:\n  - tasks[0].with.srcs: with.srcs is not declared by the interface of") {
 		t.Fatalf("apply did not print the interface warning:\n%s", applied.stdout)
 	}
@@ -575,9 +557,7 @@ func TestActivityInspect_ShowsNoOpsTableWithoutAnOpDescription(t *testing.T) {
 		Docs: &orkstackv1.ActivityDocs{SchemaVersion: 1, Ops: map[string]*orkstackv1.OpDocs{
 			"copy": {Fields: map[string]string{"src": "The file."}}}}}
 	var out strings.Builder
-	if err := renderActivityInspect(&out, info); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderActivityInspect(&out, info))
 	if strings.Contains(out.String(), "OPS") || !strings.Contains(out.String(), "The file.") {
 		t.Fatalf("inspect:\n%s", out.String())
 	}

@@ -3,7 +3,6 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -16,8 +15,11 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests prove docs/AUTOMATION.md "Names and in-place updates": triggers
@@ -80,9 +82,7 @@ func TestUpdateTrigger_InPlaceKeepsTokenAndURL(t *testing.T) {
 	updated, err := f.triggerClient().UpdateTrigger(context.Background(), connect.NewRequest(&orkstackv1.UpdateTriggerRequest{
 		Id: created.GetId(), Name: "github-deploy", OrkflowVersion: "0.3.0", Description: "GitHub Actions deploy hook",
 	}))
-	if err != nil {
-		t.Fatalf("UpdateTrigger: %v", err)
-	}
+	must.OKf(t, err, "UpdateTrigger")
 	got := updated.Msg.GetTrigger()
 	if got.GetId() != created.GetId() || got.GetName() != "github-deploy" || got.GetOrkflowVersion() != "0.3.0" ||
 		got.GetOrkflowName() != "hello-ork" || got.GetDescription() != "GitHub Actions deploy hook" {
@@ -188,9 +188,7 @@ type delivered struct {
 func newDurableNotifier(t *testing.T) *durableNotifier {
 	t.Helper()
 	store, err := artifacts.NewLocalWebhookStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewLocalWebhookStore: %v", err)
-	}
+	must.OKf(t, err, "NewLocalWebhookStore")
 	d := &durableNotifier{registry: webhooks.NewDurableRegistry(store), posts: make(chan delivered, 8)}
 	d.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body bytes.Buffer
@@ -212,9 +210,7 @@ func TestUpdateWebhook_KeepsSecretAndValidatesLikeRegister(t *testing.T) {
 		Url: d.server.URL + "/first", Namespace: "payments",
 		Events: []orkstackv1.EventType{orkstackv1.EventType_EVENT_TYPE_RUN_FAILED},
 	}))
-	if err != nil {
-		t.Fatalf("RegisterWebhook: %v", err)
-	}
+	must.OKf(t, err, "RegisterWebhook")
 	disclosed := registered.Msg.GetSecret()
 	id := registered.Msg.GetWebhook().GetId()
 
@@ -239,13 +235,11 @@ func TestUpdateWebhook_KeepsSecretAndValidatesLikeRegister(t *testing.T) {
 		Id: id, Name: "etl-loader", Url: d.server.URL + "/second", Namespace: "payments", OrkflowName: "nightly-etl",
 		Events: []orkstackv1.EventType{orkstackv1.EventType_EVENT_TYPE_RUN_FAILED},
 	}))
-	if err != nil {
-		t.Fatalf("UpdateWebhook: %v", err)
-	}
+	must.OKf(t, err, "UpdateWebhook")
 	if updated.Msg.GetWebhook().GetId() != id || updated.Msg.GetWebhook().GetName() != "etl-loader" {
 		t.Fatalf("updated = %v", updated.Msg.GetWebhook())
 	}
-	raw, _ := json.Marshal(updated.Msg)
+	raw, _ := stablejson.Marshal(updated.Msg)
 	if strings.Contains(string(raw), disclosed) {
 		t.Fatal("the update response carries the signing secret")
 	}
@@ -300,16 +294,12 @@ func TestAudit_UpdateTriggerAndUpdateWebhookNeverRecordASecret(t *testing.T) {
 	triggersClient := orkstackv1connect.NewTriggerServiceClient(f.server.Client(), f.server.URL)
 	webhooksClient := orkstackv1connect.NewWebhookServiceClient(f.server.Client(), f.server.URL)
 	trigger, err := triggersClient.CreateTrigger(ctx, connect.NewRequest(&orkstackv1.CreateTriggerRequest{OrkflowName: "hello-ork", Name: "deploy-hook"}))
-	if err != nil {
-		t.Fatalf("CreateTrigger: %v", err)
-	}
+	must.OKf(t, err, "CreateTrigger")
 	const requestSecret = "whsec-update-test-9a8b7c"
 	hook, err := webhooksClient.RegisterWebhook(ctx, connect.NewRequest(&orkstackv1.RegisterWebhookRequest{
 		Url: "https://hooks.example.test/a", Secret: requestSecret, Namespace: "payments", Name: "etl",
 	}))
-	if err != nil {
-		t.Fatalf("RegisterWebhook: %v", err)
-	}
+	must.OKf(t, err, "RegisterWebhook")
 	if _, err := triggersClient.UpdateTrigger(ctx, connect.NewRequest(&orkstackv1.UpdateTriggerRequest{
 		Id: trigger.Msg.GetTrigger().GetId(), Name: "github-deploy", Description: "hook",
 	})); err != nil {

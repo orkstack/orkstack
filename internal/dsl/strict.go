@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/types/known/structpb"
-	"gopkg.in/yaml.v3"
 )
 
 // The strict YAML-to-JSON mapping (docs/JSON.md, "Data written in an authored
@@ -21,9 +21,9 @@ import (
 //
 // A plain (unquoted) scalar is accepted only when the three readers that
 // matter agree on it — YAML 1.2's core schema (editors, yaml-language-server,
-// Bun), YAML 1.1 as PyYAML resolves it, and yaml.v3 (what OrkStack decoded
-// these positions with before) — and the JSON OrkStack writes for it keeps its
-// value exactly. Including yaml.v3 makes one more guarantee checkable: a
+// Bun), YAML 1.1 as PyYAML resolves it, and go-yaml, the library OrkStack
+// reads YAML with (readV3) — and the JSON OrkStack writes for it keeps its
+// value exactly. Including go-yaml makes one more guarantee checkable: a
 // document the previous compiler accepted either compiles to the identical
 // message or is refused, never to a different value.
 
@@ -357,10 +357,13 @@ func readY11(text string) reading {
 	return reading{kind: kindString, s: text}
 }
 
-// readV3 is yaml.v3 itself on the scalar: the decode these positions used
-// before the strict mapping.
+// readV3 is go-yaml itself on the scalar: the decode these positions used
+// before the strict mapping, with yaml.v3. go-yaml v4 resolves every plain
+// scalar as yaml.v3 did but -0, which it reads as the float -0 where yaml.v3
+// read the integer 0; both are zero to the other readers, so the mapping
+// answers as it did under yaml.v3 (TestStrictJSON_AnswersAsRecorded).
 func readV3(node *yaml.Node) reading {
-	// The text alone, as a plain scalar: yaml.v3 resolves it from scratch.
+	// The text alone, as a plain scalar: go-yaml resolves it from scratch.
 	plain := yaml.Node{Kind: yaml.ScalarNode, Value: node.Value}
 	var v any
 	if err := plain.Decode(&v); err != nil {

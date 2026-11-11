@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // prebuiltDir writes a manifest of tree for the given binaries (name ->
@@ -18,14 +20,10 @@ func prebuiltDir(t *testing.T, tree string, pkgs map[string][]string) string {
 		name := testBinaryName(importPath)
 		bin := shippedScript(t, dir, name, names...)
 		sha, err := fileSHA256(bin)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		m.Packages = append(m.Packages, compiledPackage{ImportPath: importPath, Binary: name, BinarySHA256: sha, ListingSHA256: sha256String(strings.Join(names, "\n"))})
 	}
-	if err := writeJSON(filepath.Join(dir, compiledManifestName), m); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(filepath.Join(dir, compiledManifestName), m))
 	return dir
 }
 
@@ -66,9 +64,7 @@ func TestPrebuiltBinaries_AdoptsAMatchingManifestAndRefusesEveryMismatch(t *test
 		}, "hashes to"},
 		{"an unknown format", func() string {
 			d := t.TempDir()
-			if err := writeJSON(filepath.Join(d, compiledManifestName), compiledManifest{Format: 99, Tree: "this-tree"}); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, writeJSON(filepath.Join(d, compiledManifestName), compiledManifest{Format: 99, Tree: "this-tree"}))
 			return d
 		}, "format 99"},
 	} {
@@ -85,13 +81,9 @@ func TestPrebuiltBinaries_RefusesAListingThatDiffers(t *testing.T) {
 	stubTree(t, "this-tree")
 	dir := prebuiltDir(t, "this-tree", map[string][]string{fakeSuite: fakeListing})
 	var m compiledManifest
-	if err := readJSON(filepath.Join(dir, compiledManifestName), &m); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(dir, compiledManifestName), &m))
 	m.Packages[0].ListingSHA256 = sha256String("TestSomethingElse")
-	if err := writeJSON(filepath.Join(dir, compiledManifestName), m); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(filepath.Join(dir, compiledManifestName), m))
 	if bins, err := prebuiltBinaries(dir, []pkgInfo{{ImportPath: fakeSuite, Dir: filepath.Join(mustRepoRoot(), fakeDir)}}); bins != nil || err == nil || !strings.Contains(err.Error(), "lists tests hashing to") {
 		t.Errorf("a listing that differs from the manifest's: %v, %v", bins, err)
 	}
@@ -114,25 +106,21 @@ func TestCompile_ThenIntegrationAdoptsItsBinaries(t *testing.T) {
 		t.Fatalf("compile exit %d:\n%s", code, log.String())
 	}
 	var m compiledManifest
-	if err := readJSON(filepath.Join(bins, compiledManifestName), &m); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(bins, compiledManifestName), &m))
 	if len(m.Packages) != 1 || m.Packages[0].ImportPath != fakeSuite || m.Tree == "" {
 		t.Fatalf("manifest = %+v", m)
 	}
 	out := t.TempDir()
 	log.Reset()
 	if code := cmdIntegration([]string{"-out", out, "-bin", bins, "-plan-only", "-jobs", "1", "-costs", "", "-allow", "", "-quarantine", "",
-		"-nightly", "", "-host-speed", "", "./testdata/fakesuite"}); code != 0 {
+		"-nightly", "", "./testdata/fakesuite"}); code != 0 {
 		t.Fatalf("plan-only exit %d:\n%s", code, log.String())
 	}
 	if !strings.Contains(log.String(), "adopted 1 integration test binaries") || strings.Contains(log.String(), "compiled "+fakeSuite) {
 		t.Errorf("the planner did not adopt the compiled binary:\n%s", log.String())
 	}
 	p, err := readPlan(filepath.Join(out, "integration-plan.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(p.Packages) != 1 || p.Packages[0].BinarySHA256 != m.Packages[0].BinarySHA256 || p.Packages[0].ListingSHA256 != m.Packages[0].ListingSHA256 {
 		t.Errorf("plan packages %+v, want the compile's binary %s", p.Packages, m.Packages[0].BinarySHA256)
 	}
@@ -141,7 +129,7 @@ func TestCompile_ThenIntegrationAdoptsItsBinaries(t *testing.T) {
 	fresh := t.TempDir()
 	log.Reset()
 	if code := cmdIntegration([]string{"-out", t.TempDir(), "-bin", fresh, "-plan-only", "-jobs", "1", "-costs", "", "-allow", "", "-quarantine", "",
-		"-nightly", "", "-host-speed", "", "./testdata/fakesuite"}); code != 0 {
+		"-nightly", "", "./testdata/fakesuite"}); code != 0 {
 		t.Fatalf("plan-only exit %d:\n%s", code, log.String())
 	}
 	if !strings.Contains(log.String(), "compiled "+fakeSuite) || strings.Contains(log.String(), "adopted") {

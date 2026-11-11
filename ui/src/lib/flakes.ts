@@ -1,5 +1,6 @@
 import { FailureGroupBy, type FlakeGroup, type GetFlakeIndexResponse } from './gen/orkstack/v1/stats_pb';
 import { DASH, UNAVAILABLE, fmtCategory, groupBySpelling } from './stats';
+import { ownedLabel } from './sharing';
 
 // ---- flake index -----------------------------------------------------------
 //
@@ -62,7 +63,7 @@ export function dominantCauseLabel(group: FlakeGroup): string {
 /** flakeCell renders one keyed dimension of one group; empty is a dash. */
 export function flakeCell(group: FlakeGroup, dim: FailureGroupBy): string {
 	switch (dim) {
-		case FailureGroupBy.ORKFLOW: return group.orkflowName || DASH;
+		case FailureGroupBy.ORKFLOW: return ownedLabel(group.orkflowNamespace, group.orkflowName) || DASH;
 		case FailureGroupBy.TASK: return group.taskId || DASH;
 		case FailureGroupBy.IMAGE: return group.imagePinned || DASH;
 		case FailureGroupBy.POOL: return group.pool || DASH;
@@ -143,9 +144,9 @@ export function shellWord(value: string): string {
  * named, and --group-by only when dimensions are.
  */
 export function flakesCli(namespace: string, window: string, dims: FailureGroupBy[], orkflow?: string): string {
-	const parts = ['orkctl', '--namespace', shellWord(namespace || 'default'), 'stats', 'flakes'];
+	const parts = ['orkctl', '-n', shellWord(namespace || 'default'), 'stats', 'flakes'];
 	if (orkflow) parts.push('--orkflow', shellWord(orkflow));
-	parts.push('--since', shellWord(window));
-	if (dims.length) parts.push('--group-by', shellWord(dims.map(groupBySpelling).join(',')));
+	parts.push('-s', shellWord(window));
+	if (dims.length) parts.push('-g', shellWord(dims.map(groupBySpelling).join(',')));
 	return parts.join(' ');
 }

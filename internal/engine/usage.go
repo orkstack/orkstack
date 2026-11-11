@@ -167,7 +167,7 @@ func FoldUsage(runs []UsageRun, groupBy []orkstackv1.FailureGroupBy) (total *ork
 			}
 			row := &orkstackv1.UsageRow{}
 			if grouped[orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKFLOW] {
-				row.OrkflowName = run.Orkflow
+				row.OrkflowNamespace, row.OrkflowName = SplitOrkflowKey(run.Orkflow)
 			}
 			if grouped[orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK] {
 				row.TaskId = task.TaskID
@@ -175,7 +175,7 @@ func FoldUsage(runs []UsageRun, groupBy []orkstackv1.FailureGroupBy) (total *ork
 			if grouped[orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_POOL] {
 				row.Pool = task.Pool
 			}
-			key := strings.Join([]string{row.OrkflowName, row.TaskId, row.Pool}, "\x00")
+			key := strings.Join([]string{row.OrkflowNamespace, row.OrkflowName, row.TaskId, row.Pool}, "\x00")
 			acc, ok := groups[key]
 			if !ok {
 				acc = &usageAccumulator{row: row, runs: map[string]bool{}}
@@ -213,6 +213,8 @@ func usageRowLess(a, b *orkstackv1.UsageRow) bool {
 		return a.GetTaskSeconds() > b.GetTaskSeconds()
 	case a.GetOrkflowName() != b.GetOrkflowName():
 		return a.GetOrkflowName() < b.GetOrkflowName()
+	case a.GetOrkflowNamespace() != b.GetOrkflowNamespace():
+		return a.GetOrkflowNamespace() < b.GetOrkflowNamespace()
 	case a.GetTaskId() != b.GetTaskId():
 		return a.GetTaskId() < b.GetTaskId()
 	default:

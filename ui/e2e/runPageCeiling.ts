@@ -17,6 +17,7 @@ import {
 	repoRoot,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -28,6 +29,7 @@ import {
 	waitForEngine
 } from './harness';
 import { inspectTask, taskMapCellCenter } from './uiHelpers';
+import { budgetNote, scaledBudgetMs } from './budget';
 
 // The run detail page at a task ceiling (spec E7, the run-page case of T7),
 // shared by two spec files: run-page-ceiling.spec.ts at the deployment's
@@ -83,8 +85,11 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 
 	// The gated task size, the ceiling the engine below applies.
 	const GATED_TASKS = c.tasks;
-	// E7: the run page is interactive within 5 s, live and finished.
-	const GATED_RENDER_BUDGET_MS = 5_000;
+	// E7: the run page is interactive within 5 s, live and finished, on the
+	// reference host; a smaller one is held to that bound scaled to its CPUs
+	// (e2e/budget.ts, docs/PROOFS.md §12).
+	const REFERENCE_RENDER_BUDGET_MS = 5_000;
+	const GATED_RENDER_BUDGET_MS = scaledBudgetMs(REFERENCE_RENDER_BUDGET_MS);
 	// T2 (e)'s output-maximal rows: every task's inline output at the 4 KiB
 	// values bound.
 	const OUTPUT_MAXIMAL_BYTES = 4096;
@@ -112,7 +117,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	test.beforeAll(async () => {
 		ensureBucket(BUCKET);
 		mkdirSync(PROOF_DIR, { recursive: true });
-		writeFileSync(
+		startTranscript(
 			outPath(TRANSCRIPT),
 			[
 				'# The run detail page at the task ceiling: interactive within 5 s,',
@@ -158,12 +163,20 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	});
 
 	// Opening, timed: milliseconds from navigation to the header, to every card,
-	// and to interactive.
+	// and to interactive, and from the Inspect press to its body drawn.
 	interface Opening {
 		header: number;
 		cards: number;
 		interactive: number;
+		inspect: number;
 	}
+
+	// The Inspect press, timed in the page: from the press to its body in the
+	// DOM. The body is a lazily loaded component, drawn some tens of
+	// milliseconds after the press. The bound is the page's own, so a page that
+	// leaves the reader waiting after its cards are drawn fails here, however
+	// far inside the 5 s it still is.
+	const INSPECT_DRAWN_BUDGET_MS = 1_000;
 
 	// The drift guard beside the gate: the UI revamp's stages are each held to the
 	// MEDIAN of five opens of the same run against one baseline, because a single
@@ -184,8 +197,46 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		return {
 			header: median(all.map((o) => o.header)),
 			cards: median(all.map((o) => o.cards)),
-			interactive: median(all.map((o) => o.interactive))
+			interactive: median(all.map((o) => o.interactive)),
+			inspect: median(all.map((o) => o.inspect))
 		};
+	}
+
+	// timeInspectPress records, in the page, when the Inspect of task `id` is
+	// pressed and when its body is first in the DOM. Nothing is observed until
+	// the press, so the rows the page is still drawing cost the observer nothing.
+	async function timeInspectPress(page: Page, id: string): Promise<void> {
+		await page.evaluate((taskId) => {
+			const timing: { pressed?: number; drawn?: number } = {};
+			(window as unknown as { __inspectTiming: typeof timing }).__inspectTiming = timing;
+			const toggle = `[data-testid="task-inspect-toggle-${taskId}"]`;
+			const body = `[data-testid="task-${taskId}-inspect"]`;
+			addEventListener(
+				'click',
+				(event) => {
+					if (timing.pressed !== undefined || !(event.target as Element | null)?.closest?.(toggle)) return;
+					timing.pressed = performance.now();
+					const observer = new MutationObserver(() => {
+						if (!document.querySelector(body)) return;
+						timing.drawn = performance.now();
+						observer.disconnect();
+					});
+					observer.observe(document.body, { childList: true, subtree: true });
+				},
+				{ capture: true }
+			);
+		}, id);
+	}
+
+	// inspectDrawn is the milliseconds timeInspectPress measured from the press
+	// to the body drawn.
+	async function inspectDrawn(page: Page): Promise<number> {
+		const timing = await page.evaluate(
+			() => (window as unknown as { __inspectTiming?: { pressed?: number; drawn?: number } }).__inspectTiming
+		);
+		expect(timing?.pressed, 'the Inspect press, seen in the page').toBeDefined();
+		expect(timing?.drawn, 'the Inspect body, seen in the page').toBeDefined();
+		return Math.round(timing!.drawn! - timing!.pressed!);
 	}
 
 	// measureRunPage opens a run's page and times it to interactive: its header,
@@ -210,15 +261,26 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		await last.scrollIntoViewIfNeeded({ timeout: 60_000 });
 		await expect(last).toBeVisible();
 		const cards = Date.now() - started;
+		await timeInspectPress(page, `t${tasks - 1}`);
 		await inspectTask(page, `t${tasks - 1}`);
-		await expect(page.getByTestId(`task-t${tasks - 1}-inspect`)).toBeVisible({ timeout: 60_000 });
+		// Waited for in the page (locator.waitFor), not by expect's polling. An
+		// expect poll that finds no element snapshots the accessibility tree of the
+		// whole page, in the page, for its failure message. Here that means a
+		// thousand rows, 1.5-2 s of the page's main thread, and the body, a lazily
+		// loaded component that is still loading, waits behind it. An open that
+		// polled before the body was drawn measured that snapshot, not the page.
+		const inspectBody = page.getByTestId(`task-t${tasks - 1}-inspect`);
+		await inspectBody.waitFor({ state: 'visible', timeout: 60_000 });
 		const elapsed = Date.now() - started;
+		await expect(inspectBody).toBeVisible();
+		const inspect = await inspectDrawn(page);
 		expect(await page.getByTestId('task-list').locator('[data-testid^="task-deep-link-"]').count()).toBe(tasks);
 		note(
 			`${phase}: run page of ${runId} (${tasks} tasks) interactive ${elapsed} ms after navigation ` +
-				`(header ${header} ms, every card ${cards} ms)`
+				`(header ${header} ms, every card ${cards} ms; Inspect drawn ${inspect} ms after its press)`
 		);
-		(openings[phase] ??= []).push({ header, cards, interactive: elapsed });
+		(openings[phase] ??= []).push({ header, cards, interactive: elapsed, inspect });
+		expect(inspect, `${phase}: the Inspect body drawn after its press`).toBeLessThanOrEqual(INSPECT_DRAWN_BUDGET_MS);
 		// The viewport, not the full page: a page of thousands of cards is taller
 		// than a screenshot may be.
 		if (screenshot) await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
@@ -300,8 +362,8 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		writeFileSync(outPath('medians.json'), JSON.stringify(medians, null, 2) + '\n');
 		note(
 			`medians of ${medians.opens} opens (quoted, not gated): ` +
-				`live header ${medians.live.header} ms, cards ${medians.live.cards} ms, interactive ${medians.live.interactive} ms; ` +
-				`finished header ${medians.finished.header} ms, cards ${medians.finished.cards} ms, interactive ${medians.finished.interactive} ms`
+				`live header ${medians.live.header} ms, cards ${medians.live.cards} ms, interactive ${medians.live.interactive} ms, Inspect ${medians.live.inspect} ms; ` +
+				`finished header ${medians.finished.header} ms, cards ${medians.finished.cards} ms, interactive ${medians.finished.interactive} ms, Inspect ${medians.finished.inspect} ms`
 		);
 
 		// The task map at the ceiling, outside the timed span (UI revamp, stage
@@ -330,29 +392,6 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 			await page.evaluate(() => window.scrollTo(0, 0));
 		}
 
-		// Asking for Orkers on every row, and taking them away again: one press,
-		// timed in the page to the next paint, so it holds no Playwright work.
-		const pressOrkers = async () => {
-			await page.getByTestId('run-tasks-more').click();
-			return page.evaluate(
-				() =>
-					new Promise<number>((resolve) => {
-						const pressed = performance.now();
-						document.querySelector<HTMLElement>('[data-testid="run-orkers-toggle"]')!.click();
-						requestAnimationFrame(() => requestAnimationFrame(() => resolve(Math.round(performance.now() - pressed))));
-					})
-			);
-		};
-		const named = page.locator('[data-testid^="task-"][data-testid$="-orker"]');
-		const orkersOn = await pressOrkers();
-		const orkerRows = await named.count();
-		expect(orkerRows, 'rows naming their Orker once asked').toBeGreaterThan(0);
-		const orkersOff = await pressOrkers();
-		await expect(named).toHaveCount(0);
-		note(`Orkers on every row: ${orkersOn} ms to show ${orkerRows}, ${orkersOff} ms to hide (budget ${GATED_RENDER_BUDGET_MS} ms)`);
-		expect(orkersOn, 'showing Orkers').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
-		expect(orkersOff, 'hiding Orkers').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
-
 		// The output-maximal rows, quoted only.
 		const definition = await rpc<{ orkflow?: { definitionDigest?: string } }>('OrkflowService/GetOrkflow', {
 			name: GATED_ORKFLOW
@@ -380,6 +419,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 				{
 					tasks: GATED_TASKS,
 					budget_ms: GATED_RENDER_BUDGET_MS,
+					reference_budget_ms: REFERENCE_RENDER_BUDGET_MS,
 					live_ms: live,
 					finished_ms: finished,
 					output_maximal_ms: outputMaximal,
@@ -390,7 +430,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 			) + '\n'
 		);
 		note(
-			`E7 run page at ${GATED_TASKS} tasks: live ${live} ms, finished ${finished} ms (budget ${GATED_RENDER_BUDGET_MS} ms); ` +
+			`E7 run page at ${GATED_TASKS} tasks: live ${live} ms, finished ${finished} ms (${budgetNote(REFERENCE_RENDER_BUDGET_MS)}); ` +
 				`output-maximal ${outputMaximal} ms (quoted)`
 		);
 		expect(live, 'live run page').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);

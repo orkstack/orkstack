@@ -13,6 +13,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeCleanStore holds buckets; it lists only those in listed (SeaweedFS 4.51
@@ -81,12 +83,8 @@ func (f *fakeCleanDocker) Stop(_ context.Context, name string) error {
 
 func write(t *testing.T, path, data string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	must.OK(t, os.WriteFile(path, []byte(data), 0o644))
 }
 
 func sorted(s []string) []string {
@@ -134,9 +132,7 @@ func TestClean_RemovesOnlyWhatDeadProcessesLeft(t *testing.T) {
 	// Work roots: dead, live, recorded by the running proof, no pid, the dev
 	// stack's own.
 	for _, d := range []string{"chaos-orker-a-p16-1", "pin-affinity-p41-2", "cli-p42-3", "e2e", "ork-spool", "ork-pin-x"} {
-		if err := os.MkdirAll(filepath.Join(wt, ".data", "work", d), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Join(wt, ".data", "work", d), 0o755))
 	}
 	deadRoot := filepath.Join(wt, ".data", "work", "chaos-orker-a-p16-1")
 	liveRoot := filepath.Join(wt, ".data", "work", "pin-affinity-p41-2")
@@ -431,9 +427,7 @@ func TestClean_AContainerIsOnlyHandedAFoundWorkRoot(t *testing.T) {
 	other := filepath.Join(dir, "work", "chaos-p17-2") // a real work root this run did not find
 	write(t, filepath.Join(other, "f"), "x")
 	link := filepath.Join(dir, "work", "link-p18-3")
-	if err := os.Symlink(root, link); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(root, link))
 	file := filepath.Join(dir, "work", "file-p19-4")
 	write(t, file, "x")
 
@@ -473,9 +467,7 @@ func TestClean_AContainerIsOnlyHandedAFoundWorkRoot(t *testing.T) {
 func TestClean_RemoveTreeArgs_MountOnlyTheRootAndNothingPrivileged(t *testing.T) {
 	root := "/home/u/repo/.data/work/chaos-orker-a-p16-1"
 	args, err := removeTreeArgs("orkstack-clean-1-2", root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(args) == 0 || args[0] != "run" {
 		t.Fatalf("args = %q, want them to start with run", args)
 	}
@@ -552,9 +544,7 @@ func TestClean_RemoveTreeArgs_BaseIsTheFirstPartyImagesBase(t *testing.T) {
 	seen := 0
 	for _, file := range files {
 		b, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, ref := range alpine.FindAllString(string(b), -1) {
 			seen++
 			if ref != firstPartyBase {
@@ -572,9 +562,7 @@ func TestClean_RemoveTreeArgs_BaseIsTheFirstPartyImagesBase(t *testing.T) {
 // force-removed by the name it was given, so none is left running.
 func TestClean_DockerRemoveTreeLeavesNoContainerRunning(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "chaos-p16-1")
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(root, 0o755))
 	for _, tc := range []struct {
 		mode      string
 		wantErr   string
@@ -590,9 +578,7 @@ func TestClean_DockerRemoveTreeLeavesNoContainerRunning(t *testing.T) {
 			script := "#!/bin/sh\necho \"$@\" >> \"$FAKE_DOCKER_CALLS\"\n" +
 				"if [ \"$1\" = run ]; then\n  case \"$FAKE_DOCKER_MODE\" in\n" +
 				"  fail) echo boom >&2; exit 1 ;;\n  hang) exec sleep 60 ;;\n  esac\nfi\nexit 0\n"
-			if err := os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(filepath.Join(bin, "docker"), []byte(script), 0o755))
 			t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 			t.Setenv("FAKE_DOCKER_CALLS", calls)
 			t.Setenv("FAKE_DOCKER_MODE", tc.mode)

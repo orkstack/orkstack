@@ -5,7 +5,7 @@ package dsl_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +19,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/cosigntest"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
@@ -104,12 +105,12 @@ func pushImage(ctx context.Context, t *testing.T, label string) *orkstackv1.Imag
 	client := &cosigntest.Client{}
 	token := fmt.Sprintf("%s-%d-%d", label, os.Getpid(), time.Now().UnixNano())
 	layer := []byte("orkstack cosign bundle interop " + token)
-	config, _ := json.Marshal(map[string]any{
+	config, _ := stablejson.Marshal(map[string]any{
 		"architecture": "amd64", "os": "linux",
 		"config": map[string]any{"Labels": map[string]string{"org.orkstack.test": token}},
 		"rootfs": map[string]any{"type": "layers", "diff_ids": []string{cosigntest.Digest(layer)}},
 	})
-	manifest, _ := json.Marshal(map[string]any{
+	manifest, _ := stablejson.Marshal(map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     cosigntest.OCIManifestType,
 		"config":        map[string]any{"mediaType": cosigntest.OCIConfigType, "size": len(config), "digest": cosigntest.Digest(config)},
@@ -196,7 +197,7 @@ func redescribe(t *testing.T, doc []byte, field, digest string, size int) []byte
 	}
 	first, _ := list[0].(map[string]any)
 	first["digest"], first["size"] = digest, size
-	out, err := json.Marshal(parsed)
+	out, err := stablejson.Marshal(parsed)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +325,7 @@ func TestIntegration_ACosignBundleFromThePinnedImageVerifies(t *testing.T) {
 		t.Fatal(err)
 	}
 	envelope["payload"] = base64.StdEncoding.EncodeToString(append(signed, ' '))
-	tampered, _ := json.Marshal(parsed)
+	tampered, _ := stablejson.Marshal(parsed)
 	client := &cosigntest.Client{}
 	host := localcatalog.Registry()
 	if err := client.PushBlob(ctx, host, bundleRepo, tampered); err != nil {

@@ -65,7 +65,7 @@ func taskCeilingFromEnv(historyMaxEvents, historyMaxBytes int64, cont continuati
 	}
 	limit := engine.HistoryLimit{MaxEvents: historyMaxEvents, MaxBytes: historyMaxBytes, Reserve: engine.DefaultHistoryReserve}
 	budget := engine.DefaultContinuationBudget(cont.events, cont.bytes, cont.restoreTimeout)
-	out.flatBound = engine.ShapeMaxTasks(limit, budget, int64(runMaxInFlight))
+	out.flatBound = engine.ShapeMaxTasks(limit, budget, int64(runMaxInFlight), engine.DefaultInFlightLimit(runMaxInFlight).PublishReserveEvents())
 	if int64(out.value) > out.flatBound {
 		out.warnings = append(out.warnings, fmt.Sprintf("engine.orkflow_max_tasks (ORK_ORKFLOW_MAX_TASKS=%d) is "+
 			"above %d, the flat-stage bound for engine.history.max_events (%d), engine.continuation.events (%d), "+

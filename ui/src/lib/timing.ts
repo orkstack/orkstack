@@ -1,28 +1,25 @@
-import { Status } from './gen/orkstack/v1/common_pb';
-import { AttemptOutcome, type TaskAttempt } from './gen/orkstack/v1/run_pb';
-import { formatDuration } from './runDetail';
-import { isTerminal } from './status';
+import type { Duration } from '@bufbuild/protobuf/wkt';
+import {
+	TimingReason,
+	type TaskAttempt,
+	type TaskTiming as TaskRunTiming,
+	type TimingQuantity
+} from './gen/orkstack/v1/run_pb';
+import type { TaskAttemptsTiming } from './gen/orkstack/v1/run_service_pb';
+import { formatMilliseconds } from './runDetail';
 
-// WHERE A TASK'S TIME WENT, DERIVED IN ONE PLACE.
+// WHERE A TASK'S TIME WENT, AS THE ENGINE DERIVED IT.
 //
-// This is the browser's copy of the task-timing derivation — the one
-// `orkctl run timing` implements in cmd/orkctl/timing.go — and it returns the
-// same seven reasons, spelled the same way. Given a task's snapshot
-// (S = scheduled_at, the engine's dispatch instant; B = started_at, the
-// Orker's start of the attempt that decided the task; F = finished_at) and
-// its attempt records:
-//
-//   wait  = B − S      run = F − B      total = F − S
-//
-// Every quantity is one of three things, and they are never collapsed:
+// The engine derives task timing once (internal/api/timing.go): GetRun sets
+// TaskRun.timing, ListTaskAttempts sets each attempt's timing, each phase's
+// duration and each timeline's wait for an Orker. `orkctl run timing` prints
+// the same fields, so the two clients say the same thing about the same run.
+// This module only reads them:
 //
 //   - 'na'           it does not apply (never scheduled, or not finished yet);
 //   - 'unavailable'  it happened and the evidence is gone or inconsistent,
 //                    with the reason — never drawn as 0;
-//   - 'value'        two timestamps some process actually recorded.
-
-/** A protobuf Timestamp, or the page's own `now` in the same shape. */
-export type Timestamp = { seconds: bigint; nanos: number };
+//   - 'value'        two instants some process actually recorded.
 
 export const TIMING_REASON = {
 	noOrkerStart: 'no orker reported a start',
@@ -34,44 +31,46 @@ export const TIMING_REASON = {
 	noStore: 'no task attempt store'
 } as const;
 
-export type TimingReason = (typeof TIMING_REASON)[keyof typeof TIMING_REASON];
+export type TimingReasonWords = (typeof TIMING_REASON)[keyof typeof TIMING_REASON];
+
+/** The words the CLI prints for each of the engine's reasons. */
+const REASON_WORDS: Partial<Record<TimingReason, TimingReasonWords>> = {
+	[TimingReason.NO_ORKER_START]: TIMING_REASON.noOrkerStart,
+	[TimingReason.CLOCK_SKEW]: TIMING_REASON.clockSkew,
+	[TimingReason.PRE_CONTRACT]: TIMING_REASON.preContract,
+	[TimingReason.RECLAIMED]: TIMING_REASON.reclaimed,
+	[TimingReason.NO_RECORD]: TIMING_REASON.noRecord,
+	[TimingReason.NO_PHASES]: TIMING_REASON.noPhases,
+	[TimingReason.NO_ATTEMPT_STORE]: TIMING_REASON.noStore
+};
+
+/** reasonWords spells one of the engine's reasons as both clients print it. */
+export function reasonWords(reason: TimingReason): TimingReasonWords | undefined {
+	return REASON_WORDS[reason];
+}
 
 export type Quantity =
 	| { kind: 'na' }
-	| { kind: 'unavailable'; reason: TimingReason }
-	| { kind: 'value'; from: Timestamp; to: Timestamp; ms: number };
+	| { kind: 'unavailable'; reason: TimingReasonWords }
+	| { kind: 'value'; ms: number };
 
 const NA: Quantity = { kind: 'na' };
 
-function unavailable(reason: TimingReason): Quantity {
+function unavailable(reason: TimingReasonWords): Quantity {
 	return { kind: 'unavailable', reason };
 }
 
-/** Milliseconds between two timestamps, at full precision (nanos kept). */
-function diffMs(from: Timestamp, to: Timestamp): number {
-	return Number(to.seconds - from.seconds) * 1000 + (to.nanos - from.nanos) / 1e6;
+/** Whole milliseconds of a protobuf Duration, as formatDuration counts them. */
+function durationMs(d: Duration): number {
+	return Number(d.seconds) * 1000 + Math.floor(d.nanos / 1e6);
 }
 
-/** span is to − from, or unavailable(clock skew) when the ends are inverted. */
-export function span(from: Timestamp, to: Timestamp): Quantity {
-	const ms = diffMs(from, to);
-	if (!Number.isFinite(ms) || ms < 0) return unavailable(TIMING_REASON.clockSkew);
-	return { kind: 'value', from, to, ms };
-}
-
-/** The snapshot fields the derivation reads, as TaskRun and the page's TaskView both carry them. */
-export interface TimedTask {
-	status: Status;
-	attempt: number;
-	/**
-	 * Set for an awaited task (TaskRun.await present): never queued and never
-	 * reported on by an Orker, so wait, the wait for an Orker and phases do not apply and
-	 * RUN is the time it spent awaiting — the derivation's await row.
-	 */
-	awaited?: boolean;
-	scheduledAt?: Timestamp;
-	startedAt?: Timestamp;
-	finishedAt?: Timestamp;
+/** quantityOf reads one of the engine's quantities: unset is 'na'. */
+export function quantityOf(q: TimingQuantity | undefined): Quantity {
+	if (!q) return NA;
+	if (q.duration) return { kind: 'value', ms: durationMs(q.duration) };
+	const reason = reasonWords(q.reason);
+	return reason ? unavailable(reason) : NA;
 }
 
 export interface TaskTiming {
@@ -82,103 +81,35 @@ export interface TaskTiming {
 	wait: Quantity;
 	run: Quantity;
 	total: Quantity;
-	/** RUNNING only: now − scheduled_at. */
-	sinceScheduled: Quantity;
-	/** attempts[1].started_at − scheduled_at. */
+	/** The wait for an Orker: attempts[1].started_at − scheduled_at. */
 	queueWait: Quantity;
-	/** Every attempt row is unavailable because the records were reclaimed. */
-	reclaimed: boolean;
-	/** An awaited task: `run` is the time it awaited, everything else 'na'. */
-	awaited: boolean;
 }
 
 /**
- * recordsReclaimed: a timeline with no record the Orker filed, for a task the
- * snapshot proves an Orker reported on. An Orker that reports a start has
- * always written a record for that attempt, so rows that are ALL missing mean
- * the cleanup worker reclaimed them, not that every Orker crashed.
- */
-function recordsReclaimed(task: TimedTask, rows: TaskAttempt[]): boolean {
-	if (rows.length === 0) return isTerminal(task.status);
-	if (!task.startedAt) return false;
-	return rows.every((row) => row.outcome === AttemptOutcome.UNREPORTED);
-}
-
-/**
- * taskTiming implements the derivation for one task. `attempts` is the task's
- * ListTaskAttempts rows, or `undefined` when the engine has no attempt store
- * (FailedPrecondition). `now` is the clock "since scheduled" reads.
+ * taskTiming reads one task's timing: its snapshot's (TaskRun.timing) and, for
+ * a container task, its timeline's wait for an Orker. `attempts` is that
+ * timeline's TaskAttemptsTiming, or `undefined` when the engine has no
+ * attempt store (FailedPrecondition).
  */
 export function taskTiming(
-	task: TimedTask,
-	attempts: TaskAttempt[] | undefined,
-	now?: Timestamp
+	timing: TaskRunTiming | undefined,
+	attempts: TaskAttemptsTiming | undefined,
+	container: boolean
 ): TaskTiming {
-	const S = task.scheduledAt;
-	const B = task.startedAt;
-	const F = task.finishedAt;
-	const terminal = isTerminal(task.status);
-	const timing: TaskTiming = {
-		scheduled: S !== undefined || B !== undefined,
-		preContract: S === undefined && B !== undefined,
-		wait: NA,
-		run: NA,
-		total: NA,
-		sinceScheduled: NA,
-		queueWait: NA,
-		reclaimed: false,
-		awaited: task.awaited === true
+	const scheduled = timing?.scheduled ?? false;
+	return {
+		scheduled,
+		preContract: timing?.preContract ?? false,
+		wait: quantityOf(timing?.wait),
+		run: quantityOf(timing?.run),
+		total: quantityOf(timing?.total),
+		queueWait:
+			!container || !scheduled
+				? NA
+				: attempts === undefined
+					? unavailable(TIMING_REASON.noStore)
+					: quantityOf(attempts.queueWait)
 	};
-	if (timing.awaited) {
-		// scheduled_at and started_at are both the instant it started
-		// awaiting; an await that never opened has neither.
-		timing.scheduled = B !== undefined;
-		timing.preContract = false;
-		if (timing.scheduled && terminal && F) {
-			timing.run = span(B!, F);
-			timing.total = timing.run;
-		}
-		return timing;
-	}
-	if (!timing.scheduled) return timing;
-
-	if (timing.preContract) {
-		timing.wait = unavailable(TIMING_REASON.preContract);
-		timing.run = unavailable(TIMING_REASON.preContract);
-		if (terminal && F && B) timing.total = span(B, F);
-	} else if (!terminal) {
-		if (task.status === Status.RUNNING && S && now) timing.sinceScheduled = span(S, now);
-	} else {
-		if (!B) {
-			timing.wait = unavailable(TIMING_REASON.noOrkerStart);
-			timing.run = unavailable(TIMING_REASON.noOrkerStart);
-		} else {
-			timing.wait = span(S!, B);
-			if (F) timing.run = span(B, F);
-		}
-		if (F) timing.total = span(S!, F);
-	}
-
-	if (attempts === undefined) {
-		timing.queueWait = unavailable(TIMING_REASON.noStore);
-		return timing;
-	}
-	if (timing.preContract) {
-		timing.queueWait = unavailable(TIMING_REASON.preContract);
-		return timing;
-	}
-	if (recordsReclaimed(task, attempts)) {
-		timing.reclaimed = true;
-		timing.queueWait = unavailable(TIMING_REASON.reclaimed);
-		return timing;
-	}
-	const first = attempts.find((row) => row.attempt === 1);
-	if (!first || first.outcome === AttemptOutcome.UNREPORTED || !first.startedAt) {
-		timing.queueWait = unavailable(TIMING_REASON.noRecord);
-	} else {
-		timing.queueWait = span(S!, first.startedAt);
-	}
-	return timing;
 }
 
 export interface PhaseTiming {
@@ -188,30 +119,19 @@ export interface PhaseTiming {
 
 export type AttemptPhases =
 	| { kind: 'phases'; phases: PhaseTiming[] }
-	| { kind: 'unavailable'; reason: TimingReason };
+	| { kind: 'unavailable'; reason: TimingReasonWords };
 
 /**
  * attemptPhases lists one attempt's §7.1 phases with their durations, or says
  * why they are not known: an UNREPORTED row has no record (or its records were
  * reclaimed), and a record written before phase spans existed has none.
  */
-export function attemptPhases(attempt: TaskAttempt, reclaimed = false): AttemptPhases {
-	if (attempt.outcome === AttemptOutcome.UNREPORTED) {
-		return {
-			kind: 'unavailable',
-			reason: reclaimed ? TIMING_REASON.reclaimed : TIMING_REASON.noRecord
-		};
-	}
-	if (attempt.phases.length === 0) return { kind: 'unavailable', reason: TIMING_REASON.noPhases };
+export function attemptPhases(attempt: TaskAttempt): AttemptPhases {
+	const reason = attempt.timing ? reasonWords(attempt.timing.phasesReason) : undefined;
+	if (reason) return { kind: 'unavailable', reason };
 	return {
 		kind: 'phases',
-		phases: attempt.phases.map((span_) => ({
-			phase: span_.phase,
-			duration:
-				span_.startedAt && span_.finishedAt
-					? span(span_.startedAt, span_.finishedAt)
-					: unavailable(TIMING_REASON.noRecord)
-		}))
+		phases: attempt.phases.map((span) => ({ phase: span.phase, duration: quantityOf(span.duration) }))
 	};
 }
 
@@ -223,7 +143,7 @@ export function formatQuantity(q: Quantity): string {
 		case 'unavailable':
 			return 'unavailable';
 		case 'value':
-			return formatDuration(q.from, q.to);
+			return formatMilliseconds(q.ms);
 	}
 }
 

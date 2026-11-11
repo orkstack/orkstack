@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +9,9 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestCheckRunPlanSize_RefusesAPlanOverTheBoundWithoutChildren covers the run
@@ -17,9 +19,7 @@ import (
 // is the only one, and it must refuse past engine.MaxPlanBytes.
 func TestCheckRunPlanSize_RefusesAPlanOverTheBoundWithoutChildren(t *testing.T) {
 	small := engine.RunPlan{Namespace: "default"}
-	if err := checkRunPlanSize(small); err != nil {
-		t.Fatalf("a small plan was refused: %v", err)
-	}
+	must.OKf(t, checkRunPlanSize(small), "a small plan was refused")
 	big := engine.RunPlan{CommitRoot: strings.Repeat("r", engine.MaxPlanBytes+1)}
 	err := checkRunPlanSize(big)
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "the run's plan encodes to") {
@@ -42,15 +42,11 @@ func TestPlanSize_RunTreeLimitsCostOncePerTree(t *testing.T) {
 	}
 	svc := NewService(Config{})
 	childPlan := engine.RunPlan{Namespace: "default", Routes: map[string]string{"main": "ork-tasks"}}
-	if err := svc.pinDurabilityPlan(&childPlan); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, svc.pinDurabilityPlan(&childPlan))
 	child, err := engine.NewChildRunPlan(leaf, childPlan, true, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	child.RunID = strings.Repeat("0", engine.MaxRunIDLength)
-	perChild, err := json.Marshal(child)
+	perChild, err := stablejson.Marshal(child)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,9 +55,7 @@ func TestPlanSize_RunTreeLimitsCostOncePerTree(t *testing.T) {
 		parent := &orkstackv1.Orkflow{Namespace: "default", Name: "parent", Version: "1.0.0"}
 		plan := engine.RunPlan{Namespace: "default", Routes: map[string]string{"main": "ork-tasks"},
 			Children: map[string]*engine.ChildRunPlan{}}
-		if err := svc.pinDurabilityPlan(&plan); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, svc.pinDurabilityPlan(&plan))
 		for i := 0; i < n; i++ {
 			id := fmt.Sprintf("c%04d", i)
 			parent.Tasks = append(parent.Tasks, &orkstackv1.Task{Id: id, Orkflow: &orkstackv1.OrkflowRef{
@@ -72,7 +66,7 @@ func TestPlanSize_RunTreeLimitsCostOncePerTree(t *testing.T) {
 		return parent, plan
 	}
 	size := func(plan engine.RunPlan) int {
-		encoded, err := json.Marshal(plan)
+		encoded, err := stablejson.Marshal(plan)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -106,12 +100,8 @@ func TestPlanSize_RunTreeLimitsCostOncePerTree(t *testing.T) {
 		svc.pinRunTreeLimits(&plan)
 		after := size(plan)
 		growth[n] = after - before
-		if err := svc.mintChildren(parent, &plan); err != nil {
-			t.Fatalf("%d composed tasks: mintChildren refused the plan: %v", n, err)
-		}
-		if err := checkRunPlanSize(plan); err != nil {
-			t.Fatalf("%d composed tasks: checkRunPlanSize refused the plan: %v", n, err)
-		}
+		must.OKf(t, svc.mintChildren(parent, &plan), "%d composed tasks: mintChildren refused the plan", n)
+		must.OKf(t, checkRunPlanSize(plan), "%d composed tasks: checkRunPlanSize refused the plan", n)
 		for id, cp := range plan.Children {
 			if cp.Plan.History != nil {
 				t.Fatalf("child %s carries the run-tree limits", id)

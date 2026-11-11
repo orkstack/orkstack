@@ -229,6 +229,8 @@ func RunWorkflow(
 	}
 	inFlight := map[string]workflow.Future{}
 	if carry == nil {
+		// Before the first snapshot: a shared definition's owner is part of it.
+		state.decideSharedOwner(ctx)
 		// RUN_CREATED is emitted here, by the run itself, and not by whichever
 		// API process accepted the submission. It is event 1 of every run that
 		// reaches Temporal, so a replica rebuilding the stream from history
@@ -250,6 +252,11 @@ func RunWorkflow(
 		// (continuation_restore.go). Anything it cannot adopt ends the run
 		// explicitly, with a terminal event.
 		code, message := state.restore(ctx, runCtx, carry)
+		if code == "" {
+			// The carried decision, never asked again (version), before any
+			// path below builds a snapshot.
+			state.decideSharedOwner(ctx)
+		}
 		switch {
 		case code == restoreCanceled:
 			// The operator's cancel reached this generation during the read.
@@ -273,8 +280,13 @@ func RunWorkflow(
 				readyLoopProbeForTest.pass()
 			}
 		}
-		// The reserve is counted at most once per pass.
+		// The reserve is counted at most once per pass, over the publishes
+		// still outstanding.
 		state.beginPass()
+		state.settleDetachedPublishes(ctx)
+		if readyLoopProbeForTest != nil && readyLoopProbeForTest.outstanding != nil {
+			readyLoopProbeForTest.outstanding(state.runID, len(state.pendingItemPublishes))
+		}
 		// (A) The history guard, check point 1: a run whose history plus what
 		// its own failure path still needs reaches the cluster's limit stops
 		// here, RUN_HISTORY_LIMIT, before the cluster terminates it
@@ -348,6 +360,15 @@ func RunWorkflow(
 				}
 				continue
 			}
+			// A sleeping task starts no activity either: it starts its timer
+			// and waits it out. Never held, for the await's reasons — it
+			// starts nothing, and its wake-up time crosses a switch.
+			if state.sleeps[id] != nil {
+				if err := state.openSleep(ctx, state.dispatchContext(runCtx, id), id); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, id, err)
+				}
+				continue
+			}
 			// A quiesce or the in-flight cap holds new dispatch: the task
 			// stays PENDING and nothing is emitted (hold.go).
 			if state.holdDispatch(ctx, id, inFlight) {
@@ -406,7 +427,10 @@ func RunWorkflow(
 			if state.canSwitchNow(ctx, inFlight) {
 				continue // idle: (B) takes it, open awaits included
 			}
-			if state.quiescing && state.closingPins() == 0 && state.openedUnclosedPins() > 0 {
+			// An open sleep is work that ends on its own, like a running
+			// activity: a quiescing run waits for it rather than giving up.
+			if state.quiescing && state.closingPins() == 0 && state.openedUnclosedPins() > 0 &&
+				state.openSleeps() == 0 {
 				if state.closureHasReadyWork() {
 					// The pass only propagated skips: re-scan before judging.
 					continue
@@ -416,7 +440,8 @@ func RunWorkflow(
 				state.abandonQuiesce(ctx, inFlight, state.pinBlockedReason())
 				continue
 			}
-			if state.openAwaits() == 0 && !(state.quiescing && state.closingPins() > 0) {
+			if state.openAwaits() == 0 && state.openSleeps() == 0 &&
+				!(state.quiescing && state.closingPins() > 0) {
 				if len(state.readyTasks()) == 0 && !state.heldFanOuts {
 					break
 				}
@@ -503,6 +528,16 @@ func RunWorkflow(
 				}
 			}
 		}
+		// Then every open sleep's timer in declaration order, last: a fixed
+		// position, and no history recorded before sleeps existed registers
+		// one.
+		woke := ""
+		for _, id := range state.order {
+			if sl := state.sleeps[id]; sl != nil && sl.open {
+				sleepID := id
+				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
+			}
+		}
 		if readyLoopProbeForTest != nil && readyLoopProbeForTest.selector != nil {
 			readyLoopProbeForTest.selector()
 		}
@@ -533,6 +568,14 @@ func RunWorkflow(
 			// expire always returns an error, the one the run ends with: the
 			// await's deadline, or the cancellation that settled its timer.
 			return state.fail(ctx, cancelRun, inFlight, expired, state.expire(ctx, expired))
+		}
+		if woke != "" {
+			// nil when the sleep woke and succeeded; the cancellation that
+			// settled its timer otherwise, which the run ends with.
+			if err := state.wake(ctx, woke); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, woke, err)
+			}
+			continue
 		}
 		if selectedItem >= 0 {
 			key := itemFlightKey(selectedID, selectedItem)
@@ -599,6 +642,11 @@ type runState struct {
 	awaits      map[string]*awaitState
 	resolutions workflow.ReceiveChannel
 
+	// sleeps is one entry per sleeping task, keyed by task id, built once in
+	// newRunState; iteration is over order, never the map. Nil for a run with
+	// no sleep.
+	sleeps map[string]*sleepState
+
 	// eaches is one entry per fan-out task, keyed by task id, built once in
 	// newRunState; iteration is over order, never the map. eachShare is the
 	// Orkflow's declared item total, and itemInputLimit / itemArtifactMax
@@ -639,14 +687,21 @@ type runState struct {
 
 	// The lean event path (lean_events.go). leanDecided and lean are the
 	// run's one answer to the "lean-event-path" version, asked at the first
-	// event that needs it. pendingItemPublishes is every fan-out item publish
-	// scheduled and not yet awaited, oldest first, and publishCtx the
-	// disconnected context they are scheduled on. All three stay empty on
-	// the old path.
+	// event that needs it. pendingItemPublishes is every detached publish —
+	// a fan-out item's, and on the detached publish path a plain task's
+	// TASK_SCHEDULED and TASK_STARTED — scheduled and not yet awaited, oldest
+	// first, and publishCtx the disconnected context they are scheduled on.
+	// All three stay empty on the old path.
 	leanDecided          bool
 	lean                 bool
-	pendingItemPublishes []workflow.Future
+	pendingItemPublishes []detachedPublish
 	publishCtx           workflow.Context
+	// The detached publish path (task_publish.go): the history length the
+	// current workflow task started at, and the plain tasks' activity input
+	// it has scheduled. pendingItemPublishes holds a plain task's detached
+	// publishes too.
+	dispatchTaskLength int
+	dispatchTaskBytes  int64
 
 	// The history guard (history_guard.go). versions holds every version
 	// decision this run asked, asked once each. hist counts the commands the
@@ -655,7 +710,11 @@ type runState struct {
 	// pendingHandlers is the failing phase's count of handlers still PENDING;
 	// handlerCount and handlerStartBytes feed the quick bound, set once in
 	// newRunState; guardOff is set when a history predates the guard.
-	versions                        map[string]workflow.Version
+	versions map[string]workflow.Version
+	// sharedOwner is the namespace that owns this run's definition when
+	// another namespace shared it, once the cross-namespace gate says so
+	// (shared.go); empty for every other run.
+	sharedOwner                     string
 	hist                            historyCount
 	passReserve, passCharge         reserveCount
 	pendingHandlers                 int64
@@ -868,6 +927,16 @@ func buildRunState(
 			state.awaits[t.GetId()] = &awaitState{spec: spec}
 			state.taskRuns[t.GetId()].Await = &orkstackv1.TaskAwait{Callback: spec.GetCallback()}
 		}
+		// A sleeping task carries its sleep state from the run's first
+		// snapshot, as an await does; unset for every other task, so a run
+		// with no sleep snapshots exactly as before.
+		if spec := t.GetSleep(); spec != nil {
+			if state.sleeps == nil {
+				state.sleeps = map[string]*sleepState{}
+			}
+			state.sleeps[t.GetId()] = &sleepState{spec: spec}
+			state.taskRuns[t.GetId()].Sleep = &orkstackv1.TaskSleep{Seconds: spec.GetSeconds()}
+		}
 		// A fan-out carries its TaskEach from the run's first snapshot, while
 		// still PENDING; unset for every other task, so a run with no fan-out
 		// snapshots exactly as before.
@@ -890,6 +959,9 @@ func buildRunState(
 				OrkflowName:             ref.GetName(),
 				OrkflowVersion:          ref.GetVersion(),
 				OrkflowDefinitionDigest: ref.GetDefinitionDigest(),
+				// Only a ref the definition qualifies with another namespace
+				// (decideSharedOwner adds a shared definition's own).
+				OrkflowNamespace: foreignRefOwner(ref, wf.GetNamespace()),
 			}
 		}
 	}
@@ -1850,19 +1922,52 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	// The version is asked before TASK_SCHEDULED, so its marker precedes the
 	// pair it decides.
 	s.leanEvents(ctx)
-	scheduledURI, err := s.emitWithSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
-		orkstackv1.Status_STATUS_RUNNING, scheduled, "")
+	// On the detached publish path (task_publish.go) the input is built
+	// first, because its size paces the workflow task, but any error it has
+	// is returned where the awaited path returns it: after the two events.
+	detached := s.detachTaskPublishes(ctx)
+	var input *orkstackv1.ExecuteTaskInput
+	var inputErr error
+	if detached {
+		input, inputErr = s.taskDispatchInput(t, id, pool, pinContext)
+		if inputErr == nil {
+			s.paceTaskDispatch(ctx, s.taskInputBytes(input))
+		}
+	}
+	scheduledURI, err := s.emitTaskEvent(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
+		orkstackv1.Status_STATUS_RUNNING, scheduled, "", detached)
 	if err != nil {
 		return nil, err
 	}
 	reuse := s.startedSnapshotURI(ctx, scheduledURI)
-	if _, err := s.emitWithSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
-		orkstackv1.Status_STATUS_RUNNING, "task dispatched to an orker", reuse); err != nil {
+	if _, err := s.emitTaskEvent(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
+		orkstackv1.Status_STATUS_RUNNING, "task dispatched to an orker", reuse, detached); err != nil {
 		return nil, err
 	}
 
 	activityCtx := s.taskActivityContext(activityBase, t, queue)
 
+	if !detached {
+		input, inputErr = s.taskDispatchInput(t, id, pool, pinContext)
+	}
+	if inputErr != nil {
+		return nil, inputErr
+	}
+	// The history guard counts the command this workflow task issues, and
+	// charges what the dispatch adds to the run's failure path.
+	if limit := s.historyLimit(); limit != nil {
+		s.noteCommand(ctx, 1, s.valuesBound()+limit.Reserve.CommandBytes)
+		s.chargeTaskDispatch()
+	}
+	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
+}
+
+// taskDispatchInput is the ExecuteTaskInput schedule sends for the plain task
+// id, checked against the wire bound. Pure: it reads only the definition, the
+// plan and the run's state.
+func (s *runState) taskDispatchInput(
+	t *orkstackv1.Task, id, pool string, pinContext *orkstackv1.PinContext,
+) (*orkstackv1.ExecuteTaskInput, error) {
 	commitURI, err := s.commitURIFor(id)
 	if err != nil {
 		return nil, err
@@ -1883,13 +1988,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		return nil, temporal.NewNonRetryableApplicationError(
 			err.Error(), task.CategoryContractViolation, err)
 	}
-	// The history guard counts the command this workflow task issues, and
-	// charges what the dispatch adds to the run's failure path.
-	if limit := s.historyLimit(); limit != nil {
-		s.noteCommand(ctx, 1, s.valuesBound()+limit.Reserve.CommandBytes)
-		s.chargeTaskDispatch()
-	}
-	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
+	return input, nil
 }
 
 // taskActivityContext is the ActivityOptions one task's ExecuteTask runs
@@ -2032,6 +2131,9 @@ func (s *runState) cacheContextFor(t *orkstackv1.Task) *orkstackv1.CacheContext 
 		Scope:      scope,
 		TtlSeconds: EffectiveCacheTTL(spec.GetTtlSeconds(), s.plan.Cache.MaxTTLSeconds),
 		Refresh:    s.plan.Cache.Refresh,
+		// A shared definition's tasks never share a memo with the owner's
+		// own, nor with an Orkflow of the same name here.
+		OrkflowNamespace: s.sharedOwner,
 	}
 }
 
@@ -2246,6 +2348,13 @@ func (s *runState) cancelInFlight(
 			// Reached only by an awaited task, which no history recorded
 			// before awaits existed contains.
 			if err := s.cancelAwaiting(ctx, id); err != nil {
+				workflow.GetLogger(ctx).Error("mark canceled failed",
+					"run_id", s.runID, "task_id", id, "error", err)
+			}
+		case orkstackv1.Status_STATUS_SLEEPING:
+			// Reached only by a sleeping task, which no history recorded
+			// before sleeps existed contains.
+			if err := s.cancelSleeping(ctx, id); err != nil {
 				workflow.GetLogger(ctx).Error("mark canceled failed",
 					"run_id", s.runID, "task_id", id, "error", err)
 			}
@@ -2507,11 +2616,12 @@ func (s *runState) fail(
 		eventType = orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED
 		s.status = orkstackv1.Status_STATUS_CANCELED
 		s.runError.Code = "RUN_CANCELED"
-		// An AWAITING cause is left for cancelInFlight, which records it
-		// properly — with finished_at and its sentence — instead of leaving
-		// it CANCELED with neither.
+		// An AWAITING or SLEEPING cause is left for cancelInFlight, which
+		// records it properly — with finished_at and its sentence — instead
+		// of leaving it CANCELED with neither.
 		if taskRun, ok := s.taskRuns[taskID]; ok &&
-			taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING {
+			taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING &&
+			taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING {
 			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 		}
 	}
@@ -2670,13 +2780,15 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		// explainable by the exact bytes it ran (§4.4). Read from the version
 		// document for the same reason ExecuteTaskInput reads it.
 		OrkflowDefinitionDigest: s.wf.GetDefinitionDigest(),
-		Status:                  s.status,
-		Input:                   s.input,
-		Output:                  s.output,
-		Error:                   s.runError,
-		CreatedAt:               s.createdAt,
-		StartedAt:               s.startedAt,
-		FinishedAt:              s.finished,
+		// Whose Orkflow a shared child ran; empty for every other run.
+		OrkflowNamespace: s.sharedOwner,
+		Status:           s.status,
+		Input:            s.input,
+		Output:           s.output,
+		Error:            s.runError,
+		CreatedAt:        s.createdAt,
+		StartedAt:        s.startedAt,
+		FinishedAt:       s.finished,
 		// Same selection every ExecuteTaskInput of this run carried (§2.1: the
 		// plan is replay-pinned), so the run record shows what actually routed
 		// each task's signals. Nil-safe, same as above.
@@ -2738,12 +2850,36 @@ func (s *runState) emitWithSnapshot(
 	message string,
 	reuseURI string,
 ) (string, error) {
+	return s.emitTaskEvent(ctx, eventType, taskID, status, message, reuseURI, false)
+}
+
+// emitTaskEvent is emitWithSnapshot, with the publish detached when detached
+// is set (task_publish.go): the event is numbered, recorded and given its
+// snapshot exactly as an awaited one, and its PublishEvent joins the run's
+// outstanding publishes instead of being waited for. A run's terminal event
+// is never detached.
+func (s *runState) emitTaskEvent(
+	ctx workflow.Context,
+	eventType orkstackv1.EventType,
+	taskID string,
+	status orkstackv1.Status,
+	message string,
+	reuseURI string,
+	detached bool,
+) (string, error) {
 	if readyLoopProbeForTest != nil && readyLoopProbeForTest.emit != nil {
 		readyLoopProbeForTest.emit(true)
 		defer readyLoopProbeForTest.emit(false)
 	}
 	if isTerminalRunEventType(eventType) && len(s.pendingItemPublishes) > 0 {
 		s.drainItemPublishes(ctx)
+	}
+	// Which contexts a cancel may still stop, and a dispatch the run no
+	// longer announces once it is canceled (emit_past_cancel.go).
+	announces := announcesDispatch(eventType)
+	writeCtx, publishCtx := s.emitContexts(ctx, announces)
+	if s.unannounced(ctx, announces) {
+		return "", ctx.Err()
 	}
 	s.eventSeq++
 	event := &orkstackv1.Event{
@@ -2761,7 +2897,7 @@ func (s *runState) emitWithSnapshot(
 	if snapshotURI == "" {
 		// One local activity writes it (writeEventSnapshot): a full
 		// snapshot, or an overlay for a large run's non-terminal event.
-		uri, err := s.writeEventSnapshot(ctx, eventType)
+		uri, err := s.writeEventSnapshot(writeCtx, eventType)
 		snapshotURI = uri
 		if err != nil {
 			// Object storage is part of the durable record. Continuing would
@@ -2772,15 +2908,18 @@ func (s *runState) emitWithSnapshot(
 		}
 	}
 
-	activityCtx := workflow.WithActivityOptions(ctx, eventActivityOptions())
+	if detached && !isTerminalRunEventType(eventType) {
+		s.recordEvent(event)
+		s.publishDetached(ctx, int(s.plan.InFlight.PublishWindow), event, snapshotURI, dedupeKey)
+		return snapshotURI, nil
+	}
+	activityCtx := workflow.WithActivityOptions(publishCtx, eventActivityOptions())
 	s.recordEvent(event)
 	future := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey)
-	if err := future.Get(ctx, nil); err != nil {
+	if err := future.Get(publishCtx, nil); err != nil {
 		// Projection is observability, not orchestration: a failed publish is
 		// logged and the run continues.
-		workflow.GetLogger(ctx).Error("publish event failed",
-			"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", event.GetSequence(),
-			"event", eventType.String(), "error", err)
+		s.logPublishFailed(ctx, event, err)
 	}
 	return snapshotURI, nil
 }

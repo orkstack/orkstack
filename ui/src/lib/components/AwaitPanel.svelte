@@ -11,6 +11,7 @@
 	// event stream.
 	import type { JsonObject } from '@bufbuild/protobuf';
 	import CliEquivalent from './CliEquivalent.svelte';
+	import CliPopover, { type CliCommand } from './CliPopover.svelte';
 	import DeclaredInputs from './DeclaredInputs.svelte';
 	import Dialog from './Dialog.svelte';
 	import ErrorPanel from './ErrorPanel.svelte';
@@ -66,6 +67,12 @@
 		})
 	);
 	const callbackUrl = $derived(awaitCallbackUrl(origin, runId, task.id));
+	// The panel's one terminal icon (ui/DESIGN.md, the Shell Icon Rule).
+	const cliCommands = $derived<CliCommand[]>([
+		...(awaiting && !runTerminal ? [{ label: 'Resolve it', command: resolveCli({ namespace, runId, taskId: task.id }) }] : []),
+		// The callback accepts a resolution only while the await is open, as the buttons do.
+		...(callback && awaiting && !runTerminal ? [{ label: 'Post its callback', command: awaitCurl({ url: callbackUrl }) }] : [])
+	]);
 
 	let dialog = $state<'resolve' | 'reject' | null>(null);
 	let mode = $state<'fields' | 'json'>('fields');
@@ -190,12 +197,12 @@
 <div
 	class="mt-3 rounded-sm bg-awaiting-bg/40 px-3 py-2 text-sm"
 	data-testid="task-{task.id}-await"
-	data-cli-own
+	data-cli-surface="panel"
 >
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<p class="font-medium text-ink" data-testid="task-{task.id}-await-state">{stateLabel}</p>
-		{#if awaiting && !runTerminal}
-			<div class="flex flex-wrap items-center gap-2">
+		<div class="flex flex-wrap items-center gap-2">
+			{#if awaiting && !runTerminal}
 				<button
 					type="button"
 					data-testid="task-{task.id}-resolve"
@@ -208,13 +215,11 @@
 					onclick={() => open('reject')}
 					class="inline-flex h-8 items-center rounded-sm border border-red bg-paper px-3 text-xs font-medium text-red-strong hover:bg-red-tint"
 				>Reject</button>
-				<CliEquivalent
-					command={resolveCli({ namespace, runId, taskId: task.id })}
-					testid="task-{task.id}-resolve-cli"
-					label="CLI equivalent of resolving this await"
-				/>
-			</div>
-		{/if}
+			{/if}
+			{#if cliCommands.length > 0}
+				<CliPopover testid="task-{task.id}-await-cli" title="Command line: await {task.id}" commands={cliCommands} />
+			{/if}
+		</div>
 	</div>
 	<dl class="mt-2 flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-muted">
 		<div>
@@ -250,11 +255,6 @@
 	{#if callback}
 		<div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
 			<span>Accepts a callback at <span class="font-mono break-all">POST {callbackUrl}</span></span>
-			<CliEquivalent
-				command={awaitCurl({ url: callbackUrl })}
-				testid="task-{task.id}-await-callback-cli"
-				label="Callback command for this await"
-			/>
 		</div>
 		<p class="mt-1 text-xs text-ink-muted">
 			The token was shown once, to whoever submitted the run; only its digest is kept. If the

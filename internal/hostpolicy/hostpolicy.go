@@ -9,7 +9,6 @@
 package hostpolicy
 
 import (
-	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -18,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // Listener names the settings of the listener a Policy guards, so a refusal
@@ -315,7 +316,7 @@ func (p Policy) Guard(next http.Handler, logger *slog.Logger) http.Handler {
 		if strings.HasPrefix(r.URL.Path, "/orkstack.") {
 			header.Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusForbidden)
-			_ = json.NewEncoder(w).Encode(map[string]string{"code": "permission_denied", "message": message})
+			_ = stablejson.Encode(w, map[string]string{"code": "permission_denied", "message": message}, stablejson.Options)
 			return
 		}
 		http.Error(w, message, http.StatusForbidden)

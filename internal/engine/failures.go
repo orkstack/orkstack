@@ -183,12 +183,12 @@ func FingerprintOf(
 	record := FailureRecord{
 		RunID:     entry.RunID,
 		CreatedAt: entry.Time,
-		Orkflow:   run.GetOrkflowName(),
+		Orkflow:   OrkflowKey(run),
 	}
 	if record.RunID == "" {
 		record.RunID = run.GetId()
 	}
-	if record.Orkflow == "" {
+	if run.GetOrkflowName() == "" {
 		// The key names the orkflow the run was indexed under; a body that
 		// somehow lacks one is still that orkflow's run.
 		record.Orkflow = entry.Orkflow
@@ -363,8 +363,10 @@ func GroupFailures(
 
 	groups := make([]*orkstackv1.FailureGroup, 0, len(ordered))
 	for _, bucket := range ordered {
+		owner, name := SplitOrkflowKey(bucket.key.orkflow)
 		groups = append(groups, &orkstackv1.FailureGroup{
-			OrkflowName:            bucket.key.orkflow,
+			OrkflowName:            name,
+			OrkflowNamespace:       owner,
 			TaskId:                 bucket.key.task,
 			Code:                   bucket.key.code,
 			Category:               bucket.key.category,

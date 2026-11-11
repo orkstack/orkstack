@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // provenanceCLI is the CLI fixture with a real local run archive and a real
@@ -34,14 +36,10 @@ func newProvenanceCLI(t *testing.T) *provenanceCLI {
 	t.Helper()
 	archiveDir, storeDir := t.TempDir(), t.TempDir()
 	local, err := artifacts.NewLocalRunArchive(archiveDir)
-	if err != nil {
-		t.Fatalf("NewLocalRunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewLocalRunArchive")
 	t.Cleanup(func() { _ = local.Close() })
 	store, err := artifacts.NewLocalStore(storeDir)
-	if err != nil {
-		t.Fatalf("NewLocalStore: %v", err)
-	}
+	must.OKf(t, err, "NewLocalStore")
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(local)
 	f := newFixtureWith(t, func(cfg *api.Config) {
@@ -49,9 +47,7 @@ func newProvenanceCLI(t *testing.T) *provenanceCLI {
 		cfg.ArtifactStore = store
 	})
 	stored, err := store.Put(context.Background(), "report.txt", bytes.NewBufferString("hello\n"), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
+	must.OKf(t, err, "Put")
 	return &provenanceCLI{
 		fixture: f, local: local, archiveDir: archiveDir, archiver: archiver, store: store, storeDir: storeDir,
 		report: &orkstackv1.ArtifactRef{Name: stored.Name, Uri: stored.URI, SizeBytes: stored.SizeBytes, Sha256: stored.SHA256, ContentType: stored.ContentType},
@@ -73,9 +69,7 @@ func (p *provenanceCLI) seedRun(t *testing.T, runID string, archived bool) {
 	}
 	p.runs.Apply(run)
 	if archived {
-		if err := p.archiver.Archive(context.Background(), run, nil); err != nil {
-			t.Fatalf("Archive: %v", err)
-		}
+		must.OKf(t, p.archiver.Archive(context.Background(), run, nil), "Archive")
 	}
 }
 
@@ -108,9 +102,7 @@ func TestRunArtifactProvenance_GoldenReleased(t *testing.T) {
 	if _, err := p.local.DeleteRunArtifacts(context.Background(), "default", "ork-1-a1"); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.local.MarkArtifactsCleaned(context.Background(), "ork-1-a1", time.Date(2026, 1, 9, 3, 4, 5, 0, time.UTC)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, p.local.MarkArtifactsCleaned(context.Background(), "ork-1-a1", time.Date(2026, 1, 9, 3, 4, 5, 0, time.UTC)))
 	out := p.provenance("ork-1-a1", "--task", "completed", "--kind", "output", "--name", "report.txt").requireExit(t, exitOK)
 	requireGolden(t, "run-artifact-provenance-released.golden", out.stdout)
 }
@@ -126,9 +118,7 @@ func TestRunArtifactProvenance_GoldenAbsent(t *testing.T) {
 func TestRunArtifactProvenance_GoldenBytesMissing(t *testing.T) {
 	p := newProvenanceCLI(t)
 	p.seedRun(t, "ork-1-a1", true)
-	if err := p.store.Delete(context.Background(), p.report.GetUri()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, p.store.Delete(context.Background(), p.report.GetUri()))
 	out := p.provenance("ork-1-a1", "--task", "completed", "--kind", "output", "--name", "report.txt").requireExit(t, exitOK)
 	requireGolden(t, "run-artifact-provenance-bytes-missing.golden", out.stdout)
 }
@@ -141,13 +131,9 @@ func TestRunArtifactProvenance_GoldenUnreadable(t *testing.T) {
 		t.Fatalf("ObjectIDFromURI(%s)", p.report.GetUri())
 	}
 	key, err := artifacts.RunObjectRefKey(objectID, "ork-1-orphan")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	path := filepath.Join(p.archiveDir, filepath.FromSlash(key))
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, nil, 0o600))
 	out := p.provenance("ork-1-a1", "--task", "completed", "--kind", "output", "--name", "report.txt").requireExit(t, exitOK)
 	requireGolden(t, "run-artifact-provenance-unreadable.golden", out.stdout)
 }

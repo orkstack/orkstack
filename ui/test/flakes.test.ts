@@ -63,15 +63,15 @@ test('dominantCauseLabel renders one triple with its share and a dash for none',
 
 test('flakesCli quotes every value and omits --orkflow when unset', () => {
 	expect(flakesCli('payments', '24h', [FailureGroupBy.TASK, FailureGroupBy.ORKER])).toBe(
-		'orkctl --namespace payments stats flakes --since 24h --group-by task,orker'
+		'orkctl -n payments stats flakes -s 24h -g task,orker'
 	);
 	expect(flakesCli('', '168h', [], 'nightly')).toBe(
-		'orkctl --namespace default stats flakes --orkflow nightly --since 168h'
+		'orkctl -n default stats flakes --orkflow nightly -s 168h'
 	);
 	expect(flakesCli("it's", '2026-09-24T10:00:00.000Z', [FailureGroupBy.TASK], 'a b')).toBe(
-		`orkctl --namespace 'it'"'"'s' stats flakes --orkflow 'a b' --since 2026-09-24T10:00:00.000Z --group-by task`
+		`orkctl -n 'it'"'"'s' stats flakes --orkflow 'a b' -s 2026-09-24T10:00:00.000Z -g task`
 	);
-	expect(flakesCli('x', '$(rm)', [])).toBe("orkctl --namespace x stats flakes --since '$(rm)'");
+	expect(flakesCli('x', '$(rm)', [])).toBe("orkctl -n x stats flakes -s '$(rm)'");
 });
 
 test('the chips are the six server-accepted dimensions but orkflow, sent in enum order', () => {

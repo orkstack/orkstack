@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"sort"
@@ -19,6 +19,9 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // dash is what an empty cell renders as, so tables never have holes.
@@ -35,7 +38,7 @@ func marshalJSON(message proto.Message) ([]byte, error) {
 		return nil, err
 	}
 	var indented bytes.Buffer
-	if err := json.Indent(&indented, compact, "", "  "); err != nil {
+	if err := stablejson.Indent(&indented, compact, "  "); err != nil {
 		return nil, fmt.Errorf("encode json: %w", err)
 	}
 	return jsonTerminalSafe(indented.Bytes()), nil
@@ -55,7 +58,7 @@ func marshalCompactJSON(message proto.Message) ([]byte, error) {
 // marshalJSON's. Protobuf messages go through marshalJSON, which owns the enum
 // dialect.
 func marshalGoJSON(value any) ([]byte, error) {
-	encoded, err := json.MarshalIndent(value, "", "  ")
+	encoded, err := stablejson.MarshalIndent(value, "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode json: %w", err)
 	}
@@ -94,20 +97,18 @@ func jsonTerminalSafe(encoded []byte) []byte {
 // stay themselves, as they do not in json.Marshal, and whatever a terminal
 // could obey is an escape.
 func compactValuesLine(data *structpb.Struct) (string, error) {
-	var encoded bytes.Buffer
-	encoder := json.NewEncoder(&encoded)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(data.AsMap()); err != nil {
+	encoded, err := json.Marshal(data.AsMap(), stablejson.Unescaped)
+	if err != nil {
 		return "", fmt.Errorf("encode values: %w", err)
 	}
-	return string(jsonTerminalSafe(bytes.TrimRight(encoded.Bytes(), "\n"))), nil
+	return string(jsonTerminalSafe(encoded)), nil
 }
 
 // compactStoredValues is a stored values.json on one line, as compactValuesLine
 // prints values a run carries.
 func compactStoredValues(raw []byte) (string, error) {
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
+	if err := stablejson.Compact(&compact, raw); err != nil {
 		return "", fmt.Errorf("compact values: %w", err)
 	}
 	return string(jsonTerminalSafe(compact.Bytes())), nil
@@ -144,7 +145,7 @@ func newTable(out io.Writer) *tabwriter.Writer {
 
 // statusLabel renders a Status without its enum prefix.
 func statusLabel(status orkstackv1.Status) string {
-	return strings.TrimPrefix(status.String(), "STATUS_")
+	return enumname.Of(status)
 }
 
 // taskStatusLabel renders a task run's status the way statusLabel does,
@@ -174,7 +175,7 @@ func taskStatusLabel(taskRun *orkstackv1.TaskRun) string {
 
 // eventLabel renders an EventType without its enum prefix.
 func eventLabel(eventType orkstackv1.EventType) string {
-	return strings.TrimPrefix(eventType.String(), "EVENT_TYPE_")
+	return enumname.Of(eventType)
 }
 
 // formatTime renders a timestamp in UTC RFC3339, or a dash when unset.
@@ -235,7 +236,7 @@ func payloadSummary(payload *orkstackv1.Payload, runID, namespace string) string
 	if data == nil || len(data.GetFields()) == 0 {
 		return dash
 	}
-	encoded, err := json.Marshal(structToMap(data))
+	encoded, err := stablejson.Marshal(structToMap(data))
 	if err != nil {
 		return dash
 	}

@@ -19,6 +19,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // gatedGetStore counts Gets per URI, optionally holds every Get until gate
@@ -76,9 +78,7 @@ func (s *gatedGetStore) getsOf(uri string) int {
 func stagingDispatcher(t *testing.T) (*OCIDispatcher, *artifacts.LocalStore, *gatedGetStore) {
 	t.Helper()
 	local, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = local.Close() })
 	gated := &gatedGetStore{Store: local}
 	return &OCIDispatcher{Store: gated, WorkRoot: t.TempDir(), Policy: DefaultSecurityPolicy()}, local, gated
@@ -87,9 +87,7 @@ func stagingDispatcher(t *testing.T) (*OCIDispatcher, *artifacts.LocalStore, *ga
 func putRef(t *testing.T, store artifacts.Store, name string, data []byte) *orkstackv1.ArtifactRef {
 	t.Helper()
 	ref, err := store.Put(context.Background(), name, bytes.NewReader(data), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return refPtr(ref)
 }
 
@@ -236,19 +234,13 @@ func TestBoot_ReapsTheStagingCache(t *testing.T) {
 	root := t.TempDir()
 	id := proof.OrkerID("orker-stage-reap")
 	leftover := filepath.Join(root, StageDirName, attemptOwner(id), strings.Repeat("a", 64))
-	if err := os.MkdirAll(filepath.Dir(leftover), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(leftover, []byte("stale"), 0o444); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Dir(leftover), 0o755))
+	must.OK(t, os.WriteFile(leftover, []byte("stale"), 0o444))
 	a := NewActivitiesWithOptions(nil, Options{
 		OrkerID: id, WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
 	})
 	t.Cleanup(a.Close)
-	if err := a.Boot(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, a.Boot(context.Background()))
 	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
 		t.Fatalf("the stale staging entry survived boot: %v", err)
 	}
@@ -274,9 +266,7 @@ func TestStageInputs_IsBoundedParallel(t *testing.T) {
 	in := fanInInput(t, local, 64)
 	gated.delay = func(string) time.Duration { return 20 * time.Millisecond }
 	ws, err := NewWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	staged, failure := d.stageInputs(context.Background(), in, ws, false)
 	if failure != nil {
 		t.Fatal(failure)
@@ -300,9 +290,7 @@ func TestStageInputs_ParallelIsByteIdenticalToSerial(t *testing.T) {
 		in := fanInInput(t, local, 24)
 		gated.delay = delay
 		ws, err := NewWorkspace(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		staged, failure := d.stageInputs(context.Background(), in, ws, false)
 		if failure != nil {
 			t.Fatal(failure)
@@ -346,9 +334,7 @@ func TestStageInputs_ReportsTheLowestFailingIndex(t *testing.T) {
 		return time.Millisecond
 	}
 	ws, err := NewWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	_, failure := d.stageInputs(context.Background(), in, ws, false)
 	if failure == nil || failure.Reason != ReasonInputUnavailable || !strings.Contains(failure.Message, "part-03.txt") {
 		t.Fatalf("failure = %v; want INPUT_ARTIFACT_UNAVAILABLE naming part-03.txt", failure)

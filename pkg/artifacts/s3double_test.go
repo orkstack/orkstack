@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/xml"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,12 +15,18 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/aws/retry"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 )
 
 // s3Double is the smallest S3-compatible server a unit test can point the
-// real SDK client at: path-style PutObject (honouring If-None-Match: *),
-// GetObject, HeadObject, DeleteObject, DeleteObjects, and ListObjectsV2 with
-// prefix, delimiter, start-after, max-keys and continuation. It counts each
+// real SDK client at: path-style PutObject (honouring If-None-Match: * and
+// If-Match), GetObject (with an ETag and a byte Range), HeadObject,
+// DeleteObject, DeleteObjects, and ListObjectsV2 with prefix, delimiter,
+// start-after, max-keys and continuation. It counts each
 // call, so a test can say how many bodies a listing fetched and how many list
 // requests a read made. A key in refuse is never deleted; DeleteObjects
 // reports it AccessDenied.
@@ -49,6 +57,32 @@ type s3Double struct {
 	// onRequest, when set, runs at the start of every request (outside the
 	// lock), so a test can observe the client's state mid-upload.
 	onRequest func(*http.Request)
+	// failPuts makes the next n PutObject requests of a key answer 500
+	// before anything is checked or stored; storedThenFail makes the next n
+	// that store their body answer 500 afterwards, as a server whose reply is
+	// lost after the write landed. The SDK resends either.
+	failPuts       map[string]int
+	storedThenFail map[string]int
+	// resendsFail is how many PutObject requests of a key fail, as failPuts,
+	// once a storedThenFail write of it was answered 500 (loseAnswer).
+	resendsFail map[string]int
+	// failGets makes the next n GetObject requests of a key answer 500.
+	failGets map[string]int
+	// ignoreMissingIfMatch makes a PutObject with If-Match on a key that is
+	// not there store its body, and ignoreDeleteCondition makes DeleteObject
+	// ignore If-Match: a store without the conditional answers a rollback
+	// needs (docs/STORAGE.md).
+	ignoreMissingIfMatch  bool
+	ignoreDeleteCondition bool
+	// deleteConditionAnswer, when set, answers every DeleteObject carrying
+	// If-Match with that status and deletes nothing: a store that rejects a
+	// conditional delete. keepOnDelete answers a DeleteObject as done and
+	// keeps the object.
+	deleteConditionAnswer int
+	keepOnDelete          bool
+	// missingIfMatchDelete404 answers a DeleteObject with If-Match on a key
+	// that is not there 404, as a store may: a resend of a delete that landed.
+	missingIfMatchDelete404 bool
 }
 
 type doubleUpload struct {
@@ -60,11 +94,44 @@ func newS3Double(t *testing.T) *s3Double {
 	t.Helper()
 	d := &s3Double{bucket: "double", objects: map[string][]byte{}, refuse: map[string]bool{},
 		headers: map[string]http.Header{}, uploads: map[string]*doubleUpload{},
-		partRequests: map[int]int{}, failParts: map[int]int{}}
+		partRequests: map[int]int{}, failParts: map[int]int{},
+		failPuts: map[string]int{}, storedThenFail: map[string]int{}, resendsFail: map[string]int{},
+		failGets: map[string]int{}}
 	d.server = httptest.NewServer(http.HandlerFunc(d.serve))
 	t.Cleanup(d.server.Close)
 	return d
 }
+
+// loseAnswer makes the next PutObject of key a write whose answer is lost:
+// stored, then answered 500. The SDK resends it; failingResends of those fail
+// before anything is checked (2 is every resend the SDK makes, so it gives
+// up), and a resend after them meets the stored write.
+func (d *s3Double) loseAnswer(key string, failingResends int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.storedThenFail[key] = 1
+	d.resendsFail[key] = failingResends
+}
+
+// fastClient is a client of this double whose SDK retries wait for nothing,
+// so a test of a resend does not wait out the SDK's jittered backoff. It is
+// otherwise the client newS3Client builds: the same retryer, three attempts.
+func (d *s3Double) fastClient(t *testing.T, opts ...func(*s3.Options)) *s3.Client {
+	t.Helper()
+	awsCfg, err := loadS3Config(context.Background(), d.config())
+	if err != nil {
+		t.Fatalf("loadS3Config: %v", err)
+	}
+	return s3.NewFromConfig(awsCfg, append([]func(*s3.Options){func(o *s3.Options) {
+		o.BaseEndpoint = aws.String(d.server.URL)
+		o.UsePathStyle = true
+		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) { so.Backoff = noBackoff{} })
+	}}, opts...)...)
+}
+
+type noBackoff struct{}
+
+func (noBackoff) BackoffDelay(int, error) (time.Duration, error) { return 0, nil }
 
 // config is the artifacts Config that reaches this double.
 func (d *s3Double) config() Config {
@@ -81,6 +148,13 @@ func (d *s3Double) deliveryStore(t *testing.T) *S3DeliveryStore {
 		t.Fatalf("NewS3DeliveryStore: %v", err)
 	}
 	return store
+}
+
+// doubleETag is the quoted ETag the double gives a body: its SHA-256, so a
+// conditional write sees any change of content.
+func doubleETag(body []byte) string {
+	sum := sha256.Sum256(body)
+	return `"` + hex.EncodeToString(sum[:]) + `"`
 }
 
 func (d *s3Double) counts() (puts, gets, lists int) {
@@ -122,6 +196,11 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodPut && key != "":
 		d.puts++
 		body, _ := io.ReadAll(r.Body)
+		if d.failPuts[key] > 0 {
+			d.failPuts[key]--
+			s3Error(w, http.StatusInternalServerError, "InternalError")
+			return
+		}
 		// Like S3 and MinIO: a supplied x-amz-checksum-sha256 is verified
 		// against the bytes received, and a mismatch stores nothing.
 		if want := r.Header.Get("X-Amz-Checksum-Sha256"); want != "" {
@@ -138,13 +217,52 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		if want := r.Header.Get("If-Match"); want != "" {
+			current, exists := d.objects[key]
+			if !exists && !d.ignoreMissingIfMatch {
+				s3Error(w, http.StatusNotFound, "NoSuchKey")
+				return
+			}
+			if exists && doubleETag(current) != want {
+				s3Error(w, http.StatusPreconditionFailed, "PreconditionFailed")
+				return
+			}
+		}
 		d.objects[key] = body
+		if d.storedThenFail[key] > 0 {
+			d.storedThenFail[key]--
+			d.failPuts[key] += d.resendsFail[key]
+			delete(d.resendsFail, key)
+			s3Error(w, http.StatusInternalServerError, "InternalError")
+			return
+		}
+		// Like S3: a stored write is answered with its object's ETag.
+		w.Header().Set("ETag", doubleETag(body))
 		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodGet && key != "":
 		d.gets++
+		if d.failGets[key] > 0 {
+			d.failGets[key]--
+			s3Error(w, http.StatusInternalServerError, "InternalError")
+			return
+		}
 		body, exists := d.objects[key]
 		if !exists {
 			s3Error(w, http.StatusNotFound, "NoSuchKey")
+			return
+		}
+		w.Header().Set("ETag", doubleETag(body))
+		if spec := r.Header.Get("Range"); spec != "" {
+			var first, last int
+			if _, err := fmt.Sscanf(spec, "bytes=%d-%d", &first, &last); err != nil || first >= len(body) {
+				s3Error(w, http.StatusRequestedRangeNotSatisfiable, "InvalidRange")
+				return
+			}
+			last = min(last, len(body)-1)
+			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", first, last, len(body)))
+			w.Header().Set("Content-Length", strconv.Itoa(last-first+1))
+			w.WriteHeader(http.StatusPartialContent)
+			_, _ = w.Write(body[first : last+1])
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
@@ -159,10 +277,25 @@ func (d *s3Double) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+		w.Header().Set("ETag", doubleETag(body))
 		w.WriteHeader(http.StatusOK)
 	case r.Method == http.MethodDelete && key != "":
 		d.deletes++
-		if !d.refuse[key] {
+		if r.Header.Get("If-Match") != "" && d.deleteConditionAnswer != 0 {
+			s3Error(w, d.deleteConditionAnswer, strings.ReplaceAll(http.StatusText(d.deleteConditionAnswer), " ", ""))
+			return
+		}
+		if want := r.Header.Get("If-Match"); want != "" && !d.ignoreDeleteCondition {
+			if _, exists := d.objects[key]; !exists && d.missingIfMatchDelete404 {
+				s3Error(w, http.StatusNotFound, "NoSuchKey")
+				return
+			}
+			if current, exists := d.objects[key]; exists && doubleETag(current) != want {
+				s3Error(w, http.StatusPreconditionFailed, "PreconditionFailed")
+				return
+			}
+		}
+		if !d.refuse[key] && !d.keepOnDelete {
 			delete(d.objects, key)
 		}
 		w.WriteHeader(http.StatusNoContent)

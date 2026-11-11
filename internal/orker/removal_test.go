@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestUnremovedContainers_RetrySettlesOnlyWhatIsGone(t *testing.T) {
@@ -133,9 +135,7 @@ func (r *removalRecorder) askedCount() int {
 func removalDispatcher(t *testing.T, runtime ContainerRuntime) *OCIDispatcher {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	return &OCIDispatcher{
 		Runtime: runtime, Store: store, Refs: artifacts.MemoryRefPredictor{},
@@ -181,9 +181,7 @@ func TestExecute_AFailedCreateIsRemovedUnderTheNameItAskedFor(t *testing.T) {
 // nothing is owed.
 func TestActivities_RetriesARefusedRemovalWithNoCapacityDeclared(t *testing.T) {
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer store.Close()
 	runtime := &removalRecorder{failFirst: 2}
 	a := NewActivitiesWithOptions(store, Options{Runtime: runtime, WorkRoot: t.TempDir(), OrkerID: "orker-removal-retry"})
@@ -213,9 +211,7 @@ func TestExecute_ADeclaredCapacityAloneOwesARefusedRemoval(t *testing.T) {
 	limit := amount{milli: 4000, bytes: 1 << 32}
 	capacity := newCapacity(limit, amount{milli: 1000, bytes: 1 << 30}, 2)
 	admission, err := capacity.admit(false, amount{milli: 1000, bytes: 1 << 30})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	runtime := &removalRecorder{failFirst: 1}
 	runtime.createID = "c1"
 	d := removalDispatcher(t, &exitingRuntime{removalRecorder: runtime})

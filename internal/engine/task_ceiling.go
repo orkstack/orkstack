@@ -23,13 +23,20 @@ package engine
 // task's completion lands, uncollected, during the last dispatch before the
 // budget is due. At most min(W, ⌈G/d⌉) tasks are in flight then:
 //
-//	Δ(W) = (r₁ + u)·⌈G/d⌉                              when d·W ≥ G
-//	Δ(W) = r₁·W + r₂·⌈(G − d·W)/(d + c)⌉ + u·W         otherwise
-//	T_max(W) = ⌊(L − 1 − B − F − Δ(W)) / p⌋
+//	Δ(W) = (r₁ + u)·⌈G/d⌉ + P·e                        when d·W ≥ G
+//	Δ(W) = r₁·W + r₂·⌈(G − d·W)/(d + c)⌉ + u·W + P·e   otherwise
+//	T_max(W) = min over d in [d₀, d₁] of ⌊(L − 1 − B − F − Δ(W)) / p⌋
 //
 // L is the cluster's event limit, F, p, f the reserve's Fixed, PerPending and
 // PerInFlight, G the continuation budget's events and B a generation's base
 // before its main loop: RestoreHistoryBound(budget) plus generation0Start.
+// P is the plan's publish window and e its PublishEvents: on the detached
+// publish path (task_publish.go) up to P publishes are outstanding, each
+// reserved the e events it can still append; P·e is the publishReserve
+// argument (InFlightLimit.PublishReserveEvents). A dispatch there records between d₀ =
+// DetachedDispatchEvents and d₁ = PlainDispatchEvents, and Δ is not monotone
+// in d — the cheaper a dispatch, the more tasks are in flight when the
+// budget is due — so the bound is the least over that range.
 // Once the budget is due at or above the hold line, each collection lowers
 // the sum and only an in-flight task can land, once; below it the run
 // dispatches only up to the line. So a generation never reaches the guard
@@ -51,6 +58,18 @@ const (
 	LandedCompletionEvents int64 = 5
 )
 
+// DetachedDispatchEvents is the least history one plain task's dispatch
+// records on the detached publish path (TaskPublishChange): the snapshot
+// marker, the ExecuteTask scheduling event and its two PublishEvent
+// activities' three events each, with no workflow task of its own. A
+// dispatch on that path costs between DetachedDispatchEvents and
+// PlainDispatchEvents: each publish's completion may still wake a workflow
+// task of its own (three events), which is today's cost. The closed form is
+// not monotone in d — a cheaper dispatch lets more tasks be in flight before
+// the budget is due — so it takes the worst d in that range. Not a
+// command-stream number; no workflow code reads it.
+const DetachedDispatchEvents int64 = 8
+
 // UncontinuedEventsPerTask is the history a task needs when a run cannot
 // carry on (engine.continuation.enabled off), so its tasks share one
 // history: about 26 measured events per plain task, 8 reserved per pending
@@ -68,25 +87,40 @@ const generation0Start int64 = 24
 // ShapeMaxTasks is the closed form's T_max(W): the most plain tasks a run
 // may declare so that no generation's history plus fail-path reserve reaches
 // the guard, in events, before or during its hold, for a shape keeping at
-// most concurrency tasks in flight — counting every in-flight completion
+// most concurrency tasks in flight and publishReserve events reserved for
+// its outstanding publishes (InFlightLimit.PublishReserveEvents) — counting every in-flight completion
 // landed and not yet collected, and a base of RestoreHistoryBound(budget) +
 // generation0Start. limit and budget are what pinRunTreeLimits would build.
 // A bound the deployment must stay within, not a promise that such a run
 // completes. Zero when even an empty stage cannot fit. Pure.
-func ShapeMaxTasks(limit HistoryLimit, budget ContinuationBudget, concurrency int64) int64 {
+func ShapeMaxTasks(limit HistoryLimit, budget ContinuationBudget, concurrency, publishReserve int64) int64 {
 	r := limit.Reserve
-	return shapeMaxTasks(shapeTerms{
-		limit:    limit.MaxEvents,
-		base:     RestoreHistoryBound(budget) + generation0Start,
-		fixed:    r.Fixed,
-		pending:  r.PerPending,
-		inFlight: r.PerInFlight,
-		budget:   budget.Events,
-		dispatch: PlainDispatchEvents,
-		complete: PlainCompletionEvents,
-		landed:   LandedCompletionEvents,
-		width:    concurrency,
+	return minOverDispatch(func(d int64) int64 {
+		return shapeMaxTasks(shapeTerms{
+			limit:     limit.MaxEvents,
+			base:      RestoreHistoryBound(budget) + generation0Start,
+			fixed:     r.Fixed,
+			pending:   r.PerPending,
+			inFlight:  r.PerInFlight,
+			budget:    budget.Events,
+			dispatch:  d,
+			complete:  PlainCompletionEvents,
+			landed:    LandedCompletionEvents,
+			width:     concurrency,
+			publishes: publishReserve,
+		})
 	})
+}
+
+// minOverDispatch is the smallest of bound(d) for every dispatch cost d a
+// plain task's dispatch may record, DetachedDispatchEvents to
+// PlainDispatchEvents.
+func minOverDispatch(bound func(d int64) int64) int64 {
+	least := bound(PlainDispatchEvents)
+	for d := DetachedDispatchEvents; d < PlainDispatchEvents; d++ {
+		least = min(least, bound(d))
+	}
+	return least
 }
 
 // shapeMaxTasksBytes is the same closed form in the bytes dimension, for
@@ -98,29 +132,35 @@ func ShapeMaxTasks(limit HistoryLimit, budget ContinuationBudget, concurrency in
 // budget and the base the checkpoint cap plus the base's events. Derived,
 // not measured; a test fails if it is ever below the events form, which
 // would make bytes the binding dimension. Pure.
-func shapeMaxTasksBytes(limit HistoryLimit, budget ContinuationBudget, concurrency, dispatchBytes int64) int64 {
+func shapeMaxTasksBytes(limit HistoryLimit, budget ContinuationBudget, concurrency, publishReserve, dispatchBytes int64) int64 {
 	r := limit.Reserve
 	perEvent := r.BytesPerEvent
-	return shapeMaxTasks(shapeTerms{
-		limit:    limit.MaxBytes,
-		base:     budget.CheckpointMaxBytes + (RestoreHistoryBound(budget)+generation0Start)*perEvent,
-		fixed:    r.Fixed * perEvent,
-		pending:  r.PerPending * perEvent,
-		inFlight: r.PerInFlight*perEvent + r.PerInFlightBytes,
-		budget:   budget.Bytes,
-		dispatch: dispatchBytes + PlainDispatchEvents*perEvent,
-		complete: PlainCompletionEvents*perEvent + r.PerInFlightBytes,
-		landed:   LandedCompletionEvents*perEvent + r.PerInFlightBytes,
-		width:    concurrency,
+	return minOverDispatch(func(d int64) int64 {
+		return shapeMaxTasks(shapeTerms{
+			limit:     limit.MaxBytes,
+			base:      budget.CheckpointMaxBytes + (RestoreHistoryBound(budget)+generation0Start)*perEvent,
+			fixed:     r.Fixed * perEvent,
+			pending:   r.PerPending * perEvent,
+			inFlight:  r.PerInFlight*perEvent + r.PerInFlightBytes,
+			budget:    budget.Bytes,
+			dispatch:  dispatchBytes + d*perEvent,
+			complete:  PlainCompletionEvents*perEvent + r.PerInFlightBytes,
+			landed:    LandedCompletionEvents*perEvent + r.PerInFlightBytes,
+			width:     concurrency,
+			publishes: publishReserve * perEvent,
+		})
 	})
 }
 
 // shapeTerms is one dimension of the closed form: L, B, F, p, f, G, d, c, u
-// and W.
+// and W, and P·e, the reserve of the detached publishes a run may leave
+// outstanding (at most its plan's InFlight.PublishWindow, each reserved its
+// InFlight.PublishEvents).
 type shapeTerms struct {
 	limit, base, fixed, pending, inFlight int64
 	budget, dispatch, complete, landed    int64
 	width                                 int64
+	publishes                             int64
 }
 
 // shapeRise is Δ(W): the most the sum of history and reserve rises before a
@@ -130,10 +170,10 @@ func (t shapeTerms) shapeRise() int64 {
 	r2 := t.dispatch + t.complete - t.pending
 	due := ceilDiv(t.budget, t.dispatch) // dispatches until the budget is due
 	if t.dispatch*t.width >= t.budget {
-		return (r1 + t.landed) * due
+		return (r1+t.landed)*due + t.publishes
 	}
 	rest := ceilDiv(t.budget-t.dispatch*t.width, t.dispatch+t.complete)
-	return r1*t.width + r2*rest + t.landed*t.width
+	return r1*t.width + r2*rest + t.landed*t.width + t.publishes
 }
 
 func shapeMaxTasks(t shapeTerms) int64 {
@@ -155,15 +195,18 @@ func shapeMaxTasks(t shapeTerms) int64 {
 // on until it reaches the line, at most r₁ past it, plus at most u·W of
 // landings. The peak is the larger of the two. The task soak compares every
 // generation's measured peak with it. Pure.
-func ShapePeak(limit HistoryLimit, budget ContinuationBudget, concurrency, base, pending int64) int64 {
+func ShapePeak(limit HistoryLimit, budget ContinuationBudget, concurrency, publishReserve, base, pending int64) int64 {
 	r := limit.Reserve
-	terms := shapeTerms{
-		fixed: r.Fixed, pending: r.PerPending, inFlight: r.PerInFlight,
-		budget: budget.Events, dispatch: PlainDispatchEvents, complete: PlainCompletionEvents,
-		landed: LandedCompletionEvents, width: concurrency,
-	}
-	held := base + r.Fixed + r.PerPending*pending + terms.shapeRise()
-	r1 := PlainDispatchEvents + r.PerInFlight - r.PerPending
-	line := limit.MaxEvents*budget.HoldPercent/100 + r1 + LandedCompletionEvents*concurrency
-	return max(held, line)
+	publishes := publishReserve
+	return -minOverDispatch(func(d int64) int64 {
+		terms := shapeTerms{
+			fixed: r.Fixed, pending: r.PerPending, inFlight: r.PerInFlight,
+			budget: budget.Events, dispatch: d, complete: PlainCompletionEvents,
+			landed: LandedCompletionEvents, width: concurrency, publishes: publishes,
+		}
+		held := base + r.Fixed + r.PerPending*pending + terms.shapeRise()
+		r1 := d + r.PerInFlight - r.PerPending
+		line := limit.MaxEvents*budget.HoldPercent/100 + r1 + LandedCompletionEvents*concurrency + publishes
+		return -max(held, line)
+	})
 }

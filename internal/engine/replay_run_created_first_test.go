@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runCreatedFirstFixtures are the recorded endings before start whose
@@ -52,9 +54,7 @@ func TestRunWorkflow_ReplaysCommittedRunCreatedFirstHistories(t *testing.T) {
 			requireRunCreatedFirstFixture(t, f.path)
 			recorded := loadHistoryFile(t, f.path)
 			runID, _, _, _, _ := startArgs(t, recorded)
-			if err := replayAs(t, recorded, runID); err != nil {
-				t.Fatalf("replaying %s against current code failed: %v", f.path, err)
-			}
+			must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", f.path)
 			markers := versionMarkers(t, recorded)[engine.RunCreatedFirstChange]
 			if f.legacy && markers != 0 {
 				t.Fatalf("%s records a %s marker: it is not a history from before the gate", f.path, engine.RunCreatedFirstChange)

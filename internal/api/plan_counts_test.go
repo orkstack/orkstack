@@ -12,6 +12,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // planCountService is a deployment whose task ceiling is out of the way, so
@@ -53,9 +55,7 @@ func largestSubmitted(t *testing.T, high int, build func(n int) string) (int, er
 		t.Fatalf("%d were accepted: raise the search's ceiling", high)
 	}
 	low := 1
-	if err := try(low); err != nil {
-		t.Fatalf("one was refused: %v", err)
-	}
+	must.OKf(t, try(low), "one was refused")
 	for high-low > 1 {
 		mid := (low + high) / 2
 		if try(mid) == nil {

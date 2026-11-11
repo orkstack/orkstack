@@ -4,7 +4,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // canStack is one engine replica and one Orker over a private namespace and
@@ -73,9 +75,7 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 		c = dialRoutingCluster(t, ctx, address, namespace)
 	}
 	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("snapshot store: %v", err)
-	}
+	must.OKf(t, err, "snapshot store")
 	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	s := &canStack{
 		t: t, ctx: ctx, client: c, namespace: namespace,
@@ -92,9 +92,7 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 		options = s.deployment.Apply
 	}
 	local, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("local run archive: %v", err)
-	}
+	must.OKf(t, err, "local run archive")
 	s.archive = engine.NewRunArchiver(local)
 	s.reader = engine.NewTemporalRunReader(c).WithSnapshotStore(snapshots)
 	s.starter = engine.NewTemporalStarterWithOrkerQueue(c, s.runQueue, s.orkerQueue)
@@ -126,9 +124,7 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 		engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orker, "events": events} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		t.Cleanup(w.Stop)
 	}
 	if versioned {
@@ -178,9 +174,7 @@ func (s *canStack) history(runID, execution string) *historypb.History {
 	iter := s.client.GetWorkflowHistory(s.ctx, runID, execution, false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			s.t.Fatalf("read history of %s/%s: %v", runID, execution, err)
-		}
+		must.OKf(s.t, err, "read history of %s/%s", runID, execution)
 		recorded.Events = append(recorded.Events, event)
 	}
 	return recorded
@@ -227,9 +221,7 @@ func carryOf(t *testing.T, h *historypb.History) *orkstackv1.RunContinuation {
 		return nil
 	}
 	var carry *orkstackv1.RunContinuation
-	if err := converter.GetDefaultDataConverter().FromPayload(payloads[4], &carry); err != nil {
-		t.Fatalf("decode the carry: %v", err)
-	}
+	must.OKf(t, converter.GetDefaultDataConverter().FromPayload(payloads[4], &carry), "decode the carry")
 	return carry
 }
 
@@ -243,9 +235,7 @@ func continuedCarryOf(t *testing.T, h *historypb.History) *orkstackv1.RunContinu
 			continue
 		}
 		var carry *orkstackv1.RunContinuation
-		if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[4], &carry); err != nil {
-			t.Fatalf("decode the handed-on carry: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[4], &carry), "decode the handed-on carry")
 		return carry
 	}
 	return nil
@@ -345,9 +335,7 @@ func shapeOf(t *testing.T, h *historypb.History) recordedShape {
 			switch attrs.GetActivityType().GetName() {
 			case task.ActivityExecuteTask:
 				var in *orkstackv1.ExecuteTaskInput
-				if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in))
 				scheduled[id] = in.GetTaskId()
 				shape.lastDispatch = id
 				if in.GetEach() != nil {
@@ -388,23 +376,17 @@ func recordContinued(t *testing.T, s *canStack, maxEvents, events int64) (runID 
 	limit := engine.DefaultInFlightLimit(16)
 	plan.InFlight = &limit
 	runID = fmt.Sprintf("ork-continued-%d", time.Now().UnixNano())
-	if err := s.starter.StartRun(s.ctx, runID, compile(t, canFixtureDocument()), nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(s.ctx, runID, compile(t, canFixtureDocument()), nil, plan), "StartRun")
 	chain := s.waitForSwitchOrEnd(runID, 90*time.Second)
 	if len(chain) < 2 {
 		return runID, nil, nil, nil, errors.New("the run ended without switching")
 	}
-	if err := s.client.SignalWorkflow(s.ctx, runID, "", engine.ResolveAwaitSignal, completion("approve", `{"approved":true}`, "fixture")); err != nil {
-		t.Fatalf("resolve approve: %v", err)
-	}
+	must.OKf(t, s.client.SignalWorkflow(s.ctx, runID, "", engine.ResolveAwaitSignal, completion("approve", `{"approved":true}`, "fixture")), "resolve approve")
 	if err := s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil); err != nil {
 		return runID, nil, nil, nil, fmt.Errorf("the run failed: %w", err)
 	}
 	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	chain = s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) != 2 {
 		return runID, nil, nil, nil, fmt.Errorf("%d generations, want exactly 2", len(chain))
@@ -469,9 +451,7 @@ func replayRecorded(h *historypb.History, runID string) error {
 func encodeHistory(t *testing.T, h *historypb.History) []byte {
 	t.Helper()
 	encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(h)
-	if err != nil {
-		t.Fatalf("encode history: %v", err)
-	}
+	must.OKf(t, err, "encode history")
 	return append(encoded, '\n')
 }
 
@@ -531,9 +511,7 @@ func TestIntegration_RecordContinuedRunHistories(t *testing.T) {
 		landed.maxEvents, landed.events, tried)
 
 	for name, h := range map[string]*historypb.History{"g0": g0, "g1": g1} {
-		if err := replayRecorded(h, runID); err != nil {
-			t.Fatalf("generation %s just recorded does not replay against current code: %v", name, err)
-		}
+		must.OKf(t, replayRecorded(h, runID), "generation %s just recorded does not replay against current code", name)
 	}
 	objects := map[string][]byte{}
 	for name, obj := range map[string]*orkstackv1.ContinuationObject{
@@ -541,9 +519,7 @@ func TestIntegration_RecordContinuedRunHistories(t *testing.T) {
 		continuedCheckObject: carry.GetCheckpoint(),
 	} {
 		data, err := s.snapshots.ReadSnapshot(ctx, obj.GetUri())
-		if err != nil {
-			t.Fatalf("read %s back from MinIO: %v", name, err)
-		}
+		must.OKf(t, err, "read %s back from MinIO", name)
 		if artifacts.ContinuationSHA256(data) != obj.GetSha256() {
 			t.Fatalf("%s read back does not hash to its reference", name)
 		}
@@ -555,12 +531,8 @@ func TestIntegration_RecordContinuedRunHistories(t *testing.T) {
 	capPlan := s.plan(engine.DefaultHistoryMaxEvents, nil)
 	capLimit := engine.DefaultInFlightLimit(16)
 	capPlan.InFlight = &capLimit
-	if err := s.starter.StartRun(ctx, capRunID, compile(t, inFlightCapFixtureDocument), payload(t, map[string]any{"parts": guardItems(24)}), capPlan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, capRunID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the in-flight-cap run failed: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, capRunID, compile(t, inFlightCapFixtureDocument), payload(t, map[string]any{"parts": guardItems(24)}), capPlan), "StartRun")
+	must.OKf(t, s.client.GetWorkflow(ctx, capRunID, "").Get(ctx, nil), "the in-flight-cap run failed")
 	capHistory := s.history(capRunID, "")
 	capMarker := false
 	for _, event := range capHistory.GetEvents() {
@@ -575,9 +547,7 @@ func TestIntegration_RecordContinuedRunHistories(t *testing.T) {
 	if !capMarker {
 		t.Fatal("the in-flight-cap run recorded no run-in-flight-cap marker: it never held")
 	}
-	if err := replayRecorded(capHistory, capRunID); err != nil {
-		t.Fatalf("the in-flight-cap history does not replay: %v", err)
-	}
+	must.OKf(t, replayRecorded(capHistory, capRunID), "the in-flight-cap history does not replay")
 
 	files := map[string][]byte{
 		continuedG0Fixture: encodeHistory(t, g0), continuedG1Fixture: encodeHistory(t, g1),
@@ -590,12 +560,8 @@ func TestIntegration_RecordContinuedRunHistories(t *testing.T) {
 	for path, data := range files {
 		proof.Write(t, "continuation", filepath.Base(path), data)
 		if write {
-			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(path, data, 0o644); err != nil {
-				t.Fatalf("write %s: %v", path, err)
-			}
+			must.OK(t, os.MkdirAll(filepath.Dir(path), 0o755))
+			must.OKf(t, os.WriteFile(path, data, 0o644), "write %s", path)
 		}
 	}
 	if write {

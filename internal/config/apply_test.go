@@ -3,6 +3,8 @@ package config
 import (
 	"fmt"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeEnv is a minimal in-memory stand-in for the process environment, so
@@ -33,15 +35,11 @@ func (f *fakeEnv) setenv(key, value string) error {
 func TestApply_SetsUnsetVariables(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  log_level: debug\n  log_format: json\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 
 	env := newFakeEnv(nil)
 	set, err := doc.Apply(env.lookup, env.setenv)
-	if err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
+	must.OKf(t, err, "Apply")
 
 	if got, ok := env.lookup("ORK_LOG_LEVEL"); !ok || got != "debug" {
 		t.Errorf("ORK_LOG_LEVEL = %q, %v; want debug, true", got, ok)
@@ -64,17 +62,13 @@ func TestApply_SetsUnsetVariables(t *testing.T) {
 func TestApply_EnvironmentWins_EvenWhenEmpty(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  log_level: debug\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 
 	// ORK_LOG_LEVEL is present in the environment, set to "" — Apply must
 	// leave it alone rather than treating an empty string as absent.
 	env := newFakeEnv(map[string]string{"ORK_LOG_LEVEL": ""})
 	set, err := doc.Apply(env.lookup, env.setenv)
-	if err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
+	must.OKf(t, err, "Apply")
 
 	if got, _ := env.lookup("ORK_LOG_LEVEL"); got != "" {
 		t.Errorf("ORK_LOG_LEVEL = %q, want untouched empty string", got)
@@ -89,9 +83,7 @@ func TestApply_EnvironmentWins_EvenWhenEmpty(t *testing.T) {
 func TestApply_SetenvError_Propagates(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  log_level: debug\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 
 	env := newFakeEnv(nil)
 	boom := fmt.Errorf("boom")
@@ -106,14 +98,10 @@ func TestApply_SchemaOrder(t *testing.T) {
 	// same way every time regardless of the file's own key order.
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  log_format: json\n  log_level: debug\ntemporal:\n  address: x:1\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	env := newFakeEnv(nil)
 	set, err := doc.Apply(env.lookup, env.setenv)
-	if err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
+	must.OKf(t, err, "Apply")
 	// temporal.address precedes telemetry.log_format/log_level in Schema.
 	idxAddr, idxFormat := -1, -1
 	for i, e := range set {

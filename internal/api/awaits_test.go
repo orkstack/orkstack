@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -24,8 +24,11 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const awaitedYAML = `
@@ -164,9 +167,7 @@ func newAwaitFixture(t *testing.T, configure ...func(*api.Config)) *awaitFixture
 	})
 	af.starter.onSignal = func(string, *orkstackv1.AwaitSignal) { af.order = append(af.order, "signal") }
 	wf, err := dsl.Compile([]byte(awaitedYAML))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	af.wf = wf
 	return af
 }
@@ -235,9 +236,7 @@ func (f *awaitFixture) resolve(req *orkstackv1.ResolveAwaitRequest, principal st
 func (f *awaitFixture) door(t *testing.T, path string, token *string, body string, headers map[string]string) (int, []byte) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.baseURL+path, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	req.Header.Set("Content-Type", "application/json")
 	if token != nil {
 		req.Header.Set("Authorization", *token)
@@ -246,9 +245,7 @@ func (f *awaitFixture) door(t *testing.T, path string, token *string, body strin
 		req.Header.Set(name, value)
 	}
 	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatalf("POST %s: %v", path, err)
-	}
+	must.OKf(t, err, "POST %s", path)
 	defer resp.Body.Close()
 	payload, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, payload
@@ -284,9 +281,7 @@ func TestSubmitRun_MintsOneCallbackPerCallbackAwait(t *testing.T) {
 	f.apply(t, awaitedYAML)
 	resp, err := f.svc.SubmitRun(context.Background(),
 		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "awaited-api"}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := resp.Msg.GetRun().GetId()
 	callbacks := resp.Msg.GetAwaitCallbacks()
 	if len(callbacks) != 1 || callbacks[0].GetTaskId() != "gate" {
@@ -307,14 +302,12 @@ func TestSubmitRun_MintsOneCallbackPerCallbackAwait(t *testing.T) {
 	}
 	cred := plan.Awaits["gate"]
 	salt, err := hex.DecodeString(cred.Salt)
-	if err != nil {
-		t.Fatalf("salt: %v", err)
-	}
+	must.OKf(t, err, "salt")
 	if hex.EncodeToString(triggers.HashSecret(salt, token)) != cred.Digest {
 		t.Fatal("the plan's digest is not sha256(salt || token)")
 	}
 	// The token appears nowhere but the response.
-	encodedPlan, _ := json.Marshal(plan)
+	encodedPlan, _ := stablejson.Marshal(plan)
 	if strings.Contains(string(encodedPlan), token) {
 		t.Fatal("the plan carries the plaintext token")
 	}
@@ -343,9 +336,7 @@ func TestSubmitRun_KeyedRepeatDisclosesNoCallback(t *testing.T) {
 		resp, err := f.svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: "awaited-api", IdempotencyKey: "nightly",
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun: %v", err)
-		}
+		must.OKf(t, err, "SubmitRun")
 		return resp.Msg
 	}
 	first := submit()
@@ -373,9 +364,7 @@ func TestSubmitRun_ReissuedRunIDDisclosesPathsForTheNewID(t *testing.T) {
 	}
 	resp, err := svc.SubmitRun(context.Background(),
 		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "awaited-api"}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	rejected, started := starter.attempts()
 	if len(rejected) != 1 || len(started) != 1 || rejected[0] == started[0] {
 		t.Fatalf("rejected %v started %v, want one reissue", rejected, started)
@@ -394,9 +383,7 @@ func TestSubmitRun_AwaitOnlyOrkflowNeedsNoLivePool(t *testing.T) {
 	f.apply(t, awaitOnlyYAML)
 	resp, err := f.svc.SubmitRun(context.Background(),
 		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "await-only-api"}))
-	if err != nil {
-		t.Fatalf("an await-only orkflow was refused with no Orker anywhere: %v", err)
-	}
+	must.OKf(t, err, "an await-only orkflow was refused with no Orker anywhere")
 	f.starter.mu.Lock()
 	plan := f.starter.plans[0]
 	f.starter.mu.Unlock()
@@ -524,9 +511,7 @@ func TestResolveAwait_StoresExactBytesBeforeDelivering(t *testing.T) {
 	f.seedRun(t, "ork-await-2", "", map[string]orkstackv1.Status{"gate": orkstackv1.Status_STATUS_AWAITING})
 	body := "{\r\n  \"approved\": true,\n  \"n\": 12345678901234567890 }"
 	resp, err := f.resolve(&orkstackv1.ResolveAwaitRequest{RunId: "ork-await-2", TaskId: "gate", ValuesJson: body}, "alice")
-	if err != nil {
-		t.Fatalf("ResolveAwait: %v", err)
-	}
+	must.OKf(t, err, "ResolveAwait")
 	if strings.Join(f.order, ",") != "put,signal" {
 		t.Fatalf("order = %v, want the values stored before the resolution was delivered", f.order)
 	}
@@ -817,17 +802,13 @@ func TestAwaitDoor_ReadsTheBodyWhateverTypeItDeclares(t *testing.T) {
 			f := newAwaitFixture(t)
 			f.seedRun(t, run, "", map[string]orkstackv1.Status{"gate": orkstackv1.Status_STATUS_AWAITING})
 			req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.baseURL+c.path, strings.NewReader(c.body))
-			if err != nil {
-				t.Fatalf("build request: %v", err)
-			}
+			must.OKf(t, err, "build request")
 			if contentType != "" {
 				req.Header.Set("Content-Type", contentType)
 			}
 			req.Header.Set("Authorization", "Bearer "+awaitToken)
 			resp, err := f.client.Do(req)
-			if err != nil {
-				t.Fatalf("POST %s: %v", c.path, err)
-			}
+			must.OKf(t, err, "POST %s", c.path)
 			payload, _ := io.ReadAll(resp.Body)
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusAccepted {

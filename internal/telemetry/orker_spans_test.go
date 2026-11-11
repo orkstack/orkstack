@@ -14,6 +14,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // newObserverProviders builds a Providers over an in-memory span exporter (a
@@ -67,9 +69,7 @@ func attrString(attrs []attribute.KeyValue, key string) (string, bool) {
 func TestOrkerObserver_PhaseSpansNestUnderTheAttempt(t *testing.T) {
 	providers, exporter, _ := newObserverProviders(t)
 	inst, err := NewOrkerInstruments(providers)
-	if err != nil {
-		t.Fatalf("NewOrkerInstruments: %v", err)
-	}
+	must.OKf(t, err, "NewOrkerInstruments")
 	obs := NewOrkerObserver(providers, inst, nil)
 
 	in := observerTestInput()
@@ -130,9 +130,7 @@ func TestOrkerObserver_PhaseSpansNestUnderTheAttempt(t *testing.T) {
 func TestOrkerObserver_FailureSetsSpanStatusAndReason(t *testing.T) {
 	providers, exporter, _ := newObserverProviders(t)
 	inst, err := NewOrkerInstruments(providers)
-	if err != nil {
-		t.Fatalf("NewOrkerInstruments: %v", err)
-	}
+	must.OKf(t, err, "NewOrkerInstruments")
 	obs := NewOrkerObserver(providers, inst, nil)
 
 	_, attemptObs := obs.Begin(context.Background(), observerTestInput(), 1)
@@ -167,9 +165,7 @@ func TestOrkerObserver_FailureSetsSpanStatusAndReason(t *testing.T) {
 func TestOrkerObserver_PhaseHistogramHasOnePointPerEndedPhase(t *testing.T) {
 	providers, _, reader := newObserverProviders(t)
 	inst, err := NewOrkerInstruments(providers)
-	if err != nil {
-		t.Fatalf("NewOrkerInstruments: %v", err)
-	}
+	must.OKf(t, err, "NewOrkerInstruments")
 	obs := NewOrkerObserver(providers, inst, nil)
 
 	_, attemptObs := obs.Begin(context.Background(), observerTestInput(), 1)
@@ -179,9 +175,7 @@ func TestOrkerObserver_PhaseHistogramHasOnePointPerEndedPhase(t *testing.T) {
 	attemptObs.End(orker.AttemptOutcome{})
 
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
+	must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
 	points := histogramPoints(t, rm, "ork.orker.task_phase.duration")
 	if len(points) != 3 {
 		t.Fatalf("got %d data points on ork.orker.task_phase.duration, want 3", len(points))
@@ -224,9 +218,7 @@ func histogramPoints(t *testing.T, rm metricdata.ResourceMetrics, name string) [
 func TestOrkerObserver_TraceContext(t *testing.T) {
 	providers, _, _ := newObserverProviders(t)
 	inst, err := NewOrkerInstruments(providers)
-	if err != nil {
-		t.Fatalf("NewOrkerInstruments: %v", err)
-	}
+	must.OKf(t, err, "NewOrkerInstruments")
 	obs := NewOrkerObserver(providers, inst, nil)
 
 	ctx, attemptObs := obs.Begin(context.Background(), observerTestInput(), 1)
@@ -254,18 +246,14 @@ func TestOrkerObserver_CardinalityGatesRunAndTaskIDOnTasksCounter(t *testing.T) 
 			providers, _, reader := newObserverProviders(t)
 			providers.cfg.HighCardinality = high
 			inst, err := NewOrkerInstruments(providers)
-			if err != nil {
-				t.Fatalf("NewOrkerInstruments: %v", err)
-			}
+			must.OKf(t, err, "NewOrkerInstruments")
 			obs := NewOrkerObserver(providers, inst, nil)
 
 			_, attemptObs := obs.Begin(context.Background(), observerTestInput(), 1)
 			attemptObs.End(orker.AttemptOutcome{})
 
 			var rm metricdata.ResourceMetrics
-			if err := reader.Collect(context.Background(), &rm); err != nil {
-				t.Fatalf("Collect: %v", err)
-			}
+			must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
 			dp := onlySumPoint(t, rm, "ork.orker.tasks")
 			_, hasRunID := dp.Attributes.Value(attribute.Key(AttrRunID))
 			if hasRunID != high {
@@ -357,9 +345,7 @@ func TestNewOrkerObserverForSinks_SelectionAttrsOnMetricsOnlyHighCardinality(t *
 			attemptObs.End(orker.AttemptOutcome{})
 
 			var rm metricdata.ResourceMetrics
-			if err := reader.Collect(context.Background(), &rm); err != nil {
-				t.Fatalf("Collect: %v", err)
-			}
+			must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
 			dp := onlySumPoint(t, rm, "ork.orker.tasks")
 			_, hasAttr := dp.Attributes.Value(attribute.Key("ork.ns.team"))
 			if hasAttr != high {
@@ -419,9 +405,7 @@ func TestOrkerObserver_CountsAnAttemptWhoseDirectoryWasLeftOnDisk(t *testing.T) 
 	_, clean := obs.Begin(context.Background(), inputForSink("", nil), 1)
 	clean.End(orker.AttemptOutcome{})
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
+	must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
 	for _, sm := range rm.ScopeMetrics {
 		for _, m := range sm.Metrics {
 			if m.Name == "ork.orker.workspace_cleanup_failures" {
@@ -432,9 +416,7 @@ func TestOrkerObserver_CountsAnAttemptWhoseDirectoryWasLeftOnDisk(t *testing.T) 
 
 	_, leaked := obs.Begin(context.Background(), inputForSink("", nil), 1)
 	leaked.End(orker.AttemptOutcome{Reason: orker.ReasonContainerExitNonzero, CleanupErr: errors.New("permission denied")})
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
+	must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
 	if dp := onlySumPoint(t, rm, "ork.orker.workspace_cleanup_failures"); dp.Value != 1 {
 		t.Fatalf("ork.orker.workspace_cleanup_failures = %d; want 1", dp.Value)
 	}

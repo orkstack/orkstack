@@ -57,7 +57,7 @@
 # everything in it, the orkstack-task-secrets Secret with its one key among
 # it, deleted at the end (KEEP=1 leaves it); nothing cluster-wide. In
 # OrkStack: the five check Orkflows in --ork-namespace,
-# applied once and left (an identical apply changes nothing), their runs,
+# created once and left (an identical create changes nothing), their runs,
 # kept as that namespace's retention says, and Orkers of the pool k8s-check
 # while the check runs, which that namespace must allow. Exit 0: every check
 # held; 1: a check failed, with the namespace's state in the evidence; 2: a
@@ -211,7 +211,7 @@ else
 	go build -o "$work/orkctl" ./cmd/orkctl
 	orkctl_bin=$work/orkctl
 fi
-orkctl() { "$orkctl_bin" --server "$server" --namespace "$orkns" "$@"; }
+orkctl() { "$orkctl_bin" --server "$server" -n "$orkns" "$@"; }
 orkctl orkflow list >/dev/null 2>"$out/engine.err" ||
 	refuse "the engine at $server does not answer: $(tail -n 1 "$out/engine.err")"
 log "engine: $server answers"
@@ -387,11 +387,11 @@ for shape in userns privileged; do
 done
 
 for flow in deploy/kubernetes/check/orkflows/*.ork.yaml; do
-	orkctl apply "$flow" >/dev/null
+	orkctl orkflow create "$flow" >/dev/null
 done
 
 orker_pod() { k -n "$ns" get pod -l app.kubernetes.io/name=orker --field-selector=status.phase=Running -o jsonpath='{.items[0].metadata.name}'; }
-run_status() { orkctl run get "$1" --json | jq -r .run.status; }
+run_status() { orkctl run get "$1" -j | jq -r .run.status; }
 wait_terminal() { # wait_terminal RUN: until the run has ended, at most 5 minutes
 	local deadline=$((SECONDS + 300)) status
 	while :; do
@@ -453,14 +453,14 @@ check_shape() { # check_shape SHAPE
 	fi
 
 	log "$shape: artifacts, network none and default, limits and the task profile"
-	run=$(orkctl run submit k8s-orker-proof --json | jq -r .run.id)
+	run=$(orkctl run submit k8s-orker-proof -j | jq -r .run.id)
 	wait_terminal "$run"
 	orkctl run get "$run" >"$dir/proof-run.txt"
 	orkctl run logs "$run" >"$dir/proof-logs.txt"
 	orkctl run artifacts "$run" >"$dir/proof-artifacts.txt"
 	orkctl run attempts "$run" >"$dir/proof-attempts.txt"
 	if [ "$(run_status "$run")" != SUCCEEDED ]; then
-		orkctl run get "$run" --json | jq -r '.run.taskRuns[] | select(.error) | "\(.taskId) \(.error.code): \(.error.message)"' >"$dir/proof-errors.txt" || :
+		orkctl run get "$run" -j | jq -r '.run.taskRuns[] | select(.error) | "\(.taskId) \(.error.code): \(.error.message)"' >"$dir/proof-errors.txt" || :
 		if grep -q ' IMAGE_PULL_FAILED: ' "$dir/proof-errors.txt"; then
 			fail "$shape: the engine could not pull a task's image ($(grep -m1 ' IMAGE_PULL_FAILED: ' "$dir/proof-errors.txt" | cut -c1-300)); a registry with a private certificate authority needs --registry-host and --registry-ca"
 		fi
@@ -484,9 +484,9 @@ check_shape() { # check_shape SHAPE
 	expect "$dir/proof-artifacts.txt" '^compress +1 +OUTPUT +report.txt.gz ' "$shape: compress's artifact was committed"
 
 	log "$shape: a task's secrets: the floor admits what it lists and refuses what it does not"
-	run=$(orkctl run submit k8s-orker-secrets --json | jq -r .run.id)
+	run=$(orkctl run submit k8s-orker-secrets -j | jq -r .run.id)
 	wait_terminal "$run"
-	orkctl run get "$run" --json >"$dir/secrets-run.json"
+	orkctl run get "$run" -j >"$dir/secrets-run.json"
 	orkctl run logs "$run" >"$dir/secrets-logs.txt"
 	jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-") \(.error.message // "-")"' "$dir/secrets-run.json" | tee "$dir/secrets-tasks.txt"
 	expect "$dir/secrets-tasks.txt" '^listed SUCCEEDED ' "$shape: a task reads a key of orkstack-task-secrets, which the floor lists"
@@ -503,7 +503,7 @@ check_shape() { # check_shape SHAPE
 
 	log "$shape: a cancel, and where each task's cgroup is"
 	since=$(k -n "$ns" exec "$pod" -c engine -- date +%s)
-	run=$(orkctl run submit k8s-orker-cancel --json | jq -r .run.id)
+	run=$(orkctl run submit k8s-orker-cancel -j | jq -r .run.id)
 	wait_started "$run" 2
 	# Read from inside the engine: its PID 1 lives in <its container's
 	# cgroup>/engine, and each task's process is in its PID namespace.
@@ -539,18 +539,18 @@ check_shape() { # check_shape SHAPE
 	expect "$dir/cancel-logs.txt" '^\[stubborn\] stubborn: SIGTERM at .*ignoring it' "$shape: stubborn's trap ran"
 
 	log "$shape: the per-task cap and a task's own limit"
-	if orkctl run submit k8s-orker-too-big --json >"$dir/too-big-submit.json" 2>"$dir/too-big-submit.err"; then
+	if orkctl run submit k8s-orker-too-big -j >"$dir/too-big-submit.json" 2>"$dir/too-big-submit.err"; then
 		fail "$shape: a task asking for more than the per-task cap was accepted as run $(jq -r .run.id "$dir/too-big-submit.json"), so the submit did not ask the pool's Orkers for their caps"
 	fi
 	cat "$dir/too-big-submit.err"
 	expect "$dir/too-big-submit.err" 'failed_precondition: RESOURCES_UNSATISFIABLE: task "too-big" requests memory 512Mi, which no Orker of pool "k8s-check" .* caps are 0\.5 cpu and 402653184 bytes' \
 		"$shape: a task asking for more than the 384Mi cap is refused at submit, by the cap its Orker reported"
-	orkctl run list --filter orkflow_name=k8s-orker-too-big --json >"$dir/too-big-runs.json"
+	orkctl run list -F orkflow_name=k8s-orker-too-big -j >"$dir/too-big-runs.json"
 	[ "$(jq '.runs // [] | length' "$dir/too-big-runs.json")" = 0 ] || fail "$shape: the refused submit left a run of k8s-orker-too-big"
 	log "ok: $shape: and left no run behind"
-	run=$(orkctl run submit k8s-orker-limits --json | jq -r .run.id)
+	run=$(orkctl run submit k8s-orker-limits -j | jq -r .run.id)
 	wait_terminal "$run"
-	orkctl run get "$run" --json >"$dir/limits-run.json"
+	orkctl run get "$run" -j >"$dir/limits-run.json"
 	orkctl run logs "$run" >"$dir/limits-logs.txt"
 	jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-") \(.error.message // "-")"' "$dir/limits-run.json" | tee "$dir/limits-tasks.txt"
 	expect "$dir/limits-tasks.txt" '^within SUCCEEDED ' "$shape: a task at the 384Mi cap runs"
@@ -558,7 +558,7 @@ check_shape() { # check_shape SHAPE
 	expect "$dir/limits-tasks.txt" '^hog FAILED CONTAINER_EXIT_NONZERO .*exceeding its memory limit of 64Mi' "$shape: a task over its own 64Mi is killed by the kernel"
 
 	log "$shape: deleting the pod while two tasks run"
-	run=$(orkctl run submit k8s-orker-cancel --json | jq -r .run.id)
+	run=$(orkctl run submit k8s-orker-cancel -j | jq -r .run.id)
 	wait_started "$run" 2
 	k -n "$ns" exec "$pod" -c engine -- docker events \
 		--filter type=container --filter event=kill --filter event=die --format "$events_format" \
@@ -570,7 +570,7 @@ check_shape() { # check_shape SHAPE
 	check_signals "$dir/pod-delete-signals.txt"
 	log "ok: $shape: the engine outlived the Orker and delivered every signal"
 	wait_terminal "$run"
-	orkctl run get "$run" --json | jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-")"' | tee "$dir/pod-delete-tasks.txt"
+	orkctl run get "$run" -j | jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-")"' | tee "$dir/pod-delete-tasks.txt"
 	expect "$dir/pod-delete-tasks.txt" '^graceful FAILED ORKER_HEARTBEAT_TIMEOUT$' "$shape: a task with no retry: ends explicitly when its Orker stops"
 	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the replacement pod never became ready"
 	log "ok: $shape: the Deployment replaced the pod"

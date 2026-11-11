@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The 4,000-task ceiling spec and its merge-gate twin, as a plan lists them.
@@ -88,9 +90,7 @@ func TestMerge_AFullProofRecordsTheUIPlansDeferredSpecs(t *testing.T) {
 		t.Fatalf("code %d, result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
 	}
 	var ui uiLedger
-	if err := readJSON(filepath.Join(f.out, "ui-e2e-tests.json"), &ui); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(f.out, "ui-e2e-tests.json"), &ui))
 	n := 0
 	for _, e := range ui.Tests {
 		if e.File == ceilingTest.File {
@@ -213,7 +213,7 @@ func ceilingLedger() uiLedger {
 // them, and the merge takes their ledgers.
 func TestMerge_ACINightlyProofRunsItsUIParts(t *testing.T) {
 	f := newMergeFixture(t, tierNightly, true)
-	f.plan.PartsExpected = partsExpected(tierNightly, false, 2, nightlyUIShards(1, make([]nightlySpecEntry, 1)), false)
+	f.plan.PartsExpected = partsExpected(tierNightly, false, 2, nightlyUIShards(1, make([]nightlySpecEntry, 1)))
 	nightlyUIPlan(f)
 	f.writePart(f.basePart("plan"), nil)
 	build := f.basePart("build")
@@ -278,10 +278,10 @@ func TestMerge_ANightlyProofIsHeldToTheTreesSpecList(t *testing.T) {
 // holds the listed spec files alone: at most the requested shards, at most
 // one per row, and none when the list is empty.
 func TestPlan_ANightlyCIProofExpectsItsUIParts(t *testing.T) {
-	if p := partsExpected(tierNightly, false, 2, 1, false); !containsString(p, "ui-e2e:1") || containsString(p, "fast") || containsString(p, "activity-fixture:shell") {
+	if p := partsExpected(tierNightly, false, 2, 1); !containsString(p, "ui-e2e:1") || containsString(p, "fast") || containsString(p, "activity-fixture:shell") {
 		t.Errorf("nightly parts = %v", p)
 	}
-	if p := partsExpected(tierNightly, false, 2, 0, false); containsString(p, "ui-e2e:1") {
+	if p := partsExpected(tierNightly, false, 2, 0); containsString(p, "ui-e2e:1") {
 		t.Errorf("a nightly proof with no listed spec expects a UI part: %v", p)
 	}
 	rows, _ := parseNightlySpecs(strings.NewReader(specRow+"\n"), "list")

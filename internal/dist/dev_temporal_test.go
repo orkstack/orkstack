@@ -1,10 +1,12 @@
 package dist_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The development stack's Temporal, and every proof's own (scripts/proof.sh
@@ -75,9 +77,7 @@ func dynamicConfigDuration(t *testing.T, pairs []string, key string) time.Durati
 	switch v := decoded.(type) {
 	case string:
 		d, err := time.ParseDuration(v)
-		if err != nil {
-			t.Fatalf("%s=%s: %v", key, found[0], err)
-		}
+		must.OKf(t, err, "%s=%s", key, found[0])
 		return d
 	case float64:
 		return time.Duration(v * float64(time.Second))

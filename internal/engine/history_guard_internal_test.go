@@ -23,14 +23,14 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func guardCompile(t *testing.T, document string) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(document))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	return wf
 }
 
@@ -38,9 +38,7 @@ func guardCompile(t *testing.T, document string) *orkstackv1.Orkflow {
 func guardPlan(t *testing.T, maxEvents, maxBytes int64) RunPlan {
 	t.Helper()
 	route, err := task.RouteForPool(task.DefaultPool, task.DefaultQueue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return RunPlan{
 		Namespace: "default",
 		Routes:    map[string]string{route.Pool: route.Queue},
@@ -51,9 +49,7 @@ func guardPlan(t *testing.T, maxEvents, maxBytes int64) RunPlan {
 func guardInput(t *testing.T, values map[string]any) *orkstackv1.Payload {
 	t.Helper()
 	data, err := structpb.NewStruct(values)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.Payload{Data: data}
 }
 
@@ -111,9 +107,7 @@ func runGuardWorkflow(t *testing.T, setup func(env *testsuite.TestWorkflowEnviro
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("the test workflow did not complete")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("the test workflow failed: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "the test workflow failed")
 }
 
 // TestHistoryNow_CountsCommandsOfTheCurrentWorkflowTask: one dispatch batch of
@@ -350,7 +344,7 @@ func failReserveSteps(t *testing.T, ctx workflow.Context) {
 			inFlight[itemFlightKey("fan", 0)] = nil
 		}, r.PerInFlight, r.PerInFlightBytes},
 		{"publish an item event detached", func() {
-			s.pendingItemPublishes = append(s.pendingItemPublishes, nil)
+			s.pendingItemPublishes = append(s.pendingItemPublishes, detachedPublish{})
 		}, r.PerInFlight, 0},
 		{"schedule pin member m1", func() {
 			s.taskRuns["m1"].Status = orkstackv1.Status_STATUS_RUNNING
@@ -529,7 +523,7 @@ func reserveWalks(t *testing.T, ctx workflow.Context) {
 					s.pendingItemPublishes = s.pendingItemPublishes[1:]
 					return "drain publish"
 				}
-				s.pendingItemPublishes = append(s.pendingItemPublishes, nil)
+				s.pendingItemPublishes = append(s.pendingItemPublishes, detachedPublish{})
 				s.chargeDetachedPublish()
 				return "publish"
 			},
@@ -548,7 +542,7 @@ func reserveWalks(t *testing.T, ctx workflow.Context) {
 				// A pass counts once: growth that was never charged is not
 				// seen until the next pass (which is why every growth path
 				// charges).
-				s.pendingItemPublishes = append(s.pendingItemPublishes, nil)
+				s.pendingItemPublishes = append(s.pendingItemPublishes, detachedPublish{})
 				if again, _ := s.reserveNow(inFlight); again != re {
 					t.Errorf("seed %d step %d: reserveNow counted failReserve twice in one pass", seed, step)
 					return
@@ -571,9 +565,7 @@ func reserveWalks(t *testing.T, ctx workflow.Context) {
 		// The walk is CPU-bound; yield once a seed so Temporal's deadlock
 		// detector sees progress instead of a starved host. The detector is
 		// never disabled.
-		if err := workflow.Sleep(ctx, time.Millisecond); err != nil {
-			t.Fatalf("seed %d: yield: %v", seed, err)
-		}
+		must.OKf(t, workflow.Sleep(ctx, time.Millisecond), "seed %d: yield", seed)
 	}
 }
 
@@ -609,7 +601,9 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 		t.Run(state.name, func(t *testing.T) {
 			var elapsed, wallElapsed time.Duration
 			var wallStarted time.Time
-			var clock *passClock
+			// Made here, outside the workflow: making a pass clock collects
+			// once, and holds the collector off until the subtest ends.
+			clock := newPassClock(t)
 			var quickTotal, exactTotal int64
 			var checks int
 			var guardErr error
@@ -635,7 +629,6 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 				// The pass is timed on this goroutine's thread CPU time
 				// (passClock): a host loaded by other processes delays it
 				// without adding to its CPU time, and a slower guard still does.
-				clock = &passClock{}
 				begin := clock.now()
 				wallStarted = time.Now()
 				s.beginPass()
@@ -861,9 +854,7 @@ func TestHistoryLimitHistory_CatchesAGuardRemoved(t *testing.T) {
 func TestCommittedHistory_HistoryGuardWithoutItsGateIsCaught(t *testing.T) {
 	const path = "testdata/history/run-succeeded-v2.json"
 	tiny := &HistoryLimit{MaxEvents: 100, MaxBytes: 64 << 10, Reserve: DefaultHistoryReserve}
-	if err := replayWithGuard(t, path, func() { historyGuardPlanForTest = tiny }); err != nil {
-		t.Fatalf("replaying %s with a tiny limit behind the gate failed: %v", path, err)
-	}
+	must.OKf(t, replayWithGuard(t, path, func() { historyGuardPlanForTest = tiny }), "replaying %s with a tiny limit behind the gate failed", path)
 	requireDeterminismViolation(t, replayWithGuard(t, path, func() {
 		historyGuardPlanForTest = tiny
 		historyGuardForcedForTest = true

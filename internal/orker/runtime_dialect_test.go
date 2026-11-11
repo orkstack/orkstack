@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var (
@@ -18,9 +20,7 @@ var (
 func renderedIn(t *testing.T, spec ContainerSpec, spoken dialect) string {
 	t.Helper()
 	args, err := createArgs(spec, spoken)
-	if err != nil {
-		t.Fatalf("createArgs(%+v): %v", spoken, err)
-	}
+	must.OKf(t, err, "createArgs(%+v)", spoken)
 	return strings.Join(args, " ")
 }
 
@@ -156,9 +156,7 @@ func TestDockerRuntime_SignalOfAStoppedPodmanContainerIsNotAFailure(t *testing.T
 	script := fake.bin + ".podman"
 	body := "#!/bin/sh\necho \"$*\" >> " + shellQuote(fake.dir+"/calls") + "\n" +
 		"echo 'Error: can only kill running containers. c1 is in state exited: container state improper' >&2\nexit 125\n"
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(script, []byte(body), 0o755))
 	runtime := &DockerRuntime{Bin: script, CLI: CLIPodman}
 	if err := runtime.Signal(context.Background(), "c1", SIGTERM); err != nil {
 		t.Fatalf("Signal = %v; a stopped container is not a failure", err)
@@ -198,9 +196,7 @@ func TestDockerRuntime_AsksTheEngineBehindTheDockerCLI(t *testing.T) {
 				t.Fatalf("Describe = %+v, %v; want engine %s, CLI %s, seccomp %s", info, err, tt.wantEngine, tt.cli, tt.wantSeccomp)
 			}
 			args, err := createArgs(validSpec(), spoken)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if spelled := strings.Contains(strings.Join(args, " "), "seccomp="+SeccompBuiltin); spelled != (tt.wantSeccomp == SeccompBuiltin) {
 				t.Errorf("seccomp=%s spelled %t; Describe says %s", SeccompBuiltin, spelled, tt.wantSeccomp)
 			}
@@ -419,9 +415,7 @@ func TestDockerRuntime_TheProbeSpeaksTheEnginesSeccomp(t *testing.T) {
 	}
 	shim := fake.bin + ".shim"
 	body := "#!/bin/sh\necho \"Error: template: version:1:7: executing at <.Components>: can't evaluate field Components in type *define.Version\" >&2\nexit 125\n"
-	if err := os.WriteFile(shim, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(shim, []byte(body), 0o755))
 	_, err = (&DockerRuntime{Bin: shim}).RunBootProbe(context.Background(), probeSpecUnder(t, t.TempDir()))
 	if !errors.Is(err, ErrPostureRefused) || !strings.Contains(err.Error(), CLIVar+"="+CLIPodman) {
 		t.Errorf("RunBootProbe behind the podman-docker shim = %v; want ErrPostureRefused telling to set %s", err, CLIVar)

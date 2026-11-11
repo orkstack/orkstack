@@ -12,6 +12,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // composedChildOnAPinDocument is composedChildDocument with a pin and a
@@ -71,9 +73,7 @@ func TestRunWorkflow_AComposedChildRunsOnItsParentsRetrySpacingAndFairness(t *te
 	plan.Fairness = &engine.FairnessSelection{Key: "payments", Weight: 3, PinRequests: true}
 
 	h.run("ork-parent", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	child, ok := h.store.Get(plan.Children["release"].RunID)
 	if !ok || child.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("the child did not run to success: %v", child)

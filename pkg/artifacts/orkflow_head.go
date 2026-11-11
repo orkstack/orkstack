@@ -3,7 +3,7 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +12,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // An orkflow's HEAD is the version most recently applied, and it is the token
@@ -102,7 +103,7 @@ func headMoved(namespace, name string, expected HeadExpectation, head string) er
 // version the editor saw when it fetched the document it is now applying.
 //
 // It is a type rather than a version string because the store has to tell
-// "I claim nothing" — a plain `orkctl apply file.yaml` — from a claim about a
+// "I claim nothing" — a plain `orkctl orkflow create file.yaml` — from a claim about a
 // particular version, and one string cannot say both while "" is also the
 // honest answer for an orkflow nothing was ever applied to.
 type HeadExpectation struct {
@@ -175,10 +176,17 @@ func parseOrkflowMetaKey(key, basename string) (namespace, name string, ok bool)
 type headPointer struct {
 	Version   string    `json:"version"`
 	AppliedAt time.Time `json:"applied_at"`
+	// Since is the instant this incarnation of the orkflow began: the
+	// applied_at of the apply that swapped a head in from nothing, copied by
+	// every swap after it. A version created before it belongs to an
+	// incarnation a Delete removed (confirmPromoted). Zero on a head written
+	// before the field, or rewritten by an engine that predates it, and then
+	// it says nothing.
+	Since time.Time `json:"since,omitzero"`
 }
 
 func marshalHeadPointer(pointer headPointer) ([]byte, error) {
-	document, err := json.MarshalIndent(pointer, "", "  ")
+	document, err := stablejson.MarshalIndent(pointer, "  ")
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: encode head pointer: %w", err)
 	}
@@ -303,6 +311,11 @@ func (s *S3OrkflowStore) effectiveHead(
 	}, "", nil
 }
 
+// errHeadGone is a head swap refused because the head it was conditioned on is
+// gone (a 404 to If-Match): only a Delete of the orkflow removes the head. It
+// is a refused condition too.
+var errHeadGone = fmt.Errorf("the head pointer this swap read is gone: %w", ErrPreconditionFailed)
+
 // swapHead moves the head pointer, conditional on the bytes the caller read.
 // A caller holding no etag is claiming the pointer does not exist yet, which
 // IfAbsent is the object store's word for.
@@ -335,8 +348,15 @@ func (s *S3OrkflowStore) swapHead(
 	} else {
 		input.IfMatch = aws.String(etag)
 	}
-	if _, err := s.client.PutObject(ctx, input); err != nil {
-		if isPreconditionFailed(err) {
+	// Equal bytes after a lost answer (putConfirmed) name this version at this
+	// apply's stamp: whoever wrote them, the head is exactly the pointer this
+	// swap meant to write.
+	if _, err := putConfirmed(ctx, s.client, input, document); err != nil {
+		if input.IfMatch != nil && isNotFound(err) {
+			return fmt.Errorf("artifacts: move head of orkflow %q in namespace %q to %q: %w",
+				name, ResolveNamespace(namespace), pointer.Version, errHeadGone)
+		}
+		if refusedCondition(err, input) {
 			return fmt.Errorf("artifacts: move head of orkflow %q in namespace %q to %q: %w",
 				name, ResolveNamespace(namespace), pointer.Version, ErrPreconditionFailed)
 		}

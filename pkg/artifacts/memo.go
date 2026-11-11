@@ -3,7 +3,6 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -16,6 +15,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // A cached task's memo is ONE small pointer from a memo key to a SUCCEEDED
@@ -235,7 +235,7 @@ func MarshalMemo(m *orkstackv1.CacheMemo) ([]byte, error) {
 		return nil, fmt.Errorf("artifacts: encode memo %q: %w", m.GetKey(), err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode memo %q: %w", m.GetKey(), err)
 	}
 	out.WriteByte('\n')
@@ -343,80 +343,19 @@ func pageMemoKeys(keys []string, after string, limit int, info func(key string) 
 	return entries, ""
 }
 
-// MemoStoreFactory builds a MemoStore from a Config.
-type MemoStoreFactory func(cfg Config) (MemoStore, error)
-
-var memoStoreRegistry = map[string]MemoStoreFactory{}
-
-// RegisterMemoStore adds a memo-store factory under name.
-func RegisterMemoStore(name string, f MemoStoreFactory) error {
-	if name == "" {
-		return fmt.Errorf("artifacts: register memo store: empty name")
-	}
-	if f == nil {
-		return fmt.Errorf("artifacts: register memo store %q: nil factory", name)
-	}
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	if _, exists := memoStoreRegistry[name]; exists {
-		return fmt.Errorf("artifacts: register memo store %q: already registered", name)
-	}
-	memoStoreRegistry[name] = f
-	return nil
-}
-
-// MemoStoreBackends lists the backends that can hold memos, sorted.
-func MemoStoreBackends() []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	names := make([]string, 0, len(memoStoreRegistry))
-	for name := range memoStoreRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // NewMemoStore builds the MemoStore named by cfg.Backend: one
 // ORK_ARTIFACT_BACKEND selects where memos live, exactly as it does for
 // commits and attempt records. There is no setting of its own.
 func NewMemoStore(cfg Config) (MemoStore, error) {
-	name := cfg.Backend
-	if name == "" {
-		name = DefaultBackend
-		cfg.Backend = name
-	}
-	registryMu.RLock()
-	f, ok := memoStoreRegistry[name]
-	registryMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("artifacts: memo store backend %q: %w (registered: %v)",
-			name, ErrUnknownBackend, MemoStoreBackends())
-	}
-	store, err := f(cfg)
+	b, err := openBlobs(context.Background(), cfg, "memo store", MemoPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: memo store backend %q: %w", name, err)
+		return nil, err
 	}
-	return store, nil
+	return &BlobMemoStore{blobBase{b}}, nil
 }
 
 // NewMemoStoreFromEnv builds the MemoStore described by the ORK_* environment.
 func NewMemoStoreFromEnv() (MemoStore, error) { return NewMemoStore(ConfigFromEnv()) }
-
-func init() {
-	mustRegisterMemoStore(BackendLocal, func(cfg Config) (MemoStore, error) {
-		return NewLocalMemoStore(localDir(cfg))
-	})
-	mustRegisterMemoStore(BackendS3, func(cfg Config) (MemoStore, error) {
-		return NewS3MemoStore(context.Background(), cfg)
-	})
-}
-
-func mustRegisterMemoStore(name string, f MemoStoreFactory) {
-	if err := RegisterMemoStore(name, f); err != nil {
-		panic(err)
-	}
-}
 
 // MemoryMemoStore is an in-memory MemoStore for tests. It keys and encodes
 // memos exactly as the durable backends do — real semantics, not a stub. It is

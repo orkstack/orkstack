@@ -47,9 +47,9 @@ Releasing the hold starts nothing that was refused while it was set. Refused sub
 A budget bounds the cpu and memory a namespace reserves over a rolling period. Reservation is what each attempt was granted, multiplied by how long it held it. It is not measured use.
 
 ```bash
-orkctl stats usage --since 720h --group-by namespace          # what each namespace reserved
+orkctl stats usage -s 720h -g namespace          # what each namespace reserved
 orkctl namespace update analytics --budget-cpu-seconds 5000000 --budget-period 720h
-orkctl -n analytics stats usage --since 720h                  # does the measurement answer?
+orkctl -n analytics stats usage -s 720h                  # does the measurement answer?
 orkctl namespace update analytics --budget-enforce            # now refuse new runs at the budget
 ```
 
@@ -91,7 +91,7 @@ A refusal happens before a run exists, so nothing is left behind.
 
 - Admission is best-effort. Replicas read the count without a lock, so a cap can overshoot by a few runs.
 - A hold never cancels a run. To stop one, use `orkctl run cancel`.
-- A namespace's allow-lists apply at apply and at every submit. They never apply retroactively to a run already accepted.
+- A namespace's allow-lists apply at create and at every submit. They never apply retroactively to a run already accepted.
 
 ## See also
 

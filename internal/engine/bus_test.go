@@ -14,7 +14,7 @@ func TestEventBus_ConcurrentPublishPreservesSubscriberSequenceOrder(t *testing.T
 	const publishers = 2_000
 
 	bus := engine.NewEventBus()
-	events, cancel, terminalReached := bus.Subscribe("concurrent", 0)
+	events, cancel, terminalReached, _ := bus.Subscribe("concurrent", 0)
 	defer cancel()
 	if terminalReached {
 		t.Fatal("new run unexpectedly reported a terminal event")
@@ -61,7 +61,7 @@ func TestEventBus_SubscribeReportsTerminalCursorAlreadyReached(t *testing.T) {
 		Type:  orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 	}, "done")
 
-	events, cancel, terminalReached := bus.Subscribe("done", 1)
+	events, cancel, terminalReached, _ := bus.Subscribe("done", 1)
 	defer cancel()
 	if !terminalReached {
 		t.Fatal("Subscribe terminalReached = false, want true at the terminal cursor")
@@ -75,7 +75,7 @@ func TestEventBus_SubscribeReportsTerminalCursorAlreadyReached(t *testing.T) {
 
 func TestEventBus_SubscribeFiltersFutureEventsAtOrBelowCursor(t *testing.T) {
 	bus := engine.NewEventBus()
-	events, cancel, terminalReached := bus.Subscribe("future-cursor", 3)
+	events, cancel, terminalReached, _ := bus.Subscribe("future-cursor", 3)
 	defer cancel()
 	if terminalReached {
 		t.Fatal("new run unexpectedly reported a terminal event")
@@ -102,7 +102,7 @@ func TestEventBus_SubscribeFiltersFutureEventsAtOrBelowCursor(t *testing.T) {
 
 func TestEventBus_FutureCursorClosesWhenFilteredTerminalArrives(t *testing.T) {
 	bus := engine.NewEventBus()
-	events, cancel, terminalReached := bus.Subscribe("future-terminal", 3)
+	events, cancel, terminalReached, _ := bus.Subscribe("future-terminal", 3)
 	defer cancel()
 	if terminalReached {
 		t.Fatal("new run unexpectedly reported a terminal event")

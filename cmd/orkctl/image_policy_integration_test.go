@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // policyStack is two real `ork` replicas and one real Orker, sharing one
@@ -130,9 +132,7 @@ func (s *policyStack) image(name string) string {
 func (s *policyStack) digest(ctx context.Context, t *testing.T, name string) string {
 	t.Helper()
 	ref, err := dsl.NewResolver("").Resolve(ctx, s.image(name)+":"+localcatalog.Tag(), s.image(name)+":"+localcatalog.Tag())
-	if err != nil {
-		t.Fatalf("resolve %s: %v", s.image(name), err)
-	}
+	must.OKf(t, err, "resolve %s", s.image(name))
 	return ref.GetIndexDigest()
 }
 
@@ -183,9 +183,7 @@ func (s *policyStack) writeTranscript(t *testing.T, name string) {
 func (s *policyStack) document(t *testing.T, yaml string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "orkflow.ork.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
-		t.Fatalf("write orkflow: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(yaml), 0o644), "write orkflow")
 	return path
 }
 
@@ -258,14 +256,10 @@ func (s *policyStack) objects(ctx context.Context, t *testing.T, prefix string) 
 	pager := s3.NewListObjectsV2Paginator(raw, &s3.ListObjectsV2Input{Bucket: aws.String(s.cfg.S3Bucket), Prefix: aws.String(prefix)})
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(ctx)
-		if err != nil {
-			t.Fatalf("list %s: %v", prefix, err)
-		}
+		must.OKf(t, err, "list %s", prefix)
 		for _, object := range page.Contents {
 			got, err := raw.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.cfg.S3Bucket), Key: object.Key})
-			if err != nil {
-				t.Fatalf("get %s: %v", aws.ToString(object.Key), err)
-			}
+			must.OKf(t, err, "get %s", aws.ToString(object.Key))
 			body, _ := io.ReadAll(got.Body)
 			_ = got.Body.Close()
 			out[aws.ToString(object.Key)] = body
@@ -358,7 +352,7 @@ func TestIntegration_AnEmptyPolicyReproducesTodayByteForByte(t *testing.T) {
 			t.Fatalf("empty rendering lacks %q:\n%s", want, stdout)
 		}
 	}
-	s.cli(t, s.a, exitOK, "apply", s.document(t, statsOrkflowYAML("plain", "echo plain")))
+	s.cli(t, s.a, exitOK, "orkflow", "create", s.document(t, statsOrkflowYAML("plain", "echo plain")))
 	runID := s.submitID(t, s.a, "plain", "")
 	s.awaitStatus(ctx, t, s.b, runID, "", orkstackv1.Status_STATUS_SUCCEEDED)
 	s.cli(t, s.b, exitOK, "--json", "run", "get", runID)
@@ -387,9 +381,7 @@ func TestIntegration_AnEmptyPolicyReproducesTodayByteForByte(t *testing.T) {
 	var scheduled, carrying int
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history: %v", err)
-		}
+		must.OKf(t, err, "read history")
 		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil && attrs.GetActivityType().GetName() == "ExecuteTask" {
 			scheduled++
 			for _, p := range attrs.GetInput().GetPayloads() {
@@ -424,7 +416,7 @@ func TestIntegration_ThePolicyRefusesValidateAndApplyWithTheFieldPath(t *testing
 	if !strings.Contains(stdout, want) {
 		t.Fatalf("validate did not print the field-anchored issue\nwant: %s\ngot:\n%s", want, stdout)
 	}
-	_, stderr := s.cli(t, s.b, -1, "apply", path)
+	_, stderr := s.cli(t, s.b, -1, "orkflow", "create", path)
 	if !strings.Contains(stderr, "invalid_argument") {
 		t.Fatalf("apply refusal: %s", stderr)
 	}
@@ -437,11 +429,11 @@ func TestIntegration_ThePolicyRefusesValidateAndApplyWithTheFieldPath(t *testing
 
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set", "--require-digest")
 	tagged := s.image("shell") + ":" + localcatalog.Tag()
-	_, stderr = s.cli(t, s.b, -1, "apply", s.document(t, policyOrkflowYAML("tagged", tagged, "echo tagged")))
+	_, stderr = s.cli(t, s.b, -1, "orkflow", "create", s.document(t, policyOrkflowYAML("tagged", tagged, "echo tagged")))
 	if !strings.Contains(stderr, "is a mutable tag, and this deployment requires a digest") {
 		t.Fatalf("tag refusal: %s", stderr)
 	}
-	s.cli(t, s.b, exitOK, "apply", s.document(t, policyOrkflowYAML("catalog", "shell", "echo catalog")))
+	s.cli(t, s.b, exitOK, "orkflow", "create", s.document(t, policyOrkflowYAML("catalog", "shell", "echo catalog")))
 	s.note("uses: shell (a catalog name) is exempt from require_digest and applied")
 }
 
@@ -453,7 +445,7 @@ func TestIntegration_AFloorTightenedOnOneReplicaRefusesASubmitOnTheOther(t *test
 	outside := s.shared + "/orkstack/activity-shell:" + localcatalog.Tag()
 	since := time.Now().Add(-time.Minute).UTC().Format(time.RFC3339)
 
-	s.cli(t, s.a, exitOK, "apply", s.document(t, policyOrkflowYAML("deploy", outside, "echo deployed")))
+	s.cli(t, s.a, exitOK, "orkflow", "create", s.document(t, policyOrkflowYAML("deploy", outside, "echo deployed")))
 	_, stderr := s.cli(t, s.a, -1, "admin", "image-policy", "set", "--allowed-registry", "ghcr.io/acme/")
 	if !strings.Contains(stderr, "failed_precondition") || !strings.Contains(stderr, "allowed registries exclude catalog activities") {
 		t.Fatalf("catalog refusal: %s", stderr)
@@ -500,7 +492,7 @@ func TestIntegration_ASignedImageRunsAndAnUnsignedOneIsRefusedAtApply(t *testing
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set",
 		"--signing-key", "release="+s.pub("release"), "--signing-key", "other="+s.pub("other"))
 	s.cli(t, s.a, exitOK, "namespace", "create", prod, "--require-signed-by", "cosign:release")
-	s.cli(t, s.a, exitOK, "apply", "-n", prod, s.document(t, policyOrkflowYAML("deploy", "shell", "echo signed")))
+	s.cli(t, s.a, exitOK, "orkflow", "create", "-n", prod, s.document(t, policyOrkflowYAML("deploy", "shell", "echo signed")))
 	runID := s.submitID(t, s.b, "deploy", prod)
 	s.awaitStatus(ctx, t, s.a, runID, prod, orkstackv1.Status_STATUS_SUCCEEDED)
 	stdout, _ := s.cli(t, s.a, exitOK, "--json", "run", "attempts", runID, "-n", prod)
@@ -509,13 +501,13 @@ func TestIntegration_ASignedImageRunsAndAnUnsignedOneIsRefusedAtApply(t *testing
 	}
 
 	s.cli(t, s.a, exitOK, "namespace", "update", prod, "--require-signed-by", "cosign:other")
-	_, stderr := s.cli(t, s.b, -1, "apply", "-n", prod,
+	_, stderr := s.cli(t, s.b, -1, "orkflow", "create", "-n", prod,
 		s.document(t, policyOrkflowYAML("deploy", "shell", "echo signed, again")))
 	if !strings.Contains(stderr, "invalid_argument") || !strings.Contains(stderr, `none verifies with key "other"`) {
 		t.Fatalf("IMAGE_SIGNATURE_INVALID refusal: %s", stderr)
 	}
 	s.cli(t, s.a, exitOK, "namespace", "update", prod, "--require-signed-by", "cosign:release")
-	_, stderr = s.cli(t, s.b, -1, "apply", "-n", prod,
+	_, stderr = s.cli(t, s.b, -1, "orkflow", "create", "-n", prod,
 		s.document(t, policyOrkflowYAML("fetch", "http", "echo unsigned")))
 	if !strings.Contains(stderr, "invalid_argument") || !strings.Contains(stderr, "carries no cosign signature") {
 		t.Fatalf("IMAGE_NOT_SIGNED refusal: %s", stderr)
@@ -531,7 +523,7 @@ func TestIntegration_ASignatureRemovedAfterSubmitFailsTheTaskAtTheOrker(t *testi
 
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set", "--signing-key", "release="+s.pub("release"))
 	s.cli(t, s.a, exitOK, "namespace", "create", prod, "--require-signed-by", "cosign:release")
-	s.cli(t, s.a, exitOK, "apply", "-n", prod, s.document(t, twoStepYAML("slow", "shell", 20)))
+	s.cli(t, s.a, exitOK, "orkflow", "create", "-n", prod, s.document(t, twoStepYAML("slow", "shell", 20)))
 	runID := s.submitID(t, s.a, "slow", prod)
 
 	// Wait for task one's CONTAINER, not its status: a task reads RUNNING from
@@ -601,7 +593,7 @@ func TestIntegration_ATightenedPolicyNeverTouchesARunAlreadyAccepted(t *testing.
 	defer s.writeTranscript(t, "image-policy-accepted-run.txt")
 	// Tag-spelled (not the catalog name), so require_digest refuses it.
 	tagged := s.image("shell") + ":" + localcatalog.Tag()
-	s.cli(t, s.a, exitOK, "apply", s.document(t, twoStepYAML("slow", tagged, 15)))
+	s.cli(t, s.a, exitOK, "orkflow", "create", s.document(t, twoStepYAML("slow", tagged, 15)))
 	runID := s.submitID(t, s.a, "slow", "")
 	s.cli(t, s.b, exitOK, "admin", "image-policy", "set", "--require-digest",
 		"--allowed-registry", s.registry.Host+"/orkstack/")
@@ -637,11 +629,11 @@ func TestIntegration_ARegistryOutageIsNeverAPass(t *testing.T) {
 	prod := uniqueNamespace("prod")
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set", "--signing-key", "release="+s.pub("release"))
 	s.cli(t, s.a, exitOK, "namespace", "create", prod, "--require-signed-by", "cosign:release")
-	s.cli(t, s.a, exitOK, "apply", "-n", prod, s.document(t, policyOrkflowYAML("deploy", "shell", "echo up")))
+	s.cli(t, s.a, exitOK, "orkflow", "create", "-n", prod, s.document(t, policyOrkflowYAML("deploy", "shell", "echo up")))
 
 	s.registry.Stop(t)
 	s.note("registry %s stopped (docker stop of this test's own container)", s.registry.Host)
-	_, stderr := s.cli(t, s.a, -1, "apply", "-n", prod,
+	_, stderr := s.cli(t, s.a, -1, "orkflow", "create", "-n", prod,
 		s.document(t, policyOrkflowYAML("deploy", "shell", "echo a new version")))
 	if !strings.Contains(stderr, "unavailable") || strings.Contains(stderr, "invalid_argument") {
 		t.Fatalf("apply during the outage: %s", stderr)
@@ -673,9 +665,7 @@ func TestIntegration_ASignatureProducedByTheCosignCLIVerifies(t *testing.T) {
 		}
 	}
 	dir := filepath.Join(s.keys, "cosign-cli")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(dir, 0o755))
 	run := func(args ...string) string {
 		t.Helper()
 		cmd := exec.Command(cosign, args...)
@@ -695,7 +685,7 @@ func TestIntegration_ASignatureProducedByTheCosignCLIVerifies(t *testing.T) {
 	prod := uniqueNamespace("prod")
 	s.cli(t, s.a, exitOK, "admin", "image-policy", "set", "--signing-key", "cosign-cli="+filepath.Join(dir, "cosign.pub"))
 	s.cli(t, s.a, exitOK, "namespace", "create", prod, "--require-signed-by", "cosign:cosign-cli")
-	s.cli(t, s.a, exitOK, "apply", "-n", prod, s.document(t, policyOrkflowYAML("deploy", "shell", "echo cosign")))
+	s.cli(t, s.a, exitOK, "orkflow", "create", "-n", prod, s.document(t, policyOrkflowYAML("deploy", "shell", "echo cosign")))
 	runID := s.submitID(t, s.b, "deploy", prod)
 	s.awaitStatus(ctx, t, s.a, runID, prod, orkstackv1.Status_STATUS_SUCCEEDED)
 

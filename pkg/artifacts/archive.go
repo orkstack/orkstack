@@ -899,37 +899,6 @@ func (q RunQuery) Matches(entry RunIndexEntry) bool {
 	return true
 }
 
-// afterCursor reports whether an index key sorts strictly after the KeyOrder
-// cursor, which is what makes a resumed page exclusive of the previous one.
-func (q RunQuery) afterCursor(key string) bool {
-	return q.StartAfterKey == "" || key > q.StartAfterKey
-}
-
-// prunesDir reports whether every key beneath dir sorts at or before the
-// KeyOrder cursor, so a resumed walk can skip the whole subtree.
-//
-// The comparison is against dir+"/", never dir, because dir+"/" is what every
-// key beneath it actually starts with. The distinction is load-bearing rather
-// than pedantic: '-' (0x2D) sorts below '/' (0x2F), so for sibling orkflows
-// "f" and "f-g" the plain name "f" sorts before the cursor ".../f-g/..." while
-// every key under it — ".../f/..." — sorts after. Pruning on the name alone
-// therefore skipped a whole subtree of runs that had not been visited yet, and
-// they would never have been cleaned.
-//
-// If the cursor lies inside dir's own subtree the walk must descend, because
-// deeper keys may still sort after it. Otherwise the subtree is wholly on one
-// side of the cursor, and dir+"/" decides which.
-func (q RunQuery) prunesDir(dir string) bool {
-	if q.StartAfterKey == "" {
-		return false
-	}
-	subtree := dir + "/"
-	if strings.HasPrefix(q.StartAfterKey, subtree) {
-		return false
-	}
-	return q.StartAfterKey > subtree
-}
-
 // runPageCapacityHint bounds the capacity a scan reserves before it starts
 // collecting. It is deliberately small: a page of run index entries is a
 // handful of kilobytes, and growing past it costs a few appends.

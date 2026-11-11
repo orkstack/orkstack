@@ -33,6 +33,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The task-caching integration suite (docs/DSL.md "Caching"):
@@ -54,9 +56,7 @@ func startCacheE2E(t *testing.T) *cacheE2E {
 	t.Helper()
 	e := startEachE2E(t, true)
 	memos, err := artifacts.NewMemoStore(e.cfg)
-	if err != nil {
-		t.Fatalf("open memo store: %v", err)
-	}
+	must.OKf(t, err, "open memo store")
 	return &cacheE2E{eachE2E: e, memos: memos}
 }
 
@@ -97,9 +97,7 @@ func (c *cacheE2E) startCacheOrkerOn(id, pool, queue string, policy *orker.Secur
 		return next()
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(activities.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	if err := w.Start(); err != nil {
-		c.t.Fatalf("start orker %s: %v", id, err)
-	}
+	must.OKf(c.t, w.Start(), "start orker %s", id)
 	c.t.Cleanup(w.Stop)
 	return w
 }
@@ -181,9 +179,7 @@ func (c *cacheE2E) runPipeline(runID string, wf *orkstackv1.Orkflow, rows int, r
 	c.t.Helper()
 	data, _ := structpb.NewStruct(map[string]any{"rows": rows})
 	starter := engine.NewTemporalStarterWithOrkerQueue(c.temporal, c.runQueue, c.orkerQueue)
-	if err := starter.StartRun(c.ctx, runID, wf, &orkstackv1.Payload{Data: data}, c.cachePlan(refresh)); err != nil {
-		c.t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(c.t, starter.StartRun(c.ctx, runID, wf, &orkstackv1.Payload{Data: data}, c.cachePlan(refresh)), "StartRun")
 	run := c.wait(runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		c.t.Fatalf("run %s = %v %v", runID, run.GetStatus(), run.GetError())
@@ -220,9 +216,7 @@ func (c *cacheE2E) deletePrefix(prefix string) int {
 	pager := s3.NewListObjectsV2Paginator(raw, &s3.ListObjectsV2Input{Bucket: aws.String(c.cfg.S3Bucket), Prefix: aws.String(prefix)})
 	for pager.HasMorePages() {
 		page, err := pager.NextPage(c.ctx)
-		if err != nil {
-			c.t.Fatalf("list %s: %v", prefix, err)
-		}
+		must.OKf(c.t, err, "list %s", prefix)
 		for _, object := range page.Contents {
 			if _, err := raw.DeleteObject(c.ctx, &s3.DeleteObjectInput{Bucket: aws.String(c.cfg.S3Bucket), Key: object.Key}); err != nil {
 				c.t.Fatalf("delete %s: %v", aws.ToString(object.Key), err)
@@ -389,9 +383,7 @@ func TestIntegration_CacheMissingSourceObjectIsAMiss(t *testing.T) {
 	c.startCacheOrker("cache-i6", nil, nil)
 	wf := c.cachedPipeline(fmt.Sprintf("cached-pipeline-i6-%d", time.Now().UnixNano()), pipelineOpts{})
 	first := c.runPipeline(runIDFor("i6a"), wf, 1000, false)
-	if err := c.store.Delete(c.ctx, taskRunNamed(first, "featurize").GetArtifacts()[0].GetUri()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, c.store.Delete(c.ctx, taskRunNamed(first, "featurize").GetArtifacts()[0].GetUri()))
 	second := c.runPipeline(runIDFor("i6b"), wf, 1000, false)
 	requireOutcome(t, second, "featurize", orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS, "SOURCE_OBJECT_UNAVAILABLE")
 	if !strings.Contains(c.attemptLog(second.GetId(), "featurize", 1), "featurized 1000 rows") {
@@ -428,9 +420,7 @@ func TestIntegration_CacheHitCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 	runID := runIDFor("i7b")
 	data, _ := structpb.NewStruct(map[string]any{"rows": 1000})
 	starter := engine.NewTemporalStarterWithOrkerQueue(c.temporal, c.runQueue, c.orkerQueue)
-	if err := starter.StartRun(c.ctx, runID, wf, &orkstackv1.Payload{Data: data}, c.cachePlan(false)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, starter.StartRun(c.ctx, runID, wf, &orkstackv1.Payload{Data: data}, c.cachePlan(false)))
 	select {
 	case <-committed:
 	case <-time.After(3 * time.Minute):
@@ -498,9 +488,7 @@ func TestIntegration_CacheFanOutItemsHitIndividually(t *testing.T) {
 	start := func(label string, def *orkstackv1.Orkflow) *orkstackv1.Run {
 		runID := runIDFor(label)
 		starter := engine.NewTemporalStarterWithOrkerQueue(c.temporal, c.runQueue, c.orkerQueue)
-		if err := starter.StartRun(c.ctx, runID, def, nil, c.cachePlan(false)); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, starter.StartRun(c.ctx, runID, def, nil, c.cachePlan(false)))
 		run := c.wait(runID)
 		if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 			t.Fatalf("run %s = %v %v", runID, run.GetStatus(), run.GetError())
@@ -591,13 +579,9 @@ func TestIntegration_CacheExpiredMemoIsAMiss(t *testing.T) {
 	first := c.runPipeline(runIDFor("i12a"), wf, 1000, false)
 	ref := c.memoRef(wf, "featurize", cacheOf(first, "featurize").GetKey())
 	memo, err := c.memos.GetMemo(c.ctx, ref)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	memo.Source.FinishedAt = timestamppb.New(memo.GetSource().GetFinishedAt().AsTime().Add(-48 * time.Hour))
-	if err := c.memos.PutMemo(c.ctx, memo); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, c.memos.PutMemo(c.ctx, memo))
 	second := c.runPipeline(runIDFor("i12b"), wf, 1000, false)
 	requireOutcome(t, second, "featurize", orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS, "MEMO_EXPIRED")
 	proof.Write(t, "engine", "cache-I12.txt", []byte(runJSON(second)+"\n"))
@@ -643,9 +627,7 @@ func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing
 		t.Fatalf("apply: %v", err)
 	}
 	before, err := reader.ListRuns(ctx, engine.RunQuery{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// The pool must read live before the describe question is asked. Until
 	// the stand-in answers on its own channel, a submit is admitted (a pool
 	// none of whose Orkers answers is logged, not refused), so the runs the
@@ -672,9 +654,7 @@ func TestIntegration_CacheSubmitRefusesAPoolWhoseOrkerPredatesCaching(t *testing
 		t.Fatalf("submit = %v", submitErr)
 	}
 	after, err := reader.ListRuns(ctx, engine.RunQuery{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	known := map[string]bool{}
 	for _, run := range before {
 		known[run.GetId()] = true
@@ -704,16 +684,12 @@ func TestIntegration_CacheComposedChildTaskHits(t *testing.T) {
 		runID := runIDFor(label)
 		childPlan := c.cachePlan(false)
 		cp, err := engine.NewChildRunPlan(child, childPlan, false, false)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		cp.RunID = runID + "-child"
 		plan := c.plan()
 		plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
 		starter := engine.NewTemporalStarterWithOrkerQueue(c.temporal, c.runQueue, c.orkerQueue)
-		if err := starter.StartRun(c.ctx, runID, parent, nil, plan); err != nil {
-			t.Fatalf("StartRun: %v", err)
-		}
+		must.OKf(t, starter.StartRun(c.ctx, runID, parent, nil, plan), "StartRun")
 		run := c.wait(runID)
 		if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 			t.Fatalf("parent %s = %v %v", runID, run.GetStatus(), run.GetError())
@@ -805,9 +781,7 @@ func TestIntegration_RecordCachedRunHistory(t *testing.T) {
 		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orkerWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 	setCurrentVersion(t, ctx, temporalClient, deployment, runQueue, orkerQueue)
@@ -821,29 +795,19 @@ func TestIntegration_RecordCachedRunHistory(t *testing.T) {
 	var runID string
 	for i := 0; i < 2; i++ {
 		runID = fmt.Sprintf("ork-cached-fixture-%d", time.Now().UnixNano())
-		if err := starter.StartRun(ctx, runID, wf, input, plan); err != nil {
-			t.Fatalf("StartRun: %v", err)
-		}
-		if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-			t.Fatalf("fixture run %s did not succeed: %v", runID, err)
-		}
+		must.OKf(t, starter.StartRun(ctx, runID, wf, input, plan), "StartRun")
+		must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "fixture run %s did not succeed", runID)
 	}
 	recorded := &history.History{}
 	iter := temporalClient.GetWorkflowHistory(ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history: %v", err)
-		}
+		must.OKf(t, err, "read history")
 		recorded.Events = append(recorded.Events, event)
 	}
 	encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
-	if err != nil {
-		t.Fatalf("encode history: %v", err)
-	}
-	if err := os.WriteFile(cachedHistory, append(encoded, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", cachedHistory, err)
-	}
+	must.OKf(t, err, "encode history")
+	must.OKf(t, os.WriteFile(cachedHistory, append(encoded, '\n'), 0o644), "write %s", cachedHistory)
 	t.Logf("recorded %d history events for run %s into %s (deployment version %s)",
 		len(recorded.Events), runID, cachedHistory, deployment)
 }

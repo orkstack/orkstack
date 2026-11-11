@@ -11,6 +11,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestRetentionController_EnsureMaterializesTheObservedTTLWhenNoPolicyExists(t *testing.T) {
@@ -20,9 +22,7 @@ func TestRetentionController_EnsureMaterializesTheObservedTTLWhenNoPolicyExists(
 	ctrl := NewRetentionController(policies, cluster, "ork-main", 24*time.Hour, testLogger())
 
 	policy, err := ctrl.Ensure(context.Background())
-	if err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
+	must.OKf(t, err, "Ensure")
 	if got := policy.GetMaxRunRetention().AsDuration(); got != 72*time.Hour {
 		t.Fatalf("materialized maximum = %s, want 72h (the observed TTL, unchanged)", got)
 	}
@@ -45,13 +45,9 @@ func TestRetentionController_EnsureDoesNotGrowTheCeilingOnASecondBoot(t *testing
 	ctrl := NewRetentionController(policies, cluster, "ork-main", 24*time.Hour, testLogger())
 
 	first, err := ctrl.Ensure(context.Background())
-	if err != nil {
-		t.Fatalf("first Ensure: %v", err)
-	}
+	must.OKf(t, err, "first Ensure")
 	second, err := ctrl.Ensure(context.Background())
-	if err != nil {
-		t.Fatalf("second Ensure: %v", err)
-	}
+	must.OKf(t, err, "second Ensure")
 	if got := second.GetMaxRunRetention().AsDuration(); got != first.GetMaxRunRetention().AsDuration() {
 		t.Fatalf("second Ensure moved the ceiling: first=%s second=%s", first.GetMaxRunRetention().AsDuration(), got)
 	}
@@ -70,9 +66,7 @@ func TestRetentionController_EnsureLosingTheMaterializationRaceReadsTheWinnersVa
 	ctrl := NewRetentionController(policies, cluster, "ork-main", 24*time.Hour, testLogger())
 
 	policy, err := ctrl.Ensure(context.Background())
-	if err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
+	must.OKf(t, err, "Ensure")
 	if got := policy.GetMaxRunRetention().AsDuration(); got != 48*time.Hour {
 		t.Fatalf("Ensure = %s, want the winner's 48h", got)
 	}
@@ -83,9 +77,7 @@ func TestRetentionController_ReconcileIsANoOpWhenTheClusterAlreadyMatches(t *tes
 	cluster.retention = 96 * time.Hour // already max(72h) + margin(24h)
 	ctrl := NewRetentionController(&fakePolicyStore{}, cluster, "ork-main", 24*time.Hour, testLogger())
 
-	if err := ctrl.Reconcile(context.Background(), 72*time.Hour); err != nil {
-		t.Fatalf("Reconcile: %v", err)
-	}
+	must.OKf(t, ctrl.Reconcile(context.Background(), 72*time.Hour), "Reconcile")
 	if len(cluster.setRetentionCalls) != 0 {
 		t.Fatalf("SetNamespaceRetention calls = %v, want none", cluster.setRetentionCalls)
 	}
@@ -95,16 +87,12 @@ func TestRetentionController_ReconcileCorrectsBothUpAndDown(t *testing.T) {
 	cluster := newFakeCluster()
 	cluster.retention = 10 * time.Hour
 	ctrl := NewRetentionController(&fakePolicyStore{}, cluster, "ork-main", 24*time.Hour, testLogger())
-	if err := ctrl.Reconcile(context.Background(), 72*time.Hour); err != nil {
-		t.Fatalf("Reconcile up: %v", err)
-	}
+	must.OKf(t, ctrl.Reconcile(context.Background(), 72*time.Hour), "Reconcile up")
 	if cluster.retention != 96*time.Hour {
 		t.Fatalf("after raising = %s, want 96h", cluster.retention)
 	}
 
-	if err := ctrl.Reconcile(context.Background(), 1*time.Hour); err != nil {
-		t.Fatalf("Reconcile down: %v", err)
-	}
+	must.OKf(t, ctrl.Reconcile(context.Background(), 1*time.Hour), "Reconcile down")
 	if cluster.retention != 25*time.Hour {
 		t.Fatalf("after lowering = %s, want 25h", cluster.retention)
 	}
@@ -247,9 +235,7 @@ func TestRetentionController_EnsureToleratesTheNamespacePropagationDelay(t *test
 	ctrl := NewRetentionController(&fakePolicyStore{}, cluster, "ork-main", 24*time.Hour, testLogger())
 
 	policy, err := ctrl.Ensure(context.Background())
-	if err != nil {
-		t.Fatalf("Ensure: %v", err)
-	}
+	must.OKf(t, err, "Ensure")
 	if got := policy.GetMaxRunRetention().AsDuration(); got != 72*time.Hour {
 		t.Fatalf("materialized maximum = %s, want 72h", got)
 	}

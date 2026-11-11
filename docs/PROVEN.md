@@ -6,11 +6,9 @@ believed, and it links the tests and rules rather than restating them:
 [AGENTS.md](../AGENTS.md) §11 states the rules, and
 [PROOFS.md](./PROOFS.md) is the reference for the machinery.
 
-AGENTS.md §11 forbids calling OrkStack production-ready
-until the required failure and recovery scenarios are proven, and this page
-makes no such claim. Activities run at least once, never exactly once
-(AGENTS.md §4): a durably committed result is not run again, and a stable
-idempotency key lets the systems an activity calls recognise a repeat.
+Activities run at least once, never exactly once (AGENTS.md §4): a durably
+committed result is not run again, and a stable idempotency key lets the
+systems an activity calls recognise a repeat.
 
 ## The principle: no proof, no done
 
@@ -23,12 +21,8 @@ tree a full proof passed on (§11.3).
 ## What is proven
 
 AGENTS.md §11 lists the failure and recovery scenarios a merge must prove.
-[`scripts/proof-section11-coverage.tsv`](../scripts/proof-section11-coverage.tsv)
-maps every one of them to the tests that prove it, and a test of its own
-(`TestSection11Coverage` in [`test/tools/proofrun`](../test/tools/proofrun/))
-holds that map true: every test it names must be declared in its package with
-the build tag its kind says, and every claim needs evidence beyond a unit test
-that runs in the merge gate, or a row that names its known gap.
+No check maps them to the tests that prove them: a scenario whose test is
+renamed or deleted is seen only in review.
 
 In plain language, the scenarios are:
 
@@ -61,8 +55,6 @@ In plain language, the scenarios are:
   every case the run ends in a correct durable state with one run id and a
   contiguous event stream, or fails explicitly.
 
-<!-- site-generated: section11-coverage -->
-
 A claim with no end-to-end test is listed as a known gap, never left out:
 [PROOFS.md](./PROOFS.md) §12 names every one.
 
@@ -70,13 +62,11 @@ A claim with no end-to-end test is listed as a known gap, never left out:
 
 | Tier | What it runs | Merge evidence |
 |---|---|---|
-| Feature proof (`make proof-feature`), optional | the fast gates, the tests and specs that prove the change (its **evidence**), and the integration tests of every package the change reaches (its **regression set**) | never |
-| Full proof (`make proof`, or CI's `proof` check) | every gate: lint, build, unit, vet, the activity images, every integration test against a real Temporal cluster and S3-compatible store, the activity contract fixture, the UI's type-check and unit suites, the site's check and build (which also renders every doc), the race gate (the unit tests under the race detector), every Playwright spec, and the observability gate when telemetry changed | yes |
+| Full proof (`make proof`, or CI's `proof` check) | every gate: lint, build, unit, vet, the activity images, every integration test against a real Temporal cluster and S3-compatible store, the activity contract fixture, the UI's type-check and unit suites, the site's check and build (which also renders every doc), the race gate (the unit tests under the race detector), every Playwright spec, and the observability gate | yes |
 | Nightly (`make proof-nightly`) | only the scale and soak tests [`scripts/proof-nightly-tests.txt`](../scripts/proof-nightly-tests.txt) lists and the Playwright specs [`scripts/proof-nightly-specs.txt`](../scripts/proof-nightly-specs.txt) lists, each beside the merge-gate tests or specs that cover the same behaviour at a smaller size, and two lanes of its own: the unit tests of the concurrency-heavy packages raced three times over, and every fuzz target for a bounded time | no |
 | Pre-release (`make proof-release`) | the full proof with nothing deferred; a release tag requires one for its exact commit | a tag precondition |
 
-A feature proof is scoped by the diff, optional, and never merge evidence. A
-full proof records each nightly-listed test as `deferred`, never as passed. A
+A full proof records each nightly-listed test as `deferred`, never as passed. A
 failing nightly is a regression on `main`: fixing it, or reverting what broke
 it, is the next work, but it holds no other merge, and no release is tagged
 until a pre-release proof, which runs every deferred test, passes

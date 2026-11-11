@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +13,8 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The task-caching CLI scenarios (docs/DSL.md "Caching"): real
@@ -22,9 +24,7 @@ import (
 func cachedCLIDoc(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), orkflowFixtures, "cached-pipeline.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return strings.Replace(string(raw), "name: cached-pipeline", "name: "+name, 1)
 }
 

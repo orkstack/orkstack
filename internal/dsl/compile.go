@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -115,7 +115,7 @@ type document struct {
 	// Inputs is a data position (docs/JSON.md, "Data written in an
 	// authored document"): a yaml.Node VALUE, so it holds exactly what was
 	// written — tags, anchors and aliases included — for the strict mapping
-	// (freeForm) to judge. A pointer would not: yaml.v3 decodes into a
+	// (freeForm) to judge. A pointer would not: go-yaml decodes into a
 	// *yaml.Node as an ordinary struct.
 	Inputs yaml.Node `yaml:"inputs"`
 
@@ -137,6 +137,17 @@ type document struct {
 	// refuse.
 	Pins  map[string]pinDocument `yaml:"pins"`
 	Tasks []taskDocument         `yaml:"tasks"`
+
+	// SharedWith is who in other namespaces may compose this version through
+	// `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing
+	// across namespaces"). Absent and `[]` are one value: shared with nobody.
+	SharedWith []shareDocument `yaml:"shared_with"`
+}
+
+// shareDocument is one shared_with entry; exactly one key is set (rule 48).
+type shareDocument struct {
+	Namespace string `yaml:"namespace"`
+	Orkflow   string `yaml:"orkflow"`
 }
 
 type taskDocument struct {
@@ -207,6 +218,11 @@ type taskDocument struct {
 	// the run waits until the task is resolved from outside, or its deadline
 	// passes. Mutually exclusive with Uses and with every execution field.
 	Await *awaitDocument `yaml:"await"`
+
+	// Sleep makes this a sleeping task: no image, no container, no pool —
+	// the run waits a fixed time on its own timer and the task then
+	// succeeds. Mutually exclusive with Uses, Await and every execution field.
+	Sleep *sleepDocument `yaml:"sleep"`
 
 	// Each makes this task a fan-out: one node that runs as one item per
 	// element of the array `over` names (docs/DSL.md "Fan-out").
@@ -306,10 +322,13 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		return nil, err
 	}
 	// Strict: a key the schema does not define is refused, never ignored.
-	// yaml.v3 would otherwise drop what it cannot map, and an author would
+	// go-yaml would otherwise drop what it cannot map, and an author would
 	// find out about a misspelled or unsupported key only when the run
 	// behaved differently.
 	var doc document
+	if err := mergeTagRefusal(source, doc); err != nil {
+		return nil, err
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(source))
 	decoder.KnownFields(true)
 	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
@@ -332,6 +351,9 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 	wf.Inputs = inputs
 	if len(doc.Outputs) > 0 {
 		wf.Outputs = doc.Outputs
+	}
+	for _, entry := range doc.SharedWith {
+		wf.SharedWith = append(wf.SharedWith, &orkstackv1.OrkflowShare{Namespace: entry.Namespace, Orkflow: entry.Orkflow})
 	}
 
 	// Pins compile SORTED BY NAME, and a document that declares none leaves
@@ -368,6 +390,18 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		// layer — `await:` among them) and keeps TimeoutSeconds 0.
 		if strings.HasPrefix(td.Uses, OrkflowUsesPrefix) {
 			task, err := compileComposedTask(taskIndex, td, doc.Namespace)
+			if err != nil {
+				return nil, err
+			}
+			wf.Tasks = append(wf.Tasks, task)
+			continue
+		}
+		// A sleeping task is built on its own path, before an await's: it
+		// refuses, by name, `uses:`, `await:` and every execution key its
+		// author wrote (rules 6 and 49 at the YAML layer) and keeps
+		// TimeoutSeconds 0 rather than the container default.
+		if td.Sleep != nil {
+			task, err := compileSleepTask(taskIndex, td)
 			if err != nil {
 				return nil, err
 			}

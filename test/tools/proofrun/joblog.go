@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
@@ -15,8 +15,7 @@ import (
 
 // The proof job's job records (.github/workflows/proof.yml, "job records")
 // keep a bounded log of every job that did not succeed: what the merger's
-// classification and the rerun planner read from a log, and the log's last
-// lines for a reader. A job's whole log can be megabytes, and the records are
+// classification reads from a log, and the log's last lines for a reader. A job's whole log can be megabytes, and the records are
 // copied into the merged proof (scripts/proof-collect.sh).
 const (
 	// jobLogTailLines is how many of the log's last lines are kept.
@@ -62,12 +61,11 @@ type keptLine struct {
 	text  string
 }
 
-// boundJobLog copies the part of a GitHub job log that the merger and the
-// rerun planner read, in the log's own order: every line they read anything
-// from (mergerReads: a `proofrun: start` or `proofrun: outcome` line, or a test
-// event in JSON) wherever it is, byte for byte, so logProgress,
-// attemptProgress and degradedByMarker read from the bounded log what they
-// read from the whole; and the last jobLogTailLines lines, each without its
+// boundJobLog copies the part of a GitHub job log that the merger reads, in
+// the log's own order: every line it reads anything from (mergerReads: a
+// `proofrun: start` or `proofrun: outcome` line, or a test event in JSON)
+// wherever it is, byte for byte, so logProgress and attemptProgress read from
+// the bounded log what they read from the whole; and the last jobLogTailLines lines, each without its
 // terminal control sequences and cut at jobLogLineWidth bytes. A run of lines
 // left out is one line that says how many. It reads the log once and holds at
 // most the bound in memory. A log whose merger lines pass jobLogProgressBytes
@@ -189,9 +187,9 @@ func cmdJobLog(args []string) int {
 	return 0
 }
 
-// mergerReads says the merger or the rerun planner reads something from a
-// log line: a proofrun progress line (logProgress, degradedByMarker) or a
-// test event in JSON (attemptProgress), decided on the line as it is.
+// mergerReads says the merger reads something from a log line: a proofrun
+// progress line (logProgress) or a test event in JSON (attemptProgress),
+// decided on the line as it is.
 func mergerReads(line string) bool {
 	if strings.Contains(line, "proofrun: ") && (progressStart.MatchString(line) || progressOutcome.MatchString(line)) {
 		return true

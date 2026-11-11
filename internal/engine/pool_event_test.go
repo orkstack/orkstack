@@ -4,11 +4,11 @@ import (
 	"strings"
 	"testing"
 
-	"go.temporal.io/sdk/testsuite"
-
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The rule that no user-facing surface spells `queue` does not reach
@@ -42,8 +42,7 @@ tasks:
 // event stream — the same stream a client receives — and holds the scheduled
 // message to the word the author typed.
 func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
@@ -54,9 +53,7 @@ func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-message",
 		compile(t, poolDocument), payload(t, nil), rawPlan(rawQueue, "gpu"), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	scheduled := map[string]string{}
 	for _, event := range h.bus.Events("run-pool-message", 0) {
@@ -98,16 +95,13 @@ func TestRunWorkflow_ScheduledEventNamesThePoolNotTheQueue(t *testing.T) {
 // run projection: a reader that lists task runs answers "where did this go"
 // without reading Temporal, and answers it in pools.
 func TestRunWorkflow_TaskRunRecordsThePoolItRanOn(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-projection",
 		compile(t, poolDocument), payload(t, nil), defaultPlan("gpu"), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	run := mustFinalRun(t, h.store, "run-pool-projection")
 	pools := map[string]string{}
@@ -138,16 +132,13 @@ tasks:
   - id: tidy
     uses: shell
 `
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 	})
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-input",
 		compile(t, document), payload(t, nil), defaultPlan("gpu"), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	for taskID, wantPool := range map[string]string{"crunch": "gpu", "tidy": task.DefaultPool} {
 		in, ok := h.inputFor(taskID)
@@ -202,9 +193,7 @@ tasks:
     with: {command: "echo crunch"}
 `
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool(gpu): %v", err)
-	}
+	must.OKf(t, err, "QueueForPool(gpu)")
 
 	for _, channel := range []struct {
 		name     string
@@ -215,8 +204,7 @@ tasks:
 		{name: "an override that is itself pool-shaped", bound: gpuQueue, wantPool: "gpu"},
 	} {
 		t.Run(channel.name, func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				return &orkstackv1.ExecuteTaskResult{TaskId: in.TaskId}, nil
 			})
 			// Through the real submit decision, because that is where the two
@@ -225,9 +213,7 @@ tasks:
 			planned, plan := planFor(t, compile(t, document), channel.bound)
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "run-pool-agreement",
 				planned, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatalf("workflow error: %v", err)
-			}
+			must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 			// The pool each task was reported on, from the projection a
 			// client reads.

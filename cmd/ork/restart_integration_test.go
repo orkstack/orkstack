@@ -35,6 +35,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // probeOrkflow is the orkflow this test owns in the dev bucket. The name is
@@ -93,9 +95,7 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 	applied, err := clientA.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: probeOrkflowYAML(version, nonce),
 	}))
-	if err != nil {
-		t.Fatalf("apply against engine A: %v", err)
-	}
+	must.OKf(t, err, "apply against engine A")
 	if got := applied.Msg.GetOrkflow().GetDescription(); got != nonce {
 		t.Fatalf("engine A applied description %q, want %q", got, nonce)
 	}
@@ -104,22 +104,16 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 
 	// The definition is in the bucket, at the documented key, before any read.
 	store, err := artifacts.NewS3OrkflowStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open orkflow store: %v", err)
-	}
+	must.OKf(t, err, "open orkflow store")
 	uri, err := store.URI(artifacts.DefaultNamespace, probeOrkflowName, version)
-	if err != nil {
-		t.Fatalf("orkflow URI: %v", err)
-	}
+	must.OKf(t, err, "orkflow URI")
 	want := fmt.Sprintf("s3://%s/metadata/orkflows/%s/%s/%s.json",
 		cfg.S3Bucket, artifacts.DefaultNamespace, probeOrkflowName, version)
 	if uri != want {
 		t.Fatalf("orkflow URI = %q, want %q", uri, want)
 	}
 	stored, err := store.Get(ctx, artifacts.DefaultNamespace, probeOrkflowName, version)
-	if err != nil {
-		t.Fatalf("read %s: %v", uri, err)
-	}
+	must.OKf(t, err, "read %s", uri)
 	if stored.GetDescription() != nonce {
 		t.Fatalf("%s holds description %q, want %q", uri, stored.GetDescription(), nonce)
 	}
@@ -155,9 +149,7 @@ func TestIntegration_EngineServesOrkflowsAppliedToAPreviousProcess(t *testing.T)
 		addrB, probeOrkflowName, reloaded.GetVersion(), reloaded.GetDescription(), len(reloaded.GetTasks()))
 
 	listed, err := clientB.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
-	if err != nil {
-		t.Fatalf("ListOrkflows against engine B: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflows against engine B")
 	names := make([]string, 0, len(listed.Msg.GetOrkflows()))
 	found := false
 	for _, wf := range listed.Msg.GetOrkflows() {
@@ -341,9 +333,7 @@ func startEngine(
 	log := &syncBuffer{}
 	cmd.Stdout = log
 	cmd.Stderr = log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start %s: %v", name, err)
-	}
+	must.OKf(t, cmd.Start(), "start %s", name)
 	process := &engineProcess{cmd: cmd, log: log, done: make(chan struct{})}
 	engines[name] = process
 	go func() { _ = cmd.Wait(); close(process.done) }()
@@ -373,9 +363,7 @@ func stopEngine(t *testing.T, name string) {
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve port: %v", err)
-	}
+	must.OKf(t, err, "reserve port")
 	defer listener.Close()
 	return listener.Addr().String()
 }

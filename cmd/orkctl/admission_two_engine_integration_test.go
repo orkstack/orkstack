@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // admissionHoldReason is the hold reason of the worked incident.
@@ -148,9 +150,7 @@ func startObservedReplica(
 	log := &lockedBuffer{}
 	cmd.Stdout = log
 	cmd.Stderr = log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start %s: %v", name, err)
-	}
+	must.OKf(t, cmd.Start(), "start %s", name)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
 	t.Cleanup(func() {
@@ -282,18 +282,12 @@ func (s *admissionStack) writeTranscript(t *testing.T, name string) {
 func (s *admissionStack) metricLines(ctx context.Context, t *testing.T, families ...string) []string {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+s.bAdmin+"/metrics", nil)
-	if err != nil {
-		t.Fatalf("build /metrics request: %v", err)
-	}
+	must.OKf(t, err, "build /metrics request")
 	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("GET /metrics on replica B's admin listener: %v", err)
-	}
+	must.OKf(t, err, "GET /metrics on replica B's admin listener")
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read /metrics: %v", err)
-	}
+	must.OKf(t, err, "read /metrics")
 	var out []string
 	for _, line := range strings.Split(string(body), "\n") {
 		if strings.HasPrefix(line, "#") {
@@ -480,23 +474,17 @@ func TestIntegration_ATriggerInvokeIsRefusedByAHoldWith412(t *testing.T) {
 	created, err := triggersA.CreateTrigger(ctx, connect.NewRequest(&orkstackv1.CreateTriggerRequest{
 		Namespace: s.namespace, OrkflowName: s.orkflow, Description: "partner reconcile",
 	}))
-	if err != nil {
-		t.Fatalf("CreateTrigger on replica A: %v", err)
-	}
+	must.OKf(t, err, "CreateTrigger on replica A")
 	id, secret := created.Msg.GetTrigger().GetId(), created.Msg.GetSecret()
 	s.cli(t, s.a, exitOK, "namespace", "update", s.namespace, "--hold", admissionHoldReason)
 
 	path := strings.Replace(api.TriggerInvokePath, "{id}", id, 1)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+s.b.addr+path, strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatalf("build invoke: %v", err)
-	}
+	must.OKf(t, err, "build invoke")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 	resp, err := h2cClient(t).Do(req)
-	if err != nil {
-		t.Fatalf("POST %s on replica B: %v", path, err)
-	}
+	must.OKf(t, err, "POST %s on replica B", path)
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	fmt.Fprintf(&s.transcript, "$ curl -X POST http://%s%s    # replica B, trigger created on A\n%d %s\n\n",

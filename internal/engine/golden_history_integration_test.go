@@ -21,6 +21,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // goldenHistoryPath is where the recorder writes. run-succeeded-v1.json was
@@ -117,29 +119,21 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 	for name, w := range map[string]worker.Worker{
 		"run": runWorker, "orker": orkerWorker, "event": eventWorker,
 	} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 	setCurrentVersion(t, ctx, temporalClient, deployment, runQueue, orkerQueue)
 
 	runID := fmt.Sprintf("ork-golden-%d", time.Now().UnixNano())
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, runQueue, orkerQueue)
-	if err := starter.StartRun(ctx, runID, goldenOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("run %s did not succeed: %v", runID, err)
-	}
+	must.OKf(t, starter.StartRun(ctx, runID, goldenOrkflow(), nil, rawPlan(orkerQueue)), "StartRun")
+	must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "run %s did not succeed", runID)
 
 	recorded := &history.History{}
 	iter := temporalClient.GetWorkflowHistory(ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history: %v", err)
-		}
+		must.OKf(t, err, "read history")
 		recorded.Events = append(recorded.Events, event)
 	}
 	if len(recorded.Events) == 0 {
@@ -151,15 +145,9 @@ func TestIntegration_RecordGoldenRunHistory(t *testing.T) {
 	// the same shorthand `temporal workflow show -o json` uses, so the fixture
 	// stays readable in a diff.
 	encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
-	if err != nil {
-		t.Fatalf("encode history: %v", err)
-	}
-	if err := os.MkdirAll(filepath.Dir(goldenHistoryPath), 0o755); err != nil {
-		t.Fatalf("create fixture directory: %v", err)
-	}
-	if err := os.WriteFile(goldenHistoryPath, append(encoded, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", goldenHistoryPath, err)
-	}
+	must.OKf(t, err, "encode history")
+	must.OKf(t, os.MkdirAll(filepath.Dir(goldenHistoryPath), 0o755), "create fixture directory")
+	must.OKf(t, os.WriteFile(goldenHistoryPath, append(encoded, '\n'), 0o644), "write %s", goldenHistoryPath)
 	t.Logf("recorded %d history events for run %s into %s (deployment version %s)",
 		len(recorded.Events), runID, goldenHistoryPath, deployment)
 }

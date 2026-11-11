@@ -29,6 +29,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // memArtifactStore is a content-addressed artifact store whose URIs carry no
@@ -115,9 +117,7 @@ func newEvidenceCLI(t *testing.T) *evidenceCLI {
 		refs:     map[string]*orkstackv1.ArtifactRef{},
 	}
 	archive, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = archive.Close() })
 	e.archiver = engine.NewRunArchiver(archive)
 	e.putDefinition(t, "payments-reconcile", "1.4.0", evidenceCLISource)
@@ -137,9 +137,7 @@ func (e *evidenceCLI) putDefinition(t *testing.T, name, version, source string) 
 	wf := &orkstackv1.Orkflow{Namespace: "default", Name: name, Version: version, SourceYaml: source,
 		Tasks: []*orkstackv1.Task{{Id: "extract", Uses: "shell"}, {Id: "reconcile", Uses: "shell"}}}
 	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	wf.DefinitionDigest = digest
 	if _, _, err := e.orkflows.Put(context.Background(), wf, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatal(err)
@@ -153,9 +151,7 @@ func (e *evidenceCLI) putDefinition(t *testing.T, name, version, source string) 
 func (e *evidenceCLI) put(t *testing.T, key, name, content string) *orkstackv1.ArtifactRef {
 	t.Helper()
 	ref, err := e.store.Put(context.Background(), name, strings.NewReader(content), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	proto := &orkstackv1.ArtifactRef{Name: ref.Name, Uri: ref.URI, SizeBytes: ref.SizeBytes, Sha256: ref.SHA256}
 	e.refs[key] = proto
 	return proto
@@ -192,9 +188,7 @@ func (e *evidenceCLI) seed(t *testing.T, runID, digest string) {
 	e.record(t, runID, "reconcile", 1, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED, out1, err1)
 	e.record(t, runID, "reconcile", 3, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED, out3)
 	for _, ref := range []*orkstackv1.ArtifactRef{out1, err1} {
-		if err := e.store.Delete(ctx, ref.GetUri()); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, e.store.Delete(ctx, ref.GetUri()))
 	}
 	run := &orkstackv1.Run{
 		Id: runID, OrkflowName: "payments-reconcile", OrkflowVersion: "1.4.0", OrkflowDefinitionDigest: digest,
@@ -221,9 +215,7 @@ func (e *evidenceCLI) commit(t *testing.T, runID, taskID, digest string, values 
 		OrkflowName: "payments-reconcile", OrkflowVersion: "1.4.0", OrkflowDefinitionDigest: digest,
 		Values: values, Artifacts: outputs,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.CommitRef{Uri: uri, Sha256: rec.SHA256}
 }
 
@@ -236,14 +228,10 @@ func inTempDir(t *testing.T) string {
 func verifyFile(t *testing.T, path string) *evidence.Report {
 	t.Helper()
 	file, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer file.Close()
 	report, err := evidence.Verify(file)
-	if err != nil {
-		t.Fatalf("Verify(%s): %v", path, err)
-	}
+	must.OKf(t, err, "Verify(%s)", path)
 	return report
 }
 
@@ -257,13 +245,9 @@ func TestRunEvidenceExport_WritesTheBundleAndPrintsTheSummary(t *testing.T) {
 	}
 	requireGolden(t, "run-evidence-export.golden", strings.ReplaceAll(res.stdout, dir+string(filepath.Separator), ""))
 	file, err := os.Open(filepath.Join(dir, "reconcile.tar.gz"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	gz, err := gzip.NewReader(file)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	first, err := tar.NewReader(gz).Next()
 	_ = file.Close()
 	if err != nil || first.Name != evidence.ManifestPath {
@@ -286,9 +270,7 @@ func TestRunEvidenceExport_JSONPrintsTheManifestVerbatim(t *testing.T) {
 
 	stream, err := orkstackv1connect.NewRunServiceClient(e.httpClientFor(), e.baseURL).ExportRunEvidence(context.Background(),
 		connect.NewRequest(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-evidence-1", ManifestOnly: true}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var sent bytes.Buffer
 	for stream.Receive() {
 		sent.Write(stream.Msg().GetData())
@@ -335,9 +317,7 @@ func startEvidenceStub(t *testing.T, stub evidenceStub) string {
 	mux.Handle(path, handler)
 	server := api.NewServer("127.0.0.1:0", mux)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 	return "http://" + listener.Addr().String()
@@ -357,9 +337,7 @@ func TestRunEvidenceExport_IncompleteStreamLeavesNoFile(t *testing.T) {
 		t.Fatalf("exit %d stderr %q", code, stderr.String())
 	}
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(entries) != 0 {
 		names := make([]string, 0, len(entries))
 		for _, entry := range entries {
@@ -379,9 +357,7 @@ func TestRunEvidenceExport_RefusesToClobberWithoutOverwrite(t *testing.T) {
 	e := newEvidenceCLI(t)
 	e.seed(t, "ork-evidence-1", e.digest)
 	dir := inTempDir(t)
-	if err := os.WriteFile(filepath.Join(dir, "bundle.tar.gz"), []byte("keep me"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(dir, "bundle.tar.gz"), []byte("keep me"), 0o644))
 	res := e.run("run", "evidence", "export", "ork-evidence-1", "--output", filepath.Join(dir, "bundle.tar.gz"))
 	if res.code == exitOK || !strings.Contains(res.stderr, "(pass --overwrite to replace it)") {
 		t.Fatalf("exit %d stderr %q", res.code, res.stderr)
@@ -415,13 +391,9 @@ func (e *evidenceCLI) exportFixtureBundle(t *testing.T, name string) {
 func rewriteBundle(t *testing.T, from, to string, mutate func(name string, body []byte) []byte) {
 	t.Helper()
 	in, err := os.ReadFile(from)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	gz, err := gzip.NewReader(bytes.NewReader(in))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	tr := tar.NewReader(gz)
 	var out bytes.Buffer
 	gw := gzip.NewWriter(&out)
@@ -431,31 +403,19 @@ func rewriteBundle(t *testing.T, from, to string, mutate func(name string, body 
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		body, err := io.ReadAll(tr)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		body = mutate(h.Name, body)
 		h.Size = int64(len(body))
-		if err := tw.WriteHeader(h); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, tw.WriteHeader(h))
 		if _, err := tw.Write(body); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := gw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(to, out.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, tw.Close())
+	must.OK(t, gw.Close())
+	must.OK(t, os.WriteFile(to, out.Bytes(), 0o644))
 }
 
 func TestGoldenRunEvidenceVerify_Passing(t *testing.T) {
@@ -509,9 +469,7 @@ func TestRunEvidenceVerify_AgainstStore(t *testing.T) {
 		t.Fatalf("exit %d stdout %q stderr %q", agree.code, agree.stdout, agree.stderr)
 	}
 
-	if err := e.store.Delete(context.Background(), e.refs["ork-evidence-1/reconcile/rates"].GetUri()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, e.store.Delete(context.Background(), e.refs["ork-evidence-1/reconcile/rates"].GetUri()))
 	reclaimed := e.run("run", "evidence", "verify", filepath.Join(dir, "bundle.tar.gz"), "--against-store")
 	if reclaimed.code != exitOK || !strings.Contains(reclaimed.stdout, "tasks/reconcile/artifacts/rates.parquet   reclaimed since export") {
 		t.Fatalf("exit %d stdout %q", reclaimed.code, reclaimed.stdout)

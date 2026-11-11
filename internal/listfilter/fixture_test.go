@@ -1,7 +1,7 @@
 package listfilter_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"sync"
 	"testing"
@@ -14,6 +14,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runsRequest is a request message built at test time that declares the
@@ -70,18 +72,14 @@ func runsSpec(t testing.TB) *listfilter.Spec {
 		runsDesc = fd.Messages().Get(0)
 	})
 	spec, err := listfilter.SpecForDescriptor(runsDesc)
-	if err != nil {
-		t.Fatalf("runs spec: %v", err)
-	}
+	must.OKf(t, err, "runs spec")
 	return spec
 }
 
 func specOf(t testing.TB, request proto.Message) *listfilter.Spec {
 	t.Helper()
 	spec, err := listfilter.SpecFor(request)
-	if err != nil {
-		t.Fatalf("SpecFor(%T): %v", request, err)
-	}
+	must.OKf(t, err, "SpecFor(%T)", request)
 	return spec
 }
 
@@ -109,9 +107,7 @@ type vectors struct {
 func loadVectors(t testing.TB) vectors {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/vectors.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var v vectors
 	if err := json.Unmarshal(raw, &v); err != nil {
 		t.Fatal(err)
@@ -138,9 +134,7 @@ func parseAll(t *testing.T, texts ...string) []*orkstackv1.FieldFilter {
 	out := make([]*orkstackv1.FieldFilter, len(texts))
 	for i, text := range texts {
 		f, err := listfilter.Parse(text)
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", text, err)
-		}
+		must.OKf(t, err, "Parse(%q)", text)
 		out[i] = f
 	}
 	return out
@@ -150,9 +144,7 @@ func parseAll(t *testing.T, texts ...string) []*orkstackv1.FieldFilter {
 func compile(t *testing.T, spec *listfilter.Spec, texts ...string) listfilter.Set {
 	t.Helper()
 	set, err := spec.Compile(parseAll(t, texts...))
-	if err != nil {
-		t.Fatalf("Compile(%q): %v", texts, err)
-	}
+	must.OKf(t, err, "Compile(%q)", texts)
 	return set
 }
 

@@ -1,8 +1,7 @@
 package dsl
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // The declared interface of an Orkflow version is its inputs: and its
@@ -87,15 +87,13 @@ func CountNoun(n int, singular, plural string) string {
 // as Go formats a float64, HTML characters unescaped, no trailing newline.
 // Never protojson, whose whitespace is deliberately unstable.
 func renderJSON(value *structpb.Value) string {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(value.AsInterface()); err != nil {
+	encoded, err := json.Marshal(value.AsInterface(), stablejson.Unescaped)
+	if err != nil {
 		// AsInterface yields only JSON-encodable values; a NaN or Inf number
 		// is the one exception, and it renders as Go formats it.
 		return fmt.Sprint(value.AsInterface())
 	}
-	return strings.TrimRight(buf.String(), "\n")
+	return string(encoded)
 }
 
 // renderInput renders one input declaration for a finding's from/to.

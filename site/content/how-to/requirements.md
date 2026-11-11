@@ -7,7 +7,7 @@ OrkStack needs a Temporal cluster, an S3-compatible bucket, Docker or Podman on 
 | Part | What it must do |
 |---|---|
 | Temporal | Run a cluster you operate. A hosted Temporal Cloud is not supported yet. |
-| S3-compatible storage | Support conditional `PutObject` (`If-None-Match`, `If-Match`) and `DeleteObjects`. Every Orker checks conditional writes at boot and refuses to start without them. |
+| S3-compatible storage | Support conditional `PutObject` (`If-None-Match`, `If-Match`), conditional `DeleteObject` (`If-Match`) and `DeleteObjects`. Every Orker and every engine checks conditional writes at boot and refuses to start without them. |
 | Docker or Podman | Run on each Orker host. The Orker bind-mounts its work directory into each task. |
 | Images | `ork`, `orker`, `orkctl` and the first-party activities, from `ghcr.io/orkstack`. |
 
@@ -71,7 +71,7 @@ An Orker's boot can take a long time on an overloaded daemon. It runs a probe co
 
 ## Before you depend on it
 
-The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to care for. It is a list of items to check, not a readiness claim. Start with these:
+The [production checklist](https://github.com/orkstack/orkstack/blob/main/docs/PRODUCTION_CHECKLIST.md) lists what to care for. Start with these:
 
 - Put a gateway in front of `ork` that authenticates callers. OrkStack does not authenticate callers.
 - Terminate TLS at that gateway. The engine serves plain HTTP.

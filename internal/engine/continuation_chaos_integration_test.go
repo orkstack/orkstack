@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -45,11 +44,14 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/evidence"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The continuation chaos suite: the continue-as-new scenarios C1–C31
@@ -94,8 +96,7 @@ func TestIntegration_ContinuationChaosC1_HoldWithTwelveTasksRunning(t *testing.T
 	s.startProjection(nil)
 	s.startOrker("orker-1", gated(g, running...))
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, flatAndChain("c1-hold", 12, 12)), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	hold := s.logs.wait(t, ctx, logQuiesce, runID, 2*time.Minute)
@@ -191,14 +192,11 @@ func (s *chaosStack) c2Run(t *testing.T, image, command, realQueue string) (stri
 	plan, _ := s.tcPlan()
 	plan.Routes["real"] = realQueue
 	root, err := artifacts.CommitRoot(s.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan.CommitRoot = root
 	plan.Limits = engine.DefaultLimits()
 	plan.TransferBudgetSeconds = 300
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, wf, nil, plan)
 	return runID, s.openStream(s.reader, runID, 0)
 }
@@ -284,9 +282,7 @@ func TestIntegration_ContinuationChaosC2_OrkerKilledMidHoldRetriesElsewhere(t *t
 		t.Fatalf("slow's attempts ran on %v, want orker-a then orker-b", on)
 	}
 	records, err := stores.attempts.ListAttempts(ctx, runID, "slow", artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	retryAt := time.Duration(0)
 	for _, r := range records {
 		s.transcript.step("attempt record %d on %s: %v exit %d adopted %t", r.GetAttempt(), r.GetOrkerId(),
@@ -373,9 +369,7 @@ func TestIntegration_ContinuationChaosC2_OrkerKilledAfterCommitIsAdopted(t *test
 		t.Fatalf("the switch (event %d) did not wait for slow (event %d)", g0.continuedAt, done)
 	}
 	records, err := stores.attempts.ListAttempts(ctx, runID, "slow", artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	ran, adopted := 0, 0
 	for _, r := range records {
 		s.transcript.step("attempt record %d on %s: %v exit %d adopted %t", r.GetAttempt(), r.GetOrkerId(),
@@ -393,9 +387,7 @@ func TestIntegration_ContinuationChaosC2_OrkerKilledAfterCommitIsAdopted(t *test
 		t.Fatalf("%d records ran the container and %d adopted, want the container run once and adopted once", ran, adopted)
 	}
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := taskRunOfRun(run, "slow").GetCommit().GetUri(); got != first.GetCommit().GetUri() {
 		t.Fatalf("slow's row names commit %q, Orker A committed %q", got, first.GetCommit().GetUri())
 	}
@@ -430,8 +422,7 @@ func (s *chaosStack) raceTheSwitch(t *testing.T, name string, act func(runID str
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, awaitChainDocument(name, 12, 3600)), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	entered := hook.waitEntered(t, 2*time.Minute)
@@ -473,9 +464,7 @@ func TestIntegration_ContinuationChaosC3_ResolutionRacingTheSwitch(t *testing.T)
 	defer cancel()
 	s := newChaosStack(t, ctx, "C3")
 	runID, stream, _ := s.raceTheSwitch(t, "c3-race", func(runID string) {
-		if err := s.starter.SignalAwait(ctx, runID, completion("approve", `{"approved":true}`, "chaos")); err != nil {
-			t.Fatalf("resolve approve: %v", err)
-		}
+		must.OKf(t, s.starter.SignalAwait(ctx, runID, completion("approve", `{"approved":true}`, "chaos")), "resolve approve")
 		s.transcript.step("approve's resolution recorded while the switching task was open")
 	})
 	status, err := s.wait(runID, 3*time.Minute)
@@ -518,9 +507,7 @@ func TestIntegration_ContinuationChaosC4_CancelRacingTheSwitch(t *testing.T) {
 	defer cancel()
 	s := newChaosStack(t, ctx, "C4/racing")
 	runID, stream, _ := s.raceTheSwitch(t, "c4-race", func(runID string) {
-		if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
-			t.Fatalf("cancel: %v", err)
-		}
+		must.OKf(t, s.starter.CancelRun(ctx, runID, engine.CancelRequest{}), "cancel")
 		s.transcript.step("the operator's cancel recorded while the switching task was open")
 	})
 	status, _ := s.wait(runID, 3*time.Minute)
@@ -549,17 +536,14 @@ func TestIntegration_ContinuationChaosC4_CancelAfterTheSwitch(t *testing.T) {
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, awaitChainDocument("c4-after", 12, 3600)), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	s.waitChain(runID, 1, 2*time.Minute)
 	// The await keeps the run alive in its new generation; cancel it there,
 	// once that generation has restored its state.
 	s.logs.wait(t, ctx, logRestored, runID, time.Minute)
-	if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
-		t.Fatalf("cancel: %v", err)
-	}
+	must.OKf(t, s.starter.CancelRun(ctx, runID, engine.CancelRequest{}), "cancel")
 	status, _ := s.wait(runID, 3*time.Minute)
 	if status != enums.WORKFLOW_EXECUTION_STATUS_CANCELED {
 		t.Fatalf("the run closed %v, want Canceled", status)
@@ -584,8 +568,7 @@ func TestIntegration_ContinuationChaosC5_AwaitDeadlineCrossesTheSwitch(t *testin
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, awaitChainDocument("c5-deadline", 12, 40)), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	s.waitChain(runID, 1, 2*time.Minute)
@@ -596,9 +579,7 @@ func TestIntegration_ContinuationChaosC5_AwaitDeadlineCrossesTheSwitch(t *testin
 	}
 	events := s.requireOneRunRead(runID, stream, orkstackv1.Status_STATUS_FAILED, "")
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	approve := taskRunOfRun(run, "approve")
 	deadline := approve.GetAwait().GetDeadline().AsTime()
 	if approve.GetStatus() != orkstackv1.Status_STATUS_FAILED || deadline.IsZero() || !deadline.After(switched) {
@@ -687,9 +668,7 @@ func TestIntegration_ContinuationChaosC5_ResolutionsAfterTheSwitch(t *testing.T)
 	}
 	s.requireOneRunRead(runID, stream, orkstackv1.Status_STATUS_SUCCEEDED, "")
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for id, via := range map[string]orkstackv1.AwaitResolvedVia{
 		"approve-api":      orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API,
 		"approve-callback": orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_CALLBACK,
@@ -724,17 +703,33 @@ func c6PinDocument() string {
 		guardChain("c", 40, "")
 }
 
+// C6's shape. A chain task the run does not hold adds about as much history
+// as its pending reserve releases, so history plus reserve stays level
+// through the chain and the run crosses its hold line when its budget is due
+// or never: at the default 60 % of the test's 1,000 events it never did. C6
+// pins a hold line of c6HoldPercent instead, which a chain of c6ChainTasks
+// reaches at its budget (about 148 events of history and 200 of reserve).
+// Every task after the give-up then costs about 40 events, so the chain is
+// short enough to end well inside the one history the pin keeps the run in
+// (about 724 events), and c6Margin is the room under the limit the run must
+// still have at its end.
+const (
+	c6HoldPercent = 30
+	c6ChainTasks  = 12
+	c6Margin      = 150
+)
+
 // c6AwaitPinDocument is a pin whose second member waits on an await after
-// its first, beside a 20-task chain: an open pin that cannot reach idle
-// until a person resolves the await. The pin keeps the run in one history
-// from its first task, so the chain is short enough to finish in it (C13 is
-// the run whose other work never does).
+// its first, beside a c6ChainTasks-task chain: an open pin that cannot reach
+// idle until a person resolves the await. The pin keeps the run in one
+// history from its first task, so the chain is short enough to finish in it
+// (C13 is the run whose other work never does).
 func c6AwaitPinDocument() string {
 	return "apiVersion: orkstack/v1\nkind: Orkflow\nname: c6-await-pin\nversion: \"1.0.0\"\npins:\n  deploy: {}\ntasks:\n" +
 		"  - id: q1\n    uses: shell\n    pin: deploy\n    needs: []\n    with: {op: exec}\n" +
 		"  - id: approve\n    needs: [q1]\n    await: {timeout_seconds: 3600}\n" +
 		"  - id: q2\n    uses: shell\n    pin: deploy\n    needs: [approve]\n    with: {op: exec}\n" +
-		guardChain("c", 20, "")
+		guardChain("c", c6ChainTasks, "")
 }
 
 // pinHost is one in-process pin host whose process can be killed: it dials
@@ -794,8 +789,7 @@ func TestIntegration_ContinuationChaosC6_OpenPinHoldsTheSwitch(t *testing.T) {
 	s.startProjection(nil)
 	s.startPinHosts(gated(g, "p1"))
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, c6PinDocument()), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	g.waitEntered(t, "p1", time.Minute)
@@ -849,9 +843,7 @@ func TestIntegration_ContinuationChaosC6_OpenPinHoldsTheSwitch(t *testing.T) {
 func (s *chaosStack) firstEventAt(t *testing.T, runID, taskID string, typ orkstackv1.EventType) time.Time {
 	t.Helper()
 	events, err := s.reader.Events(s.ctx, runID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, e := range events {
 		if e.GetTaskId() == taskID && e.GetType() == typ {
 			return e.GetTimestamp().AsTime()
@@ -874,8 +866,8 @@ func TestIntegration_ContinuationChaosC6_PinBehindAnAwaitGivesTheHoldUp(t *testi
 	s.startProjection(nil)
 	s.startPinHosts(instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	plan.Continuation.HoldPercent = c6HoldPercent
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, c6AwaitPinDocument()), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	gaveUp := s.logs.wait(t, ctx, logGiveUp, runID, 2*time.Minute)
@@ -886,9 +878,10 @@ func TestIntegration_ContinuationChaosC6_PinBehindAnAwaitGivesTheHoldUp(t *testi
 	}
 	// Held work goes on after the give-up: the chain's tasks complete
 	// while the await is still open.
+	last := fmt.Sprintf("c%02d", c6ChainTasks-1)
 	deadline := time.Now().Add(time.Minute)
 	for {
-		if a, _ := s.attemptsOf("c19"); a > 0 {
+		if a, _ := s.attemptsOf(last); a > 0 {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -896,9 +889,7 @@ func TestIntegration_ContinuationChaosC6_PinBehindAnAwaitGivesTheHoldUp(t *testi
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if err := s.starter.SignalAwait(ctx, runID, completion("approve", `{"approved":true}`, "chaos")); err != nil {
-		t.Fatalf("resolve approve: %v", err)
-	}
+	must.OKf(t, s.starter.SignalAwait(ctx, runID, completion("approve", `{"approved":true}`, "chaos")), "resolve approve")
 	status, err := s.wait(runID, 3*time.Minute)
 	if status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED || err != nil {
 		t.Fatalf("the run closed %v: %v", status, err)
@@ -907,9 +898,20 @@ func TestIntegration_ContinuationChaosC6_PinBehindAnAwaitGivesTheHoldUp(t *testi
 	run, _ := s.reader.GetRun(ctx, runID)
 	host := s.requireOneHost(t, run, "q1", "q2")
 	chain := s.chain(runID)
+	// The run ended with room to spare in every history: a run that only just
+	// fits would pass by luck.
+	longest := 0
+	for _, execution := range chain {
+		longest = max(longest, len(s.history(runID, execution).GetEvents()))
+	}
+	if room := plan.History.MaxEvents - int64(longest); room < c6Margin {
+		t.Fatalf("a history of the run reached %d of its %d events: %d to spare, want at least %d",
+			longest, plan.History.MaxEvents, room, c6Margin)
+	}
 	s.transcript.figure("give_up_reason", reason)
-	t.Logf("C6 await: hold given up (%s); pin closed on %s after the resolution; %d generations, %d events",
-		reason, host, len(chain), len(events))
+	s.transcript.figure("longest_history_events", longest)
+	t.Logf("C6 await: hold given up (%s); pin closed on %s after the resolution; %d generations, %d events; "+
+		"longest history %d of %d events", reason, host, len(chain), len(events), longest, plan.History.MaxEvents)
 }
 
 const c7ChildDocument = "apiVersion: orkstack/v1\nkind: Orkflow\nname: release-block\nversion: \"2.1.0\"\ninputs:\n  image: {type: string, required: true}\ntasks:\n"
@@ -963,7 +965,7 @@ func TestIntegration_ContinuationChaosC7_ComposedChildHoldsTheSwitch(t *testing.
 		plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
 		plan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_SCHEDULE", ID: rec.GetScheduleId(),
 			Reference: at.UTC().Format(time.RFC3339), Description: rec.GetName()}
-		encoded, err := json.Marshal(plan)
+		encoded, err := stablejson.Marshal(plan)
 		if err != nil {
 			return nil, err
 		}
@@ -988,9 +990,7 @@ func TestIntegration_ContinuationChaosC7_ComposedChildHoldsTheSwitch(t *testing.
 		t.Fatalf("create schedule: %v", err)
 	}
 	defer func() { _ = scheduler.Delete(context.Background(), "default", rec.GetName()) }()
-	if err := scheduler.Fire(ctx, "default", rec.GetName(), orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED); err != nil {
-		t.Fatalf("fire: %v", err)
-	}
+	must.OKf(t, scheduler.Fire(ctx, "default", rec.GetName(), orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED), "fire")
 	g.waitEntered(t, "k00", 2*time.Minute)
 	mu.Lock()
 	runID := runIDs[0]
@@ -1026,16 +1026,12 @@ func TestIntegration_ContinuationChaosC7_ComposedChildHoldsTheSwitch(t *testing.
 		t.Fatalf("the child ran %d generations, want it to continue as new itself", len(childChain))
 	}
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if taskRunOfRun(run, "release").GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("release %v", taskRunOfRun(run, "release").GetStatus())
 	}
 	fires := scheduleFireIDs(t, ctx, s.control, rec.GetScheduleId(), 1)
-	if err := s.control.GetWorkflow(ctx, fires[0], "").Get(ctx, nil); err != nil {
-		t.Fatalf("the fire did not complete with its run: %v", err)
-	}
+	must.OKf(t, s.control.GetWorkflow(ctx, fires[0], "").Get(ctx, nil), "the fire did not complete with its run")
 	s.requireOneRunRead(runID, nil, orkstackv1.Status_STATUS_SUCCEEDED, "")
 	s.transcript.figure("parent_generations", len(chain))
 	s.transcript.figure("child_generations", len(childChain))
@@ -1066,9 +1062,7 @@ func (s *chaosStack) requireStreamFromBoundary(t *testing.T, reader *engine.Temp
 	stream := s.openStream(reader, runID, from)
 	got := stream.result(t, time.Minute)
 	all, err := s.reader.Events(s.ctx, runID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var want []*orkstackv1.Event
 	for _, e := range all {
 		if e.GetSequence() > from { // a stream delivers what comes after its sequence
@@ -1099,8 +1093,7 @@ func TestIntegration_ContinuationChaosC8_ReplicaStoppedMidHold(t *testing.T) {
 	s.startProjection(nil)
 	s.startOrker("orker-1", gated(g, running...))
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, flatAndChain("c8-hold", 12, 12)), nil, plan)
 	hold := s.logs.wait(t, ctx, logQuiesce, runID, 2*time.Minute)
 	if hold.Source != "replica-a" {
@@ -1145,8 +1138,7 @@ func TestIntegration_ContinuationChaosC8_ReplicaStoppedRightAfterASwitch(t *test
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c8-after\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	chain := s.waitChain(runID, 1, 2*time.Minute)
 	b := s.startReplica("replica-b", replicaOptions{})
@@ -1243,15 +1235,12 @@ func TestIntegration_ContinuationChaosC9_RolloutWhileAChainSwitches(t *testing.T
 	counting := &countingClient{Client: s.control}
 	reader := engine.NewTemporalRunReader(counting).WithSnapshotStore(s.store)
 	releases, err := engine.NewTemporalReleaseCluster(counting, reader, s.namespace, v1.Name, s.runQueue, s.orkerQueue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	svc := api.NewService(api.Config{Reader: reader, Starter: s.starter, Releases: releases, Fleet: s.starter,
 		Orkflows: engine.NewMemoryOrkflowStore()})
 
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c9-rollout\nversion: \"1.0.0\"\ntasks:\n"+
 		"  - id: gate\n    uses: shell\n    needs: []\n    with: {op: exec}\n"+guardChain("c", 30, "gate")), nil, plan)
 	g.waitEntered(t, "gate", 2*time.Minute)
@@ -1314,9 +1303,7 @@ func TestIntegration_ContinuationChaosC9_RolloutWhileAChainSwitches(t *testing.T
 	}
 	chain, histories := s.histories(runID)
 	described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	ended := described.GetWorkflowExecutionInfo().GetCloseTime().AsTime()
 	s.transcript.step("the chain ended at %s after %d generations; polling on until v1 reports Drained", ended.Format(time.RFC3339Nano), len(chain))
 
@@ -1445,8 +1432,7 @@ func TestIntegration_ContinuationChaosC10_FirstGenerationDeletedWhileTheRunConti
 	s.startProjection(nil)
 	s.startOrker("orker-1", gated(g, "c20"))
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c10-delete\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	g.waitEntered(t, "c20", 2*time.Minute)
@@ -1466,9 +1452,7 @@ func TestIntegration_ContinuationChaosC10_FirstGenerationDeletedWhileTheRunConti
 		t.Fatalf("a stream opened after generation 0 was deleted read %d events, Events(0) %d", len(got), len(events))
 	}
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := carryOf(t, s.history(runID, s.chain(runID)[len(s.chain(runID))-1])).GetCreatedAt().AsTime(); !run.GetCreatedAt().AsTime().Equal(want) {
 		t.Fatalf("created_at %v after generation 0 was deleted, want the carried %v", run.GetCreatedAt().AsTime(), want)
 	}
@@ -1484,9 +1468,7 @@ func TestIntegration_ContinuationChaosC11_RetireDeletesEveryGeneration(t *testin
 	defer cancel()
 	cfg, _ := privateCleanupBucket(t, ctx)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	s := newChaosStackWith(t, ctx, "C11", cfg, runArchive)
 	s.startReplica("replica-a", replicaOptions{})
 	s.startProjection(nil)
@@ -1496,8 +1478,7 @@ func TestIntegration_ContinuationChaosC11_RetireDeletesEveryGeneration(t *testin
 	plan.Namespace = orkNamespace
 	wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c11-retire\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, ""))
 	wf.Namespace = orkNamespace
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, wf, nil, plan)
 	if status, err := s.wait(runID, 3*time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED || err != nil {
 		t.Fatalf("the run closed %v: %v", status, err)
@@ -1510,17 +1491,13 @@ func TestIntegration_ContinuationChaosC11_RetireDeletesEveryGeneration(t *testin
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	retention := archivecleanup.NewRetentionController(policies, s.reader, s.namespace, archivecleanup.DefaultRetentionBuffer, logger)
 	if _, err := retention.SetMax(ctx, 999*time.Hour); err != nil {
 		t.Fatalf("SetMax: %v", err)
 	}
 	namespaces, err := artifacts.NewS3NamespaceStore(ctx, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, err := namespaces.Put(ctx, &orkstackv1.Namespace{Name: orkNamespace, RunRetention: durationpb.New(time.Minute)},
 		artifacts.PutConditions{}); err != nil {
 		t.Fatalf("write the namespace document: %v", err)
@@ -1531,9 +1508,7 @@ func TestIntegration_ContinuationChaosC11_RetireDeletesEveryGeneration(t *testin
 		return time.Now().UTC().Add(2 * time.Minute)
 	})
 	stats, err := cleaner.RunOnce(ctx)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if stats.RunsCleaned != 1 {
 		t.Fatalf("cleanup %+v, want the one run retired", stats)
 	}
@@ -1542,9 +1517,7 @@ func TestIntegration_ContinuationChaosC11_RetireDeletesEveryGeneration(t *testin
 	}
 	s.transcript.step("every one of the %d executions reads NotFound", len(chain))
 	running, err := s.reader.ListRuns(ctx, engine.RunQuery{Status: orkstackv1.Status_STATUS_RUNNING, Complete: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, r := range running {
 		if r.GetId() == runID {
 			t.Fatal("ListRuns(status RUNNING) still shows the retired run")
@@ -1558,9 +1531,7 @@ func TestIntegration_ContinuationChaosC11_RetireDeletesEveryGeneration(t *testin
 	}
 	a := s.serveAPI(api.Config{Namespaces: namespaces})
 	got, err := a.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID, Namespace: orkNamespace}))
-	if err != nil {
-		t.Fatalf("GetRun of the retired run: %v", err)
-	}
+	must.OKf(t, err, "GetRun of the retired run")
 	if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || got.Msg.GetRun().GetId() != runID {
 		t.Fatalf("GetRun from the archive = %s %v", got.Msg.GetRun().GetId(), got.Msg.GetRun().GetStatus())
 	}
@@ -1605,9 +1576,7 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	s.startOrker("orker-1", instant)
 
 	namespaces, err := artifacts.NewS3NamespaceStore(ctx, s.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	ns := fmt.Sprintf("chaos-c12-%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	if _, err := namespaces.Put(ctx, &orkstackv1.Namespace{Name: ns, MaxRunning: 3}, artifacts.PutConditions{}); err != nil {
 		t.Fatalf("write the namespace document: %v", err)
@@ -1635,9 +1604,7 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	apply("apiVersion: orkstack/v1\nkind: Orkflow\nname: c12-quick\nversion: \"1.0.0\"\ntasks:\n  - id: one\n    uses: shell\n    with: {op: exec}\n")
 
 	chainRun, err := submit("c12-chain")
-	if err != nil {
-		t.Fatalf("submit the chain: %v", err)
-	}
+	must.OKf(t, err, "submit the chain")
 	runID := chainRun.GetRun().GetId()
 	s.transcript.run(runID)
 	// The run's created_at is its first execution's start, which every read
@@ -1647,16 +1614,14 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	// generation: by StartTime the chain looks newer, by created_at it is
 	// older, and every user-facing page must say the latter.
 	middleRun, err := submit("c12-middle")
-	if err != nil {
-		t.Fatalf("submit the middle run: %v", err)
-	}
+	must.OKf(t, err, "submit the middle run")
 	middleID := middleRun.GetRun().GetId()
 	s.transcript.step("chain %s and middle %s submitted (max_running 3)", runID, middleID)
 	// The polls below judge the chain's switch, so they start once the
 	// cluster's index lists both runs: a poll in the first moments after the
 	// middle run's submit can find it not yet indexed, which is the index's
-	// lag on a fresh start, not a chain that went invisible (a feature proof
-	// of the task-ceiling defaults read count 1 a tenth of a second after the submit).
+	// lag on a fresh start, not a chain that went invisible (a proof of the
+	// task-ceiling defaults read count 1 a tenth of a second after the submit).
 	indexed := time.Now().Add(30 * time.Second)
 	for {
 		count, err := reader.RunningCount(ctx, ns, 3)
@@ -1739,9 +1704,7 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	hook.waitEntered(t, 2*time.Minute)
 	s.transcript.step("the run's next generation is starting (its first saved-state read held): submit at max_running − 1")
 	quick, err := submit("c12-quick")
-	if err != nil {
-		t.Fatalf("a submit at max_running − 1 while the run switched was refused: %v", err)
-	}
+	must.OKf(t, err, "a submit at max_running − 1 while the run switched was refused")
 	s.transcript.step("submit admitted: %s", quick.GetRun().GetId())
 	hook.open(nil)
 	status, err := s.wait(runID, 3*time.Minute)
@@ -1749,9 +1712,7 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 		t.Fatalf("the run closed %v: %v", status, err)
 	}
 	described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	ended := described.GetWorkflowExecutionInfo().GetCloseTime().AsTime()
 	close(stopPolling)
 	<-pollingDone
@@ -1759,9 +1720,7 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	// After the run: ListRuns(status RUNNING) drops it, with no describe.
 	before := counting.describes.Load()
 	running, err := reader.ListRuns(ctx, engine.RunQuery{Namespace: ns, Status: orkstackv1.Status_STATUS_RUNNING, Complete: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, r := range running {
 		if r.GetId() == runID {
 			t.Fatal("ListRuns(status RUNNING) still lists the finished run")
@@ -1852,8 +1811,7 @@ func TestIntegration_ContinuationChaosC13_NeverIdleFailsBeforeTheLimit(t *testin
 		"  - id: approve\n    needs: [q1]\n    await: {timeout_seconds: 3600}\n" +
 		"  - id: q2\n    uses: shell\n    pin: deploy\n    needs: [approve]\n    with: {op: exec}\n" +
 		guardChain("c", 250, "")
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, doc), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	gaveUp := s.logs.wait(t, ctx, logGiveUp, runID, 3*time.Minute)
@@ -1894,8 +1852,7 @@ func (s *chaosStack) switchThenHoldTheRead(t *testing.T, name string, budget eng
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan := s.plan(1000, engine.DefaultHistoryMaxBytes, &budget)
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: "+name+"\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	hook.waitEntered(t, 2*time.Minute)
@@ -1955,17 +1912,11 @@ func TestIntegration_ContinuationChaosC16_OverwrittenCheckpointIsCorrupt(t *test
 func (s *chaosStack) requireTerminalIsTheSwitchSnapshot(t *testing.T, runID string, carry *orkstackv1.RunContinuation) {
 	t.Helper()
 	data, err := s.store.ReadSnapshot(s.ctx, carry.GetSnapshot().GetUri())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	switched, err := engine.DecodeSwitchSnapshot(data, carry.GetSnapshot())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	run, err := s.reader.GetRun(s.ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(run.GetTaskRuns()) != len(switched.GetTaskRuns()) {
 		t.Fatalf("the terminal snapshot has %d rows, the switch snapshot %d", len(run.GetTaskRuns()), len(switched.GetTaskRuns()))
 	}
@@ -2111,8 +2062,7 @@ func TestIntegration_ContinuationChaosC18_ForgedCarriesEndExplicitly(t *testing.
 		if tc.code == engine.RunStateCorruptCode {
 			version = 1
 		}
-		runID := s.newRunID()
-		s.transcript.run(runID)
+		runID := s.recordedRunID()
 		wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c18-forged\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 3, ""))
 		wf.Namespace = "default"
 		carry := &orkstackv1.RunContinuation{Version: version, Generation: 1, EventSequence: 0}
@@ -2201,18 +2151,14 @@ func TestIntegration_ContinuationChaosC18_MalformedSavedStateEndsExplicitly(t *t
 		}
 		segment, err := writers.WriteEventSegment(ctx, &orkstackv1.RunEventSegment{
 			RunId: runID, Generation: 0, FirstSequence: 1, LastSequence: 2, Events: events}, "default", obs)
-		if err != nil {
-			t.Fatalf("write the earlier events: %v", err)
-		}
+		must.OKf(t, err, "write the earlier events")
 		state := func(r []*orkstackv1.TaskRun) *orkstackv1.Run {
 			return &orkstackv1.Run{Id: runID, Namespace: "default", OrkflowName: "c18-malformed", OrkflowVersion: "1.0.0",
 				Status: orkstackv1.Status_STATUS_RUNNING, CreatedAt: created, StartedAt: created, TaskRuns: r}
 		}
 		switched := state(rows(atSwitch...))
 		snapshot, err := writers.WriteSwitchSnapshot(ctx, switched, "default", 0, obs)
-		if err != nil {
-			t.Fatalf("write the switch snapshot: %v", err)
-		}
+		must.OKf(t, err, "write the switch snapshot")
 		checkpoint, err := writers.WriteCheckpoint(ctx, state(checkpointRows), 0, budget.CheckpointMaxBytes, obs)
 		if err != nil || checkpoint.GetUri() == "" {
 			t.Fatalf("write the checkpoint: %v (%v)", err, checkpoint)
@@ -2274,8 +2220,7 @@ func TestIntegration_ContinuationChaosC18_MalformedSavedStateEndsExplicitly(t *t
 			want: `its task 0 is "c01", the run declares "c00"`,
 		},
 	} {
-		runID := s.newRunID()
-		s.transcript.run(runID)
+		runID := s.recordedRunID()
 		carry, switched := tc.forge(runID)
 		wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c18-malformed\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", len(ids), ""))
 		wf.Namespace = "default"
@@ -2382,9 +2327,7 @@ func TestIntegration_ContinuationChaosC19_CancelWhileReadsBackOff(t *testing.T) 
 	// Long enough that Temporal is backing off between failing reads.
 	time.Sleep(20 * time.Second)
 	canceledAt := time.Now()
-	if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, s.starter.CancelRun(ctx, runID, engine.CancelRequest{}))
 	// Storage stays down until the cancel has reached the retrying read —
 	// its marker records the read canceled — and comes back for the run's
 	// terminal event, so the latency measured is the cancel's.
@@ -2448,9 +2391,7 @@ func TestIntegration_ContinuationChaosC19_CancelWhileAReadIsBlocked(t *testing.T
 	_, budget := s.tcPlan()
 	runID, _, carry := s.switchThenHoldTheRead(t, "c19-blocked", budget, replicaOptions{}, hook)
 	canceledAt := time.Now()
-	if err := s.starter.CancelRun(ctx, runID, engine.CancelRequest{}); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, s.starter.CancelRun(ctx, runID, engine.CancelRequest{}))
 	status, _ := s.wait(runID, 2*time.Minute)
 	latency := time.Since(canceledAt)
 	hook.mu.Lock()
@@ -2488,8 +2429,7 @@ func TestIntegration_ContinuationChaosC20_PinHostLostDuringAHold(t *testing.T) {
 		"  - id: p1\n    uses: shell\n    pin: build\n    needs: []\n    with: {op: exec}\n" +
 		"  - id: p2\n    uses: shell\n    pin: build\n    needs: [p1]\n    with: {op: exec}\n" +
 		guardChain("c", 40, "")
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, doc), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	g.waitEntered(t, "p1", time.Minute)
@@ -2542,9 +2482,7 @@ func (s *chaosStack) requireCarriedObjects(t *testing.T, runID string) {
 		}
 		for kind, obj := range objects {
 			data, err := s.store.ReadSnapshot(s.ctx, obj.GetUri())
-			if err != nil {
-				t.Fatalf("generation %d's %s %s does not read: %v", generation, kind, obj.GetUri(), err)
-			}
+			must.OKf(t, err, "generation %d's %s %s does not read", generation, kind, obj.GetUri())
 			if artifacts.ContinuationSHA256(data) != obj.GetSha256() ||
 				!artifacts.ContinuationURIMatches(obj.GetUri(), "default", runID, generation, kind, obj.GetSha256()) {
 				t.Fatalf("generation %d's %s at %s is not at its content key", generation, kind, obj.GetUri())
@@ -2554,14 +2492,10 @@ func (s *chaosStack) requireCarriedObjects(t *testing.T, runID string) {
 	}
 	raw := newRawS3ClientForCommitE2E(t, s.cfg)
 	prefix, err := artifacts.RunSnapshotPrefix("default", runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	segments := map[string]int{}
 	page, err := raw.ListObjectsV2(s.ctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.cfg.S3Bucket), Prefix: aws.String(prefix + "continuations/")})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, object := range page.Contents {
 		name := aws.ToString(object.Key)[strings.LastIndex(aws.ToString(object.Key), "/")+1:]
 		if generation, rest, ok := strings.Cut(name, "-"); ok && strings.HasPrefix(rest, artifacts.ContinuationKindEvents+"-") {
@@ -2596,8 +2530,7 @@ func TestIntegration_ContinuationChaosC14_StorageCutDuringTheSwitchWrites(t *tes
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c14-store-cut\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	hook.waitEntered(t, 2*time.Minute)
 	cutAt := time.Now()
@@ -2616,9 +2549,7 @@ func TestIntegration_ContinuationChaosC14_StorageCutDuringTheSwitchWrites(t *tes
 	retried := len(s.logs.matching(logRetry, runID))
 	status, _ := s.wait(runID, 3*time.Minute)
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	switch status {
 	case enums.WORKFLOW_EXECUTION_STATUS_COMPLETED:
 		if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
@@ -2659,8 +2590,7 @@ func TestIntegration_ContinuationChaosC21_ReplicaKilledBetweenTheWritesAndTheCom
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c21-killed\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	entered := hook.waitEntered(t, 2*time.Minute)
@@ -2696,9 +2626,7 @@ func TestIntegration_ContinuationChaosC21_ReplicaKilledBetweenTheWritesAndTheCom
 		t.Fatalf("the switching execution %s is not followed by one next generation in %v", execution, chain)
 	}
 	listed, err := s.control.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{Query: fmt.Sprintf("WorkflowId = %q", runID)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if n := len(listed.GetExecutions()); n != len(chain) {
 		t.Fatalf("the cluster lists %d executions of the run, its chain names %d: a second successor exists", n, len(chain))
 	}
@@ -2731,8 +2659,7 @@ func TestIntegration_ContinuationChaosC22_CurrentGenerationTerminated(t *testing
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, awaitChainDocument("c22-terminated", 12, 3600)), nil, plan)
 	s.waitChain(runID, 1, 2*time.Minute)
 	// Terminate once the run is idle on its await in its latest generation.
@@ -2758,24 +2685,18 @@ func TestIntegration_ContinuationChaosC22_CurrentGenerationTerminated(t *testing
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if err := s.control.TerminateWorkflow(ctx, runID, "", "chaos C22: terminated from outside"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, s.control.TerminateWorkflow(ctx, runID, "", "chaos C22: terminated from outside"))
 	status, _ := s.wait(runID, time.Minute)
 	if status != enums.WORKFLOW_EXECUTION_STATUS_TERMINATED {
 		t.Fatalf("the run closed %v, want Terminated", status)
 	}
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetError().GetCode() != "RUN_TERMINATED" {
 		t.Fatalf("GetRun = %v %v, want CANCELED RUN_TERMINATED", run.GetStatus(), run.GetError())
 	}
 	events, err := s.reader.Events(ctx, runID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	requireContiguous(t, events)
 	chain, histories := s.histories(runID)
 	last := histories[len(histories)-1]
@@ -2808,8 +2729,7 @@ func (s *chaosStack) frontendCutRun(t *testing.T, name string, hook *blockingHoo
 	s.startProjection(engineClient)
 	s.startOrker("orker-1", instant)
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: "+name+"\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	hook.waitEntered(t, 2*time.Minute)
@@ -2838,9 +2758,7 @@ func TestIntegration_ContinuationChaosC28_FrontendUnreachableDuringTheSwitch(t *
 		t.Fatalf("the run closed %v: %v", status, err)
 	}
 	listed, err := s.control.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{Query: fmt.Sprintf("WorkflowId = %q", runID)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	chain := s.chain(runID)
 	if n := len(listed.GetExecutions()); n != len(chain) {
 		t.Fatalf("the cluster lists %d executions of the run, its chain names %d", n, len(chain))
@@ -2928,8 +2846,7 @@ func TestIntegration_ContinuationChaosC15_LongItemsStillSwitch(t *testing.T) {
 		"    each: {over: \"{{ .tasks.list8.output.parts }}\", as: part, max_items: 50, max_parallel: 4}\n" +
 		"    with: {op: exec, name: \"{{ .each.part.name }}\"}\n" +
 		guardChain("c", 30, "")
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, doc), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	hold := s.logs.wait(t, ctx, logQuiesce, runID, 3*time.Minute)
@@ -3071,8 +2988,7 @@ func TestIntegration_ContinuationChaosC25_InFlightCapBoundsAWideRun(t *testing.T
 			tk.Each.MaxItems = 1200
 		}
 	}
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, wf, nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	status, err := s.wait(runID, 13*time.Minute)
@@ -3151,8 +3067,7 @@ func TestIntegration_ContinuationChaosC26_BytesDrivenSwitch(t *testing.T) {
 	const budgetBytes = 2 << 20
 	budget := engine.DefaultContinuationBudget(engine.DefaultContinuationEvents, budgetBytes, engine.DefaultContinuationRestoreTimeout)
 	plan := s.plan(engine.DefaultHistoryMaxEvents, 10<<20, &budget)
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c26-bytes\nversion: \"1.0.0\"\ninputs:\n  blob: {type: string}\ntasks:\n"+guardChain("c", 40, "")),
 		blobInput(t, 128<<10), plan)
 	stream := s.openStream(s.reader, runID, 0)
@@ -3201,8 +3116,7 @@ func TestIntegration_ContinuationChaosC27_BytesDrivenGuard(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		fmt.Fprintf(&b, "  - id: w%02d\n    uses: shell\n    needs: []\n    with: {op: exec}\n", i)
 	}
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, b.String()), blobInput(t, 128<<10), plan)
 	stream := s.openStream(s.reader, runID, 0)
 	status, _ := s.wait(runID, 3*time.Minute)
@@ -3215,9 +3129,7 @@ func TestIntegration_ContinuationChaosC27_BytesDrivenGuard(t *testing.T) {
 		t.Fatalf("RUN_HISTORY_LIMIT says %q: want it to name the history's MiB", run.GetError().GetMessage())
 	}
 	described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	size := described.GetWorkflowExecutionInfo().GetHistorySizeBytes()
 	if size >= maxBytes {
 		t.Fatalf("the final history is %d bytes, at or over the %d limit", size, maxBytes)
@@ -3258,8 +3170,7 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 	})
 	a := s.serveAPI(api.Config{})
 	plan, _ := s.tcPlan()
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c30-gap\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	g.waitEntered(t, "c20", 2*time.Minute)
 	execution, _ := s.current(runID)
@@ -3315,9 +3226,7 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 		time.Sleep(200 * time.Millisecond)
 	}
 	gaps, err := engine.UnmarshalRunArchiveGaps(body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(gaps) != 1 || gaps[0].First != segment.GetFirstSequence() || gaps[0].Last != segment.GetLastSequence() {
 		t.Fatalf("archived gaps %+v, want the one segment %d–%d", gaps, segment.GetFirstSequence(), segment.GetLastSequence())
 	}
@@ -3333,9 +3242,7 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 	// DataLoss naming the range. Every execution of the chain — it carried on
 	// again after the segment was deleted — reads NotFound first.
 	executions := s.chain(runID)
-	if err := s.reader.DeleteWorkflow(ctx, s.namespace, runID); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, s.reader.DeleteWorkflow(ctx, s.namespace, runID))
 	for _, id := range executions {
 		s.waitExecutionGone(t, runID, id, time.Minute)
 	}
@@ -3344,9 +3251,7 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 		t.Fatalf("GetRun from the archive = %v %v", got, err)
 	}
 	stream, err := a.runs.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: runID}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for stream.Receive() {
 	}
 	streamErr := stream.Err()
@@ -3359,29 +3264,21 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 
 	// The evidence bundle carries the gap, and the CLI verifies it.
 	export, err := a.runs.ExportRunEvidence(ctx, connect.NewRequest(&orkstackv1.ExportRunEvidenceRequest{RunId: runID}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var bundle bytes.Buffer
 	for export.Receive() {
 		bundle.Write(export.Msg().GetData())
 	}
-	if err := export.Err(); err != nil {
-		t.Fatalf("export the evidence bundle: %v", err)
-	}
+	must.OKf(t, export.Err(), "export the evidence bundle")
 	report, err := evidence.Verify(bytes.NewReader(bundle.Bytes()))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !report.OK() || report.Manifest.SchemaVersion != evidence.SchemaVersionEventGaps || len(report.EventGaps) != 1 ||
 		report.EventGaps[0].First != segment.GetFirstSequence() || report.EventGaps[0].Last != segment.GetLastSequence() {
 		t.Fatalf("the bundle verifies %t, schema %d, gaps %+v (failures %+v)", report.OK(), report.Manifest.SchemaVersion,
 			report.EventGaps, report.Failures)
 	}
 	path := filepath.Join(t.TempDir(), "evidence.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, bundle.Bytes(), 0o644))
 	cmd := exec.CommandContext(ctx, testbin.Path(t, "./cmd/orkctl"), "run", "evidence", "verify", path)
 	cmd.Env = append(os.Environ(), "ORK_SERVER=", "ORK_NAMESPACE=", "ORK_CONFIG="+filepath.Join(t.TempDir(), "config.json"))
 	out, err := cmd.CombinedOutput()
@@ -3448,8 +3345,7 @@ func TestIntegration_ContinuationChaosC31_RestoreRetriesStayWithinTheirBound(t *
 	s.startProjection(nil)
 	s.startOrker("orker-1", instant)
 	plan := s.plan(1000, engine.DefaultHistoryMaxBytes, &budget)
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: c31-restore\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, "")), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	window := time.Duration(budget.Restore.TimeoutSeconds) * time.Second
@@ -3547,12 +3443,8 @@ func (s *chaosStack) pendingPublishes(t *testing.T, runID string) []pendingPubli
 			var published *orkstackv1.Event
 			var uri string
 			payloads := attrs.GetInput().GetPayloads()
-			if err := converter.GetDefaultDataConverter().FromPayload(payloads[0], &published); err != nil {
-				t.Fatal(err)
-			}
-			if err := converter.GetDefaultDataConverter().FromPayload(payloads[1], &uri); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, converter.GetDefaultDataConverter().FromPayload(payloads[0], &published))
+			must.OK(t, converter.GetDefaultDataConverter().FromPayload(payloads[1], &uri))
 			open[event.GetEventId()] = pendingPublish{event: published, snapshotURI: uri}
 			order = append(order, event.GetEventId())
 		}
@@ -3601,8 +3493,7 @@ func TestIntegration_ContinuationChaosC23_ProjectionDownDuringTheSwitchDrain(t *
 		"    each: {over: \"{{ .tasks.list100.output.parts }}\", as: part, max_items: 100, max_parallel: 2}\n" +
 		"    with: {op: exec, name: \"{{ .each.part.name }}\"}\n" +
 		guardChain("c", 30, "")
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, doc), nil, plan)
 	stream := s.openStream(s.reader, runID, 0)
 	s.logs.wait(t, ctx, logQuiesce, runID, 2*time.Minute)
@@ -3675,8 +3566,7 @@ func (s *chaosStack) c24Run(t *testing.T, name string, n int, capBytes int64, in
 	t.Helper()
 	budget := engine.DefaultContinuationBudget(120, capBytes, engine.DefaultContinuationRestoreTimeout)
 	plan := s.plan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes, &budget)
-	runID := s.newRunID()
-	s.transcript.run(runID)
+	runID := s.recordedRunID()
 	s.start(runID, compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: "+name+"\nversion: \"1.0.0\"\ninputs:\n  blob: {type: string}\ntasks:\n"+guardChain("c", n, "")),
 		input, plan)
 	return runID

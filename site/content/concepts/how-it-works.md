@@ -16,7 +16,7 @@ OrkStack has four parts. Each does one job, and no OrkStack process holds the on
 
 ## What happens in a run
 
-When you apply an Orkflow, OrkStack checks it, resolves each image to a digest, and stores the result as an immutable version. When you submit a run, the engine decides where each task runs and which policies apply. Then it starts the run in Temporal.
+When you create an Orkflow, OrkStack checks it, resolves each image to a digest, and stores the result as an immutable version. When you submit a run, the engine decides where each task runs and which policies apply. Then it starts the run in Temporal.
 
 Temporal starts each task once the tasks in its `needs:` have ended. The task goes to an Orker of its pool. The Orker runs the container, checks its outputs, saves them to object storage, and only then reports success to Temporal.
 

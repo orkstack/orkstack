@@ -18,6 +18,10 @@ enum Status {
   // AWAITING is a TASK status only, like SKIPPED: the task is waiting to be
   // resolved from outside the run. A run with an awaiting task is RUNNING.
   STATUS_AWAITING = 7;
+  // SLEEPING is a TASK status only, like AWAITING: a sleeping task is
+  // waiting out its fixed time on the run's own timer, and nothing outside
+  // the run can end it early. A run with a sleeping task is RUNNING.
+  STATUS_SLEEPING = 8;
 }
 
 // ArtifactRef is a pointer to a stored artifact in the object store.

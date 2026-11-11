@@ -120,3 +120,11 @@ func CommitRoot(cfg Config) (string, error) {
 		return "", ErrUnknownBackend
 	}
 }
+
+// localDir is the directory a local backend keeps everything under.
+func localDir(cfg Config) string {
+	if cfg.LocalDir == "" {
+		return DefaultLocalDir
+	}
+	return cfg.LocalDir
+}

@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestCatalogResolveUses_AppliesTheFourRulesInOrder(t *testing.T) {
@@ -43,9 +45,7 @@ func TestCatalogResolveUses_AppliesTheFourRulesInOrder(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("uses %q: unexpected error: %v", tc.uses, err)
-			}
+			must.OKf(t, err, "uses %q: unexpected error", tc.uses)
 			if got != tc.want {
 				t.Fatalf("uses %q = %q, want %q", tc.uses, got, tc.want)
 			}
@@ -82,9 +82,7 @@ func TestBuiltinActivityCatalog_IsTheSixFirstPartyImages(t *testing.T) {
 func TestCatalogResolveUses_CatalogNameBeatsDockerHubRepository(t *testing.T) {
 	catalog := BuiltinActivityCatalog()
 	got, err := catalog.ResolveUses("t1", "shell")
-	if err != nil {
-		t.Fatalf("resolve shell: %v", err)
-	}
+	must.OKf(t, err, "resolve shell")
 	if got == "shell" || got == "library/shell" {
 		t.Fatalf("`uses: shell` resolved to %q — rule 3 beat rule 2", got)
 	}
@@ -107,9 +105,7 @@ func TestCatalogResolveUses_ContainerIsNotInTheCatalog(t *testing.T) {
 func TestParseCatalog(t *testing.T) {
 	t.Run("empty selects the builtin table", func(t *testing.T) {
 		got, err := ParseCatalog(nil)
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
+		must.OKf(t, err, "parse")
 		if got["shell"] != BuiltinActivityCatalog()["shell"] {
 			t.Fatalf("empty document did not select the builtin table: %v", got)
 		}
@@ -117,9 +113,7 @@ func TestParseCatalog(t *testing.T) {
 
 	t.Run("an explicit empty mapping is an empty catalog", func(t *testing.T) {
 		got, err := ParseCatalog([]byte("activities: {}\n"))
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
+		must.OKf(t, err, "parse")
 		if len(got) != 0 {
 			t.Fatalf("`activities: {}` = %v, want an empty catalog", got)
 		}
@@ -128,9 +122,7 @@ func TestParseCatalog(t *testing.T) {
 	t.Run("an override replaces the table", func(t *testing.T) {
 		got, err := ParseCatalog([]byte(
 			"activities:\n  shell: localhost:5001/orkstack/activity-shell:dev\n"))
-		if err != nil {
-			t.Fatalf("parse: %v", err)
-		}
+		must.OKf(t, err, "parse")
 		if got["shell"] != "localhost:5001/orkstack/activity-shell:dev" {
 			t.Fatalf("shell = %q", got["shell"])
 		}
@@ -208,9 +200,7 @@ tasks:
 	wf, err := CompileWithOptions(source, Options{
 		Catalog: Catalog{"bespoke": "ghcr.io/acme/bespoke:v1"},
 	})
-	if err != nil {
-		t.Fatalf("configured catalog: %v", err)
-	}
+	must.OKf(t, err, "configured catalog")
 	if wf.GetTasks()[0].GetUses() != "bespoke" {
 		t.Fatalf("uses = %q, want the author's spelling preserved", wf.GetTasks()[0].GetUses())
 	}

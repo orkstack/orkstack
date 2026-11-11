@@ -55,24 +55,25 @@ func TestLoadConfig_OrkflowMaxTasksAboveTheMeasuredMaximumWarns(t *testing.T) {
 // TestLoadConfig_OrkflowMaxTasksAboveTheFlatShapeMaximumWarns: above X, the
 // flat-stage bound for the configured settings (engine.ShapeMaxTasks), the
 // boot warns naming the six keys, "may stop" and "plain tasks"; at the
-// defaults N does not warn (X = 4,222); with restore_timeout 8 h, an
-// explicit 4,000 warns (X = 3,041).
+// defaults N does not warn (X = 4,389); with restore_timeout 8 h, an
+// explicit 4,000 warns (X = 3,207); and run_max_in_flight at the 1,000 it
+// defaulted to before the detached publish path warns at N (X = 3,540).
 func TestLoadConfig_OrkflowMaxTasksAboveTheFlatShapeMaximumWarns(t *testing.T) {
 	cfg := loadConfig()
-	if cfg.limitsErr != nil || len(cfg.taskCeiling.warnings) != 0 || cfg.taskCeiling.flatBound != 4222 {
-		t.Fatalf("the defaults: X %d, warnings %q (%v); want X = 4,222 and no warning at N = %d",
+	if cfg.limitsErr != nil || len(cfg.taskCeiling.warnings) != 0 || cfg.taskCeiling.flatBound != 4389 {
+		t.Fatalf("the defaults: X %d, warnings %q (%v); want X = 4,389 and no warning at N = %d",
 			cfg.taskCeiling.flatBound, cfg.taskCeiling.warnings, cfg.limitsErr, engine.DefaultOrkflowMaxTasks)
 	}
 	t.Setenv("ORK_CONTINUATION_RESTORE_TIMEOUT", "8h")
 	t.Setenv("ORK_ORKFLOW_MAX_TASKS", "4000")
 	cfg = loadConfig()
-	if cfg.limitsErr != nil || cfg.taskCeiling.flatBound != 3041 {
-		t.Fatalf("restore_timeout 8h: X = %d (%v), want 3,041", cfg.taskCeiling.flatBound, cfg.limitsErr)
+	if cfg.limitsErr != nil || cfg.taskCeiling.flatBound != 3207 {
+		t.Fatalf("restore_timeout 8h: X = %d (%v), want 3,207", cfg.taskCeiling.flatBound, cfg.limitsErr)
 	}
-	requireWarning(t, cfg, "ORK_ORKFLOW_MAX_TASKS=4000", "above 3041", "engine.history.max_events",
+	requireWarning(t, cfg, "ORK_ORKFLOW_MAX_TASKS=4000", "above 3207", "engine.history.max_events",
 		"engine.continuation.events", "engine.continuation.bytes", "engine.continuation.restore_timeout",
-		"engine.run_max_in_flight", "a stage of more than 3041 plain tasks", "may stop RUN_HISTORY_LIMIT")
-	t.Setenv("ORK_ORKFLOW_MAX_TASKS", "3041")
+		"engine.run_max_in_flight", "a stage of more than 3207 plain tasks", "may stop RUN_HISTORY_LIMIT")
+	t.Setenv("ORK_ORKFLOW_MAX_TASKS", "3207")
 	cfg = loadConfig()
 	if cfg.limitsErr != nil {
 		t.Fatal(cfg.limitsErr)
@@ -82,6 +83,14 @@ func TestLoadConfig_OrkflowMaxTasksAboveTheFlatShapeMaximumWarns(t *testing.T) {
 			t.Fatalf("exactly X warns %q, want no flat-stage warning", warning)
 		}
 	}
+	t.Setenv("ORK_CONTINUATION_RESTORE_TIMEOUT", "")
+	t.Setenv("ORK_ORKFLOW_MAX_TASKS", "")
+	t.Setenv("ORK_RUN_MAX_IN_FLIGHT", "1000")
+	cfg = loadConfig()
+	if cfg.limitsErr != nil || cfg.taskCeiling.flatBound != 3540 {
+		t.Fatalf("run_max_in_flight 1000: X = %d (%v), want 3,540", cfg.taskCeiling.flatBound, cfg.limitsErr)
+	}
+	requireWarning(t, cfg, "ORK_ORKFLOW_MAX_TASKS=4000", "above 3540", "engine.run_max_in_flight (1000)")
 }
 
 // TestLoadConfig_OrkflowMaxTasksWithoutContinuation: with continuation off

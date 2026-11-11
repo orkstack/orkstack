@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestItemIdempotencyKeyFor(t *testing.T) {
@@ -25,12 +27,8 @@ func TestItemIdempotencyKeyFor(t *testing.T) {
 func TestInputSize_EqualsTheCheckersMeasure(t *testing.T) {
 	in := &orkstackv1.ExecuteTaskInput{RunId: "ork-1", TaskId: "convert", Command: []string{"sh", "-c", "echo \"quoted\"\n"}}
 	size, err := InputSize(in)
-	if err != nil {
-		t.Fatalf("InputSize: %v", err)
-	}
-	if err := CheckInputSize(in, size); err != nil {
-		t.Fatalf("CheckInputSize at exactly InputSize refused: %v", err)
-	}
+	must.OKf(t, err, "InputSize")
+	must.OKf(t, CheckInputSize(in, size), "CheckInputSize at exactly InputSize refused")
 	if err := CheckInputSize(in, size-1); err == nil || !strings.Contains(err.Error(), ReasonInputTooLarge) {
 		t.Fatalf("CheckInputSize one byte under InputSize = %v, want INPUT_TOO_LARGE", err)
 	}

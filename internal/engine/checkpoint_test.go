@@ -15,6 +15,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // checkpointRunForTest is a run with a plain task, an expanded fan-out of
@@ -49,30 +51,18 @@ func TestCheckpointRun_ConcatenatedPartsDecodeAsOne(t *testing.T) {
 		// Readers: the whole object gunzipped as one multistream and
 		// unmarshalled once.
 		reader, err := gzip.NewReader(bytes.NewReader(data))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		plain, err := io.ReadAll(reader)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		merged := &orkstackv1.RunCheckpointPart{}
-		if err := proto.Unmarshal(plain, merged); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, proto.Unmarshal(plain, merged))
 		whole, err := CheckpointRun(merged)
-		if err != nil {
-			t.Fatalf("CheckpointRun(merged): %v", err)
-		}
+		must.OKf(t, err, "CheckpointRun(merged)")
 		// A generation: part by part.
 		byPart, err := CheckpointRun(parts...)
-		if err != nil {
-			t.Fatalf("CheckpointRun(parts...): %v", err)
-		}
+		must.OKf(t, err, "CheckpointRun(parts...)")
 		decoded, err := DecodeCheckpoint(data, obj)
-		if err != nil {
-			t.Fatalf("DecodeCheckpoint: %v", err)
-		}
+		must.OKf(t, err, "DecodeCheckpoint")
 		for name, got := range map[string]*orkstackv1.Run{"merged": whole, "by part": byPart, "decoded": decoded} {
 			if !proto.Equal(got, run) {
 				t.Fatalf("%d rows per part, %s: decoded run differs from the original\n got %v\nwant %v", rowsPerPart, name, got, run)
@@ -121,9 +111,7 @@ func TestCheckpointRun_RefusesDuplicateOrOrphanItems(t *testing.T) {
 	}
 	// The items arrive out of order: they are attached in index order.
 	run, err := CheckpointRun(&orkstackv1.RunCheckpointPart{Header: header, TaskRuns: []*orkstackv1.TaskRun{fan()}, Items: []*orkstackv1.TaskRun{item("fan", 1), item("fan", 0)}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := run.GetTaskRuns()[0].GetItems(); got[0].GetItem() != 0 || got[1].GetItem() != 1 {
 		t.Fatalf("items attached out of index order: %v", got)
 	}
@@ -200,9 +188,7 @@ func TestDecodeSwitchSnapshot_VerifiesSizeAndHash(t *testing.T) {
 	run := checkpointRunForTest()
 	data, obj := gzipObjectForTest(t, run, "team-a", "ork-1-2", 0, artifacts.ContinuationKindSnapshot)
 	got, err := DecodeSwitchSnapshot(data, obj)
-	if err != nil {
-		t.Fatalf("DecodeSwitchSnapshot: %v", err)
-	}
+	must.OKf(t, err, "DecodeSwitchSnapshot")
 	if !proto.Equal(got, run) {
 		t.Fatalf("decoded snapshot differs: %v", got)
 	}
@@ -282,9 +268,7 @@ func TestCheckpointParts_BoundsEveryPartAndReassembles(t *testing.T) {
 		before[i] = proto.Clone(part).(*orkstackv1.RunCheckpointPart)
 	}
 	back, err := CheckpointRun(parts...)
-	if err != nil {
-		t.Fatalf("CheckpointRun: %v", err)
-	}
+	must.OKf(t, err, "CheckpointRun")
 	if !proto.Equal(back, run) {
 		t.Fatal("the parts do not reassemble into the run they came from")
 	}

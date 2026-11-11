@@ -1,23 +1,16 @@
 package artifacts
 
 import (
-	"bytes"
 	"context"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"os"
-	"path"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
-
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
@@ -40,14 +33,11 @@ const TriggerPrefix = "metadata/triggers"
 // directly and no process keeps a startup snapshot, so a trigger created on
 // one replica is invocable on every other one.
 func NewTriggerStore(ctx context.Context, cfg Config) (triggers.Store, error) {
-	switch cfg.Backend {
-	case "", BackendLocal:
-		return NewLocalTriggerStore(localDir(cfg))
-	case BackendS3:
-		return NewS3TriggerStore(ctx, cfg)
-	default:
-		return nil, fmt.Errorf("artifacts: trigger store backend %q: %w", cfg.Backend, ErrUnknownBackend)
+	b, err := openBlobs(ctx, cfg, "trigger store", TriggerPrefix)
+	if err != nil {
+		return nil, err
 	}
+	return &BlobTriggerStore{blobBase: blobBase{b}}, nil
 }
 
 func triggerKey(id string) (string, error) {
@@ -103,7 +93,7 @@ func marshalTriggerRecord(trigger triggers.Trigger) ([]byte, error) {
 		SecretSalt:     hex.EncodeToString(trigger.SecretSalt),
 		SecretHash:     hex.EncodeToString(trigger.SecretHash),
 	}
-	raw, err := json.MarshalIndent(record, "", "  ")
+	raw, err := stablejson.MarshalIndent(record, "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode trigger %q: %w", trigger.ID, err)
 	}
@@ -154,29 +144,52 @@ func unmarshalTriggerRecord(raw []byte) (triggers.Trigger, error) {
 	}, nil
 }
 
-// S3TriggerStore is an S3-compatible shared trigger registry.
-type S3TriggerStore struct {
-	client *s3.Client
-	bucket string
+// BlobTriggerStore is the shared trigger registry, one object per trigger in
+// the object store every replica reads.
+//
+// nameMu serialises, within one process, a named create's uniqueness check
+// with its publish, and an update's check with its write, so two creates in
+// one process cannot both take one name. Across replicas the check is
+// best-effort (Create says why); a conditional write, never this lock, is
+// what keeps an update from recreating a deleted trigger.
+type BlobTriggerStore struct {
+	blobBase
+	nameMu sync.Mutex
 	// beforeConditionalPut, when set, runs between Update's read and its
 	// conditional write. Tests use it to delete the record in that window.
 	beforeConditionalPut func()
 }
 
-var _ triggers.Store = (*S3TriggerStore)(nil)
+// LocalTriggerStore and S3TriggerStore are the trigger registry over a local
+// directory and over a bucket: one implementation, two backends.
+type (
+	LocalTriggerStore = BlobTriggerStore
+	S3TriggerStore    = BlobTriggerStore
+)
 
-func NewS3TriggerStore(ctx context.Context, cfg Config) (*S3TriggerStore, error) {
-	client, bucket, err := newS3Client(ctx, cfg)
+var _ triggers.Store = (*BlobTriggerStore)(nil)
+
+// NewLocalTriggerStore opens (creating if needed) the registry under dir.
+func NewLocalTriggerStore(dir string) (*LocalTriggerStore, error) {
+	b, err := openLocalBlobs("trigger store", dir, TriggerPrefix)
 	if err != nil {
 		return nil, err
 	}
-	return &S3TriggerStore{client: client, bucket: bucket}, nil
+	return &BlobTriggerStore{blobBase: blobBase{b}}, nil
 }
 
-// Create writes one record with a conditional PUT, so two replicas drawing the
-// same id cannot both believe they created it: the loser retries with a fresh
-// one rather than overwriting a trigger somebody is already holding a token
-// for.
+// NewS3TriggerStore builds the registry from the shared ORK_S3_* config.
+func NewS3TriggerStore(ctx context.Context, cfg Config) (*S3TriggerStore, error) {
+	b, err := openS3Blobs(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &BlobTriggerStore{blobBase: blobBase{b}}, nil
+}
+
+// Create writes one record create-only, so two replicas drawing the same id
+// cannot both believe they created it: the loser retries with a fresh one
+// rather than overwriting a trigger somebody is already holding a token for.
 //
 // A named create first refuses a name another trigger of the namespace holds.
 // That check is best-effort across replicas: two creates of one name racing
@@ -184,12 +197,16 @@ func NewS3TriggerStore(ctx context.Context, cfg Config) (*S3TriggerStore, error)
 // never silent — every automation plan and export refuses a namespace in which
 // two triggers share a name, naming both — and a lock across replicas would be
 // the distributed lock AGENTS.md §2.1 forbids.
-func (s *S3TriggerStore) Create(ctx context.Context, reg triggers.Registration) (triggers.Trigger, string, error) {
+func (s *BlobTriggerStore) Create(ctx context.Context, reg triggers.Registration) (triggers.Trigger, string, error) {
 	if err := reg.Validate(); err != nil {
 		return triggers.Trigger{}, "", err
 	}
-	if err := s.refuseTakenName(ctx, reg.Namespace, reg.Name, ""); err != nil {
-		return triggers.Trigger{}, "", err
+	if reg.Name != "" {
+		s.nameMu.Lock()
+		defer s.nameMu.Unlock()
+		if err := s.refuseTakenName(ctx, reg.Namespace, reg.Name, ""); err != nil {
+			return triggers.Trigger{}, "", err
+		}
 	}
 	for attempt := 0; attempt < triggers.CreateAttempts; attempt++ {
 		trigger, secret, err := triggers.Prepare(reg)
@@ -201,18 +218,11 @@ func (s *S3TriggerStore) Create(ctx context.Context, reg triggers.Registration) 
 		if err != nil {
 			return triggers.Trigger{}, "", err
 		}
-		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(s.bucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(int64(len(body))),
-			ContentType:   aws.String("application/json"),
-			IfNoneMatch:   aws.String("*"),
-		})
+		err = s.b.create(ctx, key, "application/json", body)
 		if err == nil {
 			return trigger, secret, nil
 		}
-		if isPreconditionFailed(err) {
+		if errors.Is(err, errBlobExists) {
 			continue
 		}
 		return triggers.Trigger{}, "", fmt.Errorf("artifacts: create trigger %q: %w", trigger.ID, err)
@@ -220,69 +230,63 @@ func (s *S3TriggerStore) Create(ctx context.Context, reg triggers.Registration) 
 	return triggers.Trigger{}, "", triggers.ErrIDCollision
 }
 
-func (s *S3TriggerStore) List(ctx context.Context, namespace, orkflowName string) ([]triggers.Trigger, error) {
-	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{
-		Bucket: aws.String(s.bucket),
-		Prefix: aws.String(TriggerPrefix + "/"),
-	})
+// List returns the triggers of namespace (and of orkflowName, when set),
+// oldest first, without their verification material.
+func (s *BlobTriggerStore) List(ctx context.Context, namespace, orkflowName string) ([]triggers.Trigger, error) {
 	var out []triggers.Trigger
-	for pager.HasMorePages() {
-		page, err := pager.NextPage(ctx)
+	err := listObjects(ctx, s.b, blobListInput{Prefix: TriggerPrefix + "/"}, func(object blobObject) (bool, error) {
+		if _, ok := parseTriggerKey(object.Key); !ok {
+			return false, nil
+		}
+		trigger, _, found, err := s.get(ctx, object.Key)
 		if err != nil {
-			return nil, fmt.Errorf("artifacts: list triggers: %w", err)
+			return true, err
 		}
-		for _, object := range page.Contents {
-			key := aws.ToString(object.Key)
-			if _, ok := parseTriggerKey(key); !ok {
-				continue
-			}
-			trigger, found, err := s.get(ctx, key)
-			if err != nil {
-				return nil, err
-			}
-			if found && trigger.Matches(namespace, orkflowName) {
-				out = append(out, trigger.Public())
-			}
+		if found && trigger.Matches(namespace, orkflowName) {
+			out = append(out, trigger.Public())
 		}
+		return false, nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("artifacts: list triggers: %w", err)
 	}
 	triggers.SortByCreation(out)
 	return out, nil
 }
 
-func (s *S3TriggerStore) Get(ctx context.Context, id string) (triggers.Trigger, bool, error) {
+// Get reads one trigger with its verification material.
+func (s *BlobTriggerStore) Get(ctx context.Context, id string) (triggers.Trigger, bool, error) {
 	key, err := triggerKey(id)
 	if err != nil {
 		return triggers.Trigger{}, false, err
 	}
-	return s.get(ctx, key)
+	trigger, _, found, err := s.get(ctx, key)
+	return trigger, found, err
 }
 
-func (s *S3TriggerStore) get(ctx context.Context, key string) (triggers.Trigger, bool, error) {
-	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+// get reads one record and the version a conditional write names.
+func (s *BlobTriggerStore) get(ctx context.Context, key string) (triggers.Trigger, string, bool, error) {
+	raw, version, err := s.b.get(ctx, key, 0)
 	if err != nil {
-		if isNotFound(err) {
-			return triggers.Trigger{}, false, nil
+		if errors.Is(err, errBlobNotFound) {
+			return triggers.Trigger{}, "", false, nil
 		}
-		return triggers.Trigger{}, false, fmt.Errorf("artifacts: get trigger %q: %w", key, err)
-	}
-	defer object.Body.Close()
-	raw, err := io.ReadAll(object.Body)
-	if err != nil {
-		return triggers.Trigger{}, false, fmt.Errorf("artifacts: read trigger %q: %w", key, err)
+		return triggers.Trigger{}, "", false, fmt.Errorf("artifacts: get trigger %q: %w", key, err)
 	}
 	trigger, err := unmarshalTriggerRecord(raw)
 	if err != nil {
-		return triggers.Trigger{}, false, fmt.Errorf("artifacts: get trigger %q: %w", key, err)
+		return triggers.Trigger{}, "", false, fmt.Errorf("artifacts: get trigger %q: %w", key, err)
 	}
-	return trigger, true, nil
+	return trigger, version, true, nil
 }
 
-func (s *S3TriggerStore) Delete(ctx context.Context, id, namespace string) (bool, error) {
+// Delete removes one trigger of namespace.
+func (s *BlobTriggerStore) Delete(ctx context.Context, id, namespace string) (bool, error) {
 	key, err := triggerKey(id)
 	if err != nil {
 		return false, err
 	}
-	trigger, found, err := s.get(ctx, key)
+	trigger, _, found, err := s.get(ctx, key)
 	if err != nil {
 		return false, err
 	}
@@ -291,7 +295,7 @@ func (s *S3TriggerStore) Delete(ctx context.Context, id, namespace string) (bool
 	if !found || trigger.Namespace != namespace {
 		return false, nil
 	}
-	if _, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}); err != nil {
+	if err := s.b.remove(ctx, key); err != nil {
 		return false, fmt.Errorf("artifacts: delete trigger %q: %w", id, err)
 	}
 	return true, nil
@@ -299,7 +303,7 @@ func (s *S3TriggerStore) Delete(ctx context.Context, id, namespace string) (bool
 
 // refuseTakenName answers ErrNameTaken when a trigger of namespace other than
 // self already holds name. An empty name never collides.
-func (s *S3TriggerStore) refuseTakenName(ctx context.Context, namespace, name, self string) error {
+func (s *BlobTriggerStore) refuseTakenName(ctx context.Context, namespace, name, self string) error {
 	if name == "" {
 		return nil
 	}
@@ -313,295 +317,29 @@ func (s *S3TriggerStore) refuseTakenName(ctx context.Context, namespace, name, s
 	return nil
 }
 
-// Update rewrites one record in place with a conditional PUT: it reads the
-// record and its ETag, applies change, and writes only if the object still
-// carries that ETag. A precondition failure, or the object vanishing under the
-// conditional write, re-reads — so a trigger deleted meanwhile is then absent
-// and the update reports false. It never writes without IfMatch, so it can
-// never recreate a deleted record.
-func (s *S3TriggerStore) Update(ctx context.Context, id, namespace string, change func(*triggers.Trigger) error) (triggers.Trigger, bool, error) {
+// Update rewrites one record in place with a conditional write: it reads the
+// record and its version, applies change, and writes only if the object still
+// carries that version. A changed or vanished object re-reads — so a trigger
+// deleted meanwhile is then absent and the update reports false. It never
+// writes unconditionally, so it can never recreate a deleted record.
+func (s *BlobTriggerStore) Update(ctx context.Context, id, namespace string, change func(*triggers.Trigger) error) (triggers.Trigger, bool, error) {
 	key, err := triggerKey(id)
 	if err != nil {
 		return triggers.Trigger{}, false, err
 	}
 	for attempt := 0; attempt < triggers.UpdateAttempts; attempt++ {
-		current, etag, found, err := s.getWithETag(ctx, key)
-		if err != nil {
-			return triggers.Trigger{}, false, err
+		next, found, err := s.updateOnce(ctx, key, id, namespace, change)
+		if !errors.Is(err, errBlobChanged) {
+			return next, found, err
 		}
-		if !found || current.Namespace != namespace {
-			return triggers.Trigger{}, false, nil
-		}
-		next, err := triggers.ApplyChange(current, change)
-		if err != nil {
-			return triggers.Trigger{}, true, err
-		}
-		if next.Name != current.Name {
-			if err := s.refuseTakenName(ctx, namespace, next.Name, id); err != nil {
-				return triggers.Trigger{}, true, err
-			}
-		}
-		if s.beforeConditionalPut != nil {
-			s.beforeConditionalPut()
-		}
-		body, err := marshalTriggerRecord(next)
-		if err != nil {
-			return triggers.Trigger{}, true, err
-		}
-		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket:        aws.String(s.bucket),
-			Key:           aws.String(key),
-			Body:          bytes.NewReader(body),
-			ContentLength: aws.Int64(int64(len(body))),
-			ContentType:   aws.String("application/json"),
-			IfMatch:       aws.String(etag),
-		})
-		if err == nil {
-			return next.Public(), true, nil
-		}
-		if isPreconditionFailed(err) || isNotFound(err) {
-			continue
-		}
-		return triggers.Trigger{}, true, fmt.Errorf("artifacts: update trigger %q: %w", id, err)
 	}
 	return triggers.Trigger{}, true, triggers.ErrUpdateContention
 }
 
-// getWithETag is get plus the object's ETag, the token Update's conditional
-// write names.
-func (s *S3TriggerStore) getWithETag(ctx context.Context, key string) (triggers.Trigger, string, bool, error) {
-	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
-	if err != nil {
-		if isNotFound(err) {
-			return triggers.Trigger{}, "", false, nil
-		}
-		return triggers.Trigger{}, "", false, fmt.Errorf("artifacts: get trigger %q: %w", key, err)
-	}
-	defer object.Body.Close()
-	raw, err := io.ReadAll(object.Body)
-	if err != nil {
-		return triggers.Trigger{}, "", false, fmt.Errorf("artifacts: read trigger %q: %w", key, err)
-	}
-	trigger, err := unmarshalTriggerRecord(raw)
-	if err != nil {
-		return triggers.Trigger{}, "", false, fmt.Errorf("artifacts: get trigger %q: %w", key, err)
-	}
-	return trigger, aws.ToString(object.ETag), true, nil
-}
-
-// LocalTriggerStore confines registry files below an os.Root. IDs are
-// validated before every path operation; no client value can traverse this
-// directory or follow a symlink outside it.
-//
-// mu serialises a named create's uniqueness check and publish, every update
-// and every delete, so within one process an update can never resurrect a
-// delete and two creates cannot both take one name. Several processes writing
-// one local directory concurrently are not a supported topology (AGENTS.md
-// §2.2: local filesystem storage is for local use).
-type LocalTriggerStore struct {
-	root *os.Root
-	mu   sync.Mutex
-}
-
-var _ triggers.Store = (*LocalTriggerStore)(nil)
-
-func NewLocalTriggerStore(dir string) (*LocalTriggerStore, error) {
-	if dir == "" {
-		return nil, errors.New("artifacts: local trigger store: empty directory")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	if err := root.MkdirAll(TriggerPrefix, 0o755); err != nil {
-		_ = root.Close()
-		return nil, err
-	}
-	if err := root.MkdirAll(localTempDir, 0o755); err != nil {
-		_ = root.Close()
-		return nil, err
-	}
-	return &LocalTriggerStore{root: root}, nil
-}
-
-func (s *LocalTriggerStore) Create(ctx context.Context, reg triggers.Registration) (triggers.Trigger, string, error) {
-	if err := ctx.Err(); err != nil {
-		return triggers.Trigger{}, "", err
-	}
-	if reg.Name != "" {
-		if err := reg.Validate(); err != nil {
-			return triggers.Trigger{}, "", err
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		list, err := s.List(ctx, reg.Namespace, "")
-		if err != nil {
-			return triggers.Trigger{}, "", err
-		}
-		if triggers.NameHeld(list, reg.Name, "") {
-			return triggers.Trigger{}, "", triggers.ErrNameTaken
-		}
-	}
-	for attempt := 0; attempt < triggers.CreateAttempts; attempt++ {
-		trigger, secret, err := triggers.Prepare(reg)
-		if err != nil {
-			return triggers.Trigger{}, "", err
-		}
-		key, _ := triggerKey(trigger.ID)
-		if err := s.root.MkdirAll(path.Dir(key), 0o755); err != nil {
-			return triggers.Trigger{}, "", fmt.Errorf("artifacts: create trigger directory: %w", err)
-		}
-		body, err := marshalTriggerRecord(trigger)
-		if err != nil {
-			return triggers.Trigger{}, "", err
-		}
-		tmpKey := path.Join(localTempDir, "trigger-"+randomToken())
-		f, err := s.root.OpenFile(tmpKey, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			return triggers.Trigger{}, "", fmt.Errorf("artifacts: create trigger %q: %w", trigger.ID, err)
-		}
-		if _, err = f.Write(body); err == nil {
-			err = f.Sync()
-		}
-		cerr := f.Close()
-		if err == nil {
-			err = cerr
-		}
-		if err != nil {
-			_ = s.root.Remove(tmpKey)
-			return triggers.Trigger{}, "", fmt.Errorf("artifacts: create trigger %q: %w", trigger.ID, err)
-		}
-		// Link publishes the fully written inode without replacing another
-		// replica's winner. A crash before this point leaves only an ignored
-		// temp file; readers never see a partial final record.
-		err = s.root.Link(tmpKey, key)
-		_ = s.root.Remove(tmpKey)
-		if errors.Is(err, fs.ErrExist) {
-			continue
-		}
-		if err != nil {
-			return triggers.Trigger{}, "", fmt.Errorf("artifacts: publish trigger %q: %w", trigger.ID, err)
-		}
-		if err := s.syncDir(path.Dir(key)); err != nil {
-			return triggers.Trigger{}, "", fmt.Errorf("artifacts: sync trigger %q directory: %w", trigger.ID, err)
-		}
-		return trigger, secret, nil
-	}
-	return triggers.Trigger{}, "", triggers.ErrIDCollision
-}
-
-func (s *LocalTriggerStore) syncDir(key string) error {
-	dir, err := s.root.Open(key)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
-}
-
-func (s *LocalTriggerStore) List(ctx context.Context, namespace, orkflowName string) ([]triggers.Trigger, error) {
-	var out []triggers.Trigger
-	err := fs.WalkDir(s.root.FS(), TriggerPrefix, func(key string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("artifacts: trigger registry contains symlink %q", key)
-		}
-		if _, ok := parseTriggerKey(key); !ok {
-			return nil
-		}
-		trigger, ok, err := s.get(ctx, key)
-		if err != nil {
-			return err
-		}
-		if ok && trigger.Matches(namespace, orkflowName) {
-			out = append(out, trigger.Public())
-		}
-		return nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("artifacts: list triggers: %w", err)
-	}
-	triggers.SortByCreation(out)
-	return out, nil
-}
-
-func (s *LocalTriggerStore) Get(ctx context.Context, id string) (triggers.Trigger, bool, error) {
-	key, err := triggerKey(id)
-	if err != nil {
-		return triggers.Trigger{}, false, err
-	}
-	return s.get(ctx, key)
-}
-
-func (s *LocalTriggerStore) get(ctx context.Context, key string) (triggers.Trigger, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return triggers.Trigger{}, false, err
-	}
-	f, err := s.root.Open(key)
-	if errors.Is(err, fs.ErrNotExist) {
-		return triggers.Trigger{}, false, nil
-	}
-	if err != nil {
-		return triggers.Trigger{}, false, fmt.Errorf("artifacts: get trigger %q: %w", key, err)
-	}
-	defer f.Close()
-	raw, err := io.ReadAll(f)
-	if err != nil {
-		return triggers.Trigger{}, false, err
-	}
-	trigger, err := unmarshalTriggerRecord(raw)
-	if err != nil {
-		return triggers.Trigger{}, false, err
-	}
-	return trigger, true, nil
-}
-
-func (s *LocalTriggerStore) Delete(ctx context.Context, id, namespace string) (bool, error) {
-	key, err := triggerKey(id)
-	if err != nil {
-		return false, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	trigger, found, err := s.get(ctx, key)
-	if err != nil {
-		return false, err
-	}
-	// Same rule as the S3 store: another namespace's trigger is absent here.
-	if !found || trigger.Namespace != namespace {
-		return false, nil
-	}
-	if err := s.root.Remove(key); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
-		return false, fmt.Errorf("artifacts: delete trigger %q: %w", id, err)
-	}
-	return true, nil
-}
-
-// Update reads, applies change, writes a temporary sibling and renames it over
-// the key, all under the store's mutex — the same mutex Delete holds — so a
-// trigger deleted before the update took the lock stays deleted.
-func (s *LocalTriggerStore) Update(ctx context.Context, id, namespace string, change func(*triggers.Trigger) error) (triggers.Trigger, bool, error) {
-	key, err := triggerKey(id)
-	if err != nil {
-		return triggers.Trigger{}, false, err
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, found, err := s.get(ctx, key)
+// updateOnce is one read-modify-conditional-write round; errBlobChanged asks
+// for another.
+func (s *BlobTriggerStore) updateOnce(ctx context.Context, key, id, namespace string, change func(*triggers.Trigger) error) (triggers.Trigger, bool, error) {
+	current, version, found, err := s.get(ctx, key)
 	if err != nil {
 		return triggers.Trigger{}, false, err
 	}
@@ -613,52 +351,24 @@ func (s *LocalTriggerStore) Update(ctx context.Context, id, namespace string, ch
 		return triggers.Trigger{}, true, err
 	}
 	if next.Name != current.Name && next.Name != "" {
-		list, err := s.List(ctx, namespace, "")
-		if err != nil {
+		s.nameMu.Lock()
+		defer s.nameMu.Unlock()
+		if err := s.refuseTakenName(ctx, namespace, next.Name, id); err != nil {
 			return triggers.Trigger{}, true, err
 		}
-		if triggers.NameHeld(list, next.Name, id) {
-			return triggers.Trigger{}, true, triggers.ErrNameTaken
-		}
+	}
+	if s.beforeConditionalPut != nil {
+		s.beforeConditionalPut()
 	}
 	body, err := marshalTriggerRecord(next)
 	if err != nil {
 		return triggers.Trigger{}, true, err
 	}
-	if err := replaceLocalRecord(s.root, key, "trigger-", body); err != nil {
+	if err := s.b.replace(ctx, key, "application/json", body, version); err != nil {
+		if errors.Is(err, errBlobChanged) {
+			return triggers.Trigger{}, true, err
+		}
 		return triggers.Trigger{}, true, fmt.Errorf("artifacts: update trigger %q: %w", id, err)
 	}
 	return next.Public(), true, nil
-}
-
-// replaceLocalRecord writes body to a temporary file and renames it over key,
-// so a reader sees either the old record or the new one and never a partial
-// write. The caller holds the store's mutex and has just read key.
-func replaceLocalRecord(root *os.Root, key, tmpPrefix string, body []byte) error {
-	tmpKey := path.Join(localTempDir, tmpPrefix+randomToken())
-	f, err := root.OpenFile(tmpKey, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err = f.Write(body); err == nil {
-		err = f.Sync()
-	}
-	cerr := f.Close()
-	if err == nil {
-		err = cerr
-	}
-	if err != nil {
-		_ = root.Remove(tmpKey)
-		return err
-	}
-	if err := root.Rename(tmpKey, key); err != nil {
-		_ = root.Remove(tmpKey)
-		return err
-	}
-	dir, err := root.Open(path.Dir(key))
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
 }

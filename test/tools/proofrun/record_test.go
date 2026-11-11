@@ -3,83 +3,16 @@ package main
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
-
-func TestScanBinaries(t *testing.T) {
-	fs := []srcFile{
-		{Name: "a_integration_test.go", Content: []byte(`//go:build integration
-
-package main
-
-import (
-	"os/exec"
-	"testing"
-
-	tb "github.com/orkstack/orkstack/internal/testsupport/testbin"
-)
-
-func TestA(t *testing.T) {
-	_ = tb.Path(t, "./cmd/ork")
-	_ = tb.Path(t, "./test/tools/cosign-sign")
-	name := "orker"
-	_ = tb.Path(t, "./cmd/"+name)
-	_ = exec.Command("go", "build", "-o", "x", "./cmd/orkctl")
-	_ = exec.CommandContext(nil, "go", "run", "./test/tools/bucket-ensure")
-	_ = exec.Command("docker", "build", ".")
-	_ = exec.Command("go", "version")
-}
-`)},
-		{Name: "b.go", Content: []byte("package main\n\nimport \"os/exec\"\n\nvar _ = exec.Command(\"go\", \"build\")\n")},
-	}
-	uses, bad := scanBinaries("cmd/orkctl", fs)
-	var got []string
-	for _, u := range uses {
-		got = append(got, relDir(u.Package))
-	}
-	if !reflect.DeepEqual(got, []string{"cmd/ork", "test/tools/cosign-sign"}) {
-		t.Errorf("uses = %v", got)
-	}
-	if len(bad) != 3 {
-		t.Fatalf("unresolved = %v, want the computed testbin path and the two exec builds", bad)
-	}
-	joined := strings.Join(bad, "\n")
-	for _, f := range []string{"a_integration_test.go:16", "a_integration_test.go:17", "a_integration_test.go:18", "use testbin.Path"} {
-		if !strings.Contains(joined, f) {
-			t.Errorf("unresolved lacks %q:\n%s", f, joined)
-		}
-	}
-}
-
-func TestDependsOn(t *testing.T) {
-	d := fakeDeps()
-	cases := []struct {
-		pkg, target string
-		want        bool
-		how         string
-	}{
-		{pEngine, pEngine, true, "is the package"},
-		{pEngine, pDSL, true, "imports it"},
-		{pOrkctl, pEngine, true, "runs cmd/ork, which links it"},
-		{pOrkctl, pOrker, true, "runs cmd/orker, which links it"},
-		{pEngine, pOrker, false, ""},
-	}
-	for _, c := range cases {
-		got, how := d.dependsOn(cfgIntegration, c.pkg, c.target)
-		if got != c.want || how != c.how {
-			t.Errorf("%s -> %s = %v %q, want %v %q", c.pkg, c.target, got, how, c.want, c.how)
-		}
-	}
-}
 
 func TestComposeTemporal(t *testing.T) {
 	doc := `{"name":"orkstack","services":{"temporal":{"image":"temporalio/temporal:1.8.2","command":["server","start-dev","--ip","0.0.0.0","--ui-port","8233","--log-level","warn"],"ports":[{"target":7233}]},"minio":{"image":"minio/minio"}}}`
 	image, args, err := composeTemporal([]byte(doc))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if image != "temporalio/temporal:1.8.2" || strings.Join(args, " ") != "server start-dev --ip 0.0.0.0 --ui-port 8233 --log-level warn" {
 		t.Errorf("image %q args %v", image, args)
 	}
@@ -135,14 +68,14 @@ func TestFullGates_NameTheSiteGateAmongTheFastGates(t *testing.T) {
 	if !ok {
 		t.Fatalf("fullGates = %v: no site gate", fullGates)
 	}
-	if site != idx["ui-unit"]+1 || idx["ui-e2e"] != len(fullGates)-1 {
-		t.Errorf("fullGates = %v: the site gate runs right after ui-unit, and ui-e2e stays last", fullGates)
+	if site != idx["ui-unit"]+1 || idx["ui-e2e"] != len(fullGates)-2 || idx["observability"] != len(fullGates)-1 {
+		t.Errorf("fullGates = %v: the site gate runs right after ui-unit, then ui-e2e, and observability last", fullGates)
 	}
 	// The nightly tier runs the deferred tests and nothing else.
 	r := passingFull()
 	r.Tier = "nightly"
 	r.Gates = []gateRecord{{Gate: "integration", Result: "pass"}}
-	verdict(&r, 0, false, map[string]bool{"integration": true})
+	verdict(&r, 0, map[string]bool{"integration": true})
 	if strings.Contains(strings.Join(r.Ineligible, "\n"), "gate site") {
 		t.Errorf("a nightly proof is held to the site gate: %v", r.Ineligible)
 	}
@@ -153,7 +86,6 @@ func TestVerdict(t *testing.T) {
 		name     string
 		mutate   func(*proofRecord)
 		status   int
-		obs      bool
 		ledgers  map[string]bool
 		result   string
 		eligible bool
@@ -162,10 +94,10 @@ func TestVerdict(t *testing.T) {
 		{name: "a clean full proof", result: "pass", eligible: true},
 		{name: "a failed gate", mutate: func(r *proofRecord) { r.Gates[5].Result = "fail" }, result: "fail", reason: "the proof did not pass"},
 		{name: "the script's own failure", status: 1, result: "fail", reason: "the proof did not pass"},
-		{name: "a missing gate", mutate: func(r *proofRecord) { r.Gates = r.Gates[:len(r.Gates)-1] }, result: "pass", reason: "gate ui-e2e did not run"},
+		{name: "a missing gate", mutate: func(r *proofRecord) { r.Gates = withoutGate(r.Gates, "ui-e2e") }, result: "pass", reason: "gate ui-e2e did not run"},
 		{name: "the site gate missing", mutate: func(r *proofRecord) { r.Gates = withoutGate(r.Gates, "site") }, result: "pass", reason: "gate site did not run"},
 		{name: "the site gate failed", mutate: func(r *proofRecord) { setGate(r.Gates, "site", "fail") }, result: "fail", reason: "the proof did not pass"},
-		{name: "observability required", obs: true, result: "pass", reason: "gate observability did not run"},
+		{name: "the observability gate missing", mutate: func(r *proofRecord) { r.Gates = withoutGate(r.Gates, "observability") }, result: "pass", reason: "gate observability did not run"},
 		{name: "PROOF_GATES", mutate: func(r *proofRecord) { r.GatesOverride = "unit" }, result: "pass", reason: "PROOF_GATES=unit chose the gates"},
 		{name: "a dirty start", mutate: func(r *proofRecord) { r.CleanStart = false }, result: "pass", reason: "not clean when the proof started"},
 		{name: "a tree that moved", mutate: func(r *proofRecord) { r.TreeEnd = "t2" }, result: "pass", reason: "the tree changed while the proof ran"},
@@ -175,8 +107,7 @@ func TestVerdict(t *testing.T) {
 		{name: "a base other than main", mutate: func(r *proofRecord) { r.BaseRef = "HEAD" }, result: "pass", reason: "the full proof diffed against HEAD, not main"},
 		{name: "no base recorded", mutate: func(r *proofRecord) { r.BaseRef = "" }, result: "pass", reason: "the full proof diffed against -, not main"},
 		{name: "an incomplete ledger", ledgers: map[string]bool{"integration": false}, result: "fail", reason: "the integration ledger is incomplete"},
-		{name: "a feature proof", mutate: func(r *proofRecord) { r.Tier = "feature" }, result: "pass", reason: "only a full proof is merge evidence"},
-		{name: "failed evidence", mutate: func(r *proofRecord) { r.Tier = "feature"; r.EvidenceFailed = []string{"x"} }, result: "fail", reason: "the proof did not pass"},
+		{name: "a nightly proof", mutate: func(r *proofRecord) { r.Tier = tierNightly }, result: "pass", reason: "only a full proof is merge evidence"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -184,7 +115,7 @@ func TestVerdict(t *testing.T) {
 			if c.mutate != nil {
 				c.mutate(&r)
 			}
-			verdict(&r, c.status, c.obs, c.ledgers)
+			verdict(&r, c.status, c.ledgers)
 			if r.Result != c.result || r.MergeEligible != c.eligible {
 				t.Errorf("result %s eligible %v, want %s %v (%v)", r.Result, r.MergeEligible, c.result, c.eligible, r.Ineligible)
 			}
@@ -201,16 +132,11 @@ func TestWriteVerdictKeepsTheFullTierResultLines(t *testing.T) {
 	}{
 		{"full", "pass", "Result: **PASS**\n"},
 		{"full", "fail", "Result: **FAIL**\n"},
-		{"feature", "pass", "Result: **FEATURE PASS — not merge evidence**\n"},
-		{"feature", "fail", "Result: **FEATURE FAIL — not merge evidence**\n"},
 	} {
 		var b strings.Builder
 		writeVerdict(&b, &proofRecord{Tier: c.tier, Result: c.result})
 		if !strings.HasSuffix(b.String(), c.want) {
 			t.Errorf("%s/%s ends %q", c.tier, c.result, b.String())
-		}
-		if c.tier == "feature" && strings.Contains(b.String(), "**PASS**") {
-			t.Errorf("a feature verdict contains the full tier's **PASS**")
 		}
 	}
 }
@@ -222,12 +148,12 @@ func withBase(r proofRecord, commit string) proofRecord {
 
 func TestVerifyProblems(t *testing.T) {
 	good := passingFull()
-	verdict(&good, 0, false, nil)
+	verdict(&good, 0, nil)
 	if p := verifyProblems(good, "t1", "m1", "m1", "", "main"); len(p) != 0 {
 		t.Fatalf("a good candidate was refused: %v", p)
 	}
-	feature := good
-	feature.Tier = "feature"
+	nightly := good
+	nightly.Tier = tierNightly
 	cases := []struct {
 		name                         string
 		r                            proofRecord
@@ -238,7 +164,7 @@ func TestVerifyProblems(t *testing.T) {
 		{"main moved", good, "t1", "m1", "m2", "", "is not main's current tip"},
 		{"no parent", good, "t1", "", "m1", "", "is not main's current tip"},
 		{"dirty", good, "t1", "m1", "m1", "?? x\n", "the worktree is not clean"},
-		{"a feature proof", feature, "t1", "m1", "m1", "", "only a full proof gates a merge"},
+		{"a nightly proof", nightly, "t1", "m1", "m1", "", "only a full proof gates a merge"},
 		// --base HEAD made the observability gate "not due": the record's base
 		// is the candidate itself, never main's tip.
 		{"another base", withBase(good, "c1"), "t1", "m1", "m1", "", "it diffed against c1, not main's current tip (m1)"},
@@ -249,23 +175,6 @@ func TestVerifyProblems(t *testing.T) {
 		if !strings.Contains(p, c.want) {
 			t.Errorf("%s: problems %q lack %q", c.name, p, c.want)
 		}
-	}
-}
-
-func TestEvidenceFailures(t *testing.T) {
-	sel := &selection{
-		UnitEvidence: []selectedTest{{Package: pDSL, Test: "TestParse"}},
-		Integration:  map[string]*pkgSelection{pEngine: {Evidence: map[string]string{"TestIntegration_Uses": "named", "TestIntegration_Recorder": "named"}}},
-		Specs:        []selectedSpec{{File: "ui/e2e/admin.spec.ts"}},
-	}
-	o := outcomes{
-		{pDSL, "TestParse"}:                   {Outcome: outcomePass},
-		{pEngine, "TestIntegration_Uses"}:     {Outcome: outcomePass},
-		{pEngine, "TestIntegration_Recorder"}: {Outcome: outcomeSkip, AllowedSkip: "recorder"},
-	}
-	got := evidenceFailures(sel, o, map[string]string{"ui/e2e/admin.spec.ts": outcomePass})
-	if !reflect.DeepEqual(got, []string{"internal/engine.TestIntegration_Recorder: skip"}) {
-		t.Errorf("got %v: an allowed skip is still not evidence", got)
 	}
 }
 
@@ -303,47 +212,18 @@ func TestUILedger(t *testing.T) {
 
 func TestRetryCeilingIsDeclaredInThePlaywrightConfig(t *testing.T) {
 	n, err := retryCeiling("../../../ui/playwright.config.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if n < 0 || n > 3 {
 		t.Errorf("ceiling %d: 0 once the browser is isolated, at most 3 while it shares the host's network", n)
 	}
 }
 
-// A gate that ran without leaving its ledger fails the proof.
-func TestRecordRequiresTheLedgerOfEveryGateThatRan(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("unit\tpass\t3\tunit.log\tproofrun unit\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	prev := os.Stdout
-	devnull, _ := os.Open(os.DevNull)
-	os.Stdout = devnull
-	code := cmdRecord([]string{"-dir", dir, "-tier", "feature", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end"})
-	os.Stdout = prev
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	var r proofRecord
-	if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
-		t.Fatal(err)
-	}
-	if r.Result != "fail" || !strings.Contains(strings.Join(r.Ineligible, "\n"), "the unit ledger is incomplete") {
-		t.Errorf("record = %+v", r)
-	}
-}
-
-// A full, release or nightly record writes a part and leaves the verdict to
-// the merger, locally and in CI (round 4 M1).
 func TestRecord_TheFullTiersWriteOnlyAPart(t *testing.T) {
 	for _, tier := range []string{tierFull, tierRelease, tierNightly} {
 		t.Run(tier, func(t *testing.T) {
 			dir := t.TempDir()
 			out := filepath.Join(dir, "parts", "local-a1")
-			if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("unit\tpass\t3\tunit.log\tproofrun unit\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("unit\tpass\t3\tunit.log\tproofrun unit\n"), 0o644))
 			prev := os.Stdout
 			devnull, _ := os.Open(os.DevNull)
 			os.Stdout = devnull
@@ -353,9 +233,7 @@ func TestRecord_TheFullTiersWriteOnlyAPart(t *testing.T) {
 				t.Fatalf("exit %d, want 0", code)
 			}
 			var rec partRecord
-			if err := readJSON(filepath.Join(out, "part.json"), &rec); err != nil {
-				t.Fatalf("no part.json: %v", err)
-			}
+			must.OKf(t, readJSON(filepath.Join(out, "part.json"), &rec), "no part.json")
 			if rec.Part != "local" || rec.Tier != tier {
 				t.Errorf("part %+v, want part local of tier %s", rec, tier)
 			}
@@ -373,13 +251,9 @@ func TestRecord_TheFullTiersWriteOnlyAPart(t *testing.T) {
 func TestRecord_CarriesTheSetupLog(t *testing.T) {
 	dir := t.TempDir()
 	out := filepath.Join(dir, "parts", "integration-1-a1")
-	if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("integration\tpass\t3\tintegration.log\tproofrun integration\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("integration\tpass\t3\tintegration.log\tproofrun integration\n"), 0o644))
 	log := filepath.Join(dir, "setup.log")
-	if err := os.WriteFile(log, []byte("fetch artifact plan-a1: attempt 1 timed out after 180s (limit 180s)\nfetch artifact plan-a1: attempt 2 ok in 14s (limit 360s)\n\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(log, []byte("fetch artifact plan-a1: attempt 1 timed out after 180s (limit 180s)\nfetch artifact plan-a1: attempt 2 ok in 14s (limit 360s)\n\n"), 0o644))
 	quiet(t)
 	prev := os.Stdout
 	devnull, _ := os.Open(os.DevNull)
@@ -390,9 +264,7 @@ func TestRecord_CarriesTheSetupLog(t *testing.T) {
 		t.Fatalf("exit %d, want 0", code)
 	}
 	var rec partRecord
-	if err := readJSON(filepath.Join(out, "part.json"), &rec); err != nil {
-		t.Fatalf("no part.json: %v", err)
-	}
+	must.OKf(t, readJSON(filepath.Join(out, "part.json"), &rec), "no part.json")
 	if want := []string{
 		"fetch artifact plan-a1: attempt 1 timed out after 180s (limit 180s)",
 		"fetch artifact plan-a1: attempt 2 ok in 14s (limit 360s)",

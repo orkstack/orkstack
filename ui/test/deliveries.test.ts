@@ -44,7 +44,7 @@ test('the panel offers the ListDeliveries allowlist: the key coordinates, events
 	expect(spec.fields.map((f) => f.path)).toEqual(['created_at', 'namespace', 'run_id', 'webhook_id', 'event', 'delivered']);
 	const event = spec.fields.find((f) => f.path === 'event');
 	expect(event?.kind).toBe('enum');
-	expect(event?.values).toHaveLength(10);
+	expect(event?.values).toHaveLength(11);
 	expect(event?.values).not.toContain('TASK_LOG');
 	expect(event?.values).not.toContain('RUN_CREATED');
 	expect(spec.fields.find((f) => f.path === 'delivered')?.kind).toBe('bool');
@@ -87,7 +87,7 @@ test("a subscription's Deliveries link opens deliveryFilter=webhook_id=<id>", ()
 test('the CLI equivalent is webhook deliveries with every filter shell-quoted and --limit, never -n', () => {
 	expect(deliveriesCliCommand(base)).toBe('orkctl webhook deliveries');
 	expect(deliveriesCliCommand({ filters: parsed("run_id=ork-'x", 'delivered=false', 'namespace=payments'), limit: 2 })).toBe(
-		`orkctl webhook deliveries --filter delivered=false --filter namespace=payments --filter 'run_id=ork-'"'"'x' --limit 2`
+		`orkctl webhook deliveries -F delivered=false -F namespace=payments -F 'run_id=ork-'"'"'x' --limit 2`
 	);
 });
 

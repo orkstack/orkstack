@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // pinInstanceID is the shape the engine mints through workflow.SideEffect and
@@ -90,9 +92,7 @@ func TestIntegration_TwoPinnedContainersShareOneDirectory(t *testing.T) {
 		t.Fatalf("the writing task failed: %v", err)
 	}
 	result, err := dispatcher.Execute(ctx, reader)
-	if err != nil {
-		t.Fatalf("the reading task failed, so the shared mount did not carry the file: %v", err)
-	}
+	must.OKf(t, err, "the reading task failed, so the shared mount did not carry the file")
 
 	if got := string(result.GetValuesJson()); !strings.Contains(got, want) {
 		t.Errorf("the second container's values.json = %s, want it to carry %q read back out "+
@@ -104,17 +104,13 @@ func TestIntegration_TwoPinnedContainersShareOneDirectory(t *testing.T) {
 	pinRoot := filepath.Join(dispatcher.WorkRoot, "ork-pin-"+runID+"-build-"+pinInstanceID)
 	shared := filepath.Join(pinRoot, "shared", "src", "greeting.txt")
 	content, err := os.ReadFile(shared)
-	if err != nil {
-		t.Fatalf("read %s on the host: %v", shared, err)
-	}
+	must.OKf(t, err, "read %s on the host", shared)
 	if string(content) != want {
 		t.Errorf("the host copy reads %q, want %q", content, want)
 	}
 	// And the lease beside it, at 0600, which is what the sweep reads.
 	info, err := os.Stat(filepath.Join(pinRoot, "lease.json"))
-	if err != nil {
-		t.Fatalf("stat lease.json: %v", err)
-	}
+	must.OKf(t, err, "stat lease.json")
 	if got := info.Mode().Perm(); got != 0o600 {
 		t.Errorf("lease.json is %04o, want 0600", got)
 	}
@@ -124,9 +120,7 @@ func TestIntegration_TwoPinnedContainersShareOneDirectory(t *testing.T) {
 	// is asserted here rather than left to the cleanup above so a failure names
 	// the release rather than a leaked directory.
 	removed, err := orker.ReleasePinDirectory(dispatcher.WorkRoot, runID, "build", pinInstanceID)
-	if err != nil {
-		t.Fatalf("ReleasePinDirectory: %v", err)
-	}
+	must.OKf(t, err, "ReleasePinDirectory")
 	if removed != pinRoot {
 		t.Errorf("released %q, want %q", removed, pinRoot)
 	}
@@ -192,18 +186,14 @@ func TestIntegration_AReplacementOrkerReapsAPinItsPredecessorLeft(t *testing.T) 
 	// not it hosts pins itself — so this one deliberately does NOT (MaxPins is
 	// unset), which is the case a max_pins-gated reap would get wrong.
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	replacement := orker.NewActivitiesWithOptions(store, orker.Options{
 		Runtime:  orker.NewDockerRuntime(),
 		WorkRoot: workRoot,
 		OrkerID:  dispatcher.OrkerID,
 	})
-	if err := replacement.Boot(ctx); err != nil {
-		t.Fatalf("replacement Boot: %v", err)
-	}
+	must.OKf(t, replacement.Boot(ctx), "replacement Boot")
 	t.Cleanup(replacement.Close)
 
 	if _, err := os.Stat(pinRoot); !errors.Is(err, os.ErrNotExist) {

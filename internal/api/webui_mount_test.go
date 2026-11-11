@@ -11,6 +11,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/webui"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const uiPage = "<!doctype html><title>OrkStack</title>"
@@ -26,21 +28,15 @@ func uiMux(t *testing.T, ui http.Handler) *httptest.Server {
 func fetch(t *testing.T, method, url, contentType, body string) (int, string) {
 	t.Helper()
 	req, err := http.NewRequest(method, url, strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer res.Body.Close()
 	b, err := io.ReadAll(res.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return res.StatusCode, string(b)
 }
 

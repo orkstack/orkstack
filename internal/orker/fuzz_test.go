@@ -3,7 +3,8 @@ package orker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"os"
@@ -20,6 +21,9 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/quantity"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // FuzzRenderer_ARenderedValueIsTheValue: a value reaches a rendered string
@@ -53,9 +57,7 @@ func FuzzRenderer_ARenderedValueIsTheValue(f *testing.F) {
 			"around": before + "{{ .inputs.value }}" + after,
 			"nested": map[string]any{"list": []any{"{{ .inputs.value }}", 1.5, true, nil}},
 		})
-		if err != nil {
-			t.Fatalf("render with the value %q: %v", value, err)
-		}
+		must.OKf(t, err, "render with the value %q", value)
 		if got["plain"] != value {
 			t.Fatalf("the value %q rendered as %q", value, got["plain"])
 		}
@@ -81,18 +83,14 @@ func FuzzRenderer_ShHelperQuotesAnyValueAsOneShellArgument(f *testing.F) {
 		f.Add(seed)
 	}
 	shell, err := exec.LookPath("sh")
-	if err != nil {
-		f.Fatalf("the sh helper is proven against a real shell: %v", err)
-	}
+	must.OKf(f, err, "the sh helper is proven against a real shell")
 	f.Fuzz(func(t *testing.T, value string) {
 		if strings.IndexByte(value, 0) >= 0 {
 			return // a NUL byte cannot be part of a command line
 		}
 		r := testRenderer(map[string]any{"value": value}, nil, nil, nil, nil)
 		got, err := r.render(context.Background(), map[string]any{"quoted": "{{ sh .inputs.value }}"})
-		if err != nil {
-			t.Fatalf("render %q: %v", value, err)
-		}
+		must.OKf(t, err, "render %q", value)
 		quoted := got["quoted"].(string)
 		script := `set -- ` + quoted + `; [ "$#" -eq 1 ] || exit 91; printf '%s' "$1"`
 		out, err := exec.Command(shell, "-c", script).CombinedOutput()
@@ -125,13 +123,11 @@ func FuzzReadValues(f *testing.F) {
 	}
 	f.Cleanup(func() { _ = tree.Close() })
 	f.Fuzz(func(t *testing.T, content []byte, max int64) {
-		if err := os.WriteFile(path, content, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(path, content, 0o644))
 		limits := &orkstackv1.WorkspaceLimits{ValuesMaxBytes: max}
 		raw, failure := tree.ReadValues(limits)
-		var object map[string]json.RawMessage
-		wellFormed := utf8.Valid(content) && json.Valid(content) && json.Unmarshal(content, &object) == nil && object != nil
+		var object map[string]stablejson.RawJSON
+		wellFormed := utf8.Valid(content) && jsontext.Value(content).IsValid() && json.Unmarshal(content, &object) == nil && object != nil
 		// json.Unmarshal into any is what the check reads with; a number
 		// beyond float64 is malformed to it.
 		var probe any
@@ -195,9 +191,7 @@ func FuzzOutputTree(f *testing.F) {
 		base := t.TempDir()
 		output, outside := filepath.Join(base, "output"), filepath.Join(base, "outside")
 		for _, dir := range []string{filepath.Join(output, "inside-dir"), filepath.Join(outside, "dir")} {
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(dir, 0o755))
 		}
 		const sentinel = "orker-only-bytes"
 		mustWrite(t, filepath.Join(outside, "outside.json"), `{"leaked":"`+sentinel+`"}`)
@@ -227,9 +221,7 @@ func FuzzOutputTree(f *testing.F) {
 			case outputKindFIFO:
 				mustFIFO(t, path)
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 		}
 		writes := func(content string) func(string) error {
 			return func(path string) error { return os.WriteFile(path, []byte(content), 0o644) }
@@ -318,9 +310,7 @@ func FuzzOutputTree(f *testing.F) {
 					t.Fatalf("Open %s: %v", artifact.Name, failure)
 				}
 				raw, err := io.ReadAll(body)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, err)
 				got = append(got, artifact.Name+"="+string(raw))
 			}
 			if strings.Join(got, ",") != strings.Join(wantArtifacts, ",") {
@@ -599,9 +589,7 @@ func FuzzResolveResources_AnAcceptedRequestIsALimitWithinTheCap(f *testing.F) {
 		spec := validSpec()
 		spec.CPUs, spec.Memory = gotCPU, gotMemory
 		args, err := dockerCreateArgs(spec)
-		if err != nil {
-			t.Fatalf("an accepted request, cpu %q memory %q, does not render: %v", gotCPU, gotMemory, err)
-		}
+		must.OKf(t, err, "an accepted request, cpu %q memory %q, does not render", gotCPU, gotMemory)
 		for i, arg := range args {
 			switch arg {
 			case "--cpus":
@@ -845,9 +833,7 @@ func FuzzAttemptDirOwner(f *testing.F) {
 		dir := t.TempDir()
 		d := &OCIDispatcher{WorkRoot: dir, OrkerID: "orker-a"}
 		made, err := d.makeAttemptDir(&orkstackv1.ExecuteTaskInput{RunId: run, TaskId: task}, 1)
-		if err != nil {
-			t.Fatalf("makeAttemptDir(%q, %q): %v", run, task, err)
-		}
+		must.OKf(t, err, "makeAttemptDir(%q, %q)", run, task)
 		// A run id "pin-..." would make a name a pin's reap and sweep already
 		// claim; the engine mints run ids starting ork-.
 		if base := filepath.Base(made); !strings.HasPrefix(base, pinDirPrefix) {
@@ -915,9 +901,7 @@ func FuzzSecurityPolicy_TheOrkersOwnSourcesAreNeverAdmitted(f *testing.F) {
 		self: "/proc/self",
 		next: filepath.Join(work, "ork-run-task-9-z", "secrets", "db"),
 	} {
-		if err := os.Symlink(target, link); err != nil {
-			f.Fatal(err)
-		}
+		must.OK(f, os.Symlink(target, link))
 	}
 	policy := DefaultSecurityPolicy().WithWorkRoot(work).
 		WithOwnVars(OwnVar{Name: "VENDOR_KEY", Why: "its telemetry credentials"})

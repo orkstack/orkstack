@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const (
@@ -29,9 +31,7 @@ const (
 func cachedExamplePath(t *testing.T) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("..", "..", orkflowFixtures, "cached-pipeline.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return path
 }
 
@@ -71,7 +71,7 @@ func newPlanFixture(t *testing.T) (*fixture, *planStarter) {
 
 func TestRunSubmit_NoCacheSetsTheField(t *testing.T) {
 	f, starter := newPlanFixture(t)
-	f.run("apply", cachedExamplePath(t)).requireExit(t, exitOK)
+	f.run("orkflow", "create", cachedExamplePath(t)).requireExit(t, exitOK)
 	f.run("run", "submit", "cached-pipeline").requireExit(t, exitOK)
 	if plan := starter.last(t); plan.Cache == nil || plan.Cache.Refresh {
 		t.Fatalf("plan.Cache = %+v, want a plan without refresh", plan.Cache)
@@ -84,7 +84,7 @@ func TestRunSubmit_NoCacheSetsTheField(t *testing.T) {
 
 func TestRunAgain_NoCacheSetsTheField(t *testing.T) {
 	f, starter := newPlanFixture(t)
-	f.run("apply", cachedExamplePath(t)).requireExit(t, exitOK)
+	f.run("orkflow", "create", cachedExamplePath(t)).requireExit(t, exitOK)
 	f.run("run", "submit", "cached-pipeline").requireExit(t, exitOK)
 	dry := f.run("run", "again", "run-001", "--no-cache", "--dry-run").requireExit(t, exitOK)
 	var request map[string]any
@@ -201,7 +201,7 @@ func TestRunAttemptsCachedGolden(t *testing.T) {
 
 func TestOrkflowGetCachedGolden(t *testing.T) {
 	f := newFixture(t)
-	f.run("apply", cachedExamplePath(t)).requireExit(t, exitOK)
+	f.run("orkflow", "create", cachedExamplePath(t)).requireExit(t, exitOK)
 	got := f.run("orkflow", "get", "cached-pipeline").requireExit(t, exitOK)
 	requireGolden(t, "orkflow-get-cached.golden", got.stdout)
 	got.requireContains(t, "CACHED", "featurize  24h", "train      deployment cap  orkflow")
@@ -209,7 +209,7 @@ func TestOrkflowGetCachedGolden(t *testing.T) {
 
 func TestRunPlanCachedGolden(t *testing.T) {
 	f := newFixture(t)
-	f.run("apply", cachedExamplePath(t)).requireExit(t, exitOK)
+	f.run("orkflow", "create", cachedExamplePath(t)).requireExit(t, exitOK)
 	got := f.run("run", "plan", "cached-pipeline").requireExit(t, exitOK)
 	requireGolden(t, "run-plan-cached.golden", got.stdout)
 	got.requireContains(t,
@@ -222,9 +222,7 @@ func TestRunPlanCachedGolden(t *testing.T) {
 func cacheStatsFixture(t *testing.T, seed bool) *fixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 	memos := artifacts.NewMemoryMemoStore()
@@ -244,9 +242,7 @@ func cacheStatsFixture(t *testing.T, seed bool) *fixture {
 					run.TaskRuns = append(run.TaskRuns, &orkstackv1.TaskRun{TaskId: task, Status: orkstackv1.Status_STATUS_SUCCEEDED, Cache: c})
 				}
 			}
-			if err := archiver.Archive(context.Background(), run, nil); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, archiver.Archive(context.Background(), run, nil))
 		}
 		archive("ork-c1", "cached-pipeline", 60, map[string]*orkstackv1.CacheResult{"featurize": miss, "train": miss})
 		archive("ork-c2", "cached-pipeline", 40, map[string]*orkstackv1.CacheResult{"featurize": hit(8), "train": miss})
@@ -350,9 +346,7 @@ func servePagingCache(t *testing.T) (string, *pagingCache) {
 	mux.Handle(orkstackv1connect.NewCacheServiceHandler(paging))
 	server := api.NewServer("127.0.0.1:0", mux)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

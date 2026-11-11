@@ -1,13 +1,16 @@
 package dsl
 
 import (
-	"encoding/json"
 	"reflect"
 	"regexp"
 	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // schemaKeys reads an object schema's property names, sorted.
@@ -41,9 +44,7 @@ func yamlKeys(v any) []string {
 // refuses what ParseInterfaceDocument refuses.
 func TestActivityInterfaceSchema_HasEveryDocumentKey(t *testing.T) {
 	root, err := ActivityInterfaceSchema()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defs := root["definitions"].(map[string]any)
 	for _, tc := range []struct {
 		name   string
@@ -77,9 +78,7 @@ func TestActivityInterfaceSchema_HasEveryDocumentKey(t *testing.T) {
 // schema states is the variable the parser checks.
 func TestActivityInterfaceSchema_BoundsAreTheParsers(t *testing.T) {
 	root, err := ActivityInterfaceSchema()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defs := root["definitions"].(map[string]any)
 	properties := root["properties"].(map[string]any)
 	fields := defs["activityinterface.fields"].(map[string]any)
@@ -146,9 +145,7 @@ func stringVerdict(t *testing.T, schema map[string]any, value string) bool {
 // SVG allowlist; those are the parser's alone.
 func TestActivityInterfaceSchema_JudgesLengthAndLineBreaksAsThePackerDoes(t *testing.T) {
 	root, err := ActivityInterfaceSchema()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defs := root["definitions"].(map[string]any)
 	description := func(def map[string]any) map[string]any {
 		return def["properties"].(map[string]any)["description"].(map[string]any)
@@ -178,7 +175,7 @@ func TestActivityInterfaceSchema_JudgesLengthAndLineBreaksAsThePackerDoes(t *tes
 			strings.Repeat("a", place.limit+1),
 			"",
 		} {
-			quoted, err := json.Marshal(value)
+			quoted, err := stablejson.Marshal(value)
 			if err != nil {
 				t.Fatal(err)
 			}

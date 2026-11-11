@@ -102,7 +102,7 @@ func newActivityBuildCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&tag, "tag", "", "the registry reference to build and push (required)")
 	cmd.Flags().BoolVar(&push, "push", true, "push after building; --push=false builds only")
 	cmd.Flags().StringVar(&platform, "platform", "", "target platform(s), e.g. linux/amd64,linux/arm64")
-	cmd.Flags().StringVar(&file, "file", "", "path to the Dockerfile")
+	cmd.Flags().StringVarP(&file, "file", "f", "", "path to the Dockerfile")
 	cmd.Flags().StringVar(&iface, "interface", "",
 		"a kind: ActivityInterface document to pack into the image's "+dsl.InterfaceLabel+", "+dsl.IconLabel+
 			" and "+dsl.DocsLabel+" labels (each replaces a LABEL of that key in the Dockerfile; an icon or "+

@@ -29,6 +29,23 @@ var (
 	_ RefPredictor = (*S3Store)(nil)
 )
 
+// NewCommitStore builds the durable completion-record store selected by cfg.
+func NewCommitStore(ctx context.Context, cfg Config) (CommitStore, error) {
+	switch name := cfg.Backend; name {
+	case "", BackendLocal:
+		return NewLocalCommitStore(localDir(cfg))
+	case BackendS3:
+		return NewS3CommitStore(ctx, cfg)
+	default:
+		return nil, fmt.Errorf("artifacts: commit store backend %q: %w", name, ErrUnknownBackend)
+	}
+}
+
+// NewCommitStoreFromEnv builds the completion store from ORK_* configuration.
+func NewCommitStoreFromEnv(ctx context.Context) (CommitStore, error) {
+	return NewCommitStore(ctx, ConfigFromEnv())
+}
+
 // LocalCommitStore is the name-addressed completion-record store beside a
 // LocalStore. It is separate because Store.Get returns bytes while
 // CommitStore.Get returns a decoded immutable record.
@@ -183,21 +200,24 @@ func (s *S3CommitStore) Create(ctx context.Context, uri string, c *orkstackv1.Ac
 	if len(document) > CommitMaxBytes {
 		return CommitRecord{}, fmt.Errorf("artifacts: s3 commit create %q: %d bytes exceeds %d: %w", uri, len(document), CommitMaxBytes, ErrInvalidCommitKey)
 	}
-	var out *s3.PutObjectOutput
-	for attempt := 0; attempt < 2; attempt++ {
-		out, err = s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), Body: bytes.NewReader(document), ContentLength: aws.Int64(int64(len(document))), ContentType: aws.String(CommitContentType), IfNoneMatch: aws.String("*")})
-		if err == nil {
-			break
-		}
+	// putConfirmed: a commit whose answer was lost is the commit this attempt
+	// made, never a winner to adopt or a failed write (§4.1). Equal bytes are
+	// this commit or the same result: a commit names its run, task, item,
+	// attempt and Orker and every output. Only the boot probe writes one fixed
+	// candidate from two writers, and it reads a readBack as an outcome it does
+	// not know (confirmedByRead). A 409 ConditionalRequestConflict is the store
+	// refusing this create, as a 412 is (isPreconditionFailed), and the caller
+	// reads what is there.
+	outcome, err := putConfirmed(ctx, s.client, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), Body: bytes.NewReader(document), ContentLength: aws.Int64(int64(len(document))), ContentType: aws.String(CommitContentType), IfNoneMatch: aws.String("*")}, document)
+	if err != nil {
 		if isPreconditionFailed(err) {
 			return CommitRecord{}, fmt.Errorf("artifacts: s3 commit create %q: %w", uri, ErrPreconditionFailed)
 		}
-		if !isConditionalConflict(err) || attempt == 1 {
-			return CommitRecord{}, fmt.Errorf("artifacts: s3 commit create %q: %w", uri, err)
-		}
+		return CommitRecord{}, fmt.Errorf("artifacts: s3 commit create %q: %w", uri, err)
 	}
 	rec, _ := recordFor(document, c)
-	rec.ETag = aws.ToString(out.ETag)
+	rec.ETag = outcome.ETag
+	rec.confirmedByRead = outcome.ReadBack
 	return rec, nil
 }
 
@@ -245,13 +265,11 @@ func (s *S3CommitStore) commitProbeURI() string {
 	return s.uri(CommitProbeKey)
 }
 
-func isConditionalConflict(err error) bool {
-	var api smithy.APIError
-	if errors.As(err, &api) && api.ErrorCode() == "ConditionalRequestConflict" {
-		return true
-	}
-	var response *smithyhttp.ResponseError
-	return errors.As(err, &response) && response.HTTPStatusCode() == http.StatusConflict
+// probeConditionalAnswers asks the store the conditional answers the orkflow
+// store relies on (probeConditionalAnswers in conditional_probe.go): the
+// commit store shares the bucket, so an Orker asks them at boot.
+func (s *S3CommitStore) probeConditionalAnswers(ctx context.Context) error {
+	return probeConditionalAnswers(ctx, s.client, s.bucket)
 }
 
 // isStoreUnavailable reports whether an S3 call failed without the store saying

@@ -10,13 +10,13 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/webui"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestUIFromEnv(t *testing.T) {
 	build := t.TempDir()
-	if err := os.WriteFile(filepath.Join(build, "index.html"), []byte("from disk"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(build, "index.html"), []byte("from disk"), 0o644))
 	for _, tc := range []struct {
 		name, enabled, dir string
 		want               uiConfig
@@ -39,9 +39,7 @@ func TestUIFromEnv(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got != tc.want {
 				t.Errorf("uiFromEnv() = %+v, want %+v", got, tc.want)
 			}
@@ -55,9 +53,7 @@ func TestUIHandler(t *testing.T) {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/runs", nil))
 		b, err := io.ReadAll(rec.Result().Body)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return string(b)
 	}
 	t.Run("off: no handler", func(t *testing.T) {
@@ -68,13 +64,9 @@ func TestUIHandler(t *testing.T) {
 	})
 	t.Run("a directory", func(t *testing.T) {
 		dir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(dir, "index.html"), []byte("from disk"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, "index.html"), []byte("from disk"), 0o644))
 		h, source, err := uiHandler(uiConfig{enabled: true, dir: dir})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if page := serve(t, h); source != "directory" || page != "from disk" {
 			t.Errorf("source %q, page %q; want the directory's", source, page)
 		}
@@ -86,9 +78,7 @@ func TestUIHandler(t *testing.T) {
 	})
 	t.Run("embedded, or the placeholder in a binary built without the UI", func(t *testing.T) {
 		h, source, err := uiHandler(uiConfig{enabled: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		_, embedded := webui.Embedded()
 		want := "placeholder"
 		if embedded {

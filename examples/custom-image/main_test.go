@@ -1,25 +1,21 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestResolveRead_Rules(t *testing.T) {
 	ws := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(ws, "input", "dir"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(ws, "input", "dir"), 0o755))
 	file := filepath.Join(ws, "input", "data.txt")
-	if err := os.WriteFile(file, []byte("x\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(file, filepath.Join(ws, "input", "link.txt")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(file, []byte("x\n"), 0o644))
+	must.OK(t, os.Symlink(file, filepath.Join(ws, "input", "link.txt")))
 
 	accepted := map[string]string{
 		"data.txt":             file,
@@ -83,8 +79,8 @@ func TestCheckArtifactName(t *testing.T) {
 }
 
 func TestLabelOf(t *testing.T) {
-	str := &eachContext{Item: json.RawMessage(`"alpha"`)}
-	obj := &eachContext{Item: json.RawMessage(`{"name":"alpha"}`)}
+	str := &eachContext{Item: jsontext.Value(`"alpha"`)}
+	obj := &eachContext{Item: jsontext.Value(`{"name":"alpha"}`)}
 	cases := []struct {
 		name string
 		cfg  config

@@ -333,8 +333,8 @@ test('aside: the version plate links to the run\'s version, the failure, the ima
 	// The commands that reproduce the run are behind the header's terminal icon.
 	await page.getByTestId('run-inspect-cli-trigger').click();
 	const commands = page.locator('[data-testid^="run-inspect-cli-command-"]');
-	await expect(commands.filter({ hasText: 'run get' })).toHaveText(`orkctl --namespace default run get ${sagaRun} --json`);
-	await expect(commands.filter({ hasText: 'run again' })).toHaveText(`orkctl --namespace default run again ${sagaRun}`);
+	await expect(commands.filter({ hasText: 'run get' })).toHaveText(`orkctl -n default run get ${sagaRun} -j`);
+	await expect(commands.filter({ hasText: 'run again' })).toHaveText(`orkctl -n default run again ${sagaRun}`);
 	await page.keyboard.press('Escape');
 	// The header: what this page is, with the version a plate and the run id its own plate.
 	await expect(page.getByTestId('pinned-orkflow-link')).toHaveText(SAGA);

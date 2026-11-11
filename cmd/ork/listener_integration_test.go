@@ -20,6 +20,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // listenerNamespace is a Temporal namespace of this test's own.
@@ -41,14 +43,10 @@ func paddedDoc(padding int) string {
 func statusUnder(t *testing.T, address, host, path string) int {
 	t.Helper()
 	request, err := http.NewRequest(http.MethodGet, "http://"+address+path, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	request.Host = host
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("GET %s with Host %q: %v", path, host, err)
-	}
+	must.OKf(t, err, "GET %s with Host %q", path, host)
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	return response.StatusCode
@@ -77,9 +75,7 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 		"ORK_ALLOWED_HOSTS=orkstack.example.com, *.corp.example",
 		"ORK_ADMIN_ADDR=127.0.0.1:0", "ORK_ADMIN_ALLOWED_HOSTS=host.docker.internal")
 	_, port, err := net.SplitHostPort(address)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	admin := regexp.MustCompile(`msg="admin listener ready" addr=(\S+)`).FindStringSubmatch(log.String())
 	if admin == nil {
 		t.Fatalf("the boot log names no admin listener:\n%s", log.String())
@@ -117,9 +113,7 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	}
 
 	conn, err := net.Dial("tcp", address)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer func() { _ = conn.Close() }()
 	// Taken before the request is sent, so it is never later than the
 	// moment the engine starts counting the connection idle.
@@ -129,14 +123,10 @@ func TestIntegration_EngineBoundsItsAPIListener(t *testing.T) {
 	}
 	reader := bufio.NewReader(conn)
 	response, err := http.ReadResponse(reader, nil)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
+	must.OKf(t, err, "read response")
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
-	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, conn.SetReadDeadline(time.Now().Add(30*time.Second)))
 	_, err = io.Copy(io.Discard, reader)
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {

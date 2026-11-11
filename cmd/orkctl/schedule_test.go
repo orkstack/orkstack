@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cliSchedules is the schedule seam behind the CLI fixture: the records it was
@@ -317,9 +319,7 @@ func goldenSchedule() *orkstackv1.Schedule {
 func renderScheduleString(t *testing.T, s *orkstackv1.Schedule) string {
 	t.Helper()
 	var out bytes.Buffer
-	if err := renderSchedule(&out, s); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderSchedule(&out, s))
 	return out.String()
 }
 
@@ -332,9 +332,7 @@ func TestScheduleList_Golden(t *testing.T) {
 		RecentFires: []*orkstackv1.ScheduleFire{{Refusal: "no live Orker", DetailsAvailable: true}}}
 	broken := &orkstackv1.Schedule{Id: "sch-00000000000000a3", Name: "broken", OrkflowName: "etl", UnavailableReason: "cluster busy"}
 	var out bytes.Buffer
-	if err := renderScheduleList(&out, []*orkstackv1.Schedule{active, hourly, refused, broken}); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderScheduleList(&out, []*orkstackv1.Schedule{active, hourly, refused, broken}))
 	requireGolden(t, "schedule-list.golden", out.String())
 }
 
@@ -364,9 +362,7 @@ func TestScheduleGet_Plain_Golden(t *testing.T) {
 
 func TestScheduleGet_JSONCarriesFires(t *testing.T) {
 	var out bytes.Buffer
-	if err := writeJSON(&out, &orkstackv1.GetScheduleResponse{Schedule: goldenSchedule()}); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(&out, &orkstackv1.GetScheduleResponse{Schedule: goldenSchedule()}))
 	var decoded struct {
 		Schedule struct {
 			Spec struct {

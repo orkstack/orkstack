@@ -136,7 +136,7 @@ test('version-pinned submit, typed inputs, CLI, and run-again retain author inte
 	await page.getByText('Advanced submission options').click();
 	await page.getByTestId('run-submit-idempotency-key').fill('authoring-retry-key');
 	await page.getByTestId('run-submit-cli-trigger').click();
-	await expect(page.getByTestId('run-submit-cli-command')).toContainText('--version 1.0.0');
+	await expect(page.getByTestId('run-submit-cli-popover').locator('[data-cli-label="Submit this run"]')).toContainText('--version 1.0.0');
 	await shot(page, 'screenshot-version-pinned-submit.png');
 
 	const submitted = await rpc<{ run: { id: string } }>('RunService/SubmitRun', {
@@ -161,7 +161,7 @@ test('version-pinned submit, typed inputs, CLI, and run-again retain author inte
 });
 
 test('apply validates without writing, imports and exports exact YAML, and guards a dirty draft', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', 'apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "1"\ntasks: []\n');
 	await page.getByTestId('apply-validate').click();
 	await expect(page.getByTestId('apply-validation-issues')).toBeVisible();
@@ -185,7 +185,7 @@ test('apply validates without writing, imports and exports exact YAML, and guard
 		page.waitForEvent('dialog').then((dialog) => dialog.dismiss()),
 		page.getByTestId('nav-orkflows').click()
 	]);
-	await expect(page).toHaveURL(/\/apply/);
+	await expect(page).toHaveURL(/\/orkflows\/\+new/);
 	await Promise.all([
 		page.waitForEvent('dialog').then((dialog) => dialog.accept()),
 		page.getByTestId('nav-orkflows').click()
@@ -217,7 +217,7 @@ tasks:
     with:
       op: copy
 `;
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', missing);
 	await page.getByTestId('apply-validate').click();
 	const error = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.src"]');
@@ -255,7 +255,7 @@ tasks:
 	await expect(page.getByTestId('apply-submit')).toBeEnabled();
 
 	await page.getByTestId('apply-submit').click();
-	await expect(page.getByTestId('apply-success')).toContainText(`Applied ${name}@1.0.0`);
+	await expect(page.getByTestId('apply-success')).toContainText(`Created ${name}@1.0.0`);
 	// The warning is still on the page after a successful apply.
 	await expect(page.getByTestId('apply-validation-issues')).toContainText('tasks[0].with.srcs');
 	const stored = await rpc<{ orkflows?: { name: string }[] }>('OrkflowService/ListOrkflows', { namespace: NS });

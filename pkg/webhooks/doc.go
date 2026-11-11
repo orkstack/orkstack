@@ -11,7 +11,7 @@
 // failure or a 5xx is retried with exponential backoff, a 4xx is not.
 //
 // The package is deliberately ignorant of protobuf and of OrkStack's JSON
-// dialect. A Delivery carries the already-encoded run as json.RawMessage, so
+// dialect. A Delivery carries the already-encoded run as a stablejson.RawJSON, so
 // the one encoder that owns that dialect (internal/api) stays the only place
 // that knows how a Run is spelled on the wire.
 //

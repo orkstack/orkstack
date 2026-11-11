@@ -19,6 +19,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func awaitPlanForTest() RunPlan {
@@ -50,9 +52,7 @@ func TestTemporalRunReader_RunStartDecodesDefinitionAndPlan(t *testing.T) {
 	reader, _ := readerOver([]*historypb.HistoryEvent{started}, "ork-await-1")
 
 	record, err := reader.RunStart(context.Background(), "ork-await-1")
-	if err != nil {
-		t.Fatalf("RunStart: %v", err)
-	}
+	must.OKf(t, err, "RunStart")
 	if record.Orkflow.GetName() != "awaited" || !record.Orkflow.GetTasks()[0].GetAwait().GetCallback() {
 		t.Fatalf("definition = %v", record.Orkflow)
 	}
@@ -106,9 +106,7 @@ func TestTemporalStarter_SignalAwaitMapsAClosedRunToErrRunEnded(t *testing.T) {
 	sig := &orkstackv1.AwaitSignal{TaskId: "gate"}
 
 	ok := &signalClient{}
-	if err := (&TemporalStarter{client: ok}).SignalAwait(context.Background(), "ork-1", sig); err != nil {
-		t.Fatalf("SignalAwait: %v", err)
-	}
+	must.OKf(t, (&TemporalStarter{client: ok}).SignalAwait(context.Background(), "ork-1", sig), "SignalAwait")
 	if ok.workflow != "ork-1" || ok.name != ResolveAwaitSignal || ok.arg != sig {
 		t.Fatalf("signalled %q/%q with %v", ok.workflow, ok.name, ok.arg)
 	}
@@ -177,9 +175,7 @@ func TestDrainResolutions_RecordsEveryQueuedSignalAsALog(t *testing.T) {
 		})
 	}, time.Second)
 	env.ExecuteWorkflow(drainTestWorkflow)
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "workflow error")
 	var empty bool
 	if err := env.GetWorkflowResult(&empty); err != nil || !empty {
 		t.Fatalf("channel left empty = %v (%v), want true", empty, err)

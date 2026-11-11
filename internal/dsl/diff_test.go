@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestUnified_RendersTheChangeBetweenTwoVersions pins the exact text both
@@ -238,9 +240,7 @@ func hunkStart(t *testing.T, header string) int {
 	}
 	numbers := strings.SplitN(strings.TrimPrefix(fields[1], "-"), ",", 2)
 	start, err := strconv.Atoi(numbers[0])
-	if err != nil {
-		t.Fatalf("malformed hunk header %q: %v", header, err)
-	}
+	must.OKf(t, err, "malformed hunk header %q", header)
 	count := 1
 	if len(numbers) == 2 {
 		if count, err = strconv.Atoi(numbers[1]); err != nil {

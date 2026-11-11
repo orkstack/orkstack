@@ -152,6 +152,19 @@ func (s *Service) SetCurrentOrkflowVersion(
 					"promotion was being written; read the versions again and retry: %w",
 				req.Msg.GetName(), ns.GetName(), err))
 		}
+		if errors.Is(err, artifacts.ErrNotFound) {
+			// The store says what happened — the version removed as it was
+			// promoted, the orkflow deleted — naming the orkflow, namespace
+			// and version, and that is the answer, not a bare "not found".
+			return nil, connect.NewError(connect.CodeNotFound, err)
+		}
+		if errors.Is(err, artifacts.ErrVersionExists) {
+			// The target now holds a document this promotion's interface
+			// check never compared, and the store moved the pointer back off
+			// it: the caller looks again.
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"%w; read the versions again and promote the one you mean", err))
+		}
 		return nil, orkflowStoreError(err, "promote orkflow %q to version %q in namespace %q",
 			req.Msg.GetName(), req.Msg.GetVersion(), ns.GetName())
 	}
@@ -291,10 +304,22 @@ func (s *Service) DeleteOrkflow(
 			recent++
 		}
 	}
-	if active+recent > 0 {
+	// A version shared with other namespaces ran there as a child: those
+	// runs block deletion too (docs/DSL.md "Sharing across namespaces").
+	elsewhere, err := s.sharedRunsBlocking(ctx, ns.GetName(), name, cutoff)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			"cannot verify whether orkflow %q in namespace %q has active or recent runs where it is shared: %w",
+			name, ns.GetName(), err))
+	}
+	shared := 0
+	for _, n := range elsewhere {
+		shared += n
+	}
+	if active+recent+shared > 0 {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-			"cannot delete orkflow %q in namespace %q: %d run(s) block deletion (%d active, %d finished within %s)",
-			name, ns.GetName(), active+recent, active, recent, OrkflowDeletionRunWindow))
+			"cannot delete orkflow %q in namespace %q: %d run(s) block deletion (%d active, %d finished within %s%s)",
+			name, ns.GetName(), active+recent+shared, active, recent, OrkflowDeletionRunWindow, sharedBlockingPhrase(elsewhere)))
 	}
 
 	err = s.orkflows.Delete(ctx, ns.GetName(), name)

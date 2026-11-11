@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // syncBuffer is a log an exec.Cmd writes to while a test reads it.
@@ -107,9 +109,7 @@ func requireObjectStore(t *testing.T) {
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("reserve port: %v", err)
-	}
+	must.OKf(t, err, "reserve port")
 	defer listener.Close()
 	return listener.Addr().String()
 }
@@ -126,18 +126,12 @@ func ownWorkRoot(t *testing.T) string {
 	if parent == "" {
 		parent = filepath.Join("..", "..", ".data", "work")
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		t.Fatalf("create work root parent %s: %v", parent, err)
-	}
+	must.OKf(t, os.MkdirAll(parent, 0o755), "create work root parent %s", parent)
 	root, err := os.MkdirTemp(parent, proof.WorkRootPattern("orker-hc"))
-	if err != nil {
-		t.Fatalf("create work root under %s: %v", parent, err)
-	}
+	must.OKf(t, err, "create work root under %s", parent)
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	absolute, err := filepath.Abs(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return absolute
 }
 
@@ -273,9 +267,7 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	cmd.Env = daemonEnv
 	log := &syncBuffer{}
 	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start orker: %v", err)
-	}
+	must.OKf(t, cmd.Start(), "start orker")
 	process := &orkerProcess{cmd: cmd, log: log, done: make(chan struct{})}
 	go func() { _ = cmd.Wait(); close(process.done) }()
 	t.Cleanup(func() {
@@ -319,16 +311,12 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 
 	// Ready means the Orker is polling: the cluster lists its activity poller.
 	control, err := client.DialContext(ctx, client.Options{HostPort: temporal, Namespace: ns, Identity: "orker-hc-control"})
-	if err != nil {
-		t.Fatalf("dial %s: %v", temporal, err)
-	}
+	must.OKf(t, err, "dial %s", temporal)
 	defer control.Close()
 	awaitActivityPoller(ctx, t, control, queue, time.Minute)
 	// And the check is the listener's own /readyz, asked of the same address.
 	response, err := http.Get("http://" + adminAddr + telemetry.ReadyzPath)
-	if err != nil {
-		t.Fatalf("GET /readyz: %v", err)
-	}
+	must.OKf(t, err, "GET /readyz")
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {

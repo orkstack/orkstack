@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // The catalog maps a short activity name to a registry reference (§4.2).
@@ -73,6 +73,9 @@ func ParseCatalog(document []byte) (Catalog, error) {
 			"one: move every activity under one activities:, and delete the ---", line)
 	}
 	var doc catalogDocument
+	if err := RefuseMergeTags(document, doc); err != nil {
+		return nil, fmt.Errorf("ORK_ACTIVITY_CATALOG: %w", err)
+	}
 	if err := yaml.Unmarshal(document, &doc); err != nil {
 		return nil, fmt.Errorf("ORK_ACTIVITY_CATALOG: parse yaml: %w", err)
 	}

@@ -15,6 +15,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cancelRequestedEvent is the cluster's record of one cancellation request,
@@ -54,9 +56,7 @@ func cancelRequestedByParent() *historypb.HistoryEvent {
 func mustCancelCause(t *testing.T, principal string) string {
 	t.Helper()
 	cause, err := encodeCancelRequest(principal)
-	if err != nil {
-		t.Fatalf("encodeCancelRequest(%q): %v", principal, err)
-	}
+	must.OKf(t, err, "encodeCancelRequest(%q)", principal)
 	return cause
 }
 
@@ -202,9 +202,7 @@ func TestTemporalRunReader_GetRunNamesWhoCanceledTheRun(t *testing.T) {
 			reader, _ := readerOver(history, runID)
 			reader.WithSnapshotStore(store)
 			run, err := reader.GetRun(context.Background(), runID)
-			if err != nil {
-				t.Fatalf("GetRun: %v", err)
-			}
+			must.OKf(t, err, "GetRun")
 			if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
 				t.Fatalf("status = %s, want CANCELED", run.GetStatus())
 			}
@@ -249,9 +247,7 @@ func TestTemporalRunReader_TheFirstRequestIsTheOneNamed(t *testing.T) {
 			reader, _ := readerOver(history, runID)
 			reader.WithSnapshotStore(store)
 			run, err := reader.GetRun(context.Background(), runID)
-			if err != nil {
-				t.Fatalf("GetRun: %v", err)
-			}
+			must.OKf(t, err, "GetRun")
 			if got := run.GetCanceledBy(); got != tt.want {
 				t.Fatalf("canceled_by = %q, want %q", got, tt.want)
 			}
@@ -271,9 +267,7 @@ func TestTemporalRunReader_ATerminatedRunNamesNobody(t *testing.T) {
 	reader, _ := readerOver(history, runID)
 	reader.WithSnapshotStore(store)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetError().GetCode() != "RUN_TERMINATED" || run.GetCanceledBy() != "" {
 		t.Fatalf("run = %s/%s by %q, want RUN_TERMINATED by nobody",
 			run.GetStatus(), run.GetError().GetCode(), run.GetCanceledBy())
@@ -292,9 +286,7 @@ func TestTemporalRunReader_ARequestAfterTheRunsEndNamesNobody(t *testing.T) {
 	reader, _ := readerOver(history, runID)
 	reader.WithSnapshotStore(store)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetCanceledBy() != "" {
 		t.Fatalf("canceled_by = %q, want nobody: the request came after the run's end", run.GetCanceledBy())
 	}
@@ -315,9 +307,7 @@ func TestTemporalRunReader_ATerminationAfterTheRunsEndKeepsTheName(t *testing.T)
 	reader, _ := readerOver(history, runID)
 	reader.WithSnapshotStore(store)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetError().GetCode() != runCanceledCode || run.GetCanceledBy() != "dana@acme" {
 		t.Fatalf("run = %s by %q, want RUN_CANCELED by dana@acme", run.GetError().GetCode(), run.GetCanceledBy())
 	}
@@ -353,9 +343,7 @@ func TestTemporalRunReader_ARequestOfAnEarlierExecutionNamesNobody(t *testing.T)
 	}
 	reader := newRunReader(fake, converter.GetDefaultDataConverter()).WithSnapshotStore(store)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED || run.GetCanceledBy() != "" {
 		t.Fatalf("run = %s by %q, want CANCELED by nobody", run.GetStatus(), run.GetCanceledBy())
 	}
@@ -368,9 +356,7 @@ func TestTemporalRunReader_EventsForArchiveReadsWhoCanceled(t *testing.T) {
 	history, _ := canceledRun(t, runID, mustCancelCause(t, "dana@acme"), false)
 	reader, _ := readerOver(history, runID)
 	read, err := reader.EventsForArchive(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("EventsForArchive: %v", err)
-	}
+	must.OKf(t, err, "EventsForArchive")
 	if read.CanceledBy != "dana@acme" || len(read.Events) != 3 {
 		t.Fatalf("read %d events by %q, want 3 by dana@acme", len(read.Events), read.CanceledBy)
 	}
@@ -403,9 +389,7 @@ func FuzzCancelPrincipal(f *testing.F) {
 		// one CancelRun can write, reads back unchanged.
 		if len(cause) <= CanceledByMaxBytes && utf8.ValidString(cause) {
 			written, err := encodeCancelRequest(cause)
-			if err != nil {
-				t.Fatalf("encodeCancelRequest(%q): %v", cause, err)
-			}
+			must.OKf(t, err, "encodeCancelRequest(%q)", cause)
 			if back := cancelPrincipal(written); back != cause {
 				t.Fatalf("round trip of %q read back %q", cause, back)
 			}

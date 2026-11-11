@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // activityImageMention matches a built-in activity image written with a tag:
@@ -42,9 +44,7 @@ func catalogTagMismatches(path, text, tag string) []string {
 // serve.
 func TestDocs_NameTheBuiltinCatalogTag(t *testing.T) {
 	tag, err := dist.BuiltinCatalogTag()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	root := repoRoot(t)
 	files := markdownFiles(t)
 	for _, extra := range []string{"deploy/orkstack.defaults.yaml", "deploy/orkstack.example.yaml"} {
@@ -54,9 +54,7 @@ func TestDocs_NameTheBuiltinCatalogTag(t *testing.T) {
 	mentions := map[string]int{}
 	for _, file := range files {
 		rel, err := filepath.Rel(root, file)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		rel = filepath.ToSlash(rel)
 		text := readFile(t, file)
 		mentions[rel] = len(activityImageMention.FindAllString(text, -1))

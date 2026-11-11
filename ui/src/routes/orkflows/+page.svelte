@@ -105,7 +105,7 @@
 
 <SheetHeader title="Orkflows" commands={cli}>
 	{#snippet actions()}
-		<a href={withNamespace('/apply', data.namespace)} class="btn btn-primary">Apply Orkflow</a>
+		<a href={withNamespace('/orkflows/+new', data.namespace)} class="btn btn-primary" data-testid="orkflows-create">Create Orkflow</a>
 	{/snippet}
 </SheetHeader>
 
@@ -133,7 +133,7 @@
 	</p>
 {:else if data.orkflows.length === 0}
 	<p class="border border-dashed border-rule-strong px-6 py-12 text-center text-sm text-ink-muted" data-testid="orkflows-empty">
-		No Orkflows yet. Apply one from a YAML document to get
+		No Orkflows yet. Create one from a YAML document to get
 		started.
 	</p>
 {:else}
@@ -148,7 +148,7 @@
 					<th scope="col">Name</th>
 					<th scope="col">Version</th>
 					<th scope="col">Digest</th>
-					<th scope="col">Applied</th>
+					<th scope="col">Created</th>
 				</tr>
 			</thead>
 			<tbody>

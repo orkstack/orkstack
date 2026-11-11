@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Fair dispatch across namespaces (docs/DEPLOY.md "Fair dispatch across
@@ -65,9 +67,7 @@ func startPrivateTemporal(t *testing.T, ctx context.Context, settings ...string)
 		infraAbsent(t, "the image %s is not present", image)
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	port := listener.Addr().(*net.TCPAddr).Port
 	_ = listener.Close()
 	command := "exec timeout 600 temporal server start-dev --ip 0.0.0.0 --headless --log-level error"
@@ -79,9 +79,7 @@ func startPrivateTemporal(t *testing.T, ctx context.Context, settings ...string)
 	out, err := exec.CommandContext(ctx, "docker", "run", "-d", "--rm", "--pull", "never",
 		"--label", fmt.Sprintf("ork.test=fairness-%d", os.Getpid()),
 		"-p", fmt.Sprintf("127.0.0.1:%d:7233", port), "--entrypoint", "sh", image, "-c", command).Output()
-	if err != nil {
-		t.Fatalf("start a private dev server: %v", err)
-	}
+	must.OKf(t, err, "start a private dev server")
 	container := strings.TrimSpace(string(out))
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", container).Run() })
 	address := fmt.Sprintf("127.0.0.1:%d", port)
@@ -160,9 +158,7 @@ func lateNamespaceMeanPosition(t *testing.T, ctx context.Context, address string
 func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address string, shape fairShape) float64 {
 	t.Helper()
 	c, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: client.DefaultNamespace})
-	if err != nil {
-		t.Fatalf("dial %s: %v", address, err)
-	}
+	must.OKf(t, err, "dial %s", address)
 	t.Cleanup(c.Close)
 	runQueue, orkerQueue := "ork-fair-runs", "ork-fair-tasks"
 	bus, runs := engine.NewEventBus(), engine.NewRunStore()
@@ -177,9 +173,7 @@ func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address stri
 	eventWorker.RegisterActivityWithOptions(engine.NewEventActivities(bus, runs).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for _, w := range []worker.Worker{runWorker, eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, w.Start())
 		t.Cleanup(w.Stop)
 	}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
@@ -200,9 +194,7 @@ func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address stri
 			plan.PinCreationTimeoutSeconds = 600
 		}
 		runID := fmt.Sprintf("ork-fair-%s-%d", name, time.Now().UnixNano())
-		if err := starter.StartRun(ctx, runID, wf, input, plan); err != nil {
-			t.Fatalf("start %s: %v", runID, err)
-		}
+		must.OKf(t, starter.StartRun(ctx, runID, wf, input, plan), "start %s", runID)
 		// Every dispatch of the run is scheduled before the next run starts.
 		deadline := time.Now().Add(2 * time.Minute)
 		for scheduledOf(t, ctx, c, runID, queued) < n {
@@ -239,14 +231,10 @@ func lateNamespaceMeanPositionOf(t *testing.T, ctx context.Context, address stri
 		mu.Unlock()
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := orker.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, orker.Start())
 	t.Cleanup(orker.Stop)
 	for _, runID := range []string{backlog, late} {
-		if err := c.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-			t.Fatalf("run %s: %v", runID, err)
-		}
+		must.OKf(t, c.GetWorkflow(ctx, runID, "").Get(ctx, nil), "run %s", runID)
 	}
 	mu.Lock()
 	defer mu.Unlock()
@@ -273,9 +261,7 @@ func scheduledOf(t *testing.T, ctx context.Context, c client.Client, runID, acti
 	n := 0
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("history of %s: %v", runID, err)
-		}
+		must.OKf(t, err, "history of %s", runID)
 		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
 			attrs.GetActivityType().GetName() == activityType {
 			n++

@@ -77,7 +77,7 @@
 <div class="items" data-testid="task-{taskId}-each">
 	<p class="items-head">
 		<b>Items of {taskId}</b>
-		<span class="text-ink-3" data-testid="task-{taskId}-each-summary">{summary}{#if selected !== undefined}{' · '}selected <b class="font-semibold text-ink-2">{itemLabel(taskId, selected)}</b>{/if}</span>
+		<span class="text-ink-3" data-testid="task-{taskId}-each-summary">{summary}{#if spec?.maxParallel}{' · '}<span data-testid="task-{taskId}-each-parallel">{spec.maxParallel} at a time</span>{/if}{#if selected !== undefined}{' · '}selected <b class="font-semibold text-ink-2">{itemLabel(taskId, selected)}</b>{/if}</span>
 	</p>
 	{#if items.length > 0}
 		<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->

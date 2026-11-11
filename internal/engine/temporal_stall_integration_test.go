@@ -26,6 +26,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests stop the one connection an Orker has to Temporal, and nothing else:
@@ -73,29 +75,19 @@ func newStallStack(t *testing.T, ctx context.Context) *stallStack {
 	s := &stallStack{t: t, ctx: ctx, proxy: faultproxy.New(t, address),
 		orkflows: newDurableOrkflowStore(t)}
 	proxied, err := client.DialContext(ctx, client.Options{HostPort: s.proxy.Addr(), Namespace: namespace})
-	if err != nil {
-		t.Fatalf("dial temporal through the proxy: %v", err)
-	}
+	must.OKf(t, err, "dial temporal through the proxy")
 	t.Cleanup(proxied.Close)
 
 	token := fmt.Sprintf("%d", time.Now().UnixNano())
 	orkerQueue := "ork-temporal-stall-" + token
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	commitStore, err := artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	logStore, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	attempts, err := artifacts.NewAttemptStore(cfg)
-	if err != nil {
-		t.Fatalf("open attempt store: %v", err)
-	}
+	must.OKf(t, err, "open attempt store")
 	s.commits, s.attempts = commitStore, attempts
 	if s.root, err = artifacts.CommitRoot(cfg); err != nil {
 		t.Fatalf("the commit root: %v", err)
@@ -153,9 +145,7 @@ func newStallStack(t *testing.T, ctx context.Context) *stallStack {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		t.Cleanup(w.Stop)
 	}
 
@@ -167,9 +157,7 @@ func newStallStack(t *testing.T, ctx context.Context) *stallStack {
 		Limits:    engine.DefaultLimits(),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -219,9 +207,7 @@ func (s *stallStack) start(definition *orkstackv1.Orkflow) string {
 	submitted, err := s.runClient.SubmitRun(s.ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: definition.GetName(), OrkflowVersion: definition.GetVersion(),
 	}))
-	if err != nil {
-		s.t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(s.t, err, "SubmitRun")
 	return submitted.Msg.GetRun().GetId()
 }
 
@@ -274,14 +260,10 @@ func (s *stallStack) holdNothingHappens(d time.Duration) {
 func (s *stallStack) awaitEnd(runID string) *orkstackv1.TaskRun {
 	s.t.Helper()
 	stream, err := s.runClient.StreamEvents(s.ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: runID}))
-	if err != nil {
-		s.t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(s.t, err, "StreamEvents")
 	for stream.Receive() {
 	}
-	if err := stream.Err(); err != nil {
-		s.t.Fatalf("event stream: %v", err)
-	}
+	must.OKf(s.t, stream.Err(), "event stream")
 	stream.Close()
 	run, ok := s.runs.Get(runID)
 	if !ok {
@@ -527,9 +509,7 @@ func TestIntegration_TemporalStall_ACommitWrittenInAStallIsNotDoneAgain(t *testi
 
 			s.proxy.Stall()
 			key, err := artifacts.CommitKey("", runID, "work")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			for {
 				if _, err := s.commits.Get(ctx, s.root+"/"+key); err == nil {
 					break

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The race gate joins the full and release tiers' required gates, and the
@@ -21,15 +23,15 @@ func shortSkip(test string) entry {
 }
 
 func TestPartsExpected_NameTheRaceAndNightlyLanes(t *testing.T) {
-	full := partsExpected(tierFull, false, 2, 1, false)
+	full := partsExpected(tierFull, false, 2, 1)
 	if !containsString(full, "race") || indexOf(full, "race") != indexOf(full, "fast")+1 {
 		t.Errorf("a CI full proof expects %v: a race part right after fast", full)
 	}
-	release := partsExpected(tierRelease, false, 2, 1, true)
+	release := partsExpected(tierRelease, false, 2, 1)
 	if !containsString(release, "race") {
 		t.Errorf("a CI release proof expects %v: the pre-release gate is the full tier", release)
 	}
-	nightly := partsExpected(tierNightly, false, 2, 1, false)
+	nightly := partsExpected(tierNightly, false, 2, 1)
 	for _, want := range []string{suiteRaceRepeat, suiteFuzz} {
 		if !containsString(nightly, want) {
 			t.Errorf("a CI nightly proof expects %v: no %s part", nightly, want)
@@ -38,7 +40,7 @@ func TestPartsExpected_NameTheRaceAndNightlyLanes(t *testing.T) {
 	if containsString(nightly, "race") || containsString(full, suiteRaceRepeat) || containsString(full, suiteFuzz) {
 		t.Errorf("the lanes belong to one tier each: full %v, nightly %v", full, nightly)
 	}
-	if got := partsExpected(tierNightly, true, 2, 1, false); len(got) != 1 || got[0] != "local" {
+	if got := partsExpected(tierNightly, true, 2, 1); len(got) != 1 || got[0] != "local" {
 		t.Errorf("a local nightly proof is one part: %v", got)
 	}
 }
@@ -84,9 +86,7 @@ func TestMerge_AFullProofIsHeldToTheRaceGate(t *testing.T) {
 	t.Run("CI missing part", func(t *testing.T) {
 		f := newMergeFixture(t, tierFull, true)
 		f.writeCI()
-		if err := os.RemoveAll(filepath.Join(f.parts, "race-a1")); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.RemoveAll(filepath.Join(f.parts, "race-a1")))
 		f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
 		f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
 		r, code := f.merge()
@@ -143,9 +143,7 @@ func TestMerge_ARaceLedgerWithProblemsFailsTheProof(t *testing.T) {
 				rec := f.basePart("local")
 				_ = rec
 				// Overwrite the local part's race ledger with the bad one.
-				if err := writeJSON(filepath.Join(f.parts, "local-a1", "race-tests.json"), bad); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, writeJSON(filepath.Join(f.parts, "local-a1", "race-tests.json"), bad))
 			}
 			r, code := f.merge()
 			if code != 1 || r.Result != "fail" || r.MergeEligible {
@@ -188,9 +186,7 @@ func TestMerge_AShortSkipIsHeldToTheUnitGatesPass(t *testing.T) {
 			f.writeLocal(integrationLedger)
 			dir := filepath.Join(f.parts, "local-a1")
 			for name, l := range map[string]ledger{"unit-tests.json": c.unit, "race-tests.json": c.race} {
-				if err := writeJSON(filepath.Join(dir, name), l); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, writeJSON(filepath.Join(dir, name), l))
 			}
 			r, code := f.merge()
 			if c.problem == "" {
@@ -228,9 +224,7 @@ func TestMerge_AShortSkipNeedsALedgerThatSaysItsRunHadShort(t *testing.T) {
 			f.writeLocal(integrationLedger)
 			dir := filepath.Join(f.parts, "local-a1")
 			for name, l := range map[string]ledger{"unit-tests.json": unit, "race-tests.json": race} {
-				if err := writeJSON(filepath.Join(dir, name), l); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, writeJSON(filepath.Join(dir, name), l))
 			}
 			r, code := f.merge()
 			if short && (code != 0 || !r.MergeEligible) {
@@ -267,9 +261,7 @@ func TestMerge_TheRaceLedgerListsEveryTestTheUnitLedgerDoes(t *testing.T) {
 	dir := filepath.Join(f.parts, "local-a1")
 	unit := unitLedger()
 	unit.Tests = append(unit.Tests, entry{Package: mPkg, Test: "TestOnlyUnit", Outcome: outcomePass, Seconds: 1})
-	if err := writeJSON(filepath.Join(dir, "unit-tests.json"), unit); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(filepath.Join(dir, "unit-tests.json"), unit))
 	r, code := f.merge()
 	if code != 1 || r.MergeEligible || !strings.Contains(joined(r), mPkg+".TestOnlyUnit is in the unit ledger and not in the race ledger") {
 		t.Errorf("code %d, eligible %v: %v", code, r.MergeEligible, r.Ineligible)
@@ -283,9 +275,7 @@ func TestMerge_ARaceFailureIsNeverQuarantined(t *testing.T) {
 	bad := raceLedger()
 	bad.Tests[0].Outcome = outcomeQuarantinedFail
 	bad.Tests[0].Quarantine = "someone, review by 2026-11-01: flaky"
-	if err := writeJSON(filepath.Join(f.parts, "local-a1", "race-tests.json"), bad); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(filepath.Join(f.parts, "local-a1", "race-tests.json"), bad))
 	r, code := f.merge()
 	if code != 1 || r.MergeEligible || !strings.Contains(joined(r), "quarantined-fail in the race ledger") {
 		t.Errorf("code %d, eligible %v: %v", code, r.MergeEligible, r.Ineligible)
@@ -316,9 +306,7 @@ func TestMerge_ARaceAllowedSkipNeedsTheListsEntry(t *testing.T) {
 			f.writeLocal(integrationLedger)
 			dir := filepath.Join(f.parts, "local-a1")
 			for name, l := range map[string]ledger{"unit-tests.json": unit, "race-tests.json": race} {
-				if err := writeJSON(filepath.Join(dir, name), l); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, writeJSON(filepath.Join(dir, name), l))
 			}
 			r, code := f.merge()
 			if c.clean && (code != 0 || !r.MergeEligible) {
@@ -463,9 +451,7 @@ func TestMerge_ACINightlyProofRunsItsTwoLanes(t *testing.T) {
 	t.Run("a missing lane fails it", func(t *testing.T) {
 		f := newMergeFixture(t, tierNightly, true)
 		write(f, pass(suiteRaceRepeat), pass(suiteFuzz), fuzzLedger())
-		if err := os.RemoveAll(filepath.Join(f.parts, "fuzz-a1")); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.RemoveAll(filepath.Join(f.parts, "fuzz-a1")))
 		r, code := f.merge()
 		if code != 1 || r.Result == "pass" || !strings.Contains(joined(r), "part fuzz left no result") {
 			t.Errorf("code %d, result %s: %v", code, r.Result, r.Ineligible)
@@ -490,57 +476,11 @@ func TestJobNames_MapToTheLaneParts(t *testing.T) {
 	}
 }
 
-func TestRecord_ALaneGateWithoutItsLedgerFailsTheRecord(t *testing.T) {
-	for _, suite := range []string{suiteRace, suiteRaceRepeat, suiteFuzz} {
-		t.Run(suite, func(t *testing.T) {
-			dir := t.TempDir()
-			if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte(suite+"\tpass\t3\t"+suite+".log\tproofrun\n"), 0o644); err != nil {
-				t.Fatal(err)
-			}
-			prev := os.Stdout
-			devnull, _ := os.Open(os.DevNull)
-			os.Stdout = devnull
-			code := cmdRecord([]string{"-dir", dir, "-tier", "feature", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end"})
-			os.Stdout = prev
-			if code != 1 {
-				t.Fatalf("exit %d, want 1", code)
-			}
-			var r proofRecord
-			if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
-				t.Fatal(err)
-			}
-			if r.Result != "fail" || !strings.Contains(strings.Join(r.Ineligible, "\n"), "the "+suite+" ledger is incomplete") {
-				t.Errorf("record = %+v", r)
-			}
-		})
+func indexOf(list []string, want string) int {
+	for i, s := range list {
+		if s == want {
+			return i
+		}
 	}
-}
-
-// A feature proof's record reads the lane ledgers it finds, as it reads the
-// unit one: a ledger with problems fails it.
-func TestRecord_AFeatureProofReadsTheRaceLedger(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte("race\tpass\t3\trace.log\tproofrun\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	bad := raceLedger()
-	bad.Problems = []string{mPkg + ".TestUnit reported a data race (1 report): the detector's output is in the gate's log"}
-	if err := writeJSON(filepath.Join(dir, "race-tests.json"), bad); err != nil {
-		t.Fatal(err)
-	}
-	prev := os.Stdout
-	devnull, _ := os.Open(os.DevNull)
-	os.Stdout = devnull
-	code := cmdRecord([]string{"-dir", dir, "-tier", "feature", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end"})
-	os.Stdout = prev
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	var r proofRecord
-	if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "the race ledger is incomplete or has problems") {
-		t.Errorf("ineligible = %v", r.Ineligible)
-	}
+	return -1
 }

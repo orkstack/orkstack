@@ -16,7 +16,6 @@
 	//      leaving a reader to think the page dropped something.
 	//   3. NOTHING IS INVENTED. A field the record does not carry is not drawn,
 	//      so a row with no timing shows no timing rather than a zero.
-	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
 	import FailurePanel from '#lib/components/FailurePanel.svelte';
 	import { AttemptOutcome, type TaskAttempt } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import {
@@ -27,7 +26,7 @@
 		isUnreported
 	} from '#lib/attempts.ts';
 	import { hasError } from '#lib/activity.ts';
-	import { formatDuration, runCommand } from '#lib/runDetail.ts';
+	import { formatDuration } from '#lib/runDetail.ts';
 	import Icon from './Icon.svelte';
 	import { attemptPhases, formatQuantity, phasesLine, type TaskTiming } from '#lib/timing.ts';
 	import { attemptCacheLine, keyComponentRows } from '#lib/cache.ts';
@@ -93,7 +92,7 @@
 	}
 </script>
 
-<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-{taskId}-attempts" data-cli-own>
+<div class="mt-3 border-t border-rule-faint pt-3" data-testid="task-{taskId}-attempts">
 	<div class="flex flex-wrap items-center justify-between gap-2">
 		<button
 			type="button"
@@ -105,13 +104,6 @@
 			<Icon name={open ? 'chev' : 'chev-right'} class="size-3.5 text-ink-3" />
 			Attempts ({attempts.length})
 		</button>
-		{#if attempts.length > 0}
-			<CliEquivalent
-				command={runCommand(namespace, ['run', 'attempts', runId, '--task', taskId, ...(item !== undefined ? ['--item', String(item)] : [])])}
-				testid="task-{taskId}-attempts-cli"
-				label="Copy CLI"
-			/>
-		{/if}
 	</div>
 
 	{#if open}

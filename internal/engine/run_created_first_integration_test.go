@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // storeHooks is a replica's snapshot store with onWrite in front of every
@@ -120,9 +122,7 @@ func (s *chaosStack) corruptStart(t *testing.T, refuse func(n int, sequence int6
 	plan, _ := s.tcPlan()
 	stub, plan, uri := storeDefinitionIn(t, s.ctx, s.store, runID, wf, plan)
 	stub.Version = "2.0.0"
-	if err := s.starter.StartRun(s.ctx, runID, stub, nil, plan); err != nil {
-		t.Fatalf("StartRun %s: %v", runID, err)
-	}
+	must.OKf(t, s.starter.StartRun(s.ctx, runID, stub, nil, plan), "StartRun %s", runID)
 	if status, _ := s.wait(runID, 3*time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_FAILED {
 		t.Fatalf("the run closed %v, want Failed", status)
 	}
@@ -172,9 +172,7 @@ func TestIntegration_RecordRunCreatedFirstHistories(t *testing.T) {
 			if n, _, _ := writes.counts(); n != rec.writes {
 				t.Fatalf("RUN_CREATED's writes began %d times, want %d", n, rec.writes)
 			}
-			if err := replayRecorded(recorded, runID); err != nil {
-				t.Fatalf("the history just recorded does not replay against current code: %v", err)
-			}
+			must.OKf(t, replayRecorded(recorded, runID), "the history just recorded does not replay against current code")
 			// The definition object beside the history, byte for byte: what
 			// the fixture's stub names (fixtureObjectDefinition).
 			object, err := s.store.ReadSnapshot(ctx, uri)
@@ -193,12 +191,8 @@ func TestIntegration_RecordRunCreatedFirstHistories(t *testing.T) {
 				if !write {
 					continue
 				}
-				if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(p, data, 0o644); err != nil {
-					t.Fatalf("write %s: %v", p, err)
-				}
+				must.OK(t, os.MkdirAll(filepath.Dir(p), 0o755))
+				must.OKf(t, os.WriteFile(p, data, 0o644), "write %s", p)
 			}
 			t.Logf("recorded %d events of run %s into %s, replayed clean; published %s",
 				len(recorded.GetEvents()), runID, written, want)

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // update rewrites the golden files: go test ./cmd/orkctl -run Golden -update
@@ -15,12 +17,8 @@ func requireGolden(t *testing.T, name, got string) {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	if *update {
-		if err := os.MkdirAll("testdata", 0o755); err != nil {
-			t.Fatalf("create testdata: %v", err)
-		}
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-			t.Fatalf("write golden %s: %v", path, err)
-		}
+		must.OKf(t, os.MkdirAll("testdata", 0o755), "create testdata")
+		must.OKf(t, os.WriteFile(path, []byte(got), 0o644), "write golden %s", path)
 		return
 	}
 	want, err := os.ReadFile(path)

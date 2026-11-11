@@ -231,7 +231,7 @@ message Budget {
   int64 gib_seconds = 2;
   // period is the rolling window a budget is held against, ending at the
   // moment of the question. Required; at least 1h and at most 744h (31 days).
-  // A longer question is a report — `orkctl stats usage --since` — not a
+  // A longer question is a report — `orkctl stats usage -s` — not a
   // budget evaluated at every submit.
   google.protobuf.Duration period = 3;
   // enforce turns the budget from an observation into an admission rule.

@@ -3,14 +3,14 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestEffective_RedactsSecrets(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "storage:\n  s3:\n    secret_key: from-file-secret\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	out := doc.Effective(BinaryOrk, func(string) (string, bool) { return "", false })
 	if strings.Contains(out, "from-file-secret") {
 		t.Errorf("Effective output contains the secret value:\n%s", out)
@@ -23,9 +23,7 @@ func TestEffective_RedactsSecrets(t *testing.T) {
 func TestEffective_Origins(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "telemetry:\n  log_level: debug\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 
 	env := map[string]string{"ORK_LOG_FORMAT": "text-from-env"}
 	lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
@@ -67,9 +65,7 @@ func TestEffective_RedactsSinksHeaders(t *testing.T) {
         authorization: super-secret-header-value
 `)
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	out := doc.Effective(BinaryOrk, func(string) (string, bool) { return "", false })
 	if strings.Contains(out, "super-secret-header-value") {
 		t.Errorf("Effective output contains the literal sink header value:\n%s", out)
@@ -96,9 +92,7 @@ func TestEffective_RedactsSinksFileLeaf(t *testing.T) {
         authorization: {file: `+secretFile+`}
 `)
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	out := doc.Effective(BinaryOrk, func(string) (string, bool) { return "", false })
 	if strings.Contains(out, secretFile) || strings.Contains(out, "sink-secret-value") {
 		t.Errorf("Effective output leaks the {file:} leaf:\n%s", out)
@@ -110,9 +104,7 @@ func TestEffective_RedactsSinksFileLeaf(t *testing.T) {
 func TestEffective_ActivitiesDocument_NoRedaction(t *testing.T) {
 	path := writeTemp(t, "cfg.yaml", "activities:\n  shell: ghcr.io/orkstack/activity-shell:0.2\n")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	out := doc.Effective(BinaryOrk, func(string) (string, bool) { return "", false })
 	if !strings.Contains(out, "ghcr.io/orkstack/activity-shell:0.2") {
 		t.Errorf("Effective output = %q, want the activities catalog reference intact", out)
@@ -136,9 +128,7 @@ func TestEffective_QuotesSpecialValues(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			path := writeTemp(t, "cfg.yaml", tc.yaml)
 			doc, err := Load(path, BinaryOrk)
-			if err != nil {
-				t.Fatalf("Load: %v", err)
-			}
+			must.OKf(t, err, "Load")
 			out := doc.Effective(BinaryOrk, func(string) (string, bool) { return "", false })
 			if !strings.Contains(out, tc.wantQuoted) {
 				t.Errorf("Effective output = %q, want it to contain %q", out, tc.wantQuoted)
@@ -150,9 +140,7 @@ func TestEffective_QuotesSpecialValues(t *testing.T) {
 func TestEffective_OnlyBinaryOwnKeys(t *testing.T) {
 	path := writeTemp(t, "empty.yaml", "")
 	doc, err := Load(path, BinaryOrk)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	out := doc.Effective(BinaryOrk, func(string) (string, bool) { return "", false })
 	if strings.Contains(out, "orker.workdir") {
 		t.Errorf("Effective(ork) output names an orker-only key:\n%s", out)

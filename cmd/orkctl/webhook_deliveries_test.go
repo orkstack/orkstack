@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingDeliveryStore is the real in-memory store with every query the
@@ -142,9 +144,7 @@ func deliveriesFixture(t *testing.T) (*fixture, *recordingDeliveryStore, *cliRec
 			at = at.Add(attempt.GetDuration().AsDuration())
 		}
 		rec.SettledAt = timestamppb.New(at)
-		if err := store.PutDelivery(context.Background(), rec); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+		must.OKf(t, store.PutDelivery(context.Background(), rec), "seed")
 	}
 	return f, store, receiver
 }

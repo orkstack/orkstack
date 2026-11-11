@@ -19,6 +19,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // refusalHarness runs RunWorkflow under a test environment with the real
@@ -29,6 +31,9 @@ type refusalHarness struct {
 	mu     sync.Mutex
 	events []*orkstackv1.Event
 	uris   []string
+	// failPublish, when set, decides an attempt's PublishEvent: a non-nil
+	// error fails that attempt and records nothing (newRefusalHarnessIn).
+	failPublish func(*orkstackv1.Event) error
 }
 
 const refusalWorkflowID = "ork-1700000000-42"
@@ -114,9 +119,7 @@ func (h *refusalHarness) terminal(t *testing.T) (*orkstackv1.Event, *orkstackv1.
 		t.Fatalf("terminal event names snapshot %q, which was never written", h.uris[0])
 	}
 	run := &orkstackv1.Run{}
-	if err := proto.Unmarshal(data, run); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(data, run))
 	return h.events[0], run
 }
 

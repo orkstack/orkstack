@@ -12,6 +12,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // joinYAML is a deploy with a re-join before it and two failure handlers
@@ -62,9 +64,7 @@ func TestPlanRun_AssumeFailedReturnsFailsAtCountsAndUnused(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()})
 	applyPlanDoc(t, svc, joinYAML, "")
 	plan, err := planRun(svc, &orkstackv1.PlanRunRequest{OrkflowName: "joined", AssumeFailed: []string{"full", "deploy"}})
-	if err != nil {
-		t.Fatalf("PlanRun: %v", err)
-	}
+	must.OKf(t, err, "PlanRun")
 	if plan.GetFailsAt() != "deploy" || plan.GetAssumedFailed() != 1 ||
 		!reflect.DeepEqual(plan.GetUnusedAssumeFailed(), []string{"full"}) {
 		t.Fatalf("fails_at %q, assumed_failed %d, unused %v", plan.GetFailsAt(), plan.GetAssumedFailed(), plan.GetUnusedAssumeFailed())
@@ -82,9 +82,7 @@ func TestPlanRun_AssumeFailedReturnsFailsAtCountsAndUnused(t *testing.T) {
 	}
 	// Without an assumption: rollback skipped, nothing fails.
 	plain, err := planRun(svc, &orkstackv1.PlanRunRequest{OrkflowName: "joined"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if plain.GetFailsAt() != "" || planOutcome(plain, "rollback") != orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED {
 		t.Fatalf("plain plan = %v", plain)
 	}

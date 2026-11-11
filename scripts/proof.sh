@@ -1,10 +1,8 @@
 #!/usr/bin/env bash
-# Produce the evidence for a change (AGENTS.md §11.2), in one of two tiers,
+# Produce the evidence for a change (AGENTS.md §11.2), in one of three tiers,
 # with every gate's full output kept under one fresh, gitignored directory.
 #
 #   scripts/proof.sh [NAME]                     full proof    -> proof/NAME/
-#   scripts/proof.sh --tier feature [--base REF] [--tests PKG:REGEX]... \
-#                    [--specs FILE]... [NAME]   feature proof -> proof/NAME-feature/
 #   scripts/proof.sh --tier nightly|release [NAME]
 #   scripts/proof.sh --part PART --plan FILE [--setup-log FILE] ...
 #                                               one CI part -> proof/<id>-part-PART-aN/
@@ -21,13 +19,7 @@
 # PROOF_JOBS at a time), the activity contract fixture on those images, the UI
 # type-check, unit and Playwright suites, the site's check and build, the race
 # gate (the unit suites under the race detector, -short), and the
-# observability gate whenever the tree differs from main in a telemetry path.
-#
-# The FEATURE proof is a branch's evidence, never merge evidence: the fast
-# gates, the change's evidence (the tests and specs that prove it) and its
-# regression set, as test/tools/proofrun select decides from the diff against
-# the merge base with --base (default main) and scripts/proof-scope.tsv; and
-# the race gate over the packages the change touches, when it touches any.
+# observability gate.
 #
 # The NIGHTLY proof runs the deferred tests and spec files, and two lanes of
 # its own: the race repeat (the concurrency-heavy packages' unit suites under
@@ -35,8 +27,7 @@
 # target, sharing FUZZ_BUDGET). Both run alone, before the integration phase.
 #
 # Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation (an unknown
-# base, an existing proof directory, missing evidence, a pattern that matches
-# nothing, a path the scope table refuses), 77 a prerequisite is absent.
+# option, an existing proof directory), 77 a prerequisite is absent.
 # Arguments and prerequisites are checked BEFORE any output file is opened, so
 # a refusal never leaves behind anything that reads like evidence.
 #
@@ -54,9 +45,9 @@
 #   PROOF_GATES=a,b     run only these gates — debugging only, never merge-eligible
 #   PROOF_TEMPORAL=own  `shared` uses make infra-up's Temporal — debugging only,
 #                       never merge-eligible
-#   FUZZ_BUDGET=125m    the nightly fuzz lane's whole time, shared equally by its
+#   FUZZ_BUDGET=130m    the nightly fuzz lane's whole time, shared equally by its
 #                       Fuzz targets: a whole number of s, m or h (the CI fuzz
-#                       step is limited to 140m, docs/PROOFS.md §2.3)
+#                       step is limited to 145m, docs/PROOFS.md §2.3)
 #   PROOF_FAIL_FAST=1   stop at the first failing gate: the fast gates run first,
 #                       one after another, and a failure in any gate stops the
 #                       gates still running and starts no other. 0 runs every
@@ -102,9 +93,6 @@ usage() { sed -n '2,46p' "$SELF" | sed 's/^# \{0,1\}//'; }
 # ---- arguments (exit 2) -------------------------------------------------------
 TIER=full
 BASE=main
-BASE_GIVEN=""
-TESTS=()
-SPECS=()
 NAME=""
 PART=""
 PLAN=""
@@ -122,12 +110,6 @@ while [ $# -gt 0 ]; do
 	case "$1" in
 	--tier) [ $# -ge 2 ] || invalid "--tier needs a value"; TIER="$2"; shift 2 ;;
 	--tier=*) TIER="${1#*=}"; shift ;;
-	--base) [ $# -ge 2 ] || invalid "--base needs a value"; BASE="$2"; BASE_GIVEN=1; shift 2 ;;
-	--base=*) BASE="${1#*=}"; BASE_GIVEN=1; shift ;;
-	--tests) [ $# -ge 2 ] || invalid "--tests needs PKG:REGEX"; TESTS+=("$2"); shift 2 ;;
-	--tests=*) TESTS+=("${1#*=}"); shift ;;
-	--specs) [ $# -ge 2 ] || invalid "--specs needs a file"; SPECS+=("$2"); shift 2 ;;
-	--specs=*) SPECS+=("${1#*=}"); shift ;;
 	--part) [ $# -ge 2 ] || invalid "--part needs a name"; PART="$2"; shift 2 ;;
 	--part=*) PART="${1#*=}"; shift ;;
 	--plan) [ $# -ge 2 ] || invalid "--plan needs a file"; PLAN="$2"; shift 2 ;;
@@ -158,27 +140,17 @@ while [ $# -gt 0 ]; do
 	esac
 done
 case "$TIER" in
-full | feature | nightly | release) ;;
-*) invalid "--tier must be full, feature, nightly or release, not '$TIER'" ;;
+full | nightly | release) ;;
+*) invalid "--tier must be full, nightly or release, not '$TIER'" ;;
 esac
-if [ -n "$PART" ] && [ "$TIER" = feature ]; then
-	invalid "--part is a full, release or nightly proof's part; a feature proof runs on one host"
-fi
 # The runner's setup log (.github/actions/proof-fetch): every fetch attempt
 # made before a CI part, copied into the part's directory so its part.json and
 # the merged proof carry it. A local proof fetches nothing before itself.
 if [ -n "$SETUP_LOG" ] && [ -z "$PART" ]; then
 	invalid "--setup-log is a CI part's record of its runner's setup; a local proof has none"
 fi
-if [ "$TIER" = full ] && { [ ${#TESTS[@]} -gt 0 ] || [ ${#SPECS[@]} -gt 0 ]; }; then
-	invalid "--tests and --specs name a feature proof's evidence; the full proof runs everything"
-fi
-# The full proof diffs against main, the branch a candidate fast-forwards:
-# that diff decides whether the observability gate is due, so a base of the
-# caller's choosing (HEAD, say) could leave it out of a merge-eligible proof.
-if [ "$TIER" = full ] && [ -n "$BASE_GIVEN" ]; then
-	invalid "--base chooses a feature proof's change set; the full proof always diffs against main, the branch it merges into"
-fi
+# Every proof diffs against main, the branch a candidate fast-forwards: the
+# gate lists are anchored to it (AGENTS.md §11.2).
 for tool in git go; do
 	if ! command -v "$tool" >/dev/null 2>&1; then
 		say "proof: prerequisites absent, nothing measured, nothing written:
@@ -215,9 +187,6 @@ if [ -z "$NAME" ]; then
 	NAME="${NAME:-detached}-$(date -u +%Y%m%dT%H%M%SZ)"
 fi
 [[ "$NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || invalid "proof name '$NAME' must be letters, digits, '.', '_' or '-'"
-if [ "$TIER" = feature ] && [[ "$NAME" != *-feature ]]; then
-	NAME="$NAME-feature"
-fi
 if [ -n "$PART" ]; then
 	PART_SLUG="${PART//:/-}"
 	DIR="$REPO/proof/$NAME-part-$PART_SLUG-a$ATTEMPT"
@@ -234,7 +203,7 @@ PROOF_FAIL_FAST="${PROOF_FAIL_FAST:-1}"
 [[ "$PROOF_UI_WORKERS" =~ ^[1-9][0-9]*$ ]] || invalid "PROOF_UI_WORKERS must be a positive integer"
 case "$PROOF_TEMPORAL" in own | shared) ;; *) invalid "PROOF_TEMPORAL must be own or shared" ;; esac
 case "$PROOF_FAIL_FAST" in 0 | 1) ;; *) invalid "PROOF_FAIL_FAST must be 1 (the default) or 0" ;; esac
-FUZZ_BUDGET="${FUZZ_BUDGET:-125m}"
+FUZZ_BUDGET="${FUZZ_BUDGET:-130m}"
 [[ "$FUZZ_BUDGET" =~ ^[1-9][0-9]*[smh]$ ]] || invalid "FUZZ_BUDGET must be a whole number of s, m or h, not '$FUZZ_BUDGET'"
 REGISTRY="${ORK_LOCAL_REGISTRY:-localhost:5001}"
 if [ -z "$PROOF_ID" ]; then
@@ -277,8 +246,8 @@ race_toolchain() {
 	command -v "${cc%% *}" >/dev/null 2>&1
 }
 
-# proofrun decides the selection before anything is written, so it is built
-# first, into a temporary directory, and moved into the proof's bin/ later.
+# proofrun runs before anything is written, so it is built first, into a
+# temporary directory, and moved into the proof's bin/ later.
 PR_TMP="$(mktemp -d)"
 PR="$PR_TMP/proofrun"
 if ! go build -o "$PR" ./test/tools/proofrun; then
@@ -299,78 +268,30 @@ fi
 ALL_GATES="temporal binaries integration-compile lint build unit vet-integration images integration activity-fixture ui-check ui-unit site race race-repeat fuzz ui-e2e observability"
 declare -A RUN=()
 SPEC_ARGS=()
-RACE_PACKAGES=()
-OBS_PATHS=""
-SEL_TMP=""
 cleanup_tmp() {
-	if [ -n "$SEL_TMP" ]; then rm -f "$SEL_TMP"; fi
 	if [ -n "$PR_TMP" ]; then rm -rf "$PR_TMP"; fi
 }
 trap cleanup_tmp EXIT
 
-if [ "$TIER" = feature ]; then
-	# The selection is part of the invocation: an unmapped path, missing
-	# evidence, a pattern that matches nothing — each is exit 2, and nothing
-	# has been written yet.
-	SEL_TMP="$(mktemp)"
-	sel_args=(-base "$BASE" -out "$SEL_TMP")
-	for t in "${TESTS[@]}"; do sel_args+=(-tests "$t"); done
-	for s in "${SPECS[@]}"; do sel_args+=(-specs "$s"); done
-	"$PR" select "${sel_args[@]}"
-	sel_status=$?
-	[ "$sel_status" -eq 0 ] || exit "$sel_status"
-	for g in lint build unit vet-integration; do RUN[$g]=1; done
-	while IFS='=' read -r key value; do
-		case "$key" in
-		integration | ui_check | ui_unit | site | ui_e2e | activity_fixture | observability)
-			if [ "$value" = yes ]; then RUN[${key//_/-}]=1; fi
-			;;
-		race_packages)
-			# The race gate runs for the packages the change touches, and
-			# only when it touches any.
-			if [ -n "$value" ]; then
-				RUN[race]=1
-				read -r -a RACE_PACKAGES <<<"$value"
-			fi
-			;;
-		specs)
-			if [ -n "$value" ] && [ "$value" != ALL ]; then
-				read -r -a SPEC_ARGS <<<"$value"
-			fi
-			;;
-		esac
-	done < <("$PR" gates -select "$SEL_TMP")
-else
-	for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit site race ui-e2e; do RUN[$g]=1; done
-	OBS_PATHS="$("$PR" touches -base "$BASE" -action observability)"
-	case $? in
-	0) RUN[observability]=1 ;;
-	1) ;;
-	*) invalid "cannot tell whether the tree touches a telemetry path" ;;
-	esac
-	if [ "$TIER" = nightly ]; then
-		# The nightly tier runs the deferred tests and spec files and its two
-		# lanes, and nothing else: the integration tests
-		# scripts/proof-nightly-tests.txt names, the Playwright specs
-		# scripts/proof-nightly-specs.txt names, the race repeat and the
-		# fuzz lane.
-		RUN=()
-		RUN[integration]=1
-		RUN[race-repeat]=1
-		RUN[fuzz]=1
-		mapfile -t SPEC_ARGS < <(grep -v '^[[:space:]]*#' scripts/proof-nightly-specs.txt 2>/dev/null |
-			awk -F'\t' 'NF >= 4 && $1 != "" { sub(/^ui\//, "", $1); print $1 }')
-		if [ ${#SPEC_ARGS[@]} -gt 0 ]; then RUN[ui-e2e]=1; fi
-	fi
-	if [ "$TIER" = release ]; then
-		# The pre-release gate runs every gate, observability included.
-		RUN[observability]=1
-	fi
+for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit site race ui-e2e observability; do RUN[$g]=1; done
+if [ "$TIER" = nightly ]; then
+	# The nightly tier runs the deferred tests and spec files and its two
+	# lanes, and nothing else: the integration tests
+	# scripts/proof-nightly-tests.txt names, the Playwright specs
+	# scripts/proof-nightly-specs.txt names, the race repeat and the
+	# fuzz lane.
+	RUN=()
+	RUN[integration]=1
+	RUN[race-repeat]=1
+	RUN[fuzz]=1
+	mapfile -t SPEC_ARGS < <(grep -v '^[[:space:]]*#' scripts/proof-nightly-specs.txt 2>/dev/null |
+		awk -F'\t' 'NF >= 4 && $1 != "" { sub(/^ui\//, "", $1); print $1 }')
+	if [ ${#SPEC_ARGS[@]} -gt 0 ]; then RUN[ui-e2e]=1; fi
 fi
 if [ -n "${PROOF_GATES:-}" ]; then
 	# A full proof runs exactly the gates named (and the setup they need); a
-	# feature proof runs the named gates its selection has. Either way the
-	# proof is not merge-eligible.
+	# nightly or release proof runs the named gates its tier has. Either way
+	# the proof is not merge-eligible.
 	for g in ${PROOF_GATES//,/ }; do
 		[[ " $ALL_GATES " == *" $g "* ]] || invalid "PROOF_GATES names an unknown gate '$g' (gates: $ALL_GATES)"
 	done
@@ -436,9 +357,7 @@ fi
 if runs integration; then
 	need "the cosign CLI on PATH (image-policy interop test)" command -v cosign
 fi
-# The unit gate needs it too: proofrun's own tests run go test -race, and a
-# feature proof whose change touches no Go package races nothing and still runs
-# the unit gate.
+# The unit gate needs it too: proofrun's own tests run go test -race.
 if runs race || runs race-repeat || runs unit; then
 	need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain
 fi
@@ -487,11 +406,6 @@ mkdir "$DIR" 2>/dev/null || invalid "proof/$NAME already exists: a proof never r
 mkdir "$DIR/artifacts" "$DIR/bin"
 mv "$PR_TMP/cleanup.log" "$DIR/cleanup.log"
 grep -m1 '^cleanup:' "$DIR/cleanup.log" >"$DIR/setup.log" || echo 'cleanup: did not finish (cleanup.log says why)' >"$DIR/setup.log"
-if [ -n "$SEL_TMP" ]; then
-	mv "$SEL_TMP" "$DIR/selection.json"
-	chmod 644 "$DIR/selection.json"
-	SEL_TMP=""
-fi
 mv "$PR" "$DIR/bin/proofrun"
 rm -rf "$PR_TMP"
 PR_TMP=""
@@ -524,22 +438,8 @@ CLEAN_START=false
 if is_clean; then CLEAN_START=true; fi
 git status --short --untracked-files=all >"$DIR/worktree-start.txt" 2>&1
 git diff --stat "$MERGE_BASE" >"$DIR/diff.stat" 2>/dev/null || true
-START_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-LOAD_START="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
 
 say "proof: $TIER proof -> $DIR (id $PROOF_ID, tree $TREE_START$([ "$CLEAN_START" = true ] || echo ', NOT clean'))"
-
-# The runner-health measurement a CI part makes first (scripts/proof-part.sh,
-# AGENTS.md §11.2), made here for information only: the same numbers,
-# appended to setup.log (after the cleanup's summary line, which opens it)
-# and written to runner-health.json, recorded in proof.json. The class is
-# `local`, which scripts/proof-runner-floors.tsv names no floor for, because
-# this host's floors are its measured costs themselves; it never changes a
-# local verdict, and a measurement that cannot run is reported, not failed.
-say "== runner-health: class local (information only)"
-"$PR" runner-health -class local -floors scripts/proof-runner-floors.tsv -out "$DIR/runner-health.json" >>"$DIR/setup.log" 2>&1 ||
-	say "   runner-health: the measurement could not run (exit $?); see $DIR/setup.log"
-grep '^runner-health:' "$DIR/setup.log" | sed 's/^/   /'
 
 # ---- cleanup of this proof's own group -------------------------------------------
 TEMPORAL_NAME="orkstack-proof-$PROOF_ID-temporal"
@@ -735,7 +635,6 @@ wait_bg() {
 git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
 git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
-git show "$BASE_COMMIT:scripts/proof-host-speed.tsv" >"$DIR/host-speed-base.txt" 2>/dev/null || : >"$DIR/host-speed-base.txt"
 # The gate files this change edits, and the rows its excusing lists add or
 # remove (plan §6.4), computed whatever gates run. A failure is written into
 # the file as an error entry, never as "no gate file changed", and makes the
@@ -768,11 +667,11 @@ step site site.log in_site bash -c 'bun run check && bun run build'
 # The race gate and the nightly lanes run alone, after the cheap gates and
 # before the setup: the detector multiplies every test's time several times
 # over, so a race run beside other gates would only make both load-sensitive,
-# and a race found here ends the proof before the long gates start. A full
-# proof runs every package; a feature proof the packages the change touches.
+# and a race found here ends the proof before the long gates start. The race
+# gate runs every package.
 # None sets ORK_PROOF_DIR: the measurements the unit gate writes there are the
 # unit gate's, and one taken under the detector is evidence of nothing.
-step race race.log "$PR" unit -race -short -out "$DIR" "${RACE_PACKAGES[@]}"
+step race race.log "$PR" unit -race -short -out "$DIR"
 step race-repeat race-repeat.log "$PR" unit -race -short -count "$RACE_REPEAT_COUNT" -out "$DIR" "${RACE_REPEAT_PACKAGES[@]}"
 step fuzz fuzz.log "$PR" fuzz -out "$DIR" -budget "$FUZZ_BUDGET"
 
@@ -880,9 +779,7 @@ if [ -z "$FF_TRIGGER" ]; then
 	step_bg temporal temporal.log start_temporal
 	step_bg images images.log push_images
 	step_bg binaries binaries.log build_binaries
-	compile_args=(-out "$DIR/bin/test")
-	if [ "$TIER" = feature ]; then compile_args+=(-select "$DIR/selection.json"); fi
-	step_bg integration-compile integration-compile.log "$PR" compile "${compile_args[@]}"
+	step_bg integration-compile integration-compile.log "$PR" compile -out "$DIR/bin/test"
 	if [ -z "$IMAGE_TAG_OWN" ] && { runs temporal || runs activity-fixture; }; then
 		record_images >"$DIR/images.log" 2>&1
 	fi
@@ -978,14 +875,12 @@ if [ -z "$FF_TRIGGER" ]; then
 		run_bg activity-fixture activity-fixture.log fixture_after_heavy
 	fi
 	if runs integration; then
-		integ_args=(-out "$DIR" -bin "$DIR/bin/test" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" -lists-changed "$DIR/lists-changed.json")
+		integ_args=(-out "$DIR" -bin "$DIR/bin/test" -jobs "$PROOF_JOBS" -namespace-prefix "$PROOF_ID" -tier "$TIER" -proof-id "$PROOF_ID" -base-commit "$BASE_COMMIT" -merge-base "$MERGE_BASE" -print-progress -quarantine scripts/proof-quarantine.txt -quarantine-base "$DIR/quarantine-base.txt" -lists-changed "$DIR/lists-changed.json")
 		case "$TIER" in
 		full) integ_args+=(-nightly-mode defer -nightly-base "$DIR/nightly-base.txt") ;;
 		release) integ_args+=(-nightly-mode include) ;;
 		nightly) integ_args+=(-nightly-mode only) ;;
 		esac
-		if [ "$TIER" = feature ]; then integ_args+=(-select "$DIR/selection.json"); fi
-		if { [ -n "$OBS_PATHS" ] && [ "$TIER" = full ]; } || [ "$TIER" = release ]; then integ_args+=(-observability-required); fi
 		# The first failing test stops the run, and its ledger still lists
 		# every test: the unfinished ones as having no outcome.
 		if [ "$PROOF_FAIL_FAST" = 1 ]; then integ_args+=(-fail-fast); fi
@@ -1052,16 +947,13 @@ ui_e2e_locked() {
 		return 1
 	fi
 	# The full tier defers the spec files both nightly spec lists carry; the
-	# nightly tier runs the listed ones alone; the pre-release gate and a
-	# feature proof run what they list. The plan names the files to pass
-	# Playwright when it leaves a listed one out.
-	# A feature proof's listing holds only its selected specs, so the list's
-	# rows cannot be checked against it: it plans with no list.
+	# nightly tier runs the listed ones alone; the pre-release gate runs what
+	# it lists. The plan names the files to pass Playwright when it leaves a
+	# listed one out.
 	local plan_mode=include plan_specs=scripts/proof-nightly-specs.txt
 	case "$TIER" in
 	full) plan_mode=defer ;;
 	nightly) plan_mode=only ;;
-	feature) plan_specs="" ;;
 	esac
 	"$PR" ui-plan -list "$DIR/ui-e2e-list.json" -costs scripts/proof-ui-costs.tsv \
 		-shards 1 -out "$DIR/ui-plan.json" -nightly-mode "$plan_mode" \
@@ -1077,7 +969,7 @@ ui_e2e_locked() {
 	# ledger reads both reports as one run. Spec files come BEFORE --project:
 	# Playwright's --project takes every following word as a project name, so
 	# a file after it is refused as an unknown project. --pass-with-no-tests,
-	# because a selection may hold no file of one project; the ledger still
+	# because a nightly plan may hold no file of one project; the ledger still
 	# fails every listed test without an outcome.
 	local reports=()
 	if [ "$PROOF_UI_WORKERS" -gt 1 ]; then
@@ -1110,7 +1002,7 @@ ui_e2e_locked() {
 	fi
 	"$PR" ui-ledger -list "$DIR/ui-e2e-list.json" "${reports[@]}" -plan "$DIR/ui-plan.json" \
 		-log "$DIR/ui-e2e.log" -config "$REPO/ui/playwright.config.ts" -out "$DIR" \
-		-part local -host-speed scripts/proof-host-speed.tsv -host-speed-base "$DIR/host-speed-base.txt" || code=1
+		-part local || code=1
 	return "$code"
 }
 # playwright_run <report> <workers> <playwright args...>: one invocation of the
@@ -1152,8 +1044,6 @@ SAMPLER=""
 TREE_END="$(tree_hash)"
 CLEAN_END=false
 if is_clean; then CLEAN_END=true; fi
-LOAD_END="$(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
-PEAK_RSS_MB="$(awk -F'\t' '$2>m {m=$2} END {printf "%.0f", m/1024}' "$DIR/rss.tsv" 2>/dev/null)"
 
 record_args=(
 	-dir "$DIR" -tier "$TIER" -name "$NAME"
@@ -1171,127 +1061,28 @@ if [ -f "$DIR/images.tsv" ]; then
 	if [ -n "$IMAGE_TAG_OWN" ]; then record_args+=(-image-tag-own); fi
 fi
 if [ -n "${PROOF_GATES:-}" ]; then record_args+=(-gates-override "$PROOF_GATES"); fi
-if [ -f "$DIR/runner-health.json" ]; then record_args+=(-runner-health "$DIR/runner-health.json"); fi
-if { [ "$TIER" = full ] && [ -n "$OBS_PATHS" ]; } || [ "$TIER" = release ]; then record_args+=(-observability-required); fi
 
 README="$DIR/README.md"
-if [ "$TIER" != feature ]; then
-	# The full, release and nightly tiers have one verdict path: one part,
-	# merged by the same code the CI proof job runs over many (plan §2.7).
-	mkdir -p "$DIR/parts/local-a1"
-	record_args+=(-part local -attempt 1 -out-dir "$DIR/parts/local-a1")
-	merge_args=(-plan "$DIR/integration-plan.json" -parts "$DIR/parts" -out "$DIR" -name "$NAME")
-	# A proof that stopped before `proofrun integration` ran has no plan: the
-	# merger then writes its failing verdict from the local part alone.
-	if [ -f "$DIR/integration-plan.json" ]; then
-		record_args+=(-plan "$DIR/integration-plan.json")
-	else
-		merge_args+=(-stopped)
-	fi
-	if [ -f "$DIR/ui-plan.json" ]; then record_args+=(-ui-plan "$DIR/ui-plan.json"); fi
-	"$PR" record "${record_args[@]}" >"$DIR/.part-record.txt" 2>&1
-	record_status=$?
-	if [ -f "$DIR/ui-plan.json" ]; then merge_args+=(-ui-plan "$DIR/ui-plan.json"); fi
-	"$PR" merge "${merge_args[@]}" >"$DIR/.merge.txt" 2>&1
-	status=$?
-	[ "$record_status" -eq 0 ] || status=1
-	[ "$status" -le 1 ] || status=1
-	say
-	say "proof: $(tail -n1 "$README") -> $README"
-	exit "$status"
+# Every tier has one verdict path: one part, merged by the same code the CI
+# proof job runs over many (plan §2.7).
+mkdir -p "$DIR/parts/local-a1"
+record_args+=(-part local -attempt 1 -out-dir "$DIR/parts/local-a1")
+merge_args=(-plan "$DIR/integration-plan.json" -parts "$DIR/parts" -out "$DIR" -name "$NAME")
+# A proof that stopped before `proofrun integration` ran has no plan: the
+# merger then writes its failing verdict from the local part alone.
+if [ -f "$DIR/integration-plan.json" ]; then
+	record_args+=(-plan "$DIR/integration-plan.json")
+else
+	merge_args+=(-stopped)
 fi
-record_args+=(-select "$DIR/selection.json")
-VERDICT="$DIR/.verdict.md"
-"$PR" record "${record_args[@]}" >"$VERDICT"
+if [ -f "$DIR/ui-plan.json" ]; then record_args+=(-ui-plan "$DIR/ui-plan.json"); fi
+"$PR" record "${record_args[@]}" >"$DIR/.part-record.txt" 2>&1
+record_status=$?
+if [ -f "$DIR/ui-plan.json" ]; then merge_args+=(-ui-plan "$DIR/ui-plan.json"); fi
+"$PR" merge "${merge_args[@]}" >"$DIR/.merge.txt" 2>&1
 status=$?
+[ "$record_status" -eq 0 ] || status=1
 [ "$status" -le 1 ] || status=1
-
-{
-	if [ "$TIER" = feature ]; then
-		echo "SCOPED FEATURE PROOF — NOT MERGE EVIDENCE"
-		echo
-		echo "# Feature proof: $NAME"
-	else
-		echo "# Proof: $NAME"
-	fi
-	echo
-	if [ "$TIER" = full ]; then
-		echo "- tier:   full (the merge gate, AGENTS.md §11.3)"
-	else
-		echo "- tier:   feature (a branch's evidence, never merge evidence)"
-	fi
-	echo "- commit: $(git rev-parse HEAD)"
-	echo "- tree:   $TREE_START (the working tree, staged and untracked files included); clean at start: $CLEAN_START; at end: $CLEAN_END, tree $TREE_END"
-	echo "- base:   $BASE = $BASE_COMMIT; merge base $MERGE_BASE"
-	echo "- branch: $(git branch --show-current 2>/dev/null || echo unknown)"
-	echo "- date:   $START_DATE → $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-	echo "- host:   $(hostname) ($(uname -sm)), $(nproc 2>/dev/null) cores; load $LOAD_START → $LOAD_END; peak RSS of the proof's process group ${PEAK_RSS_MB:-?} MiB"
-	echo "- go:     $(go version | cut -d' ' -f3)"
-	echo "- proof id: $PROOF_ID; PROOF_JOBS=$PROOF_JOBS PROOF_UI_WORKERS=$PROOF_UI_WORKERS${PROOF_GATES:+ PROOF_GATES=$PROOF_GATES}"
-	if runs temporal; then
-		echo "- Temporal: $PROOF_TEMPORAL${TEMPORAL_IMAGE:+, $TEMPORAL_IMAGE} at $TEMPORAL_ADDRESS${SWEPT:+; stale proof containers stopped:$SWEPT}"
-	fi
-	if [ -f "$DIR/images.tsv" ]; then
-		if [ -n "$IMAGE_TAG_OWN" ]; then
-			echo "- activity images: tag $IMAGE_TAG, this proof's own, pushed from this tree"
-		else
-			echo "- activity images: tag $IMAGE_TAG, supplied from outside"
-		fi
-		awk -F'\t' '{print "  - " $2 " = " $3}' "$DIR/images.tsv"
-	fi
-	if [ "$TIER" = full ]; then
-		if [ -n "$OBS_PATHS" ]; then
-			echo "- observability gate: due — the tree touches telemetry paths since $BASE:"
-			printf '%s\n' "$OBS_PATHS" | sed '/^$/d; s/^/  - /'
-		else
-			echo "- observability gate: not due — the tree touches no telemetry path since $BASE"
-		fi
-	fi
-	echo
-	echo "## Working tree at start"
-	echo
-	echo '```'
-	cat "$DIR/worktree-start.txt"
-	echo '```'
-	echo
-	echo "## Gates"
-	echo
-	while IFS=$'\t' read -r gate result seconds logname command; do
-		case "$result" in
-		not-started) echo "- **$gate**: not started — $command" ;;
-		stopped) echo "- **$gate**: stopped after ${seconds}s — $command → \`$logname\`" ;;
-		*) echo "- **$gate**: $result in ${seconds}s — \`$command\` → \`$logname\`" ;;
-		esac
-	done <"$GATES_TSV"
-	if [ -n "$FF_TRIGGER" ]; then
-		echo
-		echo "The proof stopped when **$FF_TRIGGER** failed (PROOF_FAIL_FAST): the gates marked stopped were ended and the ones marked not started never began. A stopped proof is a failed proof; docs/PROOFS.md says how to read it."
-	fi
-	for g in $ALL_GATES; do
-		if ! runs "$g" && ! grep -q "^$g	" "$GATES_TSV"; then
-			if [ -n "${PROOF_GATES:-}" ]; then
-				echo "- **$g**: not run — PROOF_GATES"
-			elif [ "$TIER" = feature ]; then
-				echo "- **$g**: not run — outside this change's scope (see Scope)"
-			else
-				echo "- **$g**: not run — not due"
-			fi
-		fi
-	done
-	echo
-	if [ "$TIER" = feature ]; then
-		"$PR" feature-report -select "$DIR/selection.json" -dir "$DIR"
-	fi
-	echo "## Artifacts"
-	echo
-	echo '```'
-	(cd "$DIR" && find . -type f -not -path './bin/*' -not -name '.verdict.md' | sort)
-	echo '```'
-	echo
-	cat "$VERDICT"
-} >"$README"
-rm -f "$VERDICT"
-
 say
 say "proof: $(tail -n1 "$README") -> $README"
 exit "$status"

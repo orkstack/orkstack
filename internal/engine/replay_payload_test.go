@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -22,7 +22,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends is the half of
@@ -100,9 +103,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete the workflow")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("re-executing the fixture's own input failed: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "re-executing the fixture's own input failed")
 	for _, err := range replayErr {
 		t.Error(err)
 	}
@@ -123,9 +124,7 @@ func TestGoldenHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 
 	// --- what the run itself returns ---------------------------------------
 	var finished *orkstackv1.Run
-	if err := env.GetWorkflowResult(&finished); err != nil {
-		t.Fatalf("decode the re-executed run: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowResult(&finished), "decode the re-executed run")
 	if diff := payloadDiff(compactRecordedRun(t, recordedRun), canonicalPayload(t, finished)); diff != "" {
 		t.Errorf("the Run this code returns no longer matches the one the recorded build "+
 			"returned for the same input:\n%s\n\n"+
@@ -200,9 +199,7 @@ func TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset(t *
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete the workflow")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("re-executing the fixture's own input failed: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "re-executing the fixture's own input failed")
 	if len(snapshots) == 0 {
 		t.Fatal("no snapshot was written")
 	}
@@ -246,9 +243,7 @@ func TestGoldenHistory_ReplayedSnapshotProjectsSchedulingAndLeavesStartUnset(t *
 
 	// (d) the fixture is untouched.
 	git, err := exec.LookPath("git")
-	if err != nil {
-		t.Fatalf("git is required to prove the fixture is untouched: %v", err)
-	}
+	must.OKf(t, err, "git is required to prove the fixture is untouched")
 	out, err := exec.Command(git, "status", "--porcelain", "testdata").CombinedOutput()
 	if err != nil {
 		t.Fatalf("git status --porcelain testdata: %v: %s", err, out)
@@ -342,13 +337,9 @@ func compareEventPayloads(t *testing.T, recorded, sent []map[string]any) {
 func loadGoldenHistory(t *testing.T) *historypb.History {
 	t.Helper()
 	raw, err := os.ReadFile(goldenHistory)
-	if err != nil {
-		t.Fatalf("read %s: %v", goldenHistory, err)
-	}
+	must.OKf(t, err, "read %s", goldenHistory)
 	recorded := &historypb.History{}
-	if err := (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded); err != nil {
-		t.Fatalf("decode %s: %v", goldenHistory, err)
-	}
+	must.OKf(t, (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded), "decode %s", goldenHistory)
 	return recorded
 }
 
@@ -419,9 +410,7 @@ func goldenActivityPayloads(t *testing.T, recorded *historypb.History) (
 				continue
 			}
 			var result *orkstackv1.ExecuteTaskResult
-			if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetResult(), &result); err != nil {
-				t.Fatalf("decode a recorded ExecuteTask result: %v", err)
-			}
+			must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetResult(), &result), "decode a recorded ExecuteTask result")
 			results[taskByScheduledID[attrs.GetScheduledEventId()]] = result
 			continue
 		}
@@ -445,14 +434,12 @@ func goldenActivityPayloads(t *testing.T, recorded *historypb.History) (
 // returns is compared exactly as the recorded build wrote it.
 func compactRecordedRun(t *testing.T, recorded map[string]any) map[string]any {
 	t.Helper()
-	raw, err := json.Marshal(recorded)
+	raw, err := stablejson.Marshal(recorded)
 	if err != nil {
 		t.Fatalf("encode the recorded run: %v", err)
 	}
 	run := &orkstackv1.Run{}
-	if err := (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, run); err != nil {
-		t.Fatalf("decode the recorded run: %v", err)
-	}
+	must.OKf(t, (protojson.UnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, run), "decode the recorded run")
 	return canonicalPayload(t, engine.CompactRunResultForTest(run))
 }
 
@@ -476,9 +463,7 @@ func recordedPayload(t *testing.T, payloads *commonpb.Payloads, index int) map[s
 func canonicalPayload(t *testing.T, value any) map[string]any {
 	t.Helper()
 	payload, err := converter.GetDefaultDataConverter().ToPayload(value)
-	if err != nil {
-		t.Fatalf("encode %T through the Temporal data converter: %v", value, err)
-	}
+	must.OKf(t, err, "encode %T through the Temporal data converter", value)
 	var decoded map[string]any
 	if err := json.Unmarshal(payload.GetData(), &decoded); err != nil {
 		t.Fatalf("decode the encoded %T as JSON: %v", value, err)
@@ -527,7 +512,7 @@ func withoutTimestamps(value any) any {
 }
 
 func payloadJSON(value any) string {
-	encoded, err := json.Marshal(value)
+	encoded, err := stablejson.Marshal(value)
 	if err != nil {
 		return fmt.Sprintf("<unencodable: %v>", err)
 	}

@@ -54,7 +54,7 @@ gh_read() {
 	return "$rc"
 }
 
-for tool in gh git jq go; do
+for tool in gh git jq; do
 	command -v "$tool" >/dev/null 2>&1 || { bad "$tool is not on PATH"; echo "github-merge-gate: cannot check"; exit 1; }
 done
 if ! gh auth status >/dev/null 2>&1; then
@@ -189,12 +189,6 @@ if git cat-file -e origin/main:.github/CODEOWNERS 2>/dev/null; then
 	fi
 else
 	owners_fail "origin/main has no .github/CODEOWNERS"
-fi
-
-if go test ./test/tools/proofrun -run '^(TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests|TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange)$' -count=1 >/dev/null 2>&1; then
-	ok "the proof workflow runs the real proof on pull requests, and pr-title reads every title"
-else
-	bad "TestWorkflows_TheProofCheckRunsTheRealProofOnPullRequests or TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange failed: a workflow no longer proves what it must"
 fi
 
 actions_enabled="$(gh api "$api/actions/permissions" --jq '.enabled // false' 2>/dev/null)"

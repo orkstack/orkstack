@@ -8,8 +8,8 @@ Three commands answer most questions about a run:
 
 ```bash
 orkctl run get <run-id> --attempts                  # each task's final outcome, and every try
-orkctl run attempts <run-id> --task <task>          # each try's error, exit status and Orker
-orkctl run logs <run-id> --task <task>              # what the task wrote
+orkctl run attempts <run-id> -t <task>          # each try's error, exit status and Orker
+orkctl run logs <run-id> -t <task>              # what the task wrote
 ```
 
 ## Submitting
@@ -44,11 +44,11 @@ A refused submission leaves nothing behind. Fix the cause and submit again.
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| [`CONTAINER_EXIT_NONZERO`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-container_exit_nonzero-the-container-exited-n) | The container exited with a non-zero status. | Read that try's logs with `orkctl run logs <run-id> --task <task> --attempt <n>`, then fix the workload. |
+| [`CONTAINER_EXIT_NONZERO`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-container_exit_nonzero-the-container-exited-n) | The container exited with a non-zero status. | Read that try's logs with `orkctl run logs <run-id> -t <task> --attempt <n>`, then fix the workload. |
 | [`CONTAINER_STOPPED_BY_RUNTIME`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-container_stopped_by_runtime-the-container-runtime-stopped-the-container) | The container's daemon shut down or restarted, or someone stopped it through the runtime. | Check the Orker's host, and give the task a `retry:` if it should survive this. |
 | [`CONTAINER_TIMEOUT`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-container_timeout-exceeded-its-timeout-of-n-seconds) | The container ran past `timeout_seconds`. It is not retried. | Raise `timeout_seconds` if the work is slow. Otherwise find the hang. |
 | [`VALUES_MISSING`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-values_missing-exited-0-but-wrote-no-valuesjson) | The container exited `0` without writing `values.json`. | Write a JSON object. Write `{}` when there is no result. |
-| [`VALUES_MALFORMED` or `VALUES_TOO_LARGE`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-values_malformed-or-values_too_large) | `values.json` is not one JSON object, or it is over 256 KiB. | Write one object. Move large data into an artifact. |
+| [`VALUES_MALFORMED` or `VALUES_TOO_LARGE`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-values_malformed-or-values_too_large) | `values.json` is not one JSON object, writes a key twice, or is over 256 KiB. | Write one object, each key once. Move large data into an artifact. |
 | [`IMAGE_PULL_FAILED`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-image_pull_failed) | The Orker could not pull the image in time. | Check the registry, and the Orker's network. |
 | [`WORKDIR_NOT_BINDABLE` or `WORKSPACE_NOT_BINDABLE`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-workdir_not_bindable-or-workspace_not_bindable-bind-source-path-does-not-exist) | The Docker daemon cannot see the Orker's work directory, as with a daemon in a virtual machine, or the path holds a comma or a control character, which a container mount cannot carry. | Set `ORK_ORKER_WORKDIR` to a plain path the daemon shares with the host. |
 | [`SECRET_UNRESOLVED` or `SECRET_NOT_PERMITTED`](https://github.com/orkstack/orkstack/blob/main/docs/TROUBLESHOOTING.md#a-task-failed-with-secret_unresolved-secret_not_permitted-or-secret_scheme_forbidden) | The variable or file is missing on that Orker, or the source is outside its allowed floor or is the Orker's own. | Set it on that host, or ask the operator to allow the source or to supply the value under a source of the task's own. |

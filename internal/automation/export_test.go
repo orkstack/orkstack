@@ -18,6 +18,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var update = flag.Bool("update", false, "rewrite the golden files under testdata/")
@@ -26,15 +28,11 @@ func requireGolden(t *testing.T, name, got string) {
 	t.Helper()
 	path := filepath.Join("testdata", name)
 	if *update {
-		if err := os.WriteFile(path, []byte(got), 0o644); err != nil {
-			t.Fatalf("write golden: %v", err)
-		}
+		must.OKf(t, os.WriteFile(path, []byte(got), 0o644), "write golden")
 		return
 	}
 	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read golden %s (run with -update to create it): %v", path, err)
-	}
+	must.OKf(t, err, "read golden %s (run with -update to create it)", path)
 	if string(want) != got {
 		t.Fatalf("%s differs from the golden file:\n--- got ---\n%s\n--- want ---\n%s", name, got, want)
 	}
@@ -89,9 +87,7 @@ func TestExport_Golden(t *testing.T) {
 				ns = "default"
 			}
 			yaml, _, err := Export(ns, live)
-			if err != nil {
-				t.Fatalf("Export: %v", err)
-			}
+			must.OKf(t, err, "Export")
 			requireGolden(t, name, yaml)
 		})
 	}
@@ -110,9 +106,7 @@ func TestExport_RoundTripPlansNothing(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			yaml, unmanaged, err := Export(tc.ns, tc.live)
-			if err != nil {
-				t.Fatalf("Export: %v", err)
-			}
+			must.OKf(t, err, "Export")
 			doc, issues := Parse([]byte(yaml))
 			if HasErrors(issues) {
 				t.Fatalf("the export does not parse: %v\n%s", issues, yaml)
@@ -140,9 +134,7 @@ func TestExport_RoundTripPlansNothing(t *testing.T) {
 
 func TestExport_IsDeterministic(t *testing.T) {
 	want, _, err := Export("payments", fullLive())
-	if err != nil {
-		t.Fatalf("Export: %v", err)
-	}
+	must.OKf(t, err, "Export")
 	rng := rand.New(rand.NewSource(7))
 	for i := 0; i < 20; i++ {
 		live := fullLive()
@@ -324,9 +316,7 @@ func TestRender_Golden(t *testing.T) {
 // mapping, keys sorted — the shape Parse reads.
 func TestExport_WritesInputAsAYAMLMapping(t *testing.T) {
 	yaml, _, err := Export("payments", fullLive())
-	if err != nil {
-		t.Fatalf("Export: %v", err)
-	}
+	must.OKf(t, err, "Export")
 	if !strings.Contains(yaml, "    input:\n      mode: full\n") || strings.Contains(yaml, `input: '`) {
 		t.Fatalf("input is not written as a YAML mapping:\n%s", yaml)
 	}
@@ -344,15 +334,11 @@ func TestExport_InputRoundTripsThroughTheStrictMapping(t *testing.T) {
 		"list": []any{"on", 1.5, []any{}}, "nested": map[string]any{"0755": "key", "k": map[string]any{}},
 	}
 	data, err := structpb.NewStruct(values)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	live := identicalLive()
 	live.Schedules[0].Input = &orkstackv1.Payload{Data: data}
 	exported, _, err := Export("payments", live)
-	if err != nil {
-		t.Fatalf("Export: %v", err)
-	}
+	must.OKf(t, err, "Export")
 	doc, issues := Parse([]byte(exported))
 	if HasErrors(issues) {
 		t.Fatalf("Parse(Export) = %v\n%s", issues, exported)

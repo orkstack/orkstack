@@ -1,10 +1,10 @@
 import { expect, test, type Page } from './test';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, mkdirSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
+import { mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, trackChild, uiEnv } from './harness';
+import { bin, catalogEnv, ensureActivityImages, ensureBucket, killStarted, ownBucket, removeBucket, temporalAddress, temporalNamespace, temporalReachable, uiEnv, spawnLogged as spawnLoggedAt } from './harness';
 import { expectNamespace, selectNamespace } from './uiHelpers';
 import { fillYaml, yamlValue } from './yaml';
 
@@ -24,7 +24,6 @@ const BUCKET = ownBucket('namespaces-editor');
 // run and `promote` always has a lineage it can predict.
 
 const uiDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const repoRoot = path.resolve(uiDir, '..');
 
 // Ports of their own: this spec and e2e/realtime.spec.ts must be able to run in
 // one `playwright test` invocation without fighting over a listener.
@@ -69,22 +68,9 @@ function shot(page: Page, name: string) {
 	return page.screenshot({ path: outPath(name), fullPage: true });
 }
 
-function spawnLogged(
-	name: string,
-	command: string,
-	args: string[],
-	env: NodeJS.ProcessEnv,
-	cwd: string = repoRoot
-): ChildProcess {
-	const out = createWriteStream(outPath(name), { flags: 'w' });
-	const child = spawn(command, args, {
-		cwd,
-		env: { ...process.env, ...env },
-		stdio: ['ignore', 'pipe', 'pipe']
-	});
-	child.stdout?.pipe(out);
-	child.stderr?.pipe(out);
-	return trackChild(child);
+/** The harness's spawnLogged, its log named inside this spec's directory. */
+function spawnLogged(name: string, command: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess {
+	return spawnLoggedAt(outPath(name), command, args, env);
 }
 
 async function waitFor(
@@ -347,8 +333,10 @@ test('the namespace switcher scopes every page, survives reload, and travels in 
 	await expect(page.getByTestId('run-submit-panel')).toBeVisible();
 	await page.getByTestId('orkflow-submit-dialog-close').click();
 
-	await nav.getByTestId('nav-apply').click();
-	await page.waitForURL(new RegExp(`/apply\\?.*ns=${ALPHA}`));
+	await nav.getByTestId('nav-orkflows').click();
+	await page.waitForURL(new RegExp(`/orkflows\\?.*ns=${ALPHA}`));
+	await page.getByTestId('orkflows-create').click();
+	await page.waitForURL(new RegExp(`/orkflows/\\+new\\?.*ns=${ALPHA}`));
 	await expect(page.getByTestId('breadcrumb').getByRole('link').first()).toHaveText(ALPHA);
 
 	// Reload preserves it.
@@ -430,7 +418,7 @@ test('editing applies a new version, real validation errors, and a stale edit is
 	await fillYaml(page, 'editor-yaml', 'apiVersion: orkstack/v1\nkind: Orkflow\nname: broken\nversion: "9.9.9"\ntasks: []\n');
 	await page.getByTestId('editor-validate').click();
 	await expect(page.getByTestId('editor-apply')).toHaveAttribute('aria-disabled', 'true');
-	await expect(page.getByTestId('editor-apply-why')).toContainText(/Fix \d+ problems? to apply/);
+	await expect(page.getByTestId('editor-apply-why')).toContainText(/Fix \d+ problems? to create a version/);
 	await expect(page.getByTestId('editor-validation-issues')).toContainText(/task/i);
 	await expect(page.getByTestId('editor-error')).toHaveCount(0);
 	await shot(page, 'screenshot-editor-validation-error.png');
@@ -638,7 +626,7 @@ test('the Edit tab recovers its document and its base version on retry', async (
 	await shot(page, 'screenshot-editor-retry.png');
 
 	// And it applies, which is what proves the token came back: without one the
-	// editor refuses itself with "reload before applying" and stores nothing.
+	// editor refuses itself with "reload before creating a version" and stores nothing.
 	await fillYaml(page, 'editor-yaml', orkflowYaml(ORKFLOW, '0.4.0', 'applied after a retry'));
 	await page.getByTestId('editor-apply').click();
 	await page.waitForURL(/tab=versions/);

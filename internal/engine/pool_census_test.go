@@ -11,6 +11,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A pool's channel shows a poller only while one of its Orkers has a free
@@ -210,9 +212,7 @@ func TestPoolResolver_PoolsCountsABusyPoolsOrkers(t *testing.T) {
 	resolver := &engine.PoolResolver{Probe: livePools{gpuQueue: 1}, Fleet: fleet}
 	pools, err := resolver.Pools(context.Background(),
 		&orkstackv1.Namespace{Name: "ml", AllowedPools: []string{"main", "gpu"}}, nil)
-	if err != nil {
-		t.Fatalf("Pools: %v", err)
-	}
+	must.OKf(t, err, "Pools")
 	byName := map[string]*orkstackv1.Pool{}
 	for _, p := range pools {
 		byName[p.GetName()] = p
@@ -238,9 +238,7 @@ func TestPoolResolver_PoolsKeepsTheChannelCountWhenTheInventoryCannotBeRead(t *t
 	}
 	pools, err := resolver.Pools(context.Background(),
 		&orkstackv1.Namespace{Name: "ml", AllowedPools: []string{"main", "gpu"}}, nil)
-	if err != nil {
-		t.Fatalf("Pools: %v", err)
-	}
+	must.OKf(t, err, "Pools")
 	for _, p := range pools {
 		if p.GetName() == "gpu" && p.GetLiveOrkerCount() != 3 {
 			t.Fatalf("pool gpu = %v; want the channel's 3", p)
@@ -257,9 +255,7 @@ func TestPoolResolver_PoolsKeepsTheChannelCountWhenTheInventoryCannotBeRead(t *t
 func TestReadFleet_KeepsAnOrkerThatDidNotAnswer(t *testing.T) {
 	fleet := &fakeFleet{orkers: []*orkstackv1.DescribeOrkerResult{currentOrker("a", "gpu", 0)}, silent: []string{"b"}}
 	orkers, err := engine.ReadFleet(context.Background(), fleet)
-	if err != nil {
-		t.Fatalf("ReadFleet: %v", err)
-	}
+	must.OKf(t, err, "ReadFleet")
 	if len(orkers) != 2 || orkers[0].Described.GetPool() != "gpu" || orkers[1].Err == nil {
 		t.Fatalf("ReadFleet = %+v; want a's answer and b's row with its error", orkers)
 	}

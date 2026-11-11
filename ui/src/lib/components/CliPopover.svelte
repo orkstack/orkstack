@@ -22,9 +22,15 @@
 		testid: string;
 		/** The popover's heading. */
 		title?: string;
+		/**
+		 * Names the icon button for anyone who cannot see the glyph; the title
+		 * when unset. Each icon on a page has a name of its own, so a reader
+		 * moving between buttons can tell a row's from the page's.
+		 */
+		label?: string;
 	}
 
-	let { commands, testid, title = 'Command line for this page' }: Props = $props();
+	let { commands, testid, title = 'Command line for this page', label = undefined }: Props = $props();
 
 	let open = $state(false);
 	let status = $state('');
@@ -50,7 +56,7 @@
 		<button
 			type="button"
 			class="btn btn-icon"
-			aria-label="Command line for this page"
+			aria-label={label ?? title}
 			aria-haspopup="dialog"
 			aria-expanded={open}
 			data-tip="Command line"
@@ -69,7 +75,7 @@
 				<h2 class="text-md font-heading">{title}</h2>
 				<p class="text-dense text-ink-3">The same, from orkctl.</p>
 			</div>
-			{#each commands as cmd, i (cmd.command)}
+			{#each commands as cmd, i (i)}
 				<div class="grid gap-1">
 					<span class="text-dense font-semibold text-ink-2">{cmd.label}</span>
 					<div class="flex items-start gap-2">

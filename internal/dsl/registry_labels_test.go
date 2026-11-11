@@ -14,6 +14,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const (
@@ -36,9 +38,7 @@ func TestInspect_ReadsTheIconAndDocsFromTheSameConfig(t *testing.T) {
 	stub := singleManifestStub(t, newTestImage(t, map[string]string{InterfaceLabel: testLabel, IconLabel: testIconLabel, DocsLabel: testDocsFor}))
 	resolver, reference := newStubResolver(t, stub)
 	res, err := resolver.Inspect(context.Background(), "migrate", reference)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	blobs := 0
 	for _, path := range stub.paths {
 		if strings.Contains(path, "/blobs/") {

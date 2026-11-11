@@ -22,6 +22,7 @@ import {
 	promoteResult,
 	rampResult,
 	releaseCommand,
+	releaseRowCommands,
 	roleLabel,
 	runsLabel,
 	stateLabel,
@@ -175,4 +176,27 @@ test('a ramp percent is a whole number from 1 to 100', () => {
 	expect(validRampPercent('10')).toBe(10);
 	expect(validRampPercent('100')).toBe(100);
 	for (const bad of ['0', '101', '-1', '1.5', '', 'ten']) expect(validRampPercent(bad)).toBeNull();
+});
+
+test("a release row's one icon lists every action it offers, and each pin host's drain once", () => {
+	const labels = (release: Parameters<typeof releaseRowCommands>[0]) => releaseRowCommands(release).map((c) => c.label);
+	expect(labels(create(ReleaseSchema, { buildId: 'v2', role: ReleaseRole.CANDIDATE }))).toEqual(['Promote it', 'Ramp it']);
+	expect(labels(create(ReleaseSchema, { buildId: 'v2', role: ReleaseRole.RAMPING }))).toEqual(['Promote it', 'Ramp it', 'Stop the ramp']);
+	expect(labels(create(ReleaseSchema, { buildId: 'v2', role: ReleaseRole.CURRENT }))).toEqual([]);
+	const previous = create(ReleaseSchema, {
+		buildId: 'v1',
+		role: ReleaseRole.PREVIOUS,
+		orkers: [
+			create(OrkerSchema, { orkerId: 'orker-a', pins: [create(OpenPinSchema, { runId: 'ork-1', pin: 'build' }), create(OpenPinSchema, { runId: 'ork-2', pin: 'build' })] }),
+			create(OrkerSchema, { orkerId: 'orker-b' })
+		]
+	});
+	const commands = releaseRowCommands(previous);
+	expect(commands.map((c) => c.label)).toEqual(['Roll back to it', 'Ramp it', 'Wait for it to drain', 'Drain orker-a, which hosts an open pin']);
+	expect(commands.map((c) => c.command)).toEqual([
+		'orkctl release rollback v1',
+		'orkctl release ramp v1 --percent 10',
+		'orkctl release wait v1',
+		'orkctl orker drain orker-a'
+	]);
 });

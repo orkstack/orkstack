@@ -2,7 +2,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/v2"
 	"flag"
 	"fmt"
 	"io"
@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // proof.json is the machine-readable record of a proof (AGENTS.md §11.2):
@@ -54,7 +56,7 @@ type proofRecord struct {
 	Ledgers     any          `json:"ledgers"`
 	ImageTag    string       `json:"image_tag,omitempty"`
 	ImageTagOwn bool         `json:"image_tag_own"`
-	Images      any          `json:"image_digests,omitempty"`
+	Images      any          `json:"image_digests,omitzero"`
 	Temporal    struct {
 		Mode    string `json:"mode"`
 		Image   string `json:"image,omitempty"`
@@ -62,8 +64,8 @@ type proofRecord struct {
 	} `json:"temporal"`
 	ProofJobs     int      `json:"proof_jobs"`
 	UIWorkers     int      `json:"proof_ui_workers"`
-	GuardRetries  *int     `json:"network_change_retries,omitempty"`
-	GuardCeiling  *int     `json:"network_change_retry_ceiling,omitempty"`
+	GuardRetries  *int     `json:"network_change_retries,omitzero"`
+	GuardCeiling  *int     `json:"network_change_retry_ceiling,omitzero"`
 	GatesOverride string   `json:"proof_gates_override,omitempty"`
 	Result        string   `json:"result"`
 	MergeEligible bool     `json:"merge_eligible"`
@@ -71,21 +73,18 @@ type proofRecord struct {
 	// EligibleButForTier says that the only ineligible reason is the tier's
 	// own ("only a full proof is merge evidence"): every identity and
 	// completeness rule held. A release tag needs it (verify -release).
-	EligibleButForTier bool     `json:"eligible_but_for_tier"`
-	EvidenceFailed     []string `json:"evidence_without_a_pass,omitempty"`
+	EligibleButForTier bool `json:"eligible_but_for_tier"`
 
 	// Merged proofs: the parts they were built from, the reruns GitHub caused,
 	// and the plan, lists and gaps the merger recorded (plan §2.6).
-	Parts             []string           `json:"parts,omitempty"`
-	Reruns            []rerunRecord      `json:"reruns,omitempty"`
-	Plan              *planSummary       `json:"plan,omitempty"`
-	UIPlan            *uiPlanSummary     `json:"ui_plan,omitempty"`
-	Quarantined       []string           `json:"quarantined,omitempty"`
-	Quarantine        *quarantineRecord  `json:"quarantine,omitempty"`
-	Nightly           *nightlyRecord     `json:"nightly,omitempty"`
-	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
-	KnownGaps         []string           `json:"known_gaps,omitempty"`
-	BinaryDigestNotes []string           `json:"binary_digest_notes,omitempty"`
+	Parts             []string          `json:"parts,omitempty"`
+	Reruns            []rerunRecord     `json:"reruns,omitempty"`
+	Plan              *planSummary      `json:"plan,omitzero"`
+	UIPlan            *uiPlanSummary    `json:"ui_plan,omitzero"`
+	Quarantined       []string          `json:"quarantined,omitempty"`
+	Quarantine        *quarantineRecord `json:"quarantine,omitzero"`
+	Nightly           *nightlyRecord    `json:"nightly,omitzero"`
+	BinaryDigestNotes []string          `json:"binary_digest_notes,omitempty"`
 	// SetupRetries are the fetches a part's runner needed a second attempt
 	// for, from the parts' setup logs (.github/actions/proof-fetch): every
 	// attempt line of each such fetch, prefixed with the part. A retry
@@ -93,16 +92,9 @@ type proofRecord struct {
 	// it is recorded so a slow blob store or registry is seen, not guessed.
 	SetupRetries []string     `json:"setup_retries,omitempty"`
 	ListsChanged []listChange `json:"lists_changed,omitempty"`
-	// RunnerHealth is every part attempt's runner-health record (its verdict
-	// re-derived by the merger), and DegradedRunners every attempt that
-	// measured below the floor, with the metric, its value and the floor: a
-	// part listed there without a later attempt makes the proof not a proof
-	// of the tree (AGENTS.md §11.2; merge.go).
-	RunnerHealth    []partHealth     `json:"runner_health,omitempty"`
-	DegradedRunners []degradedRunner `json:"degraded_runners,omitempty"`
-	// SetupFailures is every part attempt whose job failed in a fetch or
-	// install step before its proof step started (setupStepNames), whether or
-	// not the part ran again: such an attempt ran no test, and may run again.
+	// SetupFailures is every part attempt whose job failed before its proof
+	// step started, whether or not the part ran again: such an attempt ran no
+	// test, and may run again.
 	SetupFailures []setupFailure `json:"setup_failures,omitempty"`
 	// CarriedForward is every part attempt whose job "Re-run failed jobs"
 	// did not run again (carriedForward): the attempt is not one of the
@@ -110,19 +102,19 @@ type proofRecord struct {
 	CarriedForward []carriedJob `json:"carried_forward,omitempty"`
 	// QuarantineWarnings are the entries within seven days of their date.
 	QuarantineWarnings []string  `json:"quarantine_warnings,omitempty"`
-	PR                 *prRecord `json:"pr,omitempty"`
-	CI                 *ciRecord `json:"ci,omitempty"`
+	PR                 *prRecord `json:"pr,omitzero"`
+	CI                 *ciRecord `json:"ci,omitzero"`
 }
 
 // mainBranch is the branch a merge candidate fast-forwards, and the only base
 // a full proof diffs against (AGENTS.md §11.3).
 const mainBranch = "main"
 
-// fullGates is every gate the merge gate runs; observability joins it when
-// the tree changed a telemetry path. The site gate runs right after the UI's
-// fast gates (scripts/proof.sh), and ui-e2e stays last. The nightly tier is
+// fullGates is every gate the merge gate runs. The site gate runs right after
+// the UI's fast gates (scripts/proof.sh), ui-e2e after the integration gate,
+// and observability last. The nightly tier is
 // held to the integration gate and the two lanes of nightlyGates (merge.go).
-var fullGates = []string{"lint", "build", "unit", suiteRace, "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "ui-e2e"}
+var fullGates = []string{"lint", "build", "unit", suiteRace, "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "ui-e2e", "observability"}
 
 // nightlyGates are the gates the nightly tier is held to besides the
 // integration gate (and ui-e2e, when the tree lists a spec file): the race
@@ -156,7 +148,7 @@ func readGates(file string) ([]gateRecord, error) {
 }
 
 // verdict decides a record's result and merge eligibility.
-func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK map[string]bool) {
+func verdict(r *proofRecord, status int, ledgersOK map[string]bool) {
 	// A merger seeds Ineligible with its own rules before this runs; they are
 	// never discarded, so each condition is written once (plan §2.6 rule 12).
 	r.Ineligible = append([]string{}, r.Ineligible...)
@@ -167,9 +159,6 @@ func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK m
 		if g.Result != "pass" {
 			pass = false
 		}
-	}
-	if len(r.EvidenceFailed) > 0 {
-		pass = false
 	}
 	for name, ok := range ledgersOK {
 		if !ok {
@@ -190,11 +179,7 @@ func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK m
 		r.Ineligible = append(r.Ineligible, "the proof did not pass")
 	}
 	if r.Tier == "full" {
-		required := append([]string{}, fullGates...)
-		if observabilityRequired {
-			required = append(required, "observability")
-		}
-		for _, g := range required {
+		for _, g := range fullGates {
 			if _, ok := ran[g]; !ok {
 				r.Ineligible = append(r.Ineligible, "gate "+g+" did not run")
 			}
@@ -203,10 +188,10 @@ func verdict(r *proofRecord, status int, observabilityRequired bool, ledgersOK m
 	if r.GatesOverride != "" {
 		r.Ineligible = append(r.Ineligible, "PROOF_GATES="+r.GatesOverride+" chose the gates")
 	}
-	// The full tier decides whether the observability gate is due from its
-	// diff against main; any other base could have left that gate out.
+	// The full tier defers only the nightly entries main's lists carry too;
+	// any other base could have deferred an entry the change itself added.
 	if r.Tier == "full" && r.BaseRef != mainBranch {
-		r.Ineligible = append(r.Ineligible, "the full proof diffed against "+orDash(r.BaseRef)+", not "+mainBranch+", so it may have left out the observability gate")
+		r.Ineligible = append(r.Ineligible, "the full proof diffed against "+orDash(r.BaseRef)+", not "+mainBranch+", so it may have deferred a nightly entry the change itself added")
 	}
 	if !r.CleanStart {
 		r.Ineligible = append(r.Ineligible, "the working tree was not clean when the proof started")
@@ -236,41 +221,16 @@ func tierIneligible(tier string) string {
 	return "tier " + tier + ": only a full proof is merge evidence"
 }
 
-// evidenceFailures lists the feature evidence that has no pass. A skip, even
-// an allowed one, is not evidence.
-func evidenceFailures(sel *selection, o outcomes, specs map[string]string) []string {
-	var out []string
-	for _, u := range sel.UnitEvidence {
-		if e := o[testKey{u.Package, u.Test}]; e.Outcome != outcomePass {
-			out = append(out, fmt.Sprintf("%s.%s: %s", relDir(u.Package), u.Test, orDash(e.Outcome)))
-		}
-	}
-	for _, p := range sortedKeys(sel.Integration) {
-		ps := sel.Integration[p]
-		for _, t := range sortedKeys(ps.Evidence) {
-			if e := o[testKey{p, t}]; e.Outcome != outcomePass {
-				out = append(out, fmt.Sprintf("%s.%s: %s", relDir(p), t, orDash(e.Outcome)))
-			}
-		}
-	}
-	for _, s := range sel.Specs {
-		if specs[s.File] != outcomePass {
-			out = append(out, fmt.Sprintf("%s: %s", s.File, orDash(specs[s.File])))
-		}
-	}
-	return out
-}
-
 func cmdRecord(args []string) int {
 	fs := flag.NewFlagSet("record", flag.ContinueOnError)
 	var r proofRecord
 	dir := fs.String("dir", "", "the proof directory")
-	part := fs.String("part", "", "write this part's part.json (full, release and nightly always do)")
+	part := fs.String("part", "local", "the part this part.json is of")
 	attempt := fs.Int("attempt", 1, "this part's attempt (1-based)")
 	planFile := fs.String("plan", "", "the integration plan the part read")
 	uiPlanFile := fs.String("ui-plan", "", "the UI plan the part read")
 	outDir := fs.String("out-dir", "", "where part.json goes (default -dir)")
-	fs.StringVar(&r.Tier, "tier", "full", "full, release, nightly or feature")
+	fs.StringVar(&r.Tier, "tier", "full", "full, release or nightly")
 	fs.StringVar(&r.Name, "name", "", "proof name")
 	fs.StringVar(&r.Commit, "commit", "", "HEAD")
 	fs.StringVar(&r.Branch, "branch", "", "branch")
@@ -278,9 +238,9 @@ func cmdRecord(args []string) int {
 	fs.StringVar(&r.TreeEnd, "tree-end", "", "tree hash at end")
 	fs.BoolVar(&r.CleanStart, "clean-start", false, "clean at start")
 	fs.BoolVar(&r.CleanEnd, "clean-end", false, "clean at end")
-	fs.StringVar(&r.BaseRef, "base-ref", "", "feature base ref")
-	fs.StringVar(&r.BaseCommit, "base-commit", "", "feature base commit")
-	fs.StringVar(&r.MergeBase, "merge-base", "", "feature merge base")
+	fs.StringVar(&r.BaseRef, "base-ref", "", "the ref the proof's lists are compared with")
+	fs.StringVar(&r.BaseCommit, "base-commit", "", "that ref's commit")
+	fs.StringVar(&r.MergeBase, "merge-base", "", "the merge base of that commit and HEAD")
 	fs.StringVar(&r.ImageTag, "image-tag", "", "activity image tag")
 	fs.BoolVar(&r.ImageTagOwn, "image-tag-own", false, "the tag is this proof's own")
 	imagesFile := fs.String("images", "", "name<TAB>reference<TAB>index digest per activity image")
@@ -290,20 +250,14 @@ func cmdRecord(args []string) int {
 	fs.IntVar(&r.ProofJobs, "jobs", 0, "PROOF_JOBS")
 	fs.IntVar(&r.UIWorkers, "ui-workers", 0, "PROOF_UI_WORKERS")
 	fs.StringVar(&r.GatesOverride, "gates-override", "", "PROOF_GATES, when set")
-	obsRequired := fs.Bool("observability-required", false, "the tree changed a telemetry path")
 	setupLog := fs.String("setup-log", "", "the runner's setup log: every fetch attempt made before this part")
-	healthFile := fs.String("runner-health", "", "the part's runner-health.json: what its runner measured before any gate")
-	selFile := fs.String("select", "", "the feature selection")
 	status := fs.Int("status", 0, "the proof script's own status")
-	if err := fs.Parse(args); err != nil || *dir == "" || *attempt < 1 {
+	if err := fs.Parse(args); err != nil || *dir == "" || *part == "" || *attempt < 1 {
 		fmt.Fprintln(os.Stderr, "proofrun record -dir DIR -tier TIER ...")
 		return 2
 	}
-	// The full, release and nightly tiers have one verdict path: the merger.
-	// Their record writes a part, always, locally too (plan §2.7).
-	if r.Tier != tierFeature && *part == "" {
-		*part = "local"
-	}
+	// Every tier has one verdict path: the merger. A record writes a part,
+	// always, locally too (plan §2.7).
 	if *outDir == "" {
 		*outDir = *dir
 	}
@@ -316,51 +270,22 @@ func cmdRecord(args []string) int {
 	if r.Gates == nil {
 		r.Gates = []gateRecord{}
 	}
-	// A health file the part names and cannot read is an error, never a
-	// part that reads as if its runner went unmeasured.
-	var health *runnerHealth
-	if *healthFile != "" {
-		var h runnerHealth
-		if err := readJSON(*healthFile, &h); err != nil {
-			fmt.Fprintln(os.Stderr, "proofrun record: -runner-health:", err)
-			return 2
-		}
-		if h.Format != runnerHealthFormat {
-			fmt.Fprintf(os.Stderr, "proofrun record: -runner-health: %s is format %d, and this proofrun reads format %d\n", *healthFile, h.Format, runnerHealthFormat)
-			return 2
-		}
-		health = &h
-	}
 	ledgers := map[string]any{}
 	ledgerFiles := map[string]string{}
-	ledgersOK := map[string]bool{}
 	for _, name := range laneLedgers {
 		var l ledger
 		if readJSON(filepath.Join(*dir, name+"-tests.json"), &l) == nil {
 			ledgers[name] = map[string]any{"summary": l.Summary, "problems": len(l.Problems)}
 			ledgerFiles[name] = name + "-tests.json"
-			ledgersOK[name] = l.ok()
 		}
 	}
+	// A gate that ran without leaving its ledger is the merger's to refuse:
+	// the part carries the ledgers it found, and the merger reads them.
 	var ul uiLedger
 	if readJSON(filepath.Join(*dir, "ui-e2e-tests.json"), &ul) == nil {
 		ledgers["ui-e2e"] = map[string]any{"listed": ul.Listed, "pass": ul.Pass, "deferred": ul.Deferred, "problems": len(ul.Problems)}
 		ledgerFiles["ui-e2e"] = "ui-e2e-tests.json"
-		ledgersOK["ui-e2e"] = len(ul.Problems) == 0
 		r.GuardRetries, r.GuardCeiling = &ul.GuardRetries, &ul.GuardRetryCeiling
-	}
-	// A gate that ran without leaving its ledger proved nothing about which
-	// tests ran.
-	for _, g := range r.Gates {
-		if g.Result == gateNotStarted {
-			continue
-		}
-		switch g.Gate {
-		case suiteUnit, suiteRace, suiteRaceRepeat, suiteFuzz, "integration", "ui-e2e":
-			if _, ok := ledgersOK[g.Gate]; !ok {
-				ledgersOK[g.Gate] = false
-			}
-		}
 	}
 	r.Ledgers = ledgers
 	if *imagesFile != "" {
@@ -375,7 +300,7 @@ func cmdRecord(args []string) int {
 			r.Images = digests
 		}
 	}
-	if *part != "" {
+	{
 		rec := partRecord{
 			Part: *part, Attempt: *attempt, Tier: r.Tier, Name: r.Name, Commit: r.Commit,
 			Branch: r.Branch, Tree: r.Tree, TreeEnd: r.TreeEnd, CleanStart: r.CleanStart,
@@ -384,7 +309,7 @@ func cmdRecord(args []string) int {
 			Images: imageDigests(r.Images), ImageTag: r.ImageTag, ImageTagOwn: r.ImageTagOwn,
 			ProofJobs: r.ProofJobs, UIWorkers: r.UIWorkers, GatesOverride: r.GatesOverride,
 			GuardRetries: r.GuardRetries, GuardCeiling: r.GuardCeiling,
-			Runner: currentRunner(), Ledgers: ledgerFiles, Health: health,
+			Runner: currentRunner(), Ledgers: ledgerFiles,
 		}
 		// A plan the part names and cannot hash is an error, never an empty
 		// hash the merger would read as "no plan was read".
@@ -438,30 +363,6 @@ func cmdRecord(args []string) int {
 		}
 		return 0
 	}
-	if *selFile != "" {
-		var sel selection
-		if err := readJSON(*selFile, &sel); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 2
-		}
-		r.EvidenceFailed = evidenceFailures(&sel, loadOutcomes(*dir), loadSpecOutcomes(*dir))
-	}
-	if health != nil {
-		// A feature proof's own host, for information: the floor never binds
-		// a local part.
-		r.RunnerHealth = []partHealth{{Part: "local", Attempt: 1, Class: health.Class, Verdict: health.verdict(), Seconds: health.Seconds, Metrics: health.Metrics}}
-	}
-	verdict(&r, *status, *obsRequired, ledgersOK)
-	if err := writeJSON(filepath.Join(*dir, "proof.json"), r); err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	writeRunnerHealthSection(os.Stdout, r.RunnerHealth)
-	writeVerdict(os.Stdout, &r)
-	if r.Result != "pass" {
-		return 1
-	}
-	return 0
 }
 
 func imageDigests(v any) map[string]string {
@@ -491,13 +392,6 @@ func currentRunner() runnerRecord {
 // lines are byte-identical to every earlier proof's.
 func writeVerdict(w io.Writer, r *proofRecord) {
 	fmt.Fprintf(w, "## Verdict\n\n")
-	if len(r.EvidenceFailed) > 0 {
-		fmt.Fprintf(w, "Evidence without a pass (a skip is not evidence):\n\n")
-		for _, e := range r.EvidenceFailed {
-			fmt.Fprintf(w, "- %s\n", e)
-		}
-		fmt.Fprintln(w)
-	}
 	if r.MergeEligible {
 		fmt.Fprintf(w, "- merge-eligible: **yes** — tree %s\n", r.Tree)
 	} else {
@@ -507,15 +401,10 @@ func writeVerdict(w io.Writer, r *proofRecord) {
 		}
 	}
 	fmt.Fprintln(w)
-	switch {
-	case r.Tier != "feature" && r.Result == "pass":
+	if r.Result == "pass" {
 		fmt.Fprintln(w, "Result: **PASS**")
-	case r.Tier != "feature":
+	} else {
 		fmt.Fprintln(w, "Result: **FAIL**")
-	case r.Result == "pass":
-		fmt.Fprintln(w, "Result: **FEATURE PASS — not merge evidence**")
-	default:
-		fmt.Fprintln(w, "Result: **FEATURE FAIL — not merge evidence**")
 	}
 }
 
@@ -710,9 +599,6 @@ func nightlyProofOfTreeProblems(nightlyDir, tree, treeName string) []string {
 	if r.Result != "pass" {
 		p = append(p, "the nightly proof did not pass")
 	}
-	for _, d := range degradedProblems(r) {
-		p = append(p, "the nightly proof: "+d)
-	}
 	if !r.EligibleButForTier {
 		var reasons []string
 		for _, reason := range r.Ineligible {
@@ -733,11 +619,12 @@ func nightlyProofOfTreeProblems(nightlyDir, tree, treeName string) []string {
 
 // nightlyRunJobs are the jobs of nightly.yml outside its proof, whose own
 // conclusion is their verdict: the vulnerability scan's three lanes (the Go
-// module, the JavaScript dependencies, the release images) and the README's
+// module, the JavaScript dependencies, the release images), the published
+// releases' notes against their CHANGELOG.md sections, and the README's
 // Quickstart. The proof's own jobs are judged by its proof.json, never by
 // their colour (an excused timing miss leaves a part red while the proof
 // passes); `flakes` reports and gates nothing.
-var nightlyRunJobs = []string{"vuln", "vuln-js", "vuln-images", "quickstart"}
+var nightlyRunJobs = []string{"vuln", "vuln-js", "vuln-images", "release-notes", "quickstart"}
 
 // verifyNightlyOf is release.yml's nightly check: the release is not tagged
 // while the nightly of its commit is red (AGENTS.md §11).
@@ -806,36 +693,6 @@ func nightlyReleaseProblems(nightlyDir, tree string, jobs map[string]string) []s
 	return p
 }
 
-// degradedProblems names every part whose last attempt ran on a degraded
-// runner: the proof is not a proof of the tree, and the remedy is that one
-// job again, never a new rule. A degraded attempt that a later attempt
-// replaced is a recorded rerun and no problem here.
-func degradedProblems(r proofRecord) []string {
-	rerun := map[string]bool{}
-	for _, rr := range r.Reruns {
-		for _, a := range rr.EarlierAttempts {
-			rerun[fmt.Sprintf("%s#%d", rr.Part, a)] = true
-		}
-	}
-	var p []string
-	seen := map[string]bool{}
-	for _, d := range r.DegradedRunners {
-		key := fmt.Sprintf("%s#%d", d.Part, d.Attempt)
-		if rerun[key] || seen[key] {
-			continue
-		}
-		seen[key] = true
-		var metrics []string
-		for _, x := range r.DegradedRunners {
-			if x.Part == d.Part && x.Attempt == d.Attempt {
-				metrics = append(metrics, fmt.Sprintf("%s %s %s, floor %s", x.Metric, trimFloat(x.Value), x.Unit, trimFloat(x.Floor)))
-			}
-		}
-		p = append(p, fmt.Sprintf("part %s ran on a degraded runner (attempt %d, %s: %s): it is not a proof of the tree; re-run that job alone", d.Part, d.Attempt, d.Class, strings.Join(metrics, "; ")))
-	}
-	return p
-}
-
 // maxQuarantineAgeDays is how old a proof's quarantine check date may be: the
 // merged proof artifact's private retention (docs/PROOFS.md §7), so a proof
 // older than the artifact that carries it is not judged by a stale review-by
@@ -869,7 +726,6 @@ func verifyProblems(r proofRecord, headTree, parent, mainTip, status, mainRef st
 	if msg := quarantineAgeProblem(r, todayUTC()); msg != "" {
 		p = append(p, msg)
 	}
-	p = append(p, degradedProblems(r)...)
 	if r.Tier != "full" {
 		p = append(p, "it is a "+orDash(r.Tier)+" proof; only a full proof gates a merge")
 	}
@@ -921,8 +777,8 @@ func mustGit(args ...string) string {
 func composeTemporal(b []byte) (image string, args []string, err error) {
 	var doc struct {
 		Services map[string]struct {
-			Image   string          `json:"image"`
-			Command json.RawMessage `json:"command"`
+			Image   string             `json:"image"`
+			Command stablejson.RawJSON `json:"command"`
 		} `json:"services"`
 	}
 	if err := json.Unmarshal(b, &doc); err != nil {
@@ -972,9 +828,7 @@ func cmdCosts(args []string) int {
 	var from multiFlag
 	fs.Var(&from, "from", "a full, release or nightly proof's directory, or a merged CI proof's (repeatable; a later source is newer)")
 	costsOut := fs.String("costs-out", "scripts/proof-test-costs.tsv", "where to write the cost ledger (its committed rows are kept where no source measured)")
-	slowOut := fs.String("slow-out", "scripts/proof-slow-tests.txt", "where to write the slow list")
 	uiCostsOut := fs.String("ui-costs-out", "scripts/proof-ui-costs.tsv", "where to write the spec files' measured walls")
-	threshold := fs.Float64("threshold", slowThreshold, "seconds at which a test is slow")
 	if err := fs.Parse(args); err != nil || len(from) == 0 {
 		fmt.Fprintln(os.Stderr, "proofrun costs -from proof/<name> [-from proof/<newer>]...")
 		return 2
@@ -1016,14 +870,7 @@ func cmdCosts(args []string) int {
 		fmt.Fprintf(cf, "# note: %s\n", n)
 	}
 	_ = cf.Close()
-	sf, err := os.Create(*slowOut)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err)
-		return 2
-	}
-	writeSlowList(sf, lines, *threshold, source)
-	_ = sf.Close()
-	fmt.Printf("wrote %s and %s from %s (%d tests)\n", *costsOut, *slowOut, source, len(lines))
+	fmt.Printf("wrote %s from %s (%d tests)\n", *costsOut, source, len(lines))
 	// The UI costs come from the newest source with a Playwright ledger.
 	for i := len(sources) - 1; i >= 0; i-- {
 		files, why := uiFilesFrom(sources[i].dir)
@@ -1062,7 +909,7 @@ func readCostSource(dir string) (costSource, error) {
 	src := costSource{dir: dir, name: filepath.Base(dir), listed: map[testKey]bool{}}
 	var r proofRecord
 	if readJSON(filepath.Join(dir, "proof.json"), &r) == nil {
-		if r.Tier == tierFeature {
+		if r.Tier != tierFull && r.Tier != tierRelease && r.Tier != tierNightly {
 			return src, fmt.Errorf("%s: only a full, release or nightly proof measures tests in full; this is a %s proof", dir, r.Tier)
 		}
 		src.name = fmt.Sprintf("proof/%s (commit %s)", r.Name, short(r.Commit))

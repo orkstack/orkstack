@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // poolScopeClock is a settable clock for the pool-scope cache's TTL.
@@ -72,9 +74,7 @@ func poolScopeService(t *testing.T, store engine.OrkflowStore, clock *poolScopeC
 func listedPools(t *testing.T, svc *api.Service) string {
 	t.Helper()
 	resp, err := svc.ListPools(context.Background(), connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	return strings.Join(poolNames(resp.Msg.GetPools()), ",")
 }
 

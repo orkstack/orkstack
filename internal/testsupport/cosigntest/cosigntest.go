@@ -21,7 +21,7 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"encoding/pem"
 	"errors"
 	"fmt"
@@ -29,6 +29,8 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // The layout's constants, restated from internal/dsl/signature.go on purpose:
@@ -96,7 +98,7 @@ func ParsePrivateKey(data []byte) (*Key, error) {
 
 // Payload is the simple-signing payload cosign signs for one digest.
 func Payload(digest, dockerReference string) []byte {
-	body, _ := json.Marshal(map[string]any{
+	body, _ := stablejson.Marshal(map[string]any{
 		"critical": map[string]any{
 			"identity": map[string]string{"docker-reference": dockerReference},
 			"image":    map[string]string{"docker-manifest-digest": digest},
@@ -171,7 +173,7 @@ func Manifest(layers []Layer) []byte {
 			Annotations: map[string]string{SignatureAnnotation: l.Signature},
 		})
 	}
-	body, _ := json.Marshal(m)
+	body, _ := stablejson.Marshal(m)
 	return body
 }
 

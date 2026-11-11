@@ -9,13 +9,13 @@ import (
 	"fmt"
 	"io"
 	"path"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -375,7 +375,7 @@ func (e *evidenceExport) row(
 			entry.Attempts = append(entry.Attempts, evidence.AttemptEntry{
 				Attempt:       n,
 				State:         evidence.StatePresent,
-				Outcome:       strings.TrimPrefix(doc.Record.GetOutcome().String(), "ATTEMPT_OUTCOME_"),
+				Outcome:       enumname.Of(doc.Record.GetOutcome()),
 				CommitAdopted: doc.Record.GetCommitAdopted(),
 			})
 		} else {
@@ -590,7 +590,7 @@ func evidenceTaskID(id string) bool {
 
 // shortStatus is a Status in the short dialect of docs/JSON.md.
 func shortStatus(status orkstackv1.Status) string {
-	return strings.TrimPrefix(status.String(), "STATUS_")
+	return enumname.Of(status)
 }
 
 // evidenceTime is a snapshot timestamp in UTC, or the zero time when unset.

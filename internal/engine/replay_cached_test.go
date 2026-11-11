@@ -18,6 +18,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cachedHistory is the caching fixture: the SECOND run of
@@ -104,9 +106,7 @@ func reexecuteCached(t *testing.T, recorded *historypb.History) (map[string]map[
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the fixture's own input did not complete the workflow")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("re-executing the fixture's own input failed: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "re-executing the fixture's own input failed")
 	inputs := map[string]map[string]any{}
 	for _, in := range sentTasks {
 		inputs[in.TaskId] = canonicalPayload(t, in)
@@ -116,9 +116,7 @@ func reexecuteCached(t *testing.T, recorded *historypb.History) (map[string]map[
 		events = append(events, canonicalPayload(t, event))
 	}
 	var finished *orkstackv1.Run
-	if err := env.GetWorkflowResult(&finished); err != nil {
-		t.Fatalf("decode the re-executed run: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowResult(&finished), "decode the re-executed run")
 	return inputs, events, canonicalPayload(t, finished)
 }
 

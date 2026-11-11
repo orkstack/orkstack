@@ -3,7 +3,8 @@ package dsl
 import (
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 
@@ -12,6 +13,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // goldenOrkflow is the fixture the golden vector below pins. It deliberately
@@ -26,13 +30,9 @@ func goldenOrkflow(t *testing.T) *orkstackv1.Orkflow {
 		"nested":  map[string]any{"b": "2", "a": "1"},
 		"list":    []any{"x", float64(1)},
 	})
-	if err != nil {
-		t.Fatalf("with: %v", err)
-	}
+	must.OKf(t, err, "with")
 	inputs, err := structpb.NewStruct(map[string]any{"url": map[string]any{"type": "string"}})
-	if err != nil {
-		t.Fatalf("inputs: %v", err)
-	}
+	must.OKf(t, err, "inputs")
 	return &orkstackv1.Orkflow{
 		Namespace:   "default",
 		Name:        "golden",
@@ -78,9 +78,7 @@ const GoldenDefinitionDigest = "sha256:44b9f67f0b023df8d3b3039f30cb7608aa1af923e
 
 func TestDefinitionDigest_GoldenVector(t *testing.T) {
 	got, err := DefinitionDigest(goldenOrkflow(t))
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if got != GoldenDefinitionDigest {
 		t.Fatalf("definition digest changed.\n got: %s\nwant: %s\n\n"+
 			"The canonical form of §4.4 is a contract: a definition already stamped "+
@@ -121,9 +119,7 @@ const GoldenPinnedDefinitionDigest = "sha256:16f3d7f278d4632d31f9a7a682f6045972e
 
 func TestDefinitionDigest_GoldenPinnedVector(t *testing.T) {
 	got, err := DefinitionDigest(pinnedOrkflow(t))
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if got != GoldenPinnedDefinitionDigest {
 		t.Fatalf("pinned definition digest changed.\n got: %s\nwant: %s\n\n"+
 			"Pins are part of the canonical form (docs/OCI_ACTIVITY_CONTRACT.md §4.4). Update the "+
@@ -136,9 +132,7 @@ func TestDefinitionDigest_GoldenPinnedVector(t *testing.T) {
 // by name, and `pin` on each member task (docs/OCI_ACTIVITY_CONTRACT.md §4.4).
 func TestCanonicalOrkflow_EmitsPinsAndPinWhenSet(t *testing.T) {
 	canonical, err := CanonicalOrkflow(pinnedOrkflow(t))
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	var decoded struct {
 		Pins []struct {
 			Name           string `json:"name"`
@@ -173,17 +167,13 @@ func TestCanonicalOrkflow_SortsPinsByName(t *testing.T) {
 		{Name: "acceptance", TimeoutSeconds: 60},
 	}
 	first, err := CanonicalOrkflow(wf)
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	wf.Pins = []*orkstackv1.Pin{
 		{Name: "acceptance", TimeoutSeconds: 60},
 		{Name: "build", TimeoutSeconds: 3600},
 	}
 	second, err := CanonicalOrkflow(wf)
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	if string(first) != string(second) {
 		t.Fatalf("pin order changed the canonical form:\n%s\n%s", first, second)
 	}
@@ -196,9 +186,7 @@ func TestCanonicalOrkflow_SortsPinsByName(t *testing.T) {
 // with its pins stripped is a different definition.
 func TestDefinitionDigest_ChangesWhenAPinIsAddedOrRemoved(t *testing.T) {
 	pinned, err := DefinitionDigest(pinnedOrkflow(t))
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 
 	stripped := pinnedOrkflow(t)
 	stripped.Pins = nil
@@ -206,9 +194,7 @@ func TestDefinitionDigest_ChangesWhenAPinIsAddedOrRemoved(t *testing.T) {
 		task.Pin = ""
 	}
 	unpinned, err := DefinitionDigest(stripped)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if pinned == unpinned {
 		t.Fatal("stripping pins produced the same definition digest, so the pin " +
 			"is not part of the hash")
@@ -218,9 +204,7 @@ func TestDefinitionDigest_ChangesWhenAPinIsAddedOrRemoved(t *testing.T) {
 		moved := pinnedOrkflow(t)
 		moved.Pins[0].TimeoutSeconds = 7200
 		got, err := DefinitionDigest(moved)
-		if err != nil {
-			t.Fatalf("digest: %v", err)
-		}
+		must.OKf(t, err, "digest")
 		if got == pinned {
 			t.Fatal("changing Pin.timeout_seconds did not change the digest")
 		}
@@ -230,9 +214,7 @@ func TestDefinitionDigest_ChangesWhenAPinIsAddedOrRemoved(t *testing.T) {
 		moved := pinnedOrkflow(t)
 		moved.Tasks[1].Pin = ""
 		got, err := DefinitionDigest(moved)
-		if err != nil {
-			t.Fatalf("digest: %v", err)
-		}
+		must.OKf(t, err, "digest")
 		if got == pinned {
 			t.Fatal("unpinning one task did not change the digest")
 		}
@@ -247,9 +229,7 @@ func TestDefinitionDigest_ChangesWhenAPinIsAddedOrRemoved(t *testing.T) {
 // half of this proof; this test says WHY it still holds.
 func TestCanonicalOrkflow_OmitsPinKeysEntirelyWhenThereAreNoPins(t *testing.T) {
 	canonical, err := CanonicalOrkflow(goldenOrkflow(t))
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	// ImageRef.pinned is a legitimate key that starts with "pin", so the two
 	// new keys are looked for exactly.
 	for _, key := range []string{`"pins"`, `"pin":`} {
@@ -282,10 +262,8 @@ func TestCanonicalOrkflow_OmitsPinKeysEntirelyWhenThereAreNoPins(t *testing.T) {
 
 func TestCanonicalOrkflow_IsValidCompactSortedJSON(t *testing.T) {
 	canonical, err := CanonicalOrkflow(goldenOrkflow(t))
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
-	if !json.Valid(canonical) {
+	must.OKf(t, err, "canonical")
+	if !jsontext.Value(canonical).IsValid() {
 		t.Fatalf("canonical form is not valid JSON: %s", canonical)
 	}
 	if strings.ContainsAny(string(canonical), "\n\t") {
@@ -310,15 +288,11 @@ func TestCanonicalOrkflow_IsValidCompactSortedJSON(t *testing.T) {
 func TestCanonicalOrkflow_IgnoresSourceAndCreatedAt(t *testing.T) {
 	base := goldenOrkflow(t)
 	before, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	base.SourceYaml = "name: golden\n# a comment that changes nothing about what runs\n"
 	base.CreatedAt = timestamppb.Now()
 	after, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if before != after {
 		t.Fatalf("source_yaml or created_at changed the definition digest: %s -> %s", before, after)
 	}
@@ -330,16 +304,12 @@ func TestCanonicalOrkflow_IgnoresSourceAndCreatedAt(t *testing.T) {
 func TestCanonicalOrkflow_IgnoresPerExecutionImageFields(t *testing.T) {
 	base := goldenOrkflow(t)
 	before, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	base.Tasks[0].Image.PlatformDigest = "sha256:" + strings.Repeat("cd", 32)
 	base.Tasks[0].Image.Platform = "linux/amd64"
 	base.Tasks[0].Image.Delivery = "embedded"
 	after, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if before != after {
 		t.Fatalf("platform_digest/platform/delivery changed the digest: %s -> %s", before, after)
 	}
@@ -349,14 +319,10 @@ func TestCanonicalOrkflow_IgnoresPerExecutionImageFields(t *testing.T) {
 func TestDefinitionDigest_ChangesWhenTheImageDigestMoves(t *testing.T) {
 	base := goldenOrkflow(t)
 	before, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	base.Tasks[0].Image.IndexDigest = "sha256:" + strings.Repeat("ef", 32)
 	after, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if before == after {
 		t.Fatal("a moved index digest produced the same definition digest")
 	}
@@ -367,14 +333,10 @@ func TestDefinitionDigest_ChangesWhenTheImageDigestMoves(t *testing.T) {
 func TestDefinitionDigest_PlatformOrderIsPartOfTheContract(t *testing.T) {
 	base := goldenOrkflow(t)
 	before, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	base.Tasks[0].Image.Platforms = []string{"linux/arm64/v8", "linux/amd64"}
 	after, err := DefinitionDigest(base)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if before == after {
 		t.Fatal("reordering platforms did not change the digest, but the order is hashed")
 	}
@@ -385,14 +347,10 @@ func TestCanonicalOrkflow_IsStableAcrossRepeatedMarshals(t *testing.T) {
 	// leaked it would fail here rather than intermittently in production.
 	wf := goldenOrkflow(t)
 	first, err := CanonicalOrkflow(wf)
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	for i := 0; i < 200; i++ {
 		again, err := CanonicalOrkflow(wf)
-		if err != nil {
-			t.Fatalf("canonical: %v", err)
-		}
+		must.OKf(t, err, "canonical")
 		if string(again) != string(first) {
 			t.Fatalf("canonical form is not stable at iteration %d:\n%s\n%s", i, first, again)
 		}
@@ -415,9 +373,7 @@ func TestCanonicalNumber_RendersWithoutExponentOrFraction(t *testing.T) {
 		{1.5e-7, "0.00000015"},
 	} {
 		encoded, err := canonicalJSON(canonicalNumber(tc.in))
-		if err != nil {
-			t.Fatalf("%v: %v", tc.in, err)
-		}
+		must.OKf(t, err, "%v", tc.in)
 		if string(encoded) != tc.want {
 			t.Fatalf("canonicalNumber(%v) = %s, want %s", tc.in, encoded, tc.want)
 		}
@@ -436,13 +392,9 @@ func TestContentHash_IsFrozen(t *testing.T) {
 	source := []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n")
 	wf := goldenOrkflow(t)
 	got, err := ContentHash(source, wf)
-	if err != nil {
-		t.Fatalf("hash: %v", err)
-	}
+	must.OKf(t, err, "hash")
 	images, err := canonicalImages(wf)
-	if err != nil {
-		t.Fatalf("images: %v", err)
-	}
+	must.OKf(t, err, "images")
 	sum := sha256.Sum256(append(append(append([]byte(nil), source...), 0x1F), images...))
 	if want := hex.EncodeToString(sum[:]); got != want {
 		t.Fatalf("ContentHash = %s, want sha256(source || 0x1F || images) = %s", got, want)
@@ -458,9 +410,7 @@ func TestContentHash_CoversBothSourceAndResolution(t *testing.T) {
 	wf := goldenOrkflow(t)
 
 	base, err := ContentHash(source, wf)
-	if err != nil {
-		t.Fatalf("derive: %v", err)
-	}
+	must.OKf(t, err, "derive")
 	if len(base) != 64 {
 		t.Fatalf("derived version %q is not a hex sha256", base)
 	}
@@ -470,9 +420,7 @@ func TestContentHash_CoversBothSourceAndResolution(t *testing.T) {
 		// cosmetic edit is a version. Two notions of "the same document" in
 		// one system is one too many.
 		got, err := ContentHash([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: golden\ntasks: []\n# a comment\n"), wf)
-		if err != nil {
-			t.Fatalf("derive: %v", err)
-		}
+		must.OKf(t, err, "derive")
 		if got == base {
 			t.Fatal("a comment-only edit derived the same version")
 		}
@@ -482,9 +430,7 @@ func TestContentHash_CoversBothSourceAndResolution(t *testing.T) {
 		moved := goldenOrkflow(t)
 		moved.Tasks[0].Image.IndexDigest = "sha256:" + strings.Repeat("ef", 32)
 		got, err := ContentHash(source, moved)
-		if err != nil {
-			t.Fatalf("derive: %v", err)
-		}
+		must.OKf(t, err, "derive")
 		if got == base {
 			t.Fatal("a moved tag derived the same version for the same source — " +
 				"this is the defect §4.4(b) exists to fix")
@@ -493,9 +439,7 @@ func TestContentHash_CoversBothSourceAndResolution(t *testing.T) {
 
 	t.Run("identical source and identical resolution is idempotent", func(t *testing.T) {
 		got, err := ContentHash(source, goldenOrkflow(t))
-		if err != nil {
-			t.Fatalf("derive: %v", err)
-		}
+		must.OKf(t, err, "derive")
 		if got != base {
 			t.Fatalf("the same document resolved the same way derived %q then %q", base, got)
 		}
@@ -512,13 +456,9 @@ func TestCanonicalInputJSON_SortsKeysAndRendersIntegersWithoutFraction(t *testin
 		"c": map[string]any{"z": true, "y": []any{1, 2.5}},
 		"d": "a<b",
 	})
-	if err != nil {
-		t.Fatalf("NewStruct: %v", err)
-	}
+	must.OKf(t, err, "NewStruct")
 	got, err := CanonicalInputJSON(input)
-	if err != nil {
-		t.Fatalf("CanonicalInputJSON: %v", err)
-	}
+	must.OKf(t, err, "CanonicalInputJSON")
 	want := `{
   "a": 5,
   "b": 1,
@@ -541,33 +481,21 @@ func TestCanonicalInputJSON_SortsKeysAndRendersIntegersWithoutFraction(t *testin
 // that differ only in key order render identically, so their diff is empty.
 func TestCanonicalInputJSON_NilAndEmptyAreTheSameObject(t *testing.T) {
 	fromNil, err := CanonicalInputJSON(nil)
-	if err != nil {
-		t.Fatalf("CanonicalInputJSON(nil): %v", err)
-	}
+	must.OKf(t, err, "CanonicalInputJSON(nil)")
 	fromEmpty, err := CanonicalInputJSON(&structpb.Struct{})
-	if err != nil {
-		t.Fatalf("CanonicalInputJSON(empty): %v", err)
-	}
+	must.OKf(t, err, "CanonicalInputJSON(empty)")
 	if fromNil != "{}" || fromEmpty != "{}" {
 		t.Fatalf("nil renders %q and empty renders %q; both must be {}", fromNil, fromEmpty)
 	}
 
 	one, err := structpb.NewStruct(map[string]any{"x": 1, "y": "two", "z": []any{3}})
-	if err != nil {
-		t.Fatalf("NewStruct: %v", err)
-	}
+	must.OKf(t, err, "NewStruct")
 	two, err := structpb.NewStruct(map[string]any{"z": []any{3.0}, "y": "two", "x": 1.0})
-	if err != nil {
-		t.Fatalf("NewStruct: %v", err)
-	}
+	must.OKf(t, err, "NewStruct")
 	a, err := CanonicalInputJSON(one)
-	if err != nil {
-		t.Fatalf("CanonicalInputJSON: %v", err)
-	}
+	must.OKf(t, err, "CanonicalInputJSON")
 	b, err := CanonicalInputJSON(two)
-	if err != nil {
-		t.Fatalf("CanonicalInputJSON: %v", err)
-	}
+	must.OKf(t, err, "CanonicalInputJSON")
 	if a != b {
 		t.Fatalf("reordered inputs render differently:\n%s\n---\n%s", a, b)
 	}
@@ -582,9 +510,7 @@ func TestCanonicalInputLine_IsOneSortedCompactLine(t *testing.T) {
 	mustStruct := func(m map[string]any) *structpb.Struct {
 		t.Helper()
 		s, err := structpb.NewStruct(m)
-		if err != nil {
-			t.Fatalf("NewStruct: %v", err)
-		}
+		must.OKf(t, err, "NewStruct")
 		return s
 	}
 	cases := []struct {
@@ -603,9 +529,7 @@ func TestCanonicalInputLine_IsOneSortedCompactLine(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := CanonicalInputLine(tc.in)
-			if err != nil {
-				t.Fatalf("CanonicalInputLine: %v", err)
-			}
+			must.OKf(t, err, "CanonicalInputLine")
 			if got != tc.want {
 				t.Fatalf("CanonicalInputLine = %s, want %s", got, tc.want)
 			}
@@ -619,8 +543,8 @@ func TestCanonicalInputLine_IsOneSortedCompactLine(t *testing.T) {
 			if err := json.Unmarshal([]byte(tc.want), &wantBack); err != nil {
 				t.Fatalf("want does not parse: %v", err)
 			}
-			gotJSON, _ := json.Marshal(back)
-			wantJSON, _ := json.Marshal(wantBack)
+			gotJSON, _ := stablejson.Marshal(back)
+			wantJSON, _ := stablejson.Marshal(wantBack)
 			if string(gotJSON) != string(wantJSON) {
 				t.Fatalf("round-trip %s != %s", gotJSON, wantJSON)
 			}
@@ -648,21 +572,15 @@ func TestDefinitionDigest_IgnoresTheInterface(t *testing.T) {
 	resolver, reference := newStubResolver(t, stub)
 
 	labelled, err := Compile(source)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	resolutions, err := resolver.ResolveOrkflow(t.Context(), Catalog{"file": reference}, labelled)
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
+	must.OKf(t, err, "resolve")
 	if resolutions["file"].Interface == nil {
 		t.Fatalf("the labelled image declared nothing (%q)", resolutions["file"].InterfaceError)
 	}
 
 	plain, err := Compile(source)
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	plain.Tasks[0].Image = proto.Clone(resolutions["file"].Image).(*orkstackv1.ImageRef)
 
 	for _, pair := range []struct {
@@ -673,21 +591,15 @@ func TestDefinitionDigest_IgnoresTheInterface(t *testing.T) {
 		{"ContentHash", func(wf *orkstackv1.Orkflow) (string, error) { return ContentHash(source, wf) }},
 	} {
 		a, err := pair.fn(labelled)
-		if err != nil {
-			t.Fatalf("%s: %v", pair.name, err)
-		}
+		must.OKf(t, err, "%s", pair.name)
 		b, err := pair.fn(plain)
-		if err != nil {
-			t.Fatalf("%s: %v", pair.name, err)
-		}
+		must.OKf(t, err, "%s", pair.name)
 		if a != b {
 			t.Fatalf("%s differs with the interface beside the ImageRef: %s vs %s", pair.name, a, b)
 		}
 	}
 	canonical, err := CanonicalOrkflow(labelled)
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	if strings.Contains(string(canonical), "schemaVersion") || strings.Contains(string(canonical), InterfaceLabel) {
 		t.Fatalf("the canonical form carries the label: %s", canonical)
 	}
@@ -699,9 +611,7 @@ func TestDefinitionDigest_IgnoresTheInterface(t *testing.T) {
 func TestCanonicalOrkflow_EachEmittedOnlyWhenSet(t *testing.T) {
 	plain := goldenOrkflow(t)
 	canonical, err := CanonicalOrkflow(plain)
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	if strings.Contains(string(canonical), `"each"`) {
 		t.Fatalf("a task with no each emitted the key: %s", canonical)
 	}
@@ -718,9 +628,7 @@ func TestCanonicalOrkflow_EachEmittedOnlyWhenSet(t *testing.T) {
 		Source: &orkstackv1.EachSource{Input: "url"},
 	}
 	withEach, err := DefinitionDigest(fanOut)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if withEach == GoldenDefinitionDigest {
 		t.Fatal("adding each did not change the digest")
 	}
@@ -743,9 +651,7 @@ func TestCanonicalOrkflow_EachEmittedOnlyWhenSet(t *testing.T) {
 func TestCanonicalOrkflow_JoinEmittedOnlyWhenSet(t *testing.T) {
 	plain := goldenOrkflow(t)
 	canonical, err := CanonicalOrkflow(plain)
-	if err != nil {
-		t.Fatalf("canonical: %v", err)
-	}
+	must.OKf(t, err, "canonical")
 	if strings.Contains(string(canonical), `"join"`) {
 		t.Fatalf("a task with no join emitted the key: %s", canonical)
 	}
@@ -758,9 +664,7 @@ func TestCanonicalOrkflow_JoinEmittedOnlyWhenSet(t *testing.T) {
 	joined := goldenOrkflow(t)
 	joined.Tasks[0].Join = orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE
 	withJoin, err := DefinitionDigest(joined)
-	if err != nil {
-		t.Fatalf("digest: %v", err)
-	}
+	must.OKf(t, err, "digest")
 	if withJoin == GoldenDefinitionDigest {
 		t.Fatal("adding a join did not change the digest")
 	}
@@ -782,9 +686,7 @@ func TestCanonicalOrkflow_JoinEmittedOnlyWhenSet(t *testing.T) {
 func TestContentHash_TheHeaderIsPartOfTheVersion(t *testing.T) {
 	wf := goldenOrkflow(t)
 	images, err := canonicalImages(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	base := func(source string) string {
 		h := sha256.New()
 		h.Write([]byte(source))
@@ -799,9 +701,7 @@ func TestContentHash_TheHeaderIsPartOfTheVersion(t *testing.T) {
 	got := map[string]string{}
 	for name, source := range map[string]string{"with the header": with, "the header after a comment": moved, "without the header": bare} {
 		version, err := ContentHash([]byte(source), wf)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if want := base(source); version != want {
 			t.Errorf("%s: derived %q, want the raw source's %q", name, version, want)
 		}

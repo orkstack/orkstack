@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_HTTPBodyIsSentAsWritten runs the activity-http image built
@@ -66,9 +68,7 @@ tasks:
       body: 12
 `
 	path := filepath.Join(t.TempDir(), "http-body.ork.yaml")
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(doc), 0o644))
 
 	for _, tc := range []struct{ task, body, contentType string }{
 		{"mapping", `{"count":2,"nested":{"list":[1,"two"]},"status":"ok"}`, "application/json"},

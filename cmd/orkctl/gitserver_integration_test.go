@@ -26,6 +26,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // tlsGitServer is the test git remote of the transform-image suites
@@ -165,9 +167,7 @@ func mintGitToken(t *testing.T) string {
 func startTLSListener(t *testing.T, leaf tls.Certificate, handler http.Handler) (*httptest.Server, int) {
 	t.Helper()
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := httptest.NewUnstartedServer(handler)
 	server.Listener = listener
 	server.TLS = &tls.Config{Certificates: []tls.Certificate{leaf}, MinVersion: tls.VersionTLS12}
@@ -180,9 +180,7 @@ func startTLSListener(t *testing.T, leaf tls.Certificate, handler http.Handler) 
 func testCertificates(t *testing.T) (string, tls.Certificate) {
 	t.Helper()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("CA key: %v", err)
-	}
+	must.OKf(t, err, "CA key")
 	now := time.Now()
 	caTemplate := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
@@ -194,17 +192,11 @@ func testCertificates(t *testing.T) (string, tls.Certificate) {
 		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatalf("CA certificate: %v", err)
-	}
+	must.OKf(t, err, "CA certificate")
 	caCert, err := x509.ParseCertificate(caDER)
-	if err != nil {
-		t.Fatalf("parse CA: %v", err)
-	}
+	must.OKf(t, err, "parse CA")
 	leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		t.Fatalf("leaf key: %v", err)
-	}
+	must.OKf(t, err, "leaf key")
 	leafTemplate := &x509.Certificate{
 		SerialNumber: big.NewInt(2),
 		Subject:      pkix.Name{CommonName: "host.docker.internal"},
@@ -216,9 +208,7 @@ func testCertificates(t *testing.T) (string, tls.Certificate) {
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caCert, &leafKey.PublicKey, caKey)
-	if err != nil {
-		t.Fatalf("leaf certificate: %v", err)
-	}
+	must.OKf(t, err, "leaf certificate")
 	return string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER})),
 		tls.Certificate{Certificate: [][]byte{leafDER}, PrivateKey: leafKey}
 }
@@ -403,28 +393,20 @@ func (s *tlsGitServer) inWork(repo string, args ...string) {
 func (s *tlsGitServer) newRepo(repo string, files map[string]string) {
 	s.t.Helper()
 	bare := filepath.Join(s.root, repo)
-	if err := os.MkdirAll(bare, 0o755); err != nil {
-		s.t.Fatalf("mkdir: %v", err)
-	}
+	must.OKf(s.t, os.MkdirAll(bare, 0o755), "mkdir")
 	s.run(bare, "init", "--quiet", "--bare")
 	s.run(bare, "symbolic-ref", "HEAD", "refs/heads/main")
 	s.run(bare, "config", "uploadpack.allowReachableSHA1InWant", "true")
 
 	work := filepath.Join(s.work, repo)
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		s.t.Fatalf("mkdir: %v", err)
-	}
+	must.OKf(s.t, os.MkdirAll(work, 0o755), "mkdir")
 	s.run(work, "init", "--quiet")
 	s.run(work, "symbolic-ref", "HEAD", "refs/heads/main")
 	s.run(work, "remote", "add", "origin", bare)
 	for name, content := range files {
 		path := filepath.Join(work, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			s.t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			s.t.Fatalf("write %s: %v", name, err)
-		}
+		must.OKf(s.t, os.MkdirAll(filepath.Dir(path), 0o755), "mkdir")
+		must.OKf(s.t, os.WriteFile(path, []byte(content), 0o644), "write %s", name)
 	}
 	s.run(work, "add", "-A")
 	s.run(work, "commit", "--quiet", "-m", "initial")
@@ -433,9 +415,7 @@ func (s *tlsGitServer) newRepo(repo string, files map[string]string) {
 func (s *tlsGitServer) writeAndCommit(repo, name, content, message string) {
 	s.t.Helper()
 	work := filepath.Join(s.work, repo)
-	if err := os.WriteFile(filepath.Join(work, name), []byte(content), 0o644); err != nil {
-		s.t.Fatalf("write %s: %v", name, err)
-	}
+	must.OKf(s.t, os.WriteFile(filepath.Join(work, name), []byte(content), 0o644), "write %s", name)
 	s.run(work, "add", name)
 	s.run(work, "commit", "--quiet", "-m", message)
 }
@@ -475,12 +455,8 @@ func (s *tlsGitServer) PushCommit(t *testing.T, repo string, files map[string]st
 	work := filepath.Join(s.work, repo)
 	for name, content := range files {
 		path := filepath.Join(work, name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-			t.Fatalf("write %s: %v", name, err)
-		}
+		must.OKf(t, os.MkdirAll(filepath.Dir(path), 0o755), "mkdir")
+		must.OKf(t, os.WriteFile(path, []byte(content), 0o644), "write %s", name)
 		s.inWork(repo, "add", name)
 	}
 	names := make([]string, 0, len(files))

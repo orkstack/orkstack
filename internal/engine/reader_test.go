@@ -21,6 +21,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The reader is tested against synthesized history rather than a cluster,
@@ -155,9 +157,7 @@ func (f *fakeReadClient) ListWorkflow(
 func payloadsOf(t *testing.T, values ...any) *commonpb.Payloads {
 	t.Helper()
 	encoded, err := converter.GetDefaultDataConverter().ToPayloads(values...)
-	if err != nil {
-		t.Fatalf("encode payloads: %v", err)
-	}
+	must.OKf(t, err, "encode payloads")
 	return encoded
 }
 
@@ -241,9 +241,7 @@ func helloRun(t *testing.T, runID string) ([]*historypb.HistoryEvent, *countingS
 func mustMarshalRun(t *testing.T, run *orkstackv1.Run) []byte {
 	t.Helper()
 	data, err := proto.Marshal(run)
-	if err != nil {
-		t.Fatalf("marshal snapshot: %v", err)
-	}
+	must.OKf(t, err, "marshal snapshot")
 	return data
 }
 
@@ -353,9 +351,7 @@ func TestTemporalRunReader_FetchesOnlyTheLastSnapshotURI(t *testing.T) {
 	reader, _ := readerOver(history, runID)
 	reader.WithSnapshotStore(store)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if store.reads != 1 {
 		t.Fatalf("snapshot reads = %d, want exactly 1", store.reads)
 	}
@@ -435,9 +431,7 @@ func TestTemporalRunReader_EventReadsSurviveAnUnreadableSnapshot(t *testing.T) {
 			reader.WithSnapshotStore(store)
 
 			events, err := reader.Events(context.Background(), runID, 0)
-			if err != nil {
-				t.Fatalf("Events: %v", err)
-			}
+			must.OKf(t, err, "Events")
 			if len(events) != 2 || events[1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
 				t.Fatalf("events = %+v, want the 2 recorded events ending in RUN_SUCCEEDED", events)
 			}
@@ -448,9 +442,7 @@ func TestTemporalRunReader_EventReadsSurviveAnUnreadableSnapshot(t *testing.T) {
 			// No snapshot store at all must read the same.
 			bare, _ := readerOver(history, runID)
 			events, err = bare.Events(context.Background(), runID, 0)
-			if err != nil {
-				t.Fatalf("Events without a snapshot store: %v", err)
-			}
+			must.OKf(t, err, "Events without a snapshot store")
 			if len(events) != 2 {
 				t.Fatalf("events without a snapshot store = %+v, want 2", events)
 			}
@@ -485,9 +477,7 @@ func TestTemporalRunReader_EventReadsDoNotSynthesizeASecondTerminal(t *testing.T
 	}
 	reader, _ := readerOver(terminated, runID)
 	events, err := reader.Events(context.Background(), runID, 0)
-	if err != nil {
-		t.Fatalf("Events(terminated): %v", err)
-	}
+	must.OKf(t, err, "Events(terminated)")
 	if len(events) != 2 || events[1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		t.Fatalf("terminated events = %+v, want RUN_STARTED then a synthesized RUN_CANCELED", events)
 	}
@@ -495,9 +485,7 @@ func TestTemporalRunReader_EventReadsDoNotSynthesizeASecondTerminal(t *testing.T
 	closed := uriRunHistory(t, runID, true)
 	reader, _ = readerOver(closed, runID)
 	events, err = reader.Events(context.Background(), runID, 0)
-	if err != nil {
-		t.Fatalf("Events(closed): %v", err)
-	}
+	must.OKf(t, err, "Events(closed)")
 	if len(events) != 2 {
 		t.Fatalf("closed run events = %+v, want exactly the 2 published events", events)
 	}
@@ -516,9 +504,7 @@ func TestTemporalRunReader_RebuildsTheOrderedStreamFromHistory(t *testing.T) {
 	ctx := context.Background()
 
 	events, err := reader.Events(ctx, runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	if len(events) != 4 {
 		t.Fatalf("decoded %d events, want 4", len(events))
 	}
@@ -535,9 +521,7 @@ func TestTemporalRunReader_RebuildsTheOrderedStreamFromHistory(t *testing.T) {
 	}
 
 	after, err := reader.Events(ctx, runID, 2)
-	if err != nil {
-		t.Fatalf("Events(from=2): %v", err)
-	}
+	must.OKf(t, err, "Events(from=2)")
 	if len(after) != 2 || after[0].GetSequence() != 3 || after[1].GetSequence() != 4 {
 		t.Fatalf("resume after 2 returned %v, want sequences 3 and 4", after)
 	}
@@ -552,9 +536,7 @@ func TestTemporalRunReader_GetRunReturnsTheLatestPublishedSnapshot(t *testing.T)
 	reader.WithSnapshotStore(store)
 
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetId() != runID || run.GetOrkflowName() != "hello-ork" || run.GetOrkflowVersion() != "0.1.0" {
 		t.Fatalf("GetRun returned %s / %s@%s", run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion())
 	}
@@ -579,9 +561,7 @@ func TestTemporalRunReader_StreamEndsAtTheTerminalEvent(t *testing.T) {
 		delivered = append(delivered, event)
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	if !fake.longPolled {
 		t.Error("StreamEvents did not long-poll; a live run's stream would end early")
 	}
@@ -609,9 +589,7 @@ func TestTemporalRunReader_ReportsATerminatedRunAsEnded(t *testing.T) {
 	ctx := context.Background()
 
 	run, err := reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
 		t.Fatalf("a terminated run reads %s, want STATUS_CANCELED", run.GetStatus())
 	}
@@ -651,9 +629,7 @@ func TestTemporalRunReader_AnswersBeforeTheFirstEventIsPublished(t *testing.T) {
 	reader, _ := readerOver([]*historypb.HistoryEvent{startedEvent(t, runID, wf)}, runID)
 
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetOrkflowName() != "hello-ork" || run.GetOrkflowVersion() != "0.1.0" {
 		t.Fatalf("GetRun returned %s@%s, want hello-ork@0.1.0",
 			run.GetOrkflowName(), run.GetOrkflowVersion())
@@ -709,9 +685,7 @@ func TestTemporalRunReader_ListsRunsFromVisibility(t *testing.T) {
 	reader := newRunReader(fake, converter.GetDefaultDataConverter())
 
 	all, err := reader.ListRuns(context.Background(), RunQuery{})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(all) != 2 {
 		t.Fatalf("ListRuns returned %d runs, want 2", len(all))
 	}
@@ -730,9 +704,7 @@ func TestTemporalRunReader_ListsRunsFromVisibility(t *testing.T) {
 	}
 
 	byName, err := reader.ListRuns(context.Background(), RunQuery{OrkflowName: "other-ork"})
-	if err != nil {
-		t.Fatalf("ListRuns(name): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(name)")
 	if len(byName) != 1 || byName[0].GetId() != "ork-list-2" {
 		t.Fatalf("filtering by orkflow returned %v, want only ork-list-2", byName)
 	}
@@ -740,9 +712,7 @@ func TestTemporalRunReader_ListsRunsFromVisibility(t *testing.T) {
 	byStatus, err := reader.ListRuns(context.Background(), RunQuery{
 		Status: orkstackv1.Status_STATUS_RUNNING,
 	})
-	if err != nil {
-		t.Fatalf("ListRuns(status): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(status)")
 	if len(byStatus) != 1 || byStatus[0].GetId() != "ork-list-1" {
 		t.Fatalf("filtering by status returned %v, want only ork-list-1", byStatus)
 	}
@@ -762,9 +732,7 @@ func TestTemporalRunReader_ExhaustiveListWalksPastTheFirstPage(t *testing.T) {
 	bounded, err := newRunReader(&pagedReadClient{pages: pages},
 		converter.GetDefaultDataConverter()).
 		ListRuns(context.Background(), RunQuery{OrkflowName: "hello-ork", Limit: 1})
-	if err != nil {
-		t.Fatalf("bounded ListRuns: %v", err)
-	}
+	must.OKf(t, err, "bounded ListRuns")
 	if len(bounded) != 1 || bounded[0].GetId() != "ork-newer" {
 		t.Fatalf("bounded list = %v, want only the newest run", bounded)
 	}
@@ -774,9 +742,7 @@ func TestTemporalRunReader_ExhaustiveListWalksPastTheFirstPage(t *testing.T) {
 	all, err := newRunReader(&pagedReadClient{pages: pages},
 		converter.GetDefaultDataConverter()).
 		ListRuns(context.Background(), RunQuery{OrkflowName: "hello-ork", Exhaustive: true})
-	if err != nil {
-		t.Fatalf("exhaustive ListRuns: %v", err)
-	}
+	must.OKf(t, err, "exhaustive ListRuns")
 	if len(all) != 2 {
 		t.Fatalf("exhaustive list returned %d runs, want both pages", len(all))
 	}
@@ -799,9 +765,7 @@ func TestTemporalRunReader_ExhaustiveListStillHonoursLimit(t *testing.T) {
 	capped, err := newRunReader(&pagedReadClient{pages: pages},
 		converter.GetDefaultDataConverter()).
 		ListRuns(context.Background(), RunQuery{OrkflowName: "hello-ork", Limit: 1, Exhaustive: true})
-	if err != nil {
-		t.Fatalf("exhaustive ListRuns(Limit=1): %v", err)
-	}
+	must.OKf(t, err, "exhaustive ListRuns(Limit=1)")
 	if len(capped) != 1 {
 		t.Fatalf("exhaustive list with Limit 1 returned %d runs, want 1; Exhaustive controls "+
 			"how far the walk goes, not how much comes back", len(capped))
@@ -818,9 +782,7 @@ func TestTemporalRunReader_ExhaustiveListStillHonoursLimit(t *testing.T) {
 			Limit:       1,
 			Exhaustive:  true,
 		})
-	if err != nil {
-		t.Fatalf("exhaustive ListRuns(status=RUNNING, Limit=1): %v", err)
-	}
+	must.OKf(t, err, "exhaustive ListRuns(status=RUNNING, Limit=1)")
 	if len(live) != 1 || live[0].GetId() != "ork-older-active" {
 		t.Fatalf("exhaustive status query = %v, want the older active run from the second page", live)
 	}
@@ -835,9 +797,7 @@ func TestTemporalRunReader_CompletePageSortsEqualTimestampIDsAcrossVisibilityPag
 		{visibilityRecord(t, "ork-c", "hello-ork", "1.0.0", enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, readerEpoch)},
 	}
 	got, err := newRunReader(&pagedReadClient{pages: pages}, converter.GetDefaultDataConverter()).ListRuns(context.Background(), RunQuery{Limit: 2, Complete: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(got) != 2 || got[0].GetId() != "ork-c" || got[1].GetId() != "ork-b" {
 		t.Fatalf("complete page = %v, want [ork-c ork-b]", got)
 	}
@@ -897,13 +857,9 @@ func visibilityRecord(
 	t.Helper()
 	dc := converter.GetDefaultDataConverter()
 	namePayload, err := dc.ToPayload(name)
-	if err != nil {
-		t.Fatalf("encode memo name: %v", err)
-	}
+	must.OKf(t, err, "encode memo name")
 	versionPayload, err := dc.ToPayload(version)
-	if err != nil {
-		t.Fatalf("encode memo version: %v", err)
-	}
+	must.OKf(t, err, "encode memo version")
 	info := &workflowpb.WorkflowExecutionInfo{
 		Execution: &commonpb.WorkflowExecution{WorkflowId: runID},
 		Type:      &commonpb.WorkflowType{Name: RunWorkflowType},
@@ -983,9 +939,7 @@ func TestTemporalRunReader_OrdinaryListStaysOnTheBoundedBudget(t *testing.T) {
 			Status:      orkstackv1.Status_STATUS_RUNNING,
 			Limit:       1,
 		})
-	if err != nil {
-		t.Fatalf("ordinary ListRuns returned an error: %v", err)
-	}
+	must.OKf(t, err, "ordinary ListRuns returned an error")
 	if len(runs) != 0 {
 		t.Fatalf("ordinary ListRuns = %v, want none: no record matches the orkflow", runs)
 	}
@@ -1047,9 +1001,7 @@ func TestTemporalRunReader_PushesTheStatusPredicateIntoVisibility(t *testing.T) 
 				ListRuns(context.Background(), RunQuery{
 					OrkflowName: "hello-ork", Status: tc.status, Limit: 1,
 				})
-			if err != nil {
-				t.Fatalf("ListRuns: %v", err)
-			}
+			must.OKf(t, err, "ListRuns")
 			if len(client.queries) == 0 {
 				t.Fatal("ListRuns issued no visibility query")
 			}
@@ -1106,9 +1058,7 @@ func TestTemporalRunReader_AsksNothingForAStatusVisibilityCannotDecode(t *testin
 				ListRuns(context.Background(), RunQuery{
 					OrkflowName: "hello-ork", Status: tc.status, Limit: 1,
 				})
-			if err != nil {
-				t.Fatalf("ListRuns: %v", err)
-			}
+			must.OKf(t, err, "ListRuns")
 			if len(runs) != 0 {
 				t.Fatalf("returned %d runs, want none: visibility cannot decode %s",
 					len(runs), tc.status)
@@ -1133,9 +1083,7 @@ func TestTemporalRunReader_ExhaustiveAlsoAsksNothingForAnImpossibleStatus(t *tes
 			Namespace: "payments", OrkflowName: "hello-ork",
 			Status: orkstackv1.Status_STATUS_PENDING, Exhaustive: true,
 		})
-	if err != nil {
-		t.Fatalf("exhaustive ListRuns: %v", err)
-	}
+	must.OKf(t, err, "exhaustive ListRuns")
 	if len(runs) != 0 {
 		t.Fatalf("returned %d runs, want none", len(runs))
 	}
@@ -1236,9 +1184,7 @@ func TestTemporalRunReader_GetRunSurvivesAMissingSnapshotOnALiveRun(t *testing.T
 	reader.WithSnapshotStore(store)
 
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun on a live run with a missing snapshot: %v", err)
-	}
+	must.OKf(t, err, "GetRun on a live run with a missing snapshot")
 	if run.GetId() != runID {
 		t.Fatalf("run id = %q, want %q", run.GetId(), runID)
 	}
@@ -1269,9 +1215,7 @@ func TestTemporalRunReader_GetRunSurvivesAMissingSnapshotAfterATaskCausedFailure
 	reader.WithSnapshotStore(store)
 
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun on a live run with a missing snapshot: %v", err)
-	}
+	must.OKf(t, err, "GetRun on a live run with a missing snapshot")
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Fatalf("status = %v, want FAILED: RUN_FAILED is the newest lifecycle event "+
 			"even though it carries the failing task's id", run.GetStatus())
@@ -1302,9 +1246,7 @@ func TestTemporalRunReader_GetRunFallsBackToThePriorSnapshotWhenTheNewestIsMissi
 	reader.WithSnapshotStore(store)
 
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun with only the newest snapshot missing: %v", err)
-	}
+	must.OKf(t, err, "GetRun with only the newest snapshot missing")
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Fatalf("status = %v, want FAILED overlaid from history", run.GetStatus())
 	}

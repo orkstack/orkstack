@@ -3,7 +3,6 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"time"
@@ -14,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 const (
@@ -58,7 +58,7 @@ func marshalRetentionPolicy(policy *orkstackv1.RetentionPolicy) ([]byte, error) 
 		return nil, fmt.Errorf("artifacts: encode retention policy: %w", err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode retention policy: %w", err)
 	}
 	out.WriteByte('\n')
@@ -177,8 +177,11 @@ func (s *S3RetentionPolicyStore) Put(
 	if cond.IfMatch != "" {
 		input.IfMatch = aws.String(cond.IfMatch)
 	}
-	if _, err := s.client.PutObject(ctx, input); err != nil {
-		if cond.conditional() && isPreconditionFailed(err) {
+	// Equal bytes after a lost answer (putConfirmed) are this write: the
+	// document carries updated_at to the nanosecond. Were they another's, the
+	// stored policy is exactly the one this write would have left.
+	if _, err := putConfirmed(ctx, s.client, input, document); err != nil {
+		if cond.conditional() && refusedCondition(err, input) {
 			return nil, fmt.Errorf("artifacts: put retention policy %q: %w",
 				s.uri(RetentionPolicyKey), ErrPreconditionFailed)
 		}

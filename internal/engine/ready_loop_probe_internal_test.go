@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestReadyLoopProbe_CountsFromWorkflowsRunningBesideEachOther: the probe's
@@ -27,9 +29,7 @@ func TestReadyLoopProbe_CountsFromWorkflowsRunningBesideEachOther(t *testing.T) 
 				h.env.ExecuteWorkflow(RunWorkflowType, refusalWorkflowID, flatDefinition(t, tasks),
 					(*orkstackv1.Payload)(nil), guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes),
 					(*orkstackv1.RunContinuation)(nil))
-				if err := h.env.GetWorkflowError(); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, h.env.GetWorkflowError())
 			})
 		}
 	})

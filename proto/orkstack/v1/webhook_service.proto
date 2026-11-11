@@ -229,6 +229,11 @@ message Delivery {
   // asked for it through RedeliverWebhook. Empty for a delivery the engine
   // made on its own.
   string redelivery_of = 20;
+  // sequence is the run event's sequence, as the body's "sequence" and
+  // X-Ork-Sequence carried it: the order the run emitted its events in, which
+  // a receiver orders deliveries by. A redelivery keeps the original's. Zero
+  // on a record written before deliveries carried it.
+  int64 sequence = 21;
 }
 
 // ListDeliveriesRequest lists the deployment's delivery records. It is a
@@ -271,7 +276,7 @@ message ListDeliveriesRequest {
         path: "event"
         label: "Event"
         operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
-        allowed_values: ["RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "TASK_SCHEDULED", "TASK_STARTED", "TASK_AWAITING", "TASK_RESOLVED", "TASK_SUCCEEDED", "TASK_FAILED"]
+        allowed_values: ["RUN_STARTED", "RUN_SUCCEEDED", "RUN_FAILED", "RUN_CANCELED", "TASK_SCHEDULED", "TASK_STARTED", "TASK_AWAITING", "TASK_RESOLVED", "TASK_SLEEPING", "TASK_SUCCEEDED", "TASK_FAILED"]
       },
       {
         path: "delivered"

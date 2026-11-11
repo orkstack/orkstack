@@ -70,7 +70,7 @@ type ClaimRequest struct {
 // history — the workflow id is a digest and cannot be read back.
 type ClaimWorkflowInput struct {
 	Key string        `json:"key"`
-	TTL time.Duration `json:"ttl"`
+	TTL time.Duration `json:"ttl"` // int nanoseconds, as the SDK's encoding/json writes it; never encoded with v2
 }
 
 // ClaimWorkflowID is the workflow id that holds a key's binding.

@@ -2,7 +2,6 @@ package engine
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"go.temporal.io/sdk/temporal"
@@ -10,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // ResolveAwaitSignal is the Temporal Signal name that resolves an awaited
@@ -71,7 +71,7 @@ func awaitResolver(via orkstackv1.AwaitResolvedVia, principal string) string {
 // statusWord is a Status as the clients print it: "SUCCEEDED", not
 // "STATUS_SUCCEEDED".
 func statusWord(status orkstackv1.Status) string {
-	return strings.TrimPrefix(status.String(), "STATUS_")
+	return enumname.Of(status)
 }
 
 // openAwaits counts the awaits that are waiting now, over s.order and never

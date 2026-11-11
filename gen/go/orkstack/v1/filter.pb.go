@@ -160,7 +160,7 @@ type FieldFilter struct {
 	// verbatim after the first "labels." (it may contain dots).
 	Field string         `protobuf:"bytes,1,opt,name=field,proto3" json:"field,omitempty"`
 	Op    FilterOperator `protobuf:"varint,2,opt,name=op,proto3,enum=orkstack.v1.FilterOperator" json:"op,omitempty"`
-	// values in the spelling `orkctl --json` prints: text verbatim, an enum
+	// values in the spelling `orkctl -j` prints: text verbatim, an enum
 	// value's short name ("FAILED"), true/false, an RFC 3339 instant with a
 	// zone. docs/UI_CLI_PARITY.md "Filtering lists" states the matching rules.
 	Values        []string `protobuf:"bytes,3,rep,name=values,proto3" json:"values,omitempty"`

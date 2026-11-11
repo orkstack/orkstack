@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The way through /proc that a link to an open descriptor takes exists only
@@ -27,33 +29,19 @@ func TestSecurityPolicy_ASourceWhoseWayPassesThroughAnOwnDirectoryIsTheOrkers(t 
 	}
 	dir := t.TempDir()
 	gone, err := os.CreateTemp(dir, "deleted-")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = gone.Close() })
-	if err := os.Remove(gone.Name()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Remove(gone.Name()))
 	descriptor := filepath.Join(dir, "descriptor")
-	if err := os.Symlink(fmt.Sprintf("/proc/self/fd/%d", gone.Fd()), descriptor); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(fmt.Sprintf("/proc/self/fd/%d", gone.Fd()), descriptor))
 	devfd := filepath.Join(dir, "devfd")
-	if err := os.Symlink(fmt.Sprintf("/dev/fd/%d", gone.Fd()), devfd); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(fmt.Sprintf("/dev/fd/%d", gone.Fd()), devfd))
 	work := filepath.Join(dir, "work")
-	if err := os.MkdirAll(filepath.Join(work, "ork-run-task-1-x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(work, "ork-run-task-1-x"), 0o755))
 	plain := filepath.Join(dir, "plain")
-	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(plain, []byte("x"), 0o600))
 	through := filepath.Join(dir, "through")
-	if err := os.Symlink(filepath.Join(work, "ork-run-task-1-x")+"/../../plain", through); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(filepath.Join(work, "ork-run-task-1-x")+"/../../plain", through))
 	policy := DefaultSecurityPolicy().WithWorkRoot(work)
 	assertOwn(t, policy, "file:"+descriptor, "file:"+devfd, "file:"+through)
 	assertNotOwn(t, policy, "file:"+plain)

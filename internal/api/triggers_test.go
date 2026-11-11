@@ -3,7 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func (f *fixture) triggerClient() orkstackv1connect.TriggerServiceClient {
@@ -34,9 +36,7 @@ func (f *fixture) applyHello(t *testing.T) {
 func (f *fixture) createTrigger(t *testing.T, req *orkstackv1.CreateTriggerRequest) (*orkstackv1.Trigger, string) {
 	t.Helper()
 	created, err := f.triggerClient().CreateTrigger(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("CreateTrigger(%v): %v", req, err)
-	}
+	must.OKf(t, err, "CreateTrigger(%v)", req)
 	if created.Msg.GetSecret() == "" {
 		t.Fatal("CreateTrigger disclosed no secret; nothing could ever invoke the trigger")
 	}
@@ -53,9 +53,7 @@ func (f *fixture) invoke(t *testing.T, id string, token *string, body string, he
 		reader = bytes.NewReader([]byte(body))
 	}
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.baseURL+path, reader)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	req.Header.Set("Content-Type", "application/json")
 	if token != nil {
 		req.Header.Set("Authorization", *token)
@@ -64,14 +62,10 @@ func (f *fixture) invoke(t *testing.T, id string, token *string, body string, he
 		req.Header.Set(name, value)
 	}
 	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatalf("POST %s: %v", path, err)
-	}
+	must.OKf(t, err, "POST %s", path)
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
+	must.OKf(t, err, "read response")
 	return resp.StatusCode, payload
 }
 
@@ -342,9 +336,7 @@ func TestTriggerInvoke_AForbiddenSecretIs400InvalidArgument(t *testing.T) {
 		t.Errorf("body %s does not carry %q", body, exfilRefusal)
 	}
 	runs, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{Namespace: "sandbox"}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(runs.Msg.GetRuns()) != 0 || len(f.starter.startedRuns()) != 0 {
 		t.Fatalf("a refused invoke started %v", runs.Msg.GetRuns())
 	}
@@ -357,13 +349,9 @@ func TestTriggerInvoke_OnlyPostIsServed(t *testing.T) {
 
 	path := strings.Replace(api.TriggerInvokePath, "{id}", trigger.GetId(), 1)
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, f.baseURL+path, nil)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatalf("GET %s: %v", path, err)
-	}
+	must.OKf(t, err, "GET %s", path)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Errorf("GET %s = %d, want 405", path, resp.StatusCode)
@@ -386,17 +374,13 @@ func TestTriggerInvoke_ReadsTheBodyWhateverTypeItDeclares(t *testing.T) {
 	for _, contentType := range declared {
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.baseURL+path,
 			strings.NewReader(`{"url":"https://example.test/declared"}`))
-		if err != nil {
-			t.Fatalf("build request: %v", err)
-		}
+		must.OKf(t, err, "build request")
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
 		}
 		req.Header.Set("Authorization", "Bearer "+secret)
 		resp, err := f.client.Do(req)
-		if err != nil {
-			t.Fatalf("POST %s: %v", path, err)
-		}
+		must.OKf(t, err, "POST %s", path)
 		payload, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusCreated {
@@ -452,9 +436,7 @@ func TestCreateTrigger_RefusesAnOrkflowOrVersionThatDoesNotExist(t *testing.T) {
 
 	// A refused create writes nothing: a trigger must never point at nothing.
 	listed, err := f.triggerClient().ListTriggers(ctx, connect.NewRequest(&orkstackv1.ListTriggersRequest{}))
-	if err != nil {
-		t.Fatalf("ListTriggers: %v", err)
-	}
+	must.OKf(t, err, "ListTriggers")
 	if len(listed.Msg.GetTriggers()) != 0 {
 		t.Errorf("a refused create was stored: %+v", listed.Msg.GetTriggers())
 	}
@@ -482,25 +464,19 @@ func TestTriggerService_ListNarrowsToOneOrkflowAndCarriesNoSecret(t *testing.T) 
 
 	listed, err := f.triggerClient().ListTriggers(ctx, connect.NewRequest(
 		&orkstackv1.ListTriggersRequest{Filters: filters(t, "orkflow_name=hello-ork")}))
-	if err != nil {
-		t.Fatalf("ListTriggers: %v", err)
-	}
+	must.OKf(t, err, "ListTriggers")
 	if len(listed.Msg.GetTriggers()) != 2 {
 		t.Fatalf("ListTriggers returned %d triggers, want 2", len(listed.Msg.GetTriggers()))
 	}
 	encoded, err := api.MarshalJSON(listed.Msg)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	if strings.Contains(string(encoded), secret) {
 		t.Error("a listing contains a trigger's secret")
 	}
 
 	narrowed, err := f.triggerClient().ListTriggers(ctx, connect.NewRequest(
 		&orkstackv1.ListTriggersRequest{Filters: filters(t, "orkflow_name=other-ork")}))
-	if err != nil {
-		t.Fatalf("ListTriggers(other-ork): %v", err)
-	}
+	must.OKf(t, err, "ListTriggers(other-ork)")
 	if len(narrowed.Msg.GetTriggers()) != 0 {
 		t.Errorf("ListTriggers(other-ork) = %+v, want nothing", narrowed.Msg.GetTriggers())
 	}
@@ -524,9 +500,7 @@ func TestDeleteTrigger_RemovesOnceAndThenReportsNotFound(t *testing.T) {
 		}
 	}
 	listed, err := f.triggerClient().ListTriggers(ctx, connect.NewRequest(&orkstackv1.ListTriggersRequest{}))
-	if err != nil {
-		t.Fatalf("ListTriggers: %v", err)
-	}
+	must.OKf(t, err, "ListTriggers")
 	if len(listed.Msg.GetTriggers()) != 0 {
 		t.Errorf("after delete the registry still holds %+v", listed.Msg.GetTriggers())
 	}
@@ -564,9 +538,7 @@ func TestTriggerInvoke_APolicyRefusalIs412FailedPrecondition(t *testing.T) {
 		t.Errorf("body %s does not carry the policy sentence", body)
 	}
 	runs, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(runs.Msg.GetRuns()) != 0 || len(f.starter.startedRuns()) != 0 {
 		t.Fatalf("a refused invoke started %v", runs.Msg.GetRuns())
 	}

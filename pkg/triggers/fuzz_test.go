@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/pkg/triggers"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // slugRule is AGENTS.md §7's name rule, ^[a-z][a-z0-9-]*$ in at most 200
@@ -142,9 +144,7 @@ func FuzzApplyChange(f *testing.F) {
 	f.Add("ok", "1", "", uint8(6), "")
 	f.Fuzz(func(t *testing.T, name, version, description string, touch uint8, other string) {
 		current, _, err := triggers.Prepare(triggers.Registration{Namespace: "payments", OrkflowName: "hello-ork", Name: "ci"})
-		if err != nil {
-			t.Fatalf("Prepare: %v", err)
-		}
+		must.OKf(t, err, "Prepare")
 		snapshot := current
 		snapshot.SecretSalt = append([]byte(nil), current.SecretSalt...)
 		snapshot.SecretHash = append([]byte(nil), current.SecretHash...)

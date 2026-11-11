@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -76,31 +78,31 @@ func FuzzSignAndVerify(f *testing.F) {
 
 // FuzzDeliveryBody: the signed body is one JSON document in the contract's
 // field order, carrying the delivery's coordinates, the timestamp as RFC 3339
-// in UTC, task fields only when set, and the run's JSON unchanged in meaning;
+// in UTC, the event's sequence unless it has none, task fields only when set, and the run's JSON unchanged in meaning;
 // the same delivery always renders the same bytes (a retry's signature is
 // the first attempt's), and a run that is not JSON is an error, not a body.
 func FuzzDeliveryBody(f *testing.F) {
 	run := `{"id":"ork-1755302400123456789-1","status":"SUCCEEDED","note":"<a & b>"}`
-	f.Add("ork-1-1", "hello-ork", "SUCCEEDED", "", int32(0), int64(1755302400), int32(0), run)
-	f.Add("ork-1-1", "hello-ork", "FAILED", "extract", int32(2), int64(1755302400), int32(123456789), `{}`)
-	f.Add("", "", "", "", int32(0), int64(0), int32(0), `null`)
-	f.Add("r", "o", "s", "t", int32(-1), int64(-1), int32(5), `[1,2,{"a":[]}]`)
-	f.Add("r\xff", "o\u2028", "s", "t\x00", int32(0), int64(253402300799), int32(999999999), `1e400`)
-	f.Add("r", "o", "s", "", int32(0), int64(1), int32(0), `{"a":1`)
-	f.Add("r", "o", "s", "", int32(0), int64(1), int32(0), "")
-	f.Fuzz(func(t *testing.T, runID, orkflow, status, task string, attempt int32, sec int64, nanos int32, runJSON string) {
+	f.Add("ork-1-1", "hello-ork", "SUCCEEDED", "", int32(0), int64(1755302400), int32(0), int64(4), run)
+	f.Add("ork-1-1", "hello-ork", "FAILED", "extract", int32(2), int64(1755302400), int32(123456789), int64(12), `{}`)
+	f.Add("", "", "", "", int32(0), int64(0), int32(0), int64(0), `null`)
+	f.Add("r", "o", "s", "t", int32(-1), int64(-1), int32(5), int64(-1), `[1,2,{"a":[]}]`)
+	f.Add("r\xff", "o\u2028", "s", "t\x00", int32(0), int64(253402300799), int32(999999999), int64(9223372036854775807), `1e400`)
+	f.Add("r", "o", "s", "", int32(0), int64(1), int32(0), int64(1), `{"a":1`)
+	f.Add("r", "o", "s", "", int32(0), int64(1), int32(0), int64(2), "")
+	f.Fuzz(func(t *testing.T, runID, orkflow, status, task string, attempt int32, sec int64, nanos int32, seq int64, runJSON string) {
 		if nanos < 0 || nanos > 999_999_999 || sec < 0 || sec > 253402300799 {
 			return // an instant RFC 3339 spells with four digits
 		}
 		delivery := webhooks.Delivery{
 			ID: "dlv-1", Event: webhooks.EventRunSucceeded, RunID: runID, OrkflowName: orkflow, Status: status,
-			Timestamp: time.Unix(sec, int64(nanos)), TaskID: task, Attempt: attempt,
+			Timestamp: time.Unix(sec, int64(nanos)), Sequence: seq, TaskID: task, Attempt: attempt,
 		}
 		if runJSON != "" {
-			delivery.Run = json.RawMessage(runJSON)
+			delivery.Run = stablejson.RawJSON(runJSON)
 		}
 		body, err := delivery.Body()
-		if runJSON != "" && !json.Valid([]byte(runJSON)) {
+		if runJSON != "" && !jsontext.Value([]byte(runJSON)).IsValid() {
 			if err == nil {
 				t.Fatalf("Body accepted a run that is not JSON: %q", runJSON)
 			}
@@ -112,30 +114,34 @@ func FuzzDeliveryBody(f *testing.F) {
 		if again, _ := delivery.Body(); !bytes.Equal(again, body) {
 			t.Fatalf("Body is not deterministic: %s then %s", body, again)
 		}
-		if !json.Valid(body) {
+		if !jsontext.Value(body).IsValid() {
 			t.Fatalf("Body is not JSON: %s", body)
 		}
 
-		// Field order: runId, orkflowName, status, timestamp, [taskId], [attempt], run.
-		decoder := json.NewDecoder(bytes.NewReader(body))
-		if _, err := decoder.Token(); err != nil {
+		// Field order: runId, orkflowName, status, timestamp, [sequence], [taskId], [attempt], run.
+		decoder := jsontext.NewDecoder(bytes.NewReader(body))
+		if _, err := decoder.ReadToken(); err != nil {
 			t.Fatal(err)
 		}
 		var keys []string
-		fields := map[string]json.RawMessage{}
-		for decoder.More() {
-			keyToken, err := decoder.Token()
+		fields := map[string]stablejson.RawJSON{}
+		for decoder.PeekKind() != '}' {
+			keyToken, err := decoder.ReadToken()
 			if err != nil {
 				t.Fatal(err)
 			}
-			var value json.RawMessage
-			if err := decoder.Decode(&value); err != nil {
+			key := keyToken.String() // a token is valid only until the next read
+			value, err := decoder.ReadValue()
+			if err != nil {
 				t.Fatal(err)
 			}
-			keys = append(keys, keyToken.(string))
-			fields[keyToken.(string)] = value
+			keys = append(keys, key)
+			fields[key] = stablejson.RawJSON(value.Clone())
 		}
 		wantKeys := []string{"runId", "orkflowName", "status", "timestamp"}
+		if seq != 0 {
+			wantKeys = append(wantKeys, "sequence")
+		}
 		if task != "" {
 			wantKeys = append(wantKeys, "taskId")
 		}
@@ -165,6 +171,9 @@ func FuzzDeliveryBody(f *testing.F) {
 		if err != nil || !parsed.Equal(time.Unix(sec, int64(nanos))) || parsed.Location() != time.UTC {
 			t.Fatalf("timestamp %q: %v, want the UTC instant %d.%09d", stamp, err, sec, nanos)
 		}
+		if raw, present := fields["sequence"]; present && string(raw) != strconv.FormatInt(seq, 10) {
+			t.Fatalf("sequence = %s, want %d", raw, seq)
+		}
 		if raw, present := fields["attempt"]; present && string(raw) != strconv.Itoa(int(attempt)) {
 			t.Fatalf("attempt = %s, want %d", raw, attempt)
 		}
@@ -183,10 +192,8 @@ func FuzzDeliveryBody(f *testing.F) {
 func sameJSON(t *testing.T, a, b string) bool {
 	t.Helper()
 	decode := func(text string) any {
-		decoder := json.NewDecoder(strings.NewReader(text))
-		decoder.UseNumber()
 		var value any
-		if err := decoder.Decode(&value); err != nil {
+		if err := json.Unmarshal([]byte(text), &value, stablejson.UseNumber); err != nil {
 			t.Fatalf("decode %q: %v", text, err)
 		}
 		return value
@@ -212,12 +219,12 @@ func FuzzDispatcher_WhatTheReceiverReadsVerifiesAndIsWhatTheResultRecords(f *tes
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	f.Cleanup(server.Close)
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{MaxRetries: -1})
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
 
-	f.Add("s3cr3t", "wh-0123456789abcdef", "dlv-1", "ork-1-1", "", "redeliver-1", "hello-ork", "FAILED", int32(0), `{"id":"x"}`)
-	f.Add("", "wh-1", "dlv-2", "ork-2-2", "extract", "", "o", "s", int32(3), `{"a":[1,2]}`)
-	f.Add("k", "w", "d", "r", "t", "x", "\u00e9", "\u00fc", int32(-1), `"text"`)
-	f.Fuzz(func(t *testing.T, secret, hookID, deliveryID, runID, task, redelivery, orkflow, status string, attempt int32, runJSON string) {
+	f.Add("s3cr3t", "wh-0123456789abcdef", "dlv-1", "ork-1-1", "", "redeliver-1", "hello-ork", "FAILED", int32(0), int64(9), `{"id":"x"}`)
+	f.Add("", "wh-1", "dlv-2", "ork-2-2", "extract", "", "o", "s", int32(3), int64(0), `{"a":[1,2]}`)
+	f.Add("k", "w", "d", "r", "t", "x", "\u00e9", "\u00fc", int32(-1), int64(-3), `"text"`)
+	f.Fuzz(func(t *testing.T, secret, hookID, deliveryID, runID, task, redelivery, orkflow, status string, attempt int32, seq int64, runJSON string) {
 		for _, header := range []string{hookID, deliveryID, runID, task, redelivery} {
 			for i := 0; i < len(header); i++ {
 				if c := header[i]; c < 0x20 || c == 0x7f || c >= 0x80 {
@@ -228,13 +235,13 @@ func FuzzDispatcher_WhatTheReceiverReadsVerifiesAndIsWhatTheResultRecords(f *tes
 				return // the receiver's reader trims the optional whitespace around a value
 			}
 		}
-		if !json.Valid([]byte(runJSON)) {
+		if !jsontext.Value([]byte(runJSON)).IsValid() {
 			return
 		}
 		delivery := webhooks.Delivery{
 			ID: deliveryID, Event: webhooks.EventTaskFailed, RunID: runID, OrkflowName: orkflow, Status: status,
-			Timestamp: time.Unix(1755302400, 5).UTC(), TaskID: task, Attempt: attempt, Run: json.RawMessage(runJSON),
-			RedeliveryOf: redelivery,
+			Timestamp: time.Unix(1755302400, 5).UTC(), TaskID: task, Attempt: attempt, Run: stablejson.RawJSON(runJSON),
+			RedeliveryOf: redelivery, Sequence: seq,
 		}
 		hook := webhooks.Webhook{ID: hookID, URL: server.URL, Secret: secret}
 		result, err := dispatcher.Deliver(context.Background(), hook, delivery)
@@ -264,17 +271,26 @@ func FuzzDispatcher_WhatTheReceiverReadsVerifiesAndIsWhatTheResultRecords(f *tes
 		if result.BodySHA256 != hex.EncodeToString(digest[:]) || result.BodyBytes != len(body) {
 			t.Fatalf("result records %s over %d bytes, the receiver read %x over %d", result.BodySHA256, result.BodyBytes, digest, len(body))
 		}
+		if result.Sequence != seq {
+			t.Fatalf("result records sequence %d, the delivery carried %d", result.Sequence, seq)
+		}
+		wantSequence := ""
+		if seq > 0 {
+			wantSequence = strconv.FormatInt(seq, 10)
+		}
 		for name, wantValue := range map[string]string{
-			webhooks.EventHeader: string(webhooks.EventTaskFailed), webhooks.DeliveryHeader: deliveryID, webhooks.WebhookHeader: hookID,
+			webhooks.SequenceHeader: wantSequence,
+			webhooks.EventHeader:    string(webhooks.EventTaskFailed), webhooks.DeliveryHeader: deliveryID, webhooks.WebhookHeader: hookID,
 			webhooks.RunHeader: runID, webhooks.TaskHeader: task, webhooks.RedeliveryHeader: redelivery,
 			webhooks.AttemptHeader: "1", webhooks.TimestampHeader: "2025-08-16T00:00:00.000000005Z",
 		} {
 			if got := header.Get(name); got != wantValue {
 				t.Fatalf("header %s = %q, want %q", name, got, wantValue)
 			}
-			// The task and redelivery headers are sent only when there is a
-			// task or a redelivery; every other header is always sent.
-			optional := name == webhooks.TaskHeader || name == webhooks.RedeliveryHeader
+			// The task, redelivery and sequence headers are sent only when
+			// there is a task, a redelivery or a sequence; every other header
+			// is always sent.
+			optional := name == webhooks.TaskHeader || name == webhooks.RedeliveryHeader || name == webhooks.SequenceHeader
 			if _, present := header[http.CanonicalHeaderKey(name)]; present != (!optional || wantValue != "") {
 				t.Fatalf("header %s present=%v for value %q", name, present, wantValue)
 			}

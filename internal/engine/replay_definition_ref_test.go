@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,7 +12,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The definition-by-reference replay fixture (testdata/history/README.md): generation 0 of a
@@ -34,9 +37,7 @@ func TestRunWorkflow_ReplaysCommittedDefinitionRefHistory(t *testing.T) {
 	if plan.Definition == nil || len(recordedChunks(t, recorded)) < 3 {
 		t.Fatal("the fixture is not a run with its definition by reference read in several chunks")
 	}
-	if err := replayAs(t, recorded, runID); err != nil {
-		t.Fatalf("replaying %s against current code failed: %v", definitionRefHistory, err)
-	}
+	must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", definitionRefHistory)
 }
 
 // TestDefinitionRefHistory_PayloadsMatchWhatCurrentCodeSends is the payload
@@ -49,17 +50,13 @@ func TestDefinitionRefHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	recorded := loadHistoryFile(t, definitionRefHistory)
 	id, stub, input, plan, _ := startArgs(t, recorded)
 	object, err := os.ReadFile(definitionRefObjectPath)
-	if err != nil {
-		t.Fatalf("the companion object %s: %v", filepath.Base(definitionRefObjectPath), err)
-	}
+	must.OKf(t, err, "the companion object %s", filepath.Base(definitionRefObjectPath))
 	chunks := recordedChunks(t, recorded)
 	if !bytes.Equal(bytes.Join(chunks, nil), object) || artifacts.ContinuationSHA256(object) != plan.Definition.SHA256 {
 		t.Fatal("the recorded chunks are not the companion object, or it does not hash to the plan's reference")
 	}
 	loaded, err := engine.DecodeDefinitionObject(object, plan.Definition, stub)
-	if err != nil {
-		t.Fatalf("the companion object does not decode against the recorded plan and stub: %v", err)
-	}
+	must.OKf(t, err, "the companion object does not decode against the recorded plan and stub")
 	if len(stub.GetTasks()) != 0 || !proto.Equal(engine.DefinitionStub(loaded), stub) {
 		t.Fatalf("the recorded start carried %d tasks, want the stub of the definition", len(stub.GetTasks()))
 	}
@@ -96,7 +93,7 @@ func TestDefinitionRefHistory_CatchesAChangedPinnedChunkSize(t *testing.T) {
 		t.Fatalf("the fixture's definition is %v bytes in %v-byte chunks: too few to see a change", definition["size_bytes"], pinned)
 	}
 	continuation["chunk_bytes"] = 2 * pinned
-	data, err := json.Marshal(plan)
+	data, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}

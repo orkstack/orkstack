@@ -5,15 +5,15 @@ import (
 	"os"
 	"syscall"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // mustWrite writes a file a test depends on, failing the test rather than
 // returning an error nobody checks.
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(content), 0o644), "write %s", path)
 }
 
 // mustFIFO creates a named pipe, so the output scan can be shown refusing one.

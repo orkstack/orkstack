@@ -1,9 +1,13 @@
 import { expect, type Page } from '@playwright/test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, createWriteStream, mkdirSync, mkdtempSync } from 'node:fs';
+import { appendFileSync, mkdirSync, mkdtempSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openProcessLog } from './processLog';
+
+// A spec's transcript header, kept across a restarted worker (processLog.ts).
+export { startTranscript } from './processLog';
 
 // The bits every live e2e in this directory needs: start a process and keep
 // its log, probe a port, wait for a condition, call one engine by name, and
@@ -69,6 +73,11 @@ export function noteTo(file: string): (line: string) => void {
 	return (line: string) => appendFileSync(file, `${new Date().toISOString()}  ${line}\n`);
 }
 
+/**
+ * spawnLogged starts `command` with its stdout and stderr appended to
+ * `logFile`, under a line naming this start (processLog.ts says why a log is
+ * never opened afresh).
+ */
 export function spawnLogged(
 	logFile: string,
 	command: string,
@@ -76,12 +85,12 @@ export function spawnLogged(
 	env: NodeJS.ProcessEnv,
 	cwd: string = repoRoot
 ): ChildProcess {
-	const out = createWriteStream(logFile, { flags: 'w' });
 	const child = spawn(command, args, {
 		cwd,
 		env: { ...process.env, ...env },
 		stdio: ['ignore', 'pipe', 'pipe']
 	});
+	const out = openProcessLog(logFile, command, child.pid);
 	child.stdout?.pipe(out);
 	child.stderr?.pipe(out);
 	return trackChild(child);

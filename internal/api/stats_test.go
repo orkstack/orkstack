@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe the dashboard's numbers, and every one of them is about
@@ -143,9 +145,7 @@ func newStatsFixtureOver(
 ) *statsFixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 
 	docs := registry{"default": {Name: "default"}}
@@ -204,9 +204,7 @@ func (f *statsFixture) archiveRunTaking(
 		CreatedAt:   timestamppb.New(at),
 		FinishedAt:  timestamppb.New(at.Add(took)),
 	}
-	if err := engine.NewRunArchiver(f.archive).Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive run %s: %v", id, err)
-	}
+	must.OKf(t, engine.NewRunArchiver(f.archive).Archive(context.Background(), run, nil), "archive run %s", id)
 	f.corpus = append(f.corpus, seededRun{namespace: namespace, createdAt: at, took: took})
 	return id
 }
@@ -251,9 +249,7 @@ func (f *statsFixture) stats(
 		req.Until = timestamppb.New(until)
 	}
 	got, err := handler.GetStats(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("GetStats(%s): %v", namespace, err)
-	}
+	must.OKf(t, err, "GetStats(%s)", namespace)
 	return got.Msg
 }
 
@@ -795,9 +791,7 @@ func TestGetStats_RefusesANamespaceNothingRegistered(t *testing.T) {
 func TestGetStats_ReportsPoolHealthFromTheCluster(t *testing.T) {
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 	clock := newStatsClock(now)
 	reader := &fakeReader{executions: map[string]engine.Executions{}}
@@ -817,9 +811,7 @@ func TestGetStats_ReportsPoolHealthFromTheCluster(t *testing.T) {
 
 	got, err := handler.GetStats(context.Background(),
 		connect.NewRequest(&orkstackv1.GetStatsRequest{Namespace: "gpu-shop"}))
-	if err != nil {
-		t.Fatalf("GetStats: %v", err)
-	}
+	must.OKf(t, err, "GetStats")
 	live := map[string]int32{}
 	for _, pool := range got.Msg.GetPools() {
 		live[pool.GetName()] = pool.GetLiveOrkerCount()

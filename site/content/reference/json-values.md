@@ -10,7 +10,7 @@ An Orkflow is YAML, because a person writes it with comments and blocks. The dat
 
 ```bash
 orkctl run submit my-orkflow --input-json '{"count": 3, "tags": ["a", "b"], "dry_run": false}'
-orkctl run submit my-orkflow --input count=3 --input 'tags=["a","b"]' --input dry_run=false
+orkctl run submit my-orkflow -i count=3 -i 'tags=["a","b"]' -i dry_run=false
 ```
 
 `--input key=value` parses the value as JSON when it can, so `3`, `true` and `["a","b"]` keep their types. A value that is not JSON stays a string. `--input-json` takes one object, and the `--input` values are merged over it.
@@ -53,7 +53,7 @@ Values that look like versions need care. Under `with:`, `version: 1.10` is the 
 
 ## Enum values in the output
 
-Enum values print in their short form. `orkctl --json` prints `SUCCEEDED`, and the WebSocket feed prints `RUNNING`. Responses from the Connect API print the full form, `STATUS_SUCCEEDED`. Requests accept either form.
+Enum values print in their short form. `orkctl -j` prints `SUCCEEDED`, and the WebSocket feed prints `RUNNING`. Responses from the Connect API print the full form, `STATUS_SUCCEEDED`. Requests accept either form.
 
 ## See also
 

@@ -87,6 +87,9 @@ func Simulate(
 			Await: tasks[id].GetAwait(),
 			// Set for every fan-out whatever its outcome.
 			Each: tasks[id].GetEach(),
+			// Set for every sleep whatever its outcome, so a reader sees how
+			// long it would sleep.
+			Sleep: tasks[id].GetSleep(),
 			// Set for every composed task whatever its outcome. A plan never
 			// recurses into the child: a composed task that would run is RUNS,
 			// and its stub stands in for the child's declared outputs.
@@ -109,7 +112,8 @@ func Simulate(
 	// interpreter records for it.
 	planOutcomeAsNeed := func(id string) needOutcome {
 		switch result[id].GetOutcome() {
-		case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS,
+			orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS:
 			return needSucceeded
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS, orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED:
 			return needFailed
@@ -307,10 +311,16 @@ func Simulate(
 				assumeFailure(id, planned)
 				continue
 			}
-			if tasks[id].GetAwait() != nil {
+			switch {
+			case tasks[id].GetAwait() != nil:
 				// Opens, starts no activity: the interpreter's openAwait.
 				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS
-			} else {
+			case tasks[id].GetSleep() != nil:
+				// Starts its timer and no activity: the interpreter's
+				// openSleep. It has no output: nothing can read one (rule 51).
+				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS
+				continue
+			default:
 				planned.Outcome = orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS
 			}
 			// An await's stub is its resolution.
@@ -343,6 +353,11 @@ func Simulate(
 			if planned.GetWave() > resp.WaveCount {
 				resp.WaveCount = planned.GetWave()
 			}
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS:
+			resp.Sleeps++
+			if planned.GetWave() > resp.WaveCount {
+				resp.WaveCount = planned.GetWave()
+			}
 		case orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED:
 			resp.AssumedFailed++
 			if planned.GetWave() > resp.WaveCount {
@@ -369,8 +384,9 @@ func Simulate(
 	}
 	for _, id := range assumedKeys {
 		// A fan-out's own stub is accepted and unused: nothing can read it.
-		// Nor is an ASSUMED_FAILED task's: a failed task has no output.
-		if !dispatched(result[id].GetOutcome()) || tasks[id].GetEach() != nil {
+		// Nor is an ASSUMED_FAILED task's: a failed task has no output. Nor
+		// is a sleep's, which has none (rule 51).
+		if !dispatched(result[id].GetOutcome()) || tasks[id].GetEach() != nil || tasks[id].GetSleep() != nil {
 			resp.UnusedAssumedOutputs = append(resp.UnusedAssumedOutputs, id)
 		}
 	}
@@ -412,18 +428,20 @@ func simulateEachCount(
 	return true, n, nil
 }
 
-// takesAWave is RUNS, AWAITS or ASSUMED_FAILED: an await occupies a dispatch
-// round from its dependants' point of view, and so does a task assumed to
-// fail — it was dispatched and ran.
+// takesAWave is RUNS, AWAITS, SLEEPS or ASSUMED_FAILED: an await or a sleep
+// occupies a dispatch round from its dependants' point of view, and so does a
+// task assumed to fail — it was dispatched and ran.
 func takesAWave(outcome orkstackv1.PlanOutcome) bool {
 	return dispatched(outcome) || outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED
 }
 
-// dispatched is RUNS or AWAITS: the plan runs the task to success, and its
-// stub (an await's resolution) is consumed.
+// dispatched is RUNS, AWAITS or SLEEPS: the plan runs the task to success,
+// and its stub (an await's resolution) is consumed — a sleep's is not, having
+// no output to stand in for.
 func dispatched(outcome orkstackv1.PlanOutcome) bool {
 	return outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS ||
-		outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS
+		outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS ||
+		outcome == orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS
 }
 
 // planSourceStatus is the status word a run records for a fan-out's task

@@ -16,6 +16,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The lean event path's replay guards (lean_events.go). The committed v1
@@ -97,9 +99,7 @@ func TestRunWorkflow_ReplaysCommittedLeanHistories(t *testing.T) {
 	} {
 		t.Run(path, func(t *testing.T) {
 			requireLeanFixture(t, path, recorder)
-			if err := replayAgainst(t, path, leanEventPathAsk); err != nil {
-				t.Fatalf("replaying %s against current code failed: %v", path, err)
-			}
+			must.OKf(t, replayAgainst(t, path, leanEventPathAsk), "replaying %s against current code failed", path)
 		})
 	}
 }
@@ -132,13 +132,9 @@ func TestLeanHistory_TaskStartedCarriesItsScheduledURI(t *testing.T) {
 		t.Run(path, func(t *testing.T) {
 			requireLeanFixture(t, path, recorder)
 			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			hist, err := decodeHistoryJSON(data)
-			if err != nil {
-				t.Fatalf("decode %s: %v", path, err)
-			}
+			must.OKf(t, err, "decode %s", path)
 			reader := newRunReader(nil, converter.GetDefaultDataConverter())
 			scheduled := map[string]string{}
 			pairs := 0
@@ -153,9 +149,7 @@ func TestLeanHistory_TaskStartedCarriesItsScheduledURI(t *testing.T) {
 					continue
 				}
 				published, uri, err := reader.decodePublishEvent("", event)
-				if err != nil {
-					t.Fatalf("decode a recorded publish: %v", err)
-				}
+				must.OKf(t, err, "decode a recorded publish")
 				if published.Item != nil {
 					continue
 				}
@@ -224,9 +218,7 @@ func TestTemporalRunReader_FallbackSkipsAReusedSnapshotURI(t *testing.T) {
 	reader, _ := readerOver(history, runID)
 	reader.WithSnapshotStore(store)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun with the newest (reused) snapshot missing: %v", err)
-	}
+	must.OKf(t, err, "GetRun with the newest (reused) snapshot missing")
 	if got := run.GetTaskRuns(); len(got) != 1 || got[0].GetTaskId() != "a" {
 		t.Fatalf("task runs = %v, want the one carried by the older distinct snapshot", got)
 	}
@@ -251,9 +243,7 @@ func TestPublishEvent_ReusedSnapshotURIIsReadOnce(t *testing.T) {
 	} {
 		event := &orkstackv1.Event{RunId: runID, Sequence: seq, TaskId: "a", Type: eventType,
 			Status: orkstackv1.Status_STATUS_RUNNING}
-		if err := activities.PublishEvent(context.Background(), event, "memory://3.pb", fmt.Sprintf("%s#%d", runID, seq)); err != nil {
-			t.Fatalf("PublishEvent: %v", err)
-		}
+		must.OKf(t, activities.PublishEvent(context.Background(), event, "memory://3.pb", fmt.Sprintf("%s#%d", runID, seq)), "PublishEvent")
 	}
 	if store.reads != 1 {
 		t.Fatalf("snapshot reads = %d, want 1: the second publish of one URI is answered from the cache", store.reads)

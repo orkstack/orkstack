@@ -14,7 +14,7 @@
 #     this the engine boots with nothing to run.
 #   - the observability profile's containers and volumes (Grafana, Loki,
 #     Prometheus, Tempo), when it ran: the compose down takes every profile.
-#   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results, and the UI
+#   - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results(-solo), and the UI
 #     build `make ui` copied into internal/webui/dist (its committed .gitkeep
 #     stays).
 #   - .data/: the local artifact store AND the Orker's work directory
@@ -40,7 +40,7 @@ if [ "$force" -ne 1 ]; then
 	say "  - object-store data: artifacts, archived runs, and the orkflow catalogue"
 	say "  - the observability profile's containers and volumes (Grafana, Loki, Prometheus, Tempo)"
 	say "  - .data/: the local artifact store and the Orker's work directory"
-	say "  - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results, internal/webui/dist's UI build"
+	say "  - bin/, .run/, ui/build, ui/.svelte-kit, ui/test-results(-solo), internal/webui/dist's UI build"
 	say ""
 	say "The repository itself is untouched."
 	say ""
@@ -62,7 +62,7 @@ say "== removing containers and their volumes =="
 "${COMPOSE[@]}" --profile '*' down --volumes --remove-orphans
 
 say "== removing build output and run state =="
-rm -rf "$REPO/bin" "$REPO/.run" "$REPO/ui/build" "$REPO/ui/.svelte-kit" "$REPO/ui/test-results"
+rm -rf "$REPO/bin" "$REPO/.run" "$REPO/ui/build" "$REPO/ui/.svelte-kit" "$REPO/ui/test-results" "$REPO/ui/test-results-solo"
 # The UI build ork embeds; .gitkeep is committed, so a fresh ork still
 # compiles (and serves its placeholder page).
 find "$REPO/internal/webui/dist" -mindepth 1 -maxdepth 1 ! -name .gitkeep -exec rm -rf {} + 2>/dev/null || true

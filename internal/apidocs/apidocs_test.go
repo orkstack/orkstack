@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/apidocs"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const root = "../.."
@@ -15,9 +17,7 @@ const root = "../.."
 func render(t *testing.T) string {
 	t.Helper()
 	doc, err := apidocs.Render(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return string(doc)
 }
 
@@ -25,9 +25,7 @@ func render(t *testing.T) string {
 // the generator writes from the proto sources.
 func TestAPIDocs_AreGenerated(t *testing.T) {
 	got, err := os.ReadFile(filepath.Join(root, apidocs.Path))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := render(t) + "\n"; string(got) != want {
 		t.Fatalf("%s is stale: run go run ./internal/apidocs/cmd/genapidocs", apidocs.Path)
 	}

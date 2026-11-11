@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The lean event path (internal/engine/lean_events.go), version 1 of the
@@ -241,9 +243,7 @@ func TestLeanEventPath_ComposedTaskStillWritesTwoSnapshots(t *testing.T) {
 		return childOutputs(t, map[string]any{"digest": "sha256:abc", "url": "https://r/abc"}), nil
 	})
 	h.run("ork-parent-lean", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	uris := map[orkstackv1.EventType]string{}
 	h.mu.Lock()
 	for _, p := range h.published {

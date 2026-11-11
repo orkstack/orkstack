@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The no-value rule refuses a nil value that would print as "<no value>". It
@@ -96,9 +98,7 @@ func TestRenderValues_TheMarkerAssembledFromPiecesRendersAsItself(t *testing.T) 
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, err := dsl.RenderValues("with", map[string]any{"v": tc.template}, inputs, nil)
-			if err != nil {
-				t.Fatalf("%q: %v", tc.template, err)
-			}
+			must.OKf(t, err, "%q", tc.template)
 			if value := got.(map[string]any)["v"]; value != tc.want {
 				t.Errorf("%q rendered %q, want %q", tc.template, value, tc.want)
 			}

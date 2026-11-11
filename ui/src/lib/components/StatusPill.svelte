@@ -1,7 +1,8 @@
 <script lang="ts">
 	// A status pill: the status's drawn mark, its word, then its hue
 	// (#lib/statusMarks.ts). The mark is CSS on the pill itself — Running and
-	// Awaiting alone draw theirs as one inner span — so a run page of
+	// Awaiting alone draw theirs as one inner span; Sleeping's is the pill's
+	// own ::before — so a run page of
 	// thousands of pills adds no element per pill, and no reactive node beyond
 	// its props. The text is exactly the status word and nothing else: lists
 	// read it as the cell's whole text.

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestAdminMuxHealthz(t *testing.T) {
@@ -69,9 +71,7 @@ func TestAdminMuxPprof(t *testing.T) {
 
 func TestStartAdminNoAddr(t *testing.T) {
 	addr, stop, err := StartAdmin(Config{}, nil, slog.Default())
-	if err != nil {
-		t.Fatalf("StartAdmin: %v", err)
-	}
+	must.OKf(t, err, "StartAdmin")
 	if addr != "" {
 		t.Errorf("addr = %q, want empty for no AdminAddr", addr)
 	}
@@ -88,9 +88,7 @@ func TestStartAdminNoAddr(t *testing.T) {
 func TestStartAdminNilLoggerIsSafe(t *testing.T) {
 	cfg := Config{AdminAddr: "127.0.0.1:0"}
 	addr, stop, err := StartAdmin(cfg, nil, nil)
-	if err != nil {
-		t.Fatalf("StartAdmin: %v", err)
-	}
+	must.OKf(t, err, "StartAdmin")
 	defer stop(context.Background())
 	if addr == "" {
 		t.Fatal("addr is empty, want the bound address")
@@ -100,18 +98,14 @@ func TestStartAdminNilLoggerIsSafe(t *testing.T) {
 func TestStartAdminListens(t *testing.T) {
 	cfg := Config{AdminAddr: "127.0.0.1:0"}
 	addr, stop, err := StartAdmin(cfg, nil, slog.Default())
-	if err != nil {
-		t.Fatalf("StartAdmin: %v", err)
-	}
+	must.OKf(t, err, "StartAdmin")
 	defer stop(context.Background())
 	if addr == "" {
 		t.Fatal("addr is empty, want the bound address")
 	}
 
 	resp, err := http.Get("http://" + addr + HealthzPath)
-	if err != nil {
-		t.Fatalf("GET %s%s: %v", addr, HealthzPath, err)
-	}
+	must.OKf(t, err, "GET %s%s", addr, HealthzPath)
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("GET %s%s = %d, want 200", addr, HealthzPath, resp.StatusCode)
@@ -138,9 +132,7 @@ const (
 // it never asserts that nothing happened in a window.
 func requireClosedByBound(t *testing.T, conn net.Conn, r io.Reader, start time.Time, bound time.Duration) {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, conn.SetReadDeadline(time.Now().Add(closeDeadline)))
 	_, err := io.Copy(io.Discard, r)
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
@@ -158,16 +150,12 @@ func requireClosedByBound(t *testing.T, conn net.Conn, r io.Reader, start time.T
 func TestStartAdmin_ClosesASlowHeaderAndAnIdleConnection(t *testing.T) {
 	addr, stop, err := startAdmin(Config{AdminAddr: "127.0.0.1:0"}, nil, slog.New(slog.DiscardHandler),
 		adminBounds{readHeaderTimeout: testHeaderTimeout, idleTimeout: testIdleTimeout, maxHeaderBytes: adminMaxHeaderBytes})
-	if err != nil {
-		t.Fatalf("startAdmin: %v", err)
-	}
+	must.OKf(t, err, "startAdmin")
 	defer func() { _ = stop(context.Background()) }()
 	dial := func(t *testing.T) net.Conn {
 		t.Helper()
 		conn, err := net.Dial("tcp", addr)
-		if err != nil {
-			t.Fatalf("dial %s: %v", addr, err)
-		}
+		must.OKf(t, err, "dial %s", addr)
 		t.Cleanup(func() { _ = conn.Close() })
 		return conn
 	}
@@ -189,9 +177,7 @@ func TestStartAdmin_ClosesASlowHeaderAndAnIdleConnection(t *testing.T) {
 		}
 		reader := bufio.NewReader(conn)
 		response, err := http.ReadResponse(reader, nil)
-		if err != nil {
-			t.Fatalf("read response: %v", err)
-		}
+		must.OKf(t, err, "read response")
 		if _, err := io.Copy(io.Discard, response.Body); err != nil {
 			t.Fatal(err)
 		}
@@ -230,20 +216,14 @@ func TestAdminServer_RunsWithEveryBoundSetAndNoWholeRequestDeadline(t *testing.T
 
 func TestStartAdmin_RefusesHeadersOverTheBound(t *testing.T) {
 	addr, stop, err := StartAdmin(Config{AdminAddr: "127.0.0.1:0"}, nil, slog.Default())
-	if err != nil {
-		t.Fatalf("StartAdmin: %v", err)
-	}
+	must.OKf(t, err, "StartAdmin")
 	defer func() { _ = stop(context.Background()) }()
 	get := func(header string) int {
 		request, err := http.NewRequest(http.MethodGet, "http://"+addr+HealthzPath, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		request.Header.Set("X-Pad", header)
 		resp, err := http.DefaultClient.Do(request)
-		if err != nil {
-			t.Fatalf("GET %s: %v", HealthzPath, err)
-		}
+		must.OKf(t, err, "GET %s", HealthzPath)
 		_ = resp.Body.Close()
 		return resp.StatusCode
 	}
@@ -263,9 +243,7 @@ func TestStartAdmin_AnswersOnlyTheHostsItsPolicyAdmits(t *testing.T) {
 	var logged strings.Builder
 	addr, stop, err := StartAdmin(Config{AdminAddr: "127.0.0.1:0", AdminAllowedHosts: []string{"host.docker.internal"}},
 		nil, slog.New(slog.NewTextHandler(&logged, nil)))
-	if err != nil {
-		t.Fatalf("StartAdmin: %v", err)
-	}
+	must.OKf(t, err, "StartAdmin")
 	defer func() { _ = stop(context.Background()) }()
 	for host, want := range map[string]int{
 		addr: http.StatusOK, "localhost:9464": http.StatusOK, "orker:9465": http.StatusOK,
@@ -273,14 +251,10 @@ func TestStartAdmin_AnswersOnlyTheHostsItsPolicyAdmits(t *testing.T) {
 		"prometheus.monitoring.svc:9464": http.StatusForbidden,
 	} {
 		request, err := http.NewRequest(http.MethodGet, "http://"+addr+HealthzPath, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		request.Host = host
 		resp, err := http.DefaultClient.Do(request)
-		if err != nil {
-			t.Fatalf("GET %s under Host %q: %v", HealthzPath, host, err)
-		}
+		must.OKf(t, err, "GET %s under Host %q", HealthzPath, host)
 		body, _ := io.ReadAll(resp.Body)
 		_ = resp.Body.Close()
 		if resp.StatusCode != want {
@@ -302,9 +276,7 @@ func TestConfigFrom_ReadsTheAdminListenersAllowedHosts(t *testing.T) {
 	cfg, err := configFrom(ServiceOrker, lookupOf(map[string]string{
 		AdminAddrVar: "127.0.0.1:9465", AdminAllowedHostsVar: " host.docker.internal, ,*.monitoring.example ",
 	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := strings.Join(cfg.AdminAllowedHosts, ","); got != "host.docker.internal,*.monitoring.example" {
 		t.Errorf("AdminAllowedHosts = %q", got)
 	}

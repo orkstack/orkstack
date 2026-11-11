@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"net"
 	"net/http"
 	"os"
@@ -16,18 +16,21 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------------------
 // apply
 // ---------------------------------------------------------------------------
 
-func TestApply_RegistersExampleOrkflowAgainstTheRealServer(t *testing.T) {
+func TestOrkflowCreate_StoresTheExampleAgainstTheRealServer(t *testing.T) {
 	f := newFixture(t)
 
 	applied := f.applyExample().requireExit(t, exitOK)
-	requireGolden(t, "apply.golden", applied.stdout)
+	requireGolden(t, "orkflow-create.golden", applied.stdout)
 
 	listed := f.run("orkflow", "list").requireExit(t, exitOK)
 	listed.requireContains(t, "hello-ork", "0.2.0")
@@ -36,7 +39,7 @@ func TestApply_RegistersExampleOrkflowAgainstTheRealServer(t *testing.T) {
 func TestApply_MissingFileExitsNonZero(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("apply", filepath.Join(t.TempDir(), "absent.ork.yaml"))
+	outcome := f.run("orkflow", "create", filepath.Join(t.TempDir(), "absent.ork.yaml"))
 	if outcome.code == exitOK {
 		t.Fatalf("expected a non-zero exit for a missing file, stdout:\n%s", outcome.stdout)
 	}
@@ -45,18 +48,16 @@ func TestApply_MissingFileExitsNonZero(t *testing.T) {
 	}
 }
 
-func TestApply_InvalidOrkflowExitsNonZero(t *testing.T) {
+func TestOrkflowCreate_InvalidOrkflowExitsNonZero(t *testing.T) {
 	f := newFixture(t)
 	path := filepath.Join(t.TempDir(), "broken.ork.yaml")
-	if err := os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: \"\"\ntasks: []\n"), 0o644); err != nil {
-		t.Fatalf("write broken orkflow: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: \"\"\ntasks: []\n"), 0o644), "write broken orkflow")
 
-	outcome := f.run("apply", path)
+	outcome := f.run("orkflow", "create", path)
 	if outcome.code == exitOK {
 		t.Fatalf("expected a non-zero exit for an invalid orkflow, stdout:\n%s", outcome.stdout)
 	}
-	if !strings.Contains(outcome.stderr, "apply:") {
+	if !strings.Contains(outcome.stderr, "create:") {
 		t.Fatalf("stderr does not name the failing operation:\n%s", outcome.stderr)
 	}
 }
@@ -461,13 +462,11 @@ func TestServerFlag_OverridesTheEnvironmentVariable(t *testing.T) {
 // ORK_CONFIG path.
 func writeServerConfig(t *testing.T, f *fixture, server string) {
 	t.Helper()
-	raw, err := json.Marshal(cliConfig{Server: server})
+	raw, err := stablejson.Marshal(cliConfig{Server: server})
 	if err != nil {
 		t.Fatalf("encode config: %v", err)
 	}
-	if err := os.WriteFile(f.configPath, raw, 0o600); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
+	must.OKf(t, os.WriteFile(f.configPath, raw, 0o600), "write config")
 }
 
 // TestServerConfig_IsUsedWhenNeitherFlagNorEnvironmentNamesOne: the config
@@ -550,15 +549,11 @@ func TestCLITransport_SpeaksUnencryptedHTTP2ToTheEngine(t *testing.T) {
 
 	request, err := http.NewRequest(http.MethodPost,
 		f.baseURL+"/orkstack.v1.OrkflowService/ListOrkflows", strings.NewReader("{}"))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	request.Header.Set("Content-Type", "application/json")
 
 	response, err := g.httpClient().Do(request)
-	if err != nil {
-		t.Fatalf("call engine: %v", err)
-	}
+	must.OKf(t, err, "call engine")
 	defer func() { _ = response.Body.Close() }()
 
 	if response.StatusCode != http.StatusOK {
@@ -592,18 +587,18 @@ func TestJSONFlag_EmitsParseableJSONForEveryDataCommand(t *testing.T) {
 	f.run("run", "submit", "hello-ork").requireExit(t, exitOK)
 
 	commands := map[string][]string{
-		"apply":         {"apply", examplePath(t)},
-		"orkflow list":  {"orkflow", "list"},
-		"orkflow get":   {"orkflow", "get", "hello-ork"},
-		"run submit":    {"run", "submit", "hello-ork"},
-		"run get":       {"run", "get", "run-001"},
-		"run list":      {"run", "list"},
-		"run watch":     {"run", "watch", "run-001"},
-		"run cancel":    {"run", "cancel", "run-001"},
-		"activity list": {"activity", "list"},
-		"admin info":    {"admin", "info"},
-		"pool list":     {"pool", "list"},
-		"version":       {"version"},
+		"orkflow create": {"orkflow", "create", examplePath(t)},
+		"orkflow list":   {"orkflow", "list"},
+		"orkflow get":    {"orkflow", "get", "hello-ork"},
+		"run submit":     {"run", "submit", "hello-ork"},
+		"run get":        {"run", "get", "run-001"},
+		"run list":       {"run", "list"},
+		"run watch":      {"run", "watch", "run-001"},
+		"run cancel":     {"run", "cancel", "run-001"},
+		"activity list":  {"activity", "list"},
+		"admin info":     {"admin", "info"},
+		"pool list":      {"pool", "list"},
+		"version":        {"version"},
 	}
 
 	for name, args := range commands {
@@ -717,7 +712,7 @@ func TestJSONFlag_RunGetAndListNameStatusesWithoutTheEnumPrefix(t *testing.T) {
 func TestJSONFlag_ApplyCarriesTheCompiledOrkflow(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("apply", examplePath(t), "--json").requireExit(t, exitOK)
+	outcome := f.run("orkflow", "create", examplePath(t), "--json").requireExit(t, exitOK)
 
 	var document struct {
 		Orkflow struct {
@@ -780,9 +775,7 @@ func newTaskRun(id string, exitCode int32) *orkstackv1.TaskRun {
 func mustStruct(t *testing.T, values map[string]any) *structpb.Struct {
 	t.Helper()
 	data, err := structpb.NewStruct(values)
-	if err != nil {
-		t.Fatalf("build struct: %v", err)
-	}
+	must.OKf(t, err, "build struct")
 	return data
 }
 
@@ -790,12 +783,8 @@ func mustStruct(t *testing.T, values map[string]any) *structpb.Struct {
 func closedAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatalf("close listener: %v", err)
-	}
+	must.OKf(t, listener.Close(), "close listener")
 	return address
 }

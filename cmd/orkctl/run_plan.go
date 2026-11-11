@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +17,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // errPlanVersionWithFile is the sentence the server uses for the same refusal,
@@ -44,7 +45,7 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 			"start. The engine evaluates every condition with the interpreter's own\n" +
 			"evaluator; nothing is started, stored, or recorded.\n\n" +
 			"Plan a registered orkflow by name (--version pins one; the default is the\n" +
-			"current one), or an unapplied document with --file.\n\n" +
+			"current one), or a document not yet stored with --file.\n\n" +
 			"A condition that reads an upstream task's output sees an empty output\n" +
 			"unless one is supplied with --output TASK=JSON or --outputs-file PATH.\n\n" +
 			"--assert-runs and --assert-skipped make the plan a CI check: a plan that\n" +
@@ -122,13 +123,13 @@ func newRunPlanCommand(g *globalFlags) *cobra.Command {
 			return checkPlanAssertions(cmd.ErrOrStderr(), plan, assertRuns, assertSkipped)
 		},
 	}
-	cmd.Flags().StringVarP(&file, "file", "f", "", "plan an unapplied orkflow document instead of a registered one")
+	cmd.Flags().StringVarP(&file, "file", "f", "", "plan an orkflow document that is not stored instead of a stored version")
 	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: the current one)")
-	cmd.Flags().StringArrayVar(&inputs, "input", nil,
+	cmd.Flags().StringArrayVarP(&inputs, "input", "i", nil,
 		"run input as key=value (repeatable); values that parse as JSON keep their JSON type")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "",
 		"run input as a JSON object; merged under --input values")
-	cmd.Flags().StringArrayVar(&outputs, "output", nil,
+	cmd.Flags().StringArrayVarP(&outputs, "output", "o", nil,
 		"assume a task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file")
 	cmd.Flags().StringVar(&outputsFile, "outputs-file", "",
 		"a JSON object keyed by task id whose values are the assumed values.json objects")
@@ -218,7 +219,7 @@ func planOutcomeWord(outcome orkstackv1.PlanOutcome) string {
 
 // planOutcomeLabel is the short upper-case name the JSON dialect uses.
 func planOutcomeLabel(outcome orkstackv1.PlanOutcome) string {
-	return strings.TrimPrefix(outcome.String(), "PLAN_OUTCOME_")
+	return enumname.Of(outcome)
 }
 
 // planFailing returns the task at which the planned run starts failing —
@@ -269,12 +270,14 @@ func planRows(plan *orkstackv1.PlanRunResponse) []*orkstackv1.PlanTask {
 	return rows
 }
 
-// planDetail is the DETAIL cell for one task. A task with a join that runs
-// or awaits says so first: `join <word>`, then today's detail after "; ".
+// planDetail is the DETAIL cell for one task. A task with a join that runs,
+// awaits or sleeps says so first: `join <word>`, then today's detail after
+// "; ".
 func planDetail(task *orkstackv1.PlanTask, failing string) string {
 	detail := planOutcomeDetail(task, failing)
 	switch task.GetOutcome() {
-	case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+	case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS,
+		orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS:
 		if join := task.GetJoin(); join != orkstackv1.JoinPolicy_JOIN_POLICY_UNSPECIFIED {
 			if detail == "" {
 				return "join " + dsl.JoinWord(join)
@@ -313,6 +316,8 @@ func planOutcomeDetail(task *orkstackv1.PlanTask, failing string) string {
 		}
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
 		return awaitPlanDetail(task.GetAwait())
+	case orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS:
+		return sleepPlanDetail(task.GetSleep())
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_FAILS:
 		return task.GetError().GetMessage()
 	case orkstackv1.PlanOutcome_PLAN_OUTCOME_UNREACHED:
@@ -328,11 +333,15 @@ func planOutcomeDetail(task *orkstackv1.PlanTask, failing string) string {
 // renders the same sentence.
 //
 // The await count is inserted after the run count only when the plan has an
-// await, so every plan without one reads exactly as it always did.
+// await, so every plan without one reads exactly as it always did; the sleep
+// count after it, on the same rule.
 func planSummary(plan *orkstackv1.PlanRunResponse) string {
 	awaits := ""
 	if plan.GetAwaits() > 0 {
 		awaits = plural(int64(plan.GetAwaits()), "await") + ", "
+	}
+	if plan.GetSleeps() > 0 {
+		awaits += plural(int64(plan.GetSleeps()), "sleep") + ", "
 	}
 	// Inserted only when the plan assumed a failure, on the awaits
 	// precedent, so every plan without one reads as before.
@@ -351,6 +360,12 @@ func awaitPlanDetail(spec *orkstackv1.AwaitSpec) string {
 		detail += ", callback"
 	}
 	return detail
+}
+
+// sleepPlanDetail is the DETAIL cell of a SLEEPS task: how long it sleeps.
+// ui/src/lib/plan.ts renders the same words.
+func sleepPlanDetail(spec *orkstackv1.SleepSpec) string {
+	return "sleep " + (time.Duration(spec.GetSeconds()) * time.Second).String()
 }
 
 // planFailureSentence is the FAILS sentence, empty when nothing fails.
@@ -390,7 +405,8 @@ func planHandlersThatRun(plan *orkstackv1.PlanRunResponse) []string {
 			continue
 		}
 		switch task.GetOutcome() {
-		case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS:
+		case orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS, orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS,
+			orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS:
 			out = append(out, task.GetTaskId())
 		}
 	}
@@ -440,7 +456,7 @@ func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string, as
 	var buf bytes.Buffer
 	header := fmt.Sprintf("PLAN  %s  namespace %s", orkflowRef(plan.GetOrkflowName(), plan.GetOrkflowVersion()), plan.GetNamespace())
 	if plan.GetFromYaml() {
-		header += fmt.Sprintf("  (from %s, not applied)", file)
+		header += fmt.Sprintf("  (from %s, not stored)", file)
 	}
 	input, err := dsl.CanonicalInputLine(plan.GetInput().GetData())
 	if err != nil {
@@ -524,10 +540,12 @@ func checkPlanAssertions(errOut io.Writer, plan *orkstackv1.PlanRunResponse, run
 			if task.GetOutcome() == want {
 				continue
 			}
-			// The interpreter starts an awaited task as surely as a
-			// container one, so --assert-runs holds for AWAITS too.
+			// The interpreter starts an awaited or sleeping task as surely
+			// as a container one, so --assert-runs holds for AWAITS and
+			// SLEEPS too.
 			if want == orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS &&
-				task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS {
+				(task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_AWAITS ||
+					task.GetOutcome() == orkstackv1.PlanOutcome_PLAN_OUTCOME_SLEEPS) {
 				continue
 			}
 			line := fmt.Sprintf("%s %s: planned %s", flag, id, planOutcomeLabel(task.GetOutcome()))

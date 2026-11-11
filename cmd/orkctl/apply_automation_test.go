@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,7 +16,10 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // automationFixture is the CLI fixture with a schedule controller, a pinned
@@ -49,7 +52,7 @@ func newAutomationFixture(t *testing.T) *automationFixture {
 	f.run("namespace", "create", "payments").requireExit(t, exitOK)
 	for _, name := range []string{"deploy", "reconcile"} {
 		path := a.write(t, "seed-"+name+".ork.yaml", orkflowSource(t, name, "0.2.0"))
-		f.run("apply", path, "-n", "payments").requireExit(t, exitOK)
+		f.run("orkflow", "create", path, "-n", "payments").requireExit(t, exitOK)
 	}
 	return a
 }
@@ -58,9 +61,7 @@ func newAutomationFixture(t *testing.T) *automationFixture {
 func orkflowSource(t *testing.T, name, version string) string {
 	t.Helper()
 	raw, err := os.ReadFile(examplePath(t))
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	source := strings.Replace(string(raw), "name: hello-ork", "name: "+name, 1)
 	return strings.Replace(source, `version: "0.2.0"`, `version: "`+version+`"`, 1)
 }
@@ -69,12 +70,8 @@ func orkflowSource(t *testing.T, name, version string) string {
 func (a *automationFixture) write(t *testing.T, name, content string) string {
 	t.Helper()
 	path := filepath.Join(a.dir, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatalf("mkdir: %v", err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	must.OKf(t, os.MkdirAll(filepath.Dir(path), 0o755), "mkdir")
+	must.OKf(t, os.WriteFile(path, []byte(content), 0o644), "write %s", path)
 	return path
 }
 
@@ -150,10 +147,12 @@ func (a *automationFixture) normalize(text string) string {
 	return normalize(strings.ReplaceAll(text, a.dir+string(filepath.Separator), "environments/prod/"))
 }
 
-func TestApply_SingleOrkflowFileIsUnchanged(t *testing.T) {
+func TestOrkflowCreate_SingleFilePrintsTheResponse(t *testing.T) {
 	f := newFixture(t)
-	requireGolden(t, "apply.golden", f.applyExample().requireExit(t, exitOK).stdout)
-	out := f.run("--json", "apply", examplePath(t)).requireExit(t, exitOK).stdout
+	requireGolden(t, "orkflow-create.golden", f.applyExample().requireExit(t, exitOK).stdout)
+	f.applyExample().requireExit(t, exitOK).requireContains(t,
+		"Orkflow hello-ork version 0.2.0 is already stored with this source; nothing was written")
+	out := f.run("--json", "orkflow", "create", examplePath(t)).requireExit(t, exitOK).stdout
 	var resp orkstackv1.ApplyOrkflowResponse
 	if err := api.UnmarshalJSON([]byte(out), &resp); err != nil || resp.GetOrkflow().GetName() != "hello-ork" {
 		t.Fatalf("single-file --json is not ApplyOrkflowResponse: %v\n%s", err, out)
@@ -163,35 +162,47 @@ func TestApply_SingleOrkflowFileIsUnchanged(t *testing.T) {
 	}
 }
 
-// TestApply_ClassifiesDocumentsByKind: kind: decides what a file is, and a
-// file with no kind, or another, is refused before anything is sent.
-func TestApply_ClassifiesDocumentsByKind(t *testing.T) {
+// TestDocuments_ClassifiesDocumentsByKind: kind: decides what a file is; a
+// file with no kind, or another, is refused before anything is sent, and so
+// is a document of the kind the other command takes, naming that command.
+func TestDocuments_ClassifiesDocumentsByKind(t *testing.T) {
 	cases := []struct {
 		source  string
 		want    documentKind
 		wantErr string
+		accept  *documentKind // nil: the case's own kind
 	}{
-		{"apiVersion: orkstack/v1\nkind: Orkflow\nname: hello\nversion: '1'\ntasks: []\n", orkflowDocument, ""},
-		{"apiVersion: orkstack/v2\nkind: Orkflow\nname: hello\n", orkflowDocument, ""},
-		{"apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\n", automationDocument, ""},
-		{"apiVersion: orkstack/v2\nkind: Automation\nnamespace: payments\n", automationDocument, ""},
-		{"name: [unclosed\n", orkflowDocument, ""},
+		{"apiVersion: orkstack/v1\nkind: Orkflow\nname: hello\nversion: '1'\ntasks: []\n", orkflowDocument, "", nil},
+		{"apiVersion: orkstack/v2\nkind: Orkflow\nname: hello\n", orkflowDocument, "", nil},
+		{"apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\n", automationDocument, "", nil},
+		{"apiVersion: orkstack/v2\nkind: Automation\nnamespace: payments\n", automationDocument, "", nil},
+		{"name: [unclosed\n", orkflowDocument, "", nil},
 		{"name: hello\ntasks: []\n", orkflowDocument,
-			`x.ork.yaml: no apiVersion or kind: an OrkStack document begins with "apiVersion: orkstack/v1" and its kind — "kind: Orkflow" for an Orkflow, "kind: Automation" for an automation document; add the two lines at the top, after any leading comments`},
+			`x.ork.yaml: no apiVersion or kind: an OrkStack document begins with "apiVersion: orkstack/v1" and its kind — "kind: Orkflow" for an Orkflow, "kind: Automation" for an automation document; add the two lines at the top, after any leading comments`, nil},
 		{"apiVersion: orkstack/v1\nnamespace: payments\n", orkflowDocument,
-			`x.ork.yaml: kind is required: add "kind: Orkflow" (or "kind: Automation") below "apiVersion: orkstack/v1"`},
+			`x.ork.yaml: kind is required: add "kind: Orkflow" (or "kind: Automation") below "apiVersion: orkstack/v1"`, nil},
 		{"apiVersion: orkstack/v1\nkind: Workflow\n", orkflowDocument,
-			`x.ork.yaml: unknown document kind "Workflow": want kind: Orkflow or kind: Automation`},
+			`x.ork.yaml: unknown document kind "Workflow": want kind: Orkflow or kind: Automation`, nil},
 		{"kind: orkflow\nname: hello\n", orkflowDocument,
-			`x.ork.yaml: unknown document kind "orkflow": want kind: Orkflow or kind: Automation`},
+			`x.ork.yaml: unknown document kind "orkflow": want kind: Orkflow or kind: Automation`, nil},
 		{"apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n", orkflowDocument,
-			`x.ork.yaml: kind: ActivityInterface is an activity interface, not a document to apply: pack it into an image's ` +
+			`x.ork.yaml: kind: ActivityInterface is an activity interface, not an Orkflow or an automation document: pack it into an image's ` +
 				`org.orkstack.activity.interface, org.orkstack.activity.icon and org.orkstack.activity.docs labels with ` +
 				`orkctl activity interface pack, or build the image with ` +
-				`orkctl activity build --interface`},
+				`orkctl activity build --interface`, nil},
+		{"apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\n", orkflowDocument,
+			`x.ork.yaml: kind: Automation is an automation document, and orkctl orkflow create takes only Orkflows: ` +
+				`apply it with orkctl automation apply x.ork.yaml; nothing was written`, ptr(orkflowDocument)},
+		{"apiVersion: orkstack/v1\nkind: Orkflow\nname: hello\n", automationDocument,
+			`x.ork.yaml: kind: Orkflow is an Orkflow, and orkctl automation apply takes only automation documents: ` +
+				`create it with orkctl orkflow create x.ork.yaml; nothing was written`, ptr(automationDocument)},
 	}
 	for _, tc := range cases {
-		in, err := classifyDocument("x.ork.yaml", []byte(tc.source))
+		accept := tc.want
+		if tc.accept != nil {
+			accept = *tc.accept
+		}
+		in, err := classifyDocument("x.ork.yaml", []byte(tc.source), accept)
 		switch {
 		case tc.wantErr != "":
 			if err == nil || err.Error() != tc.wantErr {
@@ -205,24 +216,20 @@ func TestApply_ClassifiesDocumentsByKind(t *testing.T) {
 	}
 }
 
-// TestApply_ADirectorySkipsItsActivityInterfaces: an image's
-// interface.ork.yaml is packed into the image, not applied, so a directory
-// holding one beside its Orkflows applies the Orkflows; a directory holding
-// nothing but interfaces has nothing to apply and says why.
-func TestApply_ADirectorySkipsItsActivityInterfaces(t *testing.T) {
+// TestOrkflowCreate_ADirectorySkipsItsActivityInterfaces: an image's
+// interface.ork.yaml is packed into the image, not stored, so a directory
+// holding one beside its Orkflows creates the Orkflows; a directory holding
+// nothing but interfaces has nothing to create and says why.
+func TestOrkflowCreate_ADirectorySkipsItsActivityInterfaces(t *testing.T) {
 	dir := t.TempDir()
 	for name, content := range map[string]string{
 		"deploy.ork.yaml":    "apiVersion: orkstack/v1\nkind: Orkflow\nname: deploy\n",
 		"interface.ork.yaml": "apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n",
 	} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644))
 	}
-	inputs, skipped, err := expandApplyArgs([]string{dir})
-	if err != nil {
-		t.Fatalf("expand: %v", err)
-	}
+	inputs, skipped, err := expandApplyArgs([]string{dir}, orkflowDocument)
+	must.OKf(t, err, "expand")
 	if len(inputs) != 1 || filepath.Base(inputs[0].path) != "deploy.ork.yaml" {
 		t.Fatalf("expanded = %v, want only deploy.ork.yaml", inputs)
 	}
@@ -230,11 +237,9 @@ func TestApply_ADirectorySkipsItsActivityInterfaces(t *testing.T) {
 		t.Fatalf("skipped = %v, want interface.ork.yaml, reported", skipped)
 	}
 	only := t.TempDir()
-	if err := os.WriteFile(filepath.Join(only, "interface.ork.yaml"), []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := expandApplyArgs([]string{only}); err == nil ||
-		err.Error() != only+": no Orkflow or automation document to apply: its *.ork.yaml files are activity interfaces, which are packed into images" {
+	must.OK(t, os.WriteFile(filepath.Join(only, "interface.ork.yaml"), []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\n"), 0o644))
+	if _, _, err := expandApplyArgs([]string{only}, orkflowDocument); err == nil ||
+		err.Error() != only+": no Orkflow to create: its *.ork.yaml files are activity interfaces, which are packed into images" {
 		t.Fatalf("a directory of interfaces = %v", err)
 	}
 }
@@ -242,15 +247,13 @@ func TestApply_ADirectorySkipsItsActivityInterfaces(t *testing.T) {
 // TestApply_AnActivityInterfaceFileIsRefusedBeforeAnyRequest: naming an
 // interface document on the command line is refused, by what it is, with no
 // RPC.
-func TestApply_AnActivityInterfaceFileIsRefusedBeforeAnyRequest(t *testing.T) {
+func TestOrkflowCreate_AnActivityInterfaceFileIsRefusedBeforeAnyRequest(t *testing.T) {
 	f := newFixture(t)
 	path := filepath.Join(t.TempDir(), "interface.ork.yaml")
-	if err := os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: ActivityInterface\nfields: {}\n"), 0o644))
 	mark := len(f.requests())
-	out := f.run("apply", path).requireExit(t, exitError)
-	if !strings.Contains(out.stderr, path+": kind: ActivityInterface is an activity interface, not a document to apply") {
+	out := f.run("orkflow", "create", path).requireExit(t, exitError)
+	if !strings.Contains(out.stderr, path+": kind: ActivityInterface is an activity interface, not an Orkflow or an automation document") {
 		t.Fatalf("stderr does not name the file and its kind:\n%s", out.stderr)
 	}
 	if got := f.requests()[mark:]; len(got) != 0 {
@@ -260,18 +263,14 @@ func TestApply_AnActivityInterfaceFileIsRefusedBeforeAnyRequest(t *testing.T) {
 
 // TestApply_RefusesAFileWithNoKindBeforeAnyRequest: the single-file shortcut
 // classifies first, so a header-less file is refused with no RPC.
-func TestApply_RefusesAFileWithNoKindBeforeAnyRequest(t *testing.T) {
+func TestOrkflowCreate_RefusesAFileWithNoKindBeforeAnyRequest(t *testing.T) {
 	f := newFixture(t)
 	raw, err := os.ReadFile(examplePath(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	path := filepath.Join(t.TempDir(), "hello.ork.yaml")
-	if err := os.WriteFile(path, []byte(strings.Replace(string(raw), dsl.OrkflowHeader, "", 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(strings.Replace(string(raw), dsl.OrkflowHeader, "", 1)), 0o644))
 	mark := len(f.requests())
-	out := f.run("apply", path).requireExit(t, exitError)
+	out := f.run("orkflow", "create", path).requireExit(t, exitError)
 	if !strings.Contains(out.stderr, path+": no apiVersion or kind: an OrkStack document begins with") {
 		t.Fatalf("stderr does not name the file and the header:\n%s", out.stderr)
 	}
@@ -280,17 +279,16 @@ func TestApply_RefusesAFileWithNoKindBeforeAnyRequest(t *testing.T) {
 	}
 }
 
-// TestApply_AMixedDirectoryWithAHeaderlessFileWritesNothing: one header-less
-// file among an Orkflow and an automation document refuses the whole
-// directory, names the file, and sends no write.
-func TestApply_AMixedDirectoryWithAHeaderlessFileWritesNothing(t *testing.T) {
+// TestOrkflowCreate_ADirectoryWithAHeaderlessFileWritesNothing: one
+// header-less file among Orkflows refuses the whole directory, names the
+// file, and sends no write.
+func TestOrkflowCreate_ADirectoryWithAHeaderlessFileWritesNothing(t *testing.T) {
 	a := newAutomationFixture(t)
-	dir := filepath.Join(a.dir, "mixed")
-	a.write(t, "mixed/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
-	a.write(t, "mixed/automation.ork.yaml", cliAutomationDoc)
-	bad := a.write(t, "mixed/legacy.ork.yaml", strings.Replace(orkflowSource(t, "legacy", "1.0.0"), dsl.OrkflowHeader, "", 1))
+	dir := filepath.Join(a.dir, "orkflows")
+	a.write(t, "orkflows/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
+	bad := a.write(t, "orkflows/legacy.ork.yaml", strings.Replace(orkflowSource(t, "legacy", "1.0.0"), dsl.OrkflowHeader, "", 1))
 	mark := len(a.requests())
-	out := a.run("apply", dir, "-n", "payments").requireExit(t, exitError)
+	out := a.run("orkflow", "create", dir, "-n", "payments").requireExit(t, exitError)
 	if !strings.Contains(out.stderr, bad+": no apiVersion or kind") {
 		t.Fatalf("stderr does not name the header-less file:\n%s", out.stderr)
 	}
@@ -299,15 +297,53 @@ func TestApply_AMixedDirectoryWithAHeaderlessFileWritesNothing(t *testing.T) {
 	}
 }
 
-// TestApply_AMixedDirectoryAppliesOrkflowsThenAutomation: the same directory
-// without the bad file applies its Orkflow first, then the plan's steps.
-func TestApply_AMixedDirectoryAppliesOrkflowsThenAutomation(t *testing.T) {
+// TestDocuments_AMixedDirectoryIsRefusedByEitherCommand: a directory holding
+// an Orkflow and an automation document is refused by whichever command
+// receives it, naming the other kind's file and the command that takes it,
+// before anything is sent.
+func TestDocuments_AMixedDirectoryIsRefusedByEitherCommand(t *testing.T) {
 	a := newAutomationFixture(t)
 	dir := filepath.Join(a.dir, "mixed")
-	a.write(t, "mixed/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
-	a.write(t, "mixed/automation.ork.yaml", strings.Replace(cliAutomationDoc, "    orkflow: deploy\n", "    orkflow: deploy\n    version: 1.4.0\n", 1))
+	orkflow := a.write(t, "mixed/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
+	automationDoc := a.write(t, "mixed/automation.ork.yaml", cliAutomationDoc)
+	cases := []struct {
+		args []string
+		want string
+	}{
+		{[]string{"orkflow", "create", dir}, automationDoc + ": kind: Automation is an automation document (read from " + dir +
+			": keep Orkflows and automation documents in separate directories), and orkctl orkflow create takes only Orkflows: " +
+			"apply it with orkctl automation apply " + automationDoc + "; nothing was written"},
+		{[]string{"automation", "apply", dir}, orkflow + ": kind: Orkflow is an Orkflow (read from " + dir +
+			": keep Orkflows and automation documents in separate directories), and orkctl automation apply takes only " +
+			"automation documents: create it with orkctl orkflow create " + orkflow + "; nothing was written"},
+		{[]string{"orkflow", "create", automationDoc}, automationDoc + ": kind: Automation is an automation document, and " +
+			"orkctl orkflow create takes only Orkflows"},
+		{[]string{"automation", "apply", orkflow, "--dry-run"}, orkflow + ": kind: Orkflow is an Orkflow, and orkctl automation " +
+			"apply takes only automation documents"},
+	}
+	for _, tc := range cases {
+		mark := len(a.requests())
+		out := a.run(append(tc.args, "-n", "payments")...).requireExit(t, exitError)
+		if !strings.Contains(out.stderr, tc.want) {
+			t.Errorf("%v: stderr does not refuse by kind:\n%s\nwant %s", tc.args, out.stderr, tc.want)
+		}
+		if got := a.requests()[mark:]; len(got) != 0 {
+			t.Errorf("%v: a refused document sent %v", tc.args, got)
+		}
+	}
+}
+
+// TestDocuments_OrkflowsAreCreatedThenAutomationApplied: the two commands in
+// turn store the Orkflow, then write the plan that names its new version.
+func TestDocuments_OrkflowsAreCreatedThenAutomationApplied(t *testing.T) {
+	a := newAutomationFixture(t)
+	newOrkflow := a.write(t, "orkflows/deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
+	doc := a.write(t, "automation/automation.ork.yaml", strings.Replace(cliAutomationDoc, "    orkflow: deploy\n", "    orkflow: deploy\n    version: 1.4.0\n", 1))
 	mark := len(a.requests())
-	a.run("apply", dir, "-n", "payments").requireExit(t, exitOK)
+	a.run("automation", "apply", doc, "--dry-run").requireExit(t, exitError).requireContains(t, "Nothing was written.")
+	a.run("orkflow", "create", filepath.Dir(newOrkflow), "-n", "payments").requireExit(t, exitOK).
+		requireContains(t, "Created orkflow deploy (version 1.4.0)")
+	a.run("automation", "apply", doc).requireExit(t, exitOK)
 	want := []string{
 		"OrkflowService/ApplyOrkflow",
 		"NamespaceService/UpdateNamespace",
@@ -323,28 +359,24 @@ func TestApply_AMixedDirectoryAppliesOrkflowsThenAutomation(t *testing.T) {
 // TestApply_DryRunAHeaderOnlyChangeIsAConflict: the header is part of the
 // source, so moving it under a pinned version is a conflict like any other
 // edit, and the refusal gives the plain advice.
-func TestApply_DryRunAHeaderOnlyChangeIsAConflict(t *testing.T) {
+func TestOrkflowCreate_DryRunAHeaderOnlyChangeIsAConflict(t *testing.T) {
 	a := newAutomationFixture(t)
 	headered := orkflowSource(t, "pinned", "3.0.0")
-	a.run("apply", a.write(t, "line1.ork.yaml", headered), "-n", "payments").requireExit(t, exitOK)
+	a.run("orkflow", "create", a.write(t, "line1.ork.yaml", headered), "-n", "payments").requireExit(t, exitOK)
 
-	refused := a.run("apply", a.write(t, "moved.ork.yaml", "# moved above the header\n"+headered), "-n", "payments", "--dry-run").requireExit(t, exitError)
-	refused.requireContains(t, "stored with different source", "ApplyOrkflow would refuse it — bump version: or drop it")
+	refused := a.run("orkflow", "create", a.write(t, "moved.ork.yaml", "# moved above the header\n"+headered), "-n", "payments", "--dry-run").requireExit(t, exitError)
+	refused.requireContains(t, "stored with different source", "a version is immutable, so the engine would refuse it — change version: or drop it")
 }
 
-func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
+func TestDocuments_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"b.ork.yaml", "a.ork.yml", "c.yaml", "notes.txt", "sub/d.ork.yaml"} {
 		path := filepath.Join(dir, name)
 		_ = os.MkdirAll(filepath.Dir(path), 0o755)
-		if err := os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: x\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(path, []byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: x\n"), 0o644))
 	}
-	inputs, _, err := expandApplyArgs([]string{dir})
-	if err != nil {
-		t.Fatalf("expand: %v", err)
-	}
+	inputs, _, err := expandApplyArgs([]string{dir}, orkflowDocument)
+	must.OKf(t, err, "expand")
 	var got []string
 	for _, in := range inputs {
 		got = append(got, filepath.Base(in.path))
@@ -353,85 +385,87 @@ func TestApply_DirectoryExpandsOrkYamlLexicallyAndNonRecursively(t *testing.T) {
 		t.Errorf("expanded = %v, want [a.ork.yml b.ork.yaml]", got)
 	}
 	empty := t.TempDir()
-	if _, _, err := expandApplyArgs([]string{empty}); err == nil || !strings.Contains(err.Error(), "no *.ork.yaml or *.ork.yml files") {
+	if _, _, err := expandApplyArgs([]string{empty}, orkflowDocument); err == nil || !strings.Contains(err.Error(), "no *.ork.yaml or *.ork.yml files") {
 		t.Errorf("empty directory = %v", err)
 	}
 }
 
-func TestApply_DryRunWritesNothing(t *testing.T) {
+func TestDocuments_DryRunWritesNothing(t *testing.T) {
 	a := newAutomationFixture(t)
 	doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
 	newOrkflow := a.write(t, "deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
 	mark := len(a.requests())
-	a.run("apply", doc, newOrkflow, "-n", "payments", "--dry-run", "--prune").requireExit(t, exitOK).
+	a.run("automation", "apply", doc, "-n", "payments", "--dry-run", "--prune").requireExit(t, exitOK).
 		requireContains(t, "Dry run: nothing was written.")
+	a.run("orkflow", "create", newOrkflow, "-n", "payments", "--dry-run").requireExit(t, exitOK).
+		requireContains(t, "Plan: 1 orkflow version to store.", "Dry run: nothing was written.")
 	if writes := a.writes(mark); len(writes) != 0 {
 		t.Fatalf("a dry run wrote: %v", writes)
 	}
 }
 
-// TestApply_AnUnpinnedDocumentIsNewUntilItsContentIsApplied: validation names no
-// version for content never applied, which must plan as new rather than read the
-// empty version as "the current one" and report a conflict with it; applying it
-// makes the same file unchanged, and an edit is new again.
-func TestApply_AnUnpinnedDocumentIsNewUntilItsContentIsApplied(t *testing.T) {
+// TestOrkflowCreate_AnUnpinnedDocumentIsNewUntilItsContentIsCreated: validation
+// names no version for content never created, which must plan as new rather
+// than read the empty version as "the current one" and report a conflict with
+// it; creating it makes the same file unchanged, and an edit is new again.
+func TestOrkflowCreate_AnUnpinnedDocumentIsNewUntilItsContentIsCreated(t *testing.T) {
 	a := newAutomationFixture(t)
 	source := "apiVersion: orkstack/v1\nkind: Orkflow\nname: unpinned-doc\ntasks:\n  - id: one\n    uses: shell\n"
 	dir := filepath.Join(a.dir, "unpinned")
 	path := a.write(t, "unpinned/doc.ork.yaml", source)
 
-	a.run("apply", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "new version")
-	a.run("apply", path).requireExit(t, exitOK)
+	a.run("orkflow", "create", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "new version")
+	a.run("orkflow", "create", path).requireExit(t, exitOK)
 	mark := len(a.requests())
-	a.run("apply", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "unchanged")
-	a.run("apply", dir).requireExit(t, exitOK)
+	a.run("orkflow", "create", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "unchanged")
+	a.run("orkflow", "create", dir).requireExit(t, exitOK)
 	if writes := a.writes(mark); len(writes) != 0 {
-		t.Fatalf("re-applying an unchanged directory wrote: %v", writes)
+		t.Fatalf("re-creating an unchanged directory wrote: %v", writes)
 	}
 
 	a.write(t, "unpinned/doc.ork.yaml", source+"# an edit\n")
-	a.run("apply", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "new version")
+	a.run("orkflow", "create", dir, "--dry-run").requireExit(t, exitOK).requireContains(t, "new version")
 }
 
-func TestApply_RefusesBeforeAnyWrite(t *testing.T) {
+func TestDocuments_RefusesBeforeAnyWrite(t *testing.T) {
 	cases := map[string]func(t *testing.T, a *automationFixture) []string{
 		"conflicting orkflow": func(t *testing.T, a *automationFixture) []string {
 			changed := strings.Replace(orkflowSource(t, "deploy", "0.2.0"), "description:", "description: changed —", 1)
-			return []string{a.write(t, "deploy.ork.yaml", changed), a.write(t, "automation.ork.yaml", cliAutomationDoc), "-n", "payments"}
+			return []string{"orkflow", "create", a.write(t, "deploy.ork.yaml", changed), a.write(t, "other.ork.yaml", orkflowSource(t, "other", "1.0.0")), "-n", "payments"}
 		},
 		"plan error": func(t *testing.T, a *automationFixture) []string {
-			return []string{a.write(t, "automation.ork.yaml", strings.Replace(cliAutomationDoc, "orkflow: deploy", "orkflow: missing", 1))}
+			return []string{"automation", "apply", a.write(t, "automation.ork.yaml", strings.Replace(cliAutomationDoc, "orkflow: deploy", "orkflow: missing", 1))}
 		},
 		"missing secret_env": func(t *testing.T, a *automationFixture) []string {
 			t.Setenv("ETL_WEBHOOK_SECRET", "")
 			doc := strings.Replace(cliAutomationDoc, "events: [TASK_SUCCEEDED, RUN_FAILED]\n", "events: [TASK_SUCCEEDED, RUN_FAILED]\n    secret_env: ETL_WEBHOOK_SECRET\n", 1)
-			return []string{a.write(t, "automation.ork.yaml", doc)}
+			return []string{"automation", "apply", a.write(t, "automation.ork.yaml", doc)}
 		},
 		"existing secrets-out": func(t *testing.T, a *automationFixture) []string {
 			existing := a.write(t, "secrets.json", "{}")
-			return []string{a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", existing}
+			return []string{"automation", "apply", a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", existing}
 		},
 		"uncreatable secrets-out": func(t *testing.T, a *automationFixture) []string {
 			missing := filepath.Join(a.dir, "no-such-dir", "secrets.json")
-			return []string{a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", missing}
+			return []string{"automation", "apply", a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", missing}
 		},
 		"secrets-out under a file": func(t *testing.T, a *automationFixture) []string {
 			parent := a.write(t, "not-a-dir", "x")
-			return []string{a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", filepath.Join(parent, "secrets.json")}
+			return []string{"automation", "apply", a.write(t, "automation.ork.yaml", cliAutomationDoc), "--secrets-out", filepath.Join(parent, "secrets.json")}
 		},
 		"plan error leaves no secrets-out file": func(t *testing.T, a *automationFixture) []string {
 			t.Cleanup(func() {
 				if _, err := os.Lstat(filepath.Join(a.dir, "secrets.json")); err == nil {
-					t.Error("a refused apply left its --secrets-out file behind")
+					t.Error("a refused automation apply left its --secrets-out file behind")
 				}
 			})
 			doc := strings.Replace(cliAutomationDoc, "orkflow: deploy", "orkflow: missing", 1)
-			return []string{a.write(t, "automation.ork.yaml", doc), "--secrets-out", filepath.Join(a.dir, "secrets.json")}
+			return []string{"automation", "apply", a.write(t, "automation.ork.yaml", doc), "--secrets-out", filepath.Join(a.dir, "secrets.json")}
 		},
 		"expect-plan with two documents": func(t *testing.T, a *automationFixture) []string {
 			a.run("namespace", "create", "billing").requireExit(t, exitOK)
 			other := strings.Replace(header("billing"), "", "", 1) + "triggers: {}\n"
-			return []string{a.write(t, "a.ork.yaml", cliAutomationDoc), a.write(t, "b.ork.yaml", other), "--expect-plan", "sha256:" + strings.Repeat("0", 64)}
+			return []string{"automation", "apply", a.write(t, "a.ork.yaml", cliAutomationDoc), a.write(t, "b.ork.yaml", other), "--expect-plan", "sha256:" + strings.Repeat("0", 64)}
 		},
 	}
 	for name, build := range cases {
@@ -439,7 +473,7 @@ func TestApply_RefusesBeforeAnyWrite(t *testing.T) {
 			a := newAutomationFixture(t)
 			args := build(t, a)
 			mark := len(a.requests())
-			outcome := a.run(append([]string{"apply"}, args...)...)
+			outcome := a.run(args...)
 			if outcome.code != exitError {
 				t.Fatalf("exit = %d, want 1\n%s\n%s", outcome.code, outcome.stdout, outcome.stderr)
 			}
@@ -453,54 +487,13 @@ func TestApply_RefusesBeforeAnyWrite(t *testing.T) {
 	}
 }
 
+func ptr(kind documentKind) *documentKind { return &kind }
+
 func header(ns string) string {
 	return "apiVersion: orkstack/v1\nkind: Automation\nnamespace: " + ns + "\n"
 }
 
-func TestApply_OrkflowsFirstThenStepsInPlanOrder(t *testing.T) {
-	a := newAutomationFixture(t)
-	newOrkflow := a.write(t, "deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
-	doc := a.write(t, "automation.ork.yaml", strings.Replace(cliAutomationDoc, "    orkflow: deploy\n", "    orkflow: deploy\n    version: 1.4.0\n", 1))
-	mark := len(a.requests())
-	a.run("apply", doc, newOrkflow, "-n", "payments").requireExit(t, exitOK)
-	want := []string{
-		"OrkflowService/ApplyOrkflow",
-		"NamespaceService/UpdateNamespace",
-		"ScheduleService/CreateSchedule",
-		"TriggerService/CreateTrigger",
-		"WebhookService/RegisterWebhook",
-	}
-	if got := a.writes(mark); strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("writes = %v, want %v", got, want)
-	}
-}
-
-func TestApply_PendingOrkflowsArePassedToThePlan(t *testing.T) {
-	a := newAutomationFixture(t)
-	newOrkflow := a.write(t, "rollback.ork.yaml", orkflowSource(t, "rollback", "1.0.0"))
-	doc := a.write(t, "automation.ork.yaml", header("payments")+"triggers:\n  undo:\n    orkflow: rollback\n    version: 1.0.0\n")
-	out := a.run("apply", a.dir, "-n", "payments", "--dry-run").requireExit(t, exitOK).stdout
-	if strings.Contains(out, "ERROR") {
-		t.Fatalf("a pending orkflow did not satisfy the reference:\n%s", out)
-	}
-	var plan orkstackv1.PlanAutomationRequest
-	if !a.lastRequest("/orkstack.v1.AutomationService/PlanAutomation", &plan) {
-		t.Fatal("no plan request was sent")
-	}
-	found := false
-	for _, pending := range plan.GetPendingOrkflows() {
-		if pending.GetName() == "rollback" && pending.GetVersion() == "1.0.0" && pending.GetNamespace() == "payments" {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatalf("pending_orkflows = %v", plan.GetPendingOrkflows())
-	}
-	_ = newOrkflow
-	_ = doc
-}
-
-func TestApply_StopsAtTheFirstFailedStep(t *testing.T) {
+func TestAutomationApply_StopsAtTheFirstFailedStep(t *testing.T) {
 	a := newAutomationFixture(t)
 	a.schedules.refuseCron = "61 * * * *"
 	doc := a.write(t, "automation.ork.yaml", header("payments")+`schedules:
@@ -514,7 +507,7 @@ triggers:
   github-deploy:
     orkflow: deploy
 `)
-	outcome := a.run("--json", "apply", doc)
+	outcome := a.run("--json", "automation", "apply", doc)
 	if outcome.code != exitError {
 		t.Fatalf("exit = %d, want 1\n%s%s", outcome.code, outcome.stdout, outcome.stderr)
 	}
@@ -524,7 +517,7 @@ triggers:
 	}
 	var outcomes []string
 	for _, result := range report.GetAutomation()[0].GetResults() {
-		outcomes = append(outcomes, strings.TrimPrefix(result.GetOutcome().String(), "AUTOMATION_STEP_OUTCOME_"))
+		outcomes = append(outcomes, enumname.Of(result.GetOutcome()))
 	}
 	if strings.Join(outcomes, ",") != "APPLIED,FAILED,NOT_RUN" {
 		t.Fatalf("outcomes = %v", outcomes)
@@ -532,10 +525,10 @@ triggers:
 	if failed := report.GetAutomation()[0].GetResults()[1].GetError(); !strings.Contains(failed, "invalid_argument") || !strings.Contains(failed, "61 * * * *") {
 		t.Errorf("failed step error = %q", failed)
 	}
-	requireGolden(t, "apply-result-failed.golden", a.normalize(a.run("apply", doc).stdout))
+	requireGolden(t, "automation-apply-result-failed.golden", a.normalize(a.run("automation", "apply", doc).stdout))
 }
 
-func TestApply_DeleteNotFoundIsAlreadyGone(t *testing.T) {
+func TestAutomationApply_DeleteNotFoundIsAlreadyGone(t *testing.T) {
 	a := newAutomationFixture(t)
 	root, g := newRootCommand()
 	_ = root
@@ -559,19 +552,17 @@ func TestApply_DeleteNotFoundIsAlreadyGone(t *testing.T) {
 	}
 }
 
-func TestApply_ExpectPlanMismatchRefuses(t *testing.T) {
+func TestAutomationApply_ExpectPlanMismatchRefuses(t *testing.T) {
 	a := newAutomationFixture(t)
 	doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
 	var report orkstackv1.ApplyReport
-	out := a.run("--json", "apply", doc, "--dry-run").requireExit(t, exitOK).stdout
-	if err := api.UnmarshalJSON([]byte(out), &report); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	out := a.run("--json", "automation", "apply", doc, "--dry-run").requireExit(t, exitOK).stdout
+	must.OKf(t, api.UnmarshalJSON([]byte(out), &report), "decode")
 	digest := report.GetAutomation()[0].GetPlan().GetPlanDigest()
 	// Drift between review and apply: a named trigger appears.
 	a.run("trigger", "create", "--orkflow", "deploy", "--name", "hand-made", "-n", "payments").requireExit(t, exitOK)
 	mark := len(a.requests())
-	outcome := a.run("apply", doc, "--prune", "--expect-plan", digest)
+	outcome := a.run("automation", "apply", doc, "--prune", "--expect-plan", digest)
 	if outcome.code != exitError || !strings.Contains(outcome.stdout, "the plan differs from the one reviewed") ||
 		!strings.Contains(outcome.stdout, "hand-made") {
 		t.Fatalf("exit %d:\n%s", outcome.code, outcome.stdout)
@@ -580,40 +571,36 @@ func TestApply_ExpectPlanMismatchRefuses(t *testing.T) {
 		t.Fatalf("a mismatched plan wrote: %v", writes)
 	}
 	// The digest of the plan that is about to run is accepted.
-	out = a.run("--json", "apply", doc, "--prune", "--dry-run").requireExit(t, exitOK).stdout
-	if err := api.UnmarshalJSON([]byte(out), &report); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	a.run("apply", doc, "--prune", "--expect-plan", report.GetAutomation()[0].GetPlan().GetPlanDigest()).requireExit(t, exitOK)
+	out = a.run("--json", "automation", "apply", doc, "--prune", "--dry-run").requireExit(t, exitOK).stdout
+	must.OKf(t, api.UnmarshalJSON([]byte(out), &report), "decode")
+	a.run("automation", "apply", doc, "--prune", "--expect-plan", report.GetAutomation()[0].GetPlan().GetPlanDigest()).requireExit(t, exitOK)
 }
 
-func TestApply_CheckExitCode(t *testing.T) {
+func TestAutomationApply_CheckExitCode(t *testing.T) {
 	a := newAutomationFixture(t)
 	doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
-	a.run("apply", doc, "--check").requireExit(t, exitApplyCheckChanges)
-	a.run("apply", doc).requireExit(t, exitOK)
-	a.run("apply", doc, "--check").requireExit(t, exitOK)
+	a.run("automation", "apply", doc, "--check").requireExit(t, exitApplyCheckChanges)
+	a.run("automation", "apply", doc).requireExit(t, exitOK)
+	a.run("automation", "apply", doc, "--check").requireExit(t, exitOK)
 	newOrkflow := a.write(t, "deploy.ork.yaml", orkflowSource(t, "deploy", "9.9.9"))
-	a.run("apply", doc, newOrkflow, "-n", "payments", "--check").requireExit(t, exitApplyCheckChanges)
+	a.run("orkflow", "create", newOrkflow, "-n", "payments", "--check").requireExit(t, exitApplyCheckChanges)
+	a.run("orkflow", "create", newOrkflow, "-n", "payments").requireExit(t, exitOK)
+	a.run("orkflow", "create", newOrkflow, "-n", "payments", "--check").requireExit(t, exitOK)
 }
 
-func TestApply_SecretsOutWritesAnExclusive0600FileAndRedactsStdout(t *testing.T) {
+func TestAutomationApply_SecretsOutWritesAnExclusive0600FileAndRedactsStdout(t *testing.T) {
 	a := newAutomationFixture(t)
 	doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
 	path := filepath.Join(a.dir, "secrets.json")
-	out := a.run("apply", doc, "--secrets-out", path).requireExit(t, exitOK).stdout
+	out := a.run("automation", "apply", doc, "--secrets-out", path).requireExit(t, exitOK).stdout
 	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat: %v", err)
-	}
+	must.OKf(t, err, "stat")
 	if info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v, want 0600", info.Mode().Perm())
 	}
 	raw, _ := os.ReadFile(path)
 	var secrets orkstackv1.DisclosedSecrets
-	if err := api.UnmarshalJSON(raw, &secrets); err != nil {
-		t.Fatalf("decode %s: %v", raw, err)
-	}
+	must.OKf(t, api.UnmarshalJSON(raw, &secrets), "decode %s", raw)
 	kinds := map[string]string{}
 	for _, secret := range secrets.GetSecrets() {
 		kinds[secret.GetKind().String()] = secret.GetSecret()
@@ -635,7 +622,7 @@ func TestApply_SecretsOutWritesAnExclusive0600FileAndRedactsStdout(t *testing.T)
 // A --secrets-out write that fails after the steps ran must not lose the
 // one-time secrets: they are printed, the report carries them, and no
 // partial file is left behind.
-func TestApply_SecretsOutLateWriteFailurePrintsTheSecrets(t *testing.T) {
+func TestAutomationApply_SecretsOutLateWriteFailurePrintsTheSecrets(t *testing.T) {
 	for _, jsonOutput := range []bool{false, true} {
 		t.Run(fmt.Sprintf("json=%v", jsonOutput), func(t *testing.T) {
 			a := newAutomationFixture(t)
@@ -644,7 +631,7 @@ func TestApply_SecretsOutLateWriteFailurePrintsTheSecrets(t *testing.T) {
 			saved := secretsFileWrite
 			secretsFileWrite = func(*os.File, []byte) error { return fmt.Errorf("no space left on device") }
 			t.Cleanup(func() { secretsFileWrite = saved })
-			args := []string{"apply", doc, "--secrets-out", path}
+			args := []string{"automation", "apply", doc, "--secrets-out", path}
 			if jsonOutput {
 				args = append([]string{"--json"}, args...)
 			}
@@ -687,26 +674,26 @@ func TestApply_SecretsOutLateWriteFailurePrintsTheSecrets(t *testing.T) {
 	}
 }
 
-func TestApply_AutomationTakesOnlyAnExplicitNamespace(t *testing.T) {
+func TestAutomationApply_AutomationTakesOnlyAnExplicitNamespace(t *testing.T) {
 	a := newAutomationFixture(t)
 	doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
 	t.Setenv(namespaceEnvVar, "billing")
-	a.run("apply", doc, "--dry-run").requireExit(t, exitOK)
+	a.run("automation", "apply", doc, "--dry-run").requireExit(t, exitOK)
 	var plan orkstackv1.PlanAutomationRequest
 	if !a.lastRequest("/orkstack.v1.AutomationService/PlanAutomation", &plan) || plan.GetNamespace() != "" {
 		t.Fatalf("ORK_NAMESPACE reached the plan: %q", plan.GetNamespace())
 	}
-	a.run("apply", doc, "--dry-run", "-n", "payments").requireExit(t, exitOK)
+	a.run("automation", "apply", doc, "--dry-run", "-n", "payments").requireExit(t, exitOK)
 	if !a.lastRequest("/orkstack.v1.AutomationService/PlanAutomation", &plan) || plan.GetNamespace() != "payments" {
 		t.Fatalf("explicit -n = %q, want payments", plan.GetNamespace())
 	}
-	outcome := a.run("apply", doc, "--dry-run", "-n", "billing")
+	outcome := a.run("automation", "apply", doc, "--dry-run", "-n", "billing")
 	if outcome.code != exitError || !strings.Contains(outcome.stdout, `the document describes namespace "payments" but this request is for "billing"`) {
 		t.Fatalf("mismatched -n: exit %d\n%s", outcome.code, outcome.stdout)
 	}
 }
 
-func TestApply_ExecutorHandlesEveryStepVariant(t *testing.T) {
+func TestAutomationApply_ExecutorHandlesEveryStepVariant(t *testing.T) {
 	oneof := (&orkstackv1.AutomationStep{}).ProtoReflect().Descriptor().Oneofs().ByName("request")
 	fields := oneof.Fields()
 	if fields.Len() == 0 {
@@ -727,11 +714,11 @@ func TestApply_ExecutorHandlesEveryStepVariant(t *testing.T) {
 	}
 }
 
-func TestApply_SecretEnvIsReadFromTheEnvironment(t *testing.T) {
+func TestAutomationApply_SecretEnvIsReadFromTheEnvironment(t *testing.T) {
 	a := newAutomationFixture(t)
 	t.Setenv("ETL_WEBHOOK_SECRET", "pre-shared-secret")
 	doc := strings.Replace(cliAutomationDoc, "events: [TASK_SUCCEEDED, RUN_FAILED]\n", "events: [TASK_SUCCEEDED, RUN_FAILED]\n    secret_env: ETL_WEBHOOK_SECRET\n", 1)
-	out := a.run("apply", a.write(t, "automation.ork.yaml", doc)).requireExit(t, exitOK).stdout
+	out := a.run("automation", "apply", a.write(t, "automation.ork.yaml", doc)).requireExit(t, exitOK).stdout
 	if strings.Contains(out, "pre-shared-secret") {
 		t.Fatalf("the pre-shared secret was printed:\n%s", out)
 	}
@@ -741,7 +728,7 @@ func TestApply_SecretEnvIsReadFromTheEnvironment(t *testing.T) {
 	}
 }
 
-func TestApply_PlanGoldens(t *testing.T) {
+func TestAutomationApply_PlanGoldens(t *testing.T) {
 	a := newAutomationFixture(t)
 	// State a reviewer would see drift in: an older schedule, a named trigger
 	// the document does not declare, an unnamed one, an unscoped webhook.
@@ -749,28 +736,29 @@ func TestApply_PlanGoldens(t *testing.T) {
 		"--timezone", "Europe/Lisbon", "--input-json", `{"mode": "full"}`, "-n", "payments").requireExit(t, exitOK)
 	a.run("trigger", "create", "--orkflow", "deploy", "--name", "manual-hook", "-n", "payments").requireExit(t, exitOK)
 	a.run("trigger", "create", "--orkflow", "deploy", "-n", "payments").requireExit(t, exitOK)
-	a.run("webhook", "register", "https://hooks.acme.dev/etl", "-n", "payments", "--name", "etl-loader",
+	a.run("webhook", "create", "https://hooks.acme.dev/etl", "-n", "payments", "--name", "etl-loader",
 		"--event", "TASK_SUCCEEDED", "--event", "RUN_FAILED").requireExit(t, exitOK)
 	doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
 	newOrkflow := a.write(t, "deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0"))
 
-	requireGolden(t, "apply-plan.golden", a.normalize(a.run("apply", newOrkflow, doc, "-n", "payments", "--dry-run").requireExit(t, exitOK).stdout))
-	requireGolden(t, "apply-report-dryrun.json.golden", a.normalize(a.run("--json", "apply", doc, "--dry-run").requireExit(t, exitOK).stdout))
+	requireGolden(t, "orkflow-create-plan.golden", a.normalize(a.run("orkflow", "create", newOrkflow, "-n", "payments", "--dry-run").requireExit(t, exitOK).stdout))
+	requireGolden(t, "automation-apply-plan.golden", a.normalize(a.run("automation", "apply", doc, "-n", "payments", "--dry-run").requireExit(t, exitOK).stdout))
+	requireGolden(t, "automation-apply-report-dryrun.json.golden", a.normalize(a.run("--json", "automation", "apply", doc, "--dry-run").requireExit(t, exitOK).stdout))
 
 	broken := a.write(t, "broken.ork.yaml", strings.Replace(strings.Replace(cliAutomationDoc, "orkflow: deploy", "orkflow: missing", 1),
 		"cron: \"0 2 * * *\"", "cron: \"CRON_TZ=UTC 0 2 * * *\"", 1))
-	requireGolden(t, "apply-plan-issues.golden", a.normalize(a.run("apply", broken, "--dry-run").stdout))
+	requireGolden(t, "automation-apply-plan-issues.golden", a.normalize(a.run("automation", "apply", broken, "--dry-run").stdout))
 
-	requireGolden(t, "apply-result.golden", a.normalize(a.run("apply", doc).requireExit(t, exitOK).stdout))
-	requireGolden(t, "apply-report.json.golden", a.normalize(a.run("--json", "apply", doc, "--prune").requireExit(t, exitOK).stdout))
+	requireGolden(t, "automation-apply-result.golden", a.normalize(a.run("automation", "apply", doc).requireExit(t, exitOK).stdout))
+	requireGolden(t, "automation-apply-report.json.golden", a.normalize(a.run("--json", "automation", "apply", doc, "--prune").requireExit(t, exitOK).stdout))
 }
 
-func TestApply_ReapplyIsANoOp(t *testing.T) {
+func TestAutomationApply_ReapplyIsANoOp(t *testing.T) {
 	a := newAutomationFixture(t)
 	doc := a.write(t, "automation.ork.yaml", cliAutomationDoc)
-	a.run("apply", doc).requireExit(t, exitOK)
+	a.run("automation", "apply", doc).requireExit(t, exitOK)
 	mark := len(a.requests())
-	out := a.run("--json", "apply", doc).requireExit(t, exitOK).stdout
+	out := a.run("--json", "automation", "apply", doc).requireExit(t, exitOK).stdout
 	if writes := a.writes(mark); len(writes) != 0 {
 		t.Fatalf("a re-apply wrote: %v", writes)
 	}
@@ -783,11 +771,11 @@ func TestApply_ReapplyIsANoOp(t *testing.T) {
 	}
 }
 
-func TestExport_PrintsYAMLAndWarnsOnStderr(t *testing.T) {
+func TestAutomationExport_PrintsYAMLAndWarnsOnStderr(t *testing.T) {
 	a := newAutomationFixture(t)
-	a.run("apply", a.write(t, "automation.ork.yaml", cliAutomationDoc)).requireExit(t, exitOK)
+	a.run("automation", "apply", a.write(t, "automation.ork.yaml", cliAutomationDoc)).requireExit(t, exitOK)
 	a.run("trigger", "create", "--orkflow", "deploy", "-n", "payments").requireExit(t, exitOK)
-	outcome := a.run("export", "-n", "payments").requireExit(t, exitOK)
+	outcome := a.run("automation", "export", "-n", "payments").requireExit(t, exitOK)
 	if !strings.HasPrefix(outcome.stdout, "apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\n") {
 		t.Fatalf("export stdout:\n%s", outcome.stdout)
 	}
@@ -795,18 +783,16 @@ func TestExport_PrintsYAMLAndWarnsOnStderr(t *testing.T) {
 		t.Fatalf("export stderr does not warn about the unnamed trigger:\n%s", outcome.stderr)
 	}
 	exported := a.write(t, "exported.ork.yaml", outcome.stdout)
-	a.run("apply", exported, "--check").requireExit(t, exitOK)
-	requireGolden(t, "export.golden", a.normalize(outcome.stdout))
+	a.run("automation", "apply", exported, "--check").requireExit(t, exitOK)
+	requireGolden(t, "automation-export.golden", a.normalize(outcome.stdout))
 }
 
 func TestTriggerUpdate_ReadModifyWrite(t *testing.T) {
 	a := newAutomationFixture(t)
-	a.run("apply", a.write(t, "deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0")), "-n", "payments").requireExit(t, exitOK)
+	a.run("orkflow", "create", a.write(t, "deploy.ork.yaml", orkflowSource(t, "deploy", "1.4.0")), "-n", "payments").requireExit(t, exitOK)
 	created := a.run("--json", "trigger", "create", "--orkflow", "deploy", "--description", "kept", "-n", "payments").requireExit(t, exitOK).stdout
 	var resp orkstackv1.CreateTriggerResponse
-	if err := api.UnmarshalJSON([]byte(created), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(created), &resp), "decode")
 	id := resp.GetTrigger().GetId()
 	out := a.run("trigger", "update", id, "-n", "payments", "--name", "github-deploy", "--version", "1.4.0").requireExit(t, exitOK).stdout
 	if !strings.Contains(out, "DESCRIPTION  kept") || !strings.Contains(out, "The token is unchanged.") {
@@ -825,7 +811,7 @@ func TestTriggerUpdate_ReadModifyWrite(t *testing.T) {
 
 func TestWebhookUpdate_ReadModifyWrite(t *testing.T) {
 	a := newAutomationFixture(t)
-	a.run("webhook", "register", "https://example.test/a", "-n", "payments", "--event", "RUN_FAILED").requireExit(t, exitOK)
+	a.run("webhook", "create", "https://example.test/a", "-n", "payments", "--event", "RUN_FAILED").requireExit(t, exitOK)
 	id := "wh-0000000000000001"
 	out := a.run("webhook", "update", id, "--name", "etl-loader", "--url", "https://example.test/b").requireExit(t, exitOK).stdout
 	if !strings.Contains(out, "RUN_FAILED") || !strings.Contains(out, "payments/*/*") || !strings.Contains(out, "The signing secret is unchanged.") {

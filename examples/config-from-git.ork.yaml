@@ -43,8 +43,8 @@
 # very next run. Behind a proxy, give the git tasks an `env:` mapping that sets
 # HTTPS_PROXY: it configures git, as it would on any machine.
 #
-#   orkctl run submit config-from-git --watch
-#   orkctl run submit config-from-git --watch   # again: readme..manifest are SUCCEEDED (cached)
+#   orkctl run submit config-from-git -w
+#   orkctl run submit config-from-git -w   # again: readme..manifest are SUCCEEDED (cached)
 apiVersion: orkstack/v1
 kind: Orkflow
 name: config-from-git

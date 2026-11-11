@@ -4,7 +4,7 @@ package orker_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"io/fs"
@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // referenceImage is the image the contract is measured against.
@@ -124,9 +126,7 @@ func pinnedReference(t *testing.T) string {
 func bindableWorkRoot(t *testing.T) string {
 	t.Helper()
 	repoRoot, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("resolve the repository root: %v", err)
-	}
+	must.OKf(t, err, "resolve the repository root")
 	candidates := []string{filepath.Join(repoRoot, ".data", "work"), t.TempDir()}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates, filepath.Join(home, ".orkstack-test-work"))
@@ -170,9 +170,7 @@ func bindableWorkRoot(t *testing.T) string {
 func newDispatcher(t *testing.T) (*orker.OCIDispatcher, *artifacts.MemoryCommitStore) {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local artifact store: %v", err)
-	}
+	must.OKf(t, err, "local artifact store")
 	commits := artifacts.NewMemoryCommitStore()
 	return &orker.OCIDispatcher{
 		Runtime:  orker.NewDockerRuntime(),
@@ -239,9 +237,7 @@ func TestIntegration_DispatcherRunsAReferenceImageEndToEnd(t *testing.T) {
 	defer cancel()
 
 	result, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	must.OKf(t, err, "Execute")
 
 	if result.GetExitCode() != 0 {
 		t.Errorf("exit code = %d, want 0", result.GetExitCode())
@@ -288,9 +284,7 @@ func TestIntegration_DispatcherRunsAReferenceImageEndToEnd(t *testing.T) {
 
 	// The commit exists, and it is what the result points at.
 	record, err := commits.Get(ctx, in.GetCommitUri())
-	if err != nil {
-		t.Fatalf("the commit was not written: %v", err)
-	}
+	must.OKf(t, err, "the commit was not written")
 	if record.SHA256 != result.GetCommit().GetSha256() {
 		t.Errorf("commit sha256 = %q, result says %q", record.SHA256, result.GetCommit().GetSha256())
 	}
@@ -354,9 +348,7 @@ func TestIntegration_BurstOutputBeforeExitIsNotTruncated(t *testing.T) {
 	defer cancel()
 
 	result, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	must.OKf(t, err, "Execute")
 	if result.GetExitCode() != 0 {
 		t.Fatalf("exit code = %d, want 0", result.GetExitCode())
 	}
@@ -399,9 +391,7 @@ func TestIntegration_AdoptsAnExistingCommitWithoutRunningTheContainer(t *testing
 	defer cancel()
 
 	first, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("first Execute: %v", err)
-	}
+	must.OKf(t, err, "first Execute")
 	if first.GetCommitAdopted() {
 		t.Fatal("the first attempt adopted a commit that did not exist")
 	}
@@ -416,9 +406,7 @@ func TestIntegration_AdoptsAnExistingCommitWithoutRunningTheContainer(t *testing
 	}
 
 	second, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("second Execute: %v", err)
-	}
+	must.OKf(t, err, "second Execute")
 	if !second.GetCommitAdopted() {
 		t.Fatal("the second attempt re-ran the container instead of adopting the durable commit")
 	}
@@ -478,9 +466,7 @@ func TestIntegration_WorkspaceModesAreWhatTheContainerSees(t *testing.T) {
 	defer cancel()
 
 	result, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
-	}
+	must.OKf(t, err, "Execute")
 
 	var observed struct {
 		UID      string `json:"uid"`
@@ -984,14 +970,10 @@ func readArtifact(
 			continue
 		}
 		reader, err := dispatcher.Store.Get(ctx, ref.GetUri())
-		if err != nil {
-			t.Fatalf("read %s at %s: %v", name, ref.GetUri(), err)
-		}
+		must.OKf(t, err, "read %s at %s", name, ref.GetUri())
 		defer func() { _ = reader.Close() }()
 		raw, err := io.ReadAll(reader)
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
+		must.OKf(t, err, "read %s", name)
 		return string(raw)
 	}
 	t.Fatalf("no artifact named %q in %v", name, refs)
@@ -1007,8 +989,6 @@ func failureDetail(t *testing.T, err error) *orkstackv1.ActivityFailureDetail {
 		t.Fatalf("error %T is not a *temporal.ApplicationError", err)
 	}
 	var detail *orkstackv1.ActivityFailureDetail
-	if err := applicationErr.Details(&detail); err != nil {
-		t.Fatalf("decode the failure detail: %v", err)
-	}
+	must.OKf(t, applicationErr.Details(&detail), "decode the failure detail")
 	return detail
 }

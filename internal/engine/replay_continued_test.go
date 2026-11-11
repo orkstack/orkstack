@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -25,8 +25,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The continued-run replay fixtures (testdata/history/README.md): a run recorded
@@ -67,9 +70,7 @@ func startArgs(t *testing.T, recorded *historypb.History) (string, *orkstackv1.O
 		plan  engine.RunPlan
 		carry *orkstackv1.RunContinuation
 	)
-	if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &runID, &wf, &input, &plan, &carry); err != nil {
-		t.Fatalf("decode the recorded start: %v", err)
-	}
+	must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &runID, &wf, &input, &plan, &carry), "decode the recorded start")
 	return runID, wf, input, plan, carry
 }
 
@@ -104,9 +105,7 @@ func TestRunWorkflow_ReplaysCommittedContinuedHistories(t *testing.T) {
 	requireContinuedFixtures(t)
 	runID := continuedRunID(t)
 	for _, path := range []string{continuedG0History, continuedG1History} {
-		if err := replayAs(t, loadHistoryFile(t, path), runID); err != nil {
-			t.Fatalf("replaying %s against current code failed: %v", path, err)
-		}
+		must.OKf(t, replayAs(t, loadHistoryFile(t, path), runID), "replaying %s against current code failed", path)
 	}
 }
 
@@ -116,9 +115,7 @@ func TestRunWorkflow_ReplaysCommittedInFlightCapHistory(t *testing.T) {
 	requireContinuedFixtures(t)
 	recorded := loadHistoryFile(t, inFlightCapHistory)
 	runID, _, _, _, _ := startArgs(t, recorded)
-	if err := replayAs(t, recorded, runID); err != nil {
-		t.Fatalf("replaying %s against current code failed: %v", inFlightCapHistory, err)
-	}
+	must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", inFlightCapHistory)
 }
 
 // versionMarkers is every Version marker's change id in a history.
@@ -253,9 +250,7 @@ func recordedChunks(t *testing.T, recorded *historypb.History) [][]byte {
 	var out [][]byte
 	for _, payloads := range recordedMarkers(t, recorded)[engine.ActivityReadContinuationChunk] {
 		var data []byte
-		if err := converter.GetDefaultDataConverter().FromPayloads(payloads, &data); err != nil {
-			t.Fatalf("decode a recorded chunk: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(payloads, &data), "decode a recorded chunk")
 		out = append(out, data)
 	}
 	return out
@@ -317,9 +312,7 @@ func TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 				continue
 			}
 			var in *orkstackv1.ExecuteTaskInput
-			if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in))
 			before[scheduleKey(in)] = inputs0[scheduleKey(in)]
 		}
 		if len(before) == 0 {
@@ -367,9 +360,7 @@ func TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		}
 		read := func(name string, obj *orkstackv1.ContinuationObject) []byte {
 			data, err := os.ReadFile(filepath.Join(continuedObjects, name))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if int64(len(data)) != obj.GetSizeBytes() || artifacts.ContinuationSHA256(data) != obj.GetSha256() {
 				t.Fatalf("%s does not match its reference", name)
 			}
@@ -377,9 +368,7 @@ func TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		}
 		seg := carry.GetSegments()[0]
 		segment, err := engine.DecodeEventSegment(read("segment.pb.gz", seg.GetObject()), seg.GetObject())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if seg.GetFirstSequence() != 1 || seg.GetLastSequence() != highest || seg.GetEventCount() != int64(len(published)) ||
 			int64(len(segment.GetEvents())) != seg.GetEventCount() {
 			t.Fatalf("segment %d–%d with %d events (%d decoded), want 1–%d with %d", seg.GetFirstSequence(),
@@ -392,16 +381,12 @@ func TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 			}
 		}
 		checkpoint, err := engine.DecodeCheckpoint(read("checkpoint.pb.gz", carry.GetCheckpoint()), carry.GetCheckpoint())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !strings.Contains(carry.GetSnapshot().GetUri(), "/continuations/000000-snapshot-"+carry.GetSnapshot().GetSha256()+".pb.gz") {
 			t.Fatalf("snapshot %q", carry.GetSnapshot().GetUri())
 		}
 		snapshot, err := engine.DecodeSwitchSnapshot(read("switch-snapshot.pb.gz", carry.GetSnapshot()), carry.GetSnapshot())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !proto.Equal(&orkstackv1.Run{TaskRuns: snapshot.GetTaskRuns()}, &orkstackv1.Run{TaskRuns: checkpoint.GetTaskRuns()}) {
 			t.Fatal("the switch snapshot's rows differ from the checkpoint's")
 		}
@@ -420,11 +405,9 @@ func TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 			nextInput *orkstackv1.Payload
 			nextPlan  engine.RunPlan
 		)
-		if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &nextID, &nextWf, &nextInput, &nextPlan); err != nil {
-			t.Fatal(err)
-		}
-		wantPlan, _ := json.Marshal(plan)
-		gotPlan, _ := json.Marshal(nextPlan)
+		must.OK(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &nextID, &nextWf, &nextInput, &nextPlan))
+		wantPlan, _ := stablejson.Marshal(plan)
+		gotPlan, _ := stablejson.Marshal(nextPlan)
 		if nextID != "" || !proto.Equal(nextWf, wf) || !proto.Equal(nextInput, input) || string(gotPlan) != string(wantPlan) || id == "" {
 			t.Fatalf("the switch's arguments are not generation 0's: run id %q", nextID)
 		}
@@ -545,9 +528,7 @@ func continuedEventOf(t *testing.T, recorded *historypb.History) *historypb.Work
 func continuedCarryFromHistory(t *testing.T, recorded *historypb.History) *orkstackv1.RunContinuation {
 	t.Helper()
 	var carry *orkstackv1.RunContinuation
-	if err := converter.GetDefaultDataConverter().FromPayload(continuedEventOf(t, recorded).GetInput().GetPayloads()[4], &carry); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, converter.GetDefaultDataConverter().FromPayload(continuedEventOf(t, recorded).GetInput().GetPayloads()[4], &carry))
 	return carry
 }
 
@@ -562,7 +543,7 @@ func TestContinuedHistory_CatchesASwitchWithoutItsGate(t *testing.T) {
 	defer engine.ForceContinuationForTest(budget, limit)()
 	caught := 0
 	for _, path := range committedFixtures(t) {
-		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) {
+		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) || isCanceledAtItsFirstIdlePointHistory(path) {
 			continue
 		}
 		recorded := loadHistoryFile(t, path)
@@ -645,7 +626,7 @@ func TestContinuedHistory_CatchesAChangedPinnedBatchSize(t *testing.T) {
 		t.Fatalf("the fixture reads %d chunks: too few to see a change to 4", chunks)
 	}
 	continuation["chunks_per_task"] = 4
-	data, err := json.Marshal(plan)
+	data, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}

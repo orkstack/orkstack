@@ -12,6 +12,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // chainKind is what each link of a test chain is.
@@ -75,6 +77,9 @@ func explicitMinimalInput(t *testing.T, wf *orkstackv1.Orkflow, id string) int64
 	for _, a := range dsl.RequiredAncestors(wf)[id] {
 		kind := dsl.RefPlain
 		switch {
+		case byID[a].GetSleep() != nil:
+			continue // a sleep hands its dependants no reference
+
 		case byID[a].GetEach() != nil:
 			if !direct[a] {
 				continue
@@ -86,9 +91,7 @@ func explicitMinimalInput(t *testing.T, wf *orkstackv1.Orkflow, id string) int64
 		in.Upstream = append(in.Upstream, dsl.MinimalUpstreamRef(kind, wf.GetNamespace(), a))
 	}
 	size, err := task.PayloadSize(in)
-	if err != nil {
-		t.Fatalf("measure %s's input: %v", id, err)
-	}
+	must.OKf(t, err, "measure %s's input", id)
 	return size
 }
 
@@ -101,9 +104,7 @@ func refusalDepth(t *testing.T, kind chainKind) int {
 		mid := (low + high) / 2
 		wf := chainProto(mid, kind)
 		size, _, err := dsl.MinimalInputBytes(wf, fmt.Sprintf("c%d", mid-1))
-		if err != nil {
-			t.Fatalf("measure: %v", err)
-		}
+		must.OKf(t, err, "measure")
 		if size > task.MaxActivityInputBytes {
 			high = mid
 		} else {
@@ -197,9 +198,7 @@ tasks:
 `)
 	for _, task := range wf.GetTasks() {
 		got, _, err := dsl.MinimalInputBytes(wf, task.GetId())
-		if err != nil {
-			t.Fatalf("%s: %v", task.GetId(), err)
-		}
+		must.OKf(t, err, "%s", task.GetId())
 		if want := explicitMinimalInput(t, wf, task.GetId()); got != want {
 			t.Fatalf("%s: MinimalInputBytes = %d, PayloadSize of the minimal input = %d", task.GetId(), got, want)
 		}
@@ -354,9 +353,7 @@ tasks:
 	}
 	in := func(id string, refs ...*orkstackv1.UpstreamRef) int64 {
 		size, err := task.PayloadSize(&orkstackv1.ExecuteTaskInput{TaskId: id, Upstream: refs})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return size
 	}
 	plain := func(id string) *orkstackv1.UpstreamRef { return dsl.MinimalUpstreamRef(dsl.RefPlain, "", id) }
@@ -385,22 +382,16 @@ tasks:
 func TestValidate_MinimalRefSize(t *testing.T) {
 	const ns = "default"
 	key, err := artifacts.CommitKey(ns, "ork-0-0", "c1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	minimal := dsl.MinimalUpstreamRef(dsl.RefPlain, ns, "c1")
 	if minimal.GetCommitUri() != "/"+key {
 		t.Fatalf("minimal commit uri %q, want the engine's %q with an empty store root", minimal.GetCommitUri(), "/"+key)
 	}
 	marginal := func(ref *orkstackv1.UpstreamRef) int64 {
 		one, err := task.PayloadSize(&orkstackv1.ExecuteTaskInput{Upstream: []*orkstackv1.UpstreamRef{ref}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		two, err := task.PayloadSize(&orkstackv1.ExecuteTaskInput{Upstream: []*orkstackv1.UpstreamRef{ref, ref}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return two - one
 	}
 	plain := marginal(minimal)
@@ -412,9 +403,7 @@ func TestValidate_MinimalRefSize(t *testing.T) {
 	// records them.
 	runID := "ork-1760550000123456789-8589934593"
 	realKey, err := artifacts.CommitKey(ns, runID, "c1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	sha := strings.Repeat("7f", 32)
 	object := func(name string) string { // the S3 store's provenance key
 		return "s3://orkstack-artifacts/orkflows/chain/" + runID + "/c1/" + name + "/" + sha

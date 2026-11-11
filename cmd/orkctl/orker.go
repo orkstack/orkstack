@@ -279,7 +279,7 @@ func newOrkerDrainCommand(g *globalFlags) *cobra.Command {
 	// here it is the drain bound, and each poll is bounded by drainPollTimeout.
 	cmd.Flags().DurationVar(&timeout, "timeout", 30*time.Minute,
 		"how long to wait for the Orker to finish its tasks and pins (on this command, not the per-request timeout)")
-	cmd.Flags().BoolVar(&watch, "watch", false, "print a line each time the running tasks or open pins change")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "print a line each time the running tasks or open pins change")
 	return cmd
 }
 

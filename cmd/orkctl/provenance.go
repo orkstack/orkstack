@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // The fixed wordings of a provenance answer. The UI's disclosure renders the
@@ -64,7 +65,7 @@ func newRunArtifactProvenanceCommand(g *globalFlags) *cobra.Command {
 			return renderArtifactProvenance(cmd.OutOrStdout(), response.Msg, request)
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "", "task that recorded the artifact")
+	cmd.Flags().StringVarP(&task, "task", "t", "", "task that recorded the artifact")
 	cmd.Flags().StringVar(&kindText, "kind", "", "artifact kind: output, values, stdout, stderr")
 	cmd.Flags().StringVar(&name, "name", "", "exact artifact name returned by run artifacts")
 	cmd.Flags().StringVar(&expect, "expect-sha256", "", "fail unless the recorded digest is this lowercase hex sha256")
@@ -85,7 +86,7 @@ func renderArtifactProvenance(out io.Writer, res *orkstackv1.GetArtifactProvenan
 	} else {
 		digest = "sha256:" + digest
 	}
-	fmt.Fprintf(head, "ARTIFACT\t%s  %s  %d bytes  %s\n", artifact.GetName(), strings.TrimPrefix(req.GetKind().String(), "ARTIFACT_KIND_"), artifact.GetSizeBytes(), digest)
+	fmt.Fprintf(head, "ARTIFACT\t%s  %s  %d bytes  %s\n", artifact.GetName(), enumname.Of(req.GetKind()), artifact.GetSizeBytes(), digest)
 	bytesLine := provenanceBytesPresent
 	if !res.GetBytesPresent() {
 		bytesLine = provenanceBytesMissing
@@ -109,7 +110,7 @@ func renderArtifactProvenance(out io.Writer, res *orkstackv1.GetArtifactProvenan
 			}
 			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 				ref.GetRunId(), orDash(ref.GetOrkflowName()), orDash(ref.GetOrkflowVersion()), itemLabel(ref.GetTaskId(), ref.Item),
-				strings.TrimPrefix(ref.GetKind().String(), "ARTIFACT_KIND_"), statusLabel(ref.GetRunStatus()), created)
+				enumname.Of(ref.GetKind()), statusLabel(ref.GetRunStatus()), created)
 		}
 		if err := table.Flush(); err != nil {
 			return err

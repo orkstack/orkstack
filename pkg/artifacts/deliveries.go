@@ -3,7 +3,6 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,6 +15,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -286,7 +286,7 @@ func MarshalDelivery(rec *orkstackv1.Delivery) ([]byte, error) {
 		return nil, fmt.Errorf("artifacts: encode delivery record %q: %w", rec.GetId(), err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode delivery record %q: %w", rec.GetId(), err)
 	}
 	out.WriteByte('\n')
@@ -507,14 +507,11 @@ func walkDaysNewestFirst(ctx context.Context, last, first time.Time, visit func(
 // triggers and the audit trail — one ORK_ARTIFACT_BACKEND, no setting of its
 // own.
 func NewDeliveryStore(ctx context.Context, cfg Config) (DeliveryStore, error) {
-	switch cfg.Backend {
-	case "", BackendLocal:
-		return NewLocalDeliveryStore(localDir(cfg))
-	case BackendS3:
-		return NewS3DeliveryStore(ctx, cfg)
-	default:
-		return nil, fmt.Errorf("artifacts: delivery store backend %q: %w", cfg.Backend, ErrUnknownBackend)
+	b, err := openBlobs(ctx, cfg, "delivery store", DeliveryPrefix)
+	if err != nil {
+		return nil, err
 	}
+	return &BlobDeliveryStore{blobBase: blobBase{b}}, nil
 }
 
 // MemoryDeliveryStore is an in-memory DeliveryStore for tests. It bounds,

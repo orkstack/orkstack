@@ -2,7 +2,7 @@ package dsl_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
 	"flag"
 	"os"
 	"path/filepath"
@@ -14,6 +14,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var updateCompat = flag.Bool("update", false, "rewrite testdata goldens")
@@ -94,9 +99,7 @@ tasks:
 func compile(t *testing.T, source string) *orkstackv1.Orkflow {
 	t.Helper()
 	wf, err := dsl.Compile([]byte(source))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	return wf
 }
 
@@ -104,9 +107,7 @@ func compile(t *testing.T, source string) *orkstackv1.Orkflow {
 func decl(t *testing.T, m map[string]any) *structpb.Value {
 	t.Helper()
 	v, err := structpb.NewValue(m)
-	if err != nil {
-		t.Fatalf("structpb: %v", err)
-	}
+	must.OKf(t, err, "structpb")
 	return v
 }
 
@@ -116,9 +117,7 @@ func iface(t *testing.T, inputs map[string]any, outputs ...string) *orkstackv1.O
 	wf := &orkstackv1.Orkflow{Name: "x", Version: "1"}
 	if inputs != nil {
 		s, err := structpb.NewStruct(inputs)
-		if err != nil {
-			t.Fatalf("structpb: %v", err)
-		}
+		must.OKf(t, err, "structpb")
 		wf.Inputs = s
 	}
 	if len(outputs) > 0 {
@@ -432,31 +431,20 @@ func TestCompareInterfaces_MessagesGolden(t *testing.T) {
 	rows := make([]row, 0, len(got))
 	for _, f := range got {
 		rows = append(rows, row{f.GetField(),
-			strings.TrimPrefix(f.GetChange().String(), "INTERFACE_CHANGE_"),
-			strings.TrimPrefix(f.GetVerdict().String(), "INTERFACE_VERDICT_"),
+			enumname.Of(f.GetChange()),
+			enumname.Of(f.GetVerdict()),
 			f.GetFrom(), f.GetTo(), f.GetMessage()})
 	}
 	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(rows); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, stablejson.Encode(&buf, rows, stablejson.Unescaped, jsontext.WithIndent("  ")))
 	encoded := buf.Bytes()
 	path := filepath.Join("testdata", "compat", "release-block-2.1.0-3.0.0.golden")
 	if *updateCompat {
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, encoded, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		must.OK(t, os.WriteFile(path, encoded, 0o644))
 	}
 	want, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read golden (run with -update to create it): %v", err)
-	}
+	must.OKf(t, err, "read golden (run with -update to create it)")
 	if string(want) != string(encoded) {
 		t.Fatalf("golden mismatch\n got:\n%s\nwant:\n%s", encoded, want)
 	}

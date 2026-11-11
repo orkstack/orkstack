@@ -3,7 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -19,7 +19,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // webhookJSON performs one management call and returns the status and body.
@@ -27,28 +30,22 @@ func (f *fixture) webhookJSON(t *testing.T, method, path string, body any) (int,
 	t.Helper()
 	var reader io.Reader
 	if body != nil {
-		encoded, err := json.Marshal(body)
+		encoded, err := stablejson.Marshal(body)
 		if err != nil {
 			t.Fatalf("encode request: %v", err)
 		}
 		reader = bytes.NewReader(encoded)
 	}
 	req, err := http.NewRequestWithContext(context.Background(), method, f.baseURL+path, reader)
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatalf("%s %s: %v", method, path, err)
-	}
+	must.OKf(t, err, "%s %s", method, path)
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
+	must.OKf(t, err, "read response")
 	return resp.StatusCode, payload
 }
 
@@ -156,9 +153,7 @@ func TestWebhookAPI_RejectsAnUnreachableURLAndAnUnknownEvent(t *testing.T) {
 func TestWebhookAPI_DeleteRemovesTheSubscriptionAndReportsAnUnknownID(t *testing.T) {
 	f := newFixture(t)
 	hook, err := f.svc.Webhooks().Register(webhooks.Registration{URL: "https://example.test/hooks"})
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
+	must.OKf(t, err, "Register")
 	itemPath := strings.Replace(api.WebhookItemPath, "{id}", hook.ID, 1)
 
 	status, body := f.webhookJSON(t, http.MethodGet, itemPath, nil)
@@ -243,15 +238,11 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 		Events: []webhooks.Event{webhooks.EventRunSucceeded},
 		Secret: "s3cr3t",
 	})
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
+	must.OKf(t, err, "Register")
 
 	finished := time.Unix(1755302400, 0).UTC()
 	input, err := structpb.NewStruct(map[string]any{"url": "https://httpbin.org/json"})
-	if err != nil {
-		t.Fatalf("build input: %v", err)
-	}
+	must.OKf(t, err, "build input")
 	run := &orkstackv1.Run{
 		Id:             "ork-1755302400123456789-1",
 		OrkflowName:    "hello-ork",
@@ -266,12 +257,16 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 	}
 	f.adapter.NotifyRunEvent(context.Background(), &orkstackv1.Event{
 		RunId:     run.GetId(),
+		Sequence:  5,
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		Status:    orkstackv1.Status_STATUS_SUCCEEDED,
 		Timestamp: timestamppb.New(finished),
 	}, run)
 
 	body, headers := f.awaitDelivery(t)
+	if headers.Get(webhooks.SequenceHeader) != "5" {
+		t.Errorf("%s = %q, want the event's sequence 5", webhooks.SequenceHeader, headers.Get(webhooks.SequenceHeader))
+	}
 	if !webhooks.Verify("s3cr3t", body, headers.Get(webhooks.SignatureHeader)) {
 		t.Errorf("the delivery signature does not verify against the body")
 	}
@@ -283,14 +278,18 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 	}
 
 	var payload struct {
-		RunID       string          `json:"runId"`
-		OrkflowName string          `json:"orkflowName"`
-		Status      string          `json:"status"`
-		Timestamp   string          `json:"timestamp"`
-		Run         json.RawMessage `json:"run"`
+		RunID       string             `json:"runId"`
+		OrkflowName string             `json:"orkflowName"`
+		Status      string             `json:"status"`
+		Timestamp   string             `json:"timestamp"`
+		Sequence    int64              `json:"sequence"`
+		Run         stablejson.RawJSON `json:"run"`
 	}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		t.Fatalf("decode payload: %v (%s)", err, body)
+	}
+	if payload.Sequence != 5 {
+		t.Errorf("sequence = %d, want the event's sequence 5", payload.Sequence)
 	}
 	if payload.RunID != run.GetId() {
 		t.Errorf("runId = %q, want %q", payload.RunID, run.GetId())
@@ -308,9 +307,7 @@ func TestWebhookNotifier_PostsASignedPayloadNamingTheRunAndItsStatus(t *testing.
 	// The embedded run is the same JSON the rest of the API emits, enum
 	// dialect included, and it is the whole run rather than a summary.
 	wantRun, err := api.MarshalJSON(run)
-	if err != nil {
-		t.Fatalf("MarshalJSON: %v", err)
-	}
+	must.OKf(t, err, "MarshalJSON")
 	var got, want map[string]any
 	if err := json.Unmarshal(payload.Run, &got); err != nil {
 		t.Fatalf("decode embedded run: %v", err)
@@ -369,9 +366,15 @@ func TestSubmitRun_AnnouncesARunThatNeverReachedTemporal(t *testing.T) {
 	if !webhooks.Verify("s3cr3t", body, headers.Get(webhooks.SignatureHeader)) {
 		t.Error("the delivery signature does not verify against the body")
 	}
+	// Its stream shows RUN_CREATED at 1 and RUN_FAILED at 2, and the
+	// delivery carries the sequence the stream shows.
+	if headers.Get(webhooks.SequenceHeader) != "2" {
+		t.Errorf("%s = %q, want 2, the RUN_FAILED event's sequence", webhooks.SequenceHeader, headers.Get(webhooks.SequenceHeader))
+	}
 	var payload struct {
-		Status string `json:"status"`
-		Run    struct {
+		Status   string `json:"status"`
+		Sequence int64  `json:"sequence"`
+		Run      struct {
 			Error struct {
 				Code string `json:"code"`
 			} `json:"error"`
@@ -382,6 +385,9 @@ func TestSubmitRun_AnnouncesARunThatNeverReachedTemporal(t *testing.T) {
 	}
 	if payload.Status != "FAILED" {
 		t.Errorf("status = %q, want FAILED", payload.Status)
+	}
+	if payload.Sequence != 2 {
+		t.Errorf("sequence = %d, want 2, the RUN_FAILED event's sequence", payload.Sequence)
 	}
 	if payload.Run.Error.Code != "RUN_START_FAILED" {
 		t.Errorf("run error code = %q, want RUN_START_FAILED", payload.Run.Error.Code)

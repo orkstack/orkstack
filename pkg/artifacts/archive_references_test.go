@@ -138,7 +138,7 @@ func TestLocalRunArchive_ListObjectReferencesSkipsAForeignKey(t *testing.T) {
 	archive := newReferenceArchive(t)
 	shared := objectKey("report.txt", strings.Repeat("a", 64))
 	archiveWithObjects(t, archive, "ork-1-1", shared)
-	if err := archive.writeAtomic(runObjectRefPrefix(shared)+"~!!notbase64", nil); err != nil {
+	if err := archive.b.put(context.Background(), runObjectRefPrefix(shared)+"~!!notbase64", "", nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := archive.ListObjectReferences(context.Background(), shared)

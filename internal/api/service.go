@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/typeid"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -159,7 +160,7 @@ type Config struct {
 	// it was never called (unit-test convenience, never a production fallback).
 	Deliveries artifacts.DeliveryStore
 	// Redelivery sends RedeliverWebhook's one POST. Nil builds
-	// webhooks.NewDispatcher(webhooks.DispatcherOptions{MaxRetries: -1}): one
+	// webhooks.NewDispatcher(webhooks.DispatcherOptions{}): one
 	// request, the default 10 s timeout, no ladder. Tests inject a client.
 	Redelivery *webhooks.Dispatcher
 
@@ -678,7 +679,7 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.redelivery == nil {
 		// One request, no ladder: the operator is the retry policy.
-		svc.redelivery = webhooks.NewDispatcher(webhooks.DispatcherOptions{MaxRetries: -1})
+		svc.redelivery = webhooks.NewDispatcher(webhooks.DispatcherOptions{})
 	}
 	if cfg.AuditStore != nil {
 		svc.auditStore = cfg.AuditStore
@@ -804,9 +805,13 @@ func (s *Service) ApplyOrkflow(
 			// The edit lost the commit, not the check: a competing apply
 			// landed between the read above and the write. Same refusal, in
 			// the same words — the caller cannot tell the two apart, and
-			// should not have to.
-			return nil, editRaceRefusal(ns.GetName(), wf.GetName(),
-				req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion(), moved.Head)
+			// should not have to. What the store did with the version it
+			// wrote (left it, removed it, put it back) rides along, and the
+			// store's whole error is logged.
+			s.logger.Warn("apply refused: the head moved while it was written",
+				"namespace", ns.GetName(), "orkflow", wf.GetName(), "version", wf.GetVersion(), "error", err)
+			return nil, withStoreNote(editRaceRefusal(ns.GetName(), wf.GetName(),
+				req.Msg.GetBaseVersion(), req.Msg.GetExpectedHeadVersion(), moved.Head), storeNote(err, moved))
 		}
 		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
 			wf.GetName(), wf.GetVersion(), ns.GetName())
@@ -1143,7 +1148,7 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 //
 //	base    expected  condition
 //	----    --------  ---------
-//	""      ""        none — a plain `orkctl apply file.yaml`
+//	""      ""        none — a plain `orkctl orkflow create file.yaml`
 //	any     set       head must be expected; base, when set, must name a
 //	                  stored version (NotFound if not)
 //	set     ""        InvalidArgument naming both fields
@@ -1221,6 +1226,22 @@ func editRaceRefusal(namespace, name, base, expectedHead, head string) error {
 			"and is now %q; run `orkctl orkflow diff %s %s %s` and re-apply",
 		name, namespace, derivedFrom(base), expectedHead, head,
 		name, expectedHead, head))
+}
+
+// storeNote is what a store added to the refusal it returned: the text after
+// the refusal's own, such as what a rollback did with the version the apply
+// wrote. "" when it added nothing.
+func storeNote(err, refusal error) string {
+	return strings.TrimSpace(strings.TrimPrefix(err.Error(), refusal.Error()))
+}
+
+// withStoreNote appends a store's note to a refusal, keeping its code.
+func withStoreNote(refusal error, note string) error {
+	var connectErr *connect.Error
+	if note == "" || !errors.As(refusal, &connectErr) {
+		return refusal
+	}
+	return connect.NewError(connectErr.Code(), fmt.Errorf("%s %s", connectErr.Message(), note))
 }
 
 // storesVersion reports whether one version is among the stored ones.
@@ -1363,7 +1384,7 @@ type orkflowCursor struct {
 const orkflowCursorVersion = 2
 
 func encodeOrkflowCursor(namespace string, set listfilter.Set, name string) (string, error) {
-	raw, err := json.Marshal(orkflowCursor{Version: orkflowCursorVersion, Namespace: namespace, Filters: set.Key(), Name: name})
+	raw, err := stablejson.Marshal(orkflowCursor{Version: orkflowCursorVersion, Namespace: namespace, Filters: set.Key(), Name: name})
 	if err != nil {
 		return "", err
 	}
@@ -1733,7 +1754,7 @@ func checkRunStartPayloads(wf *orkstackv1.Orkflow, input *orkstackv1.Payload) er
 // checkRunPlanSize refuses a run whose plan encodes over engine.MaxPlanBytes,
 // with or without composed children.
 func checkRunPlanSize(plan engine.RunPlan) error {
-	encoded, err := json.Marshal(plan)
+	encoded, err := stablejson.Marshal(plan)
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("encode the run's plan: %w", err))
 	}
@@ -2173,7 +2194,7 @@ func (s *Service) recordFailedStartWith(
 	}, runID+"#created")
 	s.bus.Publish(&orkstackv1.Event{
 		RunId:     runID,
-		Sequence:  2,
+		Sequence:  runFailedToStartSequence,
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		Status:    orkstackv1.Status_STATUS_FAILED,
 		Message:   cause.Error(),
@@ -2183,6 +2204,10 @@ func (s *Service) recordFailedStartWith(
 	s.archiveRun(ctx, runID)
 	return connect.NewError(code, cause)
 }
+
+// runFailedToStartSequence is the sequence of the RUN_FAILED a run that never
+// reached Temporal publishes, after its RUN_CREATED at 1.
+const runFailedToStartSequence = 2
 
 // notifyRunFailedToStart announces the terminal transition of a run that never
 // reached Temporal, so a subscriber — and telemetry — sees the same
@@ -2208,7 +2233,10 @@ func (s *Service) notifyRunFailedToStart(
 		Timestamp: failedAt,
 	}
 	if s.notifier != nil {
-		s.notifier.NotifyRunEvent(ctx, event, run)
+		// A delivery carries the sequence the run's stream shows for it.
+		delivered := proto.Clone(event).(*orkstackv1.Event)
+		delivered.Sequence = runFailedToStartSequence
+		s.notifier.NotifyRunEvent(ctx, delivered, run)
 	}
 	if s.observer != nil {
 		s.observer.ObserveEvent(ctx, event, run)
@@ -2547,43 +2575,78 @@ func errRunNotInNamespace(runID, namespace string) error {
 // errors are LookupRunIn's, word for word: NotFound for a missing run and for
 // a run of another namespace alike.
 func (s *Service) runNamespaceIn(ctx context.Context, runID, namespace string) error {
+	_, err := s.runFactsIn(ctx, runID, namespace)
+	return err
+}
+
+// runFacts is what runFactsIn learns about a run beside its namespace: the
+// namespace that owns the Orkflow it ran (empty when its own) and its root —
+// or, for a child whose plan recorded no root, its parent.
+type runFacts struct {
+	Orkflow          string
+	OrkflowNamespace string
+	RootRunID        string
+}
+
+// rootOrParent is a child run's root, or its parent when no root was recorded.
+func rootOrParent(origin *orkstackv1.RunOrigin) string {
+	if root := origin.GetRootRunId(); root != "" {
+		return root
+	}
+	if origin.GetKind() == orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN {
+		return origin.GetId()
+	}
+	return ""
+}
+
+// runFactsIn is runNamespaceIn returning the facts its one read already holds.
+func (s *Service) runFactsIn(ctx context.Context, runID, namespace string) (runFacts, error) {
 	ns, err := s.namespace(ctx, namespace)
 	if err != nil {
-		return err
+		return runFacts{}, err
 	}
 	resolved := ns.GetName()
 	binding, err := s.locate(ctx, runID)
 	if err != nil {
-		return err
+		return runFacts{}, err
 	}
-	found, runNamespace := false, ""
+	found, runNamespace, facts := false, "", runFacts{}
 	if binding.Reader != nil {
 		start, err := binding.Reader.RunStart(ctx, runID)
 		switch {
 		case err == nil:
 			found, runNamespace = true, start.Orkflow.GetNamespace()
+			facts = runFacts{Orkflow: start.Orkflow.GetName(), OrkflowNamespace: start.Orkflow.GetDefinitionNamespace()}
+			if start.Plan.Origin != nil {
+				facts.RootRunID = start.Plan.Origin.RootRunID
+				if facts.RootRunID == "" && start.Plan.Origin.Kind == engine.RunOriginKindParentRun {
+					facts.RootRunID = start.Plan.Origin.ID
+				}
+			}
 		case !errors.Is(err, artifacts.ErrNotFound):
-			return connect.NewError(connect.CodeUnavailable, fmt.Errorf("read run %q: %w", runID, err))
+			return runFacts{}, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read run %q: %w", runID, err))
 		}
 	} else if run, ok := s.runs.Get(runID); ok {
 		found, runNamespace = true, run.GetNamespace()
+		facts = runFacts{Orkflow: run.GetOrkflowName(), OrkflowNamespace: run.GetOrkflowNamespace(), RootRunID: rootOrParent(run.GetOrigin())}
 	}
 	if !found && s.archive != nil {
 		run, err := s.archive.LoadRun(ctx, runID)
 		switch {
 		case err == nil:
 			found, runNamespace = true, run.GetNamespace()
+			facts = runFacts{Orkflow: run.GetOrkflowName(), OrkflowNamespace: run.GetOrkflowNamespace(), RootRunID: rootOrParent(run.GetOrigin())}
 		case !errors.Is(err, artifacts.ErrNotFound):
-			return connect.NewError(connect.CodeInternal,
+			return runFacts{}, connect.NewError(connect.CodeInternal,
 				fmt.Errorf("read run %q from archive: %w", runID, err))
 		}
 	}
 	if !found || artifacts.ResolveNamespace(runNamespace) != resolved {
 		// An unknown id and another namespace's run read the same, as in
 		// lookupRunInResolved: the message names where it looked.
-		return errRunNotInNamespace(runID, resolved)
+		return runFacts{}, errRunNotInNamespace(runID, resolved)
 	}
-	return nil
+	return facts, nil
 }
 
 // GetRun returns a run of one namespace, from whichever replica the request
@@ -2600,6 +2663,7 @@ func (s *Service) GetRun(
 	if err != nil {
 		return nil, err
 	}
+	SetRunTiming(run, time.Now())
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
@@ -2788,7 +2852,7 @@ type runCursor struct {
 }
 
 func encodeRunCursor(c runCursor) (string, error) {
-	raw, err := json.Marshal(c)
+	raw, err := stablejson.Marshal(c)
 	if err != nil {
 		return "", err
 	}
@@ -3052,7 +3116,7 @@ func (s *Service) streamRunEventsFrom(
 		return s.replayArchivedEvents(ctx, runID, fromSequence, send)
 	}
 
-	events, cancel, terminalAlreadyReached := s.bus.Subscribe(runID, fromSequence)
+	events, cancel, terminalAlreadyReached, streamErr := s.bus.Subscribe(runID, fromSequence)
 	defer cancel()
 	if terminalAlreadyReached {
 		return nil
@@ -3064,6 +3128,11 @@ func (s *Service) streamRunEventsFrom(
 			return nil
 		case event, open := <-events:
 			if !open {
+				// A number the bus waited for too long ends the stream with
+				// its own error, never a silent stall (EventBus.Subscribe).
+				if err := streamErr(); err != nil {
+					return connect.NewError(connect.CodeUnavailable, err)
+				}
 				return nil
 			}
 			if err := send(event); err != nil {

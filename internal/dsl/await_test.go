@@ -10,13 +10,13 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestCompile_AwaitTaskCompiles(t *testing.T) {
 	wf, err := dsl.CompileFile("testdata/orkflows/awaited-approval.ork.yaml")
-	if err != nil {
-		t.Fatalf("compile the example: %v", err)
-	}
+	must.OKf(t, err, "compile the example")
 	var approval *orkstackv1.Task
 	for _, task := range wf.GetTasks() {
 		if task.GetId() == "approval" {
@@ -57,9 +57,7 @@ tasks:
   - id: gate
     await: {timeout_seconds: 60}
 `))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	if wf.GetTasks()[0].GetAwait().GetSchema() != nil {
 		t.Fatalf("schema = %v, want unset", wf.GetTasks()[0].GetAwait().GetSchema())
 	}
@@ -105,9 +103,7 @@ func TestCompile_AwaitRefusesEveryExecutionField(t *testing.T) {
 	}
 	t.Run("run_as_orker_user false is absent", func(t *testing.T) {
 		_, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: ok\ntasks:\n  - id: gate\n    await: {timeout_seconds: 60}\n    run_as_orker_user: false\n"))
-		if err != nil {
-			t.Fatalf("run_as_orker_user: false refused: %v", err)
-		}
+		must.OKf(t, err, "run_as_orker_user: false refused")
 	})
 }
 
@@ -143,9 +139,7 @@ func TestCompile_AwaitTimeoutBounds(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: bounds\ntasks:\n  - id: gate\n    await: " + tc.await + "\n"))
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("refused: %v", err)
-				}
+				must.OKf(t, err, "refused")
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
@@ -201,9 +195,7 @@ tasks:
         e: {type: array}
         "not a slug": {type: string}
 `))
-		if err != nil {
-			t.Fatalf("refused: %v", err)
-		}
+		must.OKf(t, err, "refused")
 	})
 }
 
@@ -244,9 +236,7 @@ tasks:
       op: exec
       command: ["echo", "{{ .tasks.gate.output.model_uri }}"]
 `))
-	if err != nil {
-		t.Fatalf("refused: %v", err)
-	}
+	must.OKf(t, err, "refused")
 }
 
 func TestValidateAwaitValues(t *testing.T) {
@@ -257,9 +247,7 @@ func TestValidateAwaitValues(t *testing.T) {
 		"meta":      map[string]any{"type": "object"},
 		"tags":      map[string]any{"type": "array"},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	spec := &orkstackv1.AwaitSpec{TimeoutSeconds: 60, Schema: schema}
 	cases := []struct {
 		name      string
@@ -273,7 +261,11 @@ func TestValidateAwaitValues(t *testing.T) {
 		{"string", nil, `"x"`, 0, "", "the values must be a JSON object, not a string"},
 		{"null", nil, `null`, 0, "", "the values must be a JSON object, not null"},
 		{"invalid utf-8", nil, "{\"a\":\"\xff\"}", 0, "", "the values are not valid UTF-8"},
-		{"invalid json", nil, `{"a":`, 0, "", "the values are not one valid JSON value"},
+		{"invalid json", nil, `{"a":`, 0, "", `the values are not one valid JSON value: unexpected EOF within "/a" after offset 5`},
+		// encoding/json kept the last of two values for one key; the values
+		// are stored byte for byte, so which one a reader sees would depend on
+		// its decoder.
+		{"a key written twice", nil, `{"a":1,"b":{"c":1,"c":2}}`, 0, "", `the values are not one valid JSON value: the key "c" appears twice in the object at /b; a JSON object holds each key once`},
 		// Go's decoder reads half of a surrogate pair as U+FFFD, so a body
 		// stored byte for byte would be read back as something else.
 		{"lone high surrogate", nil, `{"a":"\ud800"}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
@@ -282,7 +274,7 @@ func TestValidateAwaitValues(t *testing.T) {
 		{"lone surrogate in a key", nil, `{"\ud800":1}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
 		{"a surrogate pair is a character", nil, `{"a":"😀"}`, 0, "", ""},
 		{"an escaped backslash before u is no escape", nil, `{"a":"\\ud800"}`, 0, "", ""},
-		{"two values", nil, `{}{}`, 0, "", "the values are not one valid JSON value"},
+		{"two values", nil, `{}{}`, 0, "", "the values are not one valid JSON value: invalid character '{' after top-level value after offset 2"},
 		{"over the bound", nil, `{"a":"bcdef"}`, 5, "", "the values are 13 bytes, over the 5-byte limit"},
 		{"missing required", spec, `{}`, 0, "values.model_uri", "is required by the await's schema"},
 		{"null for a typed key", spec, `{"model_uri":null}`, 0, "values.model_uri", "must be a string, not null"},
@@ -305,9 +297,7 @@ func TestValidateAwaitValues(t *testing.T) {
 				t.Fatalf("the input slice was modified: %q -> %q", before, raw)
 			}
 			if tc.wantMsg == "" {
-				if err != nil {
-					t.Fatalf("refused: %v", err)
-				}
+				must.OKf(t, err, "refused")
 				return
 			}
 			var verr *dsl.AwaitValuesError

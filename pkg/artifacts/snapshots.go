@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/url"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -177,76 +176,13 @@ type RunSnapshotStore interface {
 	ContinuationURI(namespace, runID string, generation int64, kind, sha256hex string) (string, error)
 }
 
-// RunSnapshotStoreFactory builds a RunSnapshotStore from a Config. A backend
-// that can hold run snapshots registers one, mirroring Factory, ArchiveFactory
-// and LogStoreFactory.
-type RunSnapshotStoreFactory func(cfg Config) (RunSnapshotStore, error)
-
-var snapshotStoreRegistry = map[string]RunSnapshotStoreFactory{}
-
-// RegisterRunSnapshotStore adds a snapshot-store factory under name.
-func RegisterRunSnapshotStore(name string, f RunSnapshotStoreFactory) error {
-	if name == "" {
-		return fmt.Errorf("artifacts: register snapshot store: empty name")
-	}
-	if f == nil {
-		return fmt.Errorf("artifacts: register snapshot store %q: nil factory", name)
-	}
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	if _, exists := snapshotStoreRegistry[name]; exists {
-		return fmt.Errorf("artifacts: register snapshot store %q: already registered", name)
-	}
-	snapshotStoreRegistry[name] = f
-	return nil
-}
-
-// RunSnapshotStoreBackends lists the backends that can hold snapshots, sorted.
-func RunSnapshotStoreBackends() []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	names := make([]string, 0, len(snapshotStoreRegistry))
-	for name := range snapshotStoreRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // NewRunSnapshotStore builds the RunSnapshotStore named by cfg.Backend, so one
 // ORK_ARTIFACT_BACKEND selects where artifacts, run history, task logs and
 // run snapshots all live.
 func NewRunSnapshotStore(cfg Config) (RunSnapshotStore, error) {
-	name := cfg.Backend
-	if name == "" {
-		name = DefaultBackend
-		cfg.Backend = name
-	}
-	registryMu.RLock()
-	f, ok := snapshotStoreRegistry[name]
-	registryMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("artifacts: snapshot store backend %q: %w (registered: %v)",
-			name, ErrUnknownBackend, RunSnapshotStoreBackends())
-	}
-	store, err := f(cfg)
+	b, err := openBlobs(context.Background(), cfg, "snapshot store", SnapshotPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: snapshot store backend %q: %w", name, err)
+		return nil, err
 	}
-	return store, nil
-}
-
-func init() {
-	mustRegisterRunSnapshotStore(BackendLocal, func(cfg Config) (RunSnapshotStore, error) {
-		return NewLocalRunSnapshotStore(localDir(cfg))
-	})
-	mustRegisterRunSnapshotStore(BackendS3, func(cfg Config) (RunSnapshotStore, error) {
-		return NewS3RunSnapshotStore(context.Background(), cfg)
-	})
-}
-
-func mustRegisterRunSnapshotStore(name string, f RunSnapshotStoreFactory) {
-	if err := RegisterRunSnapshotStore(name, f); err != nil {
-		panic(err)
-	}
+	return &BlobRunSnapshotStore{blobBase{b}}, nil
 }

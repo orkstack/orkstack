@@ -2,22 +2,22 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"regexp"
 	"strings"
 	"testing"
 )
 
-// webhookIDPattern extracts the id `webhook register` reports.
+// webhookIDPattern extracts the id `webhook create` reports.
 var webhookIDPattern = regexp.MustCompile(`wh-[0-9a-f]+`)
 
-func TestWebhookRegister_RegistersACallbackAndListShowsIt(t *testing.T) {
+func TestWebhookCreate_RegistersACallbackAndListShowsIt(t *testing.T) {
 	f := newFixture(t)
 
-	registered := f.run("webhook", "register", "https://example.test/hooks",
+	registered := f.run("webhook", "create", "https://example.test/hooks",
 		"--event", "RUN_SUCCEEDED", "--event", "RUN_FAILED").requireExit(t, exitOK)
 	registered.requireContains(t,
-		"Registered webhook wh-",
+		"Created webhook wh-",
 		"https://example.test/hooks",
 		"RUN_SUCCEEDED,RUN_FAILED",
 		"SECRET",
@@ -32,18 +32,18 @@ func TestWebhookRegister_RegistersACallbackAndListShowsIt(t *testing.T) {
 		id, "https://example.test/hooks", "RUN_SUCCEEDED,RUN_FAILED")
 }
 
-func TestWebhookRegister_WithoutEventsSubscribesToEveryTransition(t *testing.T) {
+func TestWebhookCreate_WithoutEventsSubscribesToEveryTransition(t *testing.T) {
 	f := newFixture(t)
 
-	f.run("webhook", "register", "https://example.test/audit").requireExit(t, exitOK)
+	f.run("webhook", "create", "https://example.test/audit").requireExit(t, exitOK)
 	f.run("webhook", "list").requireExit(t, exitOK).
 		requireContains(t, "https://example.test/audit", "ALL")
 }
 
-func TestWebhookRegister_ReportsTheSigningSecretOnceInJSON(t *testing.T) {
+func TestWebhookCreate_ReportsTheSigningSecretOnceInJSON(t *testing.T) {
 	f := newFixture(t)
 
-	out := f.run("webhook", "register", "https://example.test/hooks",
+	out := f.run("webhook", "create", "https://example.test/hooks",
 		"--event", "RUN_SUCCEEDED", "--json").requireExit(t, exitOK)
 
 	var registered struct {
@@ -72,17 +72,17 @@ func TestWebhookRegister_ReportsTheSigningSecretOnceInJSON(t *testing.T) {
 	}
 }
 
-func TestWebhookRegister_UsesACallerSuppliedSecret(t *testing.T) {
+func TestWebhookCreate_UsesACallerSuppliedSecret(t *testing.T) {
 	f := newFixture(t)
-	out := f.run("webhook", "register", "https://example.test/hooks",
+	out := f.run("webhook", "create", "https://example.test/hooks",
 		"--secret", "shared-with-the-receiver").requireExit(t, exitOK)
 	out.requireContains(t, "shared-with-the-receiver")
 }
 
-func TestWebhookRegister_RejectsAnUnknownEvent(t *testing.T) {
+func TestWebhookCreate_RejectsAnUnknownEvent(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("webhook", "register", "https://example.test/hooks", "--event", "RUN_EXPLODED")
+	outcome := f.run("webhook", "create", "https://example.test/hooks", "--event", "RUN_EXPLODED")
 	if outcome.code == exitOK {
 		t.Fatalf("registering an unknown event succeeded:\n%s", outcome.stdout)
 	}
@@ -92,10 +92,10 @@ func TestWebhookRegister_RejectsAnUnknownEvent(t *testing.T) {
 	f.run("webhook", "list").requireExit(t, exitOK).requireContains(t, "No webhooks.")
 }
 
-func TestWebhookRegister_RejectsAURLNoDeliveryCouldReach(t *testing.T) {
+func TestWebhookCreate_RejectsAURLNoDeliveryCouldReach(t *testing.T) {
 	f := newFixture(t)
 
-	outcome := f.run("webhook", "register", "example.test/hooks")
+	outcome := f.run("webhook", "create", "example.test/hooks")
 	if outcome.code == exitOK {
 		t.Fatalf("registering a scheme-less URL succeeded:\n%s", outcome.stdout)
 	}
@@ -111,7 +111,7 @@ func TestWebhookList_SaysSoWhenNothingIsRegistered(t *testing.T) {
 
 func TestWebhookDelete_RemovesTheSubscription(t *testing.T) {
 	f := newFixture(t)
-	registered := f.run("webhook", "register", "https://example.test/hooks").requireExit(t, exitOK)
+	registered := f.run("webhook", "create", "https://example.test/hooks").requireExit(t, exitOK)
 	id := webhookIDPattern.FindString(registered.stdout)
 	if id == "" {
 		t.Fatalf("register did not report a webhook id:\n%s", registered.stdout)
@@ -130,9 +130,9 @@ func TestWebhookDelete_RemovesTheSubscription(t *testing.T) {
 	}
 }
 
-func TestWebhookRegister_AcceptsACommaSeparatedEventList(t *testing.T) {
+func TestWebhookCreate_AcceptsACommaSeparatedEventList(t *testing.T) {
 	f := newFixture(t)
-	f.run("webhook", "register", "https://example.test/hooks",
+	f.run("webhook", "create", "https://example.test/hooks",
 		"--event", "run_started,RUN_FAILED").requireExit(t, exitOK).
 		requireContains(t, "RUN_STARTED,RUN_FAILED")
 }
@@ -144,14 +144,14 @@ func TestWebhookCommand_IsDiscoverableFromHelp(t *testing.T) {
 		args     []string
 		fragment []string
 	}{
-		{[]string{"--help"}, []string{"webhook", "Register and inspect run-event callbacks"}},
-		{[]string{"webhook", "--help"}, []string{"register", "list", "delete", "deliveries", "delivery", "redeliver",
+		{[]string{"--help"}, []string{"webhook", "Create and inspect run-event callbacks"}},
+		{[]string{"webhook", "--help"}, []string{"create", "list", "delete", "deliveries", "delivery", "redeliver",
 			"What each delivery did is recorded"}},
 		{[]string{"webhook", "deliveries", "--help"}, []string{"--filter", "--limit", "--page-token",
 			"Every namespace is listed unless a namespace filter narrows it", "created_at"}},
 		{[]string{"webhook", "delivery", "--help"}, []string{"delivery <id>"}},
 		{[]string{"webhook", "redeliver", "--help"}, []string{"once, now", "you are the retry policy", "exits 1"}},
-		{[]string{"webhook", "register", "--help"}, []string{"--event", "--secret", "RUN_SUCCEEDED"}},
+		{[]string{"webhook", "create", "--help"}, []string{"--event", "--secret", "RUN_SUCCEEDED"}},
 	} {
 		var stdout, stderr bytes.Buffer
 		if code := Execute(tc.args, &stdout, &stderr); code != exitOK {

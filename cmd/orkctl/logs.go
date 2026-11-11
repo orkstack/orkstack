@@ -72,7 +72,7 @@ func newRunLogsCommand(g *globalFlags) *cobra.Command {
 			})
 		},
 	}
-	cmd.Flags().StringVar(&taskID, "task", "", "print only this task's output")
+	cmd.Flags().StringVarP(&taskID, "task", "t", "", "print only this task's output")
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false,
 		"follow the output live, returning when the run reaches a terminal state")
 	cmd.Flags().Int32Var(&attempt, "attempt", 0,

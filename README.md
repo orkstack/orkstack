@@ -43,7 +43,7 @@ Underneath, OrkStack is a thin contract between three boring parts:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/architecture-dark.svg">
-  <img alt="The architecture: an Orkflow is applied through orkctl, the UI or the API to the ork engine, which starts each run on Temporal; Temporal dispatches tasks to Orkers, which run each task's OCI image and write artifacts and records to object storage." src="docs/images/architecture-light.svg">
+  <img alt="The architecture: an Orkflow is created through orkctl, the UI or the API to the ork engine, which starts each run on Temporal; Temporal dispatches tasks to Orkers, which run each task's OCI image and write artifacts and records to object storage." src="docs/images/architecture-light.svg">
 </picture>
 
 The `orkctl` CLI, the browser UI and any program of yours speak the same
@@ -60,19 +60,19 @@ build takes a few minutes.
 git clone https://github.com/orkstack/orkstack.git && cd orkstack
 docker compose up --build -d --wait
 alias orkctl='docker compose run --rm orkctl'
-orkctl apply examples/each-fan-out.ork.yaml
-orkctl run submit each-fan-out --watch
+orkctl orkflow create examples/each-fan-out.ork.yaml
+orkctl run submit each-fan-out -w
 ```
 
 Then open the UI at http://localhost:8080. [Getting started](./docs/GETTING_STARTED.md)
 walks through each step, and how to update and stop the stack.
 
-The same Orkflow applied, planned, run and read on the local stack:
+The same Orkflow created, planned, run and read on the local stack:
 
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/cli-quickstart-dark.gif">
-  <img alt="A terminal recording: orkctl applies the each-fan-out Orkflow, plans it, submits it and watches it to SUCCEEDED, then prints the merge task's log." src="docs/images/cli-quickstart-light.gif" width="880">
+  <img alt="A terminal recording: orkctl creates the each-fan-out Orkflow, plans it, submits it and watches it to SUCCEEDED, then prints the merge task's log." src="docs/images/cli-quickstart-light.gif" width="880">
 </picture>
 </p>
 
@@ -80,13 +80,13 @@ The same Orkflow applied, planned, run and read on the local stack:
 
 The UI draws each run as its graph and follows it live: every task's
 attempts, timing, logs, values and artifacts, and a fan-out's items one by
-one. Here the example is applied from the UI, planned and submitted, followed
+one. Here the example is created from the UI, planned and submitted, followed
 to the end, and its merged artifact opened:
 
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/ui-demo-dark.webp">
-  <img alt="The OrkStack UI: the each-fan-out Orkflow is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task's merged.txt artifact is shown with its provenance." src="docs/images/ui-demo-light.webp" width="880">
+  <img alt="The OrkStack UI: the each-fan-out Orkflow is created from the Create Orkflow page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task's merged.txt artifact is shown with its provenance." src="docs/images/ui-demo-light.webp" width="880">
 </picture>
 </p>
 
@@ -169,7 +169,7 @@ files they wrote:
   <img alt="The each-fan-out run as a graph: list computes four parts, convert runs one item per part, two at a time, and merge reads every item's part.txt." src="docs/images/each-fan-out-run-light.svg">
 </picture>
 
-Applying an Orkflow stores an immutable version with every image resolved to
+Creating an Orkflow stores an immutable version with every image resolved to
 a digest, and a run finishes on the version it started with. The
 [DSL reference](./docs/DSL.md) covers every key.
 

@@ -88,4 +88,9 @@
 		rotate: 45deg;
 		scale: 0.8;
 	}
+	.is-sleeping {
+		border-radius: 50%;
+		box-shadow: inset 0 0 0 1.5px var(--await);
+		background: linear-gradient(90deg, var(--await) 50%, var(--surface) 50%);
+	}
 </style>

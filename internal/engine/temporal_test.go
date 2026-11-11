@@ -16,6 +16,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingClient captures the arguments StartRun hands to Temporal. The
@@ -100,9 +102,7 @@ func TestStartRun_BindsTheCallersRoutingIntoTheWorkflowInput(t *testing.T) {
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-private")
 
 	plan := rawPlan("ork-tasks-submitted", "gpu")
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, plan), "StartRun")
 
 	bound := c.startedPlan(t)
 	if bound.Namespace != plan.Namespace {
@@ -130,9 +130,7 @@ func TestStartRun_SendsTheStoredDefinitionVerbatim(t *testing.T) {
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-private")
 
 	stored := twoTaskOrkflow()
-	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil, defaultPlan()); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", stored, nil, defaultPlan()), "StartRun")
 
 	started := c.startedOrkflow(t)
 	if started != stored {
@@ -160,9 +158,7 @@ func TestStartRun_WritesTheOrkflowCoordinatesAsAQualifiedMemo(t *testing.T) {
 
 	stored := twoTaskOrkflow()
 	stored.Namespace = "payments"
-	if err := starter.StartRun(context.Background(), "ork-1-1", stored, nil, defaultPlan()); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", stored, nil, defaultPlan()), "StartRun")
 
 	want := map[string]any{
 		"orkflow_name":      "hello-ork",
@@ -206,9 +202,7 @@ func TestStartRun_ZeroConfigRoutingReachesTheChannelAZeroConfigOrkerPolls(t *tes
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
 
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()), "StartRun")
 
 	if got := c.startedPlan(t).Routes[task.DefaultPool]; got != task.DefaultQueue {
 		t.Errorf("the built-in pool routes to %q, want %q", got, task.DefaultQueue)
@@ -219,9 +213,7 @@ func TestStartRun_StartsTheWorkflowOnTheEnginesOwnQueue(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, "ork-tasks-private")
 
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()), "StartRun")
 
 	// The orker queue moves task activities, not the run workflow itself: the
 	// workflow stays on the queue this engine's run worker polls.
@@ -247,9 +239,7 @@ func TestStartRun_MakesARunIDSingleUse(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarter(c, task.DefaultQueue)
 
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()), "StartRun")
 
 	if got := c.options.WorkflowIDReusePolicy; got != enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE {
 		t.Errorf("WorkflowIDReusePolicy = %v, want REJECT_DUPLICATE so a finished run's id is never reused", got)
@@ -319,9 +309,7 @@ func TestRunStartMemoAndAttributes_MatchStartRun(t *testing.T) {
 			plan.Origin = origin
 			wf := twoTaskOrkflow()
 			wf.Namespace = "payments"
-			if err := starter.StartRun(context.Background(), "ork-1-1", wf, nil, plan); err != nil {
-				t.Fatalf("StartRun: %v", err)
-			}
+			must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", wf, nil, plan), "StartRun")
 			memo := engine.RunStartMemo(wf, plan)
 			if len(memo) != len(c.options.Memo) {
 				t.Fatalf("memo %v, StartRun sent %v", memo, c.options.Memo)

@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -25,8 +25,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The snapshot-overlay replay fixture (testdata/history/README.md): a run of plain
@@ -56,21 +59,15 @@ func recordedSnapshotWrites(t *testing.T, h *historypb.History) []recordedSnapsh
 			continue
 		}
 		var data struct{ ActivityType string }
-		if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["data"], &data); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["data"], &data))
 		switch data.ActivityType {
 		case engine.ActivityWriteSnapshotOrOverlay:
 			var written engine.SnapshotWritten
-			if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["result"], &written); err != nil {
-				t.Fatalf("decode a recorded overlay write: %v", err)
-			}
+			must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["result"], &written), "decode a recorded overlay write")
 			out = append(out, recordedSnapshotWrite{data.ActivityType, written})
 		case engine.ActivityWriteSnapshot:
 			var uri string
-			if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["result"], &uri); err != nil {
-				t.Fatalf("decode a recorded snapshot write: %v", err)
-			}
+			must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["result"], &uri), "decode a recorded snapshot write")
 			out = append(out, recordedSnapshotWrite{data.ActivityType, engine.SnapshotWritten{URI: uri, Full: true}})
 		}
 	}
@@ -136,9 +133,7 @@ func TestRunWorkflow_ReplaysCommittedSnapshotOverlayHistory(t *testing.T) {
 	if versionMarkers(t, recorded)[engine.SnapshotOverlayChange] == 0 {
 		t.Fatal("the fixture records no snapshot-overlay marker")
 	}
-	if err := replayAs(t, recorded, runID); err != nil {
-		t.Fatalf("replaying %s against current code failed: %v", snapshotOverlayHistory, err)
-	}
+	must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", snapshotOverlayHistory)
 }
 
 // TestSnapshotOverlay_DiffRunsInTheLocalActivityOnly: replaying the recorded
@@ -149,9 +144,7 @@ func TestSnapshotOverlay_DiffRunsInTheLocalActivityOnly(t *testing.T) {
 	recorded, runID, _ := loadSnapshotOverlayFixture(t)
 	writes := recordedSnapshotWrites(t, recorded)
 	bases, diffs, err := replayCapturingBases(t, recorded, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if diffs != 0 {
 		t.Fatalf("the replay ran %d diffs; a replay reads the markers", diffs)
 	}
@@ -183,9 +176,7 @@ func TestSnapshotOverlay_ItemFreshEmitReplays(t *testing.T) {
 			published *orkstackv1.Event
 			uri, key  string
 		)
-		if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &published, &uri, &key); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &published, &uri, &key))
 		if !overlays[uri] {
 			continue
 		}
@@ -220,7 +211,7 @@ func TestSnapshotOverlayHistory_CatchesAChangedPinnedMinRows(t *testing.T) {
 	}
 	policy := plan["snapshot_overlay"].(map[string]any)
 	policy["min_rows"] = float64(10_000)
-	data, err := json.Marshal(plan)
+	data, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,15 +241,11 @@ func (f *fixtureObjects) ReadSnapshot(_ context.Context, uri string) ([]byte, er
 func loadFixtureObjects(t *testing.T) *fixtureObjects {
 	t.Helper()
 	entries, err := os.ReadDir(snapshotOverlayObjectsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	f := &fixtureObjects{byLeaf: map[string][]byte{}}
 	for _, entry := range entries {
 		data, err := os.ReadFile(filepath.Join(snapshotOverlayObjectsDir, entry.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		f.byLeaf[entry.Name()] = data
 	}
 	return f
@@ -383,9 +370,7 @@ func TestSnapshotOverlayHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 			overlayIndex++
 		}
 		got, err := engine.MaterializeSnapshotForTest(context.Background(), objects, writes[i].written.URI)
-		if err != nil {
-			t.Fatalf("write %d: the recorded %s does not read: %v", i, path.Base(writes[i].written.URI), err)
-		}
+		must.OKf(t, err, "write %d: the recorded %s does not read", i, path.Base(writes[i].written.URI))
 		if !proto.Equal(withoutTimes(got), withoutTimes(c.run)) {
 			t.Fatalf("write %d (event %d): the recorded %s is not the run current code hands that write",
 				i, c.seq, path.Base(writes[i].written.URI))

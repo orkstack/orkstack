@@ -14,15 +14,15 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const examplePath = "testdata/orkflows/hello.ork.yaml"
 
 func TestCompile_AcceptsHelloExample(t *testing.T) {
 	source, err := os.ReadFile(examplePath)
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	wf, err := dsl.Compile(source)
 	if err != nil {
 		t.Fatalf("Compile(hello.ork.yaml) = error %v, want success", err)
@@ -641,9 +641,7 @@ tasks:
     with: {command: "echo 1"}
 `
 	first, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	if len(first.GetVersion()) != 64 {
 		t.Fatalf("version = %q, want a 64-char sha256 hex hash", first.GetVersion())
 	}
@@ -652,9 +650,7 @@ tasks:
 	// no store, so a hermetic caller gets a stable name for what it compiled. The
 	// apply path replaces it (internal/api.prepareOrkflow).
 	second, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("Compile (repeat): %v", err)
-	}
+	must.OKf(t, err, "Compile (repeat)")
 	if first.GetVersion() != second.GetVersion() {
 		t.Errorf("version is not stable: %q vs %q", first.GetVersion(), second.GetVersion())
 	}
@@ -684,9 +680,7 @@ tasks:
 		"the header first":          headerFirst,
 	} {
 		changed, err := dsl.Compile([]byte(edited))
-		if err != nil {
-			t.Fatalf("Compile (%s): %v", what, err)
-		}
+		must.OKf(t, err, "Compile (%s)", what)
 		if changed.GetVersion() == first.GetVersion() {
 			t.Errorf("%s did not change the version %q", what, first.GetVersion())
 		}
@@ -710,9 +704,7 @@ tasks:
     with: {command: "echo 1"}
 `
 	wf, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	if wf.GetVersion() != "  2.0.0-RC1  " {
 		t.Errorf("version = %q, want the pinned value preserved verbatim", wf.GetVersion())
 	}
@@ -736,9 +728,7 @@ tasks:
     with: {command: "echo 1"}
 `
 	wf, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	task := wf.GetTasks()[0]
 	if task.GetPool() != "gpu" {
 		t.Errorf("pool = %q, want gpu", task.GetPool())
@@ -750,6 +740,33 @@ tasks:
 	if retry.GetMaximumAttempts() != 3 || retry.GetInitialIntervalSeconds() != 2 ||
 		retry.GetBackoffCoefficient() != 1.5 || retry.GetMaximumIntervalSeconds() != 10 {
 		t.Errorf("retry = %+v, want the DSL values", retry)
+	}
+}
+
+// TestCompile_RefusesANonIntegerForAnIntegerKey: a number with a fraction
+// written for an integer key is refused at its line, never truncated toward
+// zero.
+func TestCompile_RefusesANonIntegerForAnIntegerKey(t *testing.T) {
+	const head = "apiVersion: orkstack/v1\nkind: Orkflow\nname: ints\n"
+	for _, tc := range []struct {
+		name, body string
+		line       int
+	}{
+		{"timeout_seconds", "tasks:\n  - id: a\n    uses: shell\n    timeout_seconds: 1.5\n", 7},
+		{"cancellation_grace_period_seconds", "tasks:\n  - id: a\n    uses: shell\n    cancellation_grace_period_seconds: 2.5\n", 7},
+		{"retry.maximum_attempts", "tasks:\n  - id: a\n    uses: shell\n    retry:\n      maximum_attempts: 2.9\n", 8},
+		{"pins.timeout_seconds", "pins:\n  p:\n    timeout_seconds: 0.5\ntasks:\n  - id: a\n    uses: shell\n    pin: p\n", 6},
+		{"each.max_parallel", "inputs:\n  l: {type: array}\ntasks:\n  - id: a\n    uses: shell\n    each:\n      over: '{{ .inputs.l }}'\n      max_items: 10\n      max_parallel: 1.5\n", 12},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := dsl.Compile([]byte(head + tc.body))
+			if err == nil {
+				t.Fatal("Compile accepted a non-integer for an integer key")
+			}
+			if want := fmt.Sprintf("line %d: ", tc.line); !strings.Contains(err.Error(), want) {
+				t.Errorf("error %q does not name %q", err, want)
+			}
+		})
 	}
 }
 
@@ -769,9 +786,7 @@ tasks:
     with: {command: "echo 1"}
 `
 	wf, err := dsl.Compile([]byte(named))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	if wf.GetNamespace() != "payments" {
 		t.Errorf("namespace = %q, want payments", wf.GetNamespace())
 	}
@@ -786,9 +801,7 @@ tasks:
     with: {command: "echo 1"}
 `
 	wf, err = dsl.Compile([]byte(anonymous))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	if wf.GetNamespace() != "" {
 		t.Errorf("namespace = %q, want empty (meaning the default namespace)", wf.GetNamespace())
 	}
@@ -874,9 +887,7 @@ tasks:
     with: {op: exec, command: "echo c"}
 `
 	wf, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	var got []string
 	for _, pin := range wf.GetPins() {
 		got = append(got, pin.GetName())
@@ -895,9 +906,7 @@ tasks:
 		t.Fatal("test setup: the reordered document is identical to the original")
 	}
 	again, err := dsl.Compile([]byte(reordered))
-	if err != nil {
-		t.Fatalf("Compile (reordered): %v", err)
-	}
+	must.OKf(t, err, "Compile (reordered)")
 	if !proto.Equal(&orkstackv1.Orkflow{Pins: wf.GetPins()}, &orkstackv1.Orkflow{Pins: again.GetPins()}) {
 		t.Errorf("reordering the pins keys changed the compiled pins: %v vs %v",
 			wf.GetPins(), again.GetPins())
@@ -936,9 +945,7 @@ tasks:
     with: {op: exec, command: "echo 1"}
 `
 	wf, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	if wf.GetPins() != nil {
 		t.Errorf("pins = %#v, want nil for a document that declares none", wf.GetPins())
 	}
@@ -1346,9 +1353,7 @@ tasks:
     with: {}
 `
 	wf, err := dsl.Compile([]byte(explicit))
-	if err != nil {
-		t.Fatalf("Compile(explicit empty): %v", err)
-	}
+	must.OKf(t, err, "Compile(explicit empty)")
 	if wf.Inputs == nil || len(wf.Inputs.GetFields()) != 0 {
 		t.Errorf("inputs = %v, want a present empty Struct", wf.Inputs)
 	}
@@ -1365,9 +1370,7 @@ tasks:
     uses: shell
 `
 	wf, err = dsl.Compile([]byte(omitted))
-	if err != nil {
-		t.Fatalf("Compile(omitted): %v", err)
-	}
+	must.OKf(t, err, "Compile(omitted)")
 	if wf.Inputs != nil || wf.GetTasks()[0].With != nil {
 		t.Errorf("omitted fields became present: inputs=%v with=%v", wf.Inputs, wf.GetTasks()[0].With)
 	}
@@ -1401,18 +1404,14 @@ func preservesPresenceForEveryDataPosition(t *testing.T) {
 	}
 	for position, document := range documents {
 		absent, err := dsl.Compile([]byte(document("")))
-		if err != nil {
-			t.Fatalf("%s absent: %v", position, err)
-		}
+		must.OKf(t, err, "%s absent", position)
 		absentDigest, _ := dsl.DefinitionDigest(absent)
 		if struct_(position, absent) != nil {
 			t.Errorf("%s absent compiled present", position)
 		}
 		for _, null := range []string{position + ":\n", position + ": ~\n", position + ": null\n"} {
 			wf, err := dsl.Compile([]byte(document(null)))
-			if err != nil {
-				t.Fatalf("%q: %v", null, err)
-			}
+			must.OKf(t, err, "%q", null)
 			if struct_(position, wf) != nil {
 				t.Errorf("%q compiled present", null)
 			}
@@ -1421,9 +1420,7 @@ func preservesPresenceForEveryDataPosition(t *testing.T) {
 			}
 		}
 		empty, err := dsl.Compile([]byte(document(position + ": {}\n")))
-		if err != nil {
-			t.Fatalf("%s: {}: %v", position, err)
-		}
+		must.OKf(t, err, "%s: {}", position)
 		if got := struct_(position, empty); got == nil || len(got.GetFields()) != 0 {
 			t.Errorf("%s: {} = %v, want a present empty struct", position, got)
 		}

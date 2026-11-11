@@ -414,7 +414,10 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 		row := rows[i]
 		s.taskRuns[id] = row
 		e := s.eaches[id]
-		if row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED && e == nil {
+		// A sleep that woke recorded no result and no values (sleep.go),
+		// and restoring one would hand its dependants a reference the first
+		// generation never did.
+		if row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED && e == nil && s.sleeps[id] == nil {
 			s.results[id] = &orkstackv1.ExecuteTaskResult{
 				TaskId:    id,
 				ValuesRef: row.GetValuesRef(),
@@ -445,6 +448,24 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 				a.deadline = workflow.NewTimer(timerCtx, a.deadlineAt.Sub(workflow.Now(ctx)))
 				a.cancelDeadline = cancel
 				if a.deadlineAt.After(workflow.Now(ctx)) {
+					if limit := s.historyLimit(); limit != nil {
+						s.noteCommand(ctx, 1, limit.Reserve.CommandBytes)
+					}
+				}
+			}
+		}
+		if sl := s.sleeps[id]; sl != nil && row.GetStatus() == orkstackv1.Status_STATUS_SLEEPING {
+			sl.open = true
+			sl.duration = time.Duration(sl.spec.GetSeconds()) * time.Second
+			sl.wakeAt = row.GetSleep().GetWakeAt().AsTime()
+			if ctx.Err() == nil {
+				// openSleep's timer recipe, toward the ORIGINAL instant: a
+				// wake-up time already passed is a ready future with no
+				// command, so the sleep wakes at once.
+				timerCtx, cancel := workflow.WithCancel(runCtx)
+				sl.wake = workflow.NewTimer(timerCtx, sl.wakeAt.Sub(workflow.Now(ctx)))
+				sl.cancelWake = cancel
+				if sl.wakeAt.After(workflow.Now(ctx)) {
 					if limit := s.historyLimit(); limit != nil {
 						s.noteCommand(ctx, 1, limit.Reserve.CommandBytes)
 					}
@@ -502,6 +523,10 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 		return ""
 	case orkstackv1.Status_STATUS_AWAITING:
 		if s.awaits[id] != nil && row.GetAwait().GetDeadline() != nil {
+			return ""
+		}
+	case orkstackv1.Status_STATUS_SLEEPING:
+		if s.sleeps[id] != nil && row.GetSleep().GetWakeAt() != nil {
 			return ""
 		}
 	}

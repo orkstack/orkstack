@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------------------
@@ -21,8 +23,8 @@ import (
 // breaks somebody.
 func TestOrkflowVersionCommands_GoldenHumanAndJSON(t *testing.T) {
 	f := newFixture(t)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 
 	// Nothing promoted yet: the listing says so, and says what runs instead.
 	unpromoted := f.run("orkflow", "versions", "deploy").requireExit(t, exitOK)
@@ -44,8 +46,8 @@ func TestOrkflowVersionCommands_GoldenHumanAndJSON(t *testing.T) {
 	requireGolden(t, "orkflow-diff-identical.golden", same.stdout)
 
 	jsonFixture := newFixture(t)
-	jsonFixture.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-	jsonFixture.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	jsonFixture.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	jsonFixture.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 
 	promotedJSON := jsonFixture.run("--json", "orkflow", "promote", "deploy", "1.0.0").
 		requireExit(t, exitOK)
@@ -92,8 +94,8 @@ func TestOrkflowVersionCommands_GoldenHumanAndJSON(t *testing.T) {
 // follow the pointer, in both directions.
 func TestOrkflowPromote_MovesWhatRunsAndBack(t *testing.T) {
 	f := newFixture(t)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 
 	// Before any promotion the newest applied version runs.
 	f.run("run", "submit", "deploy").requireExit(t, exitOK).requireContains(t, "2.0.0")
@@ -126,7 +128,7 @@ func TestOrkflowVersions_AreScopedByNamespace(t *testing.T) {
 	f.run("namespace", "create", "bravo").requireExit(t, exitOK)
 	for _, namespace := range []string{"alpha", "bravo"} {
 		for _, version := range []string{"1.0.0", "2.0.0"} {
-			f.run("apply", writeVersionedOrkflow(t, "deploy", version, namespace+"-"+version),
+			f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", version, namespace+"-"+version),
 				"-n", namespace).requireExit(t, exitOK)
 		}
 	}
@@ -161,14 +163,14 @@ func TestOrkflowEdit_RoundTripsThroughTheEditorAndAppliesANewVersion(t *testing.
 		t.Skip("the stub editor is a shell script")
 	}
 	f := newFixture(t)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
 
 	// An editor that rewrites the command and bumps the version, the way a
 	// person would.
 	editor := stubEditor(t, `sed -i.bak -e 's/echo one/echo edited/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 
 	edited := f.run("orkflow", "edit", "deploy", "--editor", editor).requireExit(t, exitOK)
-	edited.requireContains(t, "Applied orkflow deploy", "1.1.0")
+	edited.requireContains(t, "Created orkflow deploy", "1.1.0")
 
 	// The edit became a NEW version; the old one is untouched.
 	versions := f.run("orkflow", "versions", "deploy").requireExit(t, exitOK)
@@ -205,14 +207,14 @@ func TestOrkflowEdit_ACommentOnlyEditIsAppliedAsANewVersion(t *testing.T) {
 		t.Skip("the stub editor is a shell script")
 	}
 	f := newFixture(t)
-	f.run("apply", writeUnpinnedOrkflow(t, "deploy", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeUnpinnedOrkflow(t, "deploy", "one")).requireExit(t, exitOK)
 
 	const note = "# remind me why this exists"
 	editor := stubEditor(t, fmt.Sprintf(
 		`printf '%s\n' | cat - "$1" >"$1.new" && mv "$1.new" "$1"`, note))
 
 	edited := f.run("orkflow", "edit", "deploy", "--editor", editor).requireExit(t, exitOK)
-	edited.requireContains(t, "Applied orkflow deploy")
+	edited.requireContains(t, "Created orkflow deploy")
 
 	versions := f.run("--json", "orkflow", "versions", "deploy").requireExit(t, exitOK)
 	if count := strings.Count(versions.stdout, `"version"`); count != 2 {
@@ -243,7 +245,7 @@ func TestOrkflowEdit_ReportsAnEditMadeFromAStaleVersion(t *testing.T) {
 		t.Skip("the stub editor is a shell script")
 	}
 	f := newFixture(t)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
 
 	gate := filepath.Join(t.TempDir(), "gate")
 	opened := filepath.Join(t.TempDir(), "opened")
@@ -256,10 +258,8 @@ func TestOrkflowEdit_ReportsAnEditMadeFromAStaleVersion(t *testing.T) {
 	awaitFile(t, opened, "the stub editor never opened the document")
 
 	// Somebody else applies while the editor is open. This is the whole race.
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
-	if err := os.WriteFile(gate, nil, 0o644); err != nil {
-		t.Fatalf("release the editor: %v", err)
-	}
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	must.OKf(t, os.WriteFile(gate, nil, 0o644), "release the editor")
 
 	outcome := <-done
 	if outcome.code == exitOK {
@@ -273,9 +273,7 @@ func TestOrkflowEdit_ReportsAnEditMadeFromAStaleVersion(t *testing.T) {
 	// The user's work survives the refusal.
 	kept := keptEditPath(t, outcome.stderr)
 	body, err := os.ReadFile(kept)
-	if err != nil {
-		t.Fatalf("the refused edit was not kept: %v", err)
-	}
+	must.OKf(t, err, "the refused edit was not kept")
 	t.Cleanup(func() { os.Remove(kept) })
 	if !strings.Contains(string(body), "echo mine") {
 		t.Errorf("the kept file is not the user's edit:\n%s", body)
@@ -327,9 +325,7 @@ tasks:
       op: exec
       command: echo %s
 `, name, version, version, marker)
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write orkflow %s@%s: %v", name, version, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write orkflow %s@%s", name, version)
 	return path
 }
 
@@ -350,9 +346,7 @@ tasks:
       op: exec
       command: echo %s
 `, name, marker)
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write orkflow %s: %v", name, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write orkflow %s", name)
 	return path
 }
 
@@ -363,9 +357,7 @@ func stubEditor(t *testing.T, script string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "editor.sh")
 	body := "#!/bin/sh\nset -e\n" + script + "\n"
-	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
-		t.Fatalf("write stub editor: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(body), 0o755), "write stub editor")
 	return path
 }
 

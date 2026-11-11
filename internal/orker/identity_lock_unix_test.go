@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestLockIdentity_HeldIsOnlyALiveHolder: a second holder of the lock is
@@ -18,17 +20,13 @@ func TestLockIdentity_HeldIsOnlyALiveHolder(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "identity.lock")
 	open := func() *os.File {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		t.Cleanup(func() { _ = file.Close() })
 		return file
 	}
 
 	first := open()
-	if err := lockIdentity(first); err != nil {
-		t.Fatalf("first lock: %v", err)
-	}
+	must.OKf(t, lockIdentity(first), "first lock")
 	// flock belongs to the open file description, so a second open in this
 	// process contends exactly as a second process would.
 	if err := lockIdentity(open()); !errors.Is(err, errIdentityHeld) {

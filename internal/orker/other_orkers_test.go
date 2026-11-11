@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // listingRecorder is reapRecorder that can also say what other identities hold.
@@ -33,9 +35,7 @@ func TestBoot_WarnsAboutContainersOfOtherIdentities(t *testing.T) {
 		},
 	}
 	_, logged, err := bootWithLog(t, t.TempDir(), "other-orkers-"+t.Name(), runtime)
-	if err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, err, "Boot")
 	text := logged.String()
 	if runtime.asked != 1 {
 		t.Errorf("listed %d times, want once", runtime.asked)
@@ -50,9 +50,7 @@ func TestBoot_WarnsAboutContainersOfOtherIdentities(t *testing.T) {
 func TestBoot_SaysNothingWhenNoOtherIdentityHoldsAContainer(t *testing.T) {
 	runtime := &listingRecorder{reapRecorder: reapRecorder{labelled: map[string]int{}}}
 	_, logged, err := bootWithLog(t, t.TempDir(), "other-orkers-"+t.Name(), runtime)
-	if err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, err, "Boot")
 	if runtime.asked != 1 {
 		t.Errorf("listed %d times, want once", runtime.asked)
 	}
@@ -69,9 +67,7 @@ func TestBoot_AListingThatFailsDoesNotFailBoot(t *testing.T) {
 		err:          errors.New("the daemon said no"),
 	}
 	_, logged, err := bootWithLog(t, t.TempDir(), "other-orkers-"+t.Name(), runtime)
-	if err != nil {
-		t.Fatalf("a failed listing failed Boot: %v", err)
-	}
+	must.OKf(t, err, "a failed listing failed Boot")
 	if !strings.Contains(logged.String(), "the daemon said no") {
 		t.Errorf("the failure was not said:\n%s", logged)
 	}
@@ -103,9 +99,7 @@ func TestBoot_TheWarningIsBounded(t *testing.T) {
 	}
 	runtime := &listingRecorder{reapRecorder: reapRecorder{labelled: map[string]int{}}, others: others}
 	_, logged, err := bootWithLog(t, t.TempDir(), "other-orkers-"+t.Name(), runtime)
-	if err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, err, "Boot")
 	if got := strings.Count(logged.String(), "c0a1"); got != reapLogLimit {
 		t.Errorf("the line names %d containers, want %d", got, reapLogLimit)
 	}
@@ -121,9 +115,7 @@ func TestDockerRuntime_OtherOrkersContainers_OnlyLooks(t *testing.T) {
 	fake.set("others", "c1\trunning\torker-gone\nc2\texited\torker-me\nc3\tcreated\torker-other\n")
 	runtime := &DockerRuntime{Bin: fake.bin, CLI: CLIDocker}
 	got, err := runtime.OtherOrkersContainers(context.Background(), "orker-me")
-	if err != nil {
-		t.Fatalf("OtherOrkersContainers: %v", err)
-	}
+	must.OKf(t, err, "OtherOrkersContainers")
 	want := []OtherOrkerContainer{
 		{ID: "c1", State: "running", Orker: "orker-gone"},
 		{ID: "c3", State: "created", Orker: "orker-other"},

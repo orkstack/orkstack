@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	bin,
@@ -14,6 +14,7 @@ import {
 	rpc as callEngine,
 	s3Env,
 	spawnLogged,
+	startTranscript,
 	tcpOpen,
 	temporalAddress,
 	temporalReachable,
@@ -138,7 +139,7 @@ async function rowIds(page: Page): Promise<string[]> {
 
 test.beforeAll(async () => {
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# Admin → Audit: the control-plane audit trail in a browser.',
@@ -256,7 +257,7 @@ test('A1/A2/A6: every namespace by default; namespace = selects the deployment-w
 	expect(narrowed.every((row) => row.includes(NS))).toBe(true);
 
 	// A6: the CLI equivalent filters; it never sends -n.
-	expect(await cliText(page)).toBe(`orkctl admin audit --filter namespace=${NS}`);
+	expect(await cliText(page)).toBe(`orkctl admin audit -F namespace=${NS}`);
 	await shot(page, 'admin-audit-scoped.png');
 	note(`every namespace: ${everywhere.length} rows; namespace=${NS}: ${narrowed.length} rows, no retention.update`);
 });
@@ -269,7 +270,7 @@ test('A3: action ^ namespace. narrows to namespace writes', async ({ page }) => 
 	await page.getByTestId('audit-filters-apply').click();
 	await expect.poll(() => urlFilters(page)).toEqual(['action^namespace.']);
 	await expect.poll(() => actions(page)).toEqual(['namespace.update', 'namespace.create']);
-	expect(await cliText(page)).toBe(`orkctl admin audit --filter 'action^namespace.'`);
+	expect(await cliText(page)).toBe(`orkctl admin audit -F 'action^namespace.'`);
 	note(`action^namespace. : ${(await actions(page)).join(' ')}`);
 });
 

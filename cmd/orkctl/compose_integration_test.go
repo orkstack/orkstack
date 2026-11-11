@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The composed-orkflows CLI suite (docs/DSL.md "Composition"): real `ork`,
@@ -28,7 +30,7 @@ func composedNamespace(t *testing.T, server string) string {
 	planCLI(t, server, "namespace", "create", ns).requireExit(t, exitOK)
 	root := repoRoot(t)
 	for _, file := range []string{"release-block.ork.yaml", "composed-release.ork.yaml"} {
-		planCLI(t, server, "-n", ns, "apply", filepath.Join(root, orkflowFixtures, file)).requireExit(t, exitOK)
+		planCLI(t, server, "-n", ns, "orkflow", "create", filepath.Join(root, orkflowFixtures, file)).requireExit(t, exitOK)
 	}
 	return ns
 }
@@ -121,10 +123,8 @@ func TestIntegration_CLIChainNamesItsRoot(t *testing.T) {
 	serverB := "http://" + cluster.b.addr
 	ns := composedNamespace(t, serverA)
 	document := filepath.Join(t.TempDir(), "chain-top.ork.yaml")
-	if err := os.WriteFile(document, []byte(chainTopDocument), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	planCLI(t, serverA, "-n", ns, "apply", document).requireExit(t, exitOK)
+	must.OK(t, os.WriteFile(document, []byte(chainTopDocument), 0o644))
+	planCLI(t, serverA, "-n", ns, "orkflow", "create", document).requireExit(t, exitOK)
 
 	submitted := &orkstackv1.SubmitRunResponse{}
 	raw := planCLI(t, serverA, "-n", ns, "run", "submit", "chain-top", "--json").requireExit(t, exitOK).stdout

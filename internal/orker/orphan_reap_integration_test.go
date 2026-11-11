@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestIntegration_ReplacementOrkerReapsLabelledOrphan(t *testing.T) {
@@ -31,14 +33,10 @@ func TestIntegration_ReplacementOrkerReapsLabelledOrphan(t *testing.T) {
 	container := strings.TrimSpace(string(out))
 	t.Cleanup(func() { _ = exec.Command(cli, "rm", "-f", container).Run() })
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer store.Close()
 	workRoot, err := os.MkdirTemp("../../.data/work", proof.WorkRootPattern("phase2-reap"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// The Orker hands this path to the container runtime as a bind mount, and
 	// Docker requires an absolute source. A relative root works on some
 	// daemons and is refused on others (CI's Docker 28).
@@ -47,14 +45,10 @@ func TestIntegration_ReplacementOrkerReapsLabelledOrphan(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{Runtime: orker.NewDockerRuntime(), OrkerID: id, WorkRoot: workRoot})
-	if err := activities.Boot(ctx); err != nil {
-		t.Fatalf("replacement Boot: %v", err)
-	}
+	must.OKf(t, activities.Boot(ctx), "replacement Boot")
 	check := exec.CommandContext(ctx, cli, "ps", "-aq", "--filter", "label=ork.orker="+id)
 	remaining, err := check.CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.TrimSpace(string(remaining)) != "" {
 		t.Fatalf("orphan survives replacement boot: %s", remaining)
 	}
@@ -76,9 +70,7 @@ func TestIntegration_ReplacementOrkerReapsUnderTheDefaultIdentity(t *testing.T) 
 	defer cancel()
 
 	workRoot, err := os.MkdirTemp("../../.data/work", proof.WorkRootPattern("phase2-default-reap"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if workRoot, err = filepath.Abs(workRoot); err != nil {
 		t.Fatal(err)
 	}
@@ -86,9 +78,7 @@ func TestIntegration_ReplacementOrkerReapsUnderTheDefaultIdentity(t *testing.T) 
 
 	newLife := func() *orker.Activities {
 		store, err := artifacts.NewLocalStore(t.TempDir())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		t.Cleanup(func() { _ = store.Close() })
 		return orker.NewActivitiesWithOptions(store, orker.Options{
 			Runtime: orker.NewDockerRuntime(), WorkRoot: workRoot,
@@ -120,16 +110,12 @@ func TestIntegration_ReplacementOrkerReapsUnderTheDefaultIdentity(t *testing.T) 
 	if got := second.Dispatcher().OrkerID; got != id {
 		t.Fatalf("the default identity changed across a restart: %q then %q", id, got)
 	}
-	if err := second.Boot(ctx); err != nil {
-		t.Fatalf("replacement Boot: %v", err)
-	}
+	must.OKf(t, second.Boot(ctx), "replacement Boot")
 	t.Cleanup(second.Close)
 
 	remaining, err := exec.CommandContext(ctx, cli, "ps", "-aq",
 		"--filter", "label=ork.orker="+id).CombinedOutput()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.TrimSpace(string(remaining)) != "" {
 		t.Fatalf("the predecessor's container survived a default-identity boot: %s", remaining)
 	}

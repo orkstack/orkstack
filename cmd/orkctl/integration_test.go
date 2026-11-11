@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -21,12 +21,14 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/client"
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const (
@@ -78,9 +80,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 	// process: httptest's default 127.0.0.1 loopback is the container's own
 	// loopback there, and the fetch fails with CONTAINER_EXIT_NONZERO.
 	listener, err := net.Listen("tcp", "0.0.0.0:0")
-	if err != nil {
-		t.Fatalf("listen for the example's origin: %v", err)
-	}
+	must.OKf(t, err, "listen for the example's origin")
 	origin := &httptest.Server{
 		Listener: listener,
 		Config: &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -95,9 +95,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 
 	pool := privateTaskPool()
 	taskQueue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map test pool: %v", err)
-	}
+	must.OKf(t, err, "map test pool")
 	repoRoot := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
 	enginePath := testbin.Path(t, "./cmd/ork")
@@ -141,17 +139,17 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 		t.Fatalf("namespace create %s exit = %d, want 0\nstderr:\n%s", exampleNamespace, code, stderr)
 	}
 	stdout, stderr, code := cli("--namespace", exampleNamespace,
-		"apply", filepath.Join(repoRoot, orkflowFixtures, "hello.ork.yaml"))
+		"orkflow", "create", filepath.Join(repoRoot, orkflowFixtures, "hello.ork.yaml"))
 	if code != 0 {
 		t.Fatalf("apply exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
 	}
-	if !strings.Contains(stdout, "Applied orkflow hello-ork") {
+	if !strings.Contains(stdout, "Created orkflow hello-ork") {
 		t.Fatalf("apply stdout:\n%s", stdout)
 	}
 
 	// Runs use a copy of that example pinned to this test's private task queue.
 	successPath := writePoolPinnedOrkflow(t, repoRoot, successOrkflowName, pool)
-	if _, stderr, code = cli("apply", successPath); code != 0 {
+	if _, stderr, code = cli("orkflow", "create", successPath); code != 0 {
 		t.Fatalf("apply of the pinned orkflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 	// The Orker and the engine boot side by side, and a submit onto a pool with
@@ -187,7 +185,7 @@ func TestIntegration_CLIDrivesARealEngineToTerminalRuns(t *testing.T) {
 
 	// The same path for a run whose task exits non-zero: the CLI must too.
 	failingPath := writePoolPinnedOrkflow(t, repoRoot, failingOrkflowName, pool)
-	if _, stderr, code = cli("apply", failingPath); code != 0 {
+	if _, stderr, code = cli("orkflow", "create", failingPath); code != 0 {
 		t.Fatalf("apply of the failing orkflow exit = %d, want 0\nstderr:\n%s", code, stderr)
 	}
 	stdout, stderr, code = cli("run", "submit", failingOrkflowName, "--watch")
@@ -334,8 +332,8 @@ func privateTemporalNamespace() string {
 //
 // It is a fresh directory under ORK_TEST_CONTAINER_TMPDIR, ORK_ORKER_WORKDIR
 // or the repository's .data/work, never that directory itself, and never a
-// name another process could compute: two processes running the same test (a
-// feature proof beside a full proof) would otherwise share one root, one
+// name another process could compute: two processes running the same test (two
+// proofs on one host) would otherwise share one root, one
 // default Orker identity, and each other's cleanup (AGENTS.md §11.1). Within
 // one test it is memoized, so every process the test starts — and an Orker it
 // boots twice — shares the one root.
@@ -353,9 +351,7 @@ func bindableOrkerWorkRoot(t *testing.T) string {
 	if parent == "" {
 		parent = filepath.Join(repoRoot(t), ".data", "work")
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		t.Fatalf("create work root parent %s: %v", parent, err)
-	}
+	must.OKf(t, os.MkdirAll(parent, 0o755), "create work root parent %s", parent)
 	safe := strings.Map(func(r rune) rune {
 		switch {
 		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-':
@@ -368,9 +364,7 @@ func bindableOrkerWorkRoot(t *testing.T) string {
 		safe = safe[:80]
 	}
 	root, err := os.MkdirTemp(parent, proof.WorkRootPattern("orkctl-"+safe))
-	if err != nil {
-		t.Fatalf("create bindable work root under %s: %v", parent, err)
-	}
+	must.OKf(t, err, "create bindable work root under %s", parent)
 	orkerWorkRoots[t.Name()] = root
 	name := t.Name()
 	t.Cleanup(func() {
@@ -397,9 +391,7 @@ var (
 func sharedLocalArtifactDir(t *testing.T) string {
 	t.Helper()
 	dir := filepath.Join(bindableOrkerWorkRoot(t), "artifacts")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create artifact dir: %v", err)
-	}
+	must.OKf(t, os.MkdirAll(dir, 0o755), "create artifact dir")
 	return dir
 }
 
@@ -471,9 +463,7 @@ func startProcessHandle(ctx context.Context, t *testing.T, name, path string, en
 	var log strings.Builder
 	cmd.Stdout = &log
 	cmd.Stderr = &log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start %s: %v", name, err)
-	}
+	must.OKf(t, cmd.Start(), "start %s", name)
 	done := make(chan struct{})
 	go func() { _ = cmd.Wait(); close(done) }()
 	t.Cleanup(func() {
@@ -501,9 +491,7 @@ func waitForEngine(t *testing.T, exited <-chan struct{}, cli func(args ...string
 			}
 			return nil
 		})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 }
 
 // waitForPoolLive polls `pool list -n namespace --json` until the pool reports
@@ -568,9 +556,7 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 	t.Helper()
 	source, err := os.ReadFile(filepath.Join(repoRoot, orkflowFixtures, "hello.ork.yaml"))
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	var doc map[string]any
 	if err := yaml.Unmarshal(source, &doc); err != nil {
 		t.Fatalf("parse example: %v", err)
@@ -606,9 +592,7 @@ func writePoolPinnedOrkflow(t *testing.T, repoRoot, name, pool string) string {
 		t.Fatalf("encode orkflow: %v", err)
 	}
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
-	if err := os.WriteFile(path, encoded, 0o644); err != nil {
-		t.Fatalf("write orkflow: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, encoded, 0o644), "write orkflow")
 	return path
 }
 
@@ -627,9 +611,7 @@ func parseRunID(t *testing.T, stdout string) string {
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("resolve repo root: %v", err)
-	}
+	must.OKf(t, err, "resolve repo root")
 	return path
 }
 
@@ -637,12 +619,8 @@ func repoRoot(t *testing.T) string {
 func freeAddress(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		t.Fatalf("close listener: %v", err)
-	}
+	must.OKf(t, listener.Close(), "close listener")
 	return address
 }

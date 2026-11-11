@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const snapshotHistoryMeasurementEnv = "ORK_MEASURE_SNAPSHOT_HISTORY"
@@ -113,9 +115,7 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 	for name, w := range map[string]worker.Worker{
 		"run": runWorker, "task": taskWorker, "event": eventWorker,
 	} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -123,12 +123,8 @@ func TestIntegration_SnapshotExternalizationHistoryGrowth(t *testing.T) {
 	for _, n := range []int{6, 50, 100} {
 		runID := fmt.Sprintf("ork-snapshot-history-%03d-%s", n, suffix)
 		starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, taskQueue)
-		if err := starter.StartRun(ctx, runID, measuredOrkflow(n), nil, rawPlan(taskQueue)); err != nil {
-			t.Fatalf("start %d-task run: %v", n, err)
-		}
-		if err := c.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-			t.Fatalf("wait for %d-task run: %v", n, err)
-		}
+		must.OKf(t, starter.StartRun(ctx, runID, measuredOrkflow(n), nil, rawPlan(taskQueue)), "start %d-task run", n)
+		must.OKf(t, c.GetWorkflow(ctx, runID, "").Get(ctx, nil), "wait for %d-task run", n)
 		m := measureRunHistory(t, ctx, c, snapshots, runID, n)
 		measurements = append(measurements, m)
 		t.Logf("EVIDENCE tasks=%d history_bytes=%d events=%d max_activity_input_bytes=%d bytes_per_event=%.2f bytes_per_task=%.2f snapshots=%d binary_snapshot_bytes=%d uri_payload_bytes=%d first_snapshot_bytes=%d last_snapshot_bytes=%d snapshot_growth_bytes_per_task=%.2f",
@@ -175,9 +171,7 @@ func measureRunHistory(
 	var uris []string
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history of %s: %v", runID, err)
-		}
+		must.OKf(t, err, "read history of %s", runID)
 		history.Events = append(history.Events, event)
 		attrs := event.GetActivityTaskScheduledEventAttributes()
 		if attrs == nil {
@@ -195,9 +189,7 @@ func measureRunHistory(
 			t.Fatalf("PublishEvent at event %d has %d payloads", event.GetEventId(), len(payloads))
 		}
 		var uri string
-		if err := dataConverter.FromPayload(payloads[1], &uri); err != nil {
-			t.Fatalf("decode snapshot URI at event %d: %v", event.GetEventId(), err)
-		}
+		must.OKf(t, dataConverter.FromPayload(payloads[1], &uri), "decode snapshot URI at event %d", event.GetEventId())
 		m.SnapshotURIBytes += proto.Size(payloads[1])
 		if _, duplicate := seenURI[uri]; duplicate {
 			t.Fatalf("duplicate snapshot URI %q", uri)
@@ -210,17 +202,13 @@ func measureRunHistory(
 	m.SnapshotCount = len(uris)
 	for i, uri := range uris {
 		data, err := snapshots.ReadSnapshot(ctx, uri)
-		if err != nil {
-			t.Fatalf("read snapshot %q: %v", uri, err)
-		}
+		must.OKf(t, err, "read snapshot %q", uri)
 		if i == 0 {
 			m.FirstSnapshotBytes = len(data)
 		}
 		m.LastSnapshotBytes = len(data)
 		m.BinarySnapshotBytes += len(data)
-		if err := snapshots.DeleteSnapshot(ctx, uri); err != nil {
-			t.Fatalf("delete measured snapshot %q: %v", uri, err)
-		}
+		must.OKf(t, snapshots.DeleteSnapshot(ctx, uri), "delete measured snapshot %q", uri)
 	}
 	return m
 }

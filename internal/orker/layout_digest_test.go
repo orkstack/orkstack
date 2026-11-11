@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 type layoutProbeRuntime struct{ loads int }
@@ -41,25 +43,17 @@ func TestTamperedEmbeddedLayoutIsRejectedBeforeRuntimeLoad(t *testing.T) {
 	root := t.TempDir()
 	layout := filepath.Join(root, layoutFileName(digest))
 	f, err := os.Create(layout)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	tw := tar.NewWriter(f)
 	index := []byte(`{"schemaVersion":2,"manifests":[{"digest":"` + digest + `"}]}`)
 	for name, body := range map[string][]byte{"index.json": index, "blobs/sha256/" + strings.Repeat("a", 64): []byte("tampered bytes")} {
-		if err := tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, tw.WriteHeader(&tar.Header{Name: name, Mode: 0o644, Size: int64(len(body))}))
 		if _, err := tw.Write(body); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := tw.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if err := f.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, tw.Close())
+	must.OK(t, f.Close())
 	runtime := &layoutProbeRuntime{}
 	d := &OCIDispatcher{Runtime: runtime, LayoutRoot: root}
 	_, failure := d.resolveImage(context.Background(), &orkstackv1.ExecuteTaskInput{TaskId: "build", Image: &orkstackv1.ImageRef{Pinned: "registry/image@" + digest, IndexDigest: digest}})

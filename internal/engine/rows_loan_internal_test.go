@@ -15,6 +15,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // rowStatuses is a snapshot's task rows as "id=STATUS ...", in order: the
@@ -267,7 +269,7 @@ func TestRowsLoan_LendingCostsNothingPerRow(t *testing.T) {
 	}
 	ceiling := int(DefaultOrkflowMaxTasks)
 	few, many := rowsOf(1), rowsOf(ceiling)
-	clock := &passClock{}
+	clock := newPassClock(t)
 
 	lendFew := loanCPU(clock, few, loanCycles)
 	lendMany := loanCPU(clock, many, loanCycles)
@@ -451,9 +453,7 @@ func TestSnapshotWrite_ACancelDuringTheEncodeNeverChangesTheRowsBeingEncoded(t *
 		}
 	}
 	got := &orkstackv1.Run{}
-	if err := proto.Unmarshal(written, got); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(written, got))
 	if wholeRun(got) != wholeAt {
 		t.Fatalf("the snapshot written for event %d shows rows %q, want the state at the event, %q", hookSeq, rowStatuses(got), before)
 	}

@@ -12,6 +12,8 @@ import (
 	"go.temporal.io/sdk/testsuite"
 
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestHeartbeater_RecordsProgressThroughTemporalActivityLifecycle proves the
@@ -48,13 +50,9 @@ func TestHeartbeater_RecordsProgressThroughTemporalActivityLifecycle(t *testing.
 
 	env.RegisterActivity(activityFn)
 	encoded, err := env.ExecuteActivity(activityFn)
-	if err != nil {
-		t.Fatalf("ExecuteActivity: %v", err)
-	}
+	must.OKf(t, err, "ExecuteActivity")
 	var progress HeartbeatProgress
-	if err := encoded.Get(&progress); err != nil {
-		t.Fatalf("decode activity result: %v", err)
-	}
+	must.OKf(t, encoded.Get(&progress), "decode activity result")
 	if progress.Phase != "container" || progress.ContainerID != "container-proof" || progress.BytesLogged != 123 {
 		t.Fatalf("heartbeat detail = %+v, want the current container progress", progress)
 	}

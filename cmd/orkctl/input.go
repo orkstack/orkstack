@@ -1,7 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // buildInputPayload turns --input-json and repeated --input key=value pairs
@@ -29,7 +31,11 @@ func buildInputPayload(pairs []string, inputJSON string) (*orkstackv1.Payload, e
 		if key == "" {
 			return nil, fmt.Errorf("invalid --input %q: key must not be empty", pair)
 		}
-		values[key] = parseInputValue(raw)
+		value, err := parseInputValue(raw)
+		if err != nil {
+			return nil, fmt.Errorf("invalid --input %q: %w", pair, err)
+		}
+		values[key] = value
 	}
 
 	if len(values) == 0 {
@@ -43,9 +49,10 @@ func buildInputPayload(pairs []string, inputJSON string) (*orkstackv1.Payload, e
 }
 
 // decodeInputObject reads --input-json: one JSON object, or nothing at all
-// when the flag is blank. It refuses what encoding/json would quietly change
-// (text that is not UTF-8, half of a surrogate pair: both become U+FFFD) and
-// JSON null, which is not an object and would otherwise read as an empty one.
+// when the flag is blank. It refuses what a decoder could read more than one
+// way (text that is not UTF-8, half of a surrogate pair, a key written twice)
+// and JSON null, which is not an object and would otherwise read as an empty
+// one.
 func decodeInputObject(text string) (map[string]any, error) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" {
@@ -56,7 +63,7 @@ func decodeInputObject(text string) (map[string]any, error) {
 	}
 	var object map[string]any
 	if err := json.Unmarshal([]byte(trimmed), &object); err != nil {
-		return nil, fmt.Errorf("invalid --input-json: %w", err)
+		return nil, fmt.Errorf("invalid --input-json: %w", stablejson.Explained(err))
 	}
 	if object == nil {
 		return nil, errors.New("invalid --input-json: want a JSON object, not null")
@@ -66,13 +73,19 @@ func decodeInputObject(text string) (map[string]any, error) {
 
 // parseInputValue types a --input value: valid JSON keeps its JSON type, and
 // anything else is preserved verbatim as a string, including text whose JSON
-// reading would change it (see decodeInputObject).
-func parseInputValue(raw string) any {
+// reading would change it (see decodeInputObject). JSON that writes a key
+// twice is refused, naming the key: it is plainly meant as JSON, and which of
+// the two values it means is not something to guess.
+func parseInputValue(raw string) (any, error) {
 	if dsl.CheckJSONText([]byte(raw)) == nil {
 		var decoded any
-		if err := json.Unmarshal([]byte(raw), &decoded); err == nil {
-			return decoded
+		err := json.Unmarshal([]byte(raw), &decoded)
+		if err == nil {
+			return decoded, nil
+		}
+		if errors.Is(err, jsontext.ErrDuplicateName) {
+			return nil, stablejson.Explained(err)
 		}
 	}
-	return raw
+	return raw, nil
 }

@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests drive the series through GetStats, the RPC a client calls, and
@@ -39,18 +41,14 @@ const (
 func at(t testing.TB, raw string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339Nano, raw)
-	if err != nil {
-		t.Fatalf("parse %s: %v", raw, err)
-	}
+	must.OKf(t, err, "parse %s", raw)
 	return parsed
 }
 
 func getStats(t *testing.T, handler *api.StatsHandler, req *orkstackv1.GetStatsRequest) *orkstackv1.GetStatsResponse {
 	t.Helper()
 	got, err := handler.GetStats(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("GetStats(%v): %v", req, err)
-	}
+	must.OKf(t, err, "GetStats(%v)", req)
 	return got.Msg
 }
 
@@ -244,13 +242,9 @@ func TestGetStatsSeries_EveryBoundaryAMinuteScanFinds(t *testing.T) {
 	} {
 		t.Run(tc.zone+" "+tc.width.String()+" from "+tc.since, func(t *testing.T) {
 			zone, err := time.LoadLocation(tc.zone)
-			if err != nil {
-				t.Fatalf("load %s: %v", tc.zone, err)
-			}
+			must.OKf(t, err, "load %s", tc.zone)
 			span, err := time.ParseDuration(tc.span)
-			if err != nil {
-				t.Fatalf("parse %s: %v", tc.span, err)
-			}
+			must.OKf(t, err, "parse %s", tc.span)
 			since := at(t, tc.since)
 			until := since.Add(span)
 			want := []time.Time{since}
@@ -551,9 +545,7 @@ func TestGetStatsSeries_WithoutASeriesTheAnswerIsUnchanged(t *testing.T) {
 	fixture.archiveRun(t, "payments", "charge", orkstackv1.Status_STATUS_SUCCEEDED, now.Add(-time.Hour))
 	got := getStats(t, api.NewStatsHandler(fixture.svc, 0), &orkstackv1.GetStatsRequest{Namespace: "payments"})
 	wire, err := api.MarshalJSON(got)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	must.OKf(t, err, "marshal")
 	for _, key := range []string{`"buckets"`, `"bucketWidth"`, `"timezone"`} {
 		if strings.Contains(string(wire), key) {
 			t.Errorf("the wire form carries %s though no series was asked for: %s", key, wire)
@@ -574,17 +566,13 @@ func TestGetStatsSeries_TheWidthTravelsByItsShortName(t *testing.T) {
 	for _, spelling := range []string{"day", "DAY", "STATS_BUCKET_WIDTH_DAY"} {
 		req := &orkstackv1.GetStatsRequest{}
 		body := `{"bucketWidth":"` + spelling + `","timezone":"Europe/Lisbon","bucketCount":7}`
-		if err := api.UnmarshalJSON([]byte(body), req); err != nil {
-			t.Fatalf("decode %s: %v", body, err)
-		}
+		must.OKf(t, api.UnmarshalJSON([]byte(body), req), "decode %s", body)
 		if req.GetBucketWidth() != dayBuckets || req.GetBucketCount() != 7 || req.GetTimezone() != "Europe/Lisbon" {
 			t.Fatalf("decode %s = %v", body, req)
 		}
 	}
 	wire, err := api.MarshalJSON(&orkstackv1.GetStatsResponse{BucketWidth: dayBuckets})
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
+	must.OKf(t, err, "marshal")
 	if !strings.Contains(string(wire), `"bucketWidth":"DAY"`) {
 		t.Fatalf("the answer spells the width %s, want \"DAY\"", wire)
 	}
@@ -811,9 +799,7 @@ func TestGetStatsSeries_EveryWayTheArchiveFailsIsNamed(t *testing.T) {
 	series := &orkstackv1.GetStatsRequest{Namespace: "payments", BucketWidth: dayBuckets}
 	window := &orkstackv1.GetStatsRequest{Namespace: "payments"}
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 	serviceOver := func(archive api.RunArchive) *api.StatsHandler {
 		return api.NewStatsHandler(api.NewService(api.Config{
@@ -887,9 +873,7 @@ func FuzzGetStatsSeries(f *testing.F) {
 			Id: fmt.Sprintf("ork-fuzz-%d", i), Namespace: "payments", OrkflowName: "charge",
 			Status: orkstackv1.Status_STATUS_SUCCEEDED, CreatedAt: timestamppb.New(created),
 		}
-		if err := engine.NewRunArchiver(fixture.archive).Archive(context.Background(), run, nil); err != nil {
-			f.Fatalf("archive: %v", err)
-		}
+		must.OKf(f, engine.NewRunArchiver(fixture.archive).Archive(context.Background(), run, nil), "archive")
 	}
 	handler := api.NewStatsHandler(fixture.svc, 0)
 	for _, seed := range []struct {
@@ -961,9 +945,7 @@ func FuzzGetStatsSeries(f *testing.F) {
 			t.Fatalf("bucket_count %d answered %d buckets", count, len(buckets))
 		}
 		zone, err := time.LoadLocation(got.GetTimezone())
-		if err != nil {
-			t.Fatalf("the echoed zone %q does not load: %v", got.GetTimezone(), err)
-		}
+		must.OKf(t, err, "the echoed zone %q does not load", got.GetTimezone())
 		if !buckets[0].GetSince().AsTime().Equal(got.GetWindowSince().AsTime()) ||
 			!buckets[len(buckets)-1].GetUntil().AsTime().Equal(got.GetWindowUntil().AsTime()) {
 			t.Fatalf("the buckets do not span the window %s..%s",

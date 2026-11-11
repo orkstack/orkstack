@@ -75,10 +75,10 @@ test('U2 absentMembers lists every non-present member with its sentence', () => 
 
 test('U3 evidenceCommand is the CLI that writes the same bundle', () => {
 	expect(evidenceCommand('default', 'ork-1', { logs: false, artifacts: true })).toBe(
-		runCommand('default', ['run', 'evidence', 'export', 'ork-1', '--output', 'ork-1.evidence.tar.gz', '--no-logs'])
+		runCommand('default', ['run', 'evidence', 'export', 'ork-1', '-o', 'ork-1.evidence.tar.gz', '--no-logs'])
 	);
 	expect(evidenceCommand('', 'ork-1', { logs: true, artifacts: false })).toBe(
-		"orkctl --namespace default run evidence export ork-1 --output ork-1.evidence.tar.gz --no-artifacts"
+		"orkctl -n default run evidence export ork-1 -o ork-1.evidence.tar.gz --no-artifacts"
 	);
 });
 
@@ -143,8 +143,8 @@ test('U10 an over-limit bundle names its size, the limit and the CLI that export
 		artifacts: true
 	});
 	expect(over?.message).toBe(
-		'This bundle is 300.0 MiB, more than the 256.0 MiB a browser download assembles in memory. Export it with the CLI:'
+		'This bundle is 300.0 MiB, more than the 256.0 MiB a browser download assembles in memory. Export it from the command line: its command is behind the terminal icon below.'
 	);
 	expect(over?.command).toBe(evidenceCommand('payments', 'ork-1', { logs: false, artifacts: true }));
-	expect(over?.command).toBe("orkctl --namespace payments run evidence export ork-1 --output ork-1.evidence.tar.gz --no-logs");
+	expect(over?.command).toBe("orkctl -n payments run evidence export ork-1 -o ork-1.evidence.tar.gz --no-logs");
 });

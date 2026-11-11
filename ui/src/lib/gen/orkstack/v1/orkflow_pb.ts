@@ -14,7 +14,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/orkflow.proto.
  */
 export const file_orkstack_v1_orkflow: GenFile = /*@__PURE__*/
-  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiLAoDUGluEgwKBG5hbWUYASABKAkSFwoPdGltZW91dF9zZWNvbmRzGAIgASgFIkYKCk9ya2Zsb3dSZWYSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAMgASgJIvwFCgRUYXNrEgoKAmlkGAEgASgJEiUKBHdpdGgYAyABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Eg0KBW5lZWRzGAQgAygJEhEKCWNvbmRpdGlvbhgFIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYBiABKAUSJwoFcmV0cnkYByABKAsyGC5vcmtzdGFjay52MS5SZXRyeVBvbGljeRIMCgRwb29sGAkgASgJEgwKBHVzZXMYCiABKAkSJAoFaW1hZ2UYCyABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAwgAygJEicKA2VudhgNIAMoCzIaLm9ya3N0YWNrLnYxLlRhc2suRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIvCglyZXNvdXJjZXMYDyABKAsyHC5vcmtzdGFjay52MS5SZXNvdXJjZVJlcXVlc3QSKQoHbmV0d29yaxgQIAEoDjIYLm9ya3N0YWNrLnYxLk5ldHdvcmtNb2RlEikKIWNhbmNlbGxhdGlvbl9ncmFjZV9wZXJpb2Rfc2Vjb25kcxgRIAEoBRIZChFydW5fYXNfb3JrZXJfdXNlchgSIAEoCBILCgNwaW4YEyABKAkSJQoFYXdhaXQYFCABKAsyFi5vcmtzdGFjay52MS5Bd2FpdFNwZWMSIwoEZWFjaBgVIAEoCzIVLm9ya3N0YWNrLnYxLkVhY2hTcGVjEigKB29ya2Zsb3cYFiABKAsyFy5vcmtzdGFjay52MS5PcmtmbG93UmVmEiUKBWNhY2hlGBcgASgLMhYub3Jrc3RhY2sudjEuQ2FjaGVTcGVjEiUKBGpvaW4YGCABKA4yFy5vcmtzdGFjay52MS5Kb2luUG9saWN5GioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFKBAgCEANKBAgIEAlSBnBsdWdpblIFcXVldWUiSAoJQ2FjaGVTcGVjEhMKC3R0bF9zZWNvbmRzGAEgASgFEiYKBXNjb3BlGAIgASgOMhcub3Jrc3RhY2sudjEuQ2FjaGVTY29wZSJ2CghFYWNoU3BlYxIMCgRvdmVyGAEgASgJEgoKAmFzGAIgASgJEhEKCW1heF9pdGVtcxgDIAEoBRIUCgxtYXhfcGFyYWxsZWwYBCABKAUSJwoGc291cmNlGAUgASgLMhcub3Jrc3RhY2sudjEuRWFjaFNvdXJjZSJfCglBd2FpdFNwZWMSFwoPdGltZW91dF9zZWNvbmRzGAEgASgFEhAKCGNhbGxiYWNrGAIgASgIEicKBnNjaGVtYRgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3Qi4AMKB09ya2Zsb3cSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhMKC2Rlc2NyaXB0aW9uGAMgASgJEjAKBmxhYmVscxgEIAMoCzIgLm9ya3N0YWNrLnYxLk9ya2Zsb3cuTGFiZWxzRW50cnkSJwoGaW5wdXRzGAUgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdBIgCgV0YXNrcxgGIAMoCzIRLm9ya3N0YWNrLnYxLlRhc2sSEwoLc291cmNlX3lhbWwYByABKAkSLgoKY3JlYXRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoJbmFtZXNwYWNlGAkgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAogASgJEh4KBHBpbnMYCyADKAsyEC5vcmtzdGFjay52MS5QaW4SMgoHb3V0cHV0cxgMIAMoCzIhLm9ya3N0YWNrLnYxLk9ya2Zsb3cuT3V0cHV0c0VudHJ5Gi0KC0xhYmVsc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEaLgoMT3V0cHV0c0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAFCqAEKD2NvbS5vcmtzdGFjay52MUIMT3JrZmxvd1Byb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
+  fileDesc("ChlvcmtzdGFjay92MS9vcmtmbG93LnByb3RvEgtvcmtzdGFjay52MSKIAQoLUmV0cnlQb2xpY3kSGAoQbWF4aW11bV9hdHRlbXB0cxgBIAEoBRIgChhpbml0aWFsX2ludGVydmFsX3NlY29uZHMYAiABKAUSGwoTYmFja29mZl9jb2VmZmljaWVudBgDIAEoARIgChhtYXhpbXVtX2ludGVydmFsX3NlY29uZHMYBCABKAUiLAoDUGluEgwKBG5hbWUYASABKAkSFwoPdGltZW91dF9zZWNvbmRzGAIgASgFIlkKCk9ya2Zsb3dSZWYSDAoEbmFtZRgBIAEoCRIPCgd2ZXJzaW9uGAIgASgJEhkKEWRlZmluaXRpb25fZGlnZXN0GAMgASgJEhEKCW5hbWVzcGFjZRgEIAEoCSIyCgxPcmtmbG93U2hhcmUSEQoJbmFtZXNwYWNlGAEgASgJEg8KB29ya2Zsb3cYAiABKAkiowYKBFRhc2sSCgoCaWQYASABKAkSJQoEd2l0aBgDIAEoCzIXLmdvb2dsZS5wcm90b2J1Zi5TdHJ1Y3QSDQoFbmVlZHMYBCADKAkSEQoJY29uZGl0aW9uGAUgASgJEhcKD3RpbWVvdXRfc2Vjb25kcxgGIAEoBRInCgVyZXRyeRgHIAEoCzIYLm9ya3N0YWNrLnYxLlJldHJ5UG9saWN5EgwKBHBvb2wYCSABKAkSDAoEdXNlcxgKIAEoCRIkCgVpbWFnZRgLIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEg8KB2NvbW1hbmQYDCADKAkSJwoDZW52GA0gAygLMhoub3Jrc3RhY2sudjEuVGFzay5FbnZFbnRyeRInCgdzZWNyZXRzGA4gAygLMhYub3Jrc3RhY2sudjEuU2VjcmV0UmVmEi8KCXJlc291cmNlcxgPIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBAgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBEgASgFEhkKEXJ1bl9hc19vcmtlcl91c2VyGBIgASgIEgsKA3BpbhgTIAEoCRIlCgVhd2FpdBgUIAEoCzIWLm9ya3N0YWNrLnYxLkF3YWl0U3BlYxIjCgRlYWNoGBUgASgLMhUub3Jrc3RhY2sudjEuRWFjaFNwZWMSKAoHb3JrZmxvdxgWIAEoCzIXLm9ya3N0YWNrLnYxLk9ya2Zsb3dSZWYSJQoFY2FjaGUYFyABKAsyFi5vcmtzdGFjay52MS5DYWNoZVNwZWMSJQoEam9pbhgYIAEoDjIXLm9ya3N0YWNrLnYxLkpvaW5Qb2xpY3kSJQoFc2xlZXAYGSABKAsyFi5vcmtzdGFjay52MS5TbGVlcFNwZWMaKgoIRW52RW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUoECAIQA0oECAgQCVIGcGx1Z2luUgVxdWV1ZSJICglDYWNoZVNwZWMSEwoLdHRsX3NlY29uZHMYASABKAUSJgoFc2NvcGUYAiABKA4yFy5vcmtzdGFjay52MS5DYWNoZVNjb3BlInYKCEVhY2hTcGVjEgwKBG92ZXIYASABKAkSCgoCYXMYAiABKAkSEQoJbWF4X2l0ZW1zGAMgASgFEhQKDG1heF9wYXJhbGxlbBgEIAEoBRInCgZzb3VyY2UYBSABKAsyFy5vcmtzdGFjay52MS5FYWNoU291cmNlIl8KCUF3YWl0U3BlYxIXCg90aW1lb3V0X3NlY29uZHMYASABKAUSEAoIY2FsbGJhY2sYAiABKAgSJwoGc2NoZW1hGAMgASgLMhcuZ29vZ2xlLnByb3RvYnVmLlN0cnVjdCIcCglTbGVlcFNwZWMSDwoHc2Vjb25kcxgBIAEoBSKuBAoHT3JrZmxvdxIMCgRuYW1lGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSMAoGbGFiZWxzGAQgAygLMiAub3Jrc3RhY2sudjEuT3JrZmxvdy5MYWJlbHNFbnRyeRInCgZpbnB1dHMYBSABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EiAKBXRhc2tzGAYgAygLMhEub3Jrc3RhY2sudjEuVGFzaxITCgtzb3VyY2VfeWFtbBgHIAEoCRIuCgpjcmVhdGVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCgluYW1lc3BhY2UYCSABKAkSGQoRZGVmaW5pdGlvbl9kaWdlc3QYCiABKAkSHgoEcGlucxgLIAMoCzIQLm9ya3N0YWNrLnYxLlBpbhIyCgdvdXRwdXRzGAwgAygLMiEub3Jrc3RhY2sudjEuT3JrZmxvdy5PdXRwdXRzRW50cnkSLgoLc2hhcmVkX3dpdGgYDSADKAsyGS5vcmtzdGFjay52MS5PcmtmbG93U2hhcmUSHAoUZGVmaW5pdGlvbl9uYW1lc3BhY2UYDiABKAkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ARouCgxPdXRwdXRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4AUKoAQoPY29tLm9ya3N0YWNrLnYxQgxPcmtmbG93UHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_activity]);
 
 /**
  * RetryPolicy mirrors Temporal retry semantics for a task.
@@ -91,8 +91,11 @@ export const PinSchema: GenMessage<Pin> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 1);
 
 /**
- * OrkflowRef names one immutable Orkflow version in the referencing
- * definition's OWN namespace — a composition never crosses a namespace.
+ * OrkflowRef names one immutable Orkflow version: in the referencing
+ * definition's own namespace, or in the namespace `namespace` names when the
+ * author wrote `uses: orkflow:<namespace>/<name>@<version>`. Composition is the
+ * one path that crosses a namespace, and only to a version whose shared_with
+ * admits the composing Orkflow (docs/DSL.md "Sharing across namespaces").
  *
  * @generated from message orkstack.v1.OrkflowRef
  */
@@ -115,6 +118,16 @@ export type OrkflowRef = Message<"orkstack.v1.OrkflowRef"> & {
    * @generated from field: string definition_digest = 3;
    */
   definitionDigest: string;
+
+  /**
+   * namespace is the namespace that owns the referenced Orkflow, as the author
+   * wrote it. Empty means the referencing definition's own namespace. Part of
+   * canonicalOrkflow(Task) only when set, so every existing digest is
+   * unchanged.
+   *
+   * @generated from field: string namespace = 4;
+   */
+  namespace: string;
 };
 
 /**
@@ -123,6 +136,38 @@ export type OrkflowRef = Message<"orkstack.v1.OrkflowRef"> & {
  */
 export const OrkflowRefSchema: GenMessage<OrkflowRef> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_orkflow, 2);
+
+/**
+ * OrkflowShare is one entry of Orkflow.shared_with: who in ANOTHER namespace
+ * may compose this Orkflow version through `uses:`. Exactly one field is set.
+ * Calls within one namespace never need an entry.
+ *
+ * @generated from message orkstack.v1.OrkflowShare
+ */
+export type OrkflowShare = Message<"orkstack.v1.OrkflowShare"> & {
+  /**
+   * namespace admits every Orkflow of that namespace. "*" admits every
+   * Orkflow of every namespace.
+   *
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+
+  /**
+   * orkflow admits one Orkflow, written "<namespace>/<name>": that Orkflow, in
+   * any of its versions, and nothing else of its namespace.
+   *
+   * @generated from field: string orkflow = 2;
+   */
+  orkflow: string;
+};
+
+/**
+ * Describes the message orkstack.v1.OrkflowShare.
+ * Use `create(OrkflowShareSchema)` to create a new message.
+ */
+export const OrkflowShareSchema: GenMessage<OrkflowShare> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_orkflow, 3);
 
 /**
  * Task is a single node in the orkflow DAG. It maps to exactly one activity
@@ -276,7 +321,8 @@ export type Task = Message<"orkstack.v1.Task"> & {
   /**
    * orkflow is the apply-time resolution of `uses: orkflow:<name>@<version>`,
    * the analogue of image for a container task. A composed task starts a
-   * CHILD RUN of exactly that definition, in this Orkflow's namespace, and
+   * CHILD RUN of exactly that definition, in the namespace this run executes
+   * in (even when the definition is another namespace's), and
    * reaches no Orker: it carries no image, pool, pin, retry, timeout or other
    * execution field (docs/DSL.md rules 26–27). Part of canonicalOrkflow(Task)
    * only when set (see pin), so this Orkflow's digest pins the child's.
@@ -305,6 +351,17 @@ export type Task = Message<"orkstack.v1.Task"> & {
    * @generated from field: orkstack.v1.JoinPolicy join = 24;
    */
   join: JoinPolicy;
+
+  /**
+   * sleep makes this a sleeping task: it starts no container, reaches no
+   * Orker, and succeeds once its fixed time has passed. Mutually exclusive
+   * with uses, await and every field that shapes a container (docs/DSL.md
+   * rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin),
+   * so a definition with no sleep keeps its digest.
+   *
+   * @generated from field: orkstack.v1.SleepSpec sleep = 25;
+   */
+  sleep?: SleepSpec | undefined;
 };
 
 /**
@@ -312,7 +369,7 @@ export type Task = Message<"orkstack.v1.Task"> & {
  * Use `create(TaskSchema)` to create a new message.
  */
 export const TaskSchema: GenMessage<Task> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 3);
+  messageDesc(file_orkstack_v1_orkflow, 4);
 
 /**
  * CacheSpec opts ONE task into memoization across runs (docs/DSL.md
@@ -348,7 +405,7 @@ export type CacheSpec = Message<"orkstack.v1.CacheSpec"> & {
  * Use `create(CacheSpecSchema)` to create a new message.
  */
 export const CacheSpecSchema: GenMessage<CacheSpec> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 4);
+  messageDesc(file_orkstack_v1_orkflow, 5);
 
 /**
  * EachSpec makes a Task a fan-out: ONE node of the DAG that runs as one item
@@ -408,7 +465,7 @@ export type EachSpec = Message<"orkstack.v1.EachSpec"> & {
  * Use `create(EachSpecSchema)` to create a new message.
  */
 export const EachSpecSchema: GenMessage<EachSpec> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 5);
+  messageDesc(file_orkstack_v1_orkflow, 6);
 
 /**
  * AwaitSpec makes a Task an awaited task: it starts no container and reaches
@@ -452,7 +509,33 @@ export type AwaitSpec = Message<"orkstack.v1.AwaitSpec"> & {
  * Use `create(AwaitSpecSchema)` to create a new message.
  */
 export const AwaitSpecSchema: GenMessage<AwaitSpec> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 6);
+  messageDesc(file_orkstack_v1_orkflow, 7);
+
+/**
+ * SleepSpec makes a Task a sleeping task: the run waits a fixed time on its
+ * own timer and the task then succeeds, with no values and no artifacts
+ * (docs/DSL.md "Sleeping tasks"). Part of canonicalOrkflow(Task), emitted
+ * ONLY when set (see Task.pin).
+ *
+ * @generated from message orkstack.v1.SleepSpec
+ */
+export type SleepSpec = Message<"orkstack.v1.SleepSpec"> & {
+  /**
+   * seconds is how long the task sleeps, from the moment it starts
+   * sleeping. Required: 1 to 2592000 (30 days), the bound
+   * AwaitSpec.timeout_seconds has, for the same reason.
+   *
+   * @generated from field: int32 seconds = 1;
+   */
+  seconds: number;
+};
+
+/**
+ * Describes the message orkstack.v1.SleepSpec.
+ * Use `create(SleepSpecSchema)` to create a new message.
+ */
+export const SleepSpecSchema: GenMessage<SleepSpec> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_orkflow, 8);
 
 /**
  * Orkflow is the compiled, validated form of a DSL document.
@@ -566,6 +649,30 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
    * @generated from field: map<string, string> outputs = 12;
    */
   outputs: { [key: string]: string };
+
+  /**
+   * shared_with is who in other namespaces may compose this version through
+   * `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing across
+   * namespaces"). Empty means nobody: an Orkflow is closed to every other
+   * namespace unless its definition says otherwise. Composition is the only
+   * door — a submit, a schedule or a trigger runs only its own namespace's
+   * Orkflows. It is part of the definition, so a new version changes who may
+   * call it, and part of canonicalOrkflow only when non-empty (see pins).
+   *
+   * @generated from field: repeated orkstack.v1.OrkflowShare shared_with = 13;
+   */
+  sharedWith: OrkflowShare[];
+
+  /**
+   * definition_namespace is set ONLY on a run's planned copy of an Orkflow
+   * that another namespace's Orkflow composed: the namespace that owns the
+   * stored definition, while namespace names the namespace the child run
+   * executes in and whose rules it follows. Never stored, never applied and
+   * not part of canonicalOrkflow: definition_digest is the owner's.
+   *
+   * @generated from field: string definition_namespace = 14;
+   */
+  definitionNamespace: string;
 };
 
 /**
@@ -573,5 +680,5 @@ export type Orkflow = Message<"orkstack.v1.Orkflow"> & {
  * Use `create(OrkflowSchema)` to create a new message.
  */
 export const OrkflowSchema: GenMessage<Orkflow> = /*@__PURE__*/
-  messageDesc(file_orkstack_v1_orkflow, 7);
+  messageDesc(file_orkstack_v1_orkflow, 9);
 

@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces is the
@@ -118,9 +120,7 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 			connect.NewRequest(&orkstackv1.SubmitRunRequest{
 				OrkflowName: orkflow, Namespace: namespace,
 			}))
-		if err != nil {
-			t.Fatalf("SubmitRun %s/%s on replica A: %v", namespace, orkflow, err)
-		}
+		must.OKf(t, err, "SubmitRun %s/%s on replica A", namespace, orkflow)
 		return submitted.Msg.GetRun().GetId()
 	}
 	windowSince := time.Now().Add(-time.Hour).UTC()
@@ -163,9 +163,7 @@ func TestIntegration_TwoReplicasReportTheSameStatsForTwoNamespaces(t *testing.T)
 			Since:     timestamppb.New(windowSince),
 			Until:     timestamppb.New(windowUntil),
 		}))
-		if err != nil {
-			t.Fatalf("GetStats(%s): %v", namespace, err)
-		}
+		must.OKf(t, err, "GetStats(%s)", namespace)
 		return got.Msg
 	}
 
@@ -267,16 +265,12 @@ func awaitArchived(
 ) {
 	t.Helper()
 	store, err := artifacts.NewRunArchive(cfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	deadline := time.Now().Add(3 * time.Minute)
 	var last int
 	for time.Now().Before(deadline) {
 		entries, err := store.ListRuns(ctx, artifacts.RunQuery{Namespace: namespace})
-		if err != nil {
-			t.Fatalf("list the archive index for %s: %v", namespace, err)
-		}
+		must.OKf(t, err, "list the archive index for %s", namespace)
 		last = len(entries)
 		if last >= want {
 			return
@@ -296,9 +290,7 @@ func awaitClosedInIndex(ctx context.Context, t *testing.T, c client.Client, want
 	var last int64
 	for time.Now().Before(deadline) {
 		counted, err := c.CountWorkflow(ctx, &workflowservice.CountWorkflowExecutionsRequest{Query: query})
-		if err != nil {
-			t.Fatalf("count the closed runs in the cluster's index: %v", err)
-		}
+		must.OKf(t, err, "count the closed runs in the cluster's index")
 		last = counted.GetCount()
 		if last >= want {
 			return
@@ -548,13 +540,9 @@ func TestIntegration_TwoReplicasReportTheSameFailureBreakdown(t *testing.T) {
 		}
 		// B first: it started nothing, so nothing it could hold would help it.
 		fromB, err := statsB.GetFailureBreakdown(ctx, connect.NewRequest(req))
-		if err != nil {
-			t.Fatalf("GetFailureBreakdown on replica B: %v", err)
-		}
+		must.OKf(t, err, "GetFailureBreakdown on replica B")
 		fromA, err := statsA.GetFailureBreakdown(ctx, connect.NewRequest(req))
-		if err != nil {
-			t.Fatalf("GetFailureBreakdown on replica A: %v", err)
-		}
+		must.OKf(t, err, "GetFailureBreakdown on replica A")
 		a, b := fromA.Msg, fromB.Msg
 		if a.GetFailedRunsInWindow() != int64(corpus.failed()) {
 			t.Fatalf("replica A counts %d failed runs, want %d", a.GetFailedRunsInWindow(), corpus.failed())
@@ -604,13 +592,9 @@ func TestIntegration_TwoReplicasReportTheSameFlakeIndex(t *testing.T) {
 		}
 		// B first: it started nothing, so nothing it could hold would help it.
 		fromB, err := statsB.GetFlakeIndex(ctx, connect.NewRequest(req))
-		if err != nil {
-			t.Fatalf("GetFlakeIndex on replica B: %v", err)
-		}
+		must.OKf(t, err, "GetFlakeIndex on replica B")
 		fromA, err := statsA.GetFlakeIndex(ctx, connect.NewRequest(req))
-		if err != nil {
-			t.Fatalf("GetFlakeIndex on replica A: %v", err)
-		}
+		must.OKf(t, err, "GetFlakeIndex on replica A")
 		if fromA.Msg.GetRunsInWindow() != int64(len(corpus.runs)) {
 			t.Fatalf("replica A counts %d runs, want %d", fromA.Msg.GetRunsInWindow(), len(corpus.runs))
 		}

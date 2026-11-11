@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestBootProbe_ItsContainerIsATasks is G16: the boot probe's container is
@@ -29,9 +31,7 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	// for none, as a task that sets none does.
 	in.CancellationGracePeriodSeconds = 0
 	ws, err := NewWorkspace(filepath.Join(t.TempDir(), "attempt"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cpu, memory, _ := d.Policy.ResolveResources(nil)
 	task, failure := d.containerSpec(in, ws, in.GetImage(), 1, NetworkNone, cpu, memory, true)
 	if failure != nil {
@@ -40,9 +40,7 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 
 	posture := func(spec ContainerSpec) []string {
 		flags, err := dockerContainerFlags(spec, "ork-x", dockerDialect)
-		if err != nil {
-			t.Fatalf("dockerContainerFlags: %v", err)
-		}
+		must.OKf(t, err, "dockerContainerFlags")
 		var kept []string
 		for i := 0; i < len(flags); i++ {
 			switch flags[i] {
@@ -69,13 +67,9 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	// The SIGTERM probe's container too: what it shows about a cancelled
 	// task's workload holds only for a container built as a task's is.
 	probeWS, err := NewWorkspace(filepath.Join(t.TempDir(), "sigprobe"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	signalProbe, err := d.signalProbeSpec(probeWS)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got, want := posture(signalProbe), posture(task); !slices.Equal(got, want) {
 		t.Fatalf("the SIGTERM probe's container is not a task's:\n probe %q\n  task %q", got, want)
 	}
@@ -101,13 +95,9 @@ func TestBootProbe_ItsContainerIsATasks(t *testing.T) {
 	}
 	// Labelled with its Orker's identity, as the SIGTERM probe's is above.
 	firstWS, err := NewWorkspace(filepath.Join(t.TempDir(), "bindprobe"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	first, err := d.bootProbeSpec(firstWS, "container-nonce")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := map[string]string{"ork.task": bootProbeTaskID, "ork.orker": d.OrkerID}; !maps.Equal(first.Labels, want) {
 		t.Errorf("the probe's container is labelled %v; want %v", first.Labels, want)
 	}
@@ -213,9 +203,7 @@ func TestBootProbe_RefusesEachWeakenedPosture(t *testing.T) {
 // what the container said, so the two are told apart.
 func TestBootProbe_ABindItCouldNotUseSaysWhy(t *testing.T) {
 	ws, err := NewWorkspace(filepath.Join(t.TempDir(), "probe"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	denied := "cat: can't open '/orkstack/input/probe-nonce': Permission denied"
 	err = parseProbeFacts("@@nonce\n"+denied+"\n").sameDirectory(ws, "host-nonce", "container-nonce")
 	if err == nil || !strings.Contains(err.Error(), "Permission denied") {
@@ -494,9 +482,7 @@ func TestExecute_RunAsOrkerIsTheSpecsIntent(t *testing.T) {
 func mustCreateArgs(t *testing.T, spec ContainerSpec) []string {
 	t.Helper()
 	args, err := dockerCreateArgs(spec)
-	if err != nil {
-		t.Fatalf("dockerCreateArgs: %v", err)
-	}
+	must.OKf(t, err, "dockerCreateArgs")
 	return args
 }
 
@@ -583,9 +569,15 @@ func TestExecute_ReportsAnAttemptDirectoryItCouldNotRemove(t *testing.T) {
 	if !strings.Contains(outcome.CleanupErr.Error(), d.WorkRoot) {
 		t.Errorf("CleanupErr = %v; want it to name the directory", outcome.CleanupErr)
 	}
-	for _, want := range []string{"attempt cleanup", "leaky", "permission denied"} {
+	// The directory that refused the removal is the work root the runtime
+	// sealed, not the attempt's directory the error names: the log says which,
+	// and in what mode.
+	for _, want := range []string{"attempt cleanup", "leaky", "permission denied", d.WorkRoot + " (mode=555"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("the log does not say %q:\n%s", want, logs.String())
 		}
+	}
+	if !strings.Contains(outcome.CleanupErr.Error(), d.WorkRoot+" (mode=555") {
+		t.Errorf("CleanupErr = %v; want it to name the directory that refused the removal", outcome.CleanupErr)
 	}
 }

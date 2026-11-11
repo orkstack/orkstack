@@ -47,9 +47,10 @@ import (
 
 const (
 	shutdownTimeout = 10 * time.Second
-	// webhookDrainTimeout bounds how long shutdown waits for in-flight
-	// webhook deliveries, so one unresponsive subscriber cannot hold the
-	// engine open.
+	// webhookDrainTimeout bounds how long shutdown waits for webhook
+	// deliveries this process is still matching or queuing. A queued delivery
+	// is a workflow of its own and needs no wait: another replica, or this one
+	// after a restart, carries it on.
 	webhookDrainTimeout = 15 * time.Second
 )
 
@@ -822,6 +823,15 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 			store.Location(), cfg.S3Endpoint, err)
 	}
 	listTook := time.Since(listStart)
+	// A refused apply's rollback and a promotion run here, and rely on two
+	// conditional answers of the store (docs/STORAGE.md, "What the store must
+	// honour"). They are asked before the API accepts an apply, as every Orker
+	// asks them at its boot: a store that answers one wrongly would let a
+	// rollback remove another apply's version.
+	if err := store.ProbeConditionalAnswers(ctx); err != nil {
+		return nil, fmt.Errorf("the object store at %s (endpoint %s) cannot keep orkflows: %w",
+			store.Location(), cfg.S3Endpoint, err)
+	}
 	// The boot log names the default namespace's catalog. It is a reachability
 	// check and a human breadcrumb, not an inventory: listing every namespace
 	// at boot would scan the whole prefix to log something nobody reads.
@@ -1122,23 +1132,40 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return fmt.Errorf("open webhook store: %w", err)
 	}
 	webhookRegistry := webhooks.NewDurableRegistry(webhookStore)
-	webhookNotifier := webhooks.NewNotifier(
-		webhookRegistry,
-		webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
-		webhooks.NotifierOptions{Logger: logger},
-	)
 	// Delivery records: one immutable object per SETTLED delivery, written by
-	// the Observe callback after the dispatcher returned, in the same shared
-	// object store, so any replica lists a delivery another replica made. It
-	// is a log, never a queue: nothing reads a record to decide what to send.
-	// A store that cannot be opened stops the boot; a failed WRITE later is
-	// only logged, and never changes a delivery's outcome.
+	// the delivery's settle step, in the same shared object store, so any
+	// replica lists a delivery another replica made. It is a log, never a
+	// queue: nothing reads a record to decide what to send. A store that
+	// cannot be opened stops the boot; a write that keeps failing is retried
+	// under the delivery's policy and then only logged, and never changes a
+	// delivery's outcome.
 	deliveryStore, err := artifacts.NewDeliveryStore(ctx, artifacts.ConfigFromEnv())
 	if err != nil {
 		return fmt.Errorf("open delivery record store: %w", err)
 	}
 	deliveryRecorder := api.NewDeliveryRecorder(deliveryStore, logger)
-	webhookNotifier.Observe(deliveryRecorder.Record)
+	// Delivery bodies: the signed body of each delivery still being sent, so
+	// whichever replica runs an attempt sends the bytes the queuing replica
+	// signed. The delivery's last step deletes its body.
+	deliveryBodies, err := artifacts.NewDeliveryBodyStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open webhook delivery body store: %w", err)
+	}
+	// Each delivery is a workflow of its own, so Temporal retries it and it
+	// outlives this replica (engine.WebhookDeliveryWorkflow).
+	webhookDispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	webhookNotifier := webhooks.NewNotifier(
+		webhookRegistry,
+		webhookDispatcher,
+		webhooks.NotifierOptions{
+			Logger: logger,
+			Launcher: engine.NewWebhookLauncher(temporalClient, task.DefaultQueue, deliveryBodies,
+				engine.DefaultWebhookDeliveryPolicy()),
+			Record: deliveryRecorder.RecordContext,
+		},
+	)
+	webhookActivities := engine.NewWebhookDeliveryActivities(deliveryBodies, webhookRegistry, webhookDispatcher,
+		webhookNotifier, logger)
 	runNotifier := api.NewWebhookNotifier(webhookNotifier, logger)
 
 	// Triggers: the inbound mirror of the webhooks above, in the same shared
@@ -1394,6 +1421,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		eventActivities.PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
+	engine.RegisterWebhookDeliveryActivities(eventWorker, webhookActivities)
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, q.run, q.orker).
 		WithNamespaceIndex(namespaceIndexed).

@@ -15,8 +15,11 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The shared fixture of interface-compatibility-gate's test plan: 3.0.0 adds
@@ -116,9 +119,7 @@ func applyIn(t *testing.T, svc *api.Service, namespace, document string) *orksta
 	t.Helper()
 	resp, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(
 		&orkstackv1.ApplyOrkflowRequest{Yaml: document, Namespace: namespace}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow")
 	return resp.Msg
 }
 
@@ -135,9 +136,7 @@ func promoteVersion(svc *api.Service, namespace, name, version string, ack bool)
 func mustPromote(t *testing.T, svc *api.Service, namespace, name, version string, ack bool) *orkstackv1.SetCurrentOrkflowVersionResponse {
 	t.Helper()
 	resp, err := promoteVersion(svc, namespace, name, version, ack)
-	if err != nil {
-		t.Fatalf("promote %s@%s (ack=%v): %v", name, version, ack, err)
-	}
+	must.OKf(t, err, "promote %s@%s (ack=%v)", name, version, ack)
 	return resp
 }
 
@@ -161,9 +160,7 @@ func TestCompareInterfaces_ReadsTwoStoredVersions(t *testing.T) {
 
 	resp, err := svc.CompareInterfaces(ctx, connect.NewRequest(&orkstackv1.CompareInterfacesRequest{
 		Name: "release-block", FromVersion: "2.1.0", ToVersion: "3.0.0", Namespace: "team-a"}))
-	if err != nil {
-		t.Fatalf("CompareInterfaces: %v", err)
-	}
+	must.OKf(t, err, "CompareInterfaces")
 	if resp.Msg.GetVerdict() != orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_BREAKING ||
 		len(resp.Msg.GetFindings()) != 7 || resp.Msg.GetFromVersion() != "2.1.0" || resp.Msg.GetToVersion() != "3.0.0" {
 		t.Fatalf("CompareInterfaces = %v", resp.Msg)
@@ -257,9 +254,7 @@ func TestSetCurrentOrkflowVersion_ComparesAgainstTheHeadWhenNeverPromoted(t *tes
 	// 2.0.3 runs (newest applied); promoting 2.1.0 back declares outputs:
 	// UNKNOWN, never refused.
 	_, err := promoteVersion(svc, "", "release-block", "2.1.0", false)
-	if err != nil {
-		t.Fatalf("2.0.3 -> 2.1.0: %v", err)
-	}
+	must.OKf(t, err, "2.0.3 -> 2.1.0")
 
 	svc = compatService(t, nil, nil)
 	applyIn(t, svc, "", compatBlock210)
@@ -345,6 +340,52 @@ func TestSetCurrentOrkflowVersion_RefusesWhenThePointerMovedAfterTheComparison(t
 	requireResolvedVersion(t, setup, "release-block", "2.2.0", "after the raced promotion")
 }
 
+// refusingPromotionStore answers every promotion with err.
+type refusingPromotionStore struct {
+	*engine.MemoryOrkflowStore
+	err error
+}
+
+func (r refusingPromotionStore) SetCurrentVersion(context.Context, string, string, string,
+	artifacts.CurrentExpectation) (string, error) {
+	return "", r.err
+}
+
+// LOW-F: a promotion the store refused as not found — its target removed by a
+// refused apply as it was promoted, or the orkflow deleted — is NotFound
+// carrying what the store said happened, never a bare "not found".
+func TestSetCurrentOrkflowVersion_ANotFoundRefusalSaysWhatHappened(t *testing.T) {
+	inner := engine.NewMemoryOrkflowStore()
+	applyIn(t, compatService(t, inner, nil), "", compatBlock210)
+	reason := fmt.Errorf("artifacts: cannot promote orkflow %q in namespace %q to version %q: the version was "+
+		"removed as it was promoted, and the current pointer has moved since, to %q; nothing was put back: %w",
+		"release-block", "default", "2.1.0", "2.0.3", artifacts.ErrNotFound)
+	svc := compatService(t, refusingPromotionStore{MemoryOrkflowStore: inner, err: reason}, nil)
+	_, err := promoteVersion(svc, "", "release-block", "2.1.0", false)
+	// LOW-6: the store's own account, once, not wrapped in a second prefix.
+	if connect.CodeOf(err) != connect.CodeNotFound || connectMessage(err) != reason.Error() {
+		t.Fatalf("refused promotion = %v, want NotFound with the store's account as it is: %v", err, reason)
+	}
+}
+
+// MEDIUM-3: a promotion whose read-back found another document under its
+// target, and moved the pointer back off it, failed a precondition the caller
+// must look at again: the store's account once, never AlreadyExists under a
+// second prefix.
+func TestSetCurrentOrkflowVersion_AnotherDocumentUnderTheTargetIsAFailedPrecondition(t *testing.T) {
+	inner := engine.NewMemoryOrkflowStore()
+	applyIn(t, compatService(t, inner, nil), "", compatBlock210)
+	reason := fmt.Errorf("artifacts: cannot promote orkflow %q in namespace %q to version %q: another document "+
+		"is stored under this version now (the one this promotion compared was removed and the version created "+
+		"again); the current pointer was moved back to %q: %w",
+		"release-block", "default", "2.1.0", "2.0.3", artifacts.ErrVersionExists)
+	svc := compatService(t, refusingPromotionStore{MemoryOrkflowStore: inner, err: reason}, nil)
+	_, err := promoteVersion(svc, "", "release-block", "2.1.0", false)
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.HasPrefix(connectMessage(err), reason.Error()) {
+		t.Fatalf("refused promotion = %v, want FailedPrecondition with the store's account: %v", err, reason)
+	}
+}
+
 func TestSetCurrentOrkflowVersion_StoreOutageIsUnavailableAndMovesNothing(t *testing.T) {
 	svc := compatService(t, downOrkflowStore{err: errors.New("dial tcp: connection refused")}, nil)
 	_, err := promoteVersion(svc, "", "release-block", "3.0.0", true)
@@ -362,9 +403,7 @@ func TestListOrkflowVersions_MarksEachVersionAgainstTheCurrentOne(t *testing.T) 
 	applyIn(t, svc, "", strings.Replace(compatBlock210, `"2.1.0"`, `"2.2.0"`, 1))
 	listed, err := svc.ListOrkflowVersions(context.Background(), connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "release-block"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	want := map[string]orkstackv1.InterfaceVerdict{
 		"2.1.0": orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNSPECIFIED,
 		"3.0.0": orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_BREAKING,
@@ -386,9 +425,7 @@ func TestListOrkflowVersions_MarksEachVersionAgainstTheCurrentOne(t *testing.T) 
 	applyIn(t, svc, "", strings.Replace(compatBlock203, `"2.0.3"`, `"2.0.4"`, 1))
 	listed, err = svc.ListOrkflowVersions(context.Background(), connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "release-block"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	for _, row := range listed.Msg.GetVersions() {
 		wantV := orkstackv1.InterfaceVerdict_INTERFACE_VERDICT_UNKNOWN
 		if row.GetIsCurrent() {
@@ -467,9 +504,7 @@ func TestValidateOrkflow_ReturnsInterfaceWarningsAndWritesNothing(t *testing.T) 
 	pinned = strings.Replace(pinned, "  - id: attest\n    uses: shell\n", "  - id: attest\n    uses: shell\n    pin: build\n", 1)
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(
 		&orkstackv1.ValidateOrkflowRequest{Yaml: pinned}))
-	if err != nil {
-		t.Fatalf("ValidateOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ValidateOrkflow")
 	var fields []string
 	for _, issue := range resp.Msg.GetIssues() {
 		if issue.GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING {
@@ -504,9 +539,7 @@ func TestValidateOrkflow_UnreadableCurrentVersionIsAWarning(t *testing.T) {
 	svc := compatService(t, versionsFailingStore{engine.NewMemoryOrkflowStore()}, nil)
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(
 		&orkstackv1.ValidateOrkflowRequest{Yaml: compatBlock300}))
-	if err != nil {
-		t.Fatalf("ValidateOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ValidateOrkflow")
 	if resp.Msg.GetOrkflow() == nil {
 		t.Fatal("validation must otherwise succeed")
 	}
@@ -619,14 +652,12 @@ func listCallers(t *testing.T, svc *api.Service, namespace, name string, all boo
 	t.Helper()
 	resp, err := svc.ListOrkflowCallers(context.Background(), connect.NewRequest(
 		&orkstackv1.ListOrkflowCallersRequest{Name: name, Namespace: namespace, AllVersions: all}))
-	if err != nil {
-		t.Fatalf("ListOrkflowCallers: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowCallers")
 	return resp.Msg
 }
 
 func callerRow(c *orkstackv1.OrkflowCaller) string {
-	kind := strings.ToLower(strings.TrimPrefix(c.GetKind().String(), "ORKFLOW_CALLER_KIND_"))
+	kind := strings.ToLower(enumname.Of(c.GetKind()))
 	pins := c.GetPinnedVersion()
 	switch {
 	case c.GetUnavailableReason() != "":
@@ -649,14 +680,10 @@ func TestListOrkflowCallers_FindsComposingTriggersAndSchedules(t *testing.T) {
 	store := svc.Triggers()
 	follows, _, err := store.Create(ctx, triggers.Registration{Namespace: "team-a", OrkflowName: "release-block",
 		Name: "ci-release", Description: "CI"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	pinned, _, err := store.Create(ctx, triggers.Registration{Namespace: "team-a", OrkflowName: "release-block",
 		OrkflowVersion: "2.1.0"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, _, err := store.Create(ctx, triggers.Registration{Namespace: "team-a", OrkflowName: "checkout-service"}); err != nil {
 		t.Fatal(err)
 	}
@@ -735,9 +762,7 @@ func TestListOrkflowCallers_AllVersionsScansEveryStoredVersion(t *testing.T) {
 
 func TestListOrkflowCallers_ADeletedOrkflowStillListsItsCallers(t *testing.T) {
 	svc, store := callersFixture(t, nil)
-	if err := store.MemoryOrkflowStore.Delete(context.Background(), "team-a", "release-block"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, store.MemoryOrkflowStore.Delete(context.Background(), "team-a", "release-block"))
 	resp := listCallers(t, svc, "team-a", "release-block", false)
 	if resp.GetStoredVersions() != 0 || resp.GetCurrentVersion() != "" || len(resp.GetCallers()) != 1 {
 		t.Fatalf("deleted orkflow = %v", resp)
@@ -778,9 +803,7 @@ func TestListOrkflowCallers_NeverCarriesASecretOrAScheduleInput(t *testing.T) {
 	svc, _ := callersFixture(t, schedules)
 	ctx := context.Background()
 	trig, secret, err := svc.Triggers().Create(ctx, triggers.Registration{Namespace: "team-a", OrkflowName: "release-block"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	stored, _, _ := svc.Triggers().Get(ctx, trig.ID)
 	if _, err := schedules.Create(ctx, &orkstackv1.ScheduleRecord{ScheduleId: "s", Name: "n", Namespace: "team-a",
 		OrkflowName: "release-block", Input: &orkstackv1.Payload{Data: &structpb.Struct{Fields: map[string]*structpb.Value{
@@ -788,9 +811,7 @@ func TestListOrkflowCallers_NeverCarriesASecretOrAScheduleInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, err := protojson.Marshal(listCallers(t, svc, "team-a", "release-block", true))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	body := string(encoded)
 	for _, forbidden := range []string{secret, "SCHEDULE-INPUT-SENTINEL",
 		fmt.Sprintf("%x", stored.SecretSalt), fmt.Sprintf("%x", stored.SecretHash)} {

@@ -136,7 +136,7 @@ function architecture(t) {
 			h: BAND + pad + across.h,
 			caption: 'How a run flows · ARCHITECTURE.md',
 			title:
-				'An Orkflow is applied through orkctl, the UI or the API to the ork engine; triggers and callbacks also reach it over plain HTTP. The engine starts each run on Temporal, which dispatches tasks to Orkers. An Orker runs the activity’s OCI image, passing files in and out, and writes artifacts and records to object storage.',
+				'An Orkflow is created through orkctl, the UI or the API to the ork engine; triggers and callbacks also reach it over plain HTTP. The engine starts each run on Temporal, which dispatches tasks to Orkers. An Orker runs the activity’s OCI image, passing files in and out, and writes artifacts and records to object storage.',
 		},
 		body.join('\n'),
 	);

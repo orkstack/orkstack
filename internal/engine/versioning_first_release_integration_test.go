@@ -15,6 +15,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // idleWindow is how long the first versioned release is watched receiving
@@ -83,9 +85,7 @@ func TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent(t *testing.
 
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
 	runID := "ork-firstrelease-run-" + suffix
-	if err := starter.StartRun(ctx, runID, plainOrkflow(), nil, rawPlan(orkerQueue)); err != nil {
-		t.Fatalf("submit the run: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, runID, plainOrkflow(), nil, rawPlan(orkerQueue)), "submit the run")
 
 	// --- 1. nothing is dispatched --------------------------------------
 	deadline := time.Now().Add(idleWindow)
@@ -107,9 +107,7 @@ func TestIntegration_AVersionedReleaseIsIdleUntilItsVersionIsCurrent(t *testing.
 	// --- 2. one routing change, no restart, and the run moves ------------
 	started := time.Now()
 	setCurrentVersion(t, ctx, c, v1, runQueue, orkerQueue)
-	if err := c.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("run %s did not complete after %s became Current: %v", runID, v1, err)
-	}
+	must.OKf(t, c.GetWorkflow(ctx, runID, "").Get(ctx, nil), "run %s did not complete after %s became Current", runID, v1)
 	t.Logf("the same run completed %.1fs after set-current-version, with no worker restart",
 		time.Since(started).Seconds())
 

@@ -270,7 +270,7 @@ func TestUnknownKey_NamesOnlyAKeyTheDecoderRefused(t *testing.T) {
 			absent:      "abc",
 		},
 		{
-			name:          "a null key yaml.v3 ignores, beside a value of the wrong type",
+			name:          "a null key the decoder ignores, beside a value of the wrong type",
 			source:        orkflow + "tasks:\n  - id: a\n    uses: shell\n    ~: x\n    timeout_seconds: abc\n",
 			wantFragments: []string{"line 8", "abc"},
 			absent:        "unknown key",

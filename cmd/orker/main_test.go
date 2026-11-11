@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestCommitProbeRefusal_NamesWhatTheProbeFound: the operator reads the reason
@@ -137,9 +139,7 @@ func TestLoadConfig_RejectsADeploymentNameTheClusterWould(t *testing.T) {
 // in RUNNING with nothing to say why.
 func TestLoadConfig_JoinsThePoolItWasToldToServe(t *testing.T) {
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool(gpu): %v", err)
-	}
+	must.OKf(t, err, "QueueForPool(gpu)")
 
 	t.Run("zero config serves the built-in pool", func(t *testing.T) {
 		t.Setenv("ORK_ORKER_POOL", "")
@@ -221,9 +221,7 @@ func TestOrkerOptions_CarryTheOperatorsTick(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker)
-	if err != nil {
-		t.Fatalf("telemetry.Boot: %v", err)
-	}
+	must.OKf(t, err, "telemetry.Boot")
 	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
 
 	if opts.HeartbeatInterval != 4*time.Second {
@@ -385,9 +383,7 @@ func TestWorkerOptions_APinHostOnAVersionedDeploymentIsAcceptedByTheSDK(t *testi
 		HostPort:  "127.0.0.1:1",
 		Namespace: task.DefaultNamespace,
 	})
-	if err != nil {
-		t.Fatalf("lazy client: %v", err)
-	}
+	must.OKf(t, err, "lazy client")
 	defer c.Close()
 
 	// run()'s own registrations, in run()'s order: a pin host registers
@@ -470,9 +466,7 @@ func TestOrkerOptions_AdvertiseThePinCapTheWorkerPollsFor(t *testing.T) {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker)
-	if err != nil {
-		t.Fatalf("telemetry.Boot: %v", err)
-	}
+	must.OKf(t, err, "telemetry.Boot")
 	opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
 
 	if opts.MaxPins != 5 {
@@ -495,9 +489,7 @@ func TestWorkerOptions_ZeroCordon_IsTheSameWorker(t *testing.T) {
 	activities := orker.NewActivitiesWithOptions(nil, orker.Options{OrkerID: "orker-test", WorkRoot: t.TempDir()})
 	cfg := loadConfig()
 	options, err := taskWorkerOptions(cfg, activities)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if options.Identity != "orker-test" {
 		t.Fatalf("Identity = %q; want the orker id, which is what the presence channel lists", options.Identity)
 	}
@@ -530,9 +522,7 @@ func TestWorkerOptions_ZeroCordon_IsTheSameWorker(t *testing.T) {
 		t.Fatalf("a clear cordon did not reserve at once: %v", err)
 	}
 
-	if err := checkTunerCompatible(workerOptions(cfg)); err != nil {
-		t.Fatalf("today's workerOptions refused: %v", err)
-	}
+	must.OKf(t, checkTunerCompatible(workerOptions(cfg)), "today's workerOptions refused")
 	for field, set := range map[string]func(*worker.Options){
 		"MaxConcurrentWorkflowTaskExecutionSize":  func(o *worker.Options) { o.MaxConcurrentWorkflowTaskExecutionSize = 1 },
 		"MaxConcurrentActivityExecutionSize":      func(o *worker.Options) { o.MaxConcurrentActivityExecutionSize = 1 },
@@ -550,9 +540,7 @@ func TestWorkerOptions_ZeroCordon_IsTheSameWorker(t *testing.T) {
 	// The whole of worker.New for the three workers, on a lazy client: the
 	// SDK validates its options (and panics on a Tuner beside a size) here.
 	c, err := client.NewLazyClient(client.Options{HostPort: "127.0.0.1:1", Namespace: task.DefaultNamespace})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer c.Close()
 	_ = worker.New(c, task.DefaultQueue, options)
 	control, presence, err := orker.NewChannelWorkers(c, activities)
@@ -615,16 +603,12 @@ func TestLoadConfig_MaxConcurrent(t *testing.T) {
 		}
 		logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 		tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		opts := orkerOptions(cfg, tcfg, sinks, nil, orker.LogOptions{}, nil, nil, nil, logger)
 		opts.OrkerID, opts.WorkRoot = "orker-test", t.TempDir()
 		activities := orker.NewActivitiesWithOptions(nil, opts)
 		options, err := taskWorkerOptions(cfg, activities)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if got := options.Tuner.GetActivityTaskSlotSupplier().MaxSlots(); got != 3 {
 			t.Fatalf("activity slots = %d; want 3", got)
 		}
@@ -675,9 +659,7 @@ func TestEnvStoreWatch(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got != tc.want {
 				t.Fatalf("envStoreWatch() = %+v, want %+v", got, tc.want)
 			}

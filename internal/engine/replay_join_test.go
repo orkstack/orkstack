@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"regexp"
@@ -23,7 +23,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // joinHistory is the join fixture: internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml with
@@ -59,9 +62,7 @@ func replayJoin(t *testing.T) ([]string, error) {
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: []interceptor.WorkerInterceptor{recorder},
 	})
-	if err != nil {
-		t.Fatalf("NewWorkflowReplayerWithOptions: %v", err)
-	}
+	must.OKf(t, err, "NewWorkflowReplayerWithOptions")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	err = replayer.ReplayWorkflowHistoryFromJSONFile(nil, joinHistory)
 	recorder.mu.Lock()
@@ -106,7 +107,7 @@ var activityErrorPrefix = regexp.MustCompile(`activity error \(type: [^,]*, sche
 // normalized is value as JSON with the activity error decoration removed.
 func normalized(t *testing.T, value any) map[string]any {
 	t.Helper()
-	encoded, err := json.Marshal(value)
+	encoded, err := stablejson.Marshal(value)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,9 +156,7 @@ func joinRecorded(t *testing.T, recorded *historypb.History) (
 		if attrs := event.GetActivityTaskCompletedEventAttributes(); attrs != nil &&
 			typeOf[attrs.GetScheduledEventId()] == task.ActivityExecuteTask {
 			var result *orkstackv1.ExecuteTaskResult
-			if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetResult(), &result); err != nil {
-				t.Fatalf("decode a recorded ExecuteTask result: %v", err)
-			}
+			must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetResult(), &result), "decode a recorded ExecuteTask result")
 			results[taskOf[attrs.GetScheduledEventId()]] = result
 			continue
 		}

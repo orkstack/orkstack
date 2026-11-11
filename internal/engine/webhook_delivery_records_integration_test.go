@@ -33,6 +33,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests prove delivery records on the production shape: the durable
@@ -142,9 +144,7 @@ func failingTaskWorker(t *testing.T, temporalClient client.Client, queue string)
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	if err := w.Start(); err != nil {
-		t.Fatalf("start task worker: %v", err)
-	}
+	must.OKf(t, w.Start(), "start task worker")
 	t.Cleanup(w.Stop)
 }
 
@@ -167,9 +167,7 @@ func startRecordsHarness(t *testing.T, ctx context.Context, fail bool, subscribe
 	temporalClient := scopedCluster(t, ctx)
 	pool := uniquePool("delivery-records")
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map pool: %v", err)
-	}
+	must.OKf(t, err, "map pool")
 	if fail {
 		failingTaskWorker(t, temporalClient, queue)
 	} else {
@@ -219,15 +217,11 @@ func startRecordsHarness(t *testing.T, ctx context.Context, fail bool, subscribe
 func (h *recordsHarness) run(t *testing.T, ctx context.Context, marker string) *orkstackv1.Run {
 	t.Helper()
 	input, err := structpb.NewStruct(map[string]any{"marker": marker})
-	if err != nil {
-		t.Fatalf("input: %v", err)
-	}
+	must.OKf(t, err, "input")
 	submitted, err := h.engine.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: h.orkflow, Input: &orkstackv1.Payload{Data: input},
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	run := h.engine.drainRun(t, ctx, submitted.Msg.GetRun().GetId(), "")
 	// The stream ends at the terminal event in the run's history, and the
 	// notifier hears that event from the event projection, which may come
@@ -284,27 +278,19 @@ func (h *recordsHarness) list(t *testing.T, ctx context.Context, runID string) [
 			{Field: "webhook_id", Op: orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []string{h.hook.ID}},
 		},
 	}))
-	if err != nil {
-		t.Fatalf("ListDeliveries: %v", err)
-	}
+	must.OKf(t, err, "ListDeliveries")
 	return resp.Msg.GetDeliveries()
 }
 
 func (h *recordsHarness) object(t *testing.T, ctx context.Context, rec *orkstackv1.Delivery) (string, string, []byte) {
 	t.Helper()
 	key, err := artifacts.DeliveryKey(rec)
-	if err != nil {
-		t.Fatalf("DeliveryKey: %v", err)
-	}
+	must.OKf(t, err, "DeliveryKey")
 	object, err := h.raw.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(h.cfg.S3Bucket), Key: aws.String(key)})
-	if err != nil {
-		t.Fatalf("GetObject(%s): %v", key, err)
-	}
+	must.OKf(t, err, "GetObject(%s)", key)
 	defer object.Body.Close()
 	body, err := io.ReadAll(object.Body)
-	if err != nil {
-		t.Fatalf("read %s: %v", key, err)
-	}
+	must.OKf(t, err, "read %s", key)
 	return key, aws.ToString(object.ContentType), body
 }
 
@@ -443,9 +429,7 @@ func TestIntegration_RedeliverPostsOnceSignedAndRecordsANewDelivery(t *testing.T
 	h.subscriber.answer(http.StatusOK)
 	resp, err := h.engine.webhookClient().RedeliverWebhook(ctx,
 		connect.NewRequest(&orkstackv1.RedeliverWebhookRequest{Id: original.GetId()}))
-	if err != nil {
-		t.Fatalf("RedeliverWebhook: %v", err)
-	}
+	must.OKf(t, err, "RedeliverWebhook")
 	rec := resp.Msg.GetDelivery()
 	all := h.subscriber.forRun(run.GetId())
 	if len(all) != requestsBefore+1 {

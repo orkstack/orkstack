@@ -1,23 +1,23 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { ArtifactRefSchema, PayloadSchema } from '../src/lib/gen/orkstack/v1/common_pb';
-import { artifactContentTypeLabel, artifactMetadata, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shellQuote, shortRunId, taskRunCommand, timestampJson } from '../src/lib/runDetail';
+import { artifactContentTypeLabel, artifactMetadata, downloadFilename, emptyPayload, formatDuration, inlinePayload, payloadJson, pinAccent, runCommand, shellQuote, shortRunId, taskCommands, taskRunCommand, timestampJson } from '../src/lib/runDetail';
 
 test('copyable run commands quote every page-derived coordinate and name the namespace', () => {
 	expect(shellQuote("a' b")).toBe("'a'\"'\"' b'");
 	expect(runCommand('prod west', ['run', 'get', "ork-'42"])).toBe(
-		"orkctl --namespace 'prod west' run get 'ork-'\"'\"'42'"
+		"orkctl -n 'prod west' run get 'ork-'\"'\"'42'"
 	);
-	expect(runCommand('', ['run', 'cancel', 'ork-1'])).toContain('--namespace default ');
+	expect(runCommand('', ['run', 'cancel', 'ork-1'])).toContain('-n default ');
 });
 
 test('the local replay command names the namespace, the run and the task, and nothing else', () => {
 	expect(taskRunCommand('', 'ork-1-2', 'publish')).toBe(
-		"orkctl --namespace default task run --from-run ork-1-2 --task publish"
+		"orkctl -n default task run --from-run ork-1-2 -t publish"
 	);
 	// Page data is quoted, never trusted as shell syntax.
 	expect(taskRunCommand("it's", 'ork-1-2', "pub'lish")).toBe(
-		"orkctl --namespace 'it'\"'\"'s' task run --from-run ork-1-2 --task 'pub'\"'\"'lish'"
+		"orkctl -n 'it'\"'\"'s' task run --from-run ork-1-2 -t 'pub'\"'\"'lish'"
 	);
 });
 
@@ -66,7 +66,7 @@ test('durations only use two authoritative timestamps', () => {
 });
 
 test('a token is quoted only when a shell would read it as syntax', () => {
-	for (const safe of ['default', 'ork-1792-6378', '--json', 'origin.kind=PARENT_RUN', 'status=FAILED,CANCELED', 'a/b:c@d%e+f', '1.2.3']) {
+	for (const safe of ['default', 'ork-1792-6378', '-j', 'origin.kind=PARENT_RUN', 'status=FAILED,CANCELED', 'a/b:c@d%e+f', '1.2.3']) {
 		expect(shellQuote(safe)).toBe(safe);
 	}
 	expect(shellQuote('')).toBe("''");
@@ -94,8 +94,8 @@ test('a short value is said on one line, spaced like the pretty form; a long one
 
 test('a command splits into the words a shell sees, and joins back into itself', async () => {
 	const { commandWords } = await import('../src/lib/runDetail');
-	const cmd = "orkctl --namespace 'prod west' run get ork-1 --json";
-	expect(commandWords(cmd)).toEqual(['orkctl', '--namespace', "'prod west'", 'run', 'get', 'ork-1', '--json']);
+	const cmd = "orkctl -n 'prod west' run get ork-1 -j";
+	expect(commandWords(cmd)).toEqual(['orkctl', '-n', "'prod west'", 'run', 'get', 'ork-1', '-j']);
 	expect(commandWords(cmd).join(' ')).toBe(cmd);
 	expect(commandWords(`orkctl x --reason 'it'"'"'s ok'`)).toEqual(['orkctl', 'x', '--reason', `'it'"'"'s ok'`]);
 });
@@ -103,4 +103,34 @@ test('a command splits into the words a shell sees, and joins back into itself',
 test('artifactContentTypeLabel says when no content type was recorded', () => {
 	expect(artifactContentTypeLabel(create(ArtifactRefSchema, { contentType: 'text/plain' }))).toBe('text/plain');
 	expect(artifactContentTypeLabel(create(ArtifactRefSchema, { contentType: '' }))).toBe('no content type recorded');
+});
+
+test("a task's commands in the run's one icon name its namespace, its attempts and the earlier attempt's log", () => {
+	const commands = taskCommands({ namespace: 'team-a', runId: 'ork-1', taskId: 'build', attempt: 2, canLog: true, failed: true, running: false, attempts: 2, timed: true });
+	expect(commands.map((c) => c.label)).toEqual(['Its log', "The earlier attempt's log", 'Run it here, on your machine', 'Its attempts and cache key', 'Where its time went']);
+	for (const c of commands) expect(c.command.startsWith('orkctl -n team-a '), c.label).toBe(true);
+	const byLabel = Object.fromEntries(commands.map((c) => [c.label, c.command]));
+	expect(byLabel['Its log']).toBe('orkctl -n team-a run logs ork-1 -t build --attempt 2');
+	expect(byLabel["The earlier attempt's log"]).toBe('orkctl -n team-a run logs ork-1 -t build --attempt 1');
+	expect(byLabel['Its attempts and cache key']).toBe('orkctl -n team-a run attempts ork-1 -t build');
+	// One attempt: no earlier log. A task that never started: no log, no replay.
+	expect(taskCommands({ namespace: 'team-a', runId: 'ork-1', taskId: 'build', attempt: 1, canLog: true, attempts: 1 }).map((c) => c.label)).toEqual(['Its log', 'Its attempts and cache key']);
+	expect(taskCommands({ namespace: '', runId: 'ork-1', taskId: 'wait', attempt: 0, canLog: false, failed: true, attempts: 0 })).toEqual([]);
+});
+
+test("an item's commands carry --item, the earlier attempt's included", () => {
+	const commands = taskCommands({ namespace: 'team-a', runId: 'ork-1', taskId: 'render', item: 3, attempt: 2, canLog: true, attempts: 2 });
+	expect(commands.map((c) => c.label)).toEqual(["This item's logs", "The earlier attempt's log", "This item's artifacts", "This item's attempts"]);
+	for (const c of commands) {
+		expect(c.command.startsWith('orkctl -n team-a run '), c.label).toBe(true);
+		expect(c.command, c.label).toContain(' -t render --item 3');
+	}
+	expect(commands[1].command).toBe('orkctl -n team-a run logs ork-1 -t render --item 3 --attempt 1');
+});
+
+test("an item's commands quote every argument: a quote in a task id cannot become shell syntax", () => {
+	for (const c of taskCommands({ namespace: 'data', runId: 'ork-1', taskId: "x'; rm -rf / #", item: 1, attempt: 2, canLog: true, attempts: 2 })) {
+		expect(c.command, c.label).toContain(`'x'"'"'; rm -rf / #'`);
+		expect(c.command, c.label).not.toContain("'x'; rm");
+	}
 });

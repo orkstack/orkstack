@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // planLineArgs tokenizes one documented plan line the way a POSIX shell does
@@ -92,14 +94,12 @@ func TestPlanLineArgs(t *testing.T) {
 }
 
 // examplePlanLines returns every plan line of one example's header: the
-// leading comment block's lines of the form `#   orkctl run plan --file …`,
+// leading comment block's lines of the form `#   orkctl run plan -f …`,
 // with the comment marker stripped.
 func examplePlanLines(t *testing.T, path string) []string {
 	t.Helper()
 	source, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var lines []string
 	scanner := bufio.NewScanner(bytes.NewReader(source))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1<<20)
@@ -109,7 +109,7 @@ func examplePlanLines(t *testing.T, path string) []string {
 			break // the header is the leading comment block
 		}
 		text := strings.TrimSpace(strings.TrimPrefix(line, "#"))
-		if strings.HasPrefix(text, "orkctl run plan --file ") {
+		if strings.HasPrefix(text, "orkctl run plan -f ") {
 			lines = append(lines, text)
 		}
 	}
@@ -127,7 +127,7 @@ func TestExamples_PlanWithNoInputs(t *testing.T) {
 		t.Fatalf("glob examples: %v (%d found)", err, len(paths))
 	}
 	sort.Strings(paths)
-	f.run("apply", filepath.Join("..", "..", "examples", "notify-block.ork.yaml")).requireExit(t, exitOK)
+	f.run("orkflow", "create", filepath.Join("..", "..", "examples", "notify-block.ork.yaml")).requireExit(t, exitOK)
 	for _, path := range paths {
 		if out := f.run("run", "plan", "--file", path); out.code != exitOK {
 			t.Errorf("%s: a plan with no inputs exits %d\nstdout:\n%s\nstderr:\n%s", filepath.Base(path), out.code, out.stdout, out.stderr)
@@ -135,7 +135,7 @@ func TestExamples_PlanWithNoInputs(t *testing.T) {
 	}
 }
 
-// TestExamples_DocumentedPlansHold: every `orkctl run plan --file` line
+// TestExamples_DocumentedPlansHold: every `orkctl run plan -f` line
 // in an example's header is a CI check. Each runs through the real CLI
 // against the real Connect service, exactly as a reader would type it, and
 // must exit 0 — its --assert-runs and --assert-skipped hold.
@@ -153,9 +153,7 @@ func TestExamples_DocumentedPlansHold(t *testing.T) {
 	composed := map[string]bool{}
 	for _, path := range paths {
 		wf, err := dsl.CompileFile(path)
-		if err != nil {
-			t.Fatalf("compile %s: %v", path, err)
-		}
+		must.OKf(t, err, "compile %s", path)
 		byName[wf.GetName()] = path
 		for _, task := range wf.GetTasks() {
 			if ref := task.GetOrkflow(); ref != nil {
@@ -173,7 +171,7 @@ func TestExamples_DocumentedPlansHold(t *testing.T) {
 		if !ok {
 			t.Fatalf("an example composes %q, which no shipped example defines", name)
 		}
-		f.run("apply", path).requireExit(t, exitOK)
+		f.run("orkflow", "create", path).requireExit(t, exitOK)
 	}
 
 	perExample := map[string]int{}

@@ -82,14 +82,14 @@ func newStatsFlakesCommand(g *globalFlags) *cobra.Command {
 			return renderFlakeIndex(cmd.OutOrStdout(), resp.Msg, req.GetGroupBy())
 		},
 	}
-	cmd.Flags().StringVar(&since, "since", "",
+	cmd.Flags().StringVarP(&since, "since", "s", "",
 		"how far back to look: a duration such as 168h, or an RFC3339 instant "+
 			"(default: the last 24 hours)")
 	cmd.Flags().StringVar(&until, "until", "",
 		"the window's exclusive end, an RFC3339 instant (default: now); a duration "+
 			"--since is measured back from it")
 	cmd.Flags().StringVar(&orkflow, "orkflow", "", "only this orkflow's runs")
-	cmd.Flags().StringVar(&groupBy, "group-by", "",
+	cmd.Flags().StringVarP(&groupBy, "group-by", "g", "",
 		"comma-separated dimensions, in column order: "+strings.Join(flakeGroupBySpellings(), ", ")+
 			" (default: task; orkflow is always a column)")
 	cmd.Flags().Int32Var(&limit, "limit", 0, "groups to show, flakiest first (0: the server's default)")
@@ -164,7 +164,7 @@ func parseFlakeGroupBy(raw string) ([]orkstackv1.FailureGroupBy, error) {
 func flakeCell(group *orkstackv1.FlakeGroup, dim orkstackv1.FailureGroupBy) string {
 	switch dim {
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKFLOW:
-		return orDash(group.GetOrkflowName())
+		return orDash(ownedLabel(group.GetOrkflowNamespace(), group.GetOrkflowName()))
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK:
 		return orDash(group.GetTaskId())
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_IMAGE:

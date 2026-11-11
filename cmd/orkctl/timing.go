@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,11 +13,12 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
-// The seven reasons a timing quantity can be unavailable. They are the whole
-// vocabulary — the UI's ui/src/lib/timing.ts spells the same seven — and each
-// names a cause an operator can act on, never a generic "unknown".
+// The seven reasons a timing quantity can be unavailable, in the words the
+// CLI prints for orkstackv1.TimingReason. The engine names the reason; the UI
+// (ui/src/lib/timing.ts) spells the same seven.
 const (
 	reasonNoOrkerStart   = "no orker reported a start"
 	reasonClockSkew      = "clock skew"
@@ -29,6 +29,16 @@ const (
 	reasonNoAttemptStore = "no task attempt store"
 )
 
+var timingReasonWords = map[orkstackv1.TimingReason]string{
+	orkstackv1.TimingReason_TIMING_REASON_NO_ORKER_START:   reasonNoOrkerStart,
+	orkstackv1.TimingReason_TIMING_REASON_CLOCK_SKEW:       reasonClockSkew,
+	orkstackv1.TimingReason_TIMING_REASON_PRE_CONTRACT:     reasonPreContract,
+	orkstackv1.TimingReason_TIMING_REASON_RECLAIMED:        reasonReclaimed,
+	orkstackv1.TimingReason_TIMING_REASON_NO_RECORD:        reasonNoRecord,
+	orkstackv1.TimingReason_TIMING_REASON_NO_PHASES:        reasonNoPhases,
+	orkstackv1.TimingReason_TIMING_REASON_NO_ATTEMPT_STORE: reasonNoAttemptStore,
+}
+
 // timingReasons lists the seven, for the test that proves every one of them is
 // printed by some scenario.
 var timingReasons = []string{
@@ -36,8 +46,8 @@ var timingReasons = []string{
 	reasonNoRecord, reasonNoPhases, reasonNoAttemptStore,
 }
 
-// quantity is one derived duration in one of three states, and the three are
-// never collapsed into each other:
+// quantity is one derived duration (orkstackv1.TimingQuantity) in one of
+// three states, never collapsed into each other:
 //
 //   - does not apply (the task was never scheduled, or is not terminal yet):
 //     rendered "-" and ABSENT from JSON;
@@ -58,21 +68,22 @@ func unknownBecause(reason string) quantity {
 	return quantity{applies: true, reason: reason}
 }
 
-func measured(value time.Duration) quantity {
-	return quantity{applies: true, known: true, value: value}
-}
-
-// span is to − from, or unknownBecause(clock skew) when the two ends are
-// inverted: two clocks, one span, and a negative is never printed.
-func span(from, to time.Time) quantity {
-	if to.Before(from) {
-		return unknownBecause(reasonClockSkew)
+// quantityOf reads the engine's quantity: unset does not apply, a duration is
+// a value, and a reason alone is unavailable.
+func quantityOf(q *orkstackv1.TimingQuantity) quantity {
+	switch {
+	case q == nil:
+		return quantity{}
+	case q.GetDuration() != nil:
+		return quantity{applies: true, known: true, value: q.GetDuration().AsDuration()}
+	default:
+		return unknownBecause(timingReasonWords[q.GetReason()])
 	}
-	return measured(to.Sub(from))
 }
 
-// runTiming is the one derived document both renderings print: the human
-// table and the --json object are two views of this, never two computations.
+// runTiming is the one document both renderings print: the human table and
+// the --json object are two views of the timing GetRun and ListTaskAttempts
+// answered, which the engine derived (internal/api/timing.go).
 type runTiming struct {
 	RunID          string
 	Namespace      string
@@ -117,6 +128,9 @@ type taskTiming struct {
 	// on it, so wait, the wait for an Orker and phases do not apply and RUN is the time
 	// it spent awaiting (the run-timing derivation's await row).
 	Awaited bool
+	// Slept marks a sleeping task, on the await's terms: RUN is the time it
+	// slept.
+	Slept bool
 
 	Wait           quantity
 	Run            quantity
@@ -157,18 +171,13 @@ type phaseTiming struct {
 	Duration   quantity
 }
 
-// timingOptions are computeRunTiming's inputs besides the two responses.
+// timingOptions narrow the document.
 type timingOptions struct {
 	// Task narrows the document to one task; empty means every task. A
 	// fan-out named here also lists its items, one row each.
 	Task string
 	// Item narrows a fan-out Task to one item, with its attempts.
 	Item *int32
-	// AttemptStore is false when the engine answered ListTaskAttempts with
-	// FailedPrecondition: there are no attempt records to read at all.
-	AttemptStore bool
-	// Now is the clock "since scheduled" is measured against.
-	Now time.Time
 }
 
 func timeOf(ts *timestamppb.Timestamp) *time.Time {
@@ -179,23 +188,14 @@ func timeOf(ts *timestamppb.Timestamp) *time.Time {
 	return &at
 }
 
-func taskIsTerminal(status orkstackv1.Status) bool {
-	switch status {
-	case orkstackv1.Status_STATUS_SUCCEEDED, orkstackv1.Status_STATUS_FAILED,
-		orkstackv1.Status_STATUS_CANCELED, orkstackv1.Status_STATUS_SKIPPED:
-		return true
-	}
-	return false
-}
+// timelineKey names one timeline: a task, or one item of a fan-out.
+func timelineKey(taskID string, item *int32) string { return itemLabel(taskID, item) }
 
-// computeRunTiming implements the task-timing derivation (docs/UI_CLI_PARITY.md
-// "Task timing") over one GetRun snapshot and one ListTaskAttempts response.
-// It is the only place in the CLI that subtracts a task's timestamps.
-func computeRunTiming(
-	run *orkstackv1.Run,
-	attempts []*orkstackv1.TaskAttempt,
-	opts timingOptions,
-) *runTiming {
+// buildRunTiming lays out the timing GetRun (run) and ListTaskAttempts
+// (attempts; nil when the engine has no attempt store) answered as the
+// document the CLI prints. It subtracts nothing: every quantity is the
+// engine's.
+func buildRunTiming(run *orkstackv1.Run, attempts *orkstackv1.ListTaskAttemptsResponse, opts timingOptions) *runTiming {
 	namespace := run.GetNamespace()
 	if namespace == "" {
 		namespace = "default"
@@ -208,283 +208,129 @@ func computeRunTiming(
 		Status:                  statusLabel(run.GetStatus()),
 		RunStartedAt:            timeOf(run.GetStartedAt()),
 		RunFinishedAt:           timeOf(run.GetFinishedAt()),
-		AttemptRecordsAvailable: opts.AttemptStore,
+		RunElapsed:              quantityOf(run.GetTiming().GetElapsed()),
+		AttemptRecordsAvailable: attempts != nil,
 	}
-	if timing.RunStartedAt != nil && timing.RunFinishedAt != nil {
-		timing.RunElapsed = span(*timing.RunStartedAt, *timing.RunFinishedAt)
+	rowsOf := map[string][]*orkstackv1.TaskAttempt{}
+	for _, attempt := range attempts.GetAttempts() {
+		key := timelineKey(attempt.GetTaskId(), attempt.Item)
+		rowsOf[key] = append(rowsOf[key], attempt)
+	}
+	timingsOf := map[string]*orkstackv1.TaskAttemptsTiming{}
+	for _, t := range attempts.GetTimings() {
+		timingsOf[timelineKey(t.GetTaskId(), t.Item)] = t
+	}
+	row := func(taskRun *orkstackv1.TaskRun) *taskTiming {
+		key := timelineKey(taskRun.GetTaskId(), taskRun.Item)
+		return taskTimingOf(taskRun, rowsOf[key], timingsOf[key], attempts != nil)
 	}
 
-	byTask := map[string][]*orkstackv1.TaskAttempt{}
-	for _, attempt := range attempts {
-		key := itemLabel(attempt.GetTaskId(), attempt.Item)
-		byTask[key] = append(byTask[key], attempt)
-	}
-
-	var waitSum time.Duration
 	for _, taskRun := range run.GetTaskRuns() {
 		if opts.Task != "" && taskRun.GetTaskId() != opts.Task {
 			continue
 		}
-		task := computeTaskTiming(taskRun, byTask[taskRun.GetTaskId()], opts)
+		task := row(taskRun)
 		timing.Tasks = append(timing.Tasks, task)
-		// A fan-out named by --task lists its items, one row each, with the
-		// per-item derivation; --item narrows to one.
+		// A fan-out named by --task lists its items, one row each; --item
+		// narrows to one.
 		if taskRun.GetEach() != nil && opts.Task == taskRun.GetTaskId() {
 			for _, itemRun := range taskRun.GetItems() {
 				if opts.Item != nil && itemRun.GetItem() != *opts.Item {
 					continue
 				}
-				itemTiming := computeTaskTiming(itemRun, byTask[itemLabel(itemRun.GetTaskId(), itemRun.Item)], opts)
+				itemTiming := row(itemRun)
 				index := itemRun.GetItem()
 				itemTiming.Item = &index
 				timing.Tasks = append(timing.Tasks, itemTiming)
 			}
 		}
-		switch {
-		case !task.Wait.applies:
-		case task.Wait.known:
-			waitSum += task.Wait.value
-			timing.WaitSumTasks++
-		default:
-			timing.WaitUnavailableTasks++
-		}
 	}
-	switch {
-	case timing.WaitSumTasks > 0:
-		timing.WaitSum = measured(waitSum)
-	case timing.WaitUnavailableTasks > 0:
-		timing.WaitSum = quantity{applies: true}
+
+	// The run's summed wait is the engine's; narrowed to one task it is that
+	// task's own wait.
+	if opts.Task == "" {
+		runTiming := run.GetTiming()
+		timing.WaitSum = quantityOf(runTiming.GetWaitSum())
+		timing.WaitSumTasks = int(runTiming.GetWaitSumTasks())
+		timing.WaitUnavailableTasks = int(runTiming.GetWaitUnavailableTasks())
+	} else if len(timing.Tasks) > 0 {
+		switch wait := timing.Tasks[0].Wait; {
+		case !wait.applies:
+		case wait.known:
+			timing.WaitSum, timing.WaitSumTasks = wait, 1
+		default:
+			timing.WaitSum, timing.WaitUnavailableTasks = quantity{applies: true}, 1
+		}
 	}
 	return timing
 }
 
-func computeTaskTiming(
+// taskTimingOf lays out one row from its snapshot (with the engine's
+// TaskTiming), its attempt rows and its TaskAttemptsTiming.
+func taskTimingOf(
 	taskRun *orkstackv1.TaskRun,
 	rows []*orkstackv1.TaskAttempt,
-	opts timingOptions,
+	attemptsTiming *orkstackv1.TaskAttemptsTiming,
+	store bool,
 ) *taskTiming {
+	derived := taskRun.GetTiming()
 	task := &taskTiming{
-		TaskID:      taskRun.GetTaskId(),
-		Status:      statusLabel(taskRun.GetStatus()),
-		Attempt:     taskRun.GetAttempt(),
-		Pool:        taskRun.GetPool(),
-		ScheduledAt: timeOf(taskRun.GetScheduledAt()),
-		StartedAt:   timeOf(taskRun.GetStartedAt()),
-		FinishedAt:  timeOf(taskRun.GetFinishedAt()),
+		TaskID:         taskRun.GetTaskId(),
+		Status:         statusLabel(taskRun.GetStatus()),
+		Attempt:        taskRun.GetAttempt(),
+		Pool:           taskRun.GetPool(),
+		FanOut:         taskRun.GetEach() != nil,
+		Child:          taskRun.GetChild() != nil,
+		Awaited:        taskRun.GetAwait() != nil,
+		Slept:          taskRun.GetSleep() != nil,
+		ScheduledAt:    timeOf(taskRun.GetScheduledAt()),
+		StartedAt:      timeOf(taskRun.GetStartedAt()),
+		FinishedAt:     timeOf(taskRun.GetFinishedAt()),
+		Scheduled:      derived.GetScheduled(),
+		PreContract:    derived.GetPreContract(),
+		Wait:           quantityOf(derived.GetWait()),
+		Run:            quantityOf(derived.GetRun()),
+		Total:          quantityOf(derived.GetTotal()),
+		SinceScheduled: quantityOf(derived.GetSinceScheduled()),
 	}
-	S, B, F := task.ScheduledAt, task.StartedAt, task.FinishedAt
-	terminal := taskIsTerminal(taskRun.GetStatus())
-	if taskRun.GetEach() != nil {
-		// A fan-out's own row: S its expansion, B
-		// its earliest item's start, F its end. No attempts of its own.
-		task.FanOut = true
-		task.Scheduled = S != nil
-		if !task.Scheduled {
-			return task
-		}
-		switch {
-		case !terminal:
-			if taskRun.GetStatus() == orkstackv1.Status_STATUS_RUNNING {
-				task.SinceScheduled = span(*S, opts.Now)
-			}
-		case B == nil:
-			task.Wait = unknownBecause(reasonNoOrkerStart)
-			task.Run = unknownBecause(reasonNoOrkerStart)
-		default:
-			task.Wait = span(*S, *B)
-			if F != nil {
-				task.Run = span(*B, *F)
-			}
-		}
-		if terminal && F != nil {
-			task.Total = span(*S, *F)
-		}
+	// Only a scheduled container task has attempts, phases and a wait for an
+	// Orker.
+	if !task.Scheduled || task.FanOut || task.Child || task.Awaited || task.Slept {
 		return task
 	}
-	if taskRun.GetChild() != nil {
-		task.Child = true
-		task.Scheduled = S != nil
-		if !task.Scheduled {
-			return task
-		}
-		switch {
-		case !terminal:
-			if taskRun.GetStatus() == orkstackv1.Status_STATUS_RUNNING {
-				task.SinceScheduled = span(*S, opts.Now)
-			}
-		case B == nil:
-			// No child run was started: there is no start latency and no
-			// child duration to measure, so neither applies.
-		default:
-			task.Wait = span(*S, *B)
-			if F != nil {
-				task.Run = span(*B, *F)
-			}
-		}
-		if terminal && F != nil {
-			task.Total = span(*S, *F)
-		}
+	if !store {
+		task.QueueWait = unknownBecause(reasonNoAttemptStore)
+		task.AttemptsReason = reasonNoAttemptStore
 		return task
 	}
-	if taskRun.GetAwait() != nil {
-		// scheduled_at and started_at are both the instant it started
-		// awaiting; an await that never opened has neither.
-		task.Awaited = true
-		task.Scheduled = B != nil
-		if task.Scheduled && terminal && F != nil {
-			task.Run = span(*B, *F)
-			task.Total = task.Run
-		}
-		return task
-	}
-	task.Scheduled = S != nil || B != nil
-	task.PreContract = S == nil && B != nil
-	if !task.Scheduled {
-		// Never scheduled: every quantity is "-", and there are no attempts.
-		return task
-	}
-
-	switch {
-	case task.PreContract:
-		// B still holds the dispatch instant: there is no Orker start to
-		// measure wait or run against, and total is the old dispatch-to-
-		// finish span.
-		task.Wait = unknownBecause(reasonPreContract)
-		task.Run = unknownBecause(reasonPreContract)
-		if terminal && F != nil {
-			task.Total = span(*B, *F)
-		}
-	case !terminal:
-		if taskRun.GetStatus() == orkstackv1.Status_STATUS_RUNNING && S != nil {
-			task.SinceScheduled = span(*S, opts.Now)
-		}
-	default:
-		if B == nil {
-			task.Wait = unknownBecause(reasonNoOrkerStart)
-			task.Run = unknownBecause(reasonNoOrkerStart)
-		} else {
-			task.Wait = span(*S, *B)
-			if F != nil {
-				task.Run = span(*B, *F)
-			}
-		}
-		if F != nil {
-			task.Total = span(*S, *F)
-		}
-	}
-
-	task.QueueWait, task.QueueWaitStart = queueWaitOf(task, rows, terminal, opts)
-	task.Attempts, task.AttemptsReason, task.ReclaimedEmpty = attemptsOf(task, rows, opts)
-	return task
-}
-
-// recordsReclaimed says a task's timeline holds no record the Orker filed
-// even though the snapshot proves an Orker reported on it. An Orker that
-// reports a start (started_at) has always written a record for that attempt;
-// a timeline with none left is one the cleanup worker reclaimed, not one whose
-// every Orker crashed.
-func recordsReclaimed(task *taskTiming, rows []*orkstackv1.TaskAttempt, terminal bool) bool {
-	if len(rows) == 0 {
-		return terminal
-	}
-	if task.StartedAt == nil {
-		return false
-	}
-	for _, row := range rows {
-		if row.GetOutcome() != orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED {
-			return false
-		}
-	}
-	return true
-}
-
-func queueWaitOf(
-	task *taskTiming,
-	rows []*orkstackv1.TaskAttempt,
-	terminal bool,
-	opts timingOptions,
-) (quantity, *time.Time) {
-	switch {
-	case !opts.AttemptStore:
-		return unknownBecause(reasonNoAttemptStore), nil
-	case task.PreContract:
-		return unknownBecause(reasonPreContract), nil
-	case recordsReclaimed(task, rows, terminal):
-		return unknownBecause(reasonReclaimed), nil
-	}
-	for _, row := range rows {
-		if row.GetAttempt() != 1 {
-			continue
-		}
-		start := timeOf(row.GetStartedAt())
-		if row.GetOutcome() == orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED || start == nil {
-			return unknownBecause(reasonNoRecord), nil
-		}
-		wait := span(*task.ScheduledAt, *start)
-		if !wait.known {
-			return wait, nil
-		}
-		return wait, start
-	}
-	return unknownBecause(reasonNoRecord), nil
-}
-
-func attemptsOf(
-	task *taskTiming,
-	rows []*orkstackv1.TaskAttempt,
-	opts timingOptions,
-) ([]*attemptTiming, string, bool) {
-	if !opts.AttemptStore {
-		return nil, reasonNoAttemptStore, false
-	}
-	terminal := taskIsTerminal(statusFromLabel(task.Status))
-	if len(rows) == 0 {
-		return nil, "", terminal
-	}
-	reclaimed := recordsReclaimed(task, rows, terminal)
-	out := make([]*attemptTiming, 0, len(rows))
+	task.QueueWait = quantityOf(attemptsTiming.GetQueueWait())
+	task.ReclaimedEmpty = attemptsTiming.GetReclaimed() && len(rows) == 0
 	for i := len(rows) - 1; i >= 0; i-- {
 		row := rows[i]
-		attempt := &attemptTiming{
-			Attempt:    row.GetAttempt(),
-			Outcome:    attemptOutcomeLabel(row.GetOutcome()),
-			StartedAt:  timeOf(row.GetStartedAt()),
-			FinishedAt: timeOf(row.GetFinishedAt()),
+		if row.GetAttempt() == 1 && task.QueueWait.known {
+			task.QueueWaitStart = timeOf(row.GetStartedAt())
 		}
-		switch {
-		case row.GetOutcome() == orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED &&
-			!terminal && i == len(rows)-1:
-			attempt.InProgress = true
-		case row.GetOutcome() == orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED && reclaimed:
-			attempt.PhasesReason = reasonReclaimed
-		case row.GetOutcome() == orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED:
-			attempt.PhasesReason = reasonNoRecord
-		case len(row.GetPhases()) == 0:
-			attempt.PhasesReason = reasonNoPhases
-		default:
+		attempt := &attemptTiming{
+			Attempt:      row.GetAttempt(),
+			Outcome:      attemptOutcomeLabel(row.GetOutcome()),
+			StartedAt:    timeOf(row.GetStartedAt()),
+			FinishedAt:   timeOf(row.GetFinishedAt()),
+			InProgress:   row.GetTiming().GetInProgress(),
+			PhasesReason: timingReasonWords[row.GetTiming().GetPhasesReason()],
+		}
+		if !attempt.InProgress && attempt.PhasesReason == "" {
 			for _, phase := range row.GetPhases() {
-				p := &phaseTiming{
+				attempt.Phases = append(attempt.Phases, &phaseTiming{
 					Phase:      phase.GetPhase(),
 					StartedAt:  timeOf(phase.GetStartedAt()),
 					FinishedAt: timeOf(phase.GetFinishedAt()),
-				}
-				if p.StartedAt != nil && p.FinishedAt != nil {
-					p.Duration = span(*p.StartedAt, *p.FinishedAt)
-				} else {
-					p.Duration = unknownBecause(reasonNoRecord)
-				}
-				attempt.Phases = append(attempt.Phases, p)
+					Duration:   quantityOf(phase.GetDuration()),
+				})
 			}
 		}
-		out = append(out, attempt)
+		task.Attempts = append(task.Attempts, attempt)
 	}
-	return out, "", false
-}
-
-// statusFromLabel is statusLabel's inverse, for the one place a derived task
-// needs its status back.
-func statusFromLabel(label string) orkstackv1.Status {
-	return orkstackv1.Status(orkstackv1.Status_value["STATUS_"+label])
+	return task
 }
 
 // ---------------------------------------------------------------- human
@@ -534,6 +380,9 @@ func renderRunTiming(out io.Writer, timing *runTiming, oneTask bool) error {
 		run := task.Run.cell()
 		if task.Awaited && task.Run.applies {
 			run = "awaited " + run
+		}
+		if task.Slept && task.Run.applies {
+			run = "slept " + run
 		}
 		attempt := fmt.Sprintf("%d", task.Attempt)
 		if task.FanOut {
@@ -620,7 +469,7 @@ func (timing *runTiming) attemptsBlock() string {
 	}
 	width := 0
 	for _, task := range timing.Tasks {
-		if label := itemLabel(task.TaskID, task.Item); task.Scheduled && !task.Awaited && !task.FanOut && !task.Child && len(label) > width {
+		if label := itemLabel(task.TaskID, task.Item); task.Scheduled && !task.Awaited && !task.Slept && !task.FanOut && !task.Child && len(label) > width {
 			width = len(label)
 		}
 	}
@@ -632,7 +481,7 @@ func (timing *runTiming) attemptsBlock() string {
 	for _, task := range timing.Tasks {
 		// An awaited task has no attempts and no phases, and neither does a
 		// fan-out's own row (its items do): nothing to list.
-		if !task.Scheduled || task.Awaited || task.FanOut || task.Child {
+		if !task.Scheduled || task.Awaited || task.Slept || task.FanOut || task.Child {
 			continue
 		}
 		prefix := "  " + padRight(itemLabel(task.TaskID, task.Item), width) + "  "
@@ -716,13 +565,13 @@ func (o jsonObject) MarshalJSON() ([]byte, error) {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		key, err := json.Marshal(field.key)
+		key, err := stablejson.Marshal(field.key)
 		if err != nil {
 			return nil, err
 		}
 		b.Write(key)
 		b.WriteByte(':')
-		value, err := json.Marshal(field.value)
+		value, err := stablejson.Marshal(field.value)
 		if err != nil {
 			return nil, err
 		}
@@ -798,6 +647,9 @@ func (task *taskTiming) document() jsonObject {
 	}
 	if task.Awaited {
 		doc.add("awaited", true)
+	}
+	if task.Slept {
+		doc.add("slept", true)
 	}
 	if task.FanOut {
 		doc.add("fanOut", true)
@@ -877,8 +729,8 @@ func newRunTimingCommand(g *globalFlags) *cobra.Command {
 			"reclaimed, two clocks that disagree — prints `unavailable`, never 0s. A\n" +
 			"dash means the quantity does not apply: the task was never scheduled or\n" +
 			"has not finished yet.\n\n" +
-			"It reads the run snapshot and the per-attempt records; nothing is\n" +
-			"computed on the server.\n\n" +
+			"Every quantity is the engine's: it derives them from the run snapshot\n" +
+			"and the per-attempt records, and this command prints them.\n\n" +
 			"--json prints this command's own timing document (the table's data), not a\n" +
 			"response envelope.",
 		Args: cobra.ExactArgs(1),
@@ -897,7 +749,7 @@ func newRunTimingCommand(g *globalFlags) *cobra.Command {
 			return renderRunTiming(cmd.OutOrStdout(), timing, task != "")
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "", "only this task, with its phases (a fan-out also lists its items)")
+	cmd.Flags().StringVarP(&task, "task", "t", "", "only this task, with its phases (a fan-out also lists its items)")
 	item.register(cmd, "only this item of the fan-out --task names, with its attempts")
 	return cmd
 }
@@ -925,26 +777,20 @@ func fetchRunTimingItem(cmd *cobra.Command, g *globalFlags, runID, task string, 
 		return nil, fmt.Errorf("task %q not found in run %q", task, run.GetId())
 	}
 
-	store := true
-	var attempts []*orkstackv1.TaskAttempt
+	var attempts *orkstackv1.ListTaskAttemptsResponse
 	attemptsResp, err := g.runClient().ListTaskAttempts(ctx, connect.NewRequest(
 		&orkstackv1.ListTaskAttemptsRequest{RunId: runID, Namespace: g.namespace, TaskId: task, Item: item},
 	))
 	var connectErr *connect.Error
 	switch {
 	case err == nil:
-		attempts = attemptsResp.Msg.GetAttempts()
+		attempts = attemptsResp.Msg
 	case errors.As(err, &connectErr) && connectErr.Code() == connect.CodeFailedPrecondition:
-		store = false
+		// No attempt store: the snapshot half still prints.
 	default:
 		return nil, attemptsError(err)
 	}
-	return computeRunTiming(run, attempts, timingOptions{
-		Task:         task,
-		Item:         item,
-		AttemptStore: store,
-		Now:          time.Now().UTC(),
-	}), nil
+	return buildRunTiming(run, attempts, timingOptions{Task: task, Item: item}), nil
 }
 
 // appendRunTiming prints the timing block under a rendered `run get`.

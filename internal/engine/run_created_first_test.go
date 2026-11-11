@@ -11,7 +11,6 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
-	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -147,8 +146,7 @@ func TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd(t *tes
 	for _, ending := range endings {
 		for _, w := range writes {
 			t.Run(ending.name+"/"+w.name, func(t *testing.T) {
-				var suite testsuite.WorkflowTestSuite
-				h := newHarnessCtx(t, &suite, okBehavior)
+				h := newHarnessCtx(t, nil, okBehavior)
 				store := &snapshotWrites{refuse: refusing(w.refuse)}
 				h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{store}}))
 				h.onSnapshot = store.store
@@ -195,8 +193,7 @@ func TestRunWorkflow_AnEndingBeforeStartWritesRunCreatedAgainBeforeItsEnd(t *tes
 // and capture on its worker, and returns what it published.
 func endBeforeStartWith(t *testing.T, store *snapshotWrites, capture *pinCreationCapture) []*orkstackv1.Event {
 	t.Helper()
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, okBehavior)
+	h := newHarnessCtx(t, nil, okBehavior)
 	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture, store}}))
 	h.onSnapshot = store.store
 	wf := definedChain(t)

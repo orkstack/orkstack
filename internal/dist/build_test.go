@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeCommit is the revision the tests' builds are stamped with.
@@ -44,16 +46,10 @@ func (f *fakeBuilder) build(_ context.Context, root string, target dist.Target, 
 func fakeRoot(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "LICENSE"), fakeLicense, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(root, "LICENSE"), fakeLicense, 0o644))
 	index := filepath.Join(root, filepath.FromSlash(dist.UIIndex))
-	if err := os.MkdirAll(filepath.Dir(index), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(index, []byte("<!doctype html>\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Dir(index), 0o755))
+	must.OK(t, os.WriteFile(index, []byte("<!doctype html>\n"), 0o644))
 	return root
 }
 
@@ -62,9 +58,7 @@ func buildInto(t *testing.T, root, out string, fake *fakeBuilder) []string {
 	assets, err := dist.Build(context.Background(), dist.BuildOptions{
 		Root: root, Out: out, Version: mustVersion(t, "v0.1.0"), Commit: fakeCommit, CommitTime: commitTime, Builder: fake.build,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return assets
 }
 
@@ -101,9 +95,7 @@ func TestBuild_WritesEveryAssetAndTheImageBinaries(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	slices.Sort(onDisk)
 	slices.Sort(binaries)
 	if !reflect.DeepEqual(onDisk, wantAssets) {
@@ -119,9 +111,7 @@ func TestBuild_WritesEveryAssetAndTheImageBinaries(t *testing.T) {
 	}
 	for _, rel := range wantBinaries {
 		info, err := os.Stat(filepath.Join(out, rel))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if info.Mode().Perm() != 0o755 {
 			t.Errorf("%s mode %v, want 0755", rel, info.Mode().Perm())
 		}
@@ -147,9 +137,7 @@ func TestBuild_ArchivesHoldTheBinaryAndTheLicense(t *testing.T) {
 	buildInto(t, root, out, &fakeBuilder{})
 
 	data, err := os.ReadFile(filepath.Join(out, "orker-linux-amd64.tar.gz"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	headers, contents := readTarGz(t, data)
 	if len(headers) != 2 || headers[0].Name != "LICENSE" || headers[1].Name != "orker" {
 		t.Fatalf("orker archive holds %v, want LICENSE and orker", headers)
@@ -164,21 +152,15 @@ func TestBuild_ArchivesHoldTheBinaryAndTheLicense(t *testing.T) {
 	}
 
 	zipData, err := os.ReadFile(filepath.Join(out, "orkctl-windows-amd64.zip"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	reader, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var names []string
 	for _, file := range reader.File {
 		names = append(names, file.Name)
 		if file.Name == "orkctl.exe" {
 			open, err := file.Open()
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			body, _ := io.ReadAll(open)
 			_ = open.Close()
 			if string(body) != "binary:orkctl-windows-amd64:v0.1.0:"+fakeCommit {
@@ -235,21 +217,13 @@ func TestBuild_Refuses(t *testing.T) {
 		// its .gitkeep, so ork would embed nothing and serve the placeholder.
 		without := fakeRoot(t)
 		index := filepath.Join(without, filepath.FromSlash(dist.UIIndex))
-		if err := os.Remove(index); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(filepath.Dir(index), ".gitkeep"), nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Remove(index))
+		must.OK(t, os.WriteFile(filepath.Join(filepath.Dir(index), ".gitkeep"), nil, 0o644))
 		// And one whose index.html is a directory, not the page.
 		directory := fakeRoot(t)
 		index = filepath.Join(directory, filepath.FromSlash(dist.UIIndex))
-		if err := os.Remove(index); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Mkdir(index, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Remove(index))
+		must.OK(t, os.Mkdir(index, 0o755))
 		for name, root := range map[string]string{"no index.html": without, "index.html is a directory": directory} {
 			fake := &fakeBuilder{}
 			out := filepath.Join(t.TempDir(), "dist")

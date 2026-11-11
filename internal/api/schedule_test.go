@@ -2,7 +2,7 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/schedules"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeSchedules is the ScheduleController seam without a cluster: it keeps
@@ -253,9 +255,7 @@ func (h *scheduleHarness) create(req *orkstackv1.CreateScheduleRequest) (*orksta
 func (h *scheduleHarness) mustCreate(t *testing.T, name string) *orkstackv1.Schedule {
 	t.Helper()
 	s, err := h.create(&orkstackv1.CreateScheduleRequest{Name: name, OrkflowName: "hello-ork", Spec: dailySpec()})
-	if err != nil {
-		t.Fatalf("CreateSchedule(%s): %v", name, err)
-	}
+	must.OKf(t, err, "CreateSchedule(%s)", name)
 	return s
 }
 
@@ -343,9 +343,7 @@ func TestCreateSchedule_ResolvesNamespaceAndOrkflowBeforeTheCluster(t *testing.T
 		Name: "nightly", OrkflowName: "hello-ork", OrkflowVersion: "0.2.0", Description: "Nightly",
 		Input: &orkstackv1.Payload{Data: input}, Spec: dailySpec(), Paused: true,
 	})
-	if err != nil {
-		t.Fatalf("CreateSchedule: %v", err)
-	}
+	must.OKf(t, err, "CreateSchedule")
 	if len(h.schedules.created) != 1 {
 		t.Fatalf("Create calls = %d, want 1", len(h.schedules.created))
 	}
@@ -367,9 +365,7 @@ func TestCreateAndUpdateSchedule_RecordUnspecifiedOverlapAsSkip(t *testing.T) {
 	h := newScheduleHarness(t)
 	req := &orkstackv1.CreateScheduleRequest{Name: "nightly", OrkflowName: "hello-ork", Spec: dailySpec()}
 	s, err := h.create(req)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if h.schedules.created[0].GetSpec().GetOverlap() != orkstackv1.OverlapPolicy_OVERLAP_POLICY_SKIP ||
 		s.GetSpec().GetOverlap() != orkstackv1.OverlapPolicy_OVERLAP_POLICY_SKIP {
 		t.Fatalf("create recorded overlap %v, answered %v; want SKIP", h.schedules.created[0].GetSpec().GetOverlap(), s.GetSpec().GetOverlap())
@@ -386,9 +382,7 @@ func TestCreateAndUpdateSchedule_RecordUnspecifiedOverlapAsSkip(t *testing.T) {
 
 	update := &orkstackv1.UpdateScheduleRequest{Name: "all", Spec: dailySpec()}
 	resp, err := h.svc.UpdateSchedule(context.Background(), connect.NewRequest(update))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if resp.Msg.GetSchedule().GetSpec().GetOverlap() != orkstackv1.OverlapPolicy_OVERLAP_POLICY_SKIP ||
 		h.schedules.records["default/all"].GetSpec().GetOverlap() != orkstackv1.OverlapPolicy_OVERLAP_POLICY_SKIP {
 		t.Fatalf("update with no overlap recorded %v", h.schedules.records["default/all"].GetSpec().GetOverlap())
@@ -463,9 +457,7 @@ func TestListSchedules_NarrowsByOrkflowAndCarriesUnavailableRows(t *testing.T) {
 		{ID: "sch-0000000000000002", Name: "etl", Namespace: "default", OrkflowName: "etl", Unavailable: "x"},
 	}
 	resp, err := h.svc.ListSchedules(context.Background(), connect.NewRequest(&orkstackv1.ListSchedulesRequest{Filters: filters(t, "orkflow_name=hello-ork")}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	rows := resp.Msg.GetSchedules()
 	if len(rows) != 2 {
 		t.Fatalf("rows = %v, want nightly and broken", rows)
@@ -702,9 +694,7 @@ func TestPrepareScheduledRun_UsesPrepareAndRecordsScheduleOrigin(t *testing.T) {
 	acts := api.NewScheduleActivities(h.svc, fixedIndexes{ns: true, origin: false})
 	at := time.Date(2026, 9, 24, 1, 0, 0, 0, time.FixedZone("Lisbon", 3600))
 	prep, err := acts.PrepareScheduledRun(context.Background(), scheduleRec(""), at)
-	if err != nil {
-		t.Fatalf("PrepareScheduledRun: %v", err)
-	}
+	must.OKf(t, err, "PrepareScheduledRun")
 	if prep.GetOrkflow().GetVersion() != "0.3.0" || prep.GetRun().GetOrkflowVersion() != "0.3.0" {
 		t.Fatalf("unpinned fire prepared %q, want the current 0.3.0", prep.GetOrkflow().GetVersion())
 	}
@@ -747,18 +737,14 @@ func TestPrepareScheduledRun_SubmitsInputVerbatim(t *testing.T) {
 	acts := api.NewScheduleActivities(h.svc, fixedIndexes{})
 	rec := scheduleRec("")
 	prep, err := acts.PrepareScheduledRun(context.Background(), rec, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := prep.GetInput().GetData().AsMap(); len(got) != 1 || got["url"] != "https://httpbin.org/json" {
 		t.Fatalf("no input: prepared %v, want the declared default only", got)
 	}
 	input, _ := structpb.NewStruct(map[string]any{"url": "https://caller.test", "extra": "{{ .now }}"})
 	rec.Input = &orkstackv1.Payload{Data: input}
 	prep, err = acts.PrepareScheduledRun(context.Background(), rec, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !proto.Equal(prep.GetInput(), rec.GetInput()) {
 		t.Fatalf("input = %v, want %v verbatim", prep.GetInput(), rec.GetInput())
 	}
@@ -875,9 +861,7 @@ func TestAuditInterceptor_RecordsScheduleCreateWithoutInput(t *testing.T) {
 		Name: "nightly", OrkflowName: "hello-ork", Input: &orkstackv1.Payload{Data: input},
 		Spec: &orkstackv1.ScheduleSpec{Cron: []string{"0 2 * * *"}, Timezone: "Europe/Lisbon"}, Paused: true,
 	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	page, err := store.ListAuditRecords(context.Background(), artifacts.AuditQuery{Since: now.Add(-time.Hour), Until: now.Add(time.Hour), Limit: 10})
 	if err != nil || len(page.Records) != 1 {
 		t.Fatalf("records = %v, %v", page.Records, err)
@@ -917,9 +901,7 @@ func TestScheduleJSON_OverlapAndFireRenderShort(t *testing.T) {
 			RunId: "ork-1", DetailsAvailable: true}},
 	}
 	encoded, err := api.MarshalJSON(&orkstackv1.GetScheduleResponse{Schedule: schedule})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, want := range []string{`"overlap":"BUFFER_ONE"`, `"runId":"ork-1"`, `"detailsAvailable":true`, `"scheduledAt":"2026-09-24T01:00:00Z"`} {
 		if !strings.Contains(string(encoded), want) {
 			t.Errorf("JSON lacks %s: %s", want, encoded)

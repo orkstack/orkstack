@@ -1,11 +1,13 @@
 package artifacts
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // TestOrkflowCurrentKey_SitsBesideTheVersionsAndIsNotOne pins the pointer's
@@ -98,7 +100,7 @@ func TestCurrentPointer_HoldsOnlyTheVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalCurrentPointer: %v", err)
 	}
-	var fields map[string]json.RawMessage
+	var fields map[string]stablejson.RawJSON
 	if err := json.Unmarshal(document, &fields); err != nil {
 		t.Fatalf("pointer document is not JSON: %v\n%s", err, document)
 	}

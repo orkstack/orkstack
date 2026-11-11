@@ -8,6 +8,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // svgIcon wraps body in the root every icon has.
@@ -37,9 +39,7 @@ func TestParseIconSVG_ReadsEveryAllowedElementAsATree(t *testing.T) {
   <polygon points="1 1 2 2 3 1" fill="currentColor" fill-rule="evenodd" clip-rule="nonzero"/>
   <g transform="translate(1 1) rotate(45 8 8)"><g transform="scale(.5)"><path d="M0 0h1"/></g></g>
 </svg>`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := &orkstackv1.ActivityIcon{
 		Attributes: attrs("fill", "none", "stroke", "currentColor", "stroke-width", "1.4"),
 		Elements: []*orkstackv1.IconElement{
@@ -189,13 +189,9 @@ func TestParseIconLabel_AnEmptyValueDeclaresNone(t *testing.T) {
 // read, or would read differently.
 func TestPackIconLabel_WritesTheCanonicalSVG(t *testing.T) {
 	icon, err := ParseIconSVG("<svg viewBox='0 0 16 16'\n  stroke='currentColor'>\n  <path d='M2 8h12'/>\n</svg>")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	label, err := PackIconLabel(icon)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" stroke="currentColor"><path d="M2 8h12"/></svg>`
 	if label != want {
 		t.Fatalf("label = %s, want %s", label, want)

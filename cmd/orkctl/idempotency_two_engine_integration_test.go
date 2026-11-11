@@ -30,6 +30,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // idempotencyKey is the key both replicas submit under, and submittedInto is
@@ -191,9 +193,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 	awaitWorkflowCompleted(ctx, t, temporalClient, runID)
 	for _, replica := range []*engineReplica{replicaA, replicaB} {
 		got, err := replica.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
-		if err != nil {
-			t.Fatalf("GetRun(%s) on %s: %v", runID, replica.name, err)
-		}
+		must.OKf(t, err, "GetRun(%s) on %s", runID, replica.name)
 		if got.Msg.GetRun().GetId() != runID ||
 			got.Msg.GetRun().GetOrkflowName() != orkflowName {
 			t.Errorf("%s answers GetRun(%s) with %s@%s", replica.name, runID,
@@ -207,9 +207,7 @@ func TestIntegration_TwoEnginesDedupeOneIdempotencyKey(t *testing.T) {
 			OrkflowName:    orkflowName,
 			IdempotencyKey: idempotencyKey,
 		}))
-		if err != nil {
-			t.Fatalf("repeat SubmitRun on %s: %v", replica.name, err)
-		}
+		must.OKf(t, err, "repeat SubmitRun on %s", replica.name)
 		if got := repeat.Msg.GetRun().GetId(); got != runID {
 			t.Errorf("repeat submission on %s returned %q, want the claimed run %q",
 				replica.name, got, runID)
@@ -308,9 +306,7 @@ func listExecutions(
 			Query:         query,
 			NextPageToken: token,
 		})
-		if err != nil {
-			t.Fatalf("ListWorkflow(%s): %v", query, err)
-		}
+		must.OKf(t, err, "ListWorkflow(%s)", query)
 		for _, execution := range resp.GetExecutions() {
 			ids = append(ids, execution.GetExecution().GetWorkflowId())
 		}
@@ -369,9 +365,7 @@ func (r *engineReplica) awaitReady(ctx context.Context, t *testing.T) {
 			_, err := r.flows.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
 			return err
 		})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 }
 
 // startReplica boots one real `ork` process on its own port, sharing the

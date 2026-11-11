@@ -4,7 +4,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -22,7 +23,9 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -55,29 +58,29 @@ const taskRunValuesPrintLimit = 4096
 // gives for not inventing a proto message. Enum-valued strings use the short
 // dialect of docs/JSON.md.
 type taskRunReport struct {
-	Task           string            `json:"task"`
-	Namespace      string            `json:"namespace"`
-	Orkflow        taskRunDefinition `json:"orkflow"`
-	SourceRun      *taskRunSource    `json:"sourceRun,omitempty"`
-	LocalRunID     string            `json:"localRunId"`
-	IdempotencyKey string            `json:"idempotencyKey"`
-	Image          string            `json:"image"`
-	PlatformDigest string            `json:"platformDigest,omitempty"`
-	Input          json.RawMessage   `json:"input"`
-	Upstream       []taskRunUpstream `json:"upstream"`
-	Secrets        []taskRunSecret   `json:"secrets"`
-	Limits         taskRunLimits     `json:"limits"`
-	RenderOnly     bool              `json:"renderOnly"`
-	Outcome        string            `json:"outcome"`
-	Error          *taskRunError     `json:"error,omitempty"`
-	ExitCode       *int32            `json:"exitCode,omitempty"`
-	ContainerMs    int64             `json:"containerMs"`
-	TotalMs        int64             `json:"totalMs"`
-	Config         json.RawMessage   `json:"config,omitempty"`
-	TaskJSON       json.RawMessage   `json:"taskJson,omitempty"`
-	Values         json.RawMessage   `json:"values,omitempty"`
-	Artifacts      []taskRunArtifact `json:"artifacts"`
-	Workspace      string            `json:"workspace,omitempty"`
+	Task           string             `json:"task"`
+	Namespace      string             `json:"namespace"`
+	Orkflow        taskRunDefinition  `json:"orkflow"`
+	SourceRun      *taskRunSource     `json:"sourceRun,omitzero"`
+	LocalRunID     string             `json:"localRunId"`
+	IdempotencyKey string             `json:"idempotencyKey"`
+	Image          string             `json:"image"`
+	PlatformDigest string             `json:"platformDigest,omitempty"`
+	Input          stablejson.RawJSON `json:"input"`
+	Upstream       []taskRunUpstream  `json:"upstream"`
+	Secrets        []taskRunSecret    `json:"secrets"`
+	Limits         taskRunLimits      `json:"limits"`
+	RenderOnly     bool               `json:"renderOnly"`
+	Outcome        string             `json:"outcome"`
+	Error          *taskRunError      `json:"error,omitzero"`
+	ExitCode       *int32             `json:"exitCode,omitzero"`
+	ContainerMs    int64              `json:"containerMs"`
+	TotalMs        int64              `json:"totalMs"`
+	Config         stablejson.RawJSON `json:"config,omitzero"`
+	TaskJSON       stablejson.RawJSON `json:"taskJson,omitzero"`
+	Values         stablejson.RawJSON `json:"values,omitzero"`
+	Artifacts      []taskRunArtifact  `json:"artifacts"`
+	Workspace      string             `json:"workspace,omitempty"`
 }
 
 type taskRunDefinition struct {
@@ -99,7 +102,7 @@ type taskRunUpstream struct {
 	TaskID    string            `json:"taskId"`
 	Status    string            `json:"status,omitempty"`
 	From      string            `json:"from"` // "run" | "supplied" | "none"
-	Values    *taskRunArtifact  `json:"values,omitempty"`
+	Values    *taskRunArtifact  `json:"values,omitzero"`
 	Artifacts []taskRunArtifact `json:"artifacts"`
 }
 
@@ -149,7 +152,7 @@ func artifactsOf(refs []*orkstackv1.ArtifactRef) []taskRunArtifact {
 // shortCategory renders an §8.1 category string in the short enum dialect:
 // "ActivityFailed" -> "ACTIVITY_FAILED".
 func shortCategory(category string) string {
-	return strings.TrimPrefix(orker.CategoryEnum(category).String(), "FAILURE_CATEGORY_")
+	return enumname.Of(orker.CategoryEnum(category))
 }
 
 // ---------------------------------------------------------------- transcript
@@ -368,7 +371,7 @@ func (r *taskRunner) newReport() *taskRunReport {
 		report.SourceRun = source
 	}
 	if line, err := dsl.CanonicalInputLine(r.input.GetData()); err == nil {
-		report.Input = json.RawMessage(line)
+		report.Input = stablejson.RawJSON(line)
 	}
 	limits := engine.DefaultLimits()
 	report.Limits = taskRunLimits{
@@ -397,7 +400,7 @@ func (r *taskRunner) printHeader(validation *orker.Failure) {
 	definition := r.wf.GetDefinitionDigest() + "  "
 	switch {
 	case r.opts.file != "":
-		definition += "from " + r.opts.file + ", not applied"
+		definition += "from " + r.opts.file + ", not stored"
 	case r.run.GetOrkflowDefinitionDigest() == "":
 		definition += "the run's own (the run recorded no definition digest)"
 	default:
@@ -673,7 +676,7 @@ func (r *taskRunner) finish(
 
 // valuesOf is a succeeded attempt's values.json: inline when the dispatcher
 // inlined it, else read back from the session's local store.
-func (r *taskRunner) valuesOf(result *orkstackv1.ExecuteTaskResult) json.RawMessage {
+func (r *taskRunner) valuesOf(result *orkstackv1.ExecuteTaskResult) stablejson.RawJSON {
 	raw := result.GetValuesJson()
 	if !result.GetValuesInlined() && result.GetValuesRef().GetUri() != "" && r.store != nil {
 		if reader, err := r.store.Get(r.ctx, result.GetValuesRef().GetUri()); err == nil {
@@ -681,14 +684,14 @@ func (r *taskRunner) valuesOf(result *orkstackv1.ExecuteTaskResult) json.RawMess
 			_ = reader.Close()
 		}
 	}
-	if len(raw) == 0 || !json.Valid(raw) {
+	if len(raw) == 0 || !jsontext.Value(raw).IsValid() {
 		return nil
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
+	if err := stablejson.Compact(&compact, raw); err != nil {
 		return nil
 	}
-	return json.RawMessage(compact.Bytes())
+	return stablejson.RawJSON(compact.Bytes())
 }
 
 // keepLogs copies the byte-exact captured streams the dispatcher stored into

@@ -3,7 +3,7 @@
 # this tape once per theme with the output paths and a terminal theme made
 # from ui/src/tokens.css. curl is the host's own (run.sh).
 #
-# The setup is hidden: a neutral prompt in /work, each-fan-out applied (a
+# The setup is hidden: a neutral prompt in /work, each-fan-out created (a
 # no-op when the quickstart tape stored it already), and the schedule and
 # trigger of an earlier take deleted. orkctl runs through a shell function
 # that also writes its output to a log and, after a trigger create, reads
@@ -27,7 +27,7 @@ Set CursorBlink false
 Hide
 Type "export PS1='$ ' PATH=/work/bin:$PATH && cd /work"
 Enter
-Type "orkctl apply examples/each-fan-out.ork.yaml >/dev/null; orkctl schedule delete nightly >/dev/null 2>&1; for t in $(orkctl trigger list --json | grep -o 'trg-[0-9a-f]*' | sort -u); do orkctl trigger delete $t >/dev/null; done"
+Type "orkctl orkflow create examples/each-fan-out.ork.yaml >/dev/null; orkctl schedule delete nightly >/dev/null 2>&1; for t in $(orkctl trigger list -j | grep -o 'trg-[0-9a-f]*' | sort -u); do orkctl trigger delete $t >/dev/null; done"
 Enter
 Type `orkctl() { command orkctl "$@" | tee /tmp/term.log; if [ "$1 $2" = "trigger create" ]; then URL=$(grep -o "http://[^']*/v1/triggers/trg-[0-9a-f]*" /tmp/term.log | tail -1); SECRET=$(grep -o 'Bearer [0-9a-f]*' /tmp/term.log | tail -1 | cut -d' ' -f2); fi; }; clear`
 Enter

@@ -5,6 +5,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // filters parses CLI-grammar texts into wire filters, as orkctl --filter
@@ -17,9 +19,7 @@ func filters(t *testing.T, texts ...string) []*orkstackv1.FieldFilter {
 	out := make([]*orkstackv1.FieldFilter, len(texts))
 	for i, text := range texts {
 		f, err := listfilter.Parse(text)
-		if err != nil {
-			t.Fatalf("Parse(%q): %v", text, err)
-		}
+		must.OKf(t, err, "Parse(%q)", text)
 		out[i] = f
 	}
 	return out

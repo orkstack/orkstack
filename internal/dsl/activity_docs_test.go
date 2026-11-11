@@ -8,6 +8,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const testDocsLabel = `{"schemaVersion":1,"description":"Copies files.","fields":{"verbose":"Prints each file."},` +
@@ -23,12 +25,8 @@ var docsInterface = &orkstackv1.ActivityInterface{
 
 func TestParseDocsLabel_ReadsValidDocs(t *testing.T) {
 	docs, err := ParseDocsLabel(testDocsLabel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckDocsAgainstInterface(docs, docsInterface); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
+	must.OK(t, CheckDocsAgainstInterface(docs, docsInterface))
 	want := &orkstackv1.ActivityDocs{SchemaVersion: 1, Description: "Copies files.",
 		Fields: map[string]string{"verbose": "Prints each file."},
 		Ops:    map[string]*orkstackv1.OpDocs{"copy": {Description: "Copies one file.", Fields: map[string]string{"src": "The file to copy."}}},
@@ -112,9 +110,7 @@ func TestParseDocsLabel_KeepsPlainText(t *testing.T) {
 	// a limit counts characters, not bytes.
 	text := "Two <b>{{ x }}</b> `code` — ünïcödé, 日本語, עברית. " + strings.Repeat("日", MaxActivityDescriptionChars-50)
 	docs, err := ParseDocsLabel(`{"schemaVersion":1,"description":"` + text + `"}`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := text; docs.GetDescription() != want {
 		t.Fatalf("description = %q, want %q", docs.GetDescription(), want)
 	}
@@ -132,9 +128,7 @@ func TestCheckDocsAgainstInterface(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			docs, err := ParseDocsLabel(tc.label)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			err = CheckDocsAgainstInterface(docs, docsInterface)
 			switch {
 			case tc.want == "" && err != nil:
@@ -153,9 +147,7 @@ func TestCheckDocsAgainstInterface(t *testing.T) {
 // the labels fail independently.
 func TestCheckDocsAgainstInterface_WithoutAnInterfaceChecksNothing(t *testing.T) {
 	docs, err := ParseDocsLabel(`{"schemaVersion":1,"fields":{"anything":"x"},"ops":{"any":{"description":"x"}}}`)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if err := CheckDocsAgainstInterface(docs, nil); err != nil {
 		t.Fatalf("CheckDocsAgainstInterface(docs, nil) = %v, want nil", err)
 	}
@@ -164,16 +156,12 @@ func TestCheckDocsAgainstInterface_WithoutAnInterfaceChecksNothing(t *testing.T)
 func TestPackDocsLabel_RoundTripsCanonically(t *testing.T) {
 	docs := &orkstackv1.ActivityDocs{Description: `It's "quoted".`, Values: map[string]string{"path": "The copy."}}
 	label, err := PackDocsLabel(docs, docsInterface)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := `{"schemaVersion":1,"description":"It\u0027s \"quoted\".","values":{"path":"The copy."}}`; label != want {
 		t.Fatalf("label = %s, want %s", label, want)
 	}
 	read, err := ParseDocsLabel(label)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	docs.SchemaVersion = 1
 	if !proto.Equal(read, docs) {
 		t.Fatalf("read back %v, want %v", read, docs)

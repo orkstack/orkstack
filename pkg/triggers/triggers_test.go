@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/pkg/triggers"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestPrepare_MintsAnOpaqueIDAndAToken(t *testing.T) {
@@ -19,9 +21,7 @@ func TestPrepare_MintsAnOpaqueIDAndAToken(t *testing.T) {
 		Description:    "nightly",
 	}
 	trigger, secret, err := triggers.Prepare(reg)
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
+	must.OKf(t, err, "Prepare")
 	if !strings.HasPrefix(trigger.ID, triggers.IDPrefix) {
 		t.Errorf("id = %q, want the %q prefix", trigger.ID, triggers.IDPrefix)
 	}
@@ -56,9 +56,7 @@ func TestPrepare_MintsAnOpaqueIDAndAToken(t *testing.T) {
 	}
 
 	second, otherSecret, err := triggers.Prepare(reg)
-	if err != nil {
-		t.Fatalf("Prepare (second): %v", err)
-	}
+	must.OKf(t, err, "Prepare (second)")
 	if second.ID == trigger.ID || otherSecret == secret {
 		t.Error("two preparations drew the same id or the same secret")
 	}
@@ -71,9 +69,7 @@ func TestVerifySecret_AcceptsOnlyTheIssuedToken(t *testing.T) {
 	record, secret, err := triggers.Prepare(triggers.Registration{
 		Namespace: "default", OrkflowName: "hello-ork",
 	})
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
+	must.OKf(t, err, "Prepare")
 	noHash := record
 	noHash.SecretHash = nil
 	noSalt := record
@@ -170,9 +166,7 @@ func TestTriggerPublicAndMatches(t *testing.T) {
 	record, _, err := triggers.Prepare(triggers.Registration{
 		Namespace: "payments", OrkflowName: "hello-ork",
 	})
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
+	must.OKf(t, err, "Prepare")
 	public := record.Public()
 	if len(public.SecretHash) != 0 || len(public.SecretSalt) != 0 {
 		t.Error("Public kept the verification material")
@@ -250,9 +244,7 @@ func TestMemoryStore_UpdateChangesOnlyMutableFields(t *testing.T) {
 	ctx := context.Background()
 	store := triggers.NewMemoryStore()
 	created, secret, err := store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "deploy"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	must.OKf(t, err, "Create")
 	updated, ok, err := store.Update(ctx, created.ID, "payments", func(tr *triggers.Trigger) error {
 		tr.Name = "github-deploy"
 		tr.OrkflowVersion = "1.4.0"
@@ -296,9 +288,7 @@ func TestMemoryStore_UpdateOfAnotherNamespaceOrADeletedTriggerIsAbsent(t *testin
 	ctx := context.Background()
 	store := triggers.NewMemoryStore()
 	created, _, err := store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "deploy"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	must.OKf(t, err, "Create")
 	touch := func(tr *triggers.Trigger) error { tr.Description = "x"; return nil }
 	if _, ok, err := store.Update(ctx, created.ID, "billing", touch); ok || err != nil {
 		t.Fatalf("Update in another namespace = %v, %v; want absent", ok, err)
@@ -321,9 +311,7 @@ func TestMemoryStore_UpdateRefusesATakenName(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 	second, _, err := store.Create(ctx, triggers.Registration{Namespace: "payments", OrkflowName: "deploy"})
-	if err != nil {
-		t.Fatalf("Create: %v", err)
-	}
+	must.OKf(t, err, "Create")
 	_, _, err = store.Update(ctx, second.ID, "payments", func(tr *triggers.Trigger) error { tr.Name = "taken"; return nil })
 	if !errors.Is(err, triggers.ErrNameTaken) {
 		t.Fatalf("rename onto a taken name = %v, want ErrNameTaken", err)

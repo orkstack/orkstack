@@ -7,6 +7,8 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------------------
@@ -43,9 +45,7 @@ func TestParseTaskLogsFlag(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("parseTaskLogsFlag(%q) unexpected error: %v", tc.raw, err)
-			}
+			must.OKf(t, err, "parseTaskLogsFlag(%q) unexpected error", tc.raw)
 			if got != tc.want {
 				t.Errorf("parseTaskLogsFlag(%q) = %v, want %v", tc.raw, got, tc.want)
 			}
@@ -78,9 +78,7 @@ func namespaceTelemetryTestCmd(t *testing.T, args []string) (*cobra.Command, *st
 	cmd.Flags().StringVar(&sink, "telemetry-sink", "", "")
 	cmd.Flags().StringVar(&taskLogs, "task-logs", "inherit", "")
 	cmd.Flags().StringArrayVar(&attrs, "telemetry-attribute", nil, "")
-	if err := cmd.ParseFlags(args); err != nil {
-		t.Fatalf("parse flags %v: %v", args, err)
-	}
+	must.OKf(t, cmd.ParseFlags(args), "parse flags %v", args)
 	return cmd, &sink, &taskLogs, &attrs
 }
 
@@ -96,9 +94,7 @@ func TestApplyTelemetryFlags_OmittedFlagsKeepBase(t *testing.T) {
 	}
 	cmd, sink, taskLogs, attrs := namespaceTelemetryTestCmd(t, nil)
 	got, err := applyTelemetryFlags(cmd, base, *sink, *taskLogs, *attrs)
-	if err != nil {
-		t.Fatalf("applyTelemetryFlags: %v", err)
-	}
+	must.OKf(t, err, "applyTelemetryFlags")
 	if got != base {
 		t.Fatalf("applyTelemetryFlags with no flags changed returned a different policy: %+v", got)
 	}
@@ -115,9 +111,7 @@ func TestApplyTelemetryFlags_OnlyOneFieldChanges(t *testing.T) {
 	}
 	cmd, sink, taskLogs, attrs := namespaceTelemetryTestCmd(t, []string{"--telemetry-sink", "default"})
 	got, err := applyTelemetryFlags(cmd, base, *sink, *taskLogs, *attrs)
-	if err != nil {
-		t.Fatalf("applyTelemetryFlags: %v", err)
-	}
+	must.OKf(t, err, "applyTelemetryFlags")
 	if got.GetSink() != "default" {
 		t.Errorf("sink = %q, want default", got.GetSink())
 	}
@@ -135,9 +129,7 @@ func TestApplyTelemetryFlags_EmptySinkResetsToDefault(t *testing.T) {
 	base := &orkstackv1.TelemetryPolicy{Sink: "datadog"}
 	cmd, sink, taskLogs, attrs := namespaceTelemetryTestCmd(t, []string{"--telemetry-sink="})
 	got, err := applyTelemetryFlags(cmd, base, *sink, *taskLogs, *attrs)
-	if err != nil {
-		t.Fatalf("applyTelemetryFlags: %v", err)
-	}
+	must.OKf(t, err, "applyTelemetryFlags")
 	if got.GetSink() != "" {
 		t.Errorf("sink = %q, want reset to \"\" (default)", got.GetSink())
 	}
@@ -149,9 +141,7 @@ func TestApplyTelemetryFlags_EmptySinkResetsToDefault(t *testing.T) {
 func TestApplyTelemetryFlags_NoFlagsAndNoBaseStaysNil(t *testing.T) {
 	cmd, sink, taskLogs, attrs := namespaceTelemetryTestCmd(t, nil)
 	got, err := applyTelemetryFlags(cmd, nil, *sink, *taskLogs, *attrs)
-	if err != nil {
-		t.Fatalf("applyTelemetryFlags: %v", err)
-	}
+	must.OKf(t, err, "applyTelemetryFlags")
 	if got != nil {
 		t.Fatalf("applyTelemetryFlags with no base and no flags = %+v, want nil", got)
 	}

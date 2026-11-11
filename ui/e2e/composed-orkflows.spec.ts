@@ -153,7 +153,13 @@ async function submit(name: string): Promise<string> {
 	return resp.run.id;
 }
 
+// A composed task's panel, and the child link in it, stays open while the task
+// is live or selected. When the run goes on past it (composed-release's
+// announce), the page's own choice follows the next live task and the
+// finished task's panel closes, so the task is chosen first: its link then
+// stays put whatever the run does next.
 async function childRunId(page: Page, taskId: string): Promise<string> {
+	await selectTask(page, taskId);
 	const link = page.getByTestId(`task-${taskId}-child-link`);
 	await expect(link).toBeVisible({ timeout: 120_000 });
 	return ((await link.textContent()) ?? '').trim();
@@ -183,8 +189,9 @@ test('a composed task links to its child run and rolls up its tasks live', async
 	await expect(link).toBeAttached({ timeout: 120_000 });
 	const childId = ((await link.textContent()) ?? '').trim();
 	expect(childId).toMatch(/^ork-[0-7][0-9a-hjkmnp-tv-z]{25}$/);
-	// The row names the same child, and links to it.
-	await expect(page.getByTestId('task-release-child-run')).toHaveAttribute('href', new RegExp(`/runs/${childId}\\?`));
+	// The panel links to the child; its row stays its id, its bar and its status.
+	await expect(link).toHaveAttribute('href', new RegExp(`/runs/${childId}\\?`));
+	await expect(page.getByTestId('task-release')).not.toContainText(childId);
 	await expect(page.getByTestId('task-release-child')).not.toBeInViewport();
 	expect(childReads.filter((id) => id === childId), 'no child read before the card is seen').toHaveLength(0);
 	expect(childSockets.filter((url) => url.includes(`/ws/runs/${childId}?`)), 'no child socket before the card is seen').toHaveLength(0);
@@ -228,8 +235,8 @@ test('the child run names its parent and the parent lists its children', async (
 	expect(new URL(page.url()).searchParams.getAll('filter')).toEqual([`origin.id=${runId}`, 'origin.kind=PARENT_RUN']);
 	await page.getByTestId('runs-cli-trigger').click();
 	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`run list`);
-	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`--filter origin.kind=PARENT_RUN`);
-	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`--filter origin.id=${runId}`);
+	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`-F origin.kind=PARENT_RUN`);
+	await expect(page.getByTestId('runs-cli-command-0')).toContainText(`-F origin.id=${runId}`);
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId(`run-row-${childId}`)).toBeVisible({ timeout: 30_000 });
 	await expect(page.locator('tr[data-testid^="run-row-"]')).toHaveCount(1);
@@ -254,6 +261,11 @@ test('a grandchild links its root run beside its parent, and a child of the root
 
 	// The grandchild, three levels down: its parent and, separately, its root.
 	const leafId = await childRunId(page, 'release');
+	// The middle run goes on past release, to announce: the link is still
+	// there to click once it has. Waiting for the run to end makes that order
+	// certain, where a slow browser otherwise meets it only by chance.
+	await expect(page.getByTestId('run-status')).toHaveText('Succeeded', { timeout: 120_000 });
+	await expect(page.getByTestId('task-release-child-link')).toBeVisible();
 	await page.getByTestId('task-release-child-link').click();
 	await page.waitForURL(new RegExp(`/runs/${leafId}`));
 	await expect(page.getByTestId('run-origin-kind')).toHaveText('Parent run');
@@ -362,7 +374,7 @@ test('the Orkflow page shows the child reference, its digest and the outputs', a
 });
 
 test('apply shows composition issues on the uses line', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', `apiVersion: orkstack/v1
 kind: Orkflow
 name: composed-issues

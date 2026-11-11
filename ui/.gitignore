@@ -2,5 +2,6 @@ node_modules/
 .svelte-kit/
 build/
 test-results/
+test-results-solo/
 playwright-report/
 blob-report/

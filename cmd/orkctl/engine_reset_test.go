@@ -23,6 +23,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A connection the engine resets under a call reaches orkctl as CANCELED from
@@ -183,9 +185,7 @@ func (w resetWay) saidBy(line string) bool {
 func streamEnvelope(t *testing.T, event *orkstackv1.Event) []byte {
 	t.Helper()
 	body, err := proto.Marshal(event)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	prefix := []byte{0, 0, 0, 0, 0}
 	binary.BigEndian.PutUint32(prefix[1:], uint32(len(body)))
 	return append(prefix, body...)
@@ -480,9 +480,7 @@ func TestCloseIdleConnections_ReleasesTheEnginesConnection(t *testing.T) {
 
 	g := &globalFlags{server: server.URL}
 	response, err := g.httpClient().Get(server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 

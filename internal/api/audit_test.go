@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeAuditCounter records every CountAudit call.
@@ -173,9 +175,7 @@ func (f *auditFixture) records(t *testing.T) []*orkstackv1.AuditRecord {
 	page, err := f.store.ListAuditRecords(context.Background(), artifacts.AuditQuery{
 		Since: f.now.Add(-time.Hour), Until: f.now.Add(time.Hour), Limit: 1000,
 	})
-	if err != nil {
-		t.Fatalf("list audit records: %v", err)
-	}
+	must.OKf(t, err, "list audit records")
 	return page.Records
 }
 
@@ -185,18 +185,14 @@ func TestAuditInterceptor_RecordsSuccessfulWrite(t *testing.T) {
 	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "payments"},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace (direct, unaudited)")
 	_, err = f.namespaces().UpdateNamespace(ctx, withPrincipal(&orkstackv1.UpdateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{
 			Name: "payments", Description: "card rails", Labels: map[string]string{"team": "payments"},
 			Etag: created.Msg.GetNamespace().GetEtag(),
 		},
 	}, "dsantos"))
-	if err != nil {
-		t.Fatalf("UpdateNamespace: %v", err)
-	}
+	must.OKf(t, err, "UpdateNamespace")
 	records := f.records(t)
 	if len(records) != 1 {
 		t.Fatalf("records = %d, want exactly one", len(records))
@@ -290,17 +286,13 @@ func TestAuditInterceptor_NeverRecordsSecrets(t *testing.T) {
 			Events: []orkstackv1.EventType{orkstackv1.EventType_EVENT_TYPE_RUN_FAILED},
 			Secret: requestSecret,
 		}))
-	if err != nil {
-		t.Fatalf("RegisterWebhook: %v", err)
-	}
+	must.OKf(t, err, "RegisterWebhook")
 	if _, err := f.orkflows().ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {
 		t.Fatalf("ApplyOrkflow: %v", err)
 	}
 	trigger, err := orkstackv1connect.NewTriggerServiceClient(f.server.Client(), f.server.URL).CreateTrigger(ctx,
 		connect.NewRequest(&orkstackv1.CreateTriggerRequest{OrkflowName: "hello-ork"}))
-	if err != nil {
-		t.Fatalf("CreateTrigger: %v", err)
-	}
+	must.OKf(t, err, "CreateTrigger")
 	secrets := []string{requestSecret, hook.Msg.GetSecret(), trigger.Msg.GetSecret()}
 	for key, document := range f.store.Documents() {
 		for _, secret := range secrets {
@@ -437,15 +429,11 @@ func TestLegacyWebhookAdapter_RecordsAudit(t *testing.T) {
 	const secret = "legacy-secret-5a6b7c8d"
 	body := `{"url":"https://hooks.example.test/legacy","events":["run_succeeded"],"secret":"` + secret + `"}`
 	post, err := http.NewRequest(http.MethodPost, f.server.URL+api.WebhookCollectionPath, strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	post.Header.Set("Content-Type", "application/json")
 	post.Header.Set(api.AuditPrincipalHeader, "legacy-operator")
 	resp, err := f.server.Client().Do(post)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
+	must.OKf(t, err, "POST")
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST status = %d, want 201", resp.StatusCode)
@@ -458,9 +446,7 @@ func TestLegacyWebhookAdapter_RecordsAudit(t *testing.T) {
 
 	del, _ := http.NewRequest(http.MethodDelete, f.server.URL+"/v1/webhooks/"+id, nil)
 	resp, err = f.server.Client().Do(del)
-	if err != nil {
-		t.Fatalf("DELETE: %v", err)
-	}
+	must.OKf(t, err, "DELETE")
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusNoContent {
 		t.Fatalf("DELETE status = %d, want 204", resp.StatusCode)
@@ -468,9 +454,7 @@ func TestLegacyWebhookAdapter_RecordsAudit(t *testing.T) {
 	// A second delete is refused, and recorded as a refusal.
 	del2, _ := http.NewRequest(http.MethodDelete, f.server.URL+"/v1/webhooks/"+id, nil)
 	resp, err = f.server.Client().Do(del2)
-	if err != nil {
-		t.Fatalf("DELETE again: %v", err)
-	}
+	must.OKf(t, err, "DELETE again")
 	_ = resp.Body.Close()
 
 	byProcedure := map[string][]*orkstackv1.AuditRecord{}
@@ -516,9 +500,7 @@ func TestListAuditRecords_WindowDefaultsAndValidation(t *testing.T) {
 	f := newAuditFixture(t, auditOptions{})
 	ctx := context.Background()
 	resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))
-	if err != nil {
-		t.Fatalf("ListAuditRecords: %v", err)
-	}
+	must.OKf(t, err, "ListAuditRecords")
 	if !resp.Msg.GetUntil().AsTime().Equal(f.now) || !resp.Msg.GetSince().AsTime().Equal(f.now.Add(-7*24*time.Hour)) {
 		t.Errorf("window = [%s, %s), want [now-7d, now)", resp.Msg.GetSince().AsTime(), resp.Msg.GetUntil().AsTime())
 	}
@@ -560,9 +542,7 @@ func TestListAuditRecords_WindowFromAtBounds(t *testing.T) {
 			"2026-03-02T00:00:00Z 2026-03-04T23:00:00Z"},
 	} {
 		resp, err := list(tc.filters...)
-		if err != nil {
-			t.Fatalf("%q: %v", tc.filters, err)
-		}
+		must.OKf(t, err, "%q", tc.filters)
 		if got := window(resp); got != tc.want {
 			t.Errorf("%q: window %s, want %s", tc.filters, got, tc.want)
 		}
@@ -602,9 +582,7 @@ func (f *auditFixture) seed(t *testing.T, specs ...[2]string) []*orkstackv1.Audi
 			Action:        spec[1],
 			Succeeded:     true,
 		}
-		if err := f.store.PutAuditRecord(context.Background(), rec); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+		must.OKf(t, f.store.PutAuditRecord(context.Background(), rec), "seed")
 		out = append(out, rec)
 	}
 	return out
@@ -633,9 +611,7 @@ func TestListAuditRecords_CursorBindsFilters(t *testing.T) {
 	second, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
 		Filters: filters(t, "action^namespace."), PageSize: 5, PageToken: first.Msg.GetNextPageToken(),
 	}))
-	if err != nil {
-		t.Fatalf("second page: %v", err)
-	}
+	must.OKf(t, err, "second page")
 	got := []string{first.Msg.GetRecords()[0].GetId()}
 	for _, rec := range second.Msg.GetRecords() {
 		got = append(got, rec.GetId())
@@ -661,18 +637,14 @@ func TestListAuditRecords_V1TokenIsRefusedAndV2RoundTrips(t *testing.T) {
 	first, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
 		Filters: filters(t, "namespace=a"), PageSize: 1,
 	}))
-	if err != nil {
-		t.Fatalf("first page: %v", err)
-	}
+	must.OKf(t, err, "first page")
 	token := first.Msg.GetNextPageToken()
 	body, ok := strings.CutPrefix(token, "v2:")
 	if !ok {
 		t.Fatalf("token %q does not start v2:", token)
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(body)
-	if err != nil {
-		t.Fatalf("token body: %v", err)
-	}
+	must.OKf(t, err, "token body")
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("token JSON: %v", err)
@@ -717,9 +689,7 @@ func TestListAuditRecords_EmptyNamespaceSelectsDeploymentWideRecords(t *testing.
 		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
 			Filters: filters(t, tc.filters...),
 		}))
-		if err != nil {
-			t.Fatalf("ListAuditRecords(%q): %v", tc.filters, err)
-		}
+		must.OKf(t, err, "ListAuditRecords(%q)", tc.filters)
 		var got []string
 		for _, rec := range resp.Msg.GetRecords() {
 			got = append(got, rec.GetNamespace())
@@ -746,9 +716,7 @@ func TestListAuditRecords_ActionPrefixPrincipalTargetSucceeded(t *testing.T) {
 			SchemaVersion: artifacts.AuditSchemaVersion, Id: artifacts.NewAuditID(at(i)), At: timestamppb.New(at(i)),
 			Namespace: namespace, Action: action, Principal: principal, Target: target, Succeeded: succeeded, ErrorCode: code,
 		}
-		if err := f.store.PutAuditRecord(ctx, rec); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+		must.OKf(t, f.store.PutAuditRecord(ctx, rec), "seed")
 		return rec
 	}
 	update := put(1, "payments", "namespace.update", "dsantos", "payments", true, "")
@@ -773,9 +741,7 @@ func TestListAuditRecords_ActionPrefixPrincipalTargetSucceeded(t *testing.T) {
 		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
 			Filters: filters(t, tc.filters...),
 		}))
-		if err != nil {
-			t.Fatalf("ListAuditRecords(%q): %v", tc.filters, err)
-		}
+		must.OKf(t, err, "ListAuditRecords(%q)", tc.filters)
 		var got, want []string
 		for _, rec := range resp.Msg.GetRecords() {
 			got = append(got, rec.GetId())
@@ -842,14 +808,10 @@ func TestAuditWebhookRegister_DetailNamesScope(t *testing.T) {
 	}
 	body := `{"url":"https://hooks.example.test/legacy-scoped","events":["run_failed"],"orkflowName":"nightly"}`
 	post, err := http.NewRequest(http.MethodPost, f.server.URL+api.WebhookCollectionPath, strings.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	post.Header.Set("Content-Type", "application/json")
 	resp, err := f.server.Client().Do(post)
-	if err != nil {
-		t.Fatalf("POST: %v", err)
-	}
+	must.OKf(t, err, "POST")
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusCreated {
 		t.Fatalf("POST status = %d, want 201", resp.StatusCode)
@@ -888,18 +850,14 @@ func TestAudit_NamespaceUpdateRecordsHoldWhenPresent(t *testing.T) {
 	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "payments"},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace (direct, unaudited)")
 	updated, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{
 			Name: "payments", Hold: &orkstackv1.NamespaceHold{Reason: reason}, MaxRunning: 20,
 			Etag: created.Msg.GetNamespace().GetEtag(),
 		},
 	}))
-	if err != nil {
-		t.Fatalf("UpdateNamespace (hold): %v", err)
-	}
+	must.OKf(t, err, "UpdateNamespace (hold)")
 	records := f.records(t)
 	if len(records) != 1 {
 		t.Fatalf("records after the hold = %d, want exactly one", len(records))
@@ -921,9 +879,7 @@ func TestAudit_NamespaceUpdateRecordsHoldWhenPresent(t *testing.T) {
 			Name: "payments", MaxRunning: 20, Etag: updated.Msg.GetNamespace().GetEtag(),
 		},
 	}))
-	if err != nil {
-		t.Fatalf("UpdateNamespace (release): %v", err)
-	}
+	must.OKf(t, err, "UpdateNamespace (release)")
 	records = f.records(t)
 	if len(records) != 2 {
 		t.Fatalf("records after the release = %d, want two", len(records))
@@ -939,9 +895,7 @@ func TestAudit_NamespaceUpdateRecordsHoldWhenPresent(t *testing.T) {
 			Name: "billing", Hold: &orkstackv1.NamespaceHold{Reason: reason}, MaxRunning: 20,
 		},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace (held): %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace (held)")
 	records = f.records(t)
 	if len(records) != 3 {
 		t.Fatalf("records after the create = %d, want three", len(records))
@@ -1033,9 +987,7 @@ func TestAudit_NamespaceUpdateRecordsAllowedSecretsWhenPresent(t *testing.T) {
 	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "sandbox"},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace (direct, unaudited)")
 	updated, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{
 			Name:           "sandbox",
@@ -1043,9 +995,7 @@ func TestAudit_NamespaceUpdateRecordsAllowedSecretsWhenPresent(t *testing.T) {
 			Etag:           created.Msg.GetNamespace().GetEtag(),
 		},
 	}))
-	if err != nil {
-		t.Fatalf("UpdateNamespace (set): %v", err)
-	}
+	must.OKf(t, err, "UpdateNamespace (set)")
 	records := f.records(t)
 	if len(records) != 1 || records[0].GetAction() != "namespace.update" || !records[0].GetSucceeded() {
 		t.Fatalf("records after the set = %v, want one successful namespace.update", records)
@@ -1082,18 +1032,14 @@ func TestAudit_NamespaceUpdateRecordsBudgetWhenPresent(t *testing.T) {
 	created, err := f.svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "analytics"},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace (direct, unaudited): %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace (direct, unaudited)")
 	updated, err := f.namespaces().UpdateNamespace(ctx, connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{
 			Name: "analytics", Etag: created.Msg.GetNamespace().GetEtag(),
 			Budget: &orkstackv1.Budget{CpuSeconds: 5000000, Period: durationpb.New(720 * time.Hour), Enforce: true},
 		},
 	}))
-	if err != nil {
-		t.Fatalf("UpdateNamespace (budget): %v", err)
-	}
+	must.OKf(t, err, "UpdateNamespace (budget)")
 	records := f.records(t)
 	if len(records) != 1 || records[0].GetAction() != "namespace.update" {
 		t.Fatalf("records = %v, want one namespace.update", records)
@@ -1125,9 +1071,7 @@ func TestAudit_UpdateImagePolicyRecordsFingerprintsNeverPEM(t *testing.T) {
 			SigningKeys:       map[string]string{"release": task.FixedSigningKeyPEM},
 		},
 	}, "dsantos"))
-	if err != nil {
-		t.Fatalf("UpdateImagePolicy: %v", err)
-	}
+	must.OKf(t, err, "UpdateImagePolicy")
 	if _, err := client.GetImagePolicy(context.Background(), connect.NewRequest(&orkstackv1.GetImagePolicyRequest{})); err != nil {
 		t.Fatalf("GetImagePolicy: %v", err)
 	}
@@ -1150,9 +1094,7 @@ func TestAudit_UpdateImagePolicyRecordsFingerprintsNeverPEM(t *testing.T) {
 func TestAuditInterceptor_ResolveAwaitRecordsTheDigestNeverTheValues(t *testing.T) {
 	af := &awaitFixture{reader: &fakeReader{}, store: &recordingArtifactStore{}}
 	wf, err := dsl.Compile([]byte(awaitedYAML))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	af.wf = wf
 	starter := &fakeStarter{}
 	f := newAuditFixture(t, auditOptions{reader: af.reader, starter: starter, artifactStore: af.store})
@@ -1164,9 +1106,7 @@ func TestAuditInterceptor_ResolveAwaitRecordsTheDigestNeverTheValues(t *testing.
 	resp, err := runs.ResolveAwait(context.Background(), withPrincipal(&orkstackv1.ResolveAwaitRequest{
 		RunId: "ork-audit-await", TaskId: "gate", ValuesJson: `{"approved":true,"note":"` + secretValue + `"}`,
 	}, "alice"))
-	if err != nil {
-		t.Fatalf("ResolveAwait: %v", err)
-	}
+	must.OKf(t, err, "ResolveAwait")
 	if _, err := runs.ResolveAwait(context.Background(), withPrincipal(&orkstackv1.ResolveAwaitRequest{
 		RunId: "ork-audit-await", TaskId: "manual", Reject: true, Reason: "change window closed",
 	}, "bob")); err != nil {

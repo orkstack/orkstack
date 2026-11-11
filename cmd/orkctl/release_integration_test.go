@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // `orkctl release`'s CLI acceptance (docs/DEPLOY.md §3) on the real binaries: `ork` and `orker`
@@ -155,9 +157,7 @@ func (s *relStack) start(name, path string, env ...string) {
 	p.cmd = exec.CommandContext(s.ctx, path)
 	p.cmd.Env = append(os.Environ(), env...)
 	p.cmd.Stdout, p.cmd.Stderr = p, p
-	if err := p.cmd.Start(); err != nil {
-		s.t.Fatalf("start %s: %v", name, err)
-	}
+	must.OKf(s.t, p.cmd.Start(), "start %s", name)
 	go func() { _ = p.cmd.Wait(); close(p.done) }()
 	s.procs[name] = p
 }
@@ -205,9 +205,7 @@ func (s *relStack) startEngine(name, build string) {
 			}
 			return nil
 		})
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	s.note("engine %s up (release %q)", name, build)
 }
 
@@ -225,9 +223,7 @@ func (s *relStack) startOrker(name, build string, pins int) {
 	s.t.Helper()
 	id := s.oid(name)
 	work := filepath.Join(s.workRoot, id)
-	if err := os.MkdirAll(work, 0o755); err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, os.MkdirAll(work, 0o755))
 	s.start(name, s.orker, append(s.common(build),
 		"ORK_ORKER_ID="+id,
 		"ORK_ORKER_WORKDIR="+work,
@@ -360,10 +356,8 @@ const gateLoop = `i=0; while [ ! -e /orkstack/tmp/gate ] && [ $i -lt 1200 ]; do 
 func (s *relStack) apply(name, yaml string) {
 	s.t.Helper()
 	path := filepath.Join(s.t.TempDir(), name+".ork.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
-		s.t.Fatal(err)
-	}
-	s.mustCLI("apply", path)
+	must.OK(s.t, os.WriteFile(path, []byte(yaml), 0o644))
+	s.mustCLI("orkflow", "create", path)
 }
 
 func (s *relStack) applyGated(name string) {
@@ -698,9 +692,7 @@ func TestIntegration_ReleaseRollbackKeepsTheRolledBackReleasesRunsWhereTheyAre(t
 	}
 	listed := s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since, "--json")
 	resp := &orkstackv1.ListAuditRecordsResponse{}
-	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
-		t.Fatalf("admin audit --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(listed), resp), "admin audit --json")
 	for _, rec := range resp.GetRecords() {
 		if rec.GetTarget() == "v3" {
 			t.Fatalf("a refused-before-sending rollback reached the engine: %v", rec)
@@ -870,9 +862,7 @@ func TestIntegration_ReleaseWritesAreAudited(t *testing.T) {
 	s.mustCLI("release", "ramp", "v2", "--percent", "10")
 	listed := s.mustCLI("admin", "audit", "--filter", "action^release.", "--filter", "at>="+since, "--json")
 	resp := &orkstackv1.ListAuditRecordsResponse{}
-	if err := api.UnmarshalJSON([]byte(listed), resp); err != nil {
-		t.Fatalf("admin audit --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(listed), resp), "admin audit --json")
 	var promoted, ramped *orkstackv1.AuditRecord
 	for _, rec := range resp.GetRecords() {
 		switch rec.GetAction() {

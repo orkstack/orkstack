@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // F-ui-perf-1: ListTaskAttempts with no task — the run page's seed, `run get
@@ -112,9 +114,7 @@ func seedRunWide(t *testing.T, attempts artifacts.AttemptStore, logs *memoryLogS
 	t.Helper()
 	ctx := context.Background()
 	put := func(record *orkstackv1.TaskAttempt) {
-		if err := attempts.PutAttempt(ctx, record); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, attempts.PutAttempt(ctx, record))
 	}
 	put(attemptRecord(runID, "list", 3, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED))
 	put(attemptRecord(runID, "list", 1, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED))
@@ -141,9 +141,7 @@ func listAll(t *testing.T, attempts artifacts.AttemptStore, logs artifacts.LogSt
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	response, err := fixture.runClient().ListTaskAttempts(ctx, connect.NewRequest(&orkstackv1.ListTaskAttemptsRequest{RunId: run.GetId()}))
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	return response.Msg.GetAttempts()
 }
 

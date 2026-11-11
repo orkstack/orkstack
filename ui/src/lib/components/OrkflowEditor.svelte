@@ -1,9 +1,9 @@
 <script lang="ts">
 	import { shortVersion } from '#lib/version.ts';
 	import type { Snippet } from 'svelte';
-	import { onMount, tick } from 'svelte';
+	import { tick } from 'svelte';
 	import CliPopover from './CliPopover.svelte';
-	import EditorDocsRail from './EditorDocsRail.svelte';
+	import EditorLayout from './EditorLayout.svelte';
 	import Icon from './Icon.svelte';
 	import { shellQuote } from '#lib/runDetail.ts';
 	// The Edit tab: change ONE stored version's YAML and apply it as a new one.
@@ -14,7 +14,7 @@
 	//    generated schema as the document is typed (src/lib/yaml/), and asks
 	//    the engine — ValidateOrkflow, apply's own preparation — once typing
 	//    pauses; only that answer ever says the document has no problems, and
-	//    nothing the editor finds on its own ever disables Apply. Every message
+	//    nothing the editor finds on its own ever disables Create version. Every message
 	//    in the notice slot under the card's header is an ApplyOrkflow response.
 	//
 	// 2. Every apply carries TWO versions, because it states two facts
@@ -56,7 +56,7 @@
 		error: string | null;
 		/** Where to land after a successful apply. */
 		versionsHref: string;
-		/** Hands the page its header's actions: Validate, Apply version and the command line. */
+		/** Hands the page its header's actions: Validate, Create version and the command line. */
 		onactions?: (actions: Snippet | undefined) => void;
 		onreload: () => Promise<void>;
 	}
@@ -198,8 +198,8 @@
 		if (!base || !expectedHead) {
 			applyError =
 				'This Orkflow’s versions could not be read, so an edit can be checked against ' +
-				'neither the version it came from nor the newest one. Reload before applying — ' +
-				'applying blind is how a newer version gets buried.';
+				'neither the version it came from nor the newest one. Reload before creating a version — ' +
+				'creating one blind is how a newer version gets buried.';
 			return;
 		}
 		// The unchanged document, answered where it was typed. An apply that
@@ -316,12 +316,12 @@
 		conflictDiffError = '';
 	}
 
-	// ---- Layout C: the problems chip, the docs rail, the More disclosure ----
+	// ---- Layout C (EditorLayout): the problems chip and the More disclosure ----
 	const allFindings = $derived([...session.engineFindings, ...session.localFindings]);
 	const errorCount = $derived(allFindings.filter((f) => f.severity === 'error').length);
 	const warningCount = $derived(allFindings.filter((f) => f.severity === 'warning').length);
 	const problemCount = $derived(errorCount + warningCount);
-	// Apply is held only by the engine's own verdict on this exact text, never
+	// Create version is held only by the engine's own verdict on this exact text, never
 	// by what the editor finds on its own.
 	const engineCurrent = $derived(session.engine.kind === 'answered' && session.engine.text === yaml);
 	const engineErrors = $derived(engineCurrent ? session.engineFindings.filter((f) => f.severity === 'error').length : 0);
@@ -329,26 +329,10 @@
 	// The list stays shut, with the first problem in the strip, until the chip or a Validate opens it.
 	let problemsOpen = $state(false);
 	let moreOpen = $state(false);
-	let railOpen = $state(true);
-	onMount(() => {
-		railOpen = matchMedia('(min-width: 1280px)').matches;
-	});
-	const atCaret = $derived(session.caretTask);
 
 	// ---- The notice slot: an apply's answer, under the card's header ----
 	const noticed = $derived(Boolean(applyError || noop || warnings.length || applied || conflict));
-	let notices = $state<HTMLElement>();
-	let noticesOverflow = $state(false);
 	let conflictBelow = $state<HTMLElement>();
-	$effect(() => {
-		if (!notices) return;
-		const el = notices;
-		const measure = () => (noticesOverflow = el.scrollHeight > el.clientHeight + 1);
-		measure();
-		const ro = new ResizeObserver(measure);
-		ro.observe(el);
-		return () => ro.disconnect();
-	});
 </script>
 
 {#snippet headerActions()}
@@ -356,7 +340,7 @@
 				<button
 					type="submit"
 					form={formId}
-					data-tip="Applying stores a new version: change version: first"
+					data-tip="Creating stores a new version: change version: first"
 					data-testid="editor-apply"
 					aria-disabled={applyHeld || applying || validating ? 'true' : undefined}
 					aria-describedby={applyHeld ? 'editor-apply-why' : undefined}
@@ -365,19 +349,19 @@
 					}}
 					class="btn btn-primary"
 				>
-					<Icon name="apply" />{applying ? 'Applying…' : `Apply version ${shortVersion(draftVersion)}`.trim()}
+					<Icon name="apply" />{applying ? 'Creating…' : `Create version ${shortVersion(draftVersion)}`.trim()}
 				</button>
 				<CliPopover
 					testid="editor-cli"
 					title="Command line: this Orkflow"
 					commands={[
 						{ label: 'Check a file without storing it', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow validate ${name}.ork.yaml` },
-						{ label: 'Apply it as a new version', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} apply ${name}.ork.yaml` },
+						{ label: 'Create it as a new version', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow create ${name}.ork.yaml` },
 						{ label: 'Edit it in your own editor', command: `orkctl -n ${shellQuote(namespaceLabel(namespace))} orkflow edit ${name}` }
 					]}
 				/>
 			{#if applyHeld}
-				<p id="editor-apply-why" class="apply-why" data-testid="editor-apply-why">Fix {engineErrors} {engineErrors === 1 ? 'problem' : 'problems'} to apply</p>
+				<p id="editor-apply-why" class="apply-why" data-testid="editor-apply-why">Fix {engineErrors} {engineErrors === 1 ? 'problem' : 'problems'} to create a version</p>
 			{/if}
 {/snippet}
 
@@ -404,188 +388,173 @@
 			void apply();
 		}}
 	>
-		<div class="ed-grid" class:rail-closed={!railOpen}>
-			<section class="card edcard" aria-labelledby="editor-yaml-label">
-				<div class="card-head">
-					<h2 id="editor-yaml-label">Edit</h2>
-					<span class="card-sub">a new version from <span data-testid="editor-base-version">{base}</span><span class={base === expectedHead ? 'sr' : ''}>; the newest is <span class="figure" data-testid="editor-head-version">{expectedHead}</span></span></span>
-					<div class="card-end">
-						{#if problemCount > 0}
-							<button
-								type="button"
-								class="pchip"
-								aria-expanded={problemsOpen}
-								aria-controls="editor-problems"
-								data-testid="editor-problems-chip"
-								onclick={() => (problemsOpen = !problemsOpen)}
-								><span class="sr">Problems:{' '}</span>{#if errorCount}<span class="mk-fail" aria-hidden="true"></span><b>{errorCount}</b>{' '}{errorCount === 1 ? 'error' : 'errors'}{/if}{#if errorCount && warningCount}<span class="sr">,{' '}</span><span class="pdot" aria-hidden="true">·</span>{/if}{#if warningCount}<span class="mk-warn" aria-hidden="true"></span><b>{warningCount}</b>{' '}{warningCount === 1 ? 'warning' : 'warnings'}{/if}</button
-							>
-						{/if}
-						{#if dirty}<span data-testid="editor-unsaved" class="text-sm font-semibold text-ink-3">Unsaved changes</span>{/if}
-						<span class="ie">
-							<label class="btn btn-sm btn-quiet cursor-pointer">Import<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
-							<button type="button" data-testid="editor-export" onclick={exportYaml} class="btn btn-sm btn-quiet">Export</button>
-						</span>
-						<!-- A plain disclosure: Escape and focus leaving it close it. -->
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<span
-							class="more-wrap"
-							onkeydown={(e) => {
-								if (e.key === 'Escape' && moreOpen) {
-									e.stopPropagation();
-									moreOpen = false;
-									(e.currentTarget.querySelector('[data-testid="editor-more"]') as HTMLElement | null)?.focus();
-								}
-							}}
+		<EditorLayout {session} labelledby="editor-yaml-label" testid="editor" {noticed}>
+			{#snippet head()}
+				<h2 id="editor-yaml-label">Edit</h2>
+				<span class="card-sub">a new version from <span data-testid="editor-base-version">{base}</span><span class={base === expectedHead ? 'sr' : ''}>; the newest is <span class="figure" data-testid="editor-head-version">{expectedHead}</span></span></span>
+				<div class="card-end">
+					{#if problemCount > 0}
+						<button
+							type="button"
+							class="pchip"
+							aria-expanded={problemsOpen}
+							aria-controls="editor-problems"
+							data-testid="editor-problems-chip"
+							onclick={() => (problemsOpen = !problemsOpen)}
+							><span class="sr">Problems:{' '}</span>{#if errorCount}<span class="mk-fail" aria-hidden="true"></span><b>{errorCount}</b>{' '}{errorCount === 1 ? 'error' : 'errors'}{/if}{#if errorCount && warningCount}<span class="sr">,{' '}</span><span class="pdot" aria-hidden="true">·</span>{/if}{#if warningCount}<span class="mk-warn" aria-hidden="true"></span><b>{warningCount}</b>{' '}{warningCount === 1 ? 'warning' : 'warnings'}{/if}</button
 						>
-							<button
-								type="button"
-								class="btn btn-sm btn-icon"
-								aria-label="More actions"
-								aria-expanded={moreOpen}
-								aria-controls="editor-more"
-								data-testid="editor-more"
-								onclick={() => (moreOpen = !moreOpen)}
-								onfocusout={(e) => {
-									const next = e.relatedTarget as Node | null;
-									if (!next || !(e.currentTarget.parentElement?.contains(next))) moreOpen = false;
-								}}><Icon name="more" /></button
-							>
-							{#if moreOpen}
-								<span id="editor-more" class="more-pop pop" data-testid="editor-more-menu">
-									<label class="more-item cursor-pointer">Import<input type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={(e) => { moreOpen = false; importYaml(e); }} /></label>
-									<button type="button" class="more-item" onclick={() => { moreOpen = false; exportYaml(); }}>Export</button>
-								</span>
-							{/if}
-						</span>
-					</div>
-				</div>
-				<!-- What an apply answered, beside the code and in the card that stays in view. A tab stop only while it scrolls (WCAG 2.1.1). -->
-				<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
-				<div
-					bind:this={notices}
-					class="ed-notices scroll-panel"
-					class:filled={noticed}
-					data-testid="editor-notices"
-					role={noticesOverflow ? 'region' : undefined}
-					aria-label={noticesOverflow ? 'What the apply answered' : undefined}
-					tabindex={noticesOverflow ? 0 : undefined}
-				>
-					{#if applyError}
-						<ErrorPanel testid="editor-error" message={applyError} />
 					{/if}
-					{#if noop}
-						<p
-							data-testid="editor-noop"
-							role="status"
-							class="note flex gap-3 px-4 py-2 text-sm"
-						>
-							<span class="caps text-ink-muted">Note</span>
-							<span>{noop} Nothing was applied, and no new version was created.</span>
-						</p>
-					{/if}
-					{#each warnings as warning, i (i)}
-						<div class="severity-warning border border-red px-4 py-2 text-sm">
-							{warning}
-						</div>
-					{/each}
-					<!-- A live region that is always there, so the apply's one confirmation is announced. -->
-					<div role="status">
-						{#if applied}
-							<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Applied {applied.name}@{shortVersion(applied.version)}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
-						{/if}
-					</div>
-					{#if conflict}
-						<div
-							data-testid="editor-conflict"
-							role="alert"
-							class="space-y-3 border border-red bg-red-tint px-4 py-3 text-sm text-ink"
-						>
-							<p class="severity-error font-semibold">
-								{name} changed while this edit was open. Nothing was overwritten.
-							</p>
-							<p>
-								This edit is derived from
-								<span class="font-medium" data-testid="editor-conflict-base">{conflict.base}</span>; the
-								newest applied version was
-								<span class="font-medium" data-testid="editor-conflict-expected"
-									>{conflict.expectedHead}</span
-								>
-								when this document was fetched
-								{#if conflictHead}
-									and is now
-									<span class="font-medium" data-testid="editor-conflict-head">{conflictHead}</span>.
-								{:else if conflictBusy}
-									— <span data-testid="editor-conflict-loading">reading the newest version…</span>
-								{/if}
-							</p>
-
-							{#if conflictHeadError}
-								<ErrorPanel
-									testid="editor-conflict-head-error"
-									retryTestid="editor-conflict-head-retry"
-									subject="the newest version of {name}"
-									message={conflictHeadError}
-									busy={conflictBusy}
-									onretry={readHead}
-								/>
-							{/if}
-
-							<div class="flex flex-wrap gap-3">
-								<button
-									type="button"
-									data-testid="editor-conflict-diff"
-									disabled={conflictBusy || !conflictHead}
-									onclick={showConflictDiff}
-									class="btn btn-sm"
-								>
-									{conflictBusy
-										? 'Working…'
-										: `Show what changed (${conflict.expectedHead} → ${conflictHead})`}
-								</button>
-								<button
-									type="button"
-									data-testid="editor-conflict-rebase"
-									disabled={conflictBusy || !conflictHead}
-									onclick={retarget}
-									class="btn btn-sm"
-								>
-									Keep my edit and retarget head {conflictHead || '…'}
-								</button>
-							</div>
-						</div>
-					{/if}
-				</div>
-				{#if base !== expectedHead}
-					<p class="ed-fork" data-testid="editor-fork-notice">Applying forks forward from {base} and becomes the new head; the version that runs is unchanged until somebody promotes.</p>
-				{/if}
-				<div class="px-0">
-					<YamlField
-						bind:value={yaml}
-						kind="Orkflow"
-						{namespace}
-						{session}
-						testid="editor-yaml"
-						label="Orkflow YAML"
-						labelledby="editor-yaml-label"
-						rows={24}
-						oninput={() => (noop = '')}
-						strip
+					{#if dirty}<span data-testid="editor-unsaved" class="text-sm font-semibold text-ink-3">Unsaved changes</span>{/if}
+					<span class="ie">
+						<label class="btn btn-sm btn-quiet cursor-pointer">Import<input data-testid="editor-import" type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={importYaml} /></label>
+						<button type="button" data-testid="editor-export" onclick={exportYaml} class="btn btn-sm btn-quiet">Export</button>
+					</span>
+					<!-- A plain disclosure: Escape and focus leaving it close it. -->
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<span
+						class="more-wrap"
+						onkeydown={(e) => {
+							if (e.key === 'Escape' && moreOpen) {
+								e.stopPropagation();
+								moreOpen = false;
+								(e.currentTarget.querySelector('[data-testid="editor-more"]') as HTMLElement | null)?.focus();
+							}
+						}}
 					>
-						{#snippet between()}
-							{#if problemsOpen && problemCount > 0}
-								<section id="editor-problems" class="plist scroll-panel" aria-label="Problems" data-testid="editor-problems">
-									<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" level={3} />
-								</section>
-							{/if}
-						{/snippet}
-					</YamlField>
+						<button
+							type="button"
+							class="btn btn-sm btn-icon"
+							aria-label="More actions"
+							aria-expanded={moreOpen}
+							aria-controls="editor-more"
+							data-testid="editor-more"
+							onclick={() => (moreOpen = !moreOpen)}
+							onfocusout={(e) => {
+								const next = e.relatedTarget as Node | null;
+								if (!next || !(e.currentTarget.parentElement?.contains(next))) moreOpen = false;
+							}}><Icon name="more" /></button
+						>
+						{#if moreOpen}
+							<span id="editor-more" class="more-pop pop" data-testid="editor-more-menu">
+								<label class="more-item cursor-pointer">Import<input type="file" accept=".yaml,.yml,text/yaml,application/yaml" class="sr-only" onchange={(e) => { moreOpen = false; importYaml(e); }} /></label>
+								<button type="button" class="more-item" onclick={() => { moreOpen = false; exportYaml(); }}>Export</button>
+							</span>
+						{/if}
+					</span>
 				</div>
-			</section>
-			<div class="rail-slot">
-				<EditorDocsRail task={atCaret} open={railOpen} ontoggle={() => (railOpen = !railOpen)} />
+			{/snippet}
+			{#snippet notices()}
+				{#if applyError}
+					<ErrorPanel testid="editor-error" message={applyError} />
+				{/if}
+				{#if noop}
+					<p
+						data-testid="editor-noop"
+						role="status"
+						class="note flex gap-3 px-4 py-2 text-sm"
+					>
+						<span class="caps text-ink-muted">Note</span>
+						<span>{noop} Nothing was written, and no new version was created.</span>
+					</p>
+				{/if}
+				{#each warnings as warning, i (i)}
+					<div class="severity-warning border border-red px-4 py-2 text-sm">
+						{warning}
+					</div>
+				{/each}
+				<!-- A live region that is always there, so the apply's one confirmation is announced. -->
+				<div role="status">
+					{#if applied}
+						<p data-testid="editor-apply-success" class="confirm border border-rule-strong px-4 py-2 text-sm text-ink">Created {applied.name}@{shortVersion(applied.version)}. Warnings remain visible above. <a class="link font-semibold" href={versionsHref}>Open versions</a></p>
+					{/if}
+				</div>
+				{#if conflict}
+					<div
+						data-testid="editor-conflict"
+						role="alert"
+						class="space-y-3 border border-red bg-red-tint px-4 py-3 text-sm text-ink"
+					>
+						<p class="severity-error font-semibold">
+							{name} changed while this edit was open. Nothing was overwritten.
+						</p>
+						<p>
+							This edit is derived from
+							<span class="font-medium" data-testid="editor-conflict-base">{conflict.base}</span>; the
+							newest version was
+							<span class="font-medium" data-testid="editor-conflict-expected"
+								>{conflict.expectedHead}</span
+							>
+							when this document was fetched
+							{#if conflictHead}
+								and is now
+								<span class="font-medium" data-testid="editor-conflict-head">{conflictHead}</span>.
+							{:else if conflictBusy}
+								— <span data-testid="editor-conflict-loading">reading the newest version…</span>
+							{/if}
+						</p>
+
+						{#if conflictHeadError}
+							<ErrorPanel
+								testid="editor-conflict-head-error"
+								retryTestid="editor-conflict-head-retry"
+								subject="the newest version of {name}"
+								message={conflictHeadError}
+								busy={conflictBusy}
+								onretry={readHead}
+							/>
+						{/if}
+
+						<div class="flex flex-wrap gap-3">
+							<button
+								type="button"
+								data-testid="editor-conflict-diff"
+								disabled={conflictBusy || !conflictHead}
+								onclick={showConflictDiff}
+								class="btn btn-sm"
+							>
+								{conflictBusy
+									? 'Working…'
+									: `Show what changed (${conflict.expectedHead} → ${conflictHead})`}
+							</button>
+							<button
+								type="button"
+								data-testid="editor-conflict-rebase"
+								disabled={conflictBusy || !conflictHead}
+								onclick={retarget}
+								class="btn btn-sm"
+							>
+								Keep my edit and retarget head {conflictHead || '…'}
+							</button>
+						</div>
+					</div>
+				{/if}
+			{/snippet}
+			{#if base !== expectedHead}
+				<p class="ed-fork" data-testid="editor-fork-notice">Creating a version forks forward from {base} and becomes the new head; the version that runs is unchanged until somebody promotes.</p>
+			{/if}
+			<div class="px-0">
+				<YamlField
+					bind:value={yaml}
+					kind="Orkflow"
+					{namespace}
+					{session}
+					testid="editor-yaml"
+					label="Orkflow YAML"
+					labelledby="editor-yaml-label"
+					rows={24}
+					oninput={() => (noop = '')}
+					strip
+				>
+					{#snippet between()}
+						{#if problemsOpen && problemCount > 0}
+							<section id="editor-problems" class="plist scroll-panel" aria-label="Problems" data-testid="editor-problems">
+								<YamlProblems {session} listTestid="editor-validation-issues" issueTestid="editor-validation-issue" testid="editor-yaml" level={3} />
+							</section>
+						{/if}
+					{/snippet}
+				</YamlField>
 			</div>
-		</div>
+		</EditorLayout>
 
 		<!-- The summary and its ways forward are in the card's notice slot; what would crowd the code is here. -->
 		{#if conflict}
@@ -612,21 +581,7 @@
 {/if}
 
 <style>
-	/* Empty, it takes no room: only the always-present live region is inside. */
-	.ed-notices.filled {
-		flex: none;
-		max-height: min(30dvh, 216px);
-		padding: 8px 16px;
-		overflow-y: auto;
-		border-bottom: 1px solid var(--line);
-		background: var(--surface);
-	}
-	.ed-notices:focus-visible {
-		outline-offset: -2px;
-	}
-	.ed-notices > :global(* + *:not(:empty)) {
-		margin-top: 8px;
-	}
+	/* The grid, the card and the rail are EditorLayout's; what follows is this editor's own. */
 	.ed-fork {
 		margin: 0;
 		padding: 8px 16px;
@@ -642,70 +597,6 @@
 		font-size: 13px;
 		font-weight: 600;
 		color: var(--fail);
-	}
-	.ed-grid {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) var(--spacing-aside);
-		gap: 16px;
-		align-items: start;
-	}
-	/*
-	 * Beside the code the docs never make the row taller than the card: they
-	 * scroll inside it, with the code still beside them, instead of hanging
-	 * below the window's edge.
-	 */
-	.rail-slot {
-		position: relative;
-		align-self: stretch;
-		min-width: 0;
-	}
-	.rail-slot :global(.rail) {
-		position: absolute;
-		inset: 0 0 auto;
-		max-height: 100%;
-	}
-	.edcard {
-		position: sticky;
-		top: calc(var(--spacing-bar) + 16px);
-		display: flex;
-		flex-direction: column;
-		overflow: hidden;
-	}
-	.edcard :global(.cm-editor) {
-		height: max(420px, calc(100dvh - var(--spacing-bar) - 300px)) !important;
-		min-height: 0 !important;
-		max-height: none !important;
-		border: 0 !important;
-		border-radius: 0;
-	}
-	/* One strip under the code: what is known on the left, the keys on the right. */
-	.edcard :global(.yaml-foot) {
-		flex-wrap: nowrap;
-		align-items: center;
-		gap: 12px;
-		min-height: 40px;
-		margin: 0;
-		padding: 6px 16px;
-		border-top: 1px solid var(--line);
-		background: var(--surface);
-		font-size: 13px;
-	}
-	.edcard :global(.yaml-status) {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-	.edcard :global(.yaml-status[data-tone='problems']) {
-		flex: none;
-		font-weight: 600;
-	}
-	/* Why the engine could not answer is never cut. */
-	.edcard :global(.yaml-status[data-tone='unavailable']) {
-		white-space: normal;
-	}
-	.edcard :global(.yaml-keys) {
-		flex: none;
 	}
 	.pchip {
 		display: inline-flex;
@@ -735,18 +626,6 @@
 		border-color: var(--ink-3);
 		background: var(--surface-2);
 	}
-	.plist {
-		flex: none;
-		max-height: 196px;
-		overflow-y: auto;
-		scrollbar-gutter: stable;
-		padding: 0 16px;
-		border-top: 1px solid var(--line);
-		background: var(--surface);
-	}
-	.plist :global(.yp-group:first-child) {
-		border-top: 0;
-	}
 	.more-wrap {
 		position: relative;
 		display: none;
@@ -775,94 +654,9 @@
 	.more-item:focus-visible {
 		background: var(--hover);
 	}
-	@media (max-width: 1359px) {
-		.edcard :global(.k-long) {
-			display: none;
-		}
-	}
-	@media (min-width: 1181px) and (max-width: 1279px) {
-		.ed-grid.rail-closed {
-			grid-template-columns: minmax(0, 1fr) 44px;
-		}
-		.ed-grid.rail-closed :global(.rail .rail-head > p) {
-			display: none;
-		}
-		.ed-grid.rail-closed :global(.rail .rail-head) {
-			padding: 8px 2px;
-		}
-	}
-	@media (min-width: 1280px) {
-		.ed-grid.rail-closed {
-			grid-template-columns: minmax(0, 1fr) 44px;
-		}
-		.ed-grid.rail-closed :global(.rail .rail-head > p) {
-			display: none;
-		}
-		.ed-grid.rail-closed :global(.rail .rail-head) {
-			padding: 8px 2px;
-		}
-	}
-	@media (max-width: 1180px) {
-		.ed-grid {
-			grid-template-columns: minmax(0, 1fr);
-		}
-		.rail-slot {
-			display: contents;
-		}
-		.rail-slot :global(.rail) {
-			position: static;
-			max-height: none;
-		}
-		.edcard {
-			position: static;
-		}
-		.edcard :global(.cm-editor) {
-			height: clamp(380px, 58dvh, 680px) !important;
-		}
-		.ed-grid.rail-closed :global(.rail) {
-			position: sticky;
-			bottom: 0;
-			z-index: 10;
-		}
-		:global(html:has(.ed-grid.rail-closed)) {
-			scroll-padding-bottom: 80px;
-		}
-	}
 	@media (max-width: 640px) {
 		.apply-why {
 			display: block;
-		}
-		.ed-grid.rail-closed :global(.rail) {
-			position: static;
-		}
-		.card-end {
-			flex: 1 1 100%;
-			min-width: 0;
-			margin-left: 0;
-		}
-		.edcard :global(.cm-lineNumbers .cm-gutterElement) {
-			min-width: 36px;
-		}
-		.edcard :global(.cm-gutter-lint) {
-			width: 12px;
-		}
-		.edcard :global(.yaml-foot) {
-			flex-wrap: wrap;
-		}
-		.edcard :global(.yaml-status),
-		.edcard :global(.ptext) {
-			overflow: visible;
-			white-space: normal;
-		}
-		.edcard :global(.yaml-first) {
-			flex-wrap: wrap;
-		}
-		.edcard :global(.yaml-keys) {
-			margin-left: 0;
-			white-space: normal;
-		}
-		:global(html:has(.ed-grid.rail-closed)) {
-			scroll-padding-bottom: 0;
 		}
 	}
 	@media (max-width: 400px) {

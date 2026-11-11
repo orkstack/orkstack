@@ -29,7 +29,6 @@ package task
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -38,6 +37,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 const (
@@ -198,12 +198,12 @@ const HeartbeatStaleAfter = 2 * MaxHeartbeatInterval
 // content lives.
 //
 // The JSON names are the wire contract between an Orker and an engine of
-// possibly different builds: a field is only ever ADDED, with omitempty, so
+// possibly different builds: a field is only ever ADDED, omitted when zero, so
 // an older Orker's beat decodes on a newer engine with the new field empty.
 type HeartbeatProgress struct {
 	Phase       string `json:"phase"`
 	ContainerID string `json:"container_id,omitempty"`
-	BytesLogged int64  `json:"bytes_logged,omitempty"`
+	BytesLogged int64  `json:"bytes_logged,omitzero"`
 	// OrkerID is the sender, as ORK_ORKER_ID names it. It is here rather than
 	// read from the SDK's worker identity because that identity is
 	// "pid@hostname" by default, and a host name may not reach a user-facing
@@ -273,7 +273,7 @@ func PayloadSize(m proto.Message) (int64, error) {
 	}
 	raw := payload.GetData()
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
+	if err := stablejson.Compact(&compact, raw); err != nil {
 		// Not JSON after all: the converter picked something else. Its own
 		// length is then the honest measure.
 		return int64(len(raw)), nil //nolint:nilerr // the raw length is the answer

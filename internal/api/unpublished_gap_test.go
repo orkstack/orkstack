@@ -3,7 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -21,8 +21,11 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The run an ending before start leaves when object storage refused its
@@ -73,7 +76,7 @@ func newUnpublishedReader() unpublishedReader {
 func sequencesAndTypes(events []*orkstackv1.Event) string {
 	parts := make([]string, 0, len(events))
 	for _, e := range events {
-		parts = append(parts, fmt.Sprintf("%d:%s", e.GetSequence(), strings.TrimPrefix(e.GetType().String(), "EVENT_TYPE_")))
+		parts = append(parts, fmt.Sprintf("%d:%s", e.GetSequence(), enumname.Of(e.GetType())))
 	}
 	return strings.Join(parts, " ")
 }
@@ -86,14 +89,10 @@ func sequencesAndTypes(events []*orkstackv1.Event) string {
 // at the start. From past the numbers, every read serves the terminal event.
 func TestSkippedNumbers_EveryLiveReadShowsThemAndEveryArchivedReadEndsDataLoss(t *testing.T) {
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
-	if err := archiver.Archive(context.Background(), unpublishedRun(), unpublishedRunEvents(), unpublishedGap); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, archiver.Archive(context.Background(), unpublishedRun(), unpublishedRunEvents(), unpublishedGap))
 	svc := api.NewService(api.Config{Reader: newUnpublishedReader(), Archive: archiver})
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -196,9 +195,7 @@ func TestSkippedNumbers_EveryLiveReadShowsThemAndEveryArchivedReadEndsDataLoss(t
 func TestRetiredRun_AnyReplicaReadsItFromTheArchive(t *testing.T) {
 	ctx := context.Background()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 	run := &orkstackv1.Run{Id: "ork-retired", Namespace: "default", OrkflowName: "hello", Status: orkstackv1.Status_STATUS_CANCELED,
@@ -213,9 +210,7 @@ func TestRetiredRun_AnyReplicaReadsItFromTheArchive(t *testing.T) {
 	replica := api.NewService(api.Config{Reader: &fakeReader{runs: map[string]*orkstackv1.Run{}, events: map[string][]*orkstackv1.Event{}},
 		Archive: engine.NewRunArchiver(store)})
 	got, err := replica.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: "ork-retired"}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_CANCELED || got.Msg.GetRun().GetError().GetCode() != "RUN_TERMINATED" {
 		t.Fatalf("GetRun = %v", got.Msg.GetRun())
 	}
@@ -316,14 +311,10 @@ func TestEvidenceExport_AnUnpublishedStartIsSchemaTwo(t *testing.T) {
 // object storage, both read from their archives.
 func TestWebSocketBridge_ClosesWithTheGapItReached(t *testing.T) {
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	unpublished := engine.NewRunArchiver(store)
-	if err := unpublished.Archive(context.Background(), unpublishedRun(), unpublishedRunEvents(), unpublishedGap); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, unpublished.Archive(context.Background(), unpublishedRun(), unpublishedRunEvents(), unpublishedGap))
 	neverPublished := api.NewService(api.Config{Archive: unpublished})
 	archived := api.NewService(api.Config{Archive: gappedArchive(t)})
 	for _, tc := range []struct {
@@ -344,9 +335,7 @@ func TestWebSocketBridge_ClosesWithTheGapItReached(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 			conn, _, err := websocket.Dial(ctx, "ws"+strings.TrimPrefix(server.URL, "http")+tc.path, nil)
-			if err != nil {
-				t.Fatalf("dial: %v", err)
-			}
+			must.OKf(t, err, "dial")
 			defer conn.CloseNow()
 			frames := 0
 			for {

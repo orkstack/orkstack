@@ -22,7 +22,7 @@ export const across: { w: number; h: number; nodes: Node[]; edges: Edge[] } = {
 		{ id: 'activity', x: 910, y: 352, name: 'Activity', note: 'any OCI image', balloon: 2 },
 	],
 	edges: [
-		{ d: 'M230 77H330', label: 'apply', lx: 280, ly: 69 },
+		{ d: 'M230 77H330', label: 'create', lx: 280, ly: 69 },
 		{ d: 'M520 77H620', label: 'submit', lx: 570, ly: 69 },
 		{ d: 'M910 77H810', label: 'start', lx: 860, ly: 69 },
 		{ d: 'M715 106V200', label: 'start a run', lx: 724, ly: 158, anchor: 'start' },
@@ -47,7 +47,7 @@ export const down: typeof across = {
 		{ id: 'activity', x: 260, y: 590, name: 'Activity', note: 'any OCI image', balloon: 2 },
 	],
 	edges: [
-		{ d: 'M115 82V152', label: 'apply', lx: 124, ly: 122, anchor: 'start' },
+		{ d: 'M115 82V152', label: 'create', lx: 124, ly: 122, anchor: 'start' },
 		{ d: 'M115 210V280', label: 'submit', lx: 124, ly: 250, anchor: 'start' },
 		{ d: 'M260 309H210', label: '', lx: 0, ly: 0 },
 		{ d: 'M115 338V408', label: 'start a run', lx: 124, ly: 378, anchor: 'start' },

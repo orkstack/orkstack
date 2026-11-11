@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -17,6 +16,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -111,7 +111,7 @@ type deferredFetch struct {
 // item: the element's exact JSON bytes as task.json's each.item carries them,
 // and the name, position and count task.json hands the workload.
 type resolvedEachItem struct {
-	Bytes json.RawMessage
+	Bytes stablejson.RawJSON
 	As    string
 	Index int32
 	Count int32
@@ -213,23 +213,27 @@ func sha256Hex(b []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// sha256JSON is the lowercase hex SHA-256 of json.Marshal(v). Every value
+// sha256JSON is the lowercase hex SHA-256 of stablejson.Marshal(v). Every value
 // hashed here is built of strings, ints, slices and string-keyed maps, which
 // encoding/json cannot fail to encode.
 func sha256JSON(v any) string {
-	encoded, _ := json.Marshal(v)
+	encoded, _ := stablejson.Marshal(v)
 	return sha256Hex(encoded)
 }
 
 // memoKeyDocument is the document a key is the SHA-256 of. Field order is
 // declaration order; components' keys are sorted by encoding/json.
 type memoKeyDocument struct {
-	V          int               `json:"v"`
-	Namespace  string            `json:"namespace"`
-	Scope      string            `json:"scope"`
-	Orkflow    string            `json:"orkflow"`
-	Task       string            `json:"task"`
-	Components map[string]string `json:"components"`
+	V         int    `json:"v"`
+	Namespace string `json:"namespace"`
+	// OrkflowNamespace is the owner of a shared definition
+	// (CacheContext.orkflow_namespace), omitted for an own definition, whose
+	// key is therefore what it always was.
+	OrkflowNamespace string            `json:"orkflow_namespace,omitempty"`
+	Scope            string            `json:"scope"`
+	Orkflow          string            `json:"orkflow"`
+	Task             string            `json:"task"`
+	Components       map[string]string `json:"components"`
 }
 
 // memoScopeName is the scope's word in the key document.
@@ -309,13 +313,14 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 		orkflow = in.GetOrkflowName()
 	}
 	// Strings only: encoding/json cannot fail on this document.
-	document, _ := json.Marshal(memoKeyDocument{
-		V:          MemoKeyVersion,
-		Namespace:  artifacts.ResolveNamespace(in.GetNamespace()),
-		Scope:      memoScopeName(scope),
-		Orkflow:    orkflow,
-		Task:       in.GetTaskId(),
-		Components: components,
+	document, _ := stablejson.Marshal(memoKeyDocument{
+		V:                MemoKeyVersion,
+		Namespace:        artifacts.ResolveNamespace(in.GetNamespace()),
+		OrkflowNamespace: in.GetCache().GetOrkflowNamespace(),
+		Scope:            memoScopeName(scope),
+		Orkflow:          orkflow,
+		Task:             in.GetTaskId(),
+		Components:       components,
 	})
 	return memoKey{Key: sha256Hex(document), Components: components}, true
 }

@@ -4,7 +4,7 @@
 import { route } from '../../../site.config.mjs';
 
 const steps = [
-	{ name: 'Apply an Orkflow', text: 'Applying stores an immutable version and its digest.' },
+	{ name: 'Create an Orkflow', text: 'Creating stores an immutable version and its digest.' },
 	{ name: 'Plan it', text: 'A plan shows which tasks run and which are skipped, before anything starts.' },
 	{ name: 'Run and watch it', text: 'Every attempt, digest, log line and reason is recorded, in the UI and the CLI alike.' },
 ];
@@ -12,7 +12,6 @@ const limits = [
 	{ name: 'No loops', text: 'The graph stays a DAG. Repeat with a retry policy, a fan-out, a schedule or an awaited task.', href: 'docs/reference/limits' },
 	{ name: 'No exactly-once', text: 'Activities run at least once. A committed result never runs again; side effects outside it may repeat.', href: 'docs/concepts/durability' },
 	{ name: 'No database of its own', text: 'Nothing beyond Temporal and object storage, and no record anyone edits to unstick a run.', href: 'docs/concepts/how-it-works' },
-	{ name: 'Not yet production-ready', text: 'Its required failure and recovery scenarios are still being proven, in the open.', href: 'docs/concepts/proven' },
 ];
 ---
 

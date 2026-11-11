@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The rerun rules (plan §2.6 rule 2): each test lays out shard 2's first
@@ -56,29 +58,27 @@ func TestMerge_ACancelledAttemptWhoseLogNamesNoRunningTestIsNotRerunEligible(t *
 	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
 		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
 	}
-	if !ineligibleSays(r.Ineligible, "lost runner", "runner-health", "cancelled", "names no test that was running", "may run again", "merge-eligible") {
+	if !ineligibleSays(r.Ineligible, "lost runner", "before its proof step", "cancelled", "names no test that was running", "may run again", "merge-eligible") {
 		t.Errorf("ineligible = %v", r.Ineligible)
 	}
 }
 
-func TestMerge_ASetupFailureOutsideTheFetchAndInstallStepsIsNotRerunEligible(t *testing.T) {
+// Any step before the proof step counts, a toolchain's setup as much as a
+// fetch: the attempt ran no test, so that one job may run again.
+func TestMerge_AFailureInAnyStepBeforeTheProofStepMayRunAgain(t *testing.T) {
 	r, code, _ := rerunShard2(t, &githubJob{Conclusion: "failure", FailedStep: "Run actions/setup-go@v7.0.0",
 		Steps: []githubStep{{Name: "Run actions/setup-go@v7.0.0", Conclusion: "failure"}, {Name: "integration shard", Conclusion: "skipped"}}})
-	if code != 0 || r.Result != "pass" || r.MergeEligible || len(r.Reruns) != 0 {
-		t.Fatalf("code %d result %s eligible %v reruns %+v", code, r.Result, r.MergeEligible, r.Reruns)
+	if code != 0 || r.Result != "pass" || !r.MergeEligible || len(r.Reruns) != 1 || r.Reruns[0].Reason != reasonSetupFailed {
+		t.Fatalf("code %d result %s eligible %v reruns %+v: %v", code, r.Result, r.MergeEligible, r.Reruns, r.Ineligible)
 	}
-	if !ineligibleSays(r.Ineligible, "setup failure", "Run actions/setup-go@v7.0.0", "not a fetch or install step", "may run again", "merge-eligible") {
-		t.Errorf("ineligible = %v", r.Ineligible)
-	}
-	if len(r.SetupFailures) != 0 {
-		t.Errorf("setup_failures = %+v: only a fetch or install step is one", r.SetupFailures)
+	if len(r.SetupFailures) != 1 || r.SetupFailures[0].Step != "Run actions/setup-go@v7.0.0" {
+		t.Errorf("setup_failures = %+v", r.SetupFailures)
 	}
 }
 
-// A job that never reached its proof step because a fetch or an install step
-// failed (after the fetch's own two bounded attempts) left no result and ran
-// no test: like a lost or a degraded runner, that one job may run again, as a
-// new part of the same tree.
+// A job that never reached its proof step because a fetch failed (after the
+// fetch's own two bounded attempts) left no result and ran no test: like a
+// lost runner, that one job may run again, as a new part of the same tree.
 func TestMerge_AFetchOrInstallFailureBeforeTheProofStepMayRunAgain(t *testing.T) {
 	failedFetch := &githubJob{Conclusion: "failure", FailedStep: "fetch plan",
 		Steps: []githubStep{
@@ -105,10 +105,8 @@ func TestMerge_AFetchOrInstallFailureBeforeTheProofStepMayRunAgain(t *testing.T)
 		t.Errorf("setup_failures = %+v, want %+v", r.SetupFailures, want)
 	}
 	readme, err := os.ReadFile(filepath.Join(f.out, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(readme), `- integration:2 attempt 2, after attempt [1] failed in its setup step "fetch plan" before its proof step started; no test of that attempt ran`) {
+	must.OK(t, err)
+	if !strings.Contains(string(readme), `- integration:2 attempt 2, after attempt [1] failed in its step "fetch plan" before its proof step started; no test of that attempt ran`) {
 		t.Errorf("the README does not explain the rerun:\n%s", readme)
 	}
 	if !strings.Contains(string(readme), "## Setup failures") || !strings.Contains(string(readme), `- integration:2 attempt 1: the step "fetch plan" ended failure before the proof step started`) {
@@ -129,7 +127,7 @@ func TestMerge_ASetupFailureWithNoLaterAttemptLeavesNoResult(t *testing.T) {
 		t.Fatalf("code %d result %s eligible %v: a part that never ran made a proof", code, r.Result, r.MergeEligible)
 	}
 	reasons := strings.Join(r.Ineligible, "\n")
-	want := `part integration:2 left no result because its job failed in a setup step (attempt 1, its step "fetch build" failed before its proof step started); re-run that job alone, within the plan and build artifacts' retention`
+	want := `part integration:2 left no result because its job failed before its proof step (attempt 1, its step "fetch build" failed before its proof step started); re-run that job alone, within the plan and build artifacts' retention`
 	if !strings.Contains(reasons, want) {
 		t.Errorf("ineligible = %v\nwant %q", r.Ineligible, want)
 	}
@@ -150,9 +148,7 @@ func TestMerge_ASetupFailureDoesNotExcuseAnAttemptThatRanBeforeIt(t *testing.T) 
 	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
 	// Attempt 1 ran its proof step and its job failed; attempt 2 failed in a
 	// setup step; attempt 3 passed. Attempt 1 recorded a result.
-	if err := os.MkdirAll(filepath.Join(f.parts, "integration-2-a1"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(f.parts, "integration-2-a1"), 0o755))
 	f.writeShard(2, []entry{passEntry("TestB")}, nil, 3)
 	f.writeJobs(1, githubJob{Name: "integration (2)", Conclusion: "failure", FailedStep: "integration shard",
 		Steps: []githubStep{{Name: "proof host", Conclusion: "success"}, {Name: "integration shard", Conclusion: "failure"}}})
@@ -167,9 +163,10 @@ func TestMerge_ASetupFailureDoesNotExcuseAnAttemptThatRanBeforeIt(t *testing.T) 
 	}
 }
 
-// classify: which step of which kind of part job is a setup failure. The
-// jobs API names only the steps of the workflow, so the table is by kind.
-func TestClassify_ASetupFailureIsAFetchOrInstallStepOfAPartJobAlone(t *testing.T) {
+// classify: a failure before the proof step is a setup failure of every kind
+// of part job but the plan and the build, whose failure every other part
+// would inherit. The proof step failing is a result.
+func TestClassify_ASetupFailureIsAnyStepBeforeTheProofStepOfAPartJob(t *testing.T) {
 	fail := func(job, step string) githubJob {
 		return githubJob{Name: job, Conclusion: "failure", FailedStep: step,
 			Steps: []githubStep{{Name: step, Conclusion: "failure"}, {Name: "integration shard", Conclusion: "skipped"}, {Name: "UI shard", Conclusion: "skipped"}, {Name: "activity fixture", Conclusion: "skipped"}, {Name: "observability", Conclusion: "skipped"}, {Name: "fast", Conclusion: "skipped"}, {Name: "build", Conclusion: "skipped"}, {Name: "plan", Conclusion: "skipped"}}}
@@ -180,29 +177,14 @@ func TestClassify_ASetupFailureIsAFetchOrInstallStepOfAPartJobAlone(t *testing.T
 	}{
 		{"integration (2)", "proof host", attemptSetupFailed},
 		{"integration (2)", "fetch plan", attemptSetupFailed},
-		{"integration (2)", "fetch build", attemptSetupFailed},
-		{"integration (2)", "bun install", attemptNotEligible},
-		{"integration (2)", "fetch browser image", attemptNotEligible},
-		{"integration (2)", "Run actions/setup-go@v7.0.0", attemptNotEligible},
+		{"integration (2)", "Run actions/setup-go@v7.0.0", attemptSetupFailed},
 		{"ui-e2e (1)", "bun install", attemptSetupFailed},
-		{"ui-e2e (1)", "proof host", attemptSetupFailed},
-		{"ui-e2e (1)", "fetch plan", attemptSetupFailed},
-		{"ui-e2e (1)", "fetch build", attemptSetupFailed},
-		{"ui-e2e (1)", "fetch browser image", attemptSetupFailed},
 		{"ui-e2e (1)", "Chromium (host)", attemptSetupFailed},
-		{"ui-e2e (1)", "host chromium shard", attemptNotEligible},
-		{"activity-fixture (shell)", "proof host", attemptSetupFailed},
-		{"activity-fixture (shell)", "fetch plan", attemptSetupFailed},
 		{"activity-fixture (shell)", "fetch build", attemptSetupFailed},
-		{"activity-fixture (shell)", "fetch browser image", attemptNotEligible},
 		{"observability", "observability stack", attemptSetupFailed},
-		{"observability", "fetch plan", attemptSetupFailed},
-		{"observability", "fetch build", attemptSetupFailed},
-		{"observability", "proof host", attemptNotEligible},
-		{"fast", "bun install", attemptSetupFailed},
 		{"fast", "bun install (site)", attemptSetupFailed},
-		{"fast", "fetch plan", attemptNotEligible},
-		// The plan and the build are what every other part needs: their setup
+		{"race", "Run actions/checkout@v7", attemptSetupFailed},
+		// The plan and the build are what every other part needs: their
 		// failures are never answered by running the job again.
 		{"plan", "bun install", attemptNotEligible},
 		{"build", "fetch plan", attemptNotEligible},
@@ -229,7 +211,8 @@ func TestClassify_ASetupFailureYieldsToEveryRowAboveIt(t *testing.T) {
 		return githubJob{Name: "integration (2)", Conclusion: "failure", FailedStep: "fetch plan",
 			Steps: []githubStep{{Name: "fetch plan", Conclusion: "failure"}, {Name: "integration shard", Conclusion: "skipped"}}}
 	}
-	if got, why := classify(ptr(base()), partReading{}); got != attemptSetupFailed {
+	baseJob := base()
+	if got, why := classify(&baseJob, partReading{}); got != attemptSetupFailed {
 		t.Fatalf("the base case classifies as %v (%s)", got, why)
 	}
 	for _, c := range []struct {
@@ -243,7 +226,7 @@ func TestClassify_ASetupFailureYieldsToEveryRowAboveIt(t *testing.T) {
 		{"a read error", func(j *githubJob) { j.ReadError = "annotations: the API call failed" }, partReading{}, attemptResult},
 		{"a failing test in the log", func(j *githubJob) { j.Log = "proofrun: outcome fail p TestA 1.00\n" }, partReading{}, attemptResult},
 		{"a lost runner", func(j *githubJob) { j.Annotations = []string{runnerLost} }, partReading{}, attemptLost},
-		{"no failed step", func(j *githubJob) { j.FailedStep = "" }, partReading{}, attemptNotEligible},
+		{"no failed step named", func(j *githubJob) { j.FailedStep = "" }, partReading{}, attemptSetupFailed},
 		{"a part.json", func(j *githubJob) {}, partReading{Record: &partRecord{}}, attemptResult},
 		{"a corrupt part.json", func(j *githubJob) {}, partReading{Corrupt: true}, attemptResult},
 		{"a failure in its events", func(j *githubJob) {}, partReading{Failed: true}, attemptResult},
@@ -281,9 +264,7 @@ func TestMerge_AFailedJobWithoutAnArtifactIsAResult(t *testing.T) {
 func TestMerge_AnUnreadableJobRecordFailsClosed(t *testing.T) {
 	cases := map[string]func(f *mergeFixture){
 		"a record that is not JSON": func(f *mergeFixture) {
-			if err := os.WriteFile(filepath.Join(f.jobsDir, "attempt-1.json"), []byte("{not json"), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(filepath.Join(f.jobsDir, "attempt-1.json"), []byte("{not json"), 0o644))
 		},
 		"a record whose log could not be read": func(f *mergeFixture) {
 			f.writeJobs(1, githubJob{Name: "integration (2)", Conclusion: "failure",
@@ -296,9 +277,7 @@ func TestMerge_AnUnreadableJobRecordFailsClosed(t *testing.T) {
 			f := newMergeFixture(t, tierFull, true)
 			f.writeCI()
 			f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-			if err := os.MkdirAll(filepath.Join(f.parts, "integration-2-a1"), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(filepath.Join(f.parts, "integration-2-a1"), 0o755))
 			f.writeShard(2, []entry{passEntry("TestB")}, nil, 2)
 			f.writeJobs(1)
 			corrupt(f)
@@ -382,8 +361,8 @@ func TestMerge_OnlyALostDegradedOrSetupFailedAttemptIsRecordedAsARerun(t *testin
 		{"a fetch failure", githubJob{Conclusion: "failure", FailedStep: "fetch build"}, "setup-failed"},
 		{"a host setup failure", githubJob{Conclusion: "failure", FailedStep: "proof host"}, "setup-failed"},
 		{"a failure after the proof step", githubJob{Conclusion: "failure", FailedStep: "integration shard"}, ""},
-		{"a setup failure outside the fetch and install steps", githubJob{Conclusion: "failure", FailedStep: "Run actions/checkout@v7.0.1"}, ""},
-		{"an install step of another kind of part", githubJob{Conclusion: "failure", FailedStep: "Chromium (host)"}, ""},
+		{"a checkout failure before the proof step", githubJob{Conclusion: "failure", FailedStep: "Run actions/checkout@v7.0.1"}, "setup-failed"},
+		{"any other step before the proof step", githubJob{Conclusion: "failure", FailedStep: "Chromium (host)"}, "setup-failed"},
 		{"an early cancel", githubJob{Conclusion: "cancelled"}, ""},
 		{"a cancel in a fetch step", githubJob{Conclusion: "cancelled", FailedStep: "fetch plan"}, ""},
 		{"a cancel with a running test", githubJob{Conclusion: "cancelled", Log: "proofrun: start example.com/m TestB\n"}, ""},
@@ -449,9 +428,7 @@ func TestMerge_ASetupRetryIsRecordedAndEligible(t *testing.T) {
 		t.Errorf("setup_retries =\n  %s\nwant\n  %s", strings.Join(r.SetupRetries, "\n  "), strings.Join(want, "\n  "))
 	}
 	readme, err := os.ReadFile(filepath.Join(f.out, "README.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !strings.Contains(string(readme), "- "+want[1]) {
 		t.Error("the README does not list the retried fetch under Notes")
 	}
@@ -506,9 +483,7 @@ func run40934338667(t *testing.T) map[int][]githubJob {
 	out := map[int][]githubJob{}
 	for _, a := range []int{1, 2} {
 		var rec githubAttempt
-		if err := readJSON(filepath.Join("testdata", "rerun-40934338667", "attempt-"+itoa(a)+".json"), &rec); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, readJSON(filepath.Join("testdata", "rerun-40934338667", "attempt-"+itoa(a)+".json"), &rec))
 		if rec.Attempt != a || len(rec.Jobs) == 0 {
 			t.Fatalf("attempt-%d.json records attempt %d with %d jobs", a, rec.Attempt, len(rec.Jobs))
 		}
@@ -655,9 +630,7 @@ func TestMerge_AJobGitHubCarriedForwardIsTheResultOfTheAttemptThatRanIt(t *testi
 			}
 			if c.eligible {
 				readme, err := os.ReadFile(filepath.Join(f.out, "README.md"))
-				if err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, err)
 				if !strings.Contains(string(readme), "## Carried forward") || !strings.Contains(string(readme), "- fast attempt 2: attempt 1's job\n") {
 					t.Errorf("the README does not list the carried-forward jobs:\n%s", readme)
 				}

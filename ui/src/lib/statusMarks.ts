@@ -1,13 +1,14 @@
 // How each status is DRAWN: its mark (the shape before the word on a stamp,
 // and later the cell of the task map) and its fill. Statuses differ by shape,
-// never by hue alone (WCAG 1.4.1): only RUNNING (green), AWAITING (blue) and
-// FAILED (red) carry colour at all, and each status's word is always written
+// never by hue alone (WCAG 1.4.1): only RUNNING (green), AWAITING and SLEEPING
+// (violet, told apart by their marks) and FAILED (red) carry colour at all,
+// and each status's word is always written
 // beside its mark. The CSS for every mark is in app.css's `.mark-*` primitives.
 import { Status } from './gen/orkstack/v1/common_pb';
 import { statusClasses } from './status';
 
-export type MarkShape = 'square' | 'dot' | 'diamond' | 'triangle' | 'strike' | 'dash' | 'hollow' | 'dotted';
-/** live: running blue; live-outline: awaiting violet; alarm: failed red; the rest are ink. */
+export type MarkShape = 'square' | 'dot' | 'diamond' | 'half' | 'triangle' | 'strike' | 'dash' | 'hollow' | 'dotted';
+/** live: running blue; live-outline: awaiting and sleeping violet; alarm: failed red; the rest are ink. */
 export type MarkFill = 'solid' | 'live' | 'live-outline' | 'alarm' | 'outline' | 'hatched' | 'none';
 
 export interface StatusMark {
@@ -27,7 +28,8 @@ export const STATUS_MARKS: Record<Status, StatusMark> = {
 	[Status.FAILED]: { shape: 'triangle', fill: 'alarm', className: 'mark-tri', inner: false },
 	[Status.CANCELED]: { shape: 'strike', fill: 'outline', className: 'mark-strike', inner: false },
 	[Status.SKIPPED]: { shape: 'dash', fill: 'hatched', className: 'mark-dash', inner: false },
-	[Status.AWAITING]: { shape: 'diamond', fill: 'live-outline', className: 'mark-diamond', inner: true }
+	[Status.AWAITING]: { shape: 'diamond', fill: 'live-outline', className: 'mark-diamond', inner: true },
+	[Status.SLEEPING]: { shape: 'half', fill: 'live-outline', className: 'mark-half', inner: false }
 };
 
 export function statusMark(status: Status | undefined): StatusMark {
@@ -70,6 +72,14 @@ export function svgMark(status: Status | undefined, x: number, y: number, size: 
 			return [{ el: 'circle', cx, cy, r: s / 2, cls: `mark-fill-${word}` }];
 		case 'diamond':
 			return [{ el: 'path', d: `M ${cx} ${y + 1} L ${x + s - 1} ${cy} L ${cx} ${y + s - 1} L ${x + 1} ${cy} Z`, cls: `mark-line-${word}` }];
+		case 'half': {
+			// A circle whose left half is filled: a clock face half gone.
+			const r = s / 2 - 0.75;
+			return [
+				{ el: 'path', d: `M ${cx} ${cy - r} A ${r} ${r} 0 0 0 ${cx} ${cy + r} Z`, cls: `mark-fill-${word}` },
+				{ el: 'circle', cx, cy, r, cls: `mark-line-${word}` }
+			];
+		}
 		case 'triangle':
 			return [{ el: 'path', d: `M ${cx} ${y} L ${x + s} ${y + s} L ${x} ${y + s} Z`, cls: `mark-fill-${word}` }];
 		case 'strike':
@@ -97,7 +107,8 @@ const CLASS_WORD: Record<Status, string> = {
 	[Status.FAILED]: 'failed',
 	[Status.CANCELED]: 'canceled',
 	[Status.SKIPPED]: 'skipped',
-	[Status.AWAITING]: 'awaiting'
+	[Status.AWAITING]: 'awaiting',
+	[Status.SLEEPING]: 'sleeping'
 };
 
 /** The status's word as the token families spell it (`--color-failed-solid`). */

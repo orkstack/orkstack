@@ -13,6 +13,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingPutStore records every Put's name and options.
@@ -76,19 +78,13 @@ func TestBoot_ReapsTheSpoolDirectory(t *testing.T) {
 	root := t.TempDir()
 	id := proof.OrkerID("orker-spool-reap")
 	leftover := filepath.Join(root, SpoolDirName, attemptOwner(id), "ork-artifact-123")
-	if err := os.MkdirAll(filepath.Dir(leftover), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(leftover, []byte("half an upload"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Dir(leftover), 0o700))
+	must.OK(t, os.WriteFile(leftover, []byte("half an upload"), 0o600))
 	a := NewActivitiesWithOptions(nil, Options{
 		OrkerID: id, WorkRoot: root, Runtime: &reapRecorder{labelled: map[string]int{}},
 	})
 	t.Cleanup(a.Close)
-	if err := a.Boot(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, a.Boot(context.Background()))
 	if _, err := os.Stat(leftover); !os.IsNotExist(err) {
 		t.Fatalf("the spool leftover survived boot: %v", err)
 	}
@@ -191,9 +187,7 @@ func TestCommit_UploadsAreBoundedParallelAndKeepScanOrder(t *testing.T) {
 	in := cachedTaskInput(t, "ork-many")
 	in.Cache = nil
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if peak := slow.max(); peak < 2 || peak > transferParallelism {
 		t.Fatalf("peak concurrent uploads = %d; want 2..%d", peak, transferParallelism)
 	}

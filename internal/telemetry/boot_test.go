@@ -16,6 +16,8 @@ import (
 	"testing"
 
 	"go.temporal.io/sdk/client"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestBootZeroConfig confirms Boot, given no environment at all, returns a
@@ -24,9 +26,7 @@ import (
 // of its own beyond composing ConfigFromEnv and SetupSinks.
 func TestBootZeroConfig(t *testing.T) {
 	cfg, sinks, err := Boot(ServiceOrker)
-	if err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, err, "Boot")
 	if cfg.Enabled() {
 		t.Errorf("Config.Enabled() = true for a bare environment")
 	}
@@ -45,15 +45,11 @@ func TestBootZeroConfig(t *testing.T) {
 // Logger} — plus DisableWorkerEnvironmentInfo, nothing more.
 func TestClientOptionsZeroConfigIsByteIdentical(t *testing.T) {
 	p, err := Setup(context.Background(), Config{})
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
 	got, err := ClientOptions("127.0.0.1:7233", "default", p, logger)
-	if err != nil {
-		t.Fatalf("ClientOptions: %v", err)
-	}
+	must.OKf(t, err, "ClientOptions")
 	want := client.Options{
 		HostPort:                     "127.0.0.1:7233",
 		Namespace:                    "default",
@@ -74,15 +70,11 @@ func TestClientOptionsMetricsAndTracesOnSetsHandlerAndInterceptors(t *testing.T)
 		TracesExporter:   ExporterOTLP,
 		AdminAddr:        "127.0.0.1:0",
 	})
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	defer p.Shutdown(context.Background())
 
 	got, err := ClientOptions("127.0.0.1:7233", "default", p, slog.Default())
-	if err != nil {
-		t.Fatalf("ClientOptions: %v", err)
-	}
+	must.OKf(t, err, "ClientOptions")
 	if got.MetricsHandler == nil {
 		t.Error("MetricsHandler = nil, want a handler (metrics are on)")
 	}
@@ -108,9 +100,7 @@ func TestClientOptionsMetricsAndTracesOnSetsHandlerAndInterceptors(t *testing.T)
 //     the reporting back on.
 func TestClientOptions_IsHowOrkAndOrkerDialTemporal(t *testing.T) {
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("module root: %v", err)
-	}
+	must.OKf(t, err, "module root")
 	const (
 		sdkClient = "go.temporal.io/sdk/client"
 		home      = "internal/telemetry/boot.go"
@@ -178,9 +168,7 @@ func TestClientOptions_IsHowOrkAndOrkerDialTemporal(t *testing.T) {
 			})
 			return nil
 		})
-		if err != nil {
-			t.Fatalf("walk %s: %v", dir, err)
-		}
+		must.OKf(t, err, "walk %s", dir)
 	}
 	if want := map[string]int{"cmd/ork/main.go": 1, "cmd/orker/main.go": 1}; !maps.Equal(dials, want) {
 		t.Errorf("Temporal clients dialed per file = %v, want %v", dials, want)
@@ -234,9 +222,7 @@ func TestLogBootSkipsWhenDisabled(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	sinks, err := SetupSinks(context.Background(), Config{})
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 	LogBoot(logger, Config{}, sinks, "")
 	if buf.Len() != 0 {
 		t.Errorf("LogBoot logged %q for a disabled Config, want nothing", buf.String())
@@ -247,17 +233,11 @@ func TestLogBootSkipsWhenDisabled(t *testing.T) {
 // one "telemetry sink ready" line per sink when telemetry is on.
 func TestLogBootLogsPerSinkStatus(t *testing.T) {
 	table, err := ParseSinks([]byte("sinks:\n  datadog:\n    logs_endpoint: http://127.0.0.1:1\n"))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(nil, nil); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(nil, nil), "Resolve")
 	cfg := Config{LogsExporter: ExporterOTLP, Sinks: table}
 	sinks, err := SetupSinks(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 	defer sinks.Shutdown(context.Background())
 
 	var buf bytes.Buffer

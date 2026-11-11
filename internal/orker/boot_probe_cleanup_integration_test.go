@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // probeContainersOf lists the containers, in any state, labelled with the
@@ -93,9 +95,7 @@ D='` + dir + `'
 fi
 exec '` + realDocker + `' "$@"
 `
-			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(shim, []byte(script), 0o755))
 			id := proof.OrkerID(fmt.Sprintf("probe-left-%d", i))
 			root := postureWorkRoot(t, "ork-probe-left")
 			t.Cleanup(func() {
@@ -105,9 +105,7 @@ exec '` + realDocker + `' "$@"
 			})
 			newLife := func(cli string) *orker.Activities {
 				store, err := artifacts.NewLocalStore(t.TempDir())
-				if err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, err)
 				t.Cleanup(func() { _ = store.Close() })
 				return orker.NewActivitiesWithOptions(store, orker.Options{
 					Runtime:  &orker.DockerRuntime{Bin: cli, BindProbeTimeout: 2 * time.Minute},

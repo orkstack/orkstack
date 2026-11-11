@@ -271,8 +271,8 @@ ORKFLOW_FILE="$OUT/each-fan-out-$STAMP.ork.yaml"
 sed "s/^version: .*/version: \"$STAMP\"/" "$REPO/examples/each-fan-out.ork.yaml" >"$ORKFLOW_FILE"
 grep -q "version: \"$STAMP\"" "$ORKFLOW_FILE" || fail "could not stamp a unique version into $ORKFLOW_FILE"
 
-"${ORKCTL[@]}" -n "$NS" apply "$ORKFLOW_FILE" >"$OUT/apply.txt" 2>&1 \
-	|| fail "apply: see $OUT/apply.txt"
+"${ORKCTL[@]}" -n "$NS" orkflow create "$ORKFLOW_FILE" >"$OUT/create.txt" 2>&1 \
+	|| fail "orkflow create: see $OUT/create.txt"
 
 "${ORKCTL[@]}" -n "$NS" run submit each-fan-out --json >"$OUT/submit.json" 2>"$OUT/submit.log" \
 	|| fail "run submit: see $OUT/submit.log"

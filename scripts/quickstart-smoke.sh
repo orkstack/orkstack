@@ -12,7 +12,7 @@
 #      replaced by that repository's path;
 #   2. runs the README's Quickstart commands as written, in bash, from an
 #      empty directory: the clone builds and starts the stack, and orkctl,
-#      from its image, applies each-fan-out and watches a run of it to the end.
+#      from its image, creates each-fan-out and watches a run of it to the end.
 # With --release VERSION [--layouts DIR]:
 #   1. make dist, which builds the web UI into ork first (make ui, in the
 #      pinned bun image), and make release-images (this machine's
@@ -29,10 +29,10 @@
 #      verified with `cosign verify-blob` and with openssl;
 #   3. compose.yaml, with deploy/release-smoke.yaml naming those images by tag
 #      and digest instead of building any, starts with `up -d --wait`;
-#      orkctl's image reports VERSION and applies each-fan-out, and the
+#      orkctl's image reports VERSION and creates each-fan-out, and the
 #      archive's orkctl submits it and watches it to the end.
 # With --examples (make examples-smoke, the quickstart only): every shipped
-# example too, as a reader runs it: applied, submitted with no inputs, ending
+# example too, as a reader runs it: created, submitted with no inputs, ending
 # where examples/README.md says, and the automation document applied and its
 # schedule fired. These reach httpbin.org and github.com, so this is a nightly
 # job of its own (nightly.yml, `examples`), which no release waits on.
@@ -303,8 +303,8 @@ else
 			fail "$daemon --version does not name $VERSION at $COMMIT: $got"
 	done
 	say "  commit $COMMIT, from each of the three images"
-	dc run --rm -T orkctl apply examples/each-fan-out.ork.yaml >"$WORK/apply.log" || { cat "$WORK/apply.log" >&2; fail "apply"; }
-	say "  applied each-fan-out"
+	dc run --rm -T orkctl orkflow create examples/each-fan-out.ork.yaml >"$WORK/apply.log" || { cat "$WORK/apply.log" >&2; fail "create"; }
+	say "  created each-fan-out"
 
 	say "== orkctl (the archive's binary)"
 	mkdir -p "$WORK/archive"
@@ -316,7 +316,7 @@ else
 	say "  commit $COMMIT"
 	export ORK_SERVER="http://127.0.0.1:$ORKSTACK_API_PORT"
 	watch_log="$WORK/watch.log"
-	"$ORKCTL" run submit each-fan-out --watch >"$watch_log" 2>&1 || { cat "$watch_log" >&2; fail "run submit --watch"; }
+	"$ORKCTL" run submit each-fan-out -w >"$watch_log" 2>&1 || { cat "$watch_log" >&2; fail "run submit --watch"; }
 	orkctl() { "$ORKCTL" "$@"; }
 fi
 
@@ -325,7 +325,7 @@ run="$(submitted_run "$watch_log")"
 [ -n "$run" ] || fail "no run id in: $(tail -3 "$watch_log")"
 grep -q "finished with status SUCCEEDED" "$watch_log" || fail "the run did not finish SUCCEEDED: $(tail -3 "$watch_log")"
 say "  $run SUCCEEDED"
-orkctl run logs "$run" --task merge >"$WORK/merge.log"
+orkctl run logs "$run" -t merge >"$WORK/merge.log"
 [ "$(tr -d '\r' <"$WORK/merge.log" | grep -xE '[abcd]' | tr -d '\n')" = "abcd" ] || fail "merge's log is: $(cat "$WORK/merge.log")"
 say "  merge logged a b c d"
 
@@ -337,11 +337,11 @@ if [ -n "$EXAMPLES" ]; then
 		local name="$1" want="$2" tasks="$3" log run
 		shift 3
 		log="$WORK/example-$name.log"
-		# --watch exits non-zero for a failed run, which one of these means to be.
-		orkctl run submit "$name" "$@" --watch >"$log" 2>&1 || true
+		# -w exits non-zero for a failed run, which one of these means to be.
+		orkctl run submit "$name" "$@" -w >"$log" 2>&1 || true
 		run="$(submitted_run "$log")"
 		[ -n "$run" ] || { cat "$log" >&2; fail "$name: no run id"; }
-		orkctl --json run get "$run" >"$WORK/example-$name.json" || fail "$name: run get $run"
+		orkctl -j run get "$run" >"$WORK/example-$name.json" || fail "$name: run get $run"
 		python3 - "$WORK/example-$name.json" "$want" "$tasks" <<'PY' || { tail -40 "$log" >&2; fail "$name: run $run"; }
 import json
 import sys
@@ -374,7 +374,7 @@ PY
 		say "  $name: $want"
 	}
 	apply_example() {
-		orkctl apply "examples/$1.ork.yaml" >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "apply $1"; }
+		orkctl orkflow create "examples/$1.ork.yaml" >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "create $1"; }
 	}
 	# The one block two examples compose goes first, in a command of its own, as
 	# their headers say.
@@ -385,6 +385,7 @@ PY
 		[ "$name" = notify-block ] || apply_example "$name"
 		case "$name" in
 		approval-gate) check_example "$name" "$S" "assess=$S approval=SKIPPED apply=$S announce=$S tell-requester=SKIPPED" ;;
+		bake-then-verify) check_example "$name" "$S" "change=$S bake=$S verify=$S" ;;
 		config-from-git)
 			check_example "$name" "$S" "resolve=$S clone=$S readme=$S tmpl=$S prepare=$S render=$S manifest=$S"
 			check_example "$name" "$S" "readme=HIT tmpl=HIT prepare=HIT manifest=HIT"
@@ -396,7 +397,7 @@ PY
 		notify-block) check_example "$name" "$S" "body=$S post=$S" ;;
 		order-saga)
 			check_example "$name" "$S" "shipped=$S release=SKIPPED refund=SKIPPED report=$S notify=$S"
-			check_example "$name" FAILED "shipped=FAILED release=$S refund=$S report=$S notify=$S" --input shipping_api=https://httpbin.org/absent
+			check_example "$name" FAILED "shipped=FAILED release=$S refund=$S report=$S notify=$S" -i shipping_api=https://httpbin.org/absent
 			;;
 		pinned-checkout) check_example "$name" "$S" "resolve=$S checkout=$S validate=$S merge=$S package=$S checksum=$S" ;;
 		poll-until-ready) check_example "$name" "$S" "wait-ready=$S fetch=$S summarize=$S" ;;
@@ -405,13 +406,14 @@ PY
 	done
 
 	say "== the automation document"
-	automation=(examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml)
-	orkctl apply "${automation[@]}" >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "apply the automation document"; }
-	orkctl apply examples/automation/examples.ork.yaml --check >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "the automation document drifted"; }
+	automation=(examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml)
+	orkctl orkflow create "${automation[@]}" >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "create the Orkflows the automation document names"; }
+	orkctl automation apply examples/automation/examples.ork.yaml >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "apply the automation document"; }
+	orkctl automation apply examples/automation/examples.ork.yaml --check >"$WORK/apply.log" 2>&1 || { cat "$WORK/apply.log" >&2; fail "the automation document drifted"; }
 	orkctl schedule fire poll-exports >"$WORK/fire.log" 2>&1 || { cat "$WORK/fire.log" >&2; fail "schedule fire"; }
 	scheduled=""
 	for _ in $(seq 1 60); do
-		orkctl --json run list --filter origin.kind=SCHEDULE >"$WORK/scheduled.json"
+		orkctl -j run list -F origin.kind=SCHEDULE >"$WORK/scheduled.json"
 		scheduled="$(python3 -c 'import json, sys; runs = json.load(open(sys.argv[1])).get("runs", []); print(runs[0]["id"] if runs else "")' "$WORK/scheduled.json")"
 		[ -z "$scheduled" ] || break
 		sleep 2
@@ -423,20 +425,20 @@ PY
 fi
 
 if [ -n "$VERSION" ]; then
-	say "== signatures: OrkStack's own verifier, at apply, submit and dispatch"
+	say "== signatures: OrkStack's own verifier, at create, submit and dispatch"
 	"$ORKCTL" admin image-policy set --signing-key "release=$WORK/keys/release/cosign.pub" \
 		--signing-key "other=$WORK/keys/other/cosign.pub" >"$WORK/policy.log" 2>&1 || { cat "$WORK/policy.log" >&2; fail "admin image-policy set"; }
 	"$ORKCTL" namespace create signed --require-signed-by cosign:release >"$WORK/policy.log" 2>&1 || { cat "$WORK/policy.log" >&2; fail "namespace create signed"; }
 	"$ORKCTL" namespace create other-signer --require-signed-by cosign:other >"$WORK/policy.log" 2>&1 || { cat "$WORK/policy.log" >&2; fail "namespace create other-signer"; }
 	# The refusal shows the policy is judged, not waved through: the key
 	# `other` signed nothing.
-	if "$ORKCTL" -n other-signer apply "$REPO/examples/each-fan-out.ork.yaml" >"$WORK/refused.log" 2>&1; then
+	if "$ORKCTL" -n other-signer orkflow create "$REPO/examples/each-fan-out.ork.yaml" >"$WORK/refused.log" 2>&1; then
 		fail "a namespace that requires a key that signed nothing accepted each-fan-out"
 	fi
 	grep -q 'none verifies with key "other"' "$WORK/refused.log" || fail "the refusal is not the signature's: $(cat "$WORK/refused.log")"
 	say "  refused under cosign:other: $(grep -m1 -o 'none verifies with key "other"' "$WORK/refused.log")"
-	"$ORKCTL" -n signed apply "$REPO/examples/each-fan-out.ork.yaml" >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "apply under cosign:release"; }
-	"$ORKCTL" -n signed run submit each-fan-out --watch >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "run submit --watch under cosign:release"; }
+	"$ORKCTL" -n signed orkflow create "$REPO/examples/each-fan-out.ork.yaml" >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "create under cosign:release"; }
+	"$ORKCTL" -n signed run submit each-fan-out -w >"$WORK/signed.log" 2>&1 || { cat "$WORK/signed.log" >&2; fail "run submit --watch under cosign:release"; }
 	signed_run="$(submitted_run "$WORK/signed.log")"
 	[ -n "$signed_run" ] || fail "no run id in: $(tail -3 "$WORK/signed.log")"
 	grep -q "finished with status SUCCEEDED" "$WORK/signed.log" || fail "the signed run did not finish SUCCEEDED: $(tail -3 "$WORK/signed.log")"
@@ -453,10 +455,10 @@ UI="http://127.0.0.1:$ORKSTACK_API_PORT"
 # Read whole before grep, so grep's early exit cannot fail curl under pipefail.
 page="$(curl -s "$UI/orkflows")"
 grep -qF '/_app/immutable/' <<<"$page" || fail "$UI/orkflows is not the UI's build (no /_app/immutable/ in it): ork serves the placeholder"
-gallery="$(curl -s "$UI/apply/examples.json")"
-grep -q 'each-fan-out' <<<"$gallery" || fail "the UI's example gallery ($UI/apply/examples.json) does not list each-fan-out"
-[ "$(curl -s -o /dev/null -w '%{http_code}' "$UI/apply/examples/each-fan-out.ork.yaml")" = 200 ] ||
-	fail "$UI/apply/examples/each-fan-out.ork.yaml does not answer 200"
+gallery="$(curl -s "$UI/orkflows/+new/examples.json")"
+grep -q 'each-fan-out' <<<"$gallery" || fail "the UI's example gallery ($UI/orkflows/+new/examples.json) does not list each-fan-out"
+[ "$(curl -s -o /dev/null -w '%{http_code}' "$UI/orkflows/+new/examples/each-fan-out.ork.yaml")" = 200 ] ||
+	fail "$UI/orkflows/+new/examples/each-fan-out.ork.yaml does not answer 200"
 # The browser's handshake from the page's own origin, the host it connects
 # to: the bridge's default admits it. A refused upgrade answers 403.
 ws="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \

@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests describe the replica that did not start the run.
@@ -118,7 +120,8 @@ func (f *fakeReader) RunStart(_ context.Context, runID string) (*engine.RunStart
 	if run, ok := f.runs[runID]; ok && !f.startless[runID] {
 		return &engine.RunStartRecord{Orkflow: &orkstackv1.Orkflow{
 			Name: run.GetOrkflowName(), Version: run.GetOrkflowVersion(), Namespace: run.GetNamespace(),
-		}}, nil
+			DefinitionNamespace: run.GetOrkflowNamespace(),
+		}, Plan: engine.RunPlan{Origin: engine.OriginFromProto(run.GetOrigin())}}, nil
 	}
 	return nil, fmt.Errorf("fake reader: %s: %w", runID, engine.ErrRunNotFound)
 }
@@ -353,9 +356,7 @@ func newReaderFixtureWith(
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 
 	transport := &http.Transport{}
@@ -433,9 +434,7 @@ func TestGetRun_AnswersForARunThisReplicaNeverSaw(t *testing.T) {
 	got, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
 		RunId: "ork-foreign-1",
 	}))
-	if err != nil {
-		t.Fatalf("GetRun on a replica that did not start the run: %v", err)
-	}
+	must.OKf(t, err, "GetRun on a replica that did not start the run")
 	run := got.Msg.GetRun()
 	if run.GetId() != "ork-foreign-1" || run.GetOrkflowName() != "hello-ork" {
 		t.Fatalf("GetRun returned %s@%s, want ork-foreign-1 / hello-ork",
@@ -452,9 +451,7 @@ func TestListRuns_AnswersForRunsThisReplicaNeverSaw(t *testing.T) {
 	defer cancel()
 
 	listed, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed.Msg.GetRuns()) != 1 || listed.Msg.GetRuns()[0].GetId() != "ork-foreign-1" {
 		t.Fatalf("ListRuns returned %v, want the one run the record holds",
 			listedIDs(listed.Msg.GetRuns()))
@@ -464,9 +461,7 @@ func TestListRuns_AnswersForRunsThisReplicaNeverSaw(t *testing.T) {
 	filtered, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 		Filters: filters(t, "orkflow_name=something-else"),
 	}))
-	if err != nil {
-		t.Fatalf("ListRuns(orkflow_name): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(orkflow_name)")
 	if len(filtered.Msg.GetRuns()) != 0 {
 		t.Fatalf("filtering by another orkflow returned %v, want nothing",
 			listedIDs(filtered.Msg.GetRuns()))
@@ -497,9 +492,7 @@ func TestListRuns_ArchiveStillAnswersAStatusVisibilityCannotDecode(t *testing.T)
 		Status:      orkstackv1.Status_STATUS_PENDING,
 		CreatedAt:   timestamppb.New(time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)),
 	}
-	if err := archive.Archive(ctx, pending, nil); err != nil {
-		t.Fatalf("archive the pending run: %v", err)
-	}
+	must.OKf(t, archive.Archive(ctx, pending, nil), "archive the pending run")
 
 	// The reader holds a RUNNING run of the same orkflow and nothing pending,
 	// which is exactly what the real reader can hold: visibility decodes only
@@ -516,9 +509,7 @@ func TestListRuns_ArchiveStillAnswersAStatusVisibilityCannotDecode(t *testing.T)
 	listed, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 		Filters: filters(t, "orkflow_name=deploy", "status=PENDING"),
 	}))
-	if err != nil {
-		t.Fatalf("ListRuns(status=PENDING): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(status=PENDING)")
 	ids := make([]string, 0, len(listed.Msg.GetRuns()))
 	for _, run := range listed.Msg.GetRuns() {
 		ids = append(ids, run.GetId())
@@ -566,9 +557,7 @@ func TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk(t *testing.T) {
 		Filters:  filters(t, "orkflow_name=deploy", "status=RUNNING"),
 		PageSize: 10,
 	}))
-	if err != nil {
-		t.Fatalf("ListRuns(page_size=10): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(page_size=10)")
 	if got := len(asked.Msg.GetRuns()); got != 10 {
 		t.Errorf("ListRuns(page_size=10) returned %d runs, want the 10 that were asked for", got)
 	}
@@ -577,9 +566,7 @@ func TestListRuns_StaysBoundedAndNeverAsksForAnExhaustiveWalk(t *testing.T) {
 	unstated, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 		Filters: filters(t, "orkflow_name=deploy", "status=RUNNING"),
 	}))
-	if err != nil {
-		t.Fatalf("ListRuns(no page_size): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(no page_size)")
 	if got := len(unstated.Msg.GetRuns()); got != engine.DefaultRunPageSize {
 		t.Errorf("ListRuns without page_size returned %d runs, want one default page of %d; "+
 			"an exhaustive walk must not turn a public list into an unbounded dump",
@@ -611,27 +598,21 @@ func TestStreamEvents_ReplaysTheWholeOrderedStreamOnAReplicaThatNeverSawTheRun(t
 	stream, err := f.runClient().StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: "ork-foreign-1",
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	var received []*orkstackv1.Event
 	for stream.Receive() {
 		received = append(received, stream.Msg())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("stream error: %v", err)
-	}
+	must.OKf(t, stream.Err(), "stream error")
 	assertStreamContract(t, received, 0)
 
 	// A cursor resumes inside the record's stream, not inside a local log.
 	resumed, err := f.runClient().StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: "ork-foreign-1", FromSequence: 2,
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents(from_sequence=2): %v", err)
-	}
+	must.OKf(t, err, "StreamEvents(from_sequence=2)")
 	defer resumed.Close()
 	var tail []*orkstackv1.Event
 	for resumed.Receive() {
@@ -647,9 +628,7 @@ func TestWebSocketBridge_ReplaysTheWholeOrderedStreamOnAReplicaThatNeverSawTheRu
 
 	conn, _, err := websocket.Dial(ctx,
 		strings.Replace(f.baseURL, "http://", "ws://", 1)+"/ws/runs/ork-foreign-1", nil)
-	if err != nil {
-		t.Fatalf("dial websocket: %v", err)
-	}
+	must.OKf(t, err, "dial websocket")
 	defer conn.CloseNow()
 
 	var received []*orkstackv1.Event
@@ -659,9 +638,7 @@ func TestWebSocketBridge_ReplaysTheWholeOrderedStreamOnAReplicaThatNeverSawTheRu
 			break
 		}
 		event := &orkstackv1.Event{}
-		if err := api.UnmarshalJSON(data, event); err != nil {
-			t.Fatalf("decode frame %q: %v", data, err)
-		}
+		must.OKf(t, api.UnmarshalJSON(data, event), "decode frame %q", data)
 		received = append(received, event)
 	}
 	assertStreamContract(t, received, 0)
@@ -702,9 +679,7 @@ func TestReads_IgnoreAStaleProcessLocalSnapshot(t *testing.T) {
 	got, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
 		RunId: "ork-foreign-1",
 	}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if name := got.Msg.GetRun().GetOrkflowName(); name != "hello-ork" {
 		t.Fatalf("GetRun answered from the process-local store (%s), not the record", name)
 	}
@@ -752,9 +727,7 @@ func TestStreamEvents_EndsALiveRunAtItsTerminalEvent(t *testing.T) {
 	stream, err := f.runClient().StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: run.GetId(),
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	for i := 1; i <= 2; i++ {
@@ -771,9 +744,7 @@ func TestStreamEvents_EndsALiveRunAtItsTerminalEvent(t *testing.T) {
 	if stream.Receive() {
 		t.Fatalf("stream continued past the blocking point with %v", stream.Msg())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("stream error: %v", err)
-	}
+	must.OKf(t, stream.Err(), "stream error")
 }
 
 // assertStreamContract holds the stream contract: strictly increasing
@@ -827,9 +798,7 @@ func TestGetRun_MapsAMissingSnapshotShapeByWhoHoldsTheBetterAnswer(t *testing.T)
 	t.Run("closed run falls through to the archive body", func(t *testing.T) {
 		run, events := foreignRun()
 		archive := newArchiver(t)
-		if err := archive.Archive(ctx, run, events); err != nil {
-			t.Fatalf("archive the finished run: %v", err)
-		}
+		must.OKf(t, archive.Archive(ctx, run, events), "archive the finished run")
 		missing := fmt.Errorf("engine: read snapshot of run %s: %w", run.GetId(), artifacts.ErrNotFound)
 		f := newReaderFixtureWith(t, &fakeReader{getErr: missing},
 			func(cfg *api.Config) { cfg.Archive = archive })
@@ -837,9 +806,7 @@ func TestGetRun_MapsAMissingSnapshotShapeByWhoHoldsTheBetterAnswer(t *testing.T)
 		got, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
 			RunId: run.GetId(),
 		}))
-		if err != nil {
-			t.Fatalf("GetRun should have answered from the archive: %v", err)
-		}
+		must.OKf(t, err, "GetRun should have answered from the archive")
 		if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 			t.Fatalf("archived run status = %s, want SUCCEEDED", got.Msg.GetRun().GetStatus())
 		}
@@ -848,9 +815,7 @@ func TestGetRun_MapsAMissingSnapshotShapeByWhoHoldsTheBetterAnswer(t *testing.T)
 	t.Run("transient storage error stays unavailable", func(t *testing.T) {
 		run, events := foreignRun()
 		archive := newArchiver(t)
-		if err := archive.Archive(ctx, run, events); err != nil {
-			t.Fatalf("archive the finished run: %v", err)
-		}
+		must.OKf(t, archive.Archive(ctx, run, events), "archive the finished run")
 		transient := fmt.Errorf("engine: read snapshot of run %s: object storage is down", run.GetId())
 		f := newReaderFixtureWith(t, &fakeReader{getErr: transient},
 			func(cfg *api.Config) { cfg.Archive = archive })
@@ -880,9 +845,7 @@ func TestGetRun_MapsAMissingSnapshotShapeByWhoHoldsTheBetterAnswer(t *testing.T)
 		got, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
 			RunId: run.GetId(),
 		}))
-		if err != nil {
-			t.Fatalf("GetRun on the live degraded run: %v", err)
-		}
+		must.OKf(t, err, "GetRun on the live degraded run")
 		if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_RUNNING {
 			t.Fatalf("live run status = %s, want RUNNING", got.Msg.GetRun().GetStatus())
 		}

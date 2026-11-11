@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -19,6 +19,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The release fixture's build ids.
@@ -653,9 +655,7 @@ func TestReleaseGoldens_NeverNameTheCluster(t *testing.T) {
 	}
 	for _, path := range paths {
 		body, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if hit := releaseCLIForbidden.FindString(string(body)); hit != "" {
 			t.Errorf("%s names %q", path, hit)
 		}

@@ -1,7 +1,7 @@
 import { selectTask } from './uiHelpers';
 import { expect, test, type Page } from './test';
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -19,6 +19,7 @@ import {
 	repoRoot,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -192,7 +193,7 @@ let batchOrkerProc: ChildProcess | undefined;
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# The operating story: a chatty container followed live',

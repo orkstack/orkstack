@@ -11,7 +11,7 @@ Every example cites the sections below by title in its comment header, the
 leading `#` lines (`# Pattern: docs/ORKFLOW_PATTERNS.md, "<title>"`); the
 document header (`apiVersion: orkstack/v1`, `kind: Orkflow`; [the DSL
 reference](DSL.md), "The document header") follows them. The test suite compiles
-every example, runs every `orkctl run plan --file` line in its comment header, and
+every example, runs every `orkctl run plan -f` line in its comment header, and
 runs it end to end
 against a real stack.
 
@@ -102,7 +102,7 @@ not run are `SKIPPED`.
 
 A skipped task is absent from `.tasks`, and its files are not staged. So,
 downstream of a join, any ancestor may be absent, and reading it fails the
-task. Guard every such read with one of the two forms apply recognises:
+task. Guard every such read with one of the two forms the compiler recognises:
 
 ```text
 {{ if index .tasks "canary" }}…{{ end }}
@@ -112,7 +112,7 @@ task. Guard every such read with one of the two forms apply recognises:
 Only those two exact pipelines are recognised; `{{ if and (index .tasks "a")
 … }}` still warns. Choose a path with a guard rather than name a skipped
 task — `decide-and-route`'s `report` picks the staged file of the branch that
-ran with an `if … else if … else` chain. Apply warns about every unguarded
+ran with an `if … else if … else` chain. Creating an Orkflow warns about every unguarded
 read of an ancestor a join can leave absent.
 
 Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
@@ -252,7 +252,7 @@ Examples: [config-from-git](../examples/config-from-git.ork.yaml),
 ## Pin moving inputs: resolve, then use the commit
 
 A branch, a tag and `HEAD` move. Resolve one once — `git` `op: resolve` — and
-hand the commit to every later task, as apply resolves an image tag to a
+hand the commit to every later task, as creating an Orkflow resolves an image tag to a
 digest. A clone by commit id gives every task of the run one tree, even when
 someone pushes mid-run; it makes `orkctl run diff` name the commit; and it
 lets the tasks after it be cached.
@@ -331,15 +331,20 @@ There is no loop, back-edge or `while`: the graph stays a DAG, and
 - **Polling** is one check per attempt plus a retry policy — bounded, with
   backoff. Each attempt does work (a request and a test); between attempts
   the retry policy's timer waits, and no container runs.
-- **A longer wait** than a retry policy should hold is an awaited task with a
-  callback.
+- **A fixed wait** — let a canary soak, give a downstream system time to
+  settle — is a sleeping task: `sleep: {seconds: N}`, up to 30 days. It starts
+  no container and holds no Orker, and it succeeds when its time is up
+  ([bake-then-verify](../examples/bake-then-verify.ork.yaml)).
+- **A longer wait** than a retry policy should hold, for something outside
+  the run that will say when it is done, is an awaited task with a callback.
 - **Periodic work** is a schedule — an automation document, or `orkctl
   schedule create` — with `overlap: skip`.
 - **Iteration** is `each:`.
-- **Waiting for the outside world** is `await:`. Never start a container
-  merely to sleep or wait.
+- **Waiting for the outside world** is `await:`, and waiting out a fixed time
+  is `sleep:`. Never start a container merely to sleep or wait.
 
 Examples: [poll-until-ready](../examples/poll-until-ready.ork.yaml),
+[bake-then-verify](../examples/bake-then-verify.ork.yaml),
 [the automation document](../examples/automation/examples.ork.yaml),
 [each-fan-out](../examples/each-fan-out.ork.yaml).
 
@@ -354,7 +359,7 @@ no container and holds no Orker while it waits.
   see.
 - A callback token is disclosed to whoever submits the run, so never set
   `callback: true` when the approver must be someone else.
-- `orkctl run resolve <run> --task <id> --values '<json>'` and the run page
+- `orkctl run resolve <run> -t <id> --values '<json>'` and the run page
   resolve it.
 
 Example: [approval-gate](../examples/approval-gate.ork.yaml).
@@ -385,7 +390,7 @@ Example: [pinned-checkout](../examples/pinned-checkout.ork.yaml).
 - Its `outputs:` are its interface, and they are strings.
 - `orkctl orkflow compat` and the promote gate compare interfaces.
 - A composed failure handler runs its child in a failing parent.
-- Apply a child, in its own `orkctl apply`, before the Orkflows that compose
+- Create a child, in its own `orkctl orkflow create`, before the Orkflows that compose
   it: a composing document is validated against what is already stored. That
   is why `order-saga` and `approval-gate` ask you to store `notify-block` first,
   the one thing either asks of you beyond internet access.
@@ -411,7 +416,7 @@ and handle SIGTERM if the work is long.
 - Build, push and pin it with `orkctl activity build <dir> --tag <ref>`.
 - The image policy applies to it: `require_digest`, `allowed_registries`,
   `require_signed_by`.
-- Try one task with `orkctl task run --file <doc> --task <id>`.
+- Try one task with `orkctl task run -f <doc> -t <id>`.
 - `orkctl activity test` drives only images that implement the `op: exec`
   convention.
 
@@ -422,7 +427,7 @@ whose header gives every step, [the Go image](../examples/custom-image/),
 ## Declare what surrounds your Orkflows
 
 One automation document per namespace declares its settings, schedules,
-triggers and webhooks ([the automation contract](AUTOMATION.md)). `orkctl apply` plans it with
+triggers and webhooks ([the automation contract](AUTOMATION.md)). `orkctl automation apply` plans it with
 `--dry-run`, checks for drift with `--check`, pins a reviewed plan with
 `--expect-plan`, and deletes what the document no longer names with
 `--prune`. A trigger's token is printed once and never stored in the
@@ -445,7 +450,7 @@ how each kind of task reads).
   every other task that depends on it is unreached.
 - `--assert-runs TASK` and `--assert-skipped TASK` make a plan a CI check: it
   exits `4` when the plan contradicts one.
-- Every `orkctl run plan --file` line in an example's comment header is run by the
+- Every `orkctl run plan -f` line in an example's comment header is run by the
   test suite.
 - `orkctl task run` runs one task's filter or template locally.
 
@@ -458,6 +463,7 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 | Example | Shows | Sections |
 |---|---|---|
 | [`examples/approval-gate.ork.yaml`](../examples/approval-gate.ork.yaml) | an approval only when a change is risky | "Wait for a person or a system", "Decide in a task, branch on its value", "Reuse a block with declared outputs" |
+| [`examples/bake-then-verify.ork.yaml`](../examples/bake-then-verify.ork.yaml) | a change, a bake that runs no container, then a check | "Repeat without loops" |
 | [`examples/config-from-git.ork.yaml`](../examples/config-from-git.ork.yaml) | one commit rendered per service, cached | "Pin moving inputs: resolve, then use the commit", "Batch transforms into one prepare task", "Cache only what you assert is reusable", "jq, a template, or your own image" |
 | [`examples/decide-and-route.ork.yaml`](../examples/decide-and-route.ork.yaml) | decide, branch three ways, re-join | "Decide in a task, branch on its value", "Branch and re-join", "Plan before you run" |
 | [`examples/each-fan-out.ork.yaml`](../examples/each-fan-out.ork.yaml) | a fan-out over a computed list | "Batch transforms into one prepare task" |

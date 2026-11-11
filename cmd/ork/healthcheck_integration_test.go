@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // healthcheckResult is one run of `ork --healthcheck`.
@@ -150,9 +152,7 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	}
 	// And the check is the listener's own /readyz, asked of the same address.
 	response, err := http.Get("http://" + adminAddr + telemetry.ReadyzPath)
-	if err != nil {
-		t.Fatalf("GET /readyz: %v", err)
-	}
+	must.OKf(t, err, "GET /readyz")
 	_, _ = io.Copy(io.Discard, response.Body)
 	_ = response.Body.Close()
 	if response.StatusCode != http.StatusOK {

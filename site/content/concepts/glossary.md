@@ -13,7 +13,7 @@ Look up a word that OrkStack uses in its interface and its docs. The words are i
 | **Callback token** | A one-time credential issued when an await sets `callback: true`. It lets one caller resolve that await. |
 | **Carries on** | A long run continues under the same run ID, from its saved state. It stays one run in every list. |
 | **Commit** | The record that a task succeeded and its outputs are stored. A retry that finds it returns the stored result. |
-| **Composed task** | A task whose `uses:` is `orkflow:<name>@<version>`. It starts a child run of that Orkflow, and waits for it. |
+| **Composed task** | A task whose `uses:` is `orkflow:<name>@<version>`, or `orkflow:<namespace>/<name>@<version>` for a shared Orkflow. It starts a child run of that Orkflow, and waits for it. |
 | **Cordon** | Stops an Orker from taking new tasks or opening new pins. Work already running continues. An operator sets one, and an Orker also holds one by itself while object storage does not answer it. A restarted Orker is ready again. |
 | **Current version** | The version of an Orkflow that new runs use, unless a run names another version. |
 | **Drain** | Cordons an Orker and waits until it runs no task and hosts no pin. |
@@ -42,13 +42,14 @@ Look up a word that OrkStack uses in its interface and its docs. The words are i
 | **Run retention** | How long a finished run stays readable, counted from when it finished. |
 | **Saved state** | The state a run keeps when it carries on. If it cannot be read, the run stops with a `RUN_STATE_*` reason. |
 | **Schedule** | An object that starts runs of one Orkflow at times set by cron expressions or an interval. |
+| **Shared Orkflow** | An Orkflow whose definition lists, in `shared_with:`, the other namespaces or other namespaces' Orkflows that may compose it. Composition is the only way one namespace runs another's Orkflow. |
 | **Task** | One step of an Orkflow: an activity, an awaited task or a composed task. Its `needs:` set what must finish first. |
 | **Telemetry policy** | A namespace's choice of telemetry sink, whether its task logs export, and the attributes it stamps. |
 | **Telemetry sink** | A named OpenTelemetry destination that the deployment declares. |
 | **Trigger** | An inbound plain-HTTP starter. A caller that holds its token starts one run. |
 | **Usage** | The cpu and memory each attempt was granted, multiplied by how long it held them. It is computed on read. It is not measured utilization. |
 | **Values** | A task's structured result: a JSON object in `values.json`. |
-| **Webhook** | A signed callback that OrkStack sends to a URL you register, for run events. |
+| **Webhook** | A signed callback that OrkStack sends to a URL you choose, for run events. |
 
 ## See also
 

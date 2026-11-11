@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func treeEntries() []dist.Entry {
@@ -28,9 +30,7 @@ func treeEntries() []dist.Entry {
 func TestTarGzTree_IsADeterministicRootOwnedTree(t *testing.T) {
 	t.Parallel()
 	data, err := dist.TarGzTree("bundle", treeEntries(), commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	headers, contents := readTarGz(t, data)
 	var names []string
 	for _, h := range headers {
@@ -73,17 +73,13 @@ func TestTarGzTree_IsADeterministicRootOwnedTree(t *testing.T) {
 	slices.Reverse(reversed)
 	for i, entries := range [][]dist.Entry{treeEntries(), reversed} {
 		again, err := dist.TarGzTree("bundle", entries, commitTime)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !bytes.Equal(again, data) {
 			t.Errorf("run %d gave different bytes", i)
 		}
 	}
 	other, err := dist.TarGzTree("bundle", treeEntries(), commitTime.Add(time.Second))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if bytes.Equal(other, data) {
 		t.Error("a different commit time gave the same bytes")
 	}

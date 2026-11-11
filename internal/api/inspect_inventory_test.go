@@ -2,8 +2,11 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -213,10 +216,14 @@ func receive[T any](t *testing.T, ch <-chan T, what string) T {
 func logRecords(t *testing.T, logs string) []map[string]any {
 	t.Helper()
 	var records []map[string]any
-	decoder := json.NewDecoder(strings.NewReader(logs))
-	for decoder.More() {
+	decoder := jsontext.NewDecoder(strings.NewReader(logs))
+	for {
 		var record map[string]any
-		if err := decoder.Decode(&record); err != nil {
+		err := json.UnmarshalDecode(decoder, &record)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
 			t.Fatalf("log output is not JSON records: %v\n%s", err, logs)
 		}
 		records = append(records, record)

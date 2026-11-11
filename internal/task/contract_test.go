@@ -9,6 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // inputWithBlob builds an ExecuteTaskInput whose `with:` block carries one
@@ -17,9 +19,7 @@ func inputWithBlob(t *testing.T, unit string, length int) *orkstackv1.ExecuteTas
 	t.Helper()
 	blob := strings.Repeat(unit, length/len(unit)+1)[:length]
 	with, err := structpb.NewStruct(map[string]any{"blob": blob})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.ExecuteTaskInput{TaskId: "t1", RunId: "r1", With: with}
 }
 
@@ -28,9 +28,7 @@ func inputWithBlob(t *testing.T, unit string, length int) *orkstackv1.ExecuteTas
 func temporalPayloadBytes(t *testing.T, in *orkstackv1.ExecuteTaskInput) int {
 	t.Helper()
 	payload, err := converter.GetDefaultDataConverter().ToPayload(in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return len(payload.GetData())
 }
 
@@ -100,17 +98,13 @@ func TestCheckInputSize_HonoursThePlanLimit(t *testing.T) {
 	// The bound the check itself uses: deterministic, and never below what
 	// Temporal will carry.
 	bound, err := PayloadSize(in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if raw := int64(temporalPayloadBytes(t, in)); bound < raw {
 		t.Fatalf("the bound %d is below this build's actual payload %d; it would let "+
 			"through something Temporal rejects", bound, raw)
 	}
 
-	if err := CheckInputSize(in, bound); err != nil {
-		t.Fatalf("an input exactly at the plan limit was refused: %v", err)
-	}
+	must.OKf(t, CheckInputSize(in, bound), "an input exactly at the plan limit was refused")
 	err = CheckInputSize(in, bound-1)
 	if err == nil {
 		t.Fatal("an input over the plan limit was accepted")
@@ -119,16 +113,12 @@ func TestCheckInputSize_HonoursThePlanLimit(t *testing.T) {
 		t.Errorf("error %q does not carry the %s reason code", err, ReasonInputTooLarge)
 	}
 	// A zero or absent plan limit means the hard ceiling, not "no limit".
-	if err := CheckInputSize(in, 0); err != nil {
-		t.Fatalf("a zero plan limit must fall back to the ceiling, not refuse: %v", err)
-	}
+	must.OKf(t, CheckInputSize(in, 0), "a zero plan limit must fall back to the ceiling, not refuse")
 }
 
 func mustMarshal(t *testing.T, in *orkstackv1.ExecuteTaskInput) []byte {
 	t.Helper()
 	raw, err := proto.Marshal(in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return raw
 }

@@ -16,12 +16,13 @@ func newOrkflowCommand(g *globalFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "orkflow",
 		Aliases: []string{"of"},
-		Short:   "Inspect registered orkflows and their versions",
-		Long: "An orkflow's versions are immutable: applying an edit adds a version and\n" +
+		Short:   "Create and inspect orkflows and their versions",
+		Long: "An orkflow's versions are immutable: creating an edit adds a version and\n" +
 			"never rewrites one. Which version runs is a pointer you move with\n" +
 			"`promote`, and move back the same way.",
 	}
 	cmd.AddCommand(
+		newOrkflowCreateCommand(g),
 		newOrkflowListCommand(g),
 		newOrkflowValidateCommand(g),
 		newOrkflowGetCommand(g),
@@ -56,16 +57,16 @@ func newOrkflowValidateCommand(g *globalFlags) *cobra.Command {
 		}
 		out := cmd.OutOrStdout()
 		failed, warnings := renderValidationIssues(out, response.Msg.GetIssues())
-		// Only an ERROR fails validation: a warned document is one apply
+		// Only an ERROR fails validation: a warned document is one create
 		// accepts, and docs/UI_CLI_PARITY.md says "invalid documents exit
 		// nonzero" — not warned ones.
 		if !failed {
 			wf := response.Msg.GetOrkflow()
 			version := "version " + wf.GetVersion()
 			if wf.GetVersion() == "" {
-				// Nothing was stored, and a version is only minted by the apply
+				// Nothing was stored, and a version is only minted by the create
 				// that stores it.
-				version = "new version, assigned when applied"
+				version = "new version, assigned when created"
 			}
 			if warnings == 0 {
 				fmt.Fprintf(out, "Valid orkflow %s (%s)\n", wf.GetName(), version)
@@ -195,6 +196,11 @@ func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow) error {
 	fmt.Fprintf(header, "Version:\t%s\n", wf.GetVersion())
 	fmt.Fprintf(header, "Description:\t%s\n", orDash(wf.GetDescription()))
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(wf.GetCreatedAt()))
+	// Only a shared Orkflow names who else may compose it: an Orkflow is
+	// closed to every other namespace unless its definition says otherwise.
+	if len(wf.GetSharedWith()) > 0 {
+		fmt.Fprintf(header, "Shared with:\t%s\n", sharedWithLabel(wf.GetSharedWith()))
+	}
 	if err := header.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}

@@ -11,6 +11,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestNames_AreEveryFirstPartyImage holds the four places that name the
@@ -28,9 +30,7 @@ func TestNames_AreEveryFirstPartyImage(t *testing.T) {
 
 	root := filepath.Join("..", "..", "..")
 	dirs, err := filepath.Glob(filepath.Join(root, "images", "activity-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var images []string
 	for _, d := range dirs {
 		images = append(images, strings.TrimPrefix(filepath.Base(d), "activity-"))
@@ -38,9 +38,7 @@ func TestNames_AreEveryFirstPartyImage(t *testing.T) {
 	sort.Strings(images)
 
 	makefile, err := os.ReadFile(filepath.Join(root, "images", "Makefile"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	m := regexp.MustCompile(`(?m)^ACTIVITIES := (.*)$`).FindSubmatch(makefile)
 	if m == nil {
 		t.Fatal("images/Makefile has no `ACTIVITIES := …` line")

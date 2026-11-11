@@ -100,8 +100,14 @@ func (s *Service) originForRequest(
 	}
 	sourceRunID := req.Msg.GetSourceRunId()
 	if sourceRunID != "" {
-		if err := s.runNamespaceIn(ctx, sourceRunID, req.Msg.GetNamespace()); err != nil {
+		facts, err := s.runFactsIn(ctx, sourceRunID, req.Msg.GetNamespace())
+		if err != nil {
 			return nil, err
+		}
+		// A child run of another namespace's Orkflow runs only as a child:
+		// running it again would start that Orkflow as a root run here.
+		if facts.OrkflowNamespace != "" {
+			return nil, sharedRootRefusal(sourceRunID, facts.OrkflowNamespace, facts.Orkflow, facts.RootRunID)
 		}
 	}
 	return submitOrigin(req, sourceRunID), nil

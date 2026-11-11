@@ -12,11 +12,11 @@ version: "1.4.0"
 
 `name` and `version` are the Orkflow's own identity. `apiVersion` is the format of the document, and `orkstack/v1` is the only one.
 
-## Each apply makes a version
+## Each create makes a version
 
-Applying a file stores it as a version. Applying an unchanged file stores nothing new. Applying an edited file stores a new version, and a stored version is never rewritten.
+Creating a file stores it as a version. Creating an unchanged file again stores nothing new, and nothing is written. Creating an edited file stores a new version, and a stored version is never rewritten.
 
-If you leave `version:` out, the first apply gives the file a generated version, and applying the same file again finds it. If you pin one, applying a changed file under that same version is refused, because a run pinned to it still reads those bytes. Bump the version, or drop it.
+If you leave `version:` out, the first create gives the file a generated version, and creating the same file again finds it. If you pin one, creating a changed file under that same version is refused, because a run pinned to it still reads those bytes. Bump the version, or drop it.
 
 The web UI shows a generated version in a short form, the same on every page. Hold the pointer over it for the whole value, which is what URLs and `orkctl` take.
 
@@ -24,7 +24,7 @@ The web UI shows a generated version in a short form, the same on every page. Ho
 
 Every run records the version it started with, and the digest of that version's definition. A run keeps its version even when the current version changes.
 
-Each Orkflow has one **current** version. A run that names no version uses it. Until someone promotes a version, the current one is the newest applied version.
+Each Orkflow has one **current** version. A run that names no version uses it. Until someone promotes a version, the current one is the newest created version.
 
 ## Move the current version
 

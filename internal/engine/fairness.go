@@ -38,8 +38,8 @@ const maxFairnessKey = 64
 // build later runs it.
 type FairnessSelection struct {
 	Key         string  `json:"key"`
-	Weight      float32 `json:"weight,omitempty"`
-	PinRequests bool    `json:"pin_requests,omitempty"`
+	Weight      float32 `json:"weight,omitzero"`
+	PinRequests bool    `json:"pin_requests,omitzero"`
 }
 
 // priority is the selection as a Temporal priority.

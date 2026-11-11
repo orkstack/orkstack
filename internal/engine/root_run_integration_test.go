@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // requireOrigin fails unless origin names parent and root.
@@ -62,25 +64,19 @@ func TestIntegration_ThreeLevelChainNamesItsRoot(t *testing.T) {
 	topID := fmt.Sprintf("ork-chain-%d", time.Now().UnixNano())
 	midID, leafID := topID+"-mid", topID+"-leaf"
 	leafPlan, err := engine.NewChildRunPlan(leaf, e.plan(), false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	leafPlan.RunID = leafID
 	nested := e.plan()
 	nested.Children = map[string]*engine.ChildRunPlan{"release": leafPlan}
 	midPlan, err := engine.NewChildRunPlan(mid, nested, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	midPlan.RunID = midID
 	plan := e.plan()
 	plan.RecordRootRun = true
 	plan.RootRunIndexed = true
 	plan.Children = map[string]*engine.ChildRunPlan{"release": midPlan}
 	starter := engine.NewTemporalStarterWithOrkerQueue(e.temporal, e.runQueue, e.orkerQueue)
-	if err := starter.StartRun(e.ctx, topID, top, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(e.ctx, topID, top, nil, plan), "StartRun")
 
 	// A chain as a run accepted before the field starts one: its plan does not
 	// ask, so its child holds no root and has no attribute or row.
@@ -88,15 +84,11 @@ func TestIntegration_ThreeLevelChainNamesItsRoot(t *testing.T) {
 	olderID := topID + "-older"
 	olderLeafID := olderID + "-leaf"
 	olderLeafPlan, err := engine.NewChildRunPlan(leaf, e.plan(), false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	olderLeafPlan.RunID = olderLeafID
 	older := e.plan()
 	older.Children = map[string]*engine.ChildRunPlan{"release": olderLeafPlan}
-	if err := starter.StartRun(e.ctx, olderID, olderTop, nil, older); err != nil {
-		t.Fatalf("StartRun older: %v", err)
-	}
+	must.OKf(t, starter.StartRun(e.ctx, olderID, olderTop, nil, older), "StartRun older")
 
 	// Top first: a child does not exist until its parent starts it, and a
 	// finished parent has finished its children.
@@ -135,9 +127,7 @@ func TestIntegration_ThreeLevelChainNamesItsRoot(t *testing.T) {
 	}
 
 	store, err := artifacts.NewRunArchive(e.cfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	archiver := engine.NewRunArchiver(store)
 	// Each child's archive precedes its parent's, as their terminal events do.
 	for _, id := range []string{leafID, midID, topID, olderLeafID, olderID} {
@@ -145,9 +135,7 @@ func TestIntegration_ThreeLevelChainNamesItsRoot(t *testing.T) {
 		if !ok {
 			t.Fatalf("no snapshot of %s", id)
 		}
-		if err := archiver.Archive(e.ctx, snapshot, e.bus.Events(id, 0)); err != nil {
-			t.Fatalf("archive %s: %v", id, err)
-		}
+		must.OKf(t, archiver.Archive(e.ctx, snapshot, e.bus.Events(id, 0)), "archive %s", id)
 	}
 	archived, err := archiver.ListRuns(e.ctx, engine.ArchiveQuery{
 		OriginKind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, OriginID: midID,
@@ -157,9 +145,7 @@ func TestIntegration_ThreeLevelChainNamesItsRoot(t *testing.T) {
 	}
 	requireOrigin(t, "leaf, archived row", archived[0].GetOrigin(), midID, topID)
 	loaded, err := archiver.LoadRun(e.ctx, leafID)
-	if err != nil {
-		t.Fatalf("load archived leaf: %v", err)
-	}
+	must.OKf(t, err, "load archived leaf")
 	requireOrigin(t, "leaf, archived body", loaded.GetOrigin(), midID, topID)
 
 	// Archived: the same one query, answered by the root rows.
@@ -172,9 +158,7 @@ func TestIntegration_ThreeLevelChainNamesItsRoot(t *testing.T) {
 	}
 
 	for _, id := range ids {
-		if err := replayRecorded(e.history(id), id); err != nil {
-			t.Fatalf("replaying %s, which recorded the root, against this build: %v", id, err)
-		}
+		must.OKf(t, replayRecorded(e.history(id), id), "replaying %s, which recorded the root, against this build", id)
 	}
 	proof.Write(t, "engine", "root-run-chain.txt", []byte(fmt.Sprintf(
 		"top=%s mid=%s leaf=%s\nleaf live: %v\nleaf archived: %v\nchain, live: %s\nchain, archived: %s\nall three histories replayed\n",
@@ -293,9 +277,7 @@ func TestIntegration_RootSurvivesContinuing(t *testing.T) {
 	defer cancel()
 	s := startCANStack(t, ctx, "rootcan", false, canFixtureBehavior)
 	described, err := s.client.OperatorService().ListSearchAttributes(ctx, &operatorservice.ListSearchAttributesRequest{Namespace: s.namespace})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, present := described.GetCustomAttributes()[task.SearchAttrOrkflowOriginRootRunId]; present {
 		t.Fatal("the namespace has the root attribute: this test proves nothing about a deployment without it")
 	}
@@ -315,57 +297,39 @@ func TestIntegration_RootSurvivesContinuing(t *testing.T) {
 		return plan
 	}
 	leafPlan, err := engine.NewChildRunPlan(leaf, childPlan(), false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	leafPlan.RunID = leafID
 	nested := childPlan()
 	nested.Children = map[string]*engine.ChildRunPlan{"release": leafPlan}
 	midPlan, err := engine.NewChildRunPlan(mid, nested, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	midPlan.RunID = midID
 	budget := engine.DefaultContinuationBudget(2, 1<<20, time.Minute)
 	plan := s.plan(engine.DefaultHistoryMaxEvents, &budget)
 	plan.RecordRootRun = true
 	plan.Children = map[string]*engine.ChildRunPlan{"release": midPlan}
-	if err := s.starter.StartRun(ctx, topID, top, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, topID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the chain failed: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, topID, top, nil, plan), "StartRun")
+	must.OKf(t, s.client.GetWorkflow(ctx, topID, "").Get(ctx, nil), "the chain failed")
 
 	// Every generation's history, and proof that both runs did carry on.
 	for _, id := range []string{topID, midID} {
 		described, err := s.client.DescribeWorkflowExecution(ctx, id, "")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		chain := s.chainOf(id, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 		if len(chain) < 2 {
 			t.Fatalf("run %s never carried on: the test proves nothing about a later generation", id)
 		}
 		for _, execution := range chain {
-			if err := replayRecorded(s.history(id, execution), id); err != nil {
-				t.Fatalf("replaying %s/%s: %v", id, execution, err)
-			}
+			must.OKf(t, replayRecorded(s.history(id, execution), id), "replaying %s/%s", id, execution)
 		}
 	}
-	if err := replayRecorded(s.history(leafID, ""), leafID); err != nil {
-		t.Fatalf("replaying %s: %v", leafID, err)
-	}
+	must.OKf(t, replayRecorded(s.history(leafID, ""), leafID), "replaying %s", leafID)
 
 	got, err := s.reader.GetRun(ctx, leafID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	requireOrigin(t, "leaf, GetRun", got.GetOrigin(), midID, topID)
 	got, err = s.reader.GetRun(ctx, midID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	requireOrigin(t, "mid, GetRun", got.GetOrigin(), topID, topID)
 
 	// Visibility is eventually consistent, so this reads to a deadline. A row
@@ -408,9 +372,7 @@ func TestIntegration_RootSurvivesContinuing(t *testing.T) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	if err != nil {
-		t.Fatalf("the leaf was never archived: %v", err)
-	}
+	must.OKf(t, err, "the leaf was never archived")
 	requireOrigin(t, "leaf, archived", body.GetOrigin(), midID, topID)
 
 	want := listedIDs([]*orkstackv1.Run{{Id: leafID}, {Id: midID}})

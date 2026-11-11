@@ -3,7 +3,7 @@ package orker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -15,6 +15,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -203,11 +204,11 @@ func itemCommitIdentityMismatch(commit *orkstackv1.ActivityCommit, in *orkstackv
 
 // resolveEachItem returns the exact JSON text of this item's element: for a
 // task source, the staged values.json walked by source.path, decoded level by
-// level into json.RawMessage so the element's bytes survive; for an input
+// level into stablejson.RawJSON so the element's bytes survive; for an input
 // source, the protojson rendering of the run input's value. The array must be
 // the one the engine counted — length each.count, element [each.index] —
 // otherwise the attempt fails EACH_ITEM_UNAVAILABLE.
-func (d *OCIDispatcher) resolveEachItem(in *orkstackv1.ExecuteTaskInput, ws *Workspace) (json.RawMessage, *Failure) {
+func (d *OCIDispatcher) resolveEachItem(in *orkstackv1.ExecuteTaskInput, ws *Workspace) (stablejson.RawJSON, *Failure) {
 	each := in.GetEach()
 	source := each.GetSource()
 	unavailable := func(found string) *Failure {
@@ -259,19 +260,19 @@ func (d *OCIDispatcher) resolveEachItem(in *orkstackv1.ExecuteTaskInput, ws *Wor
 			in.GetTaskId(), each.GetIndex(), err)
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, encoded); err != nil {
+	if err := stablejson.Compact(&compact, encoded); err != nil {
 		return nil, FailCause(ReasonEachItemUnavailable, err, "task %q item %d: encode the item: %v",
 			in.GetTaskId(), each.GetIndex(), err)
 	}
-	return json.RawMessage(compact.Bytes()), nil
+	return stablejson.RawJSON(compact.Bytes()), nil
 }
 
-// itemOfRaw walks raw by path, one level at a time as json.RawMessage, and
+// itemOfRaw walks raw by path, one level at a time as stablejson.RawJSON, and
 // returns element [index] of the array it reaches, byte for byte.
-func itemOfRaw(raw []byte, path []string, index, count int32, unavailable func(string) *Failure) (json.RawMessage, *Failure) {
-	cur := json.RawMessage(raw)
+func itemOfRaw(raw []byte, path []string, index, count int32, unavailable func(string) *Failure) (stablejson.RawJSON, *Failure) {
+	cur := stablejson.RawJSON(raw)
 	for _, key := range path {
-		var obj map[string]json.RawMessage
+		var obj map[string]stablejson.RawJSON
 		if err := json.Unmarshal(cur, &obj); err != nil || obj == nil {
 			return nil, unavailable(fmt.Sprintf("the value above %q is not an object", key))
 		}
@@ -281,7 +282,7 @@ func itemOfRaw(raw []byte, path []string, index, count int32, unavailable func(s
 		}
 		cur = next
 	}
-	var list []json.RawMessage
+	var list []stablejson.RawJSON
 	if err := json.Unmarshal(cur, &list); err != nil || list == nil {
 		return nil, unavailable("found a value that is not an array")
 	}
@@ -292,24 +293,22 @@ func itemOfRaw(raw []byte, path []string, index, count int32, unavailable func(s
 		return nil, unavailable(fmt.Sprintf("item %d is outside the array", index))
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, list[index]); err != nil {
+	if err := stablejson.Compact(&compact, list[index]); err != nil {
 		return nil, unavailable("the item is not valid JSON")
 	}
-	return json.RawMessage(compact.Bytes()), nil
+	return stablejson.RawJSON(compact.Bytes()), nil
 }
 
 // eachRenderData is the `.each` render root for one item: {<as>: the item
 // decoded with UseNumber, "index": i, "count": n}, so a large integer renders
 // as written.
-func eachRenderData(each *orkstackv1.EachContext, item json.RawMessage) (map[string]any, error) {
+func eachRenderData(each *orkstackv1.EachContext, item stablejson.RawJSON) (map[string]any, error) {
 	if each == nil {
 		return nil, nil
 	}
-	decoder := json.NewDecoder(bytes.NewReader(item))
-	decoder.UseNumber()
 	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, fmt.Errorf("decode the item: %w", err)
+	if err := json.Unmarshal(item, &value, stablejson.UseNumber); err != nil {
+		return nil, fmt.Errorf("decode the item: %w", stablejson.Explained(err))
 	}
 	return map[string]any{
 		each.GetAs(): value,

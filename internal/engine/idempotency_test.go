@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"testing"
 	"time"
@@ -11,7 +11,10 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingClaimClient captures the update-with-start call TemporalIdempotency
@@ -113,9 +116,7 @@ func TestTemporalIdempotency_JoinsTheKeysClaimInOneRoundTrip(t *testing.T) {
 	winner, err := idempotency.Claim(context.Background(), "order-42", func() (engine.Claim, error) {
 		return claimOf("ork-1-1"), nil
 	})
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
+	must.OKf(t, err, "Claim")
 	if winner.RunID != "ork-1-1" {
 		t.Errorf("winner = %q, want ork-1-1", winner.RunID)
 	}
@@ -196,9 +197,7 @@ func TestTemporalIdempotency_ReportsALostCandidate(t *testing.T) {
 	winner, err := idempotency.Claim(context.Background(), "order-42", func() (engine.Claim, error) {
 		return claimOf("ork-1-1"), nil
 	})
-	if err != nil {
-		t.Fatalf("Claim: %v", err)
-	}
+	must.OKf(t, err, "Claim")
 	if winner.RunID != "ork-9-9" || string(winner.Snapshot) != "ork-9-9" {
 		t.Errorf("winner = %+v, want the claim holder ork-9-9 with its own snapshot", winner)
 	}
@@ -215,9 +214,7 @@ func TestTemporalIdempotency_RebindNamesTheIDItReplaces(t *testing.T) {
 	c := &recordingClaimClient{winner: claimOf("ork-2-2")}
 	idempotency := engine.NewTemporalIdempotency(c, "", time.Hour)
 
-	if err := idempotency.Rebind(context.Background(), "order-42", claimOf("ork-2-2"), "ork-1-1"); err != nil {
-		t.Fatalf("Rebind: %v", err)
-	}
+	must.OKf(t, idempotency.Rebind(context.Background(), "order-42", claimOf("ork-2-2"), "ork-1-1"), "Rebind")
 	got := c.request(t)
 	if got.Candidate.RunID != "ork-2-2" || got.Supersedes != "ork-1-1" {
 		t.Errorf("rebind request = %+v, want ork-2-2 superseding ork-1-1", got)
@@ -286,7 +283,7 @@ func TestClaimRequest_SurvivesTheDefaultDataConverter(t *testing.T) {
 		Candidate:  engine.Claim{RunID: "ork-1-1", Snapshot: []byte{0x00, 0x01, 0xff}},
 		Supersedes: "ork-0-0",
 	}
-	encoded, err := json.Marshal(request)
+	encoded, err := stablejson.Marshal(request)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}

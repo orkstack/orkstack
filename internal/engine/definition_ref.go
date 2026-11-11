@@ -93,6 +93,9 @@ func DefinitionStub(wf *orkstackv1.Orkflow) *orkstackv1.Orkflow {
 		Version:          wf.GetVersion(),
 		Namespace:        wf.GetNamespace(),
 		DefinitionDigest: wf.GetDefinitionDigest(),
+		// A shared child's owner rides the stub too, so a read of the run's
+		// start says whose Orkflow it ran without loading the definition.
+		DefinitionNamespace: wf.GetDefinitionNamespace(),
 	}
 }
 

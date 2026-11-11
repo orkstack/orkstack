@@ -9,6 +9,14 @@
 # (rule 7), and the background-and-trap `run_supervised` (rule 2a). Every call
 # to run_supervised is a plain invocation, with redirection at most, never
 # inside $( ) or a pipeline (rule 2b).
+#
+# Scratch is never left where the Orker cannot remove it (rule 11). This image
+# runs as 65532 and the Orker as the host's own user, which on rootful Linux is
+# another user, and a directory 65532 made 0755 is one the Orker can neither
+# write nor chmod. So the script's own exits empty /orkstack/tmp (`cleanup`, on
+# the EXIT trap), and untar extracts under `umask 000`, so the directories tar
+# makes implicitly are removable after an exit that runs no trap. tar's staging
+# directory keeps 0755, because the archive records its mode as `./`'s.
 set -u
 umask 022
 
@@ -17,6 +25,17 @@ VALUES=/orkstack/output/values.json
 INPUT=/orkstack/input
 ARTIFACTS=/orkstack/output/artifacts
 TMP=/orkstack/tmp
+
+# cleanup empties /orkstack/tmp, which is this attempt's alone and which
+# nothing reads after the container exits. An extracted directory keeps the
+# archive's mode, which may deny its own owner write (0500), so every
+# directory is opened to its owner first, top down and never through a link.
+cleanup() {
+    trap '' TERM INT
+    find "$TMP" -mindepth 1 -type d -exec chmod u+rwx {} \; 2>/dev/null
+    find "$TMP" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+}
+trap cleanup EXIT
 
 run_supervised() {
     "$@" &
@@ -160,8 +179,10 @@ case "$op" in
     [ -n "$as" ] || as=$(basename "$member")
     check_name "$as"
     rm -rf "$TMP/untar"
+    umask 000
     mkdir -p "$TMP/untar"
     run_supervised tar -xzf "$src" -C "$TMP/untar" "$member" || fail "untar failed"
+    umask 022
     [ -f "$TMP/untar/$member" ] || fail "archive member is not a regular file: $member"
     cp "$TMP/untar/$member" "$ARTIFACTS/$as" || fail "extract failed"
     emit "$ARTIFACTS/$as"

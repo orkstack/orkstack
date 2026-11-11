@@ -39,8 +39,8 @@ The report also shows the `with:` interface the image declares in its `org.orkst
 The recipe [`examples/custom-image/custom-image.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/custom-image/custom-image.ork.yaml) reads an upstream file. Supply that file's values by hand:
 
 ```bash
-orkctl task run --file examples/custom-image/custom-image.ork.yaml --task report \
-  --output probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}'
+orkctl task run -f examples/custom-image/custom-image.ork.yaml -t report \
+  -o probe='{"idempotencyKey":"x","attempt":1,"taskId":"probe","argv":[]}'
 ```
 
 Build and push its images first, as [Build an activity image](/docs/activities/build-an-image/) shows, because `--file` is validated by the engine. The engine answers at `--server`, which defaults to `http://localhost:8080`.

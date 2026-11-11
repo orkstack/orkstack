@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The snapshot-overlay chaos scenarios (T6, C37–C39): a run that writes snapshot
@@ -155,9 +157,7 @@ func finishOverlayRun(t *testing.T, s *chaosStack, a *chaosAPI, runID string, g 
 	}
 	s.requireOneRunRead(runID, nil, orkstackv1.Status_STATUS_SUCCEEDED, "")
 	chain := s.chain(runID)
-	if err := s.reader.DeleteWorkflow(s.ctx, s.namespace, runID); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, s.reader.DeleteWorkflow(s.ctx, s.namespace, runID))
 	for _, id := range chain {
 		s.waitExecutionGone(t, runID, id, time.Minute)
 	}
@@ -189,16 +189,10 @@ func TestIntegration_C37_OverlayBaseLost(t *testing.T) {
 	a := s.serveAPI(api.Config{})
 	runID, g, last := overlayHeldRun(t, s)
 	data, err := s.store.ReadSnapshot(ctx, last.uri)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	overlay := &orkstackv1.RunSnapshotOverlay{}
-	if err := proto.Unmarshal(data, overlay); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.store.DeleteSnapshot(ctx, overlay.GetBaseUri()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(data, overlay))
+	must.OK(t, s.store.DeleteSnapshot(ctx, overlay.GetBaseUri()))
 	s.transcript.step("deleted the base %s that %s names", path.Base(overlay.GetBaseUri()), path.Base(last.uri))
 	liveErr := requireUnreadableLive(t, s, a, runID)
 	finishOverlayRun(t, s, a, runID, g)
@@ -267,9 +261,7 @@ func TestIntegration_C39_ADroppedPublish(t *testing.T) {
 		proxy.Restore()
 		return actx.Err()
 	}, activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	if err := projection.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, projection.Start())
 	t.Cleanup(projection.Stop)
 
 	runID := s.newRunID()
@@ -298,13 +290,9 @@ func TestIntegration_C39_ADroppedPublish(t *testing.T) {
 				continue
 			}
 			data, err := s.store.ReadSnapshot(ctx, p.uri)
-			if err != nil {
-				t.Fatalf("event %d's overlay: %v", p.event.GetSequence(), err)
-			}
+			must.OKf(t, err, "event %d's overlay", p.event.GetSequence())
 			overlay := &orkstackv1.RunSnapshotOverlay{}
-			if err := proto.Unmarshal(data, overlay); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, proto.Unmarshal(data, overlay))
 			if !strings.HasSuffix(overlay.GetBaseUri(), ".pb") {
 				t.Fatalf("event %d's overlay names %s, not a full snapshot", p.event.GetSequence(), overlay.GetBaseUri())
 			}

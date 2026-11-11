@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -44,14 +45,22 @@ func ValidDeliveryID(id string) bool { return deliveryIDPattern.MatchString(id) 
 
 // Notifier fans one run transition out to every subscription that wants it.
 //
-// Delivery runs off the caller's goroutine on purpose. The caller is the
-// engine recording a run's state change, and a slow or unreachable subscriber
-// must not hold that up: notification is observability, not orchestration.
-// The cost of that choice is that a delivery does not outlive the process, so
-// Wait exists to drain in-flight deliveries at shutdown.
+// Matching and queuing run off the caller's goroutine on purpose. The caller
+// is the engine recording a run's state change, and a slow or unreachable
+// subscriber, store or cluster must not hold that up: notification is
+// observability, not orchestration.
+//
+// A Launcher hands each delivery to something durable — the engine's
+// WebhookDeliveryWorkflow, whose activity Temporal retries — so a delivery
+// outlives the process that queued it. Without one, the Notifier makes one
+// attempt in-process and settles it, which is what a test or an embedding
+// without a cluster gets; nothing here retries. Wait drains what is still
+// being matched, queued or sent in this process at shutdown.
 type Notifier struct {
 	registry   *Registry
 	dispatcher *Dispatcher
+	launcher   Launcher
+	record     func(ctx context.Context, result Result) error
 	logger     *slog.Logger
 	newID      func(queuedAt time.Time) (string, error)
 
@@ -61,8 +70,25 @@ type Notifier struct {
 	observers []func(Result)
 }
 
+// Launcher queues one delivery durably: the engine stores its body and starts
+// the workflow that sends it. An error means the delivery was not queued and
+// will never be sent.
+type Launcher interface {
+	Launch(ctx context.Context, hook Webhook, delivery Delivery) error
+}
+
+// launchTimeout bounds queuing one delivery: storing its body and starting
+// its workflow. Past it the delivery is not queued, and its record says so.
+const launchTimeout = 10 * time.Second
+
 // NotifierOptions tunes a Notifier.
 type NotifierOptions struct {
+	// Launcher queues each delivery durably. Nil makes one attempt in-process.
+	Launcher Launcher
+	// Record writes a settled delivery's immutable record. Nil records
+	// nothing. Settle returns its error, so the engine's activity retries a
+	// record that could not be written.
+	Record func(ctx context.Context, result Result) error
 	// Logger records delivery outcomes. Nil discards them.
 	Logger *slog.Logger
 	// NewDeliveryID generates delivery ids from the instant the delivery was
@@ -75,6 +101,8 @@ func NewNotifier(registry *Registry, dispatcher *Dispatcher, options NotifierOpt
 	n := &Notifier{
 		registry:   registry,
 		dispatcher: dispatcher,
+		launcher:   options.Launcher,
+		record:     options.Record,
 		logger:     options.Logger,
 		newID:      options.NewDeliveryID,
 	}
@@ -91,9 +119,10 @@ func NewNotifier(registry *Registry, dispatcher *Dispatcher, options NotifierOpt
 }
 
 // Observe registers a callback invoked with every delivery result, after the
-// delivery settles. It is the seam tests and proof runs use to watch the wire
-// without a real subscriber, and the one the engine records each settled
-// delivery through.
+// delivery settles and its record is written. It is the seam tests and proof
+// runs use to watch the wire without a real subscriber. It runs in the process
+// that settled the delivery, which with a Launcher is whichever engine replica
+// ran the delivery's last step.
 func (n *Notifier) Observe(observer func(Result)) {
 	if observer == nil {
 		return
@@ -108,8 +137,8 @@ func (n *Notifier) Observe(observer func(Result)) {
 // asynchronously, so it returns zero because the count is not yet known.
 //
 // The caller's context supplies values and nothing else: it is stripped of
-// cancellation, because the activity that observed the transition returns long
-// before a retried delivery finishes.
+// cancellation, because the activity that observed the transition returns
+// before the delivery is queued.
 func (n *Notifier) Notify(ctx context.Context, delivery Delivery) int {
 	if n == nil || n.registry == nil {
 		return 0
@@ -181,36 +210,120 @@ func (n *Notifier) queue(ctx context.Context, delivery Delivery, hooks []Webhook
 		n.wg.Add(1)
 		go func(hook Webhook, one Delivery) {
 			defer n.wg.Done()
-			n.deliver(detached, hook, one)
+			n.dispatch(detached, hook, one)
 		}(hook, one)
 	}
 	return queued
 }
 
-// deliver performs one delivery and reports it.
-func (n *Notifier) deliver(ctx context.Context, hook Webhook, delivery Delivery) {
-	result, err := n.dispatcher.Deliver(ctx, hook, delivery)
+// dispatch hands one delivery to the launcher, or makes its one in-process
+// attempt and settles it.
+func (n *Notifier) dispatch(ctx context.Context, hook Webhook, delivery Delivery) {
+	if n.launcher == nil {
+		result, err := n.dispatcher.Deliver(ctx, hook, delivery)
+		n.logOutcome(hook, delivery, result, err)
+		n.settleLogged(ctx, result)
+		return
+	}
+	launchCtx, cancel := context.WithTimeout(ctx, launchTimeout)
+	err := n.launcher.Launch(launchCtx, hook, delivery)
+	cancel()
+	if err == nil {
+		return
+	}
+	// Never queued, so never sent: its record says why, so an operator who
+	// asks what was delivered sees this one and can redeliver it.
+	n.logger.Error("webhook delivery not queued",
+		"webhook_id", hook.ID, "delivery_id", delivery.ID, "url", hook.URL,
+		"event", string(delivery.Event), "run_id", delivery.RunID, "error", err)
+	result := NotQueued(hook, delivery, err)
+	n.settleLogged(ctx, result)
+}
+
+// NotQueuedError is a Launcher's refusal. Reason is what the delivery's
+// record says, in OrkStack's own words; Err is the underlying failure, which
+// only the engine's log names.
+type NotQueuedError struct {
+	Reason string
+	Err    error
+}
+
+func (e *NotQueuedError) Error() string { return e.Reason + ": " + e.Err.Error() }
+
+func (e *NotQueuedError) Unwrap() error { return e.Err }
+
+// NotQueued is the record of a delivery that could not be queued: no attempt
+// was made, and its one attempt row says why.
+func NotQueued(hook Webhook, delivery Delivery, cause error) Result {
+	reason := cause.Error()
+	var refused *NotQueuedError
+	if errors.As(cause, &refused) {
+		reason = refused.Reason
+	}
+	body, bodyErr := delivery.Body()
+	result := NewResult(hook, delivery, body)
+	if bodyErr != nil {
+		result.BodySHA256, result.BodyBytes, result.Signature = "", 0, ""
+	}
+	now := time.Now().UTC()
+	result.Attempts = []Attempt{{Number: 1, Error: "the delivery could not be queued, so no request was made: " + reason, At: now}}
+	result.SettledAt = now
+	return result
+}
+
+// logOutcome logs one settled delivery.
+func (n *Notifier) logOutcome(hook Webhook, delivery Delivery, result Result, err error) {
 	if err != nil {
 		n.logger.Error("webhook delivery failed",
 			"webhook_id", hook.ID, "delivery_id", delivery.ID, "url", hook.URL,
 			"event", string(delivery.Event), "run_id", delivery.RunID,
 			"attempts", len(result.Attempts), "error", err)
-	} else {
-		n.logger.Info("webhook delivered",
-			"webhook_id", hook.ID, "delivery_id", delivery.ID, "url", hook.URL,
-			"event", string(delivery.Event), "run_id", delivery.RunID,
-			"attempts", len(result.Attempts), "status", result.LastAttempt().StatusCode)
+		return
 	}
+	n.logger.Info("webhook delivered",
+		"webhook_id", hook.ID, "delivery_id", delivery.ID, "url", hook.URL,
+		"event", string(delivery.Event), "run_id", delivery.RunID,
+		"attempts", len(result.Attempts), "status", result.LastAttempt().StatusCode)
+}
 
+// settleLogged settles a delivery this process cannot retry: a record that
+// cannot be written is logged.
+func (n *Notifier) settleLogged(ctx context.Context, result Result) {
+	recordCtx, cancel := context.WithTimeout(ctx, launchTimeout)
+	defer cancel()
+	if err := n.Settle(recordCtx, result); err != nil {
+		n.logger.Warn("webhook delivery record dropped",
+			"delivery_id", result.DeliveryID, "webhook_id", result.WebhookID, "run_id", result.RunID,
+			"event", string(result.Event), "delivered", result.Delivered, "error", err)
+	}
+}
+
+// Settle writes a settled delivery's record and then hands the result to
+// every observer. It returns the record's error, and calls no observer, when
+// the record could not be written, so a caller that retries — the engine's
+// settle activity — observes a delivery once its record exists. Writing a
+// record that already exists is the recorder's success, so a retried Settle
+// is safe.
+func (n *Notifier) Settle(ctx context.Context, result Result) error {
+	if n == nil {
+		return nil
+	}
+	if n.record != nil {
+		if err := n.record(ctx, result); err != nil {
+			return err
+		}
+	}
 	n.mu.Lock()
 	observers := append([]func(Result){}, n.observers...)
 	n.mu.Unlock()
 	for _, observe := range observers {
 		observe(result)
 	}
+	return nil
 }
 
-// Wait blocks until every queued delivery has settled, or ctx ends. It returns
+// Wait blocks until every delivery this process is matching, queuing or
+// sending in-process has been handed off or settled, or ctx ends. It returns
 // ctx.Err() in the second case, so a shutdown can bound how long it waits on a
 // subscriber that is not answering.
 func (n *Notifier) Wait(ctx context.Context) error {

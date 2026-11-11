@@ -1,7 +1,7 @@
 package dsl
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
@@ -10,6 +10,9 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // handBuiltAwait is an awaited task that never met the YAML decoder, as a
@@ -64,9 +67,7 @@ func TestValidate_HandBuiltAwaitWithExecutionFieldsIsRefused(t *testing.T) {
 		})
 	}
 	t.Run("a clean hand-built await validates", func(t *testing.T) {
-		if err := validate(handBuiltAwait(), Options{}); err != nil {
-			t.Fatalf("refused: %v", err)
-		}
+		must.OKf(t, validate(handBuiltAwait(), Options{}), "refused")
 	})
 }
 
@@ -74,9 +75,7 @@ func TestCanonicalOrkflow_AwaitEmittedOnlyWhenSet(t *testing.T) {
 	// Every existing golden is unchanged: the vectors in canonical_test.go
 	// still pass, and a definition with no await carries no `await` key.
 	plain, err := CanonicalOrkflow(goldenOrkflow(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.Contains(string(plain), `"await"`) {
 		t.Fatalf("a definition with no await emitted the key: %s", plain)
 	}
@@ -87,9 +86,7 @@ func TestCanonicalOrkflow_AwaitEmittedOnlyWhenSet(t *testing.T) {
 	withAwait := func(schema map[string]any) *orkstackv1.Orkflow {
 		wf := goldenOrkflow(t)
 		s, err := structpb.NewStruct(schema)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		wf.Tasks = append(wf.Tasks, &orkstackv1.Task{
 			Id:    "gate",
 			Needs: []string{"one"},
@@ -102,11 +99,9 @@ func TestCanonicalOrkflow_AwaitEmittedOnlyWhenSet(t *testing.T) {
 		"a": map[string]any{"required": false, "type": "number"},
 	})
 	canonical, err := CanonicalOrkflow(a)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var decoded struct {
-		Tasks []map[string]json.RawMessage `json:"tasks"`
+		Tasks []map[string]stablejson.RawJSON `json:"tasks"`
 	}
 	if err := json.Unmarshal(canonical, &decoded); err != nil {
 		t.Fatal(err)

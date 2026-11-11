@@ -126,14 +126,18 @@ $(addprefix oci-,$(ACTIVITIES)): oci-%: ## Build one image as an OCI image layou
 	  activity-$*
 
 # The activities the contract fixtures cover: shell is the bash fixture's
-# reference image; json, git and template have a first-party fixture each.
-CONTRACT_ACTIVITIES := shell json git template
+# reference image; json, git and template have a first-party fixture each, and
+# file has one for its scratch. A local proof runs all five (`make test`); a CI
+# proof's activity-fixture parts run the first four (fixtureActivities in
+# test/tools/proofrun), and there file's scratch is proven by
+# TestIntegration_TransformImages_FileScratchIsRemoved.
+CONTRACT_ACTIVITIES := shell json git template file
 
-# Each activity's fixture is a target of its own, so `make -j` runs the four
+# Each activity's fixture is a target of its own, so `make -j` runs the five
 # beside each other (every fixture roots its workspaces in its own mktemp
 # directory and names no container, so they share nothing but the daemon).
 # CONTRACT_JOBS is how many run at once; `-O` keeps each one's output whole.
-CONTRACT_JOBS ?= 4
+CONTRACT_JOBS ?= 5
 
 .PHONY: contract
 contract: ## Run the contract fixtures on REGISTRY/NAMESPACE/activity-*:TAG with no build, CONTRACT_JOBS at a time; ACTIVITY= runs one
@@ -152,7 +156,7 @@ $(addprefix contract-,$(CONTRACT_ACTIVITIES)): contract-%: ## Run one activity's
 	fi
 
 .PHONY: test
-test: image-shell image-json image-git image-template ## Build the fixtures' images, then run the contract fixtures on them
+test: image-shell image-json image-git image-template image-file ## Build the fixtures' images, then run the contract fixtures on them
 	$(MAKE) contract
 
 .PHONY: clean

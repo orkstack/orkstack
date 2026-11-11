@@ -3,7 +3,7 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"strings"
@@ -11,6 +11,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // A document that pins no `version:` is given one when it is first applied: a
@@ -111,7 +112,7 @@ type derivedClaim struct {
 }
 
 func marshalDerivedClaim(claim derivedClaim) ([]byte, error) {
-	document, err := json.MarshalIndent(claim, "", "  ")
+	document, err := stablejson.MarshalIndent(claim, "  ")
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: encode derived claim: %w", err)
 	}
@@ -249,10 +250,13 @@ func (s *S3OrkflowStore) ClaimDerivedVersion(
 			// "*" is the S3 spelling of "only if nothing is there".
 			input.IfNoneMatch = aws.String("*")
 		}
-		if _, err = s.client.PutObject(ctx, input); err == nil {
+		// Equal bytes after a lost answer (putConfirmed) name candidate, the
+		// version every caller for this hash is answered with: whoever wrote
+		// them, candidate is the answer.
+		if _, err = putConfirmed(ctx, s.client, input, document); err == nil {
 			return candidate, nil
 		}
-		if !isPreconditionFailed(err) {
+		if !refusedCondition(err, input) {
 			return "", fmt.Errorf("artifacts: put derived claim %q: %w", s.uri(key), err)
 		}
 	}

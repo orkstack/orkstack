@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // localParityDiamond is corpus (a) of TestLocalTaskInput_AgreesWithTheInterpreter:
@@ -256,13 +258,9 @@ func parityCorpus(t *testing.T) []parityCase {
 	}
 	for _, path := range parityDocuments(t) {
 		source, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
+		must.OKf(t, err, "read %s", path)
 		wf, err := dsl.Compile(source)
-		if err != nil {
-			t.Fatalf("compile %s: %v", path, err)
-		}
+		must.OKf(t, err, "compile %s", path)
 		// A composing example pins its children's digests, as apply stamps
 		// them (composed-release composes release-block).
 		stampExampleChildren(t, wf)
@@ -377,9 +375,7 @@ func exampleOrkflow(t *testing.T, name, version string) *orkstackv1.Orkflow {
 		}
 		stampExampleChildren(t, wf)
 		digest, err := dsl.DefinitionDigest(wf)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		wf.DefinitionDigest = digest
 		return wf
 	}
@@ -410,9 +406,7 @@ func parityChildren(t *testing.T, wf *orkstackv1.Orkflow) map[string]*engine.Chi
 		}
 		child := exampleOrkflow(t, ref.GetName(), ref.GetVersion())
 		cp, err := engine.NewChildRunPlan(child, parityPlan(child), false, false)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		cp.Plan.Children = parityChildren(t, child)
 		cp.RunID = "ork-parity-child-" + task.GetId()
 		if children == nil {
@@ -497,9 +491,7 @@ func TestLocalTaskInput_AgreesWithTheInterpreter(t *testing.T) {
 					continue
 				}
 				got, err := engine.LocalTaskInput(local)
-				if err != nil {
-					t.Fatalf("%s/%s: LocalTaskInput: %v", c.name, want.GetTaskId(), err)
-				}
+				must.OKf(t, err, "%s/%s: LocalTaskInput", c.name, want.GetTaskId())
 				cleared := proto.Clone(want).(*orkstackv1.ExecuteTaskInput)
 				cleared.CommitUri = ""
 				cleared.Pin = nil
@@ -551,9 +543,7 @@ func TestLocalTaskInput_LeavesCommitPinTelemetryAndImagePolicyUnset(t *testing.T
 	wf := compile(t, localParityPinned)
 	for _, id := range []string{"prep", "compile", "publish"} {
 		in, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: id, RunID: "local-0123456789abcdef"})
-		if err != nil {
-			t.Fatalf("%s: %v", id, err)
-		}
+		must.OKf(t, err, "%s", id)
 		if in.GetCommitUri() != "" || in.GetPin() != nil || in.GetTelemetry() != nil || in.GetImagePolicy() != nil {
 			t.Errorf("%s: commit_uri %q, pin %v, telemetry %v, image_policy %v — want all unset",
 				id, in.GetCommitUri(), in.GetPin(), in.GetTelemetry(), in.GetImagePolicy())
@@ -579,9 +569,7 @@ func TestLocalTaskInput_UsesOnlyTheClosureInClosureOrder(t *testing.T) {
 		// d's closure; d is the target itself.
 		Upstream: map[string]*orkstackv1.UpstreamRef{"b": ref("b"), "a": ref("a"), "e": ref("e"), "d": ref("d")},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var got []string
 	for _, up := range in.GetUpstream() {
 		got = append(got, up.GetTaskId())
@@ -654,9 +642,7 @@ func TestLocalTaskInput_AppliesDeclaredDefaultsOnce(t *testing.T) {
 	compose := func(input *orkstackv1.Payload) map[string]any {
 		t.Helper()
 		in, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "a", RunID: "local-1", Input: input})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return in.GetRunInput().GetData().AsMap()
 	}
 	already := compose(payload(t, map[string]any{"greeting": "hello", "target": "t"}))
@@ -705,9 +691,7 @@ tasks:
 		small := proto.Clone(wf).(*orkstackv1.Orkflow)
 		small.Tasks[0].With = nil
 		in, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: small, TaskID: "huge", RunID: "local-1"})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		composed = in
 		composed.With = wf.GetTasks()[0].GetWith()
 	}
@@ -747,9 +731,7 @@ func TestTaskClosure_MatchesTheInterpreterClosure(t *testing.T) {
 	recorded, _ := runParity(t, c, "ork-parity-closure")
 	for _, in := range recorded {
 		closure, err := engine.TaskClosure(c.wf, in.GetTaskId())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		var passed []string
 		for _, up := range in.GetUpstream() {
 			passed = append(passed, up.GetTaskId())
@@ -785,9 +767,7 @@ func TestLocalTaskInput_FanOutItemRules(t *testing.T) {
 		t.Fatalf("a task-sourced fan-out with no count = %v", err)
 	}
 	in, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "convert", RunID: "local-1", Item: &two, ItemCount: &count})
-	if err != nil {
-		t.Fatalf("convert --item 2: %v", err)
-	}
+	must.OKf(t, err, "convert --item 2")
 	if in.GetEach().GetIndex() != 2 || in.GetEach().GetCount() != 4 || in.GetIdempotencyKey() != "default/local-1/convert/2" {
 		t.Fatalf("item input = %v", in)
 	}
@@ -892,9 +872,7 @@ func TestLocalTaskInput_RequiresAJoinForAHandlerAndRefusesOneOtherwise(t *testin
 			"smoke":  {TaskId: "smoke", CommitUri: "mem://c/smoke", Values: &orkstackv1.ArtifactRef{Uri: "mem://v/smoke"}},
 		},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !proto.Equal(in.GetJoin(), join) {
 		t.Fatalf("input join = %v", in.GetJoin())
 	}
@@ -941,5 +919,52 @@ func TestJoinContextFromRun_ReadsStatusesAndBoundedErrors(t *testing.T) {
 	}
 	if _, ok := engine.UpstreamFromRun(run)["deploy"]; ok {
 		t.Error("UpstreamFromRun lost its succeeded-only contract")
+	}
+}
+
+// TestLocalTaskInput_RefusesASleepingTaskAndHandsItsDependantsNothing: the
+// interpreter never schedules a sleeping task, so no local input is composed
+// for one (a caller error, as for an await). A task downstream of it is
+// composable, and is handed no reference for it even when the caller
+// supplies one — a run hands it none (UpstreamFromRun agrees).
+func TestLocalTaskInput_RefusesASleepingTaskAndHandsItsDependantsNothing(t *testing.T) {
+	wf := compile(t, `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: local-sleep
+version: "1"
+tasks:
+  - id: soak
+    sleep: {seconds: 60}
+  - id: after
+    uses: shell
+    needs: [soak]
+    command: ["sh", "-c", "true"]
+`)
+	in, err := engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "soak", RunID: "local-1"})
+	if err == nil || in != nil {
+		t.Fatalf("got (%v, %v), want a refusal", in, err)
+	}
+	var refusal *engine.LocalTaskRefusal
+	if errors.As(err, &refusal) {
+		t.Errorf("refused as the task's own failure (%v); want a caller error", err)
+	}
+	if !strings.Contains(err.Error(), "sleep:") || !strings.Contains(err.Error(), `"soak"`) {
+		t.Errorf("refusal %q does not name the task and the sleep: node", err)
+	}
+	run := &orkstackv1.Run{TaskRuns: []*orkstackv1.TaskRun{
+		{TaskId: "soak", Status: orkstackv1.Status_STATUS_SUCCEEDED, Sleep: &orkstackv1.TaskSleep{Seconds: 60}},
+	}}
+	upstream := engine.UpstreamFromRun(run)
+	if _, ok := upstream["soak"]; ok {
+		t.Fatalf("UpstreamFromRun named the sleep: %v", upstream)
+	}
+	upstream["soak"] = &orkstackv1.UpstreamRef{TaskId: "soak"}
+	in, err = engine.LocalTaskInput(engine.LocalTask{Orkflow: wf, TaskID: "after", RunID: "local-1", Upstream: upstream})
+	if err != nil || in == nil {
+		t.Fatalf("downstream of a sleep: got (%v, %v), want an input", in, err)
+	}
+	if len(in.GetUpstream()) != 0 {
+		t.Fatalf("after was handed %v, want nothing for the sleep", in.GetUpstream())
 	}
 }

@@ -11,10 +11,12 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/orkstack/orkstack/internal/config"
 	orkerpkg "github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // deploy/kubernetes/ holds the two supported shapes of an Orker on
@@ -542,9 +544,7 @@ func imagesIn(t *testing.T, rel string) []string {
 		if errors.Is(err, io.EOF) {
 			break
 		}
-		if err != nil {
-			t.Fatalf("%s: %v", rel, err)
-		}
+		must.OKf(t, err, "%s", rel)
 		walk(doc)
 	}
 	if len(images) == 0 {

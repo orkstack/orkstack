@@ -15,9 +15,8 @@ one squash commit whose subject is its title and whose body is this description.
 ## Evidence
 
 <!--
-Name the tests and specs that prove the change. The same values as
-`make proof-feature TESTS=… SPECS=…`, which is optional; the `proof` check
-is the gate.
+Name the tests and specs that prove the change; the `proof` check, the full
+proof, is the gate.
 -->
 
 Proof-tests:
@@ -32,11 +31,11 @@ Proof-specs:
   DSL, the CLI, the API and its error reasons, configuration, the activity
   contract, storage layout, what a release publishes and any security fix to
   it, including a vulnerable dependency's bump, a deprecation)? Then add its
-  CHANGELOG.md `[Unreleased]` entry: a sentence or two on what changed and what
-  they must do, if anything, an absolute link to the doc where one holds more
-  detail, and a link to this pull request; a breaking change is marked
-  **BREAKING**. A change that cannot affect them gets none: documentation,
-  tests, refactors, a cosmetic change to the UI, internal tooling, a dependency
+  CHANGELOG.md `[Unreleased]` entry: one line in plain words on what changed and
+  what they must do, if anything, at most 200 characters before an absolute
+  link to the doc that holds the detail and a link to this pull request; a
+  breaking change is marked **BREAKING**. A change that cannot affect them
+  gets none: documentation, tests, refactors, a cosmetic change to the UI, internal tooling, a dependency
   bump that cannot affect them, and CI or proof changes that leave what a
   release publishes as it was.
 

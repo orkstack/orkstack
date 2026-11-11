@@ -11,6 +11,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func testRenderer(inputs map[string]any, values map[string]map[string]any, artifacts map[string][]*orkstackv1.ArtifactRef, paths map[string]string, allowlist map[string]struct{}) *renderer {
@@ -20,9 +22,7 @@ func testRenderer(inputs map[string]any, values map[string]map[string]any, artif
 func TestRenderer_ResolvesRunInputReference(t *testing.T) {
 	r := testRenderer(map[string]any{"url": "http://example.test/data"}, nil, nil, nil, nil)
 	got, err := r.render(context.Background(), map[string]any{"url": "{{ .inputs.url }}"})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	if got["url"] != "http://example.test/data" {
 		t.Fatalf("rendered url = %v, want the run input value", got["url"])
 	}
@@ -35,9 +35,7 @@ func TestRenderer_ResolvesUpstreamTaskOutputField(t *testing.T) {
 	got, err := r.render(context.Background(), map[string]any{
 		"content": "value: {{ .tasks.transform.output.stdout }}",
 	})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	if got["content"] != "value: hello world" {
 		t.Fatalf("rendered content = %v, want the upstream stdout", got["content"])
 	}
@@ -53,9 +51,7 @@ func TestRenderer_ArtifactHelperReturnsStagedContainerPath(t *testing.T) {
 		"command": "cat {{ sh (artifact \"fetch/body\") }}",
 		"again":   "{{ artifact \"fetch/body\" }}",
 	})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	if got["command"] != "cat '/orkstack/input/artifacts/fetch/body'" {
 		t.Fatalf("command = %q", got["command"])
 	}
@@ -111,9 +107,7 @@ func TestRenderer_PreservesValuesThatAreNotTemplates(t *testing.T) {
 		"nested": map[string]any{"{{ raw key }}": "{{ .inputs.n }}"},
 	}
 	got, err := r.render(context.Background(), with)
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	want := map[string]any{
 		"plain": "  keep {me} \n verbatim  ", "number": float64(3), "boolean": true, "null": nil,
 		"list":   []any{"a", "2", float64(1)},
@@ -132,9 +126,7 @@ func TestRenderer_EnvHelperHonorsTheAllowlist(t *testing.T) {
 	t.Setenv("ORK_TEST_OTHER", "nope")
 	r := testRenderer(nil, nil, nil, nil, parseAllowlist(" ORK_TEST_TOKEN , "))
 	got, err := r.render(context.Background(), map[string]any{"c": "{{ env \"ORK_TEST_TOKEN\" }}"})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	if got["c"] != "s3cret" {
 		t.Fatalf("rendered env value = %v, want s3cret", got["c"])
 	}
@@ -161,9 +153,7 @@ func TestRenderer_ShHelperQuotesUntrustedTextAsOneShellArgument(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := testRenderer(map[string]any{"value": tc.value}, nil, nil, nil, nil)
 			got, err := r.render(context.Background(), map[string]any{"quoted": "{{ sh .inputs.value }}"})
-			if err != nil {
-				t.Fatalf("render: %v", err)
-			}
+			must.OKf(t, err, "render")
 			quoted := got["quoted"].(string)
 			cmd := exec.Command("/bin/sh", "-c", `set -- `+quoted+`; [ "$#" -eq 1 ] || exit 91; printf '%s' "$1"`)
 			out, err := cmd.CombinedOutput()
@@ -215,9 +205,7 @@ func TestRendererFuncs_AreExactlyArtifactEnvSh(t *testing.T) {
 func TestRenderer_EscapedBracesRenderLiterally(t *testing.T) {
 	r := testRenderer(nil, nil, nil, nil, nil)
 	got, err := r.render(context.Background(), map[string]any{"filter": `"{{ "{{" }}name}}"`})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	if got["filter"] != `"{{name}}"` {
 		t.Fatalf("filter = %q, want %q", got["filter"], `"{{name}}"`)
 	}
@@ -233,9 +221,7 @@ func TestRenderer_ATextThatSpellsTheNoValueMarkerRendersAsItself(t *testing.T) {
 		"quoted":   "{{ sh .inputs.note }}",
 		"artifact": `{{ artifact "fetch/body" }}`,
 	})
-	if err != nil {
-		t.Fatalf("render: %v", err)
-	}
+	must.OKf(t, err, "render")
 	want := map[string]any{
 		"data":     "see <no value> here",
 		"around":   "literal <no value> then see <no value> here",

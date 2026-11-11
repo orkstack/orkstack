@@ -170,11 +170,11 @@ export function purgeSelectorError(s: PurgeSelector): string {
 
 /** purgeCommand is the `orkctl cache purge …` the dialog's CliEquivalent shows. */
 export function purgeCommand(s: PurgeSelector): string {
-	const args = ['orkctl', '--namespace', shellQuote(s.namespace || 'default'), 'cache', 'purge'];
+	const args = ['orkctl', '-n', shellQuote(s.namespace || 'default'), 'cache', 'purge'];
 	if (s.orkflow) args.push('--orkflow', shellQuote(s.orkflow));
 	else if (s.namespaceScoped) args.push('--namespace-scoped');
 	else if (s.all) args.push('--all');
-	if (s.task && !s.all) args.push('--task', shellQuote(s.task));
+	if (s.task && !s.all) args.push('-t', shellQuote(s.task));
 	if (s.olderThan) args.push('--older-than', shellQuote(s.olderThan));
 	return args.join(' ');
 }
@@ -243,8 +243,8 @@ export function cacheWindowFrom(url: URL): CacheWindow {
 
 /** cacheStatsCli is `orkctl cache stats` for the page's question. */
 export function cacheStatsCli(namespace: string, window: CacheWindow, orkflow: string): string {
-	const args = ['orkctl', '--namespace', shellQuote(namespace || 'default'), 'cache', 'stats'];
-	args.push('--since', shellQuote(window.window === 'custom' ? (window.since ?? '') : window.window));
+	const args = ['orkctl', '-n', shellQuote(namespace || 'default'), 'cache', 'stats'];
+	args.push('-s', shellQuote(window.window === 'custom' ? (window.since ?? '') : window.window));
 	if (orkflow) args.push('--orkflow', shellQuote(orkflow));
 	return args.join(' ');
 }

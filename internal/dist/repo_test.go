@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // readRepoFile reads a repository file, named by its slash-separated path
@@ -15,9 +17,7 @@ import (
 func readRepoFile(t *testing.T, rel string) []byte {
 	t.Helper()
 	data, err := os.ReadFile(filepath.Join(repoRoot(t), filepath.FromSlash(rel)))
-	if err != nil {
-		t.Fatalf("read %s: %v", rel, err)
-	}
+	must.OKf(t, err, "read %s", rel)
 	return data
 }
 

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recorder collects what a LineWriter emitted. It locks because the two
@@ -118,9 +120,7 @@ func TestLineWriter_FramesLinesAcrossWriteBoundaries(t *testing.T) {
 			w := NewLineWriter(rec.logger(), "")
 			for _, chunk := range tc.writes {
 				n, err := w.Write([]byte(chunk))
-				if err != nil {
-					t.Fatalf("Write(%q): %v", chunk, err)
-				}
+				must.OKf(t, err, "Write(%q)", chunk)
 				if n != len(chunk) {
 					t.Fatalf("Write(%q) reported %d bytes, want %d", chunk, n, len(chunk))
 				}
@@ -350,9 +350,7 @@ func TestLineWriter_WithoutALoggerIsAWorkingNoOp(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			n, err := w.Write([]byte("anything\n"))
-			if err != nil {
-				t.Fatalf("Write: %v", err)
-			}
+			must.OKf(t, err, "Write")
 			if n != len("anything\n") {
 				t.Fatalf("Write reported %d bytes, want %d", n, len("anything\n"))
 			}

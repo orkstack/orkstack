@@ -5,7 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -28,8 +29,11 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // deliveryReceiver is a subscriber whose answer a test can change between
@@ -76,19 +80,6 @@ func (r *deliveryReceiver) request(i int) ([]byte, http.Header) {
 	return r.bodies[i], r.headers[i]
 }
 
-// sleepRecorder stands in for the dispatcher's backoff.
-type sleepRecorder struct {
-	mu    sync.Mutex
-	waits []time.Duration
-}
-
-func (s *sleepRecorder) sleep(_ context.Context, d time.Duration) error {
-	s.mu.Lock()
-	s.waits = append(s.waits, d)
-	s.mu.Unlock()
-	return nil
-}
-
 // deliveryFixture is the production shape in one process: a registry, a
 // notifier whose Observe writes records through the recorder, and a Service
 // reading the same store.
@@ -101,7 +92,6 @@ type deliveryFixture struct {
 	runs     *engine.RunStore
 	svc      *api.Service
 	receiver *deliveryReceiver
-	sleeper  *sleepRecorder
 	logs     *lockedBuffer
 	now      time.Time
 }
@@ -114,7 +104,6 @@ func newDeliveryFixture(t *testing.T, receiverStatus int) *deliveryFixture {
 		spaces:   newFakeRegistry(&orkstackv1.Namespace{Name: "payments"}),
 		runs:     engine.NewRunStore(),
 		receiver: newDeliveryReceiver(t, receiverStatus),
-		sleeper:  &sleepRecorder{},
 		logs:     &lockedBuffer{},
 		// The service's clock runs ahead of the wall clock the notifier
 		// stamps deliveries with, so every delivery a test makes falls inside
@@ -123,9 +112,8 @@ func newDeliveryFixture(t *testing.T, receiverStatus int) *deliveryFixture {
 	}
 	logger := slog.New(slog.NewTextHandler(f.logs, nil))
 	f.notifier = webhooks.NewNotifier(f.registry,
-		webhooks.NewDispatcher(webhooks.DispatcherOptions{Sleep: f.sleeper.sleep}),
-		webhooks.NotifierOptions{Logger: logger})
-	f.notifier.Observe(api.NewDeliveryRecorder(f.store, logger).Record)
+		webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+		webhooks.NotifierOptions{Logger: logger, Record: api.NewDeliveryRecorder(f.store, logger).RecordContext})
 	f.adapter = api.NewWebhookNotifier(f.notifier, logger)
 	f.svc = api.NewService(api.Config{
 		Runs:       f.runs,
@@ -141,9 +129,7 @@ func newDeliveryFixture(t *testing.T, receiverStatus int) *deliveryFixture {
 func (f *deliveryFixture) register(t *testing.T, events ...webhooks.Event) webhooks.Webhook {
 	t.Helper()
 	hook, err := f.registry.Register(webhooks.Registration{URL: f.receiver.server.URL, Events: events, Secret: "s3cr3t"})
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
+	must.OKf(t, err, "Register")
 	return hook
 }
 
@@ -151,9 +137,7 @@ func (f *deliveryFixture) drain(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := f.notifier.Wait(ctx); err != nil {
-		t.Fatalf("deliveries did not settle: %v", err)
-	}
+	must.OKf(t, f.notifier.Wait(ctx), "deliveries did not settle")
 }
 
 // sampleRun is a finished run the fixture's RunStore holds.
@@ -174,10 +158,14 @@ func (f *deliveryFixture) sampleRun(t *testing.T, id string, status orkstackv1.S
 	return run
 }
 
+// announcedSequence is the sequence of every event announce publishes.
+const announcedSequence = 9
+
 func (f *deliveryFixture) announce(t *testing.T, run *orkstackv1.Run, eventType orkstackv1.EventType, status orkstackv1.Status, taskID string) {
 	t.Helper()
 	f.adapter.NotifyRunEvent(context.Background(), &orkstackv1.Event{
 		RunId:     run.GetId(),
+		Sequence:  announcedSequence,
 		Type:      eventType,
 		Status:    status,
 		TaskId:    taskID,
@@ -189,9 +177,7 @@ func (f *deliveryFixture) announce(t *testing.T, run *orkstackv1.Run, eventType 
 func (f *deliveryFixture) list(t *testing.T, req *orkstackv1.ListDeliveriesRequest) *orkstackv1.ListDeliveriesResponse {
 	t.Helper()
 	resp, err := f.svc.ListDeliveries(context.Background(), connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("ListDeliveries(%v): %v", req, err)
-	}
+	must.OKf(t, err, "ListDeliveries(%v)", req)
 	return resp.Msg
 }
 
@@ -231,6 +217,10 @@ func TestDeliveryRecorder_WritesOneRecordPerSettledDelivery(t *testing.T) {
 			t.Errorf("%s = %q, want %q", name, pair[0], pair[1])
 		}
 	}
+	if rec.GetSequence() != announcedSequence || headers.Get(webhooks.SequenceHeader) != strconv.Itoa(announcedSequence) {
+		t.Errorf("record sequence %d, header %s %q; want the event's %d in both",
+			rec.GetSequence(), webhooks.SequenceHeader, headers.Get(webhooks.SequenceHeader), announcedSequence)
+	}
 	if rec.GetBodyBytes() != int64(len(body)) || !rec.GetDelivered() || rec.GetSchemaVersion() != 1 {
 		t.Errorf("record = %v, want delivered, schema 1, %d body bytes", rec, len(body))
 	}
@@ -267,24 +257,19 @@ func TestDeliveryRecorder_RecordsAFailedDeliveryWithEveryAttempt(t *testing.T) {
 		t.Fatalf("recorded %d failed deliveries, want 1", len(listed))
 	}
 	rec := listed[0]
-	if rec.GetDelivered() || len(rec.GetAttempts()) != 4 || f.receiver.count() != 4 {
-		t.Fatalf("record delivered=%t with %d attempts; receiver saw %d; want false, 4, 4",
+	// In one process with no cluster the notifier makes one attempt; the
+	// ladder is Temporal's, proven by the engine's delivery tests
+	// (TestWebhookDelivery_GivesUpAfterTheLastAttemptThePolicyAllows).
+	if rec.GetDelivered() || len(rec.GetAttempts()) != 1 || f.receiver.count() != 1 {
+		t.Fatalf("record delivered=%t with %d attempts; receiver saw %d; want false, 1, 1",
 			rec.GetDelivered(), len(rec.GetAttempts()), f.receiver.count())
 	}
-	wantBackoffs := []time.Duration{0, 100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond}
-	for i, attempt := range rec.GetAttempts() {
-		if attempt.GetNumber() != int32(i+1) || attempt.GetStatusCode() != 502 {
-			t.Errorf("attempt %d = %v, want number %d status 502", i, attempt, i+1)
-		}
-		if attempt.GetBackoff().AsDuration() != wantBackoffs[i] {
-			t.Errorf("attempt %d backoff = %s, want %s", i+1, attempt.GetBackoff().AsDuration(), wantBackoffs[i])
-		}
-		if attempt.GetError() != "receiver answered 502" {
-			t.Errorf("attempt %d error = %q", i+1, attempt.GetError())
-		}
+	attempt := rec.GetAttempts()[0]
+	if attempt.GetNumber() != 1 || attempt.GetStatusCode() != 502 || attempt.GetError() != "receiver answered 502" {
+		t.Errorf("attempt = %v, want number 1, status 502, \"receiver answered 502\"", attempt)
 	}
-	if last := rec.GetAttempts()[3].GetAt().AsTime(); rec.GetSettledAt().AsTime().Before(last) {
-		t.Errorf("settled_at %s is before the last attempt %s", rec.GetSettledAt().AsTime(), last)
+	if rec.GetSettledAt().AsTime().Before(attempt.GetAt().AsTime()) {
+		t.Errorf("settled_at %s is before the attempt %s", rec.GetSettledAt().AsTime(), attempt.GetAt().AsTime())
 	}
 	if got := f.list(t, &orkstackv1.ListDeliveriesRequest{
 		Filters: filters(t, "delivered=true"),
@@ -354,9 +339,7 @@ func TestSubmitRun_RunThatNeverReachedTemporalIsRecorded(t *testing.T) {
 	_, headers := f.awaitDelivery(t)
 	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := f.notifier.Wait(waitCtx); err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	must.OKf(t, f.notifier.Wait(waitCtx), "Wait")
 	rec, ok, err := store.GetDelivery(ctx, headers.Get(webhooks.DeliveryHeader))
 	if err != nil || !ok {
 		t.Fatalf("the synthesized RUN_FAILED was not recorded: %v, %v", ok, err)
@@ -593,9 +576,7 @@ func TestListDeliveries_FiltersAreDecidedFromKeys(t *testing.T) {
 		resp, err := svc.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{
 			Filters: filters(t, tc.filters...),
 		}))
-		if err != nil {
-			t.Fatalf("%q: %v", tc.filters, err)
-		}
+		must.OKf(t, err, "%q", tc.filters)
 		var want []string
 		for i := len(recs) - 1; i >= 0; i-- {
 			if tc.want(recs[i]) {
@@ -673,11 +654,9 @@ func TestListDeliveries_OldTokenIsRefused(t *testing.T) {
 	f := newDeliveryFixture(t, http.StatusOK)
 	recs := seed(t, f.store, f.now.Add(-time.Hour), nil, 3)
 	key, err := artifacts.DeliveryKey(recs[1])
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// A version-1 token, shaped as the removed typed filters minted it.
-	old, _ := json.Marshal(map[string]any{
+	old, _ := stablejson.Marshal(map[string]any{
 		"v": 1, "w": "wh-4a1c0e2b7d3f8159", "r": "", "e": 0, "o": 0, "n": "", "a": "", "b": "",
 		"ws": f.now.Add(-7 * 24 * time.Hour).Format(time.RFC3339Nano), "wu": f.now.Format(time.RFC3339Nano), "k": key,
 	})
@@ -696,9 +675,7 @@ func seed(t *testing.T, store artifacts.DeliveryStore, at time.Time, mutate func
 	for i := range n {
 		queued := at.Add(time.Duration(i) * time.Second)
 		id, err := webhooks.NewDeliveryID(queued)
-		if err != nil {
-			t.Fatalf("NewDeliveryID: %v", err)
-		}
+		must.OKf(t, err, "NewDeliveryID")
 		rec := &orkstackv1.Delivery{
 			Id: id, WebhookId: "wh-4a1c0e2b7d3f8159", Event: orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 			RunId: "ork-2026-09-21-8f31", Namespace: "payments", OrkflowName: "reconcile",
@@ -709,9 +686,7 @@ func seed(t *testing.T, store artifacts.DeliveryStore, at time.Time, mutate func
 		if mutate != nil {
 			mutate(i, rec)
 		}
-		if err := store.PutDelivery(context.Background(), rec); err != nil {
-			t.Fatalf("PutDelivery: %v", err)
-		}
+		must.OKf(t, store.PutDelivery(context.Background(), rec), "PutDelivery")
 		out = append(out, rec)
 	}
 	return out
@@ -725,9 +700,7 @@ func TestListDeliveries_TokenBindsTheSetAndTheResolvedWindow(t *testing.T) {
 		t.Fatal("no next page token after a full page")
 	}
 	raw, err := base64.RawURLEncoding.DecodeString(first.GetNextPageToken())
-	if err != nil {
-		t.Fatalf("token: %v", err)
-	}
+	must.OKf(t, err, "token")
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("token JSON: %v", err)
@@ -870,9 +843,7 @@ func TestRedeliverWebhook_PostsOnceSignedWithTheCurrentSecretAndRecordsANewDeliv
 
 	resp, err := f.svc.RedeliverWebhook(context.Background(),
 		connect.NewRequest(&orkstackv1.RedeliverWebhookRequest{Id: original.GetId()}))
-	if err != nil {
-		t.Fatalf("RedeliverWebhook: %v", err)
-	}
+	must.OKf(t, err, "RedeliverWebhook")
 	if got := f.receiver.count() - before; got != 1 {
 		t.Fatalf("receiver saw %d more requests, want exactly 1", got)
 	}
@@ -883,6 +854,7 @@ func TestRedeliverWebhook_PostsOnceSignedWithTheCurrentSecretAndRecordsANewDeliv
 		webhooks.DeliveryHeader:   rec.GetId(),
 		webhooks.AttemptHeader:    "1",
 		webhooks.TimestampHeader:  original.GetEventAt().AsTime().UTC().Format(time.RFC3339Nano),
+		webhooks.SequenceHeader:   strconv.FormatInt(original.GetSequence(), 10),
 	} {
 		if got := headers.Get(header); got != want {
 			t.Errorf("%s = %q, want %q", header, got, want)
@@ -899,6 +871,7 @@ func TestRedeliverWebhook_PostsOnceSignedWithTheCurrentSecretAndRecordsANewDeliv
 		OrkflowName string `json:"orkflowName"`
 		Status      string `json:"status"`
 		Timestamp   string `json:"timestamp"`
+		Sequence    int64  `json:"sequence"`
 		Run         struct {
 			OrkflowVersion string `json:"orkflowVersion"`
 		} `json:"run"`
@@ -909,6 +882,12 @@ func TestRedeliverWebhook_PostsOnceSignedWithTheCurrentSecretAndRecordsANewDeliv
 	if payload.RunID != original.GetRunId() || payload.OrkflowName != "reconcile" || payload.Status != "FAILED" ||
 		payload.Timestamp != original.GetEventAt().AsTime().UTC().Format(time.RFC3339Nano) {
 		t.Errorf("body header = %+v, want the original transition's", payload)
+	}
+	// A redelivery keeps the original event's sequence, so a receiver that
+	// orders by it places the repeat where the original belonged.
+	if original.GetSequence() != announcedSequence || payload.Sequence != original.GetSequence() || rec.GetSequence() != original.GetSequence() {
+		t.Errorf("sequence: original %d, body %d, new record %d; want the original event's %d in all three",
+			original.GetSequence(), payload.Sequence, rec.GetSequence(), announcedSequence)
 	}
 	if payload.Run.OrkflowVersion != "0.2.0-today" {
 		t.Errorf("embedded run version = %q, want the run as it reads today", payload.Run.OrkflowVersion)
@@ -987,7 +966,7 @@ func TestRedeliverWebhook_BodyCarriesNoItems(t *testing.T) {
 	for label, i := range map[string]int{"original": 0, "redelivery": before} {
 		body, _ := f.receiver.request(i)
 		var payload struct {
-			Run json.RawMessage `json:"run"`
+			Run stablejson.RawJSON `json:"run"`
 		}
 		if err := json.Unmarshal(body, &payload); err != nil {
 			t.Fatalf("%s: decode body: %v", label, err)
@@ -1081,18 +1060,14 @@ func TestAuditInterceptor_RecordsRedeliverWithoutSecrets(t *testing.T) {
 	client := orkstackv1connect.NewWebhookServiceClient(server.Client(), server.URL)
 	resp, err := client.RedeliverWebhook(context.Background(),
 		connect.NewRequest(&orkstackv1.RedeliverWebhookRequest{Id: original.GetId()}))
-	if err != nil {
-		t.Fatalf("RedeliverWebhook: %v", err)
-	}
+	must.OKf(t, err, "RedeliverWebhook")
 	if _, err := client.ListDeliveries(context.Background(), connect.NewRequest(&orkstackv1.ListDeliveriesRequest{})); err != nil {
 		t.Fatalf("ListDeliveries: %v", err)
 	}
 	page, err := audit.ListAuditRecords(context.Background(), artifacts.AuditQuery{
 		Since: f.now.Add(-time.Hour), Until: f.now.Add(time.Hour), Limit: 100,
 	})
-	if err != nil {
-		t.Fatalf("ListAuditRecords: %v", err)
-	}
+	must.OKf(t, err, "ListAuditRecords")
 	if len(page.Records) != 1 {
 		t.Fatalf("audit holds %d records, want exactly the one redeliver (reads are never recorded)", len(page.Records))
 	}
@@ -1106,7 +1081,7 @@ func TestAuditInterceptor_RecordsRedeliverWithoutSecrets(t *testing.T) {
 	if rec.GetDetail() != want {
 		t.Errorf("detail = %q, want %q", rec.GetDetail(), want)
 	}
-	encoded, _ := json.Marshal(rec)
+	encoded, _ := stablejson.Marshal(rec)
 	for _, secret := range []string{"s3cr3t", resp.Msg.GetDelivery().GetSignature(), "sha256="} {
 		if strings.Contains(string(encoded), secret) {
 			t.Errorf("audit record carries %q: %s", secret, encoded)

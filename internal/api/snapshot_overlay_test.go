@@ -9,6 +9,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // overlayService is a deployment with snapshot overlays on (or off), the
@@ -41,12 +43,8 @@ func lastPlan(t *testing.T, starter *fakeStarter) engine.RunPlan {
 func TestSnapshotOverlay_OffMeansNoPolicy(t *testing.T) {
 	caps := &fakeCapabilities{}
 	svc, starter := overlayService(t, false, caps, nil)
-	if err := applyDoc(t, svc, fanOutDoc("wide", 900, 1)); err != nil {
-		t.Fatal(err)
-	}
-	if err := submitName(svc, "wide"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, fanOutDoc("wide", 900, 1)))
+	must.OK(t, submitName(svc, "wide"))
 	if plan := lastPlan(t, starter); plan.SnapshotOverlay != nil || caps.questions() != 0 {
 		t.Fatalf("policy %+v after %d questions, want none and none", plan.SnapshotOverlay, caps.questions())
 	}
@@ -62,12 +60,8 @@ func TestPinRunTreeLimits_SmallTreeSkipsTheOverlayCheck(t *testing.T) {
 		caps := &fakeCapabilities{err: errors.New("never asked")}
 		svc, starter := overlayService(t, true, caps, nil)
 		// 1 task + 255 items = 256 rows: exactly the floor, not over it.
-		if err := applyDoc(t, svc, fanOutDoc("at-floor", 255, 1)); err != nil {
-			t.Fatal(err)
-		}
-		if err := submitName(svc, "at-floor"); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, applyDoc(t, svc, fanOutDoc("at-floor", 255, 1)))
+		must.OK(t, submitName(svc, "at-floor"))
 		if plan := lastPlan(t, starter); plan.SnapshotOverlay != nil || caps.questions() != 0 {
 			t.Fatalf("policy %+v after %d questions, want none and none", plan.SnapshotOverlay, caps.questions())
 		}
@@ -116,9 +110,7 @@ func TestSnapshotOverlay_OmittedWhileAnOlderEngineProcessPolls(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var logs bytes.Buffer
 			svc, starter := overlayService(t, true, tc.caps, &logs)
-			if err := applyDoc(t, svc, fanOutDoc("wide", 900, 1)); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, applyDoc(t, svc, fanOutDoc("wide", 900, 1)))
 			for i := 0; i < 2; i++ {
 				if err := submitName(svc, "wide"); err != nil {
 					t.Fatalf("submit %d = %v; overlays never refuse a run", i, err)

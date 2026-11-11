@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"flag"
 	"fmt"
@@ -22,6 +22,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 )
 
@@ -91,22 +92,6 @@ func integrationPackages(patterns []string) ([]pkgInfo, error) {
 			continue
 		}
 		out = append(out, pkgInfo{ImportPath: f[0], Dir: f[1]})
-	}
-	return out, nil
-}
-
-// packageDirs maps import paths to directories.
-func packageDirs(tags string, pkgs []string) (map[string]string, error) {
-	lines, err := goList(tags, `{{.ImportPath}}{{"\t"}}{{.Dir}}`, pkgs...)
-	if err != nil {
-		return nil, err
-	}
-	out := map[string]string{}
-	for _, l := range lines {
-		f := strings.SplitN(l, "\t", 2)
-		if len(f) == 2 {
-			out[f[0]] = f[1]
-		}
 	}
 	return out, nil
 }
@@ -591,7 +576,6 @@ type integrationPlanOptions struct {
 	nsPrefix, costsFile, allowFile        string
 	selectFile, only                      string
 	quarantineFile, quarantineBase        string
-	hostSpeedFile, hostSpeedBase          string
 	planOnly                              bool
 	planFile                              string
 	shard                                 int
@@ -621,9 +605,6 @@ func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
 	fs.StringVar(&o.allowFile, "allow", "scripts/proof-allowed-skips.txt", "allowed skips")
 	fs.StringVar(&o.quarantineFile, "quarantine", "scripts/proof-quarantine.txt", "the quarantine list")
 	fs.StringVar(&o.quarantineBase, "quarantine-base", "", "the base's copy of the quarantine list (only entries it carries excuse)")
-	fs.StringVar(&o.hostSpeedFile, "host-speed", "scripts/proof-host-speed.tsv", "the host-speed table, hashed into the plan")
-	fs.StringVar(&o.hostSpeedBase, "host-speed-base", "", "the base's copy of the host-speed table, hashed into the plan (only rows it carries excuse)")
-	fs.StringVar(&o.selectFile, "select", "", "a feature selection (proofrun select): run only its integration tests")
 	fs.StringVar(&o.only, "run", "", "run only the tests matching this regexp (by hand; never a proof)")
 	fs.BoolVar(&o.planOnly, "plan-only", false, "compile, list and plan, write integration-plan.json, run nothing")
 	fs.StringVar(&o.planFile, "plan", "", "run the shard a plan names, with no re-planning")
@@ -634,11 +615,10 @@ func integrationFlags() (*flag.FlagSet, *integrationPlanOptions) {
 	fs.StringVar(&o.nightlySpecs, "nightly-specs", nightlySpecFile, "the nightly spec list: a nightly CI plan expects a UI part per listed spec file, up to -ui-shards")
 	fs.StringVar(&o.nightlyMode, "nightly-mode", nightlyInclude, "include (default), defer (leave out entries the base also lists) or only")
 	fs.StringVar(&o.nightlyBase, "nightly-base", "", "the base's copy of the nightly list (required with -nightly-mode defer)")
-	fs.StringVar(&o.tier, "tier", tierFull, "full, nightly, release or feature")
+	fs.StringVar(&o.tier, "tier", tierFull, "full, nightly or release")
 	fs.StringVar(&o.proofID, "proof-id", "", "the proof's id: the plan's image tag and namespace prefix")
 	fs.StringVar(&o.baseCommit, "base-commit", "", "the commit the proof diffs against")
 	fs.StringVar(&o.mergeBase, "merge-base", "", "the merge base of -base-commit and HEAD (computed when absent)")
-	fs.BoolVar(&o.observabilityRequired, "observability-required", false, "the tree changes a telemetry path")
 	fs.BoolVar(&o.printProgress, "print-progress", false, "print proofrun: start/outcome lines as tests run")
 	fs.BoolVar(&o.failFast, "fail-fast", false, "stop at the first test failure no quarantine entry excuses: end the running processes, start no more, and record every unfinished or unstarted test as having no outcome (the ledger still fails the proof)")
 	fs.BoolVar(&o.ci, "ci", false, "this plan is a CI proof's (parts_expected is the job graph, not local)")
@@ -682,11 +662,13 @@ func cmdIntegration(args []string) int {
 		return 2
 	}
 	switch o.tier {
-	case tierFull, tierNightly, tierRelease, tierFeature:
+	case tierFull, tierNightly, tierRelease:
 	default:
-		fmt.Fprintln(os.Stderr, "proofrun integration: -tier must be full, nightly, release or feature")
+		fmt.Fprintln(os.Stderr, "proofrun integration: -tier must be full, nightly or release")
 		return 2
 	}
+	// The full and release tiers run the observability gate in every proof.
+	o.observabilityRequired = o.tier == tierFull || o.tier == tierRelease
 	if o.planFile != "" {
 		if o.planOnly || o.shard < 1 {
 			fmt.Fprintln(os.Stderr, "proofrun integration: -plan runs one shard: give -shard K (1-based) and no -plan-only")
@@ -705,9 +687,9 @@ func cmdIntegration(args []string) int {
 // it unless -plan-only.
 func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	// Only a run that plans every integration package can say a nightly
-	// entry names no integration package: a selection, -run or explicit
-	// package patterns (scripts/integration.sh) compile a subset.
-	complete := o.selectFile == "" && o.only == "" && len(patterns) == 0
+	// entry names no integration package: -run or explicit package patterns
+	// (scripts/integration.sh) compile a subset.
+	complete := o.only == "" && len(patterns) == 0
 	if len(patterns) == 0 {
 		patterns = []string{"./..."}
 	}
@@ -732,14 +714,6 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 			return 2
 		}
 	}
-	var sel *selection
-	if o.selectFile != "" {
-		sel = &selection{}
-		if err := readJSON(o.selectFile, sel); err != nil {
-			fmt.Fprintln(os.Stderr, "proofrun integration:", err)
-			return 2
-		}
-	}
 	nightly, err := readNightlyList(o.nightlyFile)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
@@ -753,15 +727,10 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		}
 	}
 
-	pkgs, chosen, whole, err := integrationPackageSet(sel, patterns)
+	pkgs, err := integrationPackages(patterns)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 		return 2
-	}
-	if sel != nil && len(pkgs) == 0 {
-		fmt.Fprintln(stdout, "proofrun integration: the selection runs no integration test")
-		plan := &integrationPlan{Format: planFormat, Tier: tierFeature, Expected: []testRef{}, Jobs: []job{}, Shards: []planShard{}, Packages: []planPackage{}, Problems: []string{}}
-		return writePlan(*o, plan, measured, nightly, nightlyBase, nil)
 	}
 	if err := os.MkdirAll(filepath.Join(o.out, "integration"), 0o755); err != nil {
 		fmt.Fprintln(os.Stderr, "proofrun integration:", err)
@@ -805,17 +774,8 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 		for _, n := range names {
 			listed[p.ImportPath][n] = true
 		}
-		want := names
-		if chosen != nil && !whole[p.ImportPath] {
-			want = chosen[p.ImportPath]
-		}
-		for _, n := range want {
+		for _, n := range names {
 			if onlyRE != nil && !onlyRE.MatchString(n) {
-				continue
-			}
-			if !listed[p.ImportPath][n] {
-				problems = append(problems, fmt.Sprintf("%s.%s was selected, and its test binary does not list it", p.ImportPath, n))
-				unlisted = append(unlisted, testKey{p.ImportPath, n})
 				continue
 			}
 			run[p.ImportPath] = append(run[p.ImportPath], n)
@@ -851,10 +811,8 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 	deferred := map[testKey]nightlyEntry{}
 	switch {
 	case o.nightlyMode == nightlyDefer:
-		if sel == nil {
-			deferred = deferredSet(nightly, nightlyBase)
-		}
-	case o.nightlyMode == nightlyOnly && sel == nil:
+		deferred = deferredSet(nightly, nightlyBase)
+	case o.nightlyMode == nightlyOnly:
 		// expected is the nightly list's tests only; everything else is out of tier.
 	}
 	runSet := map[testKey]bool{}
@@ -867,7 +825,7 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 			runSet[k] = true
 		}
 	}
-	if o.nightlyMode == nightlyOnly && sel == nil {
+	if o.nightlyMode == nightlyOnly {
 		runSet = map[testKey]bool{}
 		for _, e := range nightly {
 			if listed[e.Package][e.Test] {
@@ -914,7 +872,7 @@ func planAndMaybeRun(o *integrationPlanOptions, patterns []string) int {
 			for i := range idx {
 				idx[i] = i + 1
 			}
-			b, _ := json.Marshal(idx)
+			b, _ := stablejson.Marshal(idx)
 			if err := os.WriteFile(o.matrixOut, append(b, '\n'), 0o644); err != nil {
 				fmt.Fprintln(os.Stderr, "proofrun integration:", err)
 				return 1
@@ -1081,10 +1039,7 @@ func writePlan(o integrationPlanOptions, p *integrationPlan, measured costs, nig
 	p.Quarantine = quarantineRef{File: o.quarantineFile}
 	p.Quarantine.SHA256, _ = fileSHA256(o.quarantineFile)
 	p.Quarantine.BaseSHA256, _ = fileSHA256(o.quarantineBase)
-	p.HostSpeed = quarantineRef{File: o.hostSpeedFile}
-	p.HostSpeed.SHA256, _ = fileSHA256(o.hostSpeedFile)
-	p.HostSpeed.BaseSHA256, _ = fileSHA256(o.hostSpeedBase)
-	p.PartsExpected = partsExpected(o.tier, !o.ci, len(p.Shards), 0, o.observabilityRequired)
+	p.PartsExpected = partsExpected(o.tier, !o.ci, len(p.Shards), 0)
 	if o.ci {
 		uiShards := o.uiShards
 		if o.tier == tierNightly {
@@ -1094,7 +1049,7 @@ func writePlan(o integrationPlanOptions, p *integrationPlan, measured costs, nig
 			}
 			uiShards = nightlyUIShards(o.uiShards, rows)
 		}
-		p.PartsExpected = partsExpected(o.tier, false, len(p.Shards), uiShards, o.observabilityRequired)
+		p.PartsExpected = partsExpected(o.tier, false, len(p.Shards), uiShards)
 	}
 	if p.CheckedOn == "" {
 		p.CheckedOn = time.Now().UTC().Format("2006-01-02")

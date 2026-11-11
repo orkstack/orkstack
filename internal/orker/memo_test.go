@@ -3,7 +3,6 @@ package orker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
@@ -21,8 +20,11 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------- fakes
@@ -250,9 +252,7 @@ type cacheHarness struct {
 func newCacheHarness(t *testing.T) *cacheHarness {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local store: %v", err)
-	}
+	must.OKf(t, err, "local store")
 	t.Cleanup(func() { _ = store.Close() })
 	events := &memoEventLog{}
 	h := &cacheHarness{
@@ -315,9 +315,7 @@ func (h *cacheHarness) hasLine(prefix string) bool {
 func (h *cacheHarness) put(t *testing.T, name string, data []byte) *orkstackv1.ArtifactRef {
 	t.Helper()
 	ref, err := h.store.Put(context.Background(), name, bytes.NewReader(data), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatalf("put %s: %v", name, err)
-	}
+	must.OKf(t, err, "put %s", name)
 	return refPtr(ref)
 }
 
@@ -330,9 +328,7 @@ func cachedTaskInput(t *testing.T, runID string) *orkstackv1.ExecuteTaskInput {
 	in.OrkflowDefinitionDigest = "sha256:def-" + runID
 	in.IdempotencyKey = "default/" + runID + "/featurize"
 	key, err := artifacts.CommitKey("default", runID, "featurize")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	in.CommitUri = cacheRoot + "/" + key
 	with, _ := structpb.NewStruct(map[string]any{"rows": "{{ .inputs.rows }}"})
 	in.With = with
@@ -346,9 +342,7 @@ func cachedTaskInput(t *testing.T, runID string) *orkstackv1.ExecuteTaskInput {
 func (h *cacheHarness) produce(t *testing.T, in *orkstackv1.ExecuteTaskInput) *orkstackv1.ExecuteTaskResult {
 	t.Helper()
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("produce: %v", err)
-	}
+	must.OKf(t, err, "produce")
 	if !result.GetCache().GetMemoWritten() {
 		t.Fatalf("produce: no memo written: %v", result.GetCache())
 	}
@@ -360,9 +354,7 @@ func (h *cacheHarness) memoFor(t *testing.T, result *orkstackv1.ExecuteTaskResul
 	t.Helper()
 	ref := memoRefFor(in, memoKey{Key: result.GetCache().GetKey()})
 	memo, err := h.memos.MemoryMemoStore.GetMemo(context.Background(), ref)
-	if err != nil {
-		t.Fatalf("read the memo: %v", err)
-	}
+	must.OKf(t, err, "read the memo")
 	return memo, ref
 }
 
@@ -438,7 +430,7 @@ func TestMemoKey_PinnedDocumentAndKey(t *testing.T) {
 			t.Fatalf("component %s = %q, want %q", name, key.Components[name], want)
 		}
 	}
-	componentsJSON, _ := json.Marshal(wantComponents)
+	componentsJSON, _ := stablejson.Marshal(wantComponents)
 	document := `{"v":1,"namespace":"ml","scope":"orkflow","orkflow":"cached-pipeline","task":"featurize","components":` +
 		string(componentsJSON) + `}`
 	if want := sha256Hex([]byte(document)); key.Key != want {
@@ -454,7 +446,7 @@ func TestMemoKey_PinnedDocumentAndKey(t *testing.T) {
 
 func TestMemoKey_EveryComponentChangesTheKey(t *testing.T) {
 	baseConfig, baseRun := []byte("{}\n"), []byte("{}\n")
-	item := &resolvedEachItem{Bytes: json.RawMessage(`{"name":"a"}`), As: "part", Index: 1, Count: 4}
+	item := &resolvedEachItem{Bytes: stablejson.RawJSON(`{"name":"a"}`), As: "part", Index: 1, Count: 4}
 	base := func() (*orkstackv1.ExecuteTaskInput, *stagedInputs, []byte, []byte, *resolvedEachItem) {
 		in, staged := pinnedKeyInput()
 		staged.eachUpstream = []taskJSONEachUpstream{{TaskID: "convert", Count: 0}}
@@ -505,7 +497,7 @@ func TestMemoKey_EveryComponentChangesTheKey(t *testing.T) {
 			staged.eachUpstream[0].Count = 1
 		},
 		"the item value": func(_ *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, it *resolvedEachItem) {
-			it.Bytes = json.RawMessage(`{"name":"b"}`)
+			it.Bytes = stablejson.RawJSON(`{"name":"b"}`)
 		},
 		"as": func(_ *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, it *resolvedEachItem) {
 			it.As = "item"
@@ -613,9 +605,7 @@ func TestMemoKey_RunCoordinatesDoNotChangeTheKey(t *testing.T) {
 			in.Cache.Refresh = true
 			in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{ref}}}
 			ws, err := NewWorkspace(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true)
 			if failure != nil {
 				t.Fatal(failure)
@@ -649,9 +639,7 @@ func TestMemoKey_InputWithoutDigestIsUnkeyable(t *testing.T) {
 		ref.Sha256 = ""
 		in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{ref}}}
 		result, err := h.dispatcher.Execute(context.Background(), in)
-		if err != nil {
-			t.Fatalf("Execute: %v", err)
-		}
+		must.OKf(t, err, "Execute")
 		if c := result.GetCache(); c.GetOutcome() != orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS ||
 			c.GetMissReason() != MemoMissInputUnhashed || c.GetKey() != "" {
 			t.Fatalf("refresh=%v cache = %v", refresh, c)
@@ -676,18 +664,14 @@ func TestExecute_CacheHitReturnsTheSourceResultWithoutAContainer(t *testing.T) {
 	}
 	pullsBefore, createsBefore := h.runtime.counts()
 	// The secret's source no longer resolves: a hit must never read it.
-	if err := os.Unsetenv(envName); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Unsetenv(envName))
 	h.clearLines()
 
 	h.now = h.now.Add(time.Hour)
 	second := cachedTaskInput(t, "ork-run-2")
 	second.Secrets = first.Secrets
 	result, err := h.dispatcher.Execute(context.Background(), second)
-	if err != nil {
-		t.Fatalf("Execute (hit): %v", err)
-	}
+	must.OKf(t, err, "Execute (hit)")
 	if pulls, creates := h.runtime.counts(); pulls != pullsBefore || creates != createsBefore {
 		t.Fatalf("a hit pulled (%d→%d) or created (%d→%d)", pullsBefore, pulls, createsBefore, creates)
 	}
@@ -714,9 +698,7 @@ func TestExecute_CacheHitReturnsTheSourceResultWithoutAContainer(t *testing.T) {
 		t.Fatalf("values inline = %q (%v)", result.GetValuesJson(), result.GetValuesInlined())
 	}
 	record, err := h.commits.Get(context.Background(), second.GetCommitUri())
-	if err != nil {
-		t.Fatalf("this run's commit: %v", err)
-	}
+	must.OKf(t, err, "this run's commit")
 	commit := record.Commit
 	if commit.GetRunId() != "ork-run-2" || commit.GetIdempotencyKey() != second.GetIdempotencyKey() ||
 		commit.GetOrkflowDefinitionDigest() != second.GetOrkflowDefinitionDigest() ||
@@ -749,13 +731,9 @@ func TestExecute_HitOfAHitCommitNamesTheOriginalProducer(t *testing.T) {
 	memo.Source.CommitSha256 = hit.GetCommit().GetSha256()
 	record, _ := h.commits.Get(context.Background(), second.GetCommitUri())
 	memo.Source.FinishedAt = record.Commit.GetFinishedAt()
-	if err := h.memos.MemoryMemoStore.PutMemo(context.Background(), memo); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, h.memos.MemoryMemoStore.PutMemo(context.Background(), memo))
 	third, err := h.dispatcher.Execute(context.Background(), cachedTaskInput(t, "ork-run-3"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := third.GetCache().GetSource().GetRunId(); got != "ork-run-1" {
 		t.Fatalf("a hit of a hit names %q, want the original producer ork-run-1", got)
 	}
@@ -774,24 +752,18 @@ func TestExecute_CacheMissReasons(t *testing.T) {
 	}
 	rewriteMemo := func(t *testing.T, f *fixture, mutate func(*orkstackv1.CacheMemo)) {
 		mutate(f.memo)
-		if err := f.h.memos.MemoryMemoStore.PutMemo(context.Background(), f.memo); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, f.h.memos.MemoryMemoStore.PutMemo(context.Background(), f.memo))
 	}
 	// forgeSource rewrites the source commit (as a new object) and repoints
 	// the memo at it with a matching digest, so only the mutated field fails.
 	forgeSource := func(t *testing.T, f *fixture, mutate func(*orkstackv1.ActivityCommit)) {
 		record, err := f.h.commits.Get(context.Background(), f.memo.GetSource().GetCommitUri())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		forged := proto.Clone(record.Commit).(*orkstackv1.ActivityCommit)
 		mutate(forged)
 		uri := cacheRoot + "/forged/" + t.Name()
 		created, err := f.h.commits.MemoryCommitStore.Create(context.Background(), uri, forged)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		rewriteMemo(t, f, func(m *orkstackv1.CacheMemo) {
 			m.Source.CommitUri = uri
 			m.Source.CommitSha256 = created.SHA256
@@ -801,9 +773,7 @@ func TestExecute_CacheMissReasons(t *testing.T) {
 	}
 	localPath := func(t *testing.T, uri string) string {
 		u, err := url.Parse(uri)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return filepath.FromSlash(u.Path)
 	}
 	rows := []struct {
@@ -823,9 +793,7 @@ func TestExecute_CacheMissReasons(t *testing.T) {
 			t.Cleanup(func() { memoLookupTimeout = saved })
 		}},
 		{"undecodable", MemoMissUnreadable, func(t *testing.T, f *fixture) {
-			if err := f.h.memos.PutRaw(f.ref, []byte("garbage")); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, f.h.memos.PutRaw(f.ref, []byte("garbage")))
 		}},
 		{"unknown schema", MemoMissUnreadable, func(t *testing.T, f *fixture) {
 			rewriteMemo(t, f, func(m *orkstackv1.CacheMemo) { m.SchemaVersion = 2 })
@@ -833,30 +801,22 @@ func TestExecute_CacheMissReasons(t *testing.T) {
 		{"key mismatch", MemoMissMismatch, func(t *testing.T, f *fixture) {
 			raw, _ := artifacts.MarshalMemo(f.memo)
 			raw = bytes.Replace(raw, []byte(f.memo.GetKey()), []byte(strings.Repeat("f", 64)), 1)
-			if err := f.h.memos.PutRaw(f.ref, raw); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, f.h.memos.PutRaw(f.ref, raw))
 		}},
 		{"namespace mismatch", MemoMissMismatch, func(t *testing.T, f *fixture) {
 			raw, _ := artifacts.MarshalMemo(f.memo)
 			raw = bytes.Replace(raw, []byte(`"namespace": "default"`), []byte(`"namespace": "other"`), 1)
-			if err := f.h.memos.PutRaw(f.ref, raw); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, f.h.memos.PutRaw(f.ref, raw))
 		}},
 		{"task mismatch", MemoMissMismatch, func(t *testing.T, f *fixture) {
 			raw, _ := artifacts.MarshalMemo(f.memo)
 			raw = bytes.Replace(raw, []byte(`"taskId": "featurize"`), []byte(`"taskId": "train"`), 1)
-			if err := f.h.memos.PutRaw(f.ref, raw); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, f.h.memos.PutRaw(f.ref, raw))
 		}},
 		{"orkflow mismatch", MemoMissMismatch, func(t *testing.T, f *fixture) {
 			raw, _ := artifacts.MarshalMemo(f.memo)
 			raw = bytes.Replace(raw, []byte(`"orkflowName": "cached-pipeline"`), []byte(`"orkflowName": "other"`), 1)
-			if err := f.h.memos.PutRaw(f.ref, raw); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, f.h.memos.PutRaw(f.ref, raw))
 		}},
 		{"expired", MemoMissExpired, func(_ *testing.T, f *fixture) { f.h.now = f.h.now.Add(48 * time.Hour) }},
 		{"source commit absent", MemoMissSourceGone, func(t *testing.T, f *fixture) {
@@ -895,21 +855,15 @@ func TestExecute_CacheMissReasons(t *testing.T) {
 		}},
 		{"artifact over size", MemoMissSourceOverLimits, func(_ *testing.T, f *fixture) { f.in.Limits.ArtifactMaxBytes = 2 }},
 		{"values object missing", MemoMissSourceObjectAbsent, func(t *testing.T, f *fixture) {
-			if err := os.Remove(localPath(t, f.source.GetValuesRef().GetUri())); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.Remove(localPath(t, f.source.GetValuesRef().GetUri())))
 		}},
 		{"values corrupt", MemoMissSourceObjectAbsent, func(t *testing.T, f *fixture) {
 			path := localPath(t, f.source.GetValuesRef().GetUri())
 			_ = os.Chmod(path, 0o644)
-			if err := os.WriteFile(path, []byte(`{"rows":4}`), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(path, []byte(`{"rows":4}`), 0o644))
 		}},
 		{"artifact object missing", MemoMissSourceObjectAbsent, func(t *testing.T, f *fixture) {
-			if err := os.Remove(localPath(t, f.source.GetArtifacts()[0].GetUri())); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.Remove(localPath(t, f.source.GetArtifacts()[0].GetUri())))
 		}},
 		{"artifact check times out", MemoMissUnreadable, func(t *testing.T, f *fixture) {
 			blocking := &blockingStatStore{Store: f.h.store}
@@ -962,9 +916,7 @@ func TestExecute_CacheMissReasons(t *testing.T) {
 		h := newCacheHarness(t)
 		h.dispatcher.Commits = nil
 		result, err := h.dispatcher.Execute(context.Background(), cachedTaskInput(t, "ork-miss"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if result.GetCache().GetMissReason() != MemoMissStoreAbsent {
 			t.Fatalf("cache = %v", result.GetCache())
 		}
@@ -975,9 +927,7 @@ func TestExecute_CacheMissWritesTheMemoAfterTheCommit(t *testing.T) {
 	h := newCacheHarness(t)
 	in := cachedTaskInput(t, "ork-run-1")
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if events := h.events.list(); len(events) != 2 || events[0] != "create-commit" || events[1] != "put-memo" {
 		t.Fatalf("events = %v, want the commit create before the memo put", events)
 	}
@@ -1022,9 +972,7 @@ func TestExecute_MemoWriteFailureNeverFailsTheTask(t *testing.T) {
 			var logged bytes.Buffer
 			h.dispatcher.Logger = slogTo(&logged)
 			result, err := h.dispatcher.Execute(context.Background(), cachedTaskInput(t, "ork-run-1"))
-			if err != nil {
-				t.Fatalf("a memo write failure failed the task: %v", err)
-			}
+			must.OKf(t, err, "a memo write failure failed the task")
 			if result.GetCache().GetMemoWritten() || result.GetCache().GetMemoWriteError() == "" {
 				t.Fatalf("cache = %v", result.GetCache())
 			}
@@ -1045,9 +993,7 @@ func TestExecute_BypassedNeverReadsAMemoAndRefreshesIt(t *testing.T) {
 	in := cachedTaskInput(t, "ork-run-2")
 	in.Cache.Refresh = true
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if gets, _ := h.memos.calls(); gets != getsBefore {
 		t.Fatal("a bypass read a memo")
 	}
@@ -1087,9 +1033,7 @@ func TestExecute_ConflictAdoptionWritesNoMemo(t *testing.T) {
 	winnerCache := &orkstackv1.CacheResult{Outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS, Key: strings.Repeat("a", 64), MissReason: MemoMissAbsent}
 	h.commits.hidden[in.GetCommitUri()] = winnerFor(in, h.put(t, "values.json", []byte(`{"rows":3}`)), winnerCache)
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !result.GetCommitAdopted() || result.GetOrkerId() == "" {
 		t.Fatalf("result = %v, want the winner adopted", result)
 	}
@@ -1109,9 +1053,7 @@ func TestExecute_CacheHitCommitConflictReturnsTheWinner(t *testing.T) {
 		Source: &orkstackv1.CacheSource{RunId: "ork-run-1"}}
 	h.commits.hidden[in.GetCommitUri()] = winnerFor(in, h.put(t, "values.json", []byte(`{"rows":3}`)), winnerCache)
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !result.GetCommitAdopted() || !proto.Equal(result.GetCache(), winnerCache) {
 		t.Fatalf("result = %v", result)
 	}
@@ -1146,9 +1088,7 @@ func TestExecute_AdoptedCachedCommitKeepsItsCacheResult(t *testing.T) {
 	// adopts it.
 	_, createsBefore := h.runtime.counts()
 	retry, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !retry.GetCommitAdopted() || retry.GetCache().GetOutcome() != orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT ||
 		retry.GetCache().GetSource().GetRunId() != "ork-run-1" || retry.GetCache().GetMemoWritten() {
 		t.Fatalf("retry = %v", retry)
@@ -1178,9 +1118,7 @@ func TestExecute_CachedFanOutItemKeysOnItsItem(t *testing.T) {
 	results := map[int32]*orkstackv1.ExecuteTaskResult{}
 	for i := int32(0); i < 3; i++ {
 		r, err := h.dispatcher.Execute(context.Background(), item("ork-run-1", i))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		results[i] = r
 	}
 	// Items 0 and 2 carry the same value but different positions: distinct keys.
@@ -1192,9 +1130,7 @@ func TestExecute_CachedFanOutItemKeysOnItsItem(t *testing.T) {
 		t.Fatalf("an item's memo source item = %v", memo.GetSource().Item)
 	}
 	second, err := h.dispatcher.Execute(context.Background(), item("ork-run-2", 1))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if second.GetCache().GetOutcome() != orkstackv1.CacheOutcome_CACHE_OUTCOME_HIT ||
 		second.GetCache().GetSource().GetItem() != 1 {
 		t.Fatalf("item 1 of run 2 = %v", second.GetCache())
@@ -1243,9 +1179,7 @@ func TestExecute_CachedDirectDependentKeysOnEveryItemFile(t *testing.T) {
 	in := mergeIn()
 	in.Cache.Refresh = true // compute the key without reading
 	first, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	components := lastAttempt(t, h.attempts, runID, "merge").GetCache().GetKeyComponents()
 	if components["inputs"] == "" {
 		t.Fatalf("no inputs component: %v", components)
@@ -1256,9 +1190,7 @@ func TestExecute_CachedDirectDependentKeysOnEveryItemFile(t *testing.T) {
 	writeItem(0, "a")
 	writeItem(1, "B")
 	second, err := h.dispatcher.Execute(context.Background(), mergeIn())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if second.GetCache().GetKey() == first.GetCache().GetKey() {
 		t.Fatal("changing one item's file did not change the dependent's key")
 	}
@@ -1274,9 +1206,7 @@ func TestExecute_UncachedInputIsUnchanged(t *testing.T) {
 	in := cachedTaskInput(t, "ork-plain")
 	in.Cache = nil
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if gets, puts := h.memos.calls(); gets != 0 || puts != 0 {
 		t.Fatalf("an uncached task touched the memo store: %d gets, %d puts", gets, puts)
 	}
@@ -1305,9 +1235,7 @@ func TestExecute_PinnedInputIgnoresCache(t *testing.T) {
 	in := cachedTaskInput(t, "ork-pinned")
 	in.Pin = &orkstackv1.PinContext{Name: "build", InstanceId: "00000000-0000-0000-0000-000000000001", TimeoutSeconds: 60}
 	result, err := h.dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if gets, puts := h.memos.calls(); gets != 0 || puts != 0 || result.GetCache() != nil {
 		t.Fatalf("a pinned input took the memo step: %d gets, %d puts, cache %v", gets, puts, result.GetCache())
 	}
@@ -1318,9 +1246,7 @@ func TestPhases_CachedHitAndMissSequences(t *testing.T) {
 	h.produce(t, cachedTaskInput(t, "ork-run-1"))
 	miss := lastAttempt(t, h.attempts, "ork-run-1", "featurize")
 	_, err := h.dispatcher.Execute(context.Background(), cachedTaskInput(t, "ork-run-2"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	hit := lastAttempt(t, h.attempts, "ork-run-2", "featurize")
 	names := func(a *orkstackv1.TaskAttempt) string {
 		var out []string
@@ -1349,9 +1275,7 @@ func TestStageInputs_DeferBytesFetchesValuesOnly(t *testing.T) {
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:SANDBOX_DEFER_SECRET"}}
 	root := t.TempDir()
 	ws, err := NewWorkspace(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true)
 	if failure != nil {
 		t.Fatal(failure)
@@ -1381,9 +1305,7 @@ func TestCompleteStaging_FetchesDeferredArtifactsThenSecrets(t *testing.T) {
 	t.Setenv("SANDBOX_DEFER_SECRET", "v")
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:SANDBOX_DEFER_SECRET"}}
 	ws, err := NewWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true)
 	if failure != nil {
 		t.Fatal(failure)
@@ -1411,16 +1333,10 @@ func TestCompleteStaging_FetchesDeferredArtifactsThenSecrets(t *testing.T) {
 
 func TestEncodeInputFile_MatchesWhatTheWorkspaceWrites(t *testing.T) {
 	ws, err := NewWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	value := map[string]any{"b": []any{1.0, "x"}, "a": map[string]any{"<": "&"}}
-	if err := ws.WriteConfigJSON(value); err != nil {
-		t.Fatal(err)
-	}
-	if err := ws.WriteRunJSON(nil); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, ws.WriteConfigJSON(value))
+	must.OK(t, ws.WriteRunJSON(nil))
 	written, _ := os.ReadFile(filepath.Join(ws.Input, "config.json"))
 	encoded, err := encodeInputFile(configValue(value))
 	if err != nil || !bytes.Equal(written, encoded) {
@@ -1475,16 +1391,38 @@ func TestAttemptRecord_CarriesCacheAndComponents(t *testing.T) {
 
 func TestDescribeOrker_ReportsCacheSupported(t *testing.T) {
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	activities := NewActivitiesWithOptions(store, Options{Runtime: &reapRecorder{}, WorkRoot: t.TempDir()})
 	result, err := activities.DescribeOrker(context.Background())
-	if err != nil {
-		t.Fatalf("DescribeOrker: %v", err)
-	}
+	must.OKf(t, err, "DescribeOrker")
 	if !result.GetCacheSupported() {
 		t.Fatal("this build implements the memo step and must say so")
+	}
+}
+
+// TestMemoKey_ASharedDefinitionsOwnerChangesTheKey: the same task of two
+// namespaces' Orkflows of one name never shares a memo, and an own
+// definition's key is the pinned one (TestMemoKey_PinnedDocumentAndKey).
+func TestMemoKey_ASharedDefinitionsOwnerChangesTheKey(t *testing.T) {
+	config, runJSON := []byte("{\n  \"rows\": 3\n}\n"), []byte("{}\n")
+	own, staged := pinnedKeyInput()
+	ownKey := keyOf(t, own, config, runJSON, staged, nil)
+	shared, staged := pinnedKeyInput()
+	shared.Cache.OrkflowNamespace = "platform"
+	sharedKey := keyOf(t, shared, config, runJSON, staged, nil)
+	if sharedKey.Key == ownKey.Key {
+		t.Fatal("a shared definition's task has the key of the running namespace's own Orkflow of that name")
+	}
+	other, staged := pinnedKeyInput()
+	other.Cache.OrkflowNamespace = "infra"
+	if keyOf(t, other, config, runJSON, staged, nil).Key == sharedKey.Key {
+		t.Fatal("two owners' Orkflows of one name share a key")
+	}
+	componentsJSON, _ := stablejson.Marshal(sharedKey.Components)
+	document := `{"v":1,"namespace":"ml","orkflow_namespace":"platform","scope":"orkflow","orkflow":"cached-pipeline","task":"featurize","components":` +
+		string(componentsJSON) + `}`
+	if want := sha256Hex([]byte(document)); sharedKey.Key != want {
+		t.Fatalf("key = %s, want %s (document %s)", sharedKey.Key, want, document)
 	}
 }

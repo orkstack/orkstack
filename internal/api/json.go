@@ -2,7 +2,8 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/enumname"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // This file owns OrkStack's JSON dialect. protojson writes enum values under
@@ -78,26 +80,24 @@ type renameEnumValue func(enum protoreflect.EnumDescriptor, name string) string
 // rewriteEnums re-encodes a JSON document, renaming every value that lands in
 // an enum-typed field of md. Everything else, including key order, survives.
 //
-// Survives means unchanged in meaning: a document that Go's decoder would
-// quietly change on the way through (a string with bytes that are not UTF-8,
-// or with half of a surrogate pair, both of which it turns into U+FFFD) is
-// refused here, so the caller hands its original bytes to protojson, which
-// refuses them too. A run's input or a caller's name is never silently
-// altered by the dialect.
+// Survives means unchanged in meaning: a document a decoder could read more
+// than one way (a string with bytes that are not UTF-8, or with half of a
+// surrogate pair, or an object that writes a key twice) is refused here, so
+// the caller hands its original bytes to protojson, which refuses them too. A
+// run's input or a caller's name is never silently altered by the dialect.
 func rewriteEnums(data []byte, md protoreflect.MessageDescriptor, rename renameEnumValue) ([]byte, error) {
 	if err := dsl.CheckJSONText(data); err != nil {
 		return nil, err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.UseNumber()
+	decoder := jsontext.NewDecoder(bytes.NewReader(data))
 	node, err := decodeJSON(decoder)
 	if err != nil {
-		return nil, fmt.Errorf("decode json: %w", err)
+		return nil, fmt.Errorf("decode json: %w", stablejson.Explained(err))
 	}
 	// The decoder reads one value and would leave whatever follows it unread;
 	// the rewrite would then drop it and protojson, handed the rewrite, accept
 	// "{}0" as "{}". Anything after the value is for protojson to refuse.
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+	if _, err := decoder.ReadToken(); !errors.Is(err, io.EOF) {
 		return nil, errors.New("decode json: data after the JSON value")
 	}
 	rewriteMessage(node, md, rename)
@@ -194,52 +194,54 @@ type jsonField struct {
 }
 
 // decodeJSON reads one JSON value, preserving object key order and number text.
-func decodeJSON(decoder *json.Decoder) (any, error) {
-	token, err := decoder.Token()
+// The decoder refuses an object that writes a key twice, naming it.
+func decodeJSON(decoder *jsontext.Decoder) (any, error) {
+	token, err := decoder.ReadToken()
 	if err != nil {
 		return nil, err
 	}
-	delim, ok := token.(json.Delim)
-	if !ok {
-		return token, nil // nil, bool, string or json.Number
-	}
-	switch delim {
+	switch token.Kind() {
+	case 'n':
+		return nil, nil
+	case 't', 'f':
+		return token.Bool(), nil
+	case '"':
+		return token.String(), nil
+	case '0':
+		return stablejson.Number(token.String()), nil
 	case '{':
 		object := &jsonObject{}
-		for decoder.More() {
-			key, err := decoder.Token()
+		for decoder.PeekKind() != '}' {
+			key, err := decoder.ReadToken()
 			if err != nil {
 				return nil, err
 			}
-			name, ok := key.(string)
-			if !ok {
-				return nil, fmt.Errorf("object key %v is not a string", key)
-			}
+			name := key.String() // an object's key is always a string token
 			value, err := decodeJSON(decoder)
 			if err != nil {
 				return nil, err
 			}
 			object.fields = append(object.fields, jsonField{name: name, value: value})
 		}
-		if _, err := decoder.Token(); err != nil {
+		if _, err := decoder.ReadToken(); err != nil {
 			return nil, err
 		}
 		return object, nil
 	case '[':
 		items := []any{}
-		for decoder.More() {
+		for decoder.PeekKind() != ']' {
 			item, err := decodeJSON(decoder)
 			if err != nil {
 				return nil, err
 			}
 			items = append(items, item)
 		}
-		if _, err := decoder.Token(); err != nil {
+		if _, err := decoder.ReadToken(); err != nil {
 			return nil, err
 		}
 		return items, nil
 	default:
-		return nil, fmt.Errorf("unexpected json delimiter %q", delim)
+		return nil, fmt.Errorf("unexpected JSON token %v", token)
 	}
 }
 
@@ -250,7 +252,7 @@ func encodeJSON(buf *bytes.Buffer, node any) error {
 		buf.WriteString("null")
 	case bool:
 		buf.WriteString(strconv.FormatBool(value))
-	case json.Number:
+	case stablejson.Number:
 		buf.WriteString(value.String())
 	case string:
 		return encodeJSONString(buf, value)
@@ -289,12 +291,10 @@ func encodeJSON(buf *bytes.Buffer, node any) error {
 // encodeJSONString writes a quoted string without HTML escaping, matching
 // protojson (encoding/json would turn "<" into "\u003c").
 func encodeJSONString(buf *bytes.Buffer, value string) error {
-	var quoted bytes.Buffer
-	encoder := json.NewEncoder(&quoted)
-	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(value); err != nil {
+	quoted, err := json.Marshal(value, stablejson.Unescaped)
+	if err != nil {
 		return fmt.Errorf("encode json: %w", err)
 	}
-	buf.Write(bytes.TrimRight(quoted.Bytes(), "\n"))
+	buf.Write(quoted)
 	return nil
 }

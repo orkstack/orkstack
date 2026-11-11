@@ -54,7 +54,7 @@ test('the seed is the whole run in one call, read tolerantly', async () => {
 	const asked: unknown[] = [];
 	const attempt = create(TaskAttemptSchema, { runId: 'ork-1', taskId: 'build', attempt: 1 });
 	const ok = await readAttemptSeed(
-		{ listTaskAttempts: async (req) => (asked.push(req), { attempts: [attempt] }) },
+		{ listTaskAttempts: async (req) => (asked.push(req), { attempts: [attempt], timings: [] }) },
 		'ork-1',
 		'payments',
 		String,

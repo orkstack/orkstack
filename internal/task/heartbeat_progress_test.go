@@ -1,12 +1,14 @@
 package task
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"reflect"
 	"sort"
 	"testing"
 
 	"go.temporal.io/sdk/converter"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestHeartbeatProgress_JSONShapeIsTheOrkersShape pins the wire names
@@ -17,13 +19,9 @@ func TestHeartbeatProgress_JSONShapeIsTheOrkersShape(t *testing.T) {
 	full := HeartbeatProgress{Phase: "run", ContainerID: "3f2a9c1d0b4e7f00", BytesLogged: 432013312, OrkerID: "orker-7"}
 	dc := converter.GetDefaultDataConverter()
 	payloads, err := dc.ToPayloads(full)
-	if err != nil {
-		t.Fatalf("ToPayloads: %v", err)
-	}
+	must.OKf(t, err, "ToPayloads")
 	var back HeartbeatProgress
-	if err := dc.FromPayloads(payloads, &back); err != nil {
-		t.Fatalf("FromPayloads: %v", err)
-	}
+	must.OKf(t, dc.FromPayloads(payloads, &back), "FromPayloads")
 	if back != full {
 		t.Fatalf("round trip = %+v, want %+v", back, full)
 	}

@@ -145,7 +145,7 @@
 				{
 					"route": "docs/build/await",
 					"title": "Wait for an approval",
-					"description": "Pause a run until a person or another system resolves a task, or a deadline passes.",
+					"description": "Pause a run until a person or another system resolves a task, or a deadline passes, or for a fixed time.",
 					"parts": [
 						{
 							"source": "site/content/how-to/await.md"

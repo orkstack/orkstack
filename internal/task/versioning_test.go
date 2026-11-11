@@ -8,6 +8,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // lazyClient is a Temporal client that has not dialled anything. worker.New
@@ -17,9 +19,7 @@ import (
 func lazyClient(t *testing.T) client.Client {
 	t.Helper()
 	c, err := client.NewLazyClient(client.Options{HostPort: "127.0.0.1:1"})
-	if err != nil {
-		t.Fatalf("NewLazyClient: %v", err)
-	}
+	must.OKf(t, err, "NewLazyClient")
 	t.Cleanup(c.Close)
 	return c
 }

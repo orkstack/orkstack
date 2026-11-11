@@ -196,6 +196,11 @@ func RunStartMemo(wf *orkstackv1.Orkflow, plan RunPlan) map[string]any {
 		MemoOrkflowVersion: wf.GetVersion(),
 		MemoNamespace:      wf.GetNamespace(),
 	}
+	// A shared child names its owner; a definition of its own namespace keeps
+	// the memo it always had.
+	if owner := wf.GetDefinitionNamespace(); owner != "" {
+		memo[MemoOrkflowOwner] = owner
+	}
 	if originSlug, ok := artifacts.OriginKindSlug(plan.Origin.Proto().GetKind()); ok {
 		memo[MemoOriginKind] = originSlug
 		memo[MemoOriginID] = plan.Origin.ID

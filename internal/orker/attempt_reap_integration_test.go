@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests are about what a killed Orker leaves on the host's disk, with a
@@ -42,9 +44,7 @@ func secretInput(t *testing.T, name, value string, command ...string) *orkstackv
 func attemptDirectoryOf(t *testing.T, workRoot, run string) string {
 	t.Helper()
 	dirs, err := filepath.Glob(filepath.Join(workRoot, "ork-"+run+"-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(dirs) != 1 {
 		t.Fatalf("attempt directories of %s under %s: %v, want one", run, workRoot, dirs)
 	}
@@ -56,9 +56,7 @@ func attemptDirectoryOf(t *testing.T, workRoot, run string) string {
 func requireStagedSecret(t *testing.T, dir, value string) {
 	t.Helper()
 	got, err := os.ReadFile(filepath.Join(dir, "secrets", "db"))
-	if err != nil {
-		t.Fatalf("the attempt's staged secret: %v", err)
-	}
+	must.OKf(t, err, "the attempt's staged secret")
 	if string(got) != value {
 		t.Fatalf("the attempt's staged secret reads %q, want %q", got, value)
 	}
@@ -68,9 +66,7 @@ func requireStagedSecret(t *testing.T, dir, value string) {
 func bootLogged(ctx context.Context, t *testing.T, orkerID, workRoot string) (*orker.Activities, *bytes.Buffer) {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	var logged bytes.Buffer
 	activities := orker.NewActivitiesWithOptions(store, orker.Options{
@@ -79,9 +75,7 @@ func bootLogged(ctx context.Context, t *testing.T, orkerID, workRoot string) (*o
 		Logger: slog.New(slog.NewTextHandler(&logged, nil)),
 	})
 	orker.SetRemovalRetryEvery(activities, time.Hour)
-	if err := activities.Boot(ctx); err != nil {
-		t.Fatalf("Boot: %v", err)
-	}
+	must.OKf(t, activities.Boot(ctx), "Boot")
 	t.Cleanup(activities.Close)
 	return activities, &logged
 }
@@ -203,9 +197,7 @@ func TestIntegration_AttemptDirectories_WhatTheOrkerCannotRemoveDoesNotKeepTheSe
 		}
 	})
 	info, err := os.Stat(filepath.Join(dir, "output", "held", "file"))
-	if err != nil {
-		t.Fatalf("the workload's file: %v", err)
-	}
+	must.OKf(t, err, "the workload's file")
 
 	_, logged := bootLogged(ctx, t, id, workRoot)
 

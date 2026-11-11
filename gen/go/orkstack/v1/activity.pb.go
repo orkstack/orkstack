@@ -968,9 +968,14 @@ type CacheContext struct {
 	TtlSeconds int64 `protobuf:"varint,2,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
 	// refresh is true when the run was submitted with no_cache: the Orker reads
 	// no memo, runs the container, and writes the memo from its fresh commit.
-	Refresh       bool `protobuf:"varint,3,opt,name=refresh,proto3" json:"refresh,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Refresh bool `protobuf:"varint,3,opt,name=refresh,proto3" json:"refresh,omitempty"`
+	// orkflow_namespace is set only when the task belongs to an Orkflow another
+	// namespace shared through composition: the namespace that owns the
+	// definition. It is part of the memo key, so the same task of two
+	// namespaces' Orkflows of one name never shares a memo.
+	OrkflowNamespace string `protobuf:"bytes,4,opt,name=orkflow_namespace,json=orkflowNamespace,proto3" json:"orkflow_namespace,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CacheContext) Reset() {
@@ -1022,6 +1027,13 @@ func (x *CacheContext) GetRefresh() bool {
 		return x.Refresh
 	}
 	return false
+}
+
+func (x *CacheContext) GetOrkflowNamespace() string {
+	if x != nil {
+		return x.OrkflowNamespace
+	}
+	return ""
 }
 
 // CacheSource names the commit a memo points at — the one a hit reused.
@@ -3319,12 +3331,13 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\x05error\x18\x03 \x01(\v2\x12.orkstack.v1.ErrorR\x05error\"n\n" +
 	"\vJoinContext\x12/\n" +
 	"\x06policy\x18\x01 \x01(\x0e2\x17.orkstack.v1.JoinPolicyR\x06policy\x12.\n" +
-	"\x05needs\x18\x02 \x03(\v2\x18.orkstack.v1.NeedOutcomeR\x05needs\"x\n" +
+	"\x05needs\x18\x02 \x03(\v2\x18.orkstack.v1.NeedOutcomeR\x05needs\"\xa5\x01\n" +
 	"\fCacheContext\x12-\n" +
 	"\x05scope\x18\x01 \x01(\x0e2\x17.orkstack.v1.CacheScopeR\x05scope\x12\x1f\n" +
 	"\vttl_seconds\x18\x02 \x01(\x03R\n" +
 	"ttlSeconds\x12\x18\n" +
-	"\arefresh\x18\x03 \x01(\bR\arefresh\"\x81\x03\n" +
+	"\arefresh\x18\x03 \x01(\bR\arefresh\x12+\n" +
+	"\x11orkflow_namespace\x18\x04 \x01(\tR\x10orkflowNamespace\"\x81\x03\n" +
 	"\vCacheSource\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12!\n" +

@@ -35,8 +35,8 @@
 # git-token` under `with:`, and a `secrets:` entry whose `name` is git-token and
 # whose `source` is env:GIT_TOKEN, with GIT_TOKEN exported where the Orker runs.
 #
-#   orkctl run submit pinned-checkout --watch
-#   orkctl run submit pinned-checkout --input environment=prod --watch
+#   orkctl run submit pinned-checkout -w
+#   orkctl run submit pinned-checkout -i environment=prod -w
 apiVersion: orkstack/v1
 kind: Orkflow
 name: pinned-checkout

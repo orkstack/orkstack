@@ -13,15 +13,15 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // repoRoot is the module root: this package lives at internal/dist.
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return root
 }
 
@@ -31,9 +31,7 @@ func repoRoot(t *testing.T) string {
 func goTool(t *testing.T) string {
 	t.Helper()
 	path, err := exec.LookPath("go")
-	if err != nil {
-		t.Fatalf("no go command to build with: %v", err)
-	}
+	must.OKf(t, err, "no go command to build with")
 	return path
 }
 
@@ -158,9 +156,7 @@ func TestTargets_ReleaseBuildsEmbedTheTimeZoneDatabase(t *testing.T) {
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), target.BuildEnv()...)
 		out, err := cmd.Output()
-		if err != nil {
-			t.Fatalf("go %s: %v", strings.Join(args, " "), err)
-		}
+		must.OKf(t, err, "go %s", strings.Join(args, " "))
 		return strings.Fields(string(out))
 	}
 	tagsOf := func(t *testing.T, target dist.Target) string {

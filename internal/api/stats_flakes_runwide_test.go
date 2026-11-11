@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // scopedAttempts is an attempt store that offers ONLY the per-scope listing,
@@ -65,9 +67,7 @@ func fanOutRun(t *testing.T, fixture *breakdownFixture, store artifacts.AttemptS
 			SchemaVersion: artifacts.AttemptSchemaVersion, RunId: id, TaskId: task, Item: item,
 			Attempt: attempt, Outcome: outcome, OrkerId: fmt.Sprintf("orker-%d", attempt), Phase: "commit",
 		}
-		if err := store.PutAttempt(context.Background(), record); err != nil {
-			t.Fatalf("put attempt: %v", err)
-		}
+		must.OKf(t, store.PutAttempt(context.Background(), record), "put attempt")
 	}
 	fan := &orkstackv1.TaskRun{TaskId: "fan", Pool: "main", Each: &orkstackv1.TaskEach{}, Status: orkstackv1.Status_STATUS_SUCCEEDED}
 	for i := 0; i < items; i++ {
@@ -97,9 +97,7 @@ func fanOutRun(t *testing.T, fixture *breakdownFixture, store artifacts.AttemptS
 			{TaskId: "skipped", Status: orkstackv1.Status_STATUS_SKIPPED},
 		},
 	}
-	if err := engine.NewRunArchiver(fixture.bodies.inner).Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("archive run %s: %v", id, err)
-	}
+	must.OKf(t, engine.NewRunArchiver(fixture.bodies.inner).Archive(context.Background(), run, nil), "archive run %s", id)
 	return id
 }
 
@@ -107,9 +105,7 @@ func flakeAnswer(t *testing.T, svc *api.Service) *orkstackv1.GetFlakeIndexRespon
 	t.Helper()
 	got, err := api.NewStatsHandler(svc, 0).GetFlakeIndex(context.Background(), connect.NewRequest(
 		flakeRequest("payments", flakeNow.Add(-24*time.Hour), flakeNow, dimOrkerAPI)))
-	if err != nil {
-		t.Fatalf("GetFlakeIndex: %v", err)
-	}
+	must.OKf(t, err, "GetFlakeIndex")
 	got.Msg.ComputedAt = nil
 	return got.Msg
 }

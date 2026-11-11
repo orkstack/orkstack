@@ -4,7 +4,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -25,9 +24,12 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // transparentDocument is the 40-task run that must switch at least twice —
@@ -114,9 +116,7 @@ func (s *canStack) transparentRun(t *testing.T, runID string, plan engine.RunPla
 	childPlan := rawPlan(s.orkerQueue)
 	childPlan.CommitRoot = "mem://commits"
 	cp, err := engine.NewChildRunPlan(child, childPlan, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cp.RunID = runID + "-child"
 	plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
 	return parent, plan
@@ -128,9 +128,9 @@ type generationRecord struct {
 	Length          int    `json:"history_events"`
 	SizeBytes       int64  `json:"history_bytes"`
 	Switch          string `json:"switch,omitempty"` // natural, held, or empty for the last
-	BootstrapEvents int    `json:"bootstrap_events,omitempty"`
+	BootstrapEvents int    `json:"bootstrap_events,omitzero"`
 	Growth          int    `json:"growth_events"`
-	CheckpointBytes int64  `json:"checkpoint_bytes,omitempty"`
+	CheckpointBytes int64  `json:"checkpoint_bytes,omitzero"`
 	HoldSeconds     string `json:"hold,omitempty"`
 }
 
@@ -145,9 +145,7 @@ func publishedOf(t *testing.T, h *historypb.History) []*orkstackv1.Event {
 			continue
 		}
 		var published *orkstackv1.Event
-		if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &published); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &published))
 		out = append(out, published)
 	}
 	return out
@@ -214,9 +212,7 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 	budget := engine.DefaultContinuationBudget(budgetEvents, 1<<20, 5*time.Minute)
 	runID := fmt.Sprintf("ork-transparent-%d", time.Now().UnixNano())
 	wf, plan := s.transparentRun(t, runID, s.plan(maxEvents, &budget))
-	if err := s.starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, runID, wf, nil, plan), "StartRun")
 	var (
 		streamMu  sync.Mutex
 		streamed  []*orkstackv1.Event
@@ -231,20 +227,14 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 		})
 	}()
 	s.waitForSwitch(runID, 1, 3*time.Minute)
-	if err := s.starter.SignalAwait(ctx, runID, completion("approve", `{"approved":true}`, "transparent")); err != nil {
-		t.Fatalf("resolve approve after the first switch: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, s.starter.SignalAwait(ctx, runID, completion("approve", `{"approved":true}`, "transparent")), "resolve approve after the first switch")
+	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the run failed")
 	if err := <-streamErr; err != nil {
 		t.Fatalf("the stream opened at submit ended with %v", err)
 	}
 
 	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 3 {
 		t.Fatalf("%d generations, want at least 3", len(chain))
@@ -256,9 +246,7 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 
 	// One run, its reads unchanged.
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || run.GetId() != runID {
 		t.Fatalf("GetRun = %s %v", run.GetId(), run.GetStatus())
 	}
@@ -266,9 +254,7 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 		t.Fatalf("created_at %v, generation 0 started at %v", run.GetCreatedAt().AsTime(), want)
 	}
 	events, err := s.reader.Events(ctx, runID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	requireContiguous(t, events)
 	streamMu.Lock()
 	gotStream := eventKeys(streamed)
@@ -287,9 +273,7 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 	natural, held := 0, 0
 	for i, h := range histories {
 		info, err := s.client.DescribeWorkflowExecution(ctx, runID, chain[i])
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		records[i] = generationRecord{Execution: chain[i], Length: len(h.GetEvents()),
 			SizeBytes: info.GetWorkflowExecutionInfo().GetHistorySizeBytes()}
 		if i == len(histories)-1 {
@@ -300,13 +284,9 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 		}
 		seg := lastCarry.GetSegments()[i]
 		data, err := s.snapshots.ReadSnapshot(ctx, seg.GetObject().GetUri())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		segment, err := engine.DecodeEventSegment(data, seg.GetObject())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		published := publishedOf(t, h)
 		if len(published) != len(segment.GetEvents()) {
 			t.Fatalf("generation %d published %d events, its segment holds %d", i, len(published), len(segment.GetEvents()))
@@ -319,13 +299,9 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 		handed := continuedCarryOf(t, h)
 		records[i].CheckpointBytes = handed.GetCheckpoint().GetSizeBytes()
 		snapData, err := s.snapshots.ReadSnapshot(ctx, handed.GetSnapshot().GetUri())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		snapshot, err := engine.DecodeSwitchSnapshot(snapData, handed.GetSnapshot())
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		records[i].Switch = "natural"
 		for _, row := range snapshot.GetTaskRuns() {
 			if row.GetEach().GetExpanded() && row.GetStatus() == orkstackv1.Status_STATUS_RUNNING {
@@ -423,16 +399,12 @@ func checkSequenceSnapshots(t *testing.T, ctx context.Context, snapshots *artifa
 	cfg := s3Config()
 	raw := newRawS3ClientForCommitE2E(t, cfg)
 	prefix, err := artifacts.RunSnapshotPrefix("default", runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var keys []string
 	var token *string
 	for {
 		page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(cfg.S3Bucket), Prefix: aws.String(prefix), ContinuationToken: token})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, object := range page.Contents {
 			keys = append(keys, aws.ToString(object.Key))
 		}
@@ -452,13 +424,9 @@ func checkSequenceSnapshots(t *testing.T, ctx context.Context, snapshots *artifa
 			t.Fatalf("snapshot key %q is neither a sequence nor a continuation", key)
 		}
 		data, err := snapshots.ReadSnapshot(ctx, "s3://"+cfg.S3Bucket+"/"+key)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		run := &orkstackv1.Run{}
-		if err := proto.Unmarshal(data, run); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, proto.Unmarshal(data, run))
 		latest := map[string]orkstackv1.Status{}
 		for _, event := range events {
 			if event.GetSequence() > sequence || event.GetTaskId() == "" || event.Item != nil {
@@ -494,24 +462,16 @@ func TestIntegration_ContinuationReplaysEveryGeneration(t *testing.T) {
 	budget := engine.DefaultContinuationBudget(60, 1<<20, 5*time.Minute)
 	runID := fmt.Sprintf("ork-replay-gens-%d", time.Now().UnixNano())
 	wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: gens\ntasks:\n"+guardChain("g", 30, ""))
-	if err := s.starter.StartRun(ctx, runID, wf, nil, s.plan(1000, &budget)); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, runID, wf, nil, s.plan(1000, &budget)), "StartRun")
+	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the run failed")
 	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {
 		t.Fatalf("%d generations, want the run to switch", len(chain))
 	}
 	for i, execution := range chain {
-		if err := replayRecorded(s.history(runID, execution), runID); err != nil {
-			t.Fatalf("generation %d does not replay: %v", i, err)
-		}
+		must.OKf(t, replayRecorded(s.history(runID, execution), runID), "generation %d does not replay", i)
 	}
 	t.Logf("E2 replay: all %d generations of %s replayed deterministically", len(chain), runID)
 }
@@ -560,22 +520,14 @@ tasks:
 	childPlan := rawPlan(s.orkerQueue)
 	childPlan.CommitRoot = "mem://commits"
 	cp, err := engine.NewChildRunPlan(child, childPlan, false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cp.RunID = runID + "-child"
 	plan := s.plan(1000, &budget)
 	plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
-	if err := s.starter.StartRun(ctx, runID, parent, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the parent did not complete: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, runID, parent, nil, plan), "StartRun")
+	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the parent did not complete")
 	described, err := s.client.DescribeWorkflowExecution(ctx, cp.RunID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	chain := s.chainOf(cp.RunID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {
 		t.Fatalf("the child ran %d generations, want it to continue as new", len(chain))
@@ -585,9 +537,7 @@ tasks:
 		t.Fatalf("the child's carried generation decides with %+v / %+v, want the parent's copied limits", carriedPlan.Continuation, carriedPlan.InFlight)
 	}
 	run, err := s.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || taskRunOfRun(run, "release").GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("parent %v, release %v", run.GetStatus(), taskRunOfRun(run, "release").GetStatus())
 	}
@@ -622,7 +572,7 @@ func TestIntegration_ScheduledRunThatContinuesCompletesItsFire(t *testing.T) {
 		plan.Continuation = &budget
 		plan.Origin = &engine.RunOrigin{Kind: "RUN_ORIGIN_KIND_SCHEDULE", ID: rec.GetScheduleId(),
 			Reference: at.UTC().Format(time.RFC3339), Description: rec.GetName()}
-		encoded, err := json.Marshal(plan)
+		encoded, err := stablejson.Marshal(plan)
 		if err != nil {
 			return nil, err
 		}
@@ -649,9 +599,7 @@ func TestIntegration_ScheduledRunThatContinuesCompletesItsFire(t *testing.T) {
 		t.Fatalf("create schedule: %v", err)
 	}
 	defer func() { _ = scheduler.Delete(context.Background(), "default", name) }()
-	if err := scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED); err != nil {
-		t.Fatalf("fire: %v", err)
-	}
+	must.OKf(t, scheduler.Fire(ctx, "default", name, orkstackv1.OverlapPolicy_OVERLAP_POLICY_UNSPECIFIED), "fire")
 	var runID string
 	deadline := time.Now().Add(60 * time.Second)
 	for runID == "" && time.Now().Before(deadline) {
@@ -666,20 +614,14 @@ func TestIntegration_ScheduledRunThatContinuesCompletesItsFire(t *testing.T) {
 		t.Fatal("the fire never prepared a run")
 	}
 	waitWorkflowStarted(t, ctx, s.client, runID)
-	if err := s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the scheduled run did not complete: %v", err)
-	}
+	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the scheduled run did not complete")
 	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {
 		t.Fatalf("the scheduled run ran %d generations, want it to continue as new", len(chain))
 	}
 	fires := scheduleFireIDs(t, ctx, s.client, rec.GetScheduleId(), 1)
-	if err := s.client.GetWorkflow(ctx, fires[0], "").Get(ctx, nil); err != nil {
-		t.Fatalf("the fire did not complete with its run: %v", err)
-	}
+	must.OKf(t, s.client.GetWorkflow(ctx, fires[0], "").Get(ctx, nil), "the fire did not complete with its run")
 	t.Logf("E2 scheduled: run %s ran %d generations; its fire %s completed", runID, len(chain), fires[0])
 }

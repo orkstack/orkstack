@@ -11,6 +11,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The recorded runs of an Orkflow that opens two pins, one after the other
@@ -69,9 +71,7 @@ func replayCapturingPinCreation(t *testing.T, recorded *historypb.History, runID
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: []interceptor.WorkerInterceptor{capture},
 	})
-	if err != nil {
-		t.Fatalf("new replayer: %v", err)
-	}
+	must.OKf(t, err, "new replayer")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return capture, replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
 		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
@@ -119,9 +119,7 @@ func TestRunWorkflow_ReplaysCommittedPinCreationTimeoutHistories(t *testing.T) {
 			}
 
 			capture, err := replayCapturingPinCreation(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("replaying %s against current code failed: %v", tc.path, err)
-			}
+			must.OKf(t, err, "replaying %s against current code failed", tc.path)
 			if got := capture.creationTimeouts(); len(got) != 2 || got[0] != tc.wantTimeout || got[1] != tc.wantTimeout {
 				t.Errorf("current code sent creation timeouts %v on replaying %s, want two of %s, the recorded ones",
 					got, tc.path, tc.wantTimeout)

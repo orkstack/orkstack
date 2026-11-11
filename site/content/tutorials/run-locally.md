@@ -1,6 +1,6 @@
 # Run it locally
 
-Start the whole OrkStack stack on your machine with one command, then apply an example Orkflow and run it. It takes a few minutes, most of it the first build.
+Start the whole OrkStack stack on your machine with one command, then create an example Orkflow and run it. It takes a few minutes, most of it the first build.
 
 ## What you need
 
@@ -17,13 +17,13 @@ Run these in a folder where you keep your projects. The first line clones the re
 git clone https://github.com/orkstack/orkstack.git && cd orkstack
 docker compose up --build -d --wait
 alias orkctl='docker compose run --rm orkctl'
-orkctl apply examples/each-fan-out.ork.yaml
-orkctl run submit each-fan-out --watch
+orkctl orkflow create examples/each-fan-out.ork.yaml
+orkctl run submit each-fan-out -w
 ```
 
 The first `up` builds every image from your clone, which takes a few minutes. Later runs reuse Docker's build cache. The command returns once every service passes its health check.
 
-The `alias` runs `orkctl` from the image the stack built, so you install nothing else. The container sees the clone's folder read-only, which is enough for `orkctl apply examples/...`.
+The `alias` runs `orkctl` from the image the stack built, so you install nothing else. The container sees the clone's folder read-only, which is enough for `orkctl orkflow create examples/...`.
 
 <!-- site-media: cli-quickstart -->
 
@@ -55,7 +55,7 @@ The alias runs `orkctl` in a container. The container sees the clone's folder re
 
 Some commands write a file, or need Docker. They need the installed binary:
 
-- `orkctl run evidence export --output` and `orkctl run artifact download --output`, which write a file;
+- `orkctl run evidence export -o` and `orkctl run artifact download -o`, which write a file;
 - `orkctl task run` and `orkctl activity build`, which need Docker.
 
 To install the binary, download it from a release. You need no Go for this. Open the [releases page](https://github.com/orkstack/orkstack/releases) to see the archives. On Linux with an amd64 processor, this downloads the archive, checks it, and unpacks the binary:

@@ -19,6 +19,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // testDeadlockDetectionTimeout is the deadlock detector's budget in this
@@ -104,9 +106,7 @@ func repeat64(c byte) string {
 func newAttemptDispatcher(t *testing.T, runtime ContainerRuntime, attempts artifacts.AttemptStore) *OCIDispatcher {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local artifact store: %v", err)
-	}
+	must.OKf(t, err, "local artifact store")
 	return &OCIDispatcher{
 		Runtime:  runtime,
 		Store:    store,
@@ -173,9 +173,7 @@ func TestAttemptRecords_OneRecordPerAttemptOfARetriedTask(t *testing.T) {
 	}
 
 	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
-	if err != nil {
-		t.Fatalf("ListAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListAttempts")
 	if len(records) != 2 {
 		t.Fatalf("stored %d attempt records, want one per attempt (2): %+v", len(records), records)
 	}
@@ -325,9 +323,7 @@ func TestAttemptRecords_CancellationIsStillRecorded(t *testing.T) {
 	}
 
 	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
-	if err != nil {
-		t.Fatalf("ListAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListAttempts")
 	if len(records) != 1 {
 		t.Fatalf("stored %d records for a cancelled attempt, want 1", len(records))
 	}
@@ -360,9 +356,7 @@ func TestAttemptRecords_AnOrkerStoppingRecordsORKER_STOPPED(t *testing.T) {
 	}
 
 	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
-	if err != nil {
-		t.Fatalf("ListAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListAttempts")
 	if len(records) != 1 {
 		t.Fatalf("stored %d records for an attempt the orker stopped, want 1", len(records))
 	}
@@ -543,9 +537,7 @@ func TestAttemptRecord_AnAdoptedCommitCarriesTheReservation(t *testing.T) {
 	adoptStore := artifacts.NewMemoryAttemptStore()
 	dispatcher.Attempts = adoptStore
 	second, err := dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("second Execute: %v", err)
-	}
+	must.OKf(t, err, "second Execute")
 	if !second.GetCommitAdopted() {
 		t.Fatal("the second attempt did not adopt the first attempt's commit")
 	}

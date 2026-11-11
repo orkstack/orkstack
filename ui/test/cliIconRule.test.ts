@@ -41,7 +41,7 @@ test('no label a person reads names orkctl', () => {
 	// A palette entry or a popover row is named by its `label`; a command lives
 	// in `command` or `text`, behind the icon that copies it.
 	const named = /\blabel:\s*(['"`])(?:(?!\1).)*\borkctl\b/;
-	expect(named.test(`label: 'Copy orkctl run get --json'`)).toBe(true);
+	expect(named.test(`label: 'Copy orkctl run get -j'`)).toBe(true);
 	expect(named.test(`label: 'The run, as JSON', command: 'orkctl run get'`)).toBe(false);
 	const sources = readdirSync(src, { recursive: true }).filter((rel) => /\.(svelte|ts)$/.test(rel) && !rel.startsWith('lib/gen/'));
 	expect(sources.filter((rel) => named.test(readFileSync(`${src}/${rel}`, 'utf8')))).toEqual([]);

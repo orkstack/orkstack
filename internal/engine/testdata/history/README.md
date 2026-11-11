@@ -100,6 +100,18 @@ deadline Timer, which starts before the `TASK_AWAITING` emit.
 - recorder: `TestIntegration_RecordAwaitedRunHistories`
   (`await_integration_test.go`); `ORK_REQUIRE_AWAITED_FIXTURES`
 
+### `run-sleeping-v1.json` — sleeps
+
+The run `a → sleep b (2 s) → c`, left to wake. Pins the sleep's one Timer,
+which starts before the `TASK_SLEEPING` emit, and its firing as the task's
+success: no Signal, no activity, and no reference to `b` in `c`'s input.
+
+- command: `TestRunWorkflow_ReplaysCommittedSleepingHistory`
+- payload: `TestSleepingHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
+- negative: `TestSleepingHistory_CatchesAMovedTimer`
+- recorder: `TestIntegration_RecordSleepingRunHistory`
+  (`sleep_integration_test.go`); `ORK_REQUIRE_SLEEPING_FIXTURES`
+
 ### `run-each-v1.json` — fan-out
 
 `list → convert (each: over six parts, max_parallel: 2, item 3 retried once)
@@ -155,6 +167,24 @@ cache context, so `run-succeeded-v1.json` is unaffected.
 - negative: `TestCachedHistory_PayloadCheckCatchesADroppedCacheContext`
 - recorder: `TestIntegration_RecordCachedRunHistory`
   (`cache_integration_test.go`); `ORK_REQUIRE_CACHED_FIXTURE`
+
+### `run-cross-namespace-v1.json` — a shared child's owner
+
+One run of `internal/dsl/testdata/orkflows/cached-pipeline.ork.yaml` whose
+planned definition another namespace shared: it runs in `search` and names
+`platform` in `definition_namespace`, as submit plans a child composed with
+`uses: orkflow:platform/…` (docs/DSL.md "Sharing across namespaces"). Pins the
+`cross-namespace` version marker, asked before the first snapshot; the
+snapshot's `orkflow_namespace`; and `CacheContext.orkflow_namespace`, which
+the Orker puts in the memo key. Only a planned definition that names an owner
+asks the gate, so every other fixture replays without meeting it.
+
+- command: `TestRunWorkflow_ReplaysCommittedCrossNamespaceHistory`
+- payload: `TestCrossNamespaceHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
+  (every input, event and the finished run)
+- negative: `TestCrossNamespaceHistory_PayloadCheckCatchesAMissingOwner`
+- recorder: `TestIntegration_RecordCrossNamespaceRunHistory`
+  (`shared_integration_test.go`); `ORK_REQUIRE_CROSS_NAMESPACE_FIXTURE`
 
 ### `run-join-v1.json` — joins and failure handlers
 
@@ -315,6 +345,69 @@ first time the cap holds, and every refill the cap held back. Recorded by
 - command: `TestRunWorkflow_ReplaysCommittedInFlightCapHistory`
 - payload: `TestContinuedHistory_PayloadsMatchWhatCurrentCodeSends`
   ("in-flight cap": fully re-executed; the cap reads no history length)
+
+### `run-task-publish-window-v1.json` and `run-task-publish-window-legacy-v1.json` — plain tasks' publishes detached
+
+Forty plain tasks that start together and a task that needs them all, under a
+plan whose in-flight limit pins the publish window (32) and a 16 KiB byte
+budget, small enough that it, not the window, ends most workflow tasks. The
+gated fixture is recorded by today's code: it carries the lazy
+`task-publish-window` marker once (`task_publish.go`, asked at the first plain
+task, before its `TASK_SCHEDULED`), and its workflow tasks schedule several
+tasks' `TASK_SCHEDULED` and `TASK_STARTED` publishes without waiting for them,
+never more than the window and never more task input than the budget. The
+`legacy` fixture is recorded from the same plan with the gate switched off
+(`DisableTaskPublishGateForTest`), which is the command sequence of every
+build before the gate, a build that ignores the window: no marker, and every
+publish awaited, one per workflow task. It must keep replaying through the
+`DefaultVersion` branch.
+
+- command: `TestRunWorkflow_ReplaysCommittedTaskPublishHistories` (both; it
+  checks each fixture's shape, publishes and task bytes per workflow task)
+- negative: `TestTaskPublishHistory_CatchesTheGateRemoved` (the gated
+  fixture replayed with the gate skipped awaits each publish and fails)
+- behaviour: `TestDispatchRamp_AWideStageReachesItsCapInAFewRoundTrips`,
+  `TestDispatchRamp_APlanWithoutTheWindowAwaitsEveryPublish`,
+  `TestDispatchRamp_ABudgetBelowOneTaskEndsAWorkflowTaskPerTask`,
+  `TestTaskPublish_TheGateIsAskedOnceBeforeTheFirstTaskEvent`,
+  `TestTaskPublish_ACarriedGenerationKeepsTheDecision`
+- recorder: `TestIntegration_RecordTaskPublishWindowHistories`
+  (`task_publish_integration_test.go`), with `recordE1Pair`; only
+  `ORK_RECORD_GOLDEN_HISTORY=1` writes the fixtures.
+
+### `run-emit-past-cancel-v1.json` and `run-emit-past-cancel-legacy-v1.json` — an outcome written past the cancel
+
+A task and one that needs it (`cancelBesideDocument`), recorded on a real
+cluster with the task's completion and the operator's cancel delivered to one
+workflow task: the recorder holds the task at its gate, stops the run's
+worker, releases the task, waits for its completion to reach history,
+requests the cancel and starts a second worker — continuation chaos C4's
+race, made deterministic. The gated fixture carries the lazy
+`emit-past-cancel` marker (`emit_past_cancel.go`, asked at the run's first
+event); the task's `TASK_SUCCEEDED` is written on a context the cancel does
+not reach and published, and the run ends `RUN_CANCELED` with its stream
+contiguous. The `legacy` fixture is the same race with the gate switched off
+(`DisableEmitPastCancelGateForTest`), the command sequence of every build
+before it: the success's snapshot write is canceled with the run, its number
+is never published and the stream has a hole. It must keep replaying through
+the `DefaultVersion` branch.
+
+- command: `TestRunWorkflow_ReplaysCommittedEmitPastCancelHistories` (both; it
+  checks that each recorded the race and the shape its path leaves)
+- negative: `TestEmitPastCancelHistory_CatchesTheGateRemoved` (the gated
+  fixture replayed with the gate skipped writes the success on the canceled
+  context, loses it, and fails)
+- behaviour: `TestEmitPastCancel_ACompletionBesideTheCancelIsPublished`,
+  `TestEmitPastCancel_BeforeTheChangeTheCompletionIsLost`,
+  `TestEmitPastCancel_ACanceledDispatchIsNeverAnnounced`
+- recorder: `TestIntegration_RecordEmitPastCancelHistories`
+  (`emit_past_cancel_integration_test.go`); only
+  `ORK_RECORD_GOLDEN_HISTORY=1` writes the fixtures.
+
+The run ends at its first idle point, where the task's completion and the
+cancel arrive together, so nothing in it can switch: the two switch tests pass
+both by (`isCanceledAtItsFirstIdlePointHistory`), as they do the refused-route
+histories, and the plan-without-budget test still covers them.
 
 ### `run-cancel-before-dispatch-v1.json` — a cancel seen at a dispatch
 

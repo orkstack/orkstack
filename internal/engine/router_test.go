@@ -7,6 +7,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestSingleRouter_LocatesARunWithoutParsingItsID is the property GetRun rests
@@ -28,9 +30,7 @@ func TestSingleRouter_LocatesARunWithoutParsingItsID(t *testing.T) {
 		"anything",
 	} {
 		located, err := router.Locate(context.Background(), runID)
-		if err != nil {
-			t.Fatalf("Locate(%q): %v", runID, err)
-		}
+		must.OKf(t, err, "Locate(%q)", runID)
 		if located.Reader != binding.Reader {
 			t.Errorf("Locate(%q) returned a different binding", runID)
 		}

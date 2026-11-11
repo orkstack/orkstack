@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // planBranchesYAML is a three-branch conditional Orkflow on the shell fixture
@@ -167,10 +169,8 @@ func TestRunPlan_AgreesWithARealRun(t *testing.T) {
 
 	name := planOrkflowName("run-plan-agree")
 	file := filepath.Join(t.TempDir(), name+".ork.yaml")
-	if err := os.WriteFile(file, []byte(planBranchesYAML(name)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	planCLI(t, server, "apply", file).requireExit(t, exitOK)
+	must.OK(t, os.WriteFile(file, []byte(planBranchesYAML(name)), 0o644))
+	planCLI(t, server, "orkflow", "create", file).requireExit(t, exitOK)
 
 	human := planCLI(t, server, "run", "plan", name, "--input", "region=eu",
 		"--output", `build={"exitCode": 0}`).requireExit(t, exitOK)
@@ -244,22 +244,14 @@ func TestRunPlan_SecondReplicaAnswersForAnOrkflowItNeverApplied(t *testing.T) {
 	awaitOrkflowVisible(ctx, t, cluster.b.flows, name)
 
 	input, err := buildInputPayload([]string{"region=eu"}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	assumed, err := buildAssumedOutputs([]string{`build={"exitCode": 0}`}, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	req := &orkstackv1.PlanRunRequest{OrkflowName: name, Input: input, AssumedOutputs: assumed}
 	fromA, err := cluster.a.flows.PlanRun(ctx, connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("PlanRun on A: %v", err)
-	}
+	must.OKf(t, err, "PlanRun on A")
 	fromB, err := cluster.b.flows.PlanRun(ctx, connect.NewRequest(req))
-	if err != nil {
-		t.Fatalf("PlanRun on B, which never applied %s: %v", name, err)
-	}
+	must.OKf(t, err, "PlanRun on B, which never applied %s", name)
 	if !proto.Equal(fromA.Msg, fromB.Msg) {
 		t.Fatalf("replicas disagree:\nA %v\nB %v", fromA.Msg, fromB.Msg)
 	}
@@ -288,9 +280,7 @@ func TestRunPlan_LeavesNoRunBehind(t *testing.T) {
 		// Filtered to this test's own Orkflow: the shared bucket's archive holds
 		// other suites' runs of the default namespace.
 		resp, err := replica.runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{Filters: []*orkstackv1.FieldFilter{equalsFilter("orkflow_name", name)}}))
-		if err != nil {
-			t.Fatalf("ListRuns on %s: %v", replica.name, err)
-		}
+		must.OKf(t, err, "ListRuns on %s", replica.name)
 		return len(resp.Msg.GetRuns())
 	}
 	beforeA, beforeB := countRuns(cluster.a), countRuns(cluster.b)

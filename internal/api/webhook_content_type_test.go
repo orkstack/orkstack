@@ -2,7 +2,7 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"strings"
@@ -10,6 +10,8 @@ import (
 
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // postDeclared POSTs body to path, declaring contentType, or no Content-Type
@@ -17,21 +19,15 @@ import (
 func (f *auditFixture) postDeclared(t *testing.T, path, contentType, body string) (int, []byte) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(context.Background(), http.MethodPost, f.server.URL+path, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	resp, err := f.server.Client().Do(req)
-	if err != nil {
-		t.Fatalf("POST %s: %v", path, err)
-	}
+	must.OKf(t, err, "POST %s", path)
 	defer resp.Body.Close()
 	payload, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
+	must.OKf(t, err, "read response")
 	return resp.StatusCode, payload
 }
 
@@ -151,18 +147,14 @@ func TestAPIRoutes_GrantNoCrossOriginPreflight(t *testing.T) {
 		{orkstackv1connect.WebhookServiceRegisterWebhookProcedure, http.MethodPost, "content-type"},
 	} {
 		req, err := http.NewRequestWithContext(context.Background(), http.MethodOptions, f.server.URL+c.path, nil)
-		if err != nil {
-			t.Fatalf("build request: %v", err)
-		}
+		must.OKf(t, err, "build request")
 		req.Header.Set("Origin", "https://attacker.example")
 		req.Header.Set("Access-Control-Request-Method", c.method)
 		if c.headers != "" {
 			req.Header.Set("Access-Control-Request-Headers", c.headers)
 		}
 		resp, err := f.server.Client().Do(req)
-		if err != nil {
-			t.Fatalf("OPTIONS %s: %v", c.path, err)
-		}
+		must.OKf(t, err, "OPTIONS %s", c.path)
 		_ = resp.Body.Close()
 		if resp.StatusCode < 400 {
 			t.Errorf("OPTIONS %s (%s) = %d, want a refusal", c.path, c.method, resp.StatusCode)

@@ -16,6 +16,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // slowRetryDocument retries a task whose first wait is two minutes and that
@@ -124,9 +126,7 @@ func TestIntegration_AVersionStoredBeforeTheRetryRuleIsScheduled(t *testing.T) {
 func runRetryToCompletion(t *testing.T, ctx context.Context, s *canStack, wf *orkstackv1.Orkflow, plan engine.RunPlan) (*historypb.History, *commonpb.RetryPolicy) {
 	t.Helper()
 	runID := fmt.Sprintf("ork-retry-%d", time.Now().UnixNano())
-	if err := s.starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, s.starter.StartRun(ctx, runID, wf, nil, plan), "StartRun")
 	waitCtx, stop := context.WithTimeout(ctx, 60*time.Second)
 	defer stop()
 	runErr := s.client.GetWorkflow(waitCtx, runID, "").Get(waitCtx, nil)

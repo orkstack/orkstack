@@ -20,7 +20,7 @@ the tests named throughout hold the tree to them. Grounding: `AGENTS.md`
 
 ## 0. The one-paragraph version
 
-An Orkflow task names an **activity** (`uses:`). At apply time the engine
+An Orkflow task names an **activity** (`uses:`). When a version is created, the engine
 resolves that name through an **activity catalog** to a registry reference and
 then to an immutable **index digest**, and stores both inside the immutable
 Orkflow version. At run time the engine schedules one Temporal activity,
@@ -46,8 +46,8 @@ This table is the contract's spine. Every later section is consistent with it.
 |---|---|---|---|---|
 | Orkflow YAML, compiled IR, definition digest | **owns** — compiles, resolves images, stamps digest | never sees YAML | never | holds the immutable version document |
 | Activity name → image reference | **owns** — the activity catalog is engine config | never resolves a name | never | — |
-| Image reference → index digest | **owns** — resolved once, at apply | verifies the pin on pull | never | — |
-| Image policy | **owns** — composes the policy in force at submit, checks it at validate, apply and submit | re-checks it at dispatch and verifies signatures itself | never | holds the deployment floor |
+| Image reference → index digest | **owns** — resolved once, at create | verifies the pin on pull | never | — |
+| Image policy | **owns** — composes the policy in force at submit, checks it at validate, create and submit | re-checks it at dispatch and verifies signatures itself | never | holds the deployment floor |
 | Which version a run uses | **owns** — `@current.json` at submit; the run pins it | receives the pin as a coordinate | never | holds the pointers |
 | Pool → Temporal task queue | **owns** (`internal/task/pool.go`) | binds exactly one queue at boot | never | — |
 | Template rendering | **never** — determinism | **owns** — renders `with:` after staging artifacts | sees only the rendered result | — |
@@ -72,7 +72,7 @@ Three rules follow and are enforced everywhere below:
    results carry references. The only exception is a `values.json` of at most
    4 KiB, copied inline purely so the engine's read model can display it.
 3. **The engine never touches a filesystem or a registry inside workflow code.**
-   Image resolution happens at *apply*, and the policy and every
+   Image resolution happens at *create*, and the policy and every
    configuration-derived value at *submit*, in `internal/api` — never in
    `internal/engine`'s deterministic workflow.
 
@@ -157,7 +157,7 @@ Rules the field comments state and every change must keep:
   are per-execution facts only an Orker fills, and only into results, commits
   and attempt records. Field 8 (`resolved_at`) is **removed**, not merely
   excluded from the digest: `ImageRef` lives inside the immutable version
-  document, and a per-apply timestamp there would turn every re-apply of an
+  document, and a per-creation timestamp there would turn every repeated creation of an
   unchanged document into a version conflict (§4.4).
 - **`ExecuteTaskInput` MUST NOT exceed 262144 serialized bytes** (AGENTS.md
   §2.2). The engine checks this deterministically before scheduling and fails
@@ -202,7 +202,7 @@ Rules the field comments state and every change must keep:
   exact Temporal `ApplicationError` type strings — and `Error{code, message,
   details, retryable, category}`.
 - `orkflow.proto`: `Task.uses` is the only image-selecting field in the DSL;
-  `Task.image` is the engine's apply-time resolution of it, stamped into the
+  `Task.image` is the engine's create-time resolution of it, stamped into the
   version document; `Task.run_as_orker_user` is the §3.1 escape hatch, part of
   the canonical form.
 - `run.proto`: `TaskRun` says what the commit protocol produced (`values_ref`,
@@ -323,6 +323,20 @@ Rejected alternatives: `--group-add` plus a setgid directory propagates group
 needs UID 0 and `CAP_FOWNER`, which §9.1 forbids. The Orker MUST NOT assume it
 owns files the workload wrote, only that it can open them — and it verifies
 even that.
+
+**Removal is not guaranteed by the mount either.** The Orker removes the
+attempt's directory when the attempt ends, and a pin's when the pin ends, and
+first makes every directory in the tree that it owns writable. It cannot do
+that to a directory a workload created as another UID: unlinking an entry
+needs write on its *directory*, and chmod needs ownership. So a directory the
+workload made `0755` under `tmp/`, `output/` or `shared/` stays on the host
+with everything in it, and so does the directory above it. The attempt's
+outcome is unchanged. The Orker logs `attempt cleanup: a directory could not
+be removed and is left on disk`, with the directory that refused the removal,
+its mode and owner (`refused_by`), and counts the attempt
+(`ork.orker.workspace_cleanup_failures`); a pin's release reports the same
+in its error. First-party images leave no such directory (§10.1 rule 11), and
+`runAsOrkerUser` is the escape hatch for any other image.
 
 **Host placement.** The workspace root is a per-attempt directory under
 `ORK_ORKER_WORKDIR`, which MUST be a path the container daemon can bind-mount
@@ -549,7 +563,7 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `run.id` | string | required | — | Opaque run id. Never parsed by anything. |
 | `run.namespace` | string | required | `"default"` | Resolved, never empty |
 | `run.orkflow.name` | string | required | — | slug |
-| `run.orkflow.version` | string | required | — | pinned version string; for a document never applied, run locally by `orkctl task run --file`, its content hash (§4.4) |
+| `run.orkflow.version` | string | required | — | pinned version string; for a document never created, run locally by `orkctl task run -f`, its content hash (§4.4) |
 | `run.orkflow.definitionDigest` | string | required | — | `sha256:<64 hex>` (§4.4) |
 | `task.id` | string | required | — | slug |
 | `task.attempt` | integer | required | — | 1-based Temporal attempt |
@@ -674,6 +688,11 @@ The template helpers are exactly three:
   and what it is. The Orker follows no link the workload wrote (§9.5).
 - MUST be a JSON **object** at the top level. An array, a scalar, or `null` is
   `ContractViolation/VALUES_MALFORMED`.
+- MUST NOT write a key twice in one object, at any depth. The bytes are kept
+  as written, and two readers could keep different values for the key, so it
+  is `ContractViolation/VALUES_MALFORMED`, naming the key and the object that
+  holds it (`the key "id" appears twice in the object at /rows/0`;
+  [JSON.md](./JSON.md), "Text the codec will not change").
 - MUST be valid UTF-8 and MUST NOT exceed `limits.valuesMaxBytes` (256 KiB
   default) → `ContractViolation/VALUES_TOO_LARGE`. A larger result is an
   artifact.
@@ -801,7 +820,7 @@ activities:
 `internal/api` before the version is stored:
 
 1. `uses` containing a Go template action (`{{`) is a compile error,
-   `IMAGE_NOT_PINNED`: an image chosen at run time cannot be pinned at apply.
+   `IMAGE_NOT_PINNED`: an image chosen at run time cannot be pinned at create.
 2. Else, `uses` matching `^[a-z][a-z0-9-]*$` that is a catalog key → the
    catalog reference.
 3. Else, `uses` that parses as an OCI reference (contains `/`, `:` or `@`) →
@@ -811,7 +830,7 @@ activities:
    of lower-case letters and digits joined by single `.`, `_`, `__` or dash
    separators, a tag of at most 128 word characters, dots and dashes that does
    not start with a dot or a dash, and a `sha256:` digest. The reference becomes
-   a registry URL at apply and a runtime argument at dispatch, so nothing it
+   a registry URL at create and a runtime argument at dispatch, so nothing it
    accepts can begin like a runtime option, hold a space or a control character,
    or change a URL's path, query or fragment.
 4. Else → compile error `UNKNOWN_ACTIVITY`, listing the catalog keys.
@@ -823,7 +842,7 @@ Rule 2 before rule 3 means `shell` can never accidentally mean Docker Hub's
 ### 4.3 Where resolution runs
 
 `dsl.Compile` stays pure — no network, no clock — so every hermetic compiler
-test holds. Resolution runs in `internal/api` (apply and validate), between
+test holds. Resolution runs in `internal/api` (create and validate), between
 compile and store. For each distinct `uses` the resolver:
 
 1. Issues **`GET /v2/<repository>/manifests/<tag-or-digest>`** with the exact
@@ -839,7 +858,7 @@ compile and store. For each distinct `uses` the resolver:
    in the **index's own order** (the digest hashes it, so order is contract);
    for a single manifest `platforms` stays empty.
 4. For an already-pinned `repo@sha256:…` still issues the GET and requires a
-   `200` whose body digest equals the pin. Apply MUST NOT succeed with an
+   `200` whose body digest equals the pin. Creating the Orkflow MUST NOT succeed with an
    unpullable pin.
 5. Stamps `Task.image`.
 6. Reads the image's interface label (`docs/ACTIVITY_IMAGES.md`, "Declaring
@@ -847,7 +866,7 @@ compile and store. For each distinct `uses` the resolver:
    `platform.os` is present and not `unknown`** (buildx attestation manifests
    are skipped), fetched and digest-checked; then its config blob, bounded at
    4 MiB and digest-checked. A registry that serves a manifest but not its
-   config cannot serve a pull either, so a failure here fails the apply with
+   config cannot serve a pull either, so a failure here fails the creation with
    the codes below. A malformed **label** never does: the image is still
    pinned and runnable, and the reason is reported as an interface warning.
    The same config's icon and docs labels (`org.orkstack.activity.icon`,
@@ -860,7 +879,7 @@ compile and store. For each distinct `uses` the resolver:
    container ABI does not change: the container never reads a label.
 7. Checks the image against the image policy in force (§4.7).
 
-Failures are apply-time errors, never silent and never a fallback to a tag:
+Failures are create-time errors, never silent and never a fallback to a tag:
 `IMAGE_NOT_FOUND` (404), `IMAGE_RESOLVE_UNAUTHORIZED` (401/403),
 `IMAGE_RESOLVE_UNAVAILABLE` (5xx, timeout, DNS), `IMAGE_RESOLVE_UNSUPPORTED`
 (an unreadable manifest or config), `IMAGE_DIGEST_MISMATCH`.
@@ -903,7 +922,7 @@ the seven resolved fields — are emitted whether or not they are zero. Never
 `pins` and `outputs` on the Orkflow; `pin`, `join` (when not the default),
 `await`, `orkflow`, `each` and `cache` on a task. Each changes what runs, so
 each is in the digest — but emitting an empty one unconditionally would move
-the digest of every existing definition on its next apply, and the store
+the digest of every existing definition the next time it is created, and the store
 decides "unchanged document" by comparing after clearing only `created_at`,
 so an unchanged document stamped with a moved digest would be refused with
 `ALREADY_EXISTS`. Golden vectors beside the serializer
@@ -920,7 +939,7 @@ document's content decides whether it already has one:
 
 A version an earlier release assigned is that hash itself. The source bytes are
 hashed in full, so a comment-only edit still mints a new version. Do not hash normalized YAML instead: a comment-only edit would then
-compile to the stored version with different source and could not be applied
+compile to the stored version with different source and could not be created
 at all (`internal/dsl/hash.go`). The resolution is a second *input to what
 runs*, not a second notion of the document. Consequences:
 
@@ -928,14 +947,14 @@ runs*, not a second notion of the document. Consequences:
 |---|---|
 | Same YAML, moved tag, no explicit `version:` | a **new** version, because a different thing now runs |
 | Same YAML, moved tag, explicit `version:` | **`ALREADY_EXISTS`**: an immutable version cannot mean two definitions |
-| Same YAML, same digest | byte-identical definition; apply is a no-op |
+| Same YAML, same digest | byte-identical definition; creating it again is a no-op |
 | Comment-only edit, no explicit `version:` | a new version |
 
 ### 4.5 Registry credentials
 
 `ork` has one narrowly scoped credential surface: `ORK_REGISTRY_AUTH_FILE`, a
 Docker `config.json`, used **only** for manifest, config-blob and signature
-**GET**s at validate, apply and submit, always with a pull scope. The Orker's
+**GET**s at validate, create and submit, always with a pull scope. The Orker's
 `ORK_ORKER_REGISTRY_AUTH_FILE` is used only for the signature GETs of §4.7;
 pulls use the container runtime's own credentials. None of them grants push or
 execution, and none ever reaches a container.
@@ -976,10 +995,10 @@ Runtime.Pull(pinned) fails (network, registry down, rate limit)
 ```
 
 OrkStack verifies the root index blob, the one link that ties the layout to
-what apply pinned; the runtime verifies the child manifest and layers it
+what create pinned; the runtime verifies the child manifest and layers it
 reaches by digest from there, as it does for a registry pull. The layout is a
 cache with a proof, not a second source of truth: it serves only a digest
-already resolved from a registry at apply. `make -C images layout` populates
+already resolved from a registry at create. `make -C images layout` populates
 it.
 
 Operational notes: Docker Hub limits anonymous pulls (100 per 6 h per IPv4 or
@@ -992,7 +1011,7 @@ what §4.7's signature requirement is for.
 A deployment may bound which images run (`require_digest`,
 `allowed_registries`) and a namespace may require a cosign signature
 (`require_signed_by`). The operator surface — setting the floor, keys,
-rotation, and the validate/apply/submit gates — is `docs/DEPLOY.md`, "Image
+rotation, and the validate/create/submit gates — is `docs/DEPLOY.md`, "Image
 supply-chain policy". This is the Orker's half.
 
 - **The policy travels on the input.** The engine composes the policy in
@@ -1138,7 +1157,12 @@ key; exactly one must win and the other must see `ErrPreconditionFailed`. The
 winner stays as a bounded capability record; later boots race the same two
 writes, require both to be refused, and read back the exact candidate.
 Versioning the key means a newer build never strands every Orker on an older
-schema's winner. Any other outcome refuses to start with
+schema's winner. On an S3 store the Orker then asks the two other conditional
+answers the Orkflow store relies on (docs/STORAGE.md, "What the store must
+honour"): a `PutObject` with `If-Match` on a key that does not exist must be
+refused (404 or 412), and a `DeleteObject` with `If-Match` naming another etag
+must be refused (412) with the object kept, under two objects of its own named
+for that boot and removed before it goes on. Any other outcome refuses to start with
 `InfrastructureError/COMMIT_STORE_NOT_CONDITIONAL`, naming the endpoint — the
 alternative is a deployment that silently loses immutability. The exception is
 a probe that gets no answer about conditional writes because the store could
@@ -1205,7 +1229,7 @@ guarantee that every byte still exists.
 **Success path**, in this exact order (AGENTS.md §4.1):
 
 ```
-1. validate values.json                (exists, regular, readable, object, UTF-8, ≤ limit)
+1. validate values.json                (exists, regular, readable, object, UTF-8, no key twice, ≤ limit)
 2. scan + validate output/artifacts/   (a directory of regular files, UTF-8 names, readable, count/size)
 3. hash every artifact and values.json (sha256, streaming)
 4. bound the commit                    (project ActivityCommit via RefFor, assert ≤ commit_max_bytes)
@@ -1330,7 +1354,7 @@ containers run.
 | Cancellation, or SIGTERM ignored | logs, no commit | SIGTERM → grace → SIGKILL (§14.5); the Orker returns `ctx.Err()`. | canceled, never auto-retried |
 | Orker stopped (`SIGTERM`, `SIGINT`) mid-container | logs to the last line, the attempt record (`ORKER_STOPPED`), no commit | SIGTERM → grace → SIGKILL, then the process exits (§6.3); Temporal is told nothing, so the heartbeat timeout retries per the task's policy, as for a dead Orker. | correct, container ran twice (at-least-once) |
 | Input artifact unavailable / image pull fails | nothing | `INPUT_ARTIFACT_UNAVAILABLE` / `IMAGE_PULL_FAILED` → retried. | explicit failure |
-| Tag moved between two executions | — | Impossible: the run pins a digest at apply (§4). | correct |
+| Tag moved between two executions | — | Impossible: the run pins a digest at create (§4). | correct |
 
 There is no stuck, half-completed, unknown, or database-surgery state. Every
 row ends in a correct durable state or an explicit, categorized, actionable
@@ -1783,7 +1807,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `IMAGE_SIGNATURE_INVALID` | ContractViolation | no | signatures exist and none verifies with the named key over this digest |
 | `IMAGE_SIGNATURE_UNAVAILABLE` | InfrastructureError | yes | the registry could not be asked for a signature, or this Orker has no registry client |
 | `VALUES_MISSING` | ContractViolation | no | exit 0 with no `/orkstack/output/values.json` |
-| `VALUES_MALFORMED` | ContractViolation | no | not valid UTF-8 JSON, or not a top-level object, or not a regular file (a symlink, directory, device, socket or FIFO) |
+| `VALUES_MALFORMED` | ContractViolation | no | not valid UTF-8 JSON, or an object that writes a key twice, or not a top-level object, or not a regular file (a symlink, directory, device, socket or FIFO) |
 | `VALUES_TOO_LARGE` | ContractViolation | no | over `limits.valuesMaxBytes` |
 | `ARTIFACT_NOT_A_FILE` | ContractViolation | no | a directory, symlink, device, socket or FIFO in `output/artifacts/`, or `output/artifacts` itself replaced by one that is not a directory |
 | `ARTIFACT_LIMIT_EXCEEDED` | ContractViolation | no | too many artifacts, or one too large |
@@ -2038,8 +2062,8 @@ positive, finite quantity stops the Orker at boot. **No workload ever
 receives unlimited resources**, including one that requested nothing. The
 effective values reach the workload in `task.json` and the attempt record.
 The grammar is one package (`internal/quantity`) that the DSL also reads a
-request with at validate and apply (`docs/DSL.md` rule 6d), so a spelling
-apply accepts is never one the Orker cannot read.
+request with at validate and create (`docs/DSL.md` rule 6d), so a spelling
+creating an Orkflow accepts is never one the Orker cannot read.
 
 An Orker may also declare a **capacity** (`ORK_ORKER_CAPACITY_CPU`,
 `ORK_ORKER_CAPACITY_MEMORY`) and then admits no task beyond it: each poll
@@ -2186,6 +2210,19 @@ every container is refused before it starts.
     (exit `2`), and declare the interface label, written as an
     `interface.ork.yaml` and packed by `orkctl activity interface pack`
     (`docs/ACTIVITY_IMAGES.md`).
+11. **Leave nothing the Orker cannot remove** (§3.1). The image runs as its
+    own `USER` and the Orker as its host user, which under a rootful runtime
+    are two users. So the entry script empties `/orkstack/tmp` on every exit
+    it takes (an `EXIT` trap), and every directory it creates under
+    `/orkstack/tmp` or `/orkstack/shared` is created writable by others
+    (`umask 000` around the command that makes it). The trap covers success,
+    failure and a SIGTERM during supervised work, which ends in `fail`; the
+    mode covers an exit that runs no trap, which is a signal between commands
+    or the grace period's SIGKILL. A file needs neither, because removing a
+    file needs write on its directory, not on the file. Outputs keep rule 7's
+    `umask 022`. A directory whose mode is part of an artifact, such as the
+    `./` of the tarball activity-file's `tar` stages, keeps its mode and relies
+    on the trap alone.
 
 ### 10.2 The entry-script pattern
 
@@ -2260,7 +2297,7 @@ image in `uses:` and give it a `command`:
 ```
 
 **A templated image is deliberately unsupported.** `uses: "{{ .inputs.image }}"`
-cannot be resolved at apply, because a run input does not exist until submit,
+cannot be resolved at create, because a run input does not exist until submit,
 and AGENTS.md §5 forbids running an unresolved reference: it is a compile
 error (`IMAGE_NOT_PINNED`, §4.2).
 
@@ -2294,14 +2331,16 @@ assertions, each because a real defect would have passed without it:
    observes it** — both halves, because they fail independently (§14.14).
 
 The report also shows the `with:` interface the image declares in its
-`org.orkstack.activity.interface` label, read by the resolver apply uses
+`org.orkstack.activity.interface` label, read by the resolver that creating an Orkflow uses
 (declared, none or malformed; `docs/ACTIVITY_IMAGES.md`, "Declaring the
 interface"). It is reported, never asserted: the label is optional, and a label
-apply cannot read is a warning there, not a contract violation.
+creating an Orkflow cannot read is a warning there, not a contract violation.
 
 Fixtures in Bash, Go and Python under `test/fixtures/` run any image against
 the ABI with only docker, `cat`, `jq` and a redirect;
-`test/fixtures/first_party_contract.sh` covers `json`, `git` and `template`.
+`test/fixtures/first_party_contract.sh` covers `json`, `git` and `template`,
+and `file`'s scratch; its `git` and `file` cases check rule 11 by removing
+what the image left as the user running the fixture.
 **The Bash fixture is mandatory and is the design's own falsification test**:
 it runs the SIGTERM assertion on **every op** the image declares, because an
 entry script can pass on `exec` and fail on `eval` (§14.18). If it
@@ -2319,8 +2358,8 @@ held by the Orker's unit and integration suites.
 ### 10.4 Running one task locally
 
 ```bash
-orkctl task run --from-run RUN --task TASK [--file FILE.ork.yaml] [--input k=v]…
-orkctl task run --file FILE.ork.yaml --task TASK [--output TASK=JSON]… [--artifact TASK/NAME=PATH]…
+orkctl task run --from-run RUN -t TASK [-f FILE.ork.yaml] [-i k=v]…
+orkctl task run -f FILE.ork.yaml -t TASK [-o TASK=JSON]… [--artifact TASK/NAME=PATH]…
 ```
 
 answers the question §10.3 does not: *why did this task, in this document,

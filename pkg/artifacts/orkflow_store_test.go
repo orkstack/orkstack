@@ -2,7 +2,8 @@ package artifacts
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"strings"
 	"testing"
@@ -14,6 +15,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // helloOrkflow is a compiled orkflow shaped like the one internal/dsl produces
@@ -238,13 +240,13 @@ func TestMarshalOrkflow_IsByteStableAndLossless(t *testing.T) {
 		}
 	}
 
-	if !json.Valid(first) {
+	if !jsontext.Value(first).IsValid() {
 		t.Fatalf("stored document is not JSON:\n%s", first)
 	}
 	if !bytes.HasSuffix(first, []byte("\n")) {
 		t.Error("stored document does not end in a newline")
 	}
-	var envelope map[string]json.RawMessage
+	var envelope map[string]stablejson.RawJSON
 	if err := json.Unmarshal(first, &envelope); err != nil {
 		t.Fatalf("decode document: %v", err)
 	}

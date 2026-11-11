@@ -13,6 +13,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ork.cache.outcome joins the ork.tasks counter and the ork.task.duration
@@ -68,9 +70,7 @@ func TestEngineObserver_CacheOutcomeAttributeOnlyWhenSet(t *testing.T) {
 func TestOrkerSpans_CacheOutcome(t *testing.T) {
 	providers, exporter, _ := newObserverProviders(t)
 	inst, err := NewOrkerInstruments(providers)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	obs := NewOrkerObserver(providers, inst, nil)
 	for _, c := range []*orkstackv1.CacheResult{
 		{Outcome: orkstackv1.CacheOutcome_CACHE_OUTCOME_MISS, Key: "k", MissReason: "MEMO_EXPIRED"},

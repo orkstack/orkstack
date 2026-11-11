@@ -102,8 +102,8 @@ func (r *LocalTaskRefusal) Unwrap() error { return r.Err }
 //
 // It applies the same wire bound schedule applies (task.CheckInputSize with
 // Limits.values_max_bytes); a refusal is a *LocalTaskRefusal carrying
-// INPUT_TOO_LARGE / ContractViolation. An unknown task, an awaited task, an
-// empty RunID, or a nil Orkflow is a plain error.
+// INPUT_TOO_LARGE / ContractViolation. An unknown task, an awaited or
+// sleeping task, an empty RunID, or a nil Orkflow is a plain error.
 func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 	wf := t.Orkflow
 	if wf == nil {
@@ -123,6 +123,13 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		// failure (docs/UI_CLI_PARITY.md "Local activity build/test parity decision").
 		return nil, fmt.Errorf("task %q is an awaited task (await:): it starts no container, so there is nothing to run locally; "+
 			"resolve it in a run with orkctl run resolve, or run a task downstream of it with its values supplied", t.TaskID)
+	}
+	if spec.GetSleep() != nil {
+		// Nor a sleeping task: it waits on the run's own timer and starts no
+		// container. A downstream task reads nothing from it (rule 51), so
+		// it needs nothing supplied in its place.
+		return nil, fmt.Errorf("task %q is a sleeping task (sleep:): it starts no container, so there is nothing to run locally; "+
+			"run a task downstream of it, which reads nothing from it", t.TaskID)
 	}
 	if ref := spec.GetOrkflow(); ref != nil {
 		return nil, ComposedTaskRefusal(t.TaskID, ref)
@@ -192,6 +199,11 @@ func LocalTaskInput(t LocalTask) (*orkstackv1.ExecuteTaskInput, error) {
 		} else if failedShape && len(ref.GetArtifacts()) > 0 {
 			// A failed task's artifacts reach only a failure handler that
 			// names it directly.
+			continue
+		}
+		// A sleep contributes nothing anywhere: it has no values, no
+		// artifacts and no commit (docs/DSL.md "Sleeping tasks").
+		if taskByID(wf, id).GetSleep() != nil {
 			continue
 		}
 		// A fan-out further up the closure contributes nothing: its items
@@ -336,11 +348,12 @@ func TaskClosure(wf *orkstackv1.Orkflow, taskID string) ([]string, error) {
 // Every other status — SKIPPED, FAILED, CANCELED, PENDING, RUNNING —
 // contributes nothing, exactly as it contributes nothing to the interpreter's
 // results. A FAILED task's failure-path artifacts are therefore never passed
-// downstream, as in a run.
+// downstream, as in a run. A sleep that woke contributes nothing either: the
+// interpreter records no result for it.
 func UpstreamFromRun(run *orkstackv1.Run) map[string]*orkstackv1.UpstreamRef {
 	out := map[string]*orkstackv1.UpstreamRef{}
 	for _, tr := range run.GetTaskRuns() {
-		if tr.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		if tr.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || tr.GetSleep() != nil {
 			continue
 		}
 		// A fan-out has no commit of its own: its items do. It contributes

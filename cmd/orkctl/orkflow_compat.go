@@ -10,6 +10,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // The interface compatibility surface (docs/UI_CLI_PARITY.md "Interface compatibility"):
@@ -121,7 +122,7 @@ func verdictWord(verdict orkstackv1.InterfaceVerdict) string {
 
 // changeWord is the short enum name the CHANGE column prints.
 func changeWord(change orkstackv1.InterfaceChange) string {
-	return strings.TrimPrefix(change.String(), "INTERFACE_CHANGE_")
+	return enumname.Of(change)
 }
 
 func renderCompat(out io.Writer, name string, resp *orkstackv1.CompareInterfacesResponse) error {
@@ -171,7 +172,7 @@ func renderCompat(out io.Writer, name string, resp *orkstackv1.CompareInterfaces
 
 // callerKindWord is the KIND column.
 func callerKindWord(kind orkstackv1.OrkflowCallerKind) string {
-	return strings.ToLower(strings.TrimPrefix(kind.String(), "ORKFLOW_CALLER_KIND_"))
+	return strings.ToLower(enumname.Of(kind))
 }
 
 // callerPins is the PINS column: a version, `current` when the caller follows

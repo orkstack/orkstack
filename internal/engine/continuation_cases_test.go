@@ -175,8 +175,7 @@ tasks:
     needs: [fast]
     with: {op: exec}
 `
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarnessCtx(t, nil, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetTaskId() == "slow" {
 			return runUntilCanceled(ctx, nil)
 		}
@@ -228,7 +227,10 @@ func TestContinuation_PlanWithoutBudgetIsByteIdentical(t *testing.T) {
 				current = h
 				enablePins(h, worker.Options{})
 				r := &commandRecorder{}
-				h.env.SetWorkerOptions(testWorkerOptions(worker.Options{EnableSessionWorker: true, Interceptors: []interceptor.WorkerInterceptor{r}}))
+				// Results come back in the order the workflow scheduled them,
+				// so both plans see one interleaving (result_order_test.go).
+				order := newResultOrder()
+				h.env.SetWorkerOptions(testWorkerOptions(worker.Options{EnableSessionWorker: true, Interceptors: []interceptor.WorkerInterceptor{r, order}}))
 				h.countItems = func(*orkstackv1.ArtifactRef) (int32, error) { return count, nil }
 				for i, sig := range signals {
 					h.signalAt(offsets[i], sig)
@@ -239,29 +241,25 @@ func TestContinuation_PlanWithoutBudgetIsByteIdentical(t *testing.T) {
 			}
 			capped := plan
 			limit := engine.DefaultInFlightLimit(engine.DefaultRunMaxInFlight)
+			// The cap alone: the detached publish path the same limit
+			// pins is a command path of its own, entered through its own
+			// gate (task_publish.go, run-task-publish-window-v1.json).
+			limit.PublishWindow, limit.DispatchBytes = 0, 0
 			capped.InFlight = &limit
-			// The test environment delivers concurrently running activities'
-			// results in the order their goroutines finish, so a fixture with
-			// parallel branches (run-join-v1.json) can interleave its two
-			// runs differently whatever their plans. A command the cap added
-			// or moved would differ in every pair, so a pair is drawn until
-			// one is identical, at most identicalPairAttempts times.
-			const identicalPairAttempts = 8
-			var bare, with []string
-			for attempt := 1; ; attempt++ {
-				bare, with = commands(plan), commands(capped)
-				if len(bare) == 0 {
-					t.Fatal("the fixture's definition issued no command")
-				}
-				if strings.Join(bare, "\n") == strings.Join(with, "\n") {
-					t.Logf("%d commands, identical (pair %d)", len(bare), attempt)
-					break
-				}
-				if attempt == identicalPairAttempts {
-					t.Fatalf("the command streams differ in %d pairs:\nrecorded plan %v\nwith the cap  %v",
-						attempt, bare, with)
-				}
+			// The test environment would deliver concurrently running
+			// activities' results in the order their goroutines finish;
+			// resultOrder delivers them in the order the workflow scheduled
+			// them, so a fixture with parallel branches (run-join-v1.json) or
+			// an open pin interleaves its two runs one way, and one pair is
+			// the whole comparison.
+			bare, with := commands(plan), commands(capped)
+			if len(bare) == 0 {
+				t.Fatal("the fixture's definition issued no command")
 			}
+			if strings.Join(bare, "\n") != strings.Join(with, "\n") {
+				t.Fatalf("the command streams differ:\nrecorded plan %v\nwith the cap  %v", bare, with)
+			}
+			t.Logf("%d commands, identical", len(bare))
 		})
 	}
 }
@@ -382,8 +380,7 @@ func holdNeverSpinsAfterFailedWrite(t *testing.T) {
 func TestRunWorkflow_CancelSeenAtADispatchStartsNothing(t *testing.T) {
 	restore := engine.ContinueAtEveryIdleForTest()
 	defer restore()
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, okBehavior)
+	h := newHarnessCtx(t, nil, okBehavior)
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-cancel-dispatch"})
 	var once sync.Once
 	h.onContinuation = func(kind string, _ int64) error {

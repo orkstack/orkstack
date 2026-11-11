@@ -7,10 +7,10 @@ import (
 	"strconv"
 	"time"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/durationpb"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -126,10 +126,11 @@ var namespaceSettings = []settingRow{
 	{
 		key: "max_running", field: "max_running",
 		parse: func(node *yaml.Node, ns *orkstackv1.Namespace) error {
-			if node.Kind != yaml.ScalarNode || node.Tag != "!!int" {
+			text, ok := integerText(node)
+			if !ok {
 				return fmt.Errorf("max_running must be an integer of at least 0")
 			}
-			n, err := strconv.ParseInt(node.Value, 0, 32)
+			n, err := strconv.ParseInt(text, 0, 32)
 			if err != nil || n < 0 {
 				return fmt.Errorf("max_running must be an integer of at least 0, got %s", node.Value)
 			}
@@ -168,6 +169,9 @@ var namespaceSettings = []settingRow{
 			}
 			if w != 0 && (math.IsNaN(w) || w < artifacts.MinFairShareWeight || w > artifacts.MaxFairShareWeight) {
 				return refusal
+			}
+			if w == 0 {
+				w = 0 // -0 is 0, the default, and is stored as unset
 			}
 			ns.FairShareWeight = w
 			return nil
@@ -440,10 +444,11 @@ func parseBudget(node *yaml.Node, ns *orkstackv1.Namespace) error {
 		seen[key] = true
 		switch key {
 		case "cpu_seconds", "gib_seconds":
-			if value.Kind != yaml.ScalarNode || value.Tag != "!!int" {
+			text, ok := integerText(value)
+			if !ok {
 				return fmt.Errorf("budget.%s must be an integer of at least 0", key)
 			}
-			n, err := strconv.ParseInt(value.Value, 0, 64)
+			n, err := strconv.ParseInt(text, 0, 64)
 			if err != nil || n < 0 {
 				return fmt.Errorf("budget.%s must be an integer of at least 0, got %s", key, value.Value)
 			}
@@ -526,4 +531,18 @@ func exportBudget(ns *orkstackv1.Namespace) *yaml.Node {
 		plainNode("period"), plainNode(renderBudgetPeriod(b.GetPeriod())),
 		plainNode("enforce"), &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(b.GetEnforce())})
 	return out
+}
+
+// integerText is the text of a scalar written as an integer. -0 is the
+// integer 0: go-yaml reads it as the float -0, where yaml.v3 read the integer.
+func integerText(node *yaml.Node) (string, bool) {
+	switch {
+	case node.Kind != yaml.ScalarNode:
+		return "", false
+	case node.Tag == "!!int":
+		return node.Value, true
+	case node.Tag == "!!float" && node.Value == "-0":
+		return "0", true
+	}
+	return "", false
 }

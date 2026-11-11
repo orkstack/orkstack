@@ -155,7 +155,7 @@
 		></textarea>
 	{/if}
 	{@render between?.()}
-	<div class="yaml-foot mt-1.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs">
+	<div class="yaml-foot mt-1.5 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-xs" class:strip>
 		<p
 			id={statusId}
 			data-testid="{testid}-status"

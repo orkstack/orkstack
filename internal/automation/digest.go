@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -38,8 +40,8 @@ func Digest(namespace string, steps []*orkstackv1.AutomationStep) string {
 			continue
 		}
 		entry := digestStep{
-			Action:  shortEnum(step.GetAction().String(), "AUTOMATION_ACTION_"),
-			Kind:    shortEnum(step.GetKind().String(), "AUTOMATION_OBJECT_KIND_"),
+			Action:  enumname.Of(step.GetAction()),
+			Kind:    enumname.Of(step.GetKind()),
 			Name:    step.GetName(),
 			ID:      step.GetId(),
 			Changes: [][3]string{},
@@ -50,16 +52,7 @@ func Digest(namespace string, steps []*orkstackv1.AutomationStep) string {
 		in.Steps = append(in.Steps, entry)
 	}
 	var buf bytes.Buffer
-	encoder := json.NewEncoder(&buf)
-	encoder.SetEscapeHTML(false)
-	_ = encoder.Encode(in) // a struct of strings cannot fail to encode
+	_ = stablejson.Encode(&buf, in, stablejson.Unescaped) // a struct of strings cannot fail to encode
 	sum := sha256.Sum256(buf.Bytes())
 	return "sha256:" + hex.EncodeToString(sum[:])
-}
-
-func shortEnum(name, prefix string) string {
-	if len(name) > len(prefix) && name[:len(prefix)] == prefix {
-		return name[len(prefix):]
-	}
-	return name
 }

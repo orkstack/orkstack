@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // argvShim is the real docker CLI behind a shim that rewrites a `docker run`'s
@@ -75,17 +77,13 @@ done
 exec "$real" "${args[@]}"
 `
 	bin := filepath.Join(dir, "docker")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(bin, []byte(script), 0o755))
 	return &argvShim{t: t, dir: dir, bin: bin}
 }
 
 func (s *argvShim) set(flag, content string) {
 	s.t.Helper()
-	if err := os.WriteFile(filepath.Join(s.dir, flag), []byte(content), 0o644); err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, os.WriteFile(filepath.Join(s.dir, flag), []byte(content), 0o644))
 }
 
 // probeRuns returns every `docker run` of the boot probe's first container
@@ -93,9 +91,7 @@ func (s *argvShim) set(flag, content string) {
 func (s *argvShim) probeRuns() []string {
 	s.t.Helper()
 	raw, err := os.ReadFile(filepath.Join(s.dir, "calls"))
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	var runs []string
 	for _, line := range strings.Split(string(raw), "\n") {
 		if strings.HasPrefix(line, "run ") && strings.Contains(line, "ork.task=bindprobe") {
@@ -110,13 +106,9 @@ func (s *argvShim) probeRuns() []string {
 func postureWorkRoot(t *testing.T, name string) string {
 	t.Helper()
 	parent := "../../.data/work"
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(parent, 0o755))
 	root, err := os.MkdirTemp(parent, proof.WorkRootPattern(name))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if root, err = filepath.Abs(root); err != nil {
 		t.Fatal(err)
 	}
@@ -231,9 +223,7 @@ func TestIntegration_BootProbeJudgesATasksContainerOnTheRealDaemon(t *testing.T)
 				shim.set("sub", workRoot+"\t"+postureWorkRoot(t, "ork-posture-elsewhere")+"\n")
 			}
 			store, err := artifacts.NewLocalStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			t.Cleanup(func() { _ = store.Close() })
 			policy := orker.SecurityPolicyFromEnv()
 			policy.ForceUser = tt.force
@@ -316,17 +306,13 @@ if [ "$1" = rm ]; then
 fi
 exec '` + realDocker + `' "$@"
 `
-	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(shim, []byte(script), 0o755))
 	label := "ork.orker=" + proof.OrkerID("remove-term-ignorer")
 	// A pids limit, as every Orker container has: the Podman socket's default
 	// is one process, which leaves its init unable to fork.
 	out, err := exec.CommandContext(ctx, realDocker, "run", "--detach", "--init", "--pids-limit", "64", "--label", label,
 		"--network", "none", orker.BindProbeImage, "/bin/sh", "-c", `trap "" TERM; while :; do sleep 1; done`).Output()
-	if err != nil {
-		t.Fatalf("start the TERM-ignoring container: %v", err)
-	}
+	must.OKf(t, err, "start the TERM-ignoring container")
 	id := strings.TrimSpace(string(out))
 	t.Cleanup(func() { _ = exec.Command(realDocker, "rm", "--force", id).Run() })
 	running, err := exec.CommandContext(ctx, realDocker, "inspect", "--format", "{{.State.Running}}", id).Output()
@@ -365,9 +351,7 @@ func TestIntegration_ACLIThatWritesOnStderrStillRunsATask(t *testing.T) {
 echo "Emulate Docker CLI using podman. Create /etc/containers/nodocker to quiet msg." >&2
 exec '` + realDocker + `' "$@"
 `
-	if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(shim, []byte(script), 0o755))
 	dispatcher, _ := newDispatcher(t)
 	dispatcher.Runtime = &orker.DockerRuntime{Bin: shim}
 	in := baseInput(t, "noisy-cli", "/bin/sh", "-c", `printf '{"ok":true}' > /orkstack/output/values.json`)

@@ -304,7 +304,7 @@ test('N8: the CLI equivalent is the applied filter as orkctl spells it', async (
 	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10&filter=${encodeURIComponent('labels.team=payments')}`);
 	await expectRows(page, PAYMENTS.slice(0, 10));
 	await page.getByTestId('page-cli-trigger').click();
-	await expect(pageCli(page, 'The namespaces')).toHaveText("orkctl namespace list --filter labels.team=payments");
+	await expect(pageCli(page, 'The namespaces')).toHaveText("orkctl namespace list -F labels.team=payments");
 	note(`CLI equivalent: ${await pageCli(page, 'The namespaces').innerText()}`);
 });
 

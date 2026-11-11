@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const packDocument = `# The with: contract of a small image.
@@ -24,9 +26,7 @@ const packLabel = `{"schemaVersion":1,"fields":{"url":{"type":"string","required
 func writeActivityInterface(t *testing.T, content string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "interface.ork.yaml")
-	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(content), 0o644))
 	return path
 }
 

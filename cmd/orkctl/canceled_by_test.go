@@ -9,6 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func canceledRun(by string) *orkstackv1.Run {
@@ -75,9 +77,7 @@ func TestRenderRun_SaysWhoCanceledTheRunAsAsserted(t *testing.T) {
 	for _, tt := range unsafePrincipals {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := renderRun(&out, canceledRun(tt.principal)); err != nil {
-				t.Fatalf("renderRun: %v", err)
-			}
+			must.OKf(t, renderRun(&out, canceledRun(tt.principal)), "renderRun")
 			line := detailLine(t, out.String(), "Canceled by:")
 			requirePrintable(t, line)
 			want := "Canceled by: " + tt.shown + " " + principalCaption
@@ -88,9 +88,7 @@ func TestRenderRun_SaysWhoCanceledTheRunAsAsserted(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	if err := renderRun(&out, canceledRun("")); err != nil {
-		t.Fatalf("renderRun: %v", err)
-	}
+	must.OKf(t, renderRun(&out, canceledRun("")), "renderRun")
 	if strings.Contains(out.String(), "Canceled by") {
 		t.Fatalf("a run nobody is recorded as canceling shows a Canceled by line:\n%s", out.String())
 	}
@@ -105,9 +103,7 @@ func TestRenderRun_PrintsTheOriginPrincipalAsAsserted(t *testing.T) {
 			run := canceledRun("")
 			run.Origin.Principal = tt.principal
 			var out bytes.Buffer
-			if err := renderRun(&out, run); err != nil {
-				t.Fatalf("renderRun: %v", err)
-			}
+			must.OKf(t, renderRun(&out, run), "renderRun")
 			line := detailLine(t, out.String(), "Principal:")
 			requirePrintable(t, line)
 			want := "Principal: " + tt.shown + " " + principalCaption
@@ -134,9 +130,7 @@ func TestRenderRunList_SaysWhoCanceledEachRun(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			var out bytes.Buffer
-			if err := renderRunList(&out, []*orkstackv1.Run{canceledRun(tt.by)}); err != nil {
-				t.Fatalf("renderRunList: %v", err)
-			}
+			must.OKf(t, renderRunList(&out, []*orkstackv1.Run{canceledRun(tt.by)}), "renderRunList")
 			lines := strings.Split(strings.TrimSpace(out.String()), "\n")
 			if len(lines) != 2 {
 				t.Fatalf("run list = %q, want a header and one row", out.String())

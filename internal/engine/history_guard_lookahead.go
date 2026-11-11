@@ -68,14 +68,14 @@ func (s *runState) historyExhaustedBefore(ctx workflow.Context, inFlight map[str
 // nextDispatchBytes is the most one dispatch of id can record in a single
 // command — exactly what its dispatch notes (noteCommand): a task's input up
 // to the values bound, a child run's start, or a pin's session; nothing for
-// an await or a fan-out, whose items are checked one by one.
+// an await, a sleep or a fan-out, whose items are checked one by one.
 func (s *runState) nextDispatchBytes(id string) int64 {
 	limit := s.historyLimit()
 	if limit == nil {
 		return 0
 	}
 	switch {
-	case s.awaits[id] != nil, s.eaches[id] != nil:
+	case s.awaits[id] != nil, s.sleeps[id] != nil, s.eaches[id] != nil:
 		return 0
 	case s.children[id] != nil:
 		return limit.Reserve.ChildStartBytes

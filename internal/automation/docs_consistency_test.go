@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestAutomationSchema_EveryKeyIsInAutomationDoc: every key an automation
@@ -16,9 +18,7 @@ import (
 // tables, so a key added there and not documented fails here.
 func TestAutomationSchema_EveryKeyIsInAutomationDoc(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "AUTOMATION.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	doc := string(b)
 	keys := automationPropertyNames(automationSchemaTree(t))
 	if len(keys) < 20 {
@@ -46,9 +46,7 @@ func TestAutomationSchema_EveryKeyIsInAutomationDoc(t *testing.T) {
 // section of the entry it belongs to, not merely somewhere in the document.
 func TestAutomationSchema_EveryKeyIsInItsOwnSection(t *testing.T) {
 	b, err := os.ReadFile(filepath.Join("..", "..", "docs", "AUTOMATION.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	doc := string(b)
 	paths := schemaKeys(automationSchemaTree(t))
 	if len(paths) < 20 {

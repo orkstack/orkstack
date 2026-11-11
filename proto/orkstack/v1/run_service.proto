@@ -380,6 +380,26 @@ message ListTaskAttemptsResponse {
   // gaps — an attempt number the store has no record for is present as
   // ATTEMPT_OUTCOME_UNREPORTED rather than absent.
   repeated TaskAttempt attempts = 1;
+  // timings is one entry per task or fan-out item whose wait for an Orker
+  // applies — a container task that was scheduled, or an item of one — in
+  // the order attempts lists them. Derived on read and never stored.
+  repeated TaskAttemptsTiming timings = 2;
+}
+
+// TaskAttemptsTiming is the derivation over one task's (or one item's) whole
+// timeline (docs/UI_CLI_PARITY.md "Task timing").
+message TaskAttemptsTiming {
+  string task_id = 1;
+  optional int32 item = 2;
+  // queue_wait is how long the task waited for an Orker of its pool:
+  // attempt 1's started_at − TaskRun.scheduled_at. Unavailable with
+  // PRE_CONTRACT, RECLAIMED, NO_RECORD (attempt 1 has no record) or
+  // CLOCK_SKEW.
+  TimingQuantity queue_wait = 3;
+  // reclaimed is true when every record of this timeline was reclaimed: the
+  // task ended with no row at all, or an Orker reported its start and every
+  // row is UNREPORTED.
+  bool reclaimed = 4;
 }
 
 // ReferenceState is the addressed run's OWN standing in the object index.

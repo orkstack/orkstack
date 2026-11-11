@@ -1,7 +1,6 @@
 package automation
 
 import (
-	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -119,7 +119,7 @@ func renderInput(input *orkstackv1.Payload) string {
 
 // compactInput is the compact JSON of a non-empty input.
 func compactInput(input *orkstackv1.Payload) string {
-	encoded, err := json.Marshal(input.GetData().AsMap())
+	encoded, err := stablejson.Marshal(input.GetData().AsMap())
 	if err != nil {
 		return unsetLabel
 	}

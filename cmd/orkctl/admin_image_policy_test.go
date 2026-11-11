@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // imagePolicyStore is an in-memory artifacts.ImagePolicyStore that refuses
@@ -116,9 +118,7 @@ func imagePolicyFixture(t *testing.T, store *imagePolicyStore) *fixture {
 func writeKey(t *testing.T, name, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
@@ -328,7 +328,7 @@ func TestOrkflowValidate_PrintsTheImageIssueOnItsFieldPath(t *testing.T) {
 		decoded.Issues[0].Severity != "ERROR" || decoded.Issues[0].Message != migrateSentence {
 		t.Fatalf("--json issues = %+v", decoded.Issues)
 	}
-	apply := f.run("apply", path)
+	apply := f.run("orkflow", "create", path)
 	if apply.code == exitOK {
 		t.Fatal("apply of a forbidden image succeeded")
 	}
@@ -338,7 +338,7 @@ func TestOrkflowValidate_PrintsTheImageIssueOnItsFieldPath(t *testing.T) {
 func TestRunSubmit_RefusedByTheImagePolicyNamesTheImageAndTheRule(t *testing.T) {
 	store := &imagePolicyStore{}
 	f := imagePolicyFixture(t, store)
-	f.run("apply", migrateDocument(t)).requireExit(t, exitOK)
+	f.run("orkflow", "create", migrateDocument(t)).requireExit(t, exitOK)
 	store.mu.Lock()
 	store.policy = &orkstackv1.ImagePolicy{RequireDigest: true, UpdatedAt: timestamppb.New(fixedNow)}
 	store.mu.Unlock()

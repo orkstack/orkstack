@@ -12,7 +12,7 @@ func admissionFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := newFixture(t)
 	f.run("namespace", "create", "payments").requireExit(t, exitOK)
-	f.run("apply", writeOrkflow(t, "reconcile", "work"), "-n", "payments").requireExit(t, exitOK)
+	f.run("orkflow", "create", writeOrkflow(t, "reconcile", "work"), "-n", "payments").requireExit(t, exitOK)
 	return f
 }
 

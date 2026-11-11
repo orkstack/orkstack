@@ -7,6 +7,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestLoadConfig_InFlightCapBounds: ORK_RUN_MAX_IN_FLIGHT is always
@@ -17,7 +19,7 @@ func TestLoadConfig_InFlightCapBounds(t *testing.T) {
 		want    int32
 		refused bool
 	}{
-		{"", 1000, false}, {"16", 16, false}, {"1800", 1800, false}, {"500", 500, false},
+		{"", 500, false}, {"16", 16, false}, {"1800", 1800, false}, {"1000", 1000, false},
 		{"15", 0, true}, {"1801", 0, true}, {"0", 0, true}, {"many", 0, true},
 	} {
 		t.Run("ORK_RUN_MAX_IN_FLIGHT="+tc.raw, func(t *testing.T) {
@@ -46,9 +48,7 @@ func TestLoadConfig_ContinuationValidatedOnlyWhenEnabled(t *testing.T) {
 		t.Setenv("ORK_HISTORY_MAX_EVENTS", "600")
 		t.Setenv("ORK_CONTINUATION_EVENTS", "10")
 		t.Setenv("ORK_CONTINUATION_BYTES", "1")
-		if err := loadConfig().limitsErr; err != nil {
-			t.Fatalf("refused with continuation off: %v", err)
-		}
+		must.OKf(t, loadConfig().limitsErr, "refused with continuation off")
 	})
 	for _, tc := range []struct {
 		name, key, raw, names string
@@ -228,9 +228,7 @@ func TestDefaults_DefinitionByReferenceAndOverlaysOn(t *testing.T) {
 			cfg.definitionByReference, cfg.definitionByReferenceSet, cfg.snapshotOverlays, cfg.limitsErr)
 	}
 	raw, err := os.ReadFile("../../deploy/orkstack.defaults.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, want := range []string{"definition_by_reference: true", "snapshot_overlays: true"} {
 		if !strings.Contains(string(raw), want) {
 			t.Fatalf("deploy/orkstack.defaults.yaml does not say %q", want)

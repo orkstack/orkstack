@@ -1,7 +1,7 @@
 package automation
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"reflect"
 	"slices"
@@ -12,7 +12,10 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The automation schema, held to this parser and to docs/AUTOMATION.md.
@@ -20,10 +23,8 @@ import (
 func automationSchemaTree(t *testing.T) map[string]any {
 	t.Helper()
 	tree, err := Schema()
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(tree)
+	must.OK(t, err)
+	encoded, err := stablejson.Marshal(tree)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,10 +174,8 @@ func TestAutomationSchema_SettingsComeFromTheNamespaceDescriptor(t *testing.T) {
 	settings := propertiesOf(definition(tree, "automation.settings"))
 	for _, row := range namespaceSettings {
 		want, err := settingSchema(namespaceField(row.field))
-		if err != nil {
-			t.Fatal(err)
-		}
-		encoded, _ := json.Marshal(want)
+		must.OK(t, err)
+		encoded, _ := stablejson.Marshal(want)
 		var decoded map[string]any
 		_ = json.Unmarshal(encoded, &decoded)
 		if got := withoutDescription(settings[row.key].(map[string]any)); !reflect.DeepEqual(got, withoutDescription(decoded)) {
@@ -367,9 +366,7 @@ func normalizedDoc(text string) string {
 
 func TestAutomationSchema_DescriptionsAreAutomationText(t *testing.T) {
 	raw, err := os.ReadFile("../../docs/AUTOMATION.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	doc := normalizedDoc(strings.ReplaceAll(string(raw), `\|`, "|"))
 	for path, text := range automationDescriptions {
 		for _, part := range strings.Split(text, " — absent means ") {

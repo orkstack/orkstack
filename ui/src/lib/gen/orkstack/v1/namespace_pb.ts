@@ -354,7 +354,7 @@ export type Budget = Message<"orkstack.v1.Budget"> & {
   /**
    * period is the rolling window a budget is held against, ending at the
    * moment of the question. Required; at least 1h and at most 744h (31 days).
-   * A longer question is a report — `orkctl stats usage --since` — not a
+   * A longer question is a report — `orkctl stats usage -s` — not a
    * budget evaluated at every submit.
    *
    * @generated from field: google.protobuf.Duration period = 3;

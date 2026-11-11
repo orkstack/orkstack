@@ -227,8 +227,8 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	// P3 — the card's CLI equivalent, and what the CLI prints for the same run.
 	// (The row's commands are one popover now; the inspect command is the one with `run inspect` in it.)
 	await page.getByTestId('run-inspect-cli-trigger').click();
-	const inspectCommand = page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: '--task talk' }).filter({ hasText: 'run inspect' });
-	await expect(inspectCommand).toHaveText(`orkctl --namespace default run inspect ${run} --task talk`);
+	const inspectCommand = page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: '-t talk' }).filter({ hasText: 'run inspect' });
+	await expect(inspectCommand).toHaveText(`orkctl -n default run inspect ${run} -t talk`);
 	note(`P3 card command: ${await inspectCommand.innerText()}`);
 	await page.getByTestId('run-inspect-cli-trigger').click();
 	const cliOut = runInspectCLI(run);

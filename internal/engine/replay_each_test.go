@@ -21,6 +21,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // eachHistory is the fan-out fixture: a real history recorded by a versioned
@@ -106,9 +108,7 @@ func recordedSchedule(t *testing.T, recorded *historypb.History) []string {
 			continue
 		}
 		var in *orkstackv1.ExecuteTaskInput
-		if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in); err != nil {
-			t.Fatalf("decode a recorded ExecuteTask input: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in), "decode a recorded ExecuteTask input")
 		out = append(out, scheduleKey(in))
 	}
 	return out
@@ -122,9 +122,7 @@ func replayEach(t *testing.T, body any) ([]string, error) {
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: []interceptor.WorkerInterceptor{recorder},
 	})
-	if err != nil {
-		t.Fatalf("NewWorkflowReplayerWithOptions: %v", err)
-	}
+	must.OKf(t, err, "NewWorkflowReplayerWithOptions")
 	replayer.RegisterWorkflowWithOptions(body, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	err = replayer.ReplayWorkflowHistoryFromJSONFile(nil, eachHistory)
 	recorder.mu.Lock()
@@ -165,13 +163,9 @@ func TestEachHistory_ReplayNeverRecountsTheArray(t *testing.T) {
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: []interceptor.WorkerInterceptor{recorder},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
-	if err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, eachHistory); err != nil {
-		t.Fatalf("replay: %v", err)
-	}
+	must.OKf(t, replayer.ReplayWorkflowHistoryFromJSONFile(nil, eachHistory), "replay")
 	recorder.mu.Lock()
 	defer recorder.mu.Unlock()
 	var items []string
@@ -271,9 +265,7 @@ func recordedItemPayloads(t *testing.T, recorded *historypb.History) (map[string
 		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
 			attrs.GetActivityType().GetName() == task.ActivityExecuteTask {
 			var in *orkstackv1.ExecuteTaskInput
-			if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in); err != nil {
-				t.Fatalf("decode a recorded input: %v", err)
-			}
+			must.OKf(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in), "decode a recorded input")
 			key := scheduleKey(in)
 			keyByScheduledID[event.GetEventId()] = key
 			inputs[key] = recordedPayload(t, attrs.GetInput(), 0)
@@ -285,9 +277,7 @@ func recordedItemPayloads(t *testing.T, recorded *historypb.History) (map[string
 				continue
 			}
 			var result *orkstackv1.ExecuteTaskResult
-			if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetResult(), &result); err != nil {
-				t.Fatalf("decode a recorded result: %v", err)
-			}
+			must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetResult(), &result), "decode a recorded result")
 			results[key] = result
 		}
 	}

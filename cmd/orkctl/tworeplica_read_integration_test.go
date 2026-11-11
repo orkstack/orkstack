@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // This file lives in cmd/orkctl rather than internal/engine because the harness
@@ -88,9 +90,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	submitted, err := replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: orkflowName,
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun on replica A: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun on replica A")
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("replica A started run %s", runID)
 
@@ -123,9 +123,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	// ---- the run finishes; the stream must end on its terminal event -------
 	select {
 	case err := <-streamDone:
-		if err != nil {
-			t.Fatalf("StreamEvents on replica B: %v", err)
-		}
+		must.OKf(t, err, "StreamEvents on replica B")
 	case <-time.After(4 * time.Minute):
 		t.Fatalf("replica B's stream never ended; it holds %v", streamed.sequences())
 	}
@@ -148,9 +146,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	// start this run, yet it must list and stream the committed values without
 	// accepting an object URI from the client.
 	listedArtifacts, err := replicaB.runs.ListRunArtifacts(ctx, connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{RunId: runID, TaskId: "after"}))
-	if err != nil {
-		t.Fatalf("ListRunArtifacts on replica B: %v", err)
-	}
+	must.OKf(t, err, "ListRunArtifacts on replica B")
 	var values *orkstackv1.RunArtifact
 	for _, artifact := range listedArtifacts.Msg.GetArtifacts() {
 		if artifact.GetKind() == orkstackv1.ArtifactKind_ARTIFACT_KIND_VALUES {
@@ -162,18 +158,14 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 		t.Fatalf("replica B did not list values.json for completed task: %#v", listedArtifacts.Msg.GetArtifacts())
 	}
 	artifactStream, err := replicaB.runs.ReadArtifact(ctx, connect.NewRequest(&orkstackv1.ReadArtifactRequest{RunId: runID, TaskId: values.GetTaskId(), Kind: values.GetKind(), Name: values.GetArtifact().GetName()}))
-	if err != nil {
-		t.Fatalf("ReadArtifact on replica B: %v", err)
-	}
+	must.OKf(t, err, "ReadArtifact on replica B")
 	var bytesRead int
 	complete := false
 	for artifactStream.Receive() {
 		bytesRead += len(artifactStream.Msg().GetData())
 		complete = complete || artifactStream.Msg().GetLast()
 	}
-	if err := artifactStream.Err(); err != nil {
-		t.Fatalf("ReadArtifact stream on replica B: %v", err)
-	}
+	must.OKf(t, artifactStream.Err(), "ReadArtifact stream on replica B")
 	if !complete || bytesRead == 0 {
 		t.Fatalf("replica B artifact stream complete=%v bytes=%d, want a verified values artifact", complete, bytesRead)
 	}
@@ -187,9 +179,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	// have.
 	listedAttempts, err := replicaB.runs.ListTaskAttempts(ctx, connect.NewRequest(
 		&orkstackv1.ListTaskAttemptsRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("ListTaskAttempts on replica B: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts on replica B")
 	gotAttempts := listedAttempts.Msg.GetAttempts()
 	if len(gotAttempts) != 2 {
 		t.Errorf("replica B lists %d attempts, want one per task of the run: %#v",
@@ -219,9 +209,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 	// under a process-local read model however the activities happened to be
 	// dealt out.
 	replayA := newEventCollector()
-	if err := collectStream(ctx, replicaA, runID, 0, replayA); err != nil {
-		t.Fatalf("StreamEvents on replica A: %v", err)
-	}
+	must.OKf(t, collectStream(ctx, replicaA, runID, 0, replayA), "StreamEvents on replica A")
 	fromA := replayA.events()
 	assertRunStreamContract(t, "replica A", fromA, 0)
 	assertSameStream(t, fromA, fromB)
@@ -233,9 +221,7 @@ func TestIntegration_SecondReplicaServesARunItNeverStarted(t *testing.T) {
 
 	// ---- a cursor resumes inside the record ---------------------------------
 	resumed := newEventCollector()
-	if err := collectStream(ctx, replicaB, runID, 2, resumed); err != nil {
-		t.Fatalf("StreamEvents(from_sequence=2) on replica B: %v", err)
-	}
+	must.OKf(t, collectStream(ctx, replicaB, runID, 2, resumed), "StreamEvents(from_sequence=2) on replica B")
 	assertRunStreamContract(t, "replica B resumed", resumed.events(), 2)
 
 	// ---- B lists a run it never started -------------------------------------
@@ -338,9 +324,7 @@ func awaitListedOnB(
 		listed, err := replica.runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 			Filters: []*orkstackv1.FieldFilter{equalsFilter("orkflow_name", orkflowName)},
 		}))
-		if err != nil {
-			t.Fatalf("ListRuns on %s: %v", replica.name, err)
-		}
+		must.OKf(t, err, "ListRuns on %s", replica.name)
 		for _, run := range listed.Msg.GetRuns() {
 			if run.GetId() != runID {
 				continue
@@ -394,9 +378,7 @@ func executionStatus(
 ) enumspb.WorkflowExecutionStatus {
 	t.Helper()
 	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatalf("DescribeWorkflowExecution(%s): %v", runID, err)
-	}
+	must.OKf(t, err, "DescribeWorkflowExecution(%s)", runID)
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }
 
@@ -459,9 +441,7 @@ func readWebSocketStream(
 ) []*orkstackv1.Event {
 	t.Helper()
 	conn, _, err := websocket.Dial(ctx, "ws://"+replica.addr+"/ws/runs/"+runID, nil)
-	if err != nil {
-		t.Fatalf("dial %s's websocket bridge for run %s: %v", replica.name, runID, err)
-	}
+	must.OKf(t, err, "dial %s's websocket bridge for run %s", replica.name, runID)
 	defer conn.CloseNow()
 
 	var out []*orkstackv1.Event
@@ -471,9 +451,7 @@ func readWebSocketStream(
 			return out
 		}
 		event := &orkstackv1.Event{}
-		if err := api.UnmarshalJSON(data, event); err != nil {
-			t.Fatalf("decode websocket frame %q: %v", data, err)
-		}
+		must.OKf(t, api.UnmarshalJSON(data, event), "decode websocket frame %q", data)
 		out = append(out, event)
 	}
 }
@@ -487,9 +465,7 @@ func awaitArchivedStream(
 ) []*orkstackv1.Event {
 	t.Helper()
 	store, err := artifacts.NewRunArchive(cfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	archiver := engine.NewRunArchiver(store)
 	deadline := time.Now().Add(90 * time.Second)
 	var lastErr error
@@ -635,9 +611,7 @@ func TestTwoReplicas_RunListFiltersAnswerIdentically(t *testing.T) {
 		submitted = append(submitted, id)
 	}
 	archive, err := artifacts.NewS3RunArchive(ctx, s.artifactCfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	at := time.Now().UTC().Add(-time.Hour)
 	var archived []string
 	for i, status := range []orkstackv1.Status{orkstackv1.Status_STATUS_FAILED, orkstackv1.Status_STATUS_SUCCEEDED} {

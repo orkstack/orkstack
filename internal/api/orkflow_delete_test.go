@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 type deleteRecordingStore struct {
@@ -51,9 +53,7 @@ func deletionService(t *testing.T, now time.Time, runs []*orkstackv1.Run, reader
 			Version:   version,
 			CreatedAt: timestamppb.New(now.Add(time.Duration(index) * time.Second)),
 		}, artifacts.NoHeadExpectation())
-		if err != nil {
-			t.Fatalf("seed deploy@%s: %v", version, err)
-		}
+		must.OKf(t, err, "seed deploy@%s", version)
 	}
 	byID := make(map[string]*orkstackv1.Run, len(runs))
 	for _, run := range runs {
@@ -83,9 +83,7 @@ func assertRunSafetyResult(
 ) {
 	t.Helper()
 	if wantCode == connect.CodeUnknown {
-		if err != nil {
-			t.Fatalf("DeleteOrkflow with old run: %v", err)
-		}
+		must.OKf(t, err, "DeleteOrkflow with old run")
 		if store.deleteCalls != 1 {
 			t.Errorf("store Delete calls = %d, want 1", store.deleteCalls)
 		}
@@ -113,9 +111,7 @@ func TestDeleteOrkflow_DeletesAllVersionsAndResolvesAnEmptyNamespaceToDefault(t 
 	}
 
 	response, err := deleteDeploy(svc)
-	if err != nil {
-		t.Fatalf("DeleteOrkflow: %v", err)
-	}
+	must.OKf(t, err, "DeleteOrkflow")
 	if response.GetName() != "deploy" || response.GetNamespace() != "default" || !response.GetDeletedAt().AsTime().Equal(now) {
 		t.Errorf("response = %+v, want deploy/default deleted at %s", response, now)
 	}

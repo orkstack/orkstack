@@ -22,6 +22,7 @@ export interface ActivityTask {
 	image?: { pinned: string; indexDigest: string };
 	orkflow?: unknown;
 	await?: unknown;
+	sleep?: unknown;
 }
 
 let catalog: Promise<ActivityInfo[]> | null = null;
@@ -63,12 +64,14 @@ export function catalogName(uses: string): string {
 const CONCURRENT_READS = 4;
 
 /**
- * What each container task's image declares, by task id. A composed or awaited
- * task runs no image of its own and is absent; so is a task whose image could
- * not be read.
+ * What each container task's image declares, by task id. A composed, awaited
+ * or sleeping task runs no image of its own and is absent; so is a task whose
+ * image could not be read.
  */
 export async function loadActivities(tasks: readonly ActivityTask[], reads: ActivityReads): Promise<Map<string, ActivityInfo>> {
-	const containers = tasks.filter((task) => task.orkflow === undefined && task.await === undefined);
+	const containers = tasks.filter(
+		(task) => task.orkflow === undefined && task.await === undefined && task.sleep === undefined
+	);
 	const out = new Map<string, ActivityInfo>();
 	if (containers.length === 0) return out;
 	const known = await readCatalog(reads);

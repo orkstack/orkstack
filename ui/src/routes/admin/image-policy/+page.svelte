@@ -2,7 +2,7 @@
 	import { shellQuote } from '#lib/runDetail.ts';
 	// Image supply-chain policy (proto/orkstack/v1/service.proto's
 	// GetImagePolicy/UpdateImagePolicy): the deployment's floor on which
-	// images may be applied and run — whether a `uses:` may be a mutable tag,
+	// images may be used and run — whether a `uses:` may be a mutable tag,
 	// which registries images may come from, and which cosign public keys a
 	// namespace may require by name (Namespace.require_signed_by, set on
 	// /admin/namespaces). A namespace may tighten this floor and never loosen

@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // archiveWithoutIndex is a RunArchive that is not an ObjectReferenceLister:
@@ -36,9 +38,7 @@ func TestRunArchiver_ObjectReferencesWithoutAnArchiveIsErrNoRunArchive(t *testin
 
 func TestRunArchiver_ObjectReferencesWithoutAnIndexIsErrNoObjectIndex(t *testing.T) {
 	local, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = local.Close() })
 	archiver := engine.NewRunArchiver(archiveWithoutIndex{local})
 	if _, err := archiver.ObjectReferences(context.Background(), "objects/n-eA/"+strings.Repeat("a", 64)); !errors.Is(err, engine.ErrNoObjectIndex) {
@@ -75,18 +75,12 @@ func TestRunArchiver_ObjectIDsOfAnArchivedRunAreExactlyItsRecordedOutputs(t *tes
 			SystemArtifacts: []*orkstackv1.ArtifactRef{{Name: "stderr.log", Uri: "s3://bucket/" + id("c3RkZXJy")}},
 		},
 	}
-	if err := archiver.Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
+	must.OKf(t, archiver.Archive(context.Background(), run, nil), "Archive")
 
 	listKey, err := artifacts.RunObjectListKey(run.GetId())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	raw, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(listKey)))
-	if err != nil {
-		t.Fatalf("read object list: %v", err)
-	}
+	must.OKf(t, err, "read object list")
 	var got []string
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("decode object list: %v", err)
@@ -111,9 +105,7 @@ func TestRunArchiver_ObjectIDsOfAnArchivedRunAreExactlyItsRecordedOutputs(t *tes
 func TestRunArchiver_CleanupStateReturnsTheImmutableRecord(t *testing.T) {
 	archiver, local, _ := newArchiveFixture(t)
 	at := time.Date(2026, 1, 9, 3, 4, 5, 0, time.UTC)
-	if err := local.MarkArtifactsCleaned(context.Background(), "ork-1-1", at); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, local.MarkArtifactsCleaned(context.Background(), "ork-1-1", at))
 	state, err := archiver.CleanupState(context.Background(), "ork-1-1")
 	if err != nil || !state.TemporalDeletedAt.Equal(at) || !state.ArtifactsCleaned {
 		t.Fatalf("CleanupState = %+v, %v; want cleaned at %s", state, err, at)

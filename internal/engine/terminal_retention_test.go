@@ -100,7 +100,7 @@ func TestTerminalRetention_ARetriedTerminalPublishInsideTheWindowIsStillDeduplic
 func TestTerminalRetention_ASubscribedRunSurvivesTheWindow(t *testing.T) {
 	store, bus, clock := retainedPair(10 * time.Minute)
 	finish(store, bus, "ork-1-1")
-	_, cancel, _ := bus.Subscribe("ork-1-1", 0)
+	_, cancel, _, _ := bus.Subscribe("ork-1-1", 0)
 	clock.Advance(11 * time.Minute)
 	finish(store, bus, "ork-1-2")
 	if events := bus.Events("ork-1-1", 0); len(events) != 2 {

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // validSpec is a container specification that satisfies the whole §9.2
@@ -42,9 +44,7 @@ func validSpec() ContainerSpec {
 func argsString(t *testing.T, spec ContainerSpec) string {
 	t.Helper()
 	args, err := dockerCreateArgs(spec)
-	if err != nil {
-		t.Fatalf("dockerCreateArgs: %v", err)
-	}
+	must.OKf(t, err, "dockerCreateArgs")
 	return strings.Join(args, " ")
 }
 
@@ -229,9 +229,7 @@ func TestDockerCreateArgs_EnvAndLabelsAreOrderedDeterministically(t *testing.T) 
 	first := ""
 	for range 20 {
 		args, err := dockerCreateArgs(spec)
-		if err != nil {
-			t.Fatalf("dockerCreateArgs: %v", err)
-		}
+		must.OKf(t, err, "dockerCreateArgs")
 		for i, arg := range args {
 			if arg == "--name" {
 				names[args[i+1]] = struct{}{}
@@ -341,9 +339,7 @@ func fakeDockerBinary(t *testing.T, attachDelay time.Duration, output string) st
 		"  *) exit 1 ;;\n" +
 		"esac\n"
 	path := filepath.Join(t.TempDir(), "docker")
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake docker binary: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(script), 0o755), "write fake docker binary")
 	return path
 }
 
@@ -378,15 +374,11 @@ func TestDockerRuntime_WaitDrainsTheAttachBeforeReporting(t *testing.T) {
 	// goroutine between Start and Wait cannot eat into the delay it measures:
 	// the attach's output is written at least attachDelay after this instant.
 	began := time.Now()
-	if err := runtime.Start(ctx, "fake-container", &stdout, &stderr); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	must.OKf(t, runtime.Start(ctx, "fake-container", &stdout, &stderr), "Start")
 
 	status, err := runtime.Wait(ctx, "fake-container")
 	elapsed := time.Since(began)
-	if err != nil {
-		t.Fatalf("Wait: %v", err)
-	}
+	must.OKf(t, err, "Wait")
 	if status.Code != 0 {
 		t.Errorf("exit code = %d, want 0", status.Code)
 	}
@@ -426,9 +418,7 @@ func TestDockerRuntime_StartCancelledWhileTheContainerRunsReportsItStarted(t *te
 		"  *) exit 1 ;;\n" +
 		"esac\n"
 	bin := filepath.Join(dir, "docker")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake docker binary: %v", err)
-	}
+	must.OKf(t, os.WriteFile(bin, []byte(script), 0o755), "write fake docker binary")
 	runtime := &DockerRuntime{Bin: bin}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -441,9 +431,7 @@ func TestDockerRuntime_StartCancelledWhileTheContainerRunsReportsItStarted(t *te
 	// Let Start observe "created" at least once, so the cancellation lands in
 	// its polling loop rather than before it.
 	awaitFile(t, observed, 30*time.Second)
-	if err := os.WriteFile(running, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(running, nil, 0o644))
 	cancel()
 
 	select {
@@ -470,9 +458,7 @@ func TestDockerRuntime_StartCancelledBeforeTheContainerRunsIsACancelledStart(t *
 		"  *) exit 1 ;;\n" +
 		"esac\n"
 	bin := filepath.Join(dir, "docker")
-	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
-		t.Fatalf("write fake docker binary: %v", err)
-	}
+	must.OKf(t, os.WriteFile(bin, []byte(script), 0o755), "write fake docker binary")
 	runtime := &DockerRuntime{Bin: bin}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -765,12 +751,8 @@ func TestStaleProbeImageCopies_NamesTheCopyThatMoved(t *testing.T) {
 			}
 			for rel, content := range files {
 				path := filepath.Join(root, filepath.FromSlash(rel))
-				if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.MkdirAll(filepath.Dir(path), 0o755))
+				must.OK(t, os.WriteFile(path, []byte(content), 0o644))
 			}
 			stale := staleProbeImageCopies(root, probe)
 			if tc.want == "" {

@@ -17,6 +17,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_TheOrkerNeverReadsThroughAnOutputSymlink is release blocker
@@ -130,25 +132,19 @@ func TestIntegration_TheOrkerNeverReadsThroughAnOutputSymlink(t *testing.T) {
 			dispatcher, commits := newDispatcher(t)
 			storeDir := t.TempDir()
 			store, err := artifacts.NewLocalStore(storeDir)
-			if err != nil {
-				t.Fatalf("local artifact store: %v", err)
-			}
+			must.OKf(t, err, "local artifact store")
 			dispatcher.Store = store
 
 			// The bytes only the Orker can see live in its own work root,
 			// beside the attempts: a path no mount gives the container.
 			token := "orker-only-" + strings.ReplaceAll(tc.name, " ", "-")
 			outside, err := os.MkdirTemp(dispatcher.WorkRoot, "outside-")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			for name, content := range map[string]string{
 				"leak.json": `{"leaked":"` + token + `"}`,
 				"leak.txt":  token,
 			} {
-				if err := os.WriteFile(filepath.Join(outside, name), []byte(content), 0o644); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.WriteFile(filepath.Join(outside, name), []byte(content), 0o644))
 			}
 
 			in := baseInput(t, "confine", "/bin/sh", "-c", tc.script(outside))

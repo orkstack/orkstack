@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // livePools is a stand-in for the cluster's answer to "who is serving this
@@ -67,9 +69,7 @@ func TestPoolResolver_ResolvesTaskPoolThenNamespaceDefaultThenMain(t *testing.T)
 	t.Run("namespace default fills a task that names none", func(t *testing.T) {
 		ns := &orkstackv1.Namespace{Name: "payments", DefaultPool: "batch"}
 		planned, plan, err := resolver.Plan(context.Background(), ns, compile(t, twoPoolDocument), false)
-		if err != nil {
-			t.Fatalf("Plan: %v", err)
-		}
+		must.OKf(t, err, "Plan")
 		want := map[string]string{"crunch": "gpu", "tidy": "batch"}
 		for _, tk := range planned.GetTasks() {
 			if got := tk.GetPool(); got != want[tk.GetId()] {
@@ -97,9 +97,7 @@ func TestPoolResolver_ResolvesTaskPoolThenNamespaceDefaultThenMain(t *testing.T)
 	t.Run("a namespace with no default falls to main", func(t *testing.T) {
 		planned, plan, err := resolver.Plan(context.Background(),
 			&orkstackv1.Namespace{Name: "default"}, compile(t, twoPoolDocument), false)
-		if err != nil {
-			t.Fatalf("Plan: %v", err)
-		}
+		must.OKf(t, err, "Plan")
 		for _, tk := range planned.GetTasks() {
 			if tk.GetId() == "tidy" && tk.GetPool() != task.DefaultPool {
 				t.Errorf("task tidy planned onto %q, want the built-in %q", tk.GetPool(), task.DefaultPool)
@@ -137,9 +135,7 @@ func TestPoolResolverPlan_ClearsSourceYAML(t *testing.T) {
 		t.Fatal("the compiled definition carries no source; this test's premise does not hold")
 	}
 	planned, _, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "default"}, source, false)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if planned.GetSourceYaml() != "" {
 		t.Fatalf("the planned definition carries %d bytes of source YAML, want none", len(planned.GetSourceYaml()))
 	}
@@ -169,9 +165,7 @@ func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T)
 	ns := &orkstackv1.Namespace{Name: "default"}
 
 	_, plan, err := resolver.Plan(context.Background(), ns, compile(t, twoPoolDocument), false)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if plan.Routes[task.DefaultPool] != raw {
 		t.Errorf("route for %q = %q, want the operator's channel %q",
 			task.DefaultPool, plan.Routes[task.DefaultPool], raw)
@@ -183,9 +177,7 @@ func TestPoolResolver_SendsTheDefaultRouteToTheOperatorsRawChannel(t *testing.T)
 	}
 
 	pools, err := resolver.Pools(context.Background(), ns, []string{"gpu"})
-	if err != nil {
-		t.Fatalf("Pools: %v", err)
-	}
+	must.OKf(t, err, "Pools")
 	byName := map[string]*orkstackv1.Pool{}
 	for _, p := range pools {
 		byName[p.GetName()] = p
@@ -221,9 +213,7 @@ func TestPoolResolver_OneSetOfOrkersIsOnePool(t *testing.T) {
 	ns := &orkstackv1.Namespace{Name: "default"}
 
 	planned, plan, err := resolver.Plan(context.Background(), ns, compile(t, twoPoolDocument), false)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	// One route, because it is one set of Orkers: `pool: gpu` and the task
 	// that named none are the same route under this deployment.
 	if len(plan.Routes) != 1 || plan.Routes["gpu"] != gpuQueue {
@@ -237,9 +227,7 @@ func TestPoolResolver_OneSetOfOrkersIsOnePool(t *testing.T) {
 	}
 
 	pools, err := resolver.Pools(context.Background(), ns, []string{"gpu"})
-	if err != nil {
-		t.Fatalf("Pools: %v", err)
-	}
+	must.OKf(t, err, "Pools")
 	if len(pools) != 1 {
 		names := make([]string, 0, len(pools))
 		for _, p := range pools {
@@ -309,9 +297,7 @@ func TestPoolResolver_RefusesAPoolTheNamespaceDoesNotAllow(t *testing.T) {
 // the namespace allows, or there is no planned task.
 func TestPoolResolver_HoldsTheAllowListAgainstThePoolItDispatchesTo(t *testing.T) {
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool: %v", err)
-	}
+	must.OKf(t, err, "QueueForPool")
 	resolver := &engine.PoolResolver{RawQueue: gpuQueue, Probe: everyPoolLive{}}
 
 	t.Run("the default pool collapsed onto a pool the namespace forbids", func(t *testing.T) {
@@ -353,9 +339,7 @@ func TestPoolResolver_HoldsTheAllowListAgainstThePoolItDispatchesTo(t *testing.T
 				"gpu's queue: %v — that is where it dispatches", err)
 		}
 		planned, plan, err := resolver.Plan(context.Background(), ns, doc, false)
-		if err != nil {
-			t.Fatalf("Plan: %v", err)
-		}
+		must.OKf(t, err, "Plan")
 		if got := planned.GetTasks()[0].GetPool(); got != "gpu" {
 			t.Errorf("`pool: main` was stamped %q, want gpu — the name its channel answers to", got)
 		}
@@ -418,9 +402,7 @@ func stampedPools(planned *orkstackv1.Orkflow) []string {
 // routing decision is made.
 func TestPoolResolver_RefusesASubmitOntoAPoolWithNoLiveOrkers(t *testing.T) {
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool: %v", err)
-	}
+	must.OKf(t, err, "QueueForPool")
 	// main is served; gpu is not.
 	resolver := &engine.PoolResolver{Probe: livePools{task.DefaultQueue: 2}}
 	ns := &orkstackv1.Namespace{Name: "payments"}
@@ -546,9 +528,7 @@ func TestPoolResolver_TreatsAStaleOrkerAsGone(t *testing.T) {
 	}
 
 	pools, err := resolver.Pools(context.Background(), ns, nil)
-	if err != nil {
-		t.Fatalf("Pools: %v", err)
-	}
+	must.OKf(t, err, "Pools")
 	if got := pools[0].GetLiveOrkerCount(); got != 0 {
 		t.Errorf("ListPools would report %d Orkers on a pool everyone left, want 0", got)
 	}
@@ -584,9 +564,7 @@ func TestPoolResolver_ReportsPoolsWithTheirLiveOrkers(t *testing.T) {
 	ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"main", "gpu", "cold"}}
 
 	pools, err := resolver.Pools(context.Background(), ns, nil)
-	if err != nil {
-		t.Fatalf("Pools: %v", err)
-	}
+	must.OKf(t, err, "Pools")
 	byName := map[string]*orkstackv1.Pool{}
 	for _, p := range pools {
 		byName[p.GetName()] = p
@@ -771,9 +749,7 @@ func TestPoolResolver_AcceptsAPinnedSubmitWhenThePoolHostsPins(t *testing.T) {
 	ns := &orkstackv1.Namespace{Name: "ci"}
 
 	planned, plan, err := resolver.Plan(context.Background(), ns, compile(t, pinnedSubmitDocument), false)
-	if err != nil {
-		t.Fatalf("Plan: %v", err)
-	}
+	must.OKf(t, err, "Plan")
 	if plan.Routes["gpu"] != gpuQueue {
 		t.Errorf("plan routes gpu to %q, want %q", plan.Routes["gpu"], gpuQueue)
 	}
@@ -1096,9 +1072,7 @@ func TestPoolResolver_PoolsProbesItsPoolsTogether(t *testing.T) {
 	ns := &orkstackv1.Namespace{Name: "default"}
 
 	pools, err := resolver.Pools(context.Background(), ns, extra)
-	if err != nil {
-		t.Fatalf("Pools: %v", err)
-	}
+	must.OKf(t, err, "Pools")
 	probe.mu.Lock()
 	most := probe.most
 	probe.mu.Unlock()
@@ -1118,9 +1092,7 @@ func TestPoolResolver_PoolsProbesItsPoolsTogether(t *testing.T) {
 			t.Fatalf("pools out of name order at %d: %q then %q", i, pools[i-1].GetName(), pool.GetName())
 		}
 		queue, err := task.QueueForPool(pool.GetName(), "")
-		if err != nil {
-			t.Fatalf("queue for %q: %v", pool.GetName(), err)
-		}
+		must.OKf(t, err, "queue for %q", pool.GetName())
 		if got, want := pool.GetLiveOrkerCount(), int32(len(queue)); got != want {
 			t.Errorf("pool %q reports %d live Orkers, want its own probe's %d", pool.GetName(), got, want)
 		}

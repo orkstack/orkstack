@@ -10,6 +10,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingNotifier stands in for whatever listens outside the process.
@@ -110,9 +112,7 @@ func TestPublishEvent_AnnouncesATaskOutcomeOnceAcrossActivityRetries(t *testing.
 	event := runEvent(runID, orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED, orkstackv1.Status_STATUS_SUCCEEDED)
 	event.TaskId = "extract"
 	for range 3 {
-		if err := activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#9"); err != nil {
-			t.Fatalf("PublishEvent: %v", err)
-		}
+		must.OKf(t, activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#9"), "PublishEvent")
 	}
 	if got := notifier.types(); len(got) != 1 {
 		t.Errorf("announced the same task outcome %d times (%v); a retry must not re-announce it", len(got), got)
@@ -148,9 +148,7 @@ func TestPublishEvent_NeverAnnouncesATaskFailedEventCarryingCanceled(t *testing.
 				event := runEvent(runID, step.eventType, step.status)
 				event.TaskId = step.taskID
 				run := &orkstackv1.Run{Id: runID, OrkflowName: "hello-ork", Status: orkstackv1.Status_STATUS_RUNNING}
-				if err := activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), dedupe(runID, i)); err != nil {
-					t.Fatalf("PublishEvent %v: %v", step.eventType, err)
-				}
+				must.OKf(t, activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), dedupe(runID, i)), "PublishEvent %v", step.eventType)
 			}
 			announcedFailure := false
 			for _, eventType := range notifier.types() {
@@ -185,7 +183,9 @@ func TestIsSubscribableEvent_SelectsRunTransitionsAndTaskOutcomes(t *testing.T) 
 				orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED,
 				// An await's two events, whatever their status.
 				orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING,
-				orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED:
+				orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED,
+				// A sleep's start.
+				orkstackv1.EventType_EVENT_TYPE_TASK_SLEEPING:
 				want = true
 			case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 				want = status == orkstackv1.Status_STATUS_FAILED
@@ -265,9 +265,7 @@ func TestPublishEvent_AnnouncesATransitionOnceAcrossActivityRetries(t *testing.T
 	// The same dedupe key three times: a Temporal activity retry, then a
 	// workflow replay.
 	for range 3 {
-		if err := activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#7"); err != nil {
-			t.Fatalf("PublishEvent: %v", err)
-		}
+		must.OKf(t, activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#7"), "PublishEvent")
 	}
 	if got := notifier.types(); len(got) != 1 {
 		t.Errorf("announced the same transition %d times (%v); a retry must not re-announce it",

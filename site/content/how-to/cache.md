@@ -27,9 +27,9 @@ In [`examples/config-from-git.ork.yaml`](https://github.com/orkstack/orkstack/bl
 The example reads a small public repository, so it needs internet access to GitHub and nothing else. Run it twice with the same input:
 
 ```bash
-orkctl apply examples/config-from-git.ork.yaml
-orkctl run submit config-from-git --watch
-orkctl run submit config-from-git --watch
+orkctl orkflow create examples/config-from-git.ork.yaml
+orkctl run submit config-from-git -w
+orkctl run submit config-from-git -w
 ```
 
 If the commit has not moved, the cached tasks finish as `SUCCEEDED (cached)` in `orkctl run get`.

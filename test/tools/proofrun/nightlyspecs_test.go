@@ -5,6 +5,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const specRow = "ui/e2e/run-page-ceiling.spec.ts\tui/e2e/run-page-reduced-ceiling.spec.ts\t2026-10-26 Daniel Santos\tthe default ceiling's 4,000 tasks"
@@ -47,9 +49,7 @@ func TestNightlySpecs_ParsesTheListStrictly(t *testing.T) {
 func TestNightlySpecs_ProblemsAgainstTheListing(t *testing.T) {
 	entries, err := parseNightlySpecs(strings.NewReader(specRow+"\n"+
 		"ui/e2e/gone.spec.ts\tui/e2e/run-page-ceiling.spec.ts,ui/e2e/missing.spec.ts\t2026-10-26 Daniel Santos\tr\n"), "list")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	listed := map[string]bool{"run-page-ceiling.spec.ts": true, "run-page-reduced-ceiling.spec.ts": true}
 	got := strings.Join(nightlySpecProblems(entries, listed, true), "\n")
 	for _, want := range []string{
@@ -89,13 +89,9 @@ func TestNightlySpecs_DeferredSetIsAnchoredToTheBase(t *testing.T) {
 // and no covering spec is itself on the list.
 func TestRepositoryNightlySpecs_SpecsExistAndCoveringSpecsAreNotListed(t *testing.T) {
 	root, err := repoRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	entries, err := readNightlySpecs(filepath.Join(root, nightlySpecFile))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	listed := map[string]bool{}
 	files, _ := filepath.Glob(filepath.Join(root, "ui", "e2e", "*.spec.ts"))
 	for _, f := range files {

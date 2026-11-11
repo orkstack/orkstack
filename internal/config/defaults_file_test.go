@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestDefaultsFile_MatchesRenderDefaults proves
@@ -12,9 +14,7 @@ import (
 // regeneration.
 func TestDefaultsFile_MatchesRenderDefaults(t *testing.T) {
 	data, err := os.ReadFile("../../deploy/orkstack.defaults.yaml")
-	if err != nil {
-		t.Fatalf("read deploy/orkstack.defaults.yaml: %v", err)
-	}
+	must.OKf(t, err, "read deploy/orkstack.defaults.yaml")
 	if string(data) != RenderDefaults() {
 		t.Fatal("deploy/orkstack.defaults.yaml is stale: run make config-defaults")
 	}

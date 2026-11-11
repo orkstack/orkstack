@@ -1,7 +1,6 @@
 <script lang="ts">
 	import LiveControl from './LiveControl.svelte';
 	import { onDestroy, untrack } from 'svelte';
-	import CliEquivalent from './CliEquivalent.svelte';
 	import Icon from './Icon.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import Select from '#lib/components/Select.svelte';
@@ -567,35 +566,21 @@
 				</p>
 			{/if}
 
-			{#if dropped > 0}
-				<div
-					data-testid="task-log-dropped-{taskId}"
-					data-cli-own
-					class="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-sm text-ink-secondary"
-				>
-					{dropped} earlier lines are no longer shown here (scrollback is {scrollback} lines).
-					The whole output is in the artifact store.
-					<CliEquivalent
-						testid="task-log-dropped-cli-{taskId}"
-						label="Read the whole output from the CLI"
-						command="orkctl run logs {runId} --task {taskId}{item !== undefined ? ` --item ${item}` : ''}"
-					/>
-				</div>
-			{/if}
-
-			{#if retried}
-				<div
-					data-testid="task-log-retried-{taskId}"
-					data-cli-own
-					class="flex flex-wrap items-center gap-2 border-b border-line px-3 py-1.5 text-sm text-ink-secondary"
-				>
-					This task retried, and this pane is now following attempt {shownAttempt}. The
-					earlier attempt's output is still in the artifact store.
-					<CliEquivalent
-						testid="task-log-retried-cli-{taskId}"
-						label="Read the earlier attempt's output from the CLI"
-						command="orkctl run logs {runId} --task {taskId} --attempt {shownAttempt - 1}"
-					/>
+			{#if dropped > 0 || retried}
+				<!-- Their commands are in the run's one terminal icon (ui/DESIGN.md, the Shell Icon Rule). -->
+				<div data-testid="task-log-notices-{taskId}" class="space-y-1 border-b border-line px-3 py-1.5 text-sm text-ink-secondary">
+					{#if dropped > 0}
+						<p data-testid="task-log-dropped-{taskId}">
+							{dropped} earlier lines are no longer shown here (scrollback is {scrollback} lines).
+							The whole output is in the artifact store.
+						</p>
+					{/if}
+					{#if retried}
+						<p data-testid="task-log-retried-{taskId}">
+							This task retried, and this pane is now following attempt {shownAttempt}. The
+							earlier attempt's output is still in the artifact store.
+						</p>
+					{/if}
 				</div>
 			{/if}
 

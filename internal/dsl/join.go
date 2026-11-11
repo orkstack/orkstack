@@ -127,7 +127,8 @@ func validateJoins(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task) err
 			}
 		}
 		// Rule 42: a container failure handler names at most 32 needs.
-		if handler && task.GetAwait() == nil && !IsComposedTask(task) && len(task.GetNeeds()) > MaxHandlerNeeds {
+		if handler && task.GetAwait() == nil && task.GetSleep() == nil && !IsComposedTask(task) &&
+			len(task.GetNeeds()) > MaxHandlerNeeds {
 			return validationError(at("needs"), fmt.Errorf(
 				"task %q (join %s) names %d needs; a failure handler names at most %d, because its "+
 					"input records how each one ended — split it into handlers of at most %d needs each",

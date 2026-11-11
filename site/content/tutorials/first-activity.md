@@ -82,13 +82,13 @@ tasks:
       who: "{{ .inputs.who }}"
 ```
 
-`uses:` names the image by its registry address, not by a catalog name. Apply resolves the tag to a digest, and the run uses that digest.
+`uses:` names the image by its registry address, not by a catalog name. Creating the Orkflow resolves the tag to a digest, and the run uses that digest.
 
-## 5. Apply it and run it
+## 5. Create it and run it
 
 ```bash
-orkctl apply hello-image.ork.yaml
-orkctl run submit hello-image --input who=Ada --watch
+orkctl orkflow create hello-image.ork.yaml
+orkctl run submit hello-image -i who=Ada -w
 ```
 
 `run submit` prints `Submitted run` with the run's ID, then follows the run until it ends. The last line reads `Run <id> finished with status SUCCEEDED`.
@@ -98,7 +98,7 @@ orkctl run submit hello-image --input who=Ada --watch
 Use the run ID from step 5 in place of `<run-id>`:
 
 ```bash
-orkctl run logs <run-id> --task greet
+orkctl run logs <run-id> -t greet
 ```
 
 The log reads `hello Ada from my own image`. Leave out `--input who=Ada` and the task greets `world`.
@@ -108,7 +108,7 @@ The output is the task's `values.json`. Open the run in the UI. The run page's *
 **If you installed orkctl.** The alias cannot write files, so save the output with the installed binary, called as `./orkctl` because the alias wins over it. [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains how to install it.
 
 ```bash
-./orkctl run artifact download <run-id> --task greet --kind values --name values.json --output greeting.json
+./orkctl run artifact download <run-id> -t greet --kind values --name values.json -o greeting.json
 cat greeting.json
 ```
 

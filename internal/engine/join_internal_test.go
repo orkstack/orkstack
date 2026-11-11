@@ -9,6 +9,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestJoinAdmits_Table(t *testing.T) {
@@ -128,9 +130,7 @@ func TestJoinContextFor_WorstCase(t *testing.T) {
 		t.Fatalf("context = %d needs", len(jc.GetNeeds()))
 	}
 	size, err := task.PayloadSize(jc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if size > joinContextMaxBytes {
 		t.Fatalf("the worst-case JoinContext is %d bytes, over the %d-byte bound", size, joinContextMaxBytes)
 	}

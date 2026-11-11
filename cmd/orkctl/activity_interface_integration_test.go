@@ -8,7 +8,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"os"
@@ -26,10 +26,13 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Activity interface manifests (docs/ACTIVITY_IMAGES.md "Declaring the interface"), against
@@ -72,9 +75,7 @@ func startInterfaceStack(ctx context.Context, t *testing.T, engines int, withOrk
 	dialIsolatedNamespace(ctx, t, address, namespace)
 	pool := privateTaskPool()
 	taskQueue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map test pool: %v", err)
-	}
+	must.OKf(t, err, "map test pool")
 	root := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
 	enginePath := testbin.Path(t, "./cmd/ork")
@@ -133,9 +134,7 @@ func (s *interfaceStack) writeProof(t *testing.T, name, title string) {
 func writeInterfaceDocument(t *testing.T, name, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name+".ork.yaml")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(body), 0o644), "write %s", path)
 	return path
 }
 
@@ -207,13 +206,9 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 	root := repoRoot(t)
 	for _, name := range dsl.BuiltinActivityCatalog().Names() {
 		source, err := os.ReadFile(filepath.Join(root, "images", "activity-"+name, "interface.ork.yaml"))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		want, err := dsl.ParseActivityDocument(source)
-		if err != nil {
-			t.Fatalf("images/activity-%s/interface.ork.yaml: %v", name, err)
-		}
+		must.OKf(t, err, "images/activity-%s/interface.ork.yaml", name)
 		got := byName[name]
 		if got.GetInterfaceError() != "" || got.GetIconError() != "" || got.GetDocsError() != "" {
 			t.Fatalf("%s: a label is unreadable: %q / %q / %q", name, got.GetInterfaceError(), got.GetIconError(), got.GetDocsError())
@@ -229,13 +224,9 @@ func TestInterfaceManifests_FirstPartyImagesDeclareTheirInterfaces(t *testing.T)
 
 	inspectedText := requireCLI(t, stack.cli, "inspect file", "activity", "inspect", "file")
 	fileSource, err := os.ReadFile(filepath.Join(root, "images", "activity-file", "interface.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	fileDecl, err := dsl.ParseActivityDocument(fileSource)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, want := range []string{
 		"Description " + strings.Join(strings.Fields(fileDecl.Docs.GetDescription()), " "),
 		"Icon        declared · 2 elements", // the file image's page: two paths
@@ -334,7 +325,7 @@ func TestInterfaceManifests_ValidateAndApplyAgainstTheRealRegistry(t *testing.T)
 		if tc.what == "op gzpi" && !strings.Contains(stdout, fileOps) {
 			t.Fatalf("validate did not name the seven ops:\n%s", stdout)
 		}
-		_, stderr, code := stack.cli("apply", path)
+		_, stderr, code := stack.cli("orkflow", "create", path)
 		if code == 0 || !strings.Contains(stderr, "invalid_argument") || !strings.Contains(stderr, tc.field+": "+tc.contains) {
 			t.Fatalf("%s: apply exited %d, want invalid_argument naming %s:\n%s", tc.what, code, tc.field, stderr)
 		}
@@ -351,7 +342,7 @@ func TestInterfaceManifests_ValidateAndApplyAgainstTheRealRegistry(t *testing.T)
 		!strings.Contains(validated, "Valid orkflow "+name+" (version 1.0.0), 1 warning") {
 		t.Fatalf("validate of the warned document:\n%s", validated)
 	}
-	applied := requireCLI(t, stack.cli, "apply the warned document", "apply", path)
+	applied := requireCLI(t, stack.cli, "apply the warned document", "orkflow", "create", path)
 	if !strings.Contains(applied, "Warnings:\n  - tasks[0].with.srcs: with.srcs is not declared by the interface of ") {
 		t.Fatalf("apply did not print the warning:\n%s", applied)
 	}
@@ -396,7 +387,7 @@ tasks:
 	if !strings.Contains(validated, "warning  tasks[1].with.srcs:") || !strings.Contains(validated, "1 warning") {
 		t.Fatalf("validate:\n%s", validated)
 	}
-	requireCLI(t, stack.cli, "apply", "apply", path)
+	requireCLI(t, stack.cli, "create", "orkflow", "create", path)
 	ran := requireCLI(t, stack.cli, "run the warned document", "run", "submit", name, "--watch")
 	if !strings.Contains(ran, "SUCCEEDED") {
 		t.Fatalf("the warned document did not run to SUCCEEDED:\n%s", ran)
@@ -417,16 +408,12 @@ func pushUnlabelledImage(ctx context.Context, t *testing.T, registry, repository
 	do := func(method, url, contentType string, body []byte, want int) *http.Response {
 		t.Helper()
 		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
-		if err != nil {
-			t.Fatalf("build %s %s: %v", method, url, err)
-		}
+		must.OKf(t, err, "build %s %s", method, url)
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
 		}
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", method, url, err)
-		}
+		must.OKf(t, err, "%s %s", method, url)
 		defer resp.Body.Close()
 		if resp.StatusCode != want {
 			var text bytes.Buffer
@@ -440,9 +427,7 @@ func pushUnlabelledImage(ctx context.Context, t *testing.T, registry, repository
 		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(blob))
 		started := do(http.MethodPost, base+"/blobs/uploads/", "", nil, http.StatusAccepted)
 		location, err := started.Location()
-		if err != nil {
-			t.Fatalf("blob upload location: %v", err)
-		}
+		must.OKf(t, err, "blob upload location")
 		query := location.Query()
 		query.Set("digest", digest)
 		location.RawQuery = query.Encode()
@@ -450,22 +435,18 @@ func pushUnlabelledImage(ctx context.Context, t *testing.T, registry, repository
 		return digest
 	}
 	var tarball, layer bytes.Buffer
-	if err := tar.NewWriter(&tarball).Close(); err != nil {
-		t.Fatalf("empty tar: %v", err)
-	}
+	must.OKf(t, tar.NewWriter(&tarball).Close(), "empty tar")
 	zipper := gzip.NewWriter(&layer)
 	_, _ = zipper.Write(tarball.Bytes())
-	if err := zipper.Close(); err != nil {
-		t.Fatalf("gzip layer: %v", err)
-	}
+	must.OKf(t, zipper.Close(), "gzip layer")
 	layerDigest := pushBlob(layer.Bytes())
-	config, _ := json.Marshal(map[string]any{
+	config, _ := stablejson.Marshal(map[string]any{
 		"architecture": "amd64", "os": "linux",
 		"config": map[string]any{},
 		"rootfs": map[string]any{"type": "layers", "diff_ids": []string{fmt.Sprintf("sha256:%x", sha256.Sum256(tarball.Bytes()))}},
 	})
 	configDigest := pushBlob(config)
-	manifest, _ := json.Marshal(map[string]any{
+	manifest, _ := stablejson.Marshal(map[string]any{
 		"schemaVersion": 2,
 		"mediaType":     dsl.MediaTypeOCIManifest,
 		"config": map[string]any{"mediaType": "application/vnd.oci.image.config.v1+json",
@@ -497,9 +478,7 @@ func TestInterfaceManifests_ActivityBuildPacksTheInterface(t *testing.T) {
 		"Dockerfile": "FROM scratch\nCOPY entry /entry\nENTRYPOINT [\"/entry\"]\n",
 		"entry":      "never run\n",
 	} {
-		if err := os.WriteFile(filepath.Join(buildContext, name), []byte(content), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(buildContext, name), []byte(content), 0o644))
 	}
 	document := "apiVersion: orkstack/v1\nkind: ActivityInterface\n" +
 		"description: It's \"built\".\nicon: '<svg viewBox=\"0 0 16 16\"><path d=\"M4 7h8\" stroke=\"currentColor\"/></svg>'\n" +
@@ -507,13 +486,9 @@ func TestInterfaceManifests_ActivityBuildPacksTheInterface(t *testing.T) {
 		"ops:\n  hello:\n    fields:\n      name:\n        type: string\n        required: true\n  bye: {}\n" +
 		"defaultOp: hello\nvalues:\n  said:\n    type: string\n"
 	documentPath := filepath.Join(t.TempDir(), "interface.ork.yaml")
-	if err := os.WriteFile(documentPath, []byte(document), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(documentPath, []byte(document), 0o644))
 	want, err := dsl.ParseActivityDocument([]byte(document))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 
 	tag := fmt.Sprintf("%s/orkstack-test/interface-built:%s", testRegistry(), exampleImageTag())
 	built := requireCLI(t, stack.cli, "activity build --interface",
@@ -552,7 +527,7 @@ func TestInterfaceManifests_ADocumentNamingAnUnlabelledImageIsUnchanged(t *testi
 	if validated != fmt.Sprintf("Valid orkflow %s (version 1.0.0)\n", name) {
 		t.Fatalf("validate of a document naming an unlabelled image printed more than the valid line:\n%s", validated)
 	}
-	applied := requireCLI(t, stack.cli, "apply --json", "apply", path, "--json")
+	applied := requireCLI(t, stack.cli, "apply --json", "orkflow", "create", path, "--json")
 	if strings.Contains(applied, `"warnings"`) {
 		t.Fatalf("apply carried warnings for an unlabelled image:\n%s", applied)
 	}
@@ -593,9 +568,7 @@ func TestInspectActivity_TwoReplicasAgree(t *testing.T) {
 		for _, allowCached := range []bool{false, true, true} {
 			resp, err := client.InspectActivity(ctx, connect.NewRequest(
 				&orkstackv1.InspectActivityRequest{Reference: pinned, AllowCached: allowCached}))
-			if err != nil {
-				t.Fatalf("inspect %s on %s (allow_cached %v): %v", pinned, server, allowCached, err)
-			}
+			must.OKf(t, err, "inspect %s on %s (allow_cached %v)", pinned, server, allowCached)
 			got := resp.Msg.GetActivity()
 			if got.GetIcon() == nil || got.GetDocs() == nil {
 				t.Fatalf("inspect %s on %s: no icon or docs: %v", pinned, server, got)
@@ -624,16 +597,12 @@ func TestInterfaceManifests_ActivityTestReportsTheLabel(t *testing.T) {
 	}
 	reference := localcatalog.Reference("shell")
 	inspected, err := dsl.NewResolver("").Inspect(ctx, reference, reference)
-	if err != nil {
-		t.Fatalf("resolve %s: %v", reference, err)
-	}
+	must.OKf(t, err, "resolve %s", reference)
 	if inspected.Interface == nil || inspected.InterfaceError != "" {
 		t.Fatalf("%s declares no readable interface (%q); this test needs a labelled image", reference, inspected.InterfaceError)
 	}
 	want, err := dsl.PackInterfaceLabel(inspected.Interface)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 
 	// The suite's workspaces live in this test's own work root.
 	stdout, stderr, code := runBinaryWithEnv(ctx, t, testbin.Path(t, "./cmd/orkctl"), repoRoot(t),
@@ -642,10 +611,10 @@ func TestInterfaceManifests_ActivityTestReportsTheLabel(t *testing.T) {
 	var report struct {
 		OK        bool `json:"ok"`
 		Interface struct {
-			Status  string          `json:"status"`
-			Summary string          `json:"summary"`
-			Label   json.RawMessage `json:"label"`
-			Error   string          `json:"error"`
+			Status  string             `json:"status"`
+			Summary string             `json:"summary"`
+			Label   stablejson.RawJSON `json:"label"`
+			Error   string             `json:"error"`
 		} `json:"interface"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &report); err != nil {
@@ -665,9 +634,7 @@ func TestInterfaceManifests_ActivityTestReportsTheLabel(t *testing.T) {
 	if err := protojson.Unmarshal(report.Interface.Label, &got); err != nil {
 		t.Fatalf("the reported label is not an interface: %v (%s)", err, report.Interface.Label)
 	}
-	if err := protojson.Unmarshal([]byte(want), &expected); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, protojson.Unmarshal([]byte(want), &expected))
 	if !proto.Equal(&got, &expected) {
 		t.Fatalf("activity test reported\n%v\napply reads\n%v", &got, &expected)
 	}

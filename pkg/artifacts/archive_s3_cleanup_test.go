@@ -73,8 +73,8 @@ func TestS3RunArchive_DeleteRunArtifactsDeletesEachListingPageWithOneRequest(t *
 		t.Errorf("DeleteObjects requests = %d, want at most %d", d.batchDeletes, want)
 	}
 	for _, n := range d.batchKeys {
-		if n > s3DeleteBatch {
-			t.Errorf("a DeleteObjects named %d keys, more than %d", n, s3DeleteBatch)
+		if n > blobRemoveBatch {
+			t.Errorf("a DeleteObjects named %d keys, more than %d", n, blobRemoveBatch)
 		}
 	}
 	// The object list itself is the one single delete.

@@ -17,6 +17,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -124,7 +125,7 @@ async function submit(name: string): Promise<string> {
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# The Evidence dialog on the run page: the manifest before the bytes,',
@@ -263,9 +264,10 @@ test('P2 toggles change the manifest and the command', async ({ page }) => {
 	await page.getByTestId('run-evidence-artifacts').uncheck();
 	await expect(page.getByTestId('run-evidence-summary')).toContainText(`${before - artifactCount} present`);
 	await page.getByTestId('run-evidence-cli-trigger').click();
-	await expect(page.getByTestId('run-evidence-cli-command')).toContainText("--no-artifacts");
-	await expect(page.getByTestId('run-evidence-cli-command')).toHaveText(
-		`orkctl --namespace default run evidence export ${completedRun} --output ${completedRun}.evidence.tar.gz --no-artifacts`
+	const exported = page.getByTestId('run-evidence-cli-popover').locator('[data-cli-label="Export the bundle"]');
+	await expect(exported).toContainText("--no-artifacts");
+	await expect(exported).toHaveText(
+		`orkctl -n default run evidence export ${completedRun} -o ${completedRun}.evidence.tar.gz --no-artifacts`
 	);
 	note(`P2 present ${before} -> ${before - artifactCount} with --no-artifacts`);
 	await shot(page, 'screenshot-run-evidence-no-artifacts.png');

@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The definition-by-reference chaos scenarios (T5, C33–C36): a definition passed by reference
@@ -62,9 +64,7 @@ func (s *chaosStack) definitionChaosRun(t *testing.T, name string, budget engine
 	s.transcript.run(runID)
 	wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: "+name+"\nversion: \"1.0.0\"\ntasks:\n"+guardChain("c", 30, ""))
 	stub, plan, uri := storeDefinitionIn(t, s.ctx, s.store, runID, wf, s.plan(1000, engine.DefaultHistoryMaxBytes, &budget))
-	if err := s.starter.StartRun(s.ctx, runID, stub, nil, plan); err != nil {
-		t.Fatalf("StartRun %s: %v", runID, err)
-	}
+	must.OKf(t, s.starter.StartRun(s.ctx, runID, stub, nil, plan), "StartRun %s", runID)
 	s.transcript.step("run %s started with its %d-byte definition passed by reference", runID, plan.Definition.SizeBytes)
 	stream := s.openStream(s.reader, runID, 0)
 	hook.waitEntered(t, 2*time.Minute)
@@ -108,9 +108,7 @@ func TestIntegration_DefinitionChaosC33_CorruptAtALaterGeneration(t *testing.T) 
 		t.Fatal("the held definition read is generation 0's")
 	}
 	data, err := s.store.ReadSnapshot(ctx, uri)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	forged := bytes.Repeat([]byte("not the run's definition "), len(data)/25+1)[:len(data)]
 	raw := newRawS3ClientForCommitE2E(t, s.cfg)
 	bucket, key := s3Key(t, uri)
@@ -324,9 +322,7 @@ func (s *chaosStack) cancelDuringTheLoad(t *testing.T, name string, proxy *fault
 	}
 	s.transcript.step("the definition read failed and was retried under the cut (%+v)", proxy.Stats())
 	canceledAt := time.Now()
-	if err := s.starter.CancelRun(s.ctx, runID, engine.CancelRequest{}); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, s.starter.CancelRun(s.ctx, runID, engine.CancelRequest{}))
 	return runID, canceledAt
 }
 
@@ -505,9 +501,7 @@ func (s *chaosStack) requireStreamed(t *testing.T, a *chaosAPI, runID, want stri
 		from = 1
 	}
 	served, err := stream(from)
-	if err != nil {
-		t.Fatalf("StreamRunEvents from %d: %v", from, err)
-	}
+	must.OKf(t, err, "StreamRunEvents from %d", from)
 	if got := fmt.Sprint(definitionEventTypes(served)); got != want {
 		t.Fatalf("StreamRunEvents from %d served %s, want %s", from, got, want)
 	}
@@ -557,16 +551,12 @@ func (s *chaosStack) requireArchivedWith(t *testing.T, a *chaosAPI, runID string
 func (s *chaosStack) requireCategory(t *testing.T, runID string, want orkstackv1.FailureCategory) {
 	t.Helper()
 	run, err := s.reader.GetRun(s.ctx, runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if got := run.GetError().GetCategory(); got != want {
 		t.Fatalf("GetRun's error %v has category %v, want %v", run.GetError(), got, want)
 	}
 	archived, err := s.archive.LoadRun(s.ctx, runID)
-	if err != nil {
-		t.Fatalf("the archive body: %v", err)
-	}
+	must.OKf(t, err, "the archive body")
 	if got := archived.GetError().GetCategory(); got != want {
 		t.Fatalf("the archive body's error %v has category %v, want %v", archived.GetError(), got, want)
 	}

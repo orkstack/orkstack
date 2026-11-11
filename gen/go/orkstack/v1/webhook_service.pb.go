@@ -733,7 +733,12 @@ type Delivery struct {
 	// redelivery_of names the delivery this one repeats, when an operator
 	// asked for it through RedeliverWebhook. Empty for a delivery the engine
 	// made on its own.
-	RedeliveryOf  string `protobuf:"bytes,20,opt,name=redelivery_of,json=redeliveryOf,proto3" json:"redelivery_of,omitempty"`
+	RedeliveryOf string `protobuf:"bytes,20,opt,name=redelivery_of,json=redeliveryOf,proto3" json:"redelivery_of,omitempty"`
+	// sequence is the run event's sequence, as the body's "sequence" and
+	// X-Ork-Sequence carried it: the order the run emitted its events in, which
+	// a receiver orders deliveries by. A redelivery keeps the original's. Zero
+	// on a record written before deliveries carried it.
+	Sequence      int64 `protobuf:"varint,21,opt,name=sequence,proto3" json:"sequence,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -906,6 +911,13 @@ func (x *Delivery) GetRedeliveryOf() string {
 		return x.RedeliveryOf
 	}
 	return ""
+}
+
+func (x *Delivery) GetSequence() int64 {
+	if x != nil {
+		return x.Sequence
+	}
+	return 0
 }
 
 // ListDeliveriesRequest lists the deployment's delivery records. It is a
@@ -1305,7 +1317,7 @@ const file_orkstack_v1_webhook_service_proto_rawDesc = "" +
 	"\x05error\x18\x03 \x01(\tR\x05error\x123\n" +
 	"\abackoff\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\abackoff\x125\n" +
 	"\bduration\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\bduration\x12*\n" +
-	"\x02at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\"\xe0\x05\n" +
+	"\x02at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\"\xfc\x05\n" +
 	"\bDelivery\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1d\n" +
@@ -1332,22 +1344,23 @@ const file_orkstack_v1_webhook_service_proto_rawDesc = "" +
 	"created_at\x18\x12 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x129\n" +
 	"\n" +
 	"settled_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\tsettledAt\x12#\n" +
-	"\rredelivery_of\x18\x14 \x01(\tR\fredeliveryOf\"\x93\x04\n" +
+	"\rredelivery_of\x18\x14 \x01(\tR\fredeliveryOf\x12\x1a\n" +
+	"\bsequence\x18\x15 \x01(\x03R\bsequence\"\xa2\x04\n" +
 	"\x15ListDeliveriesRequest\x12\x1b\n" +
 	"\tpage_size\x18\b \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\t \x01(\tR\tpageToken\x122\n" +
 	"\afilters\x18\n" +
-	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xc6\x02\xa2\xbb\x18\xc1\x02\n" +
+	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xd5\x02\xa2\xbb\x18\xd0\x02\n" +
 	"\x14orkstack.v1.Delivery\x12\x18\n" +
 	"\n" +
 	"created_at\x12\x06Queued\x1a\x02\x06\a\x12\x1f\n" +
 	"\tnamespace\x12\tNamespace\x1a\x05\x01\x02\x03\x04\x058\x01\x12\x12\n" +
 	"\x06run_id\x12\x03Run\x1a\x03\x01\x02\x03\x12\x1a\n" +
 	"\n" +
-	"webhook_id\x12\aWebhook\x1a\x03\x01\x02\x03\x12\xa2\x01\n" +
+	"webhook_id\x12\aWebhook\x1a\x03\x01\x02\x03\x12\xb1\x01\n" +
 	"\x05event\x12\x05Event\x1a\x03\x01\x02\x03\"\vRUN_STARTED\"\rRUN_SUCCEEDED\"\n" +
-	"RUN_FAILED\"\fRUN_CANCELED\"\x0eTASK_SCHEDULED\"\fTASK_STARTED\"\rTASK_AWAITING\"\rTASK_RESOLVED\"\x0eTASK_SUCCEEDED\"\vTASK_FAILED\x12\x19\n" +
+	"RUN_FAILED\"\fRUN_CANCELED\"\x0eTASK_SCHEDULED\"\fTASK_STARTED\"\rTASK_AWAITING\"\rTASK_RESOLVED\"\rTASK_SLEEPING\"\x0eTASK_SUCCEEDED\"\vTASK_FAILED\x12\x19\n" +
 	"\tdelivered\x12\tDelivered\x1a\x01\x01J\x04\b\x01\x10\bR\n" +
 	"webhook_idR\x06run_idR\x05eventR\aoutcomeR\tnamespaceR\x05sinceR\x05until\"\x88\x02\n" +
 	"\x16ListDeliveriesResponse\x125\n" +

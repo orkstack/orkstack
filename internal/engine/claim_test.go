@@ -13,6 +13,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // claimOutcome captures one update's result the way a client sees it.
@@ -77,9 +79,7 @@ func claimEnv(t *testing.T, requests ...engine.ClaimRequest) []claimOutcome {
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("claim workflow did not complete")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("claim workflow: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "claim workflow")
 	return outcomes
 }
 
@@ -207,9 +207,7 @@ func TestClaimWorkflow_HoldsTheKeyForItsWholeTTLAndThenFreesIt(t *testing.T) {
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("the claim never completed, so the key is held for the life of the cluster")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("claim workflow: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "claim workflow")
 	if got := outcome.winner.RunID; got != "ork-1-1" {
 		t.Fatalf("the claim bound the key to %q, want ork-1-1", got)
 	}

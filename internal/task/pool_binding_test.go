@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestResolvePoolBinding_ResolvesTheFiveWaysAProcessCanBeToldWhereItsWorkLives
@@ -19,9 +21,7 @@ import (
 // the run strands in RUNNING.
 func TestResolvePoolBinding_ResolvesTheFiveWaysAProcessCanBeToldWhereItsWorkLives(t *testing.T) {
 	poolQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool(gpu): %v", err)
-	}
+	must.OKf(t, err, "QueueForPool(gpu)")
 
 	for _, tc := range []struct {
 		name      string
@@ -68,9 +68,7 @@ func TestResolvePoolBinding_ResolvesTheFiveWaysAProcessCanBeToldWhereItsWorkLive
 	}} {
 		t.Run(tc.name, func(t *testing.T) {
 			binding, err := task.ResolvePoolBinding(tc.pool, tc.rawQueue)
-			if err != nil {
-				t.Fatalf("ResolvePoolBinding(%q, %q): %v", tc.pool, tc.rawQueue, err)
-			}
+			must.OKf(t, err, "ResolvePoolBinding(%q, %q)", tc.pool, tc.rawQueue)
 			if binding.Pool != tc.wantPool {
 				t.Errorf("pool = %q, want %q", binding.Pool, tc.wantPool)
 			}

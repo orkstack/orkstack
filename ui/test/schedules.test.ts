@@ -91,7 +91,7 @@ test('the create command recreates the row, quoting only what needs it', () => {
 		spec: create(ScheduleSpecSchema, { cron: ['0 2 * * *'], timezone: 'Europe/Lisbon', overlap: OverlapPolicy.SKIP })
 	});
 	expect(scheduleCreateCli(schedule)).toBe(
-		"orkctl schedule create nightly --orkflow hello --cron '0 2 * * *' --timezone Europe/Lisbon --overlap skip --paused --namespace payments"
+		"orkctl schedule create nightly --orkflow hello --cron '0 2 * * *' --timezone Europe/Lisbon --overlap skip --paused -n payments"
 	);
 	schedule.description = "Bob's nightly";
 	schedule.orkflowVersion = '3';
@@ -101,13 +101,13 @@ test('the create command recreates the row, quoting only what needs it', () => {
 });
 
 test('one-liners: fire sends no override, so its command carries no --overlap', () => {
-	expect(scheduleFireCli('nightly', '')).toBe('orkctl schedule fire nightly --namespace default');
+	expect(scheduleFireCli('nightly', '')).toBe('orkctl schedule fire nightly -n default');
 	expect(scheduleFireCli('nightly', 'payments')).not.toContain('--overlap');
 	expect(schedulePauseCli('nightly', 'payments', 'Q3 close')).toBe(
-		"orkctl schedule pause nightly --reason 'Q3 close' --namespace payments"
+		"orkctl schedule pause nightly --reason 'Q3 close' -n payments"
 	);
-	expect(scheduleResumeCli('nightly', 'payments')).toBe('orkctl schedule resume nightly --namespace payments');
-	expect(scheduleDeleteCli('nightly', 'payments')).toBe('orkctl schedule delete nightly --namespace payments');
+	expect(scheduleResumeCli('nightly', 'payments')).toBe('orkctl schedule resume nightly -n payments');
+	expect(scheduleDeleteCli('nightly', 'payments')).toBe('orkctl schedule delete nightly -n payments');
 });
 
 test('a fire reads as a run, refused, preparing, or unavailable — never blank', () => {
@@ -223,7 +223,7 @@ test('a create has nothing stored: an empty form asks for no value of its own', 
 test('the update command names only what changed, as the CLI takes it', () => {
 	const schedule = stored();
 	const form = scheduleFormOf(schedule);
-	expect(scheduleUpdateCli(schedule, form)).toBe('orkctl schedule update nightly --namespace team-a');
+	expect(scheduleUpdateCli(schedule, form)).toBe('orkctl schedule update nightly -n team-a');
 	expect(
 		scheduleUpdateCli(schedule, {
 			...form,
@@ -235,11 +235,11 @@ test('the update command names only what changed, as the CLI takes it', () => {
 			pauseOnFailure: false
 		})
 	).toBe(
-		"orkctl schedule update nightly --follow-current --cron @daily --interval '' --pause-on-failure=false --description '' --input-json '{\"a\":1}' --namespace team-a"
+		"orkctl schedule update nightly --follow-current --cron @daily --interval '' --pause-on-failure=false --description '' --input-json '{\"a\":1}' -n team-a"
 	);
-	expect(scheduleUpdateCli(schedule, { ...form, input: '' })).toBe('orkctl schedule update nightly --clear-input --namespace team-a');
+	expect(scheduleUpdateCli(schedule, { ...form, input: '' })).toBe('orkctl schedule update nightly --clear-input -n team-a');
 	expect(scheduleUpdateCli(schedule, { ...form, version: 'v2', overlap: 'skip' })).toBe(
-		'orkctl schedule update nightly --version v2 --overlap skip --namespace team-a'
+		'orkctl schedule update nightly --version v2 --overlap skip -n team-a'
 	);
 });
 

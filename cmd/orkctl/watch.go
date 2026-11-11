@@ -179,7 +179,8 @@ func finalRun(cmd *cobra.Command, g *globalFlags, client orkstackv1connect.RunSe
 // the stream that ended on it stopped short of its end.
 func runStillGoing(run *orkstackv1.Run) bool {
 	switch run.GetStatus() {
-	case orkstackv1.Status_STATUS_PENDING, orkstackv1.Status_STATUS_RUNNING, orkstackv1.Status_STATUS_AWAITING:
+	case orkstackv1.Status_STATUS_PENDING, orkstackv1.Status_STATUS_RUNNING, orkstackv1.Status_STATUS_AWAITING,
+		orkstackv1.Status_STATUS_SLEEPING:
 		return true
 	default:
 		return false

@@ -8,6 +8,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestListenerFromEnv(t *testing.T) {
@@ -69,9 +71,7 @@ func TestListenerFromEnv(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got.idleTimeout != tc.want.idleTimeout || got.requestMaxBytes != tc.want.requestMaxBytes {
 				t.Errorf("listenerFromEnv(%d) = %+v, want %+v", tc.maxTasks, got, tc.want)
 			}
@@ -94,9 +94,7 @@ func TestListenerFromEnv_AllowedHosts(t *testing.T) {
 	t.Setenv("ORK_HTTP_ADDR", "ork.internal:8080")
 	t.Setenv("ORK_ALLOWED_HOSTS", " orkstack.example.com, ,*.corp.example ")
 	got, err := listenerFromEnv(engine.DefaultOrkflowMaxTasks)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.Join(got.allowedHosts, ",") != "orkstack.example.com,*.corp.example" {
 		t.Errorf("allowedHosts = %q", got.allowedHosts)
 	}

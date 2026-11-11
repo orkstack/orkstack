@@ -10,15 +10,15 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // echoServer answers every line it reads with the same line.
 func echoServer(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = listener.Close() })
 	go func() {
 		for {
@@ -65,13 +65,9 @@ func roundTripOn(conn net.Conn, d time.Duration) error {
 func TestProxy_ForwardsUntilCutAndAgainAfterRestore(t *testing.T) {
 	p := faultproxy.New(t, echoServer(t))
 	live, err := net.Dial("tcp", p.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer live.Close()
-	if err := roundTripOn(live, 2*time.Second); err != nil {
-		t.Fatalf("forwarding: %v", err)
-	}
+	must.OKf(t, roundTripOn(live, 2*time.Second), "forwarding")
 
 	p.Cut()
 	// The connection that was open is severed...
@@ -88,9 +84,7 @@ func TestProxy_ForwardsUntilCutAndAgainAfterRestore(t *testing.T) {
 	}
 
 	p.Restore()
-	if err := roundTrip(p.Addr(), 2*time.Second); err != nil {
-		t.Fatalf("after restore: %v", err)
-	}
+	must.OKf(t, roundTrip(p.Addr(), 2*time.Second), "after restore")
 	stats := p.Stats()
 	if stats.Refused == 0 || stats.Severed == 0 || stats.Forwarded < 2 {
 		t.Fatalf("stats %+v: want a refusal, a severed connection and two forwards", stats)
@@ -116,24 +110,16 @@ func TestProxy_StallHoldsAConnectionUntilItsClientGivesUp(t *testing.T) {
 	}
 
 	p.Restore()
-	if err := roundTrip(p.Addr(), 2*time.Second); err != nil {
-		t.Fatalf("after restore: %v", err)
-	}
+	must.OKf(t, roundTrip(p.Addr(), 2*time.Second), "after restore")
 }
 
 func TestProxy_CloseEndsEveryConnection(t *testing.T) {
 	p, err := faultproxy.Listen(echoServer(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	conn, err := net.Dial("tcp", p.Addr())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer conn.Close()
-	if err := roundTripOn(conn, 2*time.Second); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, roundTripOn(conn, 2*time.Second))
 	done := make(chan struct{})
 	go func() { p.Close(); close(done) }()
 	select {

@@ -1,11 +1,13 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // cliConfig is the small persisted state orkctl keeps between invocations.
@@ -71,6 +73,12 @@ func loadConfig() (cliConfig, error) {
 	}
 	var cfg cliConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return cliConfig{}, fmt.Errorf("parse %s: %w", path, stablejson.Explained(err))
+	}
+	// A key written in another case ("Namespace") once set the field; it
+	// would now be dropped, and commands would run against a namespace the
+	// user believes they set.
+	if err := stablejson.RefuseCaseOnlyMatch(raw, &cfg); err != nil {
 		return cliConfig{}, fmt.Errorf("parse %s: %w", path, err)
 	}
 	return cfg, nil

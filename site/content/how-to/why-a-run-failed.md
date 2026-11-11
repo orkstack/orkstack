@@ -34,8 +34,8 @@ The [error reasons](/docs/reference/reasons/) list every code. Each one says whe
 A retry hides the earlier tries in the task's final outcome. List them:
 
 ```bash
-orkctl run attempts <run-id> --task convert       # every try, with its error and exit status
-orkctl run logs <run-id> --task convert --attempt 2
+orkctl run attempts <run-id> -t convert       # every try, with its error and exit status
+orkctl run logs <run-id> -t convert --attempt 2
 ```
 
 In the UI, the attempt timeline shows each failed try's own error. Choose a try to open its log.
@@ -56,25 +56,25 @@ In the UI, **Compare** on the run page opens the newest other succeeded run of t
 ## 5. Check whether it is a pattern
 
 ```bash
-orkctl stats failures --since 24h                       # grouped by Orkflow, task, code and category
-orkctl stats failures --since 6h --group-by task,code,image,phase
+orkctl stats failures -s 24h                       # grouped by Orkflow, task, code and category
+orkctl stats failures -s 6h -g task,code,image,phase
 ```
 
 `stats failures` groups the window's failed runs, worst first. A group whose evidence is gone says `unavailable`.
 
 ## 6. Fix it and run again
 
-A run again uses the version it pinned. To run the fix, apply the Orkflow again, then submit it:
+A run again uses the version it pinned. To run the fix, create the Orkflow again, then submit it:
 
 ```bash
-orkctl apply my-orkflow.ork.yaml
-orkctl run submit my-orkflow --watch
+orkctl orkflow create my-orkflow.ork.yaml
+orkctl run submit my-orkflow -w
 ```
 
 To check one task on this machine, render it with the failed run's recorded inputs. This starts no container:
 
 ```bash
-orkctl task run --from-run <run-id> --task convert --render-only
+orkctl task run --from-run <run-id> -t convert --render-only
 ```
 
 Drop `--render-only` to run the task here. It writes nothing to the deployment, but any external side effect it has is real.

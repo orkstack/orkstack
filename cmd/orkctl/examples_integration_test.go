@@ -7,7 +7,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -21,6 +21,11 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The shipped-examples scenarios (examples/README.md): every example this repository ships runs end to end, as a reader
@@ -45,7 +50,7 @@ func (x *examplesStack) scenario(t *testing.T, name string, body func(t *testing
 
 func asJSON(t *testing.T, v any) string {
 	t.Helper()
-	encoded, err := json.Marshal(v)
+	encoded, err := stablejson.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,9 +98,7 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 	expectedWarnings := map[string]string{orkflowFixtures + "/cached-pipeline.ork.yaml": "tasks[2].cache.ttl_seconds"}
 	for _, file := range append(append(exampleFiles(t, x.root), customImageRecipe), fixtureFiles(t, x.root)...) {
 		wf, err := dsl.CompileFile(filepath.Join(x.root, file))
-		if err != nil {
-			t.Fatalf("compile %s: %v", file, err)
-		}
+		must.OKf(t, err, "compile %s", file)
 		path := file
 		if file == customImageRecipe {
 			// The shipped document names the `:dev` tags; this process
@@ -117,11 +120,10 @@ func TestIntegration_EveryExampleValidatesClean(t *testing.T) {
 
 	// The automation document, planned with the two Orkflows it names.
 	shipped, err := os.ReadFile(filepath.Join(x.root, "examples", "automation", "examples.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	variant := x.variantFile("examples.ork.yaml", automationVariant(t, shipped, x.ns, x.services.base))
-	out := x.in("--json", "apply", "examples/poll-until-ready.ork.yaml", "examples/approval-gate.ork.yaml", variant, "--dry-run")
+	x.in("orkflow", "create", "examples/poll-until-ready.ork.yaml", "examples/approval-gate.ork.yaml")
+	out := x.in("--json", "automation", "apply", variant, "--dry-run")
 	var report orkstackv1.ApplyReport
 	if err := api.UnmarshalJSON([]byte(out), &report); err != nil {
 		t.Fatalf("decode ApplyReport: %v\n%s", err, out)
@@ -462,9 +464,7 @@ func TestIntegration_PollUntilReadyExampleRunsAsShipped(t *testing.T) {
 			"--input", "export_url="+base+"/exports/latest.json")
 		requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
 		var resp orkstackv1.ListTaskAttemptsResponse
-		if err := api.UnmarshalJSON([]byte(x.in("--json", "run", "attempts", run.GetId(), "--task", "wait-ready")), &resp); err != nil {
-			t.Fatalf("decode run attempts: %v", err)
-		}
+		must.OKf(t, api.UnmarshalJSON([]byte(x.in("--json", "run", "attempts", run.GetId(), "--task", "wait-ready")), &resp), "decode run attempts")
 		var outcomes []orkstackv1.AttemptOutcome
 		for _, a := range resp.GetAttempts() {
 			outcomes = append(outcomes, a.GetOutcome())
@@ -550,9 +550,7 @@ func newGitExamplesStack(ctx context.Context, t *testing.T) (*examplesStack, str
 func (x *examplesStack) gitVariant(t *testing.T, file string) string {
 	t.Helper()
 	shipped, err := os.ReadFile(filepath.Join(x.root, "examples", file))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	withAccess := withExampleGitToken(t, withExampleGitCA(t, shipped))
 	requireOnlyGitAccessAdded(t, shipped, withAccess)
 	return x.variantFile(file, withAccess)
@@ -609,12 +607,12 @@ func TestIntegration_ConfigFromGitExampleRunsAsShipped(t *testing.T) {
 			for _, tr := range run.GetTaskRuns() {
 				outcome := "uncached"
 				if c := tr.GetCache(); c != nil {
-					outcome = strings.TrimPrefix(c.GetOutcome().String(), "CACHE_OUTCOME_")
+					outcome = enumname.Of(c.GetOutcome())
 				}
 				parts = append(parts, tr.GetTaskId()+"="+outcome)
 				for _, item := range tr.GetItems() {
 					parts = append(parts, fmt.Sprintf("%s[%d]=%s", tr.GetTaskId(), item.GetItem(),
-						strings.TrimPrefix(item.GetCache().GetOutcome().String(), "CACHE_OUTCOME_")))
+						enumname.Of(item.GetCache().GetOutcome())))
 				}
 			}
 			x.note("%s cache outcomes: %s", label, strings.Join(parts, " "))
@@ -756,6 +754,25 @@ func TestIntegration_ExamplesRunWithNoInputs(t *testing.T) {
 				}
 			}
 		},
+		"bake-then-verify": func(t *testing.T) {
+			run := x.runToEnd("bake-then-verify")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			requireStatuses(t, run, orkstackv1.Status_STATUS_SUCCEEDED, "change", "bake", "verify")
+			bake, verify := taskRunOf(t, run, "bake"), taskRunOf(t, run, "verify")
+			if slept := bake.GetFinishedAt().AsTime().Sub(bake.GetStartedAt().AsTime()); slept < 5*time.Second {
+				t.Fatalf("bake slept %v, want at least its 5 s", slept)
+			}
+			if bake.GetPool() != "" || bake.GetOrkerId() != "" || bake.GetValuesRef() != nil {
+				t.Fatalf("bake reached an Orker or recorded values: %v", bake)
+			}
+			if verify.GetScheduledAt().AsTime().Before(bake.GetFinishedAt().AsTime()) {
+				t.Fatalf("verify was scheduled at %v, before the bake ended at %v",
+					verify.GetScheduledAt().AsTime(), bake.GetFinishedAt().AsTime())
+			}
+			if got, want := taskOutput(t, run, "change"), mustJSON(t, `{"value":"release 1.4.2 is live","exitCode":0}`); !reflect.DeepEqual(got, want) {
+				t.Fatalf("change = %v, want %v", got, want)
+			}
+		},
 		"decide-and-route": func(t *testing.T) {
 			run := x.runToEnd("decide-and-route")
 			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
@@ -844,9 +861,7 @@ func TestIntegration_ExamplesRunWithNoInputs(t *testing.T) {
 			run := x.runToEnd("poll-until-ready")
 			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
 			var resp orkstackv1.ListTaskAttemptsResponse
-			if err := api.UnmarshalJSON([]byte(x.in("--json", "run", "attempts", run.GetId(), "--task", "wait-ready")), &resp); err != nil {
-				t.Fatalf("decode run attempts: %v", err)
-			}
+			must.OKf(t, api.UnmarshalJSON([]byte(x.in("--json", "run", "attempts", run.GetId(), "--task", "wait-ready")), &resp), "decode run attempts")
 			if got := len(resp.GetAttempts()); got != 3 {
 				t.Fatalf("wait-ready made %d attempts, want two failed polls and one that succeeded", got)
 			}
@@ -876,9 +891,7 @@ func TestIntegration_ExamplesRunWithNoInputs(t *testing.T) {
 func untarGz(t *testing.T, body []byte) map[string]string {
 	t.Helper()
 	gz, err := gzip.NewReader(bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("gunzip: %v", err)
-	}
+	must.OKf(t, err, "gunzip")
 	reader := tar.NewReader(gz)
 	members := map[string]string{}
 	for {
@@ -886,13 +899,9 @@ func untarGz(t *testing.T, body []byte) map[string]string {
 		if err == io.EOF {
 			return members
 		}
-		if err != nil {
-			t.Fatalf("untar: %v", err)
-		}
+		must.OKf(t, err, "untar")
 		content, err := io.ReadAll(reader)
-		if err != nil {
-			t.Fatalf("read %s: %v", header.Name, err)
-		}
+		must.OKf(t, err, "read %s", header.Name)
 		members[strings.TrimPrefix(header.Name, "./")] = string(content)
 	}
 }
@@ -974,11 +983,10 @@ func TestIntegration_AutomationExampleAppliesAndFires(t *testing.T) {
 	x.apply("examples/notify-block.ork.yaml")
 
 	shipped, err := os.ReadFile(filepath.Join(x.root, "examples", "automation", "examples.ork.yaml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	variant := x.variantFile("examples.ork.yaml", automationVariant(t, shipped, x.ns, base))
-	out := x.in("--json", "apply", "examples/poll-until-ready.ork.yaml", "examples/approval-gate.ork.yaml", variant)
+	x.in("orkflow", "create", "examples/poll-until-ready.ork.yaml", "examples/approval-gate.ork.yaml")
+	out := x.in("--json", "automation", "apply", variant)
 	var report orkstackv1.ApplyReport
 	if err := api.UnmarshalJSON([]byte(out), &report); err != nil {
 		t.Fatalf("decode ApplyReport: %v\n%s", err, out)
@@ -995,7 +1003,7 @@ func TestIntegration_AutomationExampleAppliesAndFires(t *testing.T) {
 	if scheduleID == "" {
 		t.Fatalf("the apply created no schedule poll-exports:\n%s", out)
 	}
-	x.mustRun(0, "apply", variant, "--check")
+	x.mustRun(0, "automation", "apply", variant, "--check")
 
 	// One fire of the schedule, as if its time had come.
 	x.in("schedule", "fire", "poll-exports")
@@ -1022,15 +1030,11 @@ func TestIntegration_AutomationExampleAppliesAndFires(t *testing.T) {
 	mark := len(x.services.Notifications(t, 0))
 	url := "http://" + x.replicas[0].addr + strings.Replace(api.TriggerInvokePath, "{id}", triggerID, 1)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, strings.NewReader(`{"notify_url":"`+base+`/notify"}`))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		t.Fatalf("POST %s: %v", url, err)
-	}
+	must.OKf(t, err, "POST %s", url)
 	body, _ := io.ReadAll(response.Body)
 	_ = response.Body.Close()
 	fmt.Fprintf(&x.transcript, "$ curl -X POST %s -H 'Authorization: Bearer <token>' -d '{\"notify_url\":\"%s/notify\"}'\n%s(HTTP %d)\n\n",

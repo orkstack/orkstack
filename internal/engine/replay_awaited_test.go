@@ -20,6 +20,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The two awaited-run fixtures: real histories recorded by a versioned worker
@@ -106,13 +108,9 @@ func normalizedMaps(in []map[string]any) []map[string]any {
 func loadHistoryFile(t *testing.T, path string) *historypb.History {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	must.OKf(t, err, "read %s", path)
 	recorded := &historypb.History{}
-	if err := (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded); err != nil {
-		t.Fatalf("decode %s: %v", path, err)
-	}
+	must.OKf(t, (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded), "decode %s", path)
 	return recorded
 }
 
@@ -134,9 +132,7 @@ func recordedResolutions(t *testing.T, recorded *historypb.History) ([]*orkstack
 			continue
 		}
 		var sig *orkstackv1.AwaitSignal
-		if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &sig); err != nil {
-			t.Fatalf("decode a recorded resolution: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetInput(), &sig), "decode a recorded resolution")
 		signals = append(signals, sig)
 		offset := event.GetEventTime().AsTime().Sub(started)
 		if offset <= 0 {
@@ -224,9 +220,7 @@ func TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("re-executing the resolved fixture did not complete the workflow")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("re-executing the resolved fixture failed: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "re-executing the resolved fixture failed")
 
 	sentTaskInputs := map[string]map[string]any{}
 	for _, in := range sentTasks {
@@ -245,9 +239,7 @@ func TestAwaitedHistory_ActivityPayloadsMatchWhatCurrentCodeSends(t *testing.T) 
 	compareEventPayloads(t, normalizedMaps(recordedEvents), normalizedMaps(sent))
 
 	var finished *orkstackv1.Run
-	if err := env.GetWorkflowResult(&finished); err != nil {
-		t.Fatalf("decode the re-executed run: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowResult(&finished), "decode the re-executed run")
 	want := withoutAwaitClocks(compactRecordedRun(t, recordedRun)).(map[string]any)
 	got := withoutAwaitClocks(canonicalPayload(t, finished)).(map[string]any)
 	if diff := payloadDiff(want, got); diff != "" {

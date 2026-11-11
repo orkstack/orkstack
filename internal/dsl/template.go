@@ -453,6 +453,11 @@ func (c *templateChecker) checkUpstream(path, taskID string) error {
 			"under /orkstack/input/upstream/%s/<item>/ and /orkstack/input/artifacts/%s/<item>/",
 			c.taskID, path, taskID, taskID, taskID))
 	}
+	// Rule 51: a sleeping task produces no values and no artifacts, so a
+	// read of one could only fail when the Orker renders it.
+	if c.tasks[taskID].GetSleep() != nil {
+		return c.refuseAt(path, sleepReadRefusal(c.taskID, path, taskID))
+	}
 	if _, ok := c.upstream[taskID]; !ok {
 		return fmt.Errorf("task %q: %s: template references task %q which is not in its needs closure",
 			c.taskID, path, taskID)

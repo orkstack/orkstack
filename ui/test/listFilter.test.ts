@@ -143,12 +143,12 @@ test('filter flags are canonical, and quoted wherever the shell would read them'
 		filterOf('description', FilterOperator.EQUALS, ["it's x,y"])
 	];
 	expect(filterFlags(filters)).toEqual([
-		`--filter 'description=it'"'"'s x\\,y'`,
-		'--filter labels.team=payments',
-		`--filter 'name^tenant-'`
+		`-F 'description=it'"'"'s x\\,y'`,
+		'-F labels.team=payments',
+		`-F 'name^tenant-'`
 	]);
 	expect(['orkctl', 'namespace', 'list', ...filterFlags([filters[1]])].join(' ')).toBe(
-		"orkctl namespace list --filter labels.team=payments"
+		"orkctl namespace list -F labels.team=payments"
 	);
 	expect(canonicalTexts([filters[0], filters[0]])).toEqual(['name^tenant-']);
 });

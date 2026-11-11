@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_APoolCountsTheOrkersPollingItAndNotTheOnesThatLeft is the
@@ -56,9 +58,7 @@ func TestIntegration_APoolCountsTheOrkersPollingItAndNotTheOnesThatLeft(t *testi
 	// this test creates. Everything else here is production code.
 	pool := fmt.Sprintf("scale-down-%d-%d", os.Getpid(), time.Now().UnixNano())
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("QueueForPool(%q): %v", pool, err)
-	}
+	must.OKf(t, err, "QueueForPool(%q)", pool)
 	probe := engine.NewTemporalPoolProbe(temporalClient)
 
 	// Distinct identities, because two Orkers ARE distinct processes: Temporal
@@ -95,9 +95,7 @@ func TestIntegration_APoolCountsTheOrkersPollingItAndNotTheOnesThatLeft(t *testi
 			len(records), records)
 	}
 	live, err := probe.ObservePool(ctx, queue)
-	if err != nil {
-		t.Fatalf("ObservePool: %v", err)
-	}
+	must.OKf(t, err, "ObservePool")
 	if live.Orkers != 1 {
 		t.Errorf("the pool reports %d Orkers from %d poller records, want 1: only "+
 			"%q is polling, %q stopped %v ago",
@@ -140,9 +138,7 @@ func rawPollerRecords(
 		ReportPollers:  true,
 		Versions:       &client.TaskQueueVersionSelection{AllActive: true, Unversioned: true},
 	})
-	if err != nil {
-		t.Fatalf("describe %s: %v", queue, err)
-	}
+	must.OKf(t, err, "describe %s", queue)
 	var records []pollerRecord
 	//lint:ignore SA1019 the SDK's VersioningInfo is the routing state and holds no pollers; VersionsInfo is the only field the SDK has for a channel's poller records
 	for _, version := range description.VersionsInfo {
@@ -171,9 +167,7 @@ func startPollingOrker(t *testing.T, c client.Client, queue, identity string) wo
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	if err := w.Start(); err != nil {
-		t.Fatalf("start orker %q: %v", identity, err)
-	}
+	must.OKf(t, w.Start(), "start orker %q", identity)
 	return w
 }
 
@@ -283,14 +277,10 @@ func TestIntegration_AnIdleOrkerStaysLiveAcrossItsPollingCycle(t *testing.T) {
 	token := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	pool := "idle-" + token
 	poolQueue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("QueueForPool(%q): %v", pool, err)
-	}
+	must.OKf(t, err, "QueueForPool(%q)", pool)
 	orkerID := "orker-idle-" + token
 	controlQueue, err := task.QueueForOrker(orkerID)
-	if err != nil {
-		t.Fatalf("QueueForOrker(%q): %v", orkerID, err)
-	}
+	must.OKf(t, err, "QueueForOrker(%q)", orkerID)
 	probe := engine.NewTemporalPoolProbe(temporalClient)
 	fleet := engine.NewTemporalStarter(temporalClient, task.DefaultQueue)
 
@@ -316,13 +306,9 @@ func TestIntegration_AnIdleOrkerStaysLiveAcrossItsPollingCycle(t *testing.T) {
 		}
 		at := time.Since(started)
 		live, err := probe.ObservePool(ctx, poolQueue)
-		if err != nil {
-			t.Fatalf("ObservePool at +%v: %v", at.Round(time.Millisecond), err)
-		}
+		must.OKf(t, err, "ObservePool at +%v", at.Round(time.Millisecond))
 		presence, present, err := fleet.ObserveOrker(ctx, orkerID)
-		if err != nil {
-			t.Fatalf("ObserveOrker at +%v: %v", at.Round(time.Millisecond), err)
-		}
+		must.OKf(t, err, "ObserveOrker at +%v", at.Round(time.Millisecond))
 		reads++
 		for _, record := range rawPollerRecords(t, ctx, temporalClient, poolQueue) {
 			if record.identity == orkerID && record.age > oldest {

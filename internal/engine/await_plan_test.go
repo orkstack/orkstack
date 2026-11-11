@@ -2,15 +2,15 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
 
-	"go.temporal.io/sdk/testsuite"
-
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // failingProbe fails the test the moment anything asks the cluster.
@@ -39,9 +39,7 @@ func TestPoolResolverPlan_SkipsAwaitTasks(t *testing.T) {
 	t.Run("an await-only definition plans with empty routes and no probe", func(t *testing.T) {
 		resolver := &engine.PoolResolver{Probe: failingProbe{t}}
 		planned, plan, err := resolver.Plan(context.Background(), nil, compile(t, awaitOnlyDocument), false)
-		if err != nil {
-			t.Fatalf("Plan: %v", err)
-		}
+		must.OKf(t, err, "Plan")
 		if len(plan.Routes) != 0 {
 			t.Fatalf("routes = %v, want none", plan.Routes)
 		}
@@ -54,9 +52,7 @@ func TestPoolResolverPlan_SkipsAwaitTasks(t *testing.T) {
 	t.Run("a mixed definition routes only the container tasks", func(t *testing.T) {
 		resolver := &engine.PoolResolver{Probe: everyPoolLive{}}
 		planned, plan, err := resolver.Plan(context.Background(), nil, compile(t, mixedAwaitDocument), false)
-		if err != nil {
-			t.Fatalf("Plan: %v", err)
-		}
+		must.OKf(t, err, "Plan")
 		if len(plan.Routes) != 1 || plan.Routes["gpu"] == "" {
 			t.Fatalf("routes = %v, want only gpu", plan.Routes)
 		}
@@ -67,9 +63,7 @@ func TestPoolResolverPlan_SkipsAwaitTasks(t *testing.T) {
 	t.Run("CheckAllowedPools ignores the await", func(t *testing.T) {
 		ns := &orkstackv1.Namespace{Name: "payments", AllowedPools: []string{"batch"}}
 		resolver := &engine.PoolResolver{}
-		if err := resolver.CheckAllowedPools(ns, compile(t, awaitOnlyDocument)); err != nil {
-			t.Fatalf("CheckAllowedPools refused an await-only orkflow: %v", err)
-		}
+		must.OKf(t, resolver.CheckAllowedPools(ns, compile(t, awaitOnlyDocument)), "CheckAllowedPools refused an await-only orkflow")
 	})
 }
 
@@ -83,7 +77,7 @@ func TestRunPlan_EncodesIdenticallyWithoutAwaits(t *testing.T) {
 		CommitRoot:            "s3://orkstack-artifacts",
 		TransferBudgetSeconds: 60,
 	}
-	got, err := json.Marshal(plan)
+	got, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +88,7 @@ func TestRunPlan_EncodesIdenticallyWithoutAwaits(t *testing.T) {
 		t.Fatalf("plan encodes as\n  %s\nwant the pre-awaits bytes\n  %s", got, want)
 	}
 	plan.Awaits = map[string]engine.AwaitCredential{"gate": {Salt: "aa", Digest: "bb"}}
-	withAwait, _ := json.Marshal(plan)
+	withAwait, _ := stablejson.Marshal(plan)
 	if string(withAwait) == want {
 		t.Fatal("a plan with a callback await encodes like one without")
 	}
@@ -153,8 +147,7 @@ func TestSimulate_AssumedOutputStubsAnAwaitsResolution(t *testing.T) {
 // awaits: AWAITS ⇔ TASK_AWAITING, and the await ends SUCCEEDED.
 func interpretAwaited(t *testing.T, runID string, wf *orkstackv1.Orkflow, assumed map[string]map[string]any) (*orkstackv1.Run, *harness) {
 	t.Helper()
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		values := assumed[in.TaskId]
 		if values == nil {
 			values = map[string]any{}

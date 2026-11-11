@@ -151,7 +151,7 @@ message PlanAutomationResponse {
   repeated ValidationIssue issues = 4;
   // plan_digest is "sha256:<64 lowercase hex>" over the namespace and the
   // actionable steps (action, kind, name, id, changes) — what a reviewer pins
-  // with `orkctl apply --expect-plan`. It excludes the carried requests, so a
+  // with `orkctl automation apply --expect-plan`. It excludes the carried requests, so a
   // no-op rewrite of the namespace (a new etag) does not move it; it excludes
   // UNCHANGED, UNDECLARED and UNMANAGED steps, which write nothing. Defined
   // even when nothing is actionable ("no changes" is pinnable); empty exactly
@@ -174,7 +174,7 @@ message ExportAutomationResponse {
 
 // ---------------------------------------------------------------------------
 // Client report types. NO RPC returns these. They are proto so that
-// `orkctl apply --json` — a machine interface CI scripts consume — has one
+// `orkctl automation apply --json` — a machine interface CI scripts consume — has one
 // generated, typed shape, and so the Admin page records a step's outcome in
 // the same shape the CLI prints (AGENTS.md §12: proto is the source of truth
 // for cross-process types).
@@ -203,8 +203,8 @@ message AutomationStepResult {
 // document's compiled name and version, read before any write.
 enum OrkflowStoredState {
   ORKFLOW_STORED_STATE_UNSPECIFIED = 0;
-  ORKFLOW_STORED_STATE_NEW = 1;            // not stored: applying stores a version
-  ORKFLOW_STORED_STATE_IDENTICAL = 2;      // stored with byte-identical source: applying writes nothing
+  ORKFLOW_STORED_STATE_NEW = 1;            // not stored: creating stores a version
+  ORKFLOW_STORED_STATE_IDENTICAL = 2;      // stored with byte-identical source: creating writes nothing
   ORKFLOW_STORED_STATE_CONFLICTING = 3;    // stored with DIFFERENT source: ApplyOrkflow would refuse (AlreadyExists)
 }
 
@@ -221,16 +221,16 @@ message AutomationDocumentReport {
   repeated AutomationStepResult results = 3;  // empty on --dry-run
 }
 
-// ApplyReport is what `orkctl apply --json` prints for any invocation except
-// the one that existed before this contract — a single orkflow file with no
-// new flag — which keeps printing ApplyOrkflowResponse byte for byte.
+// ApplyReport is what `orkctl automation apply --json` prints, and what
+// `orkctl orkflow create --json` prints for any invocation but one file with
+// no flag, which prints ApplyOrkflowResponse.
 message ApplyReport {
   bool dry_run = 1;
   repeated OrkflowDocumentReport orkflows = 2;
   repeated AutomationDocumentReport automation = 3;
 }
 
-// DisclosedSecret is one entry of the file `orkctl apply --secrets-out PATH`
+// DisclosedSecret is one entry of the file `orkctl automation apply --secrets-out PATH`
 // writes (DisclosedSecrets).
 message DisclosedSecret {
   string namespace = 1;
@@ -240,5 +240,5 @@ message DisclosedSecret {
   string secret = 5;
   string invoke_url = 6;                   // TRIGGER only: {server}/v1/triggers/{id}
 }
-// DisclosedSecrets is the file `orkctl apply --secrets-out PATH` writes.
+// DisclosedSecrets is the file `orkctl automation apply --secrets-out PATH` writes.
 message DisclosedSecrets { repeated DisclosedSecret secrets = 1; }

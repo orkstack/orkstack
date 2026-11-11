@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/testsupport/bootwait"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // logRecorder is a Wait.Logf that keeps what was logged.
@@ -103,9 +105,7 @@ func TestUntil_ReturnsOnceTheProbeAnswersAndLogsTheDuration(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Until: %v", err)
-	}
+	must.OKf(t, err, "Until")
 	if probes != 3 {
 		t.Fatalf("probes = %d, want 3: it probes until the first answer and stops", probes)
 	}
@@ -149,9 +149,7 @@ func TestUntil_ASlowBootPassesWithAWarnLine(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("a slow boot under the deadline must pass: %v", err)
-	}
+	must.OKf(t, err, "a slow boot under the deadline must pass")
 	if took < 40*time.Millisecond {
 		t.Fatalf("took = %s, want at least twenty 2ms intervals", took)
 	}

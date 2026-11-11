@@ -13,6 +13,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dist"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // deploy/source/Dockerfile builds the quickstart's platform images from a
@@ -114,9 +116,7 @@ func TestSourceDockerfile_CompilesTheReleaseCommandsStatically(t *testing.T) {
 			binariesStage, binaries.platform)
 	}
 	ref, err := dsl.ParseReference(binaries.image)
-	if err != nil {
-		t.Fatalf("%s:%d: %v", sourceDockerfilePath, binaries.line, err)
-	}
+	must.OKf(t, err, "%s:%d", sourceDockerfilePath, binaries.line)
 	if version, _, _ := strings.Cut(ref.Tag, "-"); ref.Repository != "library/golang" || version != proofPin(t, "go-version") {
 		t.Errorf("%s:%d: the %s stage is on %s, want golang at the workflows' go-version %s",
 			sourceDockerfilePath, binaries.line, binariesStage, binaries.image, proofPin(t, "go-version"))
@@ -388,9 +388,7 @@ func TestSourceDockerignore_AdmitsWhatTheBuildReadsAndNothingElse(t *testing.T) 
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 	}
 	if goFiles == 0 {
 		t.Fatal("found no Go file to check")
@@ -410,7 +408,7 @@ func TestSourceDockerignore_AdmitsWhatTheBuildReadsAndNothingElse(t *testing.T) 
 		"cmd/ork/main_test.go", "internal/dist/compose_test.go", "internal/engine/testdata/history/x.json",
 		"gen/ts/x.ts", "examples/README.md", "examples/custom-image/main.go",
 		"ui/node_modules/svelte/package.json", "ui/.svelte-kit/tsconfig.json", "ui/build/index.html",
-		"ui/e2e/harness.ts", "ui/test/preload.ts", "ui/test-results/x", "ui/playwright-report/index.html",
+		"ui/e2e/harness.ts", "ui/test/preload.ts", "ui/test-results/x", "ui/test-results-solo/x", "ui/playwright-report/index.html",
 		// A UI build `make ui` left in the checkout: ork embeds the ui stage's.
 		"internal/webui/dist/index.html", "internal/webui/dist/_app/immutable/entry/start.js",
 		"internal/webui/dist/.gitkeep",
@@ -421,9 +419,7 @@ func TestSourceDockerignore_AdmitsWhatTheBuildReadsAndNothingElse(t *testing.T) 
 	}
 	// A new top-level path stays out of the context until someone admits it.
 	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, e := range entries {
 		switch e.Name() {
 		case "LICENSE", "go.mod", "go.sum", "cmd", "gen", "internal", "pkg", "examples", "ui":

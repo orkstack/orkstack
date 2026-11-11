@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_TwoReplicasReportTheSameStatsSeries is the series' claim
@@ -83,21 +85,15 @@ func TestIntegration_TwoReplicasReportTheSameStatsSeries(t *testing.T) {
 	read := func(stats orkstackv1connect.StatsServiceClient, req *orkstackv1.GetStatsRequest) *orkstackv1.GetStatsResponse {
 		t.Helper()
 		got, err := stats.GetStats(ctx, connect.NewRequest(req))
-		if err != nil {
-			t.Fatalf("GetStats(%v): %v", req, err)
-		}
+		must.OKf(t, err, "GetStats(%v)", req)
 		return got.Msg
 	}
 
 	// ---- leg one: the calendar, from real index keys -------------------------
 	losAngeles, err := time.LoadLocation("America/Los_Angeles")
-	if err != nil {
-		t.Fatalf("load America/Los_Angeles: %v", err)
-	}
+	must.OKf(t, err, "load America/Los_Angeles")
 	store, err := artifacts.NewRunArchive(artifactCfg)
-	if err != nil {
-		t.Fatalf("open the shared run archive: %v", err)
-	}
+	must.OKf(t, err, "open the shared run archive")
 	writer := engine.NewRunArchiver(store)
 	seeded := []struct {
 		at     string
@@ -114,9 +110,7 @@ func TestIntegration_TwoReplicasReportTheSameStatsSeries(t *testing.T) {
 	}
 	for i, seed := range seeded {
 		created, err := time.Parse(time.RFC3339, seed.at)
-		if err != nil {
-			t.Fatalf("parse %s: %v", seed.at, err)
-		}
+		must.OKf(t, err, "parse %s", seed.at)
 		if err := writer.Archive(ctx, &orkstackv1.Run{
 			Id:          fmt.Sprintf("ork-series-%d-%d", stamp, i),
 			Namespace:   calendar,
@@ -194,9 +188,7 @@ func TestIntegration_TwoReplicasReportTheSameStatsSeries(t *testing.T) {
 		submitted, err := replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: orkflow, Namespace: live,
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun %s: %v", orkflow, err)
-		}
+		must.OKf(t, err, "SubmitRun %s", orkflow)
 		return submitted.Msg.GetRun().GetId()
 	}
 	submit("shipit")
@@ -249,9 +241,7 @@ func zoneAwayFromMidnight(t *testing.T, now time.Time) *time.Location {
 	t.Helper()
 	for _, name := range []string{"UTC", "Asia/Tokyo", "America/Los_Angeles", "Asia/Kolkata", "Europe/Lisbon"} {
 		zone, err := time.LoadLocation(name)
-		if err != nil {
-			t.Fatalf("load %s: %v", name, err)
-		}
+		must.OKf(t, err, "load %s", name)
 		if hour := now.In(zone).Hour(); hour >= 1 && hour < 23 {
 			return zone
 		}

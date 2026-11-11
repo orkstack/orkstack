@@ -33,6 +33,18 @@
 #
 # No jq invocation here ever reads standard input: each carries -n or names at
 # least one file.
+#
+# Scratch is never left where the Orker cannot remove it
+# (docs/OCI_ACTIVITY_CONTRACT.md §10.1, rule 11). This image runs as 65532 and
+# the Orker as the host's own user, which on rootful Linux is another user: a
+# 0755 directory 65532 made is one the Orker can neither write nor chmod, so
+# it could not remove the attempt's directory or a pin's. Two measures:
+#   - the script's own exits empty /orkstack/tmp and remove a pinned
+#     checkout's staging directory (`cleanup`, on the EXIT trap);
+#   - every directory it makes under /orkstack/tmp or /orkstack/shared (the
+#     repository, a checkout and its parents) is made under `umask 000`, so
+#     the Orker can remove it after an exit that runs no trap (a signal
+#     between commands, SIGKILL). Outputs keep `umask 022` (rule 7).
 set -u
 umask 022
 
@@ -45,6 +57,27 @@ TMP=/orkstack/tmp
 SECRETS=/orkstack/input/secrets
 SHARED=/orkstack/shared
 ASKPASS=/usr/local/libexec/activity-git/askpass
+
+# The pinned checkout's staging directory, once one is named; assigned here,
+# before the EXIT trap can read it.
+stage=
+
+# cleanup runs on every exit the script takes: success, `fail`, and a SIGTERM
+# during a git command, which run_supervised turns into `fail`. /orkstack/tmp
+# is this attempt's alone and nothing reads it after the container exits, so
+# all of it goes. The staging directory goes too; after a successful checkout
+# it was renamed to dest and is gone already. A signal during cleanup is
+# ignored, so none cuts it short. A signal between git commands ends the shell
+# by its default disposition, as in every first-party image, and SIGKILL ends
+# it anywhere: neither runs cleanup, and `umask 000` is what covers them.
+cleanup() {
+    trap '' TERM INT
+    if [ -n "$stage" ]; then
+        rm -rf "$stage"
+    fi
+    find "$TMP" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null
+}
+trap cleanup EXIT
 
 run_supervised() {
     "$@" &
@@ -359,6 +392,8 @@ resolve_ref() {
 # reported, even if the ref moved after it was resolved.
 FETCHED=
 fetch_into() {
+    # The repository's directories are writable by anyone (rule 11).
+    umask 000
     git init --quiet "$1" || fail "git init failed"
     git -C "$1" remote add origin "$url" || fail "git remote add failed"
     if [ "$BYID" = yes ]; then
@@ -380,6 +415,7 @@ fetch_into() {
     fi
     FETCHED=$(git -C "$1" rev-parse 'FETCH_HEAD^{commit}') ||
         fail "could not read the fetched commit"
+    umask 022
 }
 
 # ------------------------------------------------- a pinned working tree: dest --
@@ -388,7 +424,6 @@ fetch_into() {
 # and nothing else ever reads it. The checkout is staged beside dest and
 # renamed into place, so dest exists only after a COMPLETE checkout, and a
 # pinned retry that sees what a failed predecessor left can still succeed.
-stage=
 if [ -n "$dest" ]; then
     jq -e '.paths | has("shared")' "$TASK" >/dev/null 2>&1 ||
         fail "with.dest needs a pinned task (pin:) — /orkstack/shared exists only for one"
@@ -432,7 +467,11 @@ if [ -n "$dest" ]; then
         [ -z "$(ls -A "$dest")" ] || fail "with.dest already exists and is not empty: $dest"
     fi
 
+    # The parents outlive this attempt, as dest does, and the pin's end
+    # removes them, so they are writable by anyone too (rule 11).
+    umask 000
     mkdir -p "$(dirname "$dest")" || fail "could not create the parents of $dest"
+    umask 022
     # The staging name is reserved: a previous attempt's leftovers are removed.
     stage="$(dirname "$dest")/.activity-git-$(basename "$dest")"
     rm -rf "$stage" || fail "could not remove $stage"
@@ -454,8 +493,11 @@ case "$op" in
   clone)
     if [ -n "$dest" ]; then
         fetch_into "$stage"
+        # The working tree outlives this attempt in the pin (rule 11).
+        umask 000
         run_supervised git -C "$stage" -c advice.detachedHead=false checkout --quiet --detach "$FETCHED" ||
             fail "checking out $FETCHED failed"
+        umask 022
         if [ -d "$dest" ]; then
             rmdir "$dest" || fail "could not replace the empty directory $dest"
         fi

@@ -6,6 +6,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dist"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func catalogAt(tag string) dsl.Catalog {
@@ -19,9 +21,7 @@ func catalogAt(tag string) dsl.Catalog {
 func mustVersion(t *testing.T, s string) dist.Version {
 	t.Helper()
 	v, err := dist.ParseVersion(s)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return v
 }
 
@@ -92,9 +92,7 @@ func TestCheckCatalog_MessageNamesTheFile(t *testing.T) {
 func TestBuiltinCatalogTag_IsTheCompiledInTag(t *testing.T) {
 	t.Parallel()
 	tag, err := dist.BuiltinCatalogTag()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for name, ref := range dsl.BuiltinActivityCatalog() {
 		if !strings.HasSuffix(ref, ":"+tag) {
 			t.Errorf("catalog entry %s = %q does not end in :%s", name, ref, tag)

@@ -1,8 +1,7 @@
 package engine
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -13,6 +12,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // Join policies and failure handlers (docs/DSL.md "Joins and failure
@@ -167,11 +167,8 @@ const ellipsis = "…"
 
 // escapedLen is the length of s's JSON string encoding without its quotes.
 func escapedLen(s string) int {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	_ = enc.Encode(s)    // a string always encodes
-	return buf.Len() - 3 // the two quotes and Encode's newline
+	encoded, _ := json.Marshal(s, stablejson.Unescaped) // a string always encodes
+	return len(encoded) - 2                             // the two quotes
 }
 
 // boundEscaped returns s unchanged when its escaped length is within limit,
@@ -326,9 +323,9 @@ func (s *runState) failCondition(ctx workflow.Context, id string, err error) err
 // returned. It ends with s.closePinFor(ctx, id), as markSkipped, markCanceled
 // and collect do on every terminal transition: a pinned cause that was its
 // pin's last non-terminal member releases the host slot and the shared
-// directory now, not at F11 after every handler. An await left open by an
-// emit that failed after its timer started is closed first, so nothing waits
-// on its deadline. Shared by F4 and settleHandlerDispatch.
+// directory now, not at F11 after every handler. An await or a sleep left
+// open by an emit that failed after its timer started is closed first, so
+// nothing waits on its timer. Shared by F4 and settleHandlerDispatch.
 func (s *runState) recordRefusedDispatch(ctx workflow.Context, id string, err error) {
 	if a := s.awaits[id]; a != nil && a.open {
 		a.open = false
@@ -336,6 +333,7 @@ func (s *runState) recordRefusedDispatch(ctx workflow.Context, id string, err er
 			a.cancelDeadline()
 		}
 	}
+	s.closeSleep(id)
 	s.recordFailure(ctx, id, err)
 	if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
 		s.taskRuns[id].GetStatus(), err.Error()); emitErr != nil {
@@ -461,6 +459,7 @@ func (s *runState) failWithHandlers(
 				a.cancelDeadline()
 			}
 		}
+		s.closeSleep(id)
 		if err := s.markCanceled(ectx, id, reason); err != nil {
 			workflow.GetLogger(ctx).Error("mark canceled failed",
 				"run_id", s.runID, "task_id", id, "error", err)
@@ -504,7 +503,8 @@ func (s *runState) cancelWithHandlers(
 	s.status = orkstackv1.Status_STATUS_CANCELED
 	s.runError.Code = "RUN_CANCELED"
 	if taskRun, ok := s.taskRuns[taskID]; ok &&
-		taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING {
+		taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING &&
+		taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING {
 		taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	}
 	if v := s.version(ctx, cancelSiblingsChange, 1); v >= 1 {
@@ -545,6 +545,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 	}
 	for {
 		s.beginPass()
+		s.settleDetachedPublishes(ctx)
 		ectx := s.eventContext(ctx)
 		stopping := ctx.Err() != nil
 		// Only failure handlers can be PENDING here (F6). Declaration order.
@@ -583,6 +584,13 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 					workflow.GetLogger(ctx).Error("emit await opening failed",
 						"run_id", s.runID, "task_id", id, "error", err)
 				}
+			case s.sleeps[id] != nil:
+				// openSleep starts the timer BEFORE its emit, as openAwait
+				// does, so an emit error is logged and the timer settles it.
+				if err := s.openSleep(ectx, s.dispatchContext(s.runCtx, id), id); err != nil {
+					workflow.GetLogger(ctx).Error("emit sleep start failed",
+						"run_id", s.runID, "task_id", id, "error", err)
+				}
 			case s.children[id] != nil:
 				future, err := s.startChild(ectx, s.dispatchContext(s.runCtx, id), id)
 				if err != nil {
@@ -603,7 +611,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				inFlight[id] = future
 			}
 		}
-		if len(inFlight) == 0 && s.openAwaits() == 0 {
+		if len(inFlight) == 0 && s.openAwaits() == 0 && s.openSleeps() == 0 {
 			if len(s.readyTasks()) == 0 {
 				return
 			}
@@ -636,9 +644,29 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				}
 			}
 		}
+		// Then every open sleep's timer in s.order, last, as the main loop's.
+		woke := ""
+		for _, id := range s.order {
+			if sl := s.sleeps[id]; sl != nil && sl.open {
+				sleepID := id
+				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
+			}
+		}
 		selector.Select(ctx)
 		ectx = s.eventContext(ctx)
 		switch {
+		case woke != "":
+			// A sleeping handler woke and succeeded, or its timer was
+			// cancelled by the operator's cancel and it is recorded CANCELED.
+			if err := s.wake(ectx, woke); err != nil {
+				if !temporal.IsCanceledError(err) {
+					workflow.GetLogger(ctx).Error("emit sleep wake failed",
+						"run_id", s.runID, "task_id", woke, "error", err)
+				} else if cancelErr := s.cancelSleeping(ectx, woke); cancelErr != nil {
+					workflow.GetLogger(ctx).Error("mark canceled failed",
+						"run_id", s.runID, "task_id", woke, "error", cancelErr)
+				}
+			}
 		case resolved:
 			_ = s.resolve(ectx, resolution) // the outcome is recorded on the task
 		case expired != "":

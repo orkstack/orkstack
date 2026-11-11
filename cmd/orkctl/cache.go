@@ -229,7 +229,7 @@ func newCacheStatsCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&orkflow, "orkflow", "", "only this orkflow's runs and orkflow-scoped memos")
-	cmd.Flags().StringVar(&since, "since", "",
+	cmd.Flags().StringVarP(&since, "since", "s", "",
 		"how far back to look: a duration such as 24h, or an RFC3339 instant (default: the last 24 hours)")
 	cmd.Flags().StringVar(&until, "until", "", "the window's exclusive end, an RFC3339 instant (default: now)")
 	return cmd
@@ -259,7 +259,7 @@ func renderCacheStats(out io.Writer, resp *orkstackv1.GetCacheStatsResponse) err
 			if d := row.GetReused().AsDuration(); d > 0 {
 				reused = clockDuration(d)
 			}
-			fmt.Fprintf(table, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n", row.GetOrkflowName(), row.GetTaskId(),
+			fmt.Fprintf(table, "%s\t%s\t%d\t%d\t%d\t%s\t%s\n", ownedLabel(row.GetOrkflowNamespace(), row.GetOrkflowName()), row.GetTaskId(),
 				row.GetHits(), row.GetMisses(), row.GetBypassed(), rate, reused)
 		}
 		if err := table.Flush(); err != nil {
@@ -368,7 +368,7 @@ func newCachePurgeCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&orkflow, "orkflow", "", "purge this orkflow's orkflow-scoped memos")
 	cmd.Flags().BoolVar(&namespaceScoped, "namespace-scoped", false, "purge the namespace-scoped memos")
 	cmd.Flags().BoolVar(&all, "all", false, "purge every memo of the namespace")
-	cmd.Flags().StringVar(&task, "task", "", "narrow --orkflow or --namespace-scoped to one task")
+	cmd.Flags().StringVarP(&task, "task", "t", "", "narrow --orkflow or --namespace-scoped to one task")
 	cmd.Flags().StringVar(&olderThan, "older-than", "", "keep memos written within this duration, e.g. 72h")
 	addYesFlag(cmd, &yes)
 	return cmd

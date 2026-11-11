@@ -14,6 +14,8 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // newTestEngineObserver wires an EngineObserver to a ManualReader (so a test
@@ -29,18 +31,14 @@ func newTestEngineObserver(t *testing.T, reader sdkmetric.Reader, buf *bytes.Buf
 	}
 	logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	observer, err := NewEngineObserver(providers, logger)
-	if err != nil {
-		t.Fatalf("NewEngineObserver: %v", err)
-	}
+	must.OKf(t, err, "NewEngineObserver")
 	return observer
 }
 
 func collect(t *testing.T, reader sdkmetric.Reader) metricdata.ResourceMetrics {
 	t.Helper()
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
+	must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
 	return rm
 }
 
@@ -299,9 +297,7 @@ func TestObserveEvent_LogLineCarriesEventTypeAndRunID(t *testing.T) {
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	observer, err := NewEngineObserver(providers, logger)
-	if err != nil {
-		t.Fatalf("NewEngineObserver: %v", err)
-	}
+	must.OKf(t, err, "NewEngineObserver")
 
 	run := &orkstackv1.Run{Id: "run-7", Namespace: "default", OrkflowName: "hello-ork"}
 	observer.ObserveEvent(context.Background(),
@@ -311,6 +307,27 @@ func TestObserveEvent_LogLineCarriesEventTypeAndRunID(t *testing.T) {
 	logged := buf.String()
 	if !containsAll(logged, "level=INFO", "event_type=run_started", "run_id=run-7", "status=running") {
 		t.Errorf("log line = %q, want event_type, run_id and status", logged)
+	}
+}
+
+// TestObserveEvent_LogLineCarriesTheEventSequence: every run-event record
+// carries its event's sequence number, so a consumer can order a run's
+// records, which can reach a collector out of order.
+func TestObserveEvent_LogLineCarriesTheEventSequence(t *testing.T) {
+	meterProvider := sdkmetric.NewMeterProvider(sdkmetric.WithReader(sdkmetric.NewManualReader()))
+	t.Cleanup(func() { meterProvider.Shutdown(context.Background()) })
+	providers := &Providers{Meter: meterProvider, cfg: Config{LogsExporter: ExporterOTLP}}
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	observer, err := NewEngineObserver(providers, logger)
+	if err != nil {
+		t.Fatalf("NewEngineObserver: %v", err)
+	}
+	event := runEvent("run-8", orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, orkstackv1.Status_STATUS_RUNNING, "build")
+	event.Sequence = 42
+	observer.ObserveEvent(context.Background(), event, &orkstackv1.Run{Id: "run-8", Namespace: "default", OrkflowName: "hello-ork"})
+	if logged := buf.String(); !containsAll(logged, "run_id=run-8", "sequence=42", "event_type=task_started") {
+		t.Errorf("log line = %q, want sequence=42 beside run_id and event_type", logged)
 	}
 }
 
@@ -368,9 +385,7 @@ func TestNewEngineObserverForSinks_RunPinnedToNamedSinkLandsThere(t *testing.T) 
 	var buf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	observer, err := NewEngineObserverForSinks(sinks, logger)
-	if err != nil {
-		t.Fatalf("NewEngineObserverForSinks: %v", err)
-	}
+	must.OKf(t, err, "NewEngineObserverForSinks")
 
 	run := runWithSelection("run-b", "b", nil)
 	observer.ObserveEvent(context.Background(),
@@ -426,9 +441,7 @@ func TestNewEngineObserverForSinks_SelectionAttrsOnLogAlwaysOnMetricOnlyHigh(t *
 			// line to appear at all; its content is what this test checks.
 			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 			observer, err := NewEngineObserverForSinks(sinks, logger)
-			if err != nil {
-				t.Fatalf("NewEngineObserverForSinks: %v", err)
-			}
+			must.OKf(t, err, "NewEngineObserverForSinks")
 
 			run := runWithSelection("run-attrs", "", map[string]string{"ork.ns.team": "payments"})
 			observer.ObserveEvent(context.Background(),

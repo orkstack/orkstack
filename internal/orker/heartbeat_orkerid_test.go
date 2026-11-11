@@ -2,7 +2,6 @@ package orker
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +11,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -52,7 +52,7 @@ func TestHeartbeater_StampsTheOrkerIDOnEveryBeat(t *testing.T) {
 			t.Fatalf("beat %d orker_id = %q, want %q", i, p.OrkerID, "orker-7")
 		}
 	}
-	first, err := json.Marshal(seen[0])
+	first, err := stablejson.Marshal(seen[0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestHeartbeater_StampsTheOrkerIDOnEveryBeat(t *testing.T) {
 	t.Logf("first beat carried %s; %d beats all stamped orker_id=orker-7", first, len(seen))
 
 	unset := (&Heartbeater{}).progress()
-	raw, err := json.Marshal(unset)
+	raw, err := stablejson.Marshal(unset)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestGenschemas_WritesTheCommittedSchemas: the command writes exactly the
@@ -16,18 +18,14 @@ func TestGenschemas_WritesTheCommittedSchemas(t *testing.T) {
 	const root = "../../../.."
 	dest := t.TempDir()
 	var out bytes.Buffer
-	if err := generate(root, dest, &out); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, generate(root, dest, &out))
 	written := strings.Fields(out.String())
 	if len(written) != 14 {
 		t.Fatalf("wrote %v, want the four schemas, the UI's copies of the two kinds' and the eight Dockerfiles", written)
 	}
 	for _, path := range written {
 		got, err := os.ReadFile(filepath.Join(dest, path))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		want, err := os.ReadFile(filepath.Join(root, path))
 		if err != nil || !bytes.Equal(got, want) {
 			t.Errorf("%s differs from the committed file (%v): run go run ./internal/schemas/cmd/genschemas", path, err)

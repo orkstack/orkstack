@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The release view (docs/DEPLOY.md §3) against a real cluster. Each test provisions its own
@@ -61,9 +63,7 @@ func newReleaseWorld(t *testing.T, timeout time.Duration) *releaseWorld {
 	}
 	cluster, err := engine.NewTemporalReleaseCluster(w.c, engine.NewTemporalRunReader(w.c),
 		namespace, w.deployment, w.runQueue, w.orkerQueue)
-	if err != nil {
-		t.Fatalf("NewTemporalReleaseCluster: %v", err)
-	}
+	must.OKf(t, err, "NewTemporalReleaseCluster")
 	w.cluster = cluster
 	w.starter = engine.NewTemporalStarterWithOrkerQueue(w.c, w.runQueue, w.orkerQueue)
 	w.step("namespace " + namespace + ", deployment " + w.deployment)
@@ -100,9 +100,7 @@ type releaseOrker struct {
 func (w *releaseWorld) startPoolOrker(build, pool string, holdTask string) *releaseOrker {
 	w.t.Helper()
 	route, err := task.RouteForPool(pool, w.orkerQueue)
-	if err != nil {
-		w.t.Fatalf("route %s: %v", pool, err)
-	}
+	must.OKf(w.t, err, "route %s", pool)
 	o := &releaseOrker{w: w, build: build, ran: map[string]string{}, holdTask: holdTask,
 		hold: make(chan struct{}), held: make(chan struct{})}
 	o.worker = worker.New(w.c, route.Queue, w.version(build).Apply(worker.Options{
@@ -131,9 +129,7 @@ func (w *releaseWorld) startPoolOrker(build, pool string, holdTask string) *rele
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	if err := o.worker.Start(); err != nil {
-		w.t.Fatalf("start %s orker on %s: %v", build, pool, err)
-	}
+	must.OKf(w.t, o.worker.Start(), "start %s orker on %s", build, pool)
 	w.t.Cleanup(o.worker.Stop)
 	return o
 }
@@ -156,9 +152,7 @@ func (w *releaseWorld) startEngine(build string) {
 	engine.RegisterWorkflows(run)
 	run.RegisterActivityWithOptions(engine.NewSnapshotActivities(w.snapshots).WriteSnapshot,
 		activity.RegisterOptions{Name: engine.ActivityWriteSnapshot})
-	if err := run.Start(); err != nil {
-		w.t.Fatalf("start engine %s: %v", build, err)
-	}
+	must.OKf(w.t, run.Start(), "start engine %s", build)
 	w.t.Cleanup(run.Stop)
 }
 
@@ -171,9 +165,7 @@ func (w *releaseWorld) startProjection() {
 	})
 	inner := engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(w.snapshots)
 	events.RegisterActivityWithOptions(inner.PublishEvent, activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	if err := events.Start(); err != nil {
-		w.t.Fatalf("start projection worker: %v", err)
-	}
+	must.OKf(w.t, events.Start(), "start projection worker")
 	w.t.Cleanup(events.Stop)
 }
 
@@ -246,9 +238,7 @@ func (w *releaseWorld) setCurrent(build string) {
 	if obs.Routing.Ramping == build {
 		want.Ramping, want.RampPercent = "", 0
 	}
-	if err := w.cluster.SetRouting(w.ctx, obs, want); err != nil {
-		w.t.Fatalf("promote %s: %v", build, err)
-	}
+	must.OKf(w.t, w.cluster.SetRouting(w.ctx, obs, want), "promote %s", build)
 	w.step("SetRouting: current = " + build)
 }
 
@@ -330,9 +320,7 @@ func TestIntegration_ReleaseRunsCountsARunExecutingOnIt(t *testing.T) {
 	w.awaitRegistered("v2", w.runQueue, w.orkerQueue)
 
 	runID := "ork-release-runs-" + fmt.Sprint(time.Now().UnixNano())
-	if err := w.starter.StartRun(w.ctx, runID, heldOrkflow("release-runs", "held"), nil, rawPlan(w.orkerQueue)); err != nil {
-		t.Fatalf("start run: %v", err)
-	}
+	must.OKf(t, w.starter.StartRun(w.ctx, runID, heldOrkflow("release-runs", "held"), nil, rawPlan(w.orkerQueue)), "start run")
 	defer close(held.hold)
 	select {
 	case <-held.held:
@@ -471,9 +459,7 @@ func TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel(t *testing.T) {
 	// A ramp, confirmed.
 	obs := w.read("observe before the ramp")
 	ramp := engine.Routing{Current: "v1", Ramping: "v2", RampPercent: 30}
-	if err := w.cluster.SetRouting(w.ctx, obs, ramp); err != nil {
-		t.Fatalf("ramp: %v", err)
-	}
+	must.OKf(t, w.cluster.SetRouting(w.ctx, obs, ramp), "ramp")
 	start := time.Now()
 	ok, err := w.cluster.AwaitRouting(w.ctx, ramp, 10*time.Second)
 	if err != nil || !ok {
@@ -484,9 +470,7 @@ func TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel(t *testing.T) {
 	// A promote, confirmed, and the next run executes on the promoted release.
 	obs = w.read("observe before the promote")
 	promote := engine.Routing{Current: "v2"}
-	if err := w.cluster.SetRouting(w.ctx, obs, promote); err != nil {
-		t.Fatalf("promote: %v", err)
-	}
+	must.OKf(t, w.cluster.SetRouting(w.ctx, obs, promote), "promote")
 	start = time.Now()
 	ok, err = w.cluster.AwaitRouting(w.ctx, promote, 10*time.Second)
 	if err != nil || !ok {
@@ -495,12 +479,8 @@ func TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel(t *testing.T) {
 	w.step(fmt.Sprintf("promote v2: routing confirmed on the engine's channel after %s", time.Since(start).Round(time.Millisecond)))
 
 	runID := "ork-release-confirmed-" + fmt.Sprint(time.Now().UnixNano())
-	if err := w.starter.StartRun(w.ctx, runID, heldOrkflow("release-confirmed", "only"), nil, rawPlan(w.orkerQueue)); err != nil {
-		t.Fatalf("start run: %v", err)
-	}
-	if err := w.c.GetWorkflow(w.ctx, runID, "").Get(w.ctx, nil); err != nil {
-		t.Fatalf("run %s: %v", runID, err)
-	}
+	must.OKf(t, w.starter.StartRun(w.ctx, runID, heldOrkflow("release-confirmed", "only"), nil, rawPlan(w.orkerQueue)), "start run")
+	must.OKf(t, w.c.GetWorkflow(w.ctx, runID, "").Get(w.ctx, nil), "run %s", runID)
 	if build, ok := v2.ranBy(runID + "/only"); !ok || build != "v2" {
 		t.Fatalf("the run submitted right after the promote did not execute on v2 (%q, %v)", build, ok)
 	}
@@ -514,9 +494,7 @@ func TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel(t *testing.T) {
 func assertRunVersionPlain(t *testing.T, ctx context.Context, c client.Client, runID string, want task.Deployment) {
 	t.Helper()
 	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
-	if err != nil {
-		t.Fatalf("describe %s: %v", runID, err)
-	}
+	must.OKf(t, err, "describe %s", runID)
 	version := described.GetWorkflowExecutionInfo().GetVersioningInfo().GetDeploymentVersion()
 	if version.GetBuildId() != want.BuildID || version.GetDeploymentName() != want.Name {
 		t.Fatalf("run %s is on %s:%s, want %s", runID, version.GetDeploymentName(), version.GetBuildId(), want)

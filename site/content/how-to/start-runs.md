@@ -1,24 +1,24 @@
 # Start runs
 
-Apply an Orkflow once, then start a run of it as often as you need. Start runs from the UI or from `orkctl`, pass the input as JSON, plan a run before it starts, and cancel it with a reason.
+Create an Orkflow version once, then start a run of it as often as you need. Start runs from the UI or from `orkctl`, pass the input as JSON, plan a run before it starts, and cancel it with a reason.
 
-## Apply, then submit
+## Create, then submit
 
 ```bash
-orkctl apply examples/each-fan-out.ork.yaml
-orkctl run submit each-fan-out --watch
+orkctl orkflow create examples/each-fan-out.ork.yaml
+orkctl run submit each-fan-out -w
 ```
 
-`apply` stores an immutable version of the Orkflow and starts nothing. `run submit` starts a run of the current version and, with `--watch`, follows it until it ends.
+`orkflow create` stores an immutable version of the Orkflow and starts nothing. `run submit` starts a run of the current version and, with `--watch`, follows it until it ends.
 
-In the UI, open Runs and choose **Submit a run**. To store a new version first, use **Apply an Orkflow**.
+In the UI, open Runs and choose **Submit a run**. To store a new version first, open **Orkflows** and choose **Create Orkflow**.
 
 ## Pass the input
 
 A run's input is JSON, never YAML. Give it one of two ways:
 
 ```bash
-orkctl run submit my-orkflow --input count=3 --input 'tags=["a","b"]'
+orkctl run submit my-orkflow -i count=3 -i 'tags=["a","b"]'
 orkctl run submit my-orkflow --input-json '{"count": 3, "tags": ["a", "b"]}'
 ```
 
@@ -34,7 +34,7 @@ For the rules, see [JSON values](/docs/reference/json/).
 `orkctl run plan` shows which tasks a run would execute and which it would skip, and why. It starts nothing and stores nothing.
 
 ```bash
-orkctl run plan my-orkflow --input count=3
+orkctl run plan my-orkflow -i count=3
 orkctl run plan my-orkflow --version 0.3.0
 ```
 
@@ -58,7 +58,7 @@ A keyed repeat is refused while the namespace is on hold or at its run limit. Se
 
 ```bash
 orkctl run again ork-…                              # the same version and input
-orkctl run again ork-… --input count=5 --dry-run    # print the new submission, start nothing
+orkctl run again ork-… -i count=5 --dry-run    # print the new submission, start nothing
 orkctl run again ork-… --version 0.4.0 --no-cache   # a new version, and no cached results
 ```
 

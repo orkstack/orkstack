@@ -16,6 +16,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // pinCreationPriorities records the priority of every pin creation request a
@@ -127,26 +129,20 @@ func TestRunWorkerOptions_CarryAPlansFairnessToItsPinsCreationRequest(t *testing
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
 
 	route, err := task.RouteForPool(task.DefaultPool, task.DefaultQueue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan := engine.RunPlan{
 		Namespace: "default",
 		Routes:    map[string]string{route.Pool: route.Queue},
 		Fairness:  &engine.FairnessSelection{Key: "payments", Weight: 3, PinRequests: true},
 	}
 	definition, err := dsl.Compile([]byte(pinnedOrkflow))
-	if err != nil {
-		t.Fatalf("compile: %v", err)
-	}
+	must.OKf(t, err, "compile")
 	env.ExecuteWorkflow(engine.RunWorkflow, "run-pin-fairness", definition, &orkstackv1.Payload{}, plan,
 		(*orkstackv1.RunContinuation)(nil))
 	if !env.IsWorkflowCompleted() {
 		t.Fatal("the run did not complete")
 	}
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "workflow error")
 
 	want := temporal.Priority{FairnessKey: "payments", FairnessWeight: 3}
 	got := capture.priorities()

@@ -9,6 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // handBuiltComposed is a composed task that never met the YAML decoder, as a
@@ -77,9 +79,7 @@ func TestValidate_HandBuiltComposedTaskMustAgreeWithUses(t *testing.T) {
 		})
 	}
 	t.Run("a clean hand-built composed task validates", func(t *testing.T) {
-		if err := validate(handBuiltComposed(), Options{}); err != nil {
-			t.Fatalf("refused: %v", err)
-		}
+		must.OKf(t, validate(handBuiltComposed(), Options{}), "refused")
 	})
 }
 
@@ -96,9 +96,7 @@ func composedGolden(t *testing.T) *orkstackv1.Orkflow {
 func TestCanonicalOrkflow_OutputsAndOrkflowEmittedOnlyWhenSet(t *testing.T) {
 	plain := goldenOrkflow(t)
 	canonical, err := CanonicalOrkflow(plain)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, key := range []string{`"outputs"`, `"orkflow"`} {
 		if strings.Contains(string(canonical), key) {
 			t.Fatalf("a definition with neither emitted %s: %s", key, canonical)
@@ -129,9 +127,7 @@ func TestCanonicalOrkflow_OutputsAndOrkflowEmittedOnlyWhenSet(t *testing.T) {
 
 	composed := composedGolden(t)
 	before, err := DefinitionDigest(composed)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	canonical, _ = CanonicalOrkflow(composed)
 	if !strings.Contains(string(canonical), `"orkflow":{"definitionDigest":"sha256:aaa","name":"release-block","version":"2.1.0"}`) {
 		t.Fatalf("canonical orkflow missing: %s", canonical)
@@ -147,9 +143,7 @@ func TestContentHash_CoversTheChildDigest(t *testing.T) {
 	source := []byte("name: x\n")
 	composed := composedGolden(t)
 	a, err := ContentHash(source, composed)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	moved := proto.Clone(composed).(*orkstackv1.Orkflow)
 	moved.Tasks[len(moved.Tasks)-1].Orkflow.DefinitionDigest = "sha256:bbb"
 	b, _ := ContentHash(source, moved)
@@ -161,9 +155,7 @@ func TestContentHash_CoversTheChildDigest(t *testing.T) {
 func TestContentHash_UnchangedWithoutComposedTasks(t *testing.T) {
 	wf := goldenOrkflow(t)
 	images, err := canonicalImages(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.Contains(string(images), "orkflow") {
 		t.Fatalf("canonicalImages of a document with no composed task names orkflow: %s", images)
 	}

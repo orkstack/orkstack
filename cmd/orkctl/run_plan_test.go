@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -52,7 +52,7 @@ func writePlanFile(t *testing.T, name, content string) string {
 
 func applyAdvancedDemo(t *testing.T, f *fixture) {
 	t.Helper()
-	f.run("apply", advancedDemoPath).requireExit(t, exitOK)
+	f.run("orkflow", "create", advancedDemoPath).requireExit(t, exitOK)
 }
 
 func TestRunPlanGolden(t *testing.T) {
@@ -75,8 +75,8 @@ func TestRunPlanFileGolden(t *testing.T) {
 	f := newFixture(t)
 	out := f.run("run", "plan", "--file", advancedDemoPath).requireExit(t, exitOK)
 	requireGolden(t, "run-plan-file.golden", out.stdout)
-	if !strings.Contains(out.stdout, "(from "+advancedDemoPath+", not applied)") {
-		t.Errorf("file-form header does not say it was not applied:\n%s", out.stdout)
+	if !strings.Contains(out.stdout, "(from "+advancedDemoPath+", not stored)") {
+		t.Errorf("file-form header does not say it is not stored:\n%s", out.stdout)
 	}
 	f.run("orkflow", "get", "advanced-demo").requireExit(t, exitError)
 }
@@ -114,7 +114,7 @@ func TestRunPlanFile_AnUnappliedDocumentHasNoVersionInItsHeader(t *testing.T) {
 func TestRunPlanFailsGolden(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "plan-fails.ork.yaml", planFailsDocument)
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	out := f.run("run", "plan", "plan-fails").requireExit(t, exitOK)
 	requireGolden(t, "run-plan-fails.golden", out.stdout)
 }

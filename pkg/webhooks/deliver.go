@@ -5,12 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // Delivery is one run transition or task outcome on its way to one
@@ -26,6 +28,15 @@ type Delivery struct {
 	OrkflowName string
 	Status      string
 	Timestamp   time.Time
+	// Sequence is the run event's sequence: monotonic per run, from 1, in the
+	// order the run emitted its events. It is the body's "sequence" and
+	// X-Ork-Sequence, so a receiver can order deliveries that arrive out of
+	// order. A redelivery keeps the original's. Zero means the event carried
+	// none, and the body and header then omit it rather than invent one. The
+	// engine's delivery workflow carries a Delivery in its input, so a zero is
+	// omitted there too: an input queued before deliveries carried a sequence
+	// encodes as it was recorded (internal/engine/testdata/history).
+	Sequence int64 `json:",omitzero"`
 	// Namespace is the run's resolved namespace, used to match; it is not
 	// part of the body (the embedded run already carries it).
 	Namespace string
@@ -35,7 +46,7 @@ type Delivery struct {
 	TaskID  string
 	Attempt int32
 	// Run is the full run, already encoded in OrkStack's JSON dialect.
-	Run json.RawMessage
+	Run stablejson.RawJSON
 	// QueuedAt is when the notifier queued this delivery; it is the instant the
 	// id's stamp carries. Zero for a caller that bypasses the notifier.
 	QueuedAt time.Time
@@ -47,28 +58,31 @@ type Delivery struct {
 
 // payload is the wire body, in the field order the contract states:
 //
-//	{"runId":…,"orkflowName":…,"status":…,"timestamp":…,"taskId":…,"attempt":…,"run":{…}}
+//	{"runId":…,"orkflowName":…,"status":…,"timestamp":…,"sequence":…,"taskId":…,"attempt":…,"run":{…}}
 //
 // taskId and attempt are omitted when empty, so a run transition's body is
-// byte-identical to what it was before task outcomes were deliverable.
+// byte-identical to what it was before task outcomes were deliverable, apart
+// from sequence. sequence is omitted only when the delivery has none.
 type payload struct {
-	RunID       string          `json:"runId"`
-	OrkflowName string          `json:"orkflowName"`
-	Status      string          `json:"status"`
-	Timestamp   string          `json:"timestamp"`
-	TaskID      string          `json:"taskId,omitempty"`
-	Attempt     int32           `json:"attempt,omitempty"`
-	Run         json.RawMessage `json:"run"`
+	RunID       string             `json:"runId"`
+	OrkflowName string             `json:"orkflowName"`
+	Status      string             `json:"status"`
+	Timestamp   string             `json:"timestamp"`
+	Sequence    int64              `json:"sequence,omitzero"`
+	TaskID      string             `json:"taskId,omitempty"`
+	Attempt     int32              `json:"attempt,omitzero"`
+	Run         stablejson.RawJSON `json:"run"`
 }
 
 // Body renders the signed request body. It is computed once per delivery and
 // reused by every attempt, so the signature is stable across retries.
 func (d Delivery) Body() ([]byte, error) {
-	body, err := json.Marshal(payload{
+	body, err := stablejson.Marshal(payload{
 		RunID:       d.RunID,
 		OrkflowName: d.OrkflowName,
 		Status:      d.Status,
 		Timestamp:   d.Timestamp.UTC().Format(time.RFC3339Nano),
+		Sequence:    d.Sequence,
 		TaskID:      d.TaskID,
 		Attempt:     d.Attempt,
 		Run:         d.Run,
@@ -79,15 +93,20 @@ func (d Delivery) Body() ([]byte, error) {
 	return body, nil
 }
 
-// Retry budget. "Max 3 retries" means up to three re-sends after the first
-// attempt, so at most four requests, spaced 100ms, 200ms, 400ms.
+// The retry ladder. A delivery is retried by Temporal, not by this package:
+// the engine pins these numbers into each delivery when it queues it, as the
+// retry policy of the activity that makes one POST (internal/engine,
+// WebhookDeliveryWorkflow). "Four attempts" is the first request and up to
+// three retries, spaced 100ms, 200ms and 400ms.
 const (
-	// DefaultMaxRetries is how many times a failed delivery is re-sent.
-	DefaultMaxRetries = 3
+	// DefaultMaxAttempts is how many requests one delivery may make.
+	DefaultMaxAttempts = 4
 	// DefaultInitialBackoff is the pause before the first retry.
 	DefaultInitialBackoff = 100 * time.Millisecond
 	// DefaultBackoffCoefficient multiplies the pause after each retry.
 	DefaultBackoffCoefficient = 2.0
+	// DefaultMaxBackoff caps one pause; the default ladder never reaches it.
+	DefaultMaxBackoff = 10 * time.Second
 	// DefaultRequestTimeout bounds one attempt.
 	DefaultRequestTimeout = 10 * time.Second
 	// maxResponseBytes bounds what is read from a receiver for diagnostics.
@@ -103,12 +122,14 @@ type Attempt struct {
 	StatusCode int `json:"statusCode"`
 	// Error is the transport failure, if any.
 	Error string `json:"error,omitempty"`
-	// Backoff is the pause taken before this attempt.
-	Backoff time.Duration `json:"backoff,omitempty"`
+	// Backoff is the pause taken before this attempt: from the end of the
+	// one before it to this one's start.
+	Backoff time.Duration `json:"backoff,omitzero"`
 	// Duration is how long the request itself took.
 	Duration time.Duration `json:"duration"`
-	// At is when the request was started, in UTC. For an attempt the ladder
-	// abandoned while waiting out its backoff, it is when the wait ended.
+	// At is when the request was started, in UTC. For an attempt the engine
+	// recorded without a request (one that never ran), it is when that was
+	// found.
 	At time.Time `json:"at"`
 }
 
@@ -124,16 +145,17 @@ type Result struct {
 	Delivered  bool      `json:"delivered"`
 	Signature  string    `json:"signature,omitempty"`
 	Attempts   []Attempt `json:"attempts"`
-	// Namespace, OrkflowName, TaskID, Attempt and Status are the delivery's
+	// Namespace, OrkflowName, Sequence, TaskID, Attempt and Status are the delivery's
 	// coordinates as the body carried them: what a record needs to say WHICH
 	// transition of which run was sent, without keeping the body.
 	Namespace   string `json:"namespace,omitempty"`
 	OrkflowName string `json:"orkflowName"`
+	Sequence    int64  `json:"sequence,omitzero"`
 	TaskID      string `json:"taskId,omitempty"`
-	Attempt     int32  `json:"attempt,omitempty"`
+	Attempt     int32  `json:"attempt,omitzero"`
 	Status      string `json:"status"`
 	// EventAt is the transition's timestamp (X-Ork-Timestamp); QueuedAt the
-	// id's instant; SettledAt when Deliver returned.
+	// id's instant; SettledAt when the last attempt returned.
 	EventAt   time.Time `json:"eventAt"`
 	QueuedAt  time.Time `json:"queuedAt"`
 	SettledAt time.Time `json:"settledAt"`
@@ -157,50 +179,21 @@ func (r Result) LastAttempt() Attempt {
 type DispatcherOptions struct {
 	// Client sends the requests. Nil builds one bounded by RequestTimeout.
 	Client *http.Client
-	// MaxRetries caps re-sends after the first attempt. Negative means none.
-	MaxRetries int
-	// InitialBackoff is the pause before the first retry.
-	InitialBackoff time.Duration
-	// BackoffCoefficient multiplies the pause after each retry.
-	BackoffCoefficient float64
 	// RequestTimeout bounds one attempt.
 	RequestTimeout time.Duration
-	// Sleep waits out a backoff. Tests replace it to keep the retry ladder
-	// observable without spending real time.
-	Sleep func(ctx context.Context, d time.Duration) error
 }
 
-// Dispatcher POSTs one delivery to one subscriber, signed, with the retry
-// budget. It holds no state, so one instance serves every subscription.
+// Dispatcher makes one signed POST of one delivery to one subscriber. It
+// never retries: a retry is Temporal's, under the policy the engine pinned,
+// and an operator's redelivery is one attempt by design. It holds no state, so
+// one instance serves every subscription.
 type Dispatcher struct {
-	client         *http.Client
-	maxRetries     int
-	initialBackoff time.Duration
-	coefficient    float64
-	sleep          func(ctx context.Context, d time.Duration) error
+	client *http.Client
 }
 
 // NewDispatcher returns a dispatcher with defaults filled in.
 func NewDispatcher(options DispatcherOptions) *Dispatcher {
-	d := &Dispatcher{
-		client:         options.Client,
-		maxRetries:     options.MaxRetries,
-		initialBackoff: options.InitialBackoff,
-		coefficient:    options.BackoffCoefficient,
-		sleep:          options.Sleep,
-	}
-	if options.MaxRetries == 0 {
-		d.maxRetries = DefaultMaxRetries
-	}
-	if d.maxRetries < 0 {
-		d.maxRetries = 0
-	}
-	if d.initialBackoff <= 0 {
-		d.initialBackoff = DefaultInitialBackoff
-	}
-	if d.coefficient <= 0 {
-		d.coefficient = DefaultBackoffCoefficient
-	}
+	d := &Dispatcher{client: options.Client}
 	if d.client == nil {
 		timeout := options.RequestTimeout
 		if timeout <= 0 {
@@ -208,18 +201,15 @@ func NewDispatcher(options DispatcherOptions) *Dispatcher {
 		}
 		d.client = &http.Client{Timeout: timeout}
 	}
-	if d.sleep == nil {
-		d.sleep = sleepContext
-	}
 	return d
 }
 
-// Deliver POSTs the delivery to hook, retrying a transport failure or a 5xx
-// with exponential backoff. It returns the full attempt record; the error is
-// non-nil only when the delivery never landed, so a caller can log one and
-// keep the other.
-func (d *Dispatcher) Deliver(ctx context.Context, hook Webhook, delivery Delivery) (result Result, err error) {
-	result = Result{
+// NewResult is the record of delivery to hook before any attempt: its
+// coordinates, the digest and length of body, and its signature. Every
+// attempt of the delivery sends exactly body, signed with that signature.
+func NewResult(hook Webhook, delivery Delivery, body []byte) Result {
+	digest := sha256.Sum256(body)
+	return Result{
 		DeliveryID:   delivery.ID,
 		WebhookID:    hook.ID,
 		Event:        delivery.Event,
@@ -227,70 +217,76 @@ func (d *Dispatcher) Deliver(ctx context.Context, hook Webhook, delivery Deliver
 		URL:          hook.URL,
 		Namespace:    delivery.Namespace,
 		OrkflowName:  delivery.OrkflowName,
+		Sequence:     delivery.Sequence,
 		TaskID:       delivery.TaskID,
 		Attempt:      delivery.Attempt,
 		Status:       delivery.Status,
 		EventAt:      delivery.Timestamp.UTC(),
 		QueuedAt:     delivery.QueuedAt.UTC(),
 		RedeliveryOf: delivery.RedeliveryOf,
+		BodySHA256:   hex.EncodeToString(digest[:]),
+		BodyBytes:    len(body),
+		Signature:    Sign(hook.Secret, body),
 	}
-	// One stamp for every return path — delivered, exhausted, refused, an
-	// interrupted wait, an unencodable body — so a record always says when
-	// the delivery settled.
-	defer func() { result.SettledAt = time.Now().UTC() }()
+}
 
+// Deliver makes one attempt and returns its full record; the error is non-nil
+// only when the delivery did not land, so a caller can log one and keep the
+// other.
+func (d *Dispatcher) Deliver(ctx context.Context, hook Webhook, delivery Delivery) (result Result, err error) {
+	// One stamp for every return path — delivered, refused, unencodable — so
+	// a record always says when the delivery settled.
+	defer func() { result.SettledAt = time.Now().UTC() }()
 	body, err := delivery.Body()
 	if err != nil {
+		result = NewResult(hook, delivery, nil)
+		result.BodySHA256, result.BodyBytes, result.Signature = "", 0, ""
 		return result, err
 	}
-	digest := sha256.Sum256(body)
-	result.BodySHA256 = hex.EncodeToString(digest[:])
-	result.BodyBytes = len(body)
-	signature := Sign(hook.Secret, body)
-	result.Signature = signature
-
-	var lastErr error
-	for attempt := 1; attempt <= d.maxRetries+1; attempt++ {
-		backoff := time.Duration(0)
-		if attempt > 1 {
-			backoff = d.backoffFor(attempt)
-			if err := d.sleep(ctx, backoff); err != nil {
-				result.Attempts = append(result.Attempts, Attempt{
-					Number: attempt, Backoff: backoff, Error: err.Error(), At: time.Now().UTC(),
-				})
-				return result, fmt.Errorf("webhooks: deliver %s to %s: %w", delivery.ID, hook.URL, err)
-			}
-		}
-
-		started := time.Now()
-		status, sendErr := d.send(ctx, hook, delivery, body, signature, attempt)
-		record := Attempt{
-			Number:     attempt,
-			StatusCode: status,
-			Backoff:    backoff,
-			Duration:   time.Since(started),
-			At:         started.UTC(),
-		}
-		if sendErr != nil {
-			record.Error = sendErr.Error()
-		}
-		result.Attempts = append(result.Attempts, record)
-
-		switch {
-		case sendErr == nil && status >= 200 && status < 300:
-			result.Delivered = true
-			return result, nil
-		case sendErr != nil:
-			lastErr = sendErr
-		default:
-			lastErr = fmt.Errorf("receiver answered %d", status)
-		}
-		if !retryable(status, sendErr) {
-			break
-		}
+	result = NewResult(hook, delivery, body)
+	attempt := d.Send(ctx, hook, delivery, body, result.Signature, 1)
+	result.Attempts = []Attempt{attempt}
+	result.Delivered = attempt.Delivered()
+	if !result.Delivered {
+		return result, fmt.Errorf("webhooks: deliver %s to %s: %w", delivery.ID, hook.URL, attempt.Failure())
 	}
-	return result, fmt.Errorf("webhooks: deliver %s to %s after %d attempt(s): %w",
-		delivery.ID, hook.URL, len(result.Attempts), lastErr)
+	return result, nil
+}
+
+// Send makes attempt number n: one POST of body to hook, labelled with the
+// delivery and signed with signature, and returns its record.
+func (d *Dispatcher) Send(ctx context.Context, hook Webhook, delivery Delivery, body []byte, signature string, n int) Attempt {
+	started := time.Now()
+	status, err := d.send(ctx, hook, delivery, body, signature, n)
+	record := Attempt{Number: n, StatusCode: status, Duration: time.Since(started), At: started.UTC()}
+	if err != nil {
+		record.Error = err.Error()
+	}
+	return record
+}
+
+// Delivered reports whether the attempt landed: a 2xx with no transport
+// error.
+func (a Attempt) Delivered() bool {
+	return a.Error == "" && a.StatusCode >= 200 && a.StatusCode < 300
+}
+
+// Retryable reports whether a failed attempt is worth repeating. A transport
+// failure and a 5xx are the receiver's problem and usually transient; a 4xx is
+// this sender's problem and repeating it only doubles the damage.
+func (a Attempt) Retryable() bool {
+	if a.Delivered() {
+		return false
+	}
+	return a.Error != "" || a.StatusCode >= 500
+}
+
+// Failure is why the attempt did not land.
+func (a Attempt) Failure() error {
+	if a.Error != "" {
+		return errors.New(a.Error)
+	}
+	return fmt.Errorf("receiver answered %d", a.StatusCode)
 }
 
 // send performs one attempt and returns the response status.
@@ -315,6 +311,9 @@ func (d *Dispatcher) send(
 	if delivery.TaskID != "" {
 		req.Header.Set(TaskHeader, delivery.TaskID)
 	}
+	if delivery.Sequence > 0 {
+		req.Header.Set(SequenceHeader, strconv.FormatInt(delivery.Sequence, 10))
+	}
 	if delivery.RedeliveryOf != "" {
 		req.Header.Set(RedeliveryHeader, delivery.RedeliveryOf)
 	}
@@ -333,38 +332,4 @@ func (d *Dispatcher) send(
 	// a receiver's body is not part of the contract.
 	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxResponseBytes))
 	return resp.StatusCode, nil
-}
-
-// backoffFor returns the pause before attempt n (n >= 2): initial * coeff^(n-2).
-func (d *Dispatcher) backoffFor(attempt int) time.Duration {
-	backoff := d.initialBackoff
-	for i := 2; i < attempt; i++ {
-		backoff = time.Duration(float64(backoff) * d.coefficient)
-	}
-	return backoff
-}
-
-// retryable decides whether a failed attempt is worth repeating. A transport
-// failure and a 5xx are the receiver's problem and usually transient; a 4xx is
-// this sender's problem and repeating it only doubles the damage.
-func retryable(status int, err error) bool {
-	if err != nil {
-		return true
-	}
-	return status >= 500
-}
-
-// sleepContext waits for d unless ctx ends first.
-func sleepContext(ctx context.Context, d time.Duration) error {
-	if d <= 0 {
-		return nil
-	}
-	timer := time.NewTimer(d)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

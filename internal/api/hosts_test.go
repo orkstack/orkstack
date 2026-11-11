@@ -22,14 +22,14 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/hostpolicy"
 	"github.com/orkstack/orkstack/internal/webui"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func mustHostPolicy(t *testing.T, listen string, allowed ...string) hostpolicy.Policy {
 	t.Helper()
 	policy, err := api.NewHostPolicy(listen, allowed)
-	if err != nil {
-		t.Fatalf("NewHostPolicy(%q, %q): %v", listen, allowed, err)
-	}
+	must.OKf(t, err, "NewHostPolicy(%q, %q)", listen, allowed)
 	return policy
 }
 
@@ -59,9 +59,7 @@ func TestHostPolicy_TheListenerRefusesAForeignHostOnEveryRoute(t *testing.T) {
 	policy := mustHostPolicy(t, "127.0.0.1:0")
 	server := api.NewServer("127.0.0.1:0", policy.Guard(api.NewMux(svc, api.MuxOptions{}), slog.New(slog.NewTextHandler(io.Discard, nil))))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 	base := "http://" + listener.Addr().String()
@@ -112,18 +110,14 @@ func TestHostPolicy_TheListenerRefusesAForeignHostOnEveryRoute(t *testing.T) {
 func rawRequest(t *testing.T, addr, request string) string {
 	t.Helper()
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer conn.Close()
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	if _, err := io.WriteString(conn, request); err != nil {
 		t.Fatal(err)
 	}
 	status, err := bufio.NewReader(conn).ReadString('\n')
-	if err != nil {
-		t.Fatalf("read the status line: %v", err)
-	}
+	must.OKf(t, err, "read the status line")
 	return strings.TrimSpace(status)
 }
 
@@ -138,9 +132,7 @@ func TestHostPolicy_TheListenerJudgesTheHostItServes(t *testing.T) {
 	server := api.NewServer("127.0.0.1:0", mustHostPolicy(t, "127.0.0.1:0").Guard(api.NewMux(svc, api.MuxOptions{}),
 		slog.New(slog.NewTextHandler(io.Discard, nil))))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() { _ = server.Close() })
 	addr := listener.Addr().String()

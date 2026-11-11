@@ -54,7 +54,7 @@ const ActivityWriteSnapshotOrOverlay = "WriteSnapshotOrOverlay"
 type SnapshotBase struct {
 	URI      string `json:"uri,omitempty"`
 	SHA256   string `json:"sha256,omitempty"`
-	Overlays int32  `json:"overlays,omitempty"`
+	Overlays int32  `json:"overlays,omitzero"`
 }
 
 // SnapshotWritten is what WriteSnapshotOrOverlay wrote: its URI, and for a
@@ -62,7 +62,7 @@ type SnapshotBase struct {
 type SnapshotWritten struct {
 	URI    string `json:"uri"`
 	SHA256 string `json:"sha256,omitempty"`
-	Full   bool   `json:"full,omitempty"`
+	Full   bool   `json:"full,omitzero"`
 }
 
 // ErrSnapshotOverlayInvalid reports a snapshot overlay that could not be

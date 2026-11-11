@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The placement-order suite (docs/OCI_ACTIVITY_CONTRACT.md §7.1, AGENTS.md
@@ -67,12 +69,8 @@ func watchContainerStarts(t *testing.T, runID string) *containerStarts {
 		"--filter", "type=container", "--filter", "event=start", "--filter", "label=ork.run="+runID,
 		"--format", `{{index .Actor.Attributes "ork.orker"}} {{index .Actor.Attributes "ork.task"}}`)
 	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatalf("docker events: %v", err)
-	}
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("docker events: %v", err)
-	}
+	must.OKf(t, err, "docker events")
+	must.OKf(t, cmd.Start(), "docker events")
 	w := &containerStarts{cmd: cmd, done: make(chan struct{})}
 	go func() {
 		defer close(w.done)
@@ -217,9 +215,7 @@ func TestIntegration_ACommittedRetryIsAdoptedOnASmallerOrker(t *testing.T) {
 	}
 	s.requireOneRunRead(runID, stream, orkstackv1.Status_STATUS_SUCCEEDED, "")
 	records, err := stores.attempts.ListAttempts(ctx, runID, "work", artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(records) != 1 {
 		t.Fatalf("%d attempt records, want the retry's alone (attempt 1 is held before its record): %v", len(records), records)
 	}
@@ -249,17 +245,13 @@ func TestIntegration_ACommittedRetryIsAdoptedOnASmallerOrker(t *testing.T) {
 		t.Fatalf("the uncommitted run closed %v, want FAILED", status)
 	}
 	run, err := s.reader.GetRun(ctx, missID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	work := taskRunOfRun(run, "work")
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || work.GetError().GetCode() != orker.ReasonResourceRefused {
 		t.Fatalf("the uncommitted run = %v, work %v %v; want FAILED with %s", run.GetStatus(), work.GetStatus(), work.GetError(), orker.ReasonResourceRefused)
 	}
 	refused, err := stores.attempts.ListAttempts(ctx, missID, "work", artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(refused) != 1 || refused[0].GetOrkerId() != idB || refused[0].GetError().GetCode() != orker.ReasonResourceRefused {
 		t.Fatalf("the uncommitted run's records = %v, want one refusal on %s", refused, idB)
 	}
@@ -325,9 +317,7 @@ func TestIntegration_AMemoHitIsReusedOnASmallerOrker(t *testing.T) {
 				starts := watchContainerStarts(t, runID)
 				data, _ := structpb.NewStruct(map[string]any{"rows": rows})
 				starter := engine.NewTemporalStarterWithOrkerQueue(c.temporal, c.runQueue, c.orkerQueue)
-				if err := starter.StartRun(c.ctx, runID, wf, &orkstackv1.Payload{Data: data}, plan); err != nil {
-					t.Fatalf("StartRun: %v", err)
-				}
+				must.OKf(t, starter.StartRun(c.ctx, runID, wf, &orkstackv1.Payload{Data: data}, plan), "StartRun")
 				return c.wait(runID), starts
 			}
 

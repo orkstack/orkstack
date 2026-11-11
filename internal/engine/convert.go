@@ -1,12 +1,12 @@
 package engine
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // payloadMap converts a proto payload into the plain map the workflow uses for
@@ -39,13 +39,19 @@ func payloadOf(m map[string]any) (*orkstackv1.Payload, error) {
 // The bytes are the workload's exact bytes and are never re-serialized: this
 // decode is for the ENGINE's own reading, and what travels onward is always
 // the reference plus, at 4 KiB or less, the original bytes (§3.4, §14.9).
+//
+// It runs in workflow code on bytes a history recorded, so it reads them as
+// the build that recorded them did (stablejson.DecodeRecorded): a values.json
+// an earlier Orker committed with a key written twice, which the Orker now
+// refuses, still decides a replayed condition as it did then.
 func decodeValues(raw []byte) map[string]any {
 	if len(raw) == 0 {
 		return map[string]any{}
 	}
-	decoded := map[string]any{}
-	if err := json.Unmarshal(raw, &decoded); err != nil {
+	decoded, err := stablejson.DecodeRecorded(raw)
+	object, ok := decoded.(map[string]any)
+	if err != nil || !ok {
 		return map[string]any{}
 	}
-	return decoded
+	return object
 }

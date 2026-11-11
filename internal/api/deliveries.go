@@ -3,11 +3,10 @@ package api
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
@@ -16,7 +15,9 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -81,6 +82,21 @@ func (r *DeliveryRecorder) Record(result webhooks.Result) {
 	}
 }
 
+// RecordContext writes one settled delivery's record and returns the store's
+// error, so a caller that can retry — the engine's settle activity, through
+// webhooks.NotifierOptions.Record — retries a record that could not be
+// written. A record already there is a retried write's success: records are
+// create-only, and the one there is this delivery's.
+func (r *DeliveryRecorder) RecordContext(ctx context.Context, result webhooks.Result) error {
+	if r == nil || r.store == nil {
+		return nil
+	}
+	if err := r.record(ctx, deliveryRecordFromResult(result)); err != nil && !errors.Is(err, artifacts.ErrDeliveryExists) {
+		return err
+	}
+	return nil
+}
+
 // record writes one record synchronously and returns the store's error. It
 // is what Record calls, and what RedeliverWebhook calls directly so the
 // response can carry the stored record.
@@ -110,6 +126,7 @@ func deliveryRecordFromResult(result webhooks.Result) *orkstackv1.Delivery {
 		BodySha256:    result.BodySHA256,
 		BodyBytes:     int64(result.BodyBytes),
 		RedeliveryOf:  result.RedeliveryOf,
+		Sequence:      result.Sequence,
 	}
 	for _, attempt := range result.Attempts {
 		message := attempt.Error
@@ -165,12 +182,12 @@ type deliveryCursor struct {
 	WindowUntil string `json:"wu"`
 	// RunStart records that WindowSince is a run's created_at, so every page
 	// reports since_is_run_start as the first did.
-	RunStart  bool   `json:"rs,omitempty"`
+	RunStart  bool   `json:"rs,omitzero"`
 	BeforeKey string `json:"k"`
 }
 
 func encodeDeliveryCursor(c deliveryCursor) (string, error) {
-	raw, err := json.Marshal(c)
+	raw, err := stablejson.Marshal(c)
 	if err != nil {
 		return "", err
 	}
@@ -419,18 +436,19 @@ func (s *Service) RedeliverWebhook(
 		return nil, connect.NewError(connect.CodeInternal, err)
 	}
 	// The body differs from the original in exactly one place: `run` is the
-	// run as it reads now. The transition's own coordinates and timestamp
-	// did not move, and the new record's body_sha256 says the bytes did.
+	// run as it reads now. The transition's own coordinates, timestamp and
+	// sequence did not move, and the new record's body_sha256 says the bytes did.
 	delivery := webhooks.Delivery{
 		ID:           id,
 		Event:        event,
 		RunID:        original.GetRunId(),
 		OrkflowName:  original.GetOrkflowName(),
-		Status:       strings.TrimPrefix(original.GetStatus().String(), "STATUS_"),
+		Status:       enumname.Of(original.GetStatus()),
 		Timestamp:    original.GetEventAt().AsTime().UTC(),
 		Namespace:    original.GetNamespace(),
 		TaskID:       original.GetTaskId(),
 		Attempt:      original.GetAttempt(),
+		Sequence:     original.GetSequence(),
 		Run:          encoded,
 		QueuedAt:     now,
 		RedeliveryOf: original.GetId(),

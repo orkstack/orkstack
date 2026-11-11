@@ -12,6 +12,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
 	"github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func newCapacityTestMetrics(t *testing.T) (*CapacityMetrics, *sdkmetric.ManualReader) {
@@ -20,9 +22,7 @@ func newCapacityTestMetrics(t *testing.T) (*CapacityMetrics, *sdkmetric.ManualRe
 	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
 	t.Cleanup(func() { _ = mp.Shutdown(context.Background()) })
 	m, err := NewCapacityMetrics(&Providers{Meter: mp}, nil)
-	if err != nil {
-		t.Fatalf("NewCapacityMetrics: %v", err)
-	}
+	must.OKf(t, err, "NewCapacityMetrics")
 	return m, reader
 }
 
@@ -147,9 +147,7 @@ func TestCapacityMetrics_DisabledProvidersRecordNothing(t *testing.T) {
 	})
 
 	m, err := NewCapacityMetrics(nil, nil)
-	if err != nil {
-		t.Fatalf("NewCapacityMetrics(nil): %v", err)
-	}
+	must.OKf(t, err, "NewCapacityMetrics(nil)")
 	reads := 0
 	m.Watch("orker-a", func() orker.CapacityReading {
 		reads++

@@ -136,14 +136,14 @@ func newRunSubmitCommand(g *globalFlags) *cobra.Command {
 			return watchRun(cmd, g, run.GetId(), 0)
 		},
 	}
-	cmd.Flags().StringArrayVar(&inputs, "input", nil,
+	cmd.Flags().StringArrayVarP(&inputs, "input", "i", nil,
 		"run input as key=value (repeatable); values that parse as JSON keep their JSON type")
 	cmd.Flags().StringVar(&inputJSON, "input-json", "",
 		"run input as a JSON object; merged under --input values")
 	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: the current one)")
 	cmd.Flags().StringVar(&idempotencyKey, "idempotency-key", "",
 		"dedupe key for repeated submissions, scoped to this namespace")
-	cmd.Flags().BoolVar(&watch, "watch", false, "stream events until the run reaches a terminal state")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "stream events until the run reaches a terminal state")
 	cmd.Flags().BoolVar(&allowEmptyPool, "allow-empty-pool", false, "submit even when the selected pool has no live Orkers")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, noCacheHelp)
 	cmd.Flags().StringVar(&originRef, "origin-ref", "", originRefHelp)
@@ -438,7 +438,11 @@ func renderRun(out io.Writer, run *orkstackv1.Run) error {
 func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	header := newTable(out)
 	fmt.Fprintf(header, "Run:\t%s\n", run.GetId())
-	fmt.Fprintf(header, "Orkflow:\t%s\n", run.GetOrkflowName())
+	orkflow := runOrkflowLabel(run)
+	if owner := run.GetOrkflowNamespace(); owner != "" {
+		orkflow += fmt.Sprintf(" (shared from namespace %s)", owner)
+	}
+	fmt.Fprintf(header, "Orkflow:\t%s\n", orkflow)
 	fmt.Fprintf(header, "Version:\t%s\n", run.GetOrkflowVersion())
 	fmt.Fprintf(header, "Status:\t%s\n", runStatusLabel(run))
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(run.GetCreatedAt()))
@@ -491,6 +495,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 		fmt.Fprintln(out, composedLine(run.GetNamespace(), taskRun))
 	}
 	if err := renderAwaitTable(out, run, nowFunc()); err != nil {
+		return err
+	}
+	if err := renderSleepTable(out, run, nowFunc()); err != nil {
 		return err
 	}
 	// What each task returned. A run with no values prints nothing new.
@@ -557,7 +564,7 @@ func renderRunList(out io.Writer, runs []*orkstackv1.Run) error {
 	fmt.Fprintln(table, "ID\tORKFLOW\tVERSION\tORIGIN\tSTATUS\tCREATED\tFINISHED")
 	for _, run := range runs {
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
-			run.GetId(), run.GetOrkflowName(), run.GetOrkflowVersion(), originColumn(run.GetOrigin()),
+			run.GetId(), runOrkflowLabel(run), run.GetOrkflowVersion(), originColumn(run.GetOrigin()),
 			runListStatus(run), formatTime(run.GetCreatedAt()), formatTime(run.GetFinishedAt()))
 	}
 	if err := table.Flush(); err != nil {

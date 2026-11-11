@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './test';
-import { inspectTask, selectTask } from './uiHelpers';
+import { cliCommand, inspectTask, selectTask } from './uiHelpers';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -139,6 +139,8 @@ test('a second run shows the cached task and links to the run that produced it',
 	const first = await submitAndWait(name);
 	const second = await submitAndWait(name);
 	await page.goto(`${UI}/runs/${second}?ns=${NS}`);
+	// The cache decision is on the task's panel, not its row.
+	await selectTask(page, 'featurize');
 	const badge = page.getByTestId('task-featurize-cache');
 	await expect(badge).toHaveAttribute('data-outcome', 'hit', { timeout: 60_000 });
 	await expect(page.getByTestId('task-summary-cached')).toContainText('· 1 cached');
@@ -160,6 +162,8 @@ test('a cache miss says why, and the attempt timeline shows it', async ({ page }
 	await apply(pipeline(name));
 	const runId = await submitAndWait(name);
 	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
+	// The cache decision is on the task's panel, not its row.
+	await selectTask(page, 'train');
 	const badge = page.getByTestId('task-train-cache');
 	await expect(badge).toHaveAttribute('data-outcome', 'miss', { timeout: 60_000 });
 	await expect(badge).toHaveText('Cache miss');
@@ -176,6 +180,37 @@ test('a cache miss says why, and the attempt timeline shows it', async ({ page }
 	note(`P2: run ${runId} train Cache miss MEMO_ABSENT with its key components`);
 });
 
+test('a cached task that misses and then fails says its cache decision beside its failure', async ({ page }) => {
+	const name = `cached-fail-${STAMP}`;
+	await apply(`apiVersion: orkstack/v1
+kind: Orkflow
+name: ${name}
+version: "0.1.0"
+tasks:
+  - id: breaks
+    uses: shell
+    cache:
+      enabled: true
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - exit 1
+`);
+	const runId = (await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: name, namespace: NS, input: { data: {} } })).run.id;
+	await waitFor(`run ${runId} fails`, async () => (await rpc<RunView>('RunService/GetRun', { runId, namespace: NS })).run.status === 'STATUS_FAILED', 180_000);
+	await page.goto(`${UI}/runs/${runId}?ns=${NS}`);
+	// A failed container task says everything under its own row, its cache decision too:
+	// the failed attempt's, since a failed task's own row carries none.
+	await expect(page.getByTestId('task-breaks-error')).toBeVisible();
+	const badge = page.getByTestId('task-breaks-cache');
+	await expect(badge).toHaveAttribute('data-outcome', 'miss', { timeout: 60_000 });
+	await expect(badge).toHaveText('Cache miss');
+	await shot(page, 'screenshot-cached-failed.png');
+	note(`cached and failed: run ${runId} breaks says Cache miss beside its failure`);
+});
+
 test('Ignore cached results runs every cached task', async ({ page }) => {
 	const name = `cached-p3-${STAMP}`;
 	await apply(pipeline(name));
@@ -189,11 +224,13 @@ test('Ignore cached results runs every cached task', async ({ page }) => {
 	await page.getByText('Advanced submission options').click();
 	await page.getByTestId('run-submit-no-cache').check();
 	await page.getByTestId('run-submit-cli-trigger').click();
-	await expect(page.getByTestId('run-submit-cli-command')).toContainText('--no-cache');
+	await expect(cliCommand(page, 'run-submit-cli', 'Submit this run')).toContainText('--no-cache');
 	await shot(page, 'screenshot-p3-no-cache.png');
 	await page.getByTestId('run-submit-submit').click();
 	await page.waitForURL(/\/runs\/ork-/);
 	for (const task of ['featurize', 'train']) {
+		// The cache decision is on the task's panel.
+		await selectTask(page, task);
 		await expect(page.getByTestId(`task-${task}-cache`)).toHaveAttribute('data-outcome', 'bypassed', { timeout: 180_000 });
 		await expect(page.getByTestId(`task-${task}-cache`)).toHaveText('Cache bypassed');
 	}

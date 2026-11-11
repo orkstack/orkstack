@@ -2,7 +2,7 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"strings"
@@ -16,7 +16,10 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func (f *fixture) webhookClient() orkstackv1connect.WebhookServiceClient {
@@ -33,9 +36,7 @@ func TestWebhookAPI_RegisterWithScopeListsTheScope(t *testing.T) {
 		OrkflowName: "nightly-etl",
 		TaskId:      "extract",
 	}))
-	if err != nil {
-		t.Fatalf("RegisterWebhook: %v", err)
-	}
+	must.OKf(t, err, "RegisterWebhook")
 	hook := registered.Msg.GetWebhook()
 	if hook.GetNamespace() != "analytics" || hook.GetOrkflowName() != "nightly-etl" || hook.GetTaskId() != "extract" {
 		t.Errorf("registered scope = %q/%q/%q, want analytics/nightly-etl/extract",
@@ -48,9 +49,7 @@ func TestWebhookAPI_RegisterWithScopeListsTheScope(t *testing.T) {
 	}
 
 	listed, err := f.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{}))
-	if err != nil {
-		t.Fatalf("ListWebhooks: %v", err)
-	}
+	must.OKf(t, err, "ListWebhooks")
 	var sawScoped bool
 	for _, w := range listed.Msg.GetWebhooks() {
 		if w.GetId() == hook.GetId() {
@@ -150,9 +149,7 @@ func TestWebhookAPI_RejectsAnInvalidScope(t *testing.T) {
 		})
 	}
 	listed, err := f.webhookClient().ListWebhooks(ctx, connect.NewRequest(&orkstackv1.ListWebhooksRequest{}))
-	if err != nil {
-		t.Fatalf("ListWebhooks: %v", err)
-	}
+	must.OKf(t, err, "ListWebhooks")
 	if len(listed.Msg.GetWebhooks()) != 0 {
 		t.Errorf("refused registrations were stored: %v", listed.Msg.GetWebhooks())
 	}
@@ -222,7 +219,7 @@ func TestWebhookNotifier_OmitsAttemptWhenTheTaskHasNone(t *testing.T) {
 		Status: orkstackv1.Status_STATUS_RUNNING,
 	}, run)
 	body, _ := f.awaitDelivery(t)
-	var decoded map[string]json.RawMessage
+	var decoded map[string]stablejson.RawJSON
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -239,13 +236,9 @@ func TestWebhookNotifier_ScopesByNamespaceTreatingEmptyAsDefault(t *testing.T) {
 	results := &observed{}
 	f.notifier.Observe(results.add)
 	defaultHook, err := f.registry.Register(webhooks.Registration{URL: f.server.URL + "/default", Namespace: "default"})
-	if err != nil {
-		t.Fatalf("Register default: %v", err)
-	}
+	must.OKf(t, err, "Register default")
 	analyticsHook, err := f.registry.Register(webhooks.Registration{URL: f.server.URL + "/analytics", Namespace: "analytics"})
-	if err != nil {
-		t.Fatalf("Register analytics: %v", err)
-	}
+	must.OKf(t, err, "Register analytics")
 	for _, run := range []*orkstackv1.Run{
 		{Id: "ork-1-1", OrkflowName: "hello-ork", Namespace: ""},
 		{Id: "ork-1-2", OrkflowName: "hello-ork", Namespace: "analytics"},
@@ -256,9 +249,7 @@ func TestWebhookNotifier_ScopesByNamespaceTreatingEmptyAsDefault(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	if err := f.notifier.Wait(ctx); err != nil {
-		t.Fatalf("deliveries did not settle: %v", err)
-	}
+	must.OKf(t, f.notifier.Wait(ctx), "deliveries did not settle")
 	got := results.pairs()
 	want := map[string]bool{defaultHook.ID + " ork-1-1": true, analyticsHook.ID + " ork-1-2": true}
 	if len(got) != len(want) {
@@ -297,9 +288,7 @@ func TestWebhookNotifier_IgnoresEventsThatAreNotSubscribable(t *testing.T) {
 				&orkstackv1.Event{RunId: run.GetId(), Type: tc.event, Status: tc.status, TaskId: "sibling"}, run)
 			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			if err := f.notifier.Wait(ctx); err != nil {
-				t.Fatalf("deliveries did not settle: %v", err)
-			}
+			must.OKf(t, f.notifier.Wait(ctx), "deliveries did not settle")
 			if f.count() != 0 {
 				t.Errorf("%d deliveries went out for %s/%s", f.count(), tc.event, tc.status)
 			}
@@ -318,7 +307,7 @@ func TestWebhookNotifier_RunTransitionBodyUnchangedForUnscopedSubscription(t *te
 		RunId: run.GetId(), Type: orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED, Status: orkstackv1.Status_STATUS_SUCCEEDED,
 	}, run)
 	body, headers := f.awaitDelivery(t)
-	var decoded map[string]json.RawMessage
+	var decoded map[string]stablejson.RawJSON
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatalf("decode: %v", err)
 	}

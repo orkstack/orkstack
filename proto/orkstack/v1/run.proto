@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package orkstack.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
@@ -37,6 +38,11 @@ message TaskChild {
   // an id whose start was refused names no run. The child run's own
   // Run.origin is {PARENT_RUN, <this run's id>}.
   string run_id = 4;
+  // orkflow_namespace is the namespace that owns the child Orkflow when it is
+  // not the namespace the run executes in: a child composed from another
+  // namespace through shared_with. Empty for a child of the run's own
+  // namespace.
+  string orkflow_namespace = 5;
 }
 
 // TaskRun is the execution record of a single Task within a Run.
@@ -203,6 +209,127 @@ message TaskRun {
   // tells a failure handler from an ordinary task without reading the
   // definition (the precedent of TaskRun.await, .each and .child).
   JoinPolicy join = 25;
+
+  // timing is where this task's time went, derived from scheduled_at,
+  // started_at and finished_at above (TaskTiming). It is DERIVED ON READ:
+  // GetRun sets it on every row, a fan-out's items included, and nothing
+  // stores it — the engine never writes it, and a copy read back from
+  // anywhere else is not one GetRun answered.
+  TaskTiming timing = 26;
+
+  // sleep is this task's sleep state, set for a task whose definition
+  // declares `sleep:` and unset otherwise (see TaskSleep).
+  TaskSleep sleep = 27;
+}
+
+// TimingReason is why one timing quantity cannot be known. Each names a cause
+// an operator can act on, never a generic "unknown" (docs/UI_CLI_PARITY.md
+// "Task timing"). The comment on each is the words both clients print.
+enum TimingReason {
+  TIMING_REASON_UNSPECIFIED = 0;
+  // "no orker reported a start": the task ended and no Orker reported the
+  // start of the attempt that decided it (TaskRun.started_at unset).
+  TIMING_REASON_NO_ORKER_START = 1;
+  // "clock skew": the later of two instants reads before the earlier, so the
+  // two clocks that recorded them disagree.
+  TIMING_REASON_CLOCK_SKEW = 2;
+  // "recorded before scheduled time existed": a snapshot with started_at and
+  // no scheduled_at, whose started_at holds the dispatch instant.
+  TIMING_REASON_PRE_CONTRACT = 3;
+  // "attempt records reclaimed": the snapshot proves an Orker reported on the
+  // task, and no record it filed is left.
+  TIMING_REASON_RECLAIMED = 4;
+  // "no attempt record": this attempt has no record (UNREPORTED, or a phase
+  // with an end missing).
+  TIMING_REASON_NO_RECORD = 5;
+  // "record predates phase spans": the record was written before
+  // TaskAttempt.phases existed.
+  TIMING_REASON_NO_PHASES = 6;
+  // "no task attempt store": the engine has no attempt store at all. No
+  // response carries it — ListTaskAttempts answers FailedPrecondition then —
+  // and a client prints it for the quantities only records could give.
+  TIMING_REASON_NO_ATTEMPT_STORE = 7;
+}
+
+// TimingQuantity is one derived duration in one of three states, never
+// collapsed into each other:
+//
+//   - the message UNSET: it does not apply (the task was never scheduled, or
+//     has not finished);
+//   - set with no duration: it happened and cannot be known, and reason says
+//     why — UNSPECIFIED only on a sum whose every term is unavailable
+//     (RunTiming.wait_sum);
+//   - set with duration: two instants some process recorded, the later minus
+//     the earlier.
+//
+// A zero duration is only ever a value somebody measured.
+message TimingQuantity {
+  google.protobuf.Duration duration = 1;
+  TimingReason reason = 2;
+}
+
+// TaskTiming is the task-timing derivation over one TaskRun
+// (docs/UI_CLI_PARITY.md "Task timing"), with S = scheduled_at, B = started_at
+// and F = finished_at:
+//
+//   wait = B − S      run = F − B      total = F − S
+//
+// A fan-out's own row reads S as its expansion and B as its earliest item's
+// start; a composed task's reads S as its child run's request, B as its
+// confirmed start and F as its end, so wait is the child's start latency and
+// applies only once a child started; an awaited task's run and total are the
+// time it awaited, and wait does not apply.
+message TaskTiming {
+  // scheduled is false for a task that never reached schedule() (an awaited
+  // task: never started awaiting); every quantity is then unset.
+  bool scheduled = 1;
+  // pre_contract marks a snapshot written before scheduled_at existed:
+  // started_at holds the dispatch instant, wait and run are unavailable, and
+  // total is dispatch to finish.
+  bool pre_contract = 2;
+  // wait, run and total are set once the task is terminal.
+  TimingQuantity wait = 3;
+  TimingQuantity run = 4;
+  TimingQuantity total = 5;
+  // since_scheduled is set while the task is RUNNING in a run that has not
+  // ended: RunTiming.computed_at − scheduled_at. A row a terminated run left
+  // RUNNING has none.
+  TimingQuantity since_scheduled = 6;
+}
+
+// RunTiming is the run's half of the derivation. Like TaskRun.timing it is
+// derived on read by GetRun and never stored.
+message RunTiming {
+  // elapsed is Run.finished_at − Run.started_at, set once the run finished.
+  TimingQuantity elapsed = 1;
+  // wait_sum is every task's wait summed, over the wait_sum_tasks tasks whose
+  // wait is known; wait_unavailable_tasks counts the tasks whose wait applies
+  // and cannot be known. Unset when no task's wait applies; set with no
+  // duration when every one is unavailable. A fan-out's items are not
+  // counted: its own row is.
+  TimingQuantity wait_sum = 2;
+  int32 wait_sum_tasks = 3;
+  int32 wait_unavailable_tasks = 4;
+  // computed_at is the server's clock when it derived this, the instant every
+  // since_scheduled is measured against. Set only while the run has not
+  // ended and a task (or item) is RUNNING, so a finished run answers the same
+  // bytes every time.
+  google.protobuf.Timestamp computed_at = 5;
+}
+
+// AttemptTiming is the derivation over one TaskAttempt, set on every row
+// ListTaskAttempts answers and never stored.
+message AttemptTiming {
+  // in_progress marks the newest attempt of a task that has not finished: it
+  // has no record yet because a record is written when an attempt ENDS, and
+  // calling it unreported would say its Orker crashed. phases_reason is then
+  // unset.
+  bool in_progress = 1;
+  // phases_reason is set when this attempt's phases cannot be listed:
+  // NO_RECORD (UNREPORTED), RECLAIMED (UNREPORTED, and the task's records
+  // were reclaimed), NO_PHASES (a record with none). Each PhaseSpan
+  // otherwise carries its own duration.
+  TimingReason phases_reason = 2;
 }
 
 // AwaitResolvedVia names the door an await's resolution came through.
@@ -235,6 +362,20 @@ message TaskAwait {
   // word control-plane-audit-trail and run-origin use. Empty when none was
   // sent.
   string resolved_by = 4;
+}
+
+// TaskSleep is a sleeping task's own state on the run snapshot. It is SET for
+// every task whose definition declares `sleep:` — from the run's first
+// snapshot, while the task is still PENDING — and UNSET for every other task,
+// so a snapshot of a run with no sleep is byte-identical to what it was
+// before this message existed. Its presence is how a client tells a sleeping
+// task from a container task without reading the definition.
+message TaskSleep {
+  // seconds mirrors SleepSpec.seconds: how long the task sleeps.
+  int32 seconds = 1;
+  // wake_at is when the task wakes and succeeds, on the workflow's clock.
+  // Unset until the task starts sleeping.
+  google.protobuf.Timestamp wake_at = 2;
 }
 
 // AwaitSignal is ENGINE-INTERNAL: the argument of the Temporal Signal that
@@ -291,6 +432,10 @@ message PhaseSpan {
   string phase = 1;
   google.protobuf.Timestamp started_at = 2;
   google.protobuf.Timestamp finished_at = 3;
+  // duration is finished_at − started_at, derived on read by
+  // ListTaskAttempts; never written by an Orker. Unavailable with NO_RECORD
+  // when an end is missing, CLOCK_SKEW when the ends are inverted.
+  TimingQuantity duration = 4;
 }
 
 // ReservedResources is what an Orker granted one attempt: the cpu and memory
@@ -392,6 +537,10 @@ message TaskAttempt {
   // system_artifacts (it uploaded none) and image equal to the input's
   // pinned ImageRef with no platform (it pulled nothing).
   CacheResult cache = 20;
+
+  // timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker
+  // never writes it.
+  AttemptTiming timing = 21;
 }
 
 // RetryState is why Temporal stopped retrying a task. It mirrors
@@ -432,8 +581,10 @@ message Run {
   google.protobuf.Timestamp created_at = 9;
   google.protobuf.Timestamp started_at = 10;
   google.protobuf.Timestamp finished_at = 11;
-  // namespace is the namespace of the orkflow this run executed. Empty means
-  // the built-in "default" namespace. It is a coordinate of the run, not a
+  // namespace is the namespace this run executed in, whose rules it
+  // followed. It is also the namespace of the orkflow it ran unless
+  // orkflow_namespace says otherwise. Empty means the built-in "default"
+  // namespace. It is a coordinate of the run, not a
   // lookup: the archive indexes runs under it, so listing one namespace's runs
   // is a single prefix scan.
   string namespace = 12;
@@ -475,6 +626,17 @@ message Run {
   // It is on GetRun, on the archived run, on ListRuns rows answered from the
   // archive and in the embedded run of a RUN_CANCELED webhook delivery.
   string canceled_by = 16;
+
+  // orkflow_namespace is set only on a child run of an Orkflow another
+  // namespace shared through composition: the namespace that owns the
+  // definition it ran. Empty means the orkflow is namespace's own. A run whose
+  // orkflow belongs to another namespace is always a child run: nothing else
+  // starts one.
+  string orkflow_namespace = 17;
+
+  // timing is the run's half of the task-timing derivation (RunTiming), set
+  // by GetRun and never stored; each TaskRun carries its own half.
+  RunTiming timing = 18;
 }
 
 // RunCancelRequest is ENGINE-INTERNAL: the record CancelRun writes as the
@@ -600,6 +762,10 @@ enum EventType {
   // the same numbers as a gap in its stream instead, and a read over that gap
   // ends DataLoss.
   EVENT_TYPE_STREAM_GAP = 13;
+  // TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING;
+  // the message names the wake-up time. TASK_SUCCEEDED follows when it
+  // wakes; a run that ends first records the task CANCELED.
+  EVENT_TYPE_TASK_SLEEPING = 14;
 }
 
 // Event is a single realtime update for a run, delivered over the

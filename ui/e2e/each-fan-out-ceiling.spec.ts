@@ -1,6 +1,7 @@
 import { expect, test, type Page } from './test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
+import { budgetNote, scaledBudgetMs } from './budget';
 import {
 	bin,
 	catalogEnv,
@@ -15,6 +16,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -58,8 +60,11 @@ const GATED = `each-fan-out-gated-${STAMP}`;
 // it does for the soak). The engine below raises ORK_EACH_MAX_ITEMS to it,
 // with continuation on by default.
 const GATED_ITEMS = Number(process.env.ORK_SOAK_ITEMS ?? 10000);
-// E4: the run page and the fan-out's item list are interactive within 5 s.
-const GATED_RENDER_BUDGET_MS = 5_000;
+// E4: the run page and the fan-out's item list are interactive within 5 s on
+// the reference host; a smaller one is held to that bound scaled to its CPUs
+// (e2e/budget.ts, docs/PROOFS.md §12).
+const REFERENCE_RENDER_BUDGET_MS = 5_000;
+const GATED_RENDER_BUDGET_MS = scaledBudgetMs(REFERENCE_RENDER_BUDGET_MS);
 
 const PROOF_DIR = process.env.ORK_PROOF_DIR
 	? path.join(process.env.ORK_PROOF_DIR, 'each-fan-out-ceiling')
@@ -107,7 +112,7 @@ tasks:
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# A fan-out at the gated item size on the run detail page: the run',
@@ -208,7 +213,7 @@ test('the run page and the item list at the gated size are interactive within 5 
 		await expect(page.getByTestId(`task-spread-item-${last - 1}`)).toBeFocused();
 		note(
 			`${phase}: run page interactive ${pageReady} ms, item list of ${GATED_ITEMS} interactive ` +
-				`(item ${last} selected) ${listReady} ms after navigation`
+				`(item ${last} selected) ${listReady} ms after navigation (${budgetNote(REFERENCE_RENDER_BUDGET_MS)})`
 		);
 		await shot(page, `screenshot-each-gated-${phase}.png`);
 		expect(pageReady, `${phase} run page`).toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);

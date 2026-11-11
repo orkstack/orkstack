@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,7 +22,7 @@ import (
 type pwReport struct {
 	Suites []pwSuite  `json:"suites"`
 	Errors []pwError  `json:"errors"`
-	Stats  *pwStatsJS `json:"stats,omitempty"`
+	Stats  *pwStatsJS `json:"stats,omitzero"`
 }
 
 type pwStatsJS struct {
@@ -65,7 +64,7 @@ type pwResult struct {
 	Status        string   `json:"status"`
 	Duration      float64  `json:"duration"`
 	StartTime     string   `json:"startTime,omitempty"`
-	Error         *pwError `json:"error,omitempty"`
+	Error         *pwError `json:"error,omitzero"`
 }
 
 type uiEntry struct {
@@ -108,12 +107,10 @@ type uiLedger struct {
 	Pass     int       `json:"pass"`
 	// Deferred counts the listed tests of spec files the UI plan defers to
 	// the nightly tier: recorded with outcome "deferred", never run.
-	Deferred          int                `json:"deferred,omitempty"`
-	GuardRetries      int                `json:"network_change_retries"`
-	GuardRetryCeiling int                `json:"network_change_retry_ceiling"`
-	Files             []uiFileEntry      `json:"files,omitempty"`
-	HostSpeedFailures []hostSpeedFailure `json:"host_speed_failures,omitempty"`
-	KnownGaps         []string           `json:"known_gaps,omitempty"`
+	Deferred          int           `json:"deferred,omitzero"`
+	GuardRetries      int           `json:"network_change_retries"`
+	GuardRetryCeiling int           `json:"network_change_retry_ceiling"`
+	Files             []uiFileEntry `json:"files,omitempty"`
 }
 
 // mergeReports joins two JSON reports of one run made as two invocations:
@@ -374,9 +371,7 @@ func cmdUILedger(args []string) int {
 	config := fs.String("config", "ui/playwright.config.ts", "where NETWORK_CHANGE_RETRY_CEILING is declared")
 	out := fs.String("out", "", "the proof directory")
 	shard := fs.Int("shard", 1, "which shard of the UI plan this run is, recorded in files[].shard")
-	hostSpeed := fs.String("host-speed", "scripts/proof-host-speed.tsv", "declared runner-size budgets")
-	hostSpeedBase := fs.String("host-speed-base", "", "the base's copy of the host-speed table (only rows it carries excuse)")
-	part := fs.String("part", "local", "the part this ledger belongs to: only a CI ui-e2e:K part may excuse a runner-size miss")
+	fs.String("part", "local", "the part this ledger belongs to")
 	planFile := fs.String("plan", "", "the UI plan: its deferred spec files' tests are recorded as deferred")
 	if err := fs.Parse(args); err != nil || *listFile == "" || len(reportFiles) == 0 || *out == "" {
 		fmt.Fprintln(os.Stderr, "proofrun ui-ledger -list FILE -report FILE [-report FILE]... -log FILE -out DIR")
@@ -423,41 +418,6 @@ func cmdUILedger(args []string) int {
 	for i := range l.Files {
 		l.Files[i].Shard = *shard
 	}
-	// A declared runner-size miss of a CI UI shard exits the shard cleanly and
-	// is recorded in this part's ledger; the merger re-derives every one of
-	// them and never takes the shard's word for it. Only a failed timing
-	// assertion of a bound the base also declares is excused here; a skip, a
-	// missing outcome or any other failure stays a shard failure, and the
-	// local part never excuses at all (hostspeed.go).
-	tree, err := readHostSpeed(*hostSpeed)
-	if err != nil {
-		fmt.Println("ui-e2e ledger:", err)
-		return 1
-	}
-	base, err := readHostSpeed(*hostSpeedBase)
-	if err != nil {
-		fmt.Println("ui-e2e ledger: the base's host-speed table excuses nothing:", err)
-		base = emptyHostSpeed()
-	}
-	declared := anchoredHostSpeed(tree, base)
-	cpus := runtime.NumCPU()
-	excused := map[string]hostSpeedFailure{}
-	for _, e := range l.Tests {
-		if f, ok := declared.uiRunnerSizeMiss(*part, cpus, e); ok {
-			excused[f.Message] = f
-		}
-	}
-	var kept []string
-	for _, p := range l.Problems {
-		if f, ok := excused[p]; ok {
-			l.HostSpeedFailures = append(l.HostSpeedFailures, f)
-			l.KnownGaps = append(l.KnownGaps, p)
-			fmt.Printf("ui-e2e known gap: %s on a %d-CPU runner (bound %.0fs, reference %d CPUs)\n", p, cpus, f.Bound, f.ReferenceCPUs)
-			continue
-		}
-		kept = append(kept, p)
-	}
-	l.Problems = kept
 	if l.Problems == nil {
 		l.Problems = []string{}
 	}
@@ -474,4 +434,9 @@ func cmdUILedger(args []string) int {
 		return 1
 	}
 	return 0
+}
+
+// uiKey is a UI entry's ledger name, the prefix of its problem line.
+func uiKey(e uiEntry) string {
+	return fmt.Sprintf("%s › %s [%s]", e.File, e.Title, e.Project)
 }

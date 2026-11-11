@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestValidateOrkflowDoesNotWriteAndReturnsDocumentIssues(t *testing.T) {
@@ -136,9 +138,7 @@ func TestListRunsCursorKeepsTiesAndRejectsChangedFilters(t *testing.T) {
 	}
 	set := []string{"orkflow_name=deploy", "status!=FAILED"}
 	first, err := list(&orkstackv1.ListRunsRequest{PageSize: 2, Filters: filters(t, set...)})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := first.GetRuns(); len(got) != 2 || got[0].GetId() != "ork-c" || got[1].GetId() != "ork-b" || first.GetNextPageToken() == "" {
 		t.Fatalf("first page = %#v", first)
 	}
@@ -169,13 +169,9 @@ func TestListRunsCursorKeepsTiesAndRejectsChangedFilters(t *testing.T) {
 func TestReadArtifactRequiresRecordedReferenceAndDoesNotConfirmCorruptBytes(t *testing.T) {
 	ctx := context.Background()
 	store, err := artifacts.New(artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: t.TempDir()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	ref, err := store.Put(ctx, "report.txt", strings.NewReader("body"), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	// Deliberately record the wrong checksum: clients may receive bytes but can
 	// never receive last=true, which is the completion signal downloads trust.
 	ref.SHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte("other")))
@@ -193,9 +189,7 @@ func TestReadArtifactRequiresRecordedReferenceAndDoesNotConfirmCorruptBytes(t *t
 		}
 	}
 	stream, err := client.ReadArtifact(ctx, connect.NewRequest(&orkstackv1.ReadArtifactRequest{RunId: "ork-artifact", TaskId: "task", Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "report.txt"}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer stream.Close()
 	last := false
 	for stream.Receive() {

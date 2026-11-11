@@ -11,15 +11,15 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // inlineValues is a task's output as a run carries it.
 func inlineValues(t *testing.T, fields map[string]any) *orkstackv1.Payload {
 	t.Helper()
 	data, err := structpb.NewStruct(fields)
-	if err != nil {
-		t.Fatalf("values: %v", err)
-	}
+	must.OKf(t, err, "values")
 	return &orkstackv1.Payload{Data: data}
 }
 
@@ -65,9 +65,7 @@ func TestRunGet_ShowsATasksValues(t *testing.T) {
 		},
 	}
 	var out strings.Builder
-	if err := renderRun(&out, run); err != nil {
-		t.Fatalf("renderRun: %v", err)
-	}
+	must.OKf(t, renderRun(&out, run), "renderRun")
 	requireGolden(t, "run-get-values.golden", out.String())
 	for _, raw := range []string{"\x1b", "\x07", "\u202e", "\u009b"} {
 		if strings.Contains(out.String(), raw) {
@@ -83,9 +81,7 @@ func TestRunGet_ARunWithNoValuesPrintsNoValuesTable(t *testing.T) {
 	err := renderRun(&out, &orkstackv1.Run{Id: "r", TaskRuns: []*orkstackv1.TaskRun{
 		{TaskId: "a", Status: orkstackv1.Status_STATUS_SUCCEEDED},
 	}})
-	if err != nil {
-		t.Fatalf("renderRun: %v", err)
-	}
+	must.OKf(t, err, "renderRun")
 	if strings.Contains(out.String(), "VALUES") {
 		t.Fatalf("a run with no values printed a values table:\n%s", out.String())
 	}
@@ -96,9 +92,7 @@ func TestRunGet_ARunWithNoValuesPrintsNoValuesTable(t *testing.T) {
 func TestRunGet_ManyTasksKeepTheValuesTableShort(t *testing.T) {
 	tasks := taskRunsWithValues(t, taskValuesRowsMax+3)
 	var out strings.Builder
-	if err := renderRun(&out, &orkstackv1.Run{Id: "r", Namespace: "team-a", TaskRuns: tasks}); err != nil {
-		t.Fatalf("renderRun: %v", err)
-	}
+	must.OKf(t, renderRun(&out, &orkstackv1.Run{Id: "r", Namespace: "team-a", TaskRuns: tasks}), "renderRun")
 	if got := strings.Count(out.String(), `{"n":`); got != taskValuesRowsMax {
 		t.Fatalf("printed %d values, want %d:\n%s", got, taskValuesRowsMax, out.String())
 	}
@@ -108,9 +102,7 @@ func TestRunGet_ManyTasksKeepTheValuesTableShort(t *testing.T) {
 
 	out.Reset()
 	exactly := taskRunsWithValues(t, taskValuesRowsMax)
-	if err := renderRun(&out, &orkstackv1.Run{Id: "r", TaskRuns: exactly}); err != nil {
-		t.Fatalf("renderRun: %v", err)
-	}
+	must.OKf(t, renderRun(&out, &orkstackv1.Run{Id: "r", TaskRuns: exactly}), "renderRun")
 	if strings.Contains(out.String(), "more task") {
 		t.Fatalf("a table with nothing left out says something was:\n%s", out.String())
 	}
@@ -194,9 +186,7 @@ func TestRunGet_ExpandReadsItemValues(t *testing.T) {
 	}
 	var out strings.Builder
 	run := &orkstackv1.Run{Id: "ork-each", Namespace: "data"}
-	if err := renderFanOutItemValues(&out, run, task, read); err != nil {
-		t.Fatalf("renderFanOutItemValues: %v", err)
-	}
+	must.OKf(t, renderFanOutItemValues(&out, run, task, read), "renderFanOutItemValues")
 	requireGolden(t, "run-get-each-item-values.golden", out.String())
 	if want := []int32{0, 1, 5, 6, 7}; !slices.Equal(reads, want) {
 		t.Fatalf("read items %v, want %v", reads, want)
@@ -216,9 +206,7 @@ func TestRunGet_ExpandWithNoItemValuesPrintsNoTable(t *testing.T) {
 		return nil, nil
 	}
 	var out strings.Builder
-	if err := renderFanOutItemValues(&out, &orkstackv1.Run{Id: "r"}, storedItems(-1, 2, 3, 4), read); err != nil {
-		t.Fatalf("renderFanOutItemValues: %v", err)
-	}
+	must.OKf(t, renderFanOutItemValues(&out, &orkstackv1.Run{Id: "r"}, storedItems(-1, 2, 3, 4), read), "renderFanOutItemValues")
 	if out.Len() != 0 {
 		t.Fatalf("printed:\n%s", out.String())
 	}
@@ -237,9 +225,7 @@ func TestRunGet_ExpandReadsAtMostTheRowsItShows(t *testing.T) {
 		return []byte(`{"n":1}`), nil
 	}
 	var out strings.Builder
-	if err := renderFanOutItemValues(&out, &orkstackv1.Run{Id: "r"}, storedItems(sizes...), read); err != nil {
-		t.Fatalf("renderFanOutItemValues: %v", err)
-	}
+	must.OKf(t, renderFanOutItemValues(&out, &orkstackv1.Run{Id: "r"}, storedItems(sizes...), read), "renderFanOutItemValues")
 	if reads != taskValuesRowsMax {
 		t.Fatalf("read %d items, want %d", reads, taskValuesRowsMax)
 	}
@@ -258,9 +244,7 @@ func TestRunGet_ValuesOfOnlyALineEndAreEmpty(t *testing.T) {
 		err := renderRun(&out, &orkstackv1.Run{Id: "r", TaskRuns: []*orkstackv1.TaskRun{
 			{TaskId: "a", Status: orkstackv1.Status_STATUS_SUCCEEDED, ValuesRef: valuesRef(size)},
 		}})
-		if err != nil {
-			t.Fatalf("renderRun: %v", err)
-		}
+		must.OKf(t, err, "renderRun")
 		if strings.Contains(out.String(), "VALUES") {
 			t.Fatalf("%d bytes of nothing printed a values table:\n%s", size, out.String())
 		}

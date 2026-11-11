@@ -3,7 +3,6 @@ package api_test
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,7 +17,10 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // readCountingRegistry counts the document reads a listing makes, so a test can
@@ -104,9 +106,7 @@ func listNamespacePage(
 	resp, err := svc.ListNamespaces(context.Background(), connect.NewRequest(&orkstackv1.ListNamespacesRequest{
 		PageSize: size, PageToken: token, Filters: filters(t, texts...),
 	}))
-	if err != nil {
-		t.Fatalf("ListNamespaces(size=%d token=%q filters=%q): %v", size, token, texts, err)
-	}
+	must.OKf(t, err, "ListNamespaces(size=%d token=%q filters=%q)", size, token, texts)
 	return resp.Msg
 }
 
@@ -336,9 +336,7 @@ func TestListNamespaces_PageSizeZeroIsTheSamePlanWithNoBound(t *testing.T) {
 	page := listNamespacePage(t, svc, 0, "")
 	gets, lists := reg.reads()
 	want, err := reg.fakeRegistry.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(page.GetNamespaces()) != len(want) || page.GetNextPageToken() != "" {
 		t.Fatalf("unpaged = %d rows (token %q), want %d and no token", len(page.GetNamespaces()), page.GetNextPageToken(), len(want))
 	}
@@ -427,7 +425,7 @@ func TestListNamespaces_RefusesWhatItCannotAnswer(t *testing.T) {
 
 func forgeNamespaceCursor(t *testing.T, version int, filter, name string) string {
 	t.Helper()
-	raw, err := json.Marshal(map[string]any{"v": version, "f": filter, "name": name})
+	raw, err := stablejson.Marshal(map[string]any{"v": version, "f": filter, "name": name})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -512,9 +510,7 @@ func TestListNamespaces_StoredDefaultIsReturnedAsStored(t *testing.T) {
 		Namespace: &orkstackv1.Namespace{Name: "default", Description: "the stored default",
 			Labels: map[string]string{"team": "platform"}},
 	}))
-	if err != nil {
-		t.Fatalf("UpdateNamespace(default): %v", err)
-	}
+	must.OKf(t, err, "UpdateNamespace(default)")
 	for _, texts := range [][]string{nil, {"labels.team=platform"}, {"name=default"}} {
 		var found *orkstackv1.Namespace
 		for _, ns := range listNamespacePage(t, svc, 10, "", texts...).GetNamespaces() {

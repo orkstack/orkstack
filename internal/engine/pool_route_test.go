@@ -11,6 +11,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A white-box test, because the property spans the two halves of one decision
@@ -69,9 +71,7 @@ func planPools(t *testing.T, bound string, pools ...string) ([]string, RunPlan) 
 	}
 	resolver := &PoolResolver{RawQueue: bound}
 	planned, plan, err := resolver.Plan(context.Background(), &orkstackv1.Namespace{Name: "default"}, wf, false)
-	if err != nil {
-		t.Fatalf("Plan(bound %q, pools %v): %v", bound, pools, err)
-	}
+	must.OKf(t, err, "Plan(bound %q, pools %v)", bound, pools)
 	stamped := make([]string, 0, len(planned.GetTasks()))
 	for _, task := range planned.GetTasks() {
 		stamped = append(stamped, task.GetPool())
@@ -112,9 +112,7 @@ func TestPoolResolver_TheDefaultPoolIsTheDeploymentsDefaultChannel(t *testing.T)
 				wantQueue = task.DefaultQueue
 			}
 			queue, err := plan.Route(channel.wantPool)
-			if err != nil {
-				t.Fatalf("Route(%q): %v", channel.wantPool, err)
-			}
+			must.OKf(t, err, "Route(%q)", channel.wantPool)
 			if queue != wantQueue {
 				t.Errorf("pool %q dispatches to %q, want the bound channel %q",
 					channel.wantPool, queue, wantQueue)
@@ -162,9 +160,7 @@ func TestPoolResolver_NamingTheDefaultPoolCannotEscapeTheOperatorsRoute(t *testi
 		t.Run(channel.name, func(t *testing.T) {
 			stamped, plan := planPools(t, channel.bound, task.DefaultPool)
 			queue, err := plan.Route(stamped[0])
-			if err != nil {
-				t.Fatalf("Route(%q): %v", stamped[0], err)
-			}
+			must.OKf(t, err, "Route(%q)", stamped[0])
 			if queue != channel.bound {
 				t.Errorf("`pool: %s` dispatched to %q under a bound channel of %q; a document must "+
 					"not be able to leave the operator's route", task.DefaultPool, queue, channel.bound)
@@ -215,9 +211,7 @@ func TestRunState_ReportsThePoolTheWorkWasDispatchedTo(t *testing.T) {
 			for i, pool := range stamped {
 				tk := &orkstackv1.Task{Id: fmt.Sprintf("t%d", i), Pool: pool}
 				queue, err := s.queueForTask(tk)
-				if err != nil {
-					t.Fatalf("queueForTask(t%d): %v", i, err)
-				}
+				must.OKf(t, err, "queueForTask(t%d)", i)
 				if got := s.poolForTask(tk); got != pool {
 					t.Errorf("task t%d was planned on pool %q and is reported on %q", i, pool, got)
 				}

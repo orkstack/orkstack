@@ -2,20 +2,21 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
-	"strings"
 	"time"
 
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -281,7 +282,7 @@ func legacyWebhookErrorCode(status int) string {
 }
 
 func writeWebhookJSON(w http.ResponseWriter, status int, body any) {
-	encoded, err := json.Marshal(body)
+	encoded, err := stablejson.Marshal(body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -359,8 +360,9 @@ func (n *WebhookNotifier) NotifyRunEvent(
 		Namespace: artifacts.ResolveNamespace(run.GetNamespace()),
 		// The event's status is the transition itself, which is what a
 		// subscriber filtered on.
-		Status:    strings.TrimPrefix(event.GetStatus().String(), "STATUS_"),
+		Status:    enumname.Of(event.GetStatus()),
 		Timestamp: timestamp,
+		Sequence:  event.GetSequence(),
 		TaskID:    event.GetTaskId(),
 		Attempt:   taskAttempt(run, event.GetTaskId()),
 		Run:       encoded,

@@ -48,6 +48,7 @@ export const ICONS = {
 	'a-template': [['rect', {'x': '2', 'y': '2.5', 'width': '12', 'height': '11', 'rx': '1.8', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['path', {'d': 'M2 6h12M6.2 6v7.5', 'stroke': 'currentColor', 'stroke-width': '1.4'}]],
 	'a-orkflow': [['circle', {'cx': '3.5', 'cy': '4', 'r': '2', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['circle', {'cx': '12.5', 'cy': '4', 'r': '2', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['circle', {'cx': '8', 'cy': '12.5', 'r': '2', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['path', {'d': 'M5.5 4h5M4.6 5.7 7 10.6M11.4 5.7 9 10.6', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}]],
 	'a-await': [['path', {'d': 'M2 9.5 3.6 3.5h8.8L14 9.5v3.5H2z', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linejoin': 'round'}], ['path', {'d': 'M2 9.5h3.4l1 1.6h3.2l1-1.6H14', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linejoin': 'round'}]],
+	'a-sleep': [['circle', {'cx': '8', 'cy': '8', 'r': '6', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['path', {'d': 'M8 4.5V8l2.5 1.5', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round'}]],
 	retry: [['path', {'d': 'M13.3 8.6A5.4 5.4 0 1 1 11.6 4', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round'}], ['path', {'d': 'M12.2 1.4v3h-3', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
 	ban: [['circle', {'cx': '8', 'cy': '8', 'r': '6', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4'}], ['path', {'d': 'M3.8 12.2 12.2 3.8', 'fill': 'none', 'stroke': 'currentColor', 'stroke-width': '1.4', 'stroke-linecap': 'round'}]],
 	trash: [['path', {'d': 'M2.8 4.2h10.4M6 4.2V3a.8.8 0 0 1 .8-.8h2.4a.8.8 0 0 1 .8.8v1.2M4.1 4.2l.6 8.7a.9.9 0 0 0 .9.9h4.8a.9.9 0 0 0 .9-.9l.6-8.7M6.8 7.2v3.6M9.2 7.2v3.6', 'stroke': 'currentColor', 'stroke-width': '1.4', 'fill': 'none', 'stroke-linecap': 'round', 'stroke-linejoin': 'round'}]],
@@ -76,5 +77,5 @@ void checked;
 export type IconName = keyof typeof ICONS;
 
 /** The activity kinds the UI draws an icon for without asking the image. */
-export const ACTIVITY_KINDS = ['default', 'http', 'shell', 'file', 'json', 'git', 'template', 'orkflow', 'await'] as const;
+export const ACTIVITY_KINDS = ['default', 'http', 'shell', 'file', 'json', 'git', 'template', 'orkflow', 'await', 'sleep'] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];

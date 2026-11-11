@@ -16,6 +16,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A chain is never invisible to a liveness question, and settling it is
@@ -49,9 +51,7 @@ func (r record) indexed(t *testing.T) indexedExecution {
 	dc := converter.GetDefaultDataConverter()
 	payload := func(v string) *commonpb.Payload {
 		p, err := dc.ToPayload(v)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return p
 	}
 	ns := r.ns
@@ -147,9 +147,7 @@ func TestListRuns_ChainSeenOnlyAsContinuedAsNewIsRunning(t *testing.T) {
 	created := visibilityNow.Add(-3 * time.Hour)
 	index := indexOf(t, switched("ork-chain", created, 2))
 	runs, err := readerOverIndex(index).ListRuns(context.Background(), RunQuery{Exhaustive: true})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(runs) != 1 {
 		t.Fatalf("listed %d runs, want the chain", len(runs))
 	}
@@ -164,9 +162,7 @@ func TestListRuns_CreatedAtFromTheContinuationMemo(t *testing.T) {
 	created := visibilityNow.Add(-26 * time.Hour)
 	index := indexOf(t, successor("ork-chain", created, running), record{id: "ork-plain", status: running, start: visibilityNow.Add(-time.Hour)})
 	runs, err := readerOverIndex(index).ListRuns(context.Background(), RunQuery{Complete: true, Limit: 10})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(runs) != 2 || runs[1].GetId() != "ork-chain" || !runs[1].GetCreatedAt().AsTime().Equal(created) {
 		t.Fatalf("runs = %v, want the chain last, at its memo created_at", runs)
 	}
@@ -245,9 +241,7 @@ func TestResolveChains_DescribesOnlyChainsStillCaughtMidSwitch(t *testing.T) {
 		infos = append(infos, r.indexed(t).info)
 	}
 	live, settled, err := readerOverIndex(index).resolveChains(context.Background(), infos)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(live) != 40 || len(settled) != 100 {
 		t.Fatalf("live %d, settled %d; want 40 live of 100", len(live), len(settled))
 	}
@@ -267,9 +261,7 @@ func TestResolveChains_FallsBackToOneListPerID(t *testing.T) {
 	}
 	reader := readerOverIndex(index)
 	live, _, err := reader.resolveChains(context.Background(), infos)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(live) != 2 {
 		t.Fatalf("live = %d, want 2", len(live))
 	}
@@ -318,9 +310,7 @@ func TestListRuns_DedupeRunsBeforeEveryTrim(t *testing.T) {
 	)
 	index.pageLimit = 1
 	runs, err := readerOverIndex(index).ListRuns(context.Background(), RunQuery{Complete: true, Limit: 4})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	seen := map[string]int{}
 	for _, run := range runs {
 		seen[run.GetId()]++
@@ -347,17 +337,13 @@ func TestListRuns_CompletePageOrdersAnOldChainAmongNewerRuns(t *testing.T) {
 	)
 	reader := readerOverIndex(index)
 	runs, err := reader.ListRuns(context.Background(), RunQuery{Complete: true, Limit: 2})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := sequencesOfIDs(runs); strings.Join(got, ",") != "ork-new,ork-mid" {
 		t.Fatalf("first page = %v, want the newer runs, the old chain on the next", got)
 	}
 	next, err := reader.ListRuns(context.Background(), RunQuery{Complete: true, Limit: 2,
 		BeforeCreated: runs[1].GetCreatedAt().AsTime(), BeforeID: runs[1].GetId()})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := sequencesOfIDs(next); strings.Join(got, ",") != "ork-old-chain" {
 		t.Fatalf("second page = %v, want the chain placed by its created_at", got)
 	}
@@ -368,9 +354,7 @@ func TestListRuns_DeletionGateCountsAChainOnce(t *testing.T) {
 	index := indexOf(t, switched("ork-chain", created, 1), successor("ork-chain", created, running),
 		record{id: "ork-done", status: completed, start: created, closed: created.Add(time.Minute)})
 	runs, err := readerOverIndex(index).ListRuns(context.Background(), RunQuery{OrkflowName: "reconcile", Exhaustive: true})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	active := 0
 	for _, run := range runs {
 		if run.GetStatus() == orkstackv1.Status_STATUS_RUNNING {
@@ -548,9 +532,7 @@ func TestReleaseRuns_PageIsDeduplicatedAndSettled(t *testing.T) {
 	index := indexOf(t, recs...)
 	index.indexLater(t, successor("ork-done", created, completed))
 	count, runs, err := readerOverIndex(index).ReleaseRuns(context.Background(), "orkstack", "v2", 10)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := sequencesOfIDs(runs); len(got) != 2 || count < 2 {
 		t.Fatalf("count %d, page %v; want the chain once and ork-a, the finished chain dropped", count, got)
 	}
@@ -575,9 +557,7 @@ func TestStatsWindow_MeasuresChainsFromCreatedAt(t *testing.T) {
 	)
 	index.indexLater(t, record{id: "ork-b", status: completed, start: until.Add(time.Hour), created: inside, closed: inside.Add(5 * time.Hour)})
 	durations, err := readerOverIndex(index).windowRunDurations(context.Background(), StatsWindow{Since: since, Until: until})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := []time.Duration{10 * time.Minute, 2 * time.Hour, 5 * time.Hour}
 	if fmt.Sprint(durations) != fmt.Sprint(want) {
 		t.Fatalf("durations = %v, want %v", durations, want)

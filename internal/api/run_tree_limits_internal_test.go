@@ -1,11 +1,12 @@
 package api
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // TestPinRunTreeLimits_PinsEveryCommandStreamNumber: the top-level plan
@@ -23,7 +24,7 @@ func TestPinRunTreeLimits_PinsEveryCommandStreamNumber(t *testing.T) {
 	})
 	child := &engine.ChildRunPlan{RunID: "ork-1-1", Plan: engine.RunPlan{Namespace: "default"}}
 	plan := engine.RunPlan{Namespace: "default", Children: map[string]*engine.ChildRunPlan{"compose": child}}
-	before, err := json.Marshal(plan)
+	before, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestPinRunTreeLimits_PinsEveryCommandStreamNumber(t *testing.T) {
 		t.Fatal("a child plan nested in the top-level plan carries run-tree limits")
 	}
 	// Every field is encoded: none is dropped by omitempty at a default.
-	encoded, err := json.Marshal(plan)
+	encoded, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -138,7 +139,7 @@ func TestPinRunTreeLimits_PinsThePinCreationTimeout(t *testing.T) {
 			if got := plan.Children["compose"].Plan.PinCreationTimeoutSeconds; got != 0 {
 				t.Errorf("a child plan nested in the top-level plan carries %d, want none", got)
 			}
-			encoded, err := json.Marshal(plan)
+			encoded, err := stablejson.Marshal(plan)
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -14,6 +14,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // iconPathClass is every byte an accepted icon path may hold: command
@@ -307,9 +309,7 @@ func FuzzParseDocsLabel(f *testing.F) {
 		if err := dsl.CheckDocsAgainstInterface(docs, empty); (err != nil) != describesAny {
 			t.Fatalf("against an empty interface, docs %v checked as %v", docs, err)
 		}
-		if err := dsl.CheckDocsAgainstInterface(docs, nil); err != nil {
-			t.Fatalf("docs with no interface to check them against were refused: %v", err)
-		}
+		must.OKf(t, dsl.CheckDocsAgainstInterface(docs, nil), "docs with no interface to check them against were refused")
 		label, err := dsl.PackDocsLabel(docs, nil)
 		if err != nil {
 			if strings.Contains(err.Error(), "limit is") {
@@ -376,9 +376,7 @@ func FuzzParseActivityDocument(f *testing.F) {
 				t.Fatalf("PackInterfaceLabel refused an accepted document %q: %v", source, err)
 			}
 			icon, err := dsl.PackIconLabel(decl.Icon)
-			if err != nil {
-				t.Fatalf("PackIconLabel refused an accepted document %q: %v", source, err)
-			}
+			must.OKf(t, err, "PackIconLabel refused an accepted document %q", source)
 			docs, err := dsl.PackDocsLabel(decl.Docs, decl.Interface)
 			if err != nil {
 				if strings.Contains(err.Error(), "limit is") {

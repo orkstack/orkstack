@@ -1,10 +1,12 @@
 package engine
 
 import (
+	"fmt"
 	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -20,7 +22,11 @@ import (
 // publishers.
 //
 // Publishers also supply a dedupe key (stable across Temporal activity retries
-// and replays). Subscribers receive the backlog followed by live events.
+// and replays). Subscribers receive the backlog followed by live events, in
+// sequence order and without a gap: publishes can land out of order (a
+// fan-out's item publishes and a plain task's start events are not waited
+// for, so two can be in flight at once), and a subscription holds an event
+// until every number before it has arrived (subscription.admitLocked).
 type EventBus struct {
 	mu        sync.Mutex
 	log       map[string][]*orkstackv1.Event
@@ -28,7 +34,17 @@ type EventBus struct {
 	subs      map[string]map[int64]*subscription
 	nextID    int64
 	retention terminalRetention
+	// orderHold is how long a subscription waits for a missing number
+	// before it ends the stream with an error (busOrderHold).
+	orderHold time.Duration
 }
+
+// busOrderHold bounds how long a live subscription holds events behind a
+// number that has not arrived: one projection activity's whole retry window
+// (three attempts of eventActivityTimeout and their backoff) fits in it, so a
+// publish still in flight arrives first. Past it the stream ends with an
+// error naming the missing number, never a silent stall.
+const busOrderHold = time.Minute
 
 // NewEventBus returns an empty bus that keeps every run's log.
 func NewEventBus() *EventBus {
@@ -37,6 +53,7 @@ func NewEventBus() *EventBus {
 		seen:      map[string]map[string]int64{},
 		subs:      map[string]map[int64]*subscription{},
 		retention: newTerminalRetention(),
+		orderHold: busOrderHold,
 	}
 }
 
@@ -172,10 +189,14 @@ func (b *EventBus) snapshotLocked(runID string, fromSequence int64) []*orkstackv
 }
 
 // Subscribe returns a channel delivering the backlog after fromSequence
-// followed by live events, a cancel function, and whether fromSequence has
-// already reached a terminal run event. Registration, terminal detection, and
-// backlog capture happen under one lock so no event can slip between them.
-func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstackv1.Event, func(), bool) {
+// followed by live events, in sequence order and without a gap; a cancel
+// function; whether fromSequence has already reached a terminal run event;
+// and the stream's error, read once the channel has closed: nil for a stream
+// that ended (its terminal event, or the cancel), or the error naming the
+// number a subscription waited for longer than the bus's order hold.
+// Registration, terminal detection, and backlog capture happen under one lock
+// so no event can slip between them.
+func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstackv1.Event, func(), bool, func() error) {
 	b.mu.Lock()
 	backlog := b.snapshotLocked(runID, fromSequence)
 	terminalAlreadyReached := false
@@ -185,7 +206,7 @@ func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstack
 			break
 		}
 	}
-	sub := newSubscription(backlog, fromSequence)
+	sub := newSubscription(runID, backlog, fromSequence, b.orderHold)
 	id := b.nextID
 	b.nextID++
 	if b.subs[runID] == nil {
@@ -200,7 +221,7 @@ func (b *EventBus) Subscribe(runID string, fromSequence int64) (<-chan *orkstack
 		b.mu.Unlock()
 		sub.close()
 	}
-	return sub.out, cancel, terminalAlreadyReached
+	return sub.out, cancel, terminalAlreadyReached, sub.streamErr
 }
 
 func isTerminalRunEvent(event *orkstackv1.Event) bool {
@@ -238,30 +259,113 @@ func isRunLevelEvent(event *orkstackv1.Event) bool {
 	}
 }
 
-// subscription buffers events for one subscriber without blocking publishers.
+// subscription buffers events for one subscriber without blocking publishers,
+// and hands them over in sequence order without a gap.
+//
+// next is the number it hands over next, and held every event that arrived
+// before a number below it: a run's detached publishes can complete in any
+// order. An event is queued once every number before it has arrived. A run
+// publishes its terminal event only after every detached publish of it has
+// completed (drainItemPublishes), so a number still missing when the terminal
+// event arrives was never published — a number the run used without an event
+// — and is handed over as the STREAM_GAP event the history reader serves for
+// it (StreamGapEvent), then the rest. A gap that stands for hold ends the
+// stream with an error naming the missing number (streamErr).
 type subscription struct {
 	out          chan *orkstackv1.Event
 	mu           sync.Mutex
+	runID        string
 	queue        []*orkstackv1.Event
+	held         map[int64]*orkstackv1.Event
+	next         int64
+	hold         time.Duration
+	holdSince    time.Time
+	err          error
 	wake         chan struct{}
 	done         chan struct{}
 	closed       bool
 	fromSequence int64
 }
 
-func newSubscription(backlog []*orkstackv1.Event, fromSequence int64) *subscription {
+func newSubscription(runID string, backlog []*orkstackv1.Event, fromSequence int64, hold time.Duration) *subscription {
 	sub := &subscription{
 		out:          make(chan *orkstackv1.Event),
-		queue:        backlog,
+		runID:        runID,
+		held:         map[int64]*orkstackv1.Event{},
+		next:         fromSequence + 1,
+		hold:         hold,
 		wake:         make(chan struct{}, 1),
 		done:         make(chan struct{}),
 		fromSequence: fromSequence,
 	}
+	sub.mu.Lock()
+	for _, event := range backlog {
+		sub.admitLocked(event)
+	}
+	sub.mu.Unlock()
 	go sub.pump()
 	if len(backlog) > 0 {
 		sub.signal()
 	}
 	return sub
+}
+
+// admitLocked takes one event (the subscription's own copy) into the order:
+// queued at once when it is the next number, held otherwise, and every held
+// event it makes contiguous queued after it. A terminal event releases every
+// gap before it as a STREAM_GAP event.
+func (s *subscription) admitLocked(event *orkstackv1.Event) {
+	seq := event.GetSequence()
+	if seq < s.next {
+		return // a duplicate of one already handed over
+	}
+	s.held[seq] = event
+	if isTerminalRunEvent(event) {
+		for s.next < seq {
+			if _, ok := s.held[s.next]; ok {
+				s.release()
+				continue
+			}
+			first := s.next
+			for s.next < seq {
+				if _, ok := s.held[s.next]; ok {
+					break
+				}
+				s.next++
+			}
+			s.queue = append(s.queue, StreamGapEvent(s.runID, first, s.next-1, s.gapTimestamp()))
+		}
+	}
+	for {
+		if _, ok := s.held[s.next]; !ok {
+			break
+		}
+		s.release()
+	}
+	if len(s.held) == 0 {
+		s.holdSince = time.Time{}
+	} else if s.holdSince.IsZero() {
+		s.holdSince = time.Now()
+	}
+}
+
+// release queues the held event numbered next and moves next past it.
+func (s *subscription) release() {
+	s.queue = append(s.queue, s.held[s.next])
+	delete(s.held, s.next)
+	s.next++
+}
+
+// gapTimestamp is when the event after a gap happened: the lowest held one.
+func (s *subscription) gapTimestamp() *timestamppb.Timestamp {
+	var at *timestamppb.Timestamp
+	lowest := int64(-1)
+	for seq, event := range s.held {
+		if lowest < 0 || seq < lowest {
+			lowest, at = seq, event.GetTimestamp()
+		}
+	}
+	return at
 }
 
 func (s *subscription) enqueue(event *orkstackv1.Event) {
@@ -278,9 +382,30 @@ func (s *subscription) enqueue(event *orkstackv1.Event) {
 		}
 		return
 	}
-	s.queue = append(s.queue, proto.Clone(event).(*orkstackv1.Event))
+	s.admitLocked(proto.Clone(event).(*orkstackv1.Event))
 	s.mu.Unlock()
 	s.signal()
+}
+
+// streamErr is the error the stream ended with, read once out has closed:
+// nil, or the missing number's.
+func (s *subscription) streamErr() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.err
+}
+
+// expireHold ends the stream when its gap has stood for the hold.
+func (s *subscription) expireHold() {
+	s.mu.Lock()
+	if s.closed || len(s.held) == 0 || s.holdSince.IsZero() || time.Since(s.holdSince) < s.hold {
+		s.mu.Unlock()
+		return
+	}
+	s.err = fmt.Errorf("event %d of run %s did not reach this process's event bus within %s, while %d later events did; "+
+		"the stream ends here and can be resumed from sequence %d", s.next, s.runID, s.hold, len(s.held), s.next-1)
+	s.mu.Unlock()
+	s.close()
 }
 
 func (s *subscription) signal() {
@@ -300,22 +425,38 @@ func (s *subscription) pump() {
 			s.queue = s.queue[1:]
 		}
 		closed := s.closed
+		holdSince := s.holdSince
 		s.mu.Unlock()
 
 		if next == nil {
 			if closed {
 				return
 			}
+			// A standing gap is waited for at most until its hold ends.
+			var expiry <-chan time.Time
+			var timer *time.Timer
+			if !holdSince.IsZero() {
+				timer = time.NewTimer(time.Until(holdSince.Add(s.hold)))
+				expiry = timer.C
+			}
 			select {
 			case <-s.wake:
+			case <-expiry:
+				s.expireHold()
 			case <-s.done:
 				// Drain whatever is already queued, then stop.
 				s.mu.Lock()
 				remaining := len(s.queue)
 				s.mu.Unlock()
 				if remaining == 0 {
+					if timer != nil {
+						timer.Stop()
+					}
 					return
 				}
+			}
+			if timer != nil {
+				timer.Stop()
 			}
 			continue
 		}

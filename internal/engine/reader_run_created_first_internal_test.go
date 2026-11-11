@@ -12,6 +12,9 @@ import (
 	"go.temporal.io/sdk/converter"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runCreatedFirstHistory reads a committed run-created-first fixture and
@@ -20,13 +23,9 @@ func runCreatedFirstHistory(t *testing.T, name string) (string, []*historypb.His
 	t.Helper()
 	path := "testdata/history/" + name
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	must.OKf(t, err, "read %s", path)
 	recorded := &historypb.History{}
-	if err := (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded); err != nil {
-		t.Fatalf("decode %s: %v", path, err)
-	}
+	must.OKf(t, (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded), "decode %s", path)
 	var runID string
 	payloads := recorded.GetEvents()[0].GetWorkflowExecutionStartedEventAttributes().GetInput().GetPayloads()
 	if err := converter.GetDefaultDataConverter().FromPayload(payloads[0], &runID); err != nil || runID == "" {
@@ -73,7 +72,7 @@ func withoutPublishes(events []*historypb.HistoryEvent, n int) []*historypb.Hist
 func eventTypesOf(events []*orkstackv1.Event) string {
 	parts := make([]string, 0, len(events))
 	for _, e := range events {
-		parts = append(parts, fmt.Sprintf("%d:%s", e.GetSequence(), strings.TrimPrefix(e.GetType().String(), "EVENT_TYPE_")))
+		parts = append(parts, fmt.Sprintf("%d:%s", e.GetSequence(), enumname.Of(e.GetType())))
 	}
 	return "[" + strings.Join(parts, " ") + "]"
 }
@@ -133,9 +132,7 @@ func TestTemporalRunReader_AnEndingBeforeStartIsServedAndArchivedWithItsGap(t *t
 				t.Fatalf("a live read from 1 served %s, want %s", got, tc.fromOne)
 			}
 			read, err := reader.EventsForArchive(context.Background(), runID)
-			if err != nil {
-				t.Fatalf("EventsForArchive: %v", err)
-			}
+			must.OKf(t, err, "EventsForArchive")
 			if got := eventTypesOf(read.Events); got != tc.archived {
 				t.Fatalf("EventsForArchive gave %s, want %s", got, tc.archived)
 			}

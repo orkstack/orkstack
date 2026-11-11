@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // countingReadClient is the real SDK client behind the reader's narrowed
@@ -109,17 +111,11 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 	orkerQueue := "ork-live-reads-" + token
 
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	commitStore, err := artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	logStore, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
@@ -183,9 +179,7 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 
 	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -224,9 +218,7 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 		Limits:    engine.DefaultLimits(),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -243,9 +235,7 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 		OrkflowName:    orkflowName,
 		OrkflowVersion: definition.GetVersion(),
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := submitted.Msg.GetRun().GetId()
 
 	counting := &countingReadClient{Client: temporalClient}
@@ -272,9 +262,7 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 	}
 	counting.reset()
 	between, err := reader.LiveAttempts(ctx, runID, time.Now())
-	if err != nil {
-		t.Fatalf("LiveAttempts between tasks: %v", err)
-	}
+	must.OKf(t, err, "LiveAttempts between tasks")
 	describes, histories := counting.reset()
 	record("live run between tasks", between, describes, histories)
 	if between.Closed || len(between.Attempts) != 0 || describes != 1 || histories != 0 {
@@ -290,9 +278,7 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 	for {
 		counting.reset()
 		pending, err = reader.LiveAttempts(ctx, runID, time.Now())
-		if err != nil {
-			t.Fatalf("LiveAttempts: %v", err)
-		}
+		must.OKf(t, err, "LiveAttempts")
 		describes, histories = counting.reset()
 		if len(pending.Attempts) > 0 {
 			break
@@ -310,23 +296,17 @@ func TestIntegration_InspectRunReadsHistoryOnlyForALiveRunWithPendingWork(t *tes
 
 	// 3. Finished: drain the stream to the terminal event, then read once.
 	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	for stream.Receive() {
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("event stream: %v", err)
-	}
+	must.OKf(t, stream.Err(), "event stream")
 	stream.Close()
 	deadline = time.Now().Add(30 * time.Second)
 	var finished engine.LiveRun
 	for {
 		counting.reset()
 		finished, err = reader.LiveAttempts(ctx, runID, time.Now())
-		if err != nil {
-			t.Fatalf("LiveAttempts after the run: %v", err)
-		}
+		must.OKf(t, err, "LiveAttempts after the run")
 		describes, histories = counting.reset()
 		if finished.Closed {
 			break

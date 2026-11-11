@@ -1,9 +1,8 @@
 package engine_test
 
 import (
-	"encoding/json"
-
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // valuesJSON renders a test's intended task output as the bytes an Orker would
@@ -20,7 +19,7 @@ import (
 // So a test that wants to say "this task produced {\"stdout\": \"a\"}" has to
 // produce the bytes, and this is the one place that happens.
 func valuesJSON(values map[string]any) []byte {
-	encoded, err := json.Marshal(values)
+	encoded, err := stablejson.Marshal(values)
 	if err != nil {
 		// A test that cannot encode its own fixture is a broken test, and a
 		// panic here names it immediately. This helper is never reached from

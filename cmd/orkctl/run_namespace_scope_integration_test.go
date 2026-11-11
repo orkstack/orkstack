@@ -14,6 +14,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother is
@@ -52,9 +54,7 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 
 	pool := privateTaskPool()
 	taskQueue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map test pool: %v", err)
-	}
+	must.OKf(t, err, "map test pool")
 
 	repoRoot := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
@@ -91,7 +91,7 @@ func TestIntegration_ARunIDOfOneNamespaceIsNotReadableOrCancellableFromAnother(t
 
 	const orkflowName = "slow-deploy"
 	document := writeSleepingOrkflow(t, orkflowName, pool)
-	if stdout, stderr, code := cli("apply", document, "-n", alpha); code != 0 {
+	if stdout, stderr, code := cli("orkflow", "create", document, "-n", alpha); code != 0 {
 		t.Fatalf("apply into %s exit = %d\nstdout:\n%s\nstderr:\n%s", alpha, code, stdout, stderr)
 	}
 	waitForPoolLive(t, cli, alpha, pool)
@@ -162,8 +162,6 @@ tasks:
       op: exec
       command: ["sh", "-c", "sleep 60"]
 `, name, pool)
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write orkflow %s: %v", name, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write orkflow %s", name)
 	return path
 }

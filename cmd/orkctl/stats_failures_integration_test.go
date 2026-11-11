@@ -8,7 +8,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"os"
@@ -26,6 +26,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests drive the failure breakdown against real failures: a real
@@ -110,9 +112,7 @@ func seedFailureCorpus(ctx context.Context, t *testing.T, replicas int) *failure
 		submitted, err := a.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: orkflow, Namespace: corpus.namespace,
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun %s: %v", orkflow, err)
-		}
+		must.OKf(t, err, "SubmitRun %s", orkflow)
 		return submitted.Msg.GetRun().GetId()
 	}
 	corpus.exitRuns = []string{submit("fp-exit"), submit("fp-exit"), submit("fp-exit")}
@@ -212,16 +212,12 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 	do := func(method, url, contentType string, body []byte, want int) *http.Response {
 		t.Helper()
 		req, err := http.NewRequestWithContext(ctx, method, url, bytes.NewReader(body))
-		if err != nil {
-			t.Fatalf("build %s %s: %v", method, url, err)
-		}
+		must.OKf(t, err, "build %s %s", method, url)
 		if contentType != "" {
 			req.Header.Set("Content-Type", contentType)
 		}
 		resp, err := http.DefaultClient.Do(req)
-		if err != nil {
-			t.Fatalf("%s %s: %v", method, url, err)
-		}
+		must.OKf(t, err, "%s %s", method, url)
 		defer resp.Body.Close()
 		if resp.StatusCode != want {
 			var text bytes.Buffer
@@ -235,9 +231,7 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 		digest := fmt.Sprintf("sha256:%x", sha256.Sum256(blob))
 		started := do(http.MethodPost, base+"/blobs/uploads/", "", nil, http.StatusAccepted)
 		location, err := started.Location()
-		if err != nil {
-			t.Fatalf("blob upload location: %v", err)
-		}
+		must.OKf(t, err, "blob upload location")
 		query := location.Query()
 		query.Set("digest", digest)
 		location.RawQuery = query.Encode()
@@ -252,14 +246,10 @@ func pushForeignPlatformIndex(ctx context.Context, t *testing.T, registry, repos
 
 	// An empty tar, gzipped, is a valid layer.
 	var tarball, layer bytes.Buffer
-	if err := tar.NewWriter(&tarball).Close(); err != nil {
-		t.Fatalf("empty tar: %v", err)
-	}
+	must.OKf(t, tar.NewWriter(&tarball).Close(), "empty tar")
 	zipper := gzip.NewWriter(&layer)
 	_, _ = zipper.Write(tarball.Bytes())
-	if err := zipper.Close(); err != nil {
-		t.Fatalf("gzip layer: %v", err)
-	}
+	must.OKf(t, zipper.Close(), "gzip layer")
 	layerDigest := pushBlob(layer.Bytes())
 	config := []byte(fmt.Sprintf(`{"architecture":"s390x","os":"linux","rootfs":{"type":"layers","diff_ids":["sha256:%x"]},"config":{}}`,
 		sha256.Sum256(tarball.Bytes())))
@@ -363,17 +353,13 @@ func TestIntegration_FailureBreakdownGroupsRealFailuresAndReconcilesWithStats(t 
 	byDefault := decodeBreakdown(t, defaultJSON)
 	byImage := decodeBreakdown(t, imageJSON)
 	stats := &orkstackv1.GetStatsResponse{}
-	if err := api.UnmarshalJSON([]byte(statsJSON), stats); err != nil {
-		t.Fatalf("decode stats --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(statsJSON), stats), "decode stats --json")
 	// And the same pinned window asked of GetStats directly, since `orkctl
 	// stats` has no --until: the two must agree on both.
 	pinned, err := statsClientFor(t, a).GetStats(ctx, connect.NewRequest(&orkstackv1.GetStatsRequest{
 		Namespace: corpus.namespace, Since: timestamppb.New(corpus.since), Until: timestamppb.New(corpus.until),
 	}))
-	if err != nil {
-		t.Fatalf("GetStats for the pinned window: %v", err)
-	}
+	must.OKf(t, err, "GetStats for the pinned window")
 
 	failed := stats.GetRunsByStatus()["failed"]
 	if failed != int64(corpus.failed()) || pinned.Msg.GetRunsByStatus()["failed"] != failed {
@@ -443,9 +429,7 @@ func TestIntegration_FailureBreakdownSaysUnavailableAfterAttemptRecordsAreReclai
 	// The cleanup worker's own call, on one exit-1 run.
 	reclaimed := corpus.exitRuns[0]
 	store, err := artifacts.NewRunArchive(corpus.artifactCfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	if _, err := store.DeleteRunArtifacts(ctx, corpus.namespace, reclaimed); err != nil {
 		t.Fatalf("DeleteRunArtifacts(%s): %v", reclaimed, err)
 	}

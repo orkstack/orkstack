@@ -7,12 +7,7 @@
 /scripts/proof-quarantine.txt @danlsgiga
 /scripts/proof-allowed-skips.txt @danlsgiga
 /scripts/proof-test-costs.tsv @danlsgiga
-/scripts/proof-slow-tests.txt @danlsgiga
 /scripts/proof-ui-costs.tsv @danlsgiga
-/scripts/proof-section11-coverage.tsv @danlsgiga
-/scripts/proof-host-speed.tsv @danlsgiga
-/scripts/proof-runner-floors.tsv @danlsgiga
-/scripts/proof-scope.tsv @danlsgiga
 /scripts/integration.sh @danlsgiga
 /scripts/github-merge-gate.sh @danlsgiga
 /scripts/github/ @danlsgiga

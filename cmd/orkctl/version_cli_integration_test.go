@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_PromoteRollbackAndEditThroughTheCLI is the user-facing
@@ -40,9 +42,7 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 
 	pool := privateTaskPool()
 	taskQueue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map test pool: %v", err)
-	}
+	must.OKf(t, err, "map test pool")
 	root := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
 	enginePath := testbin.Path(t, "./cmd/ork")
@@ -85,24 +85,23 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 	first := writeVersionedCLIOrkflow(t, name, "1.0.0", pool, "one")
 	second := writeVersionedCLIOrkflow(t, name, "2.0.0", pool, "two")
 
-	requireCLI(t, cli, "apply the first version", "apply", first)
+	requireCLI(t, cli, "create the first version", "orkflow", "create", first)
 
-	// The second version is applied TWICE, both times as `--json`, because
-	// that is the only rendering that can tell the two applies apart:
-	// `ApplyOrkflowResponse.created` is a bool, so protojson prints it on the
-	// apply that created a version and omits it on the repeat, while the human
-	// rendering prints the same "Applied orkflow …" line for both.
+	// The second version is created TWICE, both times as `--json`, because
+	// that is the rendering a script reads: `ApplyOrkflowResponse.created` is
+	// a bool, so protojson prints it on the create that stored a version and
+	// omits it on the repeat.
 	//
 	// The first of the pair is the control. Without it, an absent `created`
-	// would prove nothing — a field can be missing because the apply was a
+	// would prove nothing — a field can be missing because the create was a
 	// no-op, or because the CLI never sends it at all.
-	firstApply := requireCLI(t, cli, "apply the second version", "apply", second, "--json")
+	firstApply := requireCLI(t, cli, "create the second version", "orkflow", "create", second, "--json")
 	if !strings.Contains(firstApply, `"created": true`) {
-		t.Fatalf("applying a new version did not report that it created one:\n%s", firstApply)
+		t.Fatalf("creating a new version did not report that it created one:\n%s", firstApply)
 	}
-	repeat := requireCLI(t, cli, "re-apply the unchanged file", "apply", second, "--json")
+	repeat := requireCLI(t, cli, "create the unchanged file again", "orkflow", "create", second, "--json")
 	if strings.Contains(repeat, `"created"`) {
-		t.Fatalf("re-applying an unchanged file reported that it created a version:\n%s", repeat)
+		t.Fatalf("creating an unchanged file again reported that it created a version:\n%s", repeat)
 	}
 	if !strings.Contains(repeat, `"version": "2.0.0"`) {
 		t.Fatalf("the no-op did not answer with the stored version:\n%s", repeat)
@@ -202,7 +201,7 @@ func TestIntegration_PromoteRollbackAndEditThroughTheCLI(t *testing.T) {
 	// session beside this test.
 	competing := writeVersionedCLIOrkflow(t, name, "4.0.0", pool, "competing")
 	racing := writeCLIEditor(t, fmt.Sprintf(
-		`%q --server %q apply %q >/dev/null; sed -i.bak 's/echo edited/echo mine/' "$1"`,
+		`%q --server %q orkflow create %q >/dev/null; sed -i.bak 's/echo edited/echo mine/' "$1"`,
 		orkctlPath, "http://"+engineAddr, competing))
 	stdout, stderr, code := cli("orkflow", "edit", name, "--editor", racing)
 	if code == 0 {
@@ -261,9 +260,7 @@ tasks:
       op: exec
       command: ["sh", "-c", "echo %s"]
 `, name, version, version, pool, marker)
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write %s@%s: %v", name, version, err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write %s@%s", name, version)
 	return path
 }
 
@@ -272,9 +269,7 @@ tasks:
 func writeCLIEditor(t *testing.T, script string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "editor.sh")
-	if err := os.WriteFile(path, []byte("#!/bin/sh\nset -e\n"+script+"\n"), 0o755); err != nil {
-		t.Fatalf("write editor: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte("#!/bin/sh\nset -e\n"+script+"\n"), 0o755), "write editor")
 	return path
 }
 

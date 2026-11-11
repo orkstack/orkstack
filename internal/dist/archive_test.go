@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/dist"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // commitTime is the instant every archive in these tests is stamped with.
@@ -24,9 +26,7 @@ var (
 func readTarGz(t *testing.T, data []byte) ([]*tar.Header, map[string][]byte) {
 	t.Helper()
 	gz, err := gzip.NewReader(bytes.NewReader(data))
-	if err != nil {
-		t.Fatalf("not gzip: %v", err)
-	}
+	must.OKf(t, err, "not gzip")
 	var headers []*tar.Header
 	contents := map[string][]byte{}
 	reader := tar.NewReader(gz)
@@ -35,13 +35,9 @@ func readTarGz(t *testing.T, data []byte) ([]*tar.Header, map[string][]byte) {
 		if err == io.EOF {
 			break
 		}
-		if err != nil {
-			t.Fatalf("read tar: %v", err)
-		}
+		must.OKf(t, err, "read tar")
 		body, err := io.ReadAll(reader)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		headers = append(headers, header)
 		contents[header.Name] = body
 	}
@@ -57,29 +53,21 @@ func linuxTarget() dist.Target {
 func TestPack_TarGzIsByteIdentical(t *testing.T) {
 	t.Parallel()
 	forward, err := dist.Pack(linuxTarget(), fakeBinary, fakeLicense, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for i := 0; i < 3; i++ {
 		again, err := dist.Pack(linuxTarget(), fakeBinary, fakeLicense, commitTime)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if !bytes.Equal(forward.Data, again.Data) {
 			t.Fatalf("pack %d differs from the first", i+2)
 		}
 	}
 	other, err := dist.Pack(linuxTarget(), fakeBinary, fakeLicense, commitTime.Add(time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if bytes.Equal(forward.Data, other.Data) {
 		t.Fatal("a different commit time gave the same bytes, so the time is not in the archive")
 	}
 	changed, err := dist.Pack(linuxTarget(), append([]byte("x"), fakeBinary...), fakeLicense, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if bytes.Equal(forward.Data, changed.Data) {
 		t.Fatal("a different binary gave the same bytes")
 	}
@@ -90,9 +78,7 @@ func TestPack_TarGzIsByteIdentical(t *testing.T) {
 func TestPack_TarGzEntries(t *testing.T) {
 	t.Parallel()
 	asset, err := dist.Pack(linuxTarget(), fakeBinary, fakeLicense, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	headers, contents := readTarGz(t, asset.Data)
 	var names []string
 	for _, header := range headers {
@@ -139,9 +125,7 @@ func TestPack_TarGzEntries(t *testing.T) {
 func TestPack_TarGzHeaderCarriesNoNameOrTime(t *testing.T) {
 	t.Parallel()
 	asset, err := dist.Pack(linuxTarget(), fakeBinary, fakeLicense, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	head := asset.Data
 	if len(head) < 10 || head[0] != 0x1f || head[1] != 0x8b || head[2] != 0x08 {
 		t.Fatalf("not a gzip stream: % x", head[:min(10, len(head))])
@@ -153,9 +137,7 @@ func TestPack_TarGzHeaderCarriesNoNameOrTime(t *testing.T) {
 		t.Errorf("gzip mtime % x, want zero", head[4:8])
 	}
 	gz, err := gzip.NewReader(bytes.NewReader(head))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if gz.Name != "" || gz.Comment != "" || !gz.ModTime.IsZero() {
 		t.Errorf("gzip header name %q comment %q mtime %v, want none", gz.Name, gz.Comment, gz.ModTime)
 	}
@@ -168,23 +150,17 @@ func TestPack_WindowsIsAZipWithAnExe(t *testing.T) {
 	t.Parallel()
 	target := dist.Target{Binary: dist.Orkctl, GOOS: "windows", GOARCH: "arm64"}
 	asset, err := dist.Pack(target, fakeBinary, fakeLicense, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if asset.Name != "orkctl-windows-arm64.zip" {
 		t.Fatalf("asset %q, want orkctl-windows-arm64.zip", asset.Name)
 	}
 	again, err := dist.Pack(target, fakeBinary, fakeLicense, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !bytes.Equal(asset.Data, again.Data) {
 		t.Fatal("two zips of the same inputs differ")
 	}
 	reader, err := zip.NewReader(bytes.NewReader(asset.Data), int64(len(asset.Data)))
-	if err != nil {
-		t.Fatalf("not a zip: %v", err)
-	}
+	must.OKf(t, err, "not a zip")
 	var names []string
 	for _, file := range reader.File {
 		names = append(names, file.Name)
@@ -195,14 +171,10 @@ func TestPack_WindowsIsAZipWithAnExe(t *testing.T) {
 			t.Errorf("%s: method %d, want deflate", file.Name, file.Method)
 		}
 		open, err := file.Open()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		body, err := io.ReadAll(open)
 		_ = open.Close()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		want := fakeLicense
 		if file.Name == "orkctl.exe" {
 			want = fakeBinary
@@ -220,9 +192,7 @@ func TestPack_WindowsIsAZipWithAnExe(t *testing.T) {
 		}
 	}
 	other, err := dist.Pack(target, fakeBinary, fakeLicense, commitTime.Add(48*time.Hour))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if bytes.Equal(asset.Data, other.Data) {
 		t.Fatal("a different commit time gave the same zip")
 	}
@@ -267,9 +237,7 @@ func TestAssetNames_CarryNoVersion(t *testing.T) {
 		t.Fatalf("asset names\n got: %v\nwant: %v", got, want)
 	}
 	asset, err := dist.Pack(dist.Target{Binary: dist.Orker, GOOS: "linux", GOARCH: "arm64"}, fakeBinary, fakeLicense, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if asset.Name != "orker-linux-arm64.tar.gz" {
 		t.Errorf("Pack named its asset %q, want the target's Asset()", asset.Name)
 	}
@@ -305,9 +273,7 @@ func TestTarGz_SortsAndValidatesEntries(t *testing.T) {
 		{Name: "LICENSE", Data: []byte("l"), Mode: 0o644},
 	}
 	data, err := dist.TarGz(entries, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	headers, _ := readTarGz(t, data)
 	var names []string
 	for _, header := range headers {
@@ -321,9 +287,7 @@ func TestTarGz_SortsAndValidatesEntries(t *testing.T) {
 	}
 	reversed := []dist.Entry{entries[2], entries[1], entries[0]}
 	again, err := dist.TarGz(reversed, commitTime)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !bytes.Equal(data, again) {
 		t.Error("the order entries arrive in changed the bytes")
 	}

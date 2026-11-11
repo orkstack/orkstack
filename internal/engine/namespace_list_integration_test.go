@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_AQuietNamespaceIsListedBesideABusyOne is the tenancy half of
@@ -45,9 +47,7 @@ func TestIntegration_AQuietNamespaceIsListedBesideABusyOne(t *testing.T) {
 
 	// The engine's own provisioning step, run exactly as `ork` runs it at boot.
 	indexed, err := task.EnsureRunSearchAttributes(ctx, temporalClient, temporalNamespace)
-	if err != nil {
-		t.Fatalf("provision the run index in %q: %v", temporalNamespace, err)
-	}
+	must.OKf(t, err, "provision the run index in %q", temporalNamespace)
 	if !indexed {
 		t.Fatalf("EnsureRunSearchAttributes reported no error and no index")
 	}
@@ -66,9 +66,7 @@ func TestIntegration_AQuietNamespaceIsListedBesideABusyOne(t *testing.T) {
 			Namespace: namespace,
 			Routes:    map[string]string{task.DefaultPool: task.DefaultQueue},
 		}
-		if err := starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
-			t.Fatalf("StartRun(%s in %s): %v", runID, namespace, err)
-		}
+		must.OKf(t, starter.StartRun(ctx, runID, wf, nil, plan), "StartRun(%s in %s)", runID, namespace)
 	}
 
 	// The quiet tenant goes first, so every one of the neighbour's runs is
@@ -93,9 +91,7 @@ func TestIntegration_AQuietNamespaceIsListedBesideABusyOne(t *testing.T) {
 	deadline := time.Now().Add(90 * time.Second)
 	for {
 		listed, err := reader.ListRuns(ctx, engine.RunQuery{Namespace: "bravo", Limit: busy})
-		if err != nil {
-			t.Fatalf("ListRuns(bravo): %v", err)
-		}
+		must.OKf(t, err, "ListRuns(bravo)")
 		if len(listed) >= busy {
 			break
 		}
@@ -107,9 +103,7 @@ func TestIntegration_AQuietNamespaceIsListedBesideABusyOne(t *testing.T) {
 	}
 
 	runs, err := reader.ListRuns(ctx, engine.RunQuery{Namespace: "alpha", Limit: limit})
-	if err != nil {
-		t.Fatalf("ListRuns(alpha): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(alpha)")
 	if len(runs) != 1 || runs[0].GetId() != quiet {
 		t.Fatalf("ListRuns(alpha) = %v, want the one run %s: %d live runs in namespace "+
 			"bravo must not decide whether alpha can see its own",

@@ -4,7 +4,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,11 +23,15 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The join-policy integration suite (docs/DSL.md "Joins and failure handlers"): real
@@ -66,9 +69,7 @@ func startJoinE2E(t *testing.T) *joinE2E {
 		infraAbsent(t, "%v", err)
 	}
 	catalog, err := dsl.ParseCatalog([]byte(strings.TrimPrefix(env, "ORK_ACTIVITY_CATALOG=")))
-	if err != nil {
-		t.Fatalf("parse the local catalog: %v", err)
-	}
+	must.OKf(t, err, "parse the local catalog")
 	return &joinE2E{cacheE2E: c, catalog: catalog, invoked: map[string]int{},
 		orkerActivities: map[string]*orker.Activities{}, orkerClients: map[string]client.Client{}}
 }
@@ -103,9 +104,7 @@ func (j *joinE2E) orker(id string) worker.Worker {
 		return activities.ExecuteTask(actx, in)
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(activities.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	if err := w.Start(); err != nil {
-		j.t.Fatalf("start orker %s: %v", id, err)
-	}
+	must.OKf(j.t, w.Start(), "start orker %s", id)
 	j.t.Cleanup(w.Stop)
 	j.mu.Lock()
 	j.orkerActivities[id] = activities
@@ -171,16 +170,12 @@ func awaitVariant(src string) string {
 func (j *joinE2E) compileDoc(source string) *orkstackv1.Orkflow {
 	j.t.Helper()
 	wf, err := dsl.CompileWithOptions([]byte(source), dsl.Options{Catalog: j.catalog})
-	if err != nil {
-		j.t.Fatalf("compile: %v", err)
-	}
+	must.OKf(j.t, err, "compile")
 	if _, err := dsl.NewResolver("").ResolveOrkflow(j.ctx, j.catalog, wf); err != nil {
 		infraAbsent(j.t, "resolve the local activity images: %v", err)
 	}
 	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		j.t.Fatal(err)
-	}
+	must.OK(j.t, err)
 	wf.DefinitionDigest = digest
 	return wf
 }
@@ -189,9 +184,7 @@ func (j *joinE2E) compileDoc(source string) *orkstackv1.Orkflow {
 func (j *joinE2E) example(variant func(string) string) *orkstackv1.Orkflow {
 	j.t.Helper()
 	raw, err := os.ReadFile(branchAndRecover)
-	if err != nil {
-		j.t.Fatal(err)
-	}
+	must.OK(j.t, err)
 	source := string(raw)
 	if variant != nil {
 		// A variant edits the shipped text; one that finds nothing to edit
@@ -208,13 +201,9 @@ func (j *joinE2E) example(variant func(string) string) *orkstackv1.Orkflow {
 func (j *joinE2E) startWith(runID string, wf *orkstackv1.Orkflow, input map[string]any, plan engine.RunPlan) {
 	j.t.Helper()
 	data, err := structpb.NewStruct(input)
-	if err != nil {
-		j.t.Fatal(err)
-	}
+	must.OK(j.t, err)
 	starter := engine.NewTemporalStarterWithOrkerQueue(j.temporal, j.runQueue, j.orkerQueue)
-	if err := starter.StartRun(j.ctx, runID, wf, &orkstackv1.Payload{Data: data}, plan); err != nil {
-		j.t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(j.t, starter.StartRun(j.ctx, runID, wf, &orkstackv1.Payload{Data: data}, plan), "StartRun")
 }
 
 func (j *joinE2E) startRun(runID string, wf *orkstackv1.Orkflow, input map[string]any) {
@@ -264,9 +253,7 @@ func (j *joinE2E) eventMessage(runID, taskID string, status orkstackv1.Status) s
 func (j *joinE2E) attemptsOf(runID, taskID string) []*orkstackv1.TaskAttempt {
 	j.t.Helper()
 	records, err := j.attempts.ListAttempts(j.ctx, runID, taskID, artifacts.NoItem)
-	if err != nil {
-		j.t.Fatalf("list %s's attempts: %v", taskID, err)
-	}
+	must.OKf(j.t, err, "list %s's attempts", taskID)
 	return records
 }
 
@@ -298,7 +285,7 @@ func runLine(run *orkstackv1.Run, ids ...string) string {
 	var parts []string
 	for _, id := range ids {
 		parts = append(parts, fmt.Sprintf("%s=%s", id,
-			strings.TrimPrefix(taskRunNamed(run, id).GetStatus().String(), "STATUS_")))
+			enumname.Of(taskRunNamed(run, id).GetStatus())))
 	}
 	return strings.Join(parts, " ")
 }
@@ -337,9 +324,7 @@ func TestIntegration_JoinRejoinsAfterTheBranchThatRan(t *testing.T) {
 		value, _ := structpb.NewStruct(map[string]any{"value": route})
 		plan, err := engine.Simulate(wf, &orkstackv1.Payload{Data: inputPayload},
 			map[string]*orkstackv1.Payload{"decide": {Data: value}}, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, p := range plan.GetTasks() {
 			got := taskRunNamed(run, p.GetTaskId()).GetStatus()
 			want := map[orkstackv1.PlanOutcome]orkstackv1.Status{
@@ -463,12 +448,12 @@ func TestIntegration_JoinFailureHandlerRunsAndTheRunStillFails(t *testing.T) {
 	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED || last.GetSequence() < lastHandlerSeq {
 		t.Errorf("last event = %v #%d, last handler event #%d", last.GetType(), last.GetSequence(), lastHandlerSeq)
 	}
-	runJSON, _ := json.Marshal(map[string]any{
+	runJSON, _ := stablejson.Marshal(map[string]any{
 		"deploy":   map[string]any{"status": deploy.GetStatus().String()},
 		"rollback": map[string]any{"status": taskRunNamed(run, "rollback").GetStatus().String(), "join": taskRunNamed(run, "rollback").GetJoin().String()},
 		"error":    run.GetError(),
 	})
-	noteJSON, _ := json.Marshal(notes[0])
+	noteJSON, _ := stablejson.Marshal(notes[0])
 	proof.Write(t, "engine", "join-I3.txt", []byte(fmt.Sprintf("run=%s\n%s\n%s\nfailing-note=%s\nrollback-stdout:\n%s\nnotify-stdout:\n%s\n",
 		runID, runLine(run, allTasks...), runJSON, noteJSON, rollbackOut, notifyOut)))
 }
@@ -482,18 +467,14 @@ func TestIntegration_JoinFailingShapeOnTheWire(t *testing.T) {
 	j.awaitEvent(runID, 5*time.Minute, "rollback's TASK_STARTED", taskEvent("rollback", orkstackv1.EventType_EVENT_TYPE_TASK_STARTED))
 	replica := engine.NewTemporalRunReader(j.temporal).WithSnapshotStore(j.snapshots)
 	failing, err := replica.GetRun(j.ctx, runID)
-	if err != nil {
-		t.Fatalf("second replica GetRun: %v", err)
-	}
+	must.OKf(t, err, "second replica GetRun")
 	if failing.GetStatus() != orkstackv1.Status_STATUS_RUNNING || failing.GetError().GetDetails() != `task "deploy"` ||
 		failing.GetFinishedAt() != nil {
 		t.Fatalf("failing run on the wire = %v / %v", failing.GetStatus(), failing.GetError())
 	}
 	final := j.wait(runID)
 	ended, err := replica.GetRun(j.ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if ended.GetStatus() != orkstackv1.Status_STATUS_FAILED || ended.GetError().GetMessage() != failing.GetError().GetMessage() {
 		t.Fatalf("ended = %v / %v, failing error %v", ended.GetStatus(), ended.GetError(), failing.GetError())
 	}
@@ -546,9 +527,7 @@ func TestIntegration_JoinOperatorCancelStartsNoHandler(t *testing.T) {
 	runID := joinRunID("i6")
 	j.startRun(runID, j.example(nil), map[string]any{"route": "canary", "smoke_seconds": 120})
 	j.awaitEvent(runID, 5*time.Minute, "smoke's TASK_STARTED", taskEvent("smoke", orkstackv1.EventType_EVENT_TYPE_TASK_STARTED))
-	if err := j.temporal.CancelWorkflow(j.ctx, runID, ""); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, j.temporal.CancelWorkflow(j.ctx, runID, ""))
 	run := j.wait(runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
 		t.Fatalf("run = %v", run.GetStatus())
@@ -591,9 +570,7 @@ func TestIntegration_JoinCancelDuringHandlersKeepsTheRunFailed(t *testing.T) {
 	// event alone can beat the Orker to the task, which then never starts
 	// and leaves no attempt record.
 	j.awaitLiveAttempt(runID, "rollback", 1, 3*time.Minute)
-	if err := j.temporal.CancelWorkflow(j.ctx, runID, ""); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, j.temporal.CancelWorkflow(j.ctx, runID, ""))
 	run := j.wait(runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || run.GetError().GetDetails() != `task "deploy"` {
 		t.Fatalf("run = %v / %v, want FAILED with deploy's error", run.GetStatus(), run.GetError())
@@ -622,22 +599,16 @@ func TestIntegration_JoinTerminatedFailingRunReadsCanceledWithItsError(t *testin
 	j.startRun(runID, j.example(nil), map[string]any{"route": "canary", "fail_deploy": true, "smoke_seconds": 1, "rollback_seconds": 120})
 	j.awaitEvent(runID, 5*time.Minute, "rollback's TASK_STARTED", taskEvent("rollback", orkstackv1.EventType_EVENT_TYPE_TASK_STARTED))
 	reason := "operator terminated the failing run (I8)"
-	if err := j.temporal.TerminateWorkflow(j.ctx, runID, "", reason); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, j.temporal.TerminateWorkflow(j.ctx, runID, "", reason))
 	replica := engine.NewTemporalRunReader(j.temporal).WithSnapshotStore(j.snapshots)
 	read, err := replica.GetRun(j.ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if read.GetStatus() != orkstackv1.Status_STATUS_CANCELED || read.GetFinishedAt() == nil ||
 		read.GetError().GetDetails() != `task "deploy"` || read.GetError().GetCode() != "RUN_FAILED" {
 		t.Fatalf("terminated failing run = %v / %v", read.GetStatus(), read.GetError())
 	}
 	listed, err := replica.ListRuns(j.ctx, engine.RunQuery{Status: orkstackv1.Status_STATUS_CANCELED})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	found := false
 	for _, r := range listed {
 		found = found || r.GetId() == runID
@@ -646,9 +617,7 @@ func TestIntegration_JoinTerminatedFailingRunReadsCanceledWithItsError(t *testin
 		t.Errorf("ListRuns(CANCELED) does not list %s", runID)
 	}
 	events, err := replica.Events(j.ctx, runID, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	last := events[len(events)-1]
 	if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED || !strings.Contains(last.GetMessage(), reason) {
 		t.Fatalf("last event = %v %q", last.GetType(), last.GetMessage())
@@ -905,9 +874,7 @@ tasks:
 	plan.Children = map[string]*engine.ChildRunPlan{}
 	for id, wf := range map[string]*orkstackv1.Orkflow{"release": child, "compensate": block} {
 		cp, err := engine.NewChildRunPlan(wf, j.cachePlan(false), false, false)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		cp.RunID = joinRunID("i11-" + id)
 		plan.Children[id] = cp
 	}
@@ -934,9 +901,7 @@ tasks:
 
 func signalAwait(t *testing.T, j *joinE2E, runID string, sig *orkstackv1.AwaitSignal) {
 	t.Helper()
-	if err := j.temporal.SignalWorkflow(j.ctx, runID, "", engine.ResolveAwaitSignal, sig); err != nil {
-		t.Fatalf("signal %s: %v", runID, err)
-	}
+	must.OKf(t, j.temporal.SignalWorkflow(j.ctx, runID, "", engine.ResolveAwaitSignal, sig), "signal %s", runID)
 }
 
 // Awaited.
@@ -1215,9 +1180,7 @@ func TestIntegration_JoinSubmitRefusesAPoolWhoseOrkerPredatesJoins(t *testing.T)
 	j := startJoinE2E(t)
 	pool := fmt.Sprintf("old-%d", time.Now().UnixNano()%1_000_000)
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	startStandInOrker(t, j.temporal, queue, &orkstackv1.DescribeOrkerResult{
 		OrkerId: "old-orker", BuildId: "2026.09.01", Pool: pool, EachSupported: true, CacheSupported: true})
 	starter := engine.NewTemporalStarterWithOrkerQueue(j.temporal, j.runQueue, j.orkerQueue)
@@ -1292,26 +1255,20 @@ func TestIntegration_RecordJoinRunHistory(t *testing.T) {
 		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(j.snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orkerWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 	setCurrentVersion(t, j.ctx, temporalClient, deployment, runQueue, orkerQueue)
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, runQueue, orkerQueue)
 	plan := rawPlan(orkerQueue)
 	root, err := artifacts.CommitRoot(j.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan.CommitRoot = root
 	plan.Limits = engine.DefaultLimits()
 	plan.TransferBudgetSeconds = 300
 	input, _ := structpb.NewStruct(map[string]any{"route": "full", "fail_deploy": true, "smoke_seconds": 120})
 	runID := fmt.Sprintf("ork-join-fixture-%d", time.Now().UnixNano())
-	if err := starter.StartRun(j.ctx, runID, j.example(nil), &orkstackv1.Payload{Data: input}, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(j.ctx, runID, j.example(nil), &orkstackv1.Payload{Data: input}, plan), "StartRun")
 	if err := temporalClient.GetWorkflow(j.ctx, runID, "").Get(j.ctx, nil); err == nil {
 		t.Fatalf("fixture run %s succeeded; the join fixture is a failing run", runID)
 	}
@@ -1319,18 +1276,12 @@ func TestIntegration_RecordJoinRunHistory(t *testing.T) {
 	iter := temporalClient.GetWorkflowHistory(j.ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history: %v", err)
-		}
+		must.OKf(t, err, "read history")
 		recorded.Events = append(recorded.Events, event)
 	}
 	encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
-	if err != nil {
-		t.Fatalf("encode history: %v", err)
-	}
-	if err := os.WriteFile(joinHistory, append(encoded, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", joinHistory, err)
-	}
+	must.OKf(t, err, "encode history")
+	must.OKf(t, os.WriteFile(joinHistory, append(encoded, '\n'), 0o644), "write %s", joinHistory)
 	t.Logf("recorded %d history events for run %s into %s (deployment version %s)",
 		len(recorded.Events), runID, joinHistory, deployment)
 }

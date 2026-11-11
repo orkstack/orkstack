@@ -7,6 +7,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestApplyInputDefaults_MergesDefaultsWithoutChangingCallerValues(t *testing.T) {
@@ -15,9 +17,7 @@ func TestApplyInputDefaults_MergesDefaultsWithoutChangingCallerValues(t *testing
 		"count":    map[string]any{"type": "number", "default": float64(3)},
 		"optional": map[string]any{"type": "string"},
 	})
-	if err != nil {
-		t.Fatalf("declarations: %v", err)
-	}
+	must.OKf(t, err, "declarations")
 	wf := &orkstackv1.Orkflow{Inputs: declarations}
 
 	t.Run("omitted values receive defaults", func(t *testing.T) {
@@ -39,9 +39,7 @@ func TestApplyInputDefaults_MergesDefaultsWithoutChangingCallerValues(t *testing
 			"count": float64(9),
 			"extra": "preserve me",
 		})
-		if err != nil {
-			t.Fatalf("input: %v", err)
-		}
+		must.OKf(t, err, "input")
 		input := &orkstackv1.Payload{Data: data}
 		got := engine.ApplyInputDefaults(wf, input)
 		fields := got.GetData().GetFields()

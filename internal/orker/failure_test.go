@@ -9,6 +9,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // allReasonCodes is every code the §8.2 table defines. It is written out
@@ -176,9 +178,7 @@ func TestFailure_TemporalErrorCarriesTheCategoryAsItsType(t *testing.T) {
 	// **ActivityFailureDetail: in-process the SDK assigns the stored pointer
 	// directly, and across the wire the proto converter decodes into it.
 	var detail *orkstackv1.ActivityFailureDetail
-	if err := applicationErr.Details(&detail); err != nil {
-		t.Fatalf("decode failure detail: %v", err)
-	}
+	must.OKf(t, applicationErr.Details(&detail), "decode failure detail")
 	if detail.GetReasonCode() != ReasonValuesMissing {
 		t.Errorf("detail reason = %q, want %q", detail.GetReasonCode(), ReasonValuesMissing)
 	}
@@ -224,9 +224,7 @@ func TestFailure_TemporalErrorSaysItsSentenceOnce(t *testing.T) {
 				t.Fatalf("the engine reads a %T, want *temporal.ApplicationError", got)
 			}
 			var detail *orkstackv1.ActivityFailureDetail
-			if err := applicationErr.Details(&detail); err != nil {
-				t.Fatalf("decode failure detail: %v", err)
-			}
+			must.OKf(t, applicationErr.Details(&detail), "decode failure detail")
 			if detail.GetReasonCode() != tc.reason || detail.GetExitCode() != 3 {
 				t.Errorf("detail = %v, want reason %s and exit code 3", detail, tc.reason)
 			}

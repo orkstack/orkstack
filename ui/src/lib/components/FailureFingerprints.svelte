@@ -141,7 +141,7 @@
 	const columns = $derived(result?.groupBy.length ? result.groupBy : groupBy);
 	const footer = $derived(result ? fingerprintFooter(result) : []);
 	const cli = $derived(
-		`orkctl --namespace ${shellQuote(namespaceLabel(namespace))} stats failures --since ${shellQuote(window === 'custom' && sinceParam ? sinceParam : window)} --group-by ${groupBy.map(groupBySpelling).join(',')}`
+		`orkctl -n ${shellQuote(namespaceLabel(namespace))} stats failures -s ${shellQuote(window === 'custom' && sinceParam ? sinceParam : window)} -g ${groupBy.map(groupBySpelling).join(',')}`
 	);
 
 	// The page's one terminal icon lists it, carrying this panel's own choices.
@@ -226,7 +226,7 @@
 							</thead>
 							<tbody>
 								{#each result.groups as group, i (i)}
-									{@const href = rowHref(group.orkflowName)}
+									{@const href = rowHref(group.orkflowNamespace ? '' : group.orkflowName)}
 									<tr
 										class="transition-colors hover:bg-hover"
 										data-testid="fingerprint-row-{i}"

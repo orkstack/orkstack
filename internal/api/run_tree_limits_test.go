@@ -1,12 +1,15 @@
 package api_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestSubmitRun_ThePlanPinsTheLongestRetryWait: a run starts with the longest
@@ -18,12 +21,8 @@ func TestSubmitRun_ThePlanPinsTheLongestRetryWait(t *testing.T) {
 	orkflows := engine.NewMemoryOrkflowStore()
 	starter := &fakeStarter{}
 	svc := api.NewService(api.Config{Orkflows: orkflows, Starter: starter})
-	if err := applyDoc(t, svc, retriedDoc("{maximum_attempts: 3}")); err != nil {
-		t.Fatal(err)
-	}
-	if err := submitName(svc, "retried"); err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	must.OK(t, applyDoc(t, svc, retriedDoc("{maximum_attempts: 3}")))
+	must.OKf(t, submitName(svc, "retried"), "submit")
 	if len(starter.plans) != 1 {
 		t.Fatalf("%d runs started, want 1", len(starter.plans))
 	}
@@ -35,7 +34,7 @@ func TestSubmitRun_ThePlanPinsTheLongestRetryWait(t *testing.T) {
 
 	// The plan travels as JSON in the workflow's start payload, so the number
 	// must be on the wire under the name recorded histories carry it by.
-	encoded, err := json.Marshal(plan)
+	encoded, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}

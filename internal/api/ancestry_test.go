@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // deepChainLength is a default-join chain of plain tasks rule 44 refuses:
@@ -44,9 +46,7 @@ func TestAncestryRule_RefusedAtValidateApplyAndInlinePlan(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: orkflows, OrkflowMaxTasks: 2000})
 	doc := deepChainDoc("deep", deepChainLength, true)
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: doc}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if issues := resp.Msg.GetIssues(); len(issues) != 1 || !strings.Contains(issues[0].GetMessage(), "required ancestors") ||
 		!strings.HasPrefix(issues[0].GetField(), "tasks[") {
 		t.Fatalf("validate issues = %v, want rule 44's, anchored at a task's needs", issues)
@@ -72,9 +72,7 @@ func TestSubmit_StoredVersionIsNotRecheckedForAncestry(t *testing.T) {
 	// The chain the rule refuses, compiled without its needs and given them
 	// back, as a definition stored by a release without rule 44.
 	wf, err := dsl.Compile([]byte(deepChainDoc("deep", deepChainLength, false)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for i, task := range wf.GetTasks() {
 		if i > 0 {
 			task.Needs = []string{fmt.Sprintf("c%d", i-1)}
@@ -86,9 +84,7 @@ func TestSubmit_StoredVersionIsNotRecheckedForAncestry(t *testing.T) {
 	wf.SourceYaml = deepChainDoc("deep", deepChainLength, true)
 	wf.Namespace = "default"
 	digest, err := dsl.DefinitionDigest(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	wf.DefinitionDigest = digest
 	orkflows := engine.NewMemoryOrkflowStore()
 	if _, _, err := orkflows.Put(context.Background(), wf, artifacts.NoHeadExpectation()); err != nil {

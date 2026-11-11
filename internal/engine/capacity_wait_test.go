@@ -10,6 +10,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const capacityGiB = int64(1) << 30
@@ -31,9 +33,7 @@ func sizedOrker(id, pool string, capCPU float64, capMem int64, resCPU float64, r
 func capacityWaitsOf(t *testing.T, fleet engine.FleetReader, pools ...string) (map[string]*orkstackv1.CapacityWait, int) {
 	t.Helper()
 	orkers, err := engine.ReadFleet(context.Background(), fleet)
-	if err != nil {
-		t.Fatalf("ReadFleet: %v", err)
-	}
+	must.OKf(t, err, "ReadFleet")
 	return engine.CapacityWaitsOf(orkers, pools)
 }
 
@@ -231,9 +231,7 @@ func TestStoreOutageWaits_OnlyWhenNoOrkerOfThePoolTakesNewTasks(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			orkers, err := engine.ReadFleet(context.Background(), tc.fleet)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			wait := engine.StoreOutageWaitsOf(orkers, []string{"gpu"})["gpu"]
 			if wait.GetOrkers() != tc.wantOrkers {
 				t.Fatalf("wait = %v, want %d Orkers", wait, tc.wantOrkers)

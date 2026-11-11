@@ -13,6 +13,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // statusRuntime is retryingRuntime reporting one exit status.
@@ -98,9 +100,7 @@ func TestDispatcher_TellsAContainerStoppedFromOutsideFromOneThatExited(t *testin
 			dispatcher.Commits = commits
 			in := baseExportInput("stopped")
 			key, err := artifacts.CommitKey("default", in.GetRunId(), in.GetTaskId())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			in.CommitUri = "mem://commits/" + key
 
 			_, err = dispatcher.Execute(context.Background(), in)
@@ -153,9 +153,7 @@ func startAndWait(t *testing.T, fake *countingDocker, cli string, settle time.Du
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var stdout, stderr bytes.Buffer
-	if err := runtime.Start(ctx, "cid-0123", &stdout, &stderr); err != nil {
-		t.Fatalf("Start: %v", err)
-	}
+	must.OKf(t, runtime.Start(ctx, "cid-0123", &stdout, &stderr), "Start")
 	return runtime.Wait(ctx, "cid-0123")
 }
 
@@ -217,9 +215,7 @@ func TestDockerRuntime_Wait_ReadsWhatTheEngineSaidHappened(t *testing.T) {
 				settle = 200 * time.Millisecond
 			}
 			status, err := startAndWait(t, fake, CLIDocker, settle)
-			if err != nil {
-				t.Fatalf("Wait: %v", err)
-			}
+			must.OKf(t, err, "Wait")
 			if status.StopCauseUnrecorded {
 				t.Errorf("a stream that said too little reads as a runtime that keeps no record")
 			}
@@ -266,9 +262,7 @@ func TestDockerRuntime_Wait_OnThePodmanCLIAsksTheEngineWhetherItWasStopped(t *te
 				fake.set(tt.flag, "")
 			}
 			status, err := startAndWait(t, fake, tt.cli, 0)
-			if err != nil {
-				t.Fatalf("Wait: %v", err)
-			}
+			must.OKf(t, err, "Wait")
 			if status.StoppedFromOutside != tt.wantStopped || status.StopCauseUnknown != tt.wantCauseUnknown {
 				t.Errorf("stopped = %t, cause unknown = %t; want %t, %t",
 					status.StoppedFromOutside, status.StopCauseUnknown, tt.wantStopped, tt.wantCauseUnknown)
@@ -313,9 +307,7 @@ func TestDockerRuntime_Wait_TheDockerCLIOnPodmanKeepsNoRecordOfAStop(t *testing.
 				fake.set(flag, "")
 			}
 			status, err := startAndWait(t, fake, CLIDocker, 0)
-			if err != nil {
-				t.Fatalf("Wait: %v", err)
-			}
+			must.OKf(t, err, "Wait")
 			if status.StoppedFromOutside != tt.wantStopped || status.StopCauseUnknown != tt.wantCauseUnknown {
 				t.Errorf("stopped = %t, cause unknown = %t; want %t, %t",
 					status.StoppedFromOutside, status.StopCauseUnknown, tt.wantStopped, tt.wantCauseUnknown)
@@ -342,9 +334,7 @@ func TestDockerRuntime_Wait_HearsAnEngineWhoseClockDiffers(t *testing.T) {
 				fake.set("daemonskew", skew)
 				fake.set("events", "start \nkill 15\nstop \ndie \n")
 				status, err := startAndWait(t, fake, cli, 300*time.Millisecond)
-				if err != nil {
-					t.Fatalf("Wait: %v", err)
-				}
+				must.OKf(t, err, "Wait")
 				if !status.StoppedFromOutside || status.StopCauseUnknown {
 					t.Errorf("stopped = %t, cause unknown = %t with the engine's clock %ss from the Orker's; want a stop heard",
 						status.StoppedFromOutside, status.StopCauseUnknown, skew)
@@ -369,9 +359,7 @@ func TestDockerRuntime_Wait_AStreamWithNoAnchorObservesNothing(t *testing.T) {
 			set(fake)
 			fake.set("events", "start \nkill 15\nstop \ndie \n")
 			status, err := startAndWait(t, fake, CLIDocker, 200*time.Millisecond)
-			if err != nil {
-				t.Fatalf("Wait: %v", err)
-			}
+			must.OKf(t, err, "Wait")
 			if status.StoppedFromOutside || !status.StopCauseUnknown {
 				t.Errorf("stopped = %t, cause unknown = %t, want nothing observed", status.StoppedFromOutside, status.StopCauseUnknown)
 			}
@@ -448,12 +436,8 @@ func TestDockerRuntime_TheStreamEndsWithTheContainer(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var stdout, stderr bytes.Buffer
-		if err := runtime.Start(ctx, "cid-0123", &stdout, &stderr); err != nil {
-			t.Fatalf("Start: %v", err)
-		}
-		if err := runtime.Remove(ctx, "cid-0123"); err != nil {
-			t.Fatalf("Remove: %v", err)
-		}
+		must.OKf(t, runtime.Start(ctx, "cid-0123", &stdout, &stderr), "Start")
+		must.OKf(t, runtime.Remove(ctx, "cid-0123"), "Remove")
 		awaitGone(t, fake, "eventspid")
 	})
 }
@@ -469,9 +453,7 @@ func TestDispatcher_AStoppedAttemptsRecordCarriesTheReason(t *testing.T) {
 		t.Fatal("Execute succeeded")
 	}
 	records, err := attempts.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(records) != 1 {
 		t.Fatalf("records = %+v", records)
 	}

@@ -9,6 +9,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // G1: LoadRunBody is the archive body byte for byte, the raw half of Load.
@@ -18,17 +20,11 @@ func TestRunArchiver_LoadRunBodyIsTheStoredJSONL(t *testing.T) {
 	created := at(t, "2026-08-10T10:00:00Z")
 	run := sampleRun(t, "ork-body-1", orkstackv1.Status_STATUS_SUCCEEDED, created)
 	events := sampleEvents(t, "ork-body-1", created)
-	if err := archiver.Archive(ctx, run, events); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
+	must.OKf(t, archiver.Archive(ctx, run, events), "Archive")
 	want, err := engine.MarshalRunArchive(run, events)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	body, err := archiver.LoadRunBody(ctx, "ork-body-1")
-	if err != nil {
-		t.Fatalf("LoadRunBody: %v", err)
-	}
+	must.OKf(t, err, "LoadRunBody")
 	if !bytes.Equal(body, want) {
 		t.Fatalf("LoadRunBody is not MarshalRunArchive(run, events):\n got %q\nwant %q", body, want)
 	}

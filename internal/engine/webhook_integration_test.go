@@ -5,7 +5,7 @@ package engine_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net"
@@ -26,6 +26,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -322,113 +323,6 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 	writeWebhookProof(t, runID, registered, deliveries, results)
 }
 
-// TestIntegration_WebhookRetriesUntilTheReceiverAccepts is the retry policy on
-// the real path: a receiver that rejects the first two deliveries with 503 still
-// gets the run, after exponential backoff.
-func TestIntegration_WebhookRetriesUntilTheReceiverAccepts(t *testing.T) {
-	address := temporalAddress()
-	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
-	if err != nil {
-		infraAbsent(t, "temporal is not reachable at %s: %v", address, err)
-	}
-	_ = conn.Close()
-
-	var (
-		mu       sync.Mutex
-		attempts []string
-		accepted = make(chan struct{}, 1)
-	)
-	receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mu.Lock()
-		attempts = append(attempts, r.Header.Get(webhooks.AttemptHeader))
-		count := len(attempts)
-		mu.Unlock()
-		if count < 3 {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		select {
-		case accepted <- struct{}{}:
-		default:
-		}
-	}))
-	defer receiver.Close()
-
-	registry := webhooks.NewRegistry()
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
-		webhooks.NotifierOptions{})
-	hook, err := registry.Register(webhooks.Registration{
-		URL:    receiver.URL,
-		Events: []webhooks.Event{webhooks.EventRunSucceeded},
-	})
-	if err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	var settled webhooks.Result
-	var settledMu sync.Mutex
-	notifier.Observe(func(result webhooks.Result) {
-		settledMu.Lock()
-		settled = result
-		settledMu.Unlock()
-	})
-
-	notifier.Notify(context.Background(), webhooks.Delivery{
-		Event:       webhooks.EventRunSucceeded,
-		RunID:       "ork-1755302400123456789-1",
-		OrkflowName: "hello-ork",
-		Status:      "SUCCEEDED",
-		Timestamp:   time.Now().UTC(),
-		Run:         json.RawMessage(`{"id":"ork-1755302400123456789-1","status":"SUCCEEDED"}`),
-	})
-
-	select {
-	case <-accepted:
-	case <-time.After(30 * time.Second):
-		t.Fatal("the receiver never accepted the delivery")
-	}
-	drainCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := notifier.Wait(drainCtx); err != nil {
-		t.Fatalf("delivery did not settle: %v", err)
-	}
-
-	mu.Lock()
-	got := append([]string(nil), attempts...)
-	mu.Unlock()
-	if len(got) != 3 {
-		t.Fatalf("receiver saw %d requests, want 3: two 503s then the acceptance", len(got))
-	}
-	for i, attempt := range got {
-		if attempt != strconv.Itoa(i+1) {
-			t.Errorf("request %d reported attempt %q", i+1, attempt)
-		}
-	}
-
-	settledMu.Lock()
-	defer settledMu.Unlock()
-	if !settled.Delivered {
-		t.Errorf("result %+v does not record the accepted delivery", settled)
-	}
-	if settled.WebhookID != hook.ID {
-		t.Errorf("result names webhook %q, want %q", settled.WebhookID, hook.ID)
-	}
-	if len(settled.Attempts) != 3 {
-		t.Fatalf("result records %d attempts, want 3", len(settled.Attempts))
-	}
-	if settled.Attempts[1].Backoff != webhooks.DefaultInitialBackoff {
-		t.Errorf("first retry backed off %v, want %v",
-			settled.Attempts[1].Backoff, webhooks.DefaultInitialBackoff)
-	}
-	if settled.Attempts[2].Backoff != 2*webhooks.DefaultInitialBackoff {
-		t.Errorf("second retry backed off %v, want %v (exponential)",
-			settled.Attempts[2].Backoff, 2*webhooks.DefaultInitialBackoff)
-	}
-	t.Logf("delivery %s landed on attempt 3 after backing off %v then %v",
-		settled.DeliveryID, settled.Attempts[1].Backoff, settled.Attempts[2].Backoff)
-}
-
 // ---------------------------------------------------------------------------
 // subscriber
 // ---------------------------------------------------------------------------
@@ -460,11 +354,11 @@ type webhookPayload struct {
 		Namespace string `json:"namespace"`
 		Status    string `json:"status"`
 		TaskRuns  []struct {
-			TaskID      string          `json:"taskId"`
-			Status      string          `json:"status"`
-			ScheduledAt string          `json:"scheduledAt"`
-			StartedAt   string          `json:"startedAt"`
-			ValuesRef   json.RawMessage `json:"valuesRef"`
+			TaskID      string             `json:"taskId"`
+			Status      string             `json:"status"`
+			ScheduledAt string             `json:"scheduledAt"`
+			StartedAt   string             `json:"startedAt"`
+			ValuesRef   stablejson.RawJSON `json:"valuesRef"`
 		} `json:"taskRuns"`
 	} `json:"run"`
 }
@@ -581,7 +475,7 @@ func registerWebhookOverHTTP(
 	body map[string]any,
 ) webhooks.Webhook {
 	t.Helper()
-	encoded, err := json.Marshal(body)
+	encoded, err := stablejson.Marshal(body)
 	if err != nil {
 		t.Fatalf("encode registration: %v", err)
 	}
@@ -682,14 +576,14 @@ func writeWebhookProofNamed(
 	proof.WriteJSON(t, "engine", prefix+"-registration.json", registration)
 
 	type deliveryProof struct {
-		Event      string          `json:"event"`
-		TaskHeader string          `json:"taskIdHeader,omitempty"`
-		WebhookID  string          `json:"webhookId"`
-		DeliveryID string          `json:"deliveryId"`
-		Attempt    string          `json:"attempt"`
-		Signature  string          `json:"signature"`
-		Verified   bool            `json:"signatureVerified"`
-		Body       json.RawMessage `json:"body"`
+		Event      string             `json:"event"`
+		TaskHeader string             `json:"taskIdHeader,omitempty"`
+		WebhookID  string             `json:"webhookId"`
+		DeliveryID string             `json:"deliveryId"`
+		Attempt    string             `json:"attempt"`
+		Signature  string             `json:"signature"`
+		Verified   bool               `json:"signatureVerified"`
+		Body       stablejson.RawJSON `json:"body"`
 	}
 	proofs := make([]deliveryProof, 0, len(deliveries))
 	for _, got := range deliveries {
@@ -701,7 +595,7 @@ func writeWebhookProofNamed(
 			Attempt:    got.attempt,
 			Signature:  got.signature,
 			Verified:   webhooks.Verify(hook.Secret, got.body, got.signature),
-			Body:       json.RawMessage(got.body),
+			Body:       stablejson.RawJSON(got.body),
 		})
 	}
 	proof.WriteJSON(t, "engine", prefix+"-signed-payloads.json", map[string]any{

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // stoppedGates is what scripts/proof.sh records when the integration gate
@@ -107,9 +109,7 @@ func TestMerge_AProofStoppedBeforeItsPlanStillGetsAFailingVerdict(t *testing.T) 
 		t.Fatalf("exit %d, want 1", code)
 	}
 	var r proofRecord
-	if err := readJSON(filepath.Join(f.out, "proof.json"), &r); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(f.out, "proof.json"), &r))
 	if r.Result != "fail" || r.MergeEligible || r.Tier != tierFull || r.Tree != "tree1" {
 		t.Fatalf("record = result %s eligible %v tier %s tree %s", r.Result, r.MergeEligible, r.Tier, r.Tree)
 	}
@@ -137,37 +137,35 @@ func TestMerge_AProofStoppedBeforeItsPlanStillGetsAFailingVerdict(t *testing.T) 
 
 // Gates the proof never started have no ledger, and the record does not add a
 // "ledger is incomplete" reason for them: the gate itself is the reason.
-func TestRecord_ANotStartedGateIsRecordedWithItsReasonAndNeedsNoLedger(t *testing.T) {
+func TestRecord_ANotStartedGateIsRecordedWithItsReason(t *testing.T) {
 	dir := t.TempDir()
+	out := filepath.Join(dir, "parts", "local-a1")
 	tsv := "unit\tpass\t3\tunit.log\tproofrun unit\n" +
 		"integration\tnot-started\t0\t-\tnot started: lint failed\n" +
 		"ui-e2e\tnot-started\t0\t-\tnot started: lint failed\n"
-	if err := os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte(tsv), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSON(filepath.Join(dir, "unit-tests.json"), unitLedger()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(dir, "gates.tsv"), []byte(tsv), 0o644))
+	must.OK(t, writeJSON(filepath.Join(dir, "unit-tests.json"), unitLedger()))
 	quiet(t)
 	prev := os.Stdout
 	devnull, _ := os.Open(os.DevNull)
 	os.Stdout = devnull
-	code := cmdRecord([]string{"-dir", dir, "-tier", "feature", "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end"})
+	code := cmdRecord([]string{"-dir", dir, "-tier", tierFull, "-tree-start", "t", "-tree-end", "t", "-clean-start", "-clean-end", "-out-dir", out, "-status", "1"})
 	os.Stdout = prev
 	if code != 1 {
-		t.Fatalf("exit %d, want 1: a gate that did not start is not a pass", code)
+		t.Fatalf("exit %d, want 1: the proof script's own failure", code)
 	}
-	var r proofRecord
-	if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
-		t.Fatal(err)
-	}
-	reasons := strings.Join(r.Ineligible, "\n")
-	if r.Result != "fail" || strings.Contains(reasons, "ledger is incomplete") {
-		t.Errorf("result %s, reasons:\n%s", r.Result, reasons)
-	}
-	for _, g := range r.Gates {
-		if g.Gate == "integration" && (g.Result != gateNotStarted || g.Command != "not started: lint failed") {
-			t.Errorf("integration gate = %+v", g)
+	var rec partRecord
+	must.OK(t, readJSON(filepath.Join(out, "part.json"), &rec))
+	found := false
+	for _, g := range rec.Gates {
+		if g.Gate == "integration" {
+			found = true
+			if g.Result != gateNotStarted || g.Command != "not started: lint failed" {
+				t.Errorf("integration gate = %+v", g)
+			}
 		}
+	}
+	if !found {
+		t.Errorf("the part lost the integration gate: %+v", rec.Gates)
 	}
 }

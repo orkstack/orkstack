@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/orkstack/orkstack/internal/dsl"
 )
@@ -70,7 +70,7 @@ func TestCompile_RefusesAnUnsupportedAPIVersion(t *testing.T) {
 func TestCompile_RefusesAnotherKind(t *testing.T) {
 	for _, tc := range []struct{ source, field, want string }{
 		{"apiVersion: orkstack/v1\nkind: Automation\n" + okBody, "kind",
-			`kind: Automation is an automation document, not an Orkflow: apply it with orkctl apply or Admin → Automation (docs/AUTOMATION.md); an Orkflow says kind: Orkflow`},
+			`kind: Automation is an automation document, not an Orkflow: apply it with orkctl automation apply or Admin → Automation (docs/AUTOMATION.md); an Orkflow says kind: Orkflow`},
 		{"apiVersion: orkstack/v1\nkind: ActivityInterface\n" + okBody, "kind",
 			`kind: ActivityInterface is an activity interface, not an Orkflow: pack it into an image's label with orkctl activity interface pack (docs/ACTIVITY_IMAGES.md); an Orkflow says kind: Orkflow`},
 		{"apiVersion: orkstack/v1\nkind: Workflow\n" + okBody, "kind",

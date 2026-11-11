@@ -301,19 +301,19 @@ test('the run reads between its graph and its timeline, and the task keeps what 
 	await shots(page, 'run-values-and-panel');
 });
 
-test('a row says a word for why it ended, and its panel says the whole reason', async ({ page }) => {
+test('a row says its id, its mark, its bar and its status, and its panel says the rest', async ({ page }) => {
 	await open(page, finished);
 	const row = page.getByTestId('task-notify-owner');
-	await expect(page.getByTestId('task-notify-owner-reason-word')).toHaveText('condition false');
-	await expect(row).not.toContainText('evaluated false');
-	// One line of words: the condition's expression does not make the row tall.
-	expect((await row.boundingBox())!.height).toBeLessThan(80);
-	// An unpinned row names no Orker; its panel does.
-	await expect(page.getByTestId('task-step-5-orker')).toHaveCount(0);
+	// No second line: not its activity, not why it ended, not its Orker.
+	await expect(row.locator('.tsub')).toHaveCount(0);
+	await expect(row).not.toContainText('condition false');
+	await expect(row).not.toContainText('shell');
+	await expect(page.getByTestId('task-step-5')).not.toContainText('shell');
 	await selectTask(page, 'notify-owner');
 	await expect(page.getByTestId('task-panel').getByTestId('task-notify-owner-reason')).toHaveText(`task skipped: condition ${JSON.stringify(SKIP_CONDITION)} evaluated false`);
 	await selectTask(page, 'step-5');
 	await expect(page.getByTestId('task-panel').getByTestId('task-step-5-card-orker')).not.toBeEmpty();
+	await expect(page.getByTestId('task-panel').getByTestId('run-image')).toContainText('activity-shell');
 
 	// The axis keeps its marks apart however narrow the timeline is (1184 px sits
 	// just above where the aside drops under the column).
@@ -329,59 +329,166 @@ test('a row says a word for why it ended, and its panel says the whole reason', 
 			.toBe(true);
 	}
 	await page.setViewportSize({ width: 1280, height: 800 });
+	// A row is one line: the rows-chunk and row estimates (contain-intrinsic-size)
+	// are set from this height.
+	const heights = await page
+		.getByTestId('task-list')
+		.locator('.trow:not(.thead):not(.pinned)')
+		.evaluateAll((rows) => rows.filter((row) => !row.querySelector('.tsub')).map((row) => row.getBoundingClientRect().height));
+	note(`one-line row heights at 1280 px: ${[...new Set(heights.map((h) => h.toFixed(2)))].join(', ')} px over ${heights.length} rows`);
+	expect(heights.length).toBeGreaterThan(0);
+	for (const height of heights) expect(height).toBeLessThan(56);
+	// No sideways scroll on a phone.
+	await page.setViewportSize({ width: 390, height: 800 });
+	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+	await page.setViewportSize({ width: 1280, height: 800 });
 	await page.getByTestId('task-notify-owner').scrollIntoViewIfNeeded();
 	await shots(page, 'timeline-rows');
 });
 
-test('every row names its Orker once asked, and the choice is remembered', async ({ page }) => {
-	await open(page, finished);
-	await page.evaluate(() => localStorage.removeItem('orkstack.run.orkers'));
+// Every kind of task, on one run: its row keeps to its id, its mark, its bar and
+// its status, and its panel holds what the row used to say.
+const CHILD = `rows-child-${STAMP}`;
+const KINDS = `rows-${STAMP}`;
+const child =
+	[
+		'apiVersion: orkstack/v1',
+		'kind: Orkflow',
+		`name: ${CHILD}`,
+		'version: "0.1.0"',
+		'description: The child a composed task starts.',
+		'tasks:',
+		...shell('hello', [], 'echo child says hello')
+	].join('\n') + '\n';
+const kinds =
+	[
+		'apiVersion: orkstack/v1',
+		'kind: Orkflow',
+		`name: ${KINDS}`,
+		'version: "0.1.0"',
+		'description: One task of every kind.',
+		'inputs:',
+		'  parts:',
+		'    type: array',
+		'tasks:',
+		...shell('build', [], 'echo built'),
+		'  - id: nap',
+		'    sleep:',
+		'      seconds: 1',
+		'  - id: compose',
+		`    uses: orkflow:${CHILD}@0.1.0`,
+		'  - id: fan',
+		'    each:',
+		"      over: '{{ .inputs.parts }}'",
+		'      as: part',
+		'      max_items: 10',
+		'      max_parallel: 2',
+		'    uses: shell',
+		'    network: none',
+		'    with:',
+		'      op: exec',
+		'      command: [sh, -c, echo converting]',
+		'  - id: gate',
+		'    needs: [build]',
+		'    await:',
+		'      timeout_seconds: 600',
+		...shell('after', ['nap', 'compose'], 'echo after', ['    join: none_failed']),
+		...shell('boom', ['gate', 'fan', 'after'], 'exit 1'),
+		...shell('handler', ['boom'], 'echo handled', ['    join: any_failed']),
+		// Not a failure handler: a failing run never starts it.
+		...shell('then', ['boom'], 'echo never'),
+		// Nor this sleep: its panel still says how long it would have slept.
+		'  - id: rest',
+		'    needs: [boom]',
+		'    sleep:',
+		'      seconds: 30'
+	].join('\n') + '\n';
+
+test('every kind of task keeps its row to its id and status, and its panel says the rest', async ({ page }) => {
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: child });
+	await rpc('OrkflowService/ApplyOrkflow', { yaml: kinds });
+	const run = (await rpc<{ run: { id: string } }>('RunService/SubmitRun', { orkflowName: KINDS, input: { data: { parts: ['a', 'b', 'c'] } } })).run.id;
+	await open(page, run);
+
+	// Live: a task not yet started says what it waits on, on its panel only.
+	await expect(page.getByTestId('task-gate-status')).toHaveText(/Awaiting/i, { timeout: 120_000 });
+	await expect(page.getByTestId('task-boom')).not.toContainText('Waiting for');
+	await selectTask(page, 'boom');
+	await expect(page.getByTestId('task-panel').getByTestId('task-boom-waits-for')).toContainText('gate');
+	await rpc('RunService/ResolveAwait', { runId: run, taskId: 'gate', valuesJson: '{}' });
+	expect(await terminal(run)).toBe('STATUS_FAILED');
 	await page.reload();
-	await expect(page.getByTestId('task-step-5')).toBeVisible();
-	// Rows only: the panel of a selected task names its Orker either way.
-	const named = page.locator('[data-testid^="task-"][data-testid$="-orker"]:not([data-testid$="-card-orker"])');
-	// Not asked: no row says it, and a row stays as short as it was.
-	await expect(named).toHaveCount(0);
-	const before = (await page.getByTestId('task-step-5').boundingBox())!.height;
+	await expect(page.getByTestId('run-status')).toHaveText('Failed');
 
-	await page.getByTestId('run-tasks-more').click();
-	await expect(page.getByTestId('run-orkers-toggle')).toHaveText('Show Orkers');
-	await page.getByTestId('run-orkers-toggle').click();
+	// Rows: the id and the status, and nothing under them but `never started`.
+	const ids = ['build', 'nap', 'compose', 'fan', 'gate', 'after', 'boom', 'handler'];
+	for (const id of ids) {
+		await expect(page.getByTestId(`task-${id}`).locator('.tsub'), `${id} has no second line`).toHaveCount(0);
+	}
+	await expect(page.getByTestId('task-then-status-note')).toHaveText('never started');
+	// What a row shows: everything but the words only a screen reader hears.
+	const rowsText = (
+		await page
+			.getByTestId('task-list')
+			.locator('.trow')
+			.evaluateAll((rows) =>
+				rows.map((row) => {
+					const shown = row.cloneNode(true) as HTMLElement;
+					for (const sr of shown.querySelectorAll('.sr')) sr.remove();
+					return shown.textContent ?? '';
+				})
+			)
+	).join('\n');
+	for (const words of ['shell', 'awaited task', 'sleeps', 'sleeping task', 'composed task', 'fan-out', CHILD, 'child run', 'items', 'at a time', 'runs unless a need failed', 'failure handler', 'Orker']) {
+		expect(rowsText, `no row shows "${words}"`).not.toContain(words);
+	}
+	// What a screen reader hears of a row: its id, and its kind where the mark is not an activity's.
+	for (const [id, kind] of [['gate', 'awaited task'], ['nap', 'sleeping task'], ['compose', 'composed task'], ['fan', 'fan-out']]) {
+		const heard = await page.getByTestId(`task-${id}`).ariaSnapshot();
+		expect(heard, `${id} is heard by its id`).toContain(`"${id}"`);
+		expect(heard, `${id} is heard as ${kind}`).toContain(kind);
+	}
+	const build = await page.getByTestId('task-build').ariaSnapshot();
+	for (const kind of ['awaited task', 'sleeping task', 'composed task', 'fan-out']) {
+		expect(build, `an activity task is not heard as ${kind}`).not.toContain(kind);
+	}
+	await shots(page, 'kinds-rows');
 
-	// Asked: the row says what its panel says.
-	const row = page.getByTestId('task-step-5-orker');
-	await expect(row).toBeVisible();
-	await selectTask(page, 'step-5');
-	const panel = (await page.getByTestId('task-panel').getByTestId('task-step-5-card-orker').textContent())!.trim();
-	expect(panel).not.toBe('');
-	await expect(row).toContainText(panel);
-	// The row may clip a long id, so its tip holds the whole of it.
-	await expect(row).toHaveAttribute('data-tip', panel);
-	await expect(page.getByTestId('task-prepare-orker')).toContainText(panel);
-	// A fan-out's row speaks for its items, all on this one Orker here.
-	await expect(page.getByTestId('task-convert-orker')).toContainText(panel);
-	// A task that reached no Orker has nothing to say, and says nothing.
-	await expect(page.getByTestId('task-notify-owner-orker')).toHaveCount(0);
-	expect((await page.getByTestId('task-step-5').boundingBox())!.height).toBe(before);
-	await page.getByTestId('task-step-5').scrollIntoViewIfNeeded();
-	await shots(page, 'orkers-shown');
-
-	// A reader who asked keeps it across pages.
-	await page.reload();
-	await expect(page.getByTestId('task-step-5-orker')).toBeVisible();
-
-	// The phone floor: however long an id is, the page does not scroll sideways.
-	await page.setViewportSize({ width: 390, height: 800 });
-	await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-	await page.setViewportSize({ width: 1280, height: 800 });
-
-	await page.getByTestId('run-tasks-more').click();
-	await expect(page.getByTestId('run-orkers-toggle')).toHaveText('Hide Orkers');
-	await page.getByTestId('run-orkers-toggle').click();
-	await expect(named).toHaveCount(0);
-	await page.reload();
-	await expect(page.getByTestId('task-step-5')).toBeVisible();
-	await expect(named).toHaveCount(0);
+	const panel = page.getByTestId('task-panel');
+	// A container task: its image and its Orker.
+	await selectTask(page, 'build');
+	await expect(panel.getByTestId('run-image')).toContainText('activity-shell');
+	await expect(panel.getByTestId('task-build-card-orker')).not.toBeEmpty();
+	// A sleeping task: how long it slept.
+	await selectTask(page, 'nap');
+	await expect(page.getByTestId('task-nap-sleep')).toBeVisible();
+	// A sleep that never started: its length, which its state line does not say.
+	await selectTask(page, 'rest');
+	await expect(page.getByTestId('task-rest-sleep-state')).toHaveText('Canceled before it started sleeping');
+	await expect(page.getByTestId('task-rest-sleep-length')).toHaveText('30s');
+	// A composed task: the Orkflow it ran, and the child run it started.
+	await selectTask(page, 'compose');
+	await expect(page.getByTestId('task-compose-child-orkflow')).toHaveText(`${CHILD}@0.1.0`);
+	await expect(page.getByTestId('task-compose-child-link')).toHaveAttribute('href', /\/runs\/ork-/);
+	// A fan-out: its items, and how many run at a time.
+	await selectTask(page, 'fan');
+	await expect(page.getByTestId('task-fan-each-parallel')).toHaveText('2 at a time');
+	// An awaited task: how it was resolved.
+	await selectTask(page, 'gate');
+	await expect(page.getByTestId('task-gate-await-state')).toContainText('Completed');
+	// A join that is not the default, in words with the needs in its tip.
+	await selectTask(page, 'after');
+	await expect(panel.getByTestId('task-after-join')).toHaveText('runs unless a need failed');
+	await expect(panel.getByTestId('task-after-join')).toHaveAttribute('data-tip', /nap.*compose|compose.*nap/);
+	// A failure handler: its join says so.
+	await selectTask(page, 'handler');
+	await expect(panel.getByTestId('task-handler-join')).toHaveText('failure handler, any need failed');
+	await shots(page, 'kinds-panel-handler');
+	// The failed task: its panel is the failure's, with its join absent (the default).
+	await selectTask(page, 'boom');
+	await expect(page.getByTestId('task-boom-error')).toBeVisible();
+	await expect(page.getByTestId('task-boom-join')).toHaveCount(0);
+	note(`kinds ${run}: every row kept to its id and status; each panel said the rest`);
 });
 
 test('Finished is said for the run and for each task, and a live task has it before the run ends', async ({ page }) => {

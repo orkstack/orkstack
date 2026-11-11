@@ -24,11 +24,12 @@ const OrkflowUsesPrefix = "orkflow:"
 // shared constant.
 var orkflowVersionPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 
-// orkflowUsesShape is the one accepted spelling, quoted in every refusal.
-const orkflowUsesShape = "orkflow:<name>@<version>"
+// orkflowUsesShape is the accepted spelling, quoted in every refusal.
+const orkflowUsesShape = "orkflow:<name>@<version> or orkflow:<namespace>/<name>@<version>"
 
 // ComposeVersionRequiredError is `uses: orkflow:<name>` with no version.
-// Namespace is the document's own `namespace:` (empty = default), carried so
+// Namespace is where the versions are: the ref's own namespace when the author
+// wrote one, else the document's own `namespace:` (empty = default), carried so
 // internal/api can name the versions that exist; the compiler is pure and
 // cannot.
 type ComposeVersionRequiredError struct {
@@ -36,62 +37,90 @@ type ComposeVersionRequiredError struct {
 	TaskID    string
 	Name      string
 	Namespace string
+	// Qualified is true when the author wrote the namespace into the ref, so
+	// the listing the message offers names it.
+	Qualified bool
 }
 
 func (e *ComposeVersionRequiredError) Error() string {
+	ref, list := e.Name, e.Name
+	if e.Qualified {
+		ref, list = e.Namespace+"/"+e.Name, e.Name+" -n "+e.Namespace
+	}
 	sentence := fmt.Sprintf("uses: orkflow:%s needs a version — a composed task pins one immutable "+
-		"version and never follows a pointer; list them with orkctl orkflow versions %s", e.Name, e.Name)
+		"version and never follows a pointer; list them with orkctl orkflow versions %s", ref, list)
 	if e.TaskID == "" {
 		return sentence
 	}
 	return fmt.Sprintf("task %q: %s", e.TaskID, sentence)
 }
 
+// UsesRef is what a composed task's `uses:` names. Namespace is empty when the
+// author wrote none: the ref is in the composing definition's own namespace.
+type UsesRef struct {
+	Namespace string
+	Name      string
+	Version   string
+}
+
 // ParseOrkflowUses reports whether uses is a composition reference and, when
-// it is, the name and version it pins. The only accepted shape is
+// it is, what it pins. The accepted shapes are
 //
 //	orkflow:<name>@<version>
+//	orkflow:<namespace>/<name>@<version>
 //
-// with <name> a slug (checkSlug, rule 2's) and <version> a stored-version
-// string: non-empty, at most MaxSlug bytes, ^[A-Za-z0-9][A-Za-z0-9._-]*$ —
-// the rule pkg/artifacts holds a version to. A template action is refused
-// before anything else (ResolveUses rule 1's sentence). A missing
-// "@<version>" is *ComposeVersionRequiredError. ok is false, with a nil
-// error, for a `uses:` that does not begin with OrkflowUsesPrefix.
-func ParseOrkflowUses(uses string) (name, version string, ok bool, err error) {
+// with <namespace> and <name> slugs (checkSlug, rule 2's) and <version> a
+// stored-version string: non-empty, at most MaxSlug bytes,
+// ^[A-Za-z0-9][A-Za-z0-9._-]*$ — the rule pkg/artifacts holds a version to.
+// A "/" never appears in a slug, so the first one splits namespace from name.
+// A template action is refused before anything else (ResolveUses rule 1's
+// sentence). A missing "@<version>" is *ComposeVersionRequiredError. ok is
+// false, with a nil error, for a `uses:` that does not begin with
+// OrkflowUsesPrefix.
+func ParseOrkflowUses(uses string) (ref UsesRef, ok bool, err error) {
 	if !strings.HasPrefix(uses, OrkflowUsesPrefix) {
-		return "", "", false, nil
+		return UsesRef{}, false, nil
 	}
 	refuse := func(why string) error {
-		return fmt.Errorf("uses: %q is not a composition reference: %s; the only accepted shape is %s",
+		return fmt.Errorf("uses: %q is not a composition reference: %s; the only accepted shapes are %s",
 			uses, why, orkflowUsesShape)
 	}
 	if templateAction.MatchString(uses) {
-		return "", "", true, fmt.Errorf("uses: %q cannot be a template. The engine resolves `uses:` to "+
+		return UsesRef{}, true, fmt.Errorf("uses: %q cannot be a template. The engine resolves `uses:` to "+
 			"an immutable definition when the orkflow is applied, and a value that depends on run "+
 			"input is not knowable then. Compose one pinned version (%s)", uses, orkflowUsesShape)
 	}
 	rest := strings.TrimPrefix(uses, OrkflowUsesPrefix)
-	name, version, found := strings.Cut(rest, "@")
+	target, version, found := strings.Cut(rest, "@")
+	namespace, name, qualified := strings.Cut(target, "/")
+	if !qualified {
+		namespace, name = "", target
+	}
+	if qualified {
+		if namespace == "" {
+			return UsesRef{}, true, refuse("it names no namespace before the /")
+		}
+		if err := checkSlug("namespace", namespace); err != nil {
+			return UsesRef{}, true, refuse(err.Error())
+		}
+	}
 	if name == "" {
-		return "", "", true, refuse("it names no orkflow")
+		return UsesRef{}, true, refuse("it names no orkflow")
 	}
 	if err := checkSlug("orkflow name", name); err != nil {
-		return "", "", true, refuse(err.Error())
+		return UsesRef{}, true, refuse(err.Error())
 	}
-	if !found {
-		return "", "", true, &ComposeVersionRequiredError{Name: name}
+	if !found || version == "" {
+		return UsesRef{}, true, &ComposeVersionRequiredError{Name: name, Namespace: namespace, Qualified: qualified}
 	}
 	switch {
-	case version == "":
-		return "", "", true, &ComposeVersionRequiredError{Name: name}
 	case len(version) > MaxSlug:
-		return "", "", true, refuse(fmt.Sprintf("its version of %d bytes exceeds the %d-byte limit",
+		return UsesRef{}, true, refuse(fmt.Sprintf("its version of %d bytes exceeds the %d-byte limit",
 			len(version), MaxSlug))
 	case !orkflowVersionPattern.MatchString(version):
-		return "", "", true, refuse(fmt.Sprintf("its version %q must match %s", version, orkflowVersionPattern))
+		return UsesRef{}, true, refuse(fmt.Sprintf("its version %q must match %s", version, orkflowVersionPattern))
 	}
-	return name, version, true, nil
+	return UsesRef{Namespace: namespace, Name: name, Version: version}, true, nil
 }
 
 // IsComposedTask reports whether t is a composed task: its `uses:` names an
@@ -100,16 +129,22 @@ func IsComposedTask(t *orkstackv1.Task) bool {
 	return t.GetOrkflow() != nil || strings.HasPrefix(t.GetUses(), OrkflowUsesPrefix)
 }
 
-// ComposedLabel renders a reference as "name@version".
+// ComposedLabel renders a reference as "name@version", or as
+// "namespace/name@version" when it names another namespace.
 func ComposedLabel(ref *orkstackv1.OrkflowRef) string {
-	return ref.GetName() + "@" + ref.GetVersion()
+	label := ref.GetName() + "@" + ref.GetVersion()
+	if ns := ref.GetNamespace(); ns != "" {
+		label = ns + "/" + label
+	}
+	return label
 }
 
 // composeFieldRefusal is rule 27's sentence for one key.
-func composeFieldRefusal(taskID, key, name, version string) error {
+func composeFieldRefusal(taskID, key string, ref UsesRef) error {
 	return fmt.Errorf("task %q: a composed task takes only id, needs, condition, join, uses and with; "+
-		"%q does not apply (it runs orkflow %s@%s as a child run, whose own tasks declare where "+
-		"and how they run)", taskID, key, name, version)
+		"%q does not apply (it runs orkflow %s as a child run, whose own tasks declare where "+
+		"and how they run)", taskID, key, ComposedLabel(&orkstackv1.OrkflowRef{
+		Namespace: ref.Namespace, Name: ref.Name, Version: ref.Version}))
 }
 
 // composeExecutionKeys lists, in the order they are checked, the YAML keys a
@@ -137,6 +172,7 @@ func composeExecutionKeys(td taskDocument) []struct {
 		{"run_as_orker_user", td.RunAsOrkerUser},
 		{"each", td.Each != nil},
 		{"await", td.Await != nil},
+		{"sleep", td.Sleep != nil},
 		{"cache", td.Cache != nil},
 	}
 }
@@ -146,12 +182,14 @@ func composeExecutionKeys(td taskDocument) []struct {
 // reference's definition_digest stays empty: internal/api stamps it at apply,
 // exactly as it stamps Task.image.
 func compileComposedTask(taskIndex int, td taskDocument, namespace string) (*orkstackv1.Task, error) {
-	name, version, _, err := ParseOrkflowUses(td.Uses)
+	ref, _, err := ParseOrkflowUses(td.Uses)
 	if err != nil {
 		if missing, ok := err.(*ComposeVersionRequiredError); ok {
 			missing.TaskIndex = taskIndex
 			missing.TaskID = td.ID
-			missing.Namespace = namespace
+			if !missing.Qualified {
+				missing.Namespace = namespace
+			}
 			return nil, validationError(fmt.Sprintf("tasks[%d].uses", taskIndex), missing)
 		}
 		return nil, validationError(fmt.Sprintf("tasks[%d].uses", taskIndex), fmt.Errorf("task %q: %w", td.ID, err))
@@ -159,7 +197,7 @@ func compileComposedTask(taskIndex int, td taskDocument, namespace string) (*ork
 	for _, field := range composeExecutionKeys(td) {
 		if field.written {
 			return nil, validationError(fmt.Sprintf("tasks[%d].%s", taskIndex, field.key),
-				composeFieldRefusal(td.ID, field.key, name, version))
+				composeFieldRefusal(td.ID, field.key, ref))
 		}
 	}
 	join, err := compileJoin(taskIndex, td)
@@ -175,7 +213,7 @@ func compileComposedTask(taskIndex int, td taskDocument, namespace string) (*ork
 		// 0, not DefaultTimeoutSeconds: a composed task has no timeout of its
 		// own — its child's tasks carry theirs (rule 27).
 		TimeoutSeconds: 0,
-		Orkflow:        &orkstackv1.OrkflowRef{Name: name, Version: version},
+		Orkflow:        &orkstackv1.OrkflowRef{Namespace: ref.Namespace, Name: ref.Name, Version: ref.Version},
 	}
 	with, err := freeForm("with", fmt.Sprintf("tasks[%d].with", taskIndex), &td.With)
 	if err != nil {
@@ -191,7 +229,7 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 	id := task.GetId()
 	at := func(field string) string { return fmt.Sprintf("tasks[%d].%s", taskIndex, field) }
 	// Rule 26: the reference parses, and the compiled ref agrees with it.
-	name, version, _, err := ParseOrkflowUses(task.GetUses())
+	parsed, _, err := ParseOrkflowUses(task.GetUses())
 	if err != nil {
 		if missing, ok := err.(*ComposeVersionRequiredError); ok {
 			missing.TaskIndex = taskIndex
@@ -206,10 +244,10 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 			"task %q: uses: %s names an orkflow, but the task carries no compiled orkflow reference",
 			id, task.GetUses()))
 	}
-	if ref.GetName() != name || ref.GetVersion() != version {
+	if ref.GetNamespace() != parsed.Namespace || ref.GetName() != parsed.Name || ref.GetVersion() != parsed.Version {
 		return validationError(at("orkflow"), fmt.Errorf(
-			"task %q: orkflow %s@%s does not match uses: %s — the reference is compiled from uses: "+
-				"and must agree with it", id, ref.GetName(), ref.GetVersion(), task.GetUses()))
+			"task %q: orkflow %s does not match uses: %s — the reference is compiled from uses: "+
+				"and must agree with it", id, ComposedLabel(ref), task.GetUses()))
 	}
 	if task.GetImage() != nil {
 		return validationError(at("image"), fmt.Errorf("task %q: a composed task runs no image", id))
@@ -232,11 +270,12 @@ func validateComposedTask(taskIndex int, task *orkstackv1.Task) error {
 		{"run_as_orker_user", task.GetRunAsOrkerUser()},
 		{"each", task.GetEach() != nil},
 		{"await", task.GetAwait() != nil},
+		{"sleep", task.GetSleep() != nil},
 		{"cache", task.GetCache() != nil},
 	}
 	for _, c := range checks {
 		if c.set {
-			return validationError(at(c.field), composeFieldRefusal(id, c.field, name, version))
+			return validationError(at(c.field), composeFieldRefusal(id, c.field, parsed))
 		}
 	}
 	return nil

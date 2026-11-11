@@ -16,6 +16,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // What a live GetRun reads, counted beside its latency. A GetRun's latency
@@ -127,9 +129,7 @@ func (e *eachSoak) liveGetRuns(t *testing.T, ctx context.Context, runID string, 
 		start := time.Now()
 		resp, err := e.api.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
 		took := time.Since(start)
-		if err != nil {
-			t.Fatalf("GetRun %s: %v", runID, err)
-		}
+		must.OKf(t, err, "GetRun %s", runID)
 		read := e.reads.totals().minus(counted)
 		after := e.historyOf(t, ctx, runID, "")
 		if after.execution != beforeExecution {
@@ -160,9 +160,7 @@ type executionHistory struct {
 func (e *eachSoak) historyOf(t *testing.T, ctx context.Context, runID, execution string) executionHistory {
 	t.Helper()
 	described, err := e.control.DescribeWorkflowExecution(ctx, runID, execution)
-	if err != nil {
-		t.Fatalf("describe run %s execution %q: %v", runID, execution, err)
-	}
+	must.OKf(t, err, "describe run %s execution %q", runID, execution)
 	info := described.GetWorkflowExecutionInfo()
 	return executionHistory{execution: info.GetExecution().GetRunId(), events: info.GetHistoryLength(), bytes: info.GetHistorySizeBytes()}
 }

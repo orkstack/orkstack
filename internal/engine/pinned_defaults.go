@@ -102,7 +102,7 @@ const (
 // as on a saturated pool. DefaultPendingActivityHardStop is absolute, an open
 // pin's closure included, 100 below Temporal's 2,000 pending activities.
 const (
-	DefaultRunMaxInFlight          int32 = 1000
+	DefaultRunMaxInFlight          int32 = 500
 	DefaultPendingActivityHardStop int32 = 1900
 )
 
@@ -158,8 +158,41 @@ func DefaultContinuationBudget(events, bytes int64, restoreTimeout time.Duration
 // top-level plan: the deployment's engine.run_max_in_flight and the pinned
 // hard stop.
 func DefaultInFlightLimit(maxInFlight int32) InFlightLimit {
-	return InFlightLimit{Max: maxInFlight, HardStop: DefaultPendingActivityHardStop}
+	return InFlightLimit{
+		Max:           maxInFlight,
+		HardStop:      DefaultPendingActivityHardStop,
+		PublishWindow: DefaultTaskPublishWindow,
+		DispatchBytes: DefaultTaskDispatchBytes,
+		PublishEvents: DefaultTaskPublishEvents,
+	}
 }
+
+// DefaultTaskPublishEvents is the history one outstanding detached publish
+// can still append on the detached publish path (InFlightLimit.PublishEvents),
+// which is what the history guard reserves for it in place of an in-flight
+// task's PerInFlight: its ActivityTaskScheduled is in history already, and
+// it still records its ActivityTaskStarted and the event that closes it (2,
+// whether it completes, fails or times out: Temporal records a retried
+// activity's last attempt only), plus at most a workflow task of its own to
+// collect it (scheduled, started, completed: 3). Measured on the recorded
+// task-publish-window history
+// (TestTaskPublishHistory_APublishAppendsWhatItIsReserved), which also
+// bounds those events' bytes by 5 × BytesPerEvent.
+const DefaultTaskPublishEvents int64 = 5
+
+// DefaultTaskPublishWindow is how many detached publishes a run leaves
+// outstanding on the detached publish path (InFlightLimit.PublishWindow):
+// the window a fan-out's item publishes have always had, so a run's
+// outstanding publishes stay at 32 whichever kind they are. The flat-stage
+// bound reserves it (ShapeMaxTasks).
+const DefaultTaskPublishWindow int32 = 32
+
+// DefaultTaskDispatchBytes is the most plain tasks' activity input one
+// workflow task schedules on that path (InFlightLimit.DispatchBytes): half
+// the 2 MiB a fan-out's item batch is bounded by, because the two budgets
+// are counted apart and one workflow task can dispatch both, so together
+// they stay at 3 MiB, under the 4 MiB a workflow task's completion may carry.
+const DefaultTaskDispatchBytes int64 = 1 << 20
 
 // DefaultSnapshotOverlays is engine.snapshot_overlays' default: on, in a
 // release after the one that first contained it — the order a rollback

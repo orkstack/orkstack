@@ -20,6 +20,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // namespacePagingTenants is the corpus size: tenant-0000 … tenant-2999.
@@ -53,9 +55,7 @@ func TestIntegration_NamespacePagesReadOnlyTheirDocuments(t *testing.T) {
 	}
 	t.Cleanup(func() { emptyAndDeleteBucket(raw, cfg.S3Bucket) })
 	store, err := artifacts.NewS3NamespaceStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3NamespaceStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3NamespaceStore")
 	seedTenants(ctx, t, store)
 
 	svc := api.NewService(api.Config{
@@ -76,9 +76,7 @@ func TestIntegration_NamespacePagesReadOnlyTheirDocuments(t *testing.T) {
 			PageSize: size, PageToken: token, Filters: filters(t, texts...),
 		}))
 		wall := time.Since(start)
-		if err != nil {
-			t.Fatalf("%s: %v", label, err)
-		}
+		must.OKf(t, err, "%s", label)
 		read := store.DocumentsRead() - before
 		if label != "" {
 			fmt.Fprintf(&transcript, "%s: %d documents in %s\n", label, read, wall.Round(time.Millisecond))

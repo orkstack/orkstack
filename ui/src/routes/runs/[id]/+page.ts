@@ -1,5 +1,6 @@
 import { errorMessage } from '#lib/client.ts';
 import { orkflowClient } from '#lib/clients/orkflows.ts';
+import { orkflowOwner } from '#lib/sharing.ts';
 import { runClient } from '#lib/clients/runs.ts';
 import { namespaceFrom } from '#lib/namespace.ts';
 import type { RunArtifact } from '#lib/gen/orkstack/v1/run_service_pb.ts';
@@ -53,10 +54,12 @@ export const load: PageLoad = async ({ fetch, params, url }) => {
 			// draw. The page reads it once it has rendered (#lib/attempts.ts
 			// readAttemptSeed) and fills timing in when it lands.
 			try {
+				// A child run of a shared Orkflow reads its definition from
+				// the namespace that owns it (Run.orkflowNamespace).
 				const wfRes = await orkflowClient(fetch).getOrkflow({
 					name: run.orkflowName,
 					version: run.orkflowVersion,
-					namespace
+					namespace: orkflowOwner(run, namespace)
 				});
 				orkflow = wfRes.orkflow ?? null;
 				if (!orkflow) orkflowError = 'the engine returned no definition';

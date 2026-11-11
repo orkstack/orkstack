@@ -318,7 +318,9 @@ func (s *Service) ListOrkflowCallers(
 func composingRows(wf *orkstackv1.Orkflow, target string, current bool) ([]*orkstackv1.OrkflowCaller, error) {
 	var composing []*orkstackv1.Task
 	for _, t := range wf.GetTasks() {
-		if t.GetOrkflow().GetName() == target {
+		// A ref qualified with a namespace composes another namespace's
+		// Orkflow, never this namespace's target of the same name.
+		if ref := t.GetOrkflow(); ref.GetName() == target && ref.GetNamespace() == "" {
 			composing = append(composing, t)
 		}
 	}

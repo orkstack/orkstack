@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"io"
 	"strings"
@@ -90,7 +90,7 @@ func deleteFixture(t *testing.T) (*fixture, *recordingOrkflowStore) {
 	store := newRecordingOrkflowStore()
 	f := newFixtureWith(t, func(cfg *api.Config) { cfg.Orkflows = store })
 	f.run("namespace", "create", deleteTestNamespace).requireExit(t, exitOK)
-	f.run("apply", examplePath(t), deleteNamespaceFlag, deleteTestNamespace).requireExit(t, exitOK)
+	f.run("orkflow", "create", examplePath(t), deleteNamespaceFlag, deleteTestNamespace).requireExit(t, exitOK)
 	return f, store
 }
 

@@ -20,9 +20,9 @@
 # See every path before anything runs. Each line is a CI check, and the test
 # suite runs every one of them; a condition that reads a key under `result`
 # needs the decision supplied with --output:
-#   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"canary","notify":true}}' --assert-runs canary --assert-skipped direct --assert-skipped hold --assert-runs notify-owner --assert-runs report
-#   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"direct","notify":false}}' --assert-runs direct --assert-skipped canary --assert-skipped notify-owner --assert-runs report
-#   orkctl run plan --file examples/decide-and-route.ork.yaml --output decide='{"result":{"route":"hold","notify":true}}' --assert-runs hold --assert-skipped notify-owner --assert-runs report
+#   orkctl run plan -f examples/decide-and-route.ork.yaml -o decide='{"result":{"route":"canary","notify":true}}' --assert-runs canary --assert-skipped direct --assert-skipped hold --assert-runs notify-owner --assert-runs report
+#   orkctl run plan -f examples/decide-and-route.ork.yaml -o decide='{"result":{"route":"direct","notify":false}}' --assert-runs direct --assert-skipped canary --assert-skipped notify-owner --assert-runs report
+#   orkctl run plan -f examples/decide-and-route.ork.yaml -o decide='{"result":{"route":"hold","notify":true}}' --assert-runs hold --assert-skipped notify-owner --assert-runs report
 apiVersion: orkstack/v1
 kind: Orkflow
 name: decide-and-route

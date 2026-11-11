@@ -20,6 +20,7 @@ export const TASK_EVENTS: EventType[] = [
 	EventType.TASK_STARTED,
 	EventType.TASK_AWAITING,
 	EventType.TASK_RESOLVED,
+	EventType.TASK_SLEEPING,
 	EventType.TASK_SUCCEEDED,
 	EventType.TASK_FAILED
 ];

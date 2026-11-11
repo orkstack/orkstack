@@ -2,13 +2,16 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // defaultPlan is the routing a submit binds for an orkflow whose tasks name
@@ -51,9 +54,7 @@ func planFor(t *testing.T, wf *orkstackv1.Orkflow, rawQueue string) (*orkstackv1
 	resolver := &engine.PoolResolver{RawQueue: rawQueue}
 	ns := &orkstackv1.Namespace{Name: wf.GetNamespace()}
 	planned, plan, err := resolver.Plan(context.Background(), ns, wf, false)
-	if err != nil {
-		t.Fatalf("Plan(%s, bound channel %q): %v", wf.GetName(), rawQueue, err)
-	}
+	must.OKf(t, err, "Plan(%s, bound channel %q)", wf.GetName(), rawQueue)
 	return planned, plan
 }
 
@@ -68,9 +69,7 @@ func TestRunPlan_RefusesAPoolItHasNoRouteFor(t *testing.T) {
 	plan := defaultPlan("gpu")
 
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool: %v", err)
-	}
+	must.OKf(t, err, "QueueForPool")
 	if route, err := plan.Route("gpu"); err != nil || route != gpuQueue {
 		t.Fatalf("Route(gpu) = %q, %v; want %q", route, err, gpuQueue)
 	}
@@ -100,7 +99,7 @@ func TestRunPlan_TelemetryOmittedWhenNil(t *testing.T) {
 	plan := defaultPlan()
 	plan.Telemetry = nil
 
-	out, err := json.Marshal(plan)
+	out, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
@@ -120,7 +119,7 @@ func TestRunPlan_TelemetryRoundTrips(t *testing.T) {
 		Attributes: map[string]string{"ork.ns.team": "payments", "ork.label.tier": "gold"},
 	}
 
-	out, err := json.Marshal(plan)
+	out, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}

@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // gappedArchive is an archive holding run ork-gap, whose events 1201–2400
@@ -25,9 +27,7 @@ import (
 func gappedArchive(t *testing.T) *engine.RunArchiver {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 	run := &orkstackv1.Run{Id: "ork-gap", OrkflowName: "deploy", Status: orkstackv1.Status_STATUS_SUCCEEDED,
@@ -77,9 +77,7 @@ func TestReplayArchivedEvents_SendsEventsBeforeTheGapThenFails(t *testing.T) {
 	client := orkstackv1connect.NewRunServiceClient(server.Client(), server.URL)
 	stream, err := client.StreamEvents(context.Background(),
 		connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: "ork-gap", FromSequence: 1000}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var sent []int64
 	for stream.Receive() {
 		sent = append(sent, stream.Msg().GetSequence())
@@ -105,9 +103,7 @@ func TestEvidenceExport_GappedArchiveIsSchemaTwoWithEventGaps(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, err := f.archiver.LoadRunBody(context.Background(), "ork-ev-gap")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-gap"})
 	m := r.manifest
 	if m.SchemaVersion != evidence.SchemaVersionEventGaps || len(m.EventGaps) != 1 ||
@@ -134,9 +130,7 @@ func TestEvidenceExport_UngappedArchiveStaysSchemaOne(t *testing.T) {
 		t.Fatalf("schema %d gaps %+v, want 1 and none", r.manifest.SchemaVersion, r.manifest.EventGaps)
 	}
 	document, err := r.manifest.MarshalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if bytes.Contains(document, []byte("event_gaps")) {
 		t.Fatalf("an ungapped manifest names event_gaps:\n%s", document)
 	}

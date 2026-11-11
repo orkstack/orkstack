@@ -21,6 +21,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A namespace is a tenancy boundary, and these tests are about what that costs
@@ -135,13 +137,9 @@ func namespacedRuns(t *testing.T, namespace string, count int) []indexedRun {
 	t.Helper()
 	dc := converter.GetDefaultDataConverter()
 	namePayload, err := dc.ToPayload("deploy")
-	if err != nil {
-		t.Fatalf("encode memo name: %v", err)
-	}
+	must.OKf(t, err, "encode memo name")
 	namespacePayload, err := dc.ToPayload(namespace)
-	if err != nil {
-		t.Fatalf("encode memo namespace: %v", err)
-	}
+	must.OKf(t, err, "encode memo namespace")
 	runs := make([]indexedRun, 0, count)
 	for i := 0; i < count; i++ {
 		runs = append(runs, indexedRun{
@@ -173,9 +171,7 @@ func TestTemporalRunReader_ScopesAListInTheQueryNotAfterIt(t *testing.T) {
 	reader := newRunReader(index, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
 
 	runs, err := reader.ListRuns(context.Background(), RunQuery{Namespace: "alpha", Limit: 5})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(runs) != 1 || runs[0].GetId() != "ork-alpha-0" {
 		t.Fatalf("ListRuns(alpha) = %v, want alpha's one run: a namespace's own runs "+
 			"cannot depend on how busy its neighbours are", runs)
@@ -213,9 +209,7 @@ func TestTemporalRunReader_AnswersAQuietNamespaceOnAClusterWithoutTheIndex(t *te
 	reader := newRunReader(index, converter.GetDefaultDataConverter())
 
 	runs, err := reader.ListRuns(context.Background(), RunQuery{Namespace: "alpha", Limit: limit})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(runs) != 1 || runs[0].GetId() != "ork-alpha-0" {
 		t.Fatalf("ListRuns(alpha) = %v, want alpha's one run: namespace bravo's %d live "+
 			"runs must not decide whether alpha can see its own",
@@ -441,9 +435,7 @@ func TestTemporalRunReader_ARunKeepsItsNamespaceWhenALaterSnapshotOmitsIt(t *tes
 	reader.WithSnapshotStore(store)
 
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetNamespace() != "payments" {
 		t.Fatalf("GetRun(%s).Namespace = %q, want %q: a snapshot that omits the namespace "+
 			"moves the run to the default namespace, where another tenant may read and "+

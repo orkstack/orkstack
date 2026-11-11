@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func cacheFieldOf(err error) string {
@@ -27,9 +29,7 @@ func TestValidate_HandBuiltCacheRules(t *testing.T) {
 			}, {Id: "member", Uses: "shell", TimeoutSeconds: 60, Pin: "build"}},
 		}
 	}
-	if err := validate(base(), Options{}); err != nil {
-		t.Fatalf("a valid hand-built cached task: %v", err)
-	}
+	must.OKf(t, validate(base(), Options{}), "a valid hand-built cached task")
 	cases := map[string]struct {
 		mutate func(*orkstackv1.Task)
 		field  string
@@ -69,9 +69,7 @@ func TestValidate_HandBuiltCacheRules(t *testing.T) {
 func TestCanonicalOrkflow_CacheEmittedOnlyWhenSet(t *testing.T) {
 	base := goldenOrkflow(t)
 	canonical, err := CanonicalOrkflow(base)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.Contains(string(canonical), `"cache"`) {
 		t.Fatalf("an uncached definition emits cache: %s", canonical)
 	}

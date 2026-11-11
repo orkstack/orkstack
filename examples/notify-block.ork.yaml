@@ -11,7 +11,7 @@
 # `outputs:` is its interface: the one thing a composing Orkflow may read
 # (`.tasks.<id>.output.status`). Other Orkflows compose it with
 #   uses: orkflow:notify-block@0.2.0
-# so apply this file before examples/order-saga.ork.yaml and
+# so create this file before examples/order-saga.ork.yaml and
 # examples/approval-gate.ork.yaml.
 #
 # The body is BUILT by a json task from typed values, never spliced into a

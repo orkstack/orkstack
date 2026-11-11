@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The quickstart is one list of commands: the README's "Quickstart" block.
@@ -153,9 +155,9 @@ func TestQuickstart_TheReadmeIsTheOneListOfCommands(t *testing.T) {
 	}
 	// It applies a file that exists, and submits the Orkflow that file names.
 	var applied, submitted string
-	submit := regexp.MustCompile(`^orkctl run submit ([a-z][a-z0-9-]*) --watch$`)
+	submit := regexp.MustCompile(`^orkctl run submit ([a-z][a-z0-9-]*) -w$`)
 	for _, cmd := range cmds {
-		if f, ok := strings.CutPrefix(cmd, "orkctl apply "); ok {
+		if f, ok := strings.CutPrefix(cmd, "orkctl orkflow create "); ok {
 			applied = f
 		}
 		if m := submit.FindStringSubmatch(cmd); m != nil {
@@ -169,7 +171,7 @@ func TestQuickstart_TheReadmeIsTheOneListOfCommands(t *testing.T) {
 	if name == nil || name[1] != submitted {
 		t.Errorf("the Quickstart applies %s, whose name is %v, but submits %s", applied, name, submitted)
 	}
-	if last := cmds[len(cmds)-1]; last != "orkctl run submit "+submitted+" --watch" {
+	if last := cmds[len(cmds)-1]; last != "orkctl run submit "+submitted+" -w" {
 		t.Errorf("README.md's Quickstart ends with %q; it ends with the watched run, whose result the smoke checks", last)
 	}
 	// The landing page reads the block rather than keeping a copy.
@@ -220,9 +222,7 @@ func TestQuickstart_NoPageNamesTheRetiredBundle(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, file := range files {
 		if strings.Contains(readFile(t, file), "orkstack-quickstart.tar.gz") {
 			rel, _ := filepath.Rel(root, file)

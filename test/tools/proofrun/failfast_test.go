@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const failFastSuite = modulePath + "/test/tools/proofrun/testdata/failfast"
@@ -21,9 +23,7 @@ func runFailFastSuite(t *testing.T, extra []string, env map[string]string) (int,
 	text := failFastSuite + "\tTestFailsWhileTheBlockerRuns\t30\n" +
 		failFastSuite + "\tTestBlocksUntilStopped\t30\n" +
 		failFastSuite + "\tTestNeverStarts\t20\n"
-	if err := os.WriteFile(costs, []byte(text), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(costs, []byte(text), 0o644))
 	t.Setenv("FAILFAST_DIR", t.TempDir())
 	for k, v := range env {
 		t.Setenv(k, v)
@@ -34,9 +34,7 @@ func runFailFastSuite(t *testing.T, extra []string, env map[string]string) (int,
 	code := cmdIntegration(args)
 	took := time.Since(started)
 	var l ledger
-	if err := readJSON(filepath.Join(out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "integration-tests.json"), &l))
 	got := map[string]entry{}
 	for _, e := range l.Tests {
 		got[e.Test] = e

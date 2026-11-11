@@ -26,7 +26,7 @@ import {
 	waitForEngine
 } from './harness';
 import { editorReady } from './yaml';
-import { selectTask } from './uiHelpers';
+import { expectDocsBarHeldAtFoot, selectTask } from './uiHelpers';
 
 const hold = () => {
 	let release = () => {};
@@ -357,7 +357,7 @@ for (const [width, expanded, where] of [
 		else {
 			// One column: the collapsed docs are a bar as wide as the card, held at the viewport's foot.
 			expect(Math.abs(rail!.x - card!.x)).toBeLessThan(2);
-			expect(rail!.y + rail!.height).toBeLessThanOrEqual(901);
+			await expectDocsBarHeldAtFoot(page, page.getByRole('region', { name: 'Edit' }));
 		}
 		await toggle.click();
 		await expect(toggle).toHaveAttribute('aria-expanded', expanded === 'true' ? 'false' : 'true');
@@ -449,16 +449,16 @@ test('a shell icon\'s copy buttons are icons named Copy, and a click puts the co
 	expect(await clipboard()).toBe((await page.getByTestId('pools-cli-command-0').innerText()).trim());
 	await page.keyboard.press('Escape');
 
-	// A form's own command line: the same button, its word now the name alone.
+	// A form's own command line: the same panel, inside the submit dialog.
 	await page.goto(at(`/orkflows/${FAN}`));
 	await page.getByTestId('orkflow-submit-run').click();
-	await page.getByRole('button', { name: 'CLI equivalent of this submission' }).click();
-	const one = page.getByRole('button', { name: 'Copy command' });
+	await page.getByTestId('run-submit-cli-trigger').click();
+	const form = page.getByTestId('run-submit-cli-popover');
+	const one = form.getByRole('button', { name: 'Copy: Submit this run' });
 	await expect(one).toHaveText('');
 	await one.click();
-	await expect(page.getByTestId('run-submit-cli-copied')).toHaveRole('status');
-	await expect(page.getByTestId('run-submit-cli-copied')).toHaveText('Copied');
-	expect(await clipboard()).toBe((await page.getByTestId('run-submit-cli-command').innerText()).trim());
+	await expect(form.getByRole('status')).toHaveText('Copied: Submit this run');
+	expect(await clipboard()).toBe((await form.locator('[data-cli-label="Submit this run"]').innerText()).trim());
 });
 
 test('an Orkflow tab says its count apart from its name, and the Runs table says its order', async ({ page }) => {

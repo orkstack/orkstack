@@ -36,6 +36,8 @@ import (
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // emptyNamespaceLister answers with no OrkStack namespace documents unless a
@@ -81,9 +83,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 	reader := engine.NewTemporalRunReader(temporalClient)
 
 	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3RetentionPolicyStore")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, archivecleanup.DefaultRetentionBuffer, logger)
 	// A large deployment maximum, reconciled onto the real cluster's backstop
@@ -100,21 +100,13 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 	}}
 
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	logStore, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("NewLogStore: %v", err)
-	}
+	must.OKf(t, err, "NewLogStore")
 	objectStore, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("artifact store: %v", err)
-	}
+	must.OKf(t, err, "artifact store")
 	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("snapshot store: %v", err)
-	}
+	must.OKf(t, err, "snapshot store")
 	reader.WithSnapshotStore(snapshots)
 
 	queue := fmt.Sprintf("ork-cleanup-e2e-%d", time.Now().UnixNano())
@@ -182,9 +174,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -205,9 +195,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("StartRun(%s): %v", label, err)
 		}
-		if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-			t.Fatalf("wait for %s run: %v", label, err)
-		}
+		must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "wait for %s run", label)
 		awaitArchivedRun(t, ctx, runArchive, runID)
 		return runID
 	}
@@ -232,9 +220,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 	// just reconciled to deploymentMax + the enforcement margin, far longer
 	// than the test's lifetime.
 	backstopBefore, err := reader.NamespaceRetention(ctx, namespace)
-	if err != nil {
-		t.Fatalf("NamespaceRetention (independent check, before): %v", err)
-	}
+	must.OKf(t, err, "NamespaceRetention (independent check, before)")
 	if backstopBefore < deploymentMax {
 		t.Fatalf("backstop TTL before cleanup = %s, want at least the %s deployment maximum", backstopBefore, deploymentMax)
 	}
@@ -247,9 +233,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 		return time.Now().UTC().Add(2 * shortRetention)
 	})
 	stats, err := cleaner.RunOnce(ctx)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if stats.RunsCleaned != 1 || stats.ObjectsDeleted < 3 {
 		t.Fatalf("cleanup metrics = %+v, want one run and at least log+commit+snapshot", stats)
 	}
@@ -263,9 +247,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 	// down to anything close to the one-minute window that actually did the
 	// work: OrkStack's active retirement did this, not Temporal's own TTL.
 	backstopAfter, err := reader.NamespaceRetention(ctx, namespace)
-	if err != nil {
-		t.Fatalf("NamespaceRetention (independent check, after): %v", err)
-	}
+	must.OKf(t, err, "NamespaceRetention (independent check, after)")
 	if backstopAfter < deploymentMax {
 		t.Fatalf("backstop TTL after cleanup = %s, want it unchanged at >= %s: "+
 			"the passive TTL must never be what retires a run", backstopAfter, deploymentMax)
@@ -381,9 +363,7 @@ func awaitWorkflowGone(t *testing.T, ctx context.Context, reader *engine.Tempora
 	defer ticker.Stop()
 	for {
 		found, _, err := reader.LookupWorkflow(ctx, namespace, runID)
-		if err != nil {
-			t.Fatalf("LookupWorkflow after deletion: %v", err)
-		}
+		must.OKf(t, err, "LookupWorkflow after deletion")
 		if !found {
 			return
 		}
@@ -398,22 +378,14 @@ func awaitWorkflowGone(t *testing.T, ctx context.Context, reader *engine.Tempora
 func runStorageKeys(t *testing.T, ctx context.Context, raw *s3.Client, bucket, namespace, runID string) (logs, commits, snapshots []string) {
 	t.Helper()
 	logPrefix, err := artifacts.RunLogPrefix(runID)
-	if err != nil {
-		t.Fatalf("RunLogPrefix: %v", err)
-	}
+	must.OKf(t, err, "RunLogPrefix")
 	commitPrefix, err := artifacts.RunCommitPrefix(namespace, runID)
-	if err != nil {
-		t.Fatalf("RunCommitPrefix: %v", err)
-	}
+	must.OKf(t, err, "RunCommitPrefix")
 	snapshotPrefix, err := artifacts.RunSnapshotPrefix(namespace, runID)
-	if err != nil {
-		t.Fatalf("RunSnapshotPrefix: %v", err)
-	}
+	must.OKf(t, err, "RunSnapshotPrefix")
 	list := func(prefix string) []string {
 		page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(bucket), Prefix: aws.String(prefix)})
-		if err != nil {
-			t.Fatalf("list %q: %v", prefix, err)
-		}
+		must.OKf(t, err, "list %q", prefix)
 		out := make([]string, 0, len(page.Contents))
 		for _, object := range page.Contents {
 			out = append(out, aws.ToString(object.Key))
@@ -498,13 +470,9 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 	reader := engine.NewTemporalRunReader(temporalClient)
 
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	objectStore, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("artifact store: %v", err)
-	}
+	must.OKf(t, err, "artifact store")
 
 	// Four archived runs, each owning a real object and a real log chunk, all
 	// well past retention. None ever ran in Temporal, so the live
@@ -517,18 +485,14 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 		runID := fmt.Sprintf("ork-cancel-%d-%d", time.Now().UnixNano(), i)
 		ref, err := objectStore.Put(ctx, fmt.Sprintf("payload-%d", i),
 			bytes.NewBufferString(fmt.Sprintf("payload %d", i)), artifacts.PutOptions{})
-		if err != nil {
-			t.Fatalf("Put: %v", err)
-		}
+		must.OKf(t, err, "Put")
 		objectID, ok := artifacts.ObjectIDFromURI(ref.URI)
 		if !ok {
 			t.Fatalf("ObjectIDFromURI(%q) failed", ref.URI)
 		}
 		objectIDs[runID] = objectID
 		logKey, err := artifacts.RunLogPrefix(runID)
-		if err != nil {
-			t.Fatalf("RunLogPrefix: %v", err)
-		}
+		must.OKf(t, err, "RunLogPrefix")
 		if _, err := raw.PutObject(ctx, &s3.PutObjectInput{
 			Bucket: aws.String(cfg.S3Bucket), Key: aws.String(logKey + "task/1/chunk"),
 			Body: bytes.NewReader([]byte("log bytes")),
@@ -553,9 +517,7 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 	}
 
 	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3RetentionPolicyStore")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, 24*time.Hour, logger)
 	if _, err := retentionCtrl.SetMax(ctx, 72*time.Hour); err != nil {
@@ -622,9 +584,7 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 	// Restart on a fresh context and converge: cleaned runs are skipped through
 	// their sidecars, the interrupted remainder is retried and completes.
 	resumed, err := archivecleanup.NewCleaner(config, runArchive, reader, namespaces, retentionCtrl, logger).RunOnce(ctx)
-	if err != nil {
-		t.Fatalf("resumed iteration: %v", err)
-	}
+	must.OKf(t, err, "resumed iteration")
 	// The interrupted run is cleaned AGAIN — its deletion never got a sidecar,
 	// so the next pass repeats an idempotent delete and then marks it. That is
 	// the goal's "not idempotent across restarts, but not corrupted", asserted
@@ -666,9 +626,7 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 func mustListRuns(t *testing.T, ctx context.Context, archive artifacts.RunArchive, namespace string) []artifacts.RunIndexEntry {
 	t.Helper()
 	entries, err := archive.ListRuns(ctx, artifacts.RunQuery{Namespace: namespace})
-	if err != nil {
-		t.Fatalf("ListRuns(%q): %v", namespace, err)
-	}
+	must.OKf(t, err, "ListRuns(%q)", namespace)
 	return entries
 }
 
@@ -698,9 +656,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 	reader := engine.NewTemporalRunReader(temporalClient)
 
 	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3RetentionPolicyStore")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, archivecleanup.DefaultRetentionBuffer, logger)
 	if _, err := retentionCtrl.SetMax(ctx, 999*time.Hour); err != nil {
@@ -710,24 +666,16 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 	nsDoc := &orkstackv1.Namespace{Name: orkNamespace, RunRetention: durationpb.New(shortRetention)}
 
 	registry, err := artifacts.NewS3NamespaceStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3NamespaceStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3NamespaceStore")
 	if _, err := registry.Put(ctx, nsDoc, artifacts.PutConditions{IfAbsent: true}); err != nil {
 		t.Fatalf("register namespace: %v", err)
 	}
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	objectStore, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("artifact store: %v", err)
-	}
+	must.OKf(t, err, "artifact store")
 	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("snapshot store: %v", err)
-	}
+	must.OKf(t, err, "snapshot store")
 	reader.WithSnapshotStore(snapshots)
 	archiver := engine.NewRunArchiver(runArchive)
 
@@ -766,9 +714,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -785,9 +731,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 	}); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
-	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("wait for run: %v", err)
-	}
+	must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "wait for run")
 	awaitArchivedRun(t, ctx, runArchive, runID)
 
 	// The API as `ork` wires it: the cluster reader first, the archive behind
@@ -805,9 +749,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 			RunId: runID, Namespace: orkNamespace, TaskId: "completed",
 			Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "report.txt",
 		}))
-		if err != nil {
-			t.Fatalf("GetArtifactProvenance: %v", err)
-		}
+		must.OKf(t, err, "GetArtifactProvenance")
 		return resp.Msg
 	}
 
@@ -828,9 +770,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 		return time.Now().UTC().Add(2 * shortRetention)
 	})
 	stats, err := cleaner.RunOnce(ctx)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if stats.RunsCleaned != 1 {
 		t.Fatalf("cleanup metrics = %+v, want the one run retired", stats)
 	}
@@ -852,9 +792,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 	}
 	markerPrefix := path.Dir(mustRunObjectRefKey(t, objectID, runID)) + "/"
 	page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(cfg.S3Bucket), Prefix: aws.String(markerPrefix)})
-	if err != nil {
-		t.Fatalf("list marker prefix: %v", err)
-	}
+	must.OKf(t, err, "list marker prefix")
 	if len(page.Contents) != 0 {
 		t.Fatalf("marker prefix %s still holds %d keys after cleanup", markerPrefix, len(page.Contents))
 	}
@@ -866,9 +804,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 func mustRunObjectRefKey(t *testing.T, objectID, runID string) string {
 	t.Helper()
 	key, err := artifacts.RunObjectRefKey(objectID, runID)
-	if err != nil {
-		t.Fatalf("RunObjectRefKey: %v", err)
-	}
+	must.OKf(t, err, "RunObjectRefKey")
 	return key
 }
 
@@ -897,9 +833,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 	reader := engine.NewTemporalRunReader(temporalClient)
 
 	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3RetentionPolicyStore")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	retentionCtrl := archivecleanup.NewRetentionController(policies, reader, namespace, archivecleanup.DefaultRetentionBuffer, logger)
 	if _, err := retentionCtrl.SetMax(ctx, 999*time.Hour); err != nil {
@@ -908,32 +842,20 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 	const shortRetention = time.Minute
 	nsDoc := &orkstackv1.Namespace{Name: orkNamespace, RunRetention: durationpb.New(shortRetention)}
 	registry, err := artifacts.NewS3NamespaceStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3NamespaceStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3NamespaceStore")
 	if _, err := registry.Put(ctx, nsDoc, artifacts.PutConditions{IfAbsent: true}); err != nil {
 		t.Fatalf("register namespace: %v", err)
 	}
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	objectStore, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("artifact store: %v", err)
-	}
+	must.OKf(t, err, "artifact store")
 	commits, err := artifacts.NewS3CommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("commit store: %v", err)
-	}
+	must.OKf(t, err, "commit store")
 	attempts, err := artifacts.NewS3AttemptStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("attempt store: %v", err)
-	}
+	must.OKf(t, err, "attempt store")
 	snapshots, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("snapshot store: %v", err)
-	}
+	must.OKf(t, err, "snapshot store")
 	reader.WithSnapshotStore(snapshots)
 	archiver := engine.NewRunArchiver(runArchive)
 
@@ -1003,9 +925,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	for name, w := range map[string]worker.Worker{"run": runWorker, "task": taskWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -1019,9 +939,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 		}},
 	}
 	digest, err := dsl.DefinitionDigest(definition)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	definition.DefinitionDigest = digest
 	orkflows := engine.NewMemoryOrkflowStore()
 	if _, _, err := orkflows.Put(ctx, definition, artifacts.NoHeadExpectation()); err != nil {
@@ -1032,9 +950,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("StartRun: %v", err)
 	}
-	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("wait for run: %v", err)
-	}
+	must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "wait for run")
 	awaitArchivedRun(t, ctx, runArchive, runID)
 
 	svc := api.NewService(api.Config{
@@ -1055,9 +971,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 		stream, err := client.ExportRunEvidence(ctx, connect.NewRequest(&orkstackv1.ExportRunEvidenceRequest{
 			RunId: runID, Namespace: orkNamespace, ManifestOnly: manifestOnly,
 		}))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		defer stream.Close()
 		var data bytes.Buffer
 		last := false
@@ -1074,9 +988,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 		} else {
 			m, err = evidence.ReadManifest(bytes.NewReader(data.Bytes()))
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return data.Bytes(), m
 	}
 	state := func(m *evidence.Manifest, path string) evidence.Member {
@@ -1104,9 +1016,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 		return time.Now().UTC().Add(2 * shortRetention)
 	})
 	stats, err := cleaner.RunOnce(ctx)
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if stats.RunsCleaned != 1 {
 		t.Fatalf("cleanup metrics = %+v, want the one run retired", stats)
 	}

@@ -84,7 +84,7 @@ func newRunResolveCommand(g *globalFlags) *cobra.Command {
 			return renderResolved(cmd.OutOrStdout(), g.namespace, resp.Msg, reason)
 		},
 	}
-	cmd.Flags().StringVar(&taskID, "task", "", "the awaited task to resolve (required)")
+	cmd.Flags().StringVarP(&taskID, "task", "t", "", "the awaited task to resolve (required)")
 	cmd.Flags().StringVar(&values, "values", "", "the completion's values as one JSON object (default {})")
 	cmd.Flags().StringVar(&valuesFile, "values-file", "", "read the completion's values from a file, verbatim (- for stdin)")
 	cmd.Flags().BoolVar(&reject, "reject", false, "reject the await instead of completing it")

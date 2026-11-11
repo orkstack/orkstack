@@ -13,6 +13,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // spanNames is the phase sequence a record's span list names, in order.
@@ -63,9 +65,7 @@ func assertClosedSpanList(t *testing.T, record *orkstackv1.TaskAttempt) {
 func onlyAttempt(t *testing.T, store *artifacts.MemoryAttemptStore, in *orkstackv1.ExecuteTaskInput) *orkstackv1.TaskAttempt {
 	t.Helper()
 	records, err := store.ListAttempts(context.Background(), in.GetRunId(), in.GetTaskId(), artifacts.NoItem)
-	if err != nil {
-		t.Fatalf("ListAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListAttempts")
 	if len(records) != 1 {
 		t.Fatalf("stored %d attempt records, want 1", len(records))
 	}
@@ -158,9 +158,7 @@ func TestPhaseSpans_AnAdoptedCommitRecordsStartAndCommitCheckOnly(t *testing.T) 
 	in.CommitUri = "mem://commits/" + in.GetRunId() + "/" + in.GetTaskId() + "/commit.json"
 
 	first, err := dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("first Execute: %v", err)
-	}
+	must.OKf(t, err, "first Execute")
 	if first.GetCommitAdopted() {
 		t.Fatal("the first attempt adopted a commit that did not exist yet")
 	}
@@ -169,9 +167,7 @@ func TestPhaseSpans_AnAdoptedCommitRecordsStartAndCommitCheckOnly(t *testing.T) 
 	adoptStore := artifacts.NewMemoryAttemptStore()
 	dispatcher.Attempts = adoptStore
 	second, err := dispatcher.Execute(context.Background(), in)
-	if err != nil {
-		t.Fatalf("second Execute: %v", err)
-	}
+	must.OKf(t, err, "second Execute")
 	if !second.GetCommitAdopted() {
 		t.Fatal("the second attempt did not adopt the first attempt's commit")
 	}
@@ -318,9 +314,7 @@ func TestFailure_StampStartFillsADetailOnEveryFailurePath(t *testing.T) {
 				t.Fatal("TemporalError is not an ApplicationError")
 			}
 			var detail *orkstackv1.ActivityFailureDetail
-			if err := appErr.Details(&detail); err != nil {
-				t.Fatalf("decode the detail: %v", err)
-			}
+			must.OKf(t, appErr.Details(&detail), "decode the detail")
 			if got := detail.GetStartedAt(); got == nil || !got.AsTime().Equal(start) {
 				t.Fatalf("detail.started_at = %v, want %v", got, start)
 			}
@@ -354,9 +348,7 @@ func TestExecute_AFailedAttemptReturnsItsStart(t *testing.T) {
 		t.Fatalf("Execute error = %v, want an ApplicationError", err)
 	}
 	var detail *orkstackv1.ActivityFailureDetail
-	if err := appErr.Details(&detail); err != nil {
-		t.Fatalf("decode the detail: %v", err)
-	}
+	must.OKf(t, appErr.Details(&detail), "decode the detail")
 	record := onlyAttempt(t, attempts, in)
 	if detail.GetStartedAt() == nil || !detail.GetStartedAt().AsTime().Equal(record.GetStartedAt().AsTime()) {
 		t.Fatalf("detail.started_at = %v, want the attempt's start %v", detail.GetStartedAt(), record.GetStartedAt())

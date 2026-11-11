@@ -4,7 +4,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -112,7 +114,7 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 			"the container starts.\n\n" +
 			"With --from-run RUN, the task's upstream values and artifacts are the run's\n" +
 			"committed bytes, read through the engine's integrity-checked artifact reads. With\n" +
-			"--file, an edited, unapplied document is validated by the engine and run instead\n" +
+			"--file, an edited document that is not stored is validated by the engine and run instead\n" +
 			"of the stored definition. --output and --artifact supply an upstream task's\n" +
 			"values.json and output files from local files.\n\n" +
 			"A failure handler (join: any_failed or all_done) is told how its needs ended:\n" +
@@ -148,13 +150,13 @@ func newTaskRunCommand(g *globalFlags) *cobra.Command {
 	}
 	opts.item.register(cmd, "run this item of a fan-out task (required for one)")
 	flags := cmd.Flags()
-	flags.StringVar(&opts.task, "task", "", "the task to run (required)")
+	flags.StringVarP(&opts.task, "task", "t", "", "the task to run (required)")
 	flags.StringVar(&opts.fromRun, "from-run", "", "replay against this run's recorded upstream bytes")
-	flags.StringVarP(&opts.file, "file", "f", "", "run this unapplied orkflow document instead of the stored definition")
-	flags.StringArrayVar(&opts.inputs, "input", nil,
+	flags.StringVarP(&opts.file, "file", "f", "", "run this orkflow document, not stored, instead of the stored definition")
+	flags.StringArrayVarP(&opts.inputs, "input", "i", nil,
 		"run input as key=value (repeatable); with --from-run, overrides the run's input")
 	flags.StringVar(&opts.inputJSON, "input-json", "", "run input as a JSON object; merged under --input values")
-	flags.StringArrayVar(&opts.outputs, "output", nil,
+	flags.StringArrayVarP(&opts.outputs, "output", "o", nil,
 		"supply an upstream task's values.json as TASK=JSON-object (repeatable); wins over --outputs-file")
 	flags.StringVar(&opts.outputsFile, "outputs-file", "",
 		"a JSON object keyed by task id whose values are the supplied values.json objects")
@@ -750,15 +752,21 @@ func (r *taskRunner) definition() error {
 		}
 		return nil
 	}
+	// A child run of another namespace's shared Orkflow reads its definition
+	// from the namespace that owns it.
+	namespace := r.g.namespace
+	if owner := r.run.GetOrkflowNamespace(); owner != "" {
+		namespace = owner
+	}
 	ctx, cancel := r.rpcContext()
 	response, err := r.g.orkflowClient().GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{
-		Name: r.run.GetOrkflowName(), Version: r.run.GetOrkflowVersion(), Namespace: r.g.namespace,
+		Name: r.run.GetOrkflowName(), Version: r.run.GetOrkflowVersion(), Namespace: namespace,
 	}))
 	cancel()
 	if err != nil {
 		if connect.CodeOf(err) == connect.CodeNotFound {
-			return fmt.Errorf("the run's definition %s@%s is no longer stored; pass --file with its document",
-				r.run.GetOrkflowName(), r.run.GetOrkflowVersion())
+			return fmt.Errorf("the run's definition %s@%s is no longer stored in namespace %q; pass --file with its document",
+				r.run.GetOrkflowName(), r.run.GetOrkflowVersion(), namespace)
 		}
 		return rpcError("get the run's definition", err)
 	}
@@ -910,7 +918,7 @@ func (r *taskRunner) compose() error {
 	// Each closure member's one source.
 	suppliedBy := map[string]*suppliedUpstream{}
 	for id, values := range r.parsed.assumed {
-		raw, err := json.Marshal(values.GetData().AsMap())
+		raw, err := stablejson.Marshal(values.GetData().AsMap())
 		if err != nil {
 			return fmt.Errorf("--output %s: %w", id, err)
 		}
@@ -1163,11 +1171,11 @@ func (r *taskRunner) dispatch() (err error) {
 // --render-only task.json after it.
 func (r *taskRunner) onSealed(snapshot string) {
 	r.t.printFile("config.json", filepath.Join(snapshot, "config.json"))
-	if raw, err := os.ReadFile(filepath.Join(snapshot, "config.json")); err == nil && json.Valid(raw) {
-		r.report.Config = json.RawMessage(raw)
+	if raw, err := os.ReadFile(filepath.Join(snapshot, "config.json")); err == nil && jsontext.Value(raw).IsValid() {
+		r.report.Config = stablejson.RawJSON(raw)
 	}
-	if raw, err := os.ReadFile(filepath.Join(snapshot, "task.json")); err == nil && json.Valid(raw) {
-		r.report.TaskJSON = json.RawMessage(raw)
+	if raw, err := os.ReadFile(filepath.Join(snapshot, "task.json")); err == nil && jsontext.Value(raw).IsValid() {
+		r.report.TaskJSON = stablejson.RawJSON(raw)
 		var doc struct {
 			Image struct {
 				PlatformDigest string `json:"platformDigest"`

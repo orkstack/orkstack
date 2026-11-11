@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,7 +14,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingAuditStore is the real in-memory audit store with every query the
@@ -56,9 +59,7 @@ func auditFixture(t *testing.T) (*fixture, *recordingAuditStore) {
 		// Fixed ids, so the JSON golden holds across runs.
 		rec.Id = "aud-" + artifacts.RunStamp(at) + "-" + strings.Repeat(string(rune('a'+i)), 16)
 		rec.SourceAddress = "10.0.0.7:51234"
-		if err := store.PutAuditRecord(context.Background(), rec); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
+		must.OKf(t, store.PutAuditRecord(context.Background(), rec), "seed")
 	}
 	return f, store
 }
@@ -72,7 +73,7 @@ func TestAdminAudit_Golden(t *testing.T) {
 	machine := f.run("--json", "admin", "audit").requireExit(t, exitOK)
 	requireGolden(t, "admin-audit.json.golden", machine.stdout)
 	var document struct {
-		Records []json.RawMessage `json:"records"`
+		Records []stablejson.RawJSON `json:"records"`
 	}
 	if err := json.Unmarshal([]byte(machine.stdout), &document); err != nil || len(document.Records) != 4 {
 		t.Fatalf("--json is not the raw envelope with four records: %v\n%s", err, machine.stdout)

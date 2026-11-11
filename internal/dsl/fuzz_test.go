@@ -2,7 +2,8 @@ package dsl_test
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -16,12 +17,15 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Reference grammar, from the OCI distribution specification's reference
@@ -105,9 +109,7 @@ func FuzzParseReference(f *testing.F) {
 			written += "@" + parsed.Digest
 		}
 		again, err := dsl.ParseReference(written)
-		if err != nil {
-			t.Fatalf("ParseReference(%q) = %+v, but its own spelling %q is refused: %v", reference, parsed, written, err)
-		}
+		must.OKf(t, err, "ParseReference(%q) = %+v, but its own spelling %q is refused", reference, parsed, written)
 		parsed.Original, again.Original = "", ""
 		if parsed != again {
 			t.Fatalf("ParseReference(%q) = %+v, its spelling %q parses to %+v", reference, parsed, written, again)
@@ -115,40 +117,94 @@ func FuzzParseReference(f *testing.F) {
 	})
 }
 
-// FuzzParseOrkflowUses: `uses: orkflow:<name>@<version>` accepts a slug and a
-// stored-version string and nothing else, and what it accepts spells itself.
+// FuzzParseOrkflowUses: `uses: orkflow:[<namespace>/]<name>@<version>`
+// accepts slugs and a stored-version string and nothing else, and what it
+// accepts spells itself.
 func FuzzParseOrkflowUses(f *testing.F) {
 	for _, seed := range []string{
 		"orkflow:build@1.2.0", "orkflow:build", "orkflow:build@", "orkflow:@1", "orkflow:", "shell", "orkflow:Build@1", "orkflow:build@-1",
 		"orkflow:build@1@2", "orkflow:{{ .inputs.x }}@1", "orkflow:build@{{ .inputs.v }}", "orkflow:a-b@2026-09-08.1", "orkflow:build@" + strings.Repeat("1", 201),
 		"orkflow:" + strings.Repeat("a", 201) + "@1", "orkflow:build@1 ", " orkflow:build@1", "orkflow:build@\u00e9", "orkflow:bu\x00ild@1",
+		"orkflow:team-a/deploy@1.2.3", "orkflow:/deploy@1", "orkflow:team-a/@1", "orkflow:a/b/c@1", "orkflow:Team/x@1", "orkflow:team-a/deploy",
+		"orkflow:*/deploy@1", "orkflow:team-a/deploy@1/2",
 	} {
 		f.Add(seed)
 	}
 	version := regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	slug := regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	f.Fuzz(func(t *testing.T, uses string) {
-		name, ver, ok, err := dsl.ParseOrkflowUses(uses)
+		ref, ok, err := dsl.ParseOrkflowUses(uses)
 		if ok != strings.HasPrefix(uses, dsl.OrkflowUsesPrefix) {
 			t.Fatalf("ParseOrkflowUses(%q) ok=%v", uses, ok)
 		}
 		if err != nil {
-			if name != "" || ver != "" || !ok {
-				t.Fatalf("ParseOrkflowUses(%q) = %q, %q, %v, %v", uses, name, ver, ok, err)
+			if ref != (dsl.UsesRef{}) || !ok {
+				t.Fatalf("ParseOrkflowUses(%q) = %+v, %v, %v", uses, ref, ok, err)
 			}
 			return
 		}
 		if !ok {
-			if name != "" || ver != "" {
-				t.Fatalf("ParseOrkflowUses(%q) is not a reference but returned %q@%q", uses, name, ver)
+			if ref != (dsl.UsesRef{}) {
+				t.Fatalf("ParseOrkflowUses(%q) is not a reference but returned %+v", uses, ref)
 			}
 			return
 		}
-		if len(name) > 200 || !slug.MatchString(name) || len(ver) > 200 || !version.MatchString(ver) {
-			t.Fatalf("ParseOrkflowUses(%q) accepted %q@%q", uses, name, ver)
+		if len(ref.Name) > 200 || !slug.MatchString(ref.Name) || len(ref.Version) > 200 || !version.MatchString(ref.Version) {
+			t.Fatalf("ParseOrkflowUses(%q) accepted %+v", uses, ref)
 		}
-		if written := dsl.OrkflowUsesPrefix + name + "@" + ver; written != uses {
-			t.Fatalf("ParseOrkflowUses(%q) = %q@%q, which spells %q", uses, name, ver, written)
+		written := dsl.OrkflowUsesPrefix + ref.Name + "@" + ref.Version
+		if ref.Namespace != "" {
+			if len(ref.Namespace) > 200 || !slug.MatchString(ref.Namespace) {
+				t.Fatalf("ParseOrkflowUses(%q) accepted namespace %q", uses, ref.Namespace)
+			}
+			written = dsl.OrkflowUsesPrefix + ref.Namespace + "/" + ref.Name + "@" + ref.Version
+		}
+		if written != uses {
+			t.Fatalf("ParseOrkflowUses(%q) = %+v, which spells %q", uses, ref, written)
+		}
+	})
+}
+
+// FuzzParseShare: one shared_with entry is accepted only in one of its three
+// shapes, and what it accepts renders back to the entry it parsed.
+func FuzzParseShare(f *testing.F) {
+	for _, seed := range []struct{ namespace, orkflow string }{
+		{"*", ""}, {"team-b", ""}, {"", "team-b/release"}, {"", ""}, {"team-b", "team-b/release"}, {"Team", ""},
+		{"", "release"}, {"", "team-b/"}, {"", "/release"}, {"", "team-b/*"}, {"", "*/release"}, {"", "a/b/c"},
+		{"**", ""}, {" team-b", ""}, {"", "team-b/re\x00lease"}, {strings.Repeat("a", 201), ""},
+	} {
+		f.Add(seed.namespace, seed.orkflow)
+	}
+	slug := regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+	f.Fuzz(func(t *testing.T, namespace, orkflow string) {
+		share, err := dsl.ParseShare(&orkstackv1.OrkflowShare{Namespace: namespace, Orkflow: orkflow})
+		if err != nil {
+			if share != (dsl.Share{}) {
+				t.Fatalf("ParseShare(%q, %q) = %+v with %v", namespace, orkflow, share, err)
+			}
+			return
+		}
+		if (namespace == "") == (orkflow == "") {
+			t.Fatalf("ParseShare(%q, %q) accepted an entry with not exactly one key", namespace, orkflow)
+		}
+		switch share.Kind {
+		case dsl.ShareEveryNamespace:
+			if namespace != "*" || share.String() != "namespace:*" {
+				t.Fatalf("ParseShare(%q, %q) = %+v", namespace, orkflow, share)
+			}
+		case dsl.ShareNamespace:
+			if share.Namespace != namespace || len(namespace) > 200 || !slug.MatchString(namespace) ||
+				share.String() != "namespace:"+namespace {
+				t.Fatalf("ParseShare(%q, %q) = %+v", namespace, orkflow, share)
+			}
+		case dsl.ShareOrkflow:
+			if share.Namespace+"/"+share.Name != orkflow || !slug.MatchString(share.Namespace) ||
+				!slug.MatchString(share.Name) || len(share.Namespace) > 200 || len(share.Name) > 200 ||
+				share.String() != "orkflow:"+orkflow {
+				t.Fatalf("ParseShare(%q, %q) = %+v", namespace, orkflow, share)
+			}
+		default:
+			t.Fatalf("ParseShare(%q, %q) = kind %d", namespace, orkflow, share.Kind)
 		}
 	})
 }
@@ -223,9 +279,7 @@ func FuzzValidateAwaitValues(f *testing.F) {
 			schema[key] = map[string]any{"type": types[key], "required": required>>uint(i)&1 == 1}
 		}
 		fields, err := structpb.NewStruct(schema)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		spec := &orkstackv1.AwaitSpec{TimeoutSeconds: 60, Schema: fields}
 		got := dsl.ValidateAwaitValues(spec, raw, maxBytes)
 		want := awaitVerdict(raw, maxBytes, order, types, required)
@@ -248,11 +302,14 @@ func awaitVerdict(raw []byte, maxBytes int64, order []string, types map[string]s
 	if !utf8.Valid(raw) {
 		return "values: the values are not valid UTF-8"
 	}
-	if !json.Valid(raw) {
-		return "values: the values are not one valid JSON value"
-	}
 	if escape := halfOfAPair(raw); escape != "" {
 		return "values: the values hold a string that cannot be read as text: the escape " + escape + " is half of a surrogate pair, not a character"
+	}
+	// One JSON value, as encoding/json/v2 reads it: a key written twice is
+	// refused, naming the key and where it is.
+	var probe any
+	if err := json.Unmarshal(raw, &probe, stablejson.UseNumber); err != nil {
+		return "values: the values are not one valid JSON value: " + stablejson.Explain(err)
 	}
 	kindOf := func(text []byte) string {
 		switch trimmed := strings.TrimLeft(string(text), " \t\r\n"); trimmed[0] {
@@ -273,7 +330,7 @@ func awaitVerdict(raw []byte, maxBytes int64, order []string, types map[string]s
 	if kind := kindOf(raw); kind != "an object" {
 		return "values: the values must be a JSON object, not " + kind
 	}
-	var object map[string]json.RawMessage
+	var object map[string]stablejson.RawJSON
 	if err := json.Unmarshal(raw, &object); err != nil {
 		return "values: the values are not one valid JSON value"
 	}
@@ -364,12 +421,13 @@ func FuzzCompile_Orkflow(f *testing.F) {
 	recipe := "../../examples/custom-image/custom-image.ork.yaml"
 	for _, path := range append(append(examples, recipe), fixtures...) {
 		source, err := os.ReadFile(path)
-		if err != nil {
-			f.Fatal(err)
-		}
+		must.OK(f, err)
 		f.Add(source)
 	}
 	f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks: []\n"))
+	for _, merge := range []string{"timeout_seconds: !!merge 3", "timeout_seconds: <<", "needs: <<", "!!merge needs: []", "with: {a: <<}"} {
+		f.Add([]byte("apiVersion: ! orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    " + merge + "\n"))
+	}
 	f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    with: {op: exec, command: [echo, \"{{ sh .inputs.x }}\"]}\n"))
 	for _, retry := range []string{
 		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 10}",
@@ -383,6 +441,27 @@ func FuzzCompile_Orkflow(f *testing.F) {
 	} {
 		f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    retry: " + retry + "\n"))
 	}
+	// The sleep's boundaries: every spelling of seconds, an empty or unknown
+	// map, sleep beside await and beside each key it refuses, and a template
+	// that reads a sleep (rule 51).
+	sleeps := []string{"{}", "null", "{seconds: 60, second: 1}",
+		"{seconds: 60}\n    await: {timeout_seconds: 60}", "{seconds: 60}\n    uses: shell",
+		"{seconds: 60}\n    join: all_done\n    needs: [t]"}
+	for _, spelling := range []string{"0", "1", "2592000", "2592001", "-1", "1.5", "60.0", "'10'", `"10"`, "1e3", "0x10",
+		"017", "0o17", "1_000", "2147483648", "-2147483649", "99999999999999999999", "true", ".inf", "~"} {
+		sleeps = append(sleeps, "{seconds: "+spelling+"}")
+	}
+	for _, key := range []string{"with: {op: exec}", "command: [echo]", "env: {A: b}", "secrets: [{name: d, source: 'env:D'}]",
+		"resources: {cpu: '1'}", "network: none", "pool: gpu", "pin: p", "retry: {maximum_attempts: 2}", "timeout_seconds: 60",
+		"cancellation_grace_period_seconds: 5", "run_as_orker_user: true", "each: {over: '{{ .inputs.l }}', max_items: 2}",
+		"cache: {enabled: true}"} {
+		sleeps = append(sleeps, "{seconds: 60}\n    "+key)
+	}
+	for _, sleep := range sleeps {
+		f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n  - id: s\n    sleep: " + sleep + "\n"))
+	}
+	f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: s\n    sleep: {seconds: 60}\n" +
+		"  - id: u\n    uses: shell\n    needs: [s]\n    with: {op: exec, command: [echo, '{{ .tasks.s.output.x }}']}\n"))
 	for _, tc := range secondDocumentCases {
 		f.Add([]byte(tc.source))
 	}
@@ -421,20 +500,14 @@ func FuzzCompile_Orkflow(f *testing.F) {
 			t.Fatalf("Compile accepted %q, whose digest is %q, %v", source, digest, err)
 		}
 		again, err := dsl.Compile(source)
-		if err != nil {
-			t.Fatalf("Compile accepted %q once and refused it again: %v", source, err)
-		}
+		must.OKf(t, err, "Compile accepted %q once and refused it again", source)
 		if second, _ := dsl.DefinitionDigest(again); second != digest {
 			t.Fatalf("Compile(%q) digests differ between runs: %s then %s", source, digest, second)
 		}
 		wire, err := proto.Marshal(wf)
-		if err != nil {
-			t.Fatalf("marshal: %v", err)
-		}
+		must.OKf(t, err, "marshal")
 		back := &orkstackv1.Orkflow{}
-		if err := proto.Unmarshal(wire, back); err != nil {
-			t.Fatalf("unmarshal: %v", err)
-		}
+		must.OKf(t, proto.Unmarshal(wire, back), "unmarshal")
 		if viaWire, _ := dsl.DefinitionDigest(back); viaWire != digest {
 			t.Fatalf("Compile(%q): the digest %s changed to %s across the wire format", source, digest, viaWire)
 		}
@@ -553,9 +626,7 @@ func FuzzParseInterfaceDocument(f *testing.F) {
 			t.Fatalf("PackInterfaceLabel is not deterministic: %q, then %q (%v)", label, again, err)
 		}
 		back, err := dsl.ParseInterfaceLabel(label)
-		if err != nil {
-			t.Fatalf("the engine refuses the packed label %q of %q: %v", label, source, err)
-		}
+		must.OKf(t, err, "the engine refuses the packed label %q of %q", label, source)
 		if !proto.Equal(back, iface) {
 			t.Fatalf("the packed label of %q reads back as\n%v\nnot\n%v", source, back, iface)
 		}
@@ -615,9 +686,7 @@ func FuzzRenderValues_OnlyAPrintedNilIsRefused(f *testing.F) {
 			}
 			return
 		}
-		if err != nil {
-			t.Fatalf("%q over %q and %q: %v", text, v1, v2, err)
-		}
+		must.OKf(t, err, "%q over %q and %q", text, v1, v2)
 		if want := before + v1 + middle + v2 + after + chosen.printed; got.(map[string]any)["v"] != want {
 			t.Fatalf("%q rendered %q, want %q", text, got.(map[string]any)["v"], want)
 		}
@@ -646,13 +715,11 @@ func FuzzCheckJSONText(f *testing.F) {
 			}
 			return
 		}
-		if !json.Valid(data) {
+		if !jsontext.Value(data).IsValid() {
 			return // not JSON: the decoder's to refuse
 		}
 		if escape := halfOfAPair(data); escape == "" {
-			if err != nil {
-				t.Fatalf("CheckJSONText refused %q, whose strings are all text: %v", data, err)
-			}
+			must.OKf(t, err, "CheckJSONText refused %q, whose strings are all text", data)
 		} else if err == nil || !strings.Contains(err.Error(), escape) {
 			t.Fatalf("CheckJSONText(%q) = %v, want the half pair %s named", data, err, escape)
 		}
@@ -691,8 +758,33 @@ func holdsReplacement(value any) bool {
 	return false
 }
 
+// rootBlockScalarHoldsMarker reports whether the parser read a document marker
+// line into a block scalar at a document's root (">\n---"). YAML ends the
+// document at the marker, as yaml.v3 did, and SecondDocumentLine finds the
+// second document there; go-yaml v4 reads the marker as the scalar's text, so
+// on such a file the parser is no oracle.
+func rootBlockScalarHoldsMarker(doc *yaml.Node) bool {
+	if len(doc.Content) != 1 {
+		return false
+	}
+	root := doc.Content[0]
+	if root.Kind != yaml.ScalarNode || root.Style&(yaml.LiteralStyle|yaml.FoldedStyle) == 0 {
+		return false
+	}
+	for _, line := range strings.Split(root.Value, "\n") {
+		for _, marker := range []string{"---", "..."} {
+			if rest, ok := strings.CutPrefix(line, marker); ok && (rest == "" || rest[0] == ' ' || rest[0] == '\t') {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // FuzzSecondDocumentLine: the parser and SecondDocumentLine agree on every file
-// whose first document parses, and a line it reports stands in the file.
+// whose first document parses, and a line it reports stands in the file — but
+// for a block scalar at the root that the parser reads a marker into
+// (rootBlockScalarHoldsMarker).
 func FuzzSecondDocumentLine(f *testing.F) {
 	for _, tc := range secondDocumentCases {
 		f.Add([]byte(tc.source))
@@ -710,7 +802,7 @@ func FuzzSecondDocumentLine(f *testing.F) {
 		}
 		decoder := yaml.NewDecoder(bytes.NewReader(source))
 		var first, second yaml.Node
-		if err := decoder.Decode(&first); err != nil {
+		if err := decoder.Decode(&first); err != nil || rootBlockScalarHoldsMarker(&first) {
 			return
 		}
 		err := decoder.Decode(&second)

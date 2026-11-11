@@ -90,7 +90,6 @@
 	<div
 		id={base}
 		data-testid={base}
-		data-cli-own
 		class="w-full min-w-0 rounded-sm border border-rule-faint bg-paper-sunken px-3 py-2 text-xs"
 	>
 		<div class="flex items-start justify-between gap-3">

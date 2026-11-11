@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"sort"
@@ -22,7 +22,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The composed fixtures: real histories of the shipped composition examples — a parent
@@ -83,9 +86,7 @@ func recordedMarkers(t *testing.T, recorded *historypb.History) map[string][]*co
 			continue
 		}
 		var data struct{ ActivityType string }
-		if err := converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["data"], &data); err != nil {
-			t.Fatalf("decode a local activity marker: %v", err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayloads(attrs.GetDetails()["data"], &data), "decode a local activity marker")
 		out[data.ActivityType] = append(out[data.ActivityType], attrs.GetDetails()["result"])
 	}
 	return out
@@ -189,13 +190,13 @@ func TestComposedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 		}
 		return result, nil
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	env.RegisterActivityWithOptions(func(context.Context, engine.ComposeRenderRequest) (json.RawMessage, error) {
+	env.RegisterActivityWithOptions(func(context.Context, engine.ComposeRenderRequest) (stablejson.RawJSON, error) {
 		mu.Lock()
 		defer mu.Unlock()
 		if len(renders) == 0 {
 			return nil, fmt.Errorf("current code rendered more often than the recorded run")
 		}
-		var out json.RawMessage
+		var out stablejson.RawJSON
 		err := converter.GetDefaultDataConverter().FromPayloads(renders[0], &out)
 		renders = renders[1:]
 		return out, err
@@ -253,9 +254,7 @@ func TestComposedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	}
 	for key, payload := range started.GetMemo().GetFields() {
 		var want any
-		if err := converter.GetDefaultDataConverter().FromPayload(payload, &want); err != nil {
-			t.Fatalf("decode recorded memo %s: %v", key, err)
-		}
+		must.OKf(t, converter.GetDefaultDataConverter().FromPayload(payload, &want), "decode recorded memo %s", key)
 		if fmt.Sprint(opts.Memo[key]) != fmt.Sprint(want) {
 			t.Errorf("memo %s = %v, recorded %v", key, opts.Memo[key], want)
 		}
@@ -277,9 +276,7 @@ func TestComposedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 			t.Fatalf("decode recorded child argument %d: %v", i, err)
 		}
 		payload, err := converter.GetDefaultDataConverter().ToPayload(arg)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		var got any
 		if err := json.Unmarshal(payload.GetData(), &got); err != nil {
 			t.Fatal(err)

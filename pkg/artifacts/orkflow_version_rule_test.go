@@ -21,7 +21,7 @@ func TestOrkflowVersionRule_RegistryAndCompilerAgree(t *testing.T) {
 	}
 	for _, version := range corpus {
 		_, storeErr := OrkflowKey("default", "release-block", version)
-		_, _, ok, parseErr := dsl.ParseOrkflowUses("orkflow:release-block@" + version)
+		_, ok, parseErr := dsl.ParseOrkflowUses("orkflow:release-block@" + version)
 		if !ok {
 			t.Fatalf("ParseOrkflowUses did not take %q as a composition", version)
 		}

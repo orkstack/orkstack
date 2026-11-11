@@ -9,6 +9,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // FuzzRunArchive_ABodyThatReadsIsOneTheWriterRenders: an archived run is read
@@ -22,9 +24,7 @@ func FuzzRunArchive_ABodyThatReadsIsOneTheWriterRenders(f *testing.F) {
 	events := []*orkstackv1.Event{{Sequence: 1, RunId: "ork-1-1"}, {Sequence: 2, RunId: "ork-1-1"}, {Sequence: 5, RunId: "ork-1-1"}}
 	for _, gaps := range [][]EventGap{nil, {{First: 3, Last: 4, Reason: "missing"}}, {{First: 6, Last: 9, Reason: "altered"}, {First: 3, Last: 4, Reason: "missing"}}} {
 		body, err := MarshalRunArchive(run, events, gaps...)
-		if err != nil {
-			f.Fatal(err)
-		}
+		must.OK(f, err)
 		f.Add(body)
 	}
 	for _, seed := range []string{
@@ -48,9 +48,7 @@ func FuzzRunArchive_ABodyThatReadsIsOneTheWriterRenders(f *testing.F) {
 			return // the reader is more lenient than the writer about a run with no id and about a malformed gap line
 		}
 		written, err := MarshalRunArchive(run, events, gaps...)
-		if err != nil {
-			t.Fatalf("a body that read, %q, cannot be written: %v", body, err)
-		}
+		must.OKf(t, err, "a body that read, %q, cannot be written", body)
 		again, againEvents, err := UnmarshalRunArchive(written)
 		againGaps, gapsErr := UnmarshalRunArchiveGaps(written)
 		if err != nil || gapsErr != nil || !proto.Equal(again, run) || len(againEvents) != len(events) {

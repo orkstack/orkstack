@@ -25,6 +25,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // --- fakes ------------------------------------------------------------------
@@ -137,9 +139,7 @@ func newFakeReleaseCluster(t *testing.T, orkerQueue string) (*TemporalReleaseClu
 		channelErr:  map[string]error{},
 	}
 	cluster, err := newReleaseCluster(fake, nil, "orkstack", task.DefaultQueue, orkerQueue)
-	if err != nil {
-		t.Fatalf("newReleaseCluster: %v", err)
-	}
+	must.OKf(t, err, "newReleaseCluster")
 	cluster.Now = func() time.Time { return releaseNow }
 	cluster.routingPoll = time.Millisecond
 	return cluster, fake, handle
@@ -195,9 +195,7 @@ func TestObserveReleases_RolesAndDrainFromTheClustersRouting(t *testing.T) {
 	}}
 
 	obs, err := cluster.ObserveReleases(context.Background())
-	if err != nil {
-		t.Fatalf("ObserveReleases: %v", err)
-	}
+	must.OKf(t, err, "ObserveReleases")
 	if want := (Routing{Current: "v2", Ramping: "v3", RampPercent: 10}); obs.Routing != want {
 		t.Fatalf("routing = %+v, want %+v", obs.Routing, want)
 	}
@@ -258,9 +256,7 @@ func TestObserveReleases_ADescribeVersionFailureKeepsTheRelease(t *testing.T) {
 	}}
 	handle.versionErr["v2"] = serviceerror.NewUnavailable("frontend down")
 	obs, err := cluster.ObserveReleases(context.Background())
-	if err != nil {
-		t.Fatalf("ObserveReleases: %v", err)
-	}
+	must.OKf(t, err, "ObserveReleases")
 	if len(obs.Releases) != 2 {
 		t.Fatalf("releases = %+v", obs.Releases)
 	}
@@ -302,9 +298,7 @@ func TestEngineReplicas_CountFreshWorkflowPollersByRelease(t *testing.T) {
 		poller("5@e", fresh, "", ""),
 	}}
 	got, err := cluster.engineReplicas(context.Background())
-	if err != nil {
-		t.Fatalf("engineReplicas: %v", err)
-	}
+	must.OKf(t, err, "engineReplicas")
 	if want := map[string]int{"v1": 2, "v2": 1, "": 1}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("replicas = %v, want %v", got, want)
 	}
@@ -439,9 +433,7 @@ func TestReleaseRuns_CountsAndListsNewestShallowRuns(t *testing.T) {
 		out := &commonpb.Memo{Fields: map[string]*commonpb.Payload{}}
 		for k, v := range fields {
 			p, err := dc.ToPayload(v)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			out.Fields[k] = p
 		}
 		return out
@@ -459,9 +451,7 @@ func TestReleaseRuns_CountsAndListsNewestShallowRuns(t *testing.T) {
 	}
 	reader := newRunReader(index, dc)
 	n, runs, err := reader.ReleaseRuns(context.Background(), "orkstack", "v2", 10)
-	if err != nil {
-		t.Fatalf("ReleaseRuns: %v", err)
-	}
+	must.OKf(t, err, "ReleaseRuns")
 	if n != 14 || len(runs) != 10 {
 		t.Fatalf("n = %d, runs = %d; want 14 and 10", n, len(runs))
 	}
@@ -513,9 +503,7 @@ func TestRoutingRevision_EqualExactlyWhenRoutingIsEqual(t *testing.T) {
 func TestSetRouting_KeepsTheClustersOwnGuards(t *testing.T) {
 	cluster, _, handle := newFakeReleaseCluster(t, "")
 	obs := ReleaseObservation{Routing: Routing{Current: "v1"}, conflictToken: []byte("tok")}
-	if err := cluster.SetRouting(context.Background(), obs, Routing{Current: "v2"}); err != nil {
-		t.Fatalf("SetRouting: %v", err)
-	}
+	must.OKf(t, cluster.SetRouting(context.Background(), obs, Routing{Current: "v2"}), "SetRouting")
 	if len(handle.setCurrent) != 1 || len(handle.setRamping) != 0 {
 		t.Fatalf("calls: current %d, ramping %d", len(handle.setCurrent), len(handle.setRamping))
 	}
@@ -528,9 +516,7 @@ func TestSetRouting_KeepsTheClustersOwnGuards(t *testing.T) {
 func TestSetRouting_StoppingARampUnsetsTheRampingRelease(t *testing.T) {
 	cluster, _, handle := newFakeReleaseCluster(t, "")
 	obs := ReleaseObservation{Routing: Routing{Current: "v1", Ramping: "v2", RampPercent: 10}, conflictToken: []byte("tok")}
-	if err := cluster.SetRouting(context.Background(), obs, Routing{Current: "v1"}); err != nil {
-		t.Fatalf("SetRouting: %v", err)
-	}
+	must.OKf(t, cluster.SetRouting(context.Background(), obs, Routing{Current: "v1"}), "SetRouting")
 	if len(handle.setRamping) != 1 || len(handle.setCurrent) != 0 {
 		t.Fatalf("calls: current %d, ramping %d", len(handle.setCurrent), len(handle.setRamping))
 	}

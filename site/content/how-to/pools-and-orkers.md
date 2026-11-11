@@ -10,7 +10,7 @@ On each Orker host, join the `gpu` pool, cap the tasks it runs at once, and chec
 ORK_ORKER_POOL=gpu ORK_ORKER_MAX_CONCURRENT=4 orker --config orkstack.yaml
 
 orkctl pool list -n payments                 # the pool, and how many Orkers serve it
-orkctl orker list --filter pool=gpu          # each Orker in the pool, with its load
+orkctl orker list -F pool=gpu          # each Orker in the pool, with its load
 ```
 
 A task that names no pool runs on its namespace's default pool, which `orkctl namespace update NS --default-pool POOL` sets. A namespace with no default pool set uses the deployment's default pool, `main`. To change the deployment's default, set `ORK_ORKER_POOL` to the same value on `ork` and on every Orker of that pool. Leave it unset on `ork` otherwise.

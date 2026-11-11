@@ -5,15 +5,15 @@ Follow a run as it goes: which tasks have run, what each try wrote, and where th
 ## Find the run
 
 ```bash
-orkctl run list --filter status=FAILED
-orkctl run list --filter orkflow_name=payments-release --filter status=FAILED
+orkctl run list -F status=FAILED
+orkctl run list -F orkflow_name=payments-release -F status=FAILED
 ```
 
 The list is newest first. Filters can name `status` (`PENDING`, `RUNNING`, `SUCCEEDED`, `FAILED`, `CANCELED`, `SKIPPED`), `orkflow_name`, `created_at`, `origin.kind`, `origin.id` (with `origin.kind`, to name one trigger, schedule or source run), `origin.root_run_id` (every run below that root of a composed chain, not the root itself) and `labels.KEY`, a run's label by its key. Add `-n NAMESPACE` when the run is not in `default`.
 
 ## Follow it in the UI
 
-Open Runs, then the run. The run page draws the tasks as a graph, lists them with a row each, and shows a fan-out as a grid of items. Choose a task to open its details and log under its row; a fan-out's items sit there too, and an item opens the same way. To see which Orker ran each task, choose **Show Orkers** in the Tasks card's More menu.
+Open Runs, then the run. The run page draws the tasks as a graph, lists them with a row each, and shows a fan-out as a grid of items. Choose a task to open its details and log under its row; a fan-out's items sit there too, and an item opens the same way. A row keeps to the task's name, its status and its time; what it ran, the Orker it ran on, its pin and why it ended are in its details.
 
 <!-- site-media: ui-run-live -->
 
@@ -25,11 +25,11 @@ Side cards, such as the Task map, show more about the run. The run's actions are
 
 ```bash
 orkctl run watch <run-id>                   # stream events until the run ends
-orkctl run inspect <run-id> --watch         # what each running task is doing now
+orkctl run inspect <run-id> -w         # what each running task is doing now
 orkctl run get <run-id>                     # every task's final outcome
 orkctl run get <run-id> --expand convert    # one row per item of a fan-out
-orkctl run logs <run-id> --task convert -f  # follow one task's output
-orkctl run logs <run-id> --task convert --item 2   # one item's output
+orkctl run logs <run-id> -t convert -f  # follow one task's output
+orkctl run logs <run-id> -t convert --item 2   # one item's output
 orkctl run get <run-id> --tree              # the child runs a composed task started
 ```
 
@@ -58,8 +58,8 @@ Each task shows one of these states. A run is `Running`, `Succeeded`, `Failed` o
 ### Resolve an awaited task
 
 ```bash
-orkctl run resolve <run-id> --task approve --values '{"approved": true}'
-orkctl run resolve <run-id> --task approve --reject --reason "not this week"
+orkctl run resolve <run-id> -t approve --values '{"approved": true}'
+orkctl run resolve <run-id> -t approve --reject --reason "not this week"
 ```
 
 A completion's values become the task's `values.json`, byte for byte. A rejection fails the task with `AWAIT_REJECTED`. The run applies the answer next, and a resolution that loses a race is recorded on the run.
@@ -69,9 +69,9 @@ A completion's values become the task's `values.json`, byte for byte. A rejectio
 A retry does not show in the task's final outcome. Use attempts to see each try:
 
 ```bash
-orkctl run attempts <run-id> --task convert       # every try, oldest first
-orkctl run logs <run-id> --task convert --attempt 2
-orkctl run timing <run-id> --task convert         # wait, run and total time
+orkctl run attempts <run-id> -t convert       # every try, oldest first
+orkctl run logs <run-id> -t convert --attempt 2
+orkctl run timing <run-id> -t convert         # wait, run and total time
 ```
 
 The UI's attempt timeline lists each try, with its own error and a link that opens that try's log.
@@ -83,13 +83,13 @@ A value that cannot be known prints as `unavailable`, with the reason. It never 
 ## Artifacts
 
 ```bash
-orkctl run artifacts <run-id> --task convert
-orkctl run artifact download <run-id> --task convert --name part.txt --output part.txt
+orkctl run artifacts <run-id> -t convert
+orkctl run artifact download <run-id> -t convert --name part.txt -o part.txt
 ```
 
 A fan-out's artifact needs `--item`. `download` refuses to overwrite an existing file unless you pass `--overwrite`.
 
-`download --output` writes a file, which the `orkctl` alias cannot do. Use the installed binary, as [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains.
+`download -o` writes a file, which the `orkctl` alias cannot do. Use the installed binary, as [Run it locally](/docs/get-started/run-locally/#install-orkctl-on-your-machine) explains.
 
 ## Limits
 

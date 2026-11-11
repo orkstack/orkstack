@@ -104,7 +104,7 @@ func SampleTask(
 	sample := TaskSample{
 		RunID:     entry.RunID,
 		CreatedAt: entry.Time,
-		Orkflow:   run.GetOrkflowName(),
+		Orkflow:   OrkflowKey(run),
 		TaskID:    task.GetTaskId(),
 		Pool:      task.GetPool(),
 	}
@@ -542,15 +542,17 @@ func GroupFlakes(
 
 // group renders one bucket.
 func (b *flakeBucket) group(bodyKeyed bool) *orkstackv1.FlakeGroup {
+	owner, name := SplitOrkflowKey(b.key.orkflow)
 	group := &orkstackv1.FlakeGroup{
-		OrkflowName:   b.key.orkflow,
-		TaskId:        b.key.task,
-		Pool:          b.key.pool,
-		OrkerId:       b.key.orker,
-		Phase:         b.key.phase,
-		ImagePinned:   b.key.image,
-		RunsObserved:  int64(len(b.runs)),
-		RetryAttempts: b.retries,
+		OrkflowName:      name,
+		OrkflowNamespace: owner,
+		TaskId:           b.key.task,
+		Pool:             b.key.pool,
+		OrkerId:          b.key.orker,
+		Phase:            b.key.phase,
+		ImagePinned:      b.key.image,
+		RunsObserved:     int64(len(b.runs)),
+		RetryAttempts:    b.retries,
 	}
 	if bodyKeyed {
 		group.RunsEvidenceMissing = int64(len(b.missing))

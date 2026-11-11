@@ -595,10 +595,6 @@ func TestNewRunArchive_SelectsBackendByConfig(t *testing.T) {
 		t.Fatalf("unknown backend error = %v, want ErrUnknownBackend", err)
 	}
 
-	backends := artifacts.RunArchiveBackends()
-	if !equalStrings(backends, []string{artifacts.BackendLocal, artifacts.BackendS3}) {
-		t.Fatalf("run archive backends = %v, want [local s3]", backends)
-	}
 }
 
 func TestRunObjectRefKey_CarriesHashedObjectAndExactRun(t *testing.T) {

@@ -290,7 +290,7 @@ export function shellArg(value: string): string {
 }
 
 function nsFlag(namespace: string): string {
-	return `--namespace ${shellArg(namespace || 'default')}`;
+	return `-n ${shellArg(namespace || 'default')}`;
 }
 
 /**

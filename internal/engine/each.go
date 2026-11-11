@@ -1,11 +1,10 @@
 package engine
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +20,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -143,7 +143,7 @@ func (e *EachError) Error() string { return e.Code + ": " + e.Message }
 // or a value on the way is not an object — the error names the key and what
 // it found) or EACH_OVER_NOT_ARRAY (the value reached is null, an object, a
 // string, a number or a boolean — named). root is decoded JSON: map[string]any
-// / []any / json.Number / string / bool / nil (a structpb AsMap value is the
+// / []any / stablejson.Number / string / bool / nil (a structpb AsMap value is the
 // same shapes with float64 numbers, which the count ignores). Never mutates
 // root. Pure: shared by the workflow, the local activity and Simulate, so the
 // three cannot disagree.
@@ -197,7 +197,7 @@ func jsonKind(v any) string {
 		return "a string"
 	case bool:
 		return "a boolean"
-	case json.Number, float64, float32, int, int32, int64:
+	case stablejson.Number, float64, float32, int, int32, int64:
 		return "a number"
 	default:
 		return fmt.Sprintf("a %T", v)
@@ -276,7 +276,7 @@ func eachActivityError(code, message string) error {
 // CountEachItems reads the committed values.json at ref.uri, at most
 // maxBytes+1 bytes; refuses bytes whose sha256 is not ref.sha256
 // (non-retryable EACH_EXPANSION_FAILED: the store contradicts the commit, and
-// no retry makes it agree); decodes with json.Decoder.UseNumber; and returns
+// no retry makes it agree); decodes with stablejson.UseNumber; and returns
 // EachArrayLength(value, path, over). A read error is returned as-is and is
 // retried by the local activity's policy.
 func (a *EachActivities) CountEachItems(
@@ -313,12 +313,10 @@ func (a *EachActivities) CountEachItems(
 			"each.over %s: the values.json at %s hashes to %s but its commit records %s",
 			over, ref.GetUri(), hex.EncodeToString(sum[:]), want))
 	}
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
 	var value any
-	if err := decoder.Decode(&value); err != nil {
+	if err := json.Unmarshal(raw, &value, stablejson.UseNumber); err != nil {
 		return 0, eachActivityError(EachOverNotArrayCode, fmt.Sprintf(
-			"each.over %s: the committed values.json is not JSON: %v", over, err))
+			"each.over %s: the committed values.json is not JSON: %s", over, stablejson.Explain(err)))
 	}
 	n, eerr := EachArrayLength(value, path, over)
 	if eerr != nil {
@@ -897,6 +895,8 @@ func (s *runState) finishFanOutOnRunEnd(ctx workflow.Context, id string) {
 func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 	status orkstackv1.Status, message string, fresh bool,
 ) error {
+	// The contexts a cancel does not reach (emit_past_cancel.go).
+	writeCtx, publishCtx := s.emitContexts(ctx, false)
 	s.eventSeq++
 	event := &orkstackv1.Event{
 		RunId:     s.runID,
@@ -927,13 +927,13 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 		// snapshot is an overlay exactly when emit's would be, and the base
 		// an overlay names is the run's last full snapshot, whichever site
 		// wrote it.
-		uri, err := s.writeEventSnapshot(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG)
+		uri, err := s.writeEventSnapshot(writeCtx, orkstackv1.EventType_EVENT_TYPE_TASK_LOG)
 		if err != nil {
 			return fmt.Errorf("write snapshot for event %d: %w", s.eventSeq, err)
 		}
 		snapshotURI = uri
 	}
-	base := ctx
+	base := publishCtx
 	if s.leanEvents(ctx) {
 		// Awaited, but on the same disconnected context as the item publishes
 		// that are not, so an operator's cancel arriving while it is in flight
@@ -943,9 +943,8 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 	activityCtx := workflow.WithActivityOptions(base, eventActivityOptions())
 	s.recordEvent(event)
 	if err := workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey).
-		Get(ctx, nil); err != nil {
-		workflow.GetLogger(ctx).Error("publish item event failed",
-			"run_id", s.runID, "task_id", id, "item", index, "error", err)
+		Get(publishCtx, nil); err != nil {
+		s.logPublishFailed(ctx, event, err)
 	}
 	return nil
 }

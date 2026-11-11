@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_RunningCountMatchesTheExecutionIndexOnBothPaths is the
@@ -40,9 +42,7 @@ func TestIntegration_RunningCountMatchesTheExecutionIndexOnBothPaths(t *testing.
 		time.Now().UnixNano()%1_000_000_000)
 	temporalClient := dialRoutingCluster(t, ctx, address, temporalNamespace)
 	indexed, err := task.EnsureRunSearchAttributes(ctx, temporalClient, temporalNamespace)
-	if err != nil {
-		t.Fatalf("provision the run index in %q: %v", temporalNamespace, err)
-	}
+	must.OKf(t, err, "provision the run index in %q", temporalNamespace)
 	if !indexed {
 		t.Fatalf("EnsureRunSearchAttributes reported no error and no index")
 	}
@@ -60,9 +60,7 @@ func TestIntegration_RunningCountMatchesTheExecutionIndexOnBothPaths(t *testing.
 			Namespace: namespace,
 			Routes:    map[string]string{task.DefaultPool: task.DefaultQueue},
 		}
-		if err := starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
-			t.Fatalf("StartRun(%s in %s): %v", runID, namespace, err)
-		}
+		must.OKf(t, starter.StartRun(ctx, runID, wf, nil, plan), "StartRun(%s in %s)", runID, namespace)
 	}
 
 	stamp := time.Now().UnixNano()
@@ -88,9 +86,7 @@ func TestIntegration_RunningCountMatchesTheExecutionIndexOnBothPaths(t *testing.
 			Since:     now.Add(-time.Hour),
 			Until:     now.Add(time.Hour),
 		})
-		if err != nil {
-			t.Fatalf("Executions(%s): %v", namespace, err)
-		}
+		must.OKf(t, err, "Executions(%s)", namespace)
 		return int64(len(executions.Running))
 	}
 
@@ -106,9 +102,7 @@ func TestIntegration_RunningCountMatchesTheExecutionIndexOnBothPaths(t *testing.
 			settled := got == want
 			for name, reader := range readers {
 				count, err := reader.RunningCount(ctx, namespace, 0)
-				if err != nil {
-					t.Fatalf("%s RunningCount(%s): %v", name, namespace, err)
-				}
+				must.OKf(t, err, "%s RunningCount(%s)", name, namespace)
 				counts[name] = count
 				if count != got {
 					settled = false
@@ -131,9 +125,7 @@ func TestIntegration_RunningCountMatchesTheExecutionIndexOnBothPaths(t *testing.
 	agree("billing", 2)
 
 	// A run that finishes is no longer in flight, by either path.
-	if err := temporalClient.TerminateWorkflow(ctx, payments[0], "", "admission test: finish one"); err != nil {
-		t.Fatalf("TerminateWorkflow(%s): %v", payments[0], err)
-	}
+	must.OKf(t, temporalClient.TerminateWorkflow(ctx, payments[0], "", "admission test: finish one"), "TerminateWorkflow(%s)", payments[0])
 	agree("payments", 2)
 	agree("billing", 2)
 }

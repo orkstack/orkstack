@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_ComposedChildRunsOnItsParentsVersion is the observation the
@@ -82,16 +84,12 @@ func TestIntegration_ComposedChildRunsOnItsParentsVersion(t *testing.T) {
 	stampDigest(t, parent)
 	runID := "ork-compose-rollout-" + suffix
 	cp, err := engine.NewChildRunPlan(child, rawPlan(orkerQueue), false, false)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cp.RunID = runID + "-child"
 	plan := rawPlan(orkerQueue)
 	plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, runQueue, orkerQueue)
-	if err := starter.StartRun(ctx, runID, parent, nil, plan); err != nil {
-		t.Fatalf("start the parent: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, runID, parent, nil, plan), "start the parent")
 	transcript.step("submitted parent " + runID + " while v1 was current")
 	select {
 	case <-first.started:
@@ -107,12 +105,8 @@ func TestIntegration_ComposedChildRunsOnItsParentsVersion(t *testing.T) {
 
 	releaseGate()
 	transcript.step("released the gate: the parent now starts its child, after the switch")
-	if err := c.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the parent %s did not complete: %v", runID, err)
-	}
-	if err := c.GetWorkflow(ctx, cp.RunID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("the child %s did not complete: %v", cp.RunID, err)
-	}
+	must.OKf(t, c.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the parent %s did not complete", runID)
+	must.OKf(t, c.GetWorkflow(ctx, cp.RunID, "").Get(ctx, nil), "the child %s did not complete", cp.RunID)
 	assertRunVersion(t, ctx, c, transcript, runID, v1)
 	assertRunVersion(t, ctx, c, transcript, cp.RunID, v1)
 	builds := assertTaskBuilds(t, ctx, c, transcript, cp.RunID, "v1")

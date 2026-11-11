@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -20,6 +19,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // The control-plane audit trail is one immutable object per call of a write
@@ -288,7 +288,7 @@ func marshalAuditExact(rec *orkstackv1.AuditRecord) ([]byte, error) {
 		return nil, fmt.Errorf("artifacts: encode audit record %q: %w", rec.GetId(), err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode audit record %q: %w", rec.GetId(), err)
 	}
 	out.WriteByte('\n')
@@ -503,14 +503,11 @@ func truncateToDay(t time.Time) time.Time {
 // NewAuditStore selects the same shared backend as artifacts, run history,
 // attempts and triggers — one ORK_ARTIFACT_BACKEND, no setting of its own.
 func NewAuditStore(ctx context.Context, cfg Config) (AuditStore, error) {
-	switch cfg.Backend {
-	case "", BackendLocal:
-		return NewLocalAuditStore(localDir(cfg))
-	case BackendS3:
-		return NewS3AuditStore(ctx, cfg)
-	default:
-		return nil, fmt.Errorf("artifacts: audit store backend %q: %w", cfg.Backend, ErrUnknownBackend)
+	b, err := openBlobs(ctx, cfg, "audit store", AuditPrefix)
+	if err != nil {
+		return nil, err
 	}
+	return &BlobAuditStore{blobBase: blobBase{b}}, nil
 }
 
 // MemoryAuditStore is an in-memory AuditStore for tests. It bounds, encodes

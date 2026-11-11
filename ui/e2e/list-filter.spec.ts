@@ -209,7 +209,7 @@ test('L2: a created_at row through datetime-local sends the UTC instant', async 
 	await expect.poll(() => urlFilters(page)).toEqual(['created_at>=2000-01-01T07:00:00Z']);
 	await expect.poll(() => orkflowRows(page)).toEqual([...PAY, ...SEARCH]);
 	const cli = await cliCommand(page, 'The Orkflows');
-	expect(cli).toBe(`orkctl -n ${NS} orkflow list --filter 'created_at>=2000-01-01T07:00:00Z'`);
+	expect(cli).toBe(`orkctl -n ${NS} orkflow list -F 'created_at>=2000-01-01T07:00:00Z'`);
 	note(`L2 CLI equivalent: ${cli}`);
 	await page.screenshot({ path: out('screenshot-orkflows-created-at.png'), fullPage: true });
 });
@@ -232,7 +232,7 @@ test('L3: Admin → Pools, is_default = true leaves the default pool', async ({ 
 	await page.getByTestId('pools-cli-trigger').click();
 	const cli = (await page.getByTestId('pools-cli-command-0').innerText()).trim();
 	await page.keyboard.press('Escape');
-	expect(cli).toBe(`orkctl -n ${NS} pool list --filter is_default=true`);
+	expect(cli).toBe(`orkctl -n ${NS} pool list -F is_default=true`);
 	note(`L3 is_default=true: only main; header command: ${cli}`);
 	await page.screenshot({ path: out('screenshot-pools-default.png'), fullPage: true });
 });

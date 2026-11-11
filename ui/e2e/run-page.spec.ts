@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { inspectTask, selectTask, tasksMore } from './uiHelpers';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import path from 'node:path';
 import {
@@ -19,6 +19,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -420,7 +421,7 @@ test('Inspect reveals the selected task alone, and Show events opens the event l
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# The run detail page: scoped task logs, attempts, container',
@@ -889,14 +890,15 @@ test('the event view opens and closes while task state keeps updating', async ({
 	//
 	// `boom` needs `slow`, so for the first ten seconds of this run it is not
 	// queued anywhere and no Orker has seen it. It used to draw a "PENDING"
-	// pill, which is a status about something that is not happening. The card
-	// now says which dependency it is waiting on, greyed, with no pill — and
+	// pill, which is a status about something that is not happening. Its panel
+	// now says which dependency it is waiting on, its pill is greyed — and
 	// the SUCCEEDED/FAILED assertions further down are the other half of the
 	// proof: the pill appears the moment the task is really dispatched.
 	const boomStatus = page.getByTestId('task-boom-status');
 	await expect(boomStatus).toHaveAttribute('data-state', 'not-started');
 	await expect(boomStatus).toHaveText('Pending');
-	await expect(page.getByTestId('task-boom-status-note')).toHaveText(/Waiting for slow/);
+	await selectTask(page, 'boom');
+	await expect(page.getByTestId('task-boom-waits-for')).toHaveText('slow');
 	await expect(page.getByTestId('task-boom')).toHaveAttribute('data-dispatched', 'false');
 	await shot(page, 'screenshot-task-waiting.png');
 	note('task boom rendered as "Waiting for slow" with no status pill');
@@ -1132,16 +1134,16 @@ test('a failed task offers the command that runs it locally; a succeeded or neve
 	const trigger = page.getByTestId('run-inspect-cli-trigger');
 	await expect(trigger).toBeVisible();
 	await trigger.click();
-	const commandOf = (id: string) => page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: 'task run' }).filter({ hasText: `--task ${id}` });
+	const commandOf = (id: string) => page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: 'task run' }).filter({ hasText: `-t ${id}` });
 	const command = commandOf('boom');
 	await expect(command).toHaveText(
-		`orkctl --namespace default task run --from-run ${run} --task boom`
+		`orkctl -n default task run --from-run ${run} -t boom`
 	);
 	await page.keyboard.press('Escape');
 	// A succeeded task offers its log, and none of its commands is the local run.
 	await selectTask(page, 'ok');
 	await trigger.click();
-	await expect(page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: '--task ok' }).first()).toBeVisible();
+	await expect(page.locator('[data-testid^="run-inspect-cli-command-"]').filter({ hasText: '-t ok' }).first()).toBeVisible();
 	await expect(commandOf('ok')).toHaveCount(0);
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('task-never')).toHaveAttribute('data-dispatched', 'false');

@@ -92,7 +92,7 @@ function orkctl(...args: string[]): string {
 }
 
 function submit(name: string, ...args: string[]): string {
-	const out = JSON.parse(orkctl('run', 'submit', name, ...args, '--json'));
+	const out = JSON.parse(orkctl('run', 'submit', name, ...args, '-j'));
 	const id = out.id ?? out.run?.id ?? out.runId;
 	if (!id) throw new Error(`orkctl run submit ${name} --json printed no run id: ${JSON.stringify(out)}`);
 	return id;
@@ -153,7 +153,7 @@ const gateInput = () => ({
 
 /** The history a failed run's page reads: a success before it, and a failure like it. */
 function failureHistory(): void {
-	const list = JSON.parse(orkctl('run', 'list', '--limit', '100', '--json'));
+	const list = JSON.parse(orkctl('run', 'list', '--limit', '100', '-j'));
 	const runs: { orkflowName?: string; status?: string }[] = list.runs ?? [];
 	const ended = (status: string) => runs.some((r) => r.orkflowName === 'order-saga' && r.status === status);
 	if (!ended('SUCCEEDED')) finished(submitSaga('order-1041'));
@@ -191,7 +191,7 @@ async function startBatchOrker(): Promise<ChildProcess> {
 		const deadline = Date.now() + 60_000;
 		while (Date.now() < deadline) {
 			if (ended()) throw failed();
-			const orkers: { orkerId?: string; pool?: string }[] = JSON.parse(orkctl('orker', 'list', '--json')).orkers ?? [];
+			const orkers: { orkerId?: string; pool?: string }[] = JSON.parse(orkctl('orker', 'list', '-j')).orkers ?? [];
 			if (orkers.some((o) => o.orkerId === 'orker-batch' && o.pool === 'batch')) {
 				// An id is locked host-wide: a leftover Orker of the same id answers
 				// the list while this one exits on that lock.
@@ -220,7 +220,7 @@ async function stopChild(child: ChildProcess): Promise<void> {
 
 /** The next free version of an Orkflow: a version is immutable, so every take of an edit applies its own. */
 function nextVersion(name: string): { from: number; to: number; text: string } {
-	const list = JSON.parse(orkctl('orkflow', 'versions', name, '--json'));
+	const list = JSON.parse(orkctl('orkflow', 'versions', name, '-j'));
 	const head: string = list.headVersion ?? list.versions?.[0]?.version;
 	const m = /^(\d+\.\d+\.)(\d+)$/.exec(head ?? '');
 	if (!m) throw new Error(`${name}'s newest version does not read: ${JSON.stringify(list).slice(0, 200)}`);
@@ -476,8 +476,8 @@ const shotGroups: ShotGroup[] = [
 			await all(views, settled);
 			await shoot(
 				'ui-orkflow',
-				'The each-fan-out Orkflow’s page in the OrkStack UI after an apply: its graph of list, convert and merge, its stored version, and its three tasks with their image digests.',
-				'An applied Orkflow: an immutable version, every image pinned to a digest.',
+				'The each-fan-out Orkflow’s page in the OrkStack UI after it was created: its graph of list, convert and merge, its stored version, and its three tasks with their image digests.',
+				'A created Orkflow: an immutable version, every image pinned to a digest.',
 				views,
 				async (p) => {
 					const top = await around(p.getByTestId('orkflow-name'), p.getByTestId('orkflow-drawing'), p.getByTestId('orkflow-sheet-versions'));
@@ -600,11 +600,11 @@ async function main() {
 		batch = await startBatchOrker();
 		httpApi = await startApi();
 		server = startBrowserServer(`site-media-${process.pid}`);
-		// An apply of bytes already stored, against the same image builds, is a
+		// A create of bytes already stored, against the same image builds, is a
 		// no-op. After the images are rebuilt it is refused (a version is immutable
 		// and pins its images), and the capture stops with the server's error:
 		// capture on a fresh stack then.
-		for (const file of ORKFLOWS) orkctl('apply', file);
+		for (const file of ORKFLOWS) orkctl('orkflow', 'create', file);
 
 		browser = await chromium.connect(server.wsEndpoint, { exposeNetwork: '<loopback>' });
 		await screenshots(browser);
@@ -738,15 +738,15 @@ const takes: Script[] = [
 	{
 		name: 'video-yaml-to-run',
 		title: 'From YAML to a running Orkflow',
-		alt: 'A screen recording of the Orkflow editor on greet: a key is added with the suggestions, the engine flags a needs entry that names no task and the fix clears it, the panel beside the code lists the shell activity’s keys, a new version is applied, a plan shows which tasks would run, and the run is submitted and followed until it succeeds.',
-		caption: 'Edit, apply, plan and run, then watch the graph fill in.',
+		alt: 'A screen recording of the Orkflow editor on greet: a key is added with the suggestions, the engine flags a needs entry that names no task and the fix clears it, the panel beside the code lists the shell activity’s keys, a new version is created, a plan shows which tasks would run, and the run is submitted and followed until it succeeds.',
+		caption: 'Edit, create a version, plan and run, then watch the graph fill in.',
 		open: async (p) => {
 			// Each take makes the same edit, so each starts from the same document,
-			// applied again as the next version: a version is immutable.
+			// created again as the next version: a version is immutable.
 			const file = path.join(work, 'greet.ork.yaml');
 			const source = readFileSync(path.join(repo, 'site', 'media', 'orkflows', 'greet.ork.yaml'), 'utf8');
 			writeFileSync(file, source.replace(/^version: .*$/m, `version: "${nextVersion('greet').text}"`));
-			orkctl('apply', file);
+			orkctl('orkflow', 'create', file);
 			await p.goto(orkflow('greet', '&tab=edit'));
 			await p.getByTestId('editor-docs').waitFor();
 			await p.locator('.cm-line').first().waitFor();
@@ -766,7 +766,7 @@ const takes: Script[] = [
 			await t.key('Control+Space', 900);
 			await t.key('ArrowDown', 400);
 			await t.key('Enter', 700);
-			await t.say('2', 'The engine checks as you type', 'The engine checks the document as you type. A problem is underlined; fix it to apply.');
+			await t.say('2', 'The engine checks as you type', 'The engine checks the document as you type. A problem is underlined; fix it to create a version.');
 			await t.pressLine(editorLine(p, '      - hello'), 200);
 			await t.key('End');
 			await t.type('x');
@@ -782,7 +782,7 @@ const takes: Script[] = [
 			await t.say('3', 'The activity’s keys, beside the code', 'The panel beside the code shows the keys of the activity the cursor is in.');
 			await t.glide(p.getByTestId('editor-docs-keys'));
 			await t.hold(READ);
-			await t.say('4', 'A new version, then a plan', 'Apply version stores an immutable version and its digest. A plan shows which tasks would run.');
+			await t.say('4', 'A new version, then a plan', 'Create version stores an immutable version and its digest. A plan shows which tasks would run.');
 			await revealLine(p, p.locator('.cm-line').filter({ hasText: /^version: / }));
 			await t.pressLine(p.locator('.cm-line').filter({ hasText: /^version: / }), 200);
 			await t.rest();
@@ -847,16 +847,16 @@ const takes: Script[] = [
 	// ---- The docs'.
 	{
 		name: 'e2e-demo',
-		alt: 'A screen recording of the OrkStack UI: the each-fan-out example is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is shown with its provenance.',
-		caption: 'Apply, plan and submit, watch, find the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.',
+		alt: 'A screen recording of the OrkStack UI: the each-fan-out example is created from the Create Orkflow page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is shown with its provenance.',
+		caption: 'Create, plan and submit, watch, find the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.',
 		open: async (p) => {
-			await p.goto(`${UI}/apply?ns=${NS}`);
+			await p.goto(`${UI}/orkflows/+new?ns=${NS}`);
 			await p.getByTestId('apply-import').waitFor({ state: 'attached' });
 		},
 		act: async (t, p) => {
-			await t.say('1', 'Apply an Orkflow');
+			await t.say('1', 'Create an Orkflow');
 			await t.hold(1200);
-			await t.glide(p.getByText('Import YAML'));
+			await t.glide(p.locator('label:has([data-testid="apply-import"])'));
 			await p.getByTestId('apply-import').setInputFiles(path.join(repo, 'examples', 'each-fan-out.ork.yaml'));
 			await t.hold(READ);
 			await t.press(p.getByTestId('apply-submit'));

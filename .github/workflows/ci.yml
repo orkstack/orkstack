@@ -1,7 +1,6 @@
 name: ci
 
-# The fast contributor path and the feature tier. No required check lives
-# here; the merge gate is `proof.yml`'s `proof` job (docs/PROOFS.md).
+# The fast contributor path. No required check lives here; the merge gate is `proof.yml`'s `proof` job (docs/PROOFS.md).
 #
 #   check    build, vet, lint (gofmt and staticcheck included), the unit
 #            suites with -short, and the UI's type-check and unit suite: no
@@ -13,19 +12,15 @@ name: ci
 #   proto    buf breaking: the proto contract against the first release,
 #            v0.1.0 (make proto-breaking), with the buf deploy/buf-image.txt
 #            pins.
-#   feature  the feature proof of this change, which is optional: only with
-#            the ci:feature label, on a validate/feature/** push, or by
-#            dispatch. The full proof is the gate (AGENTS.md §11.1).
 
 on:
-  # `check` runs on every push and every pull request; `feature` narrows
-  # itself to a validate/feature/** push below. A Dependabot branch runs only
-  # as its pull request, never again as a push.
+  # `check` runs on every push and every pull request. A Dependabot branch
+  # runs only as its pull request, never again as a push.
   push:
     branches-ignore:
       - dependabot/**
   pull_request:
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -101,131 +96,3 @@ jobs:
       - name: proto-breaking
         timeout-minutes: 10
         run: make proto-breaking
-
-  feature:
-    needs: check
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/heads/validate/feature/')) || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && contains(github.event.pull_request.labels.*.name, 'ci:feature')) }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 95
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        timeout-minutes: 3
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        timeout-minutes: 5
-        with:
-          go-version: "1.27.3"
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        timeout-minutes: 5
-        with:
-          bun-version: "1.4.4"
-      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        timeout-minutes: 3
-        with:
-          node-version: "26.12.0"
-      - name: bun install
-        timeout-minutes: 5
-        working-directory: ui
-        run: bun install --frozen-lockfile
-      - name: bun install (site)
-        timeout-minutes: 3
-        working-directory: site
-        run: bun install --frozen-lockfile
-      - uses: ./.github/actions/proof-host
-        timeout-minutes: 10
-        with:
-          cosign: "true"
-          temporal-cli: "true"
-      - name: base
-        id: base
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          set -euo pipefail
-          # The commit the change branched from, whatever shape the pushed
-          # commit has; on main itself (nothing to diff) its first parent.
-          base="$(git merge-base HEAD origin/main)"
-          if [ "$base" = "$(git rev-parse HEAD)" ]; then
-            base="$(git rev-parse HEAD^1)"
-          fi
-          echo "base=$base" >>"$GITHUB_OUTPUT"
-      - name: body
-        id: body
-        timeout-minutes: 1
-        shell: bash
-        env:
-          PR_BODY: ${{ github.event.pull_request.body }}
-        run: |
-          set -euo pipefail
-          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
-            printf '%s\n' "$PR_BODY" >"$RUNNER_TEMP/body.txt"
-          else
-            git log -1 --format=%B >"$RUNNER_TEMP/body.txt"
-          fi
-      - name: evidence
-        id: evidence
-        timeout-minutes: 5
-        shell: bash
-        run: |
-          set -uo pipefail
-          mapfile -t args < <(go run ./test/tools/proofrun evidence-args -body "$RUNNER_TEMP/body.txt")
-          printf '%s\n' "${args[@]}" >"$RUNNER_TEMP/evidence-args.txt"
-      - name: select
-        id: select
-        timeout-minutes: 5
-        shell: bash
-        env:
-          BASE: ${{ steps.base.outputs.base }}
-        run: |
-          set -uo pipefail
-          mapfile -t args <"$RUNNER_TEMP/evidence-args.txt"
-          go run ./test/tools/proofrun select -base "$BASE" -out "$RUNNER_TEMP/sel.json" "${args[@]}"
-          code=$?
-          if [ "$code" -eq 0 ]; then echo "run=true" >>"$GITHUB_OUTPUT"; exit 0; fi
-          if [ "$code" -eq 2 ] && jq -e '.refused_full | length > 0' "$RUNNER_TEMP/sel.json" >/dev/null 2>&1 &&
-             ! jq -e '.errors[] | select(test("changes how every suite runs") | not)' "$RUNNER_TEMP/sel.json" >/dev/null 2>&1; then
-            {
-              echo "this change touches paths only the full proof covers:"
-              jq -r '.refused_full[] | "- " + .' "$RUNNER_TEMP/sel.json"
-              echo
-              echo "the proof check runs it."
-            } >>"$GITHUB_STEP_SUMMARY"
-            echo "run=false" >>"$GITHUB_OUTPUT"
-            exit 0
-          fi
-          exit "$code"
-      - name: feature proof
-        if: steps.select.outputs.run == 'true'
-        # Five minutes over the 30 it had before staticcheck joined the lint
-        # gate every feature proof runs first.
-        timeout-minutes: 35
-        shell: bash
-        env:
-          PROOF_JOBS: ${{ github.event.repository.private && 2 || 3 }}
-          BASE: ${{ steps.base.outputs.base }}
-        run: |
-          set -euo pipefail
-          mapfile -t args <"$RUNNER_TEMP/evidence-args.txt"
-          scripts/proof.sh --tier feature --base "$BASE" "${args[@]}" "feature-ci-$GITHUB_RUN_ID"
-      - name: summary
-        if: always()
-        timeout-minutes: 1
-        shell: bash
-        run: |
-          f="proof/feature-ci-$GITHUB_RUN_ID-feature/proof.json"
-          if [ -f "$f" ]; then
-            jq -r '"feature proof: **\(.result)** (never merge evidence) tree `\(.tree)`"' "$f"
-            jq -r '.ineligible_reasons[]? | "- " + .' "$f" || true
-          fi
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        if: always()
-        timeout-minutes: 5
-        with:
-          name: feature-proof-${{ github.run_id }}-a${{ github.run_attempt }}
-          path: proof/feature-ci-${{ github.run_id }}-feature/
-          retention-days: 14
-          if-no-files-found: warn

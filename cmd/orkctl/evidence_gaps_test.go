@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/evidence"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runJSONLSource serves the one present member of a gapped bundle.
@@ -44,13 +46,9 @@ func TestEvidenceVerifyCommand_PrintsTheGap(t *testing.T) {
 	}
 	manifest.Counts = evidence.CountMembers(manifest.Members)
 	var bundle bytes.Buffer
-	if err := evidence.Write(context.Background(), &bundle, manifest, runJSONLSource(body)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, evidence.Write(context.Background(), &bundle, manifest, runJSONLSource(body)))
 	path := filepath.Join(t.TempDir(), "gapped.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, bundle.Bytes(), 0o644))
 	f := newFixture(t)
 	res := f.run("run", "evidence", "verify", path)
 	if res.code != exitOK {
@@ -99,13 +97,9 @@ func TestEvidenceVerifyCommand_NamesANeverPublishedGap(t *testing.T) {
 	}
 	manifest.Counts = evidence.CountMembers(manifest.Members)
 	var bundle bytes.Buffer
-	if err := evidence.Write(context.Background(), &bundle, manifest, runJSONLSource(body)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, evidence.Write(context.Background(), &bundle, manifest, runJSONLSource(body)))
 	path := filepath.Join(t.TempDir(), "unpublished.tar.gz")
-	if err := os.WriteFile(path, bundle.Bytes(), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, bundle.Bytes(), 0o644))
 	res := newFixture(t).run("run", "evidence", "verify", path)
 	if res.code != exitOK {
 		t.Fatalf("exit %d: %s%s", res.code, res.stdout, res.stderr)

@@ -45,6 +45,24 @@ test('planSummary handles plurals', () => {
 	expect(planSummary(create(PlanRunResponseSchema, {}))).toBe('0 run, 0 skipped, 0 waves. Nothing was started.');
 });
 
+test('a sleep is its own outcome: counted after the awaits, its detail its length, a join named first', () => {
+	const plan = create(PlanRunResponseSchema, {
+		runs: 2,
+		awaits: 1,
+		sleeps: 2,
+		skipped: 0,
+		waveCount: 3,
+		tasks: [
+			task('soak', PlanOutcome.SLEEPS, 2, { sleep: { seconds: 900 } }),
+			task('settle', PlanOutcome.SLEEPS, 2, { sleep: { seconds: 60 }, join: JoinPolicy.ALL_DONE })
+		]
+	});
+	expect(planSummary(plan)).toBe('2 run, 1 await, 2 sleeps, 0 skipped, 3 waves. Nothing was started.');
+	expect(planOutcomeWord(PlanOutcome.SLEEPS)).toBe('sleeps');
+	expect(planDetail(plan.tasks[0], plan)).toBe('sleep 15m0s');
+	expect(planDetail(plan.tasks[1], plan)).toBe('join all_done; sleep 1m0s');
+});
+
 test('planFailure is empty without a FAILS task and names it with one', () => {
 	expect(planFailure(create(PlanRunResponseSchema, { tasks: [task('a', PlanOutcome.RUNS, 1)] }))).toBe('');
 	const failing = create(PlanRunResponseSchema, {
@@ -94,7 +112,7 @@ test('planCli omits --version when empty, emits --outputs-file only with assumpt
 	const current = planCli({ name: 'deploy', namespace: 'payments', version: '', input: { region: 'eu' } });
 	expect(current).toBe(
 		`printf '%s\\n' '{"region":"eu"}' > input.json\n` +
-			`orkctl run plan deploy --namespace payments --input-json "$(cat input.json)"`
+			`orkctl run plan deploy -n payments --input-json "$(cat input.json)"`
 	);
 	expect(current).not.toContain('--version');
 	expect(current).not.toContain('--outputs-file');
@@ -108,7 +126,7 @@ test('planCli omits --version when empty, emits --outputs-file only with assumpt
 	});
 	expect(pinned).toContain(`printf '%s\\n' '{"build":{"ok":true}}' > outputs.json`);
 	expect(pinned).toContain(
-		`orkctl run plan 'it'"'"'s' --namespace default --version 1.2.3 --input-json "$(cat input.json)" --outputs-file outputs.json`
+		`orkctl run plan 'it'"'"'s' -n default --version 1.2.3 --input-json "$(cat input.json)" --outputs-file outputs.json`
 	);
 	expect(planCli({ name: 'x', namespace: 'n', version: '', input: {}, assumedOutputs: {} })).not.toContain(
 		'outputs.json'

@@ -28,12 +28,12 @@ outputs:
 
 A task that needs `announce` reads it as `{{ .tasks.announce.output.status }}`. No task in this example does.
 
-Apply the block first, in the same namespace, in a command of its own. `notify_url` defaults to a public test service, so the run needs internet access and no input:
+Create the block first, in the same namespace, in a command of its own. `notify_url` defaults to a public test service, so the run needs internet access and no input:
 
 ```bash
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/approval-gate.ork.yaml
-orkctl run submit approval-gate --watch
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/approval-gate.ork.yaml
+orkctl run submit approval-gate -w
 orkctl run get <run-id> --tree
 ```
 
@@ -42,15 +42,33 @@ The default change needs no approval, so the run applies it and `announce` start
 ## Pin the version
 
 - The version is required. `orkflow:<name>` alone is refused.
-- The child is resolved at apply, in the same namespace. Composition never crosses a namespace.
+- The child is resolved when the Orkflow is created, in the same namespace unless you name another one (see below).
 - A later promotion of the child does not change a parent that is already running.
+
+## Compose another namespace's Orkflow
+
+Write the owner's namespace before the name: `uses: orkflow:platform/deploy@1.2.3`. It works only when that version shares itself with your Orkflow, in its own definition:
+
+```yaml
+shared_with:
+  - namespace: "*"            # every namespace
+  - namespace: payments       # every Orkflow of payments
+  - orkflow: search/release   # only release, in search
+```
+
+- Without `shared_with:`, an Orkflow is closed to every other namespace. A call within one namespace never needs an entry.
+- `orkctl orkflow create` refuses an Orkflow that is not shared with yours, with `ORKFLOW_NOT_SHARED` on its `uses:`, and so does every submit.
+- The child runs in your namespace, under its pools, secret policy and image policy. If your namespace sets no `allowed_secrets`, a shared Orkflow that names a secret is refused (`FOREIGN_SECRETS_UNBOUNDED`).
+- `orkctl run get` and the run page name it `platform/deploy`. Run it again through its root run.
+- Only composition crosses a namespace. A submit, a schedule or a trigger runs only its own namespace's Orkflows.
+- Stats, failures, flakes and usage show its runs as `platform/deploy`, apart from your own `deploy`. Deleting `deploy` in `platform` is refused while its runs in your namespace are active or recent.
 
 ## Pass input and read outputs
 
 - `with:` is the child's input. The engine renders it. A child run receives values, never files. Pass a reference that the child can fetch, such as a digest or a URL.
-- Apply checks `with:` against the child's `inputs:`.
+- `orkctl orkflow create` checks `with:` against the child's `inputs:`.
 - The child's `outputs:` become the task's values. Read them as `{{ .tasks.<id>.output.<name> }}`, or `{{ index .tasks "<id>" "output" "<name>" }}` when the id has a hyphen. Every value is a string.
-- A child with no `outputs:` gives `{}`. Reading an output the child does not declare fails at apply.
+- A child with no `outputs:` gives `{}`. Reading an output the child does not declare fails at create.
 
 ## What a composed task allows
 
@@ -70,7 +88,7 @@ A composed task is never retried. Its child's tasks have their own retries. Canc
 - `orkctl run get <run-id> --tree` prints every child run under its parent.
 - A child has its own run ID, logs and events. Read it with `orkctl run get <child-run-id>`.
 - `orkctl orkflow callers <name>` lists what in the namespace starts or composes the Orkflow.
-- A child's awaits send their tokens to nobody. Resolve them with `orkctl run resolve <child-run-id> --task <task>`.
+- A child's awaits send their tokens to nobody. Resolve them with `orkctl run resolve <child-run-id> -t <task>`.
 
 ## Limits
 
@@ -82,4 +100,5 @@ A composed task is never retried. Its child's tasks have their own retries. Canc
 
 - [DSL reference, “Composition”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#composition-uses-orkflow): every rule and error code
 - [ORKFLOW_PATTERNS, “Reuse a block with declared outputs”](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_PATTERNS.md#reuse-a-block-with-declared-outputs): the pattern this example shows
+- [DSL reference, “Sharing across namespaces”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#sharing-across-namespaces): who may compose an Orkflow of another namespace
 - [Versions](/docs/concepts/versions/): how a pinned version is chosen and promoted

@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestSetupZeroConfig(t *testing.T) {
@@ -23,9 +25,7 @@ func TestSetupZeroConfig(t *testing.T) {
 	before := runtime.NumGoroutine()
 
 	p, err := Setup(context.Background(), Config{})
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	if p.Enabled() {
 		t.Errorf("Enabled() = true for zero Config")
 	}
@@ -55,9 +55,7 @@ func TestSetupZeroConfig(t *testing.T) {
 func TestSetupPrometheus(t *testing.T) {
 	cfg := Config{MetricsExporters: []string{ExporterPrometheus}, AdminAddr: "127.0.0.1:0"}
 	p, err := Setup(context.Background(), cfg, attribute.String("service.version", "test"))
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	defer p.Shutdown(context.Background())
 
 	if p.Registry == nil {
@@ -69,9 +67,7 @@ func TestSetupPrometheus(t *testing.T) {
 	defer srv.Close()
 
 	resp, err := http.Get(srv.URL + MetricsPath)
-	if err != nil {
-		t.Fatalf("GET /metrics: %v", err)
-	}
+	must.OKf(t, err, "GET /metrics")
 	defer resp.Body.Close()
 	body := make([]byte, 1<<20)
 	n, _ := resp.Body.Read(body)
@@ -91,9 +87,7 @@ func TestSetupOTLPExporterConstructs(t *testing.T) {
 		TracesExporter:   ExporterOTLP,
 	}
 	p, err := Setup(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	if !p.Enabled() {
 		t.Errorf("Enabled() = false, want true")
 	}
@@ -113,9 +107,7 @@ func TestSetupOTLPExporterConstructs(t *testing.T) {
 
 func TestSetupSinksZeroConfig(t *testing.T) {
 	sinks, err := SetupSinks(context.Background(), Config{})
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 	if sinks.Default() == nil {
 		t.Fatal("Default() = nil")
 	}
@@ -140,12 +132,8 @@ sinks:
     headers:
       X-Test: { value: "literal" }
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(os.LookupEnv, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(os.LookupEnv, os.ReadFile), "Resolve")
 
 	cfg := Config{
 		LogsExporter:     ExporterOTLP,
@@ -154,9 +142,7 @@ sinks:
 		Sinks:            table,
 	}
 	sinks, err := SetupSinks(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 
 	if got, want := sinks.Names(), []string{"default", "other"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("Names() = %v, want %v", got, want)
@@ -175,9 +161,7 @@ sinks:
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
 	resp, err := http.Get(srv.URL + MetricsPath)
-	if err != nil {
-		t.Fatalf("GET /metrics: %v", err)
-	}
+	must.OKf(t, err, "GET /metrics")
 	defer resp.Body.Close()
 	body := make([]byte, 1<<20)
 	n, _ := resp.Body.Read(body)
@@ -213,19 +197,13 @@ sinks:
   datadog:
     logs_endpoint: http://127.0.0.1:1
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(os.LookupEnv, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(os.LookupEnv, os.ReadFile), "Resolve")
 
 	// No OTEL_*_EXPORTER anywhere in cfg — the zero-config path, plus a sink.
 	cfg := Config{Sinks: table}
 	sinks, err := SetupSinks(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 
 	if got, want := sinks.Names(), []string{"datadog", "default"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("Names() = %v, want %v", got, want)
@@ -255,18 +233,12 @@ sinks:
   metrics-only:
     metrics_endpoint: http://127.0.0.1:1
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(os.LookupEnv, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(os.LookupEnv, os.ReadFile), "Resolve")
 
 	cfg := Config{LogsExporter: ExporterOTLP, Sinks: table}
 	sinks, err := SetupSinks(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 
 	p := sinks.For("metrics-only")
 	if !p.Config().MetricsEnabled() {
@@ -301,12 +273,8 @@ sinks:
   useless:
     timeout: 5s
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(os.LookupEnv, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(os.LookupEnv, os.ReadFile), "Resolve")
 	if _, err := SetupSinks(context.Background(), Config{Sinks: table}); err == nil {
 		t.Fatal("SetupSinks with an endpoint-less sink = nil error, want one naming the sink")
 	} else if !strings.Contains(err.Error(), "useless") {
@@ -319,9 +287,7 @@ sinks:
 // no matter how many times the same name is asked for.
 func TestSinksForWarnsOnceForUnknownSink(t *testing.T) {
 	sinks, err := SetupSinks(context.Background(), Config{})
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 	var buf strings.Builder
 	logger := slog.New(slog.NewTextHandler(&buf, nil))
 	sinks.WithLogger(logger)
@@ -348,16 +314,10 @@ func TestSinksForWarnsOnceForUnknownSink(t *testing.T) {
 // from an undeclared one, independent of For's own fallback.
 func TestSinksHas(t *testing.T) {
 	table, err := ParseSinks([]byte("sinks:\n  b:\n    endpoint: http://127.0.0.1:1\n"))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(os.LookupEnv, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(os.LookupEnv, os.ReadFile), "Resolve")
 	sinks, err := SetupSinks(context.Background(), Config{Sinks: table})
-	if err != nil {
-		t.Fatalf("SetupSinks: %v", err)
-	}
+	must.OKf(t, err, "SetupSinks")
 	for _, tc := range []struct {
 		name string
 		want bool
@@ -405,7 +365,5 @@ func TestSinksShutdownRunsConcurrently(t *testing.T) {
 	named.shutdowns = append(named.shutdowns, rendezvous)
 	sinks := newSinksForTest(def, map[string]*Providers{"b": named})
 
-	if err := sinks.Shutdown(context.Background()); err != nil {
-		t.Fatalf("Shutdown: %v", err)
-	}
+	must.OKf(t, sinks.Shutdown(context.Background()), "Shutdown")
 }

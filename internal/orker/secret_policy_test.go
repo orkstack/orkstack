@@ -22,6 +22,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // capturingRuntime records every question the dispatcher asks the runtime
@@ -190,9 +192,7 @@ func TestDispatcher_ResolvesASourceInsideTheFloor(t *testing.T) {
 	in := baseExportInput("fetch")
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "token", Source: "env:SANDBOX_TOKEN"}}
 
-	if err := runOnce(t, d, in); err != nil {
-		t.Fatalf("a source inside the floor failed: %v", err)
-	}
+	must.OKf(t, runOnce(t, d, in), "a source inside the floor failed")
 	if got := string(runtime.secrets["token"]); got != value {
 		t.Fatalf("staged secret = %q, want the minted value", got)
 	}
@@ -219,9 +219,7 @@ func TestDispatcher_AnEmptyFloorChangesNothing(t *testing.T) {
 	in := baseExportInput("grab")
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:PROD_DB_PASSWORD"}}
 
-	if err := runOnce(t, d, in); err != nil {
-		t.Fatalf("an empty floor refused: %v", err)
-	}
+	must.OKf(t, runOnce(t, d, in), "an empty floor refused")
 	if got := string(runtime.secrets["db"]); got != value {
 		t.Fatalf("staged secret = %q, want the value", got)
 	}
@@ -425,9 +423,7 @@ func TestNewActivities_TheWorkRootIsTheOrkersOwn(t *testing.T) {
 	// The constructor builds its own policy from the caller's: the caller's
 	// still admits a task's file at that path, which only the work root's
 	// being its own would refuse.
-	if err := explicit.AllowsSecretSource(staged); err != nil {
-		t.Fatalf("the caller's policy was changed in place, and now refuses %q: %v", staged, err)
-	}
+	must.OKf(t, explicit.AllowsSecretSource(staged), "the caller's policy was changed in place, and now refuses %q", staged)
 	// No work root is the temp dir, where every attempt then lives.
 	activities := NewActivitiesWithOptions(nil, Options{})
 	assertOwn(t, activities.Dispatcher().Policy, "file:"+filepath.Join(os.TempDir(), "ork-run-task-1-x", "input", "secrets", "db"))

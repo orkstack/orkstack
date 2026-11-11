@@ -18,6 +18,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // countingResolver is the real resolver, counted, and able to stand in for
@@ -53,9 +55,7 @@ func cachedInspectService(t *testing.T) (*api.Service, *countingResolver, string
 	tag := host + "/orkstack/activity-file:dev"
 	resolver := &countingResolver{ImageResolver: dsl.NewResolver("")}
 	digest, err := resolver.Inspect(context.Background(), "", tag)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	pinned := host + "/orkstack/activity-file@" + digest.Image.GetIndexDigest()
 	svc := api.NewService(api.Config{
 		Catalog:  dsl.Catalog{"file": tag, "pinned": pinned},
@@ -81,18 +81,14 @@ func inspect(svc *api.Service, reference string, allowCached bool) (*orkstackv1.
 func TestInspectActivity_AllowCachedAnswersADigestFromMemory(t *testing.T) {
 	svc, resolver, _, pinned := cachedInspectService(t)
 	first, err := inspect(svc, pinned, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if first.GetIcon() == nil || first.GetDocs().GetDescription() != "Copies files." || first.GetInterface() == nil {
 		t.Fatalf("first answer = %v, want the interface, icon and docs", first)
 	}
 	resolver.down.Store(true)
 	for range 3 {
 		again, err := inspect(svc, pinned, true)
-		if err != nil {
-			t.Fatalf("a cached digest went to the registry: %v", err)
-		}
+		must.OKf(t, err, "a cached digest went to the registry")
 		if !proto.Equal(again, first) {
 			t.Fatalf("cached answer\n%v\nwant\n%v", again, first)
 		}
@@ -160,13 +156,9 @@ func TestInspectActivity_NeverKeepsAFailure(t *testing.T) {
 func TestInspectActivity_NameAndReferenceAreTheRequests(t *testing.T) {
 	svc, resolver, _, pinned := cachedInspectService(t)
 	byName, err := inspect(svc, "pinned", true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	byReference, err := inspect(svc, pinned, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if byName.GetName() != "pinned" || byReference.GetName() != "" {
 		t.Fatalf("names = %q / %q, want the catalog key and then none", byName.GetName(), byReference.GetName())
 	}
@@ -362,9 +354,7 @@ func TestInspectActivity_ACachedAnswerKeepsTheCatalogName(t *testing.T) {
 	svc, resolver := syntheticService(t, nil, dsl.Catalog{"pinned": syntheticPin(5)})
 	for range 2 {
 		info, err := inspect(svc, "pinned", true)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if info.GetName() != "pinned" || info.GetReference() != syntheticPin(5) {
 			t.Fatalf("answer names %q at %q, want the catalog name and its reference", info.GetName(), info.GetReference())
 		}

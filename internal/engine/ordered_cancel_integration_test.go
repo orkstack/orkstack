@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // orderedCancelDocument is the recorded run: two awaits that open once
@@ -79,9 +81,7 @@ func TestIntegration_RecordOrderedCancelHistory(t *testing.T) {
 	defer idle.Stop()
 	for deadline := time.Now().Add(time.Minute); ; <-idle.C {
 		described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
-		if err != nil {
-			t.Fatalf("describe %s: %v", runID, err)
-		}
+		must.OKf(t, err, "describe %s", runID)
 		if len(described.GetPendingActivities()) == 0 {
 			break
 		}
@@ -89,9 +89,7 @@ func TestIntegration_RecordOrderedCancelHistory(t *testing.T) {
 			t.Fatalf("run %s still has %d activities pending after a minute", runID, len(described.GetPendingActivities()))
 		}
 	}
-	if err := s.control.CancelWorkflow(ctx, runID, ""); err != nil {
-		t.Fatalf("cancel %s: %v", runID, err)
-	}
+	must.OKf(t, s.control.CancelWorkflow(ctx, runID, ""), "cancel %s", runID)
 	s.transcript.step("operator canceled run %s with both awaits open", runID)
 	if status, _ := s.wait(runID, 3*time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_CANCELED {
 		t.Fatalf("the recorded run closed %v, want Canceled", status)
@@ -103,17 +101,13 @@ func TestIntegration_RecordOrderedCancelHistory(t *testing.T) {
 	if last := published[len(published)-1]; last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		t.Fatalf("the recorded run's stream ends with %v, want RUN_CANCELED", last.GetType())
 	}
-	if err := replayRecorded(recorded, runID); err != nil {
-		t.Fatalf("the history just recorded does not replay against current code: %v", err)
-	}
+	must.OKf(t, replayRecorded(recorded, runID), "the history just recorded does not replay against current code")
 
 	encoded := encodeHistory(t, recorded)
 	proof.Write(t, "ordered-cancel", filepath.Base(orderedCancelFixture), encoded)
 	written := "the proof directory only (ORK_RECORD_GOLDEN_HISTORY unset)"
 	if os.Getenv("ORK_RECORD_GOLDEN_HISTORY") != "" {
-		if err := os.WriteFile(orderedCancelFixture, encoded, 0o644); err != nil {
-			t.Fatalf("write %s: %v", orderedCancelFixture, err)
-		}
+		must.OKf(t, os.WriteFile(orderedCancelFixture, encoded, 0o644), "write %s", orderedCancelFixture)
 		written = orderedCancelFixture
 	}
 	cancelAt, _ := orderedCancelOf(recorded)

@@ -96,13 +96,13 @@ func newStatsUsageCommand(g *globalFlags) *cobra.Command {
 			return renderUsage(cmd.OutOrStdout(), resp.Msg)
 		},
 	}
-	cmd.Flags().StringVar(&since, "since", "",
+	cmd.Flags().StringVarP(&since, "since", "s", "",
 		"how far back to look: a duration such as 720h, or an RFC3339 instant "+
 			"(default: the last 24 hours)")
 	cmd.Flags().StringVar(&until, "until", "",
 		"the window's exclusive end, an RFC3339 instant (default: now); a duration "+
 			"--since is measured back from it")
-	cmd.Flags().StringVar(&groupBy, "group-by", "",
+	cmd.Flags().StringVarP(&groupBy, "group-by", "g", "",
 		"comma-separated dimensions, in column order: orkflow, task, pool; or namespace alone, "+
 			"which reports every namespace (default: the namespace total)")
 	return cmd
@@ -139,7 +139,7 @@ func unitSeconds(value float64) string { return fmt.Sprintf("%.0f", value) }
 func usageCell(row *orkstackv1.UsageRow, dim orkstackv1.FailureGroupBy) string {
 	switch dim {
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKFLOW:
-		return orDash(row.GetOrkflowName())
+		return orDash(ownedLabel(row.GetOrkflowNamespace(), row.GetOrkflowName()))
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK:
 		return orDash(row.GetTaskId())
 	case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_POOL:

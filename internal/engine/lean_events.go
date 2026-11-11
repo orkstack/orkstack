@@ -2,6 +2,8 @@ package engine
 
 import (
 	"go.temporal.io/sdk/workflow"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
 
 // leanEventPathChange is the workflow.GetVersion change id of the lean event
@@ -86,19 +88,46 @@ func (s *runState) startedSnapshotURI(ctx workflow.Context, scheduledURI string)
 // itemPublishContext, so an operator's cancel — which cancels the run's own
 // context — never cancels a publish already on its way: the event stays in
 // history, on the bus and in the archive like every other.
-func (s *runState) publishItemDetached(ctx workflow.Context, args ...any) {
-	if len(s.pendingItemPublishes) >= itemPublishWindow {
+func (s *runState) publishItemDetached(ctx workflow.Context, event *orkstackv1.Event, snapshotURI, dedupeKey string) {
+	s.publishDetached(ctx, itemPublishWindow, event, snapshotURI, dedupeKey)
+}
+
+// detachedPublish is one publish scheduled without the loop waiting for it:
+// its future, and the event it publishes, so a failure names that event as
+// an awaited publish's does (logPublishFailed).
+type detachedPublish struct {
+	future workflow.Future
+	event  *orkstackv1.Event
+}
+
+// publishDetached is publishItemDetached with its window: itemPublishWindow
+// for an item event, the plan's InFlight.PublishWindow for a plain task's
+// (task_publish.go). Both share one outstanding set, oldest first.
+//
+// A publish that takes the place of the one let go leaves the outstanding
+// set, and so the reserve failReserve counts for it, unchanged. On the
+// detached publish path such a publish charges nothing; before it every
+// publish charged its in-flight term, which is the formula a recorded
+// history's guard crossings were decided by, so it stays for those runs.
+func (s *runState) publishDetached(ctx workflow.Context, window int, event *orkstackv1.Event, snapshotURI, dedupeKey string) {
+	replaced := false
+	if len(s.pendingItemPublishes) >= window {
 		oldest := s.pendingItemPublishes[0]
 		s.pendingItemPublishes = s.pendingItemPublishes[1:]
 		s.awaitItemPublish(ctx, oldest)
+		replaced = true
 	}
 	activityCtx := workflow.WithActivityOptions(s.itemPublishContext(ctx), eventActivityOptions())
 	if limit := s.historyLimit(); limit != nil {
 		s.noteCommand(ctx, 1, limit.Reserve.PublishBytes)
-		s.chargeDetachedPublish()
+		if !replaced || !s.taskPublishesDetached() {
+			s.chargeDetachedPublish()
+		}
 	}
-	s.pendingItemPublishes = append(s.pendingItemPublishes,
-		workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, args...))
+	s.pendingItemPublishes = append(s.pendingItemPublishes, detachedPublish{
+		future: workflow.ExecuteActivity(activityCtx, ActivityPublishEvent, event, snapshotURI, dedupeKey),
+		event:  event,
+	})
 }
 
 // itemPublishContext is the disconnected context every item publish of a
@@ -118,15 +147,32 @@ func (s *runState) itemPublishContext(ctx workflow.Context) workflow.Context {
 func (s *runState) drainItemPublishes(ctx workflow.Context) {
 	pending := s.pendingItemPublishes
 	s.pendingItemPublishes = nil
-	for _, future := range pending {
-		s.awaitItemPublish(ctx, future)
+	for _, publish := range pending {
+		s.awaitItemPublish(ctx, publish)
 	}
 }
 
-func (s *runState) awaitItemPublish(ctx workflow.Context, future workflow.Future) {
-	if err := future.Get(s.eventContext(ctx), nil); err != nil {
+func (s *runState) awaitItemPublish(ctx workflow.Context, publish detachedPublish) {
+	if err := publish.future.Get(s.eventContext(ctx), nil); err != nil {
 		// Projection is observability, not orchestration, exactly as for an
 		// awaited publish: logged, and the run continues.
-		workflow.GetLogger(ctx).Error("publish item event failed", "run_id", s.runID, "error", err)
+		s.logPublishFailed(ctx, publish.event, err)
 	}
+}
+
+// logPublishFailed logs a publish whose every attempt failed, naming its
+// event: an item's by its task and item, any other by its type. The awaited
+// and the detached path log the same line for the same event, so which path
+// published it never changes what an operator reads. A log line is no
+// command, so this replays as it ran.
+func (s *runState) logPublishFailed(ctx workflow.Context, event *orkstackv1.Event, err error) {
+	if event.Item != nil {
+		workflow.GetLogger(ctx).Error("publish item event failed",
+			"run_id", s.runID, "task_id", event.GetTaskId(), "item", event.GetItem(),
+			"sequence", event.GetSequence(), "error", err)
+		return
+	}
+	workflow.GetLogger(ctx).Error("publish event failed",
+		"run_id", s.runID, "namespace", s.wf.GetNamespace(), "sequence", event.GetSequence(),
+		"event", event.GetType().String(), "error", err)
 }

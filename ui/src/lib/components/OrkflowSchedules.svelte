@@ -13,6 +13,7 @@
 	import { untrack } from 'svelte';
 	import { EDIT_PARAM, closedHref, editHref } from '#lib/editParam.ts';
 	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import CliPopover from '#lib/components/CliPopover.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import Dialog from '#lib/components/Dialog.svelte';
@@ -342,11 +343,6 @@
 									onclick={() => resume(schedule.name)}
 									class={smallButton}>Resume</button
 								>
-								<CliEquivalent
-									command={scheduleResumeCli(schedule.name, namespace)}
-									testid="schedule-resume-cli-{schedule.name}"
-									label="Resume {schedule.name} from the CLI"
-								/>
 							{:else}
 								<button
 									type="button"
@@ -358,11 +354,6 @@
 									}}
 									class={smallButton}>Pause</button
 								>
-								<CliEquivalent
-									command={schedulePauseCli(schedule.name, namespace, '')}
-									testid="schedule-pause-cli-{schedule.name}"
-									label="Pause {schedule.name} from the CLI"
-								/>
 							{/if}
 							<button
 								type="button"
@@ -373,15 +364,17 @@
 								}}
 								class={smallButton}>Fire now</button
 							>
-							<CliEquivalent
-								command={scheduleFireCli(schedule.name, namespace)}
-								testid="schedule-fire-cli-{schedule.name}"
-								label="Fire {schedule.name} from the CLI"
-							/>
-							<CliEquivalent
-								command={scheduleCreateCli(schedule)}
+							<!-- The row's one terminal icon: every command of this schedule (ui/DESIGN.md, the Shell Icon Rule). -->
+							<CliPopover
 								testid="schedule-cli-{schedule.name}"
-								label="The command that recreates {schedule.name}"
+								title="Command line: schedule {schedule.name}"
+								commands={[
+									schedule.paused
+										? { label: 'Resume it', command: scheduleResumeCli(schedule.name, namespace) }
+										: { label: 'Pause it', command: schedulePauseCli(schedule.name, namespace, '') },
+									{ label: 'Fire it now', command: scheduleFireCli(schedule.name, namespace) },
+									{ label: 'Recreate it', command: scheduleCreateCli(schedule) }
+								]}
 							/>
 						{/if}
 						<button

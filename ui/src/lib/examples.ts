@@ -1,7 +1,7 @@
 // The example gallery's catalogue: the repo's own `examples/` directory.
 //
 // The gallery shows a name and a description per example; the YAML itself is
-// fetched only when an example is chosen (routes/apply/examples/[file]), so
+// fetched only when an example is chosen (routes/orkflows/+new/examples/[file]), so
 // twenty-odd documents are not inlined into the page's client chunk for a
 // reader who opens none of them. The files are read at build time
 // (lib/server/examples.ts) and written into the static build as files of
@@ -82,9 +82,9 @@ export function exampleResponse(sources: ExampleSource[], file: string): Respons
 }
 
 /** Where the page fetches the gallery's cards from. */
-export const galleryHref = '/apply/examples.json';
+export const galleryHref = '/orkflows/+new/examples.json';
 
 /** Where the page fetches one example's YAML from: its file, under the gallery. */
 export function exampleHref(slug: string): string {
-	return `/apply/examples/${encodeURIComponent(slug)}.ork.yaml`;
+	return `/orkflows/+new/examples/${encodeURIComponent(slug)}.ork.yaml`;
 }

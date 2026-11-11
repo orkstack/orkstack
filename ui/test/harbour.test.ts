@@ -155,10 +155,34 @@ tasks:
 test('the task under the caret: its id, uses, op and the with: keys it sets', () => {
 	// Regression: the docs rail showed the previous task once the caret moved on.
 	const inRender = DOC.indexOf('template: hi');
-	expect(taskAt(DOC, inRender)).toEqual({ id: 'render', uses: 'template', op: '', set: ['template'], line: 11 });
-	expect(taskAt(DOC, DOC.indexOf('url:'))).toEqual({ id: 'fetch', uses: 'http', op: 'get', set: ['op', 'url'], line: 6 });
+	expect(taskAt(DOC, inRender)).toEqual({ id: 'render', kind: 'activity', uses: 'template', op: '', set: ['template'], line: 11 });
+	expect(taskAt(DOC, DOC.indexOf('url:'))).toEqual({ id: 'fetch', kind: 'activity', uses: 'http', op: 'get', set: ['op', 'url'], line: 6 });
 	expect(taskAt(DOC, DOC.indexOf('name: demo'))).toBeNull();
 	expect(taskAt('tasks: [', 3)).toBeNull();
+});
+
+test('a task that runs no activity says what it is, and a half-typed one that it names none yet', () => {
+	// Regression: the rail asked to place the caret in a task while it was in one.
+	const doc = [
+		'tasks:',
+		'  - id: approve',
+		'    await:',
+		'      timeout_seconds: 60',
+		'  - id: pause',
+		'    sleep:',
+		'      seconds: 5',
+		'  - id: notify',
+		'    uses: orkflow:notify-block@0.2.1',
+		'  - id: draft',
+		'    with:',
+		'      url: x',
+		''
+	].join('\n');
+	const at = (text: string) => taskAt(doc, doc.indexOf(text));
+	expect(at('timeout_seconds')).toEqual({ id: 'approve', kind: 'await', uses: '', op: '', set: [], line: 2 });
+	expect(at('seconds: 5')).toEqual({ id: 'pause', kind: 'sleep', uses: '', op: '', set: [], line: 5 });
+	expect(at('orkflow:')).toEqual({ id: 'notify', kind: 'orkflow', uses: 'orkflow:notify-block@0.2.1', op: '', set: [], line: 8 });
+	expect(at('url: x')).toEqual({ id: 'draft', kind: 'activity', uses: '', op: '', set: ['url'], line: 10 });
 });
 
 test('a description is plain text: only a paired backtick is code', () => {

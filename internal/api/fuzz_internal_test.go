@@ -2,7 +2,8 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -19,7 +20,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The plain-HTTP doors and the JSON codec take bytes from callers OrkStack
@@ -69,7 +73,7 @@ func FuzzTriggerInput(f *testing.F) {
 		}
 		// Accepted: one JSON object, valid UTF-8, and nothing but JSON
 		// whitespace around it.
-		if !json.Valid(body) || !utf8.Valid(body) || jsonSpace[0] != '{' {
+		if !jsontext.Value(body).IsValid() || !utf8.Valid(body) || jsonSpace[0] != '{' {
 			t.Fatalf("body %q accepted, but it is not one JSON object in UTF-8", body)
 		}
 		var spelled map[string]any
@@ -221,7 +225,7 @@ func FuzzRegisterWebhook(f *testing.F) {
 				t.Fatalf("body %q was refused, but %+v was stored", body, stored)
 			}
 		case http.StatusCreated:
-			if !json.Valid(body) || !utf8.Valid(body) {
+			if !jsontext.Value(body).IsValid() || !utf8.Valid(body) {
 				t.Fatalf("body %q was accepted, but it is not one JSON document in UTF-8", body)
 			}
 			var sent registerWebhookRequest
@@ -309,10 +313,10 @@ func FuzzAwaitRejectReason(f *testing.F) {
 			}
 			return
 		}
-		if !utf8.Valid(body) || !json.Valid(body) || !utf8.ValidString(reason) {
+		if !utf8.Valid(body) || !jsontext.Value(body).IsValid() || !utf8.ValidString(reason) {
 			t.Fatalf("body %q accepted as reason %q, but it is not one JSON document in UTF-8", body, reason)
 		}
-		var object map[string]json.RawMessage
+		var object map[string]stablejson.RawJSON
 		if err := json.Unmarshal(body, &object); err != nil || len(object) == 0 {
 			t.Fatalf("body %q accepted, but it is not an object with keys: %v", body, err)
 		}
@@ -343,9 +347,7 @@ var messageTypes = []func() proto.Message{
 func FuzzJSONCodec_RoundTripsAnyMessage(f *testing.F) {
 	seed := func(which int, message proto.Message) {
 		wire, err := proto.Marshal(message)
-		if err != nil {
-			f.Fatal(err)
-		}
+		must.OK(f, err)
 		f.Add(uint8(which), wire)
 	}
 	opaque, _ := structpb.NewStruct(map[string]any{"status": "running", "kind": "STATUS_FAILED", "n": 1.5, "list": []any{"failed", nil, true}})
@@ -367,24 +369,18 @@ func FuzzJSONCodec_RoundTripsAnyMessage(f *testing.F) {
 			return // a value JSON cannot hold (NaN in a Struct, invalid UTF-8)
 		}
 		canonical, err := protojson.Marshal(message)
-		if err != nil {
-			t.Fatalf("protojson cannot write what MarshalJSON wrote: %v", err)
-		}
+		must.OKf(t, err, "protojson cannot write what MarshalJSON wrote")
 		// A message JSON cannot hold exactly (an undeclared number in a
 		// google.protobuf.NullValue, which JSON spells null) is outside what
 		// the dialect promises; it must still read the same either way.
 		plain := messageTypes[int(which)%len(messageTypes)]()
-		if err := protojson.Unmarshal(canonical, plain); err != nil {
-			t.Fatalf("protojson cannot read what it wrote: %v", err)
-		}
+		must.OKf(t, protojson.Unmarshal(canonical, plain), "protojson cannot read what it wrote")
 		if !proto.Equal(plain, message) {
 			message = plain
 		}
 		for name, text := range map[string][]byte{"short": short, "canonical": canonical} {
 			back := messageTypes[int(which)%len(messageTypes)]()
-			if err := UnmarshalJSON(text, back); err != nil {
-				t.Fatalf("%s spelling %s of %v does not read back: %v", name, text, message, err)
-			}
+			must.OKf(t, UnmarshalJSON(text, back), "%s spelling %s of %v does not read back", name, text, message)
 			if !proto.Equal(message, back) {
 				t.Fatalf("%s spelling %s of %v reads back as %v", name, text, message, back)
 			}
@@ -478,25 +474,15 @@ func FuzzPageTokens(f *testing.F) {
 	empty := listfilter.Set{}
 	spec := listfilter.MustSpec(&orkstackv1.ListNamespacesRequest{})
 	parsed, err := listfilter.Parse("name~pay")
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	filtered, err := spec.Compile([]*orkstackv1.FieldFilter{parsed})
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	other, err := listfilter.Parse("description^x")
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	filteredOther, err := spec.Compile([]*orkstackv1.FieldFilter{other})
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	mint := func(token string, err error) string {
-		if err != nil {
-			f.Fatal(err)
-		}
+		must.OK(f, err)
 		return token
 	}
 	for _, seed := range []string{
@@ -520,9 +506,7 @@ func FuzzPageTokens(f *testing.F) {
 				refusedAsInvalid(t, "decodeNamespaceCursor", err)
 			} else {
 				again, err := encodeNamespaceCursor(set, name)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, err)
 				if back, err := decodeNamespaceCursor(again, set); err != nil || back != name {
 					t.Fatalf("a namespace cursor at %q did not survive re-encoding: %q, %v", name, back, err)
 				}
@@ -543,9 +527,7 @@ func FuzzPageTokens(f *testing.F) {
 				refusedAsInvalid(t, "decodeRunCursor", err)
 			} else if cursor != nil {
 				again, err := encodeRunCursor(*cursor)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, err)
 				if back, err := decodeRunCursor(again, "default", set); err != nil || *back != *cursor {
 					t.Fatalf("a run cursor %+v did not survive re-encoding: %+v, %v", cursor, back, err)
 				}

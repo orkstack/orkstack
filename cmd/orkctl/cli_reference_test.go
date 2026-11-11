@@ -9,6 +9,8 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cliReferencePath is the generated reference the site and the docs table
@@ -19,9 +21,7 @@ func TestCLIReference_IsGenerated(t *testing.T) {
 	root, _ := newRootCommand()
 	want := renderCLIReference(root)
 	if os.Getenv("ORK_WRITE_CLI_REFERENCE") == "1" {
-		if err := os.WriteFile(cliReferencePath, []byte(want), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(cliReferencePath, []byte(want), 0o644))
 		return
 	}
 	got, err := os.ReadFile(cliReferencePath)
@@ -130,9 +130,7 @@ func oneLine(s string) string {
 func TestCLIReference_NamesEveryRunnableCommand(t *testing.T) {
 	root, _ := newRootCommand()
 	doc, err := os.ReadFile(cliReferencePath)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var want []string
 	var walk func(*cobra.Command)
 	walk = func(cmd *cobra.Command) {
@@ -164,28 +162,32 @@ func TestCLIReference_NamesEveryRunnableCommand(t *testing.T) {
 }
 
 // TestDocs_EveryOrkctlInvocationResolves reads every orkctl invocation a
-// tracked document writes as a code span or a line of a code fence and
-// resolves its command path in the real Cobra tree, tolerating flags and
-// placeholders.
+// tracked document writes as a code span or a line of a code fence — the
+// repository's markdown, the site's pages and the example Orkflows' comment
+// headers — and resolves its command path in the real Cobra tree, tolerating
+// flags and placeholders. A long flag that has a shorthand is refused: a
+// printed command uses the shorthand (-n, not --namespace), and the long form
+// stays in help and docs/CLI.md.
 func TestDocs_EveryOrkctlInvocationResolves(t *testing.T) {
 	root, _ := newRootCommand()
 	files := []string{"../../README.md", "../../CONTRIBUTING.md", "../../AGENTS.md", "../../ARCHITECTURE.md"}
-	for _, dir := range []string{"../../docs", "../../deploy", "../../examples"} {
+	for _, dir := range []string{"../../docs", "../../deploy", "../../examples", "../../site/content"} {
 		err := filepathWalkMarkdown(dir, func(path string) { files = append(files, path) })
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 	}
 	var bad []string
+	checked := 0
 	for _, file := range files {
 		if strings.HasSuffix(file, "docs/CLI.md") {
 			continue
 		}
 		raw, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
+		must.OK(t, err)
+		invocations := orkctlInvocations(string(raw))
+		if strings.HasSuffix(file, ".yaml") || strings.HasSuffix(file, ".yml") {
+			invocations = commentInvocations(string(raw))
 		}
-		for _, invocation := range orkctlInvocations(string(raw)) {
+		for _, invocation := range invocations {
 			args, ok := splitInvocation(invocation)
 			if !ok {
 				continue
@@ -194,6 +196,7 @@ func TestDocs_EveryOrkctlInvocationResolves(t *testing.T) {
 				strings.Contains(invocation, " / ") {
 				continue
 			}
+			checked++
 			cmd, rest, err := root.Find(args)
 			if err != nil || cmd == nil {
 				bad = append(bad, fmt.Sprintf("%s: %q (%v)", file, invocation, err))
@@ -201,12 +204,62 @@ func TestDocs_EveryOrkctlInvocationResolves(t *testing.T) {
 			}
 			if cmd == root && len(rest) > 0 && !strings.HasPrefix(rest[0], "-") {
 				bad = append(bad, fmt.Sprintf("%s: %q names no command", file, invocation))
+				continue
+			}
+			for _, long := range longFlagsWithShorthand(cmd, args) {
+				bad = append(bad, fmt.Sprintf("%s: %q writes --%s; a printed command uses its shorthand -%s",
+					file, invocation, long.Name, long.Shorthand))
 			}
 		}
 	}
 	if len(bad) > 0 {
-		t.Fatalf("%d orkctl invocations do not resolve:\n%s", len(bad), strings.Join(bad, "\n"))
+		t.Fatalf("%d orkctl invocations do not resolve or spell a long flag that has a shorthand:\n%s", len(bad), strings.Join(bad, "\n"))
 	}
+	t.Logf("checked %d orkctl invocations", checked)
+}
+
+// longFlagsWithShorthand returns each flag args spell in its long form
+// (--name or --name=value) that has a shorthand on cmd, local or inherited.
+func longFlagsWithShorthand(cmd *cobra.Command, args []string) []*pflag.Flag {
+	var out []*pflag.Flag
+	for _, arg := range args {
+		if !strings.HasPrefix(arg, "--") || arg == "--" {
+			continue
+		}
+		name, _, _ := strings.Cut(strings.TrimPrefix(arg, "--"), "=")
+		flag := cmd.Flags().Lookup(name)
+		if flag == nil {
+			flag = cmd.InheritedFlags().Lookup(name)
+		}
+		if flag != nil && flag.Shorthand != "" {
+			out = append(out, flag)
+		}
+	}
+	return out
+}
+
+// commentInvocations returns the orkctl invocations an Orkflow's comment
+// header writes: a comment line whose text begins with orkctl, and a code
+// span inside a comment line.
+func commentInvocations(doc string) []string {
+	var out []string
+	for _, line := range strings.Split(doc, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		text := strings.TrimSpace(strings.TrimLeft(trimmed, "#"))
+		if strings.HasPrefix(text, "orkctl ") {
+			out = append(out, text)
+			continue
+		}
+		for _, span := range codeSpans(text) {
+			if strings.HasPrefix(span, "orkctl ") {
+				out = append(out, span)
+			}
+		}
+	}
+	return out
 }
 
 // orkctlInvocations returns code spans and fenced lines that begin with
@@ -292,7 +345,7 @@ func filepathWalkMarkdown(dir string, visit func(string)) error {
 			}
 			continue
 		}
-		if strings.HasSuffix(e.Name(), ".md") {
+		if strings.HasSuffix(e.Name(), ".md") || strings.HasSuffix(e.Name(), ".ork.yaml") || strings.HasSuffix(e.Name(), ".ork.yml") {
 			visit(path)
 		}
 	}

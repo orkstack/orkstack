@@ -34,6 +34,11 @@ const (
 	TimestampHeader = "X-Ork-Timestamp"
 	// AttemptHeader counts delivery attempts from 1. It is not signed.
 	AttemptHeader = "X-Ork-Attempt"
+	// SequenceHeader is the run event's sequence, the body's "sequence": the
+	// order the run emitted its events in. A receiver orders deliveries by it,
+	// because they can arrive out of order. Absent when the delivery has none.
+	// Not signed, like every header.
+	SequenceHeader = "X-Ork-Sequence"
 	// RedeliveryHeader names the delivery an operator asked to repeat. Absent on
 	// a delivery the engine made on its own. Not signed, like every header.
 	RedeliveryHeader = "X-Ork-Redelivery-Of"

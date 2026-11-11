@@ -286,6 +286,20 @@ vuln-images: ## Build the release images for linux/amd64 (or take LAYOUTS=<dir>)
 	done; \
 	if [ -n "$$failed" ]; then echo "make vuln-images: a fixed high or critical vulnerability, or a scan that could not run, in:$$failed" >&2; exit 1; fi
 
+# A published release's notes are its CHANGELOG.md section, word for word
+# (docs/PROOFS.md §10). Both targets read the releases with gh over the
+# network, so like vuln they are in no lint or proof gate; nightly.yml runs
+# release-notes-check. release-notes-publish is the one way to change a
+# release's notes: it shows the diff and asks before it edits the release.
+.PHONY: release-notes-check
+release-notes-check: ## Check every published release's notes against its CHANGELOG.md section, naming the first line that differs (needs the network and gh; in no lint or proof gate)
+	@scripts/release-notes.sh check
+
+.PHONY: release-notes-publish
+release-notes-publish: ## Republish a release's notes from its CHANGELOG.md section, keeping its image footer, after a diff and a yes: VERSION=vX.Y.Z (needs gh)
+	@test -n "$(VERSION)" || (echo "release-notes-publish needs VERSION=vX.Y.Z"; exit 2)
+	@scripts/release-notes.sh publish $(VERSION)
+
 .PHONY: fmt
 fmt: ## Format Go code
 	gofmt -w $$(find . -name '*.go' -not -path './gen/*')
@@ -344,10 +358,6 @@ cli-reference: ## Regenerate docs/CLI.md from the Cobra tree
 .PHONY: proof
 proof: ## The full proof, the merge gate: every gate, every test, every spec -> proof/<NAME>/ (gitignored)
 	@scripts/proof.sh $(NAME)
-
-.PHONY: proof-feature
-proof-feature: ## An optional feature proof of this branch, never merge evidence: TESTS='PKG:REGEX ...' SPECS='FILE ...' [BASE=main] -> proof/<NAME>-feature/
-	@scripts/proof.sh --tier feature $(if $(BASE),--base $(BASE)) $(foreach t,$(TESTS),--tests '$(t)') $(foreach s,$(SPECS),--specs '$(s)') $(NAME)
 
 .PHONY: proof-ui
 proof-ui: ## Alias of proof: the full proof already runs the UI type-check, unit and Playwright suites
@@ -443,15 +453,7 @@ proof-stop: ## Stop one proof and everything it started: PROOF=proof/<name>
 proof-clean: ## List what test processes that are gone left (buckets, work roots, containers); REMOVE=1 removes it
 	@scripts/proof-clean.sh $(if $(REMOVE),--remove)
 
-.PHONY: proof-slow-list
-proof-slow-list: ## Regenerate scripts/proof-test-costs.tsv and scripts/proof-slow-tests.txt from a full proof: FROM=proof/<name>
+.PHONY: proof-costs
+proof-costs: ## Regenerate scripts/proof-test-costs.tsv and scripts/proof-ui-costs.tsv from a full proof: FROM=proof/<name>
 	go run ./test/tools/proofrun costs -from $(FROM)
-
-.PHONY: proof-overhead
-proof-overhead: ## Report where an existing proof's wall-clock went and its per-process overhead, running nothing: FROM=proof/<name> [OUT=FILE.md]
-	go run ./test/tools/proofrun overhead -from $(FROM) $(if $(OUT),-out $(OUT))
-
-.PHONY: proof-flakes
-proof-flakes: ## Derive per-test flake rates from the proof ledgers: FROM='proof/*' [REPO=.]
-	go run ./test/tools/proofrun flakes -from '$(or $(FROM),proof/*)' $(if $(REPO),-repo $(REPO))
 

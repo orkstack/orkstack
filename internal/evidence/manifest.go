@@ -10,11 +10,12 @@
 package evidence
 
 import (
-	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // SchemaVersion is the manifest schema every bundle whose run's archive
@@ -153,7 +154,7 @@ type Scope struct {
 	Artifacts bool   `json:"artifacts"`
 	// Item is set when the request narrowed task_id to one item of a
 	// fan-out. Additive: schema_version stays 1.
-	Item *int32 `json:"item,omitempty"`
+	Item *int32 `json:"item,omitzero"`
 }
 
 // Definition is the state of the pinned definition's source.
@@ -168,7 +169,7 @@ type TaskEntry struct {
 	TaskID string `json:"task_id"`
 	// Item is set on the entry of one item of a fan-out task. A fan-out's own
 	// entry (no item) carries its status and no attempts; its items follow it.
-	Item           *int32         `json:"item,omitempty"`
+	Item           *int32         `json:"item,omitzero"`
 	Status         string         `json:"status"`
 	OutcomeAttempt int32          `json:"outcome_attempt"`
 	ExitCode       int32          `json:"exit_code"`
@@ -180,7 +181,7 @@ type AttemptEntry struct {
 	Attempt       int32  `json:"attempt"`
 	State         State  `json:"state"`
 	Outcome       string `json:"outcome,omitempty"`
-	CommitAdopted bool   `json:"commit_adopted,omitempty"`
+	CommitAdopted bool   `json:"commit_adopted,omitzero"`
 }
 
 // Member is one file of the bundle, or one file the bundle would have held.
@@ -190,8 +191,8 @@ type Member struct {
 	TaskID string `json:"task_id,omitempty"`
 	// Item is set on a member one item of a fan-out recorded; such a member
 	// lives under tasks/{task}/items/{item:05}/.
-	Item    *int32 `json:"item,omitempty"`
-	Attempt int32  `json:"attempt,omitempty"`
+	Item    *int32 `json:"item,omitzero"`
+	Attempt int32  `json:"attempt,omitzero"`
 	// Name is the exact recorded artifact name for kind "artifact"; Path's
 	// last segment is derived from it and may be encoded (MemberName).
 	Name string `json:"name,omitempty"`
@@ -251,7 +252,7 @@ type manifestJSON Manifest
 // trailing newline. The same Manifest always renders to the same bytes, so
 // the document a manifest_only request streams is the bundle's first member.
 func (m Manifest) MarshalJSON() ([]byte, error) {
-	out, err := json.MarshalIndent(manifestJSON(m), "", "  ")
+	out, err := stablejson.MarshalIndent(manifestJSON(m), "  ")
 	if err != nil {
 		return nil, fmt.Errorf("evidence: encode manifest: %w", err)
 	}
@@ -267,7 +268,7 @@ func ParseManifest(document []byte) (*Manifest, error) {
 		SchemaVersion *int `json:"schema_version"`
 	}
 	if err := json.Unmarshal(document, &probe); err != nil {
-		return nil, fmt.Errorf("evidence: MANIFEST.json is not JSON: %w", err)
+		return nil, fmt.Errorf("evidence: MANIFEST.json is not JSON: %w", stablejson.Explained(err))
 	}
 	if probe.SchemaVersion == nil {
 		return nil, fmt.Errorf("evidence: MANIFEST.json has no schema_version")
@@ -277,9 +278,8 @@ func ParseManifest(document []byte) (*Manifest, error) {
 			*probe.SchemaVersion, SchemaVersion, SchemaVersionEventGaps)
 	}
 	var m manifestJSON
-	decoder := json.NewDecoder(bytes.NewReader(document))
-	if err := decoder.Decode(&m); err != nil {
-		return nil, fmt.Errorf("evidence: decode MANIFEST.json: %w", err)
+	if err := json.Unmarshal(document, &m); err != nil {
+		return nil, fmt.Errorf("evidence: decode MANIFEST.json: %w", stablejson.Explained(err))
 	}
 	manifest := Manifest(m)
 	switch {

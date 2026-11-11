@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"math"
@@ -24,6 +24,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests hold namespace budgets to their contract (docs/DEPLOY.md
@@ -377,9 +379,7 @@ func TestIntegration_ReclaimedAttemptRecordsAreReportedNotCounted(t *testing.T) 
 	}
 	// The cleanup worker's own call.
 	store, err := artifacts.NewRunArchive(s.artifactCfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	if _, err := store.DeleteRunArtifacts(ctx, s.namespace, older); err != nil {
 		t.Fatalf("DeleteRunArtifacts(%s): %v", older, err)
 	}
@@ -419,24 +419,18 @@ func TestIntegration_ATriggerInvokeIntoAnExhaustedNamespaceIs412(t *testing.T) {
 	created, err := triggersA.CreateTrigger(ctx, connect.NewRequest(&orkstackv1.CreateTriggerRequest{
 		Namespace: s.namespace, OrkflowName: s.orkflow, Description: "partner reconcile",
 	}))
-	if err != nil {
-		t.Fatalf("CreateTrigger on replica A: %v", err)
-	}
+	must.OKf(t, err, "CreateTrigger on replica A")
 	id, secret := created.Msg.GetTrigger().GetId(), created.Msg.GetSecret()
 	s.cli(t, s.a, exitOK, "namespace", "update", s.namespace,
 		"--budget-cpu-seconds", "1", "--budget-period", "1h", "--budget-enforce")
 
 	path := strings.Replace(api.TriggerInvokePath, "{id}", id, 1)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+s.b.addr+path, strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatalf("build invoke: %v", err)
-	}
+	must.OKf(t, err, "build invoke")
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+secret)
 	resp, err := h2cClient(t).Do(req)
-	if err != nil {
-		t.Fatalf("POST %s on replica B: %v", path, err)
-	}
+	must.OKf(t, err, "POST %s on replica B", path)
 	body, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	fmt.Fprintf(&s.transcript, "$ curl -X POST http://%s%s    # replica B, trigger created on A\n%d %s\n\n",

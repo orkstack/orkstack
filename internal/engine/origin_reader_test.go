@@ -15,6 +15,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // withOriginMemo adds the two origin memo keys StartRun writes.
@@ -22,13 +24,9 @@ func withOriginMemo(t *testing.T, info *workflowpb.WorkflowExecutionInfo, kind, 
 	t.Helper()
 	dc := converter.GetDefaultDataConverter()
 	kindPayload, err := dc.ToPayload(kind)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	idPayload, err := dc.ToPayload(id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	info.Memo.Fields[MemoOriginKind] = kindPayload
 	info.Memo.Fields[MemoOriginID] = idPayload
 	return info
@@ -162,9 +160,7 @@ func TestListedRun_ReadsTheRootFromTheMemo(t *testing.T) {
 		t.Fatalf("a record with no root key lists root %q", got)
 	}
 	payload, err := converter.GetDefaultDataConverter().ToPayload("ork-root")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	info.Memo.Fields[MemoOriginRootRunID] = payload
 	want := &orkstackv1.RunOrigin{
 		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root",
@@ -218,9 +214,7 @@ func TestStartedRun_ReadsOriginOffThePlan(t *testing.T) {
 		startedEventWithPlan(t, runID, wf, RunPlan{Namespace: "default", Origin: origin}),
 	}, runID)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if !proto.Equal(run.GetOrigin(), origin.Proto()) {
 		t.Fatalf("pending-window origin = %v, want %v", run.GetOrigin(), origin.Proto())
 	}
@@ -230,9 +224,7 @@ func TestStartedRun_ReadsOriginOffThePlan(t *testing.T) {
 		startedEventWithPlan(t, runID, wf, "not a plan"),
 	}, runID)
 	run, err = reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run.GetOrigin() != nil || run.GetOrkflowName() != "hello-ork" {
 		t.Fatalf("an undecodable plan read origin %v (orkflow %q), want none and the orkflow intact",
 			run.GetOrigin(), run.GetOrkflowName())

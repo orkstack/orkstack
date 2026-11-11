@@ -2,7 +2,8 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -17,8 +18,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/evidence"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/timestamppb"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestTaskStatusLabel_FlagsACanceledTaskThatNeverStarted(t *testing.T) {
@@ -62,9 +66,7 @@ func TestTaskStatusLabel_LeavesEveryOtherStatusAlone(t *testing.T) {
 func TestPayloadSummary_IsBoundedAndPointsAtTheWholeDocument(t *testing.T) {
 	payload := func(n int) *orkstackv1.Payload {
 		data, err := structpb.NewStruct(map[string]any{"k": strings.Repeat("a", n)})
-		if err != nil {
-			t.Fatalf("struct: %v", err)
-		}
+		must.OKf(t, err, "struct")
 		return &orkstackv1.Payload{Data: data}
 	}
 	// `{"k":"` + n bytes + `"}` is n+8 bytes of JSON.
@@ -97,9 +99,7 @@ func TestPayloadSummary_IsBoundedAndPointsAtTheWholeDocument(t *testing.T) {
 // boundary, so the line stays valid text.
 func TestPayloadSummary_NeverSplitsACharacter(t *testing.T) {
 	data, err := structpb.NewStruct(map[string]any{"k": strings.Repeat("é", 400)})
-	if err != nil {
-		t.Fatalf("struct: %v", err)
-	}
+	must.OKf(t, err, "struct")
 	got := payloadSummary(&orkstackv1.Payload{Data: data}, "ork-1", "")
 	head, _, ok := strings.Cut(got, "… (")
 	if !ok {
@@ -116,9 +116,7 @@ func TestPayloadSummary_NeverSplitsACharacter(t *testing.T) {
 func TestOneLinePrinters_EscapeWhatATerminalObeys(t *testing.T) {
 	hostile := "a\x1b]0;x\x07\u009b31m\u202e\x7f\nb"
 	data, err := structpb.NewStruct(map[string]any{"k": hostile})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cases := map[string]string{
 		"errorLine, code and message": errorLine(&orkstackv1.Error{Code: "X\x1b[2J", Message: hostile}),
 		"errorLine, message alone":    errorLine(&orkstackv1.Error{Message: hostile}),
@@ -163,7 +161,7 @@ var jsonTerminalSafeCases = []struct {
 func TestJSONTerminalSafe(t *testing.T) {
 	for _, tc := range jsonTerminalSafeCases {
 		t.Run(tc.name, func(t *testing.T) {
-			encoded, err := json.Marshal(tc.text)
+			encoded, err := stablejson.Marshal(tc.text)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -207,20 +205,18 @@ func FuzzJSONTerminalSafe(f *testing.F) {
 	f.Add("", []byte(`\u202e not a string`))
 	f.Fuzz(func(t *testing.T, text string, raw []byte) {
 		for _, encode := range []func(any) ([]byte, error){
-			json.Marshal,
-			func(value any) ([]byte, error) { return json.MarshalIndent(value, "", "  ") },
+			stablejson.Marshal,
+			func(value any) ([]byte, error) { return stablejson.MarshalIndent(value, "  ") },
 		} {
 			encoded, err := encode(map[string]any{text: []string{text}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			requireJSONTerminalSafe(t, encoded, jsonTerminalSafe(encoded))
 		}
 		safe := jsonTerminalSafe(raw)
 		if again := jsonTerminalSafe(safe); !bytes.Equal(again, safe) {
 			t.Fatalf("not idempotent on %q: %q then %q", raw, safe, again)
 		}
-		if json.Valid(raw) {
+		if jsontext.Value(raw).IsValid() {
 			requireJSONTerminalSafe(t, raw, safe)
 		}
 	})
@@ -237,69 +233,53 @@ func TestJSONWriters_EscapeWhatTheyPrint(t *testing.T) {
 	}{
 		{"plain Go values: webhook, version, activity test, task run", func(t *testing.T) []byte {
 			var out bytes.Buffer
-			if err := writeGoJSON(&out, map[string]string{"name": hostile}); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, writeGoJSON(&out, map[string]string{"name": hostile}))
 			return out.Bytes()
 		}},
 		{"a raw label inside a report", func(t *testing.T) []byte {
 			var out bytes.Buffer
-			if err := writeGoJSON(&out, map[string]json.RawMessage{"label": json.RawMessage(`"` + hostile + `"`)}); err != nil {
+			if err := writeGoJSON(&out, map[string]stablejson.RawJSON{"label": stablejson.RawJSON(`"` + hostile + `"`)}); err != nil {
 				t.Fatal(err)
 			}
 			return out.Bytes()
 		}},
 		{"run timing", func(t *testing.T) []byte {
 			var out bytes.Buffer
-			if err := writeTimingJSON(&out, &runTiming{RunID: hostile}); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, writeTimingJSON(&out, &runTiming{RunID: hostile}))
 			return out.Bytes()
 		}},
 		{"evidence verify", func(t *testing.T) []byte {
 			var out bytes.Buffer
-			if err := writeVerifyJSON(&out, &evidence.Report{Failures: []evidence.Failure{{Path: hostile}}}, nil); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, writeVerifyJSON(&out, &evidence.Report{Failures: []evidence.Failure{{Path: hostile}}}, nil))
 			return out.Bytes()
 		}},
 		{"the log stream", func(t *testing.T) []byte {
 			var out bytes.Buffer
 			writer := &logWriter{out: &out, json: true}
-			if err := writer.chunk(&orkstackv1.TaskLogChunk{TaskId: hostile}, false); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, writer.chunk(&orkstackv1.TaskLogChunk{TaskId: hostile}, false))
 			return out.Bytes()
 		}},
 		{"the inspect stream", func(t *testing.T) []byte {
 			encoded, err := marshalCompactJSON(&orkstackv1.InspectRunResponse{Attempts: []*orkstackv1.LiveAttempt{{TaskId: hostile}}})
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			return encoded
 		}},
 		{"the watch stream", func(t *testing.T) []byte {
 			var out bytes.Buffer
 			sink := &jsonEventSink{out: &out}
-			if err := sink.event(&orkstackv1.Event{Message: hostile}); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, sink.event(&orkstackv1.Event{Message: hostile}))
 			return out.Bytes()
 		}},
 		{"the config file", func(t *testing.T) []byte {
 			t.Setenv(configEnvVar, filepath.Join(t.TempDir(), "config.json"))
 			path, err := saveConfig(cliConfig{Namespace: hostile})
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			got, err := loadConfig()
 			if err != nil || got.Namespace != hostile {
 				t.Fatalf("the config read back as %q, %v", got.Namespace, err)
 			}
 			written, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			return written
 		}},
 	} {
@@ -319,9 +299,7 @@ func TestJSONWriters_EscapeWhatTheyPrint(t *testing.T) {
 // it, and the document a --json writer builds from it passes through output.go.
 func TestJSONWriters_NoOtherEncoderPrints(t *testing.T) {
 	sources, err := filepath.Glob("*.go")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	banned := map[string]bool{"json.MarshalIndent": true, "json.NewEncoder": true, "api.MarshalJSON": true}
 	fset := token.NewFileSet()
 	for _, source := range sources {
@@ -329,9 +307,7 @@ func TestJSONWriters_NoOtherEncoderPrints(t *testing.T) {
 			continue
 		}
 		file, err := parser.ParseFile(fset, source, nil, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		ast.Inspect(file, func(node ast.Node) bool {
 			if call, ok := node.(*ast.SelectorExpr); ok {
 				if pkg, ok := call.X.(*ast.Ident); ok && banned[pkg.Name+"."+call.Sel.Name] {
@@ -352,9 +328,7 @@ func TestPayloadSummary_IsTerminalSafe(t *testing.T) {
 	const escaped = `x\u007f\u009b31m\u202e\udb40\udc41\u001b]0;x\u0007\u2028`
 	payload := func(value string) *orkstackv1.Payload {
 		data, err := structpb.NewStruct(map[string]any{"k": value})
-		if err != nil {
-			t.Fatalf("struct: %v", err)
-		}
+		must.OKf(t, err, "struct")
 		return &orkstackv1.Payload{Data: data}
 	}
 	short := payloadSummary(payload(hostile), "ork-1", "")
@@ -372,9 +346,7 @@ func TestPayloadSummary_IsTerminalSafe(t *testing.T) {
 		t.Fatalf("the summary was not cut: %s", long)
 	}
 	whole, err := marshalJSON(payload(hostile))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !strings.Contains(string(whole), escaped) {
 		t.Fatalf("--json changed: %s", whole)
 	}
@@ -387,9 +359,7 @@ func TestTaskRun_PrintsConfigTerminalSafe(t *testing.T) {
 	// As an encoder writes it: the C0 controls are escaped, and these are not.
 	raw := []byte("{\n  \"k\": \"x\x7f\u009b31m\u202e\U000e0041\",\n  \"plain\": \"日本語\"\n}\n")
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "config.json"), raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(dir, "config.json"), raw, 0o600))
 	var out bytes.Buffer
 	r := &taskRunner{t: &transcript{out: &out}, report: &taskRunReport{}, opts: &taskRunOptions{}}
 	r.onSealed(dir)

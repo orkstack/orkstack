@@ -15,6 +15,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -191,7 +192,7 @@ test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	test.setTimeout(900_000);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# Admin → Releases: release status, promotion and its refusals in a browser.',

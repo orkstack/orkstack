@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -28,6 +28,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // scheduleStack is one or two real `ork` replicas and one Orker (the Bash
@@ -70,9 +72,7 @@ func (s *scheduleStack) startEngine(ctx context.Context, t *testing.T, name, add
 	)
 	log := &lockedBuffer{}
 	cmd.Stdout, cmd.Stderr = log, log
-	if err := cmd.Start(); err != nil {
-		t.Fatalf("start %s: %v", name, err)
-	}
+	must.OKf(t, cmd.Start(), "start %s", name)
 	e := &managedEngine{cmd: cmd, done: make(chan struct{}), log: log}
 	go func() { _ = cmd.Wait(); close(e.done) }()
 	httpClient := h2cClient(t)
@@ -177,10 +177,8 @@ func (s *scheduleStack) cliRaw(t *testing.T, replica *managedEngine, args ...str
 func (s *scheduleStack) apply(t *testing.T, yaml string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "orkflow.ork.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	s.cli(t, s.a, exitOK, "apply", path)
+	must.OK(t, os.WriteFile(path, []byte(yaml), 0o644))
+	s.cli(t, s.a, exitOK, "orkflow", "create", path)
 }
 
 func (s *scheduleStack) writeProof(t *testing.T, name string) {
@@ -391,9 +389,7 @@ func (s *scheduleStack) awaitRunStatus(t *testing.T, runID string, within time.D
 func (s *scheduleStack) awaitNextFireSecond(t *testing.T, run runRow) {
 	t.Helper()
 	nominal, err := time.Parse(time.RFC3339, run.Origin.Reference)
-	if err != nil {
-		t.Fatalf("run %s reference %q: %v", run.ID, run.Origin.Reference, err)
-	}
+	must.OKf(t, err, "run %s reference %q", run.ID, run.Origin.Reference)
 	next := nominal.Truncate(time.Second).Add(time.Second)
 	if wait := time.Until(next); wait > 0 {
 		// A clock boundary, not synchronisation: nothing else can make the
@@ -426,9 +422,7 @@ func (s *scheduleStack) fireWorkflows(ctx context.Context, t *testing.T, schedul
 	resp, err := s.temporal.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
 		Query: fmt.Sprintf("WorkflowType = '%s'", engine.ScheduleFireWorkflowType),
 	})
-	if err != nil {
-		t.Fatalf("list fire workflows: %v", err)
-	}
+	must.OKf(t, err, "list fire workflows")
 	var out []fireExecution
 	for _, info := range resp.GetExecutions() {
 		if !strings.HasPrefix(info.GetExecution().GetWorkflowId(), engine.ScheduleFireWorkflowIDPrefix+scheduleID) {
@@ -471,9 +465,7 @@ type fireExecution struct {
 func (s *scheduleStack) fireStatus(ctx context.Context, t *testing.T, workflowID string) enumspb.WorkflowExecutionStatus {
 	t.Helper()
 	described, err := s.temporal.DescribeWorkflowExecution(ctx, workflowID, "")
-	if err != nil {
-		t.Fatalf("describe fire %s: %v", workflowID, err)
-	}
+	must.OKf(t, err, "describe fire %s", workflowID)
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }
 
@@ -539,17 +531,13 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 		t.Fatalf("created --paused, get reports active: %+v", got.Schedule)
 	}
 	lisbon, err := time.LoadLocation("Europe/Lisbon")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(got.Schedule.NextFireTimes) != 10 {
 		t.Fatalf("next fire times = %v, want ten", got.Schedule.NextFireTimes)
 	}
 	for _, next := range got.Schedule.NextFireTimes {
 		at, err := time.Parse(time.RFC3339, next)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if local := at.In(lisbon); local.Hour() != 2 || local.Minute() != 0 {
 			t.Fatalf("next fire %s is %s in Lisbon, want 02:00", next, local)
 		}
@@ -569,9 +557,7 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 	runJSON := s.cli(t, s.a, exitOK, "--json", "run", "get", runID)
 	origin := originOf(t, runJSON)
 	nominal, err := time.Parse(time.RFC3339Nano, fire.ScheduledAt)
-	if err != nil {
-		t.Fatalf("scheduledAt %q: %v", fire.ScheduledAt, err)
-	}
+	must.OKf(t, err, "scheduledAt %q", fire.ScheduledAt)
 	// The reference is the nominal time in RFC 3339 UTC, whole seconds; a
 	// manual fire's nominal time is the instant it was requested.
 	if origin["kind"] != "SCHEDULE" || origin["id"] != id || origin["description"] != "nightly" ||
@@ -592,9 +578,7 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{Bucket: aws.String(s.artifactCfg.S3Bucket), Prefix: aws.String(prefix)})
-		if err != nil {
-			t.Fatalf("list %s: %v", prefix, err)
-		}
+		must.OKf(t, err, "list %s", prefix)
 		originKeys = originKeys[:0]
 		for _, object := range page.Contents {
 			originKeys = append(originKeys, aws.ToString(object.Key))
@@ -618,9 +602,7 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 		page, err := raw.ListObjectsV2(ctx, &s3.ListObjectsV2Input{
 			Bucket: aws.String(s.artifactCfg.S3Bucket), Prefix: aws.String("metadata/"), ContinuationToken: token,
 		})
-		if err != nil {
-			t.Fatalf("list metadata/: %v", err)
-		}
+		must.OKf(t, err, "list metadata/")
 		for _, object := range page.Contents {
 			key := aws.ToString(object.Key)
 			scanned++
@@ -692,9 +674,7 @@ func TestIntegration_ScheduleIntervalFiresOnItsOwn(t *testing.T) {
 		// the run itself.
 		run := s.run(t, s.a, listed.ID)
 		ref, err := time.Parse(time.RFC3339, run.Origin.Reference)
-		if err != nil {
-			t.Fatalf("run %s reference %q: %v", run.ID, run.Origin.Reference, err)
-		}
+		must.OKf(t, err, "run %s reference %q", run.ID, run.Origin.Reference)
 		if ref.Unix()%5 != 0 {
 			t.Fatalf("run %s nominal time %s is not aligned to 5s from the epoch", run.ID, ref)
 		}
@@ -817,9 +797,7 @@ func TestIntegration_ScheduleOverlapAllowAll(t *testing.T) {
 	id := s.create(t, "nightly", "--orkflow", "slow", "--cron", "0 2 * * *", "--overlap", "allow-all", "--paused")
 
 	described, err := s.temporal.ScheduleClient().GetHandle(ctx, engine.TemporalScheduleID(s.namespace, "nightly")).Describe(ctx)
-	if err != nil {
-		t.Fatalf("describe the Temporal Schedule: %v", err)
-	}
+	must.OKf(t, err, "describe the Temporal Schedule")
 	if described.Schedule.Policy.Overlap != enumspb.SCHEDULE_OVERLAP_POLICY_ALLOW_ALL {
 		t.Fatalf("Temporal holds overlap %v, want SCHEDULE_OVERLAP_POLICY_ALLOW_ALL", described.Schedule.Policy.Overlap)
 	}
@@ -961,9 +939,7 @@ func TestIntegration_ScheduleFireRefusedWithoutLiveOrkerAndRecorded(t *testing.T
 	}
 
 	gpuQueue, err := task.QueueForPool("gpu", s.channel)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	startProcess(ctx, t, "orker-gpu", s.orkerPath,
 		"ORK_TEMPORAL_ADDRESS="+s.address,
 		"ORK_TEMPORAL_NAMESPACE="+s.partition,
@@ -1117,9 +1093,7 @@ func TestIntegration_TerminatedFireLeavesItsRunRunning(t *testing.T) {
 	if len(fires) != 1 {
 		t.Fatalf("fire workflows = %+v", fires)
 	}
-	if err := s.temporal.TerminateWorkflow(ctx, fires[0].WorkflowID, "", "integration test terminates the fire"); err != nil {
-		t.Fatalf("terminate fire: %v", err)
-	}
+	must.OKf(t, s.temporal.TerminateWorkflow(ctx, fires[0].WorkflowID, "", "integration test terminates the fire"), "terminate fire")
 	fmt.Fprintf(&s.transcript, "$ temporal workflow terminate --workflow-id %s\n\n", fires[0].WorkflowID)
 	if status := s.fireStatus(ctx, t, fires[0].WorkflowID); status != enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED {
 		t.Fatalf("fire status = %s, want Terminated", status)

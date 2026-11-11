@@ -3,7 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,8 +22,11 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A definition passed by reference, the submitting engine's half (spec 5.1)
@@ -93,7 +96,7 @@ type startAttempt struct {
 }
 
 func (s *recordingStarter) StartRun(ctx context.Context, runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, plan engine.RunPlan) error {
-	encoded, _ := json.Marshal(plan)
+	encoded, _ := stablejson.Marshal(plan)
 	s.mu.Lock()
 	s.attempts = append(s.attempts, startAttempt{runID: runID, wf: wf, plan: encoded})
 	if s.log != nil {
@@ -149,12 +152,8 @@ func TestPrepare_LargeDefinitionTravelsByReference(t *testing.T) {
 	objects := newDefinitionObjects(nil)
 	caps := &fakeCapabilities{}
 	svc := api.NewService(byReferenceConfig(starter, objects, caps, 0))
-	if err := applyDoc(t, svc, largeDoc("large", 400, 1000)); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
-	if err := submitName(svc, "large"); err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	must.OKf(t, applyDoc(t, svc, largeDoc("large", 400, 1000)), "apply")
+	must.OKf(t, submitName(svc, "large"), "submit")
 	started := starter.startedRuns()
 	if len(started) != 1 {
 		t.Fatalf("started %v, want one run", started)
@@ -171,7 +170,7 @@ func TestPrepare_LargeDefinitionTravelsByReference(t *testing.T) {
 	if plan.Definition == nil || len(plan.Definition.Parts) == 0 {
 		t.Fatal("the plan names no definition by reference")
 	}
-	encoded, _ := json.Marshal(plan.Definition)
+	encoded, _ := stablejson.Marshal(plan.Definition)
 	if strings.Contains(strings.ToLower(string(encoded)), "uri") || strings.Contains(string(encoded), "s3://") {
 		t.Fatalf("the plan's reference carries a location: %s", encoded)
 	}
@@ -183,13 +182,9 @@ func TestPrepare_LargeDefinitionTravelsByReference(t *testing.T) {
 		t.Fatalf("no definition was written under %s: %v", started[0], objects.writes)
 	}
 	loaded, err := engine.DecodeDefinitionObject(data, plan.Definition, stub)
-	if err != nil {
-		t.Fatalf("the written object does not decode against the plan and the stub: %v", err)
-	}
+	must.OKf(t, err, "the written object does not decode against the plan and the stub")
 	stored, err := svc.GetOrkflow(context.Background(), connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "large"}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(loaded.GetTasks()) != 400 || loaded.GetDefinitionDigest() != stored.Msg.GetOrkflow().GetDefinitionDigest() ||
 		loaded.GetSourceYaml() != "" {
 		t.Fatalf("the object holds %d tasks (digest %q, source %d bytes), want the planned definition's 400 and no source",
@@ -207,27 +202,19 @@ func TestPrepare_MeasuresTheStubAgainstTheStartBound(t *testing.T) {
 	offCfg := byReferenceConfig(off, newDefinitionObjects(nil), &fakeCapabilities{}, 0)
 	offCfg.DefinitionByReference = false
 	offSvc := api.NewService(offCfg)
-	if err := applyDoc(t, offSvc, doc); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, offSvc, doc))
 	err := submitName(offSvc, "large")
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition || !strings.Contains(err.Error(), "orkflow large@1.0.0 serializes to") {
 		t.Fatalf("submit with the flag off = %v, want today's refusal", err)
 	}
 	on := &fakeStarter{}
 	onSvc := api.NewService(byReferenceConfig(on, newDefinitionObjects(nil), &fakeCapabilities{}, 0))
-	if err := applyDoc(t, onSvc, doc); err != nil {
-		t.Fatal(err)
-	}
-	if err := submitName(onSvc, "large"); err != nil {
-		t.Fatalf("submit with the flag on: %v", err)
-	}
+	must.OK(t, applyDoc(t, onSvc, doc))
+	must.OKf(t, submitName(onSvc, "large"), "submit with the flag on")
 	// The input bound still holds on its own.
 	inputDoc := strings.Replace(doc, "tasks:\n", "inputs:\n  blob: {type: string}\ntasks:\n", 1)
 	inputDoc = strings.Replace(inputDoc, "name: large\n", "name: large-input\n", 1)
-	if err := applyDoc(t, onSvc, inputDoc); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, onSvc, inputDoc))
 	input := &orkstackv1.Payload{Data: mustStruct(t, map[string]any{"blob": strings.Repeat("x", task.MaxActivityInputBytes+1)})}
 	_, err = onSvc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "large-input", Input: input}))
 	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), task.ReasonInputTooLarge) {
@@ -244,9 +231,7 @@ func TestPrepare_RefusesADefinitionOverAQuarterOfTheCap(t *testing.T) {
 	objects := newDefinitionObjects(nil)
 	roomyCfg := byReferenceConfig(&fakeStarter{}, objects, &fakeCapabilities{}, 0)
 	roomy := api.NewService(roomyCfg)
-	if err := applyDoc(t, roomy, doc); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, roomy, doc))
 	// A deployment whose copy bound is 512 KiB carries at most 128 KiB.
 	tight := byReferenceConfig(&fakeStarter{}, objects, &fakeCapabilities{}, 512<<10)
 	tight.Orkflows = roomyCfg.Orkflows
@@ -277,9 +262,7 @@ func TestPrepare_DefinitionByReferenceRefusedWhileAnOlderEngineProcessPolls(t *t
 	cfg := byReferenceConfig(starter, objects, &fakeCapabilities{lacking: identities}, 0)
 	cfg.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
 	svc := api.NewService(cfg)
-	if err := applyDoc(t, svc, doc); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, doc))
 	err := submitName(svc, "large")
 	if connect.CodeOf(err) != connect.CodeFailedPrecondition ||
 		!strings.Contains(err.Error(), "orkflow large@1.0.0 serializes to") ||
@@ -312,9 +295,7 @@ func TestPrepare_DefinitionByReferenceRefusedWhileAnOlderEngineProcessPolls(t *t
 	small := &fakeCapabilities{lacking: identities}
 	smallCfg := byReferenceConfig(&fakeStarter{}, newDefinitionObjects(nil), small, 0)
 	smallSvc := api.NewService(smallCfg)
-	if err := applyDoc(t, smallSvc, largeDoc("small", 3, 100)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, smallSvc, largeDoc("small", 3, 100)))
 	if err := submitName(smallSvc, "small"); err != nil || small.questions() != 0 {
 		t.Fatalf("a small definition = %v after %d fleet questions, want started with none", err, small.questions())
 	}
@@ -344,9 +325,7 @@ func TestApply_RefusesADefinitionThatCouldNotBeCarried(t *testing.T) {
 	off := cfg
 	off.DefinitionByReference = false
 	off.Orkflows = engine.NewMemoryOrkflowStore()
-	if err := applyDoc(t, api.NewService(off), doc); err != nil {
-		t.Fatalf("apply with the flag off: %v", err)
-	}
+	must.OKf(t, applyDoc(t, api.NewService(off), doc), "apply with the flag off")
 }
 
 // TestStartPreparedRun_WritesTheDefinitionUnderTheFinalRunID: the object is
@@ -359,13 +338,9 @@ func TestStartPreparedRun_WritesTheDefinitionUnderTheFinalRunID(t *testing.T) {
 	starter := &recordingStarter{rejections: 1, log: &log}
 	objects := newDefinitionObjects(&log)
 	svc := api.NewService(byReferenceConfig(starter, objects, &fakeCapabilities{}, 0))
-	if err := applyDoc(t, svc, largeDoc("large", 400, 1000)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, largeDoc("large", 400, 1000)))
 	resp, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "large"}))
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	must.OKf(t, err, "submit")
 	if len(starter.attempts) != 2 {
 		t.Fatalf("%d start attempts, want 2", len(starter.attempts))
 	}
@@ -395,9 +370,7 @@ func TestStartPreparedRun_DefinitionWriteFailureStartsNothing(t *testing.T) {
 	objects.err = errors.New("bucket unreachable")
 	cfg := byReferenceConfig(starter, objects, &fakeCapabilities{}, 0)
 	svc := api.NewService(cfg)
-	if err := applyDoc(t, svc, largeDoc("large", 400, 1000)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, largeDoc("large", 400, 1000)))
 	err := submitName(svc, "large")
 	if connect.CodeOf(err) != connect.CodeUnavailable || !strings.Contains(err.Error(), "bucket unreachable") {
 		t.Fatalf("submit = %v, want unavailable naming the store's error", err)
@@ -435,16 +408,12 @@ func TestPrepareScheduledRun_WritesTheDefinitionLast(t *testing.T) {
 	cfg.NewRunID = func() string { counter++; return fmt.Sprintf("ork-sched-%d", counter) }
 	svc := api.NewService(cfg)
 	doc := strings.Replace(largeDoc("large", 400, 1000), "tasks:\n", "inputs:\n  blob: {type: string, default: \"\"}\ntasks:\n", 1)
-	if err := applyDoc(t, svc, doc); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, applyDoc(t, svc, doc))
 	acts := api.NewScheduleActivities(svc, fixedIndexes{})
 	rec := &orkstackv1.ScheduleRecord{ScheduleId: "sch-4a1c0e2b7d3f8156", Name: "nightly", Namespace: "default",
 		OrkflowName: "large", Spec: dailySpec()}
 	prep, err := acts.PrepareScheduledRun(context.Background(), rec, time.Now())
-	if err != nil {
-		t.Fatalf("PrepareScheduledRun: %v", err)
-	}
+	must.OKf(t, err, "PrepareScheduledRun")
 	var plan engine.RunPlan
 	if err := json.Unmarshal(prep.GetPlan(), &plan); err != nil || plan.Definition == nil {
 		t.Fatalf("plan = %v (%v), want one naming the definition", plan.Definition, err)
@@ -479,9 +448,7 @@ func TestPrepareScheduledRun_WritesTheDefinitionLast(t *testing.T) {
 func byReferenceReadStart(t *testing.T, reader *fakeReader, runID string, wf *orkstackv1.Orkflow, plan engine.RunPlan, broken bool) *int {
 	t.Helper()
 	data, ref, err := engine.EncodeDefinitionObject(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan.Definition = &ref
 	reader.setStart(runID, &engine.RunStartRecord{Orkflow: engine.DefinitionStub(wf), Plan: plan, ByReference: true})
 	reads := new(int)
@@ -656,8 +623,6 @@ func startPlan(t *testing.T, reader *fakeReader, runID string) engine.RunPlan {
 func mustStruct(t *testing.T, values map[string]any) *structpb.Struct {
 	t.Helper()
 	s, err := structpb.NewStruct(values)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return s
 }

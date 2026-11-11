@@ -4,7 +4,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net"
 	"net/http"
@@ -26,8 +26,11 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // temporalAddress is where the integration test expects a real Temporal
@@ -126,17 +129,11 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 
-	if err := runWorker.Start(); err != nil {
-		t.Fatalf("start run worker: %v", err)
-	}
+	must.OKf(t, runWorker.Start(), "start run worker")
 	defer runWorker.Stop()
-	if err := taskWorker.Start(); err != nil {
-		t.Fatalf("start task worker: %v", err)
-	}
+	must.OKf(t, taskWorker.Start(), "start task worker")
 	defer taskWorker.Stop()
-	if err := eventWorker.Start(); err != nil {
-		t.Fatalf("start event worker: %v", err)
-	}
+	must.OKf(t, eventWorker.Start(), "start event worker")
 	defer eventWorker.Stop()
 
 	svc := api.NewService(api.Config{
@@ -147,9 +144,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 
@@ -170,15 +165,11 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	runClient := orkstackv1connect.NewRunServiceClient(httpClient, baseURL)
 
 	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	applied, err := orkflowClient.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	}))
-	if err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
+	must.OKf(t, err, "Apply")
 	if applied.Msg.GetOrkflow().GetName() != "hello-ork" {
 		t.Fatalf("applied orkflow = %q, want hello-ork", applied.Msg.GetOrkflow().GetName())
 	}
@@ -186,27 +177,21 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "hello-ork",
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("submitted run %s", runID)
 
 	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: runID,
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	var observed []*orkstackv1.Event
 	for stream.Receive() {
 		observed = append(observed, stream.Msg())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("event stream error: %v", err)
-	}
+	must.OKf(t, stream.Err(), "event stream error")
 
 	if len(observed) == 0 {
 		t.Fatal("no events observed for the run")
@@ -224,9 +209,7 @@ func TestIntegration_HelloOrkRunSucceedsOnRealTemporal(t *testing.T) {
 	}
 
 	got, err := runClient.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	run := got.Msg.GetRun()
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run status = %v, want SUCCEEDED (error: %v)", run.GetStatus(), run.GetError())
@@ -268,9 +251,7 @@ func assertDeterministicReplay(t *testing.T, ctx context.Context, c client.Clien
 		enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read workflow history: %v", err)
-		}
+		must.OKf(t, err, "read workflow history")
 		history.Events = append(history.Events, event)
 	}
 	if len(history.Events) == 0 {
@@ -279,9 +260,7 @@ func assertDeterministicReplay(t *testing.T, ctx context.Context, c client.Clien
 
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
-	if err := replayer.ReplayWorkflowHistory(nil, history); err != nil {
-		t.Fatalf("replaying the run's history failed (non-deterministic workflow): %v", err)
-	}
+	must.OKf(t, replayer.ReplayWorkflowHistory(nil, history), "replaying the run's history failed (non-deterministic workflow)")
 	t.Logf("replayed %d history events deterministically", len(history.Events))
 }
 
@@ -289,12 +268,10 @@ func assertDeterministicReplay(t *testing.T, ctx context.Context, c client.Clien
 func writeEventProof(t *testing.T, runID string, events []*orkstackv1.Event) {
 	t.Helper()
 	marshaler := protojson.MarshalOptions{Multiline: false}
-	raw := make([]json.RawMessage, 0, len(events))
+	raw := make([]stablejson.RawJSON, 0, len(events))
 	for _, event := range events {
 		encoded, err := marshaler.Marshal(event)
-		if err != nil {
-			t.Fatalf("encode event: %v", err)
-		}
+		must.OKf(t, err, "encode event")
 		raw = append(raw, encoded)
 	}
 	proof.WriteJSON(t, "engine", "run-event-stream.json", map[string]any{

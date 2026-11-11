@@ -331,9 +331,9 @@ test('a 4,000-cell paint is O(n) calls and reads no computed style; a dirty repa
 
 test('every status has a CSS mark and a canvas mark, and no two share a (fill, mark) pair', () => {
 	const all = Object.keys(STATUS_MARKS).map(Number) as Status[];
-	expect(all.length).toBe(8);
+	expect(all.length).toBe(9);
 	const pairs = new Set(all.map((s) => `${statusMark(s).fill}/${statusMark(s).shape}`));
-	expect(pairs.size).toBe(8);
+	expect(pairs.size).toBe(9);
 	const css = readFileSync(`${import.meta.dir}/../src/app.css`, 'utf8');
 	// One colour for every status: the canvas marks must still differ by shape alone.
 	const mono: MapColors = {
@@ -352,7 +352,7 @@ test('every status has a CSS mark and a canvas mark, and no two share a (fill, m
 		traces.add(fake.trace.join(';'));
 		expect(css.includes(`.${statusMark(s).className}`)).toBe(true);
 	}
-	expect(traces.size).toBe(8);
+	expect(traces.size).toBe(9);
 });
 
 function tracingContext() {

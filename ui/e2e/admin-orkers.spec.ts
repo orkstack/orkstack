@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
 import { type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	bin,
@@ -13,6 +13,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -114,7 +115,7 @@ async function openOrkers(page: Page): Promise<void> {
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# Admin → Pools → the Orkers of a pool: the Orker inventory and the cordon in a browser.',

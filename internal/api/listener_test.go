@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The API listener's bounds, shrunk so a test outlasts them in about a
@@ -46,9 +48,7 @@ func serveBounded(t *testing.T, handler http.Handler) string {
 	server := api.NewServerWith("127.0.0.1:0", handler, api.ServerOptions{IdleTimeout: testIdleTimeout})
 	server.ReadHeaderTimeout = testHeaderTimeout
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -62,9 +62,7 @@ func serveBounded(t *testing.T, handler http.Handler) string {
 func dialRaw(t *testing.T, addr string) net.Conn {
 	t.Helper()
 	conn, err := net.Dial("tcp", addr)
-	if err != nil {
-		t.Fatalf("dial %s: %v", addr, err)
-	}
+	must.OKf(t, err, "dial %s", addr)
 	t.Cleanup(func() { _ = conn.Close() })
 	return conn
 }
@@ -76,9 +74,7 @@ func dialRaw(t *testing.T, addr string) net.Conn {
 // time is never shorter than the server's however the host schedules either.
 func requireClosedByBound(t *testing.T, conn net.Conn, r io.Reader, start time.Time, bound time.Duration) {
 	t.Helper()
-	if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, conn.SetReadDeadline(time.Now().Add(closeDeadline)))
 	_, err := io.Copy(io.Discard, r)
 	var netErr net.Error
 	if errors.As(err, &netErr) && netErr.Timeout() {
@@ -101,9 +97,7 @@ func openIdleConnection(t *testing.T, addr, path string) (net.Conn, *bufio.Reade
 	}
 	reader := bufio.NewReader(conn)
 	response, err := http.ReadResponse(reader, nil)
-	if err != nil {
-		t.Fatalf("read response: %v", err)
-	}
+	must.OKf(t, err, "read response")
 	if _, err := io.Copy(io.Discard, response.Body); err != nil {
 		t.Fatal(err)
 	}
@@ -175,13 +169,9 @@ func openH2c(t *testing.T, addr string) (net.Conn, time.Time) {
 	if _, err := conn.Write(append([]byte("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), h2Frame(h2FrameSettings, 0, 0, nil)...)); err != nil {
 		t.Fatal(err)
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, conn.SetReadDeadline(time.Now().Add(closeDeadline)))
 	kind, flags, _, err := readH2Frame(conn)
-	if err != nil {
-		t.Fatalf("read the server's first frame: %v", err)
-	}
+	must.OKf(t, err, "read the server's first frame")
 	if kind != h2FrameSettings || flags&h2FlagAck != 0 {
 		t.Fatalf("the server's first frame is type %d flags %d, want SETTINGS", kind, flags)
 	}
@@ -255,13 +245,9 @@ func TestAPIListener_ClosesASlowHeaderAnIdleConnectionAndRefusesOversizedHeaders
 		if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nX-Big: %s\r\n\r\n", addr, big); err != nil {
 			t.Fatal(err)
 		}
-		if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, conn.SetReadDeadline(time.Now().Add(closeDeadline)))
 		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
-		if err != nil {
-			t.Fatalf("read response: %v", err)
-		}
+		must.OKf(t, err, "read response")
 		_ = response.Body.Close()
 		if response.StatusCode != http.StatusRequestHeaderFieldsTooLarge {
 			t.Fatalf("headers of %d bytes: %s, want 431", len(big), response.Status)
@@ -275,13 +261,9 @@ func TestAPIListener_ClosesASlowHeaderAnIdleConnectionAndRefusesOversizedHeaders
 		if _, err := fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nCookie: session=%s\r\n\r\n", addr, cookie); err != nil {
 			t.Fatal(err)
 		}
-		if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, conn.SetReadDeadline(time.Now().Add(closeDeadline)))
 		response, err := http.ReadResponse(bufio.NewReader(conn), nil)
-		if err != nil {
-			t.Fatalf("read response: %v", err)
-		}
+		must.OKf(t, err, "read response")
 		_ = response.Body.Close()
 		if response.StatusCode != http.StatusNoContent {
 			t.Fatalf("a 24 KiB cookie: %s, want 204", response.Status)
@@ -342,9 +324,7 @@ func TestAPIListener_AnH2cHeaderBlockBesideAnOpenStreamWaitsForThatStream(t *tes
 	// been closed, whatever time that took, and the open stream must still
 	// be answering after it.
 	control, _ := openSlowH2Header(t, addr)
-	if err := control.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, control.SetReadDeadline(time.Now().Add(closeDeadline)))
 	controlClosed := make(chan struct{})
 	go func() {
 		defer close(controlClosed)
@@ -356,9 +336,7 @@ func TestAPIListener_AnH2cHeaderBlockBesideAnOpenStreamWaitsForThatStream(t *tes
 		}
 	}()
 
-	if err := conn.SetReadDeadline(time.Now().Add(closeDeadline)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, conn.SetReadDeadline(time.Now().Add(closeDeadline)))
 	reader := bufio.NewReader(conn)
 	controlGone, late := false, 0
 	for late == 0 {
@@ -439,9 +417,7 @@ func TestAPIListener_LongLivedStreamsOutliveItsBounds(t *testing.T) {
 	eventStream := func(client *http.Client, options ...connect.ClientOption) func() (string, error) {
 		stream, err := orkstackv1connect.NewRunServiceClient(client, "http://"+eventsAddr, options...).
 			StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: runID}))
-		if err != nil {
-			t.Fatalf("StreamEvents: %v", err)
-		}
+		must.OKf(t, err, "StreamEvents")
 		t.Cleanup(func() { _ = stream.Close() })
 		return func() (string, error) {
 			if !stream.Receive() {
@@ -453,9 +429,7 @@ func TestAPIListener_LongLivedStreamsOutliveItsBounds(t *testing.T) {
 	logStream := func(client *http.Client) func() (string, error) {
 		stream, err := orkstackv1connect.NewRunServiceClient(client, "http://"+logsAddr).StreamTaskLogs(ctx,
 			connect.NewRequest(&orkstackv1.StreamTaskLogsRequest{RunId: logRun.GetId(), TaskId: "build", Follow: true}))
-		if err != nil {
-			t.Fatalf("StreamTaskLogs: %v", err)
-		}
+		must.OKf(t, err, "StreamTaskLogs")
 		t.Cleanup(func() { _ = stream.Close() })
 		return func() (string, error) {
 			for stream.Receive() {
@@ -468,9 +442,7 @@ func TestAPIListener_LongLivedStreamsOutliveItsBounds(t *testing.T) {
 	}
 	socket := func(url string) *websocket.Conn {
 		conn, _, err := websocket.Dial(ctx, url, nil)
-		if err != nil {
-			t.Fatalf("dial %s: %v", url, err)
-		}
+		must.OKf(t, err, "dial %s", url)
 		t.Cleanup(func() { _ = conn.CloseNow() })
 		return conn
 	}
@@ -511,9 +483,7 @@ func TestAPIListener_LongLivedStreamsOutliveItsBounds(t *testing.T) {
 	opened := time.Now()
 	for _, s := range streams {
 		got, err := s.next()
-		if err != nil {
-			t.Fatalf("%s: first message: %v", s.name, err)
-		}
+		must.OKf(t, err, "%s: first message", s.name)
 		if !strings.Contains(got, "RUN_STARTED") && !strings.Contains(got, "before") {
 			t.Fatalf("%s: first message %q", s.name, got)
 		}
@@ -540,9 +510,7 @@ func TestAPIListener_LongLivedStreamsOutliveItsBounds(t *testing.T) {
 	logs.write(ref, 2, "after\n")
 	for _, s := range streams {
 		got, err := s.next()
-		if err != nil {
-			t.Fatalf("%s: after %s of silence: %v", s.name, time.Since(opened).Round(time.Millisecond), err)
-		}
+		must.OKf(t, err, "%s: after %s of silence", s.name, time.Since(opened).Round(time.Millisecond))
 		if !strings.Contains(got, "TASK_SCHEDULED") && !strings.Contains(got, "after") {
 			t.Fatalf("%s: after the silence got %q", s.name, got)
 		}

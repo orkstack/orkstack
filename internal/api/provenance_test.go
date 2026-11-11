@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // provenanceNow is the fixed clock every provenance fixture answers with, so
@@ -53,14 +55,10 @@ func newProvenanceFixture(t *testing.T, opts ...func(*provenanceOptions)) *prove
 	}
 	archiveDir := t.TempDir()
 	local, err := artifacts.NewLocalRunArchive(archiveDir)
-	if err != nil {
-		t.Fatalf("NewLocalRunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewLocalRunArchive")
 	t.Cleanup(func() { _ = local.Close() })
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewLocalStore: %v", err)
-	}
+	must.OKf(t, err, "NewLocalStore")
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(local)
 
@@ -97,9 +95,7 @@ func newProvenanceFixture(t *testing.T, opts ...func(*provenanceOptions)) *prove
 func (f *provenanceFixture) put(t *testing.T, name, content string) *orkstackv1.ArtifactRef {
 	t.Helper()
 	ref, err := f.store.Put(context.Background(), name, bytes.NewBufferString(content), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatalf("Put(%s): %v", name, err)
-	}
+	must.OKf(t, err, "Put(%s)", name)
 	return &orkstackv1.ArtifactRef{Name: ref.Name, Uri: ref.URI, SizeBytes: ref.SizeBytes, Sha256: ref.SHA256, ContentType: ref.ContentType}
 }
 
@@ -129,9 +125,7 @@ func (f *provenanceFixture) newRun(id, namespace string, created time.Time, task
 // archive writes the run through the production archiver: real markers.
 func (f *provenanceFixture) archive(t *testing.T, run *orkstackv1.Run) {
 	t.Helper()
-	if err := f.archiver.Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("Archive(%s): %v", run.GetId(), err)
-	}
+	must.OKf(t, f.archiver.Archive(context.Background(), run, nil), "Archive(%s)", run.GetId())
 }
 
 func (f *provenanceFixture) ask(namespace, runID, taskID, name string) (*orkstackv1.GetArtifactProvenanceResponse, error) {
@@ -176,9 +170,7 @@ func TestGetArtifactProvenance_AnArchivedRunHoldsItsOwnReference(t *testing.T) {
 	f.archive(t, run)
 
 	res, err := f.ask("", run.GetId(), "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance")
 	if res.GetArtifact().GetUri() != report.GetUri() || res.GetArtifact().GetSha256() != report.GetSha256() {
 		t.Fatalf("artifact = %+v; want the recorded reference %+v", res.GetArtifact(), report)
 	}
@@ -215,9 +207,7 @@ func TestGetArtifactProvenance_ALiveRunHasNoReferenceYet(t *testing.T) {
 	run.Status = orkstackv1.Status_STATUS_RUNNING
 
 	res, err := f.ask("default", run.GetId(), "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance")
 	if res.GetOwnReference() != orkstackv1.ReferenceState_REFERENCE_STATE_ABSENT {
 		t.Fatalf("own_reference = %s; want ABSENT", res.GetOwnReference())
 	}
@@ -235,14 +225,10 @@ func TestGetArtifactProvenance_ACleanedRunReportsReleasedWithItsTimestamp(t *tes
 		t.Fatal(err)
 	}
 	cleaned := time.Date(2026, 1, 9, 3, 4, 5, 0, time.UTC)
-	if err := f.local.MarkArtifactsCleaned(context.Background(), run.GetId(), cleaned); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, f.local.MarkArtifactsCleaned(context.Background(), run.GetId(), cleaned))
 
 	res, err := f.ask("default", run.GetId(), "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance")
 	if res.GetOwnReference() != orkstackv1.ReferenceState_REFERENCE_STATE_RELEASED {
 		t.Fatalf("own_reference = %s; want RELEASED", res.GetOwnReference())
 	}
@@ -265,9 +251,7 @@ func TestGetArtifactProvenance_SharedObjectListsEveryRunOfTheNamespaceAndNoOther
 	}
 
 	res, err := f.ask("payments", a.GetId(), "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("payments: %v", err)
-	}
+	must.OKf(t, err, "payments")
 	if got, want := strings.Join(refRows(res), ","), "ork-1-b/completed/ARTIFACT_KIND_OUTPUT,ork-1-a/completed/ARTIFACT_KIND_OUTPUT"; got != want {
 		t.Fatalf("payments references = %s; want %s (newest first)", got, want)
 	}
@@ -279,9 +263,7 @@ func TestGetArtifactProvenance_SharedObjectListsEveryRunOfTheNamespaceAndNoOther
 	}
 
 	res, err = f.ask("staging", c.GetId(), "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("staging: %v", err)
-	}
+	must.OKf(t, err, "staging")
 	if got := strings.Join(refRows(res), ","); got != "ork-1-c/completed/ARTIFACT_KIND_OUTPUT" {
 		t.Fatalf("staging references = %s; want exactly ork-1-c", got)
 	}
@@ -302,9 +284,7 @@ func TestGetArtifactProvenance_ARunRecordingTheObjectUnderTwoTasksYieldsTwoRows(
 	f.archive(t, run)
 
 	res, err := f.ask("default", run.GetId(), "alpha", "report.txt")
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance")
 	want := "ork-1-b/zeta/ARTIFACT_KIND_OUTPUT,ork-1-b/alpha/ARTIFACT_KIND_OUTPUT,ork-1-a/zeta/ARTIFACT_KIND_OUTPUT"
 	if got := strings.Join(refRows(res), ","); got != want {
 		t.Fatalf("references = %s; want %s (Run.task_runs order within a run)", got, want)
@@ -318,9 +298,7 @@ func TestGetArtifactProvenance_EqualCreationTimesTieBreakOnRunIDDescending(t *te
 		f.archive(t, f.newRun(id, "default", t0, provTask{id: "completed", outputs: []*orkstackv1.ArtifactRef{report}}))
 	}
 	res, err := f.ask("default", "ork-1-a", "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance")
 	want := "ork-1-c/completed/ARTIFACT_KIND_OUTPUT,ork-1-b/completed/ARTIFACT_KIND_OUTPUT,ork-1-a/completed/ARTIFACT_KIND_OUTPUT"
 	if got := strings.Join(refRows(res), ","); got != want {
 		t.Fatalf("references = %s; want %s", got, want)
@@ -332,14 +310,10 @@ func TestGetArtifactProvenance_MissingBytesAreReportedNotHidden(t *testing.T) {
 	report := f.put(t, "report.txt", "hello\n")
 	run := f.newRun("ork-1-1", "default", t0, provTask{id: "completed", outputs: []*orkstackv1.ArtifactRef{report}})
 	f.archive(t, run)
-	if err := f.store.Delete(context.Background(), report.GetUri()); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, f.store.Delete(context.Background(), report.GetUri()))
 
 	res, err := f.ask("default", run.GetId(), "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance")
 	if res.GetBytesPresent() {
 		t.Fatal("bytes_present = true after the object was deleted")
 	}
@@ -382,16 +356,10 @@ func (f *provenanceFixture) writeMarker(t *testing.T, ref *orkstackv1.ArtifactRe
 		t.Fatalf("ObjectIDFromURI(%s)", ref.GetUri())
 	}
 	key, err := artifacts.RunObjectRefKey(objectID, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	path := filepath.Join(f.archiveDir, filepath.FromSlash(key))
-	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Dir(path), 0o750))
+	must.OK(t, os.WriteFile(path, nil, 0o600))
 }
 
 func TestGetArtifactProvenance_MarkerWithoutABodyCountsAsUnreadable(t *testing.T) {
@@ -402,9 +370,7 @@ func TestGetArtifactProvenance_MarkerWithoutABodyCountsAsUnreadable(t *testing.T
 	f.writeMarker(t, report, "ork-1-orphan")
 
 	res, err := f.ask("default", run.GetId(), "completed", "report.txt")
-	if err != nil {
-		t.Fatalf("GetArtifactProvenance: %v", err)
-	}
+	must.OKf(t, err, "GetArtifactProvenance")
 	if res.GetReferencesUnreadable() != 1 {
 		t.Fatalf("references_unreadable = %d; want 1", res.GetReferencesUnreadable())
 	}

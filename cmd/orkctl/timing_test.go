@@ -3,16 +3,50 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"regexp"
 	"strings"
 	"testing"
 	"time"
 
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
+
+// deriveOptions are what the engine's derivation reads besides the run and
+// its attempt rows, for the rendering tests that build both by hand.
+type deriveOptions struct {
+	Task         string
+	Item         *int32
+	AttemptStore bool // false: ListTaskAttempts answered FailedPrecondition
+	Now          time.Time
+}
+
+// computeRunTiming is what `run timing` prints for a run and its attempt rows:
+// the engine's derivation (internal/api/timing.go), as GetRun and
+// ListTaskAttempts answer it, laid out by buildRunTiming. Neither input is
+// changed.
+func computeRunTiming(run *orkstackv1.Run, attempts []*orkstackv1.TaskAttempt, opts deriveOptions) *runTiming {
+	run = proto.Clone(run).(*orkstackv1.Run)
+	api.SetRunTiming(run, opts.Now)
+	var answered *orkstackv1.ListTaskAttemptsResponse
+	if opts.AttemptStore {
+		rows := make([]*orkstackv1.TaskAttempt, len(attempts))
+		for i, attempt := range attempts {
+			rows[i] = proto.Clone(attempt).(*orkstackv1.TaskAttempt)
+		}
+		answered = &orkstackv1.ListTaskAttemptsResponse{
+			Attempts: rows,
+			Timings:  api.AttemptTimings(run, opts.Task, opts.Item, rows),
+		}
+	}
+	return buildRunTiming(run, answered, timingOptions{Task: opts.Task, Item: opts.Item})
+}
 
 // These are the task-timing CLI scenarios (docs/UI_CLI_PARITY.md "Task
 // timing"). The derivation table's rows T1-T8 are built once, as data, and every rendering
@@ -216,27 +250,21 @@ func seedTimingRun(t *testing.T, f *fixture, attempts *cliAttemptStore, run *ork
 		if rec.GetOutcome() == orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_UNREPORTED {
 			continue // absent from the store; the API synthesizes the row
 		}
-		if err := attempts.PutAttempt(context.Background(), rec); err != nil {
-			t.Fatalf("PutAttempt: %v", err)
-		}
+		must.OKf(t, attempts.PutAttempt(context.Background(), rec), "PutAttempt")
 	}
 }
 
 func renderHuman(t *testing.T, timing *runTiming, oneTask bool) string {
 	t.Helper()
 	var out strings.Builder
-	if err := renderRunTiming(&out, timing, oneTask); err != nil {
-		t.Fatalf("renderRunTiming: %v", err)
-	}
+	must.OKf(t, renderRunTiming(&out, timing, oneTask), "renderRunTiming")
 	return out.String()
 }
 
 func renderJSON(t *testing.T, timing *runTiming) string {
 	t.Helper()
 	var out strings.Builder
-	if err := writeTimingJSON(&out, timing); err != nil {
-		t.Fatalf("writeTimingJSON: %v", err)
-	}
+	must.OKf(t, writeTimingJSON(&out, timing), "writeTimingJSON")
 	return out.String()
 }
 
@@ -245,7 +273,7 @@ var timingNow = at("2026-09-22T23:00:00Z")
 // TestRunTiming_GoldenTable renders T1-T4 in one run, as `run timing` prints it.
 func TestRunTiming_GoldenTable(t *testing.T) {
 	run, attempts := scenarioNightly()
-	timing := computeRunTiming(run, attempts, timingOptions{AttemptStore: true, Now: timingNow})
+	timing := computeRunTiming(run, attempts, deriveOptions{AttemptStore: true, Now: timingNow})
 	got := renderHuman(t, timing, false)
 	requireGolden(t, "run-timing.golden", got)
 	t.Logf("C1 run timing:\n%s", got)
@@ -254,15 +282,15 @@ func TestRunTiming_GoldenTable(t *testing.T) {
 // TestRunTiming_GoldenJSON: the same run as the CLI-owned document.
 func TestRunTiming_GoldenJSON(t *testing.T) {
 	run, attempts := scenarioNightly()
-	timing := computeRunTiming(run, attempts, timingOptions{AttemptStore: true, Now: timingNow})
+	timing := computeRunTiming(run, attempts, deriveOptions{AttemptStore: true, Now: timingNow})
 	got := renderJSON(t, timing)
 	requireGolden(t, "run-timing.json.golden", got)
 
 	var doc struct {
-		WaitSumSeconds       float64 `json:"waitSumSeconds"`
-		WaitSumTasks         int     `json:"waitSumTasks"`
-		WaitUnavailableTasks int     `json:"waitUnavailableTasks"`
-		Tasks                []map[string]any
+		WaitSumSeconds       float64          `json:"waitSumSeconds"`
+		WaitSumTasks         int              `json:"waitSumTasks"`
+		WaitUnavailableTasks int              `json:"waitUnavailableTasks"`
+		Tasks                []map[string]any `json:"tasks"`
 	}
 	if err := json.Unmarshal([]byte(got), &doc); err != nil {
 		t.Fatalf("the document is not JSON: %v", err)
@@ -390,23 +418,23 @@ func TestRunTiming_WithoutAnAttemptStoreStillPrintsTheSnapshotHalf(t *testing.T)
 // added without a scenario that shows it.
 func TestRunTiming_EveryReasonStringIsPrintedByAScenario(t *testing.T) {
 	var outputs []string
-	render := func(run *orkstackv1.Run, attempts []*orkstackv1.TaskAttempt, opts timingOptions) {
+	render := func(run *orkstackv1.Run, attempts []*orkstackv1.TaskAttempt, opts deriveOptions) {
 		opts.Now = timingNow
 		timing := computeRunTiming(run, attempts, opts)
 		outputs = append(outputs, renderHuman(t, timing, opts.Task != ""), renderJSON(t, timing))
 	}
 	nightly, nightlyAttempts := scenarioNightly()
-	render(nightly, nightlyAttempts, timingOptions{AttemptStore: true}) // C1, C2
+	render(nightly, nightlyAttempts, deriveOptions{AttemptStore: true}) // C1, C2
 	renderTask, renderRecords := scenarioRender("r")
-	render(oneTaskRun("r", renderTask), renderRecords, timingOptions{AttemptStore: true, Task: "render"}) // C3
+	render(oneTaskRun("r", renderTask), renderRecords, deriveOptions{AttemptStore: true, Task: "render"}) // C3
 	for _, scenario := range []func(string) (*orkstackv1.TaskRun, []*orkstackv1.TaskAttempt){
 		scenarioPreContract, // C4
 		scenarioSkew,        // C5
 	} {
 		task, records := scenario("s")
-		render(oneTaskRun("s", task), records, timingOptions{AttemptStore: true})
+		render(oneTaskRun("s", task), records, deriveOptions{AttemptStore: true})
 	}
-	render(oneTaskRun("n", scenarioNoStore()), nil, timingOptions{}) // C6
+	render(oneTaskRun("n", scenarioNoStore()), nil, deriveOptions{}) // C6
 
 	union := strings.Join(outputs, "\n")
 	for _, reason := range timingReasons {
@@ -428,7 +456,7 @@ func TestRunTiming_ReclaimedRecordsOfAReportedTaskReadAsReclaimed(t *testing.T) 
 	task := scenarioNoStore()
 	timing := computeRunTiming(oneTaskRun("gone", task),
 		[]*orkstackv1.TaskAttempt{unreported("gone", "plain", 1)},
-		timingOptions{AttemptStore: true, Now: timingNow})
+		deriveOptions{AttemptStore: true, Now: timingNow})
 	got := renderHuman(t, timing, false)
 	if !strings.Contains(got, "plain  attempt 1  unavailable (attempt records reclaimed)") {
 		t.Errorf("reclaimed records did not read as reclaimed:\n%s", got)
@@ -448,7 +476,7 @@ func TestRunTiming_RunningTaskShowsOnlySinceScheduled(t *testing.T) {
 	run := &orkstackv1.Run{Id: "live", Status: orkstackv1.Status_STATUS_RUNNING, StartedAt: ts(S),
 		TaskRuns: []*orkstackv1.TaskRun{{TaskId: "busy", Status: orkstackv1.Status_STATUS_RUNNING, Attempt: 1, Pool: "main", ScheduledAt: ts(S)}}}
 	timing := computeRunTiming(run, []*orkstackv1.TaskAttempt{unreported("live", "busy", 1)},
-		timingOptions{AttemptStore: true, Now: timingNow})
+		deriveOptions{AttemptStore: true, Now: timingNow})
 	got := renderHuman(t, timing, false)
 	row := strings.Join(strings.Fields(strings.Split(got, "\n")[1]), " ")
 	if row != "busy RUNNING main 1 "+S.Format(time.RFC3339)+" - - since scheduled 1m15s" {
@@ -510,9 +538,7 @@ func TestRunGet_TimingIsRefusedWithJSON(t *testing.T) {
 func TestRenderRun_TaskTableHasScheduledBeforeStarted(t *testing.T) {
 	task, _ := scenarioRender("r")
 	var out strings.Builder
-	if err := renderRun(&out, oneTaskRun("r", task)); err != nil {
-		t.Fatalf("renderRun: %v", err)
-	}
+	must.OKf(t, renderRun(&out, oneTaskRun("r", task)), "renderRun")
 	rows := taskTableRows(t, out.String())
 	if rows[0] != "TASK STATUS POOL PIN ORKER ATTEMPT EXIT SCHEDULED STARTED FINISHED ERROR" {
 		t.Fatalf("header = %q", rows[0])

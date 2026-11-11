@@ -13,6 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A run uses an event number without publishing an event when object storage
@@ -55,9 +57,7 @@ func liveReadsAgree(t *testing.T, reader *TemporalRunReader, runID string, from 
 		t.Fatalf("StreamEvents from %d: %v", from, err)
 	}
 	read, err := reader.Events(context.Background(), runID, from)
-	if err != nil {
-		t.Fatalf("Events from %d: %v", from, err)
-	}
+	must.OKf(t, err, "Events from %d", from)
 	if eventTypesOf(streamed) != eventTypesOf(read) {
 		t.Fatalf("from %d: StreamEvents served %s, Events %s", from, eventTypesOf(streamed), eventTypesOf(read))
 	}
@@ -142,9 +142,7 @@ func TestSkippedNumbers_AnArchiveRecordsThemAsAGap(t *testing.T) {
 	reader, _ := readerOver(events, runID)
 	reader = reader.WithSnapshotStore(store)
 	read, err := reader.EventsForArchive(ctx, runID)
-	if err != nil {
-		t.Fatalf("EventsForArchive: %v", err)
-	}
+	must.OKf(t, err, "EventsForArchive")
 	if got := eventTypesOf(read.Events); got != "[1:TASK_LOG 2:TASK_LOG 5:TASK_LOG 6:TASK_LOG 8:RUN_SUCCEEDED]" {
 		t.Fatalf("EventsForArchive gave %s", got)
 	}
@@ -157,9 +155,7 @@ func TestSkippedNumbers_AnArchiveRecordsThemAsAGap(t *testing.T) {
 		}
 	}
 	archiver := newLocalArchiver(t)
-	if err := NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID); err != nil {
-		t.Fatalf("ArchiveFromHistory: %v", err)
-	}
+	must.OKf(t, NewHistoryArchiver(reader, archiver).ArchiveFromHistory(ctx, runID), "ArchiveFromHistory")
 	stored, err := archiver.LoadRunEvents(ctx, runID)
 	var lost *ArchivedEventsLostError
 	if !errors.As(err, &lost) || gapRanges(lost.Gaps) != "[3–4 7–7]" {
@@ -222,9 +218,7 @@ func TestSkippedNumbers_AcrossTheRunsParts(t *testing.T) {
 				t.Fatalf("served %s, want %s", got, tc.served)
 			}
 			read, err := f.reader.EventsForArchive(ctx, f.runID)
-			if err != nil {
-				t.Fatalf("EventsForArchive: %v", err)
-			}
+			must.OKf(t, err, "EventsForArchive")
 			if got := gapRanges(read.Gaps); got != tc.gaps {
 				t.Fatalf("EventsForArchive recorded gaps %s, want %s", got, tc.gaps)
 			}

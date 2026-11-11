@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path"
-	"sort"
 	"strconv"
 	"strings"
 )
@@ -302,78 +301,16 @@ func parseFixedWidth(segment string, width int) (int64, bool) {
 	return value, true
 }
 
-// LogStoreFactory builds a LogStore from a Config. A backend that can hold
-// task logs registers one of these, mirroring Factory and ArchiveFactory.
-type LogStoreFactory func(cfg Config) (LogStore, error)
-
-var logStoreRegistry = map[string]LogStoreFactory{}
-
-// RegisterLogStore adds a log-store factory under name.
-func RegisterLogStore(name string, f LogStoreFactory) error {
-	if name == "" {
-		return fmt.Errorf("artifacts: register log store: empty name")
-	}
-	if f == nil {
-		return fmt.Errorf("artifacts: register log store %q: nil factory", name)
-	}
-	registryMu.Lock()
-	defer registryMu.Unlock()
-	if _, exists := logStoreRegistry[name]; exists {
-		return fmt.Errorf("artifacts: register log store %q: already registered", name)
-	}
-	logStoreRegistry[name] = f
-	return nil
-}
-
-// LogStoreBackends lists the backends that can hold task logs, sorted.
-func LogStoreBackends() []string {
-	registryMu.RLock()
-	defer registryMu.RUnlock()
-	names := make([]string, 0, len(logStoreRegistry))
-	for name := range logStoreRegistry {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
-
 // NewLogStore builds the LogStore named by cfg.Backend, so one
 // ORK_ARTIFACT_BACKEND selects where artifacts, run history and task logs all
 // live.
 func NewLogStore(cfg Config) (LogStore, error) {
-	name := cfg.Backend
-	if name == "" {
-		name = DefaultBackend
-		cfg.Backend = name
-	}
-	registryMu.RLock()
-	f, ok := logStoreRegistry[name]
-	registryMu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("artifacts: log store backend %q: %w (registered: %v)",
-			name, ErrUnknownBackend, LogStoreBackends())
-	}
-	store, err := f(cfg)
+	b, err := openBlobs(context.Background(), cfg, "log store", LogPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("artifacts: log store backend %q: %w", name, err)
+		return nil, err
 	}
-	return store, nil
+	return &BlobLogStore{blobBase{b}}, nil
 }
 
 // NewLogStoreFromEnv builds the LogStore described by the ORK_* environment.
 func NewLogStoreFromEnv() (LogStore, error) { return NewLogStore(ConfigFromEnv()) }
-
-func init() {
-	mustRegisterLogStore(BackendLocal, func(cfg Config) (LogStore, error) {
-		return NewLocalLogStore(localDir(cfg))
-	})
-	mustRegisterLogStore(BackendS3, func(cfg Config) (LogStore, error) {
-		return NewS3LogStore(context.Background(), cfg)
-	})
-}
-
-func mustRegisterLogStore(name string, f LogStoreFactory) {
-	if err := RegisterLogStore(name, f); err != nil {
-		panic(err)
-	}
-}

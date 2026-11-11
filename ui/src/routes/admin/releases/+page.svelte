@@ -13,6 +13,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import CliEquivalent from '#lib/components/CliEquivalent.svelte';
+	import CliPopover from '#lib/components/CliPopover.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import ListFilter from '#lib/components/ListFilter.svelte';
@@ -34,13 +35,13 @@
 		promoteResult,
 		rampResult,
 		releaseCommand,
+		releaseRowCommands,
 		roleLabel,
 		runsLabel,
 		stateLabel,
 		validRampPercent,
 		versioningOffSentence
 	} from '#lib/releases.ts';
-	import { shellQuote } from '#lib/runDetail.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
 	import type { PageProps } from './$types';
 
@@ -197,17 +198,8 @@
 	const actionClass =
 		'btn btn-sm';
 
-	function drainCommand(orker: string): string {
-		return `orkctl orker drain ${shellQuote(orker)}`;
-	}
-
-	// The page's commands; a previous release's wait is how its processes may stop.
-	const cli = $derived([
-		{ label: 'The releases', command: ['orkctl', 'release', 'status', ...filterFlags(data.applied)].join(' ') },
-		...(resp?.releases ?? [])
-			.filter((release) => release.role === ReleaseRole.PREVIOUS)
-			.map((release) => ({ label: `Wait for ${release.buildId} to drain`, command: `orkctl release wait ${shellQuote(release.buildId)}` }))
-	]);
+	// The page's commands.
+	const cli = $derived([{ label: 'The releases', command: ['orkctl', 'release', 'status', ...filterFlags(data.applied)].join(' ') }]);
 </script>
 
 <svelte:head><title>Admin — Releases — OrkStack</title></svelte:head>
@@ -328,19 +320,19 @@
 							<div class="flex flex-wrap items-center gap-1.5">
 								{#if canPromote(release)}
 									<button type="button" class={actionClass} data-testid="release-promote-{build}" onclick={() => void openDialog('promote', build)}>Promote</button>
-									<CliEquivalent command={releaseCommand('promote', build)} testid="release-cli-promote-{build}" />
 								{/if}
 								{#if canRollBack(release)}
 									<button type="button" class={actionClass} data-testid="release-rollback-{build}" onclick={() => void openDialog('rollback', build)}>Roll back</button>
-									<CliEquivalent command={releaseCommand('rollback', build)} testid="release-cli-rollback-{build}" />
 								{/if}
 								{#if canRamp(release)}
 									<button type="button" class={actionClass} data-testid="release-ramp-{build}" onclick={() => void openDialog('ramp', build)}>Ramp</button>
-									<CliEquivalent command={releaseCommand('ramp', build, 10)} testid="release-cli-ramp-{build}" />
 								{/if}
 								{#if release.role === ReleaseRole.RAMPING}
 									<button type="button" class={actionClass} data-testid="release-ramp-stop-{build}" onclick={() => void openDialog('ramp-stop', build)}>Stop ramp</button>
-									<CliEquivalent command={releaseCommand('ramp', build, 0)} testid="release-cli-ramp-stop-{build}" />
+								{/if}
+								{#if releaseRowCommands(release).length > 0}
+									<!-- The row's one terminal icon: every action this release offers (ui/DESIGN.md, the Shell Icon Rule). -->
+									<CliPopover testid="release-cli-{build}" title="Command line: release {build}" commands={releaseRowCommands(release)} />
 								{/if}
 							</div>
 						</td>
@@ -423,7 +415,6 @@
 																? fmtTimestamp(pin.expiresAt)
 																: '-'}
 														</span>
-														<CliEquivalent command={drainCommand(orker.orkerId)} testid="release-pin-cli-{orker.orkerId}" />
 													</div>
 												{/each}
 											{/each}

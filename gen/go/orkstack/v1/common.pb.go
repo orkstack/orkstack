@@ -36,6 +36,10 @@ const (
 	// AWAITING is a TASK status only, like SKIPPED: the task is waiting to be
 	// resolved from outside the run. A run with an awaiting task is RUNNING.
 	Status_STATUS_AWAITING Status = 7
+	// SLEEPING is a TASK status only, like AWAITING: a sleeping task is
+	// waiting out its fixed time on the run's own timer, and nothing outside
+	// the run can end it early. A run with a sleeping task is RUNNING.
+	Status_STATUS_SLEEPING Status = 8
 )
 
 // Enum value maps for Status.
@@ -49,6 +53,7 @@ var (
 		5: "STATUS_CANCELED",
 		6: "STATUS_SKIPPED",
 		7: "STATUS_AWAITING",
+		8: "STATUS_SLEEPING",
 	}
 	Status_value = map[string]int32{
 		"STATUS_UNSPECIFIED": 0,
@@ -59,6 +64,7 @@ var (
 		"STATUS_CANCELED":    5,
 		"STATUS_SKIPPED":     6,
 		"STATUS_AWAITING":    7,
+		"STATUS_SLEEPING":    8,
 	}
 )
 
@@ -385,7 +391,7 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x18\n" +
 	"\adetails\x18\x03 \x01(\tR\adetails\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\x128\n" +
-	"\bcategory\x18\x05 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory*\xaf\x01\n" +
+	"\bcategory\x18\x05 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory*\xc4\x01\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x12\n" +
@@ -394,7 +400,8 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\rSTATUS_FAILED\x10\x04\x12\x13\n" +
 	"\x0fSTATUS_CANCELED\x10\x05\x12\x12\n" +
 	"\x0eSTATUS_SKIPPED\x10\x06\x12\x13\n" +
-	"\x0fSTATUS_AWAITING\x10\a*\xed\x01\n" +
+	"\x0fSTATUS_AWAITING\x10\a\x12\x13\n" +
+	"\x0fSTATUS_SLEEPING\x10\b*\xed\x01\n" +
 	"\x0fFailureCategory\x12 \n" +
 	"\x1cFAILURE_CATEGORY_UNSPECIFIED\x10\x00\x12$\n" +
 	" FAILURE_CATEGORY_ACTIVITY_FAILED\x10\x01\x12)\n" +

@@ -326,4 +326,12 @@ type readyLoopProbe struct {
 	// false when it returns, so a test can time a pass's workflow code
 	// apart from its event writes.
 	emit func(start bool)
+	// event, when set, is called with the run's id and every event as the
+	// workflow numbers it, in workflow code: a test can move its history
+	// counters at an exact point of the command stream, whether the event's
+	// publish is awaited or detached.
+	event func(runID string, event *orkstackv1.Event)
+	// outstanding, when set, is called at the top of every main-loop pass
+	// with the run's id and the detached publishes the pass counts.
+	outstanding func(runID string, publishes int)
 }

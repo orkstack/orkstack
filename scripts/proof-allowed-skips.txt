@@ -11,7 +11,9 @@
 any	github.com/orkstack/orkstack/internal/engine	TestRunIDHelperProcess	the child role of TestNewRunID_UniqueAcrossSeparateProcesses; it runs only when that test re-executes the binary
 integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordGoldenRunHistory	opt-in recorder (ORK_RECORD_GOLDEN_HISTORY=1): re-records a committed replay fixture that is meant to age
 integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordAwaitedRunHistories	opt-in recorder: re-records committed replay fixtures
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordSleepingRunHistory	opt-in recorder: re-records committed replay fixtures
 integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordCachedRunHistory	opt-in recorder: re-records a committed replay fixture
+integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordCrossNamespaceRunHistory	opt-in recorder: re-records a committed replay fixture
 integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordComposedRunHistory	opt-in recorder: re-records a committed replay fixture
 integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordEachRunHistory	opt-in recorder: re-records a committed replay fixture
 integration	github.com/orkstack/orkstack/internal/engine	TestIntegration_RecordJoinRunHistory	opt-in recorder: re-records a committed replay fixture

@@ -1,0 +1,23 @@
+Run:       ork-sleep-1
+Orkflow:   sleeping-cli
+Version:   1.0.0
+Status:    RUNNING
+Created:   2026-01-02T02:59:05Z
+Started:   2026-01-02T02:59:05Z
+Finished:  -
+Origin:    unrecorded (started before origins were recorded)
+Input:     -
+Output:    -
+
+TASK     STATUS     POOL  PIN  ORKER    ATTEMPT  EXIT  SCHEDULED             STARTED               FINISHED              ERROR
+deploy   SUCCEEDED  main  -    orker-1  1        0     2026-01-02T02:59:05Z  2026-01-02T02:59:05Z  2026-01-02T02:59:05Z  -
+soak     SLEEPING   -     -    -        0        0     2026-01-02T02:59:05Z  2026-01-02T02:59:05Z  -                     -
+settle   SUCCEEDED  -     -    -        0        0     2026-01-02T02:59:05Z  2026-01-02T02:59:05Z  2026-01-02T03:00:05Z  -
+promote  PENDING    -     -    -        0        0     -                     -                     -                     -
+
+SLEEP   STATUS     FOR    WAKES                 REMAINING
+soak    SLEEPING   15m0s  2026-01-02T03:14:05Z  10m
+settle  SUCCEEDED  1m0s   2026-01-02T03:00:05Z  -
+
+JOIN    POLICY
+settle  all_done

@@ -1,7 +1,7 @@
 package dsl
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestOrkflowSchema_EveryKeyIsDocumented: every key the generated schema
@@ -18,9 +20,7 @@ import (
 // docs/DSL.md.
 func TestOrkflowSchema_EveryKeyIsDocumented(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "schemas", "orkflow.v1.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var schema map[string]any
 	if err := json.Unmarshal(raw, &schema); err != nil {
 		t.Fatal(err)
@@ -65,9 +65,7 @@ func TestOrkflowSchema_EveryKeyIsDocumented(t *testing.T) {
 func readDoc(t *testing.T, parts ...string) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(parts...))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return string(b)
 }
 
@@ -187,9 +185,7 @@ func TestDSLDoc_RulesAreNumberedAndCited(t *testing.T) {
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 	}
 	scan("..", false)
 	scan("../../docs", true)

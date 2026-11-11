@@ -1,5 +1,4 @@
 <script lang="ts">
-	import CliEquivalent from './CliEquivalent.svelte';
 	import { EventType, type Event } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import {
 		EVENT_FILTERS,
@@ -127,12 +126,10 @@
 	{#if dropped > 0}
 		<div
 			data-testid="event-dropped"
-			data-cli-own
 			class="flex flex-wrap items-center gap-2 border-b border-rule-strong bg-paper-sunken px-3 py-1.5 text-xs text-ink-secondary"
 		>
 			Showing the last {cap} of {total} events; {dropped} earlier ones are no longer held here.
 			The whole stream is the run's history.
-			<CliEquivalent testid="event-dropped-cli" label="Read the whole stream from the CLI" command="orkctl run watch {runId} --json" />
 		</div>
 	{/if}
 

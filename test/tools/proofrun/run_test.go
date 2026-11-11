@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const fakeSuite = modulePath + "/test/tools/proofrun/testdata/fakesuite"
@@ -25,13 +27,9 @@ func TestIntegrationRunner(t *testing.T) {
 	for _, n := range []string{"TestPass", "TestFail", "TestSkip", "TestAllowedSkip", "TestSubSkip", "TestCwd", "TestNamespace", "TestCrash", "TestAfterCrash"} {
 		b.WriteString(fakeSuite + "\t" + n + "\t1\n")
 	}
-	if err := os.WriteFile(costsFile, []byte(b.String()), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(costsFile, []byte(b.String()), 0o644))
 	allowFile := filepath.Join(out, "allow.txt")
-	if err := os.WriteFile(allowFile, []byte("integration\t"+fakeSuite+"\tTestAllowedSkip\tan opt-in recorder\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(allowFile, []byte("integration\t"+fakeSuite+"\tTestAllowedSkip\tan opt-in recorder\n"), 0o644))
 	t.Setenv("FAKESUITE_CRASH", "1")
 
 	code := cmdIntegration([]string{"-out", out, "-jobs", "2", "-namespace-prefix", "fake",
@@ -40,9 +38,7 @@ func TestIntegrationRunner(t *testing.T) {
 		t.Fatalf("exit %d, want 1 (the suite has failures)", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "integration-tests.json"), &l))
 	got := map[string]entry{}
 	for _, e := range l.Tests {
 		got[e.Test] = e
@@ -85,34 +81,6 @@ func TestIntegrationRunner(t *testing.T) {
 	}
 }
 
-// A selection that names a test the binary does not list has no outcome for
-// it, and that fails the ledger.
-func TestIntegrationRunnerSelectionOfAnUnlistedTest(t *testing.T) {
-	if testing.Short() {
-		t.Skip("compiles a test binary")
-	}
-	quiet(t)
-	out := t.TempDir()
-	sel := selection{Integration: map[string]*pkgSelection{
-		fakeSuite: {Evidence: map[string]string{"TestPass": "named", "TestGhost": "named"}},
-	}}
-	selFile := filepath.Join(out, "selection.json")
-	if err := writeJSON(selFile, sel); err != nil {
-		t.Fatal(err)
-	}
-	code := cmdIntegration([]string{"-out", out, "-jobs", "1", "-costs", "", "-allow", "", "-select", selFile})
-	if code != 1 {
-		t.Fatalf("exit %d, want 1", code)
-	}
-	var l ledger
-	if err := readJSON(filepath.Join(out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
-	if l.Summary.Pass != 1 || l.Summary.NoOutcome != 1 {
-		t.Errorf("summary = %+v, problems %v", l.Summary, l.Problems)
-	}
-}
-
 func TestUnitRunner(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs go test")
@@ -123,9 +91,7 @@ func TestUnitRunner(t *testing.T) {
 		t.Fatalf("exit %d", code)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(out, "unit-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(out, "unit-tests.json"), &l))
 	if l.Summary.Expected != 1 || l.Summary.Pass != 1 || l.Tests[0].Test != "TestUnitOnly" {
 		t.Errorf("ledger = %+v", l)
 	}
@@ -133,9 +99,7 @@ func TestUnitRunner(t *testing.T) {
 
 func TestIntegrationPackagesOnlyListsPackagesTheTagChanges(t *testing.T) {
 	pkgs, err := integrationPackages([]string{"./testdata/fakesuite", "."})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(pkgs) != 1 || pkgs[0].ImportPath != fakeSuite {
 		t.Errorf("got %+v, want only %s (proofrun itself has no integration files)", pkgs, fakeSuite)
 	}

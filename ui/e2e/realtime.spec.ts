@@ -1,11 +1,11 @@
 import { expect, test } from './test';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createWriteStream, mkdirSync, readFileSync } from 'node:fs';
+import type { ChildProcess } from 'node:child_process';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bin, catalogEnv, containerHost, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, storeEnv, temporalAddress, temporalReachable, trackChild, uiEnv } from './harness';
+import { bin, catalogEnv, containerHost, ensureActivityImages, ensureBucket, killStarted, orkerEnv, ownBucket, removeBucket, storeEnv, temporalAddress, temporalReachable, uiEnv, spawnLogged as spawnLoggedAt } from './harness';
 
 /** This spec's own bucket (harness.ts ownBucket), created in beforeAll and removed in afterAll. */
 const BUCKET = ownBucket('realtime');
@@ -51,22 +51,9 @@ function logPath(name: string): string {
 	return path.join(PROOF_DIR, name);
 }
 
-function spawnLogged(
-	name: string,
-	command: string,
-	args: string[],
-	env: NodeJS.ProcessEnv,
-	cwd: string = repoRoot
-): ChildProcess {
-	const out = createWriteStream(logPath(name), { flags: 'w' });
-	const child = spawn(command, args, {
-		cwd,
-		env: { ...process.env, ...env },
-		stdio: ['ignore', 'pipe', 'pipe']
-	});
-	child.stdout?.pipe(out);
-	child.stderr?.pipe(out);
-	return trackChild(child);
+/** The harness's spawnLogged, its log named inside this spec's directory. */
+function spawnLogged(name: string, command: string, args: string[], env: NodeJS.ProcessEnv): ChildProcess {
+	return spawnLoggedAt(logPath(name), command, args, env);
 }
 
 async function waitFor(

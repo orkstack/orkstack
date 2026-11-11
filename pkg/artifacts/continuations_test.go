@@ -141,16 +141,16 @@ func TestLocalWriteContinuation_RefusesOtherBytesAtTheKey(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Something else already sits at the content key: a corrupted object.
-	if err := store.root.MkdirAll(key[:strings.LastIndex(key, "/")], localDirPerm); err != nil {
+	if err := store.b.(*localBlobs).root.MkdirAll(key[:strings.LastIndex(key, "/")], localDirPerm); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.root.WriteFile(key, []byte("tampered"), 0o644); err != nil {
+	if err := store.b.(*localBlobs).root.WriteFile(key, []byte("tampered"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.WriteContinuation(ctx, "team-a", "ork-1-2", 1, ContinuationKindEvents, data); err == nil {
 		t.Fatal("WriteContinuation accepted a key holding other bytes")
 	}
-	existing, err := store.root.ReadFile(key)
+	existing, err := store.b.(*localBlobs).root.ReadFile(key)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestLocalReadContinuationRange_RefusesASizeMismatch(t *testing.T) {
 
 func TestParseURI_AcceptsContinuationKeysOnly(t *testing.T) {
 	local, root := newLocalSnapshotStore(t)
-	s3 := &S3RunSnapshotStore{bucket: "bucket"}
+	s3 := &S3RunSnapshotStore{blobBase{&s3Blobs{bucket: "bucket"}}}
 	contKey, err := RunContinuationKey("team-a", "ork-1-2", 1, ContinuationKindSnapshot, testSHA)
 	if err != nil {
 		t.Fatal(err)
@@ -260,7 +260,7 @@ func TestContinuationURI_IsWhatTheWriteReturned(t *testing.T) {
 	if !ContinuationURIMatches(resolved, "team-a", "ork-1-2", 0, ContinuationKindDefinition, sum) {
 		t.Fatalf("URI %q does not match its own key", resolved)
 	}
-	s3, err := (&S3RunSnapshotStore{bucket: "runs"}).ContinuationURI("team-a", "ork-1-2", 0, ContinuationKindDefinition, sum)
+	s3, err := (&S3RunSnapshotStore{blobBase{&s3Blobs{bucket: "runs"}}}).ContinuationURI("team-a", "ork-1-2", 0, ContinuationKindDefinition, sum)
 	if err != nil || !ContinuationURIMatches(s3, "team-a", "ork-1-2", 0, ContinuationKindDefinition, sum) {
 		t.Fatalf("s3 ContinuationURI = %q (%v), want a URI matching its key", s3, err)
 	}

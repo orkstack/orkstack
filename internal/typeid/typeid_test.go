@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // shape is the whole contract a reader may hold an id to: 26 characters of the
@@ -29,9 +31,7 @@ func TestEncode_MatchesTheTypeIDSpecification(t *testing.T) {
 	}
 	for _, tc := range cases {
 		id, err := uuid.Parse(tc.uuid)
-		if err != nil {
-			t.Fatalf("parse %q: %v", tc.uuid, err)
-		}
+		must.OKf(t, err, "parse %q", tc.uuid)
 		if got := encode(id); got != tc.want {
 			t.Errorf("encode(%s) = %q, want %q", tc.uuid, got, tc.want)
 		}

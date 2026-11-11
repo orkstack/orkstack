@@ -1,0 +1,43 @@
+# OrkStack orkflow DSL
+#
+# Deploy a canary, let it soak for fifteen minutes, then promote it. `soak`
+# starts no container and holds no pool slot while it sleeps.
+apiVersion: orkstack/v1
+kind: Orkflow
+name: sleeping-soak
+version: "0.1.0"
+description: "Deploy a canary, let it soak, then promote it."
+
+tasks:
+  - id: canary
+    uses: shell
+    with:
+      op: eval
+      command:
+        - sh
+        - -c
+        - "echo canary"
+
+  - id: soak
+    needs:
+      - canary
+    sleep:
+      seconds: 900
+
+  - id: promote
+    uses: shell
+    needs:
+      - soak
+    with:
+      op: eval
+      command:
+        - sh
+        - -c
+        - "echo promote {{ .tasks.canary.output.value }}"
+
+  - id: cool-down
+    needs:
+      - promote
+    join: all_done
+    sleep:
+      seconds: 60

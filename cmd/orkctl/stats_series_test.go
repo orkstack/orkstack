@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests drive `orkctl stats --by` as a person does — arguments in,
@@ -273,9 +275,7 @@ func runAgainstEngine(t *testing.T, engine standInEngine, args ...string) result
 	mux.Handle(orkstackv1connect.NewStatsServiceHandler(engine))
 	server := api.NewServer("127.0.0.1:0", mux)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

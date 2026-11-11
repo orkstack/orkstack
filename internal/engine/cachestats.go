@@ -38,10 +38,11 @@ func AggregateCacheUsage(runs []*orkstackv1.Run) []*orkstackv1.CacheUsageRow {
 				default:
 					continue
 				}
-				k := key{run.GetOrkflowName(), task.GetTaskId()}
+				k := key{OrkflowKey(run), task.GetTaskId()}
 				usage := rows[k]
 				if usage == nil {
-					usage = &orkstackv1.CacheUsageRow{OrkflowName: k.orkflow, TaskId: k.task}
+					owner, name := SplitOrkflowKey(k.orkflow)
+					usage = &orkstackv1.CacheUsageRow{OrkflowName: name, OrkflowNamespace: owner, TaskId: k.task}
 					rows[k] = usage
 				}
 				switch c.GetOutcome() {

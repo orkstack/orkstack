@@ -9,6 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestTriggerCommand_IsDiscoverableFromHelp(t *testing.T) {
@@ -62,9 +64,7 @@ func TestRenderTriggerCreated_ShowsTheSecretOnceWithARunnableCurl(t *testing.T) 
 		Description: "nightly kickoff",
 		CreatedAt:   timestamppb.New(fixedNow),
 	}
-	if err := renderTriggerCreated(&out, "https://ork.example.test/", trigger, "s3cr3t"); err != nil {
-		t.Fatalf("renderTriggerCreated: %v", err)
-	}
+	must.OKf(t, renderTriggerCreated(&out, "https://ork.example.test/", trigger, "s3cr3t"), "renderTriggerCreated")
 
 	for _, fragment := range []string{
 		"Created trigger trg-0123456789abcdef",
@@ -90,9 +90,7 @@ func TestRenderTriggerCreated_ShowsAPinnedVersion(t *testing.T) {
 	trigger := &orkstackv1.Trigger{
 		Id: "trg-1", Namespace: "default", OrkflowName: "hello", OrkflowVersion: "3",
 	}
-	if err := renderTriggerCreated(&out, "http://localhost:8080", trigger, "token"); err != nil {
-		t.Fatalf("renderTriggerCreated: %v", err)
-	}
+	must.OKf(t, renderTriggerCreated(&out, "http://localhost:8080", trigger, "token"), "renderTriggerCreated")
 	if !strings.Contains(out.String(), "hello@3") {
 		t.Errorf("pinned trigger does not name its version:\n%s", out.String())
 	}
@@ -113,9 +111,7 @@ func TestRenderTriggerList_RendersAnUnpinnedVersionAsCurrent(t *testing.T) {
 			Description: "from CI", CreatedAt: timestamppb.New(fixedNow),
 		},
 	})
-	if err != nil {
-		t.Fatalf("renderTriggerList: %v", err)
-	}
+	must.OKf(t, err, "renderTriggerList")
 	for _, fragment := range []string{
 		"ID", "NAME", "NAMESPACE", "ORKFLOW", "VERSION", "DESCRIPTION", "CREATED",
 		"trg-aaa", "current", "trg-bbb", "2", "from CI", "2026-01-02T03:04:05Z",
@@ -128,9 +124,7 @@ func TestRenderTriggerList_RendersAnUnpinnedVersionAsCurrent(t *testing.T) {
 
 func TestRenderTriggerList_SaysSoWhenNothingExists(t *testing.T) {
 	var out bytes.Buffer
-	if err := renderTriggerList(&out, nil); err != nil {
-		t.Fatalf("renderTriggerList: %v", err)
-	}
+	must.OKf(t, renderTriggerList(&out, nil), "renderTriggerList")
 	if got := out.String(); got != "No triggers.\n" {
 		t.Errorf("empty list = %q, want %q", got, "No triggers.\n")
 	}

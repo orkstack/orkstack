@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -22,8 +22,11 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // memValues is the in-memory store CountEachItems reads committed
@@ -220,7 +223,7 @@ func TestEachArrayLength(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"a":{"b":[1,2,3]},"n":null,"o":{},"s":"x","num":4,"e":[]}`), &root); err != nil {
 		t.Fatal(err)
 	}
-	before, _ := json.Marshal(root)
+	before, _ := stablejson.Marshal(root)
 	if n, err := engine.EachArrayLength(root, []string{"a", "b"}, "o"); err != nil || n != 3 {
 		t.Fatalf("nested = %d, %v", n, err)
 	}
@@ -238,15 +241,13 @@ func TestEachArrayLength(t *testing.T) {
 			t.Fatalf("%s = %v, want NOT_ARRAY naming %s", key, err, kind)
 		}
 	}
-	// json.Number elements count like any other.
-	dec := json.NewDecoder(strings.NewReader(`{"x":[12345678901234567890, 1.5]}`))
-	dec.UseNumber()
+	// stablejson.Number elements count like any other.
 	var numbers any
-	_ = dec.Decode(&numbers)
+	_ = json.Unmarshal([]byte(`{"x":[12345678901234567890, 1.5]}`), &numbers, stablejson.UseNumber)
 	if n, err := engine.EachArrayLength(numbers, []string{"x"}, "o"); err != nil || n != 2 {
-		t.Fatalf("json.Number = %d, %v", n, err)
+		t.Fatalf("stablejson.Number = %d, %v", n, err)
 	}
-	after, _ := json.Marshal(root)
+	after, _ := stablejson.Marshal(root)
 	if !bytes.Equal(before, after) {
 		t.Fatal("EachArrayLength mutated its root")
 	}
@@ -409,13 +410,9 @@ func TestRunWorkflow_EachRespectsMaxParallel(t *testing.T) {
 			continue
 		}
 		data, err := h.snapshots.ReadSnapshot(context.Background(), p.snapshotURI)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		snap := &orkstackv1.Run{}
-		if err := proto.Unmarshal(data, snap); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, proto.Unmarshal(data, snap))
 		node := taskRunOf(t, snap, "convert")
 		running, pendingSeen := 0, false
 		for _, item := range node.GetItems() {
@@ -804,9 +801,7 @@ func TestRunWorkflow_EachRefusedRefillStillEmitsTheSettledItem(t *testing.T) {
 	for _, in := range calibrate.itemCalls("convert") {
 		if in.GetEach().GetIndex() == 9 {
 			n, err := task.InputSize(in)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			size9 = n
 		}
 	}
@@ -1056,9 +1051,7 @@ func TestPublishEvent_EmptySnapshotURIPublishesWithoutReading(t *testing.T) {
 	reads := &countingSnapshots{testSnapshotStore: newTestSnapshotStore()}
 	activities := engine.NewEventActivities(bus, store).WithSnapshotStore(reads)
 	event := &orkstackv1.Event{RunId: "r", Sequence: 7, Type: orkstackv1.EventType_EVENT_TYPE_TASK_LOG, TaskId: "convert", Item: proto.Int32(3)}
-	if err := activities.PublishEvent(context.Background(), event, "", "r#7"); err != nil {
-		t.Fatalf("PublishEvent: %v", err)
-	}
+	must.OKf(t, activities.PublishEvent(context.Background(), event, "", "r#7"), "PublishEvent")
 	if got := bus.Events("r", 0); len(got) != 1 || got[0].GetItem() != 3 {
 		t.Fatalf("bus = %v", got)
 	}

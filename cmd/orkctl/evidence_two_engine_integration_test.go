@@ -24,6 +24,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The run-evidence integration scenarios: two real `ork`
@@ -177,20 +179,14 @@ func s3Object(t *testing.T, ctx context.Context, cfg artifacts.Config, uriOrKey 
 	key := uriOrKey
 	if strings.HasPrefix(uriOrKey, "s3://") {
 		parsed, err := url.Parse(uriOrKey)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		key = strings.TrimPrefix(parsed.Path, "/")
 	}
 	out, err := auditRawS3Client(t, cfg).GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(cfg.S3Bucket), Key: aws.String(key)})
-	if err != nil {
-		t.Fatalf("get s3 object %s: %v", key, err)
-	}
+	must.OKf(t, err, "get s3 object %s", key)
 	defer out.Body.Close()
 	body, err := io.ReadAll(out.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return body
 }
 
@@ -198,13 +194,9 @@ func s3Object(t *testing.T, ctx context.Context, cfg artifacts.Config, uriOrKey 
 func bundleEntries(t *testing.T, path string) map[string][]byte {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	gz, err := gzip.NewReader(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	tr := tar.NewReader(gz)
 	entries := map[string][]byte{}
 	for {
@@ -212,13 +204,9 @@ func bundleEntries(t *testing.T, path string) map[string][]byte {
 		if errors.Is(err, io.EOF) {
 			return entries
 		}
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		body, err := io.ReadAll(tr)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		entries[h.Name] = body
 	}
 }
@@ -250,14 +238,10 @@ func TestIntegration_RunEvidenceIsAnsweredByAReplicaThatNeverStartedTheRun(t *te
 	}
 
 	file, err := os.Open(bundle)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	m, err := evidence.ReadManifest(file)
 	_ = file.Close()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var retried *evidence.TaskEntry
 	for i := range m.Tasks {
 		if m.Tasks[i].TaskID == "retried" {
@@ -281,9 +265,7 @@ func TestIntegration_RunEvidenceIsAnsweredByAReplicaThatNeverStartedTheRun(t *te
 		t.Fatalf("commit.json in the bundle differs from the bucket object %s", commit.Origin)
 	}
 	runKey, err := artifacts.RunArchiveKey(e.runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if stored := s3Object(t, ctx, e.artifactCfg, runKey); !bytes.Equal(entries["run.jsonl"], stored) {
 		t.Fatalf("run.jsonl differs from the archive object %s", runKey)
 	}
@@ -295,13 +277,9 @@ func TestIntegration_RunEvidenceIsAnsweredByAReplicaThatNeverStartedTheRun(t *te
 	onA := e.mustCLI(0, "--json", "run", "evidence", "export", e.runID)
 	onB := e.mustCLI(1, "--json", "run", "evidence", "export", e.runID)
 	ma, err := evidence.ParseManifest([]byte(onA))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	mb, err := evidence.ParseManifest([]byte(onB))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	ma.ExportedAt, mb.ExportedAt = time.Time{}, time.Time{}
 	ja, _ := ma.MarshalJSON()
 	jb, _ := mb.MarshalJSON()
@@ -331,22 +309,14 @@ func TestIntegration_RunEvidenceAndProvenanceAgreeOnAMissingObject(t *testing.T)
 	m := awaitEvidenceArchived(t, e.timingStack, 1, e.runID)
 	report := memberOf(t, m, "tasks/completed/artifacts/report.txt")
 	store, err := artifacts.NewS3Store(ctx, e.artifactCfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Delete(ctx, report.Origin); err != nil {
-		t.Fatalf("delete %s: %v", report.Origin, err)
-	}
+	must.OK(t, err)
+	must.OKf(t, store.Delete(ctx, report.Origin), "delete %s", report.Origin)
 	provenance, err := e.replicas[1].runs.GetArtifactProvenance(ctx, connect.NewRequest(&orkstackv1.GetArtifactProvenanceRequest{
 		RunId: e.runID, TaskId: "completed", Kind: orkstackv1.ArtifactKind_ARTIFACT_KIND_OUTPUT, Name: "report.txt",
 	}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	after, err := manifestOf(ctx, e.replicas[1], e.runID, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	gone := memberOf(t, after, "tasks/completed/artifacts/report.txt")
 	provenanceSHA := evidence.NormalizeDigest(provenance.Msg.GetArtifact().GetSha256())
 	if provenance.Msg.GetBytesPresent() || gone.State != evidence.StateReclaimed || gone.Reason != evidence.ReasonObjectMissing ||

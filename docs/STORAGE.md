@@ -38,15 +38,15 @@ One bucket, one key family per kind of record. The builders in
 |---|---|---|---|
 | `metadata/orkflows/{ns}/{name}/{version}.json` | one immutable Orkflow version, source YAML included (`OrkflowKey`) | conditional create; a divergent rewrite is `ErrVersionExists` (the comparison covers the whole source, header included; any difference is a rewrite) | `orkctl orkflow delete`, which removes every version, both pointers and every derived claim after checking for recent runs |
 | `metadata/orkflows/{ns}/{name}/@current.json` | `{version, updated_at}`: the version new runs execute; absent means the head (`OrkflowCurrentKey`) | compare-and-swap; a promotion swaps it only while it still names the version the promotion compared the target's declared interface against (`CurrentExpectation`), so a promotion that raced another is refused, never landed over it | the same delete |
-| `metadata/orkflows/{ns}/{name}/@head.json` | `{version, applied_at}`: the newest applied version; moving it is the apply's commit point (`OrkflowHeadKey`) | compare-and-swap | the same delete |
-| `metadata/orkflows/{ns}/{name}/@derived-{contentHash}.json` | `{version}`: the version a document that pins none was given, keyed by `sha256(source ‖ 0x1F ‖ canonicalImages)` (`OrkflowDerivedKey`). A record, never a lock: an apply reads it to stay a no-op, and a claim whose version never landed is stored under by the next apply of that content. A version stored under the hash itself by an earlier release needs none | conditional create, so concurrent applies of one new document on any replica get one version; a claim that does not decode is replaced by compare-and-swap | the same delete |
+| `metadata/orkflows/{ns}/{name}/@head.json` | `{version, applied_at, since}`: the newest created version; moving it is the create's commit point (`OrkflowHeadKey`). `since`, optional, is the instant this incarnation of the orkflow began: the `applied_at` of the apply that swapped a head in from nothing, copied by every swap after it | compare-and-swap | the same delete |
+| `metadata/orkflows/{ns}/{name}/@derived-{contentHash}.json` | `{version}`: the version a document that pins none was given, keyed by `sha256(source ‖ 0x1F ‖ canonicalImages)` (`OrkflowDerivedKey`). A record, never a lock: a create reads it to stay a no-op, and a claim whose version never landed is stored under by the next create of that content. A version stored under the hash itself by an earlier release needs none | conditional create, so concurrent creates of one new document on any replica get one version; a claim that does not decode is replaced by compare-and-swap | the same delete |
 | `metadata/namespaces/{name}.json` | the namespace registry entry, every field of `Namespace` (`NamespaceKey`); `default` is synthesized when absent; a listing reads the names from the keys alone (`ListNames`, sorted by name, not key order) and then only the documents it needs: the page's, when every filter is on the name | conditional PUT with an etag | `orkctl namespace delete`, refused while the namespace holds anything |
 | `metadata/settings/retention-policy.json` | the deployment's maximum run retention (`RetentionPolicyKey`) | create-if-absent at first boot, then plain put by `UpdateRetentionPolicy` | nothing |
 | `metadata/settings/image-policy.json` | the deployment image supply-chain floor, signing keys as public PEM (`ImagePolicyKey`) | plain put by `UpdateImagePolicy`; absent until an operator writes one | nothing |
 | `metadata/triggers/{id}.json` | one inbound run starter: namespace, orkflow, pinned version, description, optional `name`, and the salted digest of its token — never the token (`triggerKey`); flat, because the invoke URL carries only the id | conditional create; rewritten only by `UpdateTrigger`, through a conditional put on the ETag it read (name, pin, description change; the id and the digest never do) | `orkctl trigger delete` |
 | `metadata/webhooks/{id}.json` | one subscription: URL, events, scope, optional `name`, and the signing secret, which no read but delivery returns (`webhookKey`) | conditional create; rewritten only by `UpdateWebhook`, through a conditional put on the ETag it read (name, URL, events and scope change; the id and the secret never do) | `orkctl webhook delete` |
 | `metadata/runs/{run-id}.jsonl` | an archived run: the run record then every event, one JSON line each (`RunArchiveKey`); a run whose stream has a gap — events lost from object storage before it was archived (an earlier history's event segment missing or altered), or numbers it used without publishing an event, because object storage refused that event's record (`docs/DEPLOY.md` §6) — has one `{"kind":"gap","gap":{"first":…,"last":…,"reason":…}}` line per range, in sequence order among the events — reads over that range fail `DataLoss` naming it and its cause, and its evidence bundle is `schema_version` 2 (`docs/RUN_EVIDENCE.md`) | once, at the run's terminal event; read verbatim as `run.jsonl` by `ExportRunEvidence` (`docs/RUN_EVIDENCE.md`) | nothing |
-| `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row, stamped by `created_at` (`RunIndexKey`) | with the archive body | nothing |
+| `metadata/index/runs/{ns}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the key is the index row, stamped by `created_at` (`RunIndexKey`). A child run of another namespace's shared Orkflow is indexed under `{ns}` it ran in and the segment `<owner>/<name>`, escaped like any segment that is not a clean component (`engine.OrkflowKey`), so it never lists as the namespace's own Orkflow of that name | with the archive body | nothing |
 | `metadata/index/roots/{ns}/{root-run-id}/{parent-run-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the root index row (`RunRootIndexKey`), one for each run with a root of a composed chain recorded; read keys-only by a `ListRuns` filtered on `origin.root_run_id`. The parent is in the key because every run with a root is a `PARENT_RUN`, so the row answers `origin.kind` and `origin.id` too. | with the archive body, only for a run with a root recorded, before its run-index row | nothing |
 | `metadata/index/origins/{ns}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the origin index row (`RunOriginIndexKey`): `kind` is `submit`, `trigger`, `schedule`, `parent-run` or `run-again`, `origin-id` the originating object's id or `none`; read keys-only by an origin-filtered `ListRuns` | with the archive body, only for a run with a recorded origin, before its run-index row | nothing |
 | `metadata/index/recent/{ns}/{inverted-stamp}/{orkflow}/{status}/{run-id}` | zero bytes; the newest-first index row (`RunRecentIndexKey`): `inverted-stamp` is the `created_at` stamp with every digit `d` written `9-d`, so ascending key order is newest first; read keys-only by a `ListRuns` page, which walks it from the page cursor and stops once the page and its last instant's ties are read | with the archive body, before its run-index row | nothing |
@@ -61,9 +61,12 @@ One bucket, one key family per kind of record. The builders in
 | `metadata/commits/{ns}/{run-id}/{task-id}/[{item:05}/]commit.json` | the immutable activity completion record of a task, or of one fan-out item (`CommitKey`, `ItemCommitKey`); a dependent of a fan-out reads every item's to stage its files | conditional create-if-absent; read verbatim as `commit.json` by `ExportRunEvidence`, only at the `CommitRef.uri` the run snapshot recorded | cleanup |
 | `metadata/memo/{ns}/orkflow/{orkflow}/{task-id}/{key}.json` | one orkflow-scoped `CacheMemo`: a pointer from a cached task's 64-hex memo key to a `SUCCEEDED` commit (`MemoKey`; `docs/DSL.md` "Caching") | by the Orker after a fresh commit of a cached task, best-effort, plain put, last writer wins | `orkctl cache purge`, or a bucket lifecycle rule |
 | `metadata/memo/{ns}/namespace/{task-id}/{key}.json` | one namespace-scoped `CacheMemo` | same | same |
+| (either memo prefix, for a shared Orkflow) | a task of a shared Orkflow composed from another namespace keeps its memos under the namespace it ran in and its Orkflow's name, with the owner in the key, so they are never another Orkflow's of that name (`docs/DSL.md` "What the key covers") | same | same |
 | `metadata/audit/{yyyy}/{mm}/{dd}/{id}.json` | one control-plane audit record: who asserted which write, on what, when, and whether it was refused (`AuditKey`); the day is the record's own `at` in UTC | create-only, by the engine after every audited write RPC | a bucket lifecycle rule only |
-| `metadata/deliveries/{yyyy}/{mm}/{dd}/{id}/{ns}/{run-id}/{webhook-id}/{event}/{delivered\|failed}.json` | one settled webhook delivery: every attempt, the signature sent, the body's SHA-256 — never the body (`DeliveryKey`); the day is the delivery id's stamp, and the segments after the id are the record's own coordinates, so every listing filter is decided from the key | create-only, by the engine after the dispatcher returns | a bucket lifecycle rule only |
+| `metadata/deliveries/{yyyy}/{mm}/{dd}/{id}/{ns}/{run-id}/{webhook-id}/{event}/{delivered\|failed}.json` | one settled webhook delivery: every attempt, the signature sent, the body's SHA-256 — never the body (`DeliveryKey`); the day is the delivery id's stamp, and the segments after the id are the record's own coordinates, so every listing filter is decided from the key | create-only, by the engine when the delivery settles | a bucket lifecycle rule only |
+| `metadata/delivery-bodies/{delivery-id}/{sha256}.json` | the signed body of one webhook delivery still being sent, so every attempt, on whichever engine replica, sends the bytes that were signed (`DeliveryBodyKey`); read back only by that delivery's attempts, verified against its SHA-256 | create-only, by the engine when it queues the delivery | the delivery's own last step deletes it; a delivery stopped from outside leaves it to a bucket lifecycle rule |
 | `metadata/probes/commit-store/…/commit.json` | the probe proving conditional create works on this store | at every Orker boot | nothing |
+| `metadata/probes/conditional-answers/{id}/{missing\|present}` | the probe asking the store's other conditional answers (If-Match on a missing key, a conditional delete); `{id}` is fresh for each boot | at every Orker and every engine boot | the probe itself, before the boot goes on; a killed process can leave the two small objects to a bucket lifecycle rule. On a bucket with versioning enabled, a delete keeps the object as a noncurrent version behind a delete marker ([AWS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html)), so every boot leaves a noncurrent version and delete markers under this prefix; a lifecycle rule on it that expires noncurrent versions and expired delete markers reclaims them ([AWS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-configuration-examples.html#lifecycle-config-conceptual-ex7)) |
 | `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
 | `manifests/{object-key}` | the artifact's exact logical name, beside its object | with the object | with the object |
 | `objects/n-{name}[/c-{…}]/{sha256}` | workload artifact bytes on the `local` backend (`objectKey`) | by the Orker, content-addressed | nothing automatic |
@@ -76,12 +79,12 @@ pointers, so a pointer can never be read as a version.
 
 ## Invariants the layout carries
 
-- **Re-applying an unchanged document writes nothing, with three stated
+- **Creating an unchanged document again writes nothing, with three stated
   exceptions.** The derived claim is what finds a document's version, so each of
-  these leaves the same content under two versions, and a re-apply moves the head
+  these leaves the same content under two versions, and creating it again moves the head
   onto the newer one. Nothing is lost or rewritten, and a run keeps the version it
-  pinned. A `Delete` that interleaves with an apply can remove the claim while
-  the apply's version lands after it. A claim that no longer decodes is replaced,
+  pinned. A `Delete` that interleaves with a create can remove the claim while
+  the create's version lands after it. A claim that no longer decodes is replaced,
   and the version it named cannot be known. While a replica of an earlier release
   runs beside a new one, as in a rolling upgrade, the old one stores the hash and
   the new one a minted version (`docs/UPGRADING.md`).
@@ -99,13 +102,122 @@ pointers, so a pointer can never be read as a version.
 - **Pointers, not copies.** `@current` and `@head` name a version and hold no
   copy of the document: a second copy is a second place to be wrong. Moving
   them is a compare-and-swap arbitrated by the store's conditional PUT, so
-  two replicas promoting or applying at once need no lock, lease or Temporal
+  two replicas promoting or creating at once need no lock, lease or Temporal
   state — the loser is told and swaps again against the winner's etag. The
   head is a pointer rather than "the greatest `created_at`" because each
   replica stamps from its own clock, and because an edit's
   `expected_head_version` must be checked by the write itself. `applied_at`
-  never goes backwards, so `orkctl orkflow versions` lists versions in apply
+  never goes backwards, so `orkctl orkflow versions` lists versions in create
   order even when clocks disagree.
+- **What the store must honour.** Beside conditional create and swap
+  (If-None-Match, If-Match on PutObject), a deployment's S3-compatible store
+  must answer a PutObject with If-Match on a key that does not exist with a
+  refusal — 404 or 412, both read as the condition refused — and must hold a
+  DeleteObject with If-Match to its condition: a wrong etag refused with 412
+  and the object left in place. A store that ignored the delete condition would
+  let a refused apply's rollback remove another document stored under the same
+  version. Every Orker asks both at boot, after its commit probe, and refuses
+  to start with `COMMIT_STORE_NOT_CONDITIONAL` on a store that gets either
+  wrong; every engine, where rollbacks and promotions run, asks both before its
+  API accepts an apply, and refuses to start naming the answer it got. SeaweedFS, the development store, answers 404 and honours the delete
+  condition; `TestIntegration_S3_ConditionalWriteAnswers` pins both and fails
+  on a store that does not.
+- **A conditional write whose answer was lost is read back.** The S3 client
+  resends a write whose answer it lost, and a resend of a conditional write
+  meets its own first send when that send was stored: a 412, or the client
+  gives up, for a write that landed. So when a conditional write's outcome is
+  unknown — the client resent it, or its last answer was a 5xx or none — it
+  reads its key (`putConfirmed`): a key holding exactly the bytes it sent is
+  that write, landed; other bytes, or none, leave its error the answer; a read
+  that fails leaves the outcome unknown, reported as such and never as a
+  refusal. A 4xx to a write's only send is final: a 412 then is another
+  writer's, even over equal bytes, so a refused write is never reported as
+  landed. That holds while nothing between OrkStack and the store resends a
+  request on its own (docs/DEPLOY.md). Equal bytes read back are this write, or
+  are harmless whoever wrote them (a nanosecond stamp, a fresh id, content
+  addressing), except in two places. The commit store's boot probe, whose two
+  writers send one fixed candidate, never counts such a writer as the winner:
+  beside the other writer's refused only send it has still proven arbitration,
+  over its durable winner it was refused, and otherwise the probe fails as one
+  that got no answer it can use. A store answers If-Match on a key that is
+  gone (a Delete took it) with a 404, and every conditional write reads that
+  as its condition refused, as a 412: the object is not the one it read (a
+  head swap's head moved to none). A refused Orkflow apply removes the version
+  it wrote, so a retargeted retry creates it afresh, but never one it does
+  not know it wrote — two applies of one document behind the same head can be
+  stamped alike, when neither caller's stamp is after the head's — nor one the
+  head or the current pointer names, or whose pointers it cannot read; and
+  since an identical apply can move the head, and a promotion of the listed
+  version the current pointer, onto the version at any point, it reads both
+  again afterwards and puts back the exact bytes of a version either names.
+  An apply that moves the head onto a version it does not know it created
+  checks that version is still stored as the document it read, and puts it
+  back; a promotion reads its target back after its swap and, finding it
+  gone while the current pointer is still its own write, puts back the bytes
+  it read and stands. Each restore is created only if absent and held to its
+  document, so whichever lands first the other finds there, and no pointer
+  stays on a version that is not stored. A promotion whose pointer has moved
+  since, or was taken by a Delete, puts nothing back and is refused as not
+  found; one whose read-back finds another document under its target (the one
+  it compared removed, and the version created again) is refused as such, and
+  — a promotion never being an unchecked move — moves the current pointer back
+  to what it named before (its exact bytes), or clears it when that version
+  is no longer stored or there was none, while it is still its own write. **A promotion or apply landing inside a Delete
+  loses to it.** A promotion whose swap meets a pointer a Delete took (a 404)
+  is refused as the orkflow deleted, and never writes the pointer again from
+  nothing, and so is an apply whose head swap meets a head a Delete took, which
+  then rolls back its version; an apply that goes round again after a refused
+  head swap is refused the same way when the head it now finds is gone, or of
+  another incarnation (`since`, below), and otherwise reads its version back
+  before it swaps again, never touching a head while its version is gone (an
+  apply that does not know it created its version — it found it stored, or
+  its create's answer was lost — goes on only when the head it now reads is of
+  the incarnation it read a head pointer of before, and the version was
+  created within it: the refused apply's rollback, which its swap undoes; it
+  is otherwise refused saying it cannot tell a rollback from a Delete); one whose target is gone with no head at all — which no rollback
+  leaves — removes its own pointer and is refused the same way; an apply that
+  swapped a head in from nothing reads its version back and, finding it gone,
+  removes its own head and is refused the same way (a Delete that stopped part
+  way, before its versions, reads the same, and the refusal says so; deleting
+  again finishes it — unless another apply has re-created the orkflow since,
+  which the refusal says instead). After the versions and claims, a Delete reads both
+  pointers once more and removes each one that names a version not stored,
+  under the etag it read, so a pointer written while its versions were going
+  does not outlive it; the pointers of an orkflow re-created meanwhile, with a
+  version the Delete never scanned, name a stored version and stay. A
+  promotion whose target is gone while a head is there tells a Delete from a
+  refused apply's rollback by the head's `since`: a refused apply's version is
+  always stamped after a head of its own incarnation, so a target created
+  before `since` belongs to an orkflow a Delete removed, and the promotion
+  removes its own pointer and is refused as the orkflow re-created, putting
+  nothing back. A head without `since` — written before the field, or
+  rewritten by an engine that predates it, whose swaps drop it, and which a
+  newer engine's later swaps then copy as absent — tells nothing, and the
+  promotion puts the target back as before the field. Two cases stay open.
+  Clock skew across replicas: the `since` of an orkflow re-created after the
+  Delete took all its versions is the re-creating apply's own clock, so a
+  deleted version stamped after it by a replica whose clock ran ahead reads as
+  this incarnation's, and a promotion of it racing the Delete puts it back: the
+  deleted version is stored again and current. Two first applies racing a
+  promotion: on an orkflow with no head pointer yet — brand new, from before
+  head pointers, or after a Delete that stopped part way — the refused apply's
+  version can be stamped before the winning apply's `since`; a promotion of it
+  whose read-back follows the rollback then removes its own pointer and is
+  refused as the orkflow re-created, which it was not, and a rollback whose
+  re-read saw that pointer puts the version back: the version then stays
+  stored and listed with no pointer naming it. The rollback removes a version only while it holds exactly the
+  document the refused apply wrote, and the removal itself is held to the etag
+  the rollback read (DeleteObject If-Match), so a Delete of the orkflow and a
+  fresh create of that version with other content, landing before the read or
+  between the read and the removal, is left alone (a pointer that cannot be read is reported, not guessed at, so no Delete
+  is undone; a Delete landing between a re-read and its restore — the
+  rollback's or a promotion's — can leave one version object behind, and the
+  orkflow then reappears with that version until it is deleted again). (An
+  identical apply that answered "already stored" with the head already past
+  the version can still find it gone, as with any rollback: explicitly not
+  found, never another version.) A version stored ahead of the head by an
+  apply whose head swap never landed is completed by the next apply of that
+  document, which moves the head onto it.
 - **A `{seq}.pb` snapshot key belongs to the emit that owns its sequence.**
   It is written only by that emit, once per workflow-task attempt that runs
   it, or by the one terminal snapshot written for a sequence no emit owns (a
@@ -170,6 +282,8 @@ pointers, so a pointer can never be read as a version.
 - **Logs and records, never queues.** Nothing in OrkStack reads an audit or
   delivery record to decide what to do or send; expiring one only shortens
   how far back `orkctl admin audit` or `orkctl webhook deliveries` can look.
+  A stored delivery body is read only by its own delivery's attempts, and
+  nothing lists `metadata/delivery-bodies/` to find work.
 - **The archive is append-only.** Bodies and index rows — the run index, the
   origin index, the root index and the newest-first index alike — are never deleted; what cleanup reclaims is the
   run's logs, attempt records, snapshots, commit records and object markers,
@@ -236,8 +350,11 @@ index existed has no row in it: it stays readable by id but is absent from
 the default list (there is no backfill; reset a development stack with
 `make reset`).
 
-Cleanup never touches `metadata/audit/`, `metadata/deliveries/` or
-`metadata/memo/`; a bucket lifecycle rule is the only retention for each.
+Cleanup never touches `metadata/audit/`, `metadata/deliveries/`,
+`metadata/delivery-bodies/` or `metadata/memo/`; a bucket lifecycle rule is the
+only retention for each. A delivery deletes its own body when it settles, so
+`metadata/delivery-bodies/` holds only deliveries in flight and the bodies of
+any stopped from outside.
 
 **Object reference accounting.** Archiving a run records which physical
 objects its completion references: one zero-byte marker per object under

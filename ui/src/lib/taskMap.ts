@@ -193,6 +193,8 @@ const SEVERITY: Record<Status, number> = {
 	[Status.FAILED]: 7,
 	[Status.RUNNING]: 6,
 	[Status.AWAITING]: 5,
+	// Below an await: a sleep ends on its own.
+	[Status.SLEEPING]: 4.5,
 	[Status.PENDING]: 4,
 	[Status.UNSPECIFIED]: 3,
 	[Status.CANCELED]: 2,
@@ -249,6 +251,7 @@ export const STATUS_ORDER: readonly Status[] = [
 	Status.SUCCEEDED,
 	Status.RUNNING,
 	Status.AWAITING,
+	Status.SLEEPING,
 	Status.FAILED,
 	Status.CANCELED,
 	Status.SKIPPED,
@@ -264,7 +267,8 @@ const STATUS_WORD: Record<Status, string> = {
 	[Status.FAILED]: 'failed',
 	[Status.CANCELED]: 'canceled',
 	[Status.SKIPPED]: 'skipped',
-	[Status.AWAITING]: 'awaiting'
+	[Status.AWAITING]: 'awaiting',
+	[Status.SLEEPING]: 'sleeping'
 };
 
 const fmt = new Intl.NumberFormat('en-US');
@@ -531,7 +535,8 @@ function line(ctx: CanvasRenderingContext2D, x1: number, y1: number, x2: number,
 /**
  * Draws one cell's mark — the canvas rendering of the same table the CSS
  * stamps draw from (#lib/statusMarks.ts): filled square, live dot, awaiting
- * diamond, failed triangle, struck, dashed, hollow, dotted.
+ * diamond, sleeping half-filled circle, failed triangle, struck, dashed,
+ * hollow, dotted.
  */
 function cellPath(ctx: CanvasRenderingContext2D, x: number, y: number, s: number, inset = 0): void {
 	const side = s - 2 * inset;
@@ -571,6 +576,21 @@ function drawMark(ctx: CanvasRenderingContext2D, r: Rect, status: Status, kind: 
 			ctx.fill();
 			ctx.stroke();
 			break;
+		case 'half': {
+			const r = s / 2 - stroke / 2;
+			ctx.fillStyle = c.bg;
+			ctx.strokeStyle = c.solid;
+			ctx.beginPath();
+			ctx.arc(x + s / 2, y + s / 2, r, 0, 2 * Math.PI);
+			ctx.fill();
+			ctx.stroke();
+			ctx.fillStyle = c.solid;
+			ctx.beginPath();
+			ctx.arc(x + s / 2, y + s / 2, r, Math.PI / 2, (3 * Math.PI) / 2);
+			ctx.closePath();
+			ctx.fill();
+			break;
+		}
 		case 'triangle':
 			ctx.fillStyle = c.solid;
 			ctx.beginPath();

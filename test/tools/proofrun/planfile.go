@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,7 +21,6 @@ const planFormat = 2
 // Tiers a plan or a proof can carry.
 const (
 	tierFull    = "full"
-	tierFeature = "feature"
 	tierNightly = "nightly"
 	tierRelease = "release"
 )
@@ -122,12 +121,11 @@ type integrationPlan struct {
 	BaseCommit            string        `json:"base_commit"`
 	MergeBase             string        `json:"merge_base"`
 	ObservabilityRequired bool          `json:"observability_required"`
-	PR                    *prRecord     `json:"pr,omitempty"`
+	PR                    *prRecord     `json:"pr,omitzero"`
 	Costs                 fileRef       `json:"costs"`
 	Nightly               nightlyRef    `json:"nightly"`
 	AllowedSkips          fileRef       `json:"allowed_skips"`
 	Quarantine            quarantineRef `json:"quarantine"`
-	HostSpeed             quarantineRef `json:"host_speed"`
 	PartsExpected         []string      `json:"parts_expected"`
 	// Complete says the plan covers every integration package: no -select, no
 	// -run and no package patterns narrowed it. The merger requires it of the
@@ -193,7 +191,7 @@ func (p *integrationPlan) shardJobs(k int) []job {
 
 // partsExpected is every part a proof of this shape must leave a result for.
 // A local proof is one part; a CI proof is the job graph of plan §3.2.
-func partsExpected(tier string, local bool, shards, uiShards int, observability bool) []string {
+func partsExpected(tier string, local bool, shards, uiShards int) []string {
 	if local {
 		return []string{"local"}
 	}
@@ -217,10 +215,8 @@ func partsExpected(tier string, local bool, shards, uiShards int, observability 
 	for _, a := range fixtureActivities {
 		parts = append(parts, "activity-fixture:"+a)
 	}
-	if observability || tier == tierRelease {
-		parts = append(parts, "observability")
-	}
-	return parts
+	// The full and release tiers run the observability gate in every proof.
+	return append(parts, "observability")
 }
 
 // fixtureActivities are the activities the contract fixture runs on, one CI
@@ -251,7 +247,7 @@ func testKinds(dir string) map[string]string {
 		if fileMatches(cfgUnit, dir, f) {
 			kind = "unit"
 		}
-		for _, t := range parseGo(f).Tests {
+		for _, t := range testsDeclaredIn(f) {
 			if out[t] != "unit" {
 				out[t] = kind
 			}

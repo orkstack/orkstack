@@ -1,6 +1,6 @@
 import { expect, test, type Page } from './test';
-import { inspectTask, selectTask } from './uiHelpers';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { cliCommand, inspectTask, selectTask } from './uiHelpers';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	activityRef,
@@ -17,6 +17,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -175,7 +176,7 @@ let fanOutRun = '';
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# Fan-out on the run detail page: a live item grid, an item panel',
@@ -293,12 +294,14 @@ test('an item that retried shows its own attempts and logs', async ({ page }) =>
 	await expect(page.getByTestId('task-log-convert')).toContainText('converting item 2 of 6: c', { timeout: 30_000 });
 	await expect(page.getByTestId('task-log-convert')).not.toContainText('converting item 1 of 6');
 
-	// The CLI equivalents are one popover; its logs command names --item 2.
+	// The CLI equivalents are one popover; every command of the item names --item
+	// 2, and, as it retried, the earlier attempt's log is there too.
 	await page.getByTestId('run-inspect-cli-trigger').click();
-	const itemCommands = page.locator('[data-testid^="run-inspect-cli-command-"]');
-	await expect(itemCommands.filter({ hasText: 'run logs' })).toContainText('--item 2');
-	await expect(itemCommands.filter({ hasText: 'run artifacts' })).toContainText('--item 2');
-	await expect(itemCommands.filter({ hasText: 'run attempts' })).toContainText('--item 2');
+	const itemCommand = (label: string) => cliCommand(page, 'run-inspect-cli', label);
+	await expect(itemCommand("This item's logs")).toContainText('--item 2');
+	await expect(itemCommand("The earlier attempt's log")).toContainText(/ --item 2 --attempt \d+$/);
+	await expect(itemCommand("This item's artifacts")).toContainText('--item 2');
+	await expect(itemCommand("This item's attempts")).toContainText('--item 2');
 	await page.keyboard.press('Escape');
 	note(`item 2 panel: ${(await panel.textContent())?.replace(/\s+/g, ' ').slice(0, 400)}`);
 	await shot(page, 'screenshot-each-item-panel.png');

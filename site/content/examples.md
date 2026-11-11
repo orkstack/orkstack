@@ -2,11 +2,11 @@
 
 The repository's example Orkflows, what each one shows, and what it needs before it runs. Start with [`each-fan-out`](/docs/examples/each-fan-out/): it needs nothing beyond a running stack.
 
-Each one runs as it stands. Apply its file, then submit the Orkflow by its `name:`, with no inputs. The *Needs* column lists what it does need:
+Each one runs as it stands. Create its Orkflow from its file, then submit the Orkflow by its `name:`, with no inputs. The *Needs* column lists what it does need:
 
 ```bash
-orkctl apply examples/each-fan-out.ork.yaml
-orkctl run submit each-fan-out --watch
+orkctl orkflow create examples/each-fan-out.ork.yaml
+orkctl run submit each-fan-out -w
 ```
 
 Each example has its own page, with the file as it is in the repository.
@@ -17,50 +17,52 @@ Tasks reach the internet, not your stack, so an example that talks to a service 
 
 | Example | What it shows | Needs |
 |---|---|---|
-| [approval-gate](/docs/examples/approval-gate/) | an approval only when a change is risky; apply, decline, or report a rejection | `notify-block` applied first; internet access to `httpbin.org` |
+| [approval-gate](/docs/examples/approval-gate/) | an approval only when a change is risky; apply, decline, or report a rejection | `notify-block` created first; internet access to `httpbin.org` |
+| [bake-then-verify](/docs/examples/bake-then-verify/) | a change, a five-second bake that runs no container, then a check | nothing |
 | [config-from-git](/docs/examples/config-from-git/) | resolve a branch to a commit, render one config per service, cached while the commit holds | internet access to `github.com` |
 | [decide-and-route](/docs/examples/decide-and-route/) | decide in a json task, branch three ways, re-join | nothing |
 | [each-fan-out](/docs/examples/each-fan-out/) | a fan-out over a list a json task computes | nothing |
 | [http-post](/docs/examples/http-post/) | a POST whose JSON body is a YAML mapping, and a condition on its status | internet access to `httpbin.org` |
 | [inputs-and-escaping](/docs/examples/inputs-and-escaping/) | typed inputs; argv, positional arguments, `sh` and jq `vars` against a hostile default | nothing |
 | [notify-block](/docs/examples/notify-block/) | a reusable block: one JSON notification, its status as the declared output | internet access to `httpbin.org` |
-| [order-saga](/docs/examples/order-saga/) | a saga over an HTTP API: compensate, report either way | `notify-block` applied first; internet access to `httpbin.org` |
+| [order-saga](/docs/examples/order-saga/) | a saga over an HTTP API: compensate, report either way | `notify-block` created first; internet access to `httpbin.org` |
 | [pinned-checkout](/docs/examples/pinned-checkout/) | a git checkout into a pin, validated and packaged in place | internet access to `github.com` |
 | [poll-until-ready](/docs/examples/poll-until-ready/) | polling through a retry policy, with no loop | internet access to `httpbin.org` |
-| [automation/examples](/docs/examples/automation-examples/) | a namespace's settings, a schedule and a trigger, declared in one automation document | the Orkflows it names, applied first |
+| [automation/examples](/docs/examples/automation-examples/) | a namespace's settings, a schedule and a trigger, declared in one automation document | the Orkflows it names, created first |
 
 ## Composed examples
 
-`order-saga` and `approval-gate` compose `notify-block`, so each asks one thing of you: store the block first, in the same namespace, in a command of its own.
+`order-saga` and `approval-gate` compose `notify-block`, so each asks one thing of you: create the block first, in the same namespace, in a command of its own.
 
 ```bash
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/order-saga.ork.yaml
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/order-saga.ork.yaml
 ```
 
 ```bash
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/approval-gate.ork.yaml
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/approval-gate.ork.yaml
 ```
 
-Applying several documents in one command checks every one against the Orkflows already stored. A block in the same command does not count yet, so the composing examples are refused.
+Creating several Orkflows in one command checks every one against the Orkflows already stored. A block in the same command does not count yet, so the composing examples are refused.
 
 Their default paths succeed with nobody there. To see the others:
 
 ```bash
 # The shipping service refuses: the shipment fails, and the reservation and the payment are undone.
-orkctl run submit order-saga --input shipping_api=https://httpbin.org/absent --watch
+orkctl run submit order-saga -i shipping_api=https://httpbin.org/absent -w
 # A risky change: the run waits for an approval.
 orkctl run submit approval-gate --input-json '{"changes":[{"service":"payments","setting":"limit","value":"10"}]}'
 ```
 
 ## The automation document
 
-The automation document in `examples/automation/` declares a description for the `default` namespace, a schedule that runs `poll-until-ready` once a day, and a trigger for `approval-gate`. Store the Orkflows it names first, or apply them in the same command. `approval-gate` composes `notify-block`, so store that first of all:
+The automation document in `examples/automation/` declares a description for the `default` namespace, a schedule that runs `poll-until-ready` once a day, and a trigger for `approval-gate`. Create the Orkflows it names first. `approval-gate` composes `notify-block`, so create that first of all:
 
 ```bash
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml
+orkctl automation apply examples/automation/examples.ork.yaml
 orkctl schedule fire poll-exports
 ```
 

@@ -10,10 +10,13 @@ import { FilterOperator, filterOf } from './listFilter';
 import { namespaceLabel, withNamespace } from './namespace';
 import { statusLabel } from './status';
 
-/** "name@version": the child as the parent pinned it. */
-export function childLabel(child: Pick<TaskChild, 'orkflowName' | 'orkflowVersion'> | undefined): string {
+/** "name@version": the child as the parent pinned it, "namespace/name@version" for another namespace's. */
+export function childLabel(
+	child: Pick<TaskChild, 'orkflowName' | 'orkflowVersion' | 'orkflowNamespace'> | undefined
+): string {
 	if (!child) return '';
-	return `${child.orkflowName}@${shortVersion(child.orkflowVersion)}`;
+	const label = `${child.orkflowName}@${shortVersion(child.orkflowVersion)}`;
+	return child.orkflowNamespace ? `${child.orkflowNamespace}/${label}` : label;
 }
 
 /** The child run's page, in the parent's namespace. */
@@ -21,9 +24,17 @@ export function childRunHref(namespace: string, runId: string): string {
 	return withNamespace(`/runs/${encodeURIComponent(runId)}`, namespace);
 }
 
-/** The pinned child Orkflow's page at its version. */
-export function childOrkflowHref(namespace: string, name: string, version: string): string {
-	return withNamespace(`/orkflows/${encodeURIComponent(name)}?version=${encodeURIComponent(version)}`, namespace);
+/** The pinned child Orkflow's page at its version, in the namespace that owns it. */
+export function childOrkflowHref(
+	namespace: string,
+	child: Pick<TaskChild, 'orkflowName' | 'orkflowVersion' | 'orkflowNamespace'> | undefined
+): string {
+	const name = child?.orkflowName ?? '';
+	const version = child?.orkflowVersion ?? '';
+	return withNamespace(
+		`/orkflows/${encodeURIComponent(name)}?version=${encodeURIComponent(version)}`,
+		child?.orkflowNamespace || namespace
+	);
 }
 
 /**
@@ -84,6 +95,7 @@ export function rollupSummary(rollup: ChildRollup): string {
 		Status.SUCCEEDED,
 		Status.RUNNING,
 		Status.AWAITING,
+		Status.SLEEPING,
 		Status.PENDING,
 		Status.FAILED,
 		Status.CANCELED,
@@ -103,6 +115,7 @@ const taskEventStatus: Partial<Record<EventType, Status>> = {
 	[EventType.TASK_SCHEDULED]: Status.RUNNING,
 	[EventType.TASK_STARTED]: Status.RUNNING,
 	[EventType.TASK_AWAITING]: Status.AWAITING,
+	[EventType.TASK_SLEEPING]: Status.SLEEPING,
 	[EventType.TASK_SUCCEEDED]: Status.SUCCEEDED,
 	[EventType.TASK_FAILED]: Status.FAILED
 };

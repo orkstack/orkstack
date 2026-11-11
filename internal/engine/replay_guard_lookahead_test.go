@@ -9,6 +9,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // historyGuardLookaheadFixture is the guard lookahead's fixture: a run that
@@ -38,9 +40,7 @@ func TestRunWorkflow_ReplaysCommittedHistoryGuardLookaheadHistory(t *testing.T) 
 	requireHistoryGuardLookaheadFixture(t)
 	recorded := loadHistoryFile(t, historyGuardLookaheadFixture)
 	runID, _, _, _, _ := startArgs(t, recorded)
-	if err := replayAs(t, recorded, runID); err != nil {
-		t.Fatalf("replaying %s against current code failed: %v", historyGuardLookaheadFixture, err)
-	}
+	must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", historyGuardLookaheadFixture)
 }
 
 // TestHistoryGuardLookaheadHistory_CatchesTheLookaheadRemoved is the negative

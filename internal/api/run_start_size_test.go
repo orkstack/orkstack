@@ -11,15 +11,15 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // submitWithURL submits hello-ork with its one string input set to url.
 func submitWithURL(t *testing.T, f *runIDFixture, url string) error {
 	t.Helper()
 	data, err := structpb.NewStruct(map[string]any{"url": url})
-	if err != nil {
-		t.Fatalf("input: %v", err)
-	}
+	must.OKf(t, err, "input")
 	_, err = f.svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "hello-ork",
 		Input:       &orkstackv1.Payload{Data: data},
@@ -59,9 +59,7 @@ func TestSubmitRun_AcceptsARunInputUnderThePayloadBound(t *testing.T) {
 	f := newRunIDFixture(t, starter, nil)
 
 	url := strings.Repeat("x", task.MaxActivityInputBytes/2)
-	if err := submitWithURL(t, f, url); err != nil {
-		t.Fatalf("SubmitRun refused an input under the bound: %v", err)
-	}
+	must.OKf(t, submitWithURL(t, f, url), "SubmitRun refused an input under the bound")
 	inputs := starter.startedInputs()
 	if len(inputs) != 1 || inputs[0]["url"] != url {
 		t.Fatalf("started inputs = %d, want the one submitted input unchanged", len(inputs))

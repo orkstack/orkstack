@@ -11,6 +11,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // manyTasksDoc is an Orkflow of n plain tasks, none of them a fan-out.
@@ -43,9 +45,7 @@ func TestValidateOrkflow_MoreTasksThanTheCeilingIsAnIssue(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()})
 	resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
 		Yaml: manyTasksDoc("wide", n+1)}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	issues := resp.Msg.GetIssues()
 	if len(issues) != 1 || issues[0].GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
 		t.Fatalf("issues = %v; want one error", issues)
@@ -95,9 +95,7 @@ func TestValidateOrkflow_TheTaskCeilingIsConfigurable(t *testing.T) {
 	lowered := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), OrkflowMaxTasks: 3})
 	resp, err := lowered.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{
 		Yaml: manyTasksDoc("wide", 4)}))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if issues := resp.Msg.GetIssues(); len(issues) != 1 || issues[0].GetField() != "tasks[3]" {
 		t.Fatalf("lowered to 3, 4 tasks: issues = %v", issues)
 	} else {

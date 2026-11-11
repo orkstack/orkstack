@@ -145,7 +145,7 @@ test('the run, runs and authoring pages add no banned word to the palette or the
 		'routes/+page.svelte',
 		'routes/orkflows/+page.svelte',
 		'routes/orkflows/[name]/+page.svelte',
-		'routes/apply/+page.svelte',
+		'routes/orkflows/+new/+page.svelte',
 		'lib/palette/orkflowPage.ts'
 	]) {
 		const text = readFileSync(`${import.meta.dir}/../src/${f}`, 'utf8');

@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"io"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 )
 
 // APIVersion is the one apiVersion every authored OrkStack document names.
@@ -128,7 +128,7 @@ func checkHeader(source []byte) error {
 			KindOrkflow, DescribeNode(kind)))
 	case kind.Value == KindAutomation:
 		return validationError("kind", fmt.Errorf("kind: %s is an automation document, not an Orkflow: "+
-			"apply it with orkctl apply or Admin → Automation (docs/AUTOMATION.md); an Orkflow says kind: %s",
+			"apply it with orkctl automation apply or Admin → Automation (docs/AUTOMATION.md); an Orkflow says kind: %s",
 			KindAutomation, KindOrkflow))
 	case kind.Value == KindActivityInterface:
 		return validationError("kind", fmt.Errorf("kind: %s is an activity interface, not an Orkflow: "+
@@ -144,6 +144,11 @@ func checkHeader(source []byte) error {
 
 // stringScalarNode reports a scalar that resolves to a string: plain,
 // quoted, or tagged !!str.
-func stringScalarNode(node *yaml.Node) bool {
-	return node.Kind == yaml.ScalarNode && node.Tag == "!!str"
+func stringScalarNode(node *yaml.Node) bool { return IsStringScalar(node) }
+
+// IsStringScalar reports a scalar that is a string: plain or quoted text,
+// tagged !!str, or tagged with the non-specific ! (`! orkstack/v1`), which
+// YAML reads as a string whatever the text.
+func IsStringScalar(node *yaml.Node) bool {
+	return node.Kind == yaml.ScalarNode && (node.Tag == "!!str" || node.Tag == "!")
 }

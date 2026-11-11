@@ -3,12 +3,14 @@ package orker
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // lockedBuffer is a bytes.Buffer a logger may write while a test reads it.
@@ -85,13 +87,9 @@ func withAttr(records []logRecord, key string) logRecord {
 // what the record carries, not by its wording.
 func TestBoot_SaysWhetherACapacityBoundsAdmission(t *testing.T) {
 	ceiling, err := DefaultSecurityPolicy().ceiling()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	declaredCPU, _, err := parseCapacity("16", "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, tc := range []struct {
 		name        string
 		capacityCPU string

@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -93,9 +94,9 @@ func newRunInspectCommand(g *globalFlags) *cobra.Command {
 			return inspector.watch(interval)
 		},
 	}
-	cmd.Flags().StringVar(&taskID, "task", "", "only this task")
+	cmd.Flags().StringVarP(&taskID, "task", "t", "", "only this task")
 	item.register(cmd, "only this item of the fan-out --task names")
-	cmd.Flags().BoolVar(&watch, "watch", false, "poll until the run is terminal")
+	cmd.Flags().BoolVarP(&watch, "watch", "w", false, "poll until the run is terminal")
 	cmd.Flags().DurationVar(&interval, "interval", defaultInspectInterval,
 		"poll period under --watch (at least 1s)")
 	return cmd
@@ -470,7 +471,7 @@ func unavailableReasonSentence(reason orkstackv1.HeartbeatUnavailableReason) str
 
 // liveStateLabel renders a LiveAttemptState without its prefix.
 func liveStateLabel(state orkstackv1.LiveAttemptState) string {
-	return strings.TrimPrefix(state.String(), "LIVE_ATTEMPT_STATE_")
+	return enumname.Of(state)
 }
 
 // heartbeatCell is the age of the last beat against the engine's clock.

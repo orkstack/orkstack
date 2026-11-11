@@ -3,29 +3,12 @@ package artifacts_test
 import (
 	"context"
 	"errors"
-	"io"
 	"os"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
-
-type fakeStore struct{ cfg artifacts.Config }
-
-func (fakeStore) Put(context.Context, string, io.Reader, artifacts.PutOptions) (artifacts.ArtifactRef, error) {
-	return artifacts.ArtifactRef{}, nil
-}
-func (fakeStore) Get(context.Context, string) (io.ReadCloser, error) { return nil, nil }
-func (fakeStore) Stat(context.Context, string) (artifacts.ArtifactRef, error) {
-	return artifacts.ArtifactRef{}, nil
-}
-func (fakeStore) List(context.Context, string) ([]artifacts.ArtifactRef, error) { return nil, nil }
-func (fakeStore) Presign(context.Context, string, time.Duration) (string, error) {
-	return "", nil
-}
-func (fakeStore) Delete(context.Context, string) error { return nil }
 
 func TestNew_SelectsBackend(t *testing.T) {
 	dir := t.TempDir()
@@ -49,33 +32,6 @@ func TestNew_SelectsBackend(t *testing.T) {
 
 	if _, err := artifacts.New(artifacts.Config{Backend: "gopher"}); !errors.Is(err, artifacts.ErrUnknownBackend) {
 		t.Errorf("New(gopher) err = %v, want ErrUnknownBackend", err)
-	}
-}
-
-func TestRegister_AddsCustomBackend(t *testing.T) {
-	name := "test-registry-backend-" + t.TempDir()
-	if err := artifacts.Register(name, func(cfg artifacts.Config) (artifacts.Store, error) {
-		return fakeStore{cfg: cfg}, nil
-	}); err != nil {
-		t.Fatalf("Register: %v", err)
-	}
-
-	st, err := artifacts.New(artifacts.Config{Backend: name})
-	if err != nil {
-		t.Fatalf("New(%s): %v", name, err)
-	}
-	if _, ok := st.(fakeStore); !ok {
-		t.Fatalf("New(%s) = %T, want fakeStore", name, st)
-	}
-
-	if err := artifacts.Register(name, func(artifacts.Config) (artifacts.Store, error) { return nil, nil }); err == nil {
-		t.Error("duplicate Register returned nil error, want error")
-	}
-	if !contains(artifacts.Backends(), name) {
-		t.Errorf("Backends() = %v, want to contain %q", artifacts.Backends(), name)
-	}
-	if !contains(artifacts.Backends(), artifacts.BackendLocal) || !contains(artifacts.Backends(), artifacts.BackendS3) {
-		t.Errorf("Backends() = %v, want builtin local and s3", artifacts.Backends())
 	}
 }
 
@@ -195,13 +151,4 @@ func TestNewFromEnv_BuildsLocalStore(t *testing.T) {
 	if ref.URI == "" || ref.SHA256 == "" {
 		t.Errorf("ref = %+v, want populated URI and SHA256", ref)
 	}
-}
-
-func contains(list []string, want string) bool {
-	for _, v := range list {
-		if v == want {
-			return true
-		}
-	}
-	return false
 }

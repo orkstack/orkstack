@@ -27,6 +27,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // capsFanOut declares 5,000 items over its run input, so its submit needs
@@ -115,9 +117,7 @@ func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	pid := engines["engine-caps"].cmd.Process.Pid
 
 	control, err := client.DialContext(ctx, client.Options{HostPort: temporal, Namespace: ns, Identity: "caps-control"})
-	if err != nil {
-		t.Fatalf("dial %s: %v", temporal, err)
-	}
+	must.OKf(t, err, "dial %s", temporal)
 	defer control.Close()
 
 	ours := func(p *taskqueuepb.PollerInfo) bool {
@@ -144,9 +144,7 @@ func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	// enough that a stopped worker ages out within the test.
 	const freshness = 15 * time.Second
 	cluster, err := engine.NewTemporalReleaseCluster(control, nil, ns, task.DefaultDeploymentName, task.DefaultQueue, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cluster.Freshness = freshness
 	var logs bytes.Buffer
 	svc := api.NewService(api.Config{
@@ -163,9 +161,7 @@ func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	}
 	submit := func() (*orkstackv1.SubmitRunResponse, error) {
 		data, err := structpb.NewStruct(map[string]any{"parts": []any{"a", "b"}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		input := &orkstackv1.Payload{Data: data}
 		resp, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: "caps-wide", Input: input}))
@@ -181,9 +177,7 @@ func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	older := worker.New(control, task.DefaultQueue, worker.Options{Identity: lackingIdentity})
 	older.RegisterWorkflowWithOptions(func(workflow.Context) error { return nil },
 		workflow.RegisterOptions{Name: "caps-older-engine"})
-	if err := older.Start(); err != nil {
-		t.Fatalf("start the older engine's worker: %v", err)
-	}
+	must.OKf(t, older.Start(), "start the older engine's worker")
 	stopped := false
 	defer func() {
 		if !stopped {
@@ -230,9 +224,7 @@ func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	}
 	note("  the older worker stopped; aged out of the %s window after %s", freshness, time.Since(stoppedAt).Round(time.Second))
 	accepted, err := submit()
-	if err != nil {
-		t.Fatalf("submit once every process has the capability: %v", err)
-	}
+	must.OKf(t, err, "submit once every process has the capability")
 	defer func() {
 		_ = control.TerminateWorkflow(context.Background(), accepted.GetRun().GetId(), "", "test cleanup")
 	}()

@@ -364,12 +364,26 @@ func TestAttemptStore_RefusesANilRecord(t *testing.T) {
 // One ORK_ARTIFACT_BACKEND selects where artifacts, logs, snapshots AND
 // attempt records live. A backend that can hold logs but not attempts would
 // silently drop retry history on exactly the deployments that configured
-// storage correctly.
-func TestAttemptStoreBackends_MatchTheLogStoreBackends(t *testing.T) {
-	attempts := strings.Join(AttemptStoreBackends(), ",")
-	logs := strings.Join(LogStoreBackends(), ",")
-	if attempts != logs {
-		t.Fatalf("attempt store backends = %q, log store backends = %q", attempts, logs)
+// storage correctly, so every record store accepts the same backends and
+// refuses the same unknown one.
+func TestRecordStoreBackends_AreTheSameForEveryStore(t *testing.T) {
+	dir := t.TempDir()
+	constructors := map[string]func(Config) (any, error){
+		"attempts":  func(cfg Config) (any, error) { return NewAttemptStore(cfg) },
+		"logs":      func(cfg Config) (any, error) { return NewLogStore(cfg) },
+		"memos":     func(cfg Config) (any, error) { return NewMemoStore(cfg) },
+		"snapshots": func(cfg Config) (any, error) { return NewRunSnapshotStore(cfg) },
+		"archive":   func(cfg Config) (any, error) { return NewRunArchive(cfg) },
+	}
+	for name, open := range constructors {
+		for _, backend := range []string{"", BackendLocal} {
+			if _, err := open(Config{Backend: backend, LocalDir: dir}); err != nil {
+				t.Errorf("%s store, backend %q: %v", name, backend, err)
+			}
+		}
+		if _, err := open(Config{Backend: "gopher", LocalDir: dir}); !errors.Is(err, ErrUnknownBackend) {
+			t.Errorf("%s store, backend gopher: %v, want ErrUnknownBackend", name, err)
+		}
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The per-Orker policy checks — this Orker's cap, its secret schemes, its
@@ -116,9 +118,7 @@ func policyOrderInput(t *testing.T, row narrowerOrker, runID string, cached bool
 		in.RunId = runID
 		in.IdempotencyKey = "default/" + runID + "/work"
 		key, err := artifacts.CommitKey("default", runID, "work")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		in.CommitUri = cacheRoot + "/" + key
 	}
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "token", Source: "env:" + orderSecretVar}}
@@ -143,9 +143,7 @@ func phasesOf(record *orkstackv1.TaskAttempt) []string {
 func requireNoAttemptDirectory(t *testing.T, root string) {
 	t.Helper()
 	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("read the work root: %v", err)
-	}
+	must.OKf(t, err, "read the work root")
 	for _, e := range entries {
 		if strings.HasPrefix(e.Name(), "ork-") {
 			t.Fatalf("attempt directory %q is still under the work root after the refusal", e.Name())
@@ -157,15 +155,11 @@ func requireNoAttemptDirectory(t *testing.T, root string) {
 func asItem(t *testing.T, _ *cacheHarness, in *orkstackv1.ExecuteTaskInput) {
 	t.Helper()
 	input, err := structpb.NewStruct(map[string]any{"rows": 3, "parts": []any{"a", "b", "c"}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	in.RunInput = &orkstackv1.Payload{Data: input}
 	in.IdempotencyKey = task.ItemIdempotencyKeyFor("default", in.GetRunId(), in.GetTaskId(), 1)
 	key, err := artifacts.ItemCommitKey("default", in.GetRunId(), in.GetTaskId(), 1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	in.CommitUri = cacheRoot + "/" + key
 	in.Each = &orkstackv1.EachContext{Index: 1, Count: 3, As: "part", Source: &orkstackv1.EachSource{Input: "parts"}}
 }
@@ -305,9 +299,7 @@ func TestExecute_AMissIsRefusedForThisOrkersPolicyBeforeAnythingRuns(t *testing.
 			t.Run(path.name+"/"+row.name, func(t *testing.T) {
 				h := policyOrderHarness(t)
 				row.narrow(h.dispatcher)
-				if err := os.Unsetenv(orderSecretVar); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Unsetenv(orderSecretVar))
 				in := policyOrderInput(t, row, "ork-order-miss", path.cached)
 				if path.edit != nil {
 					path.edit(t, h, in)
@@ -500,9 +492,7 @@ func TestCapacity_ARequestAboveThisOrkersCapReservesNothingWhateverItsOutcome(t 
 			}
 			cpuCap.narrow(h.dispatcher)
 			ceiling, err := h.dispatcher.Policy.ceiling()
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			// A capacity of exactly one cap: whatever an attempt reserves
 			// beyond the poll it was delivered on does not fit.
 			c := newCapacity(ceiling, ceiling, 16)

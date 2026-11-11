@@ -10,8 +10,15 @@ import {
 	joinTitle,
 	joinWord,
 	outstandingHandlers,
-	runFailing
+	runFailing,
+	waitingFact
 } from '../src/lib/join';
+
+test('a task not yet started names the needs it waits on, or that it waits to start once they have finished', () => {
+	expect(waitingFact(['rollback', 'gate'])).toEqual({ label: 'Waiting for', value: 'rollback, gate' });
+	// Its needs have all finished, and something else holds it: an in-flight cap, a hold, a saturated pool.
+	expect(waitingFact([])).toEqual({ label: 'Waiting to start', value: 'its needs have finished' });
+});
 
 test('joinWord spells the DSL word, all_succeeded for UNSPECIFIED', () => {
 	expect(joinWord(JoinPolicy.UNSPECIFIED)).toBe('all_succeeded');

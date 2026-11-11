@@ -2,9 +2,7 @@
 
 This document states OrkStack's security model in one place. Each rule names
 the code or the contract that enforces it, and each one describes this branch as
-it is. It is a description of what is enforced, not an audit. Nothing here makes
-OrkStack production-ready, and the bar for that is set
-in [AGENTS.md](../AGENTS.md), §11.
+it is. It is a description of what is enforced, not an audit.
 
 The engineering contract behind this model is [AGENTS.md](../AGENTS.md) §2.3 (the
 Orker is the security boundary), §6 (security and resource controls) and §15
@@ -204,7 +202,7 @@ Both refusals are `ContractViolation` and are never retried.
 
 ## Image policy
 
-By default, a `uses:` is pulled and run. The engine pins it to a digest at apply,
+By default, a `uses:` is pulled and run. The engine pins it to a digest at create,
 so a tag that moves cannot change a running execution. The digest answers "did
 the image change under us?". It does not answer "should this image run here?".
 The image policy answers the second question
@@ -218,7 +216,7 @@ The image policy answers the second question
   cosign:KEY` requires a valid signature by that key on every image the namespace
   runs. A namespace has no field that loosens the floor.
 
-The policy is checked at three doors: at validate and apply, at every submit before
+The policy is checked at three doors: at validate and create, at every submit before
 a run ID is minted, and by the Orker at dispatch, against the policy the run
 pinned at submit. A run keeps the policy and the key it was submitted under. A
 committed attempt is adopted without being judged again. The Orker verifies the
@@ -268,7 +266,7 @@ pattern, and `*` is the only wildcard. It does not cross `/`.
 | List | Set by | Checked |
 | --- | --- | --- |
 | The Orker's floor | `ORK_ORKER_SECRET_ALLOW` (`orker.secret_allow`) | at dispatch, by the process that reads the value, before the image is pulled |
-| The namespace's allow-list | `orkctl namespace update NAME --allow-secret PATTERN`, cleared by `--clear-allowed-secrets` | at apply, at every submit, and never retroactively |
+| The namespace's allow-list | `orkctl namespace update NAME --allow-secret PATTERN`, cleared by `--clear-allowed-secrets` | at create, at every submit, and never retroactively |
 
 - An empty floor resolves every source of an allowed scheme except the Orker's
   own (below), and the Orker logs a warning at boot that names
@@ -462,6 +460,26 @@ present it as a verified identity, and every rendering says it was asserted
 - `ORK_PRINCIPAL` makes `orkctl` assert a name. It is an assertion like any other.
 - `source_address` is the TCP peer. No `X-Forwarded-For` or other proxy header
   is consulted.
+
+### Sharing across namespaces is a guardrail
+
+An Orkflow's `shared_with:` decides which other namespaces' Orkflows may
+compose it, and composition is the only way one namespace runs another's
+Orkflow ([DSL.md](DSL.md#sharing-across-namespaces), "Sharing across
+namespaces"). The decision is made by one function, `internal/authz.Authorize`,
+from the composing and the composed definitions alone, at validate, at create
+and at every submit that plans the child; the admitting entry is pinned in the
+child's plan. Until callers are authenticated it protects cooperating teams
+from mistakes, not from an adversary: any caller that reaches the API port may
+create an Orkflow in any namespace. A later authentication and RBAC layer
+wraps `Authorize` rather than adding a second decision point, and a
+principal never satisfies a rule, because it is asserted.
+
+A shared child runs in the composing namespace under that namespace's rules:
+its pools, secret policy, image policy and retention. An empty
+`allowed_secrets` leaves a namespace's own Orkflows unrestricted but never a
+shared one: a shared Orkflow that names a secret is refused there
+(`FOREIGN_SECRETS_UNBOUNDED`) until the namespace lists what it may read.
 
 ### Bearer credentials
 
@@ -678,7 +696,7 @@ its own writes (`internal/api/audit.go`). A record is written once to
   admin listener's does too. Any
   process on the machine can also push to the
   quickstart's image registry, which takes a push without a login: its
-  catalog names the first-party activities by a tag there, and an apply pins
+  catalog names the first-party activities by a tag there, and creating an Orkflow pins
   whatever digest that tag names at that moment. A deployment anyone else can
   reach needs the authenticating gateway this model assumes.
 - **Object-storage keys have no default.** With `ORK_S3_ACCESS_KEY` and
@@ -725,6 +743,3 @@ its own writes (`internal/api/audit.go`). A record is written once to
 - **Webhook receivers.** Verifying the signature, and deciding what to do with a
   delivery, is the receiver's job. OrkStack keeps no record of what a receiver did
   with one ([WEBHOOKS.md](WEBHOOKS.md), "Verifying the signature").
-- **Production readiness.** OrkStack's failure and recovery scenarios must be
-  proven before it is called production-ready
-  ([AGENTS.md](../AGENTS.md), §11).

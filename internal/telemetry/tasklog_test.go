@@ -12,6 +12,8 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func testInput() *orkstackv1.ExecuteTaskInput {
@@ -103,9 +105,7 @@ func TestTaskLogWriterTruncatesLongLines(t *testing.T) {
 	}
 
 	var rm metricdata.ResourceMetrics
-	if err := reader.Collect(context.Background(), &rm); err != nil {
-		t.Fatalf("Collect: %v", err)
-	}
+	must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
 	outcome := findCounterOutcome(t, rm, "ork.orker.task_log.records", OutcomeTruncated)
 	if outcome != 1 {
 		t.Errorf("outcome=truncated count = %d, want 1", outcome)
@@ -140,9 +140,7 @@ func TestNewTaskLogExporterDisabled(t *testing.T) {
 		t.Errorf("NewTaskLogExporter(nil, 0) = %v, want nil", exp)
 	}
 	p, err := Setup(context.Background(), Config{})
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	if exp := NewTaskLogExporter(p, 0); exp != nil {
 		t.Errorf("NewTaskLogExporter on disabled Providers = %v, want nil", exp)
 	}

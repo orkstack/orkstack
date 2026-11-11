@@ -24,6 +24,7 @@ declare module 'bun:test' {
 		toBe(expected: T): void;
 		toBeLessThan(expected: number): void;
 		toBeLessThanOrEqual(expected: number): void;
+		toBeGreaterThanOrEqual(expected: number): void;
 		toEqual(expected: unknown): void;
 		toContain(expected: unknown): void;
 		toHaveLength(expected: number): void;
@@ -62,6 +63,15 @@ declare module 'node:fs' {
 	export function rmSync(path: string, options?: { force?: boolean; recursive?: boolean }): void;
 	export function mkdirSync(path: string, options?: { recursive?: boolean }): void;
 	export function mkdtempSync(prefix: string): string;
+	// e2e/processLog.ts and its test (processLog.test.ts): a spec's process
+	// log, opened for appending, and its transcript, kept across a restart.
+	export function appendFileSync(path: string, data: string): void;
+	export interface WriteStream {
+		write(chunk: string): boolean;
+		end(callback?: () => void): void;
+		on(event: 'error', listener: (error: Error) => void): WriteStream;
+	}
+	export function createWriteStream(path: string, options?: { flags?: string }): WriteStream;
 }
 
 // e2e/build-ui.ts runs `bun run build`; build-ui.test.ts imports it.
@@ -77,14 +87,20 @@ declare module 'node:path' {
 		resolve(...paths: string[]): string;
 		dirname(path: string): string;
 		join(...paths: string[]): string;
+		/** e2e/processLog.ts names a start by its command's file name. */
+		basename(path: string): string;
 	};
 	export default path;
 }
 declare module 'node:url' {
 	export function fileURLToPath(url: string): string;
 }
+// e2e/budget.ts scales a render budget by the host's CPUs; its test under
+// ui/test imports it, so the two members it uses are declared here.
 declare module 'node:os' {
 	export function tmpdir(): string;
+	export function cpus(): unknown[];
+	export function availableParallelism(): number;
 }
 
 // The hash e2e/build-hash.ts takes over the UI build's inputs; its test under

@@ -8,6 +8,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fanOutDeclaring is one fan-out over the run input declaring max items.
@@ -26,9 +28,7 @@ tasks:
     with: {op: exec, part: "{{ .each.item }}", pad: "%s"}
 `, items, strings.Repeat("p", pad))
 	wf, err := dsl.Compile([]byte(doc))
-	if err != nil {
-		t.Fatalf("compile a %d-item fan-out: %v", items, err)
-	}
+	must.OKf(t, err, "compile a %d-item fan-out", items)
 	return wf
 }
 

@@ -182,6 +182,47 @@ func TestRun_Check(t *testing.T) {
 // and then the images footer: with placeholders of a digest's length before
 // the images exist, with their digests from -images once they do. A page over
 // GitHub's limit is refused, footer included.
+// TestRun_NotesSync: notes-check passes the page notes printed and refuses a
+// body edited on GitHub, naming the version and the line; notes-republish
+// prints the section above the published footer, and refuses a body with no
+// footer or no -body.
+func TestRun_NotesSync(t *testing.T) {
+	t.Parallel()
+	root := repoWith(t, withUnreleased(changelogFor("1.2.3")))
+	page := invoke(t, nil, nil, "notes", "-version", "v1.2.3", "-root", root)
+	dir := t.TempDir()
+	write := func(name, body string) string {
+		file := filepath.Join(dir, name)
+		if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return file
+	}
+	published := write("published.md", page.stdout)
+	if got := invoke(t, nil, nil, "notes-check", "-version", "v1.2.3", "-root", root, "-body", published); got.code != 0 ||
+		!strings.Contains(got.stdout, "v1.2.3: the release notes match") {
+		t.Fatalf("the page as published: exit %d, stdout %q, stderr %q; want 0", got.code, got.stdout, got.stderr)
+	}
+	edited := write("edited.md", strings.Replace(page.stdout, "- What this release did.", "- What GitHub says now.", 1))
+	if got := invoke(t, nil, nil, "notes-check", "-version", "v1.2.3", "-root", root, "-body", edited); got.code != 1 ||
+		!strings.Contains(got.stderr, "v1.2.3") || !strings.Contains(got.stderr, "line 1") ||
+		!strings.Contains(got.stderr, "- What GitHub says now.") {
+		t.Fatalf("a body edited by hand: exit %d, stderr %q; want 1 naming the version and the line", got.code, got.stderr)
+	}
+	republished := invoke(t, nil, nil, "notes-republish", "-version", "v1.2.3", "-root", root, "-body", edited)
+	if republished.code != 0 || republished.stdout != page.stdout {
+		t.Fatalf("republish: exit %d, stdout %q (stderr %q); want the page notes printed", republished.code, republished.stdout, republished.stderr)
+	}
+	bare := write("bare.md", "First release.\n")
+	if got := invoke(t, nil, nil, "notes-republish", "-version", "v1.2.3", "-root", root, "-body", bare); got.code != 1 ||
+		got.stdout != "" || !strings.Contains(got.stderr, "no image footer") {
+		t.Fatalf("a body with no footer: exit %d, stdout %q, stderr %q; want 1 naming the footer", got.code, got.stdout, got.stderr)
+	}
+	if got := invoke(t, nil, nil, "notes-check", "-version", "v1.2.3", "-root", root); got.code != 2 || !strings.Contains(got.stderr, "-body") {
+		t.Fatalf("no -body: exit %d, stderr %q; want 2 naming the flag", got.code, got.stderr)
+	}
+}
+
 func TestRun_Notes(t *testing.T) {
 	t.Parallel()
 	root := repoWith(t, withUnreleased(changelogFor("1.2.3")))

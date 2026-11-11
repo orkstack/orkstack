@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // auditReadRPCs is every unary RPC that only reads. Each entry begins with one
@@ -202,9 +204,7 @@ func TestAuditInterceptor_DetachedFromRequestCancellation(t *testing.T) {
 	page, err := store.ListAuditRecords(context.Background(), artifacts.AuditQuery{
 		Since: now.Add(-time.Hour), Until: now.Add(time.Hour), Limit: 10,
 	})
-	if err != nil {
-		t.Fatalf("ListAuditRecords: %v", err)
-	}
+	must.OKf(t, err, "ListAuditRecords")
 	if len(page.Records) != 1 || page.Records[0].GetAction() != "namespace.delete" || page.Records[0].GetTarget() != "gone" {
 		t.Fatalf("records = %v, want the delete recorded despite the cancelled request", page.Records)
 	}

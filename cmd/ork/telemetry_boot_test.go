@@ -14,6 +14,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/telemetry"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // clearTelemetryEnv unsets every variable telemetry.ConfigFromEnv reads, and
@@ -98,9 +100,7 @@ func TestBootTelemetryZeroConfig(t *testing.T) {
 	clearTelemetryEnv(t)
 
 	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceEngine)
-	if err != nil {
-		t.Fatalf("telemetry.Boot: %v", err)
-	}
+	must.OKf(t, err, "telemetry.Boot")
 	if sinks.Default().Enabled() {
 		t.Fatalf("sinks.Default().Enabled() = true, want false with no telemetry env set")
 	}
@@ -142,13 +142,9 @@ func TestAPIHandlerWrapsWithTracingOn(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
 
 	_, sinks, err := telemetry.Boot(telemetry.ServiceEngine)
-	if err != nil {
-		t.Fatalf("telemetry.Boot: %v", err)
-	}
+	must.OKf(t, err, "telemetry.Boot")
 	tcfg, err := telemetry.ConfigFromEnv(telemetry.ServiceEngine)
-	if err != nil {
-		t.Fatalf("ConfigFromEnv: %v", err)
-	}
+	must.OKf(t, err, "ConfigFromEnv")
 
 	mux := http.NewServeMux()
 	h := apiHandler(tcfg, sinks, mux)
@@ -167,9 +163,7 @@ func TestConnectTemporal_DialsWithTheTelemetryItWasGiven(t *testing.T) {
 	t.Setenv(telemetry.TracesExporterVar, "otlp")
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
 	_, sinks, err := telemetry.Boot(telemetry.ServiceEngine)
-	if err != nil {
-		t.Fatalf("telemetry.Boot: %v", err)
-	}
+	must.OKf(t, err, "telemetry.Boot")
 
 	cfg := config{temporalAddress: testAddress, temporalNamespace: "ork-telemetry-on"}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -194,9 +188,7 @@ func TestWireEventObserver_AdminAddrAloneDoesNotWireIt(t *testing.T) {
 	t.Setenv(telemetry.AdminAddrVar, "127.0.0.1:0")
 
 	tcfg, err := telemetry.ConfigFromEnv(telemetry.ServiceEngine)
-	if err != nil {
-		t.Fatalf("ConfigFromEnv: %v", err)
-	}
+	must.OKf(t, err, "ConfigFromEnv")
 	if !tcfg.Enabled() {
 		t.Fatal("tcfg.Enabled() = false with ORK_ADMIN_ADDR set, want true")
 	}
@@ -213,9 +205,7 @@ func TestWireEventObserver_ASignalWiresIt(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:1")
 
 	tcfg, err := telemetry.ConfigFromEnv(telemetry.ServiceEngine)
-	if err != nil {
-		t.Fatalf("ConfigFromEnv: %v", err)
-	}
+	must.OKf(t, err, "ConfigFromEnv")
 	if !wireEventObserver(tcfg) {
 		t.Fatal("wireEventObserver = false with OTEL_TRACES_EXPORTER=otlp, want true")
 	}

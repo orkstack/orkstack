@@ -14,6 +14,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingObserver is a ContinuationObserver that keeps every observation.
@@ -45,9 +47,7 @@ func TestWriteCheckpoint_ObservesSizeOutcomeAndHold(t *testing.T) {
 	a := NewSnapshotActivities(newMemSnapshotStore()).WithContinuationObserver(obs)
 	in := ContinuationObservationInput{Namespace: "team-a", HoldSeconds: 7}
 	written, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, in)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 8, in); err != nil {
 		t.Fatal(err)
 	}
@@ -74,9 +74,7 @@ func TestWriteSwitchSnapshot_ObservesItsSize(t *testing.T) {
 	obs := &recordingObserver{}
 	a := NewSnapshotActivities(newMemSnapshotStore()).WithContinuationObserver(obs)
 	obj, err := a.WriteSwitchSnapshot(context.Background(), observedRun(), "team-a", 0, ContinuationObservationInput{Namespace: "team-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(obs.writes) != 1 || obs.writes[0].Kind != "snapshot" || obs.writes[0].StateBytes != obj.GetSizeBytes() || obs.writes[0].Outcome != "" {
 		t.Fatalf("observations = %+v", obs.writes)
 	}
@@ -99,9 +97,7 @@ func TestReadContinuationChunk_ObservesRestoreOnTheFinalChunk(t *testing.T) {
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
 	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{Namespace: "team-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	obs := &recordingObserver{}
 	a.WithContinuationObserver(obs)
 	size := obj.GetSizeBytes()
@@ -122,9 +118,7 @@ func TestReadContinuationChunk_ObservesItsAttempt(t *testing.T) {
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
 	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{Namespace: "team-a"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	obs := &recordingObserver{}
 	a.WithContinuationObserver(obs)
 	readChunkInActivity(t, a, obj.GetUri(), obj.GetSizeBytes(), 0, obj.GetSizeBytes(), true)
@@ -150,9 +144,7 @@ func TestReadContinuationChunk_SizeMismatchIsCorruptAndNamesNoObject(t *testing.
 	store := newMemSnapshotStore()
 	a := NewSnapshotActivities(store)
 	obj, err := a.WriteCheckpoint(context.Background(), observedRun(), 0, 1<<30, ContinuationObservationInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestActivityEnvironment()
 	env.RegisterActivityWithOptions(a.ReadContinuationChunk, activity.RegisterOptions{Name: ActivityReadContinuationChunk})

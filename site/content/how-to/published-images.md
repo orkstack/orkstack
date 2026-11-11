@@ -73,7 +73,7 @@ The `-it` flags give the command a terminal, so it can ask you to confirm. A scr
 docker run --rm -e ORK_SERVER=http://ork.internal:8080 ghcr.io/orkstack/orkctl:0.2.0 release promote 0.2.0 --yes
 ```
 
-The image's working directory is `/work`. To apply a file, mount its folder there, for example with `-v "$PWD:/work:ro"`, and pass the file's name.
+The image's working directory is `/work`. To create an Orkflow from a file, mount its folder there, for example with `-v "$PWD:/work:ro"`, and pass the file's name.
 
 ## An Orker
 

@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const capGiB = int64(1) << 30
@@ -98,9 +100,7 @@ func TestInspectRun_AnAttemptWaitingOnAFullPoolSaysItWaitsForCapacity(t *testing
 	}, fleet)
 
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	want := &orkstackv1.CapacityWait{Pool: "build", Orkers: 1,
 		Reserved: &orkstackv1.ResourceQuantity{Cpu: 4, MemoryBytes: 2 * capGiB},
 		Capacity: &orkstackv1.ResourceQuantity{Cpu: 4, MemoryBytes: 16 * capGiB}}
@@ -148,9 +148,7 @@ func TestInspectRun_NoAttemptWaitingForAnOrkerReadsNoInventory(t *testing.T) {
 	}, fleet)
 
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	if len(resp.GetAttempts()) != 4 {
 		t.Fatalf("attempts = %v, want all four", resp.GetAttempts())
 	}
@@ -199,9 +197,7 @@ func TestInspectRun_AnOrkerThatDidNotAnswerKeepsEveryPoolFromBeingCalledFull(t *
 	f := newCapacityInspectFixture(t, run, []*orkstackv1.LiveAttempt{waitingAttempt("build")}, fleet)
 
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	if got := resp.GetAttempts()[0].GetCapacityWait(); got != nil {
 		t.Fatalf("capacity_wait = %v with an Orker unanswered, want none", got)
 	}
@@ -284,9 +280,7 @@ func TestInspectRun_AnAttemptIsAskedAboutOnceNoPollCouldBeAboutToTakeIt(t *testi
 			f := newCapacityInspectFixture(t, run, []*orkstackv1.LiveAttempt{attempt}, fleet)
 
 			resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-			if err != nil {
-				t.Fatalf("InspectRun: %v", err)
-			}
+			must.OKf(t, err, "InspectRun")
 			wait := resp.GetAttempts()[0].GetCapacityWait()
 			if tc.asked && (wait.GetPool() != "build" || fleet.observeOrkers != 1) {
 				t.Fatalf("an attempt waiting %s: capacity_wait = %v after %d inventory reads, want the full pool after one",
@@ -320,9 +314,7 @@ func TestInspectRun_AnAttemptOnAPoolPausedForAStoreOutageSaysSo(t *testing.T) {
 	f := newCapacityInspectFixture(t, run, []*orkstackv1.LiveAttempt{waitingAttempt("paused"), waitingAttempt("shared")}, fleet)
 
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	for _, attempt := range resp.GetAttempts() {
 		wait := attempt.GetStoreOutageWait()
 		switch attempt.GetTaskId() {

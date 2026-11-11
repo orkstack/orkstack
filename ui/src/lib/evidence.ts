@@ -132,7 +132,7 @@ export function evidenceCommand(
 		'evidence',
 		'export',
 		runId,
-		'--output',
+		'-o',
 		`${runId}.evidence.tar.gz`,
 		...(o.logs ? [] : ['--no-logs']),
 		...(o.artifacts ? [] : ['--no-artifacts'])
@@ -214,7 +214,7 @@ export function evidenceTooLarge(
 ): { message: string; command: string } | null {
 	if (m.counts.bytes_present <= EVIDENCE_BROWSER_MAX_BYTES) return null;
 	return {
-		message: `This bundle is ${formatBytes(m.counts.bytes_present)}, more than the ${formatBytes(EVIDENCE_BROWSER_MAX_BYTES)} a browser download assembles in memory. Export it with the CLI:`,
+		message: `This bundle is ${formatBytes(m.counts.bytes_present)}, more than the ${formatBytes(EVIDENCE_BROWSER_MAX_BYTES)} a browser download assembles in memory. Export it from the command line: its command is behind the terminal icon below.`,
 		command: evidenceCommand(namespace, runId, o)
 	};
 }

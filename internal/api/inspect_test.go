@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // liveFakeReader is a fakeReader that can also describe a live execution:
@@ -117,9 +119,7 @@ func TestInspectRun_ReturnsLiveAttemptsInTaskRunOrder(t *testing.T) {
 		{TaskId: "fetch", State: orkstackv1.LiveAttemptState_LIVE_ATTEMPT_STATE_STARTED},
 	}}, nil)
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	if got := fmt.Sprint(taskIDsOf(resp.GetAttempts())); got != "[fetch load]" {
 		t.Fatalf("attempt order = %s, want [fetch load] (Run.task_runs order)", got)
 	}
@@ -138,9 +138,7 @@ func TestInspectRun_TaskFilterNarrowsAndUnknownTaskIsNotFound(t *testing.T) {
 		{TaskId: "fetch"}, {TaskId: "load"},
 	}}, nil)
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId(), TaskId: "load"})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	if got := fmt.Sprint(taskIDsOf(resp.GetAttempts())); got != "[load]" {
 		t.Fatalf("attempts = %s, want [load]", got)
 	}
@@ -156,9 +154,7 @@ func TestInspectRun_ATerminalRunAnswersFromTheSnapshotWithoutTheCluster(t *testi
 	run := inspectRun("ork-inspect-3", orkstackv1.Status_STATUS_SUCCEEDED, "fetch")
 	f := newInspectFixture(t, run, engine.LiveRun{Attempts: []*orkstackv1.LiveAttempt{{TaskId: "fetch"}}}, nil)
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	if len(resp.GetAttempts()) != 0 || resp.GetRunStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("response = %v, want SUCCEEDED and no attempts", resp)
 	}
@@ -213,9 +209,7 @@ func inMemoryRunClient(t *testing.T, runs *engine.RunStore) orkstackv1connect.Ru
 	})
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
 	transport.Protocols = new(http.Protocols)
@@ -245,9 +239,7 @@ func TestInspectRun_ARunThatLeftTheClusterAnswersTheSnapshotStatus(t *testing.T)
 	run := inspectRun("ork-inspect-7", orkstackv1.Status_STATUS_RUNNING, "fetch")
 	f := newInspectFixture(t, run, engine.LiveRun{}, fmt.Errorf("gone: %w", engine.ErrRunNotFound))
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	if len(resp.GetAttempts()) != 0 || resp.GetRunStatus() != orkstackv1.Status_STATUS_RUNNING {
 		t.Fatalf("response = %v, want RUNNING (the snapshot's) and no attempts", resp)
 	}
@@ -282,9 +274,7 @@ func TestInspectRun_StalenessIsComputedAgainstTheHandlerClock(t *testing.T) {
 		})
 		f := &inspectFixture{readerFixture: fixture, live: live}
 		resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-		if err != nil {
-			t.Fatalf("InspectRun: %v", err)
-		}
+		must.OKf(t, err, "InspectRun")
 		if got := resp.GetAttempts()[0].GetHeartbeatStale(); got != tc.stale {
 			t.Fatalf("Now %s after the last beat: heartbeat_stale = %v, want %v",
 				now.Sub(lastBeat), got, tc.stale)
@@ -307,9 +297,7 @@ func TestInspectRun_APendingTaskMissingFromTheSnapshotIsKeptLast(t *testing.T) {
 		{TaskId: "zeta"}, {TaskId: "load"}, {TaskId: "alpha"}, {TaskId: "fetch"},
 	}}, nil)
 	resp, err := f.inspect(t, &orkstackv1.InspectRunRequest{RunId: run.GetId()})
-	if err != nil {
-		t.Fatalf("InspectRun: %v", err)
-	}
+	must.OKf(t, err, "InspectRun")
 	if got := fmt.Sprint(taskIDsOf(resp.GetAttempts())); got != "[fetch load alpha zeta]" {
 		t.Fatalf("attempts = %s, want [fetch load alpha zeta]", got)
 	}

@@ -63,9 +63,7 @@ updates:
   # digest too. deploy/skopeo-image.txt, deploy/cosign-image.txt,
   # deploy/grype-image.txt, the QEMU and BuildKit images in release.yml's
   # `with:`, proof.yml's BuildKit, and the BuildKit image in nightly.yml's
-  # vuln-images job, both held equal to release.yml's
-  # (TestWorkflows_TheNightlyScansJavaScriptAndImages for nightly.yml's), are
-  # moved by hand.
+  # vuln-images job, both kept equal to release.yml's, are moved by hand.
   - package-ecosystem: docker-compose
     directories: ["/", "/deploy"]
     schedule:
@@ -80,7 +78,7 @@ updates:
 
   # Every action is pinned by the full commit SHA of a release, with the
   # release in a comment on the same line (`@<sha> # vX.Y.Z`); Dependabot
-  # moves both together (TestWorkflows_ActionsAndToolchainsArePinnedExactly).
+  # moves both together.
   # "/" reads .github/workflows; each composite action's action.yml is read
   # only from a directory listed here.
   - package-ecosystem: github-actions

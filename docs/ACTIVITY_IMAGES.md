@@ -43,7 +43,7 @@ tasks:
         status: ok
 ```
 
-The catalog name `http` resolves to the `activity-http` OCI image at apply time.
+The catalog name `http` resolves to the `activity-http` OCI image when the Orkflow is created.
 A task may instead put a registry reference directly in `uses:`. There is no
 `container` activity: every activity already is a container, so a custom
 workload names its own image directly.
@@ -66,9 +66,9 @@ Rules for reference activity authors:
 
 An image MAY write down its `with:` contract in one OCI image label,
 `org.orkstack.activity.interface`. The engine reads it from the image's config
-during the apply-time resolution that already pins the digest (OCI Activity
+during the create-time resolution that already pins the digest (OCI Activity
 Contract §4.3) and checks every task's `with:` against it at `orkctl orkflow
-validate` and at apply (`docs/DSL.md`, validation rule 14). The container never
+validate` and at create (`docs/DSL.md`, validation rule 14). The container never
 reads the label, and nothing about it is stored: it is recomputed from the
 digest-addressed image on every read (an `InspectActivity` that asks with
 `allow_cached` about a pinned digest may get an earlier read of it), so it
@@ -82,7 +82,7 @@ manifest in index order, so every platform variant should carry the same
 labels.
 
 The label is **optional**. An image without it is an ordinary activity,
-resolved, applied and run exactly as before; its `with:` is checked by the
+resolved, created and run exactly as before; its `with:` is checked by the
 image itself at run time (rule 2 above).
 
 ### Writing it: `interface.ork.yaml`
@@ -146,7 +146,7 @@ that reads no key beyond `fields` is written `name: {}` or `name:` alone.
 Editors complete it from [`activityinterface.v1.json`](schemas/activityinterface.v1.json),
 which the dispatcher `orkstack.v1.json` selects by `kind`, so the
 `*.ork.yaml` mapping of `docs/DSL.md`, "Editor support", covers
-`interface.ork.yaml`. It is never applied: `orkctl apply` refuses one named on
+`interface.ork.yaml`. It is never created or applied: `orkctl orkflow create` and `orkctl automation apply` refuse one named on
 its command line and skips one it finds in a directory, naming it on
 stderr.
 
@@ -195,7 +195,7 @@ What a document is told:
 
 - a required key that is not supplied, an `op` the image does not declare, or
   a missing `op` with no default is an **error** — the image would refuse it
-  at run time, so apply refuses it first and nothing is stored;
+  at run time, so creating the Orkflow refuses it first and nothing is stored;
 - a key the interface does not declare is a **warning**, never an error — the
   image may accept more than it declares;
 - a literal whose JSON type disagrees with the declared type is a
@@ -210,7 +210,7 @@ What a document is told:
 `orkctl activity inspect <name-or-reference>` shows what an image declares —
 its interface, icon and descriptions — and Admin → Activities shows its
 interface. `orkctl activity test <image>` reports the interface beside the
-contract's assertions (declared, none or malformed), read as apply reads it;
+contract's assertions (declared, none or malformed), read as creating an Orkflow reads it;
 the label is optional, so the test never fails over it. Every first-party
 image carries the three labels, and so does each example image: each one's
 `interface.ork.yaml`, beside its Dockerfile, is the source, and
@@ -415,7 +415,7 @@ false for each first-party image; each image's README has the detail.
    revoked or a repository's access removed, a cached private clone would keep
    handing out the tree until its memo expired (up to `ORK_CACHE_MAX_TTL`) or
    someone purged it, and the key covers a secret's name and source, never its
-   value, so rotating the token changes nothing. Apply warns on every cached
+   value, so rotating the token changes nothing. Creating an Orkflow warns on every cached
    task that mounts a secret.
 3. **Cache the tasks after an uncached step instead.** A cached task's key
    covers the content digest of every staged input — every succeeded

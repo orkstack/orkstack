@@ -2,7 +2,7 @@
 
 ## What these are
 
-Every Orkflow here runs as it stands: apply it, submit it with no inputs, and it
+Every Orkflow here runs as it stands: create it, submit it with no inputs, and it
 reaches the result its comment header states. There is no input to find out, no
 secret to supply and no service to stand up. The table's *Needs* column lists
 what each one does need. Two ask one thing more: `order-saga` and `approval-gate`
@@ -11,7 +11,7 @@ recipe beside their build, [`custom-image/custom-image.ork.yaml`](custom-image/c
 and not one of these.
 
 Each is a runnable reference document: the test suite compiles each one, runs
-every `orkctl run plan --file` line in its comment header as a CI check, and runs
+every `orkctl run plan -f` line in its comment header as a CI check, and runs
 each end to end against a real engine, Orker, Temporal and object store.
 [`docs/ORKFLOW_PATTERNS.md`](../docs/ORKFLOW_PATTERNS.md) is the guide they
 illustrate; each example names the sections it shows in a `# Pattern:` line
@@ -23,10 +23,10 @@ Every example pins its `version:`, and a store refuses different bytes under
 a version it already holds ([`docs/DSL.md`](../docs/DSL.md), "The document
 header"). On 2026-10-27 every example's YAML was rewritten in block style,
 one `- item` or `key: value` per line, and no definition changed: each
-compiles to the digest it had. A store that applied an example before then
-refuses the new file under the same version, so apply it to a fresh store
+compiles to the digest it had. A store that created an example before then
+refuses the new file under the same version, so create it in a fresh store
 or under another version. An example changed since then has a new version, and
-applies beside the one a store already holds.
+is created beside the one a store already holds.
 
 ## Running them
 
@@ -36,16 +36,16 @@ Start a stack first, from the repository's root: the quickstart,
 ([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack"). Then:
 
 ```sh
-orkctl apply examples/decide-and-route.ork.yaml  # store one example
-orkctl run plan decide-and-route --output decide='{"result":{"route":"canary","notify":true}}'
-orkctl run submit decide-and-route --watch       # run it: it needs no inputs
+orkctl orkflow create examples/decide-and-route.ork.yaml  # store one example
+orkctl run plan decide-and-route -o decide='{"result":{"route":"canary","notify":true}}'
+orkctl run submit decide-and-route -w       # run it: it needs no inputs
 ```
 
 - `orkctl run plan <name> …` plans a stored Orkflow; the plan lines in a
-  comment header use `--file examples/<file>` and plan the file without storing it.
-- `orkctl task run --file examples/<file> --task <id> …` tries one task
+  comment header use `-f examples/<file>` and plan the file without storing it.
+- `orkctl task run -f examples/<file> -t <id> …` tries one task
   locally, without a run.
-- The UI's Apply page lists the same files as cards; a card's text is the
+- The UI's Create Orkflow page lists the same files as cards; a card's text is the
   example's `description:`.
 
 Task containers reach the internet, not this stack, so an example that talks to
@@ -60,14 +60,15 @@ keeps polling until its retries run out.
 
 | Example | Shows | Activities | Needs |
 |---|---|---|---|
-| [approval-gate](approval-gate.ork.yaml) | an approval only when a change is risky; apply, decline, or report a rejection | `json`, `shell`, an awaited task, `notify-block` | `notify-block` applied first; internet access to `httpbin.org` |
+| [approval-gate](approval-gate.ork.yaml) | an approval only when a change is risky; apply, decline, or report a rejection | `json`, `shell`, an awaited task, `notify-block` | `notify-block` created first; internet access to `httpbin.org` |
+| [bake-then-verify](bake-then-verify.ork.yaml) | a change, a five-second bake that runs no container, then a check; the run succeeds once the check passes | `shell`, a sleeping task | nothing |
 | [config-from-git](config-from-git.ork.yaml) | resolve a branch to a commit, render one config per service, cached while the commit holds | `git`, `file`, `shell`, `json`, `template` | internet access to `github.com` |
 | [decide-and-route](decide-and-route.ork.yaml) | decide in a json task, branch three ways, re-join | `json`, `shell` | nothing |
 | [each-fan-out](each-fan-out.ork.yaml) | a fan-out over a list a json task computes | `json`, `shell` | nothing |
 | [http-post](http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and a condition on its status | `http`, `file`, `shell` | internet access to `httpbin.org` |
 | [inputs-and-escaping](inputs-and-escaping.ork.yaml) | typed inputs; argv, positional arguments, `sh` and jq `vars` against a hostile default | `shell`, `json`, `file` | nothing |
 | [notify-block](notify-block.ork.yaml) | a reusable block: one JSON notification, its status as the declared output | `json`, `http` | internet access to `httpbin.org` |
-| [order-saga](order-saga.ork.yaml) | a saga over an HTTP API: compensate, report either way | `json`, `http`, `notify-block` | `notify-block` applied first; internet access to `httpbin.org` |
+| [order-saga](order-saga.ork.yaml) | a saga over an HTTP API: compensate, report either way | `json`, `http`, `notify-block` | `notify-block` created first; internet access to `httpbin.org` |
 | [pinned-checkout](pinned-checkout.ork.yaml) | a git checkout into a pin, validated and packaged in place | `git`, `shell`, `json`, `file` | internet access to `github.com` |
 | [poll-until-ready](poll-until-ready.ork.yaml) | polling through a retry policy, with no loop | `shell`, `http`, `json` | internet access to `httpbin.org` |
 | [automation/examples.ork.yaml](automation/examples.ork.yaml) | the namespace's settings, a schedule and a trigger, declared | an automation document | the recipe below |
@@ -80,28 +81,28 @@ keeps polling until its retries run out.
 you: store the block first, in the same namespace, in a command of its own.
 
 ```sh
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/order-saga.ork.yaml
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/order-saga.ork.yaml
 ```
 
 ```sh
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/approval-gate.ork.yaml
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/approval-gate.ork.yaml
 ```
 
-Apply the block in its own command. Applying several documents at once
-(`orkctl apply examples/`) validates every one before writing any, against
-the Orkflows already stored — so a block in the same command does not count,
-a composing example is refused, and nothing is written.
+Create the block in its own command. Creating several Orkflows at once
+(`orkctl orkflow create examples/*.ork.yaml`) validates every one before writing
+any, against the Orkflows already stored — so a block in the same command does
+not count, a composing example is refused, and nothing is written.
 
 Their default paths succeed with nobody there. To see the others:
 
 ```sh
 # The shipping service refuses: the shipment fails, and the reservation and the payment are undone.
-orkctl run submit order-saga --input shipping_api=https://httpbin.org/absent --watch
+orkctl run submit order-saga -i shipping_api=https://httpbin.org/absent -w
 # A risky change: the run waits for an approval. Resolve it with the run id this prints.
 orkctl run submit approval-gate --input-json '{"changes":[{"service":"payments","setting":"limit","value":"10"}]}'
-orkctl run resolve <run> --task approval --values '{"approved":true,"approver":"dana"}'
+orkctl run resolve <run> -t approval --values '{"approved":true,"approver":"dana"}'
 ```
 
 ## The automation document
@@ -109,14 +110,15 @@ orkctl run resolve <run> --task approval --values '{"approved":true,"approver":"
 [`examples/automation/examples.ork.yaml`](automation/examples.ork.yaml)
 declares a description for the `default` namespace, a schedule that runs
 `poll-until-ready` once a day, and a trigger for `approval-gate`. A schedule or
-trigger must name an Orkflow that is stored or applied by the same command, and
+trigger must name an Orkflow version that is already created, and
 `approval-gate` composes `notify-block`, so:
 
 ```sh
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml --dry-run
-orkctl apply examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml examples/automation/examples.ork.yaml
-orkctl apply examples/automation/examples.ork.yaml --check     # exits 0: nothing drifted
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/poll-until-ready.ork.yaml examples/approval-gate.ork.yaml
+orkctl automation apply examples/automation/examples.ork.yaml --dry-run
+orkctl automation apply examples/automation/examples.ork.yaml
+orkctl automation apply examples/automation/examples.ork.yaml --check     # exits 0: nothing drifted
 orkctl schedule fire poll-exports                              # one fire now
 orkctl schedule delete poll-exports                            # when you are done with it
 ```
@@ -143,8 +145,8 @@ Each prints its pinned `…@sha256:…` reference. Paste each one over its tag i
 recipe, then:
 
 ```sh
-orkctl apply examples/custom-image/custom-image.ork.yaml
-orkctl run submit custom-image --watch
+orkctl orkflow create examples/custom-image/custom-image.ork.yaml
+orkctl run submit custom-image -w
 ```
 
 Each image's README ([Go](custom-image/README.md),

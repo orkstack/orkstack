@@ -19,6 +19,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/testsupport/s3bucket"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // validBucket is S3's bucket naming rule for the subset Name produces:
@@ -151,9 +153,7 @@ func newFakeStore(t *testing.T, f *fakeStore) *s3.Client {
 		S3Endpoint: server.URL, S3Region: "us-east-1",
 		S3AccessKey: "access", S3SecretKey: "secret", S3PathStyle: true,
 	})
-	if err != nil {
-		t.Fatalf("client: %v", err)
-	}
+	must.OKf(t, err, "client")
 	return client
 }
 
@@ -161,9 +161,7 @@ func TestRemove_IsOneRequestWhenTheStoreDeletesANonEmptyBucket(t *testing.T) {
 	store := &fakeStore{objects: []string{"metadata/a.json", "runs/b/commit.json"}, deletesNonEmpty: true}
 	client := newFakeStore(t, store)
 
-	if err := s3bucket.Remove(context.Background(), client, "orkstack-ork-1-2"); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
+	must.OKf(t, s3bucket.Remove(context.Background(), client, "orkstack-ork-1-2"), "Remove")
 	if got, want := store.log(), []string{"DELETE /orkstack-ork-1-2"}; !slices.Equal(got, want) {
 		t.Fatalf("requests = %q, want exactly %q: a bucket a store can delete whole is not walked object by object", got, want)
 	}
@@ -173,9 +171,7 @@ func TestRemove_EmptiesTheBucketFirstWhenTheStoreRefusesANonEmptyOne(t *testing.
 	store := &fakeStore{objects: []string{"metadata/a.json", "runs/b/commit.json"}}
 	client := newFakeStore(t, store)
 
-	if err := s3bucket.Remove(context.Background(), client, "orkstack-ork-1-2"); err != nil {
-		t.Fatalf("Remove: %v", err)
-	}
+	must.OKf(t, s3bucket.Remove(context.Background(), client, "orkstack-ork-1-2"), "Remove")
 	want := []string{
 		"DELETE /orkstack-ork-1-2",                    // refused: BucketNotEmpty
 		"GET /orkstack-ork-1-2?list-type=2",           // so it lists
@@ -195,9 +191,7 @@ func TestRemove_ABucketAlreadyGoneIsRemoved(t *testing.T) {
 	store := &fakeStore{gone: true}
 	client := newFakeStore(t, store)
 
-	if err := s3bucket.Remove(context.Background(), client, "orkstack-ork-1-2"); err != nil {
-		t.Fatalf("Remove of a bucket that is already gone: %v", err)
-	}
+	must.OKf(t, s3bucket.Remove(context.Background(), client, "orkstack-ork-1-2"), "Remove of a bucket that is already gone")
 	if got := store.log(); len(got) != 1 {
 		t.Fatalf("requests = %q, want the one delete", got)
 	}
@@ -213,9 +207,7 @@ func TestRemove_AnyOtherRefusalIsReturned(t *testing.T) {
 	client, err := s3bucket.Client(context.Background(), artifacts.Config{
 		S3Endpoint: server.URL, S3Region: "us-east-1", S3AccessKey: "a", S3SecretKey: "s", S3PathStyle: true,
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	err = s3bucket.Remove(context.Background(), client, "orkstack-ork-1-2")
 	if err == nil || !strings.Contains(err.Error(), "AccessDenied") {
 		t.Fatalf("Remove = %v, want the store's AccessDenied", err)
@@ -357,9 +349,7 @@ func TestDevKey(t *testing.T) {
 			if os.Getenv("ORK_S3_ACCESS_KEY") != tc.access || os.Getenv("ORK_S3_SECRET_KEY") != tc.secret {
 				t.Error("DevConfig changed the environment")
 			}
-			if err := s3bucket.UseDevKey(); err != nil {
-				t.Fatalf("UseDevKey: %v", err)
-			}
+			must.OKf(t, s3bucket.UseDevKey(), "UseDevKey")
 			if got, want := os.Getenv("ORK_S3_ACCESS_KEY"), tc.wantAccess; got != want {
 				t.Errorf("ORK_S3_ACCESS_KEY = %q, want %q", got, want)
 			}

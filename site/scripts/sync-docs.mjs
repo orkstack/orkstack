@@ -480,64 +480,6 @@ function diagramFigure(name) {
 
 // ------------------------------------------- generated blocks
 
-const MODULE = 'github.com/orkstack/orkstack/';
-
-/** The GitHub URL of a test's declaration, found in its package's sources. */
-function testUrl(importPath, test) {
-	const dir = importPath.startsWith(MODULE) ? importPath.slice(MODULE.length) : null;
-	if (!dir) return null;
-	const abs = path.join(repoRoot, dir);
-	if (!existsSync(abs)) return null;
-	for (const name of readdirSync(abs).sort()) {
-		if (!name.endsWith('_test.go')) continue;
-		const lines = readFileSync(path.join(abs, name), 'utf8').split('\n');
-		const i = lines.findIndex((l) => l.startsWith(`func ${test}(`));
-		if (i >= 0) return `${repoUrl(`${dir}/${name}`)}#L${i + 1}`;
-	}
-	return null;
-}
-
-/**
- * The §11 coverage map as a table: every claim of AGENTS.md §11's list and
- * the tests that prove it, linked to their source, read from
- * scripts/proof-section11-coverage.tsv (which TestSection11Coverage holds
- * true) on every build.
- */
-function section11Coverage() {
-	const rel = 'scripts/proof-section11-coverage.tsv';
-	const rows = readFileSync(path.join(repoRoot, rel), 'utf8')
-		.split('\n')
-		.filter((l) => l && !l.startsWith('#'))
-		.map((l) => l.split('\t'));
-	const out = ['| § | Claim | Proved by |', '|---|---|---|'];
-	for (const [bullet, claim, evidence = '', gap = ''] of rows) {
-		const key = claim.split(' ')[0];
-		const text = claim.slice(key.length + 1).replace(/\|/g, '\\|');
-		const proofs = evidence
-			.split(',')
-			.filter(Boolean)
-			.map((e) => {
-				const f = /^fixture:([^:]+):(.*)$/.exec(e);
-				if (f) return `[${path.basename(f[1])}](${repoUrl(f[1])}) (fixture)`;
-				const m = /^(unit|integration|chaos):(.+)\.(Test[A-Za-z0-9_]*)(\/.*)?$/.exec(e);
-				if (!m) {
-					fail(`${rel}: cannot read the evidence ${e}`);
-					return e;
-				}
-				const [, kind, pkg, test, sub = ''] = m;
-				const href = testUrl(pkg, test);
-				if (!href) {
-					fail(`${rel}: ${test} is not declared in ${pkg}`);
-					return `\`${test}\``;
-				}
-				return `[\`${test}${sub}\`](${href}) (${kind})`;
-			});
-		if (gap) proofs.push(`**${gap.replace(/^known-gap:\s*/, 'Known gap: ')}**`);
-		out.push(`| ${bullet} (${key}) | ${text} | ${proofs.join('<br>')} |`);
-	}
-	return [`The coverage map, generated from [\`${rel}\`](${repoUrl(rel)}):`, '', ...out].join('\n');
-}
-
 // ------------------------------------------- the configuration settings
 
 const deployRel = 'docs/DEPLOY.md';
@@ -641,7 +583,6 @@ function defaultsYaml() {
 }
 
 const generatedBlocks = {
-	'section11-coverage': section11Coverage,
 	'settings-all': settingsAll,
 	'defaults-yaml': defaultsYaml,
 	'find-your-way': findYourWay,
@@ -733,15 +674,15 @@ for (const ex of exampleFiles) {
 	const row = galleryRows.get(ex.id);
 	if (!row) fail(`${ex.rel} has no row in the Example gallery's table`);
 	const siteLinks = (t) => t.replace(/\]\(\/docs\//g, `](${BASE_PATH}/docs/`);
-	const inputFlags = ex.required.map((k) => ` --input ${k}=…`).join('');
+	const inputFlags = ex.required.map((k) => ` -i ${k}=…`).join('');
 	const run =
 		ex.kind === 'Automation'
 			? [`This is an automation document: [Automation documents](${url('docs/operate/automation')}) shows how to plan and apply it.`]
 			: [
 					'```bash',
-					...ex.composes.map((block) => `orkctl apply examples/${block}.ork.yaml`),
-					`orkctl apply ${ex.rel}`,
-					`orkctl run submit ${ex.name}${inputFlags} --watch`,
+					...ex.composes.map((block) => `orkctl orkflow create examples/${block}.ork.yaml`),
+					`orkctl orkflow create ${ex.rel}`,
+					`orkctl run submit ${ex.name}${inputFlags} -w`,
 					'```',
 					...(ex.required.length ? ['', `Pass your own value for each input (\`${ex.required.join('`, `')}\`). [Inputs and outputs](${url('docs/build/inputs-and-outputs')}) shows how.`] : []),
 				];

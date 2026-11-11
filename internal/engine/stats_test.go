@@ -11,6 +11,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestNearestRank_IsSharedByDurationsAndAttemptCounts: one rank formula
@@ -130,9 +132,7 @@ func TestTallyRunIndex_CountsWhatTheKeysSay(t *testing.T) {
 func TestTallyRuns_ReadsIndexKeysAndNeverABody(t *testing.T) {
 	dir := t.TempDir()
 	store, err := artifacts.NewLocalRunArchive(dir)
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
@@ -147,9 +147,7 @@ func TestTallyRuns_ReadsIndexKeysAndNeverABody(t *testing.T) {
 				Status:      status,
 				CreatedAt:   timestamppb.New(at),
 			}
-			if err := writer.Archive(context.Background(), run, nil); err != nil {
-				t.Fatalf("archive: %v", err)
-			}
+			must.OKf(t, writer.Archive(context.Background(), run, nil), "archive")
 		}
 	}
 	seed("alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, now.Add(-time.Hour), 3)
@@ -166,9 +164,7 @@ func TestTallyRuns_ReadsIndexKeysAndNeverABody(t *testing.T) {
 		// A limit a caller happened to set must not turn a total into a page.
 		Limit: 2,
 	})
-	if err != nil {
-		t.Fatalf("TallyRuns: %v", err)
-	}
+	must.OKf(t, err, "TallyRuns")
 	if got := tally.Finished(); got != 4 {
 		t.Errorf("Finished() = %d, want 4 — the window, the namespace or the limit is wrong", got)
 	}
@@ -195,9 +191,7 @@ func TestTallyRuns_ReadsIndexKeysAndNeverABody(t *testing.T) {
 // keys, however many there are and whatever limit the caller set.
 func TestListRunIndex_ReadsKeysOnlyIgnoresLimitAndNarrowsToFailed(t *testing.T) {
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
@@ -212,9 +206,7 @@ func TestListRunIndex_ReadsKeysOnlyIgnoresLimitAndNarrowsToFailed(t *testing.T) 
 				Status:      status,
 				CreatedAt:   timestamppb.New(at),
 			}
-			if err := writer.Archive(context.Background(), run, nil); err != nil {
-				t.Fatalf("archive: %v", err)
-			}
+			must.OKf(t, writer.Archive(context.Background(), run, nil), "archive")
 		}
 	}
 	seed("alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, now.Add(-time.Hour), 3)
@@ -234,9 +226,7 @@ func TestListRunIndex_ReadsKeysOnlyIgnoresLimitAndNarrowsToFailed(t *testing.T) 
 		Status: orkstackv1.Status_STATUS_SUCCEEDED,
 		Limit:  2,
 	})
-	if err != nil {
-		t.Fatalf("ListRunIndex: %v", err)
-	}
+	must.OKf(t, err, "ListRunIndex")
 	if len(entries) != 7 {
 		t.Fatalf("ListRunIndex returned %d entries, want the 7 failed runs of alpha in the window", len(entries))
 	}
@@ -264,9 +254,7 @@ func TestListRunIndex_ReadsKeysOnlyIgnoresLimitAndNarrowsToFailed(t *testing.T) 
 // whatever its status, read out of keys, however many there are.
 func TestListFinishedRunIndex_ReadsKeysOnlyEveryFinishedStatusAndIgnoresLimit(t *testing.T) {
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 
 	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
@@ -281,9 +269,7 @@ func TestListFinishedRunIndex_ReadsKeysOnlyEveryFinishedStatusAndIgnoresLimit(t 
 				Status:      status,
 				CreatedAt:   timestamppb.New(at),
 			}
-			if err := writer.Archive(context.Background(), run, nil); err != nil {
-				t.Fatalf("archive: %v", err)
-			}
+			must.OKf(t, writer.Archive(context.Background(), run, nil), "archive")
 		}
 	}
 	seed("alpha", "deploy", orkstackv1.Status_STATUS_SUCCEEDED, now.Add(-time.Hour), 3)
@@ -300,9 +286,7 @@ func TestListFinishedRunIndex_ReadsKeysOnlyEveryFinishedStatusAndIgnoresLimit(t 
 		Status:    orkstackv1.Status_STATUS_FAILED,
 		Limit:     2,
 	})
-	if err != nil {
-		t.Fatalf("ListFinishedRunIndex: %v", err)
-	}
+	must.OKf(t, err, "ListFinishedRunIndex")
 	if len(entries) != 9 {
 		t.Fatalf("ListFinishedRunIndex returned %d entries, want alpha's 9 finished runs in the window", len(entries))
 	}

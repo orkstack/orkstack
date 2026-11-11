@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -75,9 +76,9 @@ type RunPlan struct {
 	// set no policy and the orkflow carries no labels. It is decided at
 	// SUBMIT (pools.go) for the reason CommitRoot is: which sink a namespace
 	// chose is deployment/registry state that workflow code may not read.
-	// omitempty, so a plan with none encodes exactly as it did before the
+	// omitzero, so a plan with none encodes exactly as it did before the
 	// field existed.
-	Telemetry *TelemetrySelection `json:"telemetry,omitempty"`
+	Telemetry *TelemetrySelection `json:"telemetry,omitzero"`
 
 	// ImagePolicy is the image policy in force for this run, or nil when the
 	// deployment configured none and the namespace names no signer. Decided
@@ -86,18 +87,18 @@ type RunPlan struct {
 	// deterministic workflow may not read (AGENTS.md §2.1), and every
 	// attempt of one task must be judged by one rule. It is copied onto
 	// every ExecuteTaskInput and is otherwise not read by workflow code.
-	// omitempty, so a plan with none encodes exactly as it did before the
+	// omitzero, so a plan with none encodes exactly as it did before the
 	// field existed.
-	ImagePolicy *ImagePolicySelection `json:"image_policy,omitempty"`
+	ImagePolicy *ImagePolicySelection `json:"image_policy,omitzero"`
 
 	// Origin is what started this run, or nil for a plan built before origins
 	// existed. It is decided at SUBMIT for the reason CommitRoot and
 	// Telemetry are: the door that accepted the submission is the only thing
 	// that knows, and workflow code may read neither a request header nor a
-	// trigger record (AGENTS.md §2.1). omitempty, so a plan with none encodes
+	// trigger record (AGENTS.md §2.1). omitzero, so a plan with none encodes
 	// exactly as it did before the field existed, and the golden history
 	// fixture keeps matching without re-recording.
-	Origin *RunOrigin `json:"origin,omitempty"`
+	Origin *RunOrigin `json:"origin,omitzero"`
 
 	// Awaits holds, per task id, the callback credential of every `await:`
 	// of this run that declares `callback: true`: a salt and the salted
@@ -107,7 +108,7 @@ type RunPlan struct {
 	// run's replay-pinned, per-run record that any replica can read back from
 	// the run's own start event (TemporalRunReader.RunStart) — which is what
 	// lets the callback door verify a token with no table of pending
-	// callbacks anywhere (AGENTS.md §13). omitempty, so a plan with none
+	// callbacks anywhere (AGENTS.md §13). omitzero, so a plan with none
 	// encodes exactly as it did before the field existed and the golden
 	// history fixture keeps matching.
 	Awaits map[string]AwaitCredential `json:"awaits,omitempty"`
@@ -118,7 +119,7 @@ type RunPlan struct {
 	// tasks resolve to, whether the namespace allows them, which image policy
 	// holds, and what the child's run id is are store, cluster and process
 	// facts workflow code may not read (AGENTS.md §2.1) — and it is the only
-	// place a child's definition reaches workflow code. omitempty, so a plan
+	// place a child's definition reaches workflow code. omitzero, so a plan
 	// with none encodes exactly as it did before the field existed and the
 	// golden history fixture keeps matching.
 	Children map[string]*ChildRunPlan `json:"children,omitempty"`
@@ -126,9 +127,9 @@ type RunPlan struct {
 	// Cache is this run's caching plan, or nil when its definition declares
 	// no cached task. Decided at SUBMIT for the reason Limits is: the cap is
 	// process configuration workflow code may not read (AGENTS.md §2.1), and
-	// no_cache is a request field. omitempty, so a plan with none encodes
+	// no_cache is a request field. omitzero, so a plan with none encodes
 	// exactly as before and the golden history fixture keeps matching.
-	Cache *CachePlan `json:"cache,omitempty"`
+	Cache *CachePlan `json:"cache,omitzero"`
 
 	// History is the per-execution history ceiling this run must stop below,
 	// decided at submit (workflow code may not read config, AGENTS.md §2.1).
@@ -138,7 +139,7 @@ type RunPlan struct {
 	// top-level plan only, copied into each child's start plan by
 	// startChild. Nil on every plan built before this field existed: no
 	// recorded history enters the guard (history_guard.go).
-	History *HistoryLimit `json:"history,omitempty"`
+	History *HistoryLimit `json:"history,omitzero"`
 
 	// Continuation is this run's per-generation budget and every number the
 	// writer, the hold and the bootstrap decide with (continuation.go), set
@@ -148,12 +149,12 @@ type RunPlan struct {
 	// new (every plan built before this field, and every plan of a
 	// deployment that leaves it off). Set only together with History; a
 	// plan carrying a Continuation without a History never continues.
-	Continuation *ContinuationBudget `json:"continuation,omitempty"`
+	Continuation *ContinuationBudget `json:"continuation,omitzero"`
 
 	// InFlight caps what this run keeps pending (holdDispatch,
 	// continuation.go). A run-tree limit. Nil: no cap (every plan built
 	// before this field).
-	InFlight *InFlightLimit `json:"in_flight,omitempty"`
+	InFlight *InFlightLimit `json:"in_flight,omitzero"`
 
 	// Definition names this run's planned definition when it is too large
 	// to travel as a start payload (docs/DEPLOY.md §1,
@@ -167,7 +168,7 @@ type RunPlan struct {
 	// never name another run's object. Top-level runs only: a child's
 	// definition travels inside its parent's plan. Nil on every plan built
 	// before it, and on every run whose definition fits a start payload.
-	Definition *DefinitionRef `json:"definition,omitempty"`
+	Definition *DefinitionRef `json:"definition,omitzero"`
 
 	// SnapshotOverlay is when this run writes a snapshot overlay instead of
 	// a full snapshot for a non-terminal event (snapshot_overlay.go,
@@ -180,7 +181,7 @@ type RunPlan struct {
 	// small child of a large parent keeps full snapshots. Nil: every
 	// snapshot is full (every plan built before this field, and every plan
 	// of a deployment that leaves it off).
-	SnapshotOverlay *OverlayPolicy `json:"snapshot_overlay,omitempty"`
+	SnapshotOverlay *OverlayPolicy `json:"snapshot_overlay,omitzero"`
 
 	// PinCreationTimeoutSeconds is how long a pin of this run waits for some
 	// pin host of its pool to have a free session slot before its first task
@@ -192,9 +193,9 @@ type RunPlan struct {
 	// childStartPlan. Zero means unset, and an unset value is the five
 	// minutes every build before the field used, which is also what a run
 	// whose history was recorded before the pin-creation-timeout version gate
-	// takes whatever this says (pinCreationTimeoutFor). omitempty, so a plan
+	// takes whatever this says (pinCreationTimeoutFor). omitzero, so a plan
 	// with none encodes exactly as it did before the field existed.
-	PinCreationTimeoutSeconds int32 `json:"pin_creation_timeout_seconds,omitempty"`
+	PinCreationTimeoutSeconds int32 `json:"pin_creation_timeout_seconds,omitzero"`
 
 	// Fairness is the fairness key and weight every task activity of this
 	// run is dispatched with (fairness.go): the run's namespace and its
@@ -204,7 +205,7 @@ type RunPlan struct {
 	// child's start plan by childStartPlan, since a child runs in its
 	// parent's namespace. Nil on every plan built before it, which schedules
 	// with no priority and asks no gate.
-	Fairness *FairnessSelection `json:"fairness,omitempty"`
+	Fairness *FairnessSelection `json:"fairness,omitzero"`
 
 	// RetryMaxIntervalSeconds is the longest wait between two attempts of a
 	// task whose retry: sets no maximum_interval_seconds (retry_spacing.go):
@@ -215,9 +216,9 @@ type RunPlan struct {
 	// childStartPlan. Zero means unset, and an unset value is the 100 seconds
 	// every build before the field used, which is also what a run whose
 	// history was recorded before the retry-max-interval gate takes whatever
-	// this says. omitempty, so a plan with none encodes exactly as it did
+	// this says. omitzero, so a plan with none encodes exactly as it did
 	// before the field existed.
-	RetryMaxIntervalSeconds int32 `json:"retry_max_interval_seconds,omitempty"`
+	RetryMaxIntervalSeconds int32 `json:"retry_max_interval_seconds,omitzero"`
 
 	// RecordRootRun says this run's child runs record the root of their chain
 	// (RunOrigin.RootRunID, childStartPlan). It changes what a child start
@@ -226,17 +227,25 @@ type RunPlan struct {
 	// children record no root and neither do theirs: a parent that is itself
 	// a child, with no root recorded, cannot say what its child's root is. A
 	// run-tree value: set on the top-level plan by pinRunTreeLimits and copied
-	// into each child's start plan by childStartPlan. omitempty, so a plan
+	// into each child's start plan by childStartPlan. omitzero, so a plan
 	// without it encodes exactly as it did before the field existed.
-	RecordRootRun bool `json:"record_root_run,omitempty"`
+	RecordRootRun bool `json:"record_root_run,omitzero"`
 
 	// RootRunIndexed says the cluster indexes a run's root
 	// (task.EnsureRunRootSearchAttribute), so a child start may stamp it; a
 	// start stamping an attribute the cluster does not have is refused. It is
 	// the submitting engine's boot answer, pinned because workflow code may not
 	// ask, and a run-tree value like RecordRootRun, so every child of a plan
-	// has the one answer. omitempty, as RecordRootRun is.
-	RootRunIndexed bool `json:"root_run_indexed,omitempty"`
+	// has the one answer. omitzero, as RecordRootRun is.
+	RootRunIndexed bool `json:"root_run_indexed,omitzero"`
+
+	// Shared is the decision that admitted this run's definition from another
+	// namespace (internal/authz): set only on the plan of a child run whose
+	// Orkflow another namespace shared through composition, naming the
+	// shared_with entry that admitted it. It is a record of why the run was
+	// allowed, decided at the parent's submit; workflow code never reads it.
+	// omitzero, so every other plan encodes exactly as before.
+	Shared *authz.Decision `json:"shared,omitzero"`
 }
 
 // OverlayPolicy is a run's snapshot-overlay thresholds, pinned per run
@@ -299,7 +308,7 @@ type ContinuationBudget struct {
 	// above 1,024 items (eachBounds): DefaultItemInputFloorBytes, set with
 	// continuation, which every run declaring more than 1,000 items needs.
 	// Zero in every plan built before it.
-	ItemInputFloorBytes int64 `json:"item_input_floor_bytes,omitempty"`
+	ItemInputFloorBytes int64 `json:"item_input_floor_bytes,omitzero"`
 }
 
 // RestorePolicy is the bootstrap's read deadline and the Temporal retry
@@ -315,9 +324,30 @@ type RestorePolicy struct {
 // InFlightLimit caps the activities, child runs and pins one run keeps
 // pending. Max is engine.run_max_in_flight; HardStop is absolute, an open
 // pin's closure included.
+//
+// PublishWindow and DispatchBytes pace the detached publish path
+// (TaskPublishChange, task_publish.go): a plain task's TASK_SCHEDULED and
+// TASK_STARTED are published without the loop waiting for them, at most
+// PublishWindow outstanding, and one workflow task schedules at most
+// DispatchBytes of plain tasks' activity input. Both zero in every plan built
+// before the path, which then takes the awaited path and asks no version.
 type InFlightLimit struct {
-	Max      int32 `json:"max"`
-	HardStop int32 `json:"hard_stop"`
+	Max           int32 `json:"max"`
+	HardStop      int32 `json:"hard_stop"`
+	PublishWindow int32 `json:"publish_window,omitzero"`
+	DispatchBytes int64 `json:"dispatch_bytes,omitzero"`
+	PublishEvents int64 `json:"publish_events,omitzero"`
+}
+
+// PublishReserveEvents is the history the plan's publish window can still
+// append when every one of its publishes is outstanding: PublishWindow ×
+// PublishEvents, or zero for a plan without the window. The flat-stage
+// bound reserves it (ShapeMaxTasks). Pure.
+func (l InFlightLimit) PublishReserveEvents() int64 {
+	if l.PublishWindow <= 0 || l.PublishEvents <= 0 {
+		return 0
+	}
+	return int64(l.PublishWindow) * l.PublishEvents
 }
 
 // continuationChunkCeiling is the largest chunk a bootstrap may read: the
@@ -382,7 +412,7 @@ type CachePlan struct {
 	// MaxTTLSeconds is ORK_CACHE_MAX_TTL at submit, in whole seconds, >= 1.
 	MaxTTLSeconds int64 `json:"max_ttl_seconds"`
 	// Refresh is SubmitRunRequest.no_cache.
-	Refresh bool `json:"refresh,omitempty"`
+	Refresh bool `json:"refresh,omitzero"`
 }
 
 // EffectiveCacheTTL is the TTL a cached task's lookup honours: the cap when
@@ -408,7 +438,7 @@ type AwaitCredential struct {
 // TelemetrySelection is one: nesting a proto message inside RunPlan would
 // change how the whole plan is encoded.
 type ImagePolicySelection struct {
-	RequireDigest     bool     `json:"require_digest,omitempty"`
+	RequireDigest     bool     `json:"require_digest,omitzero"`
 	AllowedRegistries []string `json:"allowed_registries,omitempty"`
 	RequireSignedBy   string   `json:"require_signed_by,omitempty"`
 	SigningKeyPEM     string   `json:"signing_key_pem,omitempty"`

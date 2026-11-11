@@ -9,6 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const (
@@ -172,9 +174,9 @@ tasks:
     uses: shell
     with: { op: eval, command: ["true"] }
 `)
-	f.run("apply", child).requireExit(t, exitOK)
+	f.run("orkflow", "create", child).requireExit(t, exitOK)
 	parent := writePlanFile(t, "deploy.ork.yaml", composedPlanYAML)
-	f.run("apply", parent).requireExit(t, exitOK)
+	f.run("orkflow", "create", parent).requireExit(t, exitOK)
 	got := f.run("orkflow", "get", "deploy").requireExit(t, exitOK)
 	requireGolden(t, "orkflow-get-composed.golden", got.stdout)
 	got.requireContains(t, "COMPOSED  ORKFLOW", "release   release-block@2.1.0  sha256:", "OUTPUT  TEMPLATE",
@@ -213,7 +215,7 @@ func TestRunLogsComposedHintGolden(t *testing.T) {
 
 func TestTaskRun_RefusesAComposedTask(t *testing.T) {
 	fx := newTaskRunFixture(t)
-	fx.run("apply", fx.writeDoc(t, "release-block.ork.yaml", `
+	fx.run("orkflow", "create", fx.writeDoc(t, "release-block.ork.yaml", `
 apiVersion: orkstack/v1
 kind: Orkflow
 name: release-block
@@ -268,9 +270,7 @@ func TestRenderRunTree_AReadWithNoServerAnswerSaysSo(t *testing.T) {
 	read := func(string, string) (*orkstackv1.Run, error) {
 		return nil, errors.New("dial tcp 127.0.0.1:8080: connect: connection refused")
 	}
-	if err := renderRunTree(&out, parent, read, 1, 0); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderRunTree(&out, parent, read, 1, 0))
 	want := "release → " + composedChildID + ": unavailable (no answer: dial tcp 127.0.0.1:8080: connect: connection refused)"
 	if !strings.Contains(out.String(), want) {
 		t.Fatalf("tree does not say no answer came:\nwant %q\ngot:\n%s", want, out.String())

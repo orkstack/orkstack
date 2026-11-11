@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -20,7 +19,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestImagePolicySelection_ProtoIsNilSafe(t *testing.T) {
@@ -39,7 +41,7 @@ func TestImagePolicySelection_ProtoIsNilSafe(t *testing.T) {
 		t.Fatalf("round trip = %v, want %v", back, sel)
 	}
 	// A plan with none encodes exactly as before the field existed.
-	raw, err := json.Marshal(engine.RunPlan{Namespace: "default"})
+	raw, err := stablejson.Marshal(engine.RunPlan{Namespace: "default"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,27 +77,19 @@ func withPolicy(t *testing.T, recorded *historypb.History, sel *engine.ImagePoli
 				input *orkstackv1.Payload
 				plan  engine.RunPlan
 			)
-			if err := dc.FromPayloads(attrs.GetInput(), &runID, &wf, &input, &plan); err != nil {
-				t.Fatalf("decode the recorded workflow input: %v", err)
-			}
+			must.OKf(t, dc.FromPayloads(attrs.GetInput(), &runID, &wf, &input, &plan), "decode the recorded workflow input")
 			plan.ImagePolicy = sel
 			encoded, err := dc.ToPayloads(runID, wf, input, plan)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			attrs.Input = encoded
 		}
 		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
 			attrs.GetActivityType().GetName() == task.ActivityExecuteTask {
 			var in *orkstackv1.ExecuteTaskInput
-			if err := dc.FromPayloads(attrs.GetInput(), &in); err != nil {
-				t.Fatalf("decode a recorded ExecuteTask input: %v", err)
-			}
+			must.OKf(t, dc.FromPayloads(attrs.GetInput(), &in), "decode a recorded ExecuteTask input")
 			in.ImagePolicy = sel.Proto()
 			encoded, err := dc.ToPayloads(in)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			attrs.Input = encoded
 		}
 	}
@@ -112,9 +106,7 @@ func withPolicy(t *testing.T, recorded *historypb.History, sel *engine.ImagePoli
 // over it without a re-recording.
 func TestRunWorkflow_ReplaysAPolicyCarryingPlan(t *testing.T) {
 	raw, err := os.ReadFile(goldenHistory)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.Contains(string(raw), "imagePolicy") || strings.Contains(string(raw), "image_policy") {
 		t.Fatal("the committed golden fixture carries an image policy; it was recorded with none and must not be re-recorded")
 	}
@@ -126,9 +118,7 @@ func TestRunWorkflow_ReplaysAPolicyCarryingPlan(t *testing.T) {
 	// plan and changes no command.
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
-	if err := replayer.ReplayWorkflowHistory(nil, history); err != nil {
-		t.Fatalf("replaying a policy-carrying history failed: %v", err)
-	}
+	must.OKf(t, replayer.ReplayWorkflowHistory(nil, history), "replaying a policy-carrying history failed")
 
 	// 2. Re-executed from that history's own input, every ExecuteTaskInput
 	// carries the plan's selection, byte for byte, and nothing else changed.

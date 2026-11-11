@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestDeliveryRecords_NothingReadsThemToDecideAnything is the structural
@@ -39,9 +41,7 @@ import (
 // the RPC and is therefore the handler's caller, not the store's.
 func TestDeliveryRecords_NothingReadsThemToDecideAnything(t *testing.T) {
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatalf("module root: %v", err)
-	}
+	must.OKf(t, err, "module root")
 	const module = "github.com/orkstack/orkstack/"
 
 	storeType := reflect.TypeOf((*artifacts.DeliveryStore)(nil)).Elem()
@@ -136,7 +136,5 @@ func TestDeliveryRecords_NothingReadsThemToDecideAnything(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", root, err)
-	}
+	must.OKf(t, err, "walk %s", root)
 }

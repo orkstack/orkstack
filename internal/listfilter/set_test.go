@@ -14,6 +14,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestEquality_OnlyOneNonEmptyEquals(t *testing.T) {
@@ -49,9 +51,7 @@ func TestKey_SameSetAnyOrderSameKey(t *testing.T) {
 		spec := byRequest[row.Request]
 		if spec == nil {
 			md, err := findMessage(row.Request)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if spec, err = listfilter.SpecForDescriptor(md); err != nil {
 				t.Fatal(err)
 			}

@@ -30,6 +30,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The fan-out integration suite (docs/DSL.md "Fan-out"): real
@@ -125,9 +127,7 @@ func startEachE2E(t *testing.T, withDocker bool) *eachE2E {
 	eventWorker.RegisterActivityWithOptions(
 		engine.NewEventActivities(e.bus, e.runs).WithSnapshotStore(e.snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	if err := eventWorker.Start(); err != nil {
-		t.Fatalf("start event worker: %v", err)
-	}
+	must.OKf(t, eventWorker.Start(), "start event worker")
 	t.Cleanup(eventWorker.Stop)
 	return e
 }
@@ -148,9 +148,7 @@ func (e *eachE2E) startRunWorker() {
 		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
 	w.RegisterActivityWithOptions(compose.StoreComposedValues,
 		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
-	if err := w.Start(); err != nil {
-		e.t.Fatalf("start run worker: %v", err)
-	}
+	must.OKf(e.t, w.Start(), "start run worker")
 	e.mu.Lock()
 	e.runWorker = w
 	e.mu.Unlock()
@@ -181,9 +179,7 @@ func (e *eachE2E) startOrker(id string) (worker.Worker, *orker.Activities) {
 		return activities.ExecuteTask(actx, in)
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(activities.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	if err := w.Start(); err != nil {
-		e.t.Fatalf("start orker %s: %v", id, err)
-	}
+	must.OKf(e.t, w.Start(), "start orker %s", id)
 	e.mu.Lock()
 	e.orkers = append(e.orkers, w)
 	e.mu.Unlock()
@@ -231,9 +227,7 @@ func (e *eachE2E) eachDefinition(name string, n, maxParallel int, itemScript str
 func (e *eachE2E) plan() engine.RunPlan {
 	plan := rawPlan(e.orkerQueue)
 	root, err := artifacts.CommitRoot(e.cfg)
-	if err != nil {
-		e.t.Fatalf("commit root: %v", err)
-	}
+	must.OKf(e.t, err, "commit root")
 	plan.CommitRoot = root
 	plan.Limits = engine.DefaultLimits()
 	plan.TransferBudgetSeconds = 300
@@ -243,9 +237,7 @@ func (e *eachE2E) plan() engine.RunPlan {
 func (e *eachE2E) start(runID string, wf *orkstackv1.Orkflow) {
 	e.t.Helper()
 	starter := engine.NewTemporalStarterWithOrkerQueue(e.temporal, e.runQueue, e.orkerQueue)
-	if err := starter.StartRun(e.ctx, runID, wf, nil, e.plan()); err != nil {
-		e.t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(e.t, starter.StartRun(e.ctx, runID, wf, nil, e.plan()), "StartRun")
 }
 
 func (e *eachE2E) wait(runID string) *orkstackv1.Run {
@@ -288,9 +280,7 @@ func (e *eachE2E) history(runID string) *history.History {
 	iter := e.temporal.GetWorkflowHistory(e.ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			e.t.Fatalf("read history: %v", err)
-		}
+		must.OKf(e.t, err, "read history")
 		out.Events = append(out.Events, event)
 	}
 	return out
@@ -298,9 +288,7 @@ func (e *eachE2E) history(runID string) *history.History {
 
 func (e *eachE2E) commitKey(runID string, index int32) string {
 	key, err := artifacts.ItemCommitKey("", runID, "convert", index)
-	if err != nil {
-		e.t.Fatal(err)
-	}
+	must.OK(e.t, err)
 	return key
 }
 
@@ -428,9 +416,7 @@ func TestIntegration_EachItemCommittedThenOrkerDiesIsAdopted(t *testing.T) {
 		}
 		return result, err
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Start())
 	e.start(runID, e.eachDefinition("each-i4", 2, 1, ""))
 	select {
 	case <-committed:
@@ -508,9 +494,7 @@ func TestIntegration_EachHistoryStaysInsideTheBudgetAtTheCeiling(t *testing.T) {
 		}
 		return result, nil
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Start())
 	t.Cleanup(w.Stop)
 	numbers := make([]any, 1000)
 	for i := range numbers {
@@ -525,9 +509,7 @@ func TestIntegration_EachHistoryStaysInsideTheBudgetAtTheCeiling(t *testing.T) {
 	data, _ := structpbStruct(map[string]any{"n": numbers})
 	runID := fmt.Sprintf("ork-each-i6-%d", time.Now().UnixNano())
 	starter := engine.NewTemporalStarterWithOrkerQueue(e.temporal, e.runQueue, e.orkerQueue)
-	if err := starter.StartRun(e.ctx, runID, wf, &orkstackv1.Payload{Data: data}, e.plan()); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(e.ctx, runID, wf, &orkstackv1.Payload{Data: data}, e.plan()), "StartRun")
 	run := e.wait(runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run = %v %v", run.GetStatus(), run.GetError())
@@ -569,9 +551,7 @@ func TestIntegration_EachSubmitRefusesAPoolWhoseOrkerPredatesFanOut(t *testing.T
 	e := startEachE2E(t, false)
 	pool := fmt.Sprintf("old-%d", time.Now().UnixNano()%1_000_000)
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	startStandInOrker(t, e.temporal, queue,
 		&orkstackv1.DescribeOrkerResult{OrkerId: "old-orker", BuildId: "2026.09.01", Pool: pool})
 	starter := engine.NewTemporalStarterWithOrkerQueue(e.temporal, e.runQueue, e.orkerQueue)
@@ -673,9 +653,7 @@ func TestIntegration_RecordEachRunHistory(t *testing.T) {
 		engine.NewEventActivities(engine.NewEventBus(), engine.NewRunStore()).WithSnapshotStore(snapshots).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orkerWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 	setCurrentVersion(t, ctx, temporalClient, deployment, runQueue, orkerQueue)
@@ -685,28 +663,18 @@ func TestIntegration_RecordEachRunHistory(t *testing.T) {
 	plan := rawPlan(orkerQueue)
 	plan.CommitRoot = "mem://commits"
 	runID := fmt.Sprintf("ork-each-fixture-%d", time.Now().UnixNano())
-	if err := starter.StartRun(ctx, runID, wf, nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
-	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("fixture run %s did not succeed: %v", runID, err)
-	}
+	must.OKf(t, starter.StartRun(ctx, runID, wf, nil, plan), "StartRun")
+	must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "fixture run %s did not succeed", runID)
 	recorded := &history.History{}
 	iter := temporalClient.GetWorkflowHistory(ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history: %v", err)
-		}
+		must.OKf(t, err, "read history")
 		recorded.Events = append(recorded.Events, event)
 	}
 	encoded, err := temporalproto.CustomJSONMarshalOptions{Indent: "  "}.Marshal(recorded)
-	if err != nil {
-		t.Fatalf("encode history: %v", err)
-	}
-	if err := os.WriteFile(leanEachHistoryPath, append(encoded, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", leanEachHistoryPath, err)
-	}
+	must.OKf(t, err, "encode history")
+	must.OKf(t, os.WriteFile(leanEachHistoryPath, append(encoded, '\n'), 0o644), "write %s", leanEachHistoryPath)
 	t.Logf("recorded %d history events for run %s into %s (deployment version %s)",
 		len(recorded.Events), runID, leanEachHistoryPath, deployment)
 }
@@ -714,9 +682,7 @@ func TestIntegration_RecordEachRunHistory(t *testing.T) {
 func readValues(t *testing.T, e *eachE2E, ref *orkstackv1.ArtifactRef) string {
 	t.Helper()
 	reader, err := e.store.Get(e.ctx, ref.GetUri())
-	if err != nil {
-		t.Fatalf("read %s: %v", ref.GetUri(), err)
-	}
+	must.OKf(t, err, "read %s", ref.GetUri())
 	defer func() { _ = reader.Close() }()
 	var b strings.Builder
 	buf := make([]byte, 4096)

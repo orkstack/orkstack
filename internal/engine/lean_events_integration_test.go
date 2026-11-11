@@ -20,6 +20,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // leanFanOutItems is the fan-out width of the lean-event-path stream test:
@@ -135,9 +137,7 @@ func TestIntegration_LeanFanOutStreamsEveryItemEventInSequence(t *testing.T) {
 		workers[fmt.Sprintf("event-%d", i)] = w
 	}
 	for name, w := range workers {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -145,9 +145,7 @@ func TestIntegration_LeanFanOutStreamsEveryItemEventInSequence(t *testing.T) {
 	plan.CommitRoot = "mem://commits"
 	runID := fmt.Sprintf("ork-lean-fanout-%d", time.Now().UnixNano())
 	starter := engine.NewTemporalStarterWithOrkerQueue(temporalClient, runQueue, orkerQueue)
-	if err := starter.StartRun(ctx, runID, compile(t, leanFanOutDocument), nil, plan); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(ctx, runID, compile(t, leanFanOutDocument), nil, plan), "StartRun")
 
 	// The third reader projected nothing; it reads history only.
 	reader := engine.NewTemporalRunReader(temporalClient).WithSnapshotStore(snapshots)
@@ -165,22 +163,16 @@ func TestIntegration_LeanFanOutStreamsEveryItemEventInSequence(t *testing.T) {
 		})
 	}()
 
-	if err := temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil); err != nil {
-		t.Fatalf("run %s did not succeed: %v", runID, err)
-	}
+	must.OKf(t, temporalClient.GetWorkflow(ctx, runID, "").Get(ctx, nil), "run %s did not succeed", runID)
 	select {
 	case err := <-streamErr:
-		if err != nil {
-			t.Fatalf("stream run %s: %v", runID, err)
-		}
+		must.OKf(t, err, "stream run %s", runID)
 	case <-ctx.Done():
 		t.Fatalf("stream of run %s never ended at its terminal event", runID)
 	}
 
 	read, err := reader.Events(ctx, runID, 0)
-	if err != nil {
-		t.Fatalf("read events of run %s: %v", runID, err)
-	}
+	must.OKf(t, err, "read events of run %s", runID)
 	requireCompleteOrderedStream(t, "the live stream", streamed)
 	requireCompleteOrderedStream(t, "the read after the run", read)
 	if len(streamed) != len(read) {
@@ -214,9 +206,7 @@ func TestIntegration_LeanFanOutStreamsEveryItemEventInSequence(t *testing.T) {
 	requireLeanItemPublishes(t, ctx, temporalClient, runID)
 
 	run, err := reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("GetRun %s: %v", runID, err)
-	}
+	must.OKf(t, err, "GetRun %s", runID)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run %s is %v, want SUCCEEDED", runID, run.GetStatus())
 	}
@@ -271,9 +261,7 @@ func requireLeanItemPublishes(t *testing.T, ctx context.Context, temporalClient 
 	iter := temporalClient.GetWorkflowHistory(ctx, runID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history: %v", err)
-		}
+		must.OKf(t, err, "read history")
 		if attrs := event.GetMarkerRecordedEventAttributes(); attrs != nil &&
 			strings.Contains(attrs.String(), "lean-event-path") {
 			marker = true
@@ -281,9 +269,7 @@ func requireLeanItemPublishes(t *testing.T, ctx context.Context, temporalClient 
 		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
 			attrs.GetActivityType().GetName() == engine.ActivityPublishEvent {
 			var published *orkstackv1.Event
-			if err := dataConverter.FromPayload(attrs.GetInput().GetPayloads()[0], &published); err != nil {
-				t.Fatalf("decode a recorded publish: %v", err)
-			}
+			must.OKf(t, dataConverter.FromPayload(attrs.GetInput().GetPayloads()[0], &published), "decode a recorded publish")
 			switch {
 			case published.Item != nil:
 				items++

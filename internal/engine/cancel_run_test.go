@@ -15,6 +15,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cancelClock is the clock a CancelRun under test runs its retry on. Nothing
@@ -177,9 +179,7 @@ func TestCancelRun_CarriesThePrincipalInTheRequest(t *testing.T) {
 		t.Fatalf("request = %v, want ork-1 on ork-main as engine-a, any execution, a request id", sent)
 	}
 	var record orkstackv1.RunCancelRequest
-	if err := protojson.Unmarshal([]byte(sent.GetReason()), &record); err != nil {
-		t.Fatalf("reason %q is not a RunCancelRequest: %v", sent.GetReason(), err)
-	}
+	must.OKf(t, protojson.Unmarshal([]byte(sent.GetReason()), &record), "reason %q is not a RunCancelRequest", sent.GetReason())
 	if record.GetFormat() != 1 || record.GetPrincipal() != "dana@acme" {
 		t.Fatalf("record = %v, want format 1 naming dana@acme", &record)
 	}
@@ -189,9 +189,7 @@ func TestCancelRun_CarriesThePrincipalInTheRequest(t *testing.T) {
 // SDK's, exactly as before.
 func TestCancelRun_WithNoPrincipalIsTheSDKCancel(t *testing.T) {
 	starter, fake := newCancelStarter()
-	if err := starter.CancelRun(context.Background(), "ork-1", engine.CancelRequest{Reason: "stuck"}); err != nil {
-		t.Fatalf("CancelRun: %v", err)
-	}
+	must.OKf(t, starter.CancelRun(context.Background(), "ork-1", engine.CancelRequest{Reason: "stuck"}), "CancelRun")
 	if len(fake.canceled) != 1 || fake.canceled[0] != "ork-1" || len(fake.service.requests) != 0 {
 		t.Fatalf("CancelWorkflow %v, the service %d times; want CancelWorkflow(ork-1) alone",
 			fake.canceled, len(fake.service.requests))

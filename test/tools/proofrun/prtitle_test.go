@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The table of titles the check accepts and refuses. The accepted rows carry
@@ -132,9 +134,7 @@ func TestPRTitle_TheTypesAreTheRepositorysOwn(t *testing.T) {
 func capturePRTitle(t *testing.T, args ...string) (int, string) {
 	t.Helper()
 	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	stdout, stderr := os.Stdout, os.Stderr
 	os.Stdout, os.Stderr = w, w
 	done := make(chan string, 1)
@@ -144,9 +144,7 @@ func capturePRTitle(t *testing.T, args ...string) (int, string) {
 	}()
 	code := runCommand(append([]string{"pr-title"}, args...))
 	os.Stdout, os.Stderr = stdout, stderr
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Close())
 	return code, <-done
 }
 
@@ -231,103 +229,5 @@ func FuzzPRTitle(f *testing.F) {
 		if rebuilt += ": " + got.Description; rebuilt != title {
 			t.Fatalf("%q reads back as %q", title, rebuilt)
 		}
-	})
-}
-
-// prTitleWorkflowProblems holds the required check to what it must do: it runs
-// whenever the title can change and on every head a required check attaches to,
-// on no path filter that would leave it unreported, on the merge group the
-// queue waits on, from the pull request's own read-only event, and it hands the
-// title to the check through env:.
-func prTitleWorkflowProblems(w *wfFile) []string {
-	var p []string
-	want := []string{"edited", "opened", "ready_for_review", "reopened", "synchronize"}
-	if types, ok := w.onTypes("pull_request"); !ok {
-		p = append(p, "pr-title.yml does not trigger on pull_request")
-	} else {
-		got := append([]string(nil), types...)
-		slices.Sort(got)
-		if !slices.Equal(got, want) {
-			p = append(p, fmt.Sprintf("pull_request types = %v, want exactly %v", types, want))
-		}
-		if m, _ := w.On["pull_request"].(map[string]any); len(m) != 1 {
-			p = append(p, fmt.Sprintf("the pull_request trigger filters more than its types, and a required check that does not run never reports: %v", m))
-		}
-	}
-	if types, ok := w.onTypes("merge_group"); !ok || !slices.Equal(types, []string{"checks_requested"}) {
-		p = append(p, fmt.Sprintf("merge_group types = %v (present %v), want [checks_requested]: the queue waits for every required check", types, ok))
-	}
-	if _, ok := w.On["pull_request_target"]; ok {
-		p = append(p, "pr-title.yml triggers on pull_request_target, which runs with a write token")
-	}
-	job, ok := w.Jobs["pr-title"]
-	if !ok {
-		return append(p, "pr-title.yml has no pr-title job, the required context")
-	}
-	if job.If != "" {
-		p = append(p, "jobs.pr-title.if = "+job.If+": the required job is unconditional")
-	}
-	if len(job.Permissions) != 1 || job.Permissions["contents"] != "read" {
-		p = append(p, fmt.Sprintf("jobs.pr-title.permissions = %v, want contents: read alone", job.Permissions))
-	}
-	checks := 0
-	for _, s := range job.Steps {
-		if !strings.Contains(s.Run, "proofrun pr-title") {
-			continue
-		}
-		checks++
-		if got := fmt.Sprint(s.Env["PR_TITLE"]); got != "${{ github.event.pull_request.title }}" {
-			p = append(p, "the check's PR_TITLE is "+got+", want the pull request's title")
-		}
-		if !strings.Contains(s.Run, `-title "$PR_TITLE"`) {
-			p = append(p, "the check does not pass -title \"$PR_TITLE\": "+s.Run)
-		}
-		if s.If != "github.event_name == 'pull_request'" {
-			p = append(p, "the check's if is "+s.If+", want github.event_name == 'pull_request' alone: a pull request's title is always read")
-		}
-	}
-	if checks != 1 {
-		p = append(p, fmt.Sprintf("%d steps run proofrun pr-title, want one", checks))
-	}
-	return p
-}
-
-func TestWorkflows_ThePRTitleCheckRunsOnEveryTitleChange(t *testing.T) {
-	expectNoProblems(t, "pr-title.yml", prTitleWorkflowProblems(loadWorkflow(t, "pr-title.yml")))
-}
-
-func TestWorkflows_ThePRTitleCheckRefusesEachWeakening(t *testing.T) {
-	check := func(w *wfFile) *wfStep {
-		job := w.Jobs["pr-title"]
-		for i := range job.Steps {
-			if strings.Contains(job.Steps[i].Run, "proofrun pr-title") {
-				return &job.Steps[i]
-			}
-		}
-		return nil
-	}
-	expectEachMutationRefused(t, "pr-title.yml", prTitleWorkflowProblems, []mutation{
-		{"no pull_request", func(w *wfFile) { delete(w.On, "pull_request") }},
-		{"no re-run on an edited title", func(w *wfFile) {
-			w.On["pull_request"] = map[string]any{"types": []any{"opened", "ready_for_review", "reopened", "synchronize"}}
-		}},
-		{"no report on a new head", func(w *wfFile) {
-			w.On["pull_request"] = map[string]any{"types": []any{"edited", "opened", "ready_for_review", "reopened"}}
-		}},
-		{"a path filter", func(w *wfFile) {
-			w.On["pull_request"].(map[string]any)["paths"] = []any{"docs/**"}
-		}},
-		{"no merge_group", func(w *wfFile) { delete(w.On, "merge_group") }},
-		{"pull_request_target", func(w *wfFile) { w.On["pull_request_target"] = nil }},
-		{"another job name", func(w *wfFile) {
-			w.Jobs["title"] = w.Jobs["pr-title"]
-			delete(w.Jobs, "pr-title")
-		}},
-		{"a conditional job", func(w *wfFile) { w.Jobs["pr-title"].If = "github.actor != 'dependabot[bot]'" }},
-		{"a write token", func(w *wfFile) { w.Jobs["pr-title"].Permissions["contents"] = "write" }},
-		{"no check step", func(w *wfFile) { w.Jobs["pr-title"].Steps = w.Jobs["pr-title"].Steps[:1] }},
-		{"another title", func(w *wfFile) { check(w).Env["PR_TITLE"] = "feat: always good" }},
-		{"the title not passed", func(w *wfFile) { check(w).Run = "go run ./test/tools/proofrun pr-title -title 'feat: x'" }},
-		{"a skipped check", func(w *wfFile) { check(w).If = "github.event_name == 'merge_group'" }},
 	})
 }

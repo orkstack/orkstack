@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -18,6 +18,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // keepAliveOnInterrupt registers the test's own SIGINT receiver for its
@@ -145,9 +147,7 @@ func TestInterrupt_ArtifactDownloadLeavesNoTemporaryFile(t *testing.T) {
 	}
 	outcome.requireExit(t, exitInterrupted)
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatalf("read output dir: %v", err)
-	}
+	must.OKf(t, err, "read output dir")
 	if len(entries) != 0 {
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {

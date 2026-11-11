@@ -69,6 +69,9 @@ func (s *Service) CreateSchedule(
 	if orkflow == "" {
 		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("orkflow_name is required"))
 	}
+	if err := ownNamespaceTarget("schedule", orkflow); err != nil {
+		return nil, err
+	}
 	version := msg.GetOrkflowVersion()
 	if _, err := s.orkflows.Get(ctx, ns, orkflow, version); err != nil {
 		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q", orkflow, version, ns)

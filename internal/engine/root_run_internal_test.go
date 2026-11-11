@@ -2,14 +2,17 @@ package engine
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/v2"
 	"testing"
 
 	"go.temporal.io/sdk/temporal"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestChildStartPlan_RecordsTheRoot is the rule of a chain's root: a child of
@@ -70,7 +73,7 @@ func TestChildStartPlan_RecordsTheRoot(t *testing.T) {
 // is byte for byte what its build sent.
 func TestChildStartPlan_UnrecordedParentEncodesAsBefore(t *testing.T) {
 	state := &runState{runID: "ork-this-run", plan: RunPlan{Origin: &RunOrigin{Kind: "RUN_ORIGIN_KIND_SUBMIT"}}}
-	encoded, err := json.Marshal(state.childStartPlan(&ChildRunPlan{RunID: "ork-child"}))
+	encoded, err := stablejson.Marshal(state.childStartPlan(&ChildRunPlan{RunID: "ork-child"}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +99,7 @@ func TestRunOrigin_RootRunRoundTrips(t *testing.T) {
 		RootRunId: "ork-root",
 	}
 	plan := RunPlan{Origin: OriginFromProto(wire), RecordRootRun: true}
-	encoded, err := json.Marshal(plan)
+	encoded, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,13 +190,9 @@ func TestArchivedBody_RootRun(t *testing.T) {
 		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_PARENT_RUN, Id: "ork-mid", RootRunId: "ork-root",
 	}}
 	body, err := MarshalRunArchive(run, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	back, _, err := UnmarshalRunArchive(body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := back.GetOrigin().GetRootRunId(); got != "ork-root" {
 		t.Errorf("root after the archive body = %q, want ork-root", got)
 	}
@@ -206,9 +205,7 @@ func TestArchivedBody_RootRun(t *testing.T) {
 		t.Errorf("a body with no root names the field: %s", body)
 	}
 	older, _, err := UnmarshalRunArchive(body)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if older.GetOrigin().GetRootRunId() != "" || older.GetOrigin().GetId() != "ork-mid" {
 		t.Errorf("an older body reads as %v", older.GetOrigin())
 	}

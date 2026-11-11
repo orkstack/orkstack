@@ -7,6 +7,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordingObserver stands in for the telemetry seam: it records every event
@@ -93,9 +95,7 @@ func TestPublishEvent_ObservesATransitionOnceAcrossActivityRetries(t *testing.T)
 	// workflow replay. The observer's counts must not move on the retries,
 	// exactly like the notifier's.
 	for range 3 {
-		if err := activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#7"); err != nil {
-			t.Fatalf("PublishEvent: %v", err)
-		}
+		must.OKf(t, activities.PublishEvent(context.Background(), event, snapshots.putRun(t, run), runID+"#7"), "PublishEvent")
 	}
 	if got := observer.types(); len(got) != 1 {
 		t.Errorf("observed the same event %d times (%v); a retry must not re-observe it", len(got), got)

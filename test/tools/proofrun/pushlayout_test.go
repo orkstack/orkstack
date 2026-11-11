@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +13,10 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // plRegistry is an in-memory subset of the OCI distribution API: blob HEAD,
@@ -143,18 +147,14 @@ func plWriteBlob(t *testing.T, dir, mediaType string, b []byte) ociDescriptor {
 	t.Helper()
 	d := ociDescriptor{MediaType: mediaType, Digest: plDigest(b), Size: int64(len(b))}
 	p := filepath.Join(dir, "blobs", "sha256", strings.TrimPrefix(d.Digest, "sha256:"))
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(p, b, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Dir(p), 0o755))
+	must.OK(t, os.WriteFile(p, b, 0o644))
 	return d
 }
 
 func plJSON(t *testing.T, v any) []byte {
 	t.Helper()
-	b, err := json.Marshal(v)
+	b, err := stablejson.Marshal(v)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,9 +184,7 @@ func plLayout(t *testing.T, root, name string, index bool) (dir string, top, lay
 		idx := plJSON(t, map[string]any{"schemaVersion": 2, "mediaType": mediaOCIIndex, "manifests": []ociDescriptor{top, other}})
 		top = plWriteBlob(t, dir, mediaOCIIndex, idx)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(dir, "oci-layout"), []byte(`{"imageLayoutVersion":"1.0.0"}`), 0o644))
 	if err := os.WriteFile(filepath.Join(dir, "index.json"),
 		plJSON(t, map[string]any{"schemaVersion": 2, "mediaType": mediaOCIIndex, "manifests": []ociDescriptor{top}}), 0o644); err != nil {
 		t.Fatal(err)
@@ -217,9 +215,7 @@ func TestPushLayout_CopiesBytesVerbatimAndKeepsTheDigest(t *testing.T) {
 		t.Fatalf("exit %d:\n%s", code, out)
 	}
 	got, err := os.ReadFile(tsv)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := "json\t" + host + "/orkstack/activity-json:pr-1\t" + jsonTop.Digest + "\n" +
 		"shell\t" + host + "/orkstack/activity-shell:pr-1\t" + shellTop.Digest + "\n"
 	if string(got) != want {
@@ -257,9 +253,7 @@ func TestPushLayout_RefusesABlobThatDoesNotMatchItsDigest(t *testing.T) {
 	root := t.TempDir()
 	dir, _, layer := plLayout(t, root, "shell", false)
 	file := filepath.Join(dir, "blobs", "sha256", strings.TrimPrefix(layer.Digest, "sha256:"))
-	if err := os.WriteFile(file, []byte("not the bytes that were built"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(file, []byte("not the bytes that were built"), 0o644))
 	tsv := filepath.Join(t.TempDir(), "images.tsv")
 
 	if code := cmdPushLayout([]string{"-layouts", root, "-registry", host, "-tag", "pr-1", "-out", tsv}); code != 1 {
@@ -350,9 +344,7 @@ func TestLayoutDigests_ReadsTheTopDescriptor(t *testing.T) {
 	}
 
 	// A top manifest that is not the bytes its descriptor names is refused.
-	if err := os.WriteFile(filepath.Join(gitDir, "blobs", "sha256", strings.TrimPrefix(gitTop.Digest, "sha256:")), []byte("{}"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(gitDir, "blobs", "sha256", strings.TrimPrefix(gitTop.Digest, "sha256:")), []byte("{}"), 0o644))
 	if code := cmdLayoutDigests(args); code != 1 {
 		t.Errorf("exit %d for a corrupted top manifest, want 1:\n%s", code, out)
 	}

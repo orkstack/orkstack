@@ -19,6 +19,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_OrkerMaxConcurrentBoundsAFanOut is F-orker-storage-perf-1's
@@ -40,9 +42,7 @@ func TestIntegration_OrkerMaxConcurrentBoundsAFanOut(t *testing.T) {
 	}
 	t.Cleanup(activities.Close)
 	tuner, err := activities.WorkerTuner()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var mu sync.Mutex
 	inFlight, peak, executed := 0, 0, 0
 	w := worker.New(e.temporal, e.orkerQueue, worker.Options{
@@ -64,9 +64,7 @@ func TestIntegration_OrkerMaxConcurrentBoundsAFanOut(t *testing.T) {
 		return activities.ExecuteTask(actx, in)
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(activities.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Start())
 	t.Cleanup(w.Stop)
 
 	described, err := activities.DescribeOrker(e.ctx)
@@ -128,9 +126,7 @@ func TestIntegration_FanOutDownloadsASharedInputOncePerOrker(t *testing.T) {
 	w := worker.New(e.temporal, e.orkerQueue, worker.Options{DisableRegistrationAliasing: true, DisableWorkflowWorker: true})
 	w.RegisterActivityWithOptions(activities.ExecuteTask, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(activities.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-	if err := w.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Start())
 	t.Cleanup(w.Stop)
 
 	const items = 20

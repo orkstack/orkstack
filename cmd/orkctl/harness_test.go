@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fixedNow is the injected clock. Every timestamp the API stamps is therefore
@@ -283,9 +285,7 @@ func (f *fixture) lastRequest(path string, msg proto.Message) bool {
 	defer f.requestsMu.Unlock()
 	for i := len(f.requestLog) - 1; i >= 0; i-- {
 		if f.requestLog[i] == path {
-			if err := proto.Unmarshal(f.bodyLog[i], msg); err != nil {
-				f.t.Fatalf("decode request to %s: %v", path, err)
-			}
+			must.OKf(f.t, proto.Unmarshal(f.bodyLog[i], msg), "decode request to %s", path)
 			return true
 		}
 	}
@@ -392,9 +392,7 @@ func newFixtureWith(
 
 	server := api.NewServer("127.0.0.1:0", recording)
 	plain, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	listener := &resetListener{Listener: plain}
 	f.listener = listener
 	go func() { _ = server.Serve(listener) }()
@@ -438,7 +436,7 @@ func (f *fixture) runTo(out io.Writer, args ...string) result {
 // applyExample registers internal/dsl/testdata/orkflows/hello.ork.yaml through the CLI.
 func (f *fixture) applyExample() result {
 	f.t.Helper()
-	return f.run("apply", examplePath(f.t))
+	return f.run("orkflow", "create", examplePath(f.t))
 }
 
 // orkflowFixtures is where the Orkflows only this repository's tests read live,
@@ -449,9 +447,7 @@ const orkflowFixtures = "internal/dsl/testdata/orkflows"
 func examplePath(t *testing.T) string {
 	t.Helper()
 	path, err := filepath.Abs(filepath.Join("..", "..", orkflowFixtures, "hello.ork.yaml"))
-	if err != nil {
-		t.Fatalf("resolve fixture path: %v", err)
-	}
+	must.OKf(t, err, "resolve fixture path")
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("fixture orkflow missing: %v", err)
 	}

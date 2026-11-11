@@ -23,12 +23,11 @@ name: release
 # the user runs it.
 #
 # `gate` runs on the hosted ubuntu-24.04 runners (4 vCPUs). A wall-clock
-# budget calibrated on the 16-CPU reference host that one of them misses is
-# excused exactly as in the merge gate: a recorded known gap under a row of
-# scripts/proof-host-speed.tsv the base carries, never a pass and never a
-# widened bound (AGENTS.md §11; docs/PROOFS.md §12). Every other failure fails
-# the gate's proof. Its proof is the verdict: only a run whose release proof
-# passed and verified publishes, even when an excused miss left a part red.
+# budget calibrated on the 16-CPU reference host is held there to its bound
+# scaled by 16 over the runner's CPUs, as in the merge gate (AGENTS.md §11;
+# docs/PROOFS.md §12), and a miss of that fails the gate's proof like any
+# other failure. Its proof is the verdict: only a run whose release proof
+# passed and verified publishes.
 
 on:
   workflow_dispatch:
@@ -318,7 +317,9 @@ jobs:
   # running is waited for, up to 60 minutes. The latest completed nightly.yml
   # run on main whose head is this commit is judged by its proof.json as
   # `make merge-check NIGHTLY=` judges one, never by the proof's colour, and
-  # by the jobs outside its proof.
+  # by the jobs outside its proof: the scan's three, release-notes (every
+  # published release's notes against its CHANGELOG.md section) and
+  # quickstart.
   nightly:
     needs: [validate, gate, artifacts]
     if: ${{ !cancelled() && github.ref == 'refs/heads/main' && needs.validate.result == 'success' && needs.artifacts.result == 'success' && needs.gate.outputs.proof_artifact != '' }}

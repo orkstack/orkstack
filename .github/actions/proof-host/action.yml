@@ -127,8 +127,7 @@ runs:
     # no workflow here allows. This binary proves the legacy `.sig` layout
     # cosign 2 writes; cosign 3's bundle is proven by the image the release
     # signs with (`cosign image`, below). To move cosign, take the new line
-    # from the release's checksums and change the pair here and in
-    # test/tools/proofrun/proofhost_test.go.
+    # from the release's checksums and change the pair here.
     - name: fetch cosign
       if: inputs.cosign == 'true'
       uses: ./.github/actions/proof-fetch

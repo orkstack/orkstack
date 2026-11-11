@@ -34,7 +34,7 @@ type ContinuationLocator struct {
 	URI        string `json:"uri,omitempty"`
 	Namespace  string `json:"namespace,omitempty"`
 	RunID      string `json:"run_id,omitempty"`
-	Generation int64  `json:"generation,omitempty"`
+	Generation int64  `json:"generation,omitzero"`
 	Kind       string `json:"kind,omitempty"`
 	SHA256     string `json:"sha256,omitempty"`
 }

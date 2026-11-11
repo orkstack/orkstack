@@ -24,6 +24,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---- the conversions ----
@@ -237,9 +239,7 @@ var dc = converter.GetDefaultDataConverter()
 func mustPayload(t testing.TB, v any) *commonpb.Payload {
 	t.Helper()
 	p, err := dc.ToPayload(v)
-	if err != nil {
-		t.Fatalf("encode %v: %v", v, err)
-	}
+	must.OKf(t, err, "encode %v", v)
 	return p
 }
 
@@ -418,9 +418,7 @@ func TestTemporalScheduler_CreateIsOneCallAndMapsErrors(t *testing.T) {
 		s := engine.NewTemporalScheduler(cluster, "")
 		rec := scheduleRecord("payments", "nightly", &orkstackv1.ScheduleSpec{Cron: []string{"0 2 * * *"}, Overlap: tc.policy})
 		view, err := s.Create(ctx, rec, true)
-		if err != nil {
-			t.Fatalf("Create: %v", err)
-		}
+		must.OKf(t, err, "Create")
 		if len(cluster.sc.created) != 1 {
 			t.Fatalf("Create made %d cluster calls, want 1", len(cluster.sc.created))
 		}
@@ -502,9 +500,7 @@ func TestTemporalScheduler_DescribeDecodesRecordAndState(t *testing.T) {
 	}
 	logs.Reset()
 	view, err := s.Describe(ctx, "payments", "nightly")
-	if err != nil {
-		t.Fatalf("Describe: %v", err)
-	}
+	must.OKf(t, err, "Describe")
 	if !proto.Equal(view.Record, rec) || view.ID != rec.GetScheduleId() || view.OrkflowName != "reconcile" {
 		t.Errorf("record/identity = %+v", view)
 	}
@@ -601,9 +597,7 @@ func TestTemporalScheduler_ListFiltersByMemoNamespaceAndDescribesEach(t *testing
 		Memo: memoOf(t, map[string]string{engine.MemoScheduleID: "sch-dead", engine.MemoScheduleName: "deleted",
 			engine.MemoNamespace: "payments", engine.MemoOrkflowName: "reconcile"})})
 	views, err := s.List(ctx, "payments", nil)
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
+	must.OKf(t, err, "List")
 	if len(views) != 2 || views[0].Name != "alpha" || views[1].Name != "zeta" {
 		t.Fatalf("List = %+v, want alpha, zeta", views)
 	}
@@ -617,9 +611,7 @@ func TestTemporalScheduler_ListFiltersByMemoNamespaceAndDescribesEach(t *testing
 	cluster.sc.handles["ork-schedule/payments/zeta"].err = serviceerror.NewUnavailable("cluster busy")
 	cluster.sc.entries = append([]*client.ScheduleListEntry(nil), cluster.sc.entries...)
 	views, err = s.List(ctx, "payments", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	zeta := views[1]
 	if zeta.Name != "zeta" || zeta.ID == "" || zeta.OrkflowName != "reconcile" || zeta.Namespace != "payments" ||
 		zeta.Record != nil || !strings.Contains(zeta.Unavailable, "cluster busy") {
@@ -650,9 +642,7 @@ func TestTemporalScheduler_RecentFiresReadMemoAndMarkUnavailable(t *testing.T) {
 	cluster.sc.handles["ork-schedule/payments/nightly"].desc.Info.RecentActions = actions
 
 	view, err := s.Describe(ctx, "payments", "nightly")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := []engine.ScheduleFireView{
 		{RunID: "ork-20260921-1", DetailsAvailable: true},
 		{Refusal: `pool "gpu" has no live Orker`, DetailsAvailable: true},
@@ -691,9 +681,7 @@ func TestTemporalScheduler_UpdateRebuildsSpecPolicyAndArgsTogether(t *testing.T)
 			Overlap: orkstackv1.OverlapPolicy_OVERLAP_POLICY_ALLOW_ALL, PauseOnFailure: true}
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("Update: %v", err)
-	}
+	must.OKf(t, err, "Update")
 	u := h.updated.Schedule
 	if u.Spec.CronExpressions[0] != "30 3 * * *" || u.Spec.TimeZoneName != "Europe/Lisbon" {
 		t.Errorf("compiled spec not rebuilt: %+v", u.Spec)
@@ -758,9 +746,7 @@ func TestTemporalScheduler_PauseResumeFireBackfillDelete(t *testing.T) {
 		if err := s.Fire(ctx, "payments", "nightly", tc.in); err != nil || h.trigger.Overlap != tc.want {
 			t.Errorf("Fire(%v) = %v, sent %v; want %v", tc.in, err, h.trigger.Overlap, tc.want)
 		}
-		if err := s.Backfill(ctx, "payments", "nightly", start, end, tc.in); err != nil {
-			t.Fatalf("Backfill: %v", err)
-		}
+		must.OKf(t, s.Backfill(ctx, "payments", "nightly", start, end, tc.in), "Backfill")
 		b := h.backfill.Backfill
 		if len(b) != 1 || b[0].Overlap != tc.want || !b[0].Start.Equal(start) || !b[0].End.Equal(end) {
 			t.Errorf("Backfill(%v) sent %+v", tc.in, b)
@@ -777,9 +763,7 @@ func TestTemporalScheduler_PauseResumeFireBackfillDelete(t *testing.T) {
 		t.Errorf("a reserved overlap reached the handle: %v", h.calls[calls:])
 	}
 
-	if err := s.Delete(ctx, "payments", "nightly"); err != nil {
-		t.Fatalf("Delete: %v", err)
-	}
+	must.OKf(t, s.Delete(ctx, "payments", "nightly"), "Delete")
 	if err := s.Delete(ctx, "payments", "missing"); !errors.Is(err, engine.ErrScheduleNotFound) {
 		t.Errorf("Delete(missing) = %v, want ErrScheduleNotFound", err)
 	}

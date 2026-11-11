@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // poolRoutingNamespace isolates this suite's Temporal namespace, per
@@ -68,9 +70,7 @@ type poolOrker struct {
 func newPoolOrker(t *testing.T, name, pool string) *poolOrker {
 	t.Helper()
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("QueueForPool(%q): %v", pool, err)
-	}
+	must.OKf(t, err, "QueueForPool(%q)", pool)
 	return &poolOrker{
 		name: name, pool: pool, queue: queue,
 		identity: &orkstackv1.DescribeOrkerResult{
@@ -235,9 +235,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 		started[orker.name] = w
 	}
 	for name, w := range started {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -257,9 +255,7 @@ func TestIntegration_TwoPoolsRouteExecuteAndRejectIndependently(t *testing.T) {
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -409,9 +405,7 @@ tasks:
 	// ── now run the two-pool job for real ──
 	submitted, err := runClient.SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: twoPoolName, Namespace: nsName}))
-	if err != nil {
-		t.Fatalf("SubmitRun(%s): %v", twoPoolName, err)
-	}
+	must.OKf(t, err, "SubmitRun(%s)", twoPoolName)
 	runID := submitted.Msg.GetRun().GetId()
 
 	// The namespace travels with the run id: a run is addressed INSIDE one
@@ -419,9 +413,7 @@ tasks:
 	// none asks `default` about a run this namespace owns.
 	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(
 		&orkstackv1.StreamEventsRequest{RunId: runID, Namespace: nsName}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 	scheduled := map[string]string{}
 	var last *orkstackv1.Event
@@ -484,9 +476,7 @@ tasks:
 	awaitRunListed(t, ctx, runClient, nsName, twoPoolName, runID)
 	listed, err := runClient.ListRuns(ctx, connect.NewRequest(
 		&orkstackv1.ListRunsRequest{Filters: equalsFilters("orkflow_name", coldName), Namespace: nsName}))
-	if err != nil {
-		t.Fatalf("ListRuns(%s): %v", coldName, err)
-	}
+	must.OKf(t, err, "ListRuns(%s)", coldName)
 	if n := len(listed.Msg.GetRuns()); n != 0 {
 		t.Errorf("the refused empty-pool submit left %d run(s) behind: %v", n, listed.Msg.GetRuns())
 	}
@@ -497,9 +487,7 @@ tasks:
 	pools, err := namespaceClient.ListPools(ctx, connect.NewRequest(&orkstackv1.ListPoolsRequest{
 		Namespace: nsName,
 	}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	byName := map[string]*orkstackv1.Pool{}
 	for _, pool := range pools.Msg.GetPools() {
 		byName[pool.GetName()] = pool

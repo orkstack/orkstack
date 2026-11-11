@@ -160,7 +160,7 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	//    sees one. And a validation round-trips.
 	await page.goto(`${UI}/orkflows?ns=default`);
 	await expect(page.getByTestId('orkflows-empty').first()).toBeVisible();
-	await page.goto(`${UI}/apply?ns=default`);
+	await page.goto(`${UI}/orkflows/+new?ns=default`);
 	await editorReady(page, 'apply-yaml');
 	await fillYaml(page, 'apply-yaml', orkflowDoc('csp-lint', '  - id: fetch\n    need: [setup]\n    uses: http\n    with:\n      url: https://example.com\n'));
 	const finding = page.locator('[data-testid="apply-yaml-finding"][data-line="7"]');
@@ -189,7 +189,7 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	// 4. The positive control: an inline script the build did not name is
 	//    refused, and does not run. Declared first, since both policies on
 	//    the page (the header and the meta tag) report it.
-	cspViolations.expect(/^\/apply: script-src-elem inline$/);
+	cspViolations.expect(/^\/orkflows\/\+new: script-src-elem inline$/);
 	await page.evaluate(() => {
 		const script = document.createElement('script');
 		script.textContent = 'window.injected = true';
@@ -202,7 +202,7 @@ test('the UI runs under a strict content security policy, and only the scripts i
 	//    they compiled in the browser: refused, reported to the fixture, and
 	//    thrown to the caller. From a timer, because the page's own code is what
 	//    the policy binds, and a script the test driver evaluates may be exempt.
-	cspViolations.expect(/^\/apply: script-src eval$/);
+	cspViolations.expect(/^\/orkflows\/\+new: script-src eval$/);
 	const evaluated = await page.evaluate(
 		() =>
 			new Promise<string>((resolve) =>

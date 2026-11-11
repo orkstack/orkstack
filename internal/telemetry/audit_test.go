@@ -5,14 +5,14 @@ import (
 	"testing"
 
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestAuditInstruments_CountByActionAndOutcome(t *testing.T) {
 	providers, _, reader := newObserverProviders(t)
 	inst, err := NewAuditInstruments(providers)
-	if err != nil {
-		t.Fatalf("NewAuditInstruments: %v", err)
-	}
+	must.OKf(t, err, "NewAuditInstruments")
 	ctx := context.Background()
 	inst.CountAudit(ctx, "namespace.update", "written")
 	inst.CountAudit(ctx, "namespace.update", "written")
@@ -41,9 +41,7 @@ func TestAuditInstruments_CountByActionAndOutcome(t *testing.T) {
 
 	// Nil providers and a nil instrument set are no-ops, never a panic.
 	noop, err := NewAuditInstruments(nil)
-	if err != nil {
-		t.Fatalf("NewAuditInstruments(nil): %v", err)
-	}
+	must.OKf(t, err, "NewAuditInstruments(nil)")
 	noop.CountAudit(ctx, "x", "written")
 	var none *AuditInstruments
 	none.CountAudit(ctx, "x", "written")

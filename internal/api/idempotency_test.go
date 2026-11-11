@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // claimKeyIn is the coordinate one idempotency key occupies at the claim
@@ -154,13 +156,9 @@ func TestSubmitRun_TwoReplicasSharingAClaimerConverseOnOneRun(t *testing.T) {
 	b := newReplica(t, claimer, nil, &fakeStarter{})
 
 	first, err := a.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("submit on A: %v", err)
-	}
+	must.OKf(t, err, "submit on A")
 	second, err := b.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("submit on B: %v", err)
-	}
+	must.OKf(t, err, "submit on B")
 
 	if first.GetId() != second.GetId() {
 		t.Fatalf("one key produced two runs: A %q, B %q", first.GetId(), second.GetId())
@@ -193,9 +191,7 @@ func TestSubmitRun_LosingReplicaReportsTheWinnersRunNotItsOwnRequest(t *testing.
 
 	loser := newReplica(t, claimer, nil, &fakeStarter{})
 	got, err := loser.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	must.OKf(t, err, "submit")
 
 	if got.GetId() != winner.GetId() {
 		t.Errorf("run id = %q, want the claimed %q", got.GetId(), winner.GetId())
@@ -222,9 +218,7 @@ func TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun(t *testing.T) {
 	}
 
 	repeat, err := engineA.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("repeat submit: %v", err)
-	}
+	must.OKf(t, err, "repeat submit")
 	if repeat.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Errorf("repeat submission reports %s, want the recorded FAILED run", repeat.GetStatus())
 	}
@@ -252,9 +246,7 @@ func TestSubmitRun_FailedStartStaysDeduplicatedOnAnotherReplica(t *testing.T) {
 	}
 
 	got, err := b.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("submit on B: %v", err)
-	}
+	must.OKf(t, err, "submit on B")
 	if got.GetStatus() != orkstackv1.Status_STATUS_FAILED {
 		t.Errorf("replica B reports %s, want the FAILED run replica A recorded", got.GetStatus())
 	}
@@ -293,9 +285,7 @@ func TestSubmitRun_AClaimWhoseWinnerDiedHoldsTheKeyUntilItsTTL(t *testing.T) {
 
 	survivor := newReplica(t, claimer, newArchiver(t), &fakeStarter{})
 	got, err := survivor.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("submit against a stranded claim: %v", err)
-	}
+	must.OKf(t, err, "submit against a stranded claim")
 
 	if got.GetId() != stranded.GetId() {
 		t.Errorf("submission answered with run %q, want the claim's stranded run %q: "+
@@ -376,9 +366,7 @@ func TestSubmitRun_ReissueMovesTheClaimToTheRunThatStarted(t *testing.T) {
 	}
 
 	first, err := submit()
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	must.OKf(t, err, "submit")
 	rejected, started := starter.attempts()
 	if len(rejected) != 1 || len(started) != 1 {
 		t.Fatalf("attempts: rejected %v started %v, want one of each", rejected, started)
@@ -395,9 +383,7 @@ func TestSubmitRun_ReissueMovesTheClaimToTheRunThatStarted(t *testing.T) {
 	}
 
 	repeat, err := submit()
-	if err != nil {
-		t.Fatalf("repeat submit: %v", err)
-	}
+	must.OKf(t, err, "repeat submit")
 	if repeat.GetId() != started[0] {
 		t.Errorf("repeat submission returned %q, want the started run %q", repeat.GetId(), started[0])
 	}

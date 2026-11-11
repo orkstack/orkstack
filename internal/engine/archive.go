@@ -3,7 +3,7 @@ package engine
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"math"
@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -58,10 +59,10 @@ const (
 // archiveLine is one JSONL record. The payloads stay raw so protojson owns the
 // encoding of every protobuf message.
 type archiveLine struct {
-	Kind  string          `json:"kind"`
-	Run   json.RawMessage `json:"run,omitempty"`
-	Event json.RawMessage `json:"event,omitempty"`
-	Gap   *EventGap       `json:"gap,omitempty"`
+	Kind  string             `json:"kind"`
+	Run   stablejson.RawJSON `json:"run,omitzero"`
+	Event stablejson.RawJSON `json:"event,omitzero"`
+	Gap   *EventGap          `json:"gap,omitzero"`
 }
 
 // EventGap is a range of a run's event sequence its stream does not hold,
@@ -270,8 +271,8 @@ func UnmarshalRunLine(body []byte) (*orkstackv1.Run, error) {
 			continue
 		}
 		var kind struct {
-			Kind string          `json:"kind"`
-			Run  json.RawMessage `json:"run,omitempty"`
+			Kind string             `json:"kind"`
+			Run  stablejson.RawJSON `json:"run,omitzero"`
 		}
 		if err := json.Unmarshal(line, &kind); err != nil {
 			return nil, fmt.Errorf("engine: read archive line %d: %w", number, err)
@@ -292,7 +293,7 @@ func UnmarshalRunLine(body []byte) (*orkstackv1.Run, error) {
 }
 
 func appendArchiveLine(out *bytes.Buffer, line archiveLine) error {
-	encoded, err := json.Marshal(line)
+	encoded, err := stablejson.Marshal(line)
 	if err != nil {
 		return fmt.Errorf("encode %s line: %w", line.Kind, err)
 	}
@@ -305,13 +306,13 @@ func appendArchiveLine(out *bytes.Buffer, line archiveLine) error {
 // JSON. protojson deliberately varies its whitespace, so the output is
 // re-compacted: an archive line must be one line, and identical input must
 // produce identical bytes.
-func marshalArchiveMessage(m proto.Message) (json.RawMessage, error) {
+func marshalArchiveMessage(m proto.Message) (stablejson.RawJSON, error) {
 	raw, err := protojson.Marshal(m)
 	if err != nil {
 		return nil, fmt.Errorf("encode %T: %w", m, err)
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
+	if err := stablejson.Compact(&compact, raw); err != nil {
 		return nil, fmt.Errorf("compact %T: %w", m, err)
 	}
 	return compact.Bytes(), nil
@@ -388,7 +389,8 @@ func (a *RunArchiver) Archive(ctx context.Context, run *orkstackv1.Run, events [
 	record := artifacts.RunRecord{
 		RunID:     run.GetId(),
 		Namespace: run.GetNamespace(),
-		Orkflow:   run.GetOrkflowName(),
+		// A shared child is indexed under "<owner>/<name>" (OrkflowKey).
+		Orkflow:   OrkflowKey(run),
 		Status:    archiveStatus(run.GetStatus()),
 		Time:      RunIndexTime(run),
 		JSONL:     body,
@@ -626,11 +628,13 @@ func archiveKeep(keep func(*orkstackv1.Run) bool) func(artifacts.RunIndexEntry) 
 // origin index, its origin kind and id. A key whose status names no Status
 // projects UNSPECIFIED, which no status filter selects.
 func indexProjection(entry artifacts.RunIndexEntry) *orkstackv1.Run {
+	owner, name := SplitOrkflowKey(entry.Orkflow)
 	run := &orkstackv1.Run{
-		Id:          entry.RunID,
-		Namespace:   entry.Namespace,
-		OrkflowName: entry.Orkflow,
-		Status:      orkstackv1.Status(orkstackv1.Status_value["STATUS_"+strings.ToUpper(entry.Status)]),
+		Id:               entry.RunID,
+		Namespace:        entry.Namespace,
+		OrkflowName:      name,
+		OrkflowNamespace: owner,
+		Status:           orkstackv1.Status(orkstackv1.Status_value["STATUS_"+strings.ToUpper(entry.Status)]),
 	}
 	if !entry.Time.IsZero() {
 		run.CreatedAt = timestamppb.New(entry.Time)

@@ -12,6 +12,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The recorded runs of linearDocument whose plan carries a fairness selection
@@ -108,9 +110,7 @@ func replayCapturingFairness(t *testing.T, recorded *historypb.History, runID st
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: []interceptor.WorkerInterceptor{capture},
 	})
-	if err != nil {
-		t.Fatalf("new replayer: %v", err)
-	}
+	must.OKf(t, err, "new replayer")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return capture, replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
 		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
@@ -142,9 +142,7 @@ func TestRunWorkflow_ReplaysCommittedFairnessKeysHistories(t *testing.T) {
 			}
 			requireRecordedFairness(t, tc.path, recorded, tc.legacy)
 			capture, err := replayCapturingFairness(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("replaying %s against current code failed: %v", tc.path, err)
-			}
+			must.OKf(t, err, "replaying %s against current code failed", tc.path)
 			requireCapturedFairness(t, tc.path, capture, tc.legacy)
 		})
 	}

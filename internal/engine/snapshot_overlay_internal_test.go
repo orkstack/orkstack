@@ -20,6 +20,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The snapshot-overlay unit evidence (T6): snapshot overlays, written by
@@ -187,9 +189,7 @@ func (h *overlayHarness) checkMaterializes(t *testing.T) (overlays, fulls int) {
 	t.Helper()
 	for _, w := range h.writes {
 		got, err := materializeSnapshot(context.Background(), h.store, nil, w.written.URI)
-		if err != nil {
-			t.Fatalf("event %d: read back %s: %v", w.seq, w.written.URI, err)
-		}
+		must.OKf(t, err, "event %d: read back %s", w.seq, w.written.URI)
 		if !proto.Equal(got, w.run) {
 			t.Fatalf("event %d: %s does not materialize to the run it was written for", w.seq, w.written.URI)
 		}
@@ -280,9 +280,7 @@ tasks:
 		t.Helper()
 		want := proto.Clone(s.snapshot()).(*orkstackv1.Run)
 		written, err := a.WriteSnapshotOrOverlay(context.Background(), s.snapshot(), seq, base, policy)
-		if err != nil {
-			t.Fatalf("%s: %v", step, err)
-		}
+		must.OKf(t, err, "%s", step)
 		got, err := materializeSnapshot(context.Background(), store, nil, written.URI)
 		if err != nil || !proto.Equal(got, want) {
 			t.Fatalf("%s: event %d (%s) does not read back as the run (%v)", step, seq, written.URI, err)
@@ -408,9 +406,7 @@ func decodeOverlayForTest(t *testing.T, store *memSnapshotStore, uri string) *or
 		t.Fatalf("no object at %s", uri)
 	}
 	overlay := &orkstackv1.RunSnapshotOverlay{}
-	if err := proto.Unmarshal(data, overlay); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(data, overlay))
 	return overlay
 }
 
@@ -696,9 +692,7 @@ func TestMaterializeSnapshot_RefusesABaseOfAnotherRun(t *testing.T) {
 	store, _, uri, _, _ := overlayFixture(t, 300)
 	other := &orkstackv1.Run{Id: "ork-other", Namespace: "default"}
 	otherURI, err := store.WriteSnapshot(context.Background(), "default", "ork-other", 1, mustMarshal(t, other))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for name, base := range map[string]string{
 		"another run's snapshot": otherURI,
 		"an overlay":             strings.TrimSuffix(otherURI, ".pb") + ".ovl",
@@ -726,9 +720,7 @@ func TestMaterializeSnapshot_RefusesABaseOfAnotherRun(t *testing.T) {
 func mustMarshal(t *testing.T, m proto.Message) []byte {
 	t.Helper()
 	data, err := proto.Marshal(m)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return data
 }
 
@@ -796,9 +788,7 @@ func TestMaterializeSnapshot_BaseRewrittenAfterTheOverlayIsRefusedNotDegraded(t 
 	}
 	old, _ := store.get(full.URI)
 	rewritten := &orkstackv1.Run{}
-	if err := proto.Unmarshal(old, rewritten); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(old, rewritten))
 	rewritten.StartedAt = timestamppb.New(time.Unix(1_800_000_000, 0))
 	store.put(full.URI, mustMarshal(t, rewritten))
 	_, err := materializeSnapshot(context.Background(), store, nil, uri)
@@ -841,9 +831,7 @@ func TestWriteSnapshotOrOverlay_WritesFullWhenTheBaseChanged(t *testing.T) {
 	}
 	old, _ := store.get(full.URI)
 	changed := &orkstackv1.Run{}
-	if err := proto.Unmarshal(old, changed); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, proto.Unmarshal(old, changed))
 	changed.Status = orkstackv1.Status_STATUS_FAILED
 	store.put(full.URI, mustMarshal(t, changed))
 	written, err := NewSnapshotActivities(store).WriteSnapshotOrOverlay(context.Background(), run, 4, ref, DefaultOverlayPolicy())
@@ -897,9 +885,7 @@ func TestSnapshotBaseCache_HoldsEightBasesOrItsByteBudget(t *testing.T) {
 	runBytes := func(id string) []byte {
 		t.Helper()
 		data, err := proto.Marshal(&orkstackv1.Run{Id: id})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return data
 	}
 
@@ -938,9 +924,7 @@ func TestSnapshotBaseCache_HoldsEightBasesOrItsByteBudget(t *testing.T) {
 		t.Fatalf("the byte budget kept %d bases / %d bytes, want 1 / %d", byBytes.len(), byBytes.size(), len(b))
 	}
 	tooBig, err := proto.Marshal(&orkstackv1.Run{Id: strings.Repeat("x", int(byBytes.maxBytes))})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got := byBytes.put("s3://test/big", "big", tooBig); got == nil {
 		t.Fatal("a base over the whole byte bound was not decoded for its caller")
 	}

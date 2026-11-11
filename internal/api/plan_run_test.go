@@ -13,6 +13,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const planDocument = `apiVersion: orkstack/v1
@@ -37,9 +39,7 @@ func applyPlanDoc(t *testing.T, svc *api.Service, yaml, namespace string) *orkst
 	resp, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: yaml, Namespace: namespace,
 	}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow")
 	return resp.Msg.GetOrkflow()
 }
 
@@ -80,22 +80,16 @@ func TestPlanRun_WritesNothingAndNeedsNoStarter(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: store})
 	applyPlanDoc(t, svc, planDocument, "")
 	before, err := store.Versions(ctx, "default", "plan-me")
-	if err != nil {
-		t.Fatalf("ListVersions: %v", err)
-	}
+	must.OKf(t, err, "ListVersions")
 
 	plan, err := planRun(svc, &orkstackv1.PlanRunRequest{OrkflowName: "plan-me"})
-	if err != nil {
-		t.Fatalf("PlanRun on a starter-less service: %v", err)
-	}
+	must.OKf(t, err, "PlanRun on a starter-less service")
 	if planOutcome(plan, "first") != orkstackv1.PlanOutcome_PLAN_OUTCOME_RUNS ||
 		planOutcome(plan, "gated") != orkstackv1.PlanOutcome_PLAN_OUTCOME_SKIPPED {
 		t.Fatalf("plan = %v", plan)
 	}
 	after, err := store.Versions(ctx, "default", "plan-me")
-	if err != nil {
-		t.Fatalf("ListVersions: %v", err)
-	}
+	must.OKf(t, err, "ListVersions")
 	if len(before.All) != len(after.All) || before.Current != after.Current || before.Head != after.Head {
 		t.Fatalf("versions before %+v, after %+v: a plan wrote a definition or moved a pointer", before, after)
 	}
@@ -146,16 +140,12 @@ func TestPlanRun_ResolvesLikeGetOrkflow(t *testing.T) {
 	}
 
 	current, err := planRun(svc, &orkstackv1.PlanRunRequest{OrkflowName: "plan-me", Namespace: "team-a"})
-	if err != nil {
-		t.Fatalf("plan current: %v", err)
-	}
+	must.OKf(t, err, "plan current")
 	if current.GetOrkflowVersion() != "2.0.0" || current.GetDefinitionDigest() != v2.GetDefinitionDigest() {
 		t.Errorf("current plan = %s %s, want 2.0.0 %s", current.GetOrkflowVersion(), current.GetDefinitionDigest(), v2.GetDefinitionDigest())
 	}
 	pinned, err := planRun(svc, &orkstackv1.PlanRunRequest{OrkflowName: "plan-me", Namespace: "team-a", OrkflowVersion: "1.0.0"})
-	if err != nil {
-		t.Fatalf("plan pinned: %v", err)
-	}
+	must.OKf(t, err, "plan pinned")
 	if pinned.GetOrkflowVersion() != "1.0.0" || pinned.GetDefinitionDigest() != v1.GetDefinitionDigest() {
 		t.Errorf("pinned plan = %s %s, want 1.0.0 %s", pinned.GetOrkflowVersion(), pinned.GetDefinitionDigest(), v1.GetDefinitionDigest())
 	}
@@ -174,9 +164,7 @@ func TestPlanRun_YamlFormIsPreparedNotStored(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: store, Namespaces: reg})
 
 	plan, err := planRun(svc, &orkstackv1.PlanRunRequest{Yaml: planDocument})
-	if err != nil {
-		t.Fatalf("PlanRun yaml: %v", err)
-	}
+	must.OKf(t, err, "PlanRun yaml")
 	if !plan.GetFromYaml() || plan.GetDefinitionDigest() == "" || plan.GetOrkflowName() != "plan-me" || plan.GetOrkflowVersion() != "1.0.0" {
 		t.Fatalf("yaml plan = %v", plan)
 	}
@@ -208,13 +196,9 @@ func TestPlanRun_EchoesEffectiveInputAndCoordinates(t *testing.T) {
 	svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore()})
 	wf := applyPlanDoc(t, svc, planDocument, "")
 	extra, err := structpb.NewStruct(map[string]any{"note": "x"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plan, err := planRun(svc, &orkstackv1.PlanRunRequest{OrkflowName: "plan-me", Input: &orkstackv1.Payload{Data: extra}})
-	if err != nil {
-		t.Fatalf("PlanRun: %v", err)
-	}
+	must.OKf(t, err, "PlanRun")
 	fields := plan.GetInput().GetData().GetFields()
 	if v, ok := fields["enabled"]; !ok || v.GetBoolValue() {
 		t.Errorf("effective input %v, want the declared default enabled=false", plan.GetInput())

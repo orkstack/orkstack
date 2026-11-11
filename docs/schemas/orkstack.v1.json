@@ -192,7 +192,7 @@
     },
     "automation": {
       "additionalProperties": false,
-      "description": "One namespace's settings, schedules, triggers and webhooks, declared by name (docs/AUTOMATION.md). `orkctl apply --dry-run` plans it against what the namespace holds; a schema checks only its shape.",
+      "description": "One namespace's settings, schedules, triggers and webhooks, declared by name (docs/AUTOMATION.md). `orkctl automation apply --dry-run` plans it against what the namespace holds; a schema checks only its shape.",
       "properties": {
         "apiVersion": {
           "const": "orkstack/v1",
@@ -200,7 +200,7 @@
         },
         "kind": {
           "const": "Automation",
-          "description": "Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl apply` dispatches on it."
+          "description": "Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl automation apply` refuses any other kind, as `orkctl orkflow create` refuses this one."
         },
         "namespace": {
           "description": "The one namespace the document describes, a slug. Required and authoritative: never inferred from `-n`, `ORK_NAMESPACE` or a saved default, so a document that prunes can never land in the wrong namespace by accident of a shell.",
@@ -307,7 +307,7 @@
           "type": "string"
         },
         "orkflow": {
-          "description": "slug, **required**, fixed at creation",
+          "description": "slug of this namespace's Orkflow, **required**, fixed at creation",
           "maxLength": 200,
           "pattern": "^[a-z][a-z0-9-]*$",
           "type": "string"
@@ -378,7 +378,7 @@
               "type": "integer"
             },
             "period": {
-              "description": "A Go duration such as 168h, which `orkctl apply` checks.",
+              "description": "A Go duration such as 168h, which `orkctl automation apply` checks.",
               "type": "string"
             }
           },
@@ -451,7 +451,7 @@
           "type": "string"
         },
         "orkflow": {
-          "description": "slug, **required**, fixed at creation",
+          "description": "slug of this namespace's Orkflow, **required**, fixed at creation",
           "maxLength": 200,
           "pattern": "^[a-z][a-z0-9-]*$",
           "type": "string"
@@ -478,6 +478,7 @@
               "TASK_STARTED",
               "TASK_AWAITING",
               "TASK_RESOLVED",
+              "TASK_SLEEPING",
               "TASK_SUCCEEDED",
               "TASK_FAILED",
               "RUN_SUCCEEDED",
@@ -601,6 +602,13 @@
           },
           "type": "object"
         },
+        "shared_with": {
+          "description": "Other namespaces' Orkflows that may compose this one (see \"Sharing across namespaces\").",
+          "items": {
+            "$ref": "#/definitions/orkflow.share"
+          },
+          "type": "array"
+        },
         "tasks": {
           "description": "List of task nodes forming a DAG.",
           "items": {
@@ -610,7 +618,7 @@
           "type": "array"
         },
         "version": {
-          "description": "Author-pinned version; absent, the first apply assigns one.",
+          "description": "Author-pinned version; absent, the first create assigns one.",
           "type": "string"
         }
       },
@@ -827,6 +835,43 @@
       ],
       "type": "object"
     },
+    "orkflow.share": {
+      "additionalProperties": false,
+      "properties": {
+        "namespace": {
+          "description": "every Orkflow of that namespace, or `\"*\"` for every namespace",
+          "pattern": "^(\\*|[a-z][a-z0-9-]*)$",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "orkflow": {
+          "description": "one Orkflow of another namespace, written `<namespace>/<name>`",
+          "pattern": "^[a-z][a-z0-9-]*/[a-z][a-z0-9-]*$",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "orkflow.sleep": {
+      "additionalProperties": false,
+      "properties": {
+        "seconds": {
+          "description": "required, 1 s … 30 days",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "seconds"
+      ],
+      "type": "object"
+    },
     "orkflow.task": {
       "additionalProperties": false,
       "allOf": [
@@ -857,6 +902,7 @@
               "retry": false,
               "run_as_orker_user": false,
               "secrets": false,
+              "sleep": false,
               "timeout_seconds": false
             }
           }
@@ -992,12 +1038,42 @@
         }
       ],
       "else": {
-        "properties": {
-          "uses": true
+        "else": {
+          "properties": {
+            "uses": true
+          },
+          "required": [
+            "uses"
+          ]
         },
-        "required": [
-          "uses"
-        ]
+        "if": {
+          "properties": {
+            "sleep": true
+          },
+          "required": [
+            "sleep"
+          ]
+        },
+        "then": {
+          "properties": {
+            "await": false,
+            "cache": false,
+            "cancellation_grace_period_seconds": false,
+            "command": false,
+            "each": false,
+            "env": false,
+            "network": false,
+            "pin": false,
+            "pool": false,
+            "resources": false,
+            "retry": false,
+            "run_as_orker_user": false,
+            "secrets": false,
+            "timeout_seconds": false,
+            "uses": false,
+            "with": false
+          }
+        }
       },
       "if": {
         "properties": {
@@ -1152,6 +1228,14 @@
           },
           "type": "array"
         },
+        "sleep": {
+          "allOf": [
+            {
+              "$ref": "#/definitions/orkflow.sleep"
+            }
+          ],
+          "description": "A **sleeping task** declares `sleep:` instead of `uses:`."
+        },
         "timeout_seconds": {
           "description": "optional container wall-clock timeout; default 300",
           "type": "integer"
@@ -1186,6 +1270,7 @@
           "retry": false,
           "run_as_orker_user": false,
           "secrets": false,
+          "sleep": false,
           "timeout_seconds": false,
           "uses": false,
           "with": false

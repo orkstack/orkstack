@@ -168,6 +168,12 @@ message OrkflowFailures {
   string orkflow_name = 1;
   int64 failed = 2;
   int64 total = 3;
+  // orkflow_namespace is set when the row's runs ran another namespace's
+  // shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+  // namespaces"): the namespace that owns it. Such runs are grouped apart from
+  // this namespace's own Orkflow of the same name. Empty for the namespace's
+  // own.
+  string orkflow_namespace = 4;
 }
 
 message GetStatsResponse {
@@ -181,7 +187,7 @@ message GetStatsResponse {
   //
   // The alternative — counting a run in the window it FINISHED in — was what
   // the percentiles used to do, and one answer carrying both is a lie no
-  // field could correct: `orkctl stats --since 15m` over hour-long runs
+  // field could correct: `orkctl stats -s 15m` over hour-long runs
   // reported `succeeded 0 / failed 0 / rate unavailable` beside
   // `p50 58m over 12 finished runs`, two populations printed as one.
   //
@@ -341,6 +347,12 @@ message FailureGroup {
   // could not be read, so image and phase were unavailable for them. It is
   // only ever nonzero when the response's attempt_evidence_read is true.
   int64 attempt_evidence_missing = 13;
+  // orkflow_namespace is set when the row's runs ran another namespace's
+  // shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+  // namespaces"): the namespace that owns it. Such runs are grouped apart from
+  // this namespace's own Orkflow of the same name. Empty for the namespace's
+  // own.
+  string orkflow_namespace = 14;
 }
 
 message GetFailureBreakdownResponse {
@@ -479,6 +491,12 @@ message FlakeGroup {
   // created first, so a row leads to a run page whose attempt timeline
   // shows the retries. Ids are never compared with each other (AGENTS.md §7).
   repeated string example_run_ids = 21;
+  // orkflow_namespace is set when the row's runs ran another namespace's
+  // shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+  // namespaces"): the namespace that owns it. Such runs are grouped apart from
+  // this namespace's own Orkflow of the same name. Empty for the namespace's
+  // own.
+  string orkflow_namespace = 22;
 }
 
 message GetFlakeIndexResponse {
@@ -583,6 +601,12 @@ message UsageRow {
   // have no record — the Orker running them died or lost its heartbeat
   // before filing one. Their consumption is unknown and not counted.
   int64 unreported_attempts = 12;
+  // orkflow_namespace is set when the row's runs ran another namespace's
+  // shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+  // namespaces"): the namespace that owns it. Such runs are grouped apart from
+  // this namespace's own Orkflow of the same name. Empty for the namespace's
+  // own.
+  string orkflow_namespace = 13;
 }
 
 message GetUsageResponse {

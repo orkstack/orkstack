@@ -1,6 +1,6 @@
 # Your first Orkflow
 
-Clone OrkStack and start it with Docker, then apply an Orkflow, run it, and read each item's log and the merged result. This takes about ten minutes, most of it the first build.
+Clone OrkStack and start it with Docker, then create an Orkflow, run it, and read each item's log and the merged result. This takes about ten minutes, most of it the first build.
 
 ## What you need
 
@@ -38,17 +38,17 @@ If port 8080 is taken, set `ORKSTACK_API_PORT` in a `.env` file in this folder. 
 alias orkctl='docker compose run --rm orkctl'
 ```
 
-This runs `orkctl` from the image the stack built. The container sees the folder read-only, so `orkctl apply examples/...` works.
+This runs `orkctl` from the image the stack built. The container sees the folder read-only, so `orkctl orkflow create examples/...` works.
 
-## 4. Apply the Orkflow
+## 4. Create the Orkflow
 
 ```bash
-orkctl apply examples/each-fan-out.ork.yaml
+orkctl orkflow create examples/each-fan-out.ork.yaml
 ```
 
-The output names the Orkflow and its version, `0.3.0`. Applying checks the document, resolves each image to a digest, and stores an immutable version. Nothing runs yet.
+The output names the Orkflow and its version, `0.3.0`. Creating checks the document, resolves each image to a digest, and stores an immutable version. Nothing runs yet.
 
-The UI's Apply page does the same, and from there a run is planned, submitted and followed to its artifacts:
+The UI's Create Orkflow page does the same, and from there a run is planned, submitted and followed to its artifacts:
 
 <!-- site-media: e2e-demo -->
 
@@ -56,7 +56,7 @@ The UI's Apply page does the same, and from there a run is planned, submitted an
 
 ```bash
 orkctl run plan each-fan-out
-orkctl run submit each-fan-out --watch
+orkctl run submit each-fan-out -w
 ```
 
 `run plan` lists the tasks a run would execute, and starts nothing. `run submit` prints `Submitted run` with the run's ID, then follows the run until it ends. The last line reads `Run <id> finished with status SUCCEEDED`.
@@ -70,8 +70,8 @@ The UI shows the same run as a graph, with each item as it runs:
 Use the run ID from step 5 in place of `<run-id>`:
 
 ```bash
-orkctl run logs <run-id> --task convert --item 2
-orkctl run logs <run-id> --task merge
+orkctl run logs <run-id> -t convert --item 2
+orkctl run logs <run-id> -t merge
 orkctl run artifacts <run-id>
 ```
 
@@ -120,12 +120,12 @@ tasks:
         echo goodbye {{ sh .inputs.who }}
 ```
 
-The `orkctl` alias reads the clone's folder, so the file must be saved there. Then apply it, run it with one input, and read the log of its first task:
+The `orkctl` alias reads the clone's folder, so the file must be saved there. Then create it, run it with one input, and read the log of its first task:
 
 ```bash
-orkctl apply greet.ork.yaml
-orkctl run submit greet --input who=Ada --watch
-orkctl run logs <run-id> --task hello
+orkctl orkflow create greet.ork.yaml
+orkctl run submit greet -i who=Ada -w
+orkctl run logs <run-id> -t hello
 ```
 
 Use the run ID that `run submit` prints in place of `<run-id>`. The log of `hello` reads `hello Ada`. Leave out `--input who=Ada` to use the default, `world`. `goodbye` runs after `hello` because it names it in `needs:`.

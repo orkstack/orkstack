@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The fuzz lane's time (docs/PROOFS.md §2.3) is a budget for the whole lane,
@@ -42,9 +44,7 @@ func (f *fakeLane) clock() time.Time { return f.now }
 func (f *fakeLane) run(k testKey, fuzztime string) entry {
 	f.t.Helper()
 	d, err := time.ParseDuration(fuzztime)
-	if err != nil {
-		f.t.Fatalf("the lane gave %s a fuzz time %q that go test would refuse: %v", k, fuzztime, err)
-	}
+	must.OKf(f.t, err, "the lane gave %s a fuzz time %q that go test would refuse", k, fuzztime)
 	f.fuzzed = append(f.fuzzed, d)
 	f.ran = append(f.ran, k)
 	f.now = f.now.Add(d + f.overhead(k))

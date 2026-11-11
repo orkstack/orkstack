@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeStarter records started runs instead of talking to Temporal.
@@ -168,9 +170,7 @@ func newFixtureWith(t *testing.T, configure func(*api.Config)) *fixture {
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 
 	transport := &http.Transport{}
@@ -205,9 +205,7 @@ func (f *fixture) runClient() orkstackv1connect.RunServiceClient {
 func helloYAML(t *testing.T) string {
 	t.Helper()
 	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	return string(source)
 }
 
@@ -217,9 +215,7 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 	client := f.orkflowClient()
 
 	applied, err := client.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)}))
-	if err != nil {
-		t.Fatalf("Apply: %v", err)
-	}
+	must.OKf(t, err, "Apply")
 	wf := applied.Msg.GetOrkflow()
 	if wf.GetName() != "hello-ork" || wf.GetVersion() != "0.2.0" {
 		t.Fatalf("applied orkflow = %s@%s, want hello-ork@0.2.0", wf.GetName(), wf.GetVersion())
@@ -232,9 +228,7 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 	got, err := client.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{
 		Name: "hello-ork", Version: "0.2.0",
 	}))
-	if err != nil {
-		t.Fatalf("GetOrkflow: %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow")
 	if got.Msg.GetOrkflow().GetSourceYaml() != wf.GetSourceYaml() {
 		t.Error("round-tripped source_yaml differs from the applied document")
 	}
@@ -247,17 +241,13 @@ func TestApplyThenGetOrkflowRoundTrips(t *testing.T) {
 
 	// Empty version means latest.
 	latest, err := client.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "hello-ork"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(latest): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(latest)")
 	if latest.Msg.GetOrkflow().GetVersion() != "0.2.0" {
 		t.Errorf("latest version = %q, want 0.2.0", latest.Msg.GetOrkflow().GetVersion())
 	}
 
 	listed, err := client.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
-	if err != nil {
-		t.Fatalf("ListOrkflows: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflows")
 	if len(listed.Msg.GetOrkflows()) != 1 {
 		t.Errorf("ListOrkflows returned %d orkflows, want 1", len(listed.Msg.GetOrkflows()))
 	}
@@ -295,9 +285,7 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	submitted, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "hello-ork",
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	run := submitted.Msg.GetRun()
 	if run.GetId() != "run-001" {
 		t.Errorf("run id = %q, want run-001", run.GetId())
@@ -313,9 +301,7 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	}
 
 	got, err := f.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: "run-001"}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if got.Msg.GetRun().GetId() != "run-001" {
 		t.Errorf("GetRun id = %q, want run-001", got.Msg.GetRun().GetId())
 	}
@@ -323,9 +309,7 @@ func TestSubmitRunStartsRunAndGetRunReturnsIt(t *testing.T) {
 	listed, err := f.runClient().ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 		Filters: filters(t, "orkflow_name=hello-ork"),
 	}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed.Msg.GetRuns()) != 1 {
 		t.Errorf("ListRuns returned %d runs, want 1", len(listed.Msg.GetRuns()))
 	}
@@ -356,9 +340,7 @@ func TestSubmitRun_StartsWithoutSourceYAML(t *testing.T) {
 		t.Fatalf("the run started with %d bytes of source YAML, want none", n)
 	}
 	stored, err := f.orkflowClient().GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "hello-ork"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow: %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow")
 	if stored.Msg.GetOrkflow().GetSourceYaml() == "" {
 		t.Fatal("the stored version lost its source")
 	}
@@ -386,9 +368,7 @@ func TestSubmitRun_DefaultRunIDUsesOrkPrefix(t *testing.T) {
 		submitted, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: "hello-ork",
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun: %v", err)
-		}
+		must.OKf(t, err, "SubmitRun")
 		id := submitted.Msg.GetRun().GetId()
 		if !pattern.MatchString(id) {
 			t.Fatalf("run id = %q, want a match for %s", id, pattern)
@@ -459,9 +439,7 @@ func TestSubmitRun_StarterFailureTerminatesConnectAndWebSocketStreams(t *testing
 	defer cancelStream()
 	stream, err := f.runClient().StreamEvents(streamCtx,
 		connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: "run-001"}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 	var streamed []*orkstackv1.Event
 	for stream.Receive() {
@@ -476,22 +454,16 @@ func TestSubmitRun_StarterFailureTerminatesConnectAndWebSocketStreams(t *testing
 	defer cancelWS()
 	wsURL := "ws" + strings.TrimPrefix(f.baseURL, "http") + "/ws/runs/run-001"
 	conn, _, err := websocket.Dial(wsCtx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("websocket dial: %v", err)
-	}
+	must.OKf(t, err, "websocket dial")
 	defer conn.CloseNow()
 	var websocketEvents []*orkstackv1.Event
 	for range 2 {
 		_, payload, err := conn.Read(wsCtx)
-		if err != nil {
-			t.Fatalf("websocket read: %v", err)
-		}
+		must.OKf(t, err, "websocket read")
 		event := &orkstackv1.Event{}
 		// The bridge speaks OrkStack's JSON dialect (short enum names), so
 		// api.UnmarshalJSON is the matching decoder.
-		if err := api.UnmarshalJSON(payload, event); err != nil {
-			t.Fatalf("decode websocket event %q: %v", string(payload), err)
-		}
+		must.OKf(t, api.UnmarshalJSON(payload, event), "decode websocket event %q", string(payload))
 		websocketEvents = append(websocketEvents, event)
 	}
 	assertStartFailureEvents(t, websocketEvents)
@@ -535,13 +507,9 @@ func TestSubmitRunIsIdempotentPerKey(t *testing.T) {
 		})
 	}
 	first, err := f.runClient().SubmitRun(ctx, req())
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	second, err := f.runClient().SubmitRun(ctx, req())
-	if err != nil {
-		t.Fatalf("SubmitRun (repeat): %v", err)
-	}
+	must.OKf(t, err, "SubmitRun (repeat)")
 	if first.Msg.GetRun().GetId() != second.Msg.GetRun().GetId() {
 		t.Errorf("idempotency key produced two runs: %q and %q",
 			first.Msg.GetRun().GetId(), second.Msg.GetRun().GetId())
@@ -727,18 +695,14 @@ func TestStreamEventsDeliversOrderedEvents(t *testing.T) {
 	stream, err := f.runClient().StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: "run-stream",
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	var got []*orkstackv1.Event
 	for stream.Receive() {
 		got = append(got, stream.Msg())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("stream error: %v", err)
-	}
+	must.OKf(t, stream.Err(), "stream error")
 	if len(got) != len(want) {
 		t.Fatalf("received %d events, want %d", len(got), len(want))
 	}
@@ -770,18 +734,14 @@ func TestStreamEventsResumesFromSequence(t *testing.T) {
 		RunId:        "run-resume",
 		FromSequence: 2,
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	var sequences []int64
 	for stream.Receive() {
 		sequences = append(sequences, stream.Msg().GetSequence())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("stream error: %v", err)
-	}
+	must.OKf(t, stream.Err(), "stream error")
 	if fmt.Sprint(sequences) != fmt.Sprint([]int64{3, 4}) {
 		t.Errorf("resumed sequences = %v, want [3 4] (from_sequence is the last seen cursor)", sequences)
 	}
@@ -824,9 +784,7 @@ func TestStreamEventsDeliversLiveEvents(t *testing.T) {
 
 	stream, err := f.runClient().StreamEvents(ctx,
 		connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: "run-live"}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	if !stream.Receive() {
@@ -854,9 +812,7 @@ func TestStreamEventsDeliversLiveEvents(t *testing.T) {
 	for stream.Receive() {
 		messages = append(messages, stream.Msg().GetMessage())
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("stream error: %v", err)
-	}
+	must.OKf(t, stream.Err(), "stream error")
 	if len(messages) != 4 {
 		t.Fatalf("received %d events, want 4: %v", len(messages), messages)
 	}
@@ -874,24 +830,18 @@ func TestWebSocketBridgeDeliversSameEventsAsStreamEvents(t *testing.T) {
 
 	wsURL := "ws" + strings.TrimPrefix(f.baseURL, "http") + "/ws/runs/run-ws"
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("websocket dial: %v", err)
-	}
+	must.OKf(t, err, "websocket dial")
 	defer conn.CloseNow()
 
 	var got []*orkstackv1.Event
 	for range want {
 		typ, data, err := conn.Read(ctx)
-		if err != nil {
-			t.Fatalf("websocket read: %v", err)
-		}
+		must.OKf(t, err, "websocket read")
 		if typ != websocket.MessageText {
 			t.Fatalf("frame type = %v, want text", typ)
 		}
 		var event orkstackv1.Event
-		if err := api.UnmarshalJSON(data, &event); err != nil {
-			t.Fatalf("decode event %q: %v", string(data), err)
-		}
+		must.OKf(t, api.UnmarshalJSON(data, &event), "decode event %q", string(data))
 		got = append(got, &event)
 	}
 
@@ -932,14 +882,10 @@ func TestServerSpeaksH2CToConnectClients(t *testing.T) {
 	// Assert the transport really negotiated HTTP/2 without TLS.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		f.baseURL+"/orkstack.v1.OrkflowService/ListOrkflows", strings.NewReader("{}"))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := f.client.Do(req)
-	if err != nil {
-		t.Fatalf("ListOrkflows over h2c: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflows over h2c")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -960,9 +906,7 @@ func TestSubmitRun_MergesDeclaredInputDefaultsBeforeSavingAndStarting(t *testing
 	omitted, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "hello-ork",
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun omitted input: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun omitted input")
 	wantDefault := "https://httpbin.org/json"
 	if got := omitted.Msg.GetRun().GetInput().GetData().AsMap()["url"]; got != wantDefault {
 		t.Errorf("stored run input url = %v, want default %q", got, wantDefault)
@@ -972,16 +916,12 @@ func TestSubmitRun_MergesDeclaredInputDefaultsBeforeSavingAndStarting(t *testing
 	}
 
 	providedData, err := structpb.NewStruct(map[string]any{"url": "https://caller.test"})
-	if err != nil {
-		t.Fatalf("provided input: %v", err)
-	}
+	must.OKf(t, err, "provided input")
 	provided, err := f.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "hello-ork",
 		Input:       &orkstackv1.Payload{Data: providedData},
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun provided input: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun provided input")
 	if got := provided.Msg.GetRun().GetInput().GetData().AsMap()["url"]; got != "https://caller.test" {
 		t.Errorf("caller-provided url = %v, want preserved value", got)
 	}
@@ -1095,9 +1035,7 @@ func TestStreamEvents_TerminalCursorEndsWithoutMessages(t *testing.T) {
 		RunId:        "run-terminal-cursor",
 		FromSequence: 4,
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents at terminal cursor: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents at terminal cursor")
 	defer stream.Close()
 	var received int
 	for stream.Receive() {
@@ -1120,9 +1058,7 @@ func TestWebSocketBridge_TerminalCursorClosesNormally(t *testing.T) {
 	wsURL := "ws" + strings.TrimPrefix(f.baseURL, "http") +
 		"/ws/runs/run-ws-terminal-cursor?from_sequence=4"
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
-	if err != nil {
-		t.Fatalf("websocket dial: %v", err)
-	}
+	must.OKf(t, err, "websocket dial")
 	defer conn.CloseNow()
 	_, _, err = conn.Read(ctx)
 	if websocket.CloseStatus(err) != websocket.StatusNormalClosure {

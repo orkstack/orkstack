@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestParseSinksHappyPath(t *testing.T) {
@@ -26,9 +28,7 @@ sinks:
     timeout: 10s
 `)
 	table, err := ParseSinks(doc)
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
 	if table.Len() != 2 {
 		t.Fatalf("Len() = %d, want 2", table.Len())
 	}
@@ -52,17 +52,13 @@ sinks:
 
 func TestParseSinksEmptyDocument(t *testing.T) {
 	table, err := ParseSinks(nil)
-	if err != nil {
-		t.Fatalf("ParseSinks(nil): %v", err)
-	}
+	must.OKf(t, err, "ParseSinks(nil)")
 	if table.Len() != 0 {
 		t.Errorf("Len() = %d, want 0", table.Len())
 	}
 
 	table, err = ParseSinks([]byte("   \n\t  "))
-	if err != nil {
-		t.Fatalf("ParseSinks(blank): %v", err)
-	}
+	must.OKf(t, err, "ParseSinks(blank)")
 	if table.Len() != 0 {
 		t.Errorf("Len() = %d, want 0", table.Len())
 	}
@@ -117,18 +113,14 @@ sinks:
     headers:
       X-Test: { source: "env:SINKS_TEST_VAR" }
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
 	lookup := func(key string) (string, bool) {
 		if key == "SINKS_TEST_VAR" {
 			return "secret-value", true
 		}
 		return "", false
 	}
-	if err := table.Resolve(lookup, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, table.Resolve(lookup, os.ReadFile), "Resolve")
 	if got := table.sinks["default"].resolved["X-Test"]; got != "secret-value" {
 		t.Errorf("resolved[X-Test] = %q, want secret-value", got)
 	}
@@ -137,9 +129,7 @@ sinks:
 func TestSinkTableResolveFileTrimsTrailingNewline(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "secret")
-	if err := os.WriteFile(path, []byte("file-secret\n"), 0o600); err != nil {
-		t.Fatalf("WriteFile: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte("file-secret\n"), 0o600), "WriteFile")
 	table, err := ParseSinks([]byte(fmt.Sprintf(`
 sinks:
   default:
@@ -147,12 +137,8 @@ sinks:
     headers:
       X-Test: { source: "file:%s" }
 `, path)))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(os.LookupEnv, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(os.LookupEnv, os.ReadFile), "Resolve")
 	if got := table.sinks["default"].resolved["X-Test"]; got != "file-secret" {
 		t.Errorf("resolved[X-Test] = %q, want %q (trailing newline trimmed)", got, "file-secret")
 	}
@@ -166,9 +152,7 @@ sinks:
     headers:
       DD-API-KEY: { source: "env:DD_API_KEY_DOES_NOT_EXIST" }
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
 	lookup := func(string) (string, bool) { return "", false }
 	err = table.Resolve(lookup, os.ReadFile)
 	if err == nil {
@@ -190,12 +174,8 @@ sinks:
     headers:
       DD-API-KEY: { value: "super-secret-value" }
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(func(string) (string, bool) { return "", false }, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(func(string) (string, bool) { return "", false }, os.ReadFile), "Resolve")
 	s := table.String()
 	if !strings.Contains(s, "DD-API-KEY") {
 		t.Errorf("String() = %q, want it to name the header", s)
@@ -280,12 +260,8 @@ sinks:
     headers:
       X-Api-Key: { value: "spec-value" }
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
-	if err := table.Resolve(os.LookupEnv, os.ReadFile); err != nil {
-		t.Fatalf("Resolve: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
+	must.OKf(t, table.Resolve(os.LookupEnv, os.ReadFile), "Resolve")
 	spec := table.sinks["datadog"]
 	lookup := lookupOf(map[string]string{"OTEL_EXPORTER_OTLP_HEADERS": "X-Api-Key=env-value"})
 	got := mergedHeaders(&spec, "traces", lookup)
@@ -325,9 +301,7 @@ sinks:
     headers:
       B: { source: "env:MISSING_B" }
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
 	err = table.Resolve(func(string) (string, bool) { return "", false }, os.ReadFile)
 	if err == nil {
 		t.Fatal("expected an error")
@@ -359,9 +333,7 @@ sinks:
       X-Literal: { value: "plain" }
       X-Again: { source: "file:/etc/orkstack/dd-key" }
 `))
-	if err != nil {
-		t.Fatalf("ParseSinks: %v", err)
-	}
+	must.OKf(t, err, "ParseSinks")
 	want := []string{"/etc/orkstack/dd-key", "/etc/orkstack/hc-key"}
 	if got := table.SourceFiles(); strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("SourceFiles() = %q, want %q", got, want)

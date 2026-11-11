@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +14,9 @@ import (
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The fan-out CLI scenarios (docs/UI_CLI_PARITY.md "Fan-out"): a real engine
@@ -179,21 +182,17 @@ func TestIntegration_TaskRunOneItemLocally(t *testing.T) {
 	session := keptSession(t, stdout)
 	production := stack.mustCLI(0, "run", "logs", run.GetId(), "--task", "convert", "--item", "2")
 	localConfig, err := os.ReadFile(filepath.Join(session, "input", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if string(localConfig) != between(t, production, "CONFIG") {
 		t.Fatalf("config.json differs\nlocal:\n%s\nproduction:\n%s", localConfig, between(t, production, "CONFIG"))
 	}
 	localTask, err := os.ReadFile(filepath.Join(session, "input", "task.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var local, remote map[string]any
 	_ = json.Unmarshal(localTask, &local)
 	_ = json.Unmarshal([]byte(between(t, production, "TASK")), &remote)
-	localEach, _ := json.Marshal(local["each"])
-	remoteEach, _ := json.Marshal(remote["each"])
+	localEach, _ := stablejson.Marshal(local["each"])
+	remoteEach, _ := stablejson.Marshal(remote["each"])
 	if !bytes.Equal(localEach, remoteEach) || len(localEach) < 10 {
 		t.Fatalf("task.json each differs\nlocal:  %s\nremote: %s", localEach, remoteEach)
 	}

@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -23,7 +22,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // continuedPlan is guardedPlan with a continuation budget whose event growth
@@ -504,17 +506,13 @@ func decodeCarried(t *testing.T, store *testSnapshotStore, carry *orkstackv1.Run
 		t.Fatalf("the switch snapshot %q was never written", carry.GetSnapshot().GetUri())
 	}
 	snapshot, err := engine.DecodeSwitchSnapshot(data, carry.GetSnapshot())
-	if err != nil {
-		t.Fatalf("decode the switch snapshot: %v", err)
-	}
+	must.OKf(t, err, "decode the switch snapshot")
 	data, ok = store.get(carry.GetCheckpoint().GetUri())
 	if !ok {
 		t.Fatalf("the checkpoint %q was never written", carry.GetCheckpoint().GetUri())
 	}
 	checkpoint, err = engine.DecodeCheckpoint(data, carry.GetCheckpoint())
-	if err != nil {
-		t.Fatalf("decode the checkpoint: %v", err)
-	}
+	must.OKf(t, err, "decode the checkpoint")
 	return snapshot, checkpoint
 }
 
@@ -556,9 +554,7 @@ func TestContinuation_SwitchCarriesSequenceCreatedAtStartedAtDecisionsAndSwitchS
 		t.Fatal("the segment was never written")
 	}
 	segment, err := engine.DecodeEventSegment(data, segments[0].GetObject())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if strings.Join(eventKeys(segment.GetEvents()), "\n") != strings.Join(eventKeys(events), "\n") {
 		t.Fatalf("segment events\n%v\nwant what generation 0 published\n%v", eventKeys(segment.GetEvents()), eventKeys(events))
 	}
@@ -600,8 +596,7 @@ tasks:
 // definition, input (as submitted, before defaults) and plan are the ones
 // generation 0 started with.
 func TestContinuation_SwitchPassesAnEmptyRunIDAndTheOriginalArguments(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, okBehavior)
+	h := newHarnessCtx(t, nil, okBehavior)
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-args"})
 	wf, input, plan := compile(t, defaultedInputDocument), payload(t, nil), continuedPlan(2)
 	h.env.ExecuteWorkflow(engine.RunWorkflowType, "ork-args", wf, input, plan, (*orkstackv1.RunContinuation)(nil))
@@ -616,17 +611,15 @@ func TestContinuation_SwitchPassesAnEmptyRunIDAndTheOriginalArguments(t *testing
 		gotPlan  engine.RunPlan
 		carry    *orkstackv1.RunContinuation
 	)
-	if err := converter.GetDefaultDataConverter().FromPayloads(can.Input, &runID, &gotWf, &gotInput, &gotPlan, &carry); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, converter.GetDefaultDataConverter().FromPayloads(can.Input, &runID, &gotWf, &gotInput, &gotPlan, &carry))
 	if runID != "" {
 		t.Fatalf("run-id argument %q, want empty", runID)
 	}
 	if !proto.Equal(gotWf, wf) || !proto.Equal(gotInput, input) || gotInput.GetData() != nil {
 		t.Fatalf("definition or input changed across the switch: input %v", gotInput)
 	}
-	want, _ := json.Marshal(plan)
-	got, _ := json.Marshal(gotPlan)
+	want, _ := stablejson.Marshal(plan)
+	got, _ := stablejson.Marshal(gotPlan)
 	if string(got) != string(want) {
 		t.Fatalf("plan changed across the switch:\n%s\nwant\n%s", got, want)
 	}
@@ -726,9 +719,7 @@ func TestSwitchSnapshot_NeverWritesASequenceKey(t *testing.T) {
 	late.Status = orkstackv1.Status_STATUS_RUNNING
 	obj, err := engine.NewSnapshotActivities(store).WriteSwitchSnapshot(context.Background(), late, late.GetNamespace(), 0,
 		engine.ContinuationObservationInput{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if obj.GetUri() == carry.GetSnapshot().GetUri() || !strings.Contains(obj.GetUri(), "/continuations/") {
 		t.Fatalf("the late write landed on %q", obj.GetUri())
 	}
@@ -845,8 +836,7 @@ func TestContinuation_CheckpointOverTheCapNeverSwitches(t *testing.T) {
 	plan := continuedPlan(2)
 	plan.Continuation.CheckpointMaxBytes = 64 // smaller than any saved state
 	plan.History.MaxEvents = 1000
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, okBehavior)
+	h := newHarnessCtx(t, nil, okBehavior)
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-overcap"})
 	h.onSnapshot = onceAt(h.env, 900, taskStatusIs("c", orkstackv1.Status_STATUS_SUCCEEDED))
 	h.env.ExecuteWorkflow(engine.RunWorkflowType, "ork-overcap", compile(t, continuationChainDocument), payload(t, nil),

@@ -16,6 +16,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cappedPlan is guardedPlan with an in-flight cap, as pinRunTreeLimits pins
@@ -88,8 +90,7 @@ tasks:
 
 func runCapped(t *testing.T, runID, doc string, input *orkstackv1.Payload, plan engine.RunPlan) (*harness, *runningPeak) {
 	t.Helper()
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, itemBehavior)
+	h := newHarnessCtx(t, nil, itemBehavior)
 	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 	peak := &runningPeak{}
 	h.onSnapshot = peak.observe
@@ -97,9 +98,7 @@ func runCapped(t *testing.T, runID, doc string, input *orkstackv1.Payload, plan 
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
 	}
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "the run failed")
 	if run := mustFinalRun(t, h.store, runID); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("status = %v", run.GetStatus())
 	}
@@ -167,14 +166,11 @@ func TestInFlightCap_GateIsLazy(t *testing.T) {
 		want int
 	}{{"below the cap", 16, 0}, {"at the cap", 2, 1}} {
 		t.Run(tc.name, func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			h := newHarnessCtx(t, &suite, itemBehavior)
+			h := newHarnessCtx(t, nil, itemBehavior)
 			r := recordCommands(h)
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-cap-lazy", compile(t, flatDocument(4)), payload(t, nil),
 				cappedPlan(tc.cap, 1900), (*orkstackv1.RunContinuation)(nil))
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, h.env.GetWorkflowError())
 			if got := r.count("version:" + engine.InFlightCapChange); got != tc.want {
 				t.Fatalf("%d run-in-flight-cap markers, want %d", got, tc.want)
 			}
@@ -248,9 +244,7 @@ func TestInFlightCap_NeverSpins(t *testing.T) {
 			enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-spin-pin", compile(t, pinNeedsUnpinnedDocument), payload(t, nil),
 				cappedPlan(tc.cap, 1900), (*orkstackv1.RunContinuation)(nil))
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatalf("the run failed: %v", err)
-			}
+			must.OKf(t, h.env.GetWorkflowError(), "the run failed")
 			if got := strings.Join(sortedTaskOrder(h), ","); got != "compile,fetch,other1,other2,prep" {
 				t.Fatalf("tasks ran %q", got)
 			}
@@ -299,9 +293,7 @@ tasks:
 		enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
 		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-spin-pins", compile(t, doc), payload(t, nil),
 			cappedPlan(2, 1900), (*orkstackv1.RunContinuation)(nil))
-		if err := h.env.GetWorkflowError(); err != nil {
-			t.Fatalf("the run failed: %v", err)
-		}
+		must.OKf(t, h.env.GetWorkflowError(), "the run failed")
 		if len(h.invocations()) != 5 {
 			t.Fatalf("%d tasks ran, want 5", len(h.invocations()))
 		}
@@ -416,9 +408,7 @@ func pinClosureUnderTheCap(t *testing.T, maxInFlight, hardStop int32) {
 		// held every slot: the pin waited on the cap.
 		t.Fatal("compile did not start while the fan-out's items held the cap: the pin's closure was not exempt")
 	}
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("the run failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "the run failed")
 	if run := mustFinalRun(t, h.store, "ork-cap-pin"); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("status = %v", run.GetStatus())
 	}
@@ -447,9 +437,7 @@ func TestInFlightCap_ChildRunInheritsTheParentsCap(t *testing.T) {
 		return childOutputs(t, map[string]any{"digest": "sha256:abc", "url": "https://r/abc"}), nil
 	})
 	h.run("ork-parent-cap", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if len(h.children) != 1 {
 		t.Fatalf("%d children started", len(h.children))
 	}

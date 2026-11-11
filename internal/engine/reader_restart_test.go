@@ -16,6 +16,8 @@ import (
 	"google.golang.org/protobuf/types/known/anypb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The cluster can answer a history page with CurrentBranchChanged: the page
@@ -174,9 +176,7 @@ func TestTemporalRunReader_StreamRestartsAHistoryThatChangedUnderIt(t *testing.T
 		t.Run(tc.name, func(t *testing.T) {
 			reader, fake := helloReaderCut(t, runID, tc.cuts)
 			got, err := streamAll(t, reader, runID, tc.from)
-			if err != nil {
-				t.Fatalf("StreamEvents: %v", err)
-			}
+			must.OKf(t, err, "StreamEvents")
 			requireContiguous(t, got, tc.from+1, 4)
 			if last := got[len(got)-1]; last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
 				t.Fatalf("stream ended on %v, want the terminal event", last)
@@ -260,9 +260,7 @@ func TestTemporalRunReader_EventsRestartAHistoryThatChangedUnderIt(t *testing.T)
 	const runID = "ork-restart-4"
 	reader, fake := helloReaderCut(t, runID, cutsOf(branchChangedError(t), 3))
 	events, err := reader.Events(context.Background(), runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 1, 4)
 	if fake.reads != 2 {
 		t.Fatalf("history reads = %d, want 2", fake.reads)
@@ -289,9 +287,7 @@ func TestTemporalRunReader_RestartThatLandsOnTheSuccessorHasNoGap(t *testing.T) 
 	}
 	reader := newRunReader(fake, converter.GetDefaultDataConverter()).WithSnapshotStore(f.store)
 	got, err := streamAll(t, reader, f.runID, 0)
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	requireContiguous(t, got, 1, 9)
 	if f.segmentReads() != 1 {
 		t.Fatalf("segment reads = %d, want 1: the rest of generation 0 comes from its segment", f.segmentReads())

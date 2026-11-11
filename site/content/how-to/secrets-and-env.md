@@ -22,11 +22,11 @@ Give a task a secret as a file under `/orkstack/input/secrets/`, and plain setti
       tokenSecret: git-token
 ```
 
-Set `GIT_TOKEN` in the environment of every Orker that runs `resolve`. Do not put it in the Orkflow. Then give your copy a `version:` of its own, because a store refuses different bytes under one it holds, apply it, and run it against your repository, naming the branch and a file it holds:
+Set `GIT_TOKEN` in the environment of every Orker that runs `resolve`. Do not put it in the Orkflow. Then give your copy a `version:` of its own, because a store refuses different bytes under one it holds, create it, and run it against your repository, naming the branch and a file it holds:
 
 ```bash
-orkctl apply config-from-git.ork.yaml
-orkctl run submit config-from-git --input repo=https://git.example.com/acme/app.git --input ref=main --input readme_path=README.md --watch
+orkctl orkflow create config-from-git.ork.yaml
+orkctl run submit config-from-git -i repo=https://git.example.com/acme/app.git -i ref=main -i readme_path=README.md -w
 ```
 
 `tokenSecret: git-token` names the secret whose file holds the token. The Orker reads `GIT_TOKEN` and writes the file, and the `git` activity reads that file.
@@ -45,7 +45,7 @@ A source must pass two lists. Each list matches `scheme:pattern`, and `*` matche
 | List | Set by | Checked |
 |---|---|---|
 | The Orker's floor | `ORK_ORKER_SECRET_ALLOW` on each Orker. An empty value allows every `env` and `file` source except the Orker's own, and the Orker warns at boot. | When the Orker starts the attempt |
-| The namespace's list | `orkctl namespace update <name> --allow-secret 'env:GIT_*'`. An empty list is unrestricted. | At apply and at every submit |
+| The namespace's list | `orkctl namespace update <name> --allow-secret 'env:GIT_*'`. An empty list is unrestricted. | At create and at every submit |
 
 ## Set environment variables
 
@@ -64,7 +64,7 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 
 ## Test it locally
 
-`orkctl task run --file <path> --task <id>` runs one task on your machine. Supply each declared secret with `--secret NAME=env:VAR` or `--secret NAME=file:PATH`. Or skip one with `--omit-secret NAME`.
+`orkctl task run -f <path> -t <id>` runs one task on your machine. Supply each declared secret with `--secret NAME=env:VAR` or `--secret NAME=file:PATH`. Or skip one with `--omit-secret NAME`.
 
 ## When a secret fails
 

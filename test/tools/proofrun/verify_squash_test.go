@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // squashRepo is a repository whose main has a tip, and the branches a change
@@ -38,9 +40,7 @@ func (r *squashRepo) git(args ...string) string {
 
 func (r *squashRepo) commit(name, text, message string) {
 	r.t.Helper()
-	if err := os.WriteFile(filepath.Join(r.dir, name), []byte(text), 0o644); err != nil {
-		r.t.Fatal(err)
-	}
+	must.OK(r.t, os.WriteFile(filepath.Join(r.dir, name), []byte(text), 0o644))
 	r.git("add", ".")
 	r.git("commit", "-q", "-m", message)
 }
@@ -177,9 +177,7 @@ func TestVerify_ASquashCandidateIsRefusedWhenItIsNotWhatWasProven(t *testing.T) 
 			r.git("commit", "-q", "--amend", "-m", "Squashed the feature")
 		}},
 		{"the worktree is dirty", func(r *squashRepo) {
-			if err := os.WriteFile(filepath.Join(r.dir, "untracked"), []byte("x"), 0o644); err != nil {
-				r.t.Fatal(err)
-			}
+			must.OK(r.t, os.WriteFile(filepath.Join(r.dir, "untracked"), []byte("x"), 0o644))
 		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {

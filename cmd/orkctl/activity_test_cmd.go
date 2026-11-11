@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -76,10 +76,10 @@ type activityTestReport struct {
 // packed as a label value; Error is why the label could not be read, or the
 // declaration could not be packed.
 type activityTestInterface struct {
-	Status  string          `json:"status"`
-	Summary string          `json:"summary"`
-	Label   json.RawMessage `json:"label,omitempty"`
-	Error   string          `json:"error,omitempty"`
+	Status  string             `json:"status"`
+	Summary string             `json:"summary"`
+	Label   stablejson.RawJSON `json:"label,omitzero"`
+	Error   string             `json:"error,omitempty"`
 }
 
 type activityTestOutcome struct {
@@ -261,7 +261,7 @@ func activityInterfaceReport(res *dsl.Resolution) activityTestInterface {
 			report.Error = "the declaration could not be packed: " + err.Error()
 			break
 		}
-		report.Label = json.RawMessage(label)
+		report.Label = stablejson.RawJSON(label)
 	}
 	return report
 }

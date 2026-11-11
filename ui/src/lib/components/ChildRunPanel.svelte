@@ -17,7 +17,7 @@
 	import { onDestroy } from 'svelte';
 	import { childFollower } from '#lib/childFollower.ts';
 	import ErrorPanel from './ErrorPanel.svelte';
-	import CliEquivalent from './CliEquivalent.svelte';
+	import CliPopover from './CliPopover.svelte';
 	import StatusPill from './StatusPill.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { runClient } from '#lib/clients/runs.ts';
@@ -123,14 +123,14 @@
 	bind:this={panel}
 	class="mt-3 rounded-sm bg-paper-sunken px-3 py-2 text-sm"
 	data-testid="task-{taskId}-child"
-	data-cli-own
+	data-cli-surface="panel"
 	data-following={read ? 'read' : 'idle'}
 >
 	<p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-ink-secondary">
 		{#if childRunId}
 			<span>Runs Orkflow</span>
 			<a
-				href={childOrkflowHref(namespace, child?.orkflowName ?? '', child?.orkflowVersion ?? '')}
+				href={childOrkflowHref(namespace, child)}
 				data-testid="task-{taskId}-child-orkflow"
 				class="font-mono text-xs text-blue hover:underline">{label}</a
 			>
@@ -146,7 +146,7 @@
 		{:else if status === Status.SKIPPED || isTerminal(status)}
 			<span>Runs Orkflow</span>
 			<a
-				href={childOrkflowHref(namespace, child?.orkflowName ?? '', child?.orkflowVersion ?? '')}
+				href={childOrkflowHref(namespace, child)}
 				data-testid="task-{taskId}-child-orkflow"
 				class="font-mono text-xs text-blue hover:underline">{label}</a
 			>
@@ -154,7 +154,7 @@
 		{:else}
 			<span>Will run Orkflow</span>
 			<a
-				href={childOrkflowHref(namespace, child?.orkflowName ?? '', child?.orkflowVersion ?? '')}
+				href={childOrkflowHref(namespace, child)}
 				data-testid="task-{taskId}-child-orkflow"
 				class="font-mono text-xs text-blue hover:underline">{label}</a
 			>
@@ -201,15 +201,13 @@
 			</ul>
 		{/if}
 		<div class="mt-2 flex flex-wrap items-center gap-2 text-xs text-ink-muted">
-			<CliEquivalent
-				command={runCommand(namespace, ['run', 'get', childRunId])}
+			<CliPopover
 				testid="task-{taskId}-child-cli"
-				label="Copy the command that reads the child run"
-			/>
-			<CliEquivalent
-				command={runCommand(namespace, ['run', 'get', runId, '--tree'])}
-				testid="task-{taskId}-child-tree-cli"
-				label="Copy the command that reads this run with its children"
+				title="Command line: the child run of {taskId}"
+				commands={[
+					{ label: 'The child run', command: runCommand(namespace, ['run', 'get', childRunId]) },
+					{ label: 'This run with its children', command: runCommand(namespace, ['run', 'get', runId, '--tree']) }
+				]}
 			/>
 		</div>
 	{/if}

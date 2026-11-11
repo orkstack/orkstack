@@ -175,7 +175,7 @@ const namespaced = (): { path: string; ready: string }[] => [
 	{ path: '/runs', ready: 'run-list' },
 	{ path: `/runs/${runId}`, ready: 'run-status' },
 	{ path: '/orkflows', ready: 'orkflow-list' },
-	{ path: '/apply', ready: 'apply-validate' },
+	{ path: '/orkflows/+new', ready: 'apply-validate' },
 	{ path: `/orkflows/${FLOW}`, ready: 'orkflow-name' },
 	{ path: `/orkflows/${FLOW}?tab=versions`, ready: 'orkflow-name' },
 	{ path: `/orkflows/${FLOW}?tab=schedules`, ready: 'schedules-scope' },
@@ -340,7 +340,7 @@ test('lists: a run\'s version sits under its Orkflow\'s name, on Runs and in Run
 test('lists: an Orkflow\'s labels sit under its name in the navy tag, and the list has no Tasks or Labels column', async ({ page }) => {
 	await page.setViewportSize({ width: 1280, height: 800 });
 	await page.goto(url('/orkflows'));
-	await expect(page.getByTestId('orkflow-list').locator('thead th')).toHaveText(['Name', 'Version', 'Digest', 'Applied']);
+	await expect(page.getByTestId('orkflow-list').locator('thead th')).toHaveText(['Name', 'Version', 'Digest', 'Created']);
 	const labels = page.getByTestId(`orkflow-labels-${FLOW}`);
 	const tag = labels.locator('.tag');
 	await expect(tag).toHaveText('team=floor');

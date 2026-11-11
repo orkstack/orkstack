@@ -19,6 +19,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // chainIndexClient is a cluster whose visibility index holds a run that
@@ -87,9 +89,7 @@ func continuedOnly(t *testing.T, closedAgo time.Duration) *chainIndexClient {
 	dc := converter.GetDefaultDataConverter()
 	payload := func(v string) *commonpb.Payload {
 		p, err := dc.ToPayload(v)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		return p
 	}
 	created := time.Now().Add(-3 * time.Hour).UTC()
@@ -141,9 +141,7 @@ func TestReleaseDrained_FalseWhileAChainIsSeenOnlyAsContinuedAsNew(t *testing.T)
 	cluster := &chainReleases{stubReleases: stub, reader: engine.NewTemporalRunReader(continuedOnly(t, time.Minute))}
 	svc := releaseService(cluster, releaseFleet())
 	response, err := svc.ListReleases(context.Background(), connect.NewRequest(&orkstackv1.ListReleasesRequest{}))
-	if err != nil {
-		t.Fatalf("ListReleases: %v", err)
-	}
+	must.OKf(t, err, "ListReleases")
 	var candidate *orkstackv1.Release
 	for _, release := range response.Msg.GetReleases() {
 		if release.GetBuildId() == "v2" {

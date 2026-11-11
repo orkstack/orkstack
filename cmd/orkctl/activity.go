@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -14,6 +13,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // newActivityCommand inspects the deployment's activity catalog. An activity
@@ -477,7 +477,7 @@ func defaultText(field *orkstackv1.FieldSchema) string {
 	if field.GetDefault() == nil {
 		return dash
 	}
-	encoded, err := json.Marshal(field.GetDefault().AsInterface())
+	encoded, err := stablejson.Marshal(field.GetDefault().AsInterface())
 	if err != nil {
 		return dash
 	}

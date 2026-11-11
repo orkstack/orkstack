@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The helpers below build continuation objects the way a switch writes them
@@ -26,9 +28,7 @@ func gzipForTest(t testing.TB, data []byte) []byte {
 	if _, err := w.Write(data); err != nil {
 		t.Fatal(err)
 	}
-	if err := w.Close(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, w.Close())
 	return buf.Bytes()
 }
 
@@ -37,9 +37,7 @@ func gzipForTest(t testing.TB, data []byte) []byte {
 func gzipObjectForTest(t testing.TB, msg proto.Message, namespace, runID string, generation int64, kind string) ([]byte, *orkstackv1.ContinuationObject) {
 	t.Helper()
 	plain, err := proto.Marshal(msg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	data := gzipForTest(t, plain)
 	return data, &orkstackv1.ContinuationObject{
 		Uri:       continuationURIForTest(t, namespace, runID, generation, kind, data),
@@ -90,9 +88,7 @@ func checkpointObjectForTest(t testing.TB, parts []*orkstackv1.RunCheckpointPart
 	obj := &orkstackv1.ContinuationObject{}
 	for _, part := range parts {
 		plain, err := proto.Marshal(part)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		member := gzipForTest(t, plain)
 		obj.Parts = append(obj.Parts, &orkstackv1.ContinuationPart{
 			Offset:    int64(len(data)),
@@ -114,9 +110,7 @@ func checkpointObjectForTest(t testing.TB, parts []*orkstackv1.RunCheckpointPart
 func continuationURIForTest(t testing.TB, namespace, runID string, generation int64, kind string, data []byte) string {
 	t.Helper()
 	key, err := artifacts.RunContinuationKey(namespace, runID, generation, kind, artifacts.ContinuationSHA256(data))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return "s3://test/" + key
 }
 

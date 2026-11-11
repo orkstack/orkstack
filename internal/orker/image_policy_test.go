@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/testsupport/cosigntest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // eventLog is the one ordered, mutex-guarded record every image-policy test
@@ -82,9 +84,7 @@ func newPolicyHarness(t *testing.T) *policyHarness {
 		double:   cosigntest.NewDouble(t),
 	}
 	key, err := cosigntest.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	h.key = key
 	h.double.OnRequest = h.log.add
 	h.d = newAttemptDispatcher(t, &policyCapturingRuntime{log: h.log}, h.attempts)
@@ -111,9 +111,7 @@ func (h *policyHarness) input(taskID string, sel *orkstackv1.ImagePolicySelectio
 func (h *policyHarness) sign(t *testing.T, in *orkstackv1.ExecuteTaskInput, key *cosigntest.Key) {
 	t.Helper()
 	layer, err := key.SignatureLayer(in.GetImage().GetIndexDigest(), in.GetImage().GetRegistry()+"/"+policyRepo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	h.double.Sign(policyRepo, in.GetImage().GetIndexDigest(), layer)
 }
 
@@ -168,9 +166,7 @@ func requirePhases(t *testing.T, got, want []string) {
 func requireEmptyDir(t *testing.T, dir string) {
 	t.Helper()
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(entries) != 0 {
 		names := make([]string, 0, len(entries))
 		for _, e := range entries {
@@ -289,9 +285,7 @@ func TestDispatcher_RegistryDownIsUnavailableAndRetryable(t *testing.T) {
 	h := newPolicyHarness(t)
 	in := h.input("down", h.signer())
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	host := listener.Addr().String()
 	listener.Close()
 	in.Image.Registry = host
@@ -411,9 +405,7 @@ func TestDispatcher_AnAdoptedCommitIsNeverReJudged(t *testing.T) {
 
 			retry := h.input("adopt", tc.sel(h))
 			result, err := h.d.Execute(context.Background(), retry)
-			if err != nil {
-				t.Fatalf("the retry of a committed attempt was judged: %v", err)
-			}
+			must.OKf(t, err, "the retry of a committed attempt was judged")
 			if !result.GetCommitAdopted() || string(result.GetValuesJson()) != string(first.GetValuesJson()) {
 				t.Fatalf("result = %v, want the committed result adopted", result)
 			}

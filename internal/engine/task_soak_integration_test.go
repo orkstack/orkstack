@@ -37,6 +37,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The task soak (spec T7/E7): one Orkflow at the task ceiling, in each of
@@ -289,7 +291,7 @@ type taskSoakGeneration struct {
 	Bytes             int64    `json:"history_bytes"`
 	PeakPending       int      `json:"peak_pending_activities"`
 	PeakPendingTasks  int      `json:"peak_pending_tasks"`
-	CheckpointBytes   int64    `json:"checkpoint_bytes,omitempty"`
+	CheckpointBytes   int64    `json:"checkpoint_bytes,omitzero"`
 	ReplaySeconds     float64  `json:"replay_seconds"`
 	PendingLimit      int      `json:"pending_activities_limit_exceeded"`
 	TaskFailures      int      `json:"workflow_task_failures"`
@@ -520,7 +522,11 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 		v.C = math.Round(float64(counts[landing]+counts[collect])/float64(v.Collections)*100) / 100
 	}
 	// The peak, at every workflow task's start.
-	var dispatched, collected int
+	// published counts the plain tasks' detached publishes scheduled so far:
+	// the run's outstanding set is at most its window, and stays full once
+	// it fills until the generation ends, so the guard reserves
+	// min(window, published) of them as in-flight entries.
+	var dispatched, collected, published int
 	completed := map[string]bool{}
 	collectedIDs := map[string]bool{}
 	for _, e := range events {
@@ -532,9 +538,14 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 			}
 			if attrs.GetActivityType().GetName() == engine.ActivityPublishEvent && a.kind == dispatch {
 				var event *orkstackv1.Event
-				if converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &event) == nil &&
-					event.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED {
-					dispatched++ // out of PENDING from its first publish: counted in flight, the upper bound
+				if converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &event) == nil {
+					switch event.GetType() {
+					case orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED:
+						dispatched++ // out of PENDING from its first publish: counted in flight, the upper bound
+						published++
+					case orkstackv1.EventType_EVENT_TYPE_TASK_STARTED:
+						published++
+					}
 				}
 			}
 		}
@@ -548,7 +559,9 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 		}
 		pending := int64(tasks - dispatchedBefore - dispatched)
 		inFlight := int64(dispatched - collected)
-		sum := e.GetEventId() + r.Fixed + r.PerPending*pending + r.PerInFlight*inFlight
+		outstanding := int64(min(published, int(engine.DefaultTaskPublishWindow)))
+		sum := e.GetEventId() + r.Fixed + r.PerPending*pending + r.PerInFlight*inFlight +
+			engine.DefaultTaskPublishEvents*outstanding
 		v.Peak = max(v.Peak, sum)
 		uncollected := 0
 		for id := range completed {
@@ -562,7 +575,7 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 		Reserve: engine.DefaultHistoryReserve}
 	budget := engine.DefaultContinuationBudget(engine.DefaultContinuationEvents, engine.DefaultContinuationBytes,
 		engine.DefaultContinuationRestoreTimeout)
-	v.Predicted = engine.ShapePeak(limit, budget, width, int64(v.Base), int64(v.PendingAtStart))
+	v.Predicted = engine.ShapePeak(limit, budget, width, engine.DefaultInFlightLimit(int32(width)).PublishReserveEvents(), int64(v.Base), int64(v.PendingAtStart))
 	return v
 }
 
@@ -572,26 +585,18 @@ func analyzeClosedForm(t *testing.T, h *historypb.History, tasks, dispatchedBefo
 // for a flat shape, and the API at the task-ceiling defaults.
 func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int) (*eachSoak, *latencyHandler) {
 	t.Helper()
-	// Before the stack, so its cleanup runs after the stack's own teardown:
-	// nothing that teardown says follows the helper's report. The one cleanup
-	// registered earlier is the soak lock's release (holdLock), which is
-	// silent and cannot fail (proof.TimingBounds).
 	timing := proof.TimingBounds(t)
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	runArchive, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("run archive: %v", err)
-	}
+	must.OKf(t, err, "run archive")
 	s := newChaosStackWith(t, ctx, fmt.Sprintf("soak-tasks-%d-%s", n, shape.name), cfg, runArchive)
 	env, err := localcatalog.CatalogEnv()
 	if err != nil {
 		infraAbsent(t, "%v", err)
 	}
 	catalog, err := dsl.ParseCatalog([]byte(strings.TrimPrefix(env, "ORK_ACTIVITY_CATALOG=")))
-	if err != nil {
-		t.Fatalf("parse the local catalog: %v", err)
-	}
+	must.OKf(t, err, "parse the local catalog")
 	e := &eachSoak{chaosStack: s, realIDs: map[string]string{}, inflight: map[string]map[string]bool{}, timing: timing}
 	if shape.real {
 		e.stores = s.realStores()
@@ -600,9 +605,7 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 	identity := engine.EngineIdentity(fmt.Sprintf("%d@soak-replica-a@", os.Getpid()))
 	c, err := client.DialContext(ctx, client.Options{HostPort: s.address, Namespace: s.namespace, Identity: identity,
 		Logger: s.logs.logger("replica-a"), MetricsHandler: metrics.handler})
-	if err != nil {
-		t.Fatalf("dial the replica's client: %v", err)
-	}
+	must.OKf(t, err, "dial the replica's client")
 	t.Cleanup(c.Close)
 	s.startReplica("replica-a", replicaOptions{client: c, identity: identity})
 	s.startCapableProjection("soak-projection")
@@ -617,9 +620,7 @@ func startTaskSoak(t *testing.T, ctx context.Context, shape taskSoakShape, n int
 	}
 	cluster, err := engine.NewTemporalReleaseCluster(s.control, s.reader, s.namespace, task.DefaultDeploymentName,
 		s.runQueue, s.orkerQueue)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	e.api = s.serveAPI(api.Config{
 		OrkflowMaxTasks: int32(n), ContinuationEnabled: true,
 		DefinitionByReference: true, DefinitionObjects: s.store, SnapshotOverlays: true,
@@ -699,9 +700,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 
 	readStart := time.Now()
 	events, err := e.reader.Events(ctx, runID, 0)
-	if err != nil {
-		t.Fatalf("Events(0): %v", err)
-	}
+	must.OKf(t, err, "Events(0)")
 	rec.EventsReadSeconds = time.Since(readStart).Seconds()
 	requireContiguous(t, events)
 	streamed := stream.result(t, 5*time.Minute)
@@ -711,9 +710,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 		strings.Join(eventKeys(streamed), "\n") == strings.Join(eventKeys(events), "\n")
 
 	run, err := e.reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	succeeded := 0
 	for _, row := range run.GetTaskRuns() {
 		if row.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
@@ -727,9 +724,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 	chain, histories := e.histories(runID)
 	first := histories[0].GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
 	var plan engine.RunPlan
-	if err := converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, converter.GetDefaultDataConverter().FromPayload(first.GetInput().GetPayloads()[3], &plan))
 	rec.ByReference, rec.Overlays = plan.Definition != nil, plan.SnapshotOverlay != nil
 	if plan.Definition != nil {
 		rec.DefinitionBytes = plan.Definition.SizeBytes
@@ -738,9 +733,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 	dispatchedBefore := 0
 	for i, h := range histories {
 		info, err := e.control.DescribeWorkflowExecution(ctx, runID, chain[i])
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		g := taskSoakGeneration{Execution: chain[i], Events: len(h.GetEvents()),
 			Bytes: info.GetWorkflowExecutionInfo().GetHistorySizeBytes()}
 		g.PeakPendingTasks, g.PeakPending = pendingPeaks(h)
@@ -759,9 +752,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 		g.closedFormView = analyzeClosedForm(t, h, n, dispatchedBefore, width)
 		dispatchedBefore += g.Dispatches
 		replayStart := time.Now()
-		if err := replayRecorded(h, runID); err != nil {
-			t.Fatalf("generation %d does not replay (deadlock detection on): %v", i, err)
-		}
+		must.OKf(t, replayRecorded(h, runID), "generation %d does not replay (deadlock detection on)", i)
 		g.ReplaySeconds = math.Round(time.Since(replayStart).Seconds()*1000) / 1000
 		rec.Generations = append(rec.Generations, g)
 		rec.PeakPending = max(rec.PeakPending, g.PeakPending)
@@ -926,16 +917,48 @@ func TestIntegration_SoakTasks(t *testing.T) {
 	})
 }
 
+// reducedTaskCeiling is the merge gate's task ceiling, below the 4,000
+// default and at the deployment's other defaults. A flat stage reaches its
+// hold line, and so carries on, only once its history plus reserve does: at
+// the 500 in-flight cap, with an outstanding publish reserved what it can
+// still append, 1,000 tasks peaked at 22,485 against the 30,720 line and ran
+// in one history (proof e77-task-soak-2), while 4,000 peaked at
+// 43,260. 2,500 reaches the line with most of its work left: three
+// generations, carrying on first with 1,841 tasks pending (e77-task-soak-3).
+const reducedTaskCeiling = 2500
+
+// reducedTaskCeilingPendingShare bounds how late the reduced ceiling's run
+// may reach its hold line: its second generation must start with at least
+// 1/reducedTaskCeilingPendingShare of the run's tasks still PENDING. The
+// first generation's peak cannot measure it: a run that reaches the line
+// holds there, so every run that carries on peaks just past it (31,197
+// against 30,720 at 2,500 tasks, proof e77-task-soak-3, which carried
+// on with 1,841 of 2,500 pending).
+const reducedTaskCeilingPendingShare = 4
+
+// pendingWhenCarried is how many tasks were still PENDING when the run
+// first carried on, or 0 when it never did.
+func pendingWhenCarried(rec taskSoakRecord) int {
+	if len(rec.Generations) < 2 {
+		return 0
+	}
+	return rec.Generations[1].PendingAtStart
+}
+
 // TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling proves the
 // last AGENTS.md §11 bullet's behaviour without the full-size soak: the
-// flat-short shape runs at a deployment ceiling of 1,000 tasks, through the
-// soak's own helpers, so every E7 threshold and its closed form is checked.
-// A small run that never carried on would pass those thresholds without
-// exercising generations, so it also asserts at least two generations, a
-// definition passed by reference and snapshot overlays. The full ceilings
-// are the nightly tier's (scripts/proof-nightly-tests.txt).
+// flat-short shape runs at a deployment ceiling of reducedTaskCeiling tasks,
+// through the soak's own helpers, so every E7 threshold and its closed form
+// is checked. A small run that never carried on would pass those thresholds
+// without exercising generations, so it also asserts at least two
+// generations, a definition passed by reference and snapshot overlays, and
+// that the run carried on with at least 1/reducedTaskCeilingPendingShare of
+// its tasks still pending: a run that reached its hold line only near its
+// end carries on with almost nothing left, and would stop carrying on at all
+// after a small change, so it fails here rather than passing by luck. The
+// full ceilings are the nightly tier's (scripts/proof-nightly-tests.txt).
 func TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling(t *testing.T) {
-	const n = 1000
+	const n = reducedTaskCeiling
 	ctx, cancel := context.WithTimeout(context.Background(), taskSoakShapeTimeout)
 	defer cancel()
 	// The E7 thresholds are absolute wall-clock bounds, so this run measures
@@ -953,13 +976,19 @@ func TestIntegration_ATaskCeilingRunCarriesOnAtAReducedCeiling(t *testing.T) {
 		rec.Missed = append(rec.Missed, fmt.Sprintf("the run used %d generations; a reduced ceiling must still carry on at least once",
 			rec.GenerationCount))
 	}
+	if pending := pendingWhenCarried(rec); pending*reducedTaskCeilingPendingShare < n {
+		rec.Missed = append(rec.Missed, fmt.Sprintf("the run carried on with %d of its %d tasks still pending, under 1/%d: "+
+			"at %d tasks it reaches the point where it pauses to carry on only near its end",
+			pending, n, reducedTaskCeilingPendingShare, n))
+	}
 	if !rec.ByReference {
 		rec.Missed = append(rec.Missed, "the run did not pass its definition by reference")
 	}
 	if !rec.Overlays {
 		rec.Missed = append(rec.Missed, "the run did not write snapshot overlays")
 	}
-	t.Logf("reduced task ceiling: %d tasks at the deployment ceiling, %d generations, definition by reference %t, overlays %t",
-		n, rec.GenerationCount, rec.ByReference, rec.Overlays)
+	t.Logf("reduced task ceiling: %d tasks at the deployment ceiling, %d generations, definition by reference %t, overlays %t; "+
+		"carried on with %d tasks pending",
+		n, rec.GenerationCount, rec.ByReference, rec.Overlays, pendingWhenCarried(rec))
 	reportTaskSoak(t, rec)
 }

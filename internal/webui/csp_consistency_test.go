@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/webui"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cspKeywords are the source keywords SvelteKit writes quoted (csp takes
@@ -115,13 +117,9 @@ func policyDrift(config []byte, policy string) ([]string, error) {
 // (ui/test/gen-validators.ts), and nothing else in the page evaluates code.
 func TestDefaultPagePolicy_IsTheBuildsPolicyWithoutItsHashes(t *testing.T) {
 	config, err := os.ReadFile(filepath.Join("..", "..", "ui", "vite.config.ts"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	drift, err := policyDrift(config, webui.DefaultPagePolicy)
-	if err != nil {
-		t.Fatalf("ui/vite.config.ts: %v", err)
-	}
+	must.OKf(t, err, "ui/vite.config.ts")
 	for _, d := range drift {
 		t.Errorf("DefaultPagePolicy and ui/vite.config.ts disagree, %s", d)
 	}

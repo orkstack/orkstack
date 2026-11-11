@@ -2,7 +2,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -16,6 +15,9 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // guardedPlan is defaultPlan with a history limit at the default reserve, as
@@ -90,8 +92,7 @@ tasks:
 // recorded and what was still running; its workflow error carries the same
 // type, so Temporal records it Failed — never terminated.
 func TestHistoryGuard_FailsRunHistoryLimitBeforeTheClusterLimit(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarnessCtx(t, nil, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetTaskId() == "slow" {
 			return runUntilCanceled(ctx, nil)
 		}
@@ -142,25 +143,21 @@ func TestHistoryGuard_FailsRunHistoryLimitBeforeTheClusterLimit(t *testing.T) {
 // TestHistoryGuard_NoMarkerBelowThreshold: a run that never nears its limit
 // records no version marker for the guard.
 func TestHistoryGuard_NoMarkerBelowThreshold(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
 	h.env.OnGetVersion(engine.HistoryGuardChange, workflow.DefaultVersion, workflow.Version(1)).
 		Return(workflow.Version(1)).Never()
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-small", compile(t, guardFlatDocument), payload(t, nil),
 		guardedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("a small run failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "a small run failed")
 }
 
 // TestHistoryGuard_PlanWithoutLimitNeverChecks: a plan built before the field
 // existed — every recorded history's — never enters the guard, however long
 // the history.
 func TestHistoryGuard_PlanWithoutLimitNeverChecks(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
 	h.env.SetCurrentHistoryLength(10_000_000)
@@ -170,9 +167,7 @@ func TestHistoryGuard_PlanWithoutLimitNeverChecks(t *testing.T) {
 	plan := defaultPlan()
 	plan.History = nil
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-unguarded", compile(t, guardFlatDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("a run without a limit failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "a run without a limit failed")
 	if run := mustFinalRun(t, h.store, "ork-unguarded"); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("status = %v", run.GetStatus())
 	}
@@ -201,8 +196,7 @@ func guardItems(n int) []any {
 
 func runGuardedFanOut(t *testing.T, runID, maxParallel string, length int, maxEvents int64) (*harness, *orkstackv1.Run) {
 	t.Helper()
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return itemResult(in), nil
 	})
 	h.env.SetCurrentHistoryLength(length)
@@ -315,8 +309,7 @@ tasks:
 // pending handler, does not, so the handler runs.
 func runGuardWithHandlers(t *testing.T) (*harness, *orkstackv1.Run) {
 	t.Helper()
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
 	h.onSnapshot = onceAt(h.env, 850, taskStatusIs("a", orkstackv1.Status_STATUS_SUCCEEDED))
@@ -398,8 +391,7 @@ tasks:
 // the handler's terminal path (check point 4); past it every pending handler
 // is CANCELED with the history sentence, and the run keeps its own reason.
 func TestHistoryGuard_FailingPhaseStopsStartingHandlers(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetTaskId() == "a" {
 			return nil, temporal.NewNonRetryableApplicationError("a exploded", "ActivityFailed", nil)
 		}
@@ -547,25 +539,19 @@ func TestStartChild_CopiesTheRunTreeLimits(t *testing.T) {
 		parent, plan, _ := composedFixture(t, guardMiddleChildDocument)
 		middle := plan.Children["release"]
 		middleDef, err := middle.Definition()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		middleDef.Tasks[0].Orkflow.DefinitionDigest = leafDigest
 		leaf := compile(t, guardLeafDocument)
 		leaf.DefinitionDigest = leafDigest
 		leafPlan := defaultPlan()
 		leafPlan.CommitRoot = "mem://commits"
 		leafChild, err := engine.NewChildRunPlan(leaf, leafPlan, true, true)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		leafChild.RunID = "ork-1758790021000000000-1"
 		middlePlan := middle.Plan
 		middlePlan.Children = map[string]*engine.ChildRunPlan{"inner": leafChild}
 		rebuilt, err := engine.NewChildRunPlan(middleDef, middlePlan, true, true)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		rebuilt.RunID = middle.RunID
 		plan.Children["release"] = rebuilt
 		return parent, plan
@@ -582,9 +568,7 @@ func TestStartChild_CopiesTheRunTreeLimits(t *testing.T) {
 				Output: payload(t, map[string]any{"value": "leaf-ok"})}, nil
 		})
 		h.run("ork-parent", parent, payload(t, nil), plan)
-		if err := h.env.GetWorkflowError(); err != nil {
-			t.Fatalf("the tree failed: %v", err)
-		}
+		must.OKf(t, h.env.GetWorkflowError(), "the tree failed")
 		return h.startedChildren()
 	}
 
@@ -622,8 +606,8 @@ func TestStartChild_CopiesTheRunTreeLimits(t *testing.T) {
 				got = start.plan
 			}
 		}
-		wantJSON, _ := json.Marshal(want)
-		gotJSON, _ := json.Marshal(got)
+		wantJSON, _ := stablejson.Marshal(want)
+		gotJSON, _ := stablejson.Marshal(got)
 		if string(wantJSON) != string(gotJSON) || strings.Contains(string(gotJSON), `"history"`) {
 			t.Fatalf("child start plan changed:\n got %s\nwant %s", gotJSON, wantJSON)
 		}
@@ -641,8 +625,7 @@ func TestStartChild_CopiesTheRunTreeLimits(t *testing.T) {
 // 50 MiB). The lookahead is asked lazily, so a run that never meets the
 // difference records no marker.
 func TestHistoryGuard_NeverIssuesACommandItsFailurePathCannotFollow(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
 	const raw = 1 << 20
@@ -670,15 +653,12 @@ func TestHistoryGuard_NeverIssuesACommandItsFailurePathCannotFollow(t *testing.T
 // TestHistoryGuard_LookaheadAskedOnlyWhereItDiffers: a run whose next
 // command always fits never asks the lookahead's version.
 func TestHistoryGuard_LookaheadAskedOnlyWhereItDiffers(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.GetTaskId(), map[string]any{"ok": true}), nil
 	})
 	h.env.OnGetVersion(engine.HistoryGuardLookaheadChange, workflow.DefaultVersion, workflow.Version(1)).
 		Return(workflow.Version(1)).Never()
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-roomy", compile(t, guardFlatDocument), payload(t, nil),
 		guardedPlan(engine.DefaultHistoryMaxEvents, engine.DefaultHistoryMaxBytes), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("a small run failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "a small run failed")
 }

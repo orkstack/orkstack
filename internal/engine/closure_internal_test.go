@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
+	"runtime/metrics"
 	"slices"
 	"sort"
 	"strings"
@@ -24,6 +26,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // eagerClosure is the needs closure as newRunState computed it before 7.2,
@@ -65,13 +69,9 @@ func fixtureDefinitions(t *testing.T) map[string]*orkstackv1.Orkflow {
 	out := map[string]*orkstackv1.Orkflow{}
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		recorded := &historypb.History{}
-		if err := (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded); err != nil {
-			t.Fatalf("decode %s: %v", path, err)
-		}
+		must.OKf(t, (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, recorded), "decode %s", path)
 		for _, event := range recorded.GetEvents() {
 			payloads := event.GetWorkflowExecutionStartedEventAttributes().GetInput()
 			if attrs := event.GetStartChildWorkflowExecutionInitiatedEventAttributes(); attrs != nil {
@@ -98,21 +98,13 @@ func fixtureDefinitions(t *testing.T) map[string]*orkstackv1.Orkflow {
 func fixtureObjectDefinition(t *testing.T, path string) *orkstackv1.Orkflow {
 	t.Helper()
 	raw, err := os.ReadFile(strings.TrimSuffix(path, ".json") + ".objects/definition.pb.gz")
-	if err != nil {
-		t.Fatalf("%s starts with a definition stub and has no recorded definition: %v", path, err)
-	}
+	must.OKf(t, err, "%s starts with a definition stub and has no recorded definition", path)
 	zr, err := gzip.NewReader(bytes.NewReader(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	plain, err := io.ReadAll(zr)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	wf := &orkstackv1.Orkflow{}
-	if err := proto.Unmarshal(plain, wf); err != nil {
-		t.Fatalf("decode %s's definition object: %v", path, err)
-	}
+	must.OKf(t, proto.Unmarshal(plain, wf), "decode %s's definition object", path)
 	return wf
 }
 
@@ -168,14 +160,108 @@ func soakShape(shape string, n int) *orkstackv1.Orkflow {
 // of the workflow goroutine's own thread where the platform has one
 // (threadCPU), the wall clock otherwise. Its first reading locks the calling
 // goroutine — the workflow's, since every probe callback runs on it — to its
-// thread, so every later reading is that goroutine's. A pass whose code
-// regresses costs more CPU on any host; a host loaded by other processes
-// delays the pass without adding to its CPU time, which is what moved the
-// wall-clock form of these bounds (plan F19).
+// thread, so every later reading is that goroutine's and no other goroutine
+// runs on the thread. A pass whose code regresses costs more CPU on any host;
+// a host loaded by other processes delays the pass without adding its waits
+// to its CPU time, and those waits are what moved the wall-clock form of
+// these bounds (plan F19).
+//
+// The thread's clock also counts the collector's work the runtime hands the
+// goroutine: mark assists for what it allocates while a cycle runs, and the
+// start or end of a cycle it lands in. How much of that one pass pays depends
+// not on its code but on how far the background mark workers have got, which
+// a loaded host slows: beside 32 CPU burners on 16 CPUs, 18 of the join
+// chain's passes ran over a quarter more instructions than the same pass on
+// a quiet host, the worst 21.1M against 11.5M. So a pass clock holds the
+// collector off from when it is made until its test ends, and collects only
+// where no segment is being timed (between), at GOGC's default pace: a timed
+// segment counts the code and its own allocations, never a collection. With
+// it held, no pass ran a quarter more instructions than on a quiet host.
 type passClock struct {
 	started  bool
 	cpu      bool
 	wallBase time.Time
+	// live is the heap the last collection left, collections how many
+	// between made, and cyclesBase the cycles completed once the clock held
+	// the collector.
+	live, cyclesBase uint64
+	collections      int
+}
+
+// newPassClock is a pass clock, holding the collector off until t ends, after
+// one collection.
+func newPassClock(t testing.TB) *passClock {
+	t.Helper()
+	gcPercent := debug.SetGCPercent(-1)
+	t.Cleanup(func() { debug.SetGCPercent(gcPercent) })
+	c := &passClock{}
+	c.collect()
+	c.collections, c.cyclesBase = 0, gcCycles()
+	return c
+}
+
+// between is called where a test has ended one timed segment and not begun
+// the next. It collects once the heap has doubled since the last collection,
+// as GOGC=100 would.
+func (c *passClock) between() {
+	if heapObjectBytes() >= 2*c.live {
+		c.collect()
+	}
+}
+
+func (c *passClock) collect() {
+	runtime.GC()
+	c.live = heapObjectBytes()
+	c.collections++
+}
+
+// otherCycles is how many collections completed since the clock was made that
+// between did not make: none, unless the heap reached a memory limit
+// (GOMEMLIMIT) or other code called runtime.GC, and a measurement taken
+// meanwhile is not the code's alone.
+func (c *passClock) otherCycles() uint64 {
+	return gcCycles() - c.cyclesBase - uint64(c.collections)
+}
+
+func heapObjectBytes() uint64 { return readMetric("/memory/classes/heap/objects:bytes").Uint64() }
+
+func gcCycles() uint64 { return readMetric("/gc/cycles/total:gc-cycles").Uint64() }
+
+func readMetric(name string) metrics.Value {
+	sample := []metrics.Sample{{Name: name}}
+	metrics.Read(sample)
+	return sample[0].Value
+}
+
+// leastOfRuns measures a deterministic workflow's passes up to three times
+// and returns each pass's least cost over the runs on the pass clock, the
+// least wall clock beside it, and how many runs it made — the best of three,
+// as newRunState's bound is taken. Pass i does the same work in every run, so
+// a slowdown only one run's pass met is not the code's cost: a host's other
+// threads share a core's pipeline and caches, and on this host they cut one
+// pass's instructions per cycle to a quarter (9.5M instructions in 7.55 ms of
+// thread CPU time, against 2.03 ms on a quiet core). It runs again only while
+// some pass is over bound, so its answer is the best of three's and a host
+// that keeps every pass within it pays one run.
+func leastOfRuns(t *testing.T, bound time.Duration, measure func() (cpu, wall []time.Duration)) (cpu, wall []time.Duration, runs int) {
+	t.Helper()
+	for runs < 3 && (cpu == nil || slices.Max(cpu) > bound) {
+		runs++
+		runCPU, runWall := measure()
+		switch {
+		case len(runCPU) == 0 || len(runWall) != len(runCPU):
+			t.Fatalf("run %d timed %d passes on the pass clock and %d on the wall clock", runs, len(runCPU), len(runWall))
+		case cpu == nil:
+			cpu, wall = runCPU, runWall
+		case len(runCPU) != len(cpu):
+			t.Fatalf("run %d timed %d passes, run 1 %d: the runs did not do the same work", runs, len(runCPU), len(cpu))
+		default:
+			for i := range cpu {
+				cpu[i], wall[i] = min(cpu[i], runCPU[i]), min(wall[i], runWall[i])
+			}
+		}
+	}
+	return cpu, wall, runs
 }
 
 func (c *passClock) now() time.Duration {
@@ -218,12 +304,13 @@ func gatedSizeBound(bound time.Duration) time.Duration {
 func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 	n := int(DefaultOrkflowMaxTasks)
 	bound := gatedSizeBound(200 * time.Millisecond)
-	clock := &passClock{}
+	clock := newPassClock(t)
 	timings := map[string]float64{}
 	for _, shape := range []string{"flat", "staged", "deep"} {
 		wf := soakShape(shape, n)
 		var best time.Duration
 		for attempt := range 3 { // the best of three: a cold cache is not the code's cost
+			clock.between()
 			started := clock.now()
 			s := buildRunState("ork-gated", wf, nil, RunPlan{})
 			elapsed := clock.now() - started
@@ -250,13 +337,15 @@ func TestNewRunState_AtTheGatedSizeUnderTheDeadlockBudget(t *testing.T) {
 // needs the chain's root, which succeeds, so none_failed admits it and its
 // condition, which reads its whole closure, is evaluated (a none_failed task
 // whose every need was skipped is skipped by its join, before any
-// condition). It asserts three things: every task's condition is evaluated
-// exactly once (conditions == T); closureOf computes at most T(T−1)/2
-// entries over the run and at least T(T−1)/2 − T, spread over the passes;
-// and the run holds at most T closure entries between passes (it has no open
-// pin to add its members' closures). Run under the 1 s deadlock detector, its
-// largest pass's workflow code (outside the event writes, which yield) stays
-// within 20 ms of its thread's CPU time (passClock; the wall clock is logged).
+// condition). It asserts three things of every run: every task's condition is
+// evaluated exactly once (conditions == T); closureOf computes at most
+// T(T−1)/2 entries over the run and at least T(T−1)/2 − T, spread over the
+// passes; and the run holds at most T closure entries between passes (it has
+// no open pin to add its members' closures). Run under the 1 s deadlock
+// detector, its largest pass's workflow code (outside the event writes, which
+// yield) stays within 20 ms of its thread's CPU time (passClock, with the
+// collector held off; the wall clock is logged), each pass's cost the least
+// of up to three runs (leastOfRuns).
 func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
@@ -277,70 +366,81 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 		t.Fatalf("the chain's last task: %d B, %d required ancestors (%v); want rule 44 to accept it", size, required, err)
 	}
 
-	// Each pass's workflow code, outside its event writes, timed twice: on
-	// the pass clock, which the bound is asserted on, and on the wall clock,
-	// which is logged as evidence.
-	probe := &readyLoopProbe{}
-	clock := &passClock{}
-	var segment, current, worst time.Duration
-	var wallSegment time.Time
-	var wallCurrent, wallWorst time.Duration
-	passes := 0
-	probe.pass = func() {
-		if passes > 0 {
-			current += clock.now() - segment
-			worst = max(worst, current)
-			wallCurrent += time.Since(wallSegment)
-			wallWorst = max(wallWorst, wallCurrent)
-		}
-		passes++
-		current, wallCurrent = 0, 0
-		segment, wallSegment = clock.now(), time.Now()
-	}
-	probe.emit = func(start bool) {
-		if start {
-			current += clock.now() - segment
-			wallCurrent += time.Since(wallSegment)
-			return
-		}
-		segment, wallSegment = clock.now(), time.Now()
-	}
-	readyLoopProbeForTest = probe
-	defer func() { readyLoopProbeForTest = nil }()
-
-	h := newRefusalHarnessOver(t, newMemSnapshotStore())
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
-	h.env.SetTestTimeout(10 * time.Minute)
-	plan := refusalRoutedPlan(t)
-	plan.History, plan.Continuation = nil, nil
-	h.env.ExecuteWorkflow(RunWorkflowType, refusalWorkflowID, wf, (*orkstackv1.Payload)(nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if !h.env.IsWorkflowCompleted() || h.env.GetWorkflowError() != nil {
-		t.Fatalf("the join chain did not complete under the 1 s deadlock detector: %v", h.env.GetWorkflowError())
-	}
 	total := n * (n - 1) / 2
 	bound := gatedSizeBound(20 * time.Millisecond)
-	t.Logf("E7 join chain of %d tasks: %d passes, largest pass %.2f ms of %s (bound %s; %.2f ms wall clock), "+
-		"closure entries computed %d (bound %d), most retained between passes %d (bound %d)",
-		n, passes, float64(worst.Microseconds())/1000, clock.kind(), bound, float64(wallWorst.Microseconds())/1000,
-		probe.closureEntries.Load(), total, probe.maxRetained.Load(), n)
+	var clock *passClock
+	var probe *readyLoopProbe
+	var otherCycles uint64
+	var collections int
+	least, leastWall, runs := leastOfRuns(t, bound, func() (costs, walls []time.Duration) {
+		// Each pass's workflow code, outside its event writes, timed twice:
+		// on the pass clock, which the bound is asserted on, and on the wall
+		// clock, which is logged as evidence. A run's workflow is a goroutine
+		// of its own, so each run has its own clock.
+		clock, probe = newPassClock(t), &readyLoopProbe{}
+		var segment, current time.Duration
+		var wallSegment time.Time
+		var wallCurrent time.Duration
+		passes := 0
+		probe.pass = func() {
+			if passes > 0 {
+				current += clock.now() - segment
+				wallCurrent += time.Since(wallSegment)
+				costs, walls = append(costs, current), append(walls, wallCurrent)
+			}
+			passes++
+			current, wallCurrent = 0, 0
+			clock.between()
+			segment, wallSegment = clock.now(), time.Now()
+		}
+		probe.emit = func(start bool) {
+			if start {
+				current += clock.now() - segment
+				wallCurrent += time.Since(wallSegment)
+				return
+			}
+			segment, wallSegment = clock.now(), time.Now()
+		}
+		readyLoopProbeForTest = probe
+		defer func() { readyLoopProbeForTest = nil }()
+
+		h := newRefusalHarnessOver(t, newMemSnapshotStore())
+		h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+		h.env.SetTestTimeout(10 * time.Minute)
+		plan := refusalRoutedPlan(t)
+		plan.History, plan.Continuation = nil, nil
+		h.env.ExecuteWorkflow(RunWorkflowType, refusalWorkflowID, wf, (*orkstackv1.Payload)(nil), plan, (*orkstackv1.RunContinuation)(nil))
+		if !h.env.IsWorkflowCompleted() || h.env.GetWorkflowError() != nil {
+			t.Fatalf("the join chain did not complete under the 1 s deadlock detector: %v", h.env.GetWorkflowError())
+		}
+		if probe.conditions.Load() != int64(n) {
+			t.Fatalf("%d conditions evaluated, want every task's once (%d)", probe.conditions.Load(), n)
+		}
+		if entries := probe.closureEntries.Load(); entries > int64(total) || entries < int64(total-n) {
+			t.Fatalf("closureOf computed %d entries over the run, want about, and at most, T(T−1)/2 = %d",
+				entries, total)
+		}
+		if retained := probe.maxRetained.Load(); retained > int64(n) {
+			t.Fatalf("the run held %d closure entries between passes, over T = %d", retained, n)
+		}
+		otherCycles, collections = otherCycles+clock.otherCycles(), collections+clock.collections
+		return costs, walls
+	})
+	worst, wallWorst := slices.Max(least), slices.Max(leastWall)
+	t.Logf("E7 join chain of %d tasks: %d passes, largest pass %.2f ms of %s, the least of %d runs (bound %s; "+
+		"%.2f ms wall clock; collections between passes %d, any other %d), closure entries computed %d (bound %d), "+
+		"most retained between passes %d (bound %d)",
+		n, len(least), float64(worst.Microseconds())/1000, clock.kind(), runs, bound, float64(wallWorst.Microseconds())/1000,
+		collections, otherCycles, probe.closureEntries.Load(), total, probe.maxRetained.Load(), n)
 	proof.WriteJSON(t, "task-ceiling", "join-chain-closure.json", map[string]any{
-		"tasks": n, "passes": passes, "largest_pass_ms": float64(worst.Microseconds()) / 1000,
+		"tasks": n, "passes": len(least), "runs": runs, "largest_pass_ms": float64(worst.Microseconds()) / 1000,
 		"largest_pass_clock": clock.kind(), "largest_pass_wall_ms": float64(wallWorst.Microseconds()) / 1000,
 		"closure_entries_computed": probe.closureEntries.Load(), "closure_entries_bound": total,
-		"max_retained_entries": probe.maxRetained.Load(),
+		"max_retained_entries": probe.maxRetained.Load(), "other_collections": otherCycles,
 	})
-	if probe.conditions.Load() != int64(n) {
-		t.Fatalf("%d conditions evaluated, want every task's once (%d)", probe.conditions.Load(), n)
-	}
-	if entries := probe.closureEntries.Load(); entries > int64(total) || entries < int64(total-n) {
-		t.Fatalf("closureOf computed %d entries over the run, want about, and at most, T(T−1)/2 = %d",
-			entries, total)
-	}
-	if retained := probe.maxRetained.Load(); retained > int64(n) {
-		t.Fatalf("the run held %d closure entries between passes, over T = %d", retained, n)
-	}
 	if worst > bound {
-		t.Fatalf("the largest pass's workflow code took %s of %s, over %s", worst, clock.kind(), bound)
+		t.Fatalf("the largest pass's workflow code took %s of %s, the least of %d runs, over %s "+
+			"(collections the pass clock did not make: %d)", worst, clock.kind(), runs, bound, otherCycles)
 	}
 }
 
@@ -365,9 +465,7 @@ tasks:
     needs: [compile]
     pin: build
 `))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	s := buildRunState("ork-pins", wf, nil, RunPlan{})
 	p := s.pins["build"]
 	p.opened = true

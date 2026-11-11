@@ -6,7 +6,7 @@ See how a namespace is doing over a time window: how its runs ended, how long th
 
 ```bash
 orkctl -n payments stats                       # the last 24 hours
-orkctl -n payments stats --since 6h
+orkctl -n payments stats -s 6h
 orkctl -n payments stats --by day --buckets 7  # runs created each day, the last 7 days
 ```
 
@@ -17,8 +17,8 @@ Stats counts the runs a window created, whenever they end. It reports the runs s
 ## Failures
 
 ```bash
-orkctl -n payments stats failures --since 24h
-orkctl -n payments stats failures --since 6h --group-by task,code,image,phase
+orkctl -n payments stats failures -s 24h
+orkctl -n payments stats failures -s 6h -g task,code,image,phase
 orkctl -n payments stats failures --category infrastructure_error
 ```
 
@@ -29,7 +29,7 @@ If a window has more failed runs than one read can hold, the command refuses. Na
 ## Flaky tasks
 
 ```bash
-orkctl -n payments stats flakes --since 168h
+orkctl -n payments stats flakes -s 168h
 ```
 
 `stats flakes` lists the tasks that needed more than one attempt, flakiest first. A run that succeeded after a retry is counted here, although `stats` shows it as a success. A run whose records are gone is left out of every rate. It is never counted as clean.
@@ -45,8 +45,8 @@ For each cached task, the command shows its hits, misses and bypassed runs, and 
 ## Usage and budgets
 
 ```bash
-orkctl -n analytics stats usage --since 720h --group-by pool
-orkctl stats usage --since 720h --group-by namespace
+orkctl -n analytics stats usage -s 720h -g pool
+orkctl stats usage -s 720h -g namespace
 ```
 
 Usage is in three units: task-seconds, cpu-seconds and GiB-seconds. Each attempt's reservation, the cpu and memory the Orker granted it, is multiplied by how long the Orker held it.
@@ -64,7 +64,7 @@ orkctl namespace update analytics --budget-cpu-seconds 5000000 --budget-period 7
 orkctl namespace update analytics --budget-enforce                                    # refuse new runs at the limit
 ```
 
-A budget is soft by default. It appears on every usage read and refuses nothing. With `--budget-enforce`, a submit is refused once usage reaches the bound, and accepted runs are not touched. An enforced budget that cannot be measured also refuses new runs. Before you enforce a budget, check that `orkctl stats usage --since <period>` answers.
+A budget is soft by default. It appears on every usage read and refuses nothing. With `--budget-enforce`, a submit is refused once usage reaches the bound, and accepted runs are not touched. An enforced budget that cannot be measured also refuses new runs. Before you enforce a budget, check that `orkctl stats usage -s <period>` answers.
 
 Enforcement is best effort. It does not hold a lock, so a few runs can start past the bound.
 

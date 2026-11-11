@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // recordedWithTheWriter reports whether a committed fixture was recorded
@@ -19,13 +21,15 @@ import (
 // in-flight-cap fixtures, the cancel-before-dispatch fixture recorded
 // through a switch, the definition-by-reference fixtures (a run that loads
 // its definition, and the run-created-first endings of runs that cannot)
-// and the snapshot-overlay fixture — so it is
+// the snapshot-overlay fixture and the task-publish-window pair, whose plan
+// carries the in-flight limit's publish window — so it is
 // not one of the histories that predate the writer, which the premise and
 // negative tests over every fixture are about.
 func recordedWithTheWriter(path string) bool {
 	return strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") ||
 		strings.Contains(path, "cancel-before-dispatch") || strings.Contains(path, "definition-ref") ||
-		strings.Contains(path, "snapshot-overlay") || strings.Contains(path, "run-created-first")
+		strings.Contains(path, "snapshot-overlay") || strings.Contains(path, "run-created-first") ||
+		strings.Contains(path, "task-publish-window")
 }
 
 // isRefusedRouteHistory reports whether a committed fixture is one of the
@@ -38,13 +42,22 @@ func isRefusedRouteHistory(path string) bool {
 	return strings.Contains(path, "refused-route")
 }
 
+// isCanceledAtItsFirstIdlePointHistory reports whether a committed fixture is
+// one of the emit-past-cancel pair. Its one dispatched task's completion and
+// the operator's cancel reach the run in one workflow task, the run's first
+// idle point, so it ends there: nothing in it can switch, and the two switch
+// tests have nothing to see in it (its gate has its own negative test). Like
+// the refused-route histories it carries no writer fields, so the
+// plan-without-budget test still covers it.
+func isCanceledAtItsFirstIdlePointHistory(path string) bool {
+	return strings.Contains(path, "emit-past-cancel")
+}
+
 // committedFixtures is every committed history fixture's path.
 func committedFixtures(t *testing.T) []string {
 	t.Helper()
 	paths, err := filepath.Glob("testdata/history/run-*.json")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(paths) == 0 {
 		t.Fatal("no committed fixtures")
 	}
@@ -61,7 +74,7 @@ func committedFixtures(t *testing.T) []string {
 func TestContinuation_RestoreEqualsLiveStateAtEveryIdlePoint(t *testing.T) {
 	defer engine.ContinueAtEveryIdleForTest()()
 	for _, path := range committedFixtures(t) {
-		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) {
+		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) || isCanceledAtItsFirstIdlePointHistory(path) {
 			continue // this stage's own fixtures already continue
 		}
 		t.Run(filepath.Base(path), func(t *testing.T) {

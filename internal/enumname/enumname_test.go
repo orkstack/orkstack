@@ -56,6 +56,35 @@ func TestShortAndProto_RoundTripEveryDeclaredValue(t *testing.T) {
 	}
 }
 
+func TestOf_IsShortOfTheValuesNameOrItsNumber(t *testing.T) {
+	for _, enum := range orkstackEnums(t) {
+		values := enum.Values()
+		for i := 0; i < values.Len(); i++ {
+			declared := values.Get(i)
+			value := dynamicEnum{enum, declared.Number()}
+			if got, want := enumname.Of(value), enumname.Short(enum, string(declared.Name())); got != want {
+				t.Errorf("%s: Of(%d) = %q; want %q", enum.FullName(), declared.Number(), got, want)
+			}
+		}
+	}
+	if got := enumname.Of(orkstackv1.Status_STATUS_SUCCEEDED); got != "SUCCEEDED" {
+		t.Errorf("Of(STATUS_SUCCEEDED) = %q; want SUCCEEDED", got)
+	}
+	if got, want := enumname.Of(orkstackv1.Status(4242)), orkstackv1.Status(4242).String(); got != want {
+		t.Errorf("Of(an undeclared number) = %q; want %q, as String spells it", got, want)
+	}
+}
+
+// dynamicEnum is any declared value of any enum, without its generated type.
+type dynamicEnum struct {
+	enum   protoreflect.EnumDescriptor
+	number protoreflect.EnumNumber
+}
+
+func (e dynamicEnum) Descriptor() protoreflect.EnumDescriptor { return e.enum }
+func (e dynamicEnum) Type() protoreflect.EnumType             { return nil }
+func (e dynamicEnum) Number() protoreflect.EnumNumber         { return e.number }
+
 func TestProto_ReadsDashAsUnderscore(t *testing.T) {
 	origin := orkstackv1.RunOriginKind(0).Descriptor()
 	status := orkstackv1.Status(0).Descriptor()

@@ -33,9 +33,9 @@ require (
 	go.temporal.io/api v1.64.0
 	go.temporal.io/sdk v1.50.0
 	go.temporal.io/sdk/contrib/opentelemetry v0.8.1
+	go.yaml.in/yaml/v4 v4.0.0
 	google.golang.org/grpc v1.85.0
 	google.golang.org/protobuf v1.36.12
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

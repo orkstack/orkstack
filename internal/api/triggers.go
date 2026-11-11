@@ -2,7 +2,8 @@ package api
 
 import (
 	"bytes"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
@@ -159,8 +161,11 @@ func triggerInput(w http.ResponseWriter, r *http.Request) (*orkstackv1.Payload, 
 	// the decoder reads the first value and would silently ignore whatever
 	// followed it, accepting `{"a":1}{"b":2}` as `{"a":1}` — a caller sending
 	// two objects has a bug and has to hear about it.
-	if !json.Valid(body) {
-		return nil, fmt.Errorf("request body is not valid JSON")
+	// A key written twice is refused here too, naming it: protojson would
+	// refuse it as well, but only as a "duplicate map key" at a byte offset.
+	var probe jsontext.Value
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return nil, fmt.Errorf("request body is not valid JSON: %s", stablejson.Explain(err))
 	}
 	// A JSON array, string or number is a well-formed document that is not an
 	// input object. Saying so beats protojson's "unexpected token", which

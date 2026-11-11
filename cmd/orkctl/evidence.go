@@ -83,7 +83,7 @@ func newRunEvidenceExportCommand(g *globalFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVarP(&output, "output", "o", "", "destination file (required unless --json)")
-	cmd.Flags().StringVar(&task, "task", "", "narrow the per-task members to one task")
+	cmd.Flags().StringVarP(&task, "task", "t", "", "narrow the per-task members to one task")
 	item.register(cmd, "narrow a fan-out --task to one item")
 	cmd.Flags().BoolVar(&noLogs, "no-logs", false, "leave out every attempt's stdout.log and stderr.log")
 	cmd.Flags().BoolVar(&noArtifacts, "no-artifacts", false, "leave out the tasks' output artifacts")
@@ -360,7 +360,7 @@ func renderStoreComparison(c *storeComparison) string {
 func writeVerifyJSON(out io.Writer, report *evidence.Report, store *storeComparison) error {
 	document := struct {
 		*evidence.Report
-		Store *storeComparison `json:"store,omitempty"`
+		Store *storeComparison `json:"store,omitzero"`
 	}{Report: report, Store: store}
 	return writeGoJSON(out, document)
 }

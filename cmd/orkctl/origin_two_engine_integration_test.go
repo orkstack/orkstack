@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,9 +19,12 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // originStack is two real `ork` replicas and one Orker on a private Temporal
@@ -317,9 +320,7 @@ func TestIntegration_PreUpgradeRunRendersUnrecorded(t *testing.T) {
 	s := newOriginStack(ctx, t, "legacy")
 
 	archive, err := artifacts.NewS3RunArchive(ctx, s.artifactCfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	at := time.Now().UTC().Add(-time.Hour)
 	legacyID := fmt.Sprintf("ork-%d-legacy", time.Now().UnixNano())
 	if err := engine.NewRunArchiver(archive).Archive(ctx, &orkstackv1.Run{
@@ -356,7 +357,7 @@ func TestIntegration_PreUpgradeRunRendersUnrecorded(t *testing.T) {
 func compactJSON(t *testing.T, document string) string {
 	t.Helper()
 	var out bytes.Buffer
-	if err := json.Compact(&out, []byte(document)); err != nil {
+	if err := stablejson.Compact(&out, []byte(document)); err != nil {
 		t.Fatalf("compact %q: %v", document, err)
 	}
 	return out.String()

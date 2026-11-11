@@ -7,38 +7,19 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	enums "go.temporal.io/api/enums/v1"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/pkg/artifacts"
-)
 
-// waitLogAfter blocks until the workflow log holds an entry with msg for runID
-// stamped after after, and returns the first such entry.
-func (b *chaosLogBook) waitLogAfter(t *testing.T, ctx context.Context, msg, runID string, after time.Time, within time.Duration) chaosLogEntry {
-	t.Helper()
-	deadline := time.NewTimer(within)
-	defer deadline.Stop()
-	for {
-		b.mu.Lock()
-		notify := b.notify
-		b.mu.Unlock()
-		for _, e := range b.matching(msg, runID) {
-			if e.At.After(after) {
-				return e
-			}
-		}
-		select {
-		case <-notify:
-		case <-deadline.C:
-			t.Fatalf("no %q for %s after %s within %s", msg, runID, after.Format(time.RFC3339Nano), within)
-		case <-ctx.Done():
-			t.Fatal(ctx.Err())
-		}
-	}
-}
+	"github.com/orkstack/orkstack/internal/testsupport/must"
+)
 
 // c32Orker is one real item Orker C32 can kill: its own client dials
 // Temporal through a proxy, so cutting the proxy is its host dying.
@@ -66,7 +47,9 @@ type c32Kill struct {
 // generation running. Each killed item is retried elsewhere or adopts its
 // commit.json; no item's container runs twice except in a retried attempt
 // (the attempt records); every item SUCCEEDED exactly once; the stream is
-// contiguous across the switches.
+// contiguous across the switches. The kills watch the run from its start, so
+// the hold they wait for is one the run reaches at the default in-flight cap,
+// and the test fails as soon as the run closes without both.
 func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), soakTestTimeout)
 	defer cancel()
@@ -83,13 +66,18 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 		o := e.startRealItemOrker(name, e.dial(name, proxy.Addr()), 1)
 		killable = append(killable, &c32Orker{name: name, proxy: proxy, orker: o})
 	}
-	var kills []c32Kill
+	var (
+		killsMu sync.Mutex
+		kills   []c32Kill
+	)
 	kill := func(o *c32Orker, when string) {
 		running := e.runningItems(o.name)
 		o.proxy.Cut()
 		o.orker.stop()
+		killsMu.Lock()
 		kills = append(kills, c32Kill{Orker: o.name, OrkerID: e.realIDs[o.name], When: when,
 			At: time.Now().UTC().Format(time.RFC3339Nano), Items: running})
+		killsMu.Unlock()
 		e.transcript.step("killed %s (%s) %s, running %v", o.name, e.realIDs[o.name], when, running)
 	}
 	// busy is the first live Orker of candidates running an item now.
@@ -102,50 +90,128 @@ func TestIntegration_ContinuationChaosC32_OrkersKilledAcrossGenerations(t *testi
 		return nil
 	}
 
-	live := func(runID string) {
-		// 1. During a hold, the real Orker the hold is waiting for.
-		after := time.Now()
-		var first *c32Orker
-		for attempt := 0; attempt < 20 && first == nil; attempt++ {
-			hold := e.logs.waitLogAfter(t, ctx, logQuiesce, runID, after, 10*time.Minute)
-			after = hold.At
-			if first = busy(killable); first == nil {
-				e.transcript.step("hold at %v events: no real Orker running an item; waiting for the next hold",
-					hold.Fields["history_events"])
-			} else {
-				e.transcript.step("hold at %v events with %s running %v", hold.Fields["history_events"], first.name,
-					e.runningItems(first.name))
-			}
-		}
-		if first == nil {
-			t.Fatal("no hold found a real Orker running an item")
-		}
-		kill(first, "while a hold waited for its items")
-		killedAt := time.Now()
-
-		// 2. Right after the next switch, another one with an item of the new
-		// generation running: nothing is in flight at a switch, so every item
-		// running after it was dispatched by the new generation.
-		switched := e.logs.waitLogAfter(t, ctx, logSwitched, runID, killedAt, 10*time.Minute)
-		e.transcript.step("switched at %v events after the first kill", switched.Fields["history_events"])
-		var rest []*c32Orker
-		for _, o := range killable {
-			if o != first {
-				rest = append(rest, o)
-			}
-		}
-		deadline := time.Now().Add(5 * time.Minute)
-		var second *c32Orker
-		for second == nil {
-			second = busy(rest)
-			if second == nil {
-				if time.Now().After(deadline) {
-					t.Fatal("no surviving real Orker ran an item of the new generation within 5m")
+	// The kills watch the run from before it is submitted. A generation
+	// reaches its hold line at a history set by the in-flight cap (its
+	// reserve): at the default of 500 the first generation holds before half
+	// the items have finished, which is when soakRun calls live, and the last
+	// may finish without one. So the watcher takes the first hold of the run
+	// that finds a real Orker running an item, and the switch after it. C32's
+	// stack runs one run, so its log lines are that run's.
+	stop := make(chan struct{})
+	defer close(stop)
+	// nextLog is the first workflow log line with msg stamped after after, or
+	// false once the test is over.
+	nextLog := func(msg string, after time.Time) (chaosLogEntry, bool) {
+		for {
+			e.logs.mu.Lock()
+			notify := e.logs.notify
+			e.logs.mu.Unlock()
+			for _, entry := range e.logs.matching(msg, "") {
+				if entry.At.After(after) {
+					return entry, true
 				}
-				time.Sleep(50 * time.Millisecond)
+			}
+			select {
+			case <-notify:
+			case <-stop:
+				return chaosLogEntry{}, false
+			case <-ctx.Done():
+				return chaosLogEntry{}, false
 			}
 		}
-		kill(second, "right after a switch, with an item of the new generation running")
+	}
+	watched := make(chan error, 1)
+	var progress atomic.Value // what the watcher last saw, for a failure's message
+	progress.Store("no hold yet")
+	go func() {
+		watched <- func() error {
+			// 1. During a hold, the real Orker the hold is waiting for.
+			after := time.Now()
+			var first *c32Orker
+			for attempt := 0; attempt < 20 && first == nil; attempt++ {
+				hold, ok := nextLog(logQuiesce, after)
+				if !ok {
+					return fmt.Errorf("the test ended with %d holds seen and no real Orker running an item at any", attempt)
+				}
+				after = hold.At
+				if first = busy(killable); first == nil {
+					e.transcript.step("hold at %v events: no real Orker running an item; waiting for the next hold",
+						hold.Fields["history_events"])
+					progress.Store(fmt.Sprintf("%d holds seen, none with a real Orker running an item", attempt+1))
+				} else {
+					e.transcript.step("hold at %v events with %s running %v", hold.Fields["history_events"], first.name,
+						e.runningItems(first.name))
+				}
+			}
+			if first == nil {
+				return fmt.Errorf("no hold of 20 found a real Orker running an item")
+			}
+			kill(first, "while a hold waited for its items")
+			progress.Store("killed " + first.name + " during a hold; no switch after it yet")
+			killedAt := time.Now()
+
+			// 2. Right after the next switch, another one with an item of the new
+			// generation running: nothing is in flight at a switch, so every item
+			// running after it was dispatched by the new generation.
+			switched, ok := nextLog(logSwitched, killedAt)
+			if !ok {
+				return fmt.Errorf("the test ended before a switch after the first kill")
+			}
+			e.transcript.step("switched at %v events after the first kill", switched.Fields["history_events"])
+			progress.Store("killed " + first.name + " during a hold; switched, no real Orker of the new generation busy yet")
+			var rest []*c32Orker
+			for _, o := range killable {
+				if o != first {
+					rest = append(rest, o)
+				}
+			}
+			deadline := time.Now().Add(5 * time.Minute)
+			var second *c32Orker
+			for second == nil {
+				second = busy(rest)
+				if second == nil {
+					if time.Now().After(deadline) {
+						return fmt.Errorf("no surviving real Orker ran an item of the new generation within 5m")
+					}
+					select {
+					case <-stop:
+						return fmt.Errorf("the test ended before a real Orker ran an item of the new generation")
+					case <-time.After(50 * time.Millisecond):
+					}
+				}
+			}
+			kill(second, "right after a switch, with an item of the new generation running")
+			return nil
+		}()
+	}()
+
+	// live waits for the watcher, and fails the moment the run closes
+	// without both kills: a run that ends cannot hold or switch again.
+	live := func(runID string) {
+		for {
+			select {
+			case err := <-watched:
+				if err != nil {
+					t.Fatal(err)
+				}
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			if _, status := e.current(runID); status != enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
+				select {
+				case err := <-watched:
+					if err != nil {
+						t.Fatal(err)
+					}
+					return
+				default:
+				}
+				killsMu.Lock()
+				made := len(kills)
+				killsMu.Unlock()
+				t.Fatalf("the run closed %v with %d of its 2 kills made (%v)", status, made, progress.Load())
+			}
+		}
 	}
 
 	rec, events := e.soakRun(t, ctx, "c32", 0, live)
@@ -217,13 +283,9 @@ func c32ItemAttempts(t *testing.T, ctx context.Context, e *eachSoak, runID, key 
 	t.Helper()
 	lb, rb := strings.Index(key, "["), strings.Index(key, "]")
 	index, err := strconv.Atoi(key[lb+1 : rb])
-	if err != nil {
-		t.Fatalf("item key %q: %v", key, err)
-	}
+	must.OKf(t, err, "item key %q", key)
 	records, err := e.stores.attempts.ListAttempts(ctx, runID, key[:lb], artifacts.ItemAt(int32(index)))
-	if err != nil {
-		t.Fatalf("attempt records of %s: %v", key, err)
-	}
+	must.OKf(t, err, "attempt records of %s", key)
 	ran := map[int32]int{}
 	for _, r := range records {
 		if !r.GetCommitAdopted() {

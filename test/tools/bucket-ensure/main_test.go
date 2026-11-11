@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeStore answers the requests cleanup makes, over path-style HTTP, and
@@ -117,14 +119,10 @@ func TestCleanup(t *testing.T) {
 			t.Setenv("ORK_S3_SECRET_KEY", "secret")
 			ctx := context.Background()
 			client, endpoint, err := newBareClient(ctx)
-			if err != nil {
-				t.Fatalf("client: %v", err)
-			}
+			must.OKf(t, err, "client")
 
 			var out strings.Builder
-			if err := cleanupBucket(ctx, client, bucket, endpoint, &out); err != nil {
-				t.Fatalf("cleanupBucket: %v", err)
-			}
+			must.OKf(t, cleanupBucket(ctx, client, bucket, endpoint, &out), "cleanupBucket")
 			if got := tc.store.log(); !slices.Equal(got, tc.wantRequests) {
 				t.Errorf("requests =\n%q\nwant\n%q", got, tc.wantRequests)
 			}

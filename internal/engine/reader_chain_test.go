@@ -21,6 +21,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A chain fixture is a run that continued as new: closed generations, each
@@ -208,9 +210,7 @@ func (f *chainFixture) started(carry *orkstackv1.RunContinuation) *historypb.His
 // object is the run's state with the event's status.
 func (f *chainFixture) publish(eventID int64, event *orkstackv1.Event) *historypb.HistoryEvent {
 	key, err := artifacts.RunSnapshotKey(chainNamespace, f.runID, event.GetSequence())
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, err)
 	uri := "s3://test/" + key
 	run := proto.Clone(f.state).(*orkstackv1.Run)
 	if isTerminalRunEvent(event) {
@@ -266,9 +266,7 @@ func requireContiguous(t *testing.T, events []*orkstackv1.Event, from, to int64)
 func TestTemporalRunReader_EventsSpanEveryGeneration(t *testing.T) {
 	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 3, finish: true})
 	events, err := f.reader.Events(context.Background(), f.runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 1, 13)
 	for i, event := range events {
 		if !proto.Equal(event, f.events[i]) {
@@ -293,9 +291,7 @@ func TestTemporalRunReader_StreamFollowsTheSwitch(t *testing.T) {
 		got = append(got, e)
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	requireContiguous(t, got, 1, 9)
 	if got[len(got)-1].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED {
 		t.Fatalf("stream ended on %v, want the terminal event", got[len(got)-1])
@@ -318,9 +314,7 @@ func TestTemporalRunReader_PlainReadFollowsASwitchDuringPagination(t *testing.T)
 	f := newChain(t, chainSpec{closed: []int{5, 2}, current: 2})
 	f.readFrom(1)
 	events, err := f.reader.Events(context.Background(), f.runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 1, 9)
 	if want := []string{"", chainExecution(2)}; strings.Join(f.client.historyExecutions, ",") != strings.Join(want, ",") {
 		t.Fatalf("history reads = %v, want %v", f.client.historyExecutions, want)
@@ -330,9 +324,7 @@ func TestTemporalRunReader_PlainReadFollowsASwitchDuringPagination(t *testing.T)
 func TestTemporalRunReader_ResumesFromASequenceInAnEarlierGeneration(t *testing.T) {
 	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 3})
 	events, err := f.reader.Events(context.Background(), f.runID, 3)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 4, 12)
 	// From inside generation 1, generation 0's segment is never read.
 	f2 := newChain(t, chainSpec{closed: []int{5, 4}, current: 3})
@@ -357,9 +349,7 @@ var errStopStream = errors.New("test: stop the stream")
 func TestTemporalRunReader_EmptySegmentIsSkipped(t *testing.T) {
 	f := newChain(t, chainSpec{closed: []int{5, 0}, current: 2, finish: true})
 	events, err := f.reader.Events(context.Background(), f.runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 1, 8)
 	for _, uri := range f.store.reads {
 		if strings.Contains(uri, "/000001-events-") {
@@ -371,9 +361,7 @@ func TestTemporalRunReader_EmptySegmentIsSkipped(t *testing.T) {
 func TestTemporalRunReader_GetRunRightAfterASwitchReturnsTheCheckpoint(t *testing.T) {
 	f := newChain(t, chainSpec{closed: []int{5}, current: 0})
 	run, err := f.reader.GetRun(context.Background(), f.runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if !proto.Equal(run.GetTaskRuns()[1], f.state.GetTaskRuns()[1]) || len(run.GetTaskRuns()) != 3 {
 		t.Fatalf("GetRun rows = %v, want the checkpoint's", run.GetTaskRuns())
 	}
@@ -395,9 +383,7 @@ func TestTemporalRunReader_MissingCheckpointFallsBackToTheSwitchSnapshot(t *test
 	f := newChain(t, chainSpec{closed: []int{5}, current: 0})
 	delete(f.store.objects, f.carry.GetCheckpoint().GetUri())
 	run, err := f.reader.GetRun(context.Background(), f.runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	items := run.GetTaskRuns()[1].GetItems()
 	if len(items) != 3 || items[0].GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("fan-out items = %v, want item 0 SUCCEEDED from the switch snapshot", items)
@@ -421,9 +407,7 @@ func TestTemporalRunReader_TerminatedGenerationSynthesizesAfterTheCarriedSequenc
 	terminated := closedEvent(9, enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED, chainCreatedAt.Add(time.Hour))
 	f := newChain(t, chainSpec{closed: []int{5}, current: 0, closeWith: terminated})
 	events, err := f.reader.Events(context.Background(), f.runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 1, 6)
 	if last := events[5]; last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		t.Fatalf("terminal = %v, want a synthesized RUN_CANCELED at 6", last)
@@ -442,9 +426,7 @@ func TestTemporalRunReader_TerminatedGenerationSynthesizesAfterTheCarriedSequenc
 	// and the terminal event the reader synthesizes is 10.
 	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 0, closeWith: terminated})
 	events, err := f.reader.Events(context.Background(), f.runID, 9)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 10, 10)
 	if events[0].GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED {
 		t.Fatalf("terminal = %v, want a synthesized RUN_CANCELED at 10", events[0])
@@ -592,9 +574,7 @@ func TestTemporalRunReader_SwitchSnapshotHashMismatchIsAnError(t *testing.T) {
 func TestTemporalRunReader_RunStartReadsTheCurrentGeneration(t *testing.T) {
 	f := newChain(t, chainSpec{closed: []int{5}, current: 2})
 	record, err := f.reader.RunStart(context.Background(), f.runID)
-	if err != nil {
-		t.Fatalf("RunStart: %v", err)
-	}
+	must.OKf(t, err, "RunStart")
 	if record.Orkflow.GetName() != "pipeline" || record.Orkflow.GetNamespace() != chainNamespace ||
 		record.Plan.Namespace != chainNamespace {
 		t.Fatalf("RunStart = %v %v, want the original arguments", record.Orkflow, record.Plan)
@@ -666,9 +646,7 @@ func TestTemporalRunReader_CarriedInvalidRunReadsAsStateUnsupported(t *testing.T
 	failed.EventTime = timestamppb.New(chainCreatedAt.Add(time.Hour))
 	f := newChain(t, chainSpec{closed: []int{5}, current: 0, closeWith: failed})
 	events, err := f.reader.Events(context.Background(), f.runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	requireContiguous(t, events, 1, 6)
 	if last := events[5]; last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED ||
 		!strings.Contains(last.GetMessage(), "carried forward by a newer release") {
@@ -704,9 +682,7 @@ func TestTemporalRunReader_EventsForArchiveRecordsALostSegmentAsAGap(t *testing.
 	f := newChain(t, chainSpec{closed: []int{5, 4}, current: 2, finish: true})
 	delete(f.store.objects, f.carry.GetSegments()[0].GetObject().GetUri())
 	read, err := f.reader.EventsForArchive(context.Background(), f.runID)
-	if err != nil {
-		t.Fatalf("EventsForArchive: %v", err)
-	}
+	must.OKf(t, err, "EventsForArchive")
 	events, gaps := read.Events, read.Gaps
 	if len(gaps) != 1 || gaps[0].First != 1 || gaps[0].Last != 5 || gaps[0].Reason != "segment object missing" {
 		t.Fatalf("gaps = %v, want 1–5 (segment object missing)", gaps)

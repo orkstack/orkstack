@@ -63,10 +63,10 @@ docker build --label "org.orkstack.activity.interface=$(orkctl activity interfac
 
 Pack checks the document with the same rules the engine uses, so a value it prints is never refused. It writes the same bytes for the same document.
 
-## What apply and the editor do with it
+## What `orkctl orkflow create` and the editor do with it
 
-- `orkctl orkflow validate` and `orkctl apply` check each task's `with:` against the interface. A missing required key, or an `op:` the image does not declare, is an error, and apply refuses. A key the interface does not declare is a warning.
-- `orkctl apply` never stores the interface document. It refuses one named on the command line, and skips one it finds in a directory, naming it on stderr.
+- `orkctl orkflow validate` and `orkctl orkflow create` check each task's `with:` against the interface. A missing required key, or an `op:` the image does not declare, is an error, and `orkctl orkflow create` refuses. A key the interface does not declare is a warning.
+- `orkctl orkflow create` never stores the interface document. It refuses one named on the command line, and skips one it finds in a directory, naming it on stderr.
 - Editors complete keys from `docs/schemas/activityinterface.v1.json`. The `*.ork.yaml` file mapping in the repository's DSL reference covers `interface.ork.yaml` too.
 - The interface is read from the image each time it is needed. Nothing about it is stored, so it cannot disagree with the image that runs.
 

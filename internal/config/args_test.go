@@ -3,6 +3,8 @@ package config
 import (
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestParseArgs(t *testing.T) {
@@ -72,9 +74,7 @@ func TestParseArgs(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("ParseArgs: %v", err)
-			}
+			must.OKf(t, err, "ParseArgs")
 			if got != tc.want {
 				t.Errorf("ParseArgs = %+v, want %+v", got, tc.want)
 			}

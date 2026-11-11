@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/workflow"
 )
 
@@ -62,4 +63,25 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 		Name:               ScheduleFireWorkflowType,
 		VersioningBehavior: workflow.VersioningBehaviorPinned,
 	})
+
+	// Pinned: a delivery lives at most its ladder and its settle (about a
+	// minute at the default policy), so it holds its version open no longer
+	// than the runs whose transitions queued it, and its history — two
+	// activities — never replays on a build it did not start on.
+	w.RegisterWorkflowWithOptions(WebhookDeliveryWorkflow, workflow.RegisterOptions{
+		Name:               WebhookDeliveryWorkflowType,
+		VersioningBehavior: workflow.VersioningBehaviorPinned,
+	})
+}
+
+// RegisterWebhookDeliveryActivities registers a delivery's two activities on
+// the engine's own channel (EventQueue), which no Orker polls.
+func RegisterWebhookDeliveryActivities(w ActivityRegistrar, a *WebhookDeliveryActivities) {
+	w.RegisterActivityWithOptions(a.SendWebhookAttempt, activity.RegisterOptions{Name: ActivitySendWebhookAttempt})
+	w.RegisterActivityWithOptions(a.SettleWebhookDelivery, activity.RegisterOptions{Name: ActivitySettleWebhookDelivery})
+}
+
+// ActivityRegistrar is the slice of worker.Worker that registers activities.
+type ActivityRegistrar interface {
+	RegisterActivityWithOptions(a any, options activity.RegisterOptions)
 }

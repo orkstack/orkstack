@@ -10,6 +10,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // memNamespaceStore is an in-memory artifacts.NamespaceStore for
@@ -119,8 +121,6 @@ func sinksForTest(t *testing.T) *telemetry.Sinks {
 	t.Helper()
 	clearTelemetryEnv(t)
 	_, sinks, err := telemetry.Boot(telemetry.ServiceEngine)
-	if err != nil {
-		t.Fatalf("telemetry.Boot: %v", err)
-	}
+	must.OKf(t, err, "telemetry.Boot")
 	return sinks
 }

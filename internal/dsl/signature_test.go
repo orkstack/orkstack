@@ -3,7 +3,7 @@ package dsl
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +18,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/cosigntest"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const sigRepo = "acme/migrate"
@@ -35,9 +37,7 @@ func newSigFixture(t *testing.T) *sigFixture {
 	t.Helper()
 	double := cosigntest.NewDouble(t)
 	key, err := cosigntest.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	digest := cosigntest.Digest([]byte("the index " + t.Name()))
 	return &sigFixture{
 		double: double,
@@ -53,9 +53,7 @@ func newSigFixture(t *testing.T) *sigFixture {
 func (f *sigFixture) layer(t *testing.T, key *cosigntest.Key, digest string) cosigntest.Layer {
 	t.Helper()
 	l, err := key.SignatureLayer(digest, f.image.GetRegistry()+"/"+sigRepo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return l
 }
 
@@ -189,9 +187,7 @@ func (l failedLookup) RoundTrip(r *http.Request) (*http.Response, error) {
 func (f *sigFixture) bundle(t *testing.T, key *cosigntest.Key, digest string) []byte {
 	t.Helper()
 	b, err := key.Bundle(digest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return b
 }
 
@@ -261,25 +257,19 @@ func TestSignatureVerifier_RefusesABundleThatDoesNotVerify(t *testing.T) {
 		{"an attestation, not a signature", func(t *testing.T, f *sigFixture) []byte {
 			b, err := f.key.BundleOver(cosigntest.InTotoPayloadType,
 				cosigntest.StatementWith(f.image.GetIndexDigest(), "https://slsa.dev/provenance/v1"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			return b
 		}},
 		{"another payload type", func(t *testing.T, f *sigFixture) []byte {
 			b, err := f.key.BundleOver("application/json", cosigntest.Statement(f.image.GetIndexDigest()))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			return b
 		}},
 		{"another statement type", func(t *testing.T, f *sigFixture) []byte {
 			statement := strings.Replace(string(cosigntest.Statement(f.image.GetIndexDigest())),
 				cosigntest.StatementType, "https://in-toto.io/Statement/v0.1", 1)
 			b, err := f.key.BundleOver(cosigntest.InTotoPayloadType, []byte(statement))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			return b
 		}},
 		{"the payload changed under the signature", func(t *testing.T, f *sigFixture) []byte {
@@ -355,9 +345,7 @@ func TestSignatureVerifier_AnAttestationAloneIsNotASignature(t *testing.T) {
 	f := newSigFixture(t)
 	b, err := f.key.BundleOver(cosigntest.InTotoPayloadType,
 		cosigntest.StatementWith(f.image.GetIndexDigest(), "https://slsa.dev/provenance/v1"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	manifest := cosigntest.BundleManifest(b, f.image.GetIndexDigest(), 1024)
 	sbom := []byte(`{"an":"sbom"}`)
 	f.double.PutBlob(sigRepo, b)
@@ -481,9 +469,7 @@ func TestSignatureVerifier_RegistryDownIsUnavailableNotAVerdict(t *testing.T) {
 	t.Run("connection refused", func(t *testing.T) {
 		f := newSigFixture(t)
 		listener, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		host := listener.Addr().String()
 		listener.Close()
 		f.image.Registry = host
@@ -528,9 +514,7 @@ func TestSignatureVerifier_BoundsLayersAndPayloads(t *testing.T) {
 		layers := make([]cosigntest.Layer, 0, 17)
 		for i := 0; i < 16; i++ {
 			l, err := other.SignatureLayer(f.image.GetIndexDigest(), fmt.Sprintf("x/%d", i))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			layers = append(layers, l)
 		}
 		// The 17th is by the RIGHT key: were it fetched, the image would pass.
@@ -745,9 +729,7 @@ func TestSignatureVerifier_ReadsOnlyWhatItsDigestNames(t *testing.T) {
 func other(t *testing.T) *cosigntest.Key {
 	t.Helper()
 	k, err := cosigntest.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return k
 }
 

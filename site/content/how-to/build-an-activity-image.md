@@ -30,11 +30,11 @@ orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-exampl
 orkctl activity build examples/custom-image-shell --tag 127.0.0.1:5002/orkstack-examples/custom-image-shell:dev
 ```
 
-Each command pushes its image and prints its pinned reference. Paste each one over its tag in the recipe, then apply and run it:
+Each command pushes its image and prints its pinned reference. Paste each one over its tag in the recipe, then create and run it:
 
 ```bash
-orkctl apply examples/custom-image/custom-image.ork.yaml
-orkctl run submit custom-image --watch
+orkctl orkflow create examples/custom-image/custom-image.ork.yaml
+orkctl run submit custom-image -w
 ```
 
 The `probe` task has no `with:` block. The image reads its context, writes `values.json` and exits `0`.
@@ -83,7 +83,7 @@ When a task is cancelled, the container gets `SIGTERM`. It has 30 seconds to exi
 | `--push` | Push after the build. Default `true`. |
 | `--interface` | An `interface.ork.yaml` to pack into the image's interface, icon and description labels. |
 
-`orkctl activity build <path>` prints a reference with `@sha256:` in it. Paste that reference into `uses:` if your deployment requires digests. A tag resolves to a digest when you apply.
+`orkctl activity build <path>` prints a reference with `@sha256:` in it. Paste that reference into `uses:` if your deployment requires digests. A tag resolves to a digest when you create the Orkflow.
 
 A local image that was never pushed has no registry digest, so the deployment cannot pin it. Use `--push=false` only to smoke-test an image.
 
@@ -105,7 +105,7 @@ fields:
 
 Build with `orkctl activity build <path> --tag <ref> --interface interface.ork.yaml`. It packs the file into the image's `org.orkstack.activity.interface` label. With another build tool, pass the value `orkctl activity interface pack interface.ork.yaml` prints to its `--label`.
 
-`orkctl apply` then checks each task's `with:` keys against the label before any run starts. The interface is optional. The container never reads it. `orkctl activity inspect <reference>` shows what the image declares.
+`orkctl orkflow create` then checks each task's `with:` keys against the label before any run starts. The interface is optional. The container never reads it. `orkctl activity inspect <reference>` shows what the image declares.
 
 ## Give it an icon and descriptions
 

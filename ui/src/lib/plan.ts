@@ -23,6 +23,8 @@ export function planOutcomeWord(outcome: PlanOutcome): string {
 			return 'unreached';
 		case PlanOutcome.AWAITS:
 			return 'awaits';
+		case PlanOutcome.SLEEPS:
+			return 'sleeps';
 		case PlanOutcome.ASSUMED_FAILED:
 			return 'assumed_failed';
 		default:
@@ -64,11 +66,11 @@ export function planWaveLabel(task: PlanTask): string {
 
 /**
  * The Detail cell, verbatim as the CLI prints it. A task with a join that
- * runs or awaits says so first: `join <word>`, then the rest after "; ".
+ * runs, awaits or sleeps says so first: `join <word>`, then the rest after "; ".
  */
 export function planDetail(task: PlanTask, plan: PlanRunResponse): string {
 	const detail = planOutcomeDetail(task, plan);
-	if ((task.outcome === PlanOutcome.RUNS || task.outcome === PlanOutcome.AWAITS) && task.join) {
+	if (startsWork(task.outcome) && task.join) {
 		return detail ? `join ${joinWord(task.join)}; ${detail}` : `join ${joinWord(task.join)}`;
 	}
 	return detail;
@@ -96,6 +98,9 @@ function planOutcomeDetail(task: PlanTask, plan: PlanRunResponse): string {
 			const detail = `await ≤ ${goDuration(task.await?.timeoutSeconds ?? 0)}`;
 			return task.await?.callback ? `${detail}, callback` : detail;
 		}
+		// How long it sleeps (cmd/orkctl run_plan.go sleepPlanDetail).
+		case PlanOutcome.SLEEPS:
+			return `sleep ${goDuration(task.sleep?.seconds ?? 0)}`;
 		case PlanOutcome.FAILS:
 			return task.error?.message ?? '';
 		case PlanOutcome.UNREACHED: {
@@ -114,10 +119,13 @@ function plural(n: number, noun: string): string {
 
 /**
  * The summary sentence, with the CLI's plurals. The await count is inserted
- * after the run count only when the plan has an await, on the CLI's rule.
+ * after the run count only when the plan has an await, and the sleep count
+ * after it only when it has a sleep, on the CLI's rule.
  */
 export function planSummary(plan: PlanRunResponse): string {
-	const awaits = plan.awaits > 0 ? `${plural(plan.awaits, 'await')}, ` : '';
+	const awaits =
+		(plan.awaits > 0 ? `${plural(plan.awaits, 'await')}, ` : '') +
+		(plan.sleeps > 0 ? `${plural(plan.sleeps, 'sleep')}, ` : '');
 	const assumed = plan.assumedFailed > 0 ? `${plan.assumedFailed} assumed failed, ` : '';
 	return `${plan.runs} run, ${awaits}${assumed}${plan.skipped} skipped, ${plural(plan.waveCount, 'wave')}. Nothing was started.`;
 }
@@ -142,10 +150,14 @@ export function planHandlersThatRun(plan: PlanRunResponse): string[] {
 	return plan.tasks
 		.filter(
 			(task) =>
-				isFailureHandler(task.join) &&
-				(task.outcome === PlanOutcome.RUNS || task.outcome === PlanOutcome.AWAITS)
+				isFailureHandler(task.join) && startsWork(task.outcome)
 		)
 		.map((task) => task.taskId);
+}
+
+/** RUNS, AWAITS or SLEEPS: the interpreter starts the task. */
+function startsWork(outcome: PlanOutcome): boolean {
+	return outcome === PlanOutcome.RUNS || outcome === PlanOutcome.AWAITS || outcome === PlanOutcome.SLEEPS;
 }
 
 /** The failure sentence, '' when nothing fails. */

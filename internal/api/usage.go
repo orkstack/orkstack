@@ -489,7 +489,8 @@ func (m *UsageMeter) measureRun(ctx context.Context, entry artifacts.RunIndexEnt
 // bodyFacts keeps what a measurement needs from an archived body: its
 // orkflow and its dispatched tasks, trimmed to the fields SampleTask reads.
 func bodyFacts(run *orkstackv1.Run) runUsageEntry {
-	facts := runUsageEntry{orkflow: run.GetOrkflowName()}
+	// Keyed as the index keys it: a shared child's is "<owner>/<name>".
+	facts := runUsageEntry{orkflow: engine.OrkflowKey(run)}
 	for _, task := range run.GetTaskRuns() {
 		// A fan-out's items are each one more sample of the node: its own row
 		// is none.

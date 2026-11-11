@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"net/http"
 	"strings"
@@ -13,6 +13,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fastResumes shrinks the resume waits, so a test never waits on a clock and
@@ -28,9 +30,7 @@ func fastResumes(t *testing.T) {
 func logEnvelope(t *testing.T, chunk *orkstackv1.TaskLogChunk) []byte {
 	t.Helper()
 	body, err := proto.Marshal(chunk)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return framed(0, body)
 }
 

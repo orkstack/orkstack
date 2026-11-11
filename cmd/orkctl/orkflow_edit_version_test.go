@@ -1,13 +1,15 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // `orkctl orkflow edit --version <v>`: editing a version that is not the head.
@@ -28,8 +30,8 @@ func TestOrkflowEdit_VersionScopedEditForksFromTheChosenVersion(t *testing.T) {
 		t.Skip("the stub editor is a shell script")
 	}
 	f := newFixture(t)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 	// Promote the OLDER version: head stays 2.0.0, current moves to 1.0.0.
 	f.run("orkflow", "promote", "deploy", "1.0.0").requireExit(t, exitOK)
 
@@ -65,8 +67,8 @@ sed -i.bak -e 's/echo one/echo forked/' -e 's/1\.0\.0/1\.1\.0/' "$1"`)
 
 	// ---- the same round trip as machine output --------------------------
 	machine := newFixture(t)
-	machine.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-	machine.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	machine.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	machine.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 	machine.run("orkflow", "promote", "deploy", "1.0.0").requireExit(t, exitOK)
 
 	editedJSON := machine.run("--json", "orkflow", "edit", "deploy",
@@ -112,7 +114,7 @@ func TestOrkflowEdit_RefusesAVersionThatWasNeverApplied(t *testing.T) {
 		t.Skip("the stub editor is a shell script")
 	}
 	f := newFixture(t)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
 
 	ran := filepath.Join(t.TempDir(), "editor-ran")
 	editor := stubEditor(t, fmt.Sprintf(`touch %q`, ran))
@@ -155,8 +157,8 @@ func TestOrkflowEdit_RefusesWhenTheHeadMovedUnderAVersionScopedEdit(t *testing.T
 	} {
 		t.Run(mode.name, func(t *testing.T) {
 			f := newFixture(t)
-			f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-			f.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+			f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+			f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 
 			gate := filepath.Join(t.TempDir(), "gate")
 			opened := filepath.Join(t.TempDir(), "opened")
@@ -174,11 +176,9 @@ func TestOrkflowEdit_RefusesWhenTheHeadMovedUnderAVersionScopedEdit(t *testing.T
 			// Somebody else applies while the editor is open. This is the
 			// whole race, and it is the HEAD that moves — the version being
 			// edited is untouched.
-			f.run("apply", writeVersionedOrkflow(t, "deploy", "3.0.0", "three")).
+			f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "3.0.0", "three")).
 				requireExit(t, exitOK)
-			if err := os.WriteFile(gate, nil, 0o644); err != nil {
-				t.Fatalf("release the editor: %v", err)
-			}
+			must.OKf(t, os.WriteFile(gate, nil, 0o644), "release the editor")
 
 			outcome := <-done
 			if outcome.code == exitOK {
@@ -194,9 +194,7 @@ func TestOrkflowEdit_RefusesWhenTheHeadMovedUnderAVersionScopedEdit(t *testing.T
 			// head path: the file the refusal names holds the edit.
 			kept := keptEditPath(t, outcome.stderr)
 			body, err := os.ReadFile(kept)
-			if err != nil {
-				t.Fatalf("the refused edit was not kept: %v", err)
-			}
+			must.OKf(t, err, "the refused edit was not kept")
 			t.Cleanup(func() { os.Remove(kept) })
 			if !strings.Contains(string(body), "echo mine") {
 				t.Errorf("the kept file is not the user's edit:\n%s", body)
@@ -224,8 +222,8 @@ func TestOrkflowEdit_HeadPathKeepsSendingTheHeadAsItsOwnBase(t *testing.T) {
 		t.Skip("the stub editor is a shell script")
 	}
 	f := newFixture(t)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-	f.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 	f.run("orkflow", "promote", "deploy", "1.0.0").requireExit(t, exitOK)
 
 	// No --version: the head (2.0.0) is what opens, even though 1.0.0 is what
@@ -233,7 +231,7 @@ func TestOrkflowEdit_HeadPathKeepsSendingTheHeadAsItsOwnBase(t *testing.T) {
 	editor := stubEditor(t, `grep -q 'echo two' "$1" || { echo "not the head's source" >&2; exit 1; }
 sed -i.bak -e 's/echo two/echo head-edit/' -e 's/2\.0\.0/2\.1\.0/' "$1"`)
 	edited := f.run("orkflow", "edit", "deploy", "--editor", editor).requireExit(t, exitOK)
-	edited.requireContains(t, "Applied orkflow deploy", "2.1.0")
+	edited.requireContains(t, "Created orkflow deploy", "2.1.0")
 	// The base WAS the head, so there is no fork to report.
 	if strings.Contains(edited.stdout, "Forked from") {
 		t.Errorf("an edit of the head reported a fork:\n%s", edited.stdout)

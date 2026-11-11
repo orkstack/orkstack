@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestBoot_ProbeContainersCarryTheOrkersIdentity: both of the boot probe's
@@ -196,13 +198,9 @@ func TestDockerRuntime_TheSIGTERMContainersRetryHandsBackWhatItCouldNotRemove(t 
 	fake.set("rmfailall", "")
 	runtime := &DockerRuntime{Bin: fake.bin, BindProbeTimeout: time.Minute}
 	ws, err := NewWorkspace(filepath.Join(t.TempDir(), "ork-sigprobe-test"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	spec, err := (&OCIDispatcher{Policy: DefaultSecurityPolicy()}).signalProbeSpec(ws)
-	if err != nil {
-		t.Fatalf("signalProbeSpec: %v", err)
-	}
+	must.OKf(t, err, "signalProbeSpec")
 
 	run, err := runtime.StartBootProbe(context.Background(), spec)
 

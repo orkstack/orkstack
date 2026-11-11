@@ -62,7 +62,7 @@ func (s *Service) ListTaskAttempts(
 			if err != nil {
 				return nil, err
 			}
-			return connect.NewResponse(&orkstackv1.ListTaskAttemptsResponse{Attempts: attempts}), nil
+			return attemptsResponse(run, "", nil, attempts), nil
 		}
 	}
 	// Task order is the snapshot's order, never the store's: the run says what
@@ -97,7 +97,21 @@ func (s *Service) ListTaskAttempts(
 		logged := s.latestLoggedAttempt(ctx, run.GetId(), task.GetTaskId(), artifacts.NoItem)
 		attempts = append(attempts, taskAttemptTimeline(run, task, records, logged)...)
 	}
-	return connect.NewResponse(&orkstackv1.ListTaskAttemptsResponse{Attempts: attempts}), nil
+	return attemptsResponse(run, taskID, req.Msg.Item, attempts), nil
+}
+
+// attemptsResponse is the answer for the timelines a request selected —
+// every task's, one task's, or one item's — with their timing derived.
+func attemptsResponse(
+	run *orkstackv1.Run,
+	taskID string,
+	item *int32,
+	attempts []*orkstackv1.TaskAttempt,
+) *connect.Response[orkstackv1.ListTaskAttemptsResponse] {
+	return connect.NewResponse(&orkstackv1.ListTaskAttemptsResponse{
+		Attempts: attempts,
+		Timings:  AttemptTimings(run, taskID, item, attempts),
+	})
 }
 
 // runAttemptTimelines answers ListTaskAttempts for a whole run from two

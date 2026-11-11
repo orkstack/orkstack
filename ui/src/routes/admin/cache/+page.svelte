@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ownedLabel } from '#lib/sharing.ts';
 	// Admin → Cache: how one namespace's cached tasks fared over one window,
 	// and the memos stored now — the browser form of `orkctl cache stats` —
 	// with the purge `orkctl cache purge` performs. A memo is advisory:
@@ -204,9 +205,9 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each stats.usage as row (`${row.orkflowName}/${row.taskId}`)}
+						{#each stats.usage as row (`${ownedLabel(row.orkflowNamespace, row.orkflowName)}/${row.taskId}`)}
 							<tr class="transition-colors hover:bg-hover" data-testid="cache-usage-{row.orkflowName}-{row.taskId}">
-								<td class="font-semibold text-ink">{row.orkflowName}</td>
+								<td class="font-semibold text-ink">{ownedLabel(row.orkflowNamespace, row.orkflowName)}</td>
 								<td class="font-mono text-ink-secondary">{row.taskId}</td>
 								<td class="figure text-right" data-testid="cache-usage-{row.orkflowName}-{row.taskId}-hits">{row.hits.toString()}</td>
 								<td class="figure text-right" data-testid="cache-usage-{row.orkflowName}-{row.taskId}-misses">{row.misses.toString()}</td>

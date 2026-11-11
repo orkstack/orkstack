@@ -10,6 +10,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeStdioRuntime is the smallest ContainerRuntime that lets Execute reach
@@ -136,9 +138,7 @@ func baseExportInput(taskID string) *orkstackv1.ExecuteTaskInput {
 func newExportDispatcher(t *testing.T, taskLogs TaskLogExporter) (*OCIDispatcher, *recordingLogStore) {
 	t.Helper()
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("local artifact store: %v", err)
-	}
+	must.OKf(t, err, "local artifact store")
 	logs := &recordingLogStore{}
 	return &OCIDispatcher{
 		Runtime:  fakeStdioRuntime{},

@@ -26,6 +26,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // scopedCluster is one private Temporal namespace for one acceptance test.
@@ -54,6 +56,36 @@ func scopedCluster(t *testing.T, ctx context.Context) client.Client {
 	return temporalClient
 }
 
+var (
+	deliveryBodiesMu sync.Mutex
+	deliveryBodies   = map[string]artifacts.DeliveryBodyStore{}
+)
+
+// sharedDeliveryBodies is the delivery body store every engine replica of one
+// top-level test shares, as replicas share a bucket: an attempt one replica
+// runs reads the body another stored.
+func sharedDeliveryBodies(t *testing.T) artifacts.DeliveryBodyStore {
+	t.Helper()
+	root := strings.SplitN(t.Name(), "/", 2)[0]
+	deliveryBodiesMu.Lock()
+	defer deliveryBodiesMu.Unlock()
+	if store, ok := deliveryBodies[root]; ok {
+		return store
+	}
+	store, err := artifacts.NewLocalDeliveryBodyStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("open the delivery body store: %v", err)
+	}
+	deliveryBodies[root] = store
+	t.Cleanup(func() {
+		deliveryBodiesMu.Lock()
+		delete(deliveryBodies, root)
+		deliveryBodiesMu.Unlock()
+		_ = store.Close()
+	})
+	return store
+}
+
 // scopedEngine is one engine replica as `ork` wires it: the run worker, the
 // projection worker on ork-engine-events announcing to a webhook notifier, and
 // the API behind a real listener. A replica built with a nil notifier runs no
@@ -63,6 +95,8 @@ type scopedEngine struct {
 	runs       *engine.RunStore
 	registry   *webhooks.Registry
 	notifier   *webhooks.Notifier
+	temporal   client.Client
+	launched   *trackingLauncher
 	httpClient *http.Client
 	origin     string
 }
@@ -94,11 +128,18 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 	}
 	var runNotifier engine.RunNotifier
 	if cfg.project {
-		e.notifier = webhooks.NewNotifier(e.registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
-			webhooks.NotifierOptions{})
+		// As `ork` wires it: each delivery is a workflow of its own, its
+		// body in a store every replica of the test shares, its record
+		// written by its settle step.
+		bodies := sharedDeliveryBodies(t)
+		dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+		e.temporal = cfg.temporal
+		e.launched = &trackingLauncher{inner: engine.NewWebhookLauncher(cfg.temporal, cfg.runQueue, bodies, engine.DefaultWebhookDeliveryPolicy())}
+		options := webhooks.NotifierOptions{Launcher: e.launched}
 		if cfg.deliveries != nil {
-			e.notifier.Observe(api.NewDeliveryRecorder(cfg.deliveries, nil).Record)
+			options.Record = api.NewDeliveryRecorder(cfg.deliveries, nil).RecordContext
 		}
+		e.notifier = webhooks.NewNotifier(e.registry, dispatcher, options)
 		runNotifier = api.NewWebhookNotifier(e.notifier, nil)
 
 		runWorker := worker.New(cfg.temporal, cfg.runQueue, worker.Options{
@@ -115,10 +156,10 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 		eventWorker.RegisterActivityWithOptions(
 			engine.NewEventActivities(e.bus, e.runs).WithRunNotifier(runNotifier).WithSnapshotStore(cfg.snapshots).PublishEvent,
 			activity.RegisterOptions{Name: engine.ActivityPublishEvent})
+		engine.RegisterWebhookDeliveryActivities(eventWorker,
+			engine.NewWebhookDeliveryActivities(bodies, e.registry, dispatcher, e.notifier, nil))
 		for name, w := range map[string]worker.Worker{"run": runWorker, "event": eventWorker} {
-			if err := w.Start(); err != nil {
-				t.Fatalf("start %s worker: %v", name, err)
-			}
+			must.OKf(t, w.Start(), "start %s worker", name)
 			t.Cleanup(w.Stop)
 		}
 	}
@@ -135,9 +176,7 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 	}
 	svc := api.NewService(config)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -171,31 +210,53 @@ func (e *scopedEngine) drainRun(t *testing.T, ctx context.Context, runID, namesp
 	t.Helper()
 	stream, err := e.runClient().StreamEvents(ctx, connect.NewRequest(
 		&orkstackv1.StreamEventsRequest{RunId: runID, Namespace: namespace}))
-	if err != nil {
-		t.Fatalf("StreamEvents %s: %v", runID, err)
-	}
+	must.OKf(t, err, "StreamEvents %s", runID)
 	for stream.Receive() { //nolint:revive // draining the stream is the wait
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("event stream %s: %v", runID, err)
-	}
+	must.OKf(t, stream.Err(), "event stream %s", runID)
 	stream.Close()
 	got, err := e.runClient().GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID, Namespace: namespace}))
-	if err != nil {
-		t.Fatalf("GetRun %s: %v", runID, err)
-	}
+	must.OKf(t, err, "GetRun %s", runID)
 	return got.Msg.GetRun()
 }
 
-// settle waits for every queued delivery, so a count taken afterwards is a
-// count of everything this notifier will ever send for the run.
+// settle waits for every delivery this replica queued to settle, so a count
+// taken afterwards is a count of everything it will ever send for the run.
+// The notifier's Wait covers only matching and queuing; each queued delivery
+// is a workflow of its own, closed once its record is written and its
+// observers have run.
 func (e *scopedEngine) settle(t *testing.T) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if err := e.notifier.Wait(ctx); err != nil {
-		t.Fatalf("deliveries did not settle: %v", err)
+	must.OKf(t, e.notifier.Wait(ctx), "deliveries were not queued")
+	for _, id := range e.launched.ids() {
+		must.OKf(t, e.temporal.GetWorkflow(ctx, id, "").Get(ctx, nil), "delivery %s did not settle", id)
 	}
+}
+
+// trackingLauncher remembers every delivery it queued, so a test can wait for
+// each to settle.
+type trackingLauncher struct {
+	inner webhooks.Launcher
+	mu    sync.Mutex
+	queue []string
+}
+
+func (l *trackingLauncher) Launch(ctx context.Context, hook webhooks.Webhook, delivery webhooks.Delivery) error {
+	if err := l.inner.Launch(ctx, hook, delivery); err != nil {
+		return err
+	}
+	l.mu.Lock()
+	l.queue = append(l.queue, delivery.ID)
+	l.mu.Unlock()
+	return nil
+}
+
+func (l *trackingLauncher) ids() []string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return append([]string{}, l.queue...)
 }
 
 // committingTaskWorker stands in for the Orker on a private pool: every task
@@ -221,9 +282,7 @@ func committingTaskWorker(t *testing.T, temporalClient client.Client, queue stri
 		},
 		activity.RegisterOptions{Name: task.ActivityExecuteTask},
 	)
-	if err := w.Start(); err != nil {
-		t.Fatalf("start task worker: %v", err)
-	}
+	must.OKf(t, w.Start(), "start task worker")
 	t.Cleanup(w.Stop)
 }
 
@@ -242,17 +301,13 @@ func TestIntegration_TaskOutcomeWebhookFiresWhenTheTaskCommits(t *testing.T) {
 	temporalClient := scopedCluster(t, ctx)
 	pool := uniquePool("webhook-task")
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map pool: %v", err)
-	}
+	must.OKf(t, err, "map pool")
 	committingTaskWorker(t, temporalClient, queue)
 	subscriber := newWebhookSubscriber(t)
 	// The registry production wires (cmd/ork): durable, over a real store, so
 	// the signature asserted below is the one a production delivery carries.
 	webhookStore, err := artifacts.NewLocalWebhookStore(t.TempDir())
-	if err != nil {
-		t.Fatalf("NewLocalWebhookStore: %v", err)
-	}
+	must.OKf(t, err, "NewLocalWebhookStore")
 	e := startScopedEngine(t, scopedEngineConfig{
 		temporal: temporalClient, runQueue: queue, project: true, snapshots: newTestSnapshotStore(),
 		registry: webhooks.NewDurableRegistry(webhookStore),
@@ -279,9 +334,7 @@ func TestIntegration_TaskOutcomeWebhookFiresWhenTheTaskCommits(t *testing.T) {
 	}
 	submitted, err := e.runClient().SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: webhookOrkflowName}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := submitted.Msg.GetRun().GetId()
 	if run := e.drainRun(t, ctx, runID, ""); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run %s ended %v (%v), want SUCCEEDED", runID, run.GetStatus(), run.GetError())
@@ -384,17 +437,11 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 			orkerQueue := "ork-webhook-cancel-" + token
 
 			store, err := artifacts.New(cfg)
-			if err != nil {
-				t.Fatalf("open artifact store: %v", err)
-			}
+			must.OKf(t, err, "open artifact store")
 			commitStore, err := artifacts.NewCommitStore(ctx, cfg)
-			if err != nil {
-				t.Fatalf("open commit store: %v", err)
-			}
+			must.OKf(t, err, "open commit store")
 			logStore, err := artifacts.NewLogStore(cfg)
-			if err != nil {
-				t.Fatalf("open log store: %v", err)
-			}
+			must.OKf(t, err, "open log store")
 			refs, ok := store.(artifacts.RefPredictor)
 			if !ok {
 				t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
@@ -420,9 +467,7 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 			})
 			taskWorker.RegisterActivityWithOptions(activities.ExecuteTask, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 			taskWorker.RegisterActivityWithOptions(activities.DescribeOrker, activity.RegisterOptions{Name: task.ActivityDescribeOrker})
-			if err := taskWorker.Start(); err != nil {
-				t.Fatalf("start task worker: %v", err)
-			}
+			must.OKf(t, taskWorker.Start(), "start task worker")
 			defer taskWorker.Stop()
 
 			subscriber := newWebhookSubscriber(t)
@@ -468,9 +513,7 @@ func TestIntegration_CanceledTaskProducesNoTaskDeliveryOnlyTheRunsTerminalOne(t 
 			submitted, err := e.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 				OrkflowName: orkflowName, OrkflowVersion: definition.GetVersion(),
 			}))
-			if err != nil {
-				t.Fatalf("SubmitRun: %v", err)
-			}
+			must.OKf(t, err, "SubmitRun")
 			runID := submitted.Msg.GetRun().GetId()
 			t.Logf("EVIDENCE run_id=%s case=%q", runID, tc.name)
 
@@ -599,9 +642,7 @@ func TestIntegration_ScopedWebhookReceivesOnlyItsNamespace(t *testing.T) {
 	temporalClient := scopedCluster(t, ctx)
 	pool := uniquePool("webhook-ns")
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map pool: %v", err)
-	}
+	must.OKf(t, err, "map pool")
 	committingTaskWorker(t, temporalClient, queue)
 
 	namespaces, err := artifacts.NewS3NamespaceStore(ctx, cfg)
@@ -651,9 +692,7 @@ func TestIntegration_ScopedWebhookReceivesOnlyItsNamespace(t *testing.T) {
 		submitted, err := e.runClient().SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: webhookOrkflowName, Namespace: namespace,
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun in %q: %v", namespace, err)
-		}
+		must.OKf(t, err, "SubmitRun in %q", namespace)
 		runID := submitted.Msg.GetRun().GetId()
 		runIDs[namespace] = runID
 		if run := e.drainRun(t, ctx, runID, namespace); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
@@ -713,9 +752,7 @@ func TestIntegration_ScopedWebhookRegisteredOnOneReplicaMatchesOnAnother(t *test
 	temporalClient := scopedCluster(t, ctx)
 	pool := uniquePool("webhook-replica")
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("map pool: %v", err)
-	}
+	must.OKf(t, err, "map pool")
 	committingTaskWorker(t, temporalClient, queue)
 
 	durable := func() *webhooks.Registry {
@@ -766,9 +803,7 @@ func TestIntegration_ScopedWebhookRegisteredOnOneReplicaMatchesOnAnother(t *test
 	}
 	submitted, err := replicaB.runClient().SubmitRun(ctx, connect.NewRequest(
 		&orkstackv1.SubmitRunRequest{OrkflowName: orkflowName}))
-	if err != nil {
-		t.Fatalf("SubmitRun on B: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun on B")
 	runID := submitted.Msg.GetRun().GetId()
 	if run := replicaB.drainRun(t, ctx, runID, ""); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run %s ended %v (%v)", runID, run.GetStatus(), run.GetError())

@@ -60,5 +60,5 @@ export function unreadableText(count: bigint | number): string {
 /** The copyable command that asks the same question from a terminal. */
 export function provenanceCommand(namespace: string, runId: string, taskId: string, kind: ArtifactKind, name: string, item?: number): string {
 	const itemArgs = item !== undefined ? ['--item', String(item)] : [];
-	return runCommand(namespace, ['run', 'artifact', 'provenance', runId, '--task', taskId, ...itemArgs, '--kind', artifactKindFlag(kind), '--name', name]);
+	return runCommand(namespace, ['run', 'artifact', 'provenance', runId, '-t', taskId, ...itemArgs, '--kind', artifactKindFlag(kind), '--name', name]);
 }

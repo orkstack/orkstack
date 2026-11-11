@@ -1,5 +1,5 @@
 import { expect, test, type Page } from './test';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import {
 	bin,
@@ -14,6 +14,7 @@ import {
 	removeBucket,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -173,7 +174,7 @@ const catalog = (name: string) => rpc<Catalog>('OrkflowService/ListOrkflowVersio
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# The interface compatibility gate in the browser: verdict chips,',
@@ -268,7 +269,7 @@ test('compare interfaces shows the findings the CLI prints', async ({ page }) =>
 	);
 	await page.getByTestId('page-cli-trigger').click();
 	await expect(pageCli(page, 'Compare their interfaces')).toHaveText(
-		`orkctl --namespace ${NS} orkflow compat ${BLOCK} 2.1.0 3.0.0`
+		`orkctl -n ${NS} orkflow compat ${BLOCK} 2.1.0 3.0.0`
 	);
 	note('Compare interfaces 2.1.0 → 3.0.0: breaking — 2 breaking changes (inputs.region ADDED, outputs.url REMOVED)');
 	await shot(page, 'screenshot-compare-interfaces.png');
@@ -289,7 +290,7 @@ test('callers lists the composing orkflow, the trigger and the schedule', async 
 	);
 	await page.getByTestId('page-cli-trigger').click();
 	await expect(pageCli(page, 'What calls it')).toHaveText(
-		`orkctl --namespace ${NS} orkflow callers ${BLOCK}`
+		`orkctl -n ${NS} orkflow callers ${BLOCK}`
 	);
 	note(`Callers: ${CHECKOUT}@4.2.0 (reads digest, url), trigger ${TRIGGER} (current), schedule ${SCHEDULE} (2.1.0)`);
 	await shot(page, 'screenshot-callers.png');
@@ -303,10 +304,10 @@ test('callers lists the composing orkflow, the trigger and the schedule', async 
 });
 
 // Before the promotion below: 2.1.0 is current, and 3.0.0 is validated and
-// applied from the Apply page. The apply is a repeat (3.0.0 is stored) and
+// created from the Create Orkflow page. The create is a repeat (3.0.0 is stored) and
 // moves nothing; its warnings are the engine's comparison against 2.1.0.
-test('apply shows breaking warnings against the current version', async ({ page }) => {
-	await page.goto(`${UI_ORIGIN}/apply?ns=${NS}`);
+test('create shows breaking warnings against the current version', async ({ page }) => {
+	await page.goto(`${UI_ORIGIN}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', block('3.0.0'));
 	await page.getByTestId('apply-validate').click();
 	const issues = page.getByTestId('apply-validation-issues');
@@ -322,7 +323,7 @@ test('apply shows breaking warnings against the current version', async ({ page 
 	await shot(page, 'screenshot-apply-validate-warnings.png');
 
 	await page.getByTestId('apply-submit').click();
-	await expect(page.getByTestId('apply-success')).toContainText(`Applied ${BLOCK}@3.0.0`);
+	await expect(page.getByTestId('apply-success')).toContainText(`Already stored: ${BLOCK}@3.0.0; nothing was written.`);
 	// The warnings stay visible after the apply succeeded: the apply's own
 	// warnings (one banner each) and the validation results above them.
 	const applyWarnings = page.getByTestId('apply-warning');
@@ -336,7 +337,7 @@ test('apply shows breaking warnings against the current version', async ({ page 
 		).toHaveCount(1);
 	}
 	expect((await catalog(BLOCK)).currentVersion).toBe('2.1.0');
-	note('Apply page: validating 3.0.0 warns at inputs.region, outputs.url, version; apply succeeds, warnings stay, pointer stays 2.1.0');
+	note('Create Orkflow page: validating 3.0.0 warns at inputs.region, outputs.url, version; create succeeds, warnings stay, pointer stays 2.1.0');
 	await shot(page, 'screenshot-apply-warnings-after.png');
 });
 
@@ -354,7 +355,7 @@ test('a breaking promotion requires acknowledgement and then lands', async ({ pa
 	await expect(page.getByTestId('promote-accept')).toBeEnabled();
 	await page.getByTestId('promote-cli-trigger').click();
 	await expect(page.getByTestId('promote-cli-command')).toHaveText(
-		`orkctl --namespace ${NS} orkflow promote ${BLOCK} 3.0.0 --acknowledge-breaking`
+		`orkctl -n ${NS} orkflow promote ${BLOCK} 3.0.0 --acknowledge-breaking`
 	);
 	await page.getByTestId('promote-cli-trigger').click();
 	await page.getByTestId('promote-accept').click();

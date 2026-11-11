@@ -1,4 +1,5 @@
 import { expect, test, type Page } from './test';
+import { selectTask } from './uiHelpers';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -161,9 +162,9 @@ test('P3 — plan the failure path', async ({ page }) => {
 	await expect(page.getByTestId('run-plan-row-notify-outcome')).toHaveText('runs');
 	await expect(page.getByTestId('run-plan-summary')).toContainText('1 assumed failed');
 	await expect(page.getByTestId('run-plan-fails')).toContainText('Failure handlers that would run: rollback, notify.');
-	await page.getByTestId('run-submit-plan-cli-trigger').click();
-	await expect(page.getByTestId('run-submit-plan-cli-command')).toContainText('--assume-failed deploy');
-	await page.getByTestId('run-submit-plan-cli-trigger').click();
+	await page.getByTestId('run-submit-cli-trigger').click();
+	await expect(page.getByTestId('run-submit-cli-popover').locator('[data-cli-label="Plan this run"]')).toContainText('--assume-failed deploy');
+	await page.getByTestId('run-submit-cli-trigger').click();
 	note(`P3 failure sentence: ${await page.getByTestId('run-plan-fails').textContent()}`);
 	await shot(page, 'screenshot-plan-assume-failed.png');
 	// Clearing the field clears the plan: it answered another draft.
@@ -216,7 +217,10 @@ test('P4 — a failing run, watched live', async ({ page }) => {
 	await expect(page.getByTestId('run-status')).toHaveText(/running/i);
 	await expect(page.getByTestId('task-deploy')).not.toContainText('run failing after task');
 	await expect(page.getByTestId('task-escalate-status')).toHaveText('Pending');
-	await expect(page.getByTestId('task-escalate-status-note')).toHaveText('Waiting for rollback');
+	// What a pending task waits on, and a handler's join, are on its panel.
+	await selectTask(page, 'escalate');
+	await expect(page.getByTestId('task-escalate-waits-for')).toHaveText('rollback');
+	await selectTask(page, 'rollback');
 	await expect(page.getByTestId('task-rollback-join')).toContainText('failure handler, any need failed');
 	await expect(page.getByTestId('task-smoke-status')).toHaveText(/canceled/i);
 	// A never-started task's reason is the note's tip, not repeated on its row.

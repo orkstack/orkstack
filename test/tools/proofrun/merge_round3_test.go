@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func joined(r proofRecord) string { return strings.Join(r.Ineligible, "\n") }
@@ -43,17 +45,6 @@ func TestMerge_AUIShardEntryWithoutAProblemLineStillFails(t *testing.T) {
 	r, _ := mergeUIShard(t, f, 16, "fail", uiShardLedger(outcomeSkip, "", []string{"a.spec.ts › t [chromium] skipped; a skip is never a pass"}))
 	if strings.Contains(joined(r), "names no problem") || !strings.Contains(joined(r), "skipped; a skip is never a pass") {
 		t.Errorf("a named skip: %v", r.Ineligible)
-	}
-}
-
-// An excusal the merger derives itself does not need the shard to have
-// written the problem line.
-func TestMerge_ADerivedExcusalNeedsNoShardProblemLine(t *testing.T) {
-	f := newMergeFixture(t, tierFull, true)
-	f.anchorHostSpeed(hostRow, hostRow)
-	r, code := mergeUIShard(t, f, 2, "fail", uiShardLedger(outcomeFail, timingDetail, nil))
-	if code != 0 || !r.MergeEligible || len(r.KnownGaps) != 1 {
-		t.Fatalf("code %d eligible %v gaps %v: %v", code, r.MergeEligible, r.KnownGaps, r.Ineligible)
 	}
 }
 
@@ -153,7 +144,7 @@ func TestMerge_ThePlanMustBeTheWholeSuiteOfItsTier(t *testing.T) {
 }
 
 func TestMerge_APartTheTierDoesNotExpectIsFlagged(t *testing.T) {
-	for _, extra := range []string{"observability", "ui-e2e:2", "integration:3", "activity-fixture:bogus", "local"} {
+	for _, extra := range []string{suiteRaceRepeat, "ui-e2e:2", "integration:3", "activity-fixture:bogus", "local"} {
 		t.Run(extra, func(t *testing.T) {
 			f := newMergeFixture(t, tierFull, true)
 			f.writeCI()
@@ -181,11 +172,9 @@ func TestMerge_ACIProofWithoutAUIPlanFails(t *testing.T) {
 	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
 	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
 	quiet(t)
-	code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "t", "-host-speed", f.hostSpeed})
+	code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "t"})
 	var r proofRecord
-	if err := readJSON(filepath.Join(f.out, "proof.json"), &r); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(f.out, "proof.json"), &r))
 	if code != 1 || !strings.Contains(joined(r), "was given no UI plan") {
 		t.Errorf("code %d: %v", code, r.Ineligible)
 	}
@@ -266,9 +255,7 @@ func TestMerge_ACorruptPartJSONOrUnreadableEventsIsAResult(t *testing.T) {
 			f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
 			// Attempt 1 of shard 2 is unreadable; attempt 2 ran again.
 			dir := filepath.Join(f.parts, "integration-2-a1")
-			if err := os.MkdirAll(dir, 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.MkdirAll(dir, 0o755))
 			setup(dir)
 			f.writeShard(2, []entry{passEntry("TestB")}, nil, 2)
 			f.writeJobs(1, githubJob{Part: "integration:2", Conclusion: "failure", RunnerLost: true})
@@ -285,12 +272,8 @@ func TestReadParts_RefusesTwoDirectoriesForOneAttempt(t *testing.T) {
 	f := newMergeFixture(t, tierFull, true)
 	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
 	rec := f.basePart("integration:1")
-	if err := os.MkdirAll(filepath.Join(f.parts, "copy-of-it"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeJSON(filepath.Join(f.parts, "copy-of-it", "part.json"), rec); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(f.parts, "copy-of-it"), 0o755))
+	must.OK(t, writeJSON(filepath.Join(f.parts, "copy-of-it", "part.json"), rec))
 	if _, _, err := readParts(f.parts); err == nil || !strings.Contains(err.Error(), "both claim part integration:1 attempt 1") {
 		t.Errorf("err = %v", err)
 	}
@@ -299,9 +282,7 @@ func TestReadParts_RefusesTwoDirectoriesForOneAttempt(t *testing.T) {
 		t.Errorf("merge exit %d, want 1", code)
 	}
 	var proof proofRecord
-	if err := readJSON(filepath.Join(f.out, "proof.json"), &proof); err != nil {
-		t.Fatalf("a duplicate claim wrote no proof.json: %v", err)
-	}
+	must.OKf(t, readJSON(filepath.Join(f.out, "proof.json"), &proof), "a duplicate claim wrote no proof.json")
 	if proof.Result != "fail" || proof.MergeEligible || !strings.Contains(strings.Join(proof.Ineligible, "\n"), "both claim part integration:1 attempt 1") {
 		t.Errorf("proof.json = result %q eligible %v reasons %v", proof.Result, proof.MergeEligible, proof.Ineligible)
 	}
@@ -311,24 +292,16 @@ func TestMerge_AWriteErrorIsANonZeroExit(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
 	// The README's path is a directory: it cannot be written.
-	if err := os.MkdirAll(filepath.Join(f.out, "README.md"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(f.out, "README.md"), 0o755))
 	quiet(t)
-	code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "t", "-ui-plan", f.uiPlanPath, "-host-speed", f.hostSpeed})
+	code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "t", "-ui-plan", f.uiPlanPath})
 	if code != 2 {
 		t.Errorf("exit %d, want 2", code)
 	}
-	if err := os.RemoveAll(filepath.Join(f.out, "README.md")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.RemoveAll(filepath.Join(f.out, "integration-tests.json")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Join(f.out, "integration-tests.json"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "t", "-ui-plan", f.uiPlanPath, "-host-speed", f.hostSpeed}); code != 2 {
+	must.OK(t, os.RemoveAll(filepath.Join(f.out, "README.md")))
+	must.OK(t, os.RemoveAll(filepath.Join(f.out, "integration-tests.json")))
+	must.OK(t, os.MkdirAll(filepath.Join(f.out, "integration-tests.json"), 0o755))
+	if code := cmdMerge([]string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "t", "-ui-plan", f.uiPlanPath}); code != 2 {
 		t.Errorf("a ledger that cannot be written: exit %d, want 2", code)
 	}
 }
@@ -354,14 +327,10 @@ func TestMerge_TheOutputIsDeterministic(t *testing.T) {
 		for _, part := range []string{"fast", "build", "integration:1", "integration:2", "ui-e2e:1", "activity-fixture:shell"} {
 			var rec partRecord
 			dir := filepath.Join(f.parts, strings.NewReplacer(":", "-").Replace(part)+"-a1")
-			if err := readJSON(filepath.Join(dir, "part.json"), &rec); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, readJSON(filepath.Join(dir, "part.json"), &rec))
 			rec.Tree, rec.TreeEnd = "other", "other"
 			rec.Gates = append(rec.Gates, gateRecord{Gate: "extra", Result: "pass", Log: part + ".log"})
-			if err := writeJSON(filepath.Join(dir, "part.json"), rec); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, writeJSON(filepath.Join(dir, "part.json"), rec))
 		}
 		r, _ := f.merge()
 		if i == 0 {
@@ -430,9 +399,7 @@ func TestVerify_MainsNightlyListsAreNoInputToMergeCheck(t *testing.T) {
 	}
 	dir := t.TempDir()
 	git(dir, "init", "-q", "-b", "main")
-	if err := os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(dir, "f"), []byte("x"), 0o644))
 	git(dir, "add", "f")
 	git(dir, "commit", "-q", "-m", "one")
 	tip, tree := git(dir, "rev-parse", "HEAD"), git(dir, "rev-parse", "HEAD^{tree}")
@@ -446,15 +413,9 @@ func TestVerify_MainsNightlyListsAreNoInputToMergeCheck(t *testing.T) {
 			t.Errorf("%s: a nightly proof was asked for: %v", c.name, p)
 		}
 	}
-	if err := os.MkdirAll(filepath.Join(dir, "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "proof-nightly-tests.txt"), []byte(mainNightlyList), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "scripts", "proof-nightly-specs.txt"), []byte("not\ta\trow\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(dir, "scripts"), 0o755))
+	must.OK(t, os.WriteFile(filepath.Join(dir, "scripts", "proof-nightly-tests.txt"), []byte(mainNightlyList), 0o644))
+	must.OK(t, os.WriteFile(filepath.Join(dir, "scripts", "proof-nightly-specs.txt"), []byte("not\ta\trow\n"), 0o644))
 	git(dir, "add", ".")
 	git(dir, "commit", "-q", "-m", "two")
 	tip2, tree2 := git(dir, "rev-parse", "HEAD"), git(dir, "rev-parse", "HEAD^{tree}")

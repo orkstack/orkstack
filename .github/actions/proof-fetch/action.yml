@@ -8,7 +8,7 @@ description: Fetch one of this run's own artifacts, images pinned by digest, or 
 # read a part that ran on half an artifact as a result), and it never re-runs a
 # job itself: a fetch that fails both attempts fails its step, before the part,
 # and the job is then a setup-failed part, which the merger lets run again as a
-# new part of the same tree (docs/PROOFS.md §8, `setupStepNames` in
+# new part of the same tree (docs/PROOFS.md §8, `classify` in
 # test/tools/proofrun/merge.go). Each attempt is one line in the setup log,
 # which `scripts/proof.sh --part --setup-log` copies into the part's
 # directory, `proofrun record` carries into part.json and `proofrun merge`

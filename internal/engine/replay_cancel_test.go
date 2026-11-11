@@ -10,11 +10,12 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
-	"go.temporal.io/sdk/testsuite"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cancelBeforeDispatchFixture is the cancel-before-dispatch fixture: a run
@@ -43,9 +44,7 @@ func TestRunWorkflow_ReplaysCommittedCancelBeforeDispatchHistory(t *testing.T) {
 	requireCancelBeforeDispatchFixture(t)
 	recorded := loadHistoryFile(t, cancelBeforeDispatchFixture)
 	runID, _, _, _, _ := startArgs(t, recorded)
-	if err := replayAs(t, recorded, runID); err != nil {
-		t.Fatalf("replaying %s against current code failed: %v", cancelBeforeDispatchFixture, err)
-	}
+	must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", cancelBeforeDispatchFixture)
 }
 
 // TestCancelBeforeDispatchHistory_CatchesTheCheckRemoved is the negative
@@ -83,17 +82,14 @@ func TestCancelBeforeDispatchHistory_PayloadsMatchWhatCurrentCodeSends(t *testin
 			continue
 		}
 		var in *orkstackv1.ExecuteTaskInput
-		if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in))
 		last = scheduleKey(in)
 	}
 	if last == "" || plan.Continuation == nil || plan.History == nil {
 		t.Fatalf("the fixture dispatched nothing or carries no budget (last %q)", last)
 	}
 
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarnessCtx(t, nil, func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if result, ok := results[scheduleKey(in)]; ok {
 			return result, nil
 		}

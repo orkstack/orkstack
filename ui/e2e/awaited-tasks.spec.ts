@@ -1,4 +1,4 @@
-import { inspectTask, selectTask } from './uiHelpers';
+import { cliCommand, inspectTask, selectTask } from './uiHelpers';
 import { expect, test, type Page } from './test';
 import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -187,8 +187,8 @@ test('submitting a run with a callback await shows each callback once', async ({
 	await waitAwaiting(page);
 	const html = await page.content();
 	expect(html).not.toContain(token);
-	await page.getByTestId('task-approval-await-callback-cli-trigger').click();
-	await expect(page.getByTestId('task-approval-await-callback-cli-command')).toContainText(
+	await page.getByTestId('task-approval-await-cli-trigger').click();
+	await expect(cliCommand(page, 'task-approval-await-cli', 'Post its callback')).toContainText(
 		'"Authorization: Bearer $ORKSTACK_CALLBACK_TOKEN"'
 	);
 	expect(await page.content()).not.toContain(token);

@@ -101,7 +101,7 @@ test.afterAll(async () => {
 });
 
 test('an unknown key is flagged on its line, by the schema as it is typed and by the engine', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', UNKNOWN_KEY);
 
 	// The editor's own finding: line 7, column 5, the key itself underlined.
@@ -131,7 +131,7 @@ test('an unknown key is flagged on its line, by the schema as it is typed and by
 });
 
 test('a strict-mapping refusal, which only the engine can see, lands on its line', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', STRICT);
 	const issue = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].with.body.enabled"]');
 	await expect(issue).toBeVisible();
@@ -146,7 +146,7 @@ test('a strict-mapping refusal, which only the engine can see, lands on its line
 });
 
 test('a semantic error only the engine finds is placed on the node its field names', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', SEMANTIC);
 	const issue = page.locator('[data-testid="apply-validation-issue"][data-field="tasks[0].needs[0]"]');
 	await expect(issue).toBeVisible();
@@ -157,12 +157,12 @@ test('a semantic error only the engine finds is placed on the node its field nam
 });
 
 test('a valid document shows clean, and only once the engine has said so', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', VALID);
 	const line = status(page);
 	await expect(line).toHaveAttribute('data-tone', 'clean');
 	await expect(line).toHaveText(
-		'The engine finds no problems in this document. Apply also refuses a version already stored with other content.'
+		'The engine finds no problems in this document. Create also refuses a version already stored with other content.'
 	);
 	await expect(page.getByTestId('apply-yaml-finding')).toHaveCount(0);
 	await expect(page.getByTestId('apply-validation-issues')).toHaveCount(0);
@@ -183,7 +183,7 @@ test('the editor in both themes: findings, colours and the list (screenshots)', 
 	await page.setViewportSize({ width: 1280, height: 900 });
 	const withTemplate = UNKNOWN_KEY.replace('url: https://example.com', 'url: "https://example.com/{{ .inputs.day }}"\n      op: fetch');
 	for (const theme of ['light', 'dark'] as const) {
-		await page.goto(`${UI}/apply?ns=${NS}`);
+		await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 		await page.getByTestId(`theme-${theme}`).click();
 		await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
 		await fillYaml(page, 'apply-yaml', withTemplate);
@@ -222,7 +222,7 @@ test('the editor in both themes: findings, colours and the list (screenshots)', 
 });
 
 test('Tab indents, Escape then Tab leaves the editor, and completion offers the schema’s keys', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await fillYaml(page, 'apply-yaml', doc('yaml-editor-keys', '  - id: fetch\n    uses: http\n    with:\n      url: https://example.com\n'));
 	const editor = page.getByTestId('apply-yaml');
 	// Tab is the editor's: it indents, and focus stays.
@@ -241,7 +241,7 @@ test('Tab indents, Escape then Tab leaves the editor, and completion offers the 
 	await page.keyboard.press('Escape');
 	await expect(page.locator('.cm-schema-doc')).toHaveCount(0);
 	// Escape, then Tab: the keyboard leaves the editor for the next control,
-	// the footer's Shortcuts, then Import YAML, whose label shows the focus.
+	// the footer's Shortcuts, then the docs rail's toggle beside the card.
 	await page.keyboard.press('Escape');
 	await page.keyboard.press('Tab');
 	await expect(editor).not.toBeFocused();
@@ -252,6 +252,14 @@ test('Tab indents, Escape then Tab leaves the editor, and completion offers the 
 	await page.keyboard.press('Escape');
 	await expect(page.getByTestId('apply-yaml-shortcuts')).toBeFocused();
 	await page.keyboard.press('Tab');
+	await expect(page.getByTestId('editor-docs-toggle')).toBeFocused();
+	// Escape, then Shift-Tab, leaves it the other way: the card header's Export,
+	// then Import, whose label shows the focus.
+	await page.locator('.cm-line').nth(6).click();
+	await page.keyboard.press('Escape');
+	await page.keyboard.press('Shift+Tab');
+	await expect(page.getByTestId('apply-export')).toBeFocused();
+	await page.keyboard.press('Shift+Tab');
 	await expect(page.getByTestId('apply-import')).toBeFocused();
 	const outline = await page.getByTestId('apply-import').evaluate((input) => getComputedStyle(input.closest('label')!).outlineStyle);
 	expect(outline).toBe('solid');

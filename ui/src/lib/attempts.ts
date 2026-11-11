@@ -1,5 +1,6 @@
 import { Status } from './gen/orkstack/v1/common_pb';
 import { AttemptOutcome, RetryState, type TaskAttempt } from './gen/orkstack/v1/run_pb';
+import type { TaskAttemptsTiming } from './gen/orkstack/v1/run_service_pb';
 import { STATUS_CLASSES } from './status';
 
 // WHAT A TASK'S TRIES SAY, DERIVED IN ONE PLACE.
@@ -83,6 +84,11 @@ export function groupAttemptsByTask(attempts: TaskAttempt[]): Map<string, TaskAt
 		grouped.set(key, rows);
 	}
 	return grouped;
+}
+
+/** groupTimingsByTask keys each timeline's TaskAttemptsTiming as attemptsKey keys its rows. */
+export function groupTimingsByTask(timings: TaskAttemptsTiming[]): Map<string, TaskAttemptsTiming> {
+	return new Map(timings.map((timing) => [attemptsKey(timing.taskId, timing.item), timing]));
 }
 
 /**
@@ -228,6 +234,8 @@ export function retryBadgeLabel(attempts: TaskAttempt[], terminal: boolean): str
 /** What the run page's attempt seed read answered. */
 export interface AttemptSeed {
 	attempts: TaskAttempt[];
+	/** Each container timeline's wait for an Orker, as the engine derived it. */
+	timings: TaskAttemptsTiming[];
 	/** Why the timeline could not be read, if it could not. */
 	error: string | null;
 	/**
@@ -248,7 +256,7 @@ export interface AttemptSeed {
  */
 export async function readAttemptSeed(
 	runs: {
-		listTaskAttempts(req: { runId: string; namespace: string; taskId: string }): Promise<{ attempts: TaskAttempt[] }>;
+		listTaskAttempts(req: { runId: string; namespace: string; taskId: string }): Promise<{ attempts: TaskAttempt[]; timings: TaskAttemptsTiming[] }>;
 	},
 	runId: string,
 	namespace: string,
@@ -257,9 +265,9 @@ export async function readAttemptSeed(
 ): Promise<AttemptSeed> {
 	try {
 		const res = await runs.listTaskAttempts({ runId, namespace, taskId: '' });
-		return { attempts: res.attempts, error: null, storeAbsent: false };
+		return { attempts: res.attempts, timings: res.timings, error: null, storeAbsent: false };
 	} catch (err) {
-		return { attempts: [], error: describe(err), storeAbsent: isStoreAbsent(err) };
+		return { attempts: [], timings: [], error: describe(err), storeAbsent: isStoreAbsent(err) };
 	}
 }
 

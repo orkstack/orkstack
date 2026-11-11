@@ -15,6 +15,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // outsideSentinel is the content of every file a test places outside the
@@ -37,9 +39,7 @@ func newOutputFixture(t *testing.T) outputFixture {
 		filepath.Join(fx.output, "inside-dir"),
 		filepath.Join(fx.outside, "dir"),
 	} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(dir, 0o755))
 	}
 	for _, path := range []string{
 		filepath.Join(fx.outside, "outside.json"),
@@ -55,9 +55,7 @@ func newOutputFixture(t *testing.T) outputFixture {
 
 func mustSymlink(t *testing.T, target, link string) {
 	t.Helper()
-	if err := os.Symlink(target, link); err != nil {
-		t.Fatalf("symlink %s -> %s: %v", link, target, err)
-	}
+	must.OKf(t, os.Symlink(target, link), "symlink %s -> %s", link, target)
 }
 
 // TestOutputTree_RefusesEveryLinkTheWorkloadLeft is B7 at the reader: every
@@ -118,9 +116,7 @@ func TestOutputTree_RefusesEveryLinkTheWorkloadLeft(t *testing.T) {
 		{
 			name: "values.json is a directory",
 			build: func(t *testing.T, fx outputFixture) {
-				if err := os.Mkdir(filepath.Join(fx.output, "values.json"), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Mkdir(filepath.Join(fx.output, "values.json"), 0o755))
 			},
 			read: readValues, wantReason: ReasonValuesMalformed, wantNamed: ContainerValuesJSON, wantKind: "a directory",
 		},
@@ -232,9 +228,7 @@ func TestOutputTree_ReadsWhatAWellBehavedWorkloadWrote(t *testing.T) {
 			t.Fatalf("Open %s: %v", artifact.Name, failure)
 		}
 		raw, err := io.ReadAll(body)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if int64(len(raw)) != artifact.Size {
 			t.Errorf("%s: scanned %d bytes, read %d", artifact.Name, artifact.Size, len(raw))
 		}
@@ -262,9 +256,7 @@ func TestScannedArtifact_OpenNeverFollowsWhatTookTheNameAfterTheScan(t *testing.
 			name: "the name becomes a link outside",
 			replace: func(t *testing.T, fx outputFixture) {
 				path := filepath.Join(fx.output, "artifacts", "report.txt")
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Remove(path))
 				mustSymlink(t, filepath.Join(fx.outside, "outside.txt"), path)
 			},
 		},
@@ -272,9 +264,7 @@ func TestScannedArtifact_OpenNeverFollowsWhatTookTheNameAfterTheScan(t *testing.
 			name: "the name becomes another regular file",
 			replace: func(t *testing.T, fx outputFixture) {
 				path := filepath.Join(fx.output, "artifacts", "report.txt")
-				if err := os.Remove(path); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Remove(path))
 				mustWrite(t, path, "ersatz")
 			},
 		},
@@ -282,12 +272,8 @@ func TestScannedArtifact_OpenNeverFollowsWhatTookTheNameAfterTheScan(t *testing.
 			name: "the directory is renamed away and replaced by a link outside",
 			replace: func(t *testing.T, fx outputFixture) {
 				artifactsDir := filepath.Join(fx.output, "artifacts")
-				if err := os.Rename(artifactsDir, filepath.Join(fx.output, "moved")); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.MkdirAll(filepath.Join(fx.outside, "dir"), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Rename(artifactsDir, filepath.Join(fx.output, "moved")))
+				must.OK(t, os.MkdirAll(filepath.Join(fx.outside, "dir"), 0o755))
 				mustWrite(t, filepath.Join(fx.outside, "dir", "report.txt"), outsideSentinel)
 				mustSymlink(t, filepath.Join(fx.outside, "dir"), artifactsDir)
 			},
@@ -309,9 +295,7 @@ func TestScannedArtifact_OpenNeverFollowsWhatTookTheNameAfterTheScan(t *testing.
 					t.Fatalf("Open: %v", failure)
 				}
 				raw, err := io.ReadAll(body)
-				if err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, err)
 				if string(raw) != "report" {
 					t.Fatalf("Open read %q; want the scanned file's own bytes", raw)
 				}
@@ -346,9 +330,7 @@ func TestOpenScanned_ProvesTheNameAgainstTheDescriptorItHolds(t *testing.T) {
 		{
 			name: "a link inside a subdirectory to such a file",
 			plant: func(t *testing.T, dir string) string {
-				if err := os.Mkdir(filepath.Join(dir, "sub"), 0o755); err != nil {
-					t.Fatal(err)
-				}
+				must.OK(t, os.Mkdir(filepath.Join(dir, "sub"), 0o755))
 				mustWrite(t, filepath.Join(dir, "sub", "real.txt"), "inside")
 				mustSymlink(t, filepath.Join("sub", "real.txt"), filepath.Join(dir, "report.txt"))
 				return filepath.Join("sub", "real.txt")
@@ -367,14 +349,10 @@ func TestOpenScanned_ProvesTheNameAgainstTheDescriptorItHolds(t *testing.T) {
 			dir := t.TempDir()
 			seenName := tc.plant(t, dir)
 			root, err := os.OpenRoot(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			t.Cleanup(func() { _ = root.Close() })
 			seen, err := root.Lstat(seenName)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 
 			file, opened, failure := openScanned(root, "report.txt", seen, ContainerArtifacts+"/report.txt", ReasonArtifactNotAFile)
 			if file != nil {
@@ -465,9 +443,7 @@ func TestExecute_CommitsNothingFromOutsideTheOutputTree(t *testing.T) {
 			h := newCacheHarness(t)
 			storeDir := t.TempDir()
 			store, err := artifacts.NewLocalStore(storeDir)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			t.Cleanup(func() { _ = store.Close() })
 			h.dispatcher.Store = store
 			outside := t.TempDir()
@@ -499,9 +475,7 @@ func TestExecute_CommitsNothingFromOutsideTheOutputTree(t *testing.T) {
 			}
 			if tc.wantNote != "" {
 				var detail *orkstackv1.ActivityFailureDetail
-				if err := applicationErr.Details(&detail); err != nil {
-					t.Fatalf("decode the failure detail: %v", err)
-				}
+				must.OKf(t, applicationErr.Details(&detail), "decode the failure detail")
 				notes := strings.Join(detail.GetScanNotes(), "; ")
 				if !strings.Contains(notes, tc.wantNote) {
 					t.Errorf("scan notes %q do not say %q", notes, tc.wantNote)
@@ -531,32 +505,20 @@ func TestExecute_CommitsNothingFromOutsideTheOutputTree(t *testing.T) {
 func TestRemoveSealedTree_LeavesWhatALinkPointsAtAlone(t *testing.T) {
 	base := t.TempDir()
 	tree, outside := filepath.Join(base, "attempt"), filepath.Join(base, "outside")
-	if err := os.MkdirAll(filepath.Join(tree, "input", "sealed"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(tree, "input", "sealed"), 0o755))
+	must.OK(t, os.MkdirAll(outside, 0o755))
 	mustWrite(t, filepath.Join(outside, "keep.txt"), "keep")
 	mustSymlink(t, outside, filepath.Join(tree, "input", "sealed", "link"))
-	if err := os.Chmod(filepath.Join(tree, "input", "sealed"), 0o555); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(outside, 0o500); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Chmod(filepath.Join(tree, "input", "sealed"), 0o555))
+	must.OK(t, os.Chmod(outside, 0o500))
 	t.Cleanup(func() { _ = os.Chmod(outside, 0o700) })
 
-	if err := removeSealedTree(tree); err != nil {
-		t.Fatalf("removeSealedTree: %v", err)
-	}
+	must.OKf(t, removeSealedTree(tree), "removeSealedTree")
 	if _, err := os.Lstat(tree); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("the sealed tree is still there: %v", err)
 	}
 	info, err := os.Stat(outside)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if info.Mode().Perm() != 0o500 {
 		t.Errorf("the linked directory's mode is %o; the walk changed it", info.Mode().Perm())
 	}

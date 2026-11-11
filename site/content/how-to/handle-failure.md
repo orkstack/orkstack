@@ -28,11 +28,11 @@ In [`examples/order-saga.ork.yaml`](https://github.com/orkstack/orkstack/blob/ma
 
 `join: any_failed` makes `release` a failure handler. It runs only when one of its needs fails. Its `retry:` allows five attempts.
 
-Plan the failing path before you run anything. Apply the block first, because the example composes it:
+Plan the failing path before you run anything. Create the block first, because the example composes it:
 
 ```bash
-orkctl apply examples/notify-block.ork.yaml
-orkctl apply examples/order-saga.ork.yaml
+orkctl orkflow create examples/notify-block.ork.yaml
+orkctl orkflow create examples/order-saga.ork.yaml
 orkctl run plan order-saga --assume-failed reserve --assert-runs release --assert-skipped refund
 ```
 
@@ -41,7 +41,7 @@ orkctl run plan order-saga --assume-failed reserve --assert-runs release --asser
 With no inputs, every step succeeds against a public test service. Point the shipping service somewhere that refuses it, and `shipped` fails, the `release`, `refund`, `report` and `notify` handlers run, and the run ends `FAILED` with `shipped`'s error:
 
 ```bash
-orkctl run submit order-saga --input shipping_api=https://httpbin.org/absent --watch
+orkctl run submit order-saga -i shipping_api=https://httpbin.org/absent -w
 ```
 
 <!-- site-media: ui-failure -->

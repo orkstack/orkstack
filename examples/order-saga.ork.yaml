@@ -11,14 +11,14 @@
 # It composes notify-block, so that block must be stored first, in a command of
 # its own. That is the one thing it asks of you, besides internet access to
 # httpbin.org, or `--input` naming endpoints of your own:
-#   orkctl apply examples/notify-block.ork.yaml
-#   orkctl apply examples/order-saga.ork.yaml
+#   orkctl orkflow create examples/notify-block.ork.yaml
+#   orkctl orkflow create examples/order-saga.ork.yaml
 #
 # By default every step succeeds: httpbin.org answers any request under
 # /anything with 200. A 5xx from httpbin.org is data here, so an outage of it
 # takes this example's failure path. To see that path, have the shipping service
 # refuse: the shipment fails, and the reservation and the payment are undone:
-#   orkctl run submit order-saga --input shipping_api=https://httpbin.org/absent --watch
+#   orkctl run submit order-saga -i shipping_api=https://httpbin.org/absent -w
 #
 #   prepare      validates the order and builds every request body ONCE.
 #   reserve,     the requests. Each PUTs to a URL keyed by the order id, so a
@@ -43,15 +43,15 @@
 # ran to their own outcomes.
 #
 # Plan both paths before anything runs:
-#   orkctl run plan --file examples/order-saga.ork.yaml --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
-#   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed shipped --assert-runs release --assert-runs refund --assert-runs report --assert-runs notify
-#   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed reserve --assert-runs release --assert-skipped refund --assert-runs report
-#   orkctl run plan --file examples/order-saga.ork.yaml --assume-failed prepare --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
+#   orkctl run plan -f examples/order-saga.ork.yaml --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
+#   orkctl run plan -f examples/order-saga.ork.yaml --assume-failed shipped --assert-runs release --assert-runs refund --assert-runs report --assert-runs notify
+#   orkctl run plan -f examples/order-saga.ork.yaml --assume-failed reserve --assert-runs release --assert-skipped refund --assert-runs report
+#   orkctl run plan -f examples/order-saga.ork.yaml --assume-failed prepare --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
 apiVersion: orkstack/v1
 kind: Orkflow
 name: order-saga
-version: "0.2.0"
-description: "Reserve, charge and ship an order over HTTP; release and refund when a later step fails; report either way. Store notify-block first: orkctl apply examples/notify-block.ork.yaml, then orkctl apply examples/order-saga.ork.yaml."
+version: "0.2.1"
+description: "Reserve, charge and ship an order over HTTP; release and refund when a later step fails; report either way. Store notify-block first: orkctl orkflow create examples/notify-block.ork.yaml, then orkctl orkflow create examples/order-saga.ork.yaml."
 
 inputs:
   api:

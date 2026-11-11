@@ -6,6 +6,8 @@ import (
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // GetRun's scan keeps the run and nothing else: the decoded events of a whole
@@ -19,9 +21,7 @@ func TestTemporalRunReader_ARunReadCollectsNoEvents(t *testing.T) {
 	reader.WithSnapshotStore(store)
 
 	projection, err := reader.scan(context.Background(), runID, false, 0, true, nil)
-	if err != nil {
-		t.Fatalf("scan(wantRun): %v", err)
-	}
+	must.OKf(t, err, "scan(wantRun)")
 	if projection.run == nil {
 		t.Fatal("a run read lost the run")
 	}
@@ -31,9 +31,7 @@ func TestTemporalRunReader_ARunReadCollectsNoEvents(t *testing.T) {
 
 	reader2, _ := readerOver(history, runID)
 	events, err := reader2.Events(context.Background(), runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	if len(events) != 4 {
 		t.Fatalf("an event read returned %d events, want 4", len(events))
 	}

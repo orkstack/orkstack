@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { ownedLabel } from '#lib/sharing.ts';
 	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { goto, invalidate } from '$app/navigation';
 	import { navigating } from '$app/state';
@@ -174,7 +175,7 @@
 		};
 	});
 
-	const statsCli = $derived(`orkctl --namespace ${shellQuote(namespaceLabel(data.namespace))} stats --since ${shellQuote(data.window === 'custom' && data.sinceParam ? data.sinceParam : data.window)}`);
+	const statsCli = $derived(`orkctl -n ${shellQuote(namespaceLabel(data.namespace))} stats -s ${shellQuote(data.window === 'custom' && data.sinceParam ? data.sinceParam : data.window)}`);
 	// The sections below hand their own commands up, each carrying its own choices.
 	let fingerprintsCli = $state('');
 	let flakesCli = $state('');
@@ -343,21 +344,21 @@
 								</tr>
 							</thead>
 							<tbody>
-								{#each failures as failure (failure.orkflowName)}
-									<tr class="transition-colors hover:bg-hover" data-testid="failure-{failure.orkflowName}">
+								{#each failures as failure (ownedLabel(failure.orkflowNamespace, failure.orkflowName))}
+									<tr class="transition-colors hover:bg-hover" data-testid="failure-{ownedLabel(failure.orkflowNamespace, failure.orkflowName)}">
 										<td>
 											<a
 												class="link font-semibold"
 												href={listHref(
 													'/runs',
 													{ ns: namespaceLabel(data.namespace) },
-													{ filter: runWindowFilters(failure.orkflowName, '', '', '') }
-												)}>{failure.orkflowName}</a
+													{ filter: runWindowFilters(failure.orkflowNamespace ? '' : failure.orkflowName, '', '', '') }
+												)}>{ownedLabel(failure.orkflowNamespace, failure.orkflowName)}</a
 											>
 										</td>
 										<!-- Stacked below 640 px, the figures say what they count. -->
-										<td class="figure text-right font-semibold text-red" data-testid="failure-{failure.orkflowName}-failed">{failure.failed.toString()}<span class="font-sans font-normal sm:hidden">&nbsp;failed</span></td>
-										<td class="figure text-ink-secondary sm:text-right" data-testid="failure-{failure.orkflowName}-finished"><span class="font-sans sm:hidden">of&nbsp;</span>{failure.total.toString()}<span class="font-sans sm:hidden">&nbsp;finished</span></td>
+										<td class="figure text-right font-semibold text-red" data-testid="failure-{ownedLabel(failure.orkflowNamespace, failure.orkflowName)}-failed">{failure.failed.toString()}<span class="font-sans font-normal sm:hidden">&nbsp;failed</span></td>
+										<td class="figure text-ink-secondary sm:text-right" data-testid="failure-{ownedLabel(failure.orkflowNamespace, failure.orkflowName)}-finished"><span class="font-sans sm:hidden">of&nbsp;</span>{failure.total.toString()}<span class="font-sans sm:hidden">&nbsp;finished</span></td>
 									</tr>
 								{/each}
 							</tbody>

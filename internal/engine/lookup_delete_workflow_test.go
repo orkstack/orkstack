@@ -12,15 +12,15 @@ import (
 	"go.temporal.io/sdk/converter"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestLookupWorkflow_ReportsAFoundRunningExecution(t *testing.T) {
 	reader := readerWithRetention(&fakeWorkflowServiceAdmin{describeExecutionFound: true})
 
 	found, closedAt, err := reader.LookupWorkflow(context.Background(), "ork-main", "run-1")
-	if err != nil {
-		t.Fatalf("LookupWorkflow: %v", err)
-	}
+	must.OKf(t, err, "LookupWorkflow")
 	if !found {
 		t.Fatal("found = false, want true")
 	}
@@ -37,9 +37,7 @@ func TestLookupWorkflow_ReportsAFoundClosedExecutionsCloseTime(t *testing.T) {
 	})
 
 	found, closedAt, err := reader.LookupWorkflow(context.Background(), "ork-main", "run-1")
-	if err != nil {
-		t.Fatalf("LookupWorkflow: %v", err)
-	}
+	must.OKf(t, err, "LookupWorkflow")
 	if !found {
 		t.Fatal("found = false, want true")
 	}
@@ -52,9 +50,7 @@ func TestLookupWorkflow_ReportsAnAbsentExecutionAsNotFoundWithoutError(t *testin
 	reader := readerWithRetention(&fakeWorkflowServiceAdmin{describeExecutionFound: false})
 
 	found, closedAt, err := reader.LookupWorkflow(context.Background(), "ork-main", "run-1")
-	if err != nil {
-		t.Fatalf("LookupWorkflow: %v", err)
-	}
+	must.OKf(t, err, "LookupWorkflow")
 	if found {
 		t.Fatal("found = true, want false for a NotFound execution")
 	}
@@ -114,9 +110,7 @@ func TestDeleteWorkflow_CallsDeleteWorkflowExecutionForTheGivenNamespaceAndWorkf
 	fake := &fakeWorkflowServiceAdmin{}
 	reader := deletionReader(t, fake)
 
-	if err := reader.DeleteWorkflow(context.Background(), "ork-main", "run-1"); err != nil {
-		t.Fatalf("DeleteWorkflow: %v", err)
-	}
+	must.OKf(t, reader.DeleteWorkflow(context.Background(), "ork-main", "run-1"), "DeleteWorkflow")
 	if len(fake.deleteExecutionCalls) != 1 {
 		t.Fatalf("delete calls = %d, want 1", len(fake.deleteExecutionCalls))
 	}
@@ -170,9 +164,7 @@ func chainDeletion(t *testing.T, fake *fakeWorkflowServiceAdmin) (*TemporalRunRe
 func TestDeleteWorkflow_DeletesEveryGenerationOldestFirst(t *testing.T) {
 	fake := &fakeWorkflowServiceAdmin{}
 	reader, f := chainDeletion(t, fake)
-	if err := reader.DeleteWorkflow(context.Background(), "ork-main", f.runID); err != nil {
-		t.Fatalf("DeleteWorkflow: %v", err)
-	}
+	must.OKf(t, reader.DeleteWorkflow(context.Background(), "ork-main", f.runID), "DeleteWorkflow")
 	var got []string
 	for _, call := range fake.deleteExecutionCalls {
 		if call.GetWorkflowExecution().GetWorkflowId() != f.runID {

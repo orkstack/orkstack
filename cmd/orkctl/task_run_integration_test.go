@@ -8,7 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -29,10 +29,13 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The `orkctl task run` integration scenarios: a real engine and a
@@ -102,9 +105,7 @@ func newTaskRunStack(ctx context.Context, t *testing.T) *taskRunStack {
 	s := newTimingStack(ctx, t, 1)
 	s.startOrker()
 	sessions := filepath.Join(bindableOrkerWorkRoot(t), "task-run-sessions")
-	if err := os.MkdirAll(sessions, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(sessions, 0o755))
 	return &taskRunStack{timingStack: s, sessions: sessions}
 }
 
@@ -215,9 +216,7 @@ func withoutIdentity(t *testing.T, raw []byte) map[string]any {
 func fileSHA(t *testing.T, path string) string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	must.OKf(t, err, "read %s", path)
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
@@ -236,9 +235,7 @@ func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) []string {
 
 	production := productionStdout(t, s.replicas[0].runs, s.ctx, run.GetId(), "consume")
 	keptConfig, err := os.ReadFile(filepath.Join(session, "input", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if string(keptConfig) != between(t, production, "CONFIG") {
 		t.Fatalf("config.json differs from the production attempt's\nlocal:\n%s\nproduction:\n%s", keptConfig, between(t, production, "CONFIG"))
 	}
@@ -249,12 +246,10 @@ func (s *taskRunStack) replayFailedConsume(run *orkstackv1.Run) []string {
 		run.GetId(), between(t, production, "CONFIG"), keptConfig, string(keptConfig) == between(t, production, "CONFIG"), len(keptConfig))))
 
 	keptTask, err := os.ReadFile(filepath.Join(session, "input", "task.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	local, remote := withoutIdentity(t, keptTask), withoutIdentity(t, []byte(between(t, production, "TASK")))
-	localJSON, _ := json.Marshal(local)
-	remoteJSON, _ := json.Marshal(remote)
+	localJSON, _ := stablejson.Marshal(local)
+	remoteJSON, _ := stablejson.Marshal(remote)
 	if !bytes.Equal(localJSON, remoteJSON) {
 		t.Fatalf("task.json differs beyond run.id and idempotencyKey\nlocal:  %s\nremote: %s", localJSON, remoteJSON)
 	}
@@ -292,13 +287,9 @@ func TestIntegration_TaskRunReplaysAFailedTaskAgainstItsRunsBytes(t *testing.T) 
 func bucketListing(t *testing.T, ctx context.Context, cfg artifacts.Config) []string {
 	t.Helper()
 	store, err := artifacts.NewS3Store(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open the bucket: %v", err)
-	}
+	must.OKf(t, err, "open the bucket")
 	refs, err := store.List(ctx, "")
-	if err != nil {
-		t.Fatalf("list the bucket: %v", err)
-	}
+	must.OKf(t, err, "list the bucket")
 	out := make([]string, 0, len(refs))
 	for _, ref := range refs {
 		out = append(out, fmt.Sprintf("%s %d %s", ref.URI, ref.SizeBytes, ref.SHA256))
@@ -317,9 +308,7 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 	// "Before" is taken once the source run's archive record is readable, so
 	// the engine's own terminal writes are complete.
 	archive, err := artifacts.NewRunArchive(s.artifactCfg)
-	if err != nil {
-		t.Fatalf("open the run archive: %v", err)
-	}
+	must.OKf(t, err, "open the run archive")
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
 		if _, err := archive.GetRun(ctx, run.GetId()); err == nil {
@@ -337,9 +326,7 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 			res, err := s.replicas[0].runs.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 				PageSize: 200, PageToken: token,
 			}))
-			if err != nil {
-				t.Fatalf("ListRuns: %v", err)
-			}
+			must.OKf(t, err, "ListRuns")
 			for _, r := range res.Msg.GetRuns() {
 				ids = append(ids, r.GetId())
 			}
@@ -354,10 +341,8 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 		res, err := s.replicas[0].runs.ListTaskAttempts(ctx, connect.NewRequest(&orkstackv1.ListTaskAttemptsRequest{
 			RunId: run.GetId(), TaskId: "consume",
 		}))
-		if err != nil {
-			t.Fatalf("ListTaskAttempts: %v", err)
-		}
-		raw, _ := json.Marshal(res.Msg.GetAttempts())
+		must.OKf(t, err, "ListTaskAttempts")
+		raw, _ := stablejson.Marshal(res.Msg.GetAttempts())
 		return string(raw)
 	}
 	runsBefore, bucketBefore, attemptsBefore := listRuns(), bucketListing(t, ctx, s.artifactCfg), attempts()
@@ -375,17 +360,11 @@ func TestIntegration_TaskRunWritesNothingToTheDeployment(t *testing.T) {
 		t.Errorf("ListTaskAttempts(%s, consume) changed:\nbefore %s\nafter  %s", run.GetId(), attemptsBefore, attemptsAfter)
 	}
 	commits, err := artifacts.NewS3CommitStore(ctx, s.artifactCfg)
-	if err != nil {
-		t.Fatalf("open the commit store: %v", err)
-	}
+	must.OKf(t, err, "open the commit store")
 	root, err := artifacts.CommitRoot(s.artifactCfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	key, err := artifacts.CommitKey("default", run.GetId(), "consume")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if _, err := commits.Get(ctx, root+"/"+key); !errors.Is(err, artifacts.ErrNotFound) {
 		t.Errorf("consume's commit key answered %v after a locally SUCCESSFUL replay, want ErrNotFound", err)
 	}
@@ -414,18 +393,14 @@ func TestIntegration_TaskRunRunsAnEditedDocumentAgainstTheRunsBytes(t *testing.T
 	name, marker, run := s.failedFixtureRun()
 	versions := func() string {
 		res, err := s.replicas[0].flows.ListOrkflowVersions(ctx, connect.NewRequest(&orkstackv1.ListOrkflowVersionsRequest{Name: name}))
-		if err != nil {
-			t.Fatalf("ListOrkflowVersions: %v", err)
-		}
-		raw, _ := json.Marshal(res.Msg)
+		must.OKf(t, err, "ListOrkflowVersions")
+		raw, _ := stablejson.Marshal(res.Msg)
 		return string(raw)
 	}
 	before := versions()
 	edited := filepath.Join(t.TempDir(), "edited.ork.yaml")
 	doc := strings.Replace(taskRunFixtureDoc(name, marker, false), `version: "0.1.0"`, `version: "0.1.1"`, 1)
-	if err := os.WriteFile(edited, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(edited, []byte(doc), 0o644))
 	stdout, stderr, code := s.taskRun("--file", edited, "--from-run", run.GetId(), "--task", "consume")
 	if code != exitOK {
 		t.Fatalf("edited replay exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
@@ -541,9 +516,7 @@ tasks:
 	}
 	marker := fmt.Sprintf("secret-marker-%d", time.Now().UnixNano())
 	secretFile := filepath.Join(t.TempDir(), "tok")
-	if err := os.WriteFile(secretFile, []byte(marker), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(secretFile, []byte(marker), 0o600))
 	stdout, stderr, code = s.taskRun("--from-run", runID, "--task", "secretive", "--secret", "tok=file:"+secretFile, "--keep")
 	if code != exitOK {
 		t.Fatalf("supplied secret exit = %d, want 0\nstdout:\n%s\nstderr:\n%s", code, stdout, stderr)
@@ -599,14 +572,10 @@ tasks:
 	cmd.Dir = s.root
 	cmd.Env = append(os.Environ(), orker.WorkRootVar+"="+s.sessions)
 	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, cmd.Start())
 	var out bytes.Buffer
 	ready := make(chan struct{})
 	copied := make(chan struct{})
@@ -629,9 +598,7 @@ tasks:
 		t.Fatalf("the container never printed its ready line\nstderr:\n%s", stderr.String())
 	}
 	interrupted := time.Now()
-	if err := cmd.Process.Signal(syscall.SIGINT); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, cmd.Process.Signal(syscall.SIGINT))
 	waited := make(chan error, 1)
 	go func() { <-copied; waited <- cmd.Wait() }()
 	var waitErr error
@@ -712,14 +679,10 @@ func (s *taskRunStack) startLooper(doc string) *startedTaskRun {
 	cmd.Dir = s.root
 	cmd.Env = append(os.Environ(), orker.WorkRootVar+"="+s.sessions)
 	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	run := &startedTaskRun{cmd: cmd, copied: make(chan struct{}), stderr: &bytes.Buffer{}}
 	cmd.Stderr = run.stderr
-	if err := cmd.Start(); err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, cmd.Start())
 	// A failed test still stops what it started and removes its container,
 	// by the run's own label once the header named it.
 	s.t.Cleanup(func() {
@@ -766,9 +729,7 @@ func (s *taskRunStack) startLooper(doc string) *startedTaskRun {
 func taskRunContainer(ctx context.Context, t *testing.T, localID string) (id, orkerLabel string, running, ok bool) {
 	t.Helper()
 	raw, err := exec.CommandContext(ctx, localContainerCLI(), "ps", "-a", "-q", "--filter", "label=ork.run="+localID).Output()
-	if err != nil {
-		t.Fatalf("list the containers labelled ork.run=%s: %v", localID, err)
-	}
+	must.OKf(t, err, "list the containers labelled ork.run=%s", localID)
 	ids := strings.Fields(string(raw))
 	switch len(ids) {
 	case 0:
@@ -779,9 +740,7 @@ func taskRunContainer(ctx context.Context, t *testing.T, localID string) (id, or
 	}
 	answer, err := exec.CommandContext(ctx, localContainerCLI(), "inspect", "--format",
 		`{{index .Config.Labels "ork.orker"}} {{.State.Running}}`, ids[0]).Output()
-	if err != nil {
-		t.Fatalf("inspect container %s: %v", ids[0], err)
-	}
+	must.OKf(t, err, "inspect container %s", ids[0])
 	fields := strings.Fields(string(answer))
 	if len(fields) != 2 {
 		t.Fatalf("inspect container %s answered %q", ids[0], answer)
@@ -841,9 +800,7 @@ tasks:
 
 	// SIGKILL runs nothing of orkctl's: the container stays, running, with
 	// nobody watching it.
-	if err := abandoned.cmd.Process.Kill(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, abandoned.cmd.Process.Kill())
 	<-abandoned.copied
 	_ = abandoned.cmd.Wait()
 	if _, _, running, ok := taskRunContainer(ctx, t, abandoned.localID); !ok || !running {
@@ -870,9 +827,7 @@ tasks:
 	}
 
 	// The live run is still the one in charge of its container.
-	if err := live.cmd.Process.Signal(syscall.SIGINT); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, live.cmd.Process.Signal(syscall.SIGINT))
 	waited := make(chan error, 1)
 	go func() { <-live.copied; waited <- live.cmd.Wait() }()
 	var waitErr error
@@ -921,9 +876,7 @@ func TestIntegration_TaskRunRendersOnlyWithoutACreatedContainer(t *testing.T) {
 		t.Fatalf("report outcome %q (config %d bytes, task.json %d bytes), want RENDERED with both", report.Outcome, len(report.Config), len(report.TaskJSON))
 	}
 	containers, err := exec.CommandContext(ctx, localContainerCLI(), "ps", "-a", "-q", "--filter", "label=ork.run="+report.LocalRunID).Output()
-	if err != nil {
-		t.Fatalf("docker ps: %v", err)
-	}
+	must.OKf(t, err, "docker ps")
 	if strings.TrimSpace(string(containers)) != "" {
 		t.Fatalf("containers labelled ork.run=%s exist: %s", report.LocalRunID, containers)
 	}
@@ -957,9 +910,7 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 	requireTemporal(t, address)
 	pool := privateTaskPool()
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	root := repoRoot(t)
 	orkctlPath := testbin.Path(t, "./cmd/orkctl")
 	enginePath := testbin.Path(t, "./cmd/ork")
@@ -976,17 +927,13 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 	waitForEngine(t, engineExited, cli)
 	waitForPoolLive(t, cli, "default", pool)
 	sessions := filepath.Join(bindableOrkerWorkRoot(t), "task-run-sessions")
-	if err := os.MkdirAll(sessions, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(sessions, 0o755))
 
 	name := fmt.Sprintf("task-run-local-%d-%d", os.Getpid(), time.Now().UnixNano())
 	marker := fmt.Sprintf("marker-%d", time.Now().UnixNano())
 	doc := filepath.Join(t.TempDir(), "fixture.ork.yaml")
-	if err := os.WriteFile(doc, []byte(taskRunFixtureDoc(name, marker, true)), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if stdout, stderr, code := cli("apply", doc); code != 0 {
+	must.OK(t, os.WriteFile(doc, []byte(taskRunFixtureDoc(name, marker, true)), 0o644))
+	if stdout, stderr, code := cli("orkflow", "create", doc); code != 0 {
 		t.Fatalf("apply exit = %d\n%s\n%s", code, stdout, stderr)
 	}
 	stdout, stderr, code := cli("run", "submit", name, "--input", "target=staging", "--input", "expect=prod")
@@ -1006,9 +953,7 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 	// "Before" is taken once the source run's archive record is readable, so
 	// the engine's own terminal writes into the shared directory are done.
 	archive, err := artifacts.NewRunArchive(artifacts.Config{Backend: artifacts.BackendLocal, LocalDir: shared})
-	if err != nil {
-		t.Fatalf("open the local run archive: %v", err)
-	}
+	must.OKf(t, err, "open the local run archive")
 	archived := time.Now().Add(2 * time.Minute)
 	for {
 		if _, err := archive.GetRun(ctx, runID); err == nil {
@@ -1028,9 +973,7 @@ func TestIntegration_TaskRunReplaysALocalBackendRun(t *testing.T) {
 	session := keptSession(t, stdout)
 	production := productionStdout(t, runs, ctx, runID, "consume")
 	keptConfig, err := os.ReadFile(filepath.Join(session, "input", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if string(keptConfig) != between(t, production, "CONFIG") {
 		t.Fatalf("config.json differs from the production attempt's\nlocal:\n%s\nproduction:\n%s", keptConfig, between(t, production, "CONFIG"))
 	}

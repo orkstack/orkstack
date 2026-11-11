@@ -502,7 +502,7 @@ test('D6: the CLI equivalents name the same listing', async ({ page }) => {
 	await page.waitForLoadState('networkidle');
 	const listing = await cliText(page, 'The deliveries');
 	expect(listing).toBe(
-		`orkctl webhook deliveries --filter delivered=false --filter run_id=${firstRun} --filter webhook_id=${webhookId} --limit 2`
+		`orkctl webhook deliveries -F delivered=false -F run_id=${firstRun} -F webhook_id=${webhookId} --limit 2`
 	);
 	note(`D6 CLI equivalent: ${listing}`);
 });

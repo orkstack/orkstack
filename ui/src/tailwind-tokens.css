@@ -175,6 +175,10 @@
 	--color-awaiting-fg: var(--color-awaiting-fg);
 	--color-awaiting-border: var(--color-awaiting-border);
 	--color-awaiting-solid: var(--color-awaiting-solid);
+	--color-sleeping-bg: var(--color-sleeping-bg);
+	--color-sleeping-fg: var(--color-sleeping-fg);
+	--color-sleeping-border: var(--color-sleeping-border);
+	--color-sleeping-solid: var(--color-sleeping-solid);
 	--color-succeeded-bg: var(--color-succeeded-bg);
 	--color-succeeded-fg: var(--color-succeeded-fg);
 	--color-succeeded-border: var(--color-succeeded-border);

@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_BootProbeRefusesARuntimeThatDropsSIGTERM is the boot
@@ -53,13 +55,9 @@ func TestIntegration_BootProbeRefusesARuntimeThatDropsSIGTERM(t *testing.T) {
 			}
 			shim := filepath.Join(dir, "docker")
 			script := "#!/bin/sh\necho \"$*\" >> '" + dir + "/calls'\n" + drop + "exec '" + realDocker + "' \"$@\"\n"
-			if err := os.WriteFile(shim, []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(shim, []byte(script), 0o755))
 			store, err := artifacts.NewLocalStore(t.TempDir())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			t.Cleanup(func() { _ = store.Close() })
 			activities := orker.NewActivitiesWithOptions(store, orker.Options{
 				Runtime:  &orker.DockerRuntime{Bin: shim, BindProbeTimeout: 90 * time.Second},

@@ -5,25 +5,19 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
-	"os"
-	"path"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -36,8 +30,8 @@ import (
 // its mutable fields (name, url, events, scope): the id and the signing
 // secret — what a receiver and a delivery record hold — never change. On S3
 // the rewrite is a conditional put naming the ETag it read, so it can never
-// recreate a record deleted meanwhile; on the local backend it is serialised
-// with deletes by the store's mutex.
+// recreate a record deleted meanwhile; a local directory compares and renames
+// under the lock its removals take.
 const WebhookPrefix = "metadata/webhooks"
 
 var webhookIDPattern = regexp.MustCompile(`^wh-[0-9a-f]{16,}$`)
@@ -46,14 +40,11 @@ var webhookIDPattern = regexp.MustCompile(`^wh-[0-9a-f]{16,}$`)
 // history. It is a registry, not an artifact: callers always read it directly
 // and no process keeps a startup snapshot.
 func NewWebhookStore(ctx context.Context, cfg Config) (webhooks.Store, error) {
-	switch cfg.Backend {
-	case "", BackendLocal:
-		return NewLocalWebhookStore(localDir(cfg))
-	case BackendS3:
-		return NewS3WebhookStore(ctx, cfg)
-	default:
-		return nil, fmt.Errorf("artifacts: webhook store backend %q: %w", cfg.Backend, ErrUnknownBackend)
+	b, err := openBlobs(ctx, cfg, "webhook store", WebhookPrefix)
+	if err != nil {
+		return nil, err
 	}
+	return &BlobWebhookStore{blobBase: blobBase{b}}, nil
 }
 
 // ErrInvalidWebhookID reports an id no stored subscription can have. A caller
@@ -93,7 +84,7 @@ func marshalWebhookRecord(hook webhooks.Webhook) ([]byte, error) {
 		return nil, fmt.Errorf("encode webhook %q: %w", hook.ID, err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("encode webhook %q: %w", hook.ID, err)
 	}
 	out.WriteByte('\n')
@@ -227,35 +218,63 @@ func webhookToken(prefix string, bytes int) (string, error) {
 	return prefix + hex.EncodeToString(b), nil
 }
 
-// S3WebhookStore is an S3-compatible shared webhook registry.
-type S3WebhookStore struct {
-	client *s3.Client
-	bucket string
+// BlobWebhookStore is the shared webhook registry, one object per
+// subscription in the object store every replica reads.
+//
+// nameMu serialises, within one process, a named registration's uniqueness
+// check with its publish, and an update's check with its write. Across
+// replicas the check is best-effort (Register says why); a conditional
+// write, never this lock, is what keeps an update from recreating a deleted
+// subscription.
+type BlobWebhookStore struct {
+	blobBase
+	nameMu sync.Mutex
 	// beforeConditionalPut, when set, runs between Update's read and its
 	// conditional write. Tests use it to delete the record in that window.
 	beforeConditionalPut func()
 }
 
-var _ webhooks.Store = (*S3WebhookStore)(nil)
+// LocalWebhookStore and S3WebhookStore are the webhook registry over a local
+// directory and over a bucket: one implementation, two backends.
+type (
+	LocalWebhookStore = BlobWebhookStore
+	S3WebhookStore    = BlobWebhookStore
+)
 
-func NewS3WebhookStore(ctx context.Context, cfg Config) (*S3WebhookStore, error) {
-	client, bucket, err := newS3Client(ctx, cfg)
+var _ webhooks.Store = (*BlobWebhookStore)(nil)
+
+// NewLocalWebhookStore opens (creating if needed) the registry under dir.
+func NewLocalWebhookStore(dir string) (*LocalWebhookStore, error) {
+	b, err := openLocalBlobs("webhook store", dir, WebhookPrefix)
 	if err != nil {
 		return nil, err
 	}
-	return &S3WebhookStore{client: client, bucket: bucket}, nil
+	return &BlobWebhookStore{blobBase: blobBase{b}}, nil
 }
 
-// Register writes one record with a conditional create. A named registration
-// first refuses a name another subscription of the same namespace scope holds;
-// that check is best-effort across replicas on the terms
-// S3TriggerStore.Create states, and every automation plan and export refuses
-// the state it can leave behind.
-func (s *S3WebhookStore) Register(ctx context.Context, reg webhooks.Registration) (webhooks.Webhook, error) {
+// NewS3WebhookStore builds the registry from the shared ORK_S3_* config.
+func NewS3WebhookStore(ctx context.Context, cfg Config) (*S3WebhookStore, error) {
+	b, err := openS3Blobs(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	return &BlobWebhookStore{blobBase: blobBase{b}}, nil
+}
+
+// Register writes one record create-only. A named registration first refuses
+// a name another subscription of the same namespace scope holds; that check
+// is best-effort across replicas on the terms BlobTriggerStore.Create states,
+// and every automation plan and export refuses the state it can leave behind.
+func (s *BlobWebhookStore) Register(ctx context.Context, reg webhooks.Registration) (webhooks.Webhook, error) {
+	if err := ctx.Err(); err != nil {
+		return webhooks.Webhook{}, err
+	}
 	if reg.Name != "" {
 		if err := webhooks.ValidateName(reg.Name, reg.Namespace); err != nil {
 			return webhooks.Webhook{}, err
 		}
+		s.nameMu.Lock()
+		defer s.nameMu.Unlock()
 		list, err := s.List(ctx)
 		if err != nil {
 			return webhooks.Webhook{}, err
@@ -264,7 +283,7 @@ func (s *S3WebhookStore) Register(ctx context.Context, reg webhooks.Registration
 			return webhooks.Webhook{}, webhooks.ErrNameTaken
 		}
 	}
-	for attempt := 0; attempt < 8; attempt++ {
+	for attempt := 0; attempt < webhooks.CreateAttempts; attempt++ {
 		hook, err := preparedWebhook(reg)
 		if err != nil {
 			return webhooks.Webhook{}, err
@@ -274,11 +293,11 @@ func (s *S3WebhookStore) Register(ctx context.Context, reg webhooks.Registration
 		if err != nil {
 			return webhooks.Webhook{}, err
 		}
-		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key), Body: bytes.NewReader(body), ContentLength: aws.Int64(int64(len(body))), ContentType: aws.String("application/json"), IfNoneMatch: aws.String("*")})
+		err = s.b.create(ctx, key, "application/json", body)
 		if err == nil {
 			return hook, nil
 		}
-		if isPreconditionFailed(err) {
+		if errors.Is(err, errBlobExists) {
 			continue
 		}
 		return webhooks.Webhook{}, fmt.Errorf("artifacts: register webhook %q: %w", hook.ID, err)
@@ -287,318 +306,33 @@ func (s *S3WebhookStore) Register(ctx context.Context, reg webhooks.Registration
 }
 
 // List returns every subscription without its secret.
-func (s *S3WebhookStore) List(ctx context.Context) ([]webhooks.Webhook, error) {
+func (s *BlobWebhookStore) List(ctx context.Context) ([]webhooks.Webhook, error) {
 	return s.list(ctx, true)
 }
 
 // ListForDelivery returns every subscription with its signing secret, for the
 // dispatcher only.
-func (s *S3WebhookStore) ListForDelivery(ctx context.Context) ([]webhooks.Webhook, error) {
+func (s *BlobWebhookStore) ListForDelivery(ctx context.Context) ([]webhooks.Webhook, error) {
 	return s.list(ctx, false)
 }
 
-func (s *S3WebhookStore) list(ctx context.Context, public bool) ([]webhooks.Webhook, error) {
-	pager := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: aws.String(s.bucket), Prefix: aws.String(WebhookPrefix + "/")})
+func (s *BlobWebhookStore) list(ctx context.Context, public bool) ([]webhooks.Webhook, error) {
 	var out []webhooks.Webhook
-	for pager.HasMorePages() {
-		page, err := pager.NextPage(ctx)
+	err := listObjects(ctx, s.b, blobListInput{Prefix: WebhookPrefix + "/"}, func(object blobObject) (bool, error) {
+		if _, ok := parseWebhookKey(object.Key); !ok {
+			return false, nil
+		}
+		hook, _, found, err := s.get(ctx, object.Key)
 		if err != nil {
-			return nil, fmt.Errorf("artifacts: list webhooks: %w", err)
+			return true, err
 		}
-		for _, object := range page.Contents {
-			key := aws.ToString(object.Key)
-			if _, ok := parseWebhookKey(key); !ok {
-				continue
-			}
-			hook, found, err := s.get(ctx, key)
-			if err != nil {
-				return nil, err
-			}
-			if found {
-				if public {
-					hook = hook.Public()
-				}
-				out = append(out, hook)
-			}
-		}
-	}
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].CreatedAt.Equal(out[j].CreatedAt) {
-			return out[i].ID < out[j].ID
-		}
-		return out[i].CreatedAt.Before(out[j].CreatedAt)
-	})
-	return out, nil
-}
-func (s *S3WebhookStore) Get(ctx context.Context, id string) (webhooks.Webhook, bool, error) {
-	key, err := webhookKey(id)
-	if err != nil {
-		return webhooks.Webhook{}, false, err
-	}
-	hook, ok, err := s.get(ctx, key)
-	return hook.Public(), ok, err
-}
-func (s *S3WebhookStore) get(ctx context.Context, key string) (webhooks.Webhook, bool, error) {
-	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
-	if err != nil {
-		if isNotFound(err) {
-			return webhooks.Webhook{}, false, nil
-		}
-		return webhooks.Webhook{}, false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
-	}
-	defer object.Body.Close()
-	raw, err := io.ReadAll(object.Body)
-	if err != nil {
-		return webhooks.Webhook{}, false, fmt.Errorf("artifacts: read webhook %q: %w", key, err)
-	}
-	hook, err := unmarshalWebhookRecord(raw)
-	if err != nil {
-		return webhooks.Webhook{}, false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
-	}
-	return hook, true, nil
-}
-func (s *S3WebhookStore) Delete(ctx context.Context, id string) (bool, error) {
-	key, err := webhookKey(id)
-	if err != nil {
-		return false, err
-	}
-	_, found, err := s.get(ctx, key)
-	if err != nil || !found {
-		return found, err
-	}
-	if _, err = s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)}); err != nil {
-		return false, fmt.Errorf("artifacts: delete webhook %q: %w", id, err)
-	}
-	return true, nil
-}
-
-// Update rewrites one record in place with a conditional PUT on the ETag it
-// read; a precondition failure or the object vanishing re-reads, so a
-// subscription deleted meanwhile is reported absent and never recreated. The
-// secret is decoded from the record, carried into the rewrite, and stripped
-// from the return.
-func (s *S3WebhookStore) Update(ctx context.Context, id string, change func(*webhooks.Webhook) error) (webhooks.Webhook, bool, error) {
-	key, err := webhookKey(id)
-	if err != nil {
-		return webhooks.Webhook{}, false, err
-	}
-	for attempt := 0; attempt < webhooks.UpdateAttempts; attempt++ {
-		current, etag, found, err := s.getWithETag(ctx, key)
-		if err != nil {
-			return webhooks.Webhook{}, false, err
-		}
-		if !found {
-			return webhooks.Webhook{}, false, nil
-		}
-		next, err := webhooks.ApplyChange(current, change)
-		if err != nil {
-			return webhooks.Webhook{}, true, err
-		}
-		if next.Name != "" && (next.Name != current.Name || next.Namespace != current.Namespace) {
-			list, err := s.List(ctx)
-			if err != nil {
-				return webhooks.Webhook{}, true, err
-			}
-			if webhooks.NameHeld(list, next.Name, next.Namespace, id) {
-				return webhooks.Webhook{}, true, webhooks.ErrNameTaken
-			}
-		}
-		if s.beforeConditionalPut != nil {
-			s.beforeConditionalPut()
-		}
-		body, err := marshalWebhookRecord(next)
-		if err != nil {
-			return webhooks.Webhook{}, true, err
-		}
-		_, err = s.client.PutObject(ctx, &s3.PutObjectInput{
-			Bucket: aws.String(s.bucket), Key: aws.String(key), Body: bytes.NewReader(body),
-			ContentLength: aws.Int64(int64(len(body))), ContentType: aws.String("application/json"),
-			IfMatch: aws.String(etag),
-		})
-		if err == nil {
-			return next.Public(), true, nil
-		}
-		if isPreconditionFailed(err) || isNotFound(err) {
-			continue
-		}
-		return webhooks.Webhook{}, true, fmt.Errorf("artifacts: update webhook %q: %w", id, err)
-	}
-	return webhooks.Webhook{}, true, webhooks.ErrUpdateContention
-}
-
-// getWithETag is get plus the object's ETag, the token Update's conditional
-// write names.
-func (s *S3WebhookStore) getWithETag(ctx context.Context, key string) (webhooks.Webhook, string, bool, error) {
-	object, err := s.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
-	if err != nil {
-		if isNotFound(err) {
-			return webhooks.Webhook{}, "", false, nil
-		}
-		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
-	}
-	defer object.Body.Close()
-	raw, err := io.ReadAll(object.Body)
-	if err != nil {
-		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: read webhook %q: %w", key, err)
-	}
-	hook, err := unmarshalWebhookRecord(raw)
-	if err != nil {
-		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
-	}
-	return hook, aws.ToString(object.ETag), true, nil
-}
-
-// LocalWebhookStore confines registry files below an os.Root. IDs are
-// validated before every path operation; no client value can traverse this
-// directory or follow a symlink outside it.
-//
-// mu serialises a named registration's uniqueness check and publish, every
-// update and every delete, so within one process an update can never
-// resurrect a delete. Several processes writing one local directory
-// concurrently are not a supported topology (AGENTS.md §2.2).
-type LocalWebhookStore struct {
-	root *os.Root
-	mu   sync.Mutex
-}
-
-var _ webhooks.Store = (*LocalWebhookStore)(nil)
-
-func NewLocalWebhookStore(dir string) (*LocalWebhookStore, error) {
-	if dir == "" {
-		return nil, errors.New("artifacts: local webhook store: empty directory")
-	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, err
-	}
-	root, err := os.OpenRoot(dir)
-	if err != nil {
-		return nil, err
-	}
-	if err := root.MkdirAll(WebhookPrefix, 0o755); err != nil {
-		_ = root.Close()
-		return nil, err
-	}
-	if err := root.MkdirAll(localTempDir, 0o755); err != nil {
-		_ = root.Close()
-		return nil, err
-	}
-	return &LocalWebhookStore{root: root}, nil
-}
-func (s *LocalWebhookStore) Register(ctx context.Context, reg webhooks.Registration) (webhooks.Webhook, error) {
-	if err := ctx.Err(); err != nil {
-		return webhooks.Webhook{}, err
-	}
-	if reg.Name != "" {
-		if err := webhooks.ValidateName(reg.Name, reg.Namespace); err != nil {
-			return webhooks.Webhook{}, err
-		}
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		list, err := s.List(ctx)
-		if err != nil {
-			return webhooks.Webhook{}, err
-		}
-		if webhooks.NameHeld(list, reg.Name, reg.Namespace, "") {
-			return webhooks.Webhook{}, webhooks.ErrNameTaken
-		}
-	}
-	for attempt := 0; attempt < 8; attempt++ {
-		hook, err := preparedWebhook(reg)
-		if err != nil {
-			return webhooks.Webhook{}, err
-		}
-		key, _ := webhookKey(hook.ID)
-		if err := s.root.MkdirAll(path.Dir(key), 0o755); err != nil {
-			return webhooks.Webhook{}, fmt.Errorf("artifacts: create webhook directory: %w", err)
-		}
-		body, err := marshalWebhookRecord(hook)
-		if err != nil {
-			return webhooks.Webhook{}, err
-		}
-		tmpKey := path.Join(localTempDir, "webhook-"+randomToken())
-		f, err := s.root.OpenFile(tmpKey, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-		if err != nil {
-			return webhooks.Webhook{}, fmt.Errorf("artifacts: register webhook %q: %w", hook.ID, err)
-		}
-		if _, err = f.Write(body); err == nil {
-			err = f.Sync()
-		}
-		cerr := f.Close()
-		if err == nil {
-			err = cerr
-		}
-		if err != nil {
-			_ = s.root.Remove(tmpKey)
-			return webhooks.Webhook{}, fmt.Errorf("artifacts: register webhook %q: %w", hook.ID, err)
-		}
-		// Link publishes the fully written inode without replacing another
-		// replica's winner. A crash before this point leaves only an ignored
-		// temp file; readers never see a partial final record.
-		err = s.root.Link(tmpKey, key)
-		_ = s.root.Remove(tmpKey)
-		if errors.Is(err, fs.ErrExist) {
-			continue
-		}
-		if err != nil {
-			return webhooks.Webhook{}, fmt.Errorf("artifacts: publish webhook %q: %w", hook.ID, err)
-		}
-		if err := s.syncDir(path.Dir(key)); err != nil {
-			return webhooks.Webhook{}, fmt.Errorf("artifacts: sync webhook %q directory: %w", hook.ID, err)
-		}
-		return hook, nil
-	}
-	return webhooks.Webhook{}, errors.New("artifacts: register webhook: repeated id collision")
-}
-
-func (s *LocalWebhookStore) syncDir(key string) error {
-	dir, err := s.root.Open(key)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	return dir.Sync()
-}
-
-// List returns every subscription without its secret.
-func (s *LocalWebhookStore) List(ctx context.Context) ([]webhooks.Webhook, error) {
-	return s.list(ctx, true)
-}
-
-// ListForDelivery returns every subscription with its signing secret, for the
-// dispatcher only.
-func (s *LocalWebhookStore) ListForDelivery(ctx context.Context) ([]webhooks.Webhook, error) {
-	return s.list(ctx, false)
-}
-
-func (s *LocalWebhookStore) list(ctx context.Context, public bool) ([]webhooks.Webhook, error) {
-	var out []webhooks.Webhook
-	err := fs.WalkDir(s.root.FS(), WebhookPrefix, func(key string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return nil
-		}
-		if d.Type()&fs.ModeSymlink != 0 {
-			return fmt.Errorf("artifacts: webhook registry contains symlink %q", key)
-		}
-		if _, ok := parseWebhookKey(key); !ok {
-			return nil
-		}
-		hook, ok, err := s.get(ctx, key)
-		if err != nil {
-			return err
-		}
-		if ok {
+		if found {
 			if public {
 				hook = hook.Public()
 			}
 			out = append(out, hook)
 		}
-		return nil
+		return false, nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("artifacts: list webhooks: %w", err)
@@ -611,67 +345,71 @@ func (s *LocalWebhookStore) list(ctx context.Context, public bool) ([]webhooks.W
 	})
 	return out, nil
 }
-func (s *LocalWebhookStore) Get(ctx context.Context, id string) (webhooks.Webhook, bool, error) {
+
+// Get reads one subscription without its secret.
+func (s *BlobWebhookStore) Get(ctx context.Context, id string) (webhooks.Webhook, bool, error) {
 	key, err := webhookKey(id)
 	if err != nil {
 		return webhooks.Webhook{}, false, err
 	}
-	hook, ok, err := s.get(ctx, key)
+	hook, _, ok, err := s.get(ctx, key)
 	return hook.Public(), ok, err
 }
-func (s *LocalWebhookStore) get(ctx context.Context, key string) (webhooks.Webhook, bool, error) {
-	if err := ctx.Err(); err != nil {
-		return webhooks.Webhook{}, false, err
-	}
-	f, err := s.root.Open(key)
-	if errors.Is(err, fs.ErrNotExist) {
-		return webhooks.Webhook{}, false, nil
-	}
+
+// get reads one record and the version a conditional write names.
+func (s *BlobWebhookStore) get(ctx context.Context, key string) (webhooks.Webhook, string, bool, error) {
+	raw, version, err := s.b.get(ctx, key, 0)
 	if err != nil {
-		return webhooks.Webhook{}, false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
-	}
-	defer f.Close()
-	raw, err := io.ReadAll(f)
-	if err != nil {
-		return webhooks.Webhook{}, false, err
+		if errors.Is(err, errBlobNotFound) {
+			return webhooks.Webhook{}, "", false, nil
+		}
+		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
 	}
 	hook, err := unmarshalWebhookRecord(raw)
 	if err != nil {
-		return webhooks.Webhook{}, false, err
+		return webhooks.Webhook{}, "", false, fmt.Errorf("artifacts: get webhook %q: %w", key, err)
 	}
-	return hook, true, nil
+	return hook, version, true, nil
 }
-func (s *LocalWebhookStore) Delete(ctx context.Context, id string) (bool, error) {
+
+// Delete removes one subscription.
+func (s *BlobWebhookStore) Delete(ctx context.Context, id string) (bool, error) {
 	key, err := webhookKey(id)
 	if err != nil {
 		return false, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, found, err := s.get(ctx, key)
+	_, _, found, err := s.get(ctx, key)
 	if err != nil || !found {
 		return found, err
 	}
-	if err := s.root.Remove(key); err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return false, nil
-		}
+	if err := s.b.remove(ctx, key); err != nil {
 		return false, fmt.Errorf("artifacts: delete webhook %q: %w", id, err)
 	}
 	return true, nil
 }
 
-// Update reads, applies change, and renames a rewritten record over the key,
-// all under the mutex Delete holds, so a deleted subscription stays deleted.
-// The secret is carried over and stripped from the return.
-func (s *LocalWebhookStore) Update(ctx context.Context, id string, change func(*webhooks.Webhook) error) (webhooks.Webhook, bool, error) {
+// Update rewrites one record in place with a conditional write on the version
+// it read; a changed or vanished object re-reads, so a subscription deleted
+// meanwhile is reported absent and never recreated. The secret is decoded
+// from the record, carried into the rewrite, and stripped from the return.
+func (s *BlobWebhookStore) Update(ctx context.Context, id string, change func(*webhooks.Webhook) error) (webhooks.Webhook, bool, error) {
 	key, err := webhookKey(id)
 	if err != nil {
 		return webhooks.Webhook{}, false, err
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	current, found, err := s.get(ctx, key)
+	for attempt := 0; attempt < webhooks.UpdateAttempts; attempt++ {
+		next, found, err := s.updateOnce(ctx, key, id, change)
+		if !errors.Is(err, errBlobChanged) {
+			return next, found, err
+		}
+	}
+	return webhooks.Webhook{}, true, webhooks.ErrUpdateContention
+}
+
+// updateOnce is one read-modify-conditional-write round; errBlobChanged asks
+// for another.
+func (s *BlobWebhookStore) updateOnce(ctx context.Context, key, id string, change func(*webhooks.Webhook) error) (webhooks.Webhook, bool, error) {
+	current, version, found, err := s.get(ctx, key)
 	if err != nil {
 		return webhooks.Webhook{}, false, err
 	}
@@ -683,6 +421,8 @@ func (s *LocalWebhookStore) Update(ctx context.Context, id string, change func(*
 		return webhooks.Webhook{}, true, err
 	}
 	if next.Name != "" && (next.Name != current.Name || next.Namespace != current.Namespace) {
+		s.nameMu.Lock()
+		defer s.nameMu.Unlock()
 		list, err := s.List(ctx)
 		if err != nil {
 			return webhooks.Webhook{}, true, err
@@ -691,11 +431,17 @@ func (s *LocalWebhookStore) Update(ctx context.Context, id string, change func(*
 			return webhooks.Webhook{}, true, webhooks.ErrNameTaken
 		}
 	}
+	if s.beforeConditionalPut != nil {
+		s.beforeConditionalPut()
+	}
 	body, err := marshalWebhookRecord(next)
 	if err != nil {
 		return webhooks.Webhook{}, true, err
 	}
-	if err := replaceLocalRecord(s.root, key, "webhook-", body); err != nil {
+	if err := s.b.replace(ctx, key, "application/json", body, version); err != nil {
+		if errors.Is(err, errBlobChanged) {
+			return webhooks.Webhook{}, true, err
+		}
 		return webhooks.Webhook{}, true, fmt.Errorf("artifacts: update webhook %q: %w", id, err)
 	}
 	return next.Public(), true, nil

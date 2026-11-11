@@ -48,7 +48,7 @@ on:
       fuzz_budget:
         description: the nightly fuzz lane's whole time, shared by its Fuzz targets (the fuzz step's limit less the lane's margin bounds it)
         type: string
-        default: 125m
+        default: 130m
     outputs:
       # The merged proof's artifact name, so a caller's re-run job finds the
       # attempt that uploaded it (release.yml › verify and publish).
@@ -73,7 +73,7 @@ env:
   TIER: ${{ inputs.tier || 'full' }}
   INT_SHARDS: ${{ inputs.int_shards || 10 }}
   UI_SHARDS: ${{ inputs.ui_shards || 5 }}
-  FUZZ_BUDGET: ${{ inputs.fuzz_budget || '125m' }}
+  FUZZ_BUDGET: ${{ inputs.fuzz_budget || '130m' }}
   PROOF_ID: pr-ci-${{ github.run_id }}
   PROOF_NAME: pr-ci-${{ github.run_id }}
   ORK_LOCAL_REGISTRY: localhost:5001
@@ -441,7 +441,7 @@ jobs:
     needs: base
     if: ${{ inputs.tier == 'nightly' && (github.event_name != 'pull_request' || (!github.event.pull_request.draft && ((github.event.repository.private == false && github.event.pull_request.user.login != 'dependabot[bot]') || contains(github.event.pull_request.labels.*.name, 'ci:proof')))) }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 160
+    timeout-minutes: 165
     permissions:
       contents: read
     steps:
@@ -455,7 +455,7 @@ jobs:
         with:
           go-version: "1.27.3"
       - name: fuzz
-        timeout-minutes: 140
+        timeout-minutes: 145
         shell: bash
         run: |
           scripts/proof.sh --part fuzz --tier "$TIER" --proof-id "$PROOF_ID" \
@@ -494,8 +494,8 @@ jobs:
         with:
           go-version: "1.27.3"
       # Named, because the jobs API reports a composite action only as the
-      # step that uses it, and the merger's setup-failed rule reads that name
-      # (test/tools/proofrun/merge.go, setupStepNames).
+      # step that uses it, and the merger's setup-failed rule names it
+      # (test/tools/proofrun/merge.go, classify).
       - name: proof host
         uses: ./.github/actions/proof-host
         timeout-minutes: 10
@@ -777,7 +777,7 @@ jobs:
           # with 503 for its first seconds (about 22 s on a 16-CPU host), and
           # proof.sh refuses the part (exit 77) unless every endpoint below is
           # ready. Wait for them here, so a stack that never comes up fails
-          # this setup step (setupStepNames) and not the proof step.
+          # this setup step (a setup failure) and not the proof step.
           ready() {
             curl -sf -o /dev/null http://127.0.0.1:3100/ready &&
               curl -sf -o /dev/null http://127.0.0.1:3200/ready &&
@@ -1028,7 +1028,6 @@ jobs:
             jq -r '.ineligible_reasons[]? | "- " + .' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             jq -r '.quarantine_warnings[]? | "- WARNING: " + .' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             jq -r '.reruns[]? | "- rerun: \(.part) attempt \(.attempt), \(.reason)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
-            jq -r '.degraded_runners[]? | "- degraded runner: \(.part) attempt \(.attempt): \(.metric) \(.value) \(.unit), floor \(.floor) (re-run that job alone)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             jq -r '.setup_failures[]? | "- setup failure: \(.part) attempt \(.attempt): the step \"\(.step)\" ended \(.conclusion) before the proof step started (re-run that job alone)"' "$RUNNER_TEMP/ci/proof/proof.json" 2>/dev/null || true
             echo
             du -sh "$RUNNER_TEMP/ci/proof" 2>/dev/null || true

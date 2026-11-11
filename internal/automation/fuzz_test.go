@@ -11,6 +11,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const secondDocumentHeader = "apiVersion: orkstack/v1\nkind: Automation\nnamespace: x\n"
@@ -24,13 +26,13 @@ const secondDocumentHeader = "apiVersion: orkstack/v1\nkind: Automation\nnamespa
 // document is refused, on the line it begins, whatever that document holds.
 func FuzzParseAndPlan(f *testing.F) {
 	example, err := os.ReadFile("../../examples/automation/examples.ork.yaml")
-	if err != nil {
-		f.Fatal(err)
-	}
+	must.OK(f, err)
 	f.Add(example, false)
 	f.Add(example, true)
 	for _, seed := range []string{
 		"", "apiVersion: orkstack/v1\nkind: Automation\nnamespace: default\n",
+		"apiVersion: ! orkstack/v1\nkind: ! Automation\nnamespace: ! default\nsettings:\n  max_running: -0\n  fair_share_weight: -0\n  description: ! 12\n",
+		"apiVersion: orkstack/v1\nkind: Automation\nnamespace: default\nsettings:\n  max_running: !!merge 1\n",
 		"apiVersion: orkstack/v1\nkind: Automation\nnamespace: Bad\n", "apiVersion: orkstack/v1\nkind: Orkflow\n", "---\n---\n",
 		"apiVersion: orkstack/v1\nkind: Automation\nnamespace: x\nschedules:\n  s:\n    orkflow: o\n    cron: '* * * * *'\n    input: {a: yes}\n",
 		"apiVersion: orkstack/v1\nkind: Automation\nnamespace: x\nwebhooks:\n  w:\n    url: https://example.test/h\n    events: [RUN_FAILED]\n    secret_env: HOOK\n",

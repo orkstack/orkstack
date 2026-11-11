@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const cPkg = "example.com/c"
@@ -26,20 +28,14 @@ func costSourceDir(t *testing.T, tier string, measured map[string]float64, liste
 		{"proof.json", proofRecord{Tier: tier, Name: "src-" + tier, Commit: "0123456789abcdef"}},
 		{"integration-tests.json", ledger{Suite: "integration", Tests: tests}},
 	} {
-		if err := writeJSON(filepath.Join(dir, w.name), w.v); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, writeJSON(filepath.Join(dir, w.name), w.v))
 	}
 	switch {
 	case format1:
-		if err := os.WriteFile(filepath.Join(dir, "integration-plan.json"), []byte(`[{"id":"c-001","package":"`+cPkg+`","tests":["TestA"]}]`), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dir, "integration-plan.json"), []byte(`[{"id":"c-001","package":"`+cPkg+`","tests":["TestA"]}]`), 0o644))
 	case listed != nil:
 		p := integrationPlan{Format: planFormat, Packages: []planPackage{{ImportPath: cPkg, Listed: listed}}}
-		if err := writeJSON(filepath.Join(dir, "integration-plan.json"), p); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, writeJSON(filepath.Join(dir, "integration-plan.json"), p))
 	}
 	return dir
 }
@@ -51,10 +47,8 @@ func refreshCosts(t *testing.T, committed string, sources ...string) (map[string
 	quiet(t)
 	out := t.TempDir()
 	costsFile := filepath.Join(out, "costs.tsv")
-	if err := os.WriteFile(costsFile, []byte(committed), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	args := []string{"-costs-out", costsFile, "-slow-out", filepath.Join(out, "slow.txt"), "-ui-costs-out", filepath.Join(out, "ui.tsv")}
+	must.OK(t, os.WriteFile(costsFile, []byte(committed), 0o644))
+	args := []string{"-costs-out", costsFile, "-ui-costs-out", filepath.Join(out, "ui.tsv")}
 	for _, s := range sources {
 		args = append(args, "-from", s)
 	}

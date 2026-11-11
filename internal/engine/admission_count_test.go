@@ -11,6 +11,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runningCorpus is three runs in flight in payments, one in billing, and one
@@ -37,9 +39,7 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 		index := statsIndexOver(t, runningCorpus())
 		reader := newRunReader(index, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
 		got, err := reader.RunningCount(ctx, "payments", 10)
-		if err != nil {
-			t.Fatalf("RunningCount: %v", err)
-		}
+		must.OKf(t, err, "RunningCount")
 		if got != 3 {
 			t.Errorf("RunningCount(payments) = %d, want 3", got)
 		}
@@ -71,9 +71,7 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 		index := statsIndexOver(t, runningCorpus())
 		reader := newRunReader(index, converter.GetDefaultDataConverter())
 		got, err := reader.RunningCount(ctx, "payments", 10)
-		if err != nil {
-			t.Fatalf("RunningCount: %v", err)
-		}
+		must.OKf(t, err, "RunningCount")
 		if got != 3 {
 			t.Errorf("RunningCount(payments) = %d, want 3 (billing's run and the finished one excluded)", got)
 		}

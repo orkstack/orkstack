@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // eachReader answers for one fan-out run, and streams its recorded events.
@@ -154,9 +156,7 @@ func newEachCLIFixture(t *testing.T) *eachCLIFixture {
 	}
 	attempts := artifacts.NewMemoryAttemptStore()
 	logs, err := artifacts.NewLocalLogStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	f := newFixtureWith(t, func(cfg *api.Config) {
 		cfg.Reader = reader
 		cfg.Attempts = attempts
@@ -183,9 +183,7 @@ func newEachCLIFixture(t *testing.T) *eachCLIFixture {
 				record.Error = &orkstackv1.Error{Code: "CONTAINER_EXIT_NONZERO", Message: `task "convert": the container exited 1`,
 					Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED, Retryable: true}
 			}
-			if err := attempts.PutAttempt(ctx, record); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, attempts.PutAttempt(ctx, record))
 			if err := logs.PutLogChunk(ctx, artifacts.LogChunk{
 				LogRef: artifacts.LogRef{RunID: eachCLIRunID, TaskID: "convert", Item: artifacts.ItemAt(i), Attempt: attempt},
 				Seq:    1, Data: []byte(fmt.Sprintf("converting part %d (attempt %d)\n", i, attempt)),
@@ -372,7 +370,7 @@ tasks:
 func TestRunPlanAndOrkflowGetEachGoldens(t *testing.T) {
 	f := newFixture(t)
 	path := writePlanFile(t, "each.ork.yaml", eachCLIYAML)
-	f.run("apply", path).requireExit(t, exitOK)
+	f.run("orkflow", "create", path).requireExit(t, exitOK)
 	plan := f.run("run", "plan", "each-cli", "--input-json", `{"regions":["eu","us","ap"]}`).requireExit(t, exitOK)
 	requireGolden(t, "run-plan-each.golden", plan.stdout)
 	for _, want := range []string{

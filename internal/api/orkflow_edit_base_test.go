@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Editing an old version: the two tokens an apply carries and what each one
@@ -74,9 +76,7 @@ func storedVersions(
 ) (list string, head, current string) {
 	t.Helper()
 	versions, err := store.Versions(context.Background(), "", name)
-	if err != nil {
-		t.Fatalf("read stored versions of %s: %v", name, err)
-	}
+	must.OKf(t, err, "read stored versions of %s", name)
 	rows := make([]string, 0, len(versions.All))
 	for _, wf := range versions.All {
 		rows = append(rows, wf.GetVersion())
@@ -114,9 +114,7 @@ func TestApplyOrkflow_ANonHeadBaseAppliesAsTheNewHead(t *testing.T) {
 	// is 2.0.0 and stays 2.0.0 until this apply lands.
 	edited, err := applyEdit(t, svc,
 		versionedDocument("deploy", "3.0.0", "one-edited"), "1.0.0", "2.0.0")
-	if err != nil {
-		t.Fatalf("an edit derived from the current, non-head version was refused: %v", err)
-	}
+	must.OKf(t, err, "an edit derived from the current, non-head version was refused")
 	if !edited.GetCreated() || edited.GetOrkflow().GetVersion() != "3.0.0" {
 		t.Fatalf("the edit answered created=%v version=%q, want true and 3.0.0",
 			edited.GetCreated(), edited.GetOrkflow().GetVersion())
@@ -140,9 +138,7 @@ func TestApplyOrkflow_ANonHeadBaseAppliesAsTheNewHead(t *testing.T) {
 	// token to be filled in with whatever head happened to be.
 	forked, err := svc.GetOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: "3.0.0"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(3.0.0): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(3.0.0)")
 	if !strings.Contains(forked.Msg.GetOrkflow().GetSourceYaml(), "echo one-edited") {
 		t.Errorf("3.0.0 does not carry the edited body:\n%s",
 			forked.Msg.GetOrkflow().GetSourceYaml())
@@ -151,9 +147,7 @@ func TestApplyOrkflow_ANonHeadBaseAppliesAsTheNewHead(t *testing.T) {
 	// rewrites.
 	base, err := svc.GetOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.GetOrkflowRequest{Name: "deploy", Version: "1.0.0"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(1.0.0): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(1.0.0)")
 	if !strings.Contains(base.Msg.GetOrkflow().GetSourceYaml(), "echo one") ||
 		strings.Contains(base.Msg.GetOrkflow().GetSourceYaml(), "one-edited") {
 		t.Errorf("the base version changed under the fork:\n%s",
@@ -163,9 +157,7 @@ func TestApplyOrkflow_ANonHeadBaseAppliesAsTheNewHead(t *testing.T) {
 	// What runs is still what the operator promoted: an edit is not a release.
 	listed, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	if listed.Msg.GetCurrentVersion() != "1.0.0" || listed.Msg.GetHeadVersion() != "3.0.0" {
 		t.Errorf("the listing reports current %q head %q, want 1.0.0 and 3.0.0",
 			listed.Msg.GetCurrentVersion(), listed.Msg.GetHeadVersion())
@@ -278,7 +270,7 @@ func TestApplyOrkflow_TokensAreIndependent(t *testing.T) {
 		t.Fatalf("a refused apply stored something: %s (head %s)", list, head)
 	}
 
-	// Neither token: a plain `orkctl apply file.yaml`, unchecked.
+	// Neither token: a plain `orkctl orkflow create file.yaml`, unchecked.
 	if _, err := applyEdit(t, svc,
 		versionedDocument("deploy", "3.0.0", "three"), "", ""); err != nil {
 		t.Fatalf("a plain apply was refused: %v", err)
@@ -329,9 +321,7 @@ func TestOrkflowReadPath_AnyVersionAnswersWithItsSourceAndTheListingMarksHeadAnd
 
 	listed, err := svc.ListOrkflowVersions(ctx, connect.NewRequest(
 		&orkstackv1.ListOrkflowVersionsRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("ListOrkflowVersions: %v", err)
-	}
+	must.OKf(t, err, "ListOrkflowVersions")
 	if listed.Msg.GetHeadVersion() != "3.0.0" || listed.Msg.GetCurrentVersion() != "1.0.0" {
 		t.Fatalf("the listing reports head %q current %q, want 3.0.0 and 1.0.0",
 			listed.Msg.GetHeadVersion(), listed.Msg.GetCurrentVersion())
@@ -346,9 +336,7 @@ func TestOrkflowReadPath_AnyVersionAnswersWithItsSourceAndTheListingMarksHeadAnd
 		got, err := svc.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{
 			Name: "deploy", Version: row.GetVersion(),
 		}))
-		if err != nil {
-			t.Fatalf("GetOrkflow(%s): %v", row.GetVersion(), err)
-		}
+		must.OKf(t, err, "GetOrkflow(%s)", row.GetVersion())
 		source := got.Msg.GetOrkflow().GetSourceYaml()
 		if !strings.Contains(source, "echo body-"+row.GetVersion()) {
 			t.Errorf("version %s answered with somebody else's source:\n%s",
@@ -372,9 +360,7 @@ func TestOrkflowReadPath_AnyVersionAnswersWithItsSourceAndTheListingMarksHeadAnd
 	// so a reader that names none gets what RUNS, not what was last applied.
 	resolved, err := svc.GetOrkflow(ctx, connect.NewRequest(
 		&orkstackv1.GetOrkflowRequest{Name: "deploy"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(\"\"): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(\"\")")
 	if resolved.Msg.GetOrkflow().GetVersion() != "1.0.0" {
 		t.Errorf("an empty version resolved to %q, want the promoted 1.0.0",
 			resolved.Msg.GetOrkflow().GetVersion())

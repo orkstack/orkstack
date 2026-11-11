@@ -5,22 +5,18 @@
 	// read, or the submit panel's fresh one — never a rule the UI invented:
 	// the server is the gate, and a submit forced through by any other means
 	// is refused by the same check (docs/UI_CLI_PARITY.md). The release
-	// command is the CLI's, so the fix is one copy away: in the page's one
-	// terminal icon, or beside the banner inside a dialog, which is `cli`.
-	import CliEquivalent from './CliEquivalent.svelte';
+	// command is the CLI's, so the fix is one copy away, in the one terminal
+	// icon of the page or panel that shows the banner (releaseHoldCli).
 	import type { NamespaceHold } from '#lib/gen/orkstack/v1/namespace_pb.ts';
-	import { releaseHoldCli } from '#lib/namespace.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
 
 	interface Props {
 		namespace: string;
 		hold: NamespaceHold;
 		testid: string;
-		/** Draw the release command beside the banner: for a banner in a dialog, not a page. */
-		cli?: boolean;
 	}
 
-	let { namespace, hold, testid, cli = false }: Props = $props();
+	let { namespace, hold, testid }: Props = $props();
 </script>
 
 <div
@@ -37,7 +33,4 @@
 			released. Runs already accepted finish untouched.
 		</p>
 	</div>
-	{#if cli}
-		<CliEquivalent testid="{testid}-cli" label="Command that releases this hold" command={releaseHoldCli(namespace)} />
-	{/if}
 </div>

@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -13,6 +12,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -71,7 +71,7 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	// served from the child's own start event, and a process-memory row
 	// would exist only on the replica that ran this activity.
 	run := a.svc.newPendingRun(a.svc.newRunID(), sub.wf, sub.input, origin)
-	plan, err := json.Marshal(sub.plan)
+	plan, err := stablejson.Marshal(sub.plan)
 	if err != nil {
 		return nil, refusedFire(fmt.Sprintf("encode the run plan: %v", err))
 	}

@@ -9,13 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"strings"
 
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
@@ -139,7 +139,7 @@ func isTerminalRunStatus(status orkstackv1.Status) bool {
 // awaitStatusWord is a status as every client prints it: "AWAITING", not
 // "STATUS_AWAITING".
 func awaitStatusWord(status orkstackv1.Status) string {
-	return strings.TrimPrefix(status.String(), "STATUS_")
+	return enumname.Of(status)
 }
 
 // taskRunIn is one task's run record, or nil when the read model has none yet
@@ -195,6 +195,11 @@ func (s *Service) resolveAwait(ctx context.Context, r awaitResolution) (*orkstac
 	if task == nil {
 		return nil, connect.NewError(connect.CodeNotFound,
 			fmt.Errorf("run %q has no task %q", runID, r.taskID))
+	}
+	if task.GetSleep() != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument,
+			fmt.Errorf("task %q of run %q is a sleeping task, not an awaited one: it wakes at its own time, "+
+				"and nothing outside the run resolves it", r.taskID, runID))
 	}
 	if task.GetAwait() == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument,

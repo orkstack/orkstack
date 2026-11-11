@@ -2,7 +2,6 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strconv"
 	"time"
@@ -13,6 +12,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -102,6 +102,9 @@ func (s *runState) endUnrestorable(
 	s.eventSeq = int(max(0, carry.GetEventSequence()))
 	s.createdAt = carry.GetCreatedAt()
 	s.startedAt = carry.GetStartedAt()
+	// A shared definition's owner, as the generation that switched decided
+	// it: read from the carry, never asked here.
+	s.sharedOwner = carriedSharedOwner(s.wf, carry)
 	s.finished = timestamppb.New(workflow.Now(ectx))
 	s.status = orkstackv1.Status_STATUS_FAILED
 	// The category comes from the same mapping the reader applies to the
@@ -305,6 +308,9 @@ func reached(events, bytes int64, at [2]int64) bool { return events >= at[0] || 
 // published and never recorded, so the segment holds exactly what Temporal
 // recorded in this generation.
 func (s *runState) recordEvent(event *orkstackv1.Event) {
+	if readyLoopProbeForTest != nil && readyLoopProbeForTest.event != nil {
+		readyLoopProbeForTest.event(s.runID, event)
+	}
 	if s.continuationBudget() == nil {
 		return
 	}
@@ -368,8 +374,14 @@ func (s *runState) updateContinuation(ctx workflow.Context, inFlight map[string]
 			return
 		}
 		s.switchDue = true // switches at the next natural idle point (canSwitchNow)
+		// The reserve and the hold line the hold decision compares against,
+		// so a run that never holds can be read from its log. failReserve is
+		// pure: counting it here changes no pass's count, and once per
+		// generation.
+		reserveEvents, _ := s.failReserve(inFlight, limit.Reserve)
 		s.logInfo(ctx, inFlight, "run will carry on into a fresh history at its next idle point",
-			"budget_events", budget.Events, "budget_bytes", budget.Bytes)
+			"budget_events", budget.Events, "budget_bytes", budget.Bytes,
+			"reserve_events", reserveEvents, "hold_line_events", limit.MaxEvents*budget.HoldPercent/100)
 	}
 	if s.generation+1 >= budget.MaxGenerations {
 		// User-facing through carryReason, so it names no count (A2); the
@@ -479,9 +491,9 @@ func (s *runState) applyQueuedResolutions(ctx workflow.Context) (applied bool, t
 type ContinuationObservationInput struct {
 	Namespace        string    `json:"namespace"`
 	Generation       int64     `json:"generation"`
-	HoldSeconds      float64   `json:"hold_seconds,omitempty"`
+	HoldSeconds      float64   `json:"hold_seconds,omitzero"`
 	RestoreStartedAt time.Time `json:"restore_started_at,omitempty"`
-	Final            bool      `json:"final,omitempty"`
+	Final            bool      `json:"final,omitzero"`
 }
 
 // continuationWriteContext is the local-activity options of a switch's
@@ -766,7 +778,7 @@ func (s *runState) observeDecisionState(phase string) {
 			state.Results[id] = string(projected)
 		}
 		if values, ok := s.outputs[id]; ok {
-			encoded, _ := json.Marshal(values)
+			encoded, _ := stablejson.Marshal(values)
 			state.Outputs[id] = string(encoded)
 		}
 		if e := s.eaches[id]; e != nil {
@@ -779,6 +791,12 @@ func (s *runState) observeDecisionState(phase string) {
 		if a := s.awaits[id]; a != nil && a.open {
 			state.Awaits[id] = fmt.Sprintf("deadline=%s timeout=%s cancel=%t", a.deadlineAt.UTC().Format(time.RFC3339Nano),
 				a.timeout, a.cancelDeadline != nil)
+		}
+		// An open sleep in the same map, told apart by its words: a task is
+		// one kind or the other.
+		if sl := s.sleeps[id]; sl != nil && sl.open {
+			state.Awaits[id] = fmt.Sprintf("wake=%s duration=%s cancel=%t", sl.wakeAt.UTC().Format(time.RFC3339Nano),
+				sl.duration, sl.cancelWake != nil)
 		}
 	}
 	for change, v := range s.versions {
@@ -810,9 +828,12 @@ const (
 var runStateFieldClass = map[string]fieldClass{
 	// Derived: structure and spec, rebuilt from the arguments.
 	"runState.runID": fieldDerived, "runState.wf": fieldDerived, "runState.plan": fieldDerived,
-	"runState.input": fieldDerived, "runState.inputs": fieldDerived, "runState.order": fieldDerived,
+	// Rebuilt from wf and the carried cross-namespace decision (shared.go).
+	"runState.sharedOwner": fieldDerived,
+	"runState.input":       fieldDerived, "runState.inputs": fieldDerived, "runState.order": fieldDerived,
 	"runState.tasks": fieldDerived, "runState.pinMemberClosures": fieldDerived, "runState.endTasks": fieldDerived,
 	"runState.pins": fieldDerived, "runState.pinOrder": fieldDerived, "runState.awaits": fieldDerived,
+	"runState.sleeps": fieldDerived, "sleepState.spec": fieldDerived,
 	"runState.resolutions": fieldDerived, "runState.eaches": fieldDerived, "runState.eachShare": fieldDerived,
 	"runState.itemInputLimit": fieldDerived, "runState.itemArtifactMax": fieldDerived,
 	"runState.children": fieldDerived, "runState.hasHandlers": fieldDerived, "runState.declaredRows": fieldDerived,
@@ -831,10 +852,13 @@ var runStateFieldClass = map[string]fieldClass{
 	"eachState.settled": fieldRestored, "eachState.limit": fieldRestored, "eachState.stride": fieldRestored,
 	"awaitState.open": fieldRestored, "awaitState.timeout": fieldRestored, "awaitState.deadlineAt": fieldRestored,
 	"awaitState.deadline": fieldRestored, "awaitState.cancelDeadline": fieldRestored,
+	"sleepState.open": fieldRestored, "sleepState.duration": fieldRestored, "sleepState.wakeAt": fieldRestored,
+	"sleepState.wake": fieldRestored, "sleepState.cancelWake": fieldRestored,
 
 	// Ephemeral: zero or fresh at a switch.
 	"runState.runError": fieldEphemeral, "runState.finished": fieldEphemeral, "runState.output": fieldEphemeral,
 	"runState.pendingItemPublishes": fieldEphemeral, "runState.publishCtx": fieldEphemeral,
+	"runState.dispatchTaskLength": fieldEphemeral, "runState.dispatchTaskBytes": fieldEphemeral,
 	"runState.runCtx": fieldEphemeral, "runState.handlerCtx": fieldEphemeral, "runState.cancelHandlers": fieldEphemeral,
 	"runState.detached": fieldEphemeral, "runState.cancelDetached": fieldEphemeral,
 	"runState.switchDue": fieldEphemeral, "runState.quiescing": fieldEphemeral, "runState.holdStartedAt": fieldEphemeral,

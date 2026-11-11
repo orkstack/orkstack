@@ -12,6 +12,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // statsReader is the cluster half of the read model for these tests: the live
@@ -57,9 +59,7 @@ func (s statsReader) RunningCount(_ context.Context, namespace string, _ int64) 
 func seedStats(t *testing.T, executions map[string]engine.Executions) *fixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 
@@ -215,9 +215,7 @@ func TestParseSince_ReadsALookbackOrAnInstant(t *testing.T) {
 				}
 				return
 			}
-			if err != nil {
-				t.Fatalf("parseSince(%q): %v", testCase.raw, err)
-			}
+			must.OKf(t, err, "parseSince(%q)", testCase.raw)
 			if lookback != testCase.wantLookback {
 				t.Errorf("parseSince(%q) lookback = %v, want %v",
 					testCase.raw, lookback, testCase.wantLookback)

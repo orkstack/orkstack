@@ -12,6 +12,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The document header at the API (docs/DSL.md, "The document header").
@@ -58,9 +60,7 @@ func TestValidateOrkflow_ReportsTheHeaderOnItsField(t *testing.T) {
 			`apiVersion "orkstack/v2" is not supported: this engine reads apiVersion: orkstack/v1`},
 	} {
 		resp, err := svc.ValidateOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ValidateOrkflowRequest{Yaml: tc.yaml}))
-		if err != nil {
-			t.Fatalf("ValidateOrkflow: %v", err)
-		}
+		must.OKf(t, err, "ValidateOrkflow")
 		issues := resp.Msg.GetIssues()
 		if len(issues) != 1 || issues[0].GetField() != tc.field || !strings.HasPrefix(issues[0].GetMessage(), tc.prefix) ||
 			issues[0].GetSeverity() != orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_ERROR {
@@ -111,9 +111,7 @@ func TestApplyOrkflow_MovingTheHeaderOnAnUnpinnedDocumentIsANewVersion(t *testin
 	}
 	moved := "# derive\n" + dsl.OrkflowHeader + strings.TrimPrefix(headerlessUnpinned, "# derive\n")
 	second, err := applyHeaderDoc(svc, moved)
-	if err != nil {
-		t.Fatalf("moving the header: %v", err)
-	}
+	must.OKf(t, err, "moving the header")
 	if !second.GetCreated() || second.GetOrkflow().GetVersion() == first.GetOrkflow().GetVersion() {
 		t.Fatalf("created=%v version %s; want a new version beside %s",
 			second.GetCreated(), second.GetOrkflow().GetVersion(), first.GetOrkflow().GetVersion())

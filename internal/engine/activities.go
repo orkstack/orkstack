@@ -249,8 +249,9 @@ func (a *EventActivities) PublishEvent(
 				"run_id", event.GetRunId(), "error", err)
 		}
 	}
+	var applied *orkstackv1.Run
 	if run != nil {
-		a.store.Apply(run)
+		applied = a.store.Apply(run)
 	}
 	firstPublication := false
 	if event != nil {
@@ -258,10 +259,18 @@ func (a *EventActivities) PublishEvent(
 	}
 
 	// Computed once and shared by every branch below: all three want the
-	// same run, resolved the same way (mergedSnapshot prefers the store's
-	// own copy, which still carries CreatedAt and Input), so there is
-	// nothing for a second or third call to recompute.
-	snapshot := a.mergedSnapshot(event.GetRunId(), run)
+	// same run, resolved the same way, so there is nothing for a second or
+	// third call to recompute. An event with a snapshot of its own is
+	// described by that snapshot, with the CreatedAt and Input only the
+	// store's copy carries folded in (Apply's return): a run's publishes may
+	// run concurrently (a plain task's detached TASK_SCHEDULED and
+	// TASK_STARTED, task_publish.go), and a store read here could return a
+	// neighbouring event's snapshot. An event without one is described by
+	// the store's copy, as before.
+	snapshot := applied
+	if snapshot == nil {
+		snapshot = a.mergedSnapshot(event.GetRunId(), run)
+	}
 
 	if a.notifier != nil && firstPublication && run != nil && IsSubscribableEvent(event) && snapshot != nil {
 		a.notifier.NotifyRunEvent(ctx, event, snapshot)
@@ -387,7 +396,9 @@ func IsSubscribableEvent(event *orkstackv1.Event) bool {
 		// An await's two events, whatever their status: a TASK_RESOLVED
 		// carrying FAILED is a real rejection, not a run-ending cancellation.
 		orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING,
-		orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED:
+		orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED,
+		// A sleep's start; its wake is the TASK_SUCCEEDED above.
+		orkstackv1.EventType_EVENT_TYPE_TASK_SLEEPING:
 		return true
 	case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 		return event.GetStatus() == orkstackv1.Status_STATUS_FAILED

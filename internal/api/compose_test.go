@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,7 +18,10 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const composeChildYAML = `
@@ -95,9 +97,7 @@ func (f *composeFixture) apply(t *testing.T, yaml string) (*orkstackv1.ApplyOrkf
 func (f *composeFixture) mustApply(t *testing.T, yaml string) *orkstackv1.Orkflow {
 	t.Helper()
 	resp, err := f.apply(t, yaml)
-	if err != nil {
-		t.Fatalf("ApplyOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ApplyOrkflow")
 	return resp.GetOrkflow()
 }
 
@@ -105,9 +105,7 @@ func (f *composeFixture) validate(t *testing.T, yaml string) []*orkstackv1.Valid
 	t.Helper()
 	resp, err := f.orkflowClient().ValidateOrkflow(context.Background(), connect.NewRequest(
 		&orkstackv1.ValidateOrkflowRequest{Yaml: yaml, Namespace: "team-a"}))
-	if err != nil {
-		t.Fatalf("ValidateOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ValidateOrkflow")
 	return resp.Msg.GetIssues()
 }
 
@@ -241,7 +239,7 @@ func TestValidateOrkflow_StaleDescendantDigestIsAnError(t *testing.T) {
 	f.putStored(t, "release-block", "2.1.0", "sha256:rb", composedTask("notarize", "notarize", "1.0", "sha256:aaa"))
 	issues := f.validate(t, composeParentYAMLWithout(t))
 	requireIssue(t, issues, "tasks[1].uses",
-		"release → release-block@2.1.0 → notarize@1.0: release-block@2.1.0 pins notarize@1.0 as sha256:aaa, but the stored notarize@1.0 is sha256:bbb — it was deleted and re-applied with other content; apply release-block as a new version to re-pin it",
+		"release → release-block@2.1.0 → notarize@1.0: release-block@2.1.0 pins notarize@1.0 as sha256:aaa, but the stored notarize@1.0 is sha256:bbb — it was deleted and created again with other content; create release-block as a new version to re-pin it",
 		errorIssue)
 }
 
@@ -334,9 +332,7 @@ func TestValidateOrkflow_ChildInputContract(t *testing.T) {
 		warningIssue)
 	requireIssue(t, issues, "tasks[1].with.count", "with.count is a string, but release-block@2.1.0 declares input count as number", warningIssue)
 	resp, err := f.apply(t, warnings)
-	if err != nil {
-		t.Fatalf("warnings refused the apply: %v", err)
-	}
+	must.OKf(t, err, "warnings refused the apply")
 	joined := strings.Join(resp.GetWarnings(), "\n")
 	if !strings.Contains(joined, "tasks[1].with.extra: with.extra is not an input") || !strings.Contains(joined, "tasks[1].with.count:") {
 		t.Fatalf("apply warnings = %v", resp.GetWarnings())
@@ -444,9 +440,7 @@ func TestSubmitRun_PlansEveryChildAndMintsIdsLast(t *testing.T) {
 	f.mustApply(t, strings.Replace(composeChildYAML, "tasks:\n", "tasks:\n  - id: notarize\n    uses: orkflow:notarize@1.0\n", 1))
 	f.mustApply(t, composeParentYAML)
 	resp, err := f.submit("deploy")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	// Child ids are minted after every refusal, depth first; the parent's
 	// own id after them.
 	if resp.GetRun().GetId() != "run-003" {
@@ -510,7 +504,7 @@ func TestPrepare_SetsRunTreeLimitsOnTheTopLevelPlanOnly(t *testing.T) {
 	if release.Plan.History != nil || release.Plan.Children["notarize"].Plan.History != nil {
 		t.Fatal("a nested child plan carries the run-tree limits")
 	}
-	encoded, err := json.Marshal(plan)
+	encoded, err := stablejson.Marshal(plan)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -531,9 +525,7 @@ func TestSubmitRun_ChildVersionDeletedIsFailedPrecondition(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, composeChildYAML)
 	f.mustApply(t, composeParentYAML)
-	if err := f.store.Delete(context.Background(), "team-a", "release-block"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, f.store.Delete(context.Background(), "team-a", "release-block"))
 	_, err := f.submit("deploy")
 	requireRefusal(t, err, connect.CodeFailedPrecondition,
 		`child orkflow release-block@2.1.0 of task "release" no longer exists in namespace "team-a"; apply it again, or submit a version of deploy that composes an existing one`)
@@ -558,13 +550,11 @@ func TestSubmitRun_ChildDigestMismatchIsFailedPrecondition(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, composeChildYAML)
 	f.mustApply(t, composeParentYAML)
-	if err := f.store.Delete(context.Background(), "team-a", "release-block"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, f.store.Delete(context.Background(), "team-a", "release-block"))
 	f.mustApply(t, strings.Replace(composeChildYAML, `command: ["true"]`, `command: ["false"]`, 1))
 	_, err := f.submit("deploy")
 	requireRefusal(t, err, connect.CodeFailedPrecondition, "deploy@1.0.0 pins release-block@2.1.0 as sha256:",
-		"it was deleted and re-applied with other content")
+		"it was deleted and created again with other content")
 	assertComposeNothingBehind(t, f)
 }
 
@@ -607,9 +597,7 @@ func TestSubmitRun_ChildPoolRefusalNamesTheChild(t *testing.T) {
 	// allow_empty_pool applies to the whole tree.
 	resp, err := f.runClient().SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "deploy", Namespace: "team-a", AllowEmptyPool: true}))
-	if err != nil {
-		t.Fatalf("allow_empty_pool did not reach the child: %v", err)
-	}
+	must.OKf(t, err, "allow_empty_pool did not reach the child")
 	if resp.Msg.GetRun().GetId() == "" {
 		t.Fatal("no run")
 	}
@@ -715,9 +703,7 @@ tasks:
     uses: orkflow:approval-gate@1.0
 `)
 	resp, err := f.submit("deploy")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	if len(resp.GetAwaitCallbacks()) != 0 {
 		t.Fatalf("the child's callback tokens were disclosed: %v", resp.GetAwaitCallbacks())
 	}
@@ -734,9 +720,7 @@ func TestSubmitRun_KeyedRepeatDiscardsTheCandidatesChildIds(t *testing.T) {
 	submit := func() *orkstackv1.Run {
 		resp, err := f.runClient().SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: "deploy", Namespace: "team-a", IdempotencyKey: "once"}))
-		if err != nil {
-			t.Fatalf("SubmitRun: %v", err)
-		}
+		must.OKf(t, err, "SubmitRun")
 		return resp.Msg.GetRun()
 	}
 	first, second := submit(), submit()
@@ -755,9 +739,7 @@ func TestTriggerInvoke_ChildRefusalIs412(t *testing.T) {
 	f := newComposeFixture(t)
 	f.mustApply(t, composeChildYAML)
 	f.mustApply(t, composeParentYAML)
-	if err := f.store.Delete(context.Background(), "team-a", "release-block"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, f.store.Delete(context.Background(), "team-a", "release-block"))
 	trigger, secret := f.createTrigger(t, &orkstackv1.CreateTriggerRequest{OrkflowName: "deploy", Namespace: "team-a"})
 	status, body := f.invoke(t, trigger.GetId(), bearer(secret), `{}`, nil)
 	if status != http.StatusPreconditionFailed {
@@ -818,9 +800,7 @@ func TestListTaskAttempts_ComposedTaskIsEmpty(t *testing.T) {
 	run := composedRun(f, "ork-parent-attempts")
 	resp, err := f.client.ListTaskAttempts(context.Background(), connect.NewRequest(&orkstackv1.ListTaskAttemptsRequest{
 		RunId: run.GetId(), TaskId: "release"}))
-	if err != nil {
-		t.Fatalf("ListTaskAttempts: %v", err)
-	}
+	must.OKf(t, err, "ListTaskAttempts")
 	if len(resp.Msg.GetAttempts()) != 0 {
 		t.Fatalf("a composed task has attempts: %v", resp.Msg.GetAttempts())
 	}
@@ -831,9 +811,7 @@ func TestListRunArtifacts_ComposedTaskListsItsValues(t *testing.T) {
 	run := composedRun(f, "ork-parent-artifacts")
 	resp, err := f.client.ListRunArtifacts(context.Background(), connect.NewRequest(&orkstackv1.ListRunArtifactsRequest{
 		RunId: run.GetId(), TaskId: "release"}))
-	if err != nil {
-		t.Fatalf("ListRunArtifacts: %v", err)
-	}
+	must.OKf(t, err, "ListRunArtifacts")
 	found := false
 	for _, a := range resp.Msg.GetArtifacts() {
 		if a.GetKind() == orkstackv1.ArtifactKind_ARTIFACT_KIND_VALUES && a.GetTaskId() == "release" {

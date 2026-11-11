@@ -31,6 +31,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // This file is the feature's headline proof, and it is deliberately the only
@@ -340,9 +342,7 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 
 	pool := "pinhosts-" + token
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("QueueForPool(%q): %v", pool, err)
-	}
+	must.OKf(t, err, "QueueForPool(%q)", pool)
 
 	// The ork namespace document, in the real S3 registry, so the allow-list
 	// the submit path enforces is a document that made a round trip through
@@ -376,20 +376,14 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 	// wrong reason. Here the only thing a split pin loses is the shared
 	// directory.
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	commitStore, err := artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	if err := artifacts.ProbeCommitStore(ctx, commitStore); err != nil {
 		infraAbsent(t, "the object store's conditional create is not usable: %v", err)
 	}
 	logStore, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
@@ -452,9 +446,7 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent},
 	)
 	for name, w := range map[string]worker.Worker{"run": runWorker, "event": eventWorker} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -480,9 +472,7 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 		Limits:    engine.DefaultLimits(),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -527,9 +517,7 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 
 	// ═══ PROOF 1: affinity under real contention ══════════════════════════
 	roundTripName := "pin-roundtrip-" + token
-	if err := dep.storeOrkflow(ctx, roundTripName, pinRoundTripYAML); err != nil {
-		t.Fatalf("store the round-trip orkflow: %v", err)
-	}
+	must.OKf(t, dep.storeOrkflow(ctx, roundTripName, pinRoundTripYAML), "store the round-trip orkflow")
 
 	transcript.section("1. affinity: every task of a pin on ONE Orker, over " +
 		fmt.Sprint(pinAffinityRuns) + " runs")
@@ -570,17 +558,13 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 	transcript.section(fmt.Sprintf("1b. %d pins open at once, at most %d per host",
 		pinAffinityOpenPins, pinAffinityMaxPins))
 	gatedName := "pin-gated-" + token
-	if err := dep.storeOrkflow(ctx, gatedName, pinGatedRoundTripYAML); err != nil {
-		t.Fatalf("store the gated round-trip orkflow: %v", err)
-	}
+	must.OKf(t, dep.storeOrkflow(ctx, gatedName, pinGatedRoundTripYAML), "store the gated round-trip orkflow")
 	gated := make([]string, 0, pinAffinityOpenPins)
 	for range pinAffinityOpenPins {
 		submitted, err := dep.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: gatedName, Namespace: nsName,
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun(%s): %v", gatedName, err)
-		}
+		must.OKf(t, err, "SubmitRun(%s)", gatedName)
 		gated = append(gated, submitted.Msg.GetRun().GetId())
 	}
 	// A pin is open from the moment its first member is handed to its host
@@ -641,16 +625,12 @@ func TestIntegration_PinnedTasksShareOneOrkerAndNeverFailOverItsPinAffinity(t *t
 	// ═══ PROOF 2: no failover when the pin host dies mid-pin ══════════════
 	transcript.section("2. no failover: the pin host is killed mid-pin")
 	holdName := "pin-hostloss-" + token
-	if err := dep.storeOrkflow(ctx, holdName, pinHoldYAML); err != nil {
-		t.Fatalf("store the host-loss orkflow: %v", err)
-	}
+	must.OKf(t, dep.storeOrkflow(ctx, holdName, pinHoldYAML), "store the host-loss orkflow")
 
 	submitted, err := dep.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: holdName, Namespace: nsName,
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun(%s): %v", holdName, err)
-	}
+	must.OKf(t, err, "SubmitRun(%s)", holdName)
 	lostRunID := submitted.Msg.GetRun().GetId()
 	transcript.line("run                  %s", lostRunID)
 
@@ -1056,9 +1036,7 @@ func (d *pinDeployment) runPinnedRoundTrip(
 	submitted, err := d.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: orkflowName, Namespace: d.namespace,
 	}))
-	if err != nil {
-		t.Fatalf("%s: SubmitRun(%s): %v", label, orkflowName, err)
-	}
+	must.OKf(t, err, "%s: SubmitRun(%s)", label, orkflowName)
 	runID := submitted.Msg.GetRun().GetId()
 	return runID, d.checkPinnedRoundTrip(t, ctx, runID, label)
 }
@@ -1165,9 +1143,7 @@ func (d *pinDeployment) resolveGate(t *testing.T, ctx context.Context, runID str
 		got, err := d.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
 			RunId: runID, Namespace: d.namespace,
 		}))
-		if err != nil {
-			t.Fatalf("GetRun(%s): %v", runID, err)
-		}
+		must.OKf(t, err, "GetRun(%s)", runID)
 		gate := pinTaskRun(t, got.Msg.GetRun(), "gate")
 		if gate.GetStatus() == orkstackv1.Status_STATUS_AWAITING {
 			break
@@ -1202,9 +1178,7 @@ func (d *pinDeployment) awaitTerminalRun(
 	stream, err := d.runs.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{
 		RunId: runID, Namespace: d.namespace,
 	}))
-	if err != nil {
-		t.Fatalf("StreamEvents(%s): %v", runID, err)
-	}
+	must.OKf(t, err, "StreamEvents(%s)", runID)
 	for stream.Receive() {
 	}
 	streamErr := stream.Err()
@@ -1217,9 +1191,7 @@ func (d *pinDeployment) awaitTerminalRun(
 	got, err := d.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{
 		RunId: runID, Namespace: d.namespace,
 	}))
-	if err != nil {
-		t.Fatalf("GetRun(%s): %v", runID, err)
-	}
+	must.OKf(t, err, "GetRun(%s)", runID)
 	return got.Msg.GetRun()
 }
 
@@ -1340,6 +1312,11 @@ type pinOrkerConfig struct {
 	// temporalAddress is the frontend this Orker alone dials (empty: the
 	// cluster's), so a test can put a proxy between it and the cluster.
 	temporalAddress string
+	// channelsStart, when set, holds the control and presence workers back
+	// until it is closed while the task worker starts at once: a host whose
+	// first polls on the Orker's own channels have not reached the cluster
+	// yet, which a loaded host makes a visible gap.
+	channelsStart <-chan struct{}
 }
 
 // newPinOrker builds and starts one real pin host, the way cmd/orker builds
@@ -1366,9 +1343,7 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		root := pinAffinityWorkRootParent(t)
 		var err error
 		workRoot, err = os.MkdirTemp(root, proof.WorkRootPattern("pin-affinity"))
-		if err != nil {
-			t.Fatalf("create a work root under %s: %v", root, err)
-		}
+		must.OKf(t, err, "create a work root under %s", root)
 		t.Cleanup(func() { _ = os.RemoveAll(workRoot) })
 	}
 
@@ -1452,9 +1427,7 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 	o.activities = activities
 
 	tuner, err := activities.WorkerTuner()
-	if err != nil {
-		t.Fatalf("orker %s tuner: %v", cfg.id, err)
-	}
+	must.OKf(t, err, "orker %s tuner", cfg.id)
 	o.worker = worker.New(orkerClient, cfg.queue, cfg.deployment.Apply(worker.Options{
 		DisableRegistrationAliasing: true,
 		DisableWorkflowWorker:       true,
@@ -1492,18 +1465,31 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
 
 	o.control, o.presence, err = orker.NewChannelWorkers(orkerClient, activities)
-	if err != nil {
-		t.Fatalf("orker %s channel workers: %v", cfg.id, err)
-	}
+	must.OKf(t, err, "orker %s channel workers", cfg.id)
 
-	if err := o.worker.Start(); err != nil {
-		t.Fatalf("start orker %s: %v", cfg.id, err)
+	must.OKf(t, o.worker.Start(), "start orker %s", cfg.id)
+	startChannels := func() error {
+		if err := o.control.Start(); err != nil {
+			return fmt.Errorf("control worker: %w", err)
+		}
+		if err := o.presence.Start(); err != nil {
+			return fmt.Errorf("presence worker: %w", err)
+		}
+		return nil
 	}
-	if err := o.control.Start(); err != nil {
-		t.Fatalf("start orker %s control worker: %v", cfg.id, err)
-	}
-	if err := o.presence.Start(); err != nil {
-		t.Fatalf("start orker %s presence worker: %v", cfg.id, err)
+	if cfg.channelsStart == nil {
+		must.OKf(t, startChannels(), "start orker %s channel workers", cfg.id)
+	} else {
+		go func() {
+			select {
+			case <-cfg.channelsStart:
+			case <-ctx.Done():
+				return
+			}
+			if err := startChannels(); err != nil {
+				t.Errorf("start orker %s channel workers: %v", cfg.id, err)
+			}
+		}()
 	}
 	t.Cleanup(o.stop)
 	// Whatever happens, this Orker's containers do not outlive the test.
@@ -1523,18 +1509,12 @@ func newPinOrker(t *testing.T, ctx context.Context, cfg pinOrkerConfig) *pinOrke
 func pinAffinityWorkRootParent(t *testing.T) string {
 	t.Helper()
 	if root := os.Getenv(orker.WorkRootVar); root != "" {
-		if err := os.MkdirAll(root, 0o755); err != nil {
-			t.Fatalf("create work root %s: %v", root, err)
-		}
+		must.OKf(t, os.MkdirAll(root, 0o755), "create work root %s", root)
 		return root
 	}
 	root, err := filepath.Abs(filepath.Join("..", "..", ".data", "work"))
-	if err != nil {
-		t.Fatalf("resolve work root: %v", err)
-	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatalf("create work root %s: %v", root, err)
-	}
+	must.OKf(t, err, "resolve work root")
+	must.OKf(t, os.MkdirAll(root, 0o755), "create work root %s", root)
 	return root
 }
 
@@ -1544,9 +1524,7 @@ func pinAffinityWorkRootParent(t *testing.T) string {
 func pinDirsFor(t *testing.T, workRoot, runID string) []string {
 	t.Helper()
 	matches, err := filepath.Glob(filepath.Join(workRoot, "ork-pin-"+runID+"-share-*"))
-	if err != nil {
-		t.Fatalf("glob pin directories under %s: %v", workRoot, err)
-	}
+	must.OKf(t, err, "glob pin directories under %s", workRoot)
 	names := make([]string, 0, len(matches))
 	for _, m := range matches {
 		names = append(names, filepath.Base(m))

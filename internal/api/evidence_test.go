@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/evidence"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var evidenceNow = time.Date(2026, 9, 22, 10, 51, 49, 0, time.UTC)
@@ -132,14 +134,10 @@ func newEvidenceFixture(t *testing.T, opts ...func(*evidenceOptions)) *evidenceF
 		opt(&o)
 	}
 	archive, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = archive.Close() })
 	local, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = local.Close() })
 	f := &evidenceFixture{
 		t:        t,
@@ -157,9 +155,7 @@ func newEvidenceFixture(t *testing.T, opts ...func(*evidenceOptions)) *evidenceF
 		Tasks: []*orkstackv1.Task{{Id: "t", Uses: "shell"}},
 	}
 	f.digest, err = dsl.DefinitionDigest(wf)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	wf.DefinitionDigest = f.digest
 	if _, _, err := f.orkflows.Put(context.Background(), wf, artifacts.NoHeadExpectation()); err != nil {
 		t.Fatal(err)
@@ -198,9 +194,7 @@ func withConfig(change func(*api.Config)) func(*evidenceOptions) {
 func (f *evidenceFixture) put(name string, content []byte) *orkstackv1.ArtifactRef {
 	f.t.Helper()
 	ref, err := f.local.Put(context.Background(), name, bytes.NewReader(content), artifacts.PutOptions{})
-	if err != nil {
-		f.t.Fatalf("Put(%s): %v", name, err)
-	}
+	must.OKf(f.t, err, "Put(%s)", name)
 	return &orkstackv1.ArtifactRef{Name: ref.Name, Uri: ref.URI, SizeBytes: ref.SizeBytes, Sha256: ref.SHA256, ContentType: ref.ContentType}
 }
 
@@ -213,9 +207,7 @@ func (f *evidenceFixture) commit(runID, taskID string, values *orkstackv1.Artifa
 		SchemaVersion: artifacts.CommitSchemaVersion, Namespace: "default", RunId: runID, TaskId: taskID,
 		OrkflowDefinitionDigest: f.digest, Values: values, Artifacts: outputs,
 	})
-	if err != nil {
-		f.t.Fatalf("commit Create: %v", err)
-	}
+	must.OKf(f.t, err, "commit Create")
 	return &orkstackv1.CommitRef{Uri: uri, Sha256: rec.SHA256, Etag: rec.ETag}
 }
 
@@ -274,9 +266,7 @@ func (f *evidenceFixture) succeeded(runID string) succeededRun {
 	s.stderr2 = f.put("stderr.log", []byte("attempt 2 warned "+runID+"\n"))
 	s.commit = f.commit(runID, "t", s.values, []*orkstackv1.ArtifactRef{s.report})
 	rec, err := f.commits.Get(context.Background(), s.commit.GetUri())
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, err)
 	s.commitRaw = rec.Raw
 	f.record(runID, "t", 1, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_FAILED, false, s.stdout1, s.stderr1)
 	f.record(runID, "t", 2, orkstackv1.AttemptOutcome_ATTEMPT_OUTCOME_SUCCEEDED, false, s.stdout2, s.stderr2)
@@ -286,9 +276,7 @@ func (f *evidenceFixture) succeeded(runID string) succeededRun {
 		SystemArtifacts: []*orkstackv1.ArtifactRef{s.stdout2, s.stderr2}, Commit: s.commit,
 	}}})
 	body, err := f.archiver.LoadRunBody(context.Background(), runID)
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, err)
 	s.runJSONL = body
 	return s
 }
@@ -339,9 +327,7 @@ func (f *evidenceFixture) collectEvidence(req *orkstackv1.ExportRunEvidenceReque
 	} else {
 		r.manifest, err = evidence.ReadManifest(bytes.NewReader(r.data))
 	}
-	if err != nil {
-		f.t.Fatalf("manifest: %v", err)
-	}
+	must.OKf(f.t, err, "manifest")
 	return r
 }
 
@@ -386,18 +372,14 @@ func hasMember(m *evidence.Manifest, path string) bool {
 func tarMembers(t *testing.T, bundle []byte) map[string][]byte {
 	t.Helper()
 	entries, err := evidenceEntries(bundle)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return entries
 }
 
 func verifyBundle(t *testing.T, bundle []byte) *evidence.Report {
 	t.Helper()
 	report, err := evidence.Verify(bytes.NewReader(bundle))
-	if err != nil {
-		t.Fatalf("Verify: %v", err)
-	}
+	must.OKf(t, err, "Verify")
 	if len(report.Failures) != 0 {
 		t.Fatalf("Verify failures: %+v", report.Failures)
 	}
@@ -485,9 +467,7 @@ func TestExportRunEvidence_ManifestOnlyReadsNoLargeObject(t *testing.T) {
 	}
 	t.Logf("H2 manifest_only: %d Get calls, %d Stat calls", gets-beforeGets, stats-beforeStats)
 	document, err := r.manifest.MarshalJSON()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !bytes.Equal(r.data, document) {
 		t.Fatal("the manifest_only stream is not exactly the MANIFEST.json document")
 	}
@@ -515,9 +495,7 @@ func TestExportRunEvidence_ReclaimedMembersKeepTheirRecordedDigest(t *testing.T)
 	s := f.succeeded("ork-ev-3")
 	ctx := context.Background()
 	for _, ref := range []*orkstackv1.ArtifactRef{s.report, s.stdout2} {
-		if err := f.local.Delete(ctx, ref.GetUri()); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, f.local.Delete(ctx, ref.GetUri()))
 	}
 	commits.gone[s.commit.GetUri()] = true
 
@@ -612,9 +590,7 @@ func TestExportRunEvidence_DefinitionDeletedAndMismatchAreDistinct(t *testing.T)
 	t.Run("deleted", func(t *testing.T) {
 		f := newEvidenceFixture(t)
 		f.succeeded("ork-ev-6a")
-		if err := f.orkflows.Delete(context.Background(), "default", "evidence"); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, f.orkflows.Delete(context.Background(), "default", "evidence"))
 		r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-6a"})
 		m := memberAt(t, r.manifest, "orkflow/source.yaml")
 		if m.State != evidence.StateReclaimed || m.Reason != evidence.ReasonDefinitionDeleted || m.SHA256 != "" || m.SizeBytes != 0 ||
@@ -678,9 +654,7 @@ func TestExportRunEvidence_MismatchedBytesAbortWithoutLast(t *testing.T) {
 			t.Fatal("no chunk left before the mismatch was found")
 		}
 		sent, err := evidence.ReadManifest(bytes.NewReader(r.data))
-		if err != nil {
-			t.Fatalf("the manifest chunk already sent does not read: %v", err)
-		}
+		must.OKf(t, err, "the manifest chunk already sent does not read")
 		if m := memberAt(t, sent, "tasks/t/artifacts/report.txt"); m.State != evidence.StatePresent {
 			t.Fatalf("the manifest already sent said %s", m.State)
 		}
@@ -690,9 +664,7 @@ func TestExportRunEvidence_MismatchedBytesAbortWithoutLast(t *testing.T) {
 		f := newEvidenceFixture(t)
 		s := f.succeeded("ork-ev-7c")
 		different, err := artifacts.MarshalCommit(&orkstackv1.ActivityCommit{SchemaVersion: 1, RunId: "tampered", TaskId: "t"})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		f.commits.PutRaw(s.commit.GetUri(), different)
 		r := f.collectEvidence(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-7c"})
 		if r.code() != connect.CodeDataLoss || len(r.chunks) != 0 {
@@ -797,9 +769,7 @@ func TestExportRunEvidence_ScopingAndRefusals(t *testing.T) {
 			f.succeeded("ork-ev-10")
 			f.succeeded("ork-ev-11")
 			other, err := f.archiver.LoadRunBody(context.Background(), "ork-ev-11")
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			swapped := api.NewService(api.Config{
 				Reader: f.reader, Runs: engine.NewRunStore(), Starter: &fakeStarter{}, Orkflows: f.orkflows,
 				Archive: swappedBody{RunArchiver: f.archiver, body: other}, ArtifactStore: f.store,

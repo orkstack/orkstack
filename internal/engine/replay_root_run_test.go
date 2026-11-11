@@ -8,6 +8,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestRootRun_ChangesNoCommand is why recording a chain's root takes no
@@ -31,9 +33,7 @@ func TestRootRun_ChangesNoCommand(t *testing.T) {
 	plan.RecordRootRun = true
 	plan.RootRunIndexed = true
 	encoded, err := converter.GetDefaultDataConverter().ToPayload(plan)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, event := range recorded.GetEvents() {
 		if attrs := event.GetWorkflowExecutionStartedEventAttributes(); attrs != nil {
 			attrs.GetInput().GetPayloads()[3] = encoded
@@ -41,7 +41,5 @@ func TestRootRun_ChangesNoCommand(t *testing.T) {
 	}
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
-	if err := replayer.ReplayWorkflowHistory(nil, recorded); err != nil {
-		t.Fatalf("recording the root moved a command, so it needs a gate (AGENTS.md §7.2): %v", err)
-	}
+	must.OKf(t, replayer.ReplayWorkflowHistory(nil, recorded), "recording the root moved a command, so it needs a gate (AGENTS.md §7.2)")
 }

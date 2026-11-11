@@ -49,7 +49,7 @@ export function shortRunId(id: string): string {
 
 /** A copyable command always states the namespace, including `default`. */
 export function runCommand(namespace: string, args: string[]): string {
-	return ['orkctl', '--namespace', shellQuote(namespace || 'default'), ...args.map(shellQuote)].join(' ');
+	return ['orkctl', '-n', shellQuote(namespace || 'default'), ...args.map(shellQuote)].join(' ');
 }
 
 /**
@@ -58,7 +58,56 @@ export function runCommand(namespace: string, args: string[]): string {
  * browser never runs it (docs/UI_CLI_PARITY.md, local-tool exception).
  */
 export function taskRunCommand(namespace: string, runId: string, taskId: string): string {
-	return runCommand(namespace, ['task', 'run', '--from-run', runId, '--task', taskId]);
+	return runCommand(namespace, ['task', 'run', '--from-run', runId, '-t', taskId]);
+}
+
+/** One command behind a terminal icon: what it does, and the line itself. */
+export interface TaskCommand {
+	label: string;
+	command: string;
+}
+
+/**
+ * The selected task's or item's commands, in the run page's one terminal icon
+ * (ui/DESIGN.md, the Shell Icon Rule): its log, the earlier attempt's log once
+ * it has retried, its attempts, and what it is doing. Every one names the
+ * namespace, and an item's carry `--item`, so each runs as copied.
+ */
+export function taskCommands(o: {
+	namespace: string;
+	runId: string;
+	taskId: string;
+	/** The fan-out item, when the selection is one. */
+	item?: number;
+	/** The attempt shown, 0 when none has started. */
+	attempt: number;
+	/** A container task that started: it has a log. */
+	canLog: boolean;
+	failed?: boolean;
+	running?: boolean;
+	/** How many attempt records it has, and whether its cache was not a hit. */
+	attempts: number;
+	cacheMiss?: boolean;
+	timed?: boolean;
+}): TaskCommand[] {
+	const at = ['-t', o.taskId, ...(o.item !== undefined ? ['--item', String(o.item)] : [])];
+	const cmd = (verb: string, ...rest: string[]) => runCommand(o.namespace, ['run', verb, o.runId, ...at, ...rest]);
+	const earlier = o.attempt > 1 ? [{ label: "The earlier attempt's log", command: cmd('logs', '--attempt', String(o.attempt - 1)) }] : [];
+	if (o.item !== undefined) {
+		return [
+			{ label: "This item's logs", command: cmd('logs') },
+			...earlier,
+			{ label: "This item's artifacts", command: cmd('artifacts') },
+			{ label: "This item's attempts", command: cmd('attempts') }
+		];
+	}
+	return [
+		...(o.canLog ? [{ label: 'Its log', command: cmd('logs', ...(o.attempt > 0 ? ['--attempt', String(o.attempt)] : [])) }, ...earlier] : []),
+		...(o.canLog && o.failed ? [{ label: 'Run it here, on your machine', command: taskRunCommand(o.namespace, o.runId, o.taskId) }] : []),
+		...(o.attempts > 0 || o.cacheMiss ? [{ label: 'Its attempts and cache key', command: cmd('attempts') }] : []),
+		...(o.running ? [{ label: 'What it is doing', command: cmd('inspect') }] : []),
+		...(o.timed ? [{ label: 'Where its time went', command: cmd('timing') }] : [])
+	];
 }
 
 /** Payloads are compact JSON values; absent means the API has no inline value. */
@@ -114,7 +163,11 @@ export function artifactContentTypeLabel(artifact: Pick<ArtifactRef, 'contentTyp
 
 export function formatDuration(start: { seconds: bigint; nanos: number } | undefined, end: { seconds: bigint; nanos: number } | undefined): string {
 	if (!start || !end) return '—';
-	const milliseconds = Number(end.seconds - start.seconds) * 1000 + Math.floor((end.nanos - start.nanos) / 1e6);
+	return formatMilliseconds(Number(end.seconds - start.seconds) * 1000 + Math.floor((end.nanos - start.nanos) / 1e6));
+}
+
+/** formatMilliseconds is formatDuration for a span already counted in whole milliseconds. */
+export function formatMilliseconds(milliseconds: number): string {
 	if (!Number.isFinite(milliseconds) || milliseconds < 0) return '—';
 	if (milliseconds < 1000) return `${milliseconds}ms`;
 	const seconds = milliseconds / 1000;

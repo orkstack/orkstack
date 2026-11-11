@@ -18,6 +18,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The workflow tests of join policies and failure handlers (docs/DSL.md
@@ -214,7 +216,7 @@ func failingRun(t *testing.T, runID, doc string) (*orkstackv1.Run, *harness) {
 	var suite testsuite.WorkflowTestSuite
 	smokeCanceled := make(chan struct{})
 	h := newHarnessCtx(t, &suite, joinFailBehavior(smokeCanceled))
-	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, runID, doc, nil)
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatalf("%s: workflow did not complete", runID)
 	}
@@ -268,16 +270,12 @@ func upstreamIDs(in *orkstackv1.ExecuteTaskInput) []string {
 func TestRunWorkflow_NoneFailedRejoinsAfterTheBranchThatRan(t *testing.T) {
 	for _, route := range []string{"canary", "full"} {
 		t.Run(route, func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				return succeeded(in.TaskId, map[string]any{"task": in.TaskId}), nil
 			})
 			runID := "run-rejoin-" + route
-			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, rejoinDocument),
-				payload(t, map[string]any{"route": route}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-			if err := h.env.GetWorkflowError(); err != nil {
-				t.Fatalf("workflow error: %v", err)
-			}
+			h.start(t, runID, rejoinDocument, map[string]any{"route": route})
+			must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 			run := runOf(t, h, runID)
 			other := map[string]string{"canary": "full", "full": "canary"}[route]
 			for id, want := range map[string]orkstackv1.Status{
@@ -318,13 +316,9 @@ func TestRunWorkflow_NoneFailedRejoinsAfterTheBranchThatRan(t *testing.T) {
 }
 
 func TestRunWorkflow_NoneFailedIsSkippedWhenEveryNeedWasSkipped(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, okTask)
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-rejoin-none", compile(t, rejoinDocument),
-		payload(t, map[string]any{"route": "none"}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	h := newHarness(t, nil, okTask)
+	h.start(t, "run-rejoin-none", rejoinDocument, map[string]any{"route": "none"})
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	run := runOf(t, h, "run-rejoin-none")
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run = %v", run.GetStatus())
@@ -355,13 +349,9 @@ tasks:
 `
 
 func TestRunWorkflow_AnyFailedIsSkippedInARunThatDoesNotFail(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, okTask)
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-any-failed-skipped", compile(t, anyFailedSkippedDocument),
-		payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	h := newHarness(t, nil, okTask)
+	h.start(t, "run-any-failed-skipped", anyFailedSkippedDocument, nil)
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	run := runOf(t, h, "run-any-failed-skipped")
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || statusOf(run, "rollback") != orkstackv1.Status_STATUS_SKIPPED {
 		t.Fatalf("run = %v, rollback = %v", run.GetStatus(), statusOf(run, "rollback"))
@@ -526,8 +516,7 @@ func TestRunWorkflow_AllDoneHandlerRunningWhenAnotherTaskFailsIsNotCanceled(t *t
 			return succeeded(in.TaskId, map[string]any{}), nil
 		}
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-all-done-running", compile(t, allDoneRunningDocument),
-		payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-all-done-running", allDoneRunningDocument, nil)
 	run := runOf(t, h, "run-all-done-running")
 	if watcherCanceled {
 		t.Fatal("the all_done handler was cancelled by fail-fast")
@@ -561,8 +550,7 @@ tasks:
 `
 
 func TestRunWorkflow_AFailingHandlerStopsNothingAndLeavesTheRunError(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		switch in.TaskId {
 		case "deploy":
 			return nil, temporal.NewNonRetryableApplicationError("deploy exploded", task.CategoryActivityFailed, nil)
@@ -572,7 +560,7 @@ func TestRunWorkflow_AFailingHandlerStopsNothingAndLeavesTheRunError(t *testing.
 			return okTask(in)
 		}
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-two-handlers", compile(t, twoHandlersDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-two-handlers", twoHandlersDocument, nil)
 	run := runOf(t, h, "run-two-handlers")
 	if statusOf(run, "page") != orkstackv1.Status_STATUS_FAILED || statusOf(run, "rollback") != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("page = %v, rollback = %v", statusOf(run, "page"), statusOf(run, "rollback"))
@@ -606,15 +594,14 @@ tasks:
 func TestRunWorkflow_AnyFailedOnAHandlerEscalates(t *testing.T) {
 	for _, rollbackFails := range []bool{true, false} {
 		t.Run(fmt.Sprintf("rollback fails %v", rollbackFails), func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				if in.TaskId == "deploy" || (in.TaskId == "rollback" && rollbackFails) {
 					return nil, temporal.NewNonRetryableApplicationError(in.TaskId+" exploded", task.CategoryActivityFailed, nil)
 				}
 				return okTask(in)
 			})
 			runID := fmt.Sprintf("run-escalate-%v", rollbackFails)
-			h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, escalateDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+			h.start(t, runID, escalateDocument, nil)
 			run := runOf(t, h, runID)
 			if rollbackFails {
 				if statusOf(run, "escalate") != orkstackv1.Status_STATUS_SUCCEEDED {
@@ -702,7 +689,7 @@ func TestRunWorkflow_OperatorCancelStartsNoHandlerAndStopsRunningOnes(t *testing
 			return okTask(in)
 		}
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-operator-cancel", compile(t, operatorCancelDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-operator-cancel", operatorCancelDocument, nil)
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -767,7 +754,7 @@ func TestRunWorkflow_OperatorCancelDuringFailureHandlersKeepsTheRunFailed(t *tes
 			return okTask(in)
 		}
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-handler-cancel", compile(t, handlerCancelDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-handler-cancel", handlerCancelDocument, nil)
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -813,7 +800,7 @@ func TestRunWorkflow_SnapshotsAreRunningWithTheErrorWhileHandlersRun(t *testing.
 		mu.Unlock()
 		return nil
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-failing-shape", compile(t, escalateDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-failing-shape", escalateDocument, nil)
 	mu.Lock()
 	defer mu.Unlock()
 	failingSeen := false
@@ -839,14 +826,13 @@ func TestRunWorkflow_SnapshotsAreRunningWithTheErrorWhileHandlersRun(t *testing.
 }
 
 func TestRunWorkflow_EmitsOneFailingNoteNamingTheOutstandingHandlers(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.TaskId == "deploy" {
 			return nil, temporal.NewNonRetryableApplicationError("deploy exploded", task.CategoryActivityFailed, nil)
 		}
 		return okTask(in)
 	})
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-failing-note", compile(t, escalateDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-failing-note", escalateDocument, nil)
 	var notes []*orkstackv1.Event
 	for _, e := range eventsOf(h, "run-failing-note") {
 		if e.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_LOG && e.GetTaskId() == "" {
@@ -925,8 +911,7 @@ tasks:
 `
 
 func TestRunWorkflow_AConditionThatCannotBeEvaluatedFailsItsTask(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, okTask)
+	h := newHarness(t, nil, okTask)
 	doc := brokenConditionDocument + `
   - id: rollback
     uses: shell
@@ -934,8 +919,7 @@ func TestRunWorkflow_AConditionThatCannotBeEvaluatedFailsItsTask(t *testing.T) {
     join: any_failed
     with: {op: exec}
 `
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-condition-failed", compile(t, doc),
-		payload(t, map[string]any{"a": "x", "b": 1}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-condition-failed", doc, map[string]any{"a": "x", "b": 1})
 	run := runOf(t, h, "run-condition-failed")
 	broken := taskRunOf(t, run, "broken")
 	if broken.GetStatus() != orkstackv1.Status_STATUS_FAILED || broken.GetError().GetCode() != "CONDITION_FAILED" ||
@@ -966,10 +950,8 @@ func TestRunWorkflow_AConditionThatCannotBeEvaluatedFailsItsTask(t *testing.T) {
 
 func TestRunWorkflow_ConditionErrorWithoutAHandlerKeepsTodaysRecord(t *testing.T) {
 	record := func(doc, runID string) (*orkstackv1.Run, *harness) {
-		var suite testsuite.WorkflowTestSuite
-		h := newHarness(t, &suite, okTask)
-		h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc),
-			payload(t, map[string]any{"a": "x", "b": 1}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+		h := newHarness(t, nil, okTask)
+		h.start(t, runID, doc, map[string]any{"a": "x", "b": 1})
 		return runOf(t, h, runID), h
 	}
 	// A none_failed join is present: the gate is failure handlers, not joins.
@@ -1029,8 +1011,7 @@ func proto3Equal(a, b *orkstackv1.Error) bool {
 var bigWith = strings.Repeat("x", 6000)
 
 func TestRunWorkflow_RefusedDispatchOfTheCauseIsRecordedFailed(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, okTask)
+	h := newHarness(t, nil, okTask)
 	plan := defaultPlan()
 	plan.Limits = engine.WorkspaceLimits{ValuesMaxBytes: 4096}
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-refused-cause", compile(t, `
@@ -1251,7 +1232,7 @@ func TestRunWorkflow_ACancelDuringTheDrainStartsNoHandlerAndEndsFailed(t *testin
 		}
 		return nil
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-drain", compile(t, joinFailDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-cancel-drain", joinFailDocument, nil)
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("workflow did not complete")
 	}
@@ -1291,8 +1272,7 @@ func TestRunWorkflow_ACancelDuringTheDrainStartsNoHandlerAndEndsFailed(t *testin
 }
 
 func TestRunWorkflow_ACancelThatLandsMidDispatchRecordsTheHandlerCanceled(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.TaskId == "deploy" {
 			return nil, temporal.NewNonRetryableApplicationError("deploy exploded", task.CategoryActivityFailed, nil)
 		}
@@ -1307,7 +1287,7 @@ func TestRunWorkflow_ACancelThatLandsMidDispatchRecordsTheHandlerCanceled(t *tes
 		}
 		return nil
 	}
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-cancel-dispatch", compile(t, anyFailedSkippedDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-cancel-dispatch", anyFailedSkippedDocument, nil)
 	run := runOf(t, h, "run-cancel-dispatch")
 	rollback := taskRunOf(t, run, "rollback")
 	if rollback.GetStatus() != orkstackv1.Status_STATUS_CANCELED || rollback.GetScheduledAt() != nil {
@@ -1327,9 +1307,7 @@ func childPlanFor(t *testing.T, plan *engine.RunPlan, id string, child *orkstack
 	child.DefinitionDigest = childDigest
 	childPlan := defaultPlan()
 	cp, err := engine.NewChildRunPlan(child, childPlan, true, true)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cp.RunID = "ork-1758790021000000000-" + id
 	if plan.Children == nil {
 		plan.Children = map[string]*engine.ChildRunPlan{}
@@ -1425,15 +1403,14 @@ tasks:
 `
 
 func TestRunWorkflow_AwaitedHandlerOpensInAFailingRunAndResolves(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.TaskId == "deploy" {
 			return nil, temporal.NewNonRetryableApplicationError("deploy exploded", task.CategoryActivityFailed, nil)
 		}
 		return okTask(in)
 	})
 	h.signalAt(time.Minute, completion("approve", `{"ok":true}`, "alice"))
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-awaited-handler", compile(t, awaitedHandlerDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "run-awaited-handler", awaitedHandlerDocument, nil)
 	run := runOf(t, h, "run-awaited-handler")
 	approve := taskRunOf(t, run, "approve")
 	if approve.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || approve.GetAwait().GetResolvedBy() != "alice" {
@@ -1457,8 +1434,7 @@ func TestRunWorkflow_AwaitedHandlerOpensInAFailingRunAndResolves(t *testing.T) {
 }
 
 func TestRunWorkflow_RejectedAwaitStartsItsAnyFailedHandler(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, okTask)
+	h := newHarness(t, nil, okTask)
 	reject := completion("gate", "", "bob")
 	reject.Values, reject.ValuesJson, reject.Reject, reject.Reason = nil, nil, true, "not today"
 	h.signalAt(time.Minute, reject)
@@ -1493,8 +1469,7 @@ tasks:
 }
 
 func TestRunWorkflow_AnItemFailureStartsTheFanOutsHandler(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetEach() != nil && in.GetEach().GetIndex() == 1 {
 			return nil, temporal.NewNonRetryableApplicationError("item exploded", task.CategoryActivityFailed, nil,
 				&orkstackv1.ActivityFailureDetail{ReasonCode: "CONTAINER_EXIT_NONZERO",
@@ -1567,8 +1542,7 @@ func TestRunWorkflow_ALostPinMemberStartsAnUnpinnedHandler(t *testing.T) {
 }
 
 func TestRunWorkflow_NoneFailedFanOutWhoseSourceWasSkippedFailsEachOverMissing(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, okTask)
+	h := newHarness(t, nil, okTask)
 	plan := defaultPlan()
 	plan.CommitRoot = "mem://commits"
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-each-over-missing", compile(t, `
@@ -1602,8 +1576,7 @@ tasks:
 }
 
 func TestRunWorkflow_HandlerEdgesDoNotRemoveLeavesFromTheRunOutput(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"by": in.TaskId}), nil
 	})
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-handler-end-tasks", compile(t, `
@@ -1649,10 +1622,9 @@ func TestRunWorkflow_EveryTaskIsTerminalWhenAFailingRunEnds(t *testing.T) {
 	}
 	for i, doc := range []string{joinFailWithoutHandlersDocument, twoHandlersDocument, escalateDocument,
 		handlerCancelDocument, anyFailedSkippedDocument, awaitedHandlerDocument} {
-		var suite testsuite.WorkflowTestSuite
-		h := newHarness(t, &suite, failDeploy)
+		h := newHarness(t, nil, failDeploy)
 		runID := fmt.Sprintf("run-terminal-%d", i)
-		h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+		h.start(t, runID, doc, nil)
 		run := runOf(t, h, runID)
 		for _, tr := range run.GetTaskRuns() {
 			switch tr.GetStatus() {
@@ -1685,8 +1657,7 @@ func TestRunWorkflow_ADefinitionWithoutJoinSendsTheInputsItAlwaysSent(t *testing
 		kept = append(kept, tk)
 	}
 	wf.Tasks = kept
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"value": "canary"}), nil
 	})
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-join", wf, payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
@@ -1749,8 +1720,7 @@ func TestRunWorkflow_AHandlersRefusedOrHalfDoneDispatchIsRecorded(t *testing.T) 
 	}
 	containerRun := func(t *testing.T, runID string, with string, limit int64,
 		hook func(*harness) func(*orkstackv1.Run, int64) error) outcome {
-		var suite testsuite.WorkflowTestSuite
-		h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			if in.TaskId == "deploy" {
 				return nil, temporal.NewNonRetryableApplicationError("deploy exploded", task.CategoryActivityFailed, nil)
 			}

@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -23,7 +23,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // historyLimitHistory is the history guard's fixture: a run that stopped
@@ -54,9 +57,7 @@ func TestRunWorkflow_ReplaysCommittedHistoryLimitHistory(t *testing.T) {
 	requireHistoryLimitFixture(t)
 	replayer := worker.NewWorkflowReplayer()
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
-	if err := replayer.ReplayWorkflowHistoryFromJSONFile(nil, historyLimitHistory); err != nil {
-		t.Fatalf("replaying the committed history-limit history against current code failed: %v", err)
-	}
+	must.OKf(t, replayer.ReplayWorkflowHistoryFromJSONFile(nil, historyLimitHistory), "replaying the committed history-limit history against current code failed")
 }
 
 // guardMarkerEventID is the event id of the recorded run-history-guard
@@ -92,9 +93,7 @@ var historyLimitSentence = regexp.MustCompile(`^run (\S+) stopped before reachin
 func parseGrouped(t *testing.T, s string) int64 {
 	t.Helper()
 	n, err := strconv.ParseInt(strings.ReplaceAll(s, ",", ""), 10, 64)
-	if err != nil {
-		t.Fatalf("parse %q: %v", s, err)
-	}
+	must.OKf(t, err, "parse %q", s)
 	return n
 }
 
@@ -233,8 +232,10 @@ func TestHistoryLimitHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 // in_flight, definition, snapshot_overlay, pin_creation_timeout_seconds,
 // fairness or retry_max_interval_seconds — in its start or in any child start
 // it recorded, so none of them can enter a new path. And no committed fixture
-// at all carries a field the fairness-pin-creation or retry-max-interval path
-// reads — fairness.pin_requests, retry_max_interval_seconds — but the ones
+// at all carries a field the fairness-pin-creation, retry-max-interval or
+// task-publish-window path reads — fairness.pin_requests,
+// retry_max_interval_seconds, in_flight.publish_window and
+// in_flight.publish_events — but the ones
 // recorded for that path, which do, so a post-guard fixture recorded before
 // those gates cannot enter them either.
 func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
@@ -263,7 +264,7 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 			if len(payloads.GetPayloads()) < 4 {
 				continue
 			}
-			var plan map[string]json.RawMessage
+			var plan map[string]stablejson.RawJSON
 			if err := json.Unmarshal(payloads.GetPayloads()[3].GetData(), &plan); err != nil {
 				t.Fatalf("%s: decode a recorded plan: %v", path, err)
 			}
@@ -283,6 +284,8 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"fairness.pin_requests": {"run-fairness-pin-creation-v1.json", "run-fairness-pin-creation-legacy-v1.json"},
 		"retry_max_interval_seconds": {"run-retry-max-interval-v1.json", "run-retry-max-interval-legacy-v1.json",
 			"run-retry-long-initial-v1.json", "run-retry-long-initial-legacy-v1.json"},
+		"in_flight.publish_window": {"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
+		"in_flight.publish_events": {"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
 	}
 	paths, err := filepath.Glob("testdata/history/*.json")
 	if err != nil || len(paths) == 0 {
@@ -303,6 +306,10 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 					PinRequests *bool `json:"pin_requests"`
 				} `json:"fairness"`
 				RetryMaxIntervalSeconds *int32 `json:"retry_max_interval_seconds"`
+				InFlight                *struct {
+					PublishWindow *int32 `json:"publish_window"`
+					PublishEvents *int64 `json:"publish_events"`
+				} `json:"in_flight"`
 			}
 			if err := json.Unmarshal(payloads.GetPayloads()[3].GetData(), &plan); err != nil {
 				t.Fatalf("%s: decode a recorded plan: %v", path, err)
@@ -312,6 +319,12 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 			}
 			if plan.RetryMaxIntervalSeconds != nil {
 				carried["retry_max_interval_seconds"] = true
+			}
+			if plan.InFlight != nil && plan.InFlight.PublishWindow != nil {
+				carried["in_flight.publish_window"] = true
+			}
+			if plan.InFlight != nil && plan.InFlight.PublishEvents != nil {
+				carried["in_flight.publish_events"] = true
 			}
 		}
 		for field, fixtures := range recordedFor {

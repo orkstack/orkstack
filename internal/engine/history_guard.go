@@ -193,7 +193,7 @@ func (s *runState) chargeItemDispatch() {
 // chargeDetachedPublish is publishItemDetached's charge.
 func (s *runState) chargeDetachedPublish() {
 	if limit := s.historyLimit(); limit != nil {
-		s.chargeReserve(limit.Reserve.PerInFlight, 0)
+		s.chargeReserve(s.publishReserve(limit.Reserve), 0)
 	}
 }
 
@@ -233,7 +233,8 @@ func (s *runState) valuesBound() int64 {
 // handler start.
 func handlerStartBytesOf(t *orkstackv1.Task, r HistoryReserve) int64 {
 	switch {
-	case t.GetAwait() != nil:
+	// A sleeping handler's start is an await's: one timer and one event.
+	case t.GetAwait() != nil, t.GetSleep() != nil:
 		return r.AwaitHandlerStartBytes
 	case t.GetOrkflow() != nil:
 		return r.ChildStartBytes
@@ -267,7 +268,7 @@ func (s *runState) countHandlers() {
 // one completion result per in-flight entry and the start of every pending
 // handler. O(T): counted at most once per pass (reserveNow).
 func (s *runState) failReserve(inFlight map[string]workflow.Future, r HistoryReserve) (events, bytes int64) {
-	events = r.Fixed + r.PerInFlight*int64(len(inFlight)+len(s.pendingItemPublishes))
+	events = r.Fixed + r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes))
 	bytes = r.PerInFlightBytes * int64(len(inFlight))
 	for _, id := range s.order {
 		status := s.taskRuns[id].GetStatus()
@@ -276,6 +277,10 @@ func (s *runState) failReserve(inFlight map[string]workflow.Future, r HistoryRes
 			events += r.PerPending
 		}
 		if a := s.awaits[id]; a != nil && a.open {
+			events += r.PerAwait
+		}
+		// An open sleep's wake or cancel, which an await's resolution bounds.
+		if sl := s.sleeps[id]; sl != nil && sl.open {
 			events += r.PerAwait
 		}
 		if e := s.eaches[id]; e != nil && e.expanded && e.count > 0 &&
@@ -323,9 +328,9 @@ func (s *runState) reserveNow(inFlight map[string]workflow.Future) (events, byte
 // large run; it only spares small and young runs the per-pass count.
 func (s *runState) quickReserve(inFlight map[string]workflow.Future, r HistoryReserve) (events, bytes int64) {
 	events = r.Fixed +
-		r.PerInFlight*int64(len(inFlight)+len(s.pendingItemPublishes)) +
+		r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes)) +
 		r.PerPending*int64(len(s.order)) +
-		r.PerAwait*int64(len(s.awaits)) +
+		r.PerAwait*int64(len(s.awaits)+len(s.sleeps)) +
 		r.PerHandler*s.handlerCount +
 		r.PerOpenPin*int64(len(s.pins)) +
 		r.PerFanOut*int64(len(s.eaches))
@@ -451,7 +456,7 @@ type HistoryCrossingDetail struct {
 	DetachedPublishes int64 `json:"detached_publishes"`
 	// NextCommandBytes is the dispatch's own command the lookahead counted
 	// when it, and not the history as it stood, crossed the line.
-	NextCommandBytes int64 `json:"next_command_bytes,omitempty"`
+	NextCommandBytes int64 `json:"next_command_bytes,omitzero"`
 }
 
 // guardAdopted asks the guard's version once a line is crossed. A history
@@ -515,7 +520,7 @@ func (s *runState) cancelHandlersAtHistoryLimit(ctx workflow.Context) {
 // the run error's details and the message's last sentence. O(T), once, at
 // the failure.
 func (s *runState) historyBlockers(inFlight map[string]workflow.Future) string {
-	var running, pins, awaiting []string
+	var running, pins, awaiting, sleeping []string
 	for _, id := range s.order {
 		if _, ok := inFlight[id]; ok {
 			running = append(running, id)
@@ -530,6 +535,9 @@ func (s *runState) historyBlockers(inFlight map[string]workflow.Future) string {
 		if a := s.awaits[id]; a != nil && a.open {
 			awaiting = append(awaiting, id)
 		}
+		if sl := s.sleeps[id]; sl != nil && sl.open {
+			sleeping = append(sleeping, id)
+		}
 	}
 	for _, name := range s.pinOrder {
 		if p := s.pins[name]; p.opened && (p.closed == nil || !p.closed.IsReady()) {
@@ -540,7 +548,7 @@ func (s *runState) historyBlockers(inFlight map[string]workflow.Future) string {
 	for _, list := range []struct {
 		label string
 		ids   []string
-	}{{"still running", running}, {"pins open", pins}, {"awaiting", awaiting}} {
+	}{{"still running", running}, {"pins open", pins}, {"awaiting", awaiting}, {"sleeping", sleeping}} {
 		if len(list.ids) > 0 {
 			parts = append(parts, list.label+": "+boundedList(list.ids))
 		}

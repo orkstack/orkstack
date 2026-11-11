@@ -288,7 +288,7 @@ test('4: Validate anchors both refusals to tasks[0].uses; a signed catalog image
 	// meet the tag sentence first, and a real, resolvable reference outside
 	// `localhost:5001/orkstack/` needs no public-registry round trip.
 	const { outside, outsideRepo } = await outsideImage();
-	await page.goto(`${UI_ORIGIN}/apply?ns=${PROD}`);
+	await page.goto(`${UI_ORIGIN}/orkflows/+new?ns=${PROD}`);
 	await fillYaml(page, 'apply-yaml', document('deploy', outside));
 	await page.getByTestId('apply-validate').click();
 	const issues = page.getByTestId('apply-validation-issues');

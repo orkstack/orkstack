@@ -4,7 +4,7 @@ package main
 
 import (
 	"bufio"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -206,7 +206,7 @@ func watchThroughReplicaExit(t *testing.T, sig syscall.Signal) {
 	if err := os.WriteFile(path, []byte(replicaExitOrkflowYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c.must(0, "apply", path)
+	c.must(0, "orkflow", "create", path)
 	var submitted submitJSON
 	if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "replica-exit", "--json")), &submitted); err != nil {
 		t.Fatalf("decode submit: %v", err)
@@ -293,7 +293,7 @@ func TestIntegration_AStoppingReplicaAnswersUnavailable(t *testing.T) {
 	if err := os.WriteFile(path, []byte(replicaExitOrkflowYAML), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c.must(0, "apply", path)
+	c.must(0, "orkflow", "create", path)
 	submit := func() string {
 		var submitted submitJSON
 		if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "replica-exit", "--json")), &submitted); err != nil {
@@ -386,7 +386,7 @@ func submitTalking(t *testing.T, c *awaitCLI, doc, doomed string) (string, *repl
 	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c.must(0, "apply", path)
+	c.must(0, "orkflow", "create", path)
 	var submitted submitJSON
 	if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "talking", "--json")), &submitted); err != nil {
 		t.Fatalf("decode submit: %v", err)

@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,7 +19,9 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -311,7 +313,7 @@ var auditedProcedures = map[string]auditExtractor{
 		// secret, and none could reach this detail.
 		names := make([]string, 0, len(in.GetEvents()))
 		for _, event := range in.GetEvents() {
-			names = append(names, strings.TrimPrefix(event.String(), "EVENT_TYPE_"))
+			names = append(names, enumname.Of(event))
 		}
 		events := "all"
 		if len(names) > 0 {
@@ -350,7 +352,7 @@ var auditedProcedures = map[string]auditExtractor{
 			// Coordinates and outcome only: never the signature, never a
 			// secret, never the body.
 			entry.Detail = fmt.Sprintf("webhook=%s run=%s event=%s -> %s delivered=%t status=%d",
-				d.GetWebhookId(), d.GetRunId(), strings.TrimPrefix(d.GetEvent().String(), "EVENT_TYPE_"),
+				d.GetWebhookId(), d.GetRunId(), enumname.Of(d.GetEvent()),
 				d.GetId(), d.GetDelivered(), status)
 		}
 		return entry
@@ -809,7 +811,7 @@ type auditCursor struct {
 const auditCursorVersion = "v2:"
 
 func encodeAuditCursor(c auditCursor) (string, error) {
-	raw, err := json.Marshal(c)
+	raw, err := stablejson.Marshal(c)
 	if err != nil {
 		return "", err
 	}

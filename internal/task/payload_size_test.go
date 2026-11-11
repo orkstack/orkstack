@@ -2,7 +2,6 @@ package task
 
 import (
 	"bytes"
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -12,6 +11,9 @@ import (
 	"go.temporal.io/sdk/converter"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // legacyInputSize is the measure CheckInputSize took before PayloadSize was
@@ -23,7 +25,7 @@ func legacyInputSize(in *orkstackv1.ExecuteTaskInput) (int64, error) {
 	}
 	raw := payload.GetData()
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
+	if err := stablejson.Compact(&compact, raw); err != nil {
 		return int64(len(raw)), nil //nolint:nilerr // the raw length is the answer
 	}
 	return int64(compact.Len() + whitespaceSites(compact.Bytes())), nil
@@ -41,30 +43,20 @@ func TestPayloadSize_IsWhatCheckInputSizeMeasured(t *testing.T) {
 	compared := 0
 	for _, path := range paths {
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		history := &historypb.History{}
-		if err := (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, history); err != nil {
-			t.Fatalf("decode %s: %v", path, err)
-		}
+		must.OKf(t, (temporalproto.CustomJSONUnmarshalOptions{DiscardUnknown: true}).Unmarshal(raw, history), "decode %s", path)
 		for _, event := range history.GetEvents() {
 			attrs := event.GetActivityTaskScheduledEventAttributes()
 			if attrs == nil || attrs.GetActivityType().GetName() != ActivityExecuteTask {
 				continue
 			}
 			var in *orkstackv1.ExecuteTaskInput
-			if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in); err != nil {
-				t.Fatalf("%s: decode an ExecuteTask input: %v", path, err)
-			}
+			must.OKf(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in), "%s: decode an ExecuteTask input", path)
 			got, err := PayloadSize(in)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			want, err := legacyInputSize(in)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got != want {
 				t.Errorf("%s/%s: PayloadSize = %d, the measure before = %d", filepath.Base(path), in.GetTaskId(), got, want)
 			}

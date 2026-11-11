@@ -41,7 +41,7 @@ the contract these components obey; this page is the map.
 Parses `*.ork.yaml`, validates names, the dependency DAG and every task
 feature (pins, `each:`, `await:`, `cache:`, `join:`, composition and
 `outputs:`), resolves each `uses:` catalog name or registry reference to an
-immutable image digest at apply time, and compiles one versioned
+immutable image digest when the Orkflow is created, and compiles one versioned
 `orkstack.v1.Orkflow` with a canonical form and SHA-256 definition digest.
 Malformed DAGs are refused here, never discovered at runtime. Tasks select a
 user-facing `pool`; Temporal task-queue translation stays internal
@@ -165,7 +165,7 @@ The first-party `activity-http`, `activity-shell`, `activity-file`,
 `activity-json`, `activity-git` and `activity-template` images are reference
 implementations of this same public contract, not privileged plugins. An image
 may declare its `with:` interface in the `org.orkstack.activity.interface`
-label, which validate and apply then check, and an icon and descriptions in
+label, which validate and create then check, and an icon and descriptions in
 the `org.orkstack.activity.icon` and `org.orkstack.activity.docs` labels,
 which the API returns for clients to show; its author writes all three as
 one `interface.ork.yaml` (`kind: ActivityInterface`) that `orkctl` packs into
@@ -195,9 +195,9 @@ automation; the UI is a static SvelteKit app that `ork` embeds and serves at
 `/` on its API port, so it calls the generated Connect clients and opens its
 sockets on its own origin, with no server of its own and no proxy. Both
 perform the same operations with the same selectors and errors
-([docs/UI_CLI_PARITY.md](docs/UI_CLI_PARITY.md)). `orkctl apply` also applies
-automation documents by planning against `AutomationService` and sending each
-planned write to its ordinary RPC.
+([docs/UI_CLI_PARITY.md](docs/UI_CLI_PARITY.md)). `orkctl orkflow create` creates
+Orkflows. `orkctl automation apply` applies automation documents by planning
+against `AutomationService` and sending each planned write to its ordinary RPC.
 
 ### Telemetry (`internal/telemetry`)
 
@@ -218,7 +218,7 @@ metrics stay on the default sink. See [docs/DEPLOY.md](docs/DEPLOY.md),
 
 ## Data flow of a run
 
-1. `orkctl apply` compiles an Orkflow, resolves image references to digests,
+1. `orkctl orkflow create` compiles an Orkflow, resolves image references to digests,
    resolves composed references, and stores an immutable version addressed by
    its definition digest.
 2. A starter calls submit; preparation decides routing and policy and starts

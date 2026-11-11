@@ -4,11 +4,14 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
-	"encoding/json"
 	"sort"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds builds bundles whose
@@ -92,9 +95,7 @@ func FuzzVerify_AVerifiedMemberIsExactlyWhatTheBundleHolds(f *testing.F) {
 		}
 		manifest := &Manifest{SchemaVersion: SchemaVersion, RunID: "ork-1", Members: members, Counts: CountMembers(members)}
 		document, err := manifest.MarshalJSON()
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		var bundle bytes.Buffer
 		gz := gzip.NewWriter(&bundle)
 		tw := tar.NewWriter(gz)
@@ -245,11 +246,9 @@ func FuzzParseManifest(f *testing.F) {
 			return // a value the writer refuses (a time out of range)
 		}
 		again, err := ParseManifest(written)
-		if err != nil {
-			t.Fatalf("ParseManifest(%q) wrote %s, which does not read back: %v", document, written, err)
-		}
-		a, _ := json.Marshal(manifest)
-		b, _ := json.Marshal(again)
+		must.OKf(t, err, "ParseManifest(%q) wrote %s, which does not read back", document, written)
+		a, _ := stablejson.Marshal(manifest)
+		b, _ := stablejson.Marshal(again)
 		if !bytes.Equal(a, b) {
 			t.Fatalf("ParseManifest(%q) differs after a round trip:\n%s\n%s", document, a, b)
 		}

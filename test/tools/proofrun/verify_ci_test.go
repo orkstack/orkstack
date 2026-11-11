@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ciCandidateRepo is a repository whose main carries a non-empty nightly
@@ -28,12 +30,8 @@ func ciCandidateRepo(t *testing.T) (dir, mainTip, mainTree, headTree string) {
 	}
 	write := func(name, text string) {
 		t.Helper()
-		if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Dir(filepath.Join(dir, name)), 0o755))
+		must.OK(t, os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644))
 	}
 	git("init", "-q", "-b", "main")
 	write("scripts/proof-nightly-tests.txt", mainNightlyList)

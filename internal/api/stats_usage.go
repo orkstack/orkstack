@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // GetUsage reports how much of the fleet one namespace RESERVED over one
@@ -64,7 +64,7 @@ func resolveUsageGroupBy(requested []orkstackv1.FailureGroupBy) ([]orkstackv1.Fa
 	seen := map[orkstackv1.FailureGroupBy]bool{}
 	out := make([]orkstackv1.FailureGroupBy, 0, len(requested)+1)
 	for _, dim := range requested {
-		name := strings.TrimPrefix(dim.String(), "FAILURE_GROUP_BY_")
+		name := enumname.Of(dim)
 		switch dim {
 		case orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_ORKFLOW,
 			orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK,

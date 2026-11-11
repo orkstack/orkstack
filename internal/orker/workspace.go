@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +19,9 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -313,6 +316,45 @@ func removeSealedTree(root string) error {
 	return os.RemoveAll(root)
 }
 
+// removalRefusal says which directory refused a removal when os.RemoveAll was
+// refused permission, and "" for any other error. Unlinking needs write on
+// the DIRECTORY, so for a refused unlink the path the error names is not what
+// refused it; its directory is. For a refused open or read of a directory (one
+// its owner made 0000 or 0300), the directory the error names is itself what
+// refused it. Either is described from its Lstat, never through a link,
+// because a workload may have made it.
+func removalRefusal(err error) string {
+	var pathErr *fs.PathError
+	if !errors.Is(err, fs.ErrPermission) || !errors.As(err, &pathErr) {
+		return ""
+	}
+	dir := filepath.Dir(pathErr.Path)
+	if pathErr.Op != "unlinkat" && pathErr.Op != "remove" {
+		if self, statErr := os.Lstat(pathErr.Path); statErr == nil && self.IsDir() {
+			dir = pathErr.Path
+		}
+	}
+	info, statErr := os.Lstat(dir)
+	if statErr != nil {
+		return ""
+	}
+	return describeRemovalRefusal(dir, info, os.Geteuid())
+}
+
+// describeRemovalRefusal renders "<dir> (mode=755 owner=65532:65532) refused
+// it". When a user other than the Orker owns dir, it also says why nothing the
+// Orker does will remove it, and what will: removeSealedTree opens up only
+// directories the Orker owns, because chmod needs ownership too.
+func describeRemovalRefusal(dir string, info os.FileInfo, orkerUID int) string {
+	text := fmt.Sprintf("%s (mode=%o%s) refused it", dir, info.Mode().Perm(), ownerOf(info))
+	if uid, ok := ownerUID(info); ok && orkerUID >= 0 && int64(uid) != int64(orkerUID) {
+		text += fmt.Sprintf(": it is owned by uid %d, not the Orker's uid %d, so the Orker can neither write nor chmod it."+
+			" A workload running as that user made it; its image must remove its own scratch, or make the directories"+
+			" it creates writable by others (docs/OCI_ACTIVITY_CONTRACT.md §10.1, rule 11)", uid, orkerUID)
+	}
+	return text
+}
+
 // RemoveSecrets deletes the per-attempt secrets directory. It is called on
 // EVERY exit path — success, failure, panic and cancellation — because secret
 // bytes must not outlive the attempt that needed them (§9.4). A process that is
@@ -489,12 +531,12 @@ func writePinLease(pin *PinWorkspace, runID, pinName string, pinTimeoutSeconds i
 		pinTimeoutSeconds = 0
 	}
 	expires := now.Add(time.Duration(pinTimeoutSeconds)*time.Second + pinLeaseSlack)
-	encoded, err := json.MarshalIndent(pinLease{
+	encoded, err := stablejson.MarshalIndent(pinLease{
 		ExpiresAt: expires.UTC().Format(time.RFC3339Nano),
 		RunID:     runID,
 		Pin:       pinName,
 		OrkerID:   orkerID,
-	}, "", "  ")
+	}, "  ")
 	if err != nil {
 		return fmt.Errorf("encode pin lease: %w", err)
 	}
@@ -530,6 +572,9 @@ func ReleasePinDirectory(workRoot, runID, pinName, instanceID string) (string, e
 		return "", fmt.Errorf("stat pin directory %s: %w", root, err)
 	}
 	if err := removeSealedTree(root); err != nil {
+		if refused := removalRefusal(err); refused != "" {
+			return "", fmt.Errorf("remove pin directory %s: %w; %s", root, err, refused)
+		}
 		return "", fmt.Errorf("remove pin directory %s: %w", root, err)
 	}
 	return root, nil
@@ -784,7 +829,7 @@ type taskJSON struct {
 	Task           taskJSONTask     `json:"task"`
 	Image          taskJSONImage    `json:"image"`
 	Limits         taskJSONLimits   `json:"limits"`
-	Resources      *taskJSONRes     `json:"resources,omitempty"`
+	Resources      *taskJSONRes     `json:"resources,omitzero"`
 	Network        string           `json:"network"`
 	Paths          taskJSONPaths    `json:"paths"`
 	Inputs         taskJSONInputs   `json:"inputs"`
@@ -794,17 +839,17 @@ type taskJSON struct {
 	// and a workload that ignores it loses nothing (internal/telemetry is the
 	// only OpenTelemetry-aware code in the repository; this package never
 	// imports it, and fills the field from a plain func the caller supplies).
-	Trace *taskJSONTrace `json:"trace,omitempty"`
+	Trace *taskJSONTrace `json:"trace,omitzero"`
 	// Each is present ONLY for an item of a fan-out task, absent as a key
 	// otherwise — the precedent of task.pin: an added optional key keeps
 	// SchemaVersion at 1 and costs a workload that never heard of fan-out
 	// nothing.
-	Each *taskJSONEach `json:"each,omitempty"`
+	Each *taskJSONEach `json:"each,omitzero"`
 	// Join is present ONLY for a failure handler, absent as a key otherwise
 	// — the precedent of task.pin and each: an added optional key keeps
 	// SchemaVersion at 1 and costs a workload that never heard of joins
 	// nothing.
-	Join *taskJSONJoin `json:"join,omitempty"`
+	Join *taskJSONJoin `json:"join,omitzero"`
 }
 
 // taskJSONJoin tells a failure handler how each of its needs ended, in
@@ -818,7 +863,7 @@ type taskJSONJoin struct {
 type taskJSONNeedOutcome struct {
 	TaskID string             `json:"taskId"`
 	Status string             `json:"status"` // SUCCEEDED | FAILED | SKIPPED | CANCELED
-	Error  *taskJSONNeedError `json:"error,omitempty"`
+	Error  *taskJSONNeedError `json:"error,omitzero"`
 }
 
 type taskJSONNeedError struct {
@@ -840,7 +885,7 @@ func taskJSONJoinOf(join *orkstackv1.JoinContext) *taskJSONJoin {
 	for _, need := range join.GetNeeds() {
 		outcome := taskJSONNeedOutcome{
 			TaskID: need.GetTaskId(),
-			Status: strings.TrimPrefix(need.GetStatus().String(), "STATUS_"),
+			Status: enumname.Of(need.GetStatus()),
 		}
 		if e := need.GetError(); e != nil {
 			outcome.Error = &taskJSONNeedError{
@@ -878,10 +923,10 @@ func failureCategoryWord(c orkstackv1.FailureCategory) string {
 // 20-digit integer preserved) and the protojson rendering of the run input's
 // value for an input source.
 type taskJSONEach struct {
-	Index int32           `json:"index"`
-	Count int32           `json:"count"`
-	As    string          `json:"as"`
-	Item  json.RawMessage `json:"item"`
+	Index int32              `json:"index"`
+	Count int32              `json:"count"`
+	As    string             `json:"as"`
+	Item  stablejson.RawJSON `json:"item"`
 }
 
 // taskJSONEachUpstream says a fan-out upstream exists and how many items it
@@ -919,13 +964,13 @@ type taskJSONTask struct {
 	// RunAsOrkerUser is present and true only when the Orker overrode the
 	// image's own USER, so a workload can see WHY its uid is not the one its
 	// image declared. omitempty is the "absent = false" the table specifies.
-	RunAsOrkerUser bool `json:"runAsOrkerUser,omitempty"`
+	RunAsOrkerUser bool `json:"runAsOrkerUser,omitzero"`
 	// Pin is present ONLY for a pinned task, absent as a key rather than
 	// written empty — which is what makes the addition additive under the rule
 	// above (a major version may only ADD optional fields), keeps
 	// SchemaVersion at 1, and costs a workload that has never heard of pins
 	// nothing (§3.2).
-	Pin *taskJSONPin `json:"pin,omitempty"`
+	Pin *taskJSONPin `json:"pin,omitzero"`
 }
 
 // taskJSONPin names the pin this task belongs to and which opening of it.
@@ -999,14 +1044,14 @@ type taskJSONInputArtifact struct {
 	SHA256      string `json:"sha256"`
 	ContentType string `json:"contentType,omitempty"`
 	// Item is present only for a file one item of a fan-out produced.
-	Item *int32 `json:"item,omitempty"`
+	Item *int32 `json:"item,omitzero"`
 }
 
 type taskJSONUpstream struct {
 	TaskID     string `json:"taskId"`
 	ValuesPath string `json:"valuesPath"`
 	// Item is present only for one item of a fan-out upstream.
-	Item *int32 `json:"item,omitempty"`
+	Item *int32 `json:"item,omitzero"`
 }
 
 type taskJSONSecret struct {
@@ -1038,7 +1083,7 @@ type TaskContext struct {
 	// Each is the item context off ExecuteTaskInput, or nil for an attempt
 	// that is not an item; EachItem is the resolved element's JSON text.
 	Each     *orkstackv1.EachContext
-	EachItem json.RawMessage
+	EachItem stablejson.RawJSON
 	// StagedEachUpstream lists every fan-out upstream staged for a direct
 	// dependent, with its item count.
 	StagedEachUpstream []taskJSONEachUpstream
@@ -1130,7 +1175,7 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 	if e := tc.Each; e != nil {
 		item := tc.EachItem
 		if len(item) == 0 {
-			item = json.RawMessage("null")
+			item = stablejson.RawJSON("null")
 		}
 		doc.Each = &taskJSONEach{Index: e.GetIndex(), Count: e.GetCount(), As: e.GetAs(), Item: item}
 	}
@@ -1175,12 +1220,12 @@ func (w *Workspace) WriteRunJSON(inputs map[string]any) error {
 }
 
 // encodeInputFile renders value as config.json and run.json are written:
-// json.MarshalIndent(value, "", "  ") plus a trailing newline. It is the ONE
+// stablejson.MarshalIndent(value, "  ") plus a trailing newline. It is the ONE
 // encoder of both files, so a cached task's memo key (memo.go) hashes exactly
 // the bytes its container would read; a build that changes this encoding
 // changes every key, and every memo misses once — safe.
 func encodeInputFile(value any) ([]byte, error) {
-	encoded, err := json.MarshalIndent(value, "", "  ")
+	encoded, err := stablejson.MarshalIndent(value, "  ")
 	if err != nil {
 		return nil, err
 	}
@@ -1597,10 +1642,13 @@ func (t *OutputTree) ReadValues(limits *orkstackv1.WorkspaceLimits) ([]byte, *Fa
 	// A top-level object, specifically. An array, a scalar or null is a
 	// violation: downstream templates address .tasks.<id>.output.<field>, and
 	// there is no field on an array.
+	// One JSON value, read as encoding/json/v2 reads it: a key written twice
+	// is refused, naming it, since which of the two a reader keeps would
+	// depend on the reader, and the bytes are kept as written.
 	var probe any
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, FailCause(ReasonValuesMalformed, err,
-			"%s is not valid JSON: %v", ContainerValuesJSON, err)
+			"%s is not valid JSON: %s", ContainerValuesJSON, stablejson.Explain(err))
 	}
 	if _, ok := probe.(map[string]any); !ok {
 		return nil, Fail(ReasonValuesMalformed,

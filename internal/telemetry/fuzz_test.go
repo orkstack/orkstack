@@ -25,6 +25,7 @@ func FuzzParseSinks(f *testing.F) {
 		"sinks:\n  " + strings.Repeat("a", 64) + ": {}\n", "sinks:\n  " + strings.Repeat("a", 65) + ": {}\n", "---\nsinks: {a: {}}\n---\nsinks: {b: {}}\n",
 		"sinks: [", "sinks: 1", "- sinks", "sinks:\n  a:\n    timeout: soon\n", "sinks:\n  a:\n    insecure: yes\n", "sinks:\n  \"a\\u0000\": {}\n",
 		"sinks:\n  a: &x {}\n  b: *x\n", "sinks:\n  <<: {a: {}}\n",
+		"sinks:\n  a:\n    insecure: !!merge true\n", "sinks:\n  a:\n    timeout: <<\n", "sinks:\n  !!merge a: {}\n",
 		"sinks: {}\n---\nsinks: [\n", "sinks: {}\n---\n\tx: 1\n", "sinks: {}\n---\n", "---\nsinks: {}\n", "sinks: {}\n...\n",
 	} {
 		f.Add([]byte(seed))
@@ -65,4 +66,18 @@ func FuzzParseSinks(f *testing.F) {
 			}
 		}
 	})
+}
+
+// TestParseSinks_RefusesAMergeTagTheDecoderWouldDrop: a !!merge tag, or a <<
+// for a value that is not a string, is refused naming the setting, the line
+// and the path, never dropped.
+func TestParseSinks_RefusesAMergeTagTheDecoderWouldDrop(t *testing.T) {
+	for source, want := range map[string]string{
+		"sinks:\n  a:\n    insecure: !!merge true\n": "ORK_TELEMETRY_SINKS: line 3: sinks.a.insecure: the tag !!merge is not allowed",
+		"sinks:\n  a:\n    timeout: <<\n":            "ORK_TELEMETRY_SINKS: line 3: sinks.a.timeout: << is a merge key, not a value",
+	} {
+		if _, err := ParseSinks([]byte(source)); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q = %v, want %q", source, err, want)
+		}
+	}
 }

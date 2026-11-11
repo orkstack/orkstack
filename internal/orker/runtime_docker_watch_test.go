@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // callWatch is a live feed of the invocations a countingDocker receives, so a
@@ -26,16 +28,12 @@ type callWatch struct {
 func (f *countingDocker) watch() *callWatch {
 	f.t.Helper()
 	pipe := filepath.Join(f.dir, "live")
-	if err := syscall.Mkfifo(pipe, 0o600); err != nil {
-		f.t.Fatalf("make the stand-in's call feed: %v", err)
-	}
+	must.OKf(f.t, syscall.Mkfifo(pipe, 0o600), "make the stand-in's call feed")
 	// Opened for reading and writing, so the open does not wait for a writer
 	// and a writer never waits for a reader: the watch is its own reader for
 	// as long as it lives.
 	file, err := os.OpenFile(pipe, os.O_RDWR, 0)
-	if err != nil {
-		f.t.Fatalf("open the stand-in's call feed: %v", err)
-	}
+	must.OKf(f.t, err, "open the stand-in's call feed")
 	w := &callWatch{changed: make(chan struct{})}
 	done := make(chan struct{})
 	go func() {

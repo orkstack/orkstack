@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // refusedRouteFixtures are the recorded runs of a task whose pool the run's
@@ -64,9 +66,7 @@ func TestRunWorkflow_ReplaysCommittedRefusedRouteHistories(t *testing.T) {
 				requireRefusedRouteFixture(t, path)
 				recorded := loadHistoryFile(t, path)
 				runID, _, _, _, _ := startArgs(t, recorded)
-				if err := replayAs(t, recorded, runID); err != nil {
-					t.Fatalf("replaying %s against current code failed: %v", path, err)
-				}
+				must.OKf(t, replayAs(t, recorded, runID), "replaying %s against current code failed", path)
 				markers := versionMarkers(t, recorded)[engine.RefusedRouteChange]
 				if legacy && markers != 0 {
 					t.Fatalf("%s records a %s marker: it is not a history from before the gate", path, engine.RefusedRouteChange)

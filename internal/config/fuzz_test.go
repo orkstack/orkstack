@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // FuzzParseArgs: the two daemons read the same argv. The flags are read in any
@@ -130,9 +132,7 @@ func FuzzLoad_AValueTheFileSetsIsOneItsKindReads(f *testing.F) {
 		if strings.Contains(strings.ToLower(string(content)), "file") {
 			return
 		}
-		if err := os.WriteFile(path, content, 0o600); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(path, content, 0o600))
 		for _, binary := range []Binary{BinaryOrk, BinaryOrker} {
 			doc, err := Load(path, binary)
 			if line, found := dsl.SecondDocumentLine(content); found {

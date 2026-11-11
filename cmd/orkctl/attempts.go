@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 )
 
 // newRunAttemptsCommand builds `orkctl run attempts`.
@@ -71,7 +72,7 @@ func newRunAttemptsCommand(g *globalFlags) *cobra.Command {
 			return renderAttemptFailures(cmd.OutOrStdout(), g.namespace, args[0], attempts)
 		},
 	}
-	cmd.Flags().StringVar(&task, "task", "",
+	cmd.Flags().StringVarP(&task, "task", "t", "",
 		"only this task's attempts, with the full error of every failed one")
 	item.register(cmd, "only this item of the fan-out --task names (0-based)")
 	return cmd
@@ -237,7 +238,7 @@ func orkctlCommand(namespace string, args ...string) string {
 
 // attemptOutcomeLabel renders an AttemptOutcome without its enum prefix.
 func attemptOutcomeLabel(outcome orkstackv1.AttemptOutcome) string {
-	return strings.TrimPrefix(outcome.String(), "ATTEMPT_OUTCOME_")
+	return enumname.Of(outcome)
 }
 
 // failureCategoryLabel renders a FailureCategory without its enum prefix.
@@ -245,7 +246,7 @@ func failureCategoryLabel(category orkstackv1.FailureCategory) string {
 	if category == orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED {
 		return dash
 	}
-	return strings.TrimPrefix(category.String(), "FAILURE_CATEGORY_")
+	return enumname.Of(category)
 }
 
 // attemptErrorLine renders an attempt's error for one table cell, category

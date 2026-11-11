@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"syscall"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // unprivilegedID is the user and group (nobody) a script runs as when the
@@ -25,18 +27,14 @@ const unprivilegedID = 65534
 func (r *resetRepo) dropPrivileges(cmd *exec.Cmd) {
 	r.t.Helper()
 	for _, dir := range []string{r.root, r.bin, r.logs} {
-		if err := os.Chmod(filepath.Dir(dir), 0o711); err != nil {
-			r.t.Fatalf("open %s to the unprivileged account: %v", filepath.Dir(dir), err)
-		}
+		must.OKf(r.t, os.Chmod(filepath.Dir(dir), 0o711), "open %s to the unprivileged account", filepath.Dir(dir))
 		err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
 			if err != nil {
 				return err
 			}
 			return os.Lchown(path, unprivilegedID, unprivilegedID)
 		})
-		if err != nil {
-			r.t.Fatalf("hand %s to the unprivileged account: %v", dir, err)
-		}
+		must.OKf(r.t, err, "hand %s to the unprivileged account", dir)
 	}
 	cmd.Dir = r.root
 	cmd.SysProcAttr = &syscall.SysProcAttr{Credential: &syscall.Credential{Uid: unprivilegedID, Gid: unprivilegedID}}

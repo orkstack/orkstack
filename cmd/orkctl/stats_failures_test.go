@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // seedFailures wires a fixture over a real archive and attempt store holding
@@ -27,9 +29,7 @@ import (
 func seedFailures(t *testing.T) *fixture {
 	t.Helper()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("open local run archive: %v", err)
-	}
+	must.OKf(t, err, "open local run archive")
 	t.Cleanup(func() { _ = store.Close() })
 	archiver := engine.NewRunArchiver(store)
 	attempts := artifacts.NewMemoryAttemptStore()
@@ -44,9 +44,7 @@ func seedFailures(t *testing.T) *fixture {
 		if task != nil {
 			run.TaskRuns = []*orkstackv1.TaskRun{task}
 		}
-		if err := archiver.Archive(context.Background(), run, nil); err != nil {
-			t.Fatalf("archive %s: %v", id, err)
-		}
+		must.OKf(t, archiver.Archive(context.Background(), run, nil), "archive %s", id)
 	}
 	failed := func(task, code string, category orkstackv1.FailureCategory, pool, orker string, at time.Time) *orkstackv1.TaskRun {
 		return &orkstackv1.TaskRun{
@@ -146,9 +144,7 @@ func serveStats(t *testing.T, handler orkstackv1connect.StatsServiceHandler) str
 	mux.Handle(orkstackv1connect.NewStatsServiceHandler(handler))
 	server := api.NewServer("127.0.0.1:0", mux)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

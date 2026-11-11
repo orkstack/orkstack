@@ -2,6 +2,7 @@ import type { Duration, Timestamp } from '@bufbuild/protobuf/wkt';
 import { FailureCategory } from './gen/orkstack/v1/common_pb';
 import { FailureGroupBy, StatsBucketWidth, type FailureGroup, type GetFailureBreakdownResponse, type GetStatsResponse } from './gen/orkstack/v1/stats_pb';
 import type { StatsClient } from './clients/stats';
+import { ownedLabel } from './sharing';
 
 // UNAVAILABLE is what a number that cannot be answered renders as.
 //
@@ -167,7 +168,7 @@ export function fmtCategory(category: FailureCategory): string {
 export function fingerprintCell(group: FailureGroup, dim: FailureGroupBy): { text: string; unavailable: boolean } {
 	let value = '';
 	switch (dim) {
-		case FailureGroupBy.ORKFLOW: value = group.orkflowName; break;
+		case FailureGroupBy.ORKFLOW: value = ownedLabel(group.orkflowNamespace, group.orkflowName); break;
 		case FailureGroupBy.TASK: value = group.taskId; break;
 		case FailureGroupBy.CODE: value = group.code; break;
 		case FailureGroupBy.CATEGORY: return { text: fmtCategory(group.category), unavailable: false };

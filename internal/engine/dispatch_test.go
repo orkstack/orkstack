@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const dispatchDocument = `
@@ -31,8 +33,7 @@ tasks:
 // TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask is the engine half
 // of the wire: what the Orker actually receives.
 func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"ok": true}), nil
 	})
 
@@ -56,9 +57,7 @@ func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
 	plan.TransferBudgetSeconds = 300
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-1", wf, payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	in, ok := h.inputFor("build")
 	if !ok {
@@ -82,9 +81,7 @@ func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
 	// key renderer, so the Orker uses the value it was SENT rather than
 	// re-deriving one (§5.2).
 	key, err := artifacts.CommitKey("default", "ork-dispatch-1", "build")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if got, want := in.GetCommitUri(), "s3://orkstack-artifacts/"+key; got != want {
 		t.Errorf("commit_uri = %q, want exactly %q", got, want)
 	}
@@ -124,16 +121,13 @@ func TestRunWorkflow_BuildsTheActivityInputFromTheResolvedTask(t *testing.T) {
 
 func TestRunWorkflow_CommitURIIsStableAcrossReplayEquivalentExecutions(t *testing.T) {
 	execute := func() string {
-		var suite testsuite.WorkflowTestSuite
-		h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			return succeeded(in.TaskId, nil), nil
 		})
 		plan := defaultPlan()
 		plan.CommitRoot = "s3://orkstack-artifacts/"
 		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-stable-uri", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-		if err := h.env.GetWorkflowError(); err != nil {
-			t.Fatalf("workflow error: %v", err)
-		}
+		must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 		in, ok := h.inputFor("build")
 		if !ok {
 			t.Fatal("build was never dispatched")
@@ -143,17 +137,14 @@ func TestRunWorkflow_CommitURIIsStableAcrossReplayEquivalentExecutions(t *testin
 
 	first, replayEquivalent := execute(), execute()
 	key, err := artifacts.CommitKey("default", "ork-stable-uri", "build")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if want := "s3://orkstack-artifacts/" + key; first != want || replayEquivalent != want {
 		t.Fatalf("commit URIs = %q and %q, want deterministic %q", first, replayEquivalent, want)
 	}
 }
 
 func TestRunWorkflow_UsesThePlansInputLimitBeforeScheduling(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, nil), nil
 	})
 	plan := defaultPlan()
@@ -173,8 +164,7 @@ func TestRunWorkflow_UsesThePlansInputLimitBeforeScheduling(t *testing.T) {
 // TestRunWorkflow_RecordsTheCommitAndExitCodeOnTheTaskRun is what the read
 // model gains: an execution is explainable after the fact.
 func TestRunWorkflow_RecordsTheCommitAndExitCodeOnTheTaskRun(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		result := succeeded(in.TaskId, map[string]any{"built": true})
 		result.Commit = &orkstackv1.CommitRef{
 			Uri:    in.GetCommitUri(),
@@ -193,9 +183,7 @@ func TestRunWorkflow_RecordsTheCommitAndExitCodeOnTheTaskRun(t *testing.T) {
 	plan.CommitRoot = "s3://orkstack-artifacts"
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-2", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 
 	run := mustFinalRun(t, h.store, "ork-dispatch-2")
 	taskRun := run.GetTaskRuns()[0]
@@ -229,8 +217,7 @@ func TestRunWorkflow_RecordsTheCommitAndExitCodeOnTheTaskRun(t *testing.T) {
 // violation — this image did not write values.json" instead of rendering an
 // error string.
 func TestRunWorkflow_ReadsTheOrkersFailureAsDataNotAsAString(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		detail := &orkstackv1.ActivityFailureDetail{
 			ReasonCode: "VALUES_MISSING",
 			Category:   orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION,
@@ -247,7 +234,7 @@ func TestRunWorkflow_ReadsTheOrkersFailureAsDataNotAsAString(t *testing.T) {
 			task.CategoryContractViolation, nil, detail)
 	})
 
-	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-3", compile(t, dispatchDocument), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
+	h.start(t, "ork-dispatch-3", dispatchDocument, nil)
 	if err := h.env.GetWorkflowError(); err == nil {
 		t.Fatal("the run succeeded despite its only task failing")
 	}
@@ -358,9 +345,7 @@ func TestRunWorkflow_SetsTheHeartbeatAndCancellationOptions(t *testing.T) {
 	plan.TransferBudgetSeconds = 600
 
 	env.ExecuteWorkflow(engine.RunWorkflow, "ork-dispatch-4", compile(t, dispatchDocument), payload(t, nil), plan, (*orkstackv1.RunContinuation)(nil))
-	if err := env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, env.GetWorkflowError(), "workflow error")
 }
 
 // TestNonRetryableCategories_AreContractViolationAndTimedOut pins the
@@ -383,9 +368,7 @@ func TestNonRetryableCategories_AreContractViolationAndTimedOut(t *testing.T) {
 // task.
 func TestCheckInputSize_RefusesAnOversizedActivityInput(t *testing.T) {
 	small := &orkstackv1.ExecuteTaskInput{TaskId: "small", RunId: "r"}
-	if err := task.CheckInputSize(small); err != nil {
-		t.Fatalf("a small input was refused: %v", err)
-	}
+	must.OKf(t, task.CheckInputSize(small), "a small input was refused")
 
 	// A `with:` block that grew past the wire budget is the realistic way
 	// this happens.

@@ -13,6 +13,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // RunWorkflow takes a fifth argument, the carry of a run that continued as
@@ -75,9 +77,7 @@ func (o *childStartArgsOutbound) ExecuteChildWorkflow(ctx workflow.Context, chil
 func TestStartRun_PassesExactlyFourArguments(t *testing.T) {
 	c := &recordingClient{}
 	starter := engine.NewTemporalStarterWithOrkerQueue(c, task.DefaultQueue, task.DefaultQueue)
-	if err := starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()); err != nil {
-		t.Fatalf("StartRun: %v", err)
-	}
+	must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", twoTaskOrkflow(), nil, defaultPlan()), "StartRun")
 	if len(c.args) != 4 {
 		t.Fatalf("StartRun passed %d arguments to RunWorkflow, want exactly 4 (run id, orkflow, input, plan): %v",
 			len(c.args), c.args)
@@ -93,9 +93,7 @@ func TestStartChild_PassesExactlyFourArguments(t *testing.T) {
 		return childOutputs(t, map[string]any{"digest": "sha256:abc", "url": "https://r/abc"}), nil
 	})
 	h.run("ork-parent", parent, payload(t, nil), plan)
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if got := capture.seen(); len(got) != 1 || got[0] != 4 {
 		t.Fatalf("child starts passed %v arguments, want one start of exactly 4", got)
 	}
@@ -117,9 +115,7 @@ func TestScheduleFire_PassesExactlyFourArguments(t *testing.T) {
 		return nil
 	})
 	h.env.ExecuteWorkflow(engine.ScheduleFireWorkflowType, fireRecord())
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("fire failed: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "fire failed")
 	if got := capture.seen(); len(got) != 1 || got[0] != 4 {
 		t.Fatalf("the fire's run start passed %v arguments, want one start of exactly 4", got)
 	}

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestWrite_LandsUnderTheProofDirectory(t *testing.T) {
@@ -18,9 +20,7 @@ func TestWrite_LandsUnderTheProofDirectory(t *testing.T) {
 	proof.WriteJSON(t, "engine", "sample.json", map[string]int{"events": 3})
 
 	got, err := os.ReadFile(filepath.Join(dir, "engine", "transcript.txt"))
-	if err != nil {
-		t.Fatalf("transcript was not written: %v", err)
-	}
+	must.OKf(t, err, "transcript was not written")
 	if string(got) != "observed\n" {
 		t.Errorf("transcript = %q, want %q", got, "observed\n")
 	}
@@ -54,9 +54,7 @@ func TestOrkerIDIsUniqueToTheProcessAndNamesTheProof(t *testing.T) {
 // -p([0-9]+)-[0-9]+$; a root it cannot read that way it never removes.
 func TestWorkRootPatternNamesTheOwningProcess(t *testing.T) {
 	root, err := os.MkdirTemp(t.TempDir(), proof.WorkRootPattern("orkctl-TestIntegration_X-sub"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	want := regexp.MustCompile(`^orkctl-TestIntegration_X-sub-p` + strconv.Itoa(os.Getpid()) + `-[0-9]+$`)
 	if base := filepath.Base(root); !want.MatchString(base) {
 		t.Errorf("work root %q does not match %s", base, want)

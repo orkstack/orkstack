@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestQueueForOrker_UsesTheOrkerPrefix pins the control channel's spelling and
@@ -62,9 +64,7 @@ func TestResolvePoolBinding_RefusesTheOrkerChannels(t *testing.T) {
 // reported as a pool.
 func TestPoolForQueue_NeverNamesAnOrkerChannel(t *testing.T) {
 	control, err := task.QueueForOrker("orker-7f3a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, queue := range []string{task.OrkersQueue, control} {
 		if pool, ok := task.PoolForQueue(queue); ok {
 			t.Errorf("PoolForQueue(%q) = %q, true; an Orker channel is no pool", queue, pool)

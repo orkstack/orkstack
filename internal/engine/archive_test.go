@@ -2,7 +2,7 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,15 +15,16 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func at(t *testing.T, value string) time.Time {
 	t.Helper()
 	parsed, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		t.Fatalf("parse %q: %v", value, err)
-	}
+	must.OKf(t, err, "parse %q", value)
 	return parsed
 }
 
@@ -31,9 +32,7 @@ func newArchiveFixture(t *testing.T) (*engine.RunArchiver, *artifacts.LocalRunAr
 	t.Helper()
 	dir := t.TempDir()
 	store, err := artifacts.NewLocalRunArchive(dir)
-	if err != nil {
-		t.Fatalf("NewLocalRunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewLocalRunArchive")
 	t.Cleanup(func() { _ = store.Close() })
 	return engine.NewRunArchiver(store), store, dir
 }
@@ -43,13 +42,9 @@ func newArchiveFixture(t *testing.T) (*engine.RunArchiver, *artifacts.LocalRunAr
 func sampleRun(t *testing.T, id string, status orkstackv1.Status, created time.Time) *orkstackv1.Run {
 	t.Helper()
 	input, err := structpb.NewStruct(map[string]any{"url": "https://example.test", "retries": float64(2)})
-	if err != nil {
-		t.Fatalf("input struct: %v", err)
-	}
+	must.OKf(t, err, "input struct")
 	output, err := structpb.NewStruct(map[string]any{"save": map[string]any{"bytes": float64(11)}})
-	if err != nil {
-		t.Fatalf("output struct: %v", err)
-	}
+	must.OKf(t, err, "output struct")
 	return &orkstackv1.Run{
 		Id:             id,
 		OrkflowName:    "hello-ork",
@@ -106,9 +101,7 @@ func TestMarshalRunArchive_IsOneRunLineThenOneEventPerLine(t *testing.T) {
 	events := sampleEvents(t, "ork-1-1", created)
 
 	body, err := engine.MarshalRunArchive(run, events)
-	if err != nil {
-		t.Fatalf("MarshalRunArchive: %v", err)
-	}
+	must.OKf(t, err, "MarshalRunArchive")
 	if !strings.HasSuffix(string(body), "\n") {
 		t.Fatal("archive body must end with a newline so appends stay line-aligned")
 	}
@@ -119,9 +112,9 @@ func TestMarshalRunArchive_IsOneRunLineThenOneEventPerLine(t *testing.T) {
 	}
 	for i, line := range lines {
 		var record struct {
-			Kind  string          `json:"kind"`
-			Run   json.RawMessage `json:"run"`
-			Event json.RawMessage `json:"event"`
+			Kind  string             `json:"kind"`
+			Run   stablejson.RawJSON `json:"run"`
+			Event stablejson.RawJSON `json:"event"`
 		}
 		if err := json.Unmarshal([]byte(line), &record); err != nil {
 			t.Fatalf("line %d is not standalone JSON: %v (%q)", i+1, err, line)
@@ -148,13 +141,9 @@ func TestRunArchive_RoundTripsEveryRunFieldAndEvent(t *testing.T) {
 	run := sampleRun(t, "ork-1-1", orkstackv1.Status_STATUS_SUCCEEDED, created)
 	events := sampleEvents(t, "ork-1-1", created)
 
-	if err := archiver.Archive(context.Background(), run, events); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
+	must.OKf(t, archiver.Archive(context.Background(), run, events), "Archive")
 	loaded, loadedEvents, err := archiver.Load(context.Background(), "ork-1-1")
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 
 	if loaded.GetOrkflowName() != run.GetOrkflowName() ||
 		loaded.GetOrkflowVersion() != run.GetOrkflowVersion() ||
@@ -245,13 +234,9 @@ func TestPublishEvent_ArchivesTheRunWhenItEnds(t *testing.T) {
 	}
 
 	body, err := os.ReadFile(filepath.Join(dir, "metadata", "runs", runID+".jsonl"))
-	if err != nil {
-		t.Fatalf("archived body: %v", err)
-	}
+	must.OKf(t, err, "archived body")
 	loaded, events, err := engine.UnmarshalRunArchive(body)
-	if err != nil {
-		t.Fatalf("UnmarshalRunArchive: %v", err)
-	}
+	must.OKf(t, err, "UnmarshalRunArchive")
 	if loaded.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("archived status = %s, want SUCCEEDED", loaded.GetStatus())
 	}
@@ -277,9 +262,7 @@ func TestPublishEvent_ArchivesTheRunWhenItEnds(t *testing.T) {
 	entries, err := store.ListRuns(context.Background(), artifacts.RunQuery{
 		Orkflow: "hello-ork", Status: "succeeded",
 	})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(entries) != 1 || entries[0].RunID != runID {
 		t.Fatalf("index entries = %+v, want exactly %s", entries, runID)
 	}
@@ -310,22 +293,16 @@ func TestPublishEvent_RepeatedTerminalEventArchivesOnce(t *testing.T) {
 	finished.CreatedAt = nil
 
 	for attempt := 0; attempt < 3; attempt++ {
-		if err := activities.PublishEvent(context.Background(), terminal, snapshots.putRun(t, finished), runID+"#1"); err != nil {
-			t.Fatalf("PublishEvent attempt %d: %v", attempt+1, err)
-		}
+		must.OKf(t, activities.PublishEvent(context.Background(), terminal, snapshots.putRun(t, finished), runID+"#1"), "PublishEvent attempt %d", attempt+1)
 	}
 
 	entries, err := store.ListRuns(context.Background(), artifacts.RunQuery{})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(entries) != 1 {
 		t.Fatalf("three attempts produced %d index entries, want 1", len(entries))
 	}
 	_, events, err := archiver.Load(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("Load: %v", err)
-	}
+	must.OKf(t, err, "Load")
 	if len(events) != 1 {
 		t.Fatalf("archived %d events, want 1 (the bus deduplicates by key)", len(events))
 	}
@@ -349,18 +326,14 @@ func TestRunArchiver_ListRunsReturnsWholeRunsNewestFirst(t *testing.T) {
 	for _, s := range seed {
 		created := at(t, s.created)
 		run := sampleRun(t, s.id, s.status, created)
-		if err := archiver.Archive(ctx, run, sampleEvents(t, s.id, created)); err != nil {
-			t.Fatalf("Archive(%s): %v", s.id, err)
-		}
+		must.OKf(t, archiver.Archive(ctx, run, sampleEvents(t, s.id, created)), "Archive(%s)", s.id)
 	}
 
 	runs, err := archiver.ListRuns(ctx, engine.ArchiveQuery{
 		OrkflowName: "hello-ork",
 		Status:      orkstackv1.Status_STATUS_SUCCEEDED,
 	})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(runs) != 2 {
 		t.Fatalf("listed %d runs, want the 2 succeeded ones", len(runs))
 	}
@@ -376,9 +349,7 @@ func TestRunArchiver_ListRunsReturnsWholeRunsNewestFirst(t *testing.T) {
 		Since: at(t, "2026-08-11T00:00:00Z"),
 		Until: at(t, "2026-08-12T00:00:00Z"),
 	})
-	if err != nil {
-		t.Fatalf("ListRuns(date range): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(date range)")
 	if len(window) != 1 || window[0].GetId() != "ork-2" {
 		t.Fatalf("date range listed %d runs (%v), want just ork-2", len(window), runIDsOf(window))
 	}
@@ -423,16 +394,39 @@ func TestRunArchiver_IndexesEveryCanonicalTaskObjectReference(t *testing.T) {
 	run.TaskRuns[0].Artifacts = []*orkstackv1.ArtifactRef{{Uri: "file:///tmp/root/" + objectIDs[0]}}
 	run.TaskRuns[0].SystemArtifacts = []*orkstackv1.ArtifactRef{{Uri: "s3://bucket/" + objectIDs[1]}, {Uri: "s3://bucket/not-an-object"}}
 	run.TaskRuns[0].ValuesRef = &orkstackv1.ArtifactRef{Uri: "file:///tmp/root/" + objectIDs[2]}
-	if err := archiver.Archive(context.Background(), run, nil); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
+	must.OKf(t, archiver.Archive(context.Background(), run, nil), "Archive")
 	for _, objectID := range objectIDs {
 		key, err := artifacts.RunObjectRefKey(objectID, run.Id)
+		must.OK(t, err)
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(key))); err != nil {
+			t.Fatalf("reference marker %q: %v", key, err)
+		}
+	}
+}
+
+// TestRunArchiver_IndexesASharedChildUnderItsOwner: a child run of another
+// namespace's shared Orkflow is indexed "<owner>/<name>" (engine.OrkflowKey),
+// so a list of the running namespace's own Orkflow of that name never holds
+// it, and the owner's deletion check finds it.
+func TestRunArchiver_IndexesASharedChildUnderItsOwner(t *testing.T) {
+	archiver, _, _ := newArchiveFixture(t)
+	ctx := context.Background()
+	created := at(t, "2026-08-10T10:00:00Z")
+	own := sampleRun(t, "ork-own", orkstackv1.Status_STATUS_SUCCEEDED, created)
+	shared := sampleRun(t, "ork-shared", orkstackv1.Status_STATUS_SUCCEEDED, created)
+	shared.OrkflowNamespace = "platform"
+	for _, run := range []*orkstackv1.Run{own, shared} {
+		if err := archiver.Archive(ctx, run, sampleEvents(t, run.GetId(), created)); err != nil {
+			t.Fatalf("Archive(%s): %v", run.GetId(), err)
+		}
+	}
+	for query, want := range map[string]string{own.GetOrkflowName(): "ork-own", "platform/" + own.GetOrkflowName(): "ork-shared"} {
+		runs, err := archiver.ListRuns(ctx, engine.ArchiveQuery{Namespace: own.GetNamespace(), OrkflowName: query, Exhaustive: true})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(key))); err != nil {
-			t.Fatalf("reference marker %q: %v", key, err)
+		if len(runs) != 1 || runs[0].GetId() != want {
+			t.Fatalf("ListRuns(%q) = %v, want only %s", query, runs, want)
 		}
 	}
 }

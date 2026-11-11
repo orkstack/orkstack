@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"net/http"
@@ -24,6 +24,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestDeliveries_TwoEngines_FilteredListingAndItsNextPage drives delivery
@@ -84,17 +86,17 @@ func TestDeliveries_TwoEngines_FilteredListingAndItsNextPage(t *testing.T) {
 	fmt.Fprintf(&transcript, "# delivery records across two engine replicas (%s)\nbucket %s, backend s3, temporal namespace %s\n\n",
 		time.Now().UTC().Format(time.RFC3339), artifactCfg.S3Bucket, namespace)
 
-	registered := deliveriesCLI(t, replicaA, exitOK, "--json", "webhook", "register", subscriber.URL,
+	registered := deliveriesCLI(t, replicaA, exitOK, "--json", "webhook", "create", subscriber.URL,
 		"--event", "RUN_SUCCEEDED", "--orkflow", orkflowName)
 	var envelope struct {
 		Webhook webhooks.Webhook `json:"webhook"`
 	}
 	if err := json.Unmarshal([]byte(registered), &envelope); err != nil || envelope.Webhook.Secret == "" {
-		t.Fatalf("webhook register --json = %v\n%s", err, registered)
+		t.Fatalf("webhook create --json = %v\n%s", err, registered)
 	}
 	hook := envelope.Webhook
 	defer deliveriesCLI(t, replicaA, exitOK, "webhook", "delete", hook.ID)
-	fmt.Fprintf(&transcript, "$ orkctl --server <replica A> webhook register <subscriber> --event RUN_SUCCEEDED --orkflow %s\nregistered %s\n\n",
+	fmt.Fprintf(&transcript, "$ orkctl --server <replica A> webhook create <subscriber> --event RUN_SUCCEEDED --orkflow %s\nregistered %s\n\n",
 		orkflowName, hook.ID)
 
 	if _, err := replicaA.flows.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
@@ -105,9 +107,7 @@ func TestDeliveries_TwoEngines_FilteredListingAndItsNextPage(t *testing.T) {
 		t.Fatalf("ApplyOrkflow on A: %v", err)
 	}
 	submitted, err := replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: orkflowName}))
-	if err != nil {
-		t.Fatalf("SubmitRun on A: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun on A")
 	runID := submitted.Msg.GetRun().GetId()
 	if finished := awaitTerminalOnB(ctx, t, replicaA, runID); finished.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run %s ended %s (%v)", runID, finished.GetStatus(), finished.GetError())

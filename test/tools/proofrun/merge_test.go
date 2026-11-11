@@ -1,11 +1,14 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const mPkg = "example.com/m"
@@ -18,7 +21,6 @@ type mergeFixture struct {
 	out        string
 	planPath   string
 	uiPlanPath string
-	hostSpeed  string
 	plan       *integrationPlan
 	planSHA    string
 	uiPlan     uiPlan
@@ -110,38 +112,28 @@ func newMergeFixture(t *testing.T, tier string, ci bool) *mergeFixture {
 		// A nightly proof runs a UI part only for a listed spec file.
 		uiShards = 0
 	}
-	f.plan.PartsExpected = partsExpected(tier, !ci, 2, uiShards, false)
-	f.hostSpeed = filepath.Join(dir, "host-speed.tsv")
-	f.plan.HostSpeed = quarantineRef{File: f.hostSpeed, SHA256: emptySHA, BaseSHA256: emptySHA}
+	f.plan.PartsExpected = partsExpected(tier, !ci, 2, uiShards)
 	f.planPath = filepath.Join(dir, "integration-plan.json")
 	f.uiPlanPath = filepath.Join(dir, "ui-plan.json")
 	f.uiPlan = uiPlanFixture()
 	f.save()
-	if err := os.MkdirAll(f.parts, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(f.parts, 0o755))
 	return f
 }
 
 // save writes the plans; parts written after it carry the plan's hash.
 func (f *mergeFixture) save() {
 	f.t.Helper()
-	if err := writeJSON(f.planPath, f.plan); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, writeJSON(f.planPath, f.plan))
 	f.planSHA, _ = fieldSHA256(f.planPath)
-	if err := writeJSON(f.uiPlanPath, f.uiPlan); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, writeJSON(f.uiPlanPath, f.uiPlan))
 }
 
 // writeFile writes a file beside the plan (the plan artifact's directory).
 func (f *mergeFixture) writeFile(name, text string) string {
 	f.t.Helper()
 	p := filepath.Join(f.dir, name)
-	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, os.WriteFile(p, []byte(text), 0o644))
 	return p
 }
 
@@ -170,16 +162,10 @@ func (f *mergeFixture) basePart(part string) partRecord {
 func (f *mergeFixture) writePart(rec partRecord, files map[string]any) {
 	f.t.Helper()
 	dir := filepath.Join(f.parts, strings.NewReplacer(":", "-").Replace(rec.Part)+"-a"+itoa(rec.Attempt))
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		f.t.Fatal(err)
-	}
-	if err := writeJSON(filepath.Join(dir, "part.json"), rec); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, os.MkdirAll(dir, 0o755))
+	must.OK(f.t, writeJSON(filepath.Join(dir, "part.json"), rec))
 	for name, v := range files {
-		if err := writeJSON(filepath.Join(dir, name), v); err != nil {
-			f.t.Fatal(err)
-		}
+		must.OK(f.t, writeJSON(filepath.Join(dir, name), v))
 	}
 }
 
@@ -193,6 +179,20 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// passingIntegration is the integration ledger of a local part that ran the
+// fixture package's two tests and passed both.
+func passingIntegration() ledger {
+	return ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}}
+}
+
+// writePassingShards writes the two integration shards of a CI proof, each
+// passing the one fixture test the plan gives it.
+func (f *mergeFixture) writePassingShards() {
+	f.t.Helper()
+	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
+	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
 }
 
 func (f *mergeFixture) writeLocal(integration ledger) {
@@ -260,6 +260,10 @@ func (f *mergeFixture) writeCI() {
 		fix.Images = map[string]string{"activity-shell": "sha256:aaa"}
 		f.writePart(fix, nil)
 	}
+	obs := f.basePart("observability")
+	obs.Gates = []gateRecord{{Gate: "observability", Result: "pass"}}
+	obs.Images = map[string]string{"activity-shell": "sha256:aaa"}
+	f.writePart(obs, nil)
 }
 
 func (f *mergeFixture) writeShard(n int, tests []entry, problems []string, attempt int) {
@@ -274,12 +278,8 @@ func (f *mergeFixture) writeShard(n int, tests []entry, problems []string, attem
 func (f *mergeFixture) writeAttemptEvents(dirName string, lines ...string) {
 	f.t.Helper()
 	dir := filepath.Join(f.parts, dirName)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		f.t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "integration.events.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, os.MkdirAll(dir, 0o755))
+	must.OK(f.t, os.WriteFile(filepath.Join(dir, "integration.events.jsonl"), []byte(strings.Join(lines, "\n")+"\n"), 0o644))
 }
 
 func (f *mergeFixture) writeJobs(attempt int, jobs ...githubJob) {
@@ -287,18 +287,14 @@ func (f *mergeFixture) writeJobs(attempt int, jobs ...githubJob) {
 	if f.jobsDir == "" {
 		f.jobsDir = filepath.Join(f.dir, "jobs")
 	}
-	if err := os.MkdirAll(f.jobsDir, 0o755); err != nil {
-		f.t.Fatal(err)
-	}
-	if err := writeJSON(filepath.Join(f.jobsDir, "attempt-"+itoa(attempt)+".json"), githubAttempt{Attempt: attempt, Jobs: jobs}); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, os.MkdirAll(f.jobsDir, 0o755))
+	must.OK(f.t, writeJSON(filepath.Join(f.jobsDir, "attempt-"+itoa(attempt)+".json"), githubAttempt{Attempt: attempt, Jobs: jobs}))
 }
 
 func (f *mergeFixture) merge(extra ...string) (proofRecord, int) {
 	f.t.Helper()
 	quiet(f.t)
-	args := []string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "test", "-host-speed", f.hostSpeed}
+	args := []string{"-plan", f.planPath, "-parts", f.parts, "-out", f.out, "-name", "test"}
 	if f.plan.Tier != tierNightly {
 		args = append(args, "-ui-plan", f.uiPlanPath)
 	}
@@ -308,9 +304,7 @@ func (f *mergeFixture) merge(extra ...string) (proofRecord, int) {
 	args = append(args, extra...)
 	code := cmdMerge(args)
 	var r proofRecord
-	if err := readJSON(filepath.Join(f.out, "proof.json"), &r); err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, readJSON(filepath.Join(f.out, "proof.json"), &r))
 	return r, code
 }
 
@@ -320,7 +314,7 @@ func passEntry(test string) entry {
 
 func TestMerge_ALocalProofPasses(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
-	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	f.writeLocal(passingIntegration())
 	r, code := f.merge()
 	if code != 0 || r.Result != "pass" || !r.MergeEligible {
 		t.Fatalf("code %d, result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
@@ -360,7 +354,7 @@ func TestMerge_AProofWithoutAPassingSiteGateIsRefused(t *testing.T) {
 		t.Run("local "+c.name, func(t *testing.T) {
 			f := newMergeFixture(t, tierFull, false)
 			f.writeLocalWith(func(r *partRecord) { r.Gates = c.gates() },
-				ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+				passingIntegration())
 			r, code := f.merge()
 			if code != 1 || r.Result != c.result || r.MergeEligible {
 				t.Fatalf("code %d, result %s, eligible %v: a proof without a passing site gate must not be merge-eligible", code, r.Result, r.MergeEligible)
@@ -383,8 +377,7 @@ func TestMerge_AProofWithoutAPassingSiteGateIsRefused(t *testing.T) {
 			f := newMergeFixture(t, tierFull, true)
 			f.writeCI()
 			f.writeFast(c.gates)
-			f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-			f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+			f.writePassingShards()
 			r, code := f.merge()
 			if code != 1 || r.Result != "fail" || r.MergeEligible || !strings.Contains(joined(r), c.reason) {
 				t.Errorf("code %d, result %s, eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
@@ -397,7 +390,7 @@ func TestMerge_AProofWithoutAPassingSiteGateIsRefused(t *testing.T) {
 		f.save()
 		f.writeLocalWith(func(r *partRecord) {
 			r.Gates = append(withoutGate(fullGateRecords(), "site"), gateRecord{Gate: "observability", Result: "pass"})
-		}, ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+		}, passingIntegration())
 		r, code := f.merge()
 		if code != 1 || !strings.Contains(joined(r), "gate site did not run") {
 			t.Errorf("code %d, result %s: %v", code, r.Result, r.Ineligible)
@@ -410,7 +403,7 @@ func TestMerge_AProofWithoutAPassingSiteGateIsRefused(t *testing.T) {
 func TestMerge_ANightlyProofIsNotHeldToTheSiteGate(t *testing.T) {
 	f := newMergeFixture(t, tierNightly, false)
 	f.writeLocalWith(func(r *partRecord) { r.Gates = []gateRecord{{Gate: "integration", Result: "pass"}} },
-		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+		passingIntegration())
 	r, _ := f.merge()
 	if strings.Contains(joined(r), "gate site") {
 		t.Errorf("a nightly proof is held to the site gate: %v", r.Ineligible)
@@ -419,7 +412,7 @@ func TestMerge_ANightlyProofIsNotHeldToTheSiteGate(t *testing.T) {
 
 func TestMerge_ALocalProofIsOnePart(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
-	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	f.writeLocal(passingIntegration())
 	r, code := f.merge()
 	if code != 0 || len(r.Parts) != 1 || r.Parts[0] != "local" {
 		t.Fatalf("exit %d, parts %v: a local proof is exactly one part, local", code, r.Parts)
@@ -428,13 +421,12 @@ func TestMerge_ALocalProofIsOnePart(t *testing.T) {
 
 func TestProof_ALocalOnePartProofAndAOneShardCIProofAgree(t *testing.T) {
 	local := newMergeFixture(t, tierFull, false)
-	local.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	local.writeLocal(passingIntegration())
 	lp, lcode := local.merge()
 
 	sharded := newMergeFixture(t, tierFull, true)
 	sharded.writeCI()
-	sharded.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	sharded.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	sharded.writePassingShards()
 	sp, scode := sharded.merge()
 
 	if lcode != scode || lp.Result != sp.Result || lp.MergeEligible != sp.MergeEligible {
@@ -593,7 +585,7 @@ func TestMerge_ACancelledAttemptWithAStartedTestIsAResult(t *testing.T) {
 func TestMerge_AShardOutcomeForADeferredTestFailsTheProof(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	f.deferB(nightlyLine("TestB")+"\n", nightlyLine("TestB")+"\n")
-	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	f.writeLocal(passingIntegration())
 	r, code := f.merge()
 	if code != 1 || !strings.Contains(strings.Join(r.Ineligible, "\n"), "which the plan deferred") {
 		t.Errorf("code %d, ineligible = %v", code, r.Ineligible)
@@ -609,9 +601,7 @@ func TestMerge_DeferredTestsAreRecordedNotRun(t *testing.T) {
 		t.Fatalf("code %d, eligible %v: %v", code, r.MergeEligible, r.Ineligible)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(f.out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(f.out, "integration-tests.json"), &l))
 	found := false
 	for _, e := range l.Tests {
 		if e.Test == "TestB" {
@@ -641,9 +631,7 @@ func TestMerge_ALocalLedgerThatRecordsItsDeferredTestsIsEligible(t *testing.T) {
 		t.Fatalf("code %d, result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(f.out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(f.out, "integration-tests.json"), &l))
 	n := 0
 	for _, e := range l.Tests {
 		if e.Test == "TestB" {
@@ -676,31 +664,10 @@ func TestMerge_ADeferredEntryForATestThePlanRunsFailsTheProof(t *testing.T) {
 	}
 }
 
-func TestMerge_ARunnerSizeUISpecIsAKnownGap(t *testing.T) {
+// A wall-clock miss of a UI spec on a CI shard is a failure like any other:
+// no table excuses it (the spec scales its own bound to the runner).
+func TestMerge_AUITimingMissOnACIShardFails(t *testing.T) {
 	f := newMergeFixture(t, tierFull, true)
-	f.anchorHostSpeed(hostRow, hostRow)
-	problem := "a.spec.ts › t [chromium] failed (" + timingDetail + ")"
-	r, code := mergeUIShard(t, f, 2, "fail", uiShardLedger(outcomeFail, timingDetail, []string{problem}))
-	if code != 0 || r.Result != "pass" || !r.MergeEligible {
-		t.Fatalf("code %d, result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
-	}
-	if len(r.HostSpeedFailures) != 1 || r.HostSpeedFailures[0].RunnerCPUs != 2 || r.HostSpeedFailures[0].ReferenceCPUs != 16 ||
-		r.HostSpeedFailures[0].Observed != 8.123 {
-		t.Fatalf("host_speed_failures = %+v", r.HostSpeedFailures)
-	}
-	if len(r.KnownGaps) != 1 || !strings.Contains(r.KnownGaps[0], "8123") {
-		t.Fatalf("known_gaps = %v", r.KnownGaps)
-	}
-	b, _ := os.ReadFile(filepath.Join(f.out, "README.md"))
-	if !strings.Contains(string(b), "Known gaps: runner size") || !strings.Contains(string(b), "recorded, not merge-blocking") || !r.HostSpeedFailures[0].Excused {
-		t.Errorf("README lacks the known-gaps section:\n%s", b)
-	}
-}
-
-func TestMerge_AnUnlistedUISpecFailureStillFails(t *testing.T) {
-	f := newMergeFixture(t, tierFull, true)
-	other := "ui\te2e/other.spec.ts\tt\tlessThan 5000\t5\t16\tnot this one\n"
-	f.anchorHostSpeed(other, other)
 	r, code := mergeUIShard(t, f, 2, "fail", uiShardLedger(outcomeFail, timingDetail,
 		[]string{"a.spec.ts › t [chromium] failed (" + timingDetail + ")"}))
 	if code == 0 || r.Result != "fail" || r.MergeEligible {
@@ -730,7 +697,7 @@ func (f *mergeFixture) writeLocalWith(mutate func(*partRecord), integration ledg
 func TestMerge_EveryStackPartRanItsOwnTemporal(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	f.writeLocalWith(func(r *partRecord) { r.Temporal = temporalRecord{Mode: "shared", Address: "localhost:7233"} },
-		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+		passingIntegration())
 	r, _ := f.merge()
 	if r.MergeEligible {
 		t.Fatal("a local proof on a shared Temporal is merge-eligible")
@@ -747,7 +714,7 @@ func TestMerge_EveryStackPartRanItsOwnTemporal(t *testing.T) {
 func TestMerge_TheImageTagIsThePlansOwn(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	f.writeLocalWith(func(r *partRecord) { r.ImageTag, r.ImageTagOwn = "borrowed-tag", false },
-		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+		passingIntegration())
 	r, _ := f.merge()
 	if r.MergeEligible {
 		t.Fatal("a local proof on an outside image tag is merge-eligible")
@@ -765,7 +732,7 @@ func TestMerge_AProofGatesOverrideIsIneligible(t *testing.T) {
 	// it names.
 	f := newMergeFixture(t, tierFull, false)
 	f.writeLocalWith(func(r *partRecord) { r.GatesOverride = strings.Join(fullGates, ",") },
-		ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+		passingIntegration())
 	r, code := f.merge()
 	if code != 0 || r.Result != "pass" {
 		t.Fatalf("code %d, result %s: every gate ran and passed", code, r.Result)
@@ -781,8 +748,7 @@ func TestMerge_AProofGatesOverrideIsIneligible(t *testing.T) {
 func TestMerge_ImageDigestsAreIdenticalAcrossParts(t *testing.T) {
 	f := newMergeFixture(t, tierFull, true)
 	f.writeCI()
-	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	f.writePassingShards()
 	// The second shard ran an image whose digest is not the build's.
 	rec := f.basePart("integration:2")
 	rec.Gates = []gateRecord{{Gate: "integration", Result: "pass"}}
@@ -800,9 +766,7 @@ func TestMerge_ImageDigestsAreIdenticalAcrossParts(t *testing.T) {
 func TestMerge_ShardListingsMatchThePlan(t *testing.T) {
 	f := newMergeFixture(t, tierFull, true)
 	f.plan.Packages[0].ListingSHA256 = "plan-listing"
-	if err := writeJSON(f.planPath, f.plan); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(f.planPath, f.plan))
 	f.planSHA, _ = fieldSHA256(f.planPath)
 	f.writeCI()
 	// The shard compiled the package and its listing differs from the plan's.
@@ -842,40 +806,6 @@ func TestMerge_AQuarantinedFailureIsRecordedAndDoesNotFailTheProof(t *testing.T)
 	}
 }
 
-func TestMerge_RecordsHostSpeedFailuresWithoutChangingTheVerdict(t *testing.T) {
-	f := newMergeFixture(t, tierFull, true)
-	f.writeCI()
-	// Shard 1 ran on 2 CPUs and its only test failed a bound declared for 16.
-	rec := f.basePart("integration:1")
-	rec.Gates = []gateRecord{{Gate: "integration", Result: "fail"}}
-	rec.Images = map[string]string{"activity-shell": "sha256:aaa"}
-	rec.Runner = runnerRecord{OS: "linux", CPUs: 2}
-	failed := passEntry("TestA")
-	failed.Outcome = outcomeFail
-	f.writePart(rec, map[string]any{
-		"integration-tests.json": ledger{
-			Suite: "integration", Tests: []entry{failed},
-			Problems: []string{mPkg + ".TestA failed (job m-001)"},
-		},
-	})
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
-	host := filepath.Join(f.dir, "host-speed.tsv")
-	if err := os.WriteFile(host, []byte("test\t"+mPkg+"\tTestA\t-\t60\t16\tthe stage completes within 60 s\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	r, code := f.merge("-host-speed", host)
-	if code == 0 || r.Result != "fail" || r.MergeEligible {
-		t.Fatalf("a failing bound passed: code %d, result %s, %v", code, r.Result, r.Ineligible)
-	}
-	if len(r.HostSpeedFailures) != 1 || r.HostSpeedFailures[0].Kind != "integration" ||
-		r.HostSpeedFailures[0].RunnerCPUs != 2 || r.HostSpeedFailures[0].ReferenceCPUs != 16 {
-		t.Fatalf("host_speed_failures = %+v", r.HostSpeedFailures)
-	}
-	if len(r.KnownGaps) == 0 || !strings.Contains(strings.Join(r.KnownGaps, " "), "2-CPU runner") {
-		t.Errorf("known_gaps = %v", r.KnownGaps)
-	}
-}
-
 func TestMerge_ADeferredEntryTheBaseListLacksFailsTheProof(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	// The change adds TestB to the tree's list; the base's list is empty.
@@ -912,15 +842,11 @@ func (f *mergeFixture) pinAllowlist(text string) {
 func TestMerge_TheAllowedSkipListMustBeThePlans(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	allow := filepath.Join(f.dir, "allowed-skips.txt")
-	if err := os.WriteFile(allow, []byte(""), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(allow, []byte(""), 0o644))
 	f.plan.AllowedSkips = fileRef{File: allow, SHA256: "a-hash-of-other-bytes"}
-	if err := writeJSON(f.planPath, f.plan); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, writeJSON(f.planPath, f.plan))
 	f.planSHA, _ = fieldSHA256(f.planPath)
-	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	f.writeLocal(passingIntegration())
 	r, _ := f.merge()
 	if !strings.Contains(strings.Join(r.Ineligible, "\n"), "is not the one the plan read") {
 		t.Errorf("ineligible = %v", r.Ineligible)
@@ -934,7 +860,7 @@ func TestMerge_AGateThatDidNotRunIsIneligible(t *testing.T) {
 	rec.Gates = rec.Gates[1:] // drop "lint"
 	rec.Images = map[string]string{"activity-shell": "sha256:aaa"}
 	f.writePart(rec, map[string]any{
-		"integration-tests.json": ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}},
+		"integration-tests.json": passingIntegration(),
 		"unit-tests.json":        unitLedger(),
 		"ui-e2e-tests.json":      uiLedgerFixture(),
 	})
@@ -959,13 +885,9 @@ func (f *mergeFixture) deferB(treeText, baseText string) {
 	treeFile := f.writeFile("nightly.txt", treeText)
 	baseFile := f.writeFile("nightly-base.txt", baseText)
 	tree, err := readNightlyList(treeFile)
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, err)
 	base, err := readNightlyList(baseFile)
-	if err != nil {
-		f.t.Fatal(err)
-	}
+	must.OK(f.t, err)
 	treeSHA, _ := fileSHA256(treeFile)
 	baseSHA, _ := fileSHA256(baseFile)
 	f.plan.Nightly = nightlyRef{File: treeFile, SHA256: treeSHA, Mode: nightlyDefer, Entries: entryLines(tree),
@@ -1066,9 +988,7 @@ func TestMerge_ShardProblemsAreCarriedVerbatim(t *testing.T) {
 		t.Fatalf("code %d, the shard's problem is not carried verbatim: %v", code, r.Ineligible)
 	}
 	var l ledger
-	if err := readJSON(filepath.Join(f.out, "integration-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(f.out, "integration-tests.json"), &l))
 	if !containsString(l.Problems, "integration:1: "+skip) {
 		t.Errorf("the merged ledger lacks the shard's problem: %v", l.Problems)
 	}
@@ -1124,7 +1044,7 @@ func TestMerge_IdentityProblemsAreIneligibleNotFailures(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := newMergeFixture(t, tierFull, false)
-			f.writeLocalWith(mutate, ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+			f.writeLocalWith(mutate, passingIntegration())
 			r, code := f.merge()
 			if code != 0 || r.Result != "pass" || r.MergeEligible {
 				t.Errorf("code %d result %s eligible %v: %v", code, r.Result, r.MergeEligible, r.Ineligible)
@@ -1186,7 +1106,7 @@ func TestMerge_AnUnpinnedAllowlistFailsClosed(t *testing.T) {
 	f := newMergeFixture(t, tierFull, false)
 	f.plan.AllowedSkips = fileRef{File: "scripts/proof-allowed-skips.txt"}
 	f.save()
-	f.writeLocal(ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
+	f.writeLocal(passingIntegration())
 	r, code := f.merge()
 	if code != 1 || !strings.Contains(strings.Join(r.Ineligible, "\n"), "recorded no hash of its allowed-skips list") {
 		t.Errorf("code %d, ineligible = %v", code, r.Ineligible)
@@ -1202,8 +1122,7 @@ func TestMerge_ThePlansOwnProblemsFailTheProof(t *testing.T) {
 	f.plan.Problems = []string{"nightly list line 3 names example.com/m.TestGone, which its package does not list: remove the stale entry"}
 	f.save()
 	f.writeCI()
-	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	f.writePassingShards()
 	r, code := f.merge()
 	if code != 1 || !containsString(r.Ineligible, "plan: "+f.plan.Problems[0]) {
 		t.Errorf("code %d, ineligible = %v", code, r.Ineligible)
@@ -1215,8 +1134,7 @@ func TestMerge_ThePullRequestRecordIsCarried(t *testing.T) {
 	f.plan.PR = &prRecord{Number: 12, HeadSHA: "head1", BaseSHA: "base1", ContainsBase: true}
 	f.save()
 	f.writeCI()
-	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	f.writePassingShards()
 	r, code := f.merge()
 	if code != 0 || r.PR == nil || !reflect.DeepEqual(*r.PR, *f.plan.PR) {
 		t.Errorf("code %d, pr = %+v, want %+v", code, r.PR, f.plan.PR)
@@ -1226,19 +1144,18 @@ func TestMerge_ThePullRequestRecordIsCarried(t *testing.T) {
 func TestMerge_ListsChangedAreCarriedIntoProofJSON(t *testing.T) {
 	f := newMergeFixture(t, tierFull, true)
 	f.plan.ListsChanged = []listChange{
-		{File: "scripts/proof-host-speed.tsv", Added: []string{"ui\te2e/x.spec.ts\tt\t5\t16\tnew"}},
+		{File: "scripts/proof-quarantine.txt", Added: []string{"unit\tm\tTestA\towner\t2026-11-01\t2026-11-30\tnew"}},
 		{File: "scripts/proof.sh"},
 	}
 	f.save()
 	f.writeCI()
-	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	f.writePassingShards()
 	r, code := f.merge()
 	if code != 0 || !r.MergeEligible || !reflect.DeepEqual(r.ListsChanged, f.plan.ListsChanged) {
 		t.Fatalf("code %d eligible %v, lists_changed = %+v", code, r.MergeEligible, r.ListsChanged)
 	}
 	b, _ := os.ReadFile(filepath.Join(f.out, "README.md"))
-	if !strings.Contains(string(b), "added: `ui\te2e/x.spec.ts") {
+	if !strings.Contains(string(b), "added: `unit\tm\tTestA") {
 		t.Errorf("the README does not itemise the added row:\n%s", b)
 	}
 
@@ -1247,8 +1164,7 @@ func TestMerge_ListsChangedAreCarriedIntoProofJSON(t *testing.T) {
 	g.plan.ListsChanged = []listChange{{Error: "base \"main\" is not a commit"}}
 	g.save()
 	g.writeCI()
-	g.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	g.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	g.writePassingShards()
 	r, _ = g.merge()
 	if r.MergeEligible || !strings.Contains(strings.Join(r.Ineligible, "\n"), "the gate files this change edits could not be listed") {
 		t.Errorf("an unlisted change is eligible: %v", r.Ineligible)
@@ -1259,37 +1175,38 @@ func TestMerge_ListsChangedAreCarriedIntoProofJSON(t *testing.T) {
 	}
 }
 
-func TestMerge_TheReleaseTierRequiresTheObservabilityPart(t *testing.T) {
-	if p := partsExpected(tierRelease, false, 2, 1, false); !containsString(p, "observability") {
-		t.Fatalf("a release plan's parts %v lack observability", p)
-	}
-	for _, withObs := range []bool{false, true} {
-		f := newMergeFixture(t, tierRelease, true)
-		f.plan.PartsExpected = partsExpected(tierRelease, false, 2, 1, false)
-		f.save()
-		f.writeCI()
-		for _, a := range fixtureActivities[1:] {
-			fix := f.basePart("activity-fixture:" + a)
-			fix.Gates = []gateRecord{{Gate: "activity-fixture", Result: "pass"}}
-			f.writePart(fix, nil)
+// The observability gate runs in every full and release proof: a plan of
+// either tier expects its part, and a proof without it is not merge-eligible
+// (a full one) or not a release proof (a release one).
+func TestMerge_TheFullAndReleaseTiersRequireTheObservabilityPart(t *testing.T) {
+	for _, tier := range []string{tierFull, tierRelease} {
+		if p := partsExpected(tier, false, 2, 1); !containsString(p, "observability") {
+			t.Fatalf("a %s plan's parts %v lack observability", tier, p)
 		}
-		f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-		f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
-		if withObs {
-			obs := f.basePart("observability")
-			obs.Gates = []gateRecord{{Gate: "observability", Result: "pass"}}
-			f.writePart(obs, nil)
-		}
-		r, code := f.merge()
-		joined := strings.Join(r.Ineligible, "\n")
-		if withObs {
-			if code != 0 || r.Result != "pass" || !r.EligibleButForTier {
-				t.Errorf("with the observability part: code %d result %s, %v", code, r.Result, r.Ineligible)
-			}
-			continue
-		}
-		if code != 1 || !strings.Contains(joined, "part observability left no result") || !strings.Contains(joined, "gate observability did not run") {
-			t.Errorf("without the observability part: code %d, %v", code, r.Ineligible)
+		for _, withObs := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/observability=%v", tier, withObs), func(t *testing.T) {
+				f := newMergeFixture(t, tier, true)
+				f.writeCI()
+				f.writePassingShards()
+				if !withObs {
+					must.OK(t, os.RemoveAll(filepath.Join(f.parts, "observability-a1")))
+				}
+				r, code := f.merge()
+				joined := strings.Join(r.Ineligible, "\n")
+				if withObs {
+					ok := r.MergeEligible
+					if tier == tierRelease {
+						ok = r.EligibleButForTier
+					}
+					if code != 0 || r.Result != "pass" || !ok {
+						t.Errorf("with the observability part: code %d result %s, %v", code, r.Result, r.Ineligible)
+					}
+					return
+				}
+				if code != 1 || !strings.Contains(joined, "part observability left no result") || !strings.Contains(joined, "gate observability did not run") {
+					t.Errorf("without the observability part: code %d, %v", code, r.Ineligible)
+				}
+			})
 		}
 	}
 }
@@ -1297,16 +1214,13 @@ func TestMerge_TheReleaseTierRequiresTheObservabilityPart(t *testing.T) {
 func TestMerge_ReRunningEveryJobIsIneligible(t *testing.T) {
 	f := newMergeFixture(t, tierFull, true)
 	f.writeCI()
-	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	f.writePassingShards()
 	// "Re-run all jobs": every part runs again, and passes again.
 	entries, _ := os.ReadDir(f.parts)
 	for _, e := range entries {
 		var rec partRecord
 		dir := filepath.Join(f.parts, e.Name())
-		if err := readJSON(filepath.Join(dir, "part.json"), &rec); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, readJSON(filepath.Join(dir, "part.json"), &rec))
 		rec.Attempt = 2
 		files := map[string]any{}
 		for _, name := range []string{"integration-tests.json", "unit-tests.json", "race-tests.json", "ui-e2e-tests.json"} {
@@ -1342,22 +1256,6 @@ func TestMerge_ReRunningEveryJobIsIneligible(t *testing.T) {
 // toBeLessThanOrEqual failure: the message, its newlines folded.
 const timingDetail = "Error: live run page; ; expect(received).toBeLessThanOrEqual(expected); ; Expected: <= 5000; Received:    8123"
 
-// hostRow is a host-speed row for the fixture's UI test a.spec.ts › t.
-const hostRow = "ui\te2e/a.spec.ts\tt\tlessThan 5000\t5\t16\tthe gated size is interactive within 5 s\n"
-
-// anchorHostSpeed writes the tree's table and the base's copy beside the plan,
-
-// and pins both in the plan, as the plan part does.
-
-func (f *mergeFixture) anchorHostSpeed(tree, base string) {
-	f.t.Helper()
-	f.writeFile("host-speed.tsv", tree)
-	f.writeFile("host-speed-base.txt", base)
-	f.plan.HostSpeed.SHA256, _ = fileSHA256(f.hostSpeed)
-	f.plan.HostSpeed.BaseSHA256, _ = fileSHA256(filepath.Join(f.dir, "host-speed-base.txt"))
-	f.save()
-}
-
 // uiShardLedger is a shard ledger whose one test has the given outcome.
 
 func uiShardLedger(outcome, detail string, problems []string) uiLedger {
@@ -1381,101 +1279,12 @@ func uiShardLedger(outcome, detail string, problems []string) uiLedger {
 func mergeUIShard(t *testing.T, f *mergeFixture, cpus int, gate string, shard uiLedger) (proofRecord, int) {
 	t.Helper()
 	f.writeCI()
-	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	f.writePassingShards()
 	ui := f.basePart("ui-e2e:1")
 	ui.Gates = []gateRecord{{Gate: "ui-e2e", Result: gate}}
 	ui.Runner = runnerRecord{OS: "linux", CPUs: cpus}
 	f.writePart(ui, map[string]any{"ui-e2e-tests.json": shard})
 	return f.merge()
-}
-
-// Only a failed outcome whose failure is the declared bound's own timing
-
-// assertion, on a CI UI part below the reference, under a row the base
-
-// carries identically, is a known gap. Everything else in a listed spec fails
-
-// the proof, whether the shard reported it or excused it itself (R2-M1).
-
-func TestMerge_OnlyTheBoundsOwnTimingMissIsAKnownGap(t *testing.T) {
-	timingProblem := "a.spec.ts › t [chromium] failed (" + timingDetail + ")"
-	loosenedDetail := "Error: live run page; ; expect(received).toBeLessThanOrEqual(expected); ; Expected: <= 9000; Received:    9500"
-	loosenedProblem := "a.spec.ts › t [chromium] failed (" + loosenedDetail + ")"
-	if _, ok := timingMiss(loosenedDetail, 9); !ok {
-		t.Fatal("the 9000 detail is not a timing miss of a 9 s bound: the case would not test the anchor")
-	}
-	otherDetail := "Error: expect(locator).toBeVisible() failed; ; Locator: getByRole('heading')"
-	cases := []struct {
-		name       string
-		ci         bool
-		cpus       int
-		tree, base string
-		shard      uiLedger
-		gate       string
-		want       string
-	}{
-		{name: "a non-timing failure", ci: true, cpus: 2, tree: hostRow, base: hostRow,
-			shard: uiShardLedger(outcomeFail, otherDetail, []string{"a.spec.ts › t [chromium] failed (" + otherDetail + ")"}), gate: "fail",
-			want: "toBeVisible"},
-		{name: "a skip", ci: true, cpus: 2, tree: hostRow, base: hostRow,
-			shard: uiShardLedger(outcomeSkip, "", []string{"a.spec.ts › t [chromium] skipped; a skip is never a pass"}), gate: "fail",
-			want: "skipped; a skip is never a pass"},
-		{name: "a missing outcome", ci: true, cpus: 2, tree: hostRow, base: hostRow,
-			shard: uiShardLedger(outcomeNone, "", []string{"a.spec.ts › t [chromium] has no outcome"}), gate: "fail",
-			want: "has no outcome"},
-		{name: "a skip the shard excused itself", ci: true, cpus: 2, tree: hostRow, base: hostRow,
-			shard: func() uiLedger {
-				l := uiShardLedger(outcomeSkip, "", nil)
-				p := "a.spec.ts › t [chromium] skipped; a skip is never a pass"
-				l.HostSpeedFailures = []hostSpeedFailure{{Test: p, Kind: "ui", Message: p, Bound: 5, ReferenceCPUs: 16}}
-				l.KnownGaps = []string{p}
-				return l
-			}(), gate: "pass", want: "the shard excused"},
-		{name: "the timing miss on a local proof", ci: false, cpus: 2, tree: hostRow, base: hostRow,
-			shard: uiShardLedger(outcomeFail, timingDetail, []string{timingProblem}), gate: "fail", want: timingProblem},
-		{name: "a row the change adds", ci: true, cpus: 2, tree: hostRow, base: "",
-			shard: uiShardLedger(outcomeFail, timingDetail, []string{timingProblem}), gate: "fail", want: timingProblem},
-		{name: "a bound the change loosens", ci: true, cpus: 2,
-			tree: strings.Replace(hostRow, "lessThan 5000\t5\t", "lessThan 9000\t9\t", 1), base: hostRow,
-			shard: uiShardLedger(outcomeFail, loosenedDetail, []string{loosenedProblem}), gate: "fail", want: loosenedProblem},
-		{name: "a runner at the reference", ci: true, cpus: 16, tree: hostRow, base: hostRow,
-			shard: uiShardLedger(outcomeFail, timingDetail, []string{timingProblem}), gate: "fail", want: timingProblem},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			f := newMergeFixture(t, tierFull, c.ci)
-			f.anchorHostSpeed(c.tree, c.base)
-			var r proofRecord
-			var code int
-			if c.ci {
-				r, code = mergeUIShard(t, f, c.cpus, c.gate, c.shard)
-			} else {
-				f.writeLocalWith(func(p *partRecord) {
-					p.Runner.CPUs = c.cpus
-					for i := range p.Gates {
-						if p.Gates[i].Gate == "ui-e2e" {
-							p.Gates[i].Result = c.gate
-						}
-					}
-				}, ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
-				// writeLocalWith wrote the passing UI ledger; replace it.
-				if err := writeJSON(filepath.Join(f.parts, "local-a1", "ui-e2e-tests.json"), c.shard); err != nil {
-					t.Fatal(err)
-				}
-				r, code = f.merge()
-			}
-			if code == 0 || r.Result != "fail" || r.MergeEligible {
-				t.Fatalf("code %d result %s eligible %v: the miss was excused (%v)", code, r.Result, r.MergeEligible, r.Ineligible)
-			}
-			if !strings.Contains(strings.Join(r.Ineligible, "\n"), c.want) {
-				t.Errorf("ineligible = %v, want a line with %q", r.Ineligible, c.want)
-			}
-			if len(r.KnownGaps) != 0 {
-				t.Errorf("known_gaps = %v, want none", r.KnownGaps)
-			}
-		})
-	}
 }
 
 // writeQuarantine pins a quarantine list and the base's copy, both carrying
@@ -1580,11 +1389,10 @@ func mergeTwoUIShards(t *testing.T, a, b *uiLedger) (proofRecord, int, *mergeFix
 	t.Helper()
 	f := newMergeFixture(t, tierFull, true)
 	f.uiPlan = twoUIShards()
-	f.plan.PartsExpected = partsExpected(tierFull, false, 2, 2, false)
+	f.plan.PartsExpected = partsExpected(tierFull, false, 2, 2)
 	f.save()
 	f.writeCI()
-	f.writeShard(1, []entry{passEntry("TestA")}, nil, 1)
-	f.writeShard(2, []entry{passEntry("TestB")}, nil, 1)
+	f.writePassingShards()
 	for i, l := range []*uiLedger{a, b} {
 		rec := f.basePart("ui-e2e:" + itoa(i+1))
 		rec.Gates = []gateRecord{{Gate: "ui-e2e", Result: "pass"}}
@@ -1640,82 +1448,12 @@ func TestMerge_CarriesEachSpecFilesWall(t *testing.T) {
 		t.Fatalf("code %d", code)
 	}
 	var l uiLedger
-	if err := readJSON(filepath.Join(f.out, "ui-e2e-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, readJSON(filepath.Join(f.out, "ui-e2e-tests.json"), &l))
 	want := []uiFileEntry{
 		{File: "a.spec.ts", Shard: 1, Tests: 1, Seconds: 10, WallSeconds: 12},
 		{File: "b.spec.ts", Shard: 2, Tests: 1, Seconds: 10, WallSeconds: 12},
 	}
 	if !reflect.DeepEqual(l.Files, want) {
 		t.Errorf("files = %+v, want %+v", l.Files, want)
-	}
-}
-
-// visibleRow declares a.spec.ts › t's header-visibility timeout as its
-// runner-size bound, as run-page-ceiling.spec.ts's row does.
-const visibleRow = "ui\te2e/a.spec.ts\tt\tvisibleWithin 60000 getByTestId('run-status')\t5\t16\tthe header never drew within 60 s\n"
-
-// The class-B miss of run-page-ceiling.spec.ts — its run page's header not
-// visible within the spec's 60 s wait on a 2-vCPU runner — is a known gap when
-// a row declares exactly that assertion, and nothing else is: another
-// locator's visibility timeout in the same test, a skip, a local proof and a
-// row the change adds all still fail the proof.
-func TestMerge_ADeclaredVisibilityTimeoutIsAKnownGapAndNothingElse(t *testing.T) {
-	header := visibleFailure("getByTestId('run-status')", "60000")
-	headerProblem := "a.spec.ts › t [chromium] failed (" + header + ")"
-	f := newMergeFixture(t, tierFull, true)
-	f.anchorHostSpeed(hostRow+visibleRow, hostRow+visibleRow)
-	r, code := mergeUIShard(t, f, 2, "fail", uiShardLedger(outcomeFail, header, []string{headerProblem}))
-	if code != 0 || r.Result != "pass" || !r.MergeEligible {
-		t.Fatalf("the declared visibility timeout failed the proof: code %d, %v", code, r.Ineligible)
-	}
-	if len(r.HostSpeedFailures) != 1 || !r.HostSpeedFailures[0].Excused ||
-		r.HostSpeedFailures[0].Assertion != "visibleWithin 60000 getByTestId('run-status')" {
-		t.Fatalf("host_speed_failures = %+v", r.HostSpeedFailures)
-	}
-
-	inspect := visibleFailure("getByTestId('task-t3999-inspect')", "60000")
-	cases := []struct {
-		name       string
-		ci         bool
-		tree, base string
-		shard      uiLedger
-	}{
-		{"another locator's visibility timeout", true, hostRow + visibleRow, hostRow + visibleRow,
-			uiShardLedger(outcomeFail, inspect, []string{"a.spec.ts › t [chromium] failed (" + inspect + ")"})},
-		{"a skip", true, hostRow + visibleRow, hostRow + visibleRow,
-			uiShardLedger(outcomeSkip, "", []string{"a.spec.ts › t [chromium] skipped; a skip is never a pass"})},
-		{"the same timeout on a local proof", false, hostRow + visibleRow, hostRow + visibleRow,
-			uiShardLedger(outcomeFail, header, []string{headerProblem})},
-		{"a row the change adds", true, hostRow + visibleRow, hostRow,
-			uiShardLedger(outcomeFail, header, []string{headerProblem})},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			f := newMergeFixture(t, tierFull, c.ci)
-			f.anchorHostSpeed(c.tree, c.base)
-			var r proofRecord
-			var code int
-			if c.ci {
-				r, code = mergeUIShard(t, f, 2, "fail", c.shard)
-			} else {
-				f.writeLocalWith(func(p *partRecord) {
-					p.Runner.CPUs = 2
-					for i := range p.Gates {
-						if p.Gates[i].Gate == "ui-e2e" {
-							p.Gates[i].Result = "fail"
-						}
-					}
-				}, ledger{Suite: "integration", Tests: []entry{passEntry("TestA"), passEntry("TestB")}})
-				if err := writeJSON(filepath.Join(f.parts, "local-a1", "ui-e2e-tests.json"), c.shard); err != nil {
-					t.Fatal(err)
-				}
-				r, code = f.merge()
-			}
-			if code == 0 || r.Result != "fail" || r.MergeEligible || len(r.KnownGaps) != 0 {
-				t.Errorf("code %d result %s eligible %v gaps %v: it was excused", code, r.Result, r.MergeEligible, r.KnownGaps)
-			}
-		})
 	}
 }

@@ -52,7 +52,7 @@ on v0.1.0 is unaffected by it. A later 0.1 release would move that tag to
 bundle-signed images, so a v0.1.0 deployment that requires a signer and must
 stay there names v0.1.0's images by digest in `ORK_ACTIVITY_CATALOG`.
 Upgrade the Orkers with the engines: once an engine is upgraded it accepts a
-bundle-signed image at apply and submit, and where the run's namespace
+bundle-signed image when an Orkflow is created and at submit, and where the run's namespace
 requires a signer, a v0.1.0 Orker still polling refuses that run's task at
 dispatch with `IMAGE_NOT_SIGNED`, a contract violation, which is never
 retried, so the run fails. A namespace that requires no signer is not
@@ -61,8 +61,8 @@ affected.
 key, and how to verify an image or `SHA256SUMS` by hand.
 
 The built-in activity catalog names the activity images by their `X.Y` tag,
-so a release's `ork` resolves `uses: shell` to that release line's image at
-apply time and pins its digest; `release.yml` refuses a version whose `X.Y`
+so a release's `ork` resolves `uses: shell` to that release line's image when
+an Orkflow is created and pins its digest; `release.yml` refuses a version whose `X.Y`
 the catalog does not name. The notes on the GitHub release page are the
 version's `## [X.Y.Z]` section of [CHANGELOG.md](../CHANGELOG.md), word for
 word, without its heading, followed by each image's digest and the commands
@@ -74,12 +74,12 @@ Running the published images is set out in [DEPLOY.md](./DEPLOY.md),
 
 ## Orkflow versions
 
-An Orkflow version is immutable. Applying an edit creates a new version, and applying an unchanged file writes nothing ([DSL.md](./DSL.md), "`version`"). That holds across this release's change to assigned versions: a document stored under its sha256 hash stays that version, and its next edit lands a UUIDv7 beside it. During a rolling upgrade, while a replica of the older release runs beside a new one, one unpinned document applied to both can be stored twice: under its hash by the old replica and under a UUIDv7 by the new one, with the head on whichever landed last. Both are valid, and nothing needs repairing. Rolled back to a release that derives hashes, a document first applied under a UUIDv7 is given a hash version the next time it is applied; the versions it has remain, and nothing is rewritten. A run pins the version it started with and the definition digest that version carries ([AGENTS.md](../AGENTS.md) §2.2), so it finishes on the definition it began with.
+An Orkflow version is immutable. Creating an edit stores a new version, and creating an unchanged file again writes nothing ([DSL.md](./DSL.md), "`version`"). That holds across this release's change to assigned versions: a document stored under its sha256 hash stays that version, and its next edit lands a UUIDv7 beside it. During a rolling upgrade, while a replica of the older release runs beside a new one, one unpinned document created on both can be stored twice: under its hash by the old replica and under a UUIDv7 by the new one, with the head on whichever landed last. Both are valid, and nothing needs repairing. Rolled back to a release that derives hashes, a document first created under a UUIDv7 is given a hash version the next time it is created; the versions it has remain, and nothing is rewritten. A run pins the version it started with and the definition digest that version carries ([AGENTS.md](../AGENTS.md) §2.2), so it finishes on the definition it began with.
 
-The current pointer is the only thing that moves what starts. Until someone promotes an Orkflow, it runs its most recently applied version. Promoting moves the pointer for new runs only, and applying a new version does not move it ([DSL.md](./DSL.md), "Which version runs").
+The current pointer is the only thing that moves what starts. Until someone promotes an Orkflow, it runs its most recently created version. Promoting moves the pointer for new runs only, and creating a new version does not move it ([DSL.md](./DSL.md), "Which version runs").
 
 ```bash
-orkctl apply deploy.ork.yaml                 # an edited file: a new version; an unchanged one: nothing written
+orkctl orkflow create deploy.ork.yaml        # an edited file: a new version; an unchanged one: nothing written
 orkctl orkflow versions deploy               # every version, newest first, CURRENT marked
 orkctl orkflow diff deploy 1.3.0 1.4.0       # what text changed between two versions
 orkctl orkflow compat deploy 1.4.0           # what promoting 1.4.0 would break, from its inputs: and outputs:
@@ -91,7 +91,7 @@ orkctl orkflow promote deploy 1.3.0          # roll back: the same command, gate
 
 Promotion compares the declared interface of the target with the version that runs now. The declared interface is `inputs:`, with `type`, `required` and `default`, and `outputs:`, by name. An input added as required with no default, an input removed, an input retyped, and an output removed are breaking. A breaking promotion is refused until you pass `--acknowledge-breaking`. Rolling back is gated the same way: rolling back from a version that added an input removes that input, so the rollback needs the flag too ([DSL.md](./DSL.md), "Promoting compares declared interfaces").
 
-Applying is never refused for a breaking change. The apply stores the version with warnings at the fields that changed. A composing Orkflow pins its child's version, so it meets a breaking change only when its author moves the pin ([DSL.md](./DSL.md), "Promoting compares declared interfaces").
+Creating a version is never refused for a breaking change. The create stores the version with warnings at the fields that changed. A composing Orkflow pins its child's version, so it meets a breaking change only when its author moves the pin ([DSL.md](./DSL.md), "Promoting compares declared interfaces").
 
 ## Upgrading the deployment
 
@@ -167,7 +167,7 @@ Never decommission the previous release until the next one is proven. A pinned r
 
 ### Upgrading Orkflows with the release
 
-A stored Orkflow version outlives the release that applied it. An older engine refuses to apply a construct it does not know. Asked to run a stored version that uses one, it drops the unknown fields. So apply a document that uses a new construct only once the release that introduced it is current, or on every replica for an unversioned deployment ([DEPLOY.md](./DEPLOY.md), "Releases that add Orkflow constructs").
+A stored Orkflow version outlives the release that created it. An older engine refuses to create a version that uses a construct it does not know. Asked to run a stored version that uses one, it drops the unknown fields. So create a version that uses a new construct only once the release that introduced it is current, or on every replica for an unversioned deployment ([DEPLOY.md](./DEPLOY.md), "Releases that add Orkflow constructs").
 
 What an older release does with each construct, from the same reference:
 
@@ -183,7 +183,7 @@ What an older release does with each construct, from the same reference:
 
 From v0.2.0, a `retry:` with a negative interval, a `maximum_interval_seconds` below its `initial_interval_seconds`, or a `backoff_coefficient` that is set below 1 or not finite ([DSL.md](./DSL.md), rule 47) is refused whatever its `maximum_attempts`: validate reports an error at the field, and apply and plan refuse the document. A version stored before keeps starting, its retry raised to the nearest policy the cluster accepts, so fix the document before you next apply it.
 
-A run that v0.1.0 already left stuck on such a retry, or on a `retry:` whose `initial_interval_seconds` is above 100 and that sets no maximum, stays `RUNNING` with that task never starting: the cluster refuses its policy each time the run schedules it. On a deployment with versioning ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward"), the run stays on v0.1.0, never reaches the new release's raise, and keeps `orkctl release wait` on v0.1.0 from exiting 0. Before you wait for v0.1.0 to drain, find such runs — `orkctl run list --filter status=RUNNING` in each namespace lists the candidates, and `orkctl run get` shows the retrying task still `PENDING` long after its needs ended — and cancel each with `orkctl run cancel`. If one is still `RUNNING` afterwards, terminate it with `temporal workflow terminate --workflow-id <run id> --reason "stuck on a refused retry" --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"`, which ends it `RUN_TERMINATED`. Submit the work again on the new release if it is still needed. On a deployment without versioning, the new release's engine takes the stuck run's next attempt and schedules the raised policy.
+A run that v0.1.0 already left stuck on such a retry, or on a `retry:` whose `initial_interval_seconds` is above 100 and that sets no maximum, stays `RUNNING` with that task never starting: the cluster refuses its policy each time the run schedules it. On a deployment with versioning ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward"), the run stays on v0.1.0, never reaches the new release's raise, and keeps `orkctl release wait` on v0.1.0 from exiting 0. Before you wait for v0.1.0 to drain, find such runs — `orkctl run list -F status=RUNNING` in each namespace lists the candidates, and `orkctl run get` shows the retrying task still `PENDING` long after its needs ended — and cancel each with `orkctl run cancel`. If one is still `RUNNING` afterwards, terminate it with `temporal workflow terminate --workflow-id <run id> --reason "stuck on a refused retry" --namespace "$ORK_TEMPORAL_NAMESPACE" --address "$ORK_TEMPORAL_ADDRESS"`, which ends it `RUN_TERMINATED`. Submit the work again on the new release if it is still needed. On a deployment without versioning, the new release's engine takes the stuck run's next attempt and schedules the raised policy.
 
 Some runs need a newer engine than the one that could otherwise decide them. A submit that needs such a run is refused while an older `ork` process is polling, and the refusal names the count of processes. A fan-out above 1,000 items, and a definition passed by reference, are the two refusals of this kind. A snapshot overlay is never refused: a run whose engines cannot all be sure of overlays writes full snapshots instead ([DEPLOY.md](./DEPLOY.md), "Engine capabilities and the fleet check"). Submit refuses a run whose fan-out, cached task or failure handler would reach a pool whose Orkers predate that feature, so run every Orker of one pool on one release ([DEPLOY.md](./DEPLOY.md), "Fan-out, caching and failure handlers need every Orker of a pool on a release that supports them").
 
@@ -204,7 +204,7 @@ Rolling back past a release that added Orkflow constructs needs the preparation 
 | A fan-out maximum above 1,000 items | Lower `engine.each_max_items` to at most 1,000, then wait until every run created before the change has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Definitions passed by reference | Set `engine.definition_by_reference` to `false` on every replica, then wait until every run started with its definition by reference has finished. An older release cannot read such a run's definition ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Snapshot overlays | Set `engine.snapshot_overlays` to `false` on every replica, then wait until every run started while it was on has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
-| The Temporal Go SDK 1.50 (0.2.0) | With versioning on, nothing more: a run 0.2.0 started finishes on 0.2.0. With versioning off, hold each namespace that takes runs, wait until `orkctl run list -n NS --filter 'status=PENDING,RUNNING'` lists no run in any of them, roll back, then release each hold: `orkctl namespace update NS --release-hold`. Count every open run, however old: any run open while 0.2.0 ran may carry the marker. A run waiting on an await stays open until the await is resolved or its deadline passes, so resolve or cancel it rather than wait. An older engine cannot replay a run in which 0.2.0 recorded an ordered cancellation, and the run stays `RUNNING` until a 0.2.0 engine picks it up. For the same reason, replace every engine replica of an unversioned fleet together when rolling forward to 0.2.0 ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
+| The Temporal Go SDK 1.50 (0.2.0) | With versioning on, nothing more: a run 0.2.0 started finishes on 0.2.0. With versioning off, hold each namespace that takes runs, wait until `orkctl run list -n NS -F 'status=PENDING,RUNNING'` lists no run in any of them, roll back, then release each hold: `orkctl namespace update NS --release-hold`. Count every open run, however old: any run open while 0.2.0 ran may carry the marker. A run waiting on an await stays open until the await is resolved or its deadline passes, so resolve or cancel it rather than wait. An older engine cannot replay a run in which 0.2.0 recorded an ordered cancellation, and the run stays `RUNNING` until a 0.2.0 engine picks it up. For the same reason, replace every engine replica of an unversioned fleet together when rolling forward to 0.2.0 ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 
 Two floors do not move. Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a gap in its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
@@ -238,7 +238,7 @@ Some defaults changed after the setting was introduced. Read the setting in the 
 
 ## Upgrading from 0.1.0 to 0.2.0
 
-Every **BREAKING** entry of 0.2.0's [CHANGELOG.md](../CHANGELOG.md) section is listed here with what to do. Do these before the release's engines and Orkers start. A stored Orkflow version is immutable, so a step that changes a document means applying and promoting a new version ([Orkflow versions](#orkflow-versions)).
+Every **BREAKING** entry of 0.2.0's [CHANGELOG.md](../CHANGELOG.md) section is listed here with what to do. Do these before the release's engines and Orkers start. A stored Orkflow version is immutable, so a step that changes a document means creating and promoting a new version ([Orkflow versions](#orkflow-versions)).
 
 | Change | What to do |
 |---|---|
@@ -332,7 +332,7 @@ Connect 1.21 codes four failures differently:
 | A stream that ends cleanly partway through a message | `internal` | `invalid_argument` |
 | An engine's write to a client that has gone away | `canceled` | `unknown` |
 
-Such an end is still `unavailable` before any response and `unknown` inside a message. `orkctl run watch` and `orkctl run inspect --watch` resume on a `canceled` they did not cause as on `unavailable`, so a watch whose stream is reset partway through now resumes where it used to stop. A Ctrl-C still ends them. A connection that ends partway through a stream (`internal` or `unknown`) ended them too before v0.3.0, which resumes it. Other `orkctl` commands print the new code for the same failure, with the same exit status. None of the four reaches an audit record, and no OrkStack metric carries a Connect code.
+Such an end is still `unavailable` before any response and `unknown` inside a message. `orkctl run watch` and `orkctl run inspect -w` resume on a `canceled` they did not cause as on `unavailable`, so a watch whose stream is reset partway through now resumes where it used to stop. A Ctrl-C still ends them. A connection that ends partway through a stream (`internal` or `unknown`) ended them too before v0.3.0, which resumes it. Other `orkctl` commands print the new code for the same failure, with the same exit status. None of the four reaches an audit record, and no OrkStack metric carries a Connect code.
 
 ### The examples
 
@@ -343,3 +343,31 @@ Every example in `examples/` but the `custom-image` recipe runs as it stands: ap
 - `config-from-git` and `pinned-checkout` no longer mount `GIT_TOKEN` or read their template, services and config from the repository: those are inputs now. Their headers say how to add a token for a private repository.
 - `examples/automation/examples.ork.yaml` declares `default`, not `examples`, and fires once a day, not every 15 minutes, pausing itself after a failure.
 - `custom-image` runs images you build, so it is now a recipe beside their build, `examples/custom-image/custom-image.ork.yaml`, whose header gives the steps. It is gone from the Apply page's gallery.
+
+## Upgrading from 0.2.0 to 0.3.0
+
+### Orkflows are created, automation documents applied
+
+orkctl's `apply` is gone, with no alias: each kind of document has a command of its own, under its own noun, and each refuses the other's `kind:` by name, pointing at the command that takes it ([CHANGELOG.md](../CHANGELOG.md)).
+
+| orkctl 0.2.0 | orkctl 0.3.0 |
+|---|---|
+| `apply deploy.ork.yaml` (`kind: Orkflow`) | `orkflow create deploy.ork.yaml` |
+| `apply automation.ork.yaml` (`kind: Automation`) | `automation apply automation.ork.yaml` |
+| `export -n payments` | `automation export -n payments` |
+| `webhook register URL` | `webhook create URL` |
+
+`--dry-run` and `--check` move with each command, and `--check` still exits 4 when something would change; `--prune`, `--expect-plan` and `--secrets-out` belong to `orkctl automation apply` alone. Output says `Created orkflow …` and `Created webhook …` where it said `Applied` and `Registered`.
+
+A directory, or a list of files, that holds both kinds is refused by either command, so a pipeline that ran one `apply environments/prod/` now runs two steps, Orkflows first, because an automation document's plan reads only the Orkflow versions already stored:
+
+```bash
+orkctl orkflow create environments/prod/orkflows/
+orkctl automation apply environments/prod/automation.ork.yaml
+```
+
+Move the Orkflows and the automation document into separate directories, or name the files. The RPCs keep their names (`ApplyOrkflow`, `RegisterWebhook`, `PlanAutomation`), so an API client needs no change. In the UI, the Apply page is now **Create Orkflow**, at `/orkflows/+new`, reached from the Orkflows page; the sidebar no longer lists it, and the editor's button reads **Create version**. The `approval-gate` and `order-saga` examples are now version `0.2.1`: only their descriptions changed, to name the new command, so a store holding `0.2.0` creates the new file beside it.
+
+### Flag shorthands
+
+orkctl gained shorthands for its most used flags, and the docs and the UI print them: `-j` `--json`, `-t` `--task`, `-s` `--since`, `-w` `--watch`, `-F` `--filter`, `-i` `--input`, `-g` `--group-by`, and `-o` `--output` and `-f` `--file` where they had none. The long forms keep working, so nothing needs changing ([CLI.md](./CLI.md)).

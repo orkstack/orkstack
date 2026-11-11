@@ -17,6 +17,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------------------
@@ -101,9 +103,7 @@ tasks:
 func writeCompatDocument(t *testing.T, document string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "doc.ork.yaml")
-	if err := os.WriteFile(path, []byte(document), 0o644); err != nil {
-		t.Fatalf("write document: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(document), 0o644), "write document")
 	return path
 }
 
@@ -111,9 +111,9 @@ func writeCompatDocument(t *testing.T, document string) string {
 func compatFixture(t *testing.T) *fixture {
 	t.Helper()
 	f := newFixture(t)
-	f.run("apply", writeCompatDocument(t, compatBlock210)).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeCompatDocument(t, compatBlock210)).requireExit(t, exitOK)
 	f.run("orkflow", "promote", "release-block", "2.1.0").requireExit(t, exitOK)
-	f.run("apply", writeCompatDocument(t, compatBlock300)).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeCompatDocument(t, compatBlock300)).requireExit(t, exitOK)
 	return f
 }
 
@@ -125,8 +125,8 @@ func TestOrkflowCompat_GoldenHumanAndJSON(t *testing.T) {
 	requireGolden(t, "orkflow-compat.json.golden", jsonOut.stdout)
 
 	g := newFixture(t)
-	g.run("apply", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
-	g.run("apply", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
+	g.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "1.0.0", "one")).requireExit(t, exitOK)
+	g.run("orkflow", "create", writeVersionedOrkflow(t, "deploy", "2.0.0", "two")).requireExit(t, exitOK)
 	unknown := g.run("orkflow", "compat", "deploy", "1.0.0", "2.0.0").requireExit(t, exitOK)
 	requireGolden(t, "orkflow-compat-unknown.golden", unknown.stdout)
 }
@@ -227,13 +227,13 @@ func callersFixture(t *testing.T) (*fixture, *cliSchedules) {
 	t.Helper()
 	schedules := &cliSchedules{records: map[string]*orkstackv1.ScheduleRecord{}}
 	f := newFixtureWith(t, func(cfg *api.Config) { cfg.Schedules = schedules })
-	f.run("apply", writeCompatDocument(t, compatBlock210)).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeCompatDocument(t, compatBlock210)).requireExit(t, exitOK)
 	f.run("orkflow", "promote", "release-block", "2.1.0").requireExit(t, exitOK)
-	f.run("apply", writeCompatDocument(t, compatBilling)).requireExit(t, exitOK)
-	f.run("apply", writeCompatDocument(t, compatCheckout)).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeCompatDocument(t, compatBilling)).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeCompatDocument(t, compatCheckout)).requireExit(t, exitOK)
 	f.run("orkflow", "promote", "checkout-service", "4.2.0").requireExit(t, exitOK)
-	f.run("apply", writeCompatDocument(t, compatBlock300)).requireExit(t, exitOK)
-	f.run("apply", writeCompatDocument(t, strings.NewReplacer(`"4.2.0"`, `"4.3.0"`,
+	f.run("orkflow", "create", writeCompatDocument(t, compatBlock300)).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeCompatDocument(t, strings.NewReplacer(`"4.2.0"`, `"4.3.0"`,
 		"release-block@2.1.0", "release-block@3.0.0", "notes: from checkout", "region: eu",
 		".tasks.release.output.url", ".tasks.release.output.sbom").Replace(compatCheckout))).requireExit(t, exitOK)
 	f.run("trigger", "create", "--orkflow", "release-block", "--name", "ci-release").requireExit(t, exitOK)
@@ -261,7 +261,7 @@ func TestOrkflowCallers_GoldenHumanAndJSON(t *testing.T) {
 	empty := f.run("orkflow", "callers", "checkout-service").requireExit(t, exitOK)
 	requireGolden(t, "orkflow-callers-empty.golden", empty.stdout)
 
-	f.run("apply", writeVersionedOrkflow(t, "ghost-block", "1.0.0", "ghost")).requireExit(t, exitOK)
+	f.run("orkflow", "create", writeVersionedOrkflow(t, "ghost-block", "1.0.0", "ghost")).requireExit(t, exitOK)
 	f.run("trigger", "create", "--orkflow", "ghost-block", "--name", "ghost-trigger").requireExit(t, exitOK)
 	f.run("orkflow", "delete", "ghost-block", "--yes").requireExit(t, exitOK)
 	deleted := f.run("orkflow", "callers", "ghost-block").requireExit(t, exitOK)

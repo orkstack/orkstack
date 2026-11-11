@@ -3,7 +3,7 @@ package api_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // reconcileYAML is the orkflow every admission test knocks with. Its label is
@@ -214,9 +216,7 @@ func newAdmissionFixture(t *testing.T, configure ...func(*api.Config)) *admissio
 
 	server := api.NewServer("127.0.0.1:0", api.NewMux(svc, api.MuxOptions{}))
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
 	transport.Protocols = new(http.Protocols)
@@ -261,16 +261,12 @@ func (f *admissionFixture) edit(t *testing.T, name string, change func(*orkstack
 	t.Helper()
 	ctx := context.Background()
 	got, err := f.namespaceClient().GetNamespace(ctx, connect.NewRequest(&orkstackv1.GetNamespaceRequest{Name: name}))
-	if err != nil {
-		t.Fatalf("GetNamespace(%s): %v", name, err)
-	}
+	must.OKf(t, err, "GetNamespace(%s)", name)
 	doc := got.Msg.GetNamespace()
 	change(doc)
 	updated, err := f.namespaceClient().UpdateNamespace(ctx,
 		connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: doc}))
-	if err != nil {
-		t.Fatalf("UpdateNamespace(%s): %v", name, err)
-	}
+	must.OKf(t, err, "UpdateNamespace(%s)", name)
 	return updated.Msg.GetNamespace()
 }
 
@@ -344,9 +340,7 @@ func TestSubmitRun_RefusedByHoldLeavesNothingBehind(t *testing.T) {
 
 	listed, err := f.runClient().ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{Namespace: "payments"}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed.Msg.GetRuns()) != 0 {
 		t.Errorf("ListRuns(payments) = %v, want none", listed.Msg.GetRuns())
 	}
@@ -440,9 +434,7 @@ func TestSubmitRun_AllowEmptyPoolDoesNotBypassAdmission(t *testing.T) {
 func TestSubmitRun_AKeyedRepeatDuringAHoldIsRefusedNotAnswered(t *testing.T) {
 	f := newAdmissionFixture(t)
 	first, err := f.submit("order-42", false)
-	if err != nil {
-		t.Fatalf("first keyed submit: %v", err)
-	}
+	must.OKf(t, err, "first keyed submit")
 	f.hold(t, heldReason)
 
 	_, err = f.submit("order-42", false)
@@ -450,17 +442,13 @@ func TestSubmitRun_AKeyedRepeatDuringAHoldIsRefusedNotAnswered(t *testing.T) {
 
 	got, err := f.runClient().GetRun(context.Background(),
 		connect.NewRequest(&orkstackv1.GetRunRequest{RunId: first.GetId(), Namespace: "payments"}))
-	if err != nil {
-		t.Fatalf("GetRun(%s) after a refused repeat: %v", first.GetId(), err)
-	}
+	must.OKf(t, err, "GetRun(%s) after a refused repeat", first.GetId())
 	if got.Msg.GetRun().GetId() != first.GetId() {
 		t.Errorf("GetRun = %s, want %s", got.Msg.GetRun().GetId(), first.GetId())
 	}
 	listed, err := f.runClient().ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{Namespace: "payments"}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if runs := listed.Msg.GetRuns(); len(runs) != 1 || runs[0].GetId() != first.GetId() {
 		t.Errorf("ListRuns(payments) = %v, want only %s", runs, first.GetId())
 	}
@@ -492,18 +480,14 @@ func TestSubmitRun_ReleasingAHoldAdmitsAgainAndStartsNothingRefusedEarlier(t *te
 func TestSubmitRun_AHoldNeverCancelsAnAcceptedRun(t *testing.T) {
 	f := newAdmissionFixture(t)
 	run, err := f.submit("", false)
-	if err != nil {
-		t.Fatalf("submit: %v", err)
-	}
+	must.OKf(t, err, "submit")
 	f.hold(t, heldReason)
 	if canceled := f.starter.canceledRuns(); len(canceled) != 0 {
 		t.Errorf("a hold canceled %v", canceled)
 	}
 	got, err := f.runClient().GetRun(context.Background(),
 		connect.NewRequest(&orkstackv1.GetRunRequest{RunId: run.GetId(), Namespace: "payments"}))
-	if err != nil {
-		t.Fatalf("GetRun after a hold: %v", err)
-	}
+	must.OKf(t, err, "GetRun after a hold")
 	if got.Msg.GetRun().GetStatus() != orkstackv1.Status_STATUS_RUNNING {
 		t.Errorf("status = %v, want still RUNNING", got.Msg.GetRun().GetStatus())
 	}
@@ -526,9 +510,7 @@ func TestCreateNamespace_IdempotentRepeatComparesHoldAndMaxRunning(t *testing.T)
 		t.Fatalf("CreateNamespace: %v", err)
 	}
 	again, err := create(spec(heldReason, 20))
-	if err != nil {
-		t.Fatalf("identical repeat: %v", err)
-	}
+	must.OKf(t, err, "identical repeat")
 	if again.Msg.GetCreated() {
 		t.Error("an identical repeat reported created: true, want the no-op")
 	}
@@ -602,9 +584,7 @@ func TestTriggerInvoke_IntoAHeldNamespaceIs412FailedPrecondition(t *testing.T) {
 	}
 	listed, err := f.runClient().ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{Namespace: "payments"}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed.Msg.GetRuns()) != 0 {
 		t.Errorf("a refused invoke left runs: %v", listed.Msg.GetRuns())
 	}

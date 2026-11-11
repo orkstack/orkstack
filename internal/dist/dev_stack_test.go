@@ -16,6 +16,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestDevCompose_PublishesOnlyOnLoopback: the development stack's services
@@ -112,9 +114,7 @@ func newStackRepo(t *testing.T) *stackRepo {
 		t.Fatalf("bash is required (CONTRIBUTING.md): %v", err)
 	}
 	realSleep, err := exec.LookPath("sleep")
-	if err != nil {
-		t.Fatalf("sleep is required: %v", err)
-	}
+	must.OKf(t, err, "sleep is required")
 	s := &stackRepo{t: t, root: t.TempDir(), logs: t.TempDir()}
 	standIns := t.TempDir()
 	s.path = standIns + string(os.PathListSeparator) + os.Getenv("PATH")
@@ -122,9 +122,7 @@ func newStackRepo(t *testing.T) *stackRepo {
 
 	s.write(filepath.Join(s.root, "scripts", "stack.sh"), string(readRepoFile(t, "scripts/stack.sh")))
 	// Present, so the script installs nothing.
-	if err := os.MkdirAll(filepath.Join(s.root, "ui", "node_modules"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(s.root, "ui", "node_modules"), 0o755))
 	// A process the script starts stays up until the test stops it, or until
 	// this runs out if the test could not.
 	stay := "exec " + shellQuote(realSleep) + " 120\n"
@@ -157,12 +155,8 @@ esac
 
 func (s *stackRepo) write(path, content string) {
 	s.t.Helper()
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		s.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), 0o755); err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, os.MkdirAll(filepath.Dir(path), 0o755))
+	must.OK(s.t, os.WriteFile(path, []byte(content), 0o755))
 }
 
 // up runs `scripts/stack.sh up` in the throwaway repository, with env and
@@ -195,9 +189,7 @@ func (s *stackRepo) engineAddr() string {
 		s.t.Fatalf("the engine was started with %q; want %q", got, want)
 	}
 	doc, err := config.Load(file, config.BinaryOrk)
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	addr := ""
 	unset := func(string) (string, bool) { return "", false }
 	if _, err := doc.Apply(unset, func(name, value string) error {
@@ -216,9 +208,7 @@ func (s *stackRepo) engineAddr() string {
 func (s *stackRepo) assertClientsDial(url string) {
 	s.t.Helper()
 	calls, err := os.ReadFile(filepath.Join(s.logs, "orkctl"))
-	if err != nil {
-		s.t.Fatal(err)
-	}
+	must.OK(s.t, err)
 	if !strings.Contains(string(calls), "--server "+url+" ") {
 		s.t.Errorf("orkctl was called with %q; want --server %s", calls, url)
 	}
@@ -315,12 +305,8 @@ func newResetRepo(t *testing.T) *resetRepo {
 	if len(profiles) == 0 {
 		t.Fatal("deploy/docker-compose.yml declares no profile; the stand-in would check nothing")
 	}
-	if err := os.WriteFile(filepath.Join(r.logs, "profiles"), []byte(strings.Join(profiles, "\n")+"\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(r.logs, "repo"), []byte(r.root), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(r.logs, "profiles"), []byte(strings.Join(profiles, "\n")+"\n"), 0o644))
+	must.OK(t, os.WriteFile(filepath.Join(r.logs, "repo"), []byte(r.root), 0o644))
 	docker := `#!/bin/sh
 S=` + shellQuote(r.logs) + `
 echo "$*" >> "$S/calls"
@@ -352,21 +338,15 @@ volume)
 esac
 exit 0
 `
-	if err := os.WriteFile(filepath.Join(r.bin, "docker"), []byte(docker), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(r.bin, "docker"), []byte(docker), 0o755))
 	return r
 }
 
 func (r *resetRepo) write(rel, content string, mode os.FileMode) {
 	r.t.Helper()
 	path := filepath.Join(r.root, filepath.FromSlash(rel))
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		r.t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(content), mode); err != nil {
-		r.t.Fatal(err)
-	}
+	must.OK(r.t, os.MkdirAll(filepath.Dir(path), 0o755))
+	must.OK(r.t, os.WriteFile(path, []byte(content), mode))
 }
 
 // run runs `scripts/reset.sh --force` in the throwaway repository and returns
@@ -441,25 +421,15 @@ func TestResetScript_RemovesWorkspacesTheOrkerSealed(t *testing.T) {
 	t.Parallel()
 	r := newResetRepo(t)
 	ws, err := orker.NewWorkspace(filepath.Join(r.root, ".data", "work", "e2e-run-page-p1-abc", "ork-run-1-task-1"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(ws.Input, "input.json"), []byte("{}"), orker.ModeInputFile); err != nil {
-		t.Fatal(err)
-	}
-	if err := ws.Seal(); err != nil {
-		t.Fatal(err)
-	}
-	if err := ws.SealSecrets(); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
+	must.OK(t, os.WriteFile(filepath.Join(ws.Input, "input.json"), []byte("{}"), orker.ModeInputFile))
+	must.OK(t, ws.Seal())
+	must.OK(t, ws.SealSecrets())
 	// A directory a workload made in its output/ that its owner can only
 	// enter: neither rm nor a chmod that adds write alone can empty it.
 	shut := filepath.Join(ws.Output, "tree")
 	r.write(strings.TrimPrefix(filepath.Join(shut, "result.json"), r.root+string(filepath.Separator)), "{}", 0o644)
-	if err := os.Chmod(shut, 0o100); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Chmod(shut, 0o100))
 	r.write(".data/artifacts/orkflows/hello.json", "{}", 0o644)
 
 	code, out := r.run()
@@ -501,9 +471,7 @@ func TestResetScript_TakesDownEveryProfile(t *testing.T) {
 func TestResetScript_RefusesWhenAVolumeSurvives(t *testing.T) {
 	t.Parallel()
 	r := newResetRepo(t)
-	if err := os.WriteFile(filepath.Join(r.logs, "left"), []byte("orkstack_stuck-data\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(r.logs, "left"), []byte("orkstack_stuck-data\n"), 0o644))
 
 	code, out := r.run()
 
@@ -519,9 +487,7 @@ func TestResetScript_RefusesWhenAVolumeSurvives(t *testing.T) {
 func TestResetScript_RefusesWhenStateSurvives(t *testing.T) {
 	t.Parallel()
 	r := newResetRepo(t)
-	if err := os.WriteFile(filepath.Join(r.logs, "recreate"), nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(filepath.Join(r.logs, "recreate"), nil, 0o644))
 
 	code, out := r.run()
 

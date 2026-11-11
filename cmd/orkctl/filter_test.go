@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -13,6 +13,9 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // requestBodies decodes every request the fixture received on path, in
@@ -27,9 +30,7 @@ func requestBodies[M proto.Message](t *testing.T, f *fixture, path string, newMs
 			continue
 		}
 		msg := newMsg()
-		if err := proto.Unmarshal(f.bodyLog[i], msg); err != nil {
-			t.Fatalf("decode request to %s: %v", path, err)
-		}
+		must.OKf(t, proto.Unmarshal(f.bodyLog[i], msg), "decode request to %s", path)
 		out = append(out, msg)
 	}
 	return out
@@ -146,10 +147,8 @@ func applyOrkflows(t *testing.T, f *fixture, docs map[string]string) {
 	dir := t.TempDir()
 	for name, team := range docs {
 		path := filepath.Join(dir, name+".ork.yaml")
-		if err := os.WriteFile(path, []byte(orkflowSourceNamed(name, team)), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		f.run("apply", path).requireExit(t, exitOK)
+		must.OK(t, os.WriteFile(path, []byte(orkflowSourceNamed(name, team)), 0o644))
+		f.run("orkflow", "create", path).requireExit(t, exitOK)
 	}
 }
 
@@ -191,10 +190,8 @@ func TestOrkflowList_PrintsANextPageLineWithItsFilters(t *testing.T) {
 	dir := t.TempDir()
 	for _, name := range []string{"one", "two"} {
 		path := filepath.Join(dir, name+".ork.yaml")
-		if err := os.WriteFile(path, []byte(orkflowSourceNamed(name, "x")), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		scoped.run("apply", path, "-n", "payments").requireExit(t, exitOK)
+		must.OK(t, os.WriteFile(path, []byte(orkflowSourceNamed(name, "x")), 0o644))
+		scoped.run("orkflow", "create", path, "-n", "payments").requireExit(t, exitOK)
 	}
 	out := scoped.run("orkflow", "list", "-n", "payments", "--limit", "1").requireExit(t, exitOK)
 	out.requireContains(t, "Next page: orkctl -n payments orkflow list --limit 1 --page-token ")
@@ -202,8 +199,8 @@ func TestOrkflowList_PrintsANextPageLineWithItsFilters(t *testing.T) {
 
 func TestWebhookList_FilteredGolden(t *testing.T) {
 	f, _ := newWebhookFixture(t)
-	f.run("webhook", "register", "https://example.test/audit").requireExit(t, exitOK)
-	f.run("webhook", "register", "https://example.test/etl",
+	f.run("webhook", "create", "https://example.test/audit").requireExit(t, exitOK)
+	f.run("webhook", "create", "https://example.test/etl",
 		"-n", "analytics", "--orkflow", "nightly-etl", "--task", "extract",
 		"--event", "TASK_SUCCEEDED", "--name", "etl-loader").requireExit(t, exitOK)
 	requireGolden(t, "webhook-list-filtered.golden",
@@ -217,8 +214,8 @@ func TestWebhookList_FilteredGolden(t *testing.T) {
 // command's --json envelope and never change its shape.
 func TestWebhookListJSON_KeepsItsEnvelope(t *testing.T) {
 	f, _ := newWebhookFixture(t)
-	f.run("webhook", "register", "https://example.test/audit").requireExit(t, exitOK)
-	f.run("webhook", "register", "https://example.test/etl", "-n", "analytics", "--name", "etl-loader").requireExit(t, exitOK)
+	f.run("webhook", "create", "https://example.test/audit").requireExit(t, exitOK)
+	f.run("webhook", "create", "https://example.test/etl", "-n", "analytics", "--name", "etl-loader").requireExit(t, exitOK)
 	for _, tc := range []struct {
 		args []string
 		urls string
@@ -228,7 +225,7 @@ func TestWebhookListJSON_KeepsItsEnvelope(t *testing.T) {
 		{[]string{"--filter", "name=nope"}, ""},
 	} {
 		out := f.run(append([]string{"--json", "webhook", "list"}, tc.args...)...).requireExit(t, exitOK)
-		var envelope map[string]json.RawMessage
+		var envelope map[string]stablejson.RawJSON
 		if err := json.Unmarshal([]byte(out.stdout), &envelope); err != nil {
 			t.Fatalf("%v: %v\n%s", tc.args, err, out.stdout)
 		}

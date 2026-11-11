@@ -115,7 +115,7 @@ e.g. as `workspace.tar.gz`. Names must be valid UTF-8.
 The image declares its `with:` contract in
 [`interface.ork.yaml`](interface.ork.yaml), packed into its
 `org.orkstack.activity.interface` label (`docs/ACTIVITY_IMAGES.md`,
-"Declaring the interface"), so `orkctl orkflow validate` and apply check a
+"Declaring the interface"), so `orkctl orkflow validate` and `orkctl orkflow create` check a
 task's `with:` before anything runs: a missing required key or an unknown
 `op` is an error, an undeclared key a warning. Three ops, `exec` when `op`
 is absent, and every `values.json` key of Output — `value` is the captured

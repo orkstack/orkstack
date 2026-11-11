@@ -4,14 +4,14 @@ Learn what a namespace separates, which namespace a command uses, and which limi
 
 ```bash
 orkctl namespace create payments --default-pool main --allow-pool main --max-running 20
-orkctl -n payments apply examples/each-fan-out.ork.yaml
+orkctl -n payments orkflow create examples/each-fan-out.ork.yaml
 ```
 
-The first command creates a namespace with a pool and a cap on runs in flight. The second applies an Orkflow into it.
+The first command creates a namespace with a pool and a cap on runs in flight. The second creates an Orkflow in it.
 
 ## What a namespace separates
 
-A namespace is a scope. An Orkflow's name is unique within one namespace, so two namespaces can each hold a `deploy` and never see each other's. Runs are scoped the same way: `orkctl run get` finds a run only in the namespace the command acts in.
+A namespace is a scope. An Orkflow's name is unique within one namespace, so two namespaces can each hold a `deploy` and never see each other's. Runs are scoped the same way: `orkctl run get` finds a run only in the namespace the command acts in. The one way across is composition: an Orkflow can share itself with other namespaces in its own `shared_with:`, and their Orkflows can then compose it ([Run one Orkflow inside another](/docs/how-to/compose/)).
 
 A command acts in the namespace given by `-n`. If there is none, it uses `ORK_NAMESPACE`, then the namespace saved by `orkctl namespace use`, then `default`.
 

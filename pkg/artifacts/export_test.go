@@ -14,7 +14,7 @@ func NewS3RunArchiveWithOptions(ctx context.Context, cfg Config, optFns ...func(
 	if err != nil {
 		return nil, err
 	}
-	return &S3RunArchive{client: s3.New(client.Options(), optFns...), bucket: bucket}, nil
+	return &S3RunArchive{blobBase: blobBase{&s3Blobs{client: s3.New(client.Options(), optFns...), bucket: bucket}}}, nil
 }
 
 // SetTriggerUpdateHookForTest makes Update run hook between its read and its

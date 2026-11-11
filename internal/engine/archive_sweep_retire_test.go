@@ -20,6 +20,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // sweepCluster is the cluster the retention path talks to. It holds one run,
@@ -89,18 +91,12 @@ func TestRetention_ARunThatDidNotArchiveItselfIsArchivedAndRetired(t *testing.T)
 		CloseTime: timestamppb.New(closedAt),
 	}}
 	liveRun, err := reader.GetRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	liveEvents, err := reader.Events(ctx, runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	cluster := &sweepCluster{client: client, runID: runID, closed: closedAt}
 	config := archivecleanup.CleanupConfig{TemporalNamespace: temporalNamespace, Interval: time.Hour, BatchSize: 10}
@@ -143,16 +139,12 @@ func TestRetention_ARunThatDidNotArchiveItselfIsArchivedAndRetired(t *testing.T)
 	}
 	replica := NewRunArchiver(store)
 	run, err := replica.LoadRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("LoadRun: %v", err)
-	}
+	must.OKf(t, err, "LoadRun")
 	if !proto.Equal(run, liveRun) {
 		t.Fatalf("after retirement the run reads\n%v\nand before it read\n%v", run, liveRun)
 	}
 	stored, err := replica.LoadRunEvents(ctx, runID)
-	if err != nil {
-		t.Fatalf("LoadRunEvents: %v", err)
-	}
+	must.OKf(t, err, "LoadRunEvents")
 	if eventTypesOf(stored) != eventTypesOf(liveEvents) {
 		t.Fatalf("after retirement the stream reads %s, before it read %s", eventTypesOf(stored), eventTypesOf(liveEvents))
 	}

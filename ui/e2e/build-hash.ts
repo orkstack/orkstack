@@ -23,7 +23,7 @@ export const BUILD_HASH_FILE = '.orkstack-build-hash';
  * taken as they are. Generated clients live under src/lib/gen, so a proto
  * change reaches the hash through them. The repository's examples/ is one
  * too: the build writes the example gallery from it, the cards and each
- * document as a file of its own (src/routes/apply/examples*), so an edited
+ * document as a file of its own (src/routes/orkflows/+new/examples*), so an edited
  * example is a different build.
  */
 export const BUILD_INPUTS = [

@@ -197,7 +197,7 @@
 		<ActivityIcon icon={declared} class="dag-icon" x={node.x + DAG_NODE_W - 25} y={node.y + 11} width={15} height={15} />
 	{:else}
 		<use
-			href="#i-a-{node.task.orkflow ? 'orkflow' : activityKind(node.task.uses, { awaited: !!node.task.await })}"
+			href="#i-a-{node.task.orkflow ? 'orkflow' : activityKind(node.task.uses, { awaited: !!node.task.await, slept: !!node.task.sleep })}"
 			x={node.x + DAG_NODE_W - 25}
 			y={node.y + 11}
 			width="15"
@@ -439,7 +439,8 @@
 	.dag-node.is-running.is-selected .dag-outline {
 		stroke: var(--select);
 	}
-	.dag-node.is-awaiting .dag-outline {
+	.dag-node.is-awaiting .dag-outline,
+	.dag-node.is-sleeping .dag-outline {
 		stroke: var(--await);
 	}
 	/* Outside the selection: greyed, not faded, so its words keep 4.5:1. */
@@ -463,7 +464,11 @@
 	.mark-fill-failed {
 		fill: var(--fail-mark);
 	}
+	.mark-fill-sleeping {
+		fill: var(--await);
+	}
 	.mark-line-awaiting,
+	.mark-line-sleeping,
 	.mark-line-canceled,
 	.mark-line-skipped,
 	.mark-line-pending,
@@ -471,7 +476,8 @@
 		fill: none;
 		stroke-width: 1.5;
 	}
-	.mark-line-awaiting {
+	.mark-line-awaiting,
+	.mark-line-sleeping {
 		stroke: var(--await);
 	}
 	.mark-line-canceled,

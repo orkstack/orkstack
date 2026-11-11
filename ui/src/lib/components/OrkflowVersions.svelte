@@ -271,7 +271,7 @@
 	<p data-testid="versions-loading" class="text-sm text-ink-muted">Loading versions…</p>
 {:else if versions.length === 0}
 	<p data-testid="versions-empty" class="text-sm text-ink-muted">
-		No stored versions. Apply this Orkflow from the Edit tab to create one.
+		No stored versions. Create one from the Edit tab.
 	</p>
 {:else}
 	<div class="mb-4 flex items-start justify-between gap-4">
@@ -280,7 +280,7 @@
 			{versions.length === 1 ? 'version' : 'versions'}; runs execute
 			<VersionText version={resolved} class="font-medium text-ink" testid="versions-resolved" />
 			{#if !currentVersion}
-				<span class="text-ink-muted">(nobody has promoted this Orkflow, so the newest applies)</span>
+				<span class="text-ink-muted">(nobody has promoted this Orkflow, so the newest version runs)</span>
 			{/if}
 		</p>
 		<button
@@ -299,7 +299,7 @@
 			<thead>
 				<tr>
 					<th>Version</th>
-					<th>Applied</th>
+					<th>Created</th>
 					<th>Description</th>
 					<th class="text-center">From</th>
 					<th class="text-center">To</th>
@@ -325,7 +325,7 @@
 								<span
 									data-testid="version-head-{version.version}"
 									class="stamp ml-2 border-rule-strong text-ink-secondary"
-									data-tip="the most recently applied version — what an edit is derived from"
+									data-tip="the most recently created version — what an edit is derived from"
 									>head</span
 								>
 							{/if}
@@ -369,7 +369,7 @@
 								<a
 									href={editHref(version.version)}
 									data-testid="version-edit-{version.version}"
-									data-tip="edit this version's source and apply it as a new version"
+									data-tip="edit this version's source and create it as a new version"
 									class="btn btn-sm"
 								>
 									Edit
@@ -488,7 +488,7 @@
 		{#snippet body()}
 			<p>
 				Runs that name no version currently execute
-				<span class="font-medium text-ink">{shortVersion(resolved) || 'the newest applied version'}</span>.
+				<span class="font-medium text-ink">{shortVersion(resolved) || 'the newest version'}</span>.
 				After this they execute
 				<span class="font-medium text-blue">{shortVersion(pendingPromotion ?? '')}</span>, in namespace
 				<span class="font-medium text-ink">{namespaceLabel(namespace)}</span>.

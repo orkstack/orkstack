@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const (
@@ -43,9 +45,7 @@ func TestRunIDHelperProcess(t *testing.T) {
 	for range runIDHelperIDs {
 		fmt.Fprintln(out, engine.NewRunID())
 	}
-	if err := out.Flush(); err != nil {
-		t.Fatalf("flush ids: %v", err)
-	}
+	must.OKf(t, out.Flush(), "flush ids")
 }
 
 // TestNewRunID_UniqueAcrossSeparateProcesses is the cross-replica uniqueness
@@ -54,9 +54,7 @@ func TestRunIDHelperProcess(t *testing.T) {
 // and requires every id from every child to be distinct.
 func TestNewRunID_UniqueAcrossSeparateProcesses(t *testing.T) {
 	binary, err := os.Executable()
-	if err != nil {
-		t.Fatalf("locate this test binary: %v", err)
-	}
+	must.OKf(t, err, "locate this test binary")
 
 	perChild := make([][]string, runIDHelperProcesses)
 	failures := make([]error, runIDHelperProcesses)
@@ -72,9 +70,7 @@ func TestNewRunID_UniqueAcrossSeparateProcesses(t *testing.T) {
 	wg.Wait()
 
 	for i, err := range failures {
-		if err != nil {
-			t.Fatalf("child %d: %v", i, err)
-		}
+		must.OKf(t, err, "child %d", i)
 	}
 
 	seen := make(map[string]int, runIDHelperProcesses*runIDHelperIDs)

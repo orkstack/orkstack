@@ -9,7 +9,7 @@ web
 ## Users
 Two audiences of equal weight, both engineers at a desk, often mid-task and often under pressure when a run has failed.
 
-- **Orkflow authors.** Engineers who build advanced Orkflows (YAML documents that compile to durable Temporal workflows whose tasks are OCI containers). They apply and plan Orkflows, submit and watch runs, read task logs and artifacts, compare runs and diagnose failures.
+- **Orkflow authors.** Engineers who build advanced Orkflows (YAML documents that compile to durable Temporal workflows whose tasks are OCI containers). They create and plan Orkflows, submit and watch runs, read task logs and artifacts, compare runs and diagnose failures.
 - **Platform operators.** Engineers who run a deployment: Orkers and pools, namespaces, run retention, image policy, releases, usage and budgets, caches, webhooks, audit, and the namespace automation document.
 
 ## Product Purpose
@@ -25,7 +25,7 @@ Two things a neighbouring product could not truthfully copy, both to be shown by
 - Engineers work beside a terminal (`orkctl`) and an editor; the CLI and the UI are two surfaces of one contract (`docs/UI_CLI_PARITY.md`), so a copied CLI command reproduces what the UI submitted.
 - Authored documents (an Orkflow, an automation document) are YAML. Structured runtime data (a run's input, its output, `values.json`) is always JSON. The UI has a typed JSON input editor and no YAML input mode.
 - Runs are long-lived and live: events and task logs stream. Finished runs come from an archive; a run may be large (the task ceiling is 4000 and the run page is held to a 5 s budget at that size).
-- Routes today: runs (list, run page, compare), Orkflows (list, detail), Apply, and admin (namespaces, pools, activities, releases, retention, usage, cache, image policy, webhooks, audit, automation).
+- Routes today: runs (list, run page, compare), Orkflows (list, detail, Create Orkflow at /orkflows/+new), and admin (namespaces, pools, activities, releases, retention, usage, cache, image policy, webhooks, audit, automation).
 
 ## Capabilities and Constraints
 - SvelteKit with Svelte 5 runes, Vite, Tailwind 4 and Bun, with generated Connect clients under `ui/src/lib/gen`, one client module per service. The UI is a static single-page app (`adapter-static`) that `ork` embeds and serves at `/` on its API port: there is no UI server and no server-side proxy, and every page calls Connect and opens its sockets on its own origin. All design tokens are to live in one file under `ui/` (light and dark colours, fonts, monospace, radii, spacing), importable by other surfaces.

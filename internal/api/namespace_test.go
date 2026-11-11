@@ -18,6 +18,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeRegistry is the namespace registry in memory, with the durable store's
@@ -180,9 +182,7 @@ func mustApply(t *testing.T, svc *api.Service, document, namespace string) *orks
 	t.Helper()
 	resp, err := svc.ApplyOrkflow(context.Background(),
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: document, Namespace: namespace}))
-	if err != nil {
-		t.Fatalf("ApplyOrkflow(namespace %q): %v", namespace, err)
-	}
+	must.OKf(t, err, "ApplyOrkflow(namespace %q)", namespace)
 	return resp.Msg.GetOrkflow()
 }
 
@@ -245,9 +245,7 @@ tasks:
 	} {
 		listed, err := svc.ListOrkflows(ctx,
 			connect.NewRequest(&orkstackv1.ListOrkflowsRequest{Namespace: tc.namespace}))
-		if err != nil {
-			t.Fatalf("ListOrkflows(%q): %v", tc.namespace, err)
-		}
+		must.OKf(t, err, "ListOrkflows(%q)", tc.namespace)
 		orkflows := listed.Msg.GetOrkflows()
 		if len(orkflows) != 1 {
 			t.Fatalf("ListOrkflows(%q) returned %d orkflows, want exactly its own one",
@@ -264,9 +262,7 @@ tasks:
 
 	// The default namespace holds neither.
 	listed, err := svc.ListOrkflows(ctx, connect.NewRequest(&orkstackv1.ListOrkflowsRequest{}))
-	if err != nil {
-		t.Fatalf("ListOrkflows(default): %v", err)
-	}
+	must.OKf(t, err, "ListOrkflows(default)")
 	if got := len(listed.Msg.GetOrkflows()); got != 0 {
 		t.Errorf("ListOrkflows(default) returned %d orkflows, want 0", got)
 	}
@@ -274,14 +270,10 @@ tasks:
 	// Two gets of one name answer with two different definitions.
 	getA, err := svc.GetOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "deploy", Namespace: "alpha"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(alpha, deploy): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(alpha, deploy)")
 	getB, err := svc.GetOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.GetOrkflowRequest{Name: "deploy", Namespace: "bravo"}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(bravo, deploy): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(bravo, deploy)")
 	if proto.Equal(getA.Msg.GetOrkflow(), getB.Msg.GetOrkflow()) {
 		t.Fatal("GetOrkflow answered with the same document in both namespaces")
 	}
@@ -297,9 +289,7 @@ tasks:
 			OrkflowName: "deploy",
 			Namespace:   namespace,
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun(%q, deploy): %v", namespace, err)
-		}
+		must.OKf(t, err, "SubmitRun(%q, deploy)", namespace)
 		run := submitted.Msg.GetRun()
 		if run.GetNamespace() != namespace {
 			t.Errorf("submitted run namespace = %q, want %q", run.GetNamespace(), namespace)
@@ -314,9 +304,7 @@ tasks:
 	for _, namespace := range []string{"alpha", "bravo"} {
 		listedRuns, err := svc.ListRuns(ctx,
 			connect.NewRequest(&orkstackv1.ListRunsRequest{Namespace: namespace}))
-		if err != nil {
-			t.Fatalf("ListRuns(%q): %v", namespace, err)
-		}
+		must.OKf(t, err, "ListRuns(%q)", namespace)
 		runs := listedRuns.Msg.GetRuns()
 		if len(runs) != 1 || runs[0].GetId() != runIn[namespace] {
 			t.Fatalf("ListRuns(%q) = %v, want exactly [%s]",
@@ -324,9 +312,7 @@ tasks:
 		}
 	}
 	listedDefault, err := svc.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns(default): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(default)")
 	if got := len(listedDefault.Msg.GetRuns()); got != 0 {
 		t.Errorf("ListRuns(default) = %v, want none: neither run is in it",
 			runIDs(listedDefault.Msg.GetRuns()))
@@ -396,9 +382,7 @@ tasks:
 			Namespace:      namespace,
 			IdempotencyKey: "nightly",
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun(%q, key nightly): %v", namespace, err)
-		}
+		must.OKf(t, err, "SubmitRun(%q, key nightly)", namespace)
 		return resp.Msg.GetRun()
 	}
 
@@ -452,9 +436,7 @@ tasks:
 	got, err := svc.GetOrkflow(ctx, connect.NewRequest(&orkstackv1.GetOrkflowRequest{
 		Name: "nightly-close", Namespace: "payments",
 	}))
-	if err != nil {
-		t.Fatalf("GetOrkflow(payments, nightly-close): %v", err)
-	}
+	must.OKf(t, err, "GetOrkflow(payments, nightly-close)")
 	if got.Msg.GetOrkflow().GetVersion() != applied.GetVersion() {
 		t.Errorf("read back version %q, want %q",
 			got.Msg.GetOrkflow().GetVersion(), applied.GetVersion())
@@ -463,9 +445,7 @@ tasks:
 	submitted, err := svc.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "nightly-close", Namespace: "payments",
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun(payments, nightly-close): %v", err)
-	}
+	must.OKf(t, err, "SubmitRun(payments, nightly-close)")
 	if ns := submitted.Msg.GetRun().GetNamespace(); ns != "payments" {
 		t.Errorf("run namespace = %q, want payments", ns)
 	}
@@ -482,7 +462,7 @@ tasks:
 // TestApplyOrkflow_RefusesASelectorThatDisagreesWithTheDocument keeps the two
 // ways of naming a namespace from silently diverging.
 //
-// `orkctl -n staging apply payments.ork.yaml` is a mistake somebody made:
+// `orkctl -n staging orkflow create payments.ork.yaml` is a mistake somebody made:
 // either the flag or the file is wrong, and guessing which would store the
 // definition where its author will not look for it.
 func TestApplyOrkflow_RefusesASelectorThatDisagreesWithTheDocument(t *testing.T) {
@@ -587,9 +567,7 @@ func TestCreateNamespace_IsIdempotentForAnIdenticalSpec(t *testing.T) {
 
 	first, err := svc.CreateNamespace(ctx,
 		connect.NewRequest(&orkstackv1.CreateNamespaceRequest{Namespace: spec}))
-	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace")
 	if !first.Msg.GetCreated() {
 		t.Error("the first create reports created=false")
 	}
@@ -601,9 +579,7 @@ func TestCreateNamespace_IsIdempotentForAnIdenticalSpec(t *testing.T) {
 	repeat.AllowedPools = []string{"main", "batch"}
 	second, err := svc.CreateNamespace(ctx,
 		connect.NewRequest(&orkstackv1.CreateNamespaceRequest{Namespace: repeat}))
-	if err != nil {
-		t.Fatalf("CreateNamespace repeated: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace repeated")
 	if second.Msg.GetCreated() {
 		t.Error("the repeated create reports created=true; nothing was written")
 	}
@@ -634,9 +610,7 @@ func TestCreateNamespace_IsIdempotentForAnIdenticalSpec(t *testing.T) {
 				connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 					Namespace: &orkstackv1.Namespace{Name: "billing", DefaultPool: tc.created},
 				}))
-			if err != nil {
-				t.Fatalf("CreateNamespace(default_pool %q): %v", tc.created, err)
-			}
+			must.OKf(t, err, "CreateNamespace(default_pool %q)", tc.created)
 			again, err := svc.CreateNamespace(ctx,
 				connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 					Namespace: &orkstackv1.Namespace{Name: "billing", DefaultPool: tc.repeat},
@@ -692,9 +666,7 @@ func TestUpdateNamespace_RefusesAStaleEtag(t *testing.T) {
 	created, err := svc.CreateNamespace(ctx, connect.NewRequest(&orkstackv1.CreateNamespaceRequest{
 		Namespace: &orkstackv1.Namespace{Name: "payments", Description: "first"},
 	}))
-	if err != nil {
-		t.Fatalf("CreateNamespace: %v", err)
-	}
+	must.OKf(t, err, "CreateNamespace")
 	stale := created.Msg.GetNamespace().GetEtag()
 	if stale == "" {
 		t.Fatal("create returned no etag, so nothing can compare-and-swap on it")
@@ -704,9 +676,7 @@ func TestUpdateNamespace_RefusesAStaleEtag(t *testing.T) {
 	winner.Description = "the winner"
 	updated, err := svc.UpdateNamespace(ctx,
 		connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: winner}))
-	if err != nil {
-		t.Fatalf("UpdateNamespace: %v", err)
-	}
+	must.OKf(t, err, "UpdateNamespace")
 	if updated.Msg.GetNamespace().GetEtag() == stale {
 		t.Error("the etag did not move on a successful update")
 	}
@@ -724,9 +694,7 @@ func TestUpdateNamespace_RefusesAStaleEtag(t *testing.T) {
 
 	current, err := svc.GetNamespace(ctx,
 		connect.NewRequest(&orkstackv1.GetNamespaceRequest{Name: "payments"}))
-	if err != nil {
-		t.Fatalf("GetNamespace: %v", err)
-	}
+	must.OKf(t, err, "GetNamespace")
 	if got := current.Msg.GetNamespace().GetDescription(); got != "the winner" {
 		t.Errorf("description = %q, want %q: the loser's write landed", got, "the winner")
 	}
@@ -797,9 +765,7 @@ func TestDeleteNamespace_RemovesAnEmptyOneAndItStopsBeingListed(t *testing.T) {
 		t.Fatalf("DeleteNamespace(scratch): %v", err)
 	}
 	listed, err := svc.ListNamespaces(ctx, connect.NewRequest(&orkstackv1.ListNamespacesRequest{}))
-	if err != nil {
-		t.Fatalf("ListNamespaces: %v", err)
-	}
+	must.OKf(t, err, "ListNamespaces")
 	for _, ns := range listed.Msg.GetNamespaces() {
 		if ns.GetName() == "scratch" {
 			t.Fatal("the deleted namespace is still listed")
@@ -818,9 +784,7 @@ func TestListNamespaces_AlwaysIncludesTheDefault(t *testing.T) {
 
 	listed, err := svc.ListNamespaces(context.Background(),
 		connect.NewRequest(&orkstackv1.ListNamespacesRequest{}))
-	if err != nil {
-		t.Fatalf("ListNamespaces: %v", err)
-	}
+	must.OKf(t, err, "ListNamespaces")
 	if len(listed.Msg.GetNamespaces()) != 1 ||
 		listed.Msg.GetNamespaces()[0].GetName() != artifacts.DefaultNamespace {
 		t.Fatalf("ListNamespaces on an empty registry = %v, want [default]",
@@ -917,9 +881,7 @@ tasks:
 		OrkflowName: "deploy",
 		Namespace:   "alpha",
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun(alpha, deploy): %v", err)
-	}
+	must.OKf(t, err, "SubmitRun(alpha, deploy)")
 	runID := submitted.Msg.GetRun().GetId()
 
 	// The run's stream is finished before anything asks for it, so a stream
@@ -1037,9 +999,7 @@ tasks:
 		OrkflowName: "deploy",
 		Namespace:   "alpha",
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun(alpha, deploy): %v", err)
-	}
+	must.OKf(t, err, "SubmitRun(alpha, deploy)")
 	runID := submitted.Msg.GetRun().GetId()
 
 	mux := http.NewServeMux()
@@ -1054,9 +1014,7 @@ tasks:
 		t.Helper()
 		resp, err := server.Client().Get(
 			server.URL + "/ws/runs/" + runID + "?namespace=" + namespace)
-		if err != nil {
-			t.Fatalf("GET /ws/runs/%s?namespace=%s: %v", runID, namespace, err)
-		}
+		must.OKf(t, err, "GET /ws/runs/%s?namespace=%s", runID, namespace)
 		defer func() { _ = resp.Body.Close() }()
 		return resp.StatusCode
 	}
@@ -1098,9 +1056,7 @@ func TestUpdateNamespace_TwoFirstEditsOfTheDefaultCannotClobberEachOther(t *test
 		t.Helper()
 		resp, err := svc.GetNamespace(ctx,
 			connect.NewRequest(&orkstackv1.GetNamespaceRequest{Name: "default"}))
-		if err != nil {
-			t.Fatalf("GetNamespace(default): %v", err)
-		}
+		must.OKf(t, err, "GetNamespace(default)")
 		return resp.Msg.GetNamespace()
 	}
 	first, second := read(), read()

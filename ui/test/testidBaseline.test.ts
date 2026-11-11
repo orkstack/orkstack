@@ -20,6 +20,10 @@ const fixture = `${import.meta.dir}/fixtures/testid-baseline.txt`;
 
 /** Shape → why it may be gone (and the spec change that goes with it). */
 const ALLOWED_REMOVALS: Record<string, string> = {
+	// TimingBar drew them, and no page rendered TimingBar: the run page's
+	// timing reads ItemCard's {prefix}-wait, -run and -total. No spec read them.
+	'id task-{}-total': 'TimingBar was never rendered; deleted.',
+	'id task-{}-{}': 'TimingBar was never rendered; deleted.',
 	// The same ids, drawn by ScheduleFields under its prefix: the create form and
 	// the edit dialog share one markup (orkflow-schedules.spec.ts).
 	'id schedule-catchup-window': 'ScheduleFields draws it as {prefix}-….',
@@ -118,7 +122,29 @@ const ALLOWED_REMOVALS: Record<string, string> = {
 	'prop run-task-{}-logs-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
 	'prop run-task-{}-replay-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
 	'prop run-task-{}-timing-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
-	'prop task-{}-cache-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli."
+	'prop task-{}-cache-cli': "Run page: a task row's commands are one popover, run-task-{id}-cli.",
+	// One icon per surface (2026-11-10): a panel, dialog or row with several
+	// commands lists them all behind its one terminal icon (ui/DESIGN.md).
+	'prop run-submit-plan-cli': 'Submit panel: the plan command is in run-submit-cli (join-policy, run-plan, cli-icon-rule specs).',
+	'prop {}-cli': "HoldBanner draws no icon: the submit panel's release command is in run-submit-cli (cli-icon-rule.spec.ts).",
+	'prop task-{}-resolve-cli': 'Await panel: one icon, task-{id}-await-cli (cli-icon-rule.spec.ts).',
+	'prop task-{}-await-callback-cli': 'Await panel: the callback command is in task-{id}-await-cli (awaited-tasks.spec.ts).',
+	'prop task-{}-child-tree-cli': 'Child-run panel: both commands are in task-{id}-child-cli (cli-icon-rule.spec.ts).',
+	'prop run-evidence-too-large-cli': 'Evidence dialog: the export command is in run-evidence-cli (run-evidence.spec.ts).',
+	'id run-evidence-too-large-command': 'Evidence dialog: the over-limit notice no longer prints the export command; it is in run-evidence-cli.',
+	'prop schedule-fire-cli-{}': 'Schedule row: one icon, schedule-cli-{name} (cli-icon-rule.spec.ts).',
+	'prop schedule-pause-cli-{}': 'Schedule row: one icon, schedule-cli-{name}.',
+	'prop schedule-resume-cli-{}': 'Schedule row: one icon, schedule-cli-{name}.',
+	'prop release-cli-promote-{}': 'Release row: one icon, release-cli-{build} (cli-panel.spec.ts).',
+	'prop release-cli-rollback-{}': 'Release row: one icon, release-cli-{build}.',
+	'prop release-cli-ramp-{}': 'Release row: one icon, release-cli-{build}.',
+	'prop release-cli-ramp-stop-{}': 'Release row: one icon, release-cli-{build}.',
+	'prop release-pin-cli-{}': "Release row: each pin host's drain is in release-cli-{build} (releases.test.ts).",
+	'prop task-{}-attempts-cli': "Run page: a task's or item's attempts are in run-inspect-cli (runDetail.test.ts).",
+	// A task row says no more than its id, its mark, its bar and its status; the
+	// Item card names the Orker as task-{id}-card-orker (run-page-pins.spec.ts,
+	// run-page-panel.spec.ts).
+	'id task-{}-orker': 'The row no longer names its Orker; its panel does, as {prefix}-card-orker.'
 };
 
 function sources(): string[] {

@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +13,8 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster is the
@@ -69,17 +71,13 @@ func TestIntegration_CLISetsMaximumRunRetentionOnTheRealCluster(t *testing.T) {
 	independent, err := client.DialContext(ctx, client.Options{
 		HostPort: address, Namespace: temporalNamespace,
 	})
-	if err != nil {
-		t.Fatalf("dial independent verification client: %v", err)
-	}
+	must.OKf(t, err, "dial independent verification client")
 	t.Cleanup(independent.Close)
 	describeIndependently := func() time.Duration {
 		t.Helper()
 		resp, err := independent.WorkflowService().DescribeNamespace(ctx,
 			&workflowservice.DescribeNamespaceRequest{Namespace: temporalNamespace})
-		if err != nil {
-			t.Fatalf("independent DescribeNamespace(%s): %v", temporalNamespace, err)
-		}
+		must.OKf(t, err, "independent DescribeNamespace(%s)", temporalNamespace)
 		ttl := resp.GetConfig().GetWorkflowExecutionRetentionTtl()
 		if ttl == nil {
 			t.Fatalf("independent DescribeNamespace(%s) reported no retention", temporalNamespace)
@@ -199,8 +197,6 @@ func (p retentionPolicyJSON) maxRunRetention(t *testing.T) time.Duration {
 		t.Fatalf("empty maxRunRetention in %+v", p)
 	}
 	d, err := time.ParseDuration(p.Policy.MaxRunRetention)
-	if err != nil {
-		t.Fatalf("parse maxRunRetention %q: %v", p.Policy.MaxRunRetention, err)
-	}
+	must.OKf(t, err, "parse maxRunRetention %q", p.Policy.MaxRunRetention)
 	return d
 }

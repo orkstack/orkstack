@@ -18,6 +18,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The landing arrangements of a flat stage (spec 7.4, T7).
@@ -37,9 +39,12 @@ const (
 
 // flatStageRun drives a flat stage of plain tasks through RunWorkflow in a
 // test environment whose raw history length moves exactly as 7.4's measured
-// costs say: d per dispatch (TASK_SCHEDULED 7, TASK_STARTED with the
-// ExecuteTask scheduling event 7), u when a completion lands, and c − u when
-// the loop collects a landed one (c for one that had not landed). Every
+// costs say: d per dispatch (7 at TASK_SCHEDULED, the rest at TASK_STARTED),
+// u when a completion lands, and c − u when the loop collects a landed one
+// (c for one that had not landed). The length moves as the workflow numbers
+// each event (readyLoopProbe.event), so it moves at the same point of the
+// command stream whether the event's publish is awaited or detached; d is
+// the run's, between DetachedDispatchEvents and PlainDispatchEvents. Every
 // generation starts from a base of B = RestoreHistoryBound + generation0Start.
 // No ExecuteTask completes until the generation's dispatch pass is over and
 // the loop reaches its Selector, which is where a hold that started during
@@ -54,6 +59,12 @@ type flatStageRun struct {
 	rng   *rand.Rand
 	store *memSnapshotStore
 	base  int
+	d     int64 // the history one dispatch records
+	// owed is the part of the last dispatch's d not yet in the raw length:
+	// its TASK_STARTED publish and its ExecuteTask, which the workflow
+	// counts itself (noteCommand) until its workflow task is recorded, as a
+	// real history does. The next move of the length adds it.
+	owed int
 
 	mu sync.Mutex
 	// This generation's environment and raw length.
@@ -86,16 +97,23 @@ type flatStageRun struct {
 var flatStageRuns sync.Map
 
 func newFlatStageRun(t *testing.T, tasks int, mode string, seed uint64) *flatStageRun {
+	return newFlatStageRunAt(t, tasks, mode, seed, DefaultRunMaxInFlight, PlainDispatchEvents)
+}
+
+// newFlatStageRunAt is newFlatStageRun under an in-flight cap of width, its
+// dispatches recording d events each.
+func newFlatStageRunAt(t *testing.T, tasks int, mode string, seed uint64, width int32, d int64) *flatStageRun {
 	wf := &orkstackv1.Orkflow{Name: "flat", Version: "v1", Namespace: "team-a"}
 	for i := range tasks {
 		wf.Tasks = append(wf.Tasks, &orkstackv1.Task{Id: fmt.Sprintf("t%d", i), Image: &orkstackv1.ImageRef{Reference: "alpine"}})
 	}
 	plan := refusalRoutedPlan(t)
-	inFlight := DefaultInFlightLimit(DefaultRunMaxInFlight)
+	inFlight := DefaultInFlightLimit(width)
 	plan.InFlight = &inFlight
 	plan.Limits = WorkspaceLimits{ValuesMaxBytes: 4096}
 	r := &flatStageRun{
-		t: t, runID: fmt.Sprintf("ork-flat-%s-%d-%d", mode, tasks, seed), wf: wf, plan: plan, mode: mode,
+		t: t, runID: fmt.Sprintf("ork-flat-%s-%d-%d-w%d-d%d", mode, tasks, seed, width, d), wf: wf, plan: plan, mode: mode,
+		d:     d,
 		rng:   rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)),
 		store: newMemSnapshotStore(),
 		base:  int(RestoreHistoryBound(*plan.Continuation) + generation0Start),
@@ -108,12 +126,13 @@ func newFlatStageRun(t *testing.T, tasks int, mode string, seed uint64) *flatSta
 // stageDueAt is the closed form's ⌈G/d⌉: the dispatches after which a
 // generation's budget is due.
 func (r *flatStageRun) stageDueAt() int {
-	return int(ceilDiv(r.plan.Continuation.Events, PlainDispatchEvents))
+	return int(ceilDiv(r.plan.Continuation.Events, r.d))
 }
 
 func (r *flatStageRun) stageSetLength(length int) {
-	r.length = length
-	r.env.SetCurrentHistoryLength(length)
+	r.length = length + r.owed
+	r.owed = 0
+	r.env.SetCurrentHistoryLength(r.length)
 }
 
 // stageLand lands the completion of every running task in ids not landed yet.
@@ -121,7 +140,8 @@ func (r *flatStageRun) stageLand(ids []string) {
 	for _, id := range ids {
 		if r.running[id] && !r.landed[id] {
 			r.landed[id] = true
-			r.length += int(LandedCompletionEvents)
+			r.length += int(LandedCompletionEvents) + r.owed
+			r.owed = 0
 		}
 	}
 	waiting := 0
@@ -159,7 +179,14 @@ func (r *flatStageRun) stageMaybeLand() {
 	r.stageLand(pick)
 }
 
-func (r *flatStageRun) stagePublish(_ context.Context, event *orkstackv1.Event, _, _ string) error {
+// stagePublish is the PublishEvent activity: the history it stands for has
+// already been counted, as the workflow numbered the event (stageEvent).
+func (r *flatStageRun) stagePublish(context.Context, *orkstackv1.Event, string, string) error {
+	return nil
+}
+
+// stageEvent moves the raw length for one event, in workflow code.
+func (r *flatStageRun) stageEvent(event *orkstackv1.Event) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	switch event.GetType() {
@@ -171,7 +198,8 @@ func (r *flatStageRun) stagePublish(_ context.Context, event *orkstackv1.Event, 
 		r.stageSetLength(r.length + 7)
 		r.stageMaybeLand()
 	case orkstackv1.EventType_EVENT_TYPE_TASK_STARTED:
-		r.stageSetLength(r.length + int(PlainDispatchEvents) - 7)
+		r.stageSetLength(r.length + int(r.d) - 7 - 2)
+		r.owed = 2
 		if r.mode == landInPass && r.dispatched == r.landAt {
 			r.stageLand(r.stageRunningIDs())
 		}
@@ -195,7 +223,6 @@ func (r *flatStageRun) stagePublish(_ context.Context, event *orkstackv1.Event, 
 		r.stageSetLength(r.length + int(collect))
 		r.stageMaybeLand()
 	}
-	return nil
 }
 
 func (r *flatStageRun) stageExecute(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
@@ -235,7 +262,7 @@ func (r *flatStageRun) stageGeneration(remaining int) *testsuite.TestWorkflowEnv
 	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: r.runID})
 	r.mu.Lock()
 	r.env = env
-	r.dispatched, r.arrived = 0, 0
+	r.dispatched, r.arrived, r.owed = 0, 0, 0
 	r.landAt = min(r.stageDueAt(), remaining)
 	r.release, r.released = make(chan struct{}), false
 	r.running, r.landed = map[string]bool{}, map[string]bool{}
@@ -294,9 +321,7 @@ func (r *flatStageRun) drive(firstOnly bool) error {
 			nextPlan  RunPlan
 			carry     *orkstackv1.RunContinuation
 		)
-		if err := converter.GetDefaultDataConverter().FromPayloads(can.Input, &nextID, &nextWf, &nextInput, &nextPlan, &carry); err != nil {
-			r.t.Fatalf("decode generation %d's continue-as-new arguments: %v", r.generation, err)
-		}
+		must.OKf(r.t, converter.GetDefaultDataConverter().FromPayloads(can.Input, &nextID, &nextWf, &nextInput, &nextPlan, &carry), "decode generation %d's continue-as-new arguments", r.generation)
 		args = []any{nextID, nextWf, nextInput, nextPlan, carry}
 	}
 	r.t.Fatal("the run did not end within 64 generations")
@@ -315,6 +340,10 @@ func installGuardProbe(t *testing.T) {
 		if r, ok := flatStageRuns.Load(runID); ok {
 			r.(*flatStageRun).stageAtSelector()
 		}
+	}, event: func(runID string, event *orkstackv1.Event) {
+		if r, ok := flatStageRuns.Load(runID); ok {
+			r.(*flatStageRun).stageEvent(event)
+		}
 	}}
 	t.Cleanup(func() { historyGuardProbeForTest, readyLoopProbeForTest = nil, nil })
 }
@@ -329,41 +358,56 @@ func isRunHistoryLimit(err error) bool {
 // flat stage of tasks at the defaults.
 func predictedPeak(r *flatStageRun, tasks int) int64 {
 	limit, budget := *r.plan.History, *r.plan.Continuation
-	return ShapePeak(limit, budget, int64(r.plan.InFlight.Max), int64(r.base), int64(tasks))
+	return ShapePeak(limit, budget, int64(r.plan.InFlight.Max), testPublishReserve, int64(r.base), int64(tasks))
+}
+
+// cornerMaxTasks is the closed form's T_max at one dispatch cost d, for a
+// cap of width and the plan's publish window: the corner of ShapeMaxTasks's
+// minimum a flatStageRun of that d stands for.
+func cornerMaxTasks(limit HistoryLimit, budget ContinuationBudget, width, d int64) int64 {
+	r := limit.Reserve
+	return shapeMaxTasks(shapeTerms{
+		limit: limit.MaxEvents, base: RestoreHistoryBound(budget) + generation0Start,
+		fixed: r.Fixed, pending: r.PerPending, inFlight: r.PerInFlight, budget: budget.Events,
+		dispatch: d, complete: PlainCompletionEvents, landed: LandedCompletionEvents,
+		width: width, publishes: testPublishReserve,
+	})
 }
 
 // TestHistoryGuard_FlatStageAtTheClosedFormMaximum: a flat stage of
 // ShapeMaxTasks(defaults) plain tasks, from a base of B, completes across
 // generations without RUN_HISTORY_LIMIT whether its completions land late
 // (a) or all at once during the dispatch that makes the budget due (b, the
-// worst case). With one task more, (b) fails RUN_HISTORY_LIMIT in generation
-// 0 at the guard check right after that dispatch, before any hold.
+// worst case). Under a cap wide enough that the budget falls due in the
+// first pass (W = 1,000, so d·W ≥ G), the bound is exact at each corner of
+// d: a stage of T_max(d) tasks completes, generation 0 dispatching ⌈G/d⌉
+// before its hold, within the predicted peak; and at d = PlainDispatchEvents,
+// the corner that binds, one task more (b) fails RUN_HISTORY_LIMIT in
+// generation 0 at the guard check right after that dispatch, before any
+// hold. Every run takes the detached publish path, so its outstanding
+// publishes are reserved as the closed form's P·f says.
 func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 	if testing.Short() {
 		t.Skip("scale test: every proof's unit gate runs it; make check skips it")
 	}
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
-	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight)))
-	if tasks != 4222 {
-		t.Fatalf("ShapeMaxTasks at the defaults = %d, want 4,222", tasks)
+	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight), testPublishReserve))
+	if tasks != 4389 {
+		t.Fatalf("ShapeMaxTasks at the defaults = %d, want 4,389", tasks)
 	}
 	for _, mode := range []string{landLate, landInPass} {
-		t.Run(mode, func(t *testing.T) {
+		t.Run("defaults/"+mode, func(t *testing.T) {
 			r := newFlatStageRun(t, tasks, mode, 1)
-			if err := r.drive(false); err != nil {
-				t.Fatalf("a flat stage of %d tasks, landings %s: %v", tasks, mode, err)
-			}
+			must.OKf(t, r.drive(false), "a flat stage of %d tasks, landings %s", tasks, mode)
 			if r.total != tasks {
 				t.Fatalf("%d dispatches over the run, want each of %d tasks once", r.total, tasks)
 			}
-			if got := r.genDispatch[0]; got != r.stageDueAt() {
-				t.Fatalf("generation 0 dispatched %d tasks before its hold, want ⌈G/d⌉ = %d", got, r.stageDueAt())
-			}
 			predicted := predictedPeak(r, tasks)
-			t.Logf("E7 flat stage of %d tasks, landings %s: %d generations %v; generation 0's peak of history "+
-				"plus reserve %d (predicted %d, limit %d); most landed and uncollected %d",
-				tasks, mode, len(r.genDispatch), r.genDispatch, r.peaks[0], predicted, limit.MaxEvents, r.maxLanded)
+			t.Logf("E7 flat stage of %d tasks at W = %d, landings %s: %d generations %v; generation 0's peak "+
+				"of history plus reserve %d (predicted %d, limit %d); most landed and uncollected %d",
+				tasks, DefaultRunMaxInFlight, mode, len(r.genDispatch), r.genDispatch, r.peaks[0], predicted,
+				limit.MaxEvents, r.maxLanded)
 			for g, peak := range r.peaks {
 				if peak > predicted || peak >= limit.MaxEvents {
 					t.Fatalf("generation %d's peak %d is over the predicted %d (limit %d)", g, peak, predicted, limit.MaxEvents)
@@ -371,17 +415,44 @@ func TestHistoryGuard_FlatStageAtTheClosedFormMaximum(t *testing.T) {
 			}
 		})
 	}
-	t.Run("one task more, landing in the pass", func(t *testing.T) {
-		r := newFlatStageRun(t, tasks+1, landInPass, 1)
-		err := r.drive(true)
-		if !isRunHistoryLimit(err) {
-			t.Fatalf("a flat stage of %d tasks = %v, want RUN_HISTORY_LIMIT in generation 0", tasks+1, err)
+	const wide = 1000
+	for _, d := range []int64{PlainDispatchEvents, 9} {
+		corner := int(cornerMaxTasks(limit, budget, wide, d))
+		for _, mode := range []string{landLate, landInPass} {
+			t.Run(fmt.Sprintf("W=%d/d=%d/%s", wide, d, mode), func(t *testing.T) {
+				r := newFlatStageRunAt(t, corner, mode, 1, wide, d)
+				if err := r.drive(false); err != nil {
+					t.Fatalf("a flat stage of %d tasks at d = %d, landings %s: %v", corner, d, mode, err)
+				}
+				if got := r.genDispatch[0]; got != r.stageDueAt() {
+					t.Fatalf("generation 0 dispatched %d tasks before its hold, want ⌈G/d⌉ = %d", got, r.stageDueAt())
+				}
+				predicted := predictedPeak(r, corner)
+				for g, peak := range r.peaks {
+					if peak > predicted || peak >= limit.MaxEvents {
+						t.Fatalf("generation %d's peak %d is over the predicted %d (limit %d)", g, peak, predicted, limit.MaxEvents)
+					}
+				}
+				t.Logf("E7 corner W = %d, d = %d, %d tasks, landings %s: generation 0's peak %d (limit %d)",
+					wide, d, corner, mode, r.peaks[0], limit.MaxEvents)
+			})
 		}
-		if got := r.genDispatch[0]; got != r.stageDueAt() {
-			t.Fatalf("it failed after %d dispatches, want right after the %dth, before any hold", got, r.stageDueAt())
+		if d != PlainDispatchEvents {
+			continue // a cheaper corner is bounded, with rounding to spare: tightness is d₁'s
 		}
-		t.Logf("E7 one task over (%d): RUN_HISTORY_LIMIT in generation 0 after %d dispatches, peak %d", tasks+1, r.genDispatch[0], r.peaks[0])
-	})
+		t.Run(fmt.Sprintf("W=%d/d=%d/one task more, landing in the pass", wide, d), func(t *testing.T) {
+			r := newFlatStageRunAt(t, corner+1, landInPass, 1, wide, d)
+			err := r.drive(true)
+			if !isRunHistoryLimit(err) {
+				t.Fatalf("a flat stage of %d tasks at d = %d = %v, want RUN_HISTORY_LIMIT in generation 0", corner+1, d, err)
+			}
+			if got := r.genDispatch[0]; got != r.stageDueAt() {
+				t.Fatalf("it failed after %d dispatches, want right after the %dth, before any hold", got, r.stageDueAt())
+			}
+			t.Logf("E7 one task over (%d) at W = %d, d = %d: RUN_HISTORY_LIMIT in generation 0 after %d dispatches, peak %d",
+				corner+1, wide, d, r.genDispatch[0], r.peaks[0])
+		})
+	}
 }
 
 // TestHistoryGuard_CompletionsLandingDuringThePassNeverTripTheGuard: a flat
@@ -397,7 +468,7 @@ func TestHistoryGuard_CompletionsLandingDuringThePassNeverTripTheGuard(t *testin
 	}
 	installGuardProbe(t)
 	limit, budget := ceilingDefaults()
-	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight)))
+	tasks := int(ShapeMaxTasks(limit, budget, int64(DefaultRunMaxInFlight), testPublishReserve))
 	const seeds = 200
 	var mu sync.Mutex
 	var worst int64

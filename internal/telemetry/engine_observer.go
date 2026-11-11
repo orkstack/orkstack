@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 )
@@ -285,8 +286,13 @@ func (o *EngineObserver) log(ctx context.Context, event *orkstackv1.Event, run *
 	if !o.logger.Enabled(ctx, level) {
 		return
 	}
+	// sequence is the event's number in its run's stream: records can reach
+	// a collector out of order (a retried publish, and a fan-out's items and
+	// a plain task's start events, which are published without the run
+	// waiting), so a consumer orders a run's records by it.
 	args := []any{
 		slog.String("run_id", event.GetRunId()),
+		slog.Int64("sequence", event.GetSequence()),
 		slog.String("event_type", eventTypeLabel(event.GetType())),
 		slog.String("status", statusLabel(event.GetStatus())),
 	}
@@ -313,12 +319,12 @@ func (o *EngineObserver) log(ctx context.Context, event *orkstackv1.Event, run *
 // short name, lowercased, which is what a status= label should read like on a
 // dashboard rather than the wire's shouting SCREAMING_CASE.
 func statusLabel(status orkstackv1.Status) string {
-	return trimEnumPrefix(status.String(), "STATUS_")
+	return strings.ToLower(enumname.Of(status))
 }
 
 // eventTypeLabel turns EventType_EVENT_TYPE_RUN_STARTED into "run_started".
 func eventTypeLabel(eventType orkstackv1.EventType) string {
-	return trimEnumPrefix(eventType.String(), "EVENT_TYPE_")
+	return strings.ToLower(enumname.Of(eventType))
 }
 
 // failureCategoryLabel turns FailureCategory_FAILURE_CATEGORY_TIMED_OUT into
@@ -328,11 +334,7 @@ func failureCategoryLabel(category orkstackv1.FailureCategory) string {
 	if category == orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED {
 		return ""
 	}
-	return trimEnumPrefix(category.String(), "FAILURE_CATEGORY_")
-}
-
-func trimEnumPrefix(name, prefix string) string {
-	return strings.ToLower(strings.TrimPrefix(name, prefix))
+	return strings.ToLower(enumname.Of(category))
 }
 
 // CacheOutcomeLabel renders a memo decision for AttrCacheOutcome: "hit",

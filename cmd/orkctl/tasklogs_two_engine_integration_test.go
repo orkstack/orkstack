@@ -23,6 +23,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // Two falsifying tests. Both run the production topology: two real `ork`
@@ -77,9 +79,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	submitted, err := replicaA.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: orkflowName,
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun on replica A after the Orker poller became ready: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun on replica A after the Orker poller became ready")
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("replica A started run %s", runID)
 
@@ -125,9 +125,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	// ---- the stream must end on its own when the task finishes -------------
 	select {
 	case err := <-followDone:
-		if err != nil {
-			t.Fatalf("following the task log on replica B: %v", err)
-		}
+		must.OKf(t, err, "following the task log on replica B")
 	case <-time.After(4 * time.Minute):
 		t.Fatalf("replica B's log stream never ended; it holds %d chunks", follower.count())
 	}
@@ -153,9 +151,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 
 	// ---- and the whole log is readable afterwards, from the same replica ---
 	postMortem := newLogFollower()
-	if err := replayTaskLog(ctx, replicaB, runID, "emit", postMortem); err != nil {
-		t.Fatalf("post-mortem read on replica B: %v", err)
-	}
+	must.OKf(t, replayTaskLog(ctx, replicaB, runID, "emit", postMortem), "post-mortem read on replica B")
 	for line := 1; line <= 10; line++ {
 		if !strings.Contains(postMortem.body(), fmt.Sprintf("emit-%02d", line)) {
 			t.Fatalf("the post-mortem read is missing emit-%02d; it reads:\n%s",
@@ -166,9 +162,7 @@ func TestIntegration_SecondReplicaFollowsATaskLogWhileTheRunIsStillRunning(t *te
 	// ---- resume replays nothing twice and misses nothing -------------------
 	resumeAt := chunks[0].GetSeq()
 	resumed := newLogFollower()
-	if err := replayTaskLogFrom(ctx, replicaB, runID, "emit", resumeAt, resumed); err != nil {
-		t.Fatalf("resumed read on replica B: %v", err)
-	}
+	must.OKf(t, replayTaskLogFrom(ctx, replicaB, runID, "emit", resumeAt, resumed), "resumed read on replica B")
 	for _, chunk := range resumed.chunks() {
 		if chunk.GetSeq() <= resumeAt && !chunk.GetLast() {
 			t.Fatalf("resuming after seq %d replayed seq %d", resumeAt, chunk.GetSeq())
@@ -268,17 +262,13 @@ func TestIntegration_TaskLogBytesNeverEnterRunHistory(t *testing.T) {
 	submitted, err := engine.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: orkflowName,
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := submitted.Msg.GetRun().GetId()
 	awaitWorkflowCompleted(ctx, t, temporalClient, runID)
 
 	// ---- BOTH markers are in the log stream --------------------------------
 	logged := newLogFollower()
-	if err := replayTaskLog(ctx, engine, runID, "emit", logged); err != nil {
-		t.Fatalf("read task logs: %v", err)
-	}
+	must.OKf(t, replayTaskLog(ctx, engine, runID, "emit", logged), "read task logs")
 	for _, marker := range []string{headMarker, tailMarker} {
 		if !strings.Contains(logged.body(), marker) {
 			t.Fatalf("the log stream does not carry %s; it holds %d bytes",
@@ -558,9 +548,7 @@ func historyText(
 	events := 0
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			t.Fatalf("read history of %s: %v", runID, err)
-		}
+		must.OKf(t, err, "read history of %s", runID)
 		events++
 		rendered, err := marshaler.Marshal(event)
 		if err != nil {

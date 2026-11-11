@@ -25,8 +25,8 @@ inputs:
 Submit it, overriding two of them:
 
 ```bash
-orkctl apply examples/inputs-and-escaping.ork.yaml
-orkctl run submit inputs-and-escaping --input release=1.4.3 --input dry_run=false --watch
+orkctl orkflow create examples/inputs-and-escaping.ork.yaml
+orkctl run submit inputs-and-escaping -i release=1.4.3 -i dry_run=false -w
 ```
 
 A value that is valid JSON keeps its type. `dry_run=false` is a boolean. `release=1.4.3` is text.

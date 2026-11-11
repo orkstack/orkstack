@@ -259,6 +259,11 @@ message CacheContext {
   // refresh is true when the run was submitted with no_cache: the Orker reads
   // no memo, runs the container, and writes the memo from its fresh commit.
   bool refresh = 3;
+  // orkflow_namespace is set only when the task belongs to an Orkflow another
+  // namespace shared through composition: the namespace that owns the
+  // definition. It is part of the memo key, so the same task of two
+  // namespaces' Orkflows of one name never shares a memo.
+  string orkflow_namespace = 4;
 }
 
 // CacheSource names the commit a memo points at — the one a hit reused.

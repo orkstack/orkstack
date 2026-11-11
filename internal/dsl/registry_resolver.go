@@ -6,7 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -166,6 +166,10 @@ func (r *Resolver) ResolveOrkflow(ctx context.Context, catalog Catalog, wf *orks
 		// An awaited task has no `uses:` and gets no Task.image: it runs no
 		// container (docs/DSL.md rules 6 and 15).
 		if t.GetAwait() != nil {
+			continue
+		}
+		// Nor has a sleeping task (rules 6 and 49).
+		if t.GetSleep() != nil {
 			continue
 		}
 		// A composed task names an Orkflow, not an image: its child's own

@@ -1,0 +1,63 @@
+# OrkStack orkflow DSL
+#
+# Make a change, let it bake for a few seconds, then verify it. The bake is a
+# sleeping task: the run waits on its own timer, with no container running and
+# no Orker held, and nothing outside the run ends it early.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Repeat without loops"
+#
+#   change   records the change it made as its value.
+#   bake     sleeps 5 seconds, then succeeds. It produces no values, so the
+#            task after it reads change's, never bake's.
+#   verify   needs bake, so it starts only once the bake is over. It fails
+#            the run if the change is not the one it expects.
+#
+# See it before it runs. The line is a CI check, and the test suite runs it:
+#   orkctl run plan -f examples/bake-then-verify.ork.yaml --assert-runs change --assert-runs bake --assert-runs verify
+apiVersion: orkstack/v1
+kind: Orkflow
+name: bake-then-verify
+version: "0.1.0"
+description: "Make a change, let it bake for five seconds on the run's own timer with no container running, then verify it."
+
+inputs:
+  release:
+    type: string
+    default: "1.4.2"
+
+tasks:
+  # 1. The change. Its value is what it printed.
+  - id: change
+    uses: shell
+    network: none
+    with:
+      op: eval
+      command:
+        - printf
+        - "release %s is live"
+        - "{{ .inputs.release }}"
+
+  # 2. The bake: a fixed wait, no container. A longer one is the same key, up
+  #    to 30 days.
+  - id: bake
+    needs:
+      - change
+    sleep:
+      seconds: 5
+
+  # 3. The check, after the bake. It reads change's value as "$1".
+  - id: verify
+    uses: shell
+    network: none
+    needs:
+      - bake
+    with:
+      op: script
+      interpreter: sh
+      command:
+        - "{{ .tasks.change.output.value }}"
+        - "{{ .inputs.release }}"
+      script: |
+        set -eu
+        test "$1" = "release $2 is live"
+        printf 'verified after the bake: %s\n' "$1"

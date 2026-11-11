@@ -4,15 +4,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"sort"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -147,7 +146,7 @@ func TestDispatcher_ResultCarriesCoordinatesDigestAndTimestamps(t *testing.T) {
 		t.Errorf("Attempts[0].At = %s, want between %s and %s", at, before, after)
 	}
 	// The record's JSON tags keep the existing keys and add the new ones.
-	encoded, _ := json.Marshal(result)
+	encoded, _ := stablejson.Marshal(result)
 	for _, key := range []string{`"deliveryId"`, `"bodySha256"`, `"settledAt"`, `"queuedAt"`, `"eventAt"`, `"at"`} {
 		if !strings.Contains(string(encoded), key) {
 			t.Errorf("encoded result has no %s key: %s", key, encoded)
@@ -157,26 +156,20 @@ func TestDispatcher_ResultCarriesCoordinatesDigestAndTimestamps(t *testing.T) {
 
 func TestDispatcher_SettledAtIsStampedOnEveryReturnPath(t *testing.T) {
 	unencodable := sampleDelivery()
-	unencodable.Run = json.RawMessage(`{not json`)
+	unencodable.Run = stablejson.RawJSON(`{not json`)
 	cases := map[string]struct {
 		statuses []int
 		delivery webhooks.Delivery
-		sleep    func(context.Context, time.Duration) error
 	}{
-		"success":           {statuses: []int{http.StatusOK}, delivery: sampleDelivery()},
-		"exhausted ladder":  {statuses: []int{http.StatusBadGateway}, delivery: sampleDelivery()},
-		"4xx stop":          {statuses: []int{http.StatusBadRequest}, delivery: sampleDelivery()},
-		"body failure":      {statuses: []int{http.StatusOK}, delivery: unencodable},
-		"interrupted sleep": {statuses: []int{http.StatusInternalServerError}, delivery: sampleDelivery(), sleep: func(context.Context, time.Duration) error { return context.Canceled }},
+		"success":      {statuses: []int{http.StatusOK}, delivery: sampleDelivery()},
+		"5xx":          {statuses: []int{http.StatusBadGateway}, delivery: sampleDelivery()},
+		"4xx stop":     {statuses: []int{http.StatusBadRequest}, delivery: sampleDelivery()},
+		"body failure": {statuses: []int{http.StatusOK}, delivery: unencodable},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			rec := newReceiver(t, tc.statuses...)
-			sleep := tc.sleep
-			if sleep == nil {
-				sleep = (&recordingSleeper{}).sleep
-			}
-			result, _ := webhooks.NewDispatcher(webhooks.DispatcherOptions{Sleep: sleep}).
+			result, _ := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).
 				Deliver(context.Background(), webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}, tc.delivery)
 			if result.SettledAt.IsZero() {
 				t.Errorf("SettledAt is zero on the %s path", name)
@@ -192,7 +185,7 @@ func TestDispatcher_SettledAtIsStampedOnEveryReturnPath(t *testing.T) {
 
 func TestDispatcher_SetsTheRedeliveryHeaderOnlyForRedeliveries(t *testing.T) {
 	rec := newReceiver(t, http.StatusOK)
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{MaxRetries: -1})
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
 	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}
 
 	plain := sampleDelivery()
@@ -272,24 +265,29 @@ func TestRegistry_LookupForDeliveryFindsOneSubscriptionWithItsSecret(t *testing.
 	})
 }
 
-// Guardrail clause 1: the record is of a SETTLED delivery. The observer sees
-// the final result once, after the receiver's last response.
-func TestObserve_IsCalledAfterDeliverReturnsWithTheSettledResult(t *testing.T) {
-	rec := newReceiver(t, http.StatusBadGateway, http.StatusBadGateway, http.StatusOK)
+// Guardrail clause 1: the record is of a SETTLED delivery. Without a
+// launcher the notifier makes its one attempt in-process; the record is
+// written first and the observer then sees the final result once.
+func TestObserve_IsCalledAfterTheRecordWithTheSettledResult(t *testing.T) {
+	rec := newReceiver(t, http.StatusOK)
 	registry := webhooks.NewRegistry()
 	mustRegister(t, registry, webhooks.Registration{URL: rec.server.URL})
-	sleeper := &recordingSleeper{}
-	notifier := webhooks.NewNotifier(registry,
-		webhooks.NewDispatcher(webhooks.DispatcherOptions{Sleep: sleeper.sleep}), webhooks.NotifierOptions{})
-
 	var mu sync.Mutex
+	var order []string
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}), webhooks.NotifierOptions{
+		Record: func(_ context.Context, result webhooks.Result) error {
+			mu.Lock()
+			defer mu.Unlock()
+			order = append(order, "record "+result.DeliveryID)
+			return nil
+		},
+	})
 	var seen []webhooks.Result
-	var requestsWhenObserved []int
 	notifier.Observe(func(result webhooks.Result) {
 		mu.Lock()
 		defer mu.Unlock()
 		seen = append(seen, result)
-		requestsWhenObserved = append(requestsWhenObserved, rec.count())
+		order = append(order, "observe "+result.DeliveryID)
 	})
 	notifier.Notify(context.Background(), sampleDelivery())
 	drain(t, notifier)
@@ -300,20 +298,103 @@ func TestObserve_IsCalledAfterDeliverReturnsWithTheSettledResult(t *testing.T) {
 		t.Fatalf("observer called %d times, want once", len(seen))
 	}
 	result := seen[0]
-	if !result.Delivered || len(result.Attempts) != 3 {
-		t.Errorf("observed %+v, want the settled result: delivered after 3 attempts", result)
+	if !result.Delivered || len(result.Attempts) != 1 || rec.count() != 1 {
+		t.Errorf("observed %+v after %d requests, want delivered in one attempt", result, rec.count())
 	}
-	if requestsWhenObserved[0] != 3 {
-		t.Errorf("observer ran when the receiver had seen %d requests, want all 3", requestsWhenObserved[0])
+	if result.SettledAt.IsZero() || result.SettledAt.Before(result.Attempts[0].At) {
+		t.Errorf("SettledAt %s is not after the attempt %s", result.SettledAt, result.Attempts[0].At)
 	}
-	if result.SettledAt.IsZero() || result.SettledAt.Before(result.Attempts[2].At) {
-		t.Errorf("SettledAt %s is not after the last attempt %s", result.SettledAt, result.Attempts[2].At)
+	if len(order) != 2 || !strings.HasPrefix(order[0], "record ") || !strings.HasPrefix(order[1], "observe ") {
+		t.Errorf("order = %q, want the record written before the observer runs", order)
 	}
-	ats := make([]time.Time, 0, len(result.Attempts))
-	for _, attempt := range result.Attempts {
-		ats = append(ats, attempt.At)
+}
+
+// A record that cannot be written is Settle's error, and no observer sees the
+// delivery: the engine's settle activity retries until the record exists.
+func TestNotifier_SettleReturnsTheRecordErrorAndObservesNothing(t *testing.T) {
+	refused := errors.New("store is down")
+	notifier := webhooks.NewNotifier(webhooks.NewRegistry(), nil, webhooks.NotifierOptions{
+		Record: func(context.Context, webhooks.Result) error { return refused },
+	})
+	observed := 0
+	notifier.Observe(func(webhooks.Result) { observed++ })
+	if err := notifier.Settle(context.Background(), webhooks.Result{DeliveryID: "dlv-1"}); !errors.Is(err, refused) {
+		t.Fatalf("Settle = %v, want the record's error", err)
 	}
-	if !sort.SliceIsSorted(ats, func(i, j int) bool { return ats[i].Before(ats[j]) }) {
-		t.Errorf("attempt instants are not in order: %v", ats)
+	if observed != 0 {
+		t.Errorf("an observer saw a delivery whose record was not written")
+	}
+}
+
+// fakeLauncher records what it was handed, or refuses.
+type fakeLauncher struct {
+	mu       sync.Mutex
+	launched []webhooks.Delivery
+	refuse   error
+}
+
+func (l *fakeLauncher) Launch(_ context.Context, _ webhooks.Webhook, delivery webhooks.Delivery) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.refuse != nil {
+		return l.refuse
+	}
+	l.launched = append(l.launched, delivery)
+	return nil
+}
+
+// With a launcher the notifier sends nothing itself: each delivery is handed
+// off, whole, to be sent and retried durably.
+func TestNotifier_HandsEachDeliveryToTheLauncherAndSendsNothing(t *testing.T) {
+	rec := newReceiver(t, http.StatusOK)
+	registry := webhooks.NewRegistry()
+	mustRegister(t, registry, webhooks.Registration{URL: rec.server.URL})
+	mustRegister(t, registry, webhooks.Registration{URL: rec.server.URL})
+	launcher := &fakeLauncher{}
+	notifier := webhooks.NewNotifier(registry, nil, webhooks.NotifierOptions{Launcher: launcher})
+	notifier.Notify(context.Background(), sampleDelivery())
+	drain(t, notifier)
+
+	launcher.mu.Lock()
+	defer launcher.mu.Unlock()
+	if len(launcher.launched) != 2 || rec.count() != 0 {
+		t.Fatalf("launched %d and sent %d, want 2 handed off and none sent", len(launcher.launched), rec.count())
+	}
+	for _, delivery := range launcher.launched {
+		if !webhooks.ValidDeliveryID(delivery.ID) || delivery.QueuedAt.IsZero() || len(delivery.Run) == 0 {
+			t.Errorf("handed off %+v, want an id, a queued instant and the run", delivery)
+		}
+	}
+}
+
+// A delivery the launcher could not queue is never sent, and its record says
+// so: one attempt row, no status, naming why.
+func TestNotifier_RecordsADeliveryThatCouldNotBeQueued(t *testing.T) {
+	registry := webhooks.NewRegistry()
+	mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/hook"})
+	var recorded []webhooks.Result
+	var mu sync.Mutex
+	notifier := webhooks.NewNotifier(registry, nil, webhooks.NotifierOptions{
+		Launcher: &fakeLauncher{refuse: errors.New("cluster unreachable")},
+		Record: func(_ context.Context, result webhooks.Result) error {
+			mu.Lock()
+			defer mu.Unlock()
+			recorded = append(recorded, result)
+			return nil
+		},
+	})
+	notifier.Notify(context.Background(), sampleDelivery())
+	drain(t, notifier)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(recorded) != 1 {
+		t.Fatalf("recorded %d results, want 1", len(recorded))
+	}
+	result := recorded[0]
+	if result.Delivered || len(result.Attempts) != 1 || result.Attempts[0].StatusCode != 0 ||
+		!strings.Contains(result.Attempts[0].Error, "could not be queued") || !strings.Contains(result.Attempts[0].Error, "cluster unreachable") ||
+		result.SettledAt.IsZero() || result.BodySHA256 == "" {
+		t.Errorf("recorded %+v, want an undelivered record naming why it was not queued", result)
 	}
 }

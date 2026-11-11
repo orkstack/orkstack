@@ -7,7 +7,6 @@ import { Status } from './gen/orkstack/v1/common_pb';
 import type { Event, TaskRun } from './gen/orkstack/v1/run_pb';
 import type { EachSpec } from './gen/orkstack/v1/orkflow_pb';
 import type { PlanTask } from './gen/orkstack/v1/orkflow_service_pb';
-import { runCommand } from './runDetail';
 import { isTerminal as isTerminalStatus } from './status';
 import { isTerminal, statusLabel } from './status';
 
@@ -220,14 +219,6 @@ export function itemFromUrl(url: { readonly searchParams: Pick<URLSearchParams, 
 	if (raw === null || !/^\d+$/.test(raw)) return undefined;
 	const n = Number(raw);
 	return Number.isSafeInteger(n) ? n : undefined;
-}
-
-/**
- * itemCli is the CLI equivalent for one item: `orkctl … run <command> <run>
- * --task <task> --item <n>`, every argument shell-quoted by runCommand.
- */
-export function itemCli(opts: { namespace: string; runId: string; taskId: string; item: number; command: string }): string {
-	return runCommand(opts.namespace, ['run', opts.command, opts.runId, '--task', opts.taskId, '--item', String(opts.item)]);
 }
 
 /** eachPlanDetail is the plan's DETAIL for a fan-out, as the CLI prints it. */

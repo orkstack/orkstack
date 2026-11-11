@@ -22,8 +22,7 @@ export function joinWord(policy: JoinPolicy | undefined): string {
 	}
 }
 
-/** A failure handler: join any_failed or all_done. */
-/** What a task's join means, in the words of its row; '' for the default. */
+/** What a task's join means, in the words of its panel; '' for the default. */
 export function joinWords(policy: JoinPolicy | undefined): string {
 	switch (policy) {
 		case JoinPolicy.ANY_FAILED:
@@ -37,6 +36,16 @@ export function joinWords(policy: JoinPolicy | undefined): string {
 	}
 }
 
+/**
+ * A task of a live run that no Orker has seen yet, as its panel's fact: the
+ * needs it still waits on, or — once they have all finished — that it waits
+ * to start (an in-flight cap, a hold, a saturated pool).
+ */
+export function waitingFact(blocking: readonly string[]): { label: string; value: string } {
+	return blocking.length > 0 ? { label: 'Waiting for', value: blocking.join(', ') } : { label: 'Waiting to start', value: 'its needs have finished' };
+}
+
+/** A failure handler: join any_failed or all_done. */
 export function isFailureHandler(policy: JoinPolicy | undefined): boolean {
 	return policy === JoinPolicy.ANY_FAILED || policy === JoinPolicy.ALL_DONE;
 }
@@ -83,7 +92,7 @@ export function runFailing(status: Status | undefined, error: OrkError | undefin
 /** One outstanding failure handler, for the banner. */
 export interface OutstandingHandler {
 	id: string;
-	word: 'pending' | 'running' | 'awaiting';
+	word: 'pending' | 'running' | 'awaiting' | 'sleeping';
 }
 
 function statusWord(status: Status | undefined): OutstandingHandler['word'] | undefined {
@@ -92,6 +101,8 @@ function statusWord(status: Status | undefined): OutstandingHandler['word'] | un
 			return 'running';
 		case Status.AWAITING:
 			return 'awaiting';
+		case Status.SLEEPING:
+			return 'sleeping';
 		case Status.PENDING:
 		case Status.UNSPECIFIED:
 		case undefined:

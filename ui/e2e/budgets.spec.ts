@@ -185,7 +185,7 @@ test('2–3: a run reserves past the budget, and the Usage card shows the danger
 	);
 	await expect(page.getByTestId('usage-footer')).toContainText('coverage begins ');
 	await page.getByTestId('page-cli-trigger').click();
-	await expect(pageCli(page, 'What this namespace reserved')).toHaveText(`orkctl --namespace ${NS} stats usage --since 1h0m0s`);
+	await expect(pageCli(page, 'What this namespace reserved')).toHaveText(`orkctl -n ${NS} stats usage -s 1h0m0s`);
 	note(`usage card: bar ${await page.getByTestId('usage-bar-cpu-label').innerText()}; cpu-seconds ${await page.getByTestId('usage-cpu-seconds').innerText()}`);
 	await card.scrollIntoViewIfNeeded();
 	await page.screenshot({ path: out('screenshot-usage-card-danger.png'), fullPage: true });
@@ -214,7 +214,7 @@ test('5: Admin → Usage lists every namespace; the budget’s share only in its
 	await expect(page.getByTestId(`usage-ns-${FREE}-budget`)).toHaveText('unbounded', { timeout: 120_000 });
 	await expect(page.getByTestId('usage-admin-caveat')).toContainText('RESERVED');
 	await page.getByTestId('page-cli-trigger').click();
-	await expect(pageCli(page, 'What each namespace reserved')).toHaveText('orkctl stats usage --group-by namespace --since 24h');
+	await expect(pageCli(page, 'What each namespace reserved')).toHaveText('orkctl stats usage -g namespace -s 24h');
 	note(`admin usage row ${NS}: cpu-seconds ${await page.getByTestId(`usage-ns-${NS}-cpu-seconds`).innerText()}, budget ${await page.getByTestId(`usage-ns-${NS}-budget`).innerText()}`);
 	await page.screenshot({ path: out('screenshot-admin-usage.png'), fullPage: true });
 	await page.keyboard.press('Escape');

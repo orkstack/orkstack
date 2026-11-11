@@ -2,7 +2,6 @@ package orker
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,8 +16,11 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // cordonOrkerID is this process's identity for the cordon tests: identities
@@ -113,9 +115,7 @@ func TestCordon_SetClearAndState(t *testing.T) {
 
 func TestCordonSlotSupplier_BlocksReservationWhileCordoned(t *testing.T) {
 	inner, err := worker.NewFixedSizeSlotSupplier(1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	c := NewCordon()
 	s := &cordonSlotSupplier{inner: inner, cordon: c}
 	if s.MaxSlots() != 1 {
@@ -358,9 +358,7 @@ func TestDescribeOrker_ReportsCordonAndLoad(t *testing.T) {
 	a := newCordonActivities(t, t.TempDir())
 	ctx := context.Background()
 	after, err := a.CordonOrker(ctx, &orkstackv1.CordonOrkerInput{Cordoned: true, Reason: "cve"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !after.GetCordoned() || after.GetCordonReason() != "cve" || after.GetCordonedAt() == nil {
 		t.Fatalf("after cordon: cordoned=%v reason=%q at=%v", after.GetCordoned(), after.GetCordonReason(), after.GetCordonedAt())
 	}
@@ -371,9 +369,7 @@ func TestDescribeOrker_ReportsCordonAndLoad(t *testing.T) {
 		t.Fatalf("an idle Orker reports load: %v", after)
 	}
 	cleared, err := a.CordonOrker(ctx, &orkstackv1.CordonOrkerInput{Cordoned: false, Reason: "ignored"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if cleared.GetCordoned() || cleared.GetCordonReason() != "" || cleared.GetCordonedAt() != nil {
 		t.Fatalf("after uncordon: cordoned=%v reason=%q at=%v", cleared.GetCordoned(), cleared.GetCordonReason(), cleared.GetCordonedAt())
 	}
@@ -396,11 +392,9 @@ func TestCordonOrker_RefusesAnEmptyReason(t *testing.T) {
 func writeLease(t *testing.T, root, dir string, lease *pinLease, raw string) {
 	t.Helper()
 	path := filepath.Join(root, dir)
-	if err := os.MkdirAll(path, 0o700); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(path, 0o700))
 	if lease != nil {
-		encoded, err := json.Marshal(lease)
+		encoded, err := stablejson.Marshal(lease)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -423,9 +417,7 @@ func TestListOpenPinLeases_ReadsLeasesAndSkipsUndecodable(t *testing.T) {
 	writeLease(t, root, "not-a-pin", &pinLease{ExpiresAt: expires.Format(time.RFC3339Nano), RunID: "ork-z", Pin: "z"}, "")
 
 	leases, err := ListOpenPinLeases(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if len(leases) != 2 {
 		t.Fatalf("ListOpenPinLeases = %+v; want the two decodable leases", leases)
 	}
@@ -447,9 +439,7 @@ func TestListOpenPinLeases_ReadsLeasesAndSkipsUndecodable(t *testing.T) {
 	a.pins.add("creation-1", "ork-a", since)
 	a.pins.add("creation-2", "ork-new", since.Add(time.Minute))
 	described, err := a.DescribeOrker(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if described.GetOpenPins() != 2 || len(described.GetPins()) != 2 {
 		t.Fatalf("open_pins=%d pins=%v; want 2 and 2", described.GetOpenPins(), described.GetPins())
 	}
@@ -526,9 +516,7 @@ func TestWorkerTuner_ActivitySlotsAreTheConfiguredCeiling(t *testing.T) {
 				Runtime:       &reapRecorder{labelled: map[string]int{}},
 			})
 			tuner, err := a.WorkerTuner()
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got := tuner.GetActivityTaskSlotSupplier().MaxSlots(); got != tc.want {
 				t.Fatalf("activity supplier MaxSlots() = %d; want %d", got, tc.want)
 			}
@@ -536,9 +524,7 @@ func TestWorkerTuner_ActivitySlotsAreTheConfiguredCeiling(t *testing.T) {
 				t.Fatalf("session supplier MaxSlots() = %d; want the SDK default %d", got, sdkDefaultSlots)
 			}
 			described, err := a.DescribeOrker(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if int(described.GetMaxConcurrent()) != tc.want {
 				t.Fatalf("DescribeOrker max_concurrent = %d; want the tuner's %d", described.GetMaxConcurrent(), tc.want)
 			}

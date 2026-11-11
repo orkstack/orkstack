@@ -12,9 +12,9 @@ needs nothing but itself to verify: `orkctl run evidence verify` is a hashing
 loop over its manifest, with no server and no credentials.
 
 ```text
-orkctl run evidence export <run-id> --output PATH [--task TASK [--item N]] [--no-logs] [--no-artifacts] [--overwrite] [-n NS]
-orkctl run evidence export <run-id> --json [--task TASK [--item N]] [--no-logs] [--no-artifacts] [-n NS]
-orkctl run evidence verify <bundle.tar.gz> [--json]
+orkctl run evidence export <run-id> -o PATH [-t TASK [--item N]] [--no-logs] [--no-artifacts] [--overwrite] [-n NS]
+orkctl run evidence export <run-id> -j [-t TASK [--item N]] [--no-logs] [--no-artifacts] [-n NS]
+orkctl run evidence verify <bundle.tar.gz> [-j]
 orkctl run evidence verify <bundle.tar.gz> --against-store [-n NS] [--server URL]
 ```
 

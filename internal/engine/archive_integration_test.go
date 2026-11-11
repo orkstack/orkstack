@@ -5,7 +5,6 @@ package engine_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -25,9 +24,12 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // requireObjectStore skips when the dev object store is not up, matching the
@@ -126,9 +128,7 @@ func startEngine(
 		)
 
 		for _, w := range []worker.Worker{runWorker, taskWorker, eventWorker} {
-			if err := w.Start(); err != nil {
-				t.Fatalf("start worker: %v", err)
-			}
+			must.OKf(t, w.Start(), "start worker")
 			stops = append(stops, w.Stop)
 		}
 	}
@@ -141,9 +141,7 @@ func startEngine(
 		Archive:  archive,
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 
@@ -202,18 +200,14 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	defer temporalClient.Close()
 
 	store, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	archive := engine.NewRunArchiver(store)
 
 	// ---- engine process 1: execute a real run --------------------------------
 	first := startEngine(t, temporalClient, archive, true)
 
 	source, err := os.ReadFile("../../internal/dsl/testdata/orkflows/hello.ork.yaml")
-	if err != nil {
-		t.Fatalf("read example: %v", err)
-	}
+	must.OKf(t, err, "read example")
 	if _, err := first.flows.ApplyOrkflow(ctx, connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{
 		Yaml: string(source),
 	})); err != nil {
@@ -309,9 +303,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	}
 
 	got, err := second.client.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("GetRun after restart: %v", err)
-	}
+	must.OKf(t, err, "GetRun after restart")
 	recovered := got.Msg.GetRun()
 	if recovered.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("recovered status = %s, want SUCCEEDED", recovered.GetStatus())
@@ -328,9 +320,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	listed, err := second.client.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 		Filters: equalsFilters("orkflow_name", "hello-ork", "status", "SUCCEEDED"),
 	}))
-	if err != nil {
-		t.Fatalf("ListRuns after restart: %v", err)
-	}
+	must.OKf(t, err, "ListRuns after restart")
 	if !containsRun(listed.Msg.GetRuns(), runID) {
 		t.Fatalf("`run list --filter orkflow_name=hello-ork --filter status=SUCCEEDED` did not return %s (got %v)",
 			runID, runIDsOf(listed.Msg.GetRuns()))
@@ -347,9 +337,7 @@ func TestIntegration_RunArchivesToS3AndSurvivesEngineRestart(t *testing.T) {
 	failedOnly, err := second.client.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{
 		Filters: equalsFilters("orkflow_name", "hello-ork", "status", "FAILED"),
 	}))
-	if err != nil {
-		t.Fatalf("ListRuns(FAILED): %v", err)
-	}
+	must.OKf(t, err, "ListRuns(FAILED)")
 	if containsRun(failedOnly.Msg.GetRuns(), runID) {
 		t.Fatalf("a succeeded run was returned by --filter status=FAILED")
 	}
@@ -462,15 +450,11 @@ func writeArchiveProof(
 	proof.Write(t, "engine", "run-archive-uri.txt", []byte(uri+"\n"))
 
 	recoveredJSON, err := api.MarshalJSON(recovered)
-	if err != nil {
-		t.Fatalf("encode recovered run: %v", err)
-	}
+	must.OKf(t, err, "encode recovered run")
 	proof.Write(t, "engine", "run-get-after-restart.json", indentJSON(t, recoveredJSON))
 
 	listJSON, err := api.MarshalJSON(&orkstackv1.ListRunsResponse{Runs: listed})
-	if err != nil {
-		t.Fatalf("encode run list: %v", err)
-	}
+	must.OKf(t, err, "encode run list")
 	proof.Write(t, "engine", "run-list-succeeded.json", indentJSON(t, listJSON))
 	t.Logf("recorded archive evidence for run %s", runID)
 }
@@ -478,7 +462,7 @@ func writeArchiveProof(
 func indentJSON(t *testing.T, data []byte) []byte {
 	t.Helper()
 	var pretty bytes.Buffer
-	if err := json.Indent(&pretty, data, "", "  "); err != nil {
+	if err := stablejson.Indent(&pretty, data, "  "); err != nil {
 		t.Fatalf("indent json: %v", err)
 	}
 	pretty.WriteByte('\n')

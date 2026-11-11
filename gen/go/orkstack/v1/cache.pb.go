@@ -120,9 +120,15 @@ type CacheUsageRow struct {
 	// reused is the sum, over hits, of the source attempt's duration
 	// (source.finished_at - source.started_at): the producing attempts' time
 	// these hits did not spend again. Stated as that, never as "saved".
-	Reused        *durationpb.Duration `protobuf:"bytes,8,opt,name=reused,proto3" json:"reused,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Reused *durationpb.Duration `protobuf:"bytes,8,opt,name=reused,proto3" json:"reused,omitempty"`
+	// orkflow_namespace is set when the row's runs ran another namespace's
+	// shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+	// namespaces"): the namespace that owns it. Such runs are grouped apart from
+	// this namespace's own Orkflow of the same name. Empty for the namespace's
+	// own.
+	OrkflowNamespace string `protobuf:"bytes,9,opt,name=orkflow_namespace,json=orkflowNamespace,proto3" json:"orkflow_namespace,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *CacheUsageRow) Reset() {
@@ -209,6 +215,13 @@ func (x *CacheUsageRow) GetReused() *durationpb.Duration {
 		return x.Reused
 	}
 	return nil
+}
+
+func (x *CacheUsageRow) GetOrkflowNamespace() string {
+	if x != nil {
+		return x.OrkflowNamespace
+	}
+	return ""
 }
 
 // CacheInventoryRow is one group of stored memos, from a listing of keys:
@@ -581,7 +594,7 @@ const file_orkstack_v1_cache_proto_rawDesc = "" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x120\n" +
 	"\x05since\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
 	"\x05until\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x125\n" +
-	"\blookback\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\blookback\"\x8b\x02\n" +
+	"\blookback\x18\x05 \x01(\v2\x19.google.protobuf.DurationR\blookback\"\xb8\x02\n" +
 	"\rCacheUsageRow\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x12\n" +
@@ -590,7 +603,8 @@ const file_orkstack_v1_cache_proto_rawDesc = "" +
 	"\bbypassed\x18\x05 \x01(\x03R\bbypassed\x12\x19\n" +
 	"\bhit_rate\x18\x06 \x01(\x01R\ahitRate\x12(\n" +
 	"\x10hit_rate_defined\x18\a \x01(\bR\x0ehitRateDefined\x121\n" +
-	"\x06reused\x18\b \x01(\v2\x19.google.protobuf.DurationR\x06reused\"\xfc\x01\n" +
+	"\x06reused\x18\b \x01(\v2\x19.google.protobuf.DurationR\x06reused\x12+\n" +
+	"\x11orkflow_namespace\x18\t \x01(\tR\x10orkflowNamespace\"\xfc\x01\n" +
 	"\x11CacheInventoryRow\x12-\n" +
 	"\x05scope\x18\x01 \x01(\x0e2\x17.orkstack.v1.CacheScopeR\x05scope\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12\x17\n" +

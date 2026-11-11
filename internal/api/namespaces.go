@@ -3,7 +3,7 @@ package api
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"sort"
@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -601,7 +602,7 @@ type namespaceCursor struct {
 }
 
 func encodeNamespaceCursor(set listfilter.Set, name string) (string, error) {
-	raw, err := json.Marshal(namespaceCursor{Version: 1, Filters: set.Key(), Name: name})
+	raw, err := stablejson.Marshal(namespaceCursor{Version: 1, Filters: set.Key(), Name: name})
 	if err != nil {
 		return "", err
 	}

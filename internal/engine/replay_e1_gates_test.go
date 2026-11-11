@@ -13,6 +13,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The recorded runs behind the fairness-pin-creation and retry-max-interval
@@ -79,9 +81,7 @@ func replayCapturingDispatch(t *testing.T, recorded *historypb.History, runID st
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: append([]interceptor.WorkerInterceptor{capture}, engine.RunWorkerInterceptors()...),
 	})
-	if err != nil {
-		t.Fatalf("new replayer: %v", err)
-	}
+	must.OKf(t, err, "new replayer")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	return capture, replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
 		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
@@ -146,9 +146,7 @@ func TestRunWorkflow_ReplaysCommittedFairnessPinCreationHistories(t *testing.T) 
 			}
 			requireRecordedCreationPriority(t, tc.path, recorded, tc.legacy)
 			capture, err := replayCapturingDispatch(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("replaying %s against current code failed: %v", tc.path, err)
-			}
+			must.OKf(t, err, "replaying %s against current code failed", tc.path)
 			requireKeyed(t, "pin creation request on replay", capture.of(sessionCreationActivityName), 2, wantCreationPriority(tc.legacy))
 			requireKeyed(t, "ExecuteTask on replay", capture.of(task.ActivityExecuteTask), 3, wantPriority(false))
 			want := workflow.Version(1)
@@ -169,9 +167,7 @@ func TestFairnessPinCreationHistories_CatchTheGateRemoved(t *testing.T) {
 	runID, _, _, _, _ := startArgs(t, recorded)
 	defer engine.DisableFairnessPinCreationGateForTest()()
 	capture, err := replayCapturingDispatch(t, recorded, runID)
-	if err != nil {
-		t.Fatalf("replay with the gate skipped: %v", err)
-	}
+	must.OKf(t, err, "replay with the gate skipped")
 	// Both requests are sent, and both unkeyed: the comparison above sees a
 	// difference at each, rather than passing on nothing.
 	requireKeyed(t, "pin creation request with the gate skipped", capture.of(sessionCreationActivityName), 2, temporal.Priority{})
@@ -192,9 +188,7 @@ func TestFairnessPinCreationHistories_CatchTheInterceptorMissing(t *testing.T) {
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: []interceptor.WorkerInterceptor{capture},
 	})
-	if err != nil {
-		t.Fatalf("new replayer: %v", err)
-	}
+	must.OKf(t, err, "new replayer")
 	replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 	if err := replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
 		OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
@@ -254,9 +248,7 @@ func TestRunWorkflow_ReplaysCommittedRetryMaxIntervalHistories(t *testing.T) {
 				t.Fatalf("%s recorded retrying tasks with maximum intervals %v, want one of %s", tc.path, got, wantRetryMaxInterval(tc.legacy))
 			}
 			capture, err := replayCapturingDispatch(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("replaying %s against current code failed: %v", tc.path, err)
-			}
+			must.OKf(t, err, "replaying %s against current code failed", tc.path)
 			requireIntervals(t, maximumIntervals(capture), 1, wantRetryMaxInterval(tc.legacy))
 			want := workflow.Version(1)
 			if tc.legacy {
@@ -308,9 +300,7 @@ func TestRunWorkflow_ReplaysCommittedRetryLongInitialHistories(t *testing.T) {
 				t.Fatalf("%s recorded retrying tasks with maximum intervals %v, want one of %s", tc.path, got, retryLongInitial)
 			}
 			capture, err := replayCapturingDispatch(t, recorded, runID)
-			if err != nil {
-				t.Fatalf("replaying %s against current code failed: %v", tc.path, err)
-			}
+			must.OKf(t, err, "replaying %s against current code failed", tc.path)
 			requireIntervals(t, maximumIntervals(capture), 1, retryLongInitial)
 			want := workflow.Version(1)
 			if tc.legacy {
@@ -330,9 +320,7 @@ func TestRetryMaxIntervalHistories_CatchTheGateRemoved(t *testing.T) {
 	runID, _, _, _, _ := startArgs(t, recorded)
 	defer engine.DisableRetryMaxIntervalGateForTest()()
 	capture, err := replayCapturingDispatch(t, recorded, runID)
-	if err != nil {
-		t.Fatalf("replay with the gate skipped: %v", err)
-	}
+	must.OKf(t, err, "replay with the gate skipped")
 	// The retrying task is sent, at 100 seconds: the comparison above sees
 	// the difference, rather than passing on nothing.
 	requireIntervals(t, maximumIntervals(capture), 1, 100*time.Second)
@@ -369,9 +357,7 @@ func TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy(t *testing.T) 
 		replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 			Interceptors: []interceptor.WorkerInterceptor{rewrite},
 		})
-		if err != nil {
-			t.Fatalf("new replayer: %v", err)
-		}
+		must.OKf(t, err, "new replayer")
 		replayer.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 		return replayer.ReplayWorkflowHistoryWithOptions(nil, recorded, worker.ReplayWorkflowHistoryOptions{
 			OriginalExecution: workflow.Execution{ID: runID, RunID: "replay"},
@@ -379,9 +365,7 @@ func TestSDKPremise_TheReplayerComparesNoPriorityAndNoRetryPolicy(t *testing.T) 
 	}
 	keyed := &commandRewriter{priority: temporal.Priority{FairnessKey: "added", FairnessWeight: 5},
 		retry: &temporal.RetryPolicy{MaximumAttempts: 9, InitialInterval: 7 * time.Second, MaximumInterval: 11 * time.Second}}
-	if err := replay(keyed); err != nil {
-		t.Fatalf("replay with a fairness key and a retry policy added to every recorded command failed: %v", err)
-	}
+	must.OKf(t, replay(keyed), "replay with a fairness key and a retry policy added to every recorded command failed")
 	if keyed.rewritten < 3 {
 		t.Fatalf("only %d commands were rewritten; want both creation requests and the tasks", keyed.rewritten)
 	}

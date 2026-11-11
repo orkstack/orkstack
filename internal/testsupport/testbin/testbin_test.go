@@ -4,14 +4,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestPathPrefersTheProofsBinaries(t *testing.T) {
 	shared := t.TempDir()
 	want := filepath.Join(shared, "orkctl")
-	if err := os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755))
 	t.Setenv(EnvDir, shared)
 	if got := Path(t, "./cmd/orkctl"); got != want {
 		t.Errorf("Path = %s, want the proof's %s", got, want)
@@ -32,9 +32,7 @@ func TestPathBuildsOncePerProcessWithoutTheProofsBinaries(t *testing.T) {
 	}
 	t.Setenv(EnvDir, "")
 	first, err := resolve("./test/tools/deaf-poller")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	second, err := resolve("./test/tools/deaf-poller")
 	if err != nil || second != first {
 		t.Fatalf("second build: %s, %v; want the first, %s", second, err, first)

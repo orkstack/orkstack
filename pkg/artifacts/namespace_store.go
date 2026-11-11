@@ -3,7 +3,6 @@ package artifacts
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -26,6 +25,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -198,7 +198,7 @@ func marshalNamespace(ns *orkstackv1.Namespace) ([]byte, error) {
 		return nil, fmt.Errorf("artifacts: encode namespace %q: %w", ns.GetName(), err)
 	}
 	var out bytes.Buffer
-	if err := json.Indent(&out, raw, "", "  "); err != nil {
+	if err := stablejson.Indent(&out, raw, "  "); err != nil {
 		return nil, fmt.Errorf("artifacts: encode namespace %q: %w", ns.GetName(), err)
 	}
 	out.WriteByte('\n')
@@ -327,15 +327,18 @@ func (s *S3NamespaceStore) Put(
 	if cond.IfMatch != "" {
 		input.IfMatch = aws.String(cond.IfMatch)
 	}
-	out, err := s.client.PutObject(ctx, input)
+	// Equal bytes after a lost answer (putConfirmed) are this write: the
+	// document carries updated_at to the nanosecond. Were they another's, the
+	// stored document is exactly the one this write would have left.
+	outcome, err := putConfirmed(ctx, s.client, input, document)
 	if err != nil {
-		if cond.conditional() && isPreconditionFailed(err) {
+		if cond.conditional() && refusedCondition(err, input) {
 			return nil, fmt.Errorf("artifacts: put namespace %q: %w",
 				s.uri(key), ErrPreconditionFailed)
 		}
 		return nil, fmt.Errorf("artifacts: put namespace %q: %w", s.uri(key), err)
 	}
-	stored.Etag = aws.ToString(out.ETag)
+	stored.Etag = outcome.ETag
 	return stored, nil
 }
 

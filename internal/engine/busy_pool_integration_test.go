@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A pool whose every Orker is busy is a live pool.
@@ -83,9 +85,7 @@ func TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes(t *testing.
 	for {
 		var err error
 		live, err = probe.ObservePool(ctx, a.queue)
-		if err != nil {
-			t.Fatalf("ObservePool: %v", err)
-		}
+		must.OKf(t, err, "ObservePool")
 		if !live.Fresh(time.Now(), engine.DefaultPollerFreshness) {
 			break
 		}
@@ -144,9 +144,7 @@ func TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes(t *testing.
 			"naming the missing pin host", refused)
 	}
 	after, err := reader.ListRuns(ctx, engine.RunQuery{})
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	for _, run := range after {
 		if !before[run.GetId()] {
 			t.Fatalf("the refused pinned submit left run %s behind", run.GetId())
@@ -159,9 +157,7 @@ func TestIntegration_ASaturatedPoolIsLiveAtSubmitAndAnswersItsProbes(t *testing.
 	}
 
 	// The accepted run was never stranded: once the holds end, it runs.
-	if err := d.starter.CancelRun(ctx, holdID, engine.CancelRequest{}); err != nil {
-		t.Fatalf("cancel the hold run: %v", err)
-	}
+	must.OKf(t, d.starter.CancelRun(ctx, holdID, engine.CancelRequest{}), "cancel the hold run")
 	if got := d.await(holdID).GetStatus(); got != orkstackv1.Status_STATUS_CANCELED {
 		t.Fatalf("hold run ended %v; want CANCELED", got)
 	}
@@ -182,9 +178,7 @@ func (d *cordonDeployment) awaitListed(reader *engine.TemporalRunReader, runID s
 	deadline := time.Now().Add(time.Minute)
 	for {
 		runs, err := reader.ListRuns(d.ctx, engine.RunQuery{})
-		if err != nil {
-			d.t.Fatalf("ListRuns: %v", err)
-		}
+		must.OKf(d.t, err, "ListRuns")
 		listed := map[string]bool{}
 		for _, run := range runs {
 			listed[run.GetId()] = true
@@ -206,8 +200,6 @@ func (d *cordonDeployment) awaitListed(reader *engine.TemporalRunReader, runID s
 func (d *cordonDeployment) getRun(runID string) *orkstackv1.Run {
 	d.t.Helper()
 	resp, err := d.runs.GetRun(d.ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID, Namespace: d.orkNS}))
-	if err != nil {
-		d.t.Fatalf("GetRun(%s): %v", runID, err)
-	}
+	must.OKf(d.t, err, "GetRun(%s)", runID)
 	return resp.Msg.GetRun()
 }

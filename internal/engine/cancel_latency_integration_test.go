@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval measures
@@ -70,17 +72,11 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	orkerQueue := "ork-cancel-latency-" + token
 
 	store, err := artifacts.New(cfg)
-	if err != nil {
-		t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(t, err, "open artifact store")
 	commitStore, err := artifacts.NewCommitStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(t, err, "open commit store")
 	logStore, err := artifacts.NewLogStore(cfg)
-	if err != nil {
-		t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(t, err, "open log store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
@@ -152,9 +148,7 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 	for name, w := range map[string]worker.Worker{
 		"run": runWorker, "task": taskWorker, "event": eventWorker,
 	} {
-		if err := w.Start(); err != nil {
-			t.Fatalf("start %s worker: %v", name, err)
-		}
+		must.OKf(t, w.Start(), "start %s worker", name)
 		defer w.Stop()
 	}
 
@@ -204,9 +198,7 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 		Limits:    engine.DefaultLimits(),
 	})
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -225,22 +217,16 @@ func TestIntegration_RunFailureStopsASiblingWithinTheHeartbeatInterval(t *testin
 		OrkflowName:    orkflowName,
 		OrkflowVersion: definition.GetVersion(),
 	}))
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	runID := submitted.Msg.GetRun().GetId()
 	t.Logf("EVIDENCE run_id=%s heartbeat_interval=%s", runID, tick)
 
 	// Drain rather than sleep: the stream closes at the run's terminal event.
 	stream, err := runClient.StreamEvents(ctx, connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	for stream.Receive() {
 	}
-	if err := stream.Err(); err != nil {
-		t.Fatalf("event stream: %v", err)
-	}
+	must.OKf(t, stream.Err(), "event stream")
 	stream.Close()
 
 	// The measurement comes from the ENGINE's own event timestamps, not from

@@ -22,7 +22,6 @@ on:
       - "examples/**"
       - "deploy/orkstack.defaults.yaml"
       - "proto/**"
-      - "scripts/proof-section11-coverage.tsv"
       - ".github/workflows/site.yml"
   workflow_dispatch:
 

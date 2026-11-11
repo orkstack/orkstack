@@ -6,6 +6,8 @@ import (
 	"errors"
 	"io"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // A gzip message stops inflating at the cap: reading it costs at most limit
@@ -18,27 +20,21 @@ func TestBoundedGzip_StopsInflatingAtTheCap(t *testing.T) {
 		if _, err := w.Write(bytes.Repeat([]byte("x"), n)); err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, w.Close())
 		return b.Bytes()
 	}
 	const limit = 64 << 10
 	d := &boundedGzip{limit: limit}
 
 	bomb := compress(64 << 20)
-	if err := d.Reset(bytes.NewReader(bomb)); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, d.Reset(bytes.NewReader(bomb)))
 	n, err := io.Copy(io.Discard, d)
 	if !errors.Is(err, errInflatedPastCap) || n != limit {
 		t.Fatalf("%d bytes of gzip inflating to 64 MiB: read %d bytes, err %v; want %d and errInflatedPastCap", len(bomb), n, err, limit)
 	}
 
 	for _, size := range []int{0, 1, limit - 1, limit} {
-		if err := d.Reset(bytes.NewReader(compress(size))); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, d.Reset(bytes.NewReader(compress(size))))
 		if n, err := io.Copy(io.Discard, d); err != nil || n != int64(size) {
 			t.Fatalf("a message of %d bytes after a refusal: read %d, err %v", size, n, err)
 		}

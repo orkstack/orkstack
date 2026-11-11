@@ -8,7 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"io"
 	"os"
@@ -25,9 +25,12 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // secretFloor is the Orker floor every scenario's Orker runs with: the
@@ -163,9 +166,7 @@ func (s *secretStack) writeTranscript(t *testing.T, name string) {
 func (s *secretStack) document(t *testing.T, yaml string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "orkflow.ork.yaml")
-	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
-		t.Fatalf("write orkflow: %v", err)
-	}
+	must.OKf(t, os.WriteFile(path, []byte(yaml), 0o644), "write orkflow")
 	return path
 }
 
@@ -226,19 +227,13 @@ func (s *secretStack) runObjects(ctx context.Context, t *testing.T, runID string
 		})
 		for pager.HasMorePages() {
 			page, err := pager.NextPage(ctx)
-			if err != nil {
-				t.Fatalf("list %s: %v", prefix, err)
-			}
+			must.OKf(t, err, "list %s", prefix)
 			for _, object := range page.Contents {
 				got, err := client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(s.cfg.S3Bucket), Key: object.Key})
-				if err != nil {
-					t.Fatalf("get %s: %v", aws.ToString(object.Key), err)
-				}
+				must.OKf(t, err, "get %s", aws.ToString(object.Key))
 				body, err := io.ReadAll(got.Body)
 				_ = got.Body.Close()
-				if err != nil {
-					t.Fatalf("read %s: %v", aws.ToString(object.Key), err)
-				}
+				must.OKf(t, err, "read %s", aws.ToString(object.Key))
 				out[aws.ToString(object.Key)] = body
 			}
 		}
@@ -328,7 +323,7 @@ func TestIntegration_ASecretPolicyRefusesValidateAndApplyWithTheFieldPath(t *tes
 	if !strings.Contains(stdout, "tasks[0].secrets[0].source: "+sentence) {
 		t.Fatalf("validate via B = %q, want the field-anchored sentence", stdout)
 	}
-	_, stderr := s.cli(t, s.b, exitError, "apply", path, "-n", s.namespace)
+	_, stderr := s.cli(t, s.b, exitError, "orkflow", "create", path, "-n", s.namespace)
 	if !strings.Contains(stderr, "invalid_argument: "+sentence) {
 		t.Fatalf("apply via B = %q, want invalid_argument with the sentence", stderr)
 	}
@@ -350,7 +345,7 @@ func TestIntegration_AListTightenedOnOneReplicaRefusesASubmitOnTheOther(t *testi
 	defer s.writeTranscript(t, "secret-policy-two-replicas.txt")
 
 	s.cli(t, s.a, exitOK, "namespace", "create", s.namespace)
-	s.cli(t, s.a, exitOK, "apply", s.document(t, exfilYAML()), "-n", s.namespace)
+	s.cli(t, s.a, exitOK, "orkflow", "create", s.document(t, exfilYAML()), "-n", s.namespace)
 	s.cli(t, s.a, exitOK, "namespace", "update", s.namespace, "--allow-secret", "env:SANDBOX_*")
 
 	_, stderr := s.cli(t, s.b, exitError, "run", "submit", "exfil", "-n", s.namespace)
@@ -404,7 +399,7 @@ func TestIntegration_TheOrkerFloorRefusesWhatTheNamespaceAllows(t *testing.T) {
 	defer s.writeTranscript(t, "secret-policy-orker-floor.txt")
 
 	s.cli(t, s.a, exitOK, "namespace", "create", s.namespace)
-	s.cli(t, s.a, exitOK, "apply", s.document(t, exfilYAML()), "-n", s.namespace)
+	s.cli(t, s.a, exitOK, "orkflow", "create", s.document(t, exfilYAML()), "-n", s.namespace)
 	runID := s.submitID(t, s.a, "exfil")
 	s.awaitStatus(ctx, t, s.a, runID, orkstackv1.Status_STATUS_FAILED)
 
@@ -440,7 +435,7 @@ func TestIntegration_TheOrkerFloorRefusesWhatTheNamespaceAllows(t *testing.T) {
 
 	attempts, _ := s.cli(t, s.b, exitOK, "--json", "run", "attempts", runID, "--task", "grab", "-n", s.namespace)
 	var listed struct {
-		Attempts []json.RawMessage `json:"attempts"`
+		Attempts []stablejson.RawJSON `json:"attempts"`
 	}
 	if err := json.Unmarshal([]byte(attempts), &listed); err != nil || len(listed.Attempts) != 1 {
 		t.Fatalf("run attempts --json = %v, %s; want exactly one attempt (a policy refusal is never retried)", err, attempts)
@@ -459,7 +454,7 @@ func TestIntegration_APermittedSecretResolvesAndItsValueNeverLeavesTheOrker(t *t
 	defer s.writeTranscript(t, "secret-policy-permitted.txt")
 
 	s.cli(t, s.a, exitOK, "namespace", "create", s.namespace, "--allow-secret", "env:SANDBOX_*")
-	s.cli(t, s.a, exitOK, "apply",
+	s.cli(t, s.a, exitOK, "orkflow", "create",
 		s.document(t, fetchYAML("fetch", "sha256sum /orkstack/input/secrets/token")), "-n", s.namespace)
 	runID := s.submitID(t, s.b, "fetch")
 	s.awaitStatus(ctx, t, s.b, runID, orkstackv1.Status_STATUS_SUCCEEDED)
@@ -503,14 +498,14 @@ func TestIntegration_TraversalIsRefusedAtApplyAndAtSubmit(t *testing.T) {
 	if !strings.Contains(stdout, "tasks[0].secrets[0].source: "+sentence) {
 		t.Fatalf("validate = %q, want the traversal sentence", stdout)
 	}
-	_, stderr := s.cli(t, s.b, exitError, "apply", path, "-n", s.namespace)
+	_, stderr := s.cli(t, s.b, exitError, "orkflow", "create", path, "-n", s.namespace)
 	if !strings.Contains(stderr, sentence) {
 		t.Fatalf("apply = %q, want the traversal sentence", stderr)
 	}
 
 	// A definition applied while unrestricted is refused at submit.
 	s.cli(t, s.a, exitOK, "namespace", "update", s.namespace, "--clear-allowed-secrets")
-	s.cli(t, s.a, exitOK, "apply", path, "-n", s.namespace)
+	s.cli(t, s.a, exitOK, "orkflow", "create", path, "-n", s.namespace)
 	s.cli(t, s.a, exitOK, "namespace", "update", s.namespace, "--allow-secret", pattern)
 	_, stderr = s.cli(t, s.b, exitError, "run", "submit", "climb", "-n", s.namespace)
 	if !strings.Contains(stderr, "invalid_argument: "+sentence) {
@@ -525,7 +520,7 @@ func TestIntegration_ATightenedListNeverTouchesARunAlreadyAccepted(t *testing.T)
 	defer s.writeTranscript(t, "secret-policy-accepted-run.txt")
 
 	s.cli(t, s.a, exitOK, "namespace", "create", s.namespace, "--allow-secret", "env:SANDBOX_*")
-	s.cli(t, s.a, exitOK, "apply", s.document(t, fetchYAML("slow-fetch",
+	s.cli(t, s.a, exitOK, "orkflow", "create", s.document(t, fetchYAML("slow-fetch",
 		"sleep 20; sha256sum /orkstack/input/secrets/token")), "-n", s.namespace)
 	runID := s.submitID(t, s.a, "slow-fetch")
 	s.awaitStatus(ctx, t, s.a, runID, orkstackv1.Status_STATUS_RUNNING)
@@ -533,9 +528,7 @@ func TestIntegration_ATightenedListNeverTouchesARunAlreadyAccepted(t *testing.T)
 	// Tightened to exclude the source while the run is in flight.
 	s.cli(t, s.b, exitOK, "namespace", "update", s.namespace, "--allow-secret", "env:ANALYTICS_*")
 	got, err := s.a.runs.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID, Namespace: s.namespace}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if status := got.Msg.GetRun().GetStatus(); status != orkstackv1.Status_STATUS_RUNNING {
 		t.Fatalf("the run was %s when the list tightened; the test did not observe an in-flight run", status)
 	}

@@ -5,7 +5,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -45,7 +45,7 @@ func TestIntegration_RunGetShowsValuesAndTheCommandsThatSaveThem(t *testing.T) {
 	if err := os.WriteFile(document, []byte(threeAwaitsOrkflow), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	c.must(0, "apply", document)
+	c.must(0, "orkflow", "create", document)
 	var submitted submitJSON
 	if err := json.Unmarshal([]byte(c.must(0, "run", "submit", "values-in-run-get", "--json")), &submitted); err != nil {
 		t.Fatalf("decode submit: %v", err)

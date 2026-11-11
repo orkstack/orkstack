@@ -31,6 +31,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestAudit_UnwritableStoreDoesNotFailWrite is the best-effort claim against
@@ -61,13 +63,9 @@ func TestAudit_UnwritableStoreDoesNotFailWrite(t *testing.T) {
 	missingCfg.S3Bucket = "orkstack-audit-missing-" + stamp
 
 	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, policyCfg)
-	if err != nil {
-		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3RetentionPolicyStore")
 	auditStore, err := artifacts.NewS3AuditStore(ctx, missingCfg)
-	if err != nil {
-		t.Fatalf("NewS3AuditStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3AuditStore")
 	namespace := "ork-audit-" + stamp
 	temporalClient := auditTemporalClient(ctx, t, namespace)
 	reader := engine.NewTemporalRunReader(temporalClient)
@@ -185,9 +183,7 @@ func auditS3Client(t *testing.T, cfg artifacts.Config) *s3.Client {
 		awsconfig.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(cfg.S3AccessKey, cfg.S3SecretKey, cfg.S3SessionToken)),
 	)
-	if err != nil {
-		t.Fatalf("load aws config: %v", err)
-	}
+	must.OKf(t, err, "load aws config")
 	return s3.NewFromConfig(awsCfg, func(o *s3.Options) {
 		if cfg.S3Endpoint != "" {
 			o.BaseEndpoint = aws.String(cfg.S3Endpoint)

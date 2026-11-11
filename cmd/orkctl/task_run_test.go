@@ -3,7 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +30,9 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // ---------------------------------------------------------------- fixture
@@ -137,7 +140,7 @@ func taskRunResolution() *dsl.Resolution {
 
 // newTaskRunFixture serves the real API with a local artifact store, a
 // catalog naming `shell`, and a stub resolver pinning it; applies the fixture
-// orkflow through `orkctl apply`; and seeds the source run.
+// orkflow through `orkctl orkflow create`; and seeds the source run.
 func newTaskRunFixture(t *testing.T) *taskRunFixture {
 	t.Helper()
 	workdir := t.TempDir()
@@ -148,9 +151,7 @@ func newTaskRunFixture(t *testing.T) *taskRunFixture {
 		t.Setenv(name, "")
 	}
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	orkflows := engine.NewMemoryOrkflowStore()
 	f := newFixtureWith(t, func(cfg *api.Config) {
@@ -161,11 +162,9 @@ func newTaskRunFixture(t *testing.T) *taskRunFixture {
 	})
 	fx := &taskRunFixture{fixture: f, store: store, orkflows: orkflows, workdir: workdir}
 	fx.file = fx.writeDoc(t, "task-run-fixture.ork.yaml", taskRunFixtureYAML)
-	f.run("apply", fx.file).requireExit(t, exitOK)
+	f.run("orkflow", "create", fx.file).requireExit(t, exitOK)
 	wf, err := orkflows.Get(context.Background(), "default", "task-run-fixture", "1")
-	if err != nil {
-		t.Fatalf("stored fixture: %v", err)
-	}
+	must.OKf(t, err, "stored fixture")
 	fx.wf = wf
 	fx.values = fx.put(t, "values.json", `{"target":"staging"}`)
 	fx.payload = fx.put(t, "payload.txt", taskRunPayload)
@@ -178,18 +177,14 @@ func newTaskRunFixture(t *testing.T) *taskRunFixture {
 func (fx *taskRunFixture) writeDoc(t *testing.T, name, body string) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
 func (fx *taskRunFixture) put(t *testing.T, name, body string) *orkstackv1.ArtifactRef {
 	t.Helper()
 	ref, err := fx.store.Put(context.Background(), name, strings.NewReader(body), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return protoRef(ref)
 }
 
@@ -237,9 +232,7 @@ func (fx *taskRunFixture) seedRun(t *testing.T, id string, edit func(*orkstackv1
 func payloadOf(t *testing.T, values map[string]any) *orkstackv1.Payload {
 	t.Helper()
 	data, err := structFromMap(values)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return &orkstackv1.Payload{Data: data}
 }
 
@@ -443,9 +436,7 @@ func normalizeTaskRun(out, workdir string) string {
 func sessions(t *testing.T, workdir string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(workdir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var out []string
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), "ork-task-run-") {
@@ -484,19 +475,11 @@ func countRequests(paths []string, method string) int {
 func TestParseTaskSecretFlag_SaysWhyAFileCannotBeUsed(t *testing.T) {
 	dir := t.TempDir()
 	regular := filepath.Join(dir, "regular")
-	if err := os.WriteFile(regular, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(regular, []byte("x"), 0o600))
 	locked := filepath.Join(dir, "locked")
-	if err := os.Mkdir(locked, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(locked, "tok"), []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chmod(locked, 0); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(locked, 0o700))
+	must.OK(t, os.WriteFile(filepath.Join(locked, "tok"), []byte("x"), 0o600))
+	must.OK(t, os.Chmod(locked, 0))
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
 	lockedCause := error(fs.ErrPermission)
 	if os.Geteuid() == 0 {
@@ -575,16 +558,10 @@ func TestTaskRun_RefusesMalformedFlagsWithoutAnyRequest(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	dir := t.TempDir()
 	regular := filepath.Join(dir, "a.txt")
-	if err := os.WriteFile(regular, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(regular, []byte("x"), 0o644))
 	withLink := filepath.Join(dir, "seed")
-	if err := os.MkdirAll(withLink, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(regular, filepath.Join(withLink, "link")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(withLink, 0o755))
+	must.OK(t, os.Symlink(regular, filepath.Join(withLink, "link")))
 	t.Setenv("TEST_TASK_RUN_UNSET_VARIABLE", "")
 	_ = os.Unsetenv("TEST_TASK_RUN_UNSET_VARIABLE")
 	t.Setenv("ORK_TEST_TASK_RUN_OWN_VARIABLE", "x")
@@ -737,9 +714,7 @@ func TestTaskRun_WritesNothingToTheDeployment(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	ctx := context.Background()
 	storeBefore, err := fx.store.List(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	runsBefore := len(fx.runs.List(engine.ListFilter{}))
 	before := len(fx.requests())
 
@@ -760,9 +735,7 @@ func TestTaskRun_WritesNothingToTheDeployment(t *testing.T) {
 		}
 	}
 	storeAfter, err := fx.store.List(ctx, "")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if fmt.Sprint(storeAfter) != fmt.Sprint(storeBefore) {
 		t.Errorf("the deployment's artifact store changed:\nbefore %v\nafter  %v", storeBefore, storeAfter)
 	}
@@ -833,9 +806,7 @@ func TestTaskRun_StagesASuppliedSecretAndKeepsNoByteOfIt(t *testing.T) {
 	fx := newTaskRunFixture(t)
 	marker := "secret-marker-" + strings.Repeat("9", 24)
 	secretFile := filepath.Join(t.TempDir(), "tok")
-	if err := os.WriteFile(secretFile, []byte(marker), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(secretFile, []byte(marker), 0o600))
 	rt := &fakeTaskRuntime{script: succeedWith(`{"ok":true}`, "")}
 	staged := ""
 	rt.onCreate = func(spec orker.ContainerSpec) {
@@ -988,11 +959,9 @@ func TestTaskRun_AFileNeverAppliedKeepsTheContextTheContractRequires(t *testing.
 		t.Fatalf("a local run stored something: %d versions, %v", len(versions.All), err)
 	}
 
-	fx.run("apply", unpinned).requireExit(t, exitOK)
+	fx.run("orkflow", "create", unpinned).requireExit(t, exitOK)
 	stored, err := fx.orkflows.Get(context.Background(), "default", "task-run-fixture", "")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
+	must.OKf(t, err, "Get")
 	after, _ := runOnce()
 	if after.Run.Orkflow.Version != stored.GetVersion() || after.Run.Orkflow.DefinitionDigest != stored.GetDefinitionDigest() {
 		t.Fatalf("after the apply task.json = %+v, want the stored %s, %s", after.Run.Orkflow, stored.GetVersion(), stored.GetDefinitionDigest())
@@ -1149,12 +1118,8 @@ func TestTaskRun_PinnedTaskGetsAFreshOrSeededSharedDirectory(t *testing.T) {
 	requireNoPinDirectory(t, fx.workdir)
 
 	seed := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(seed, "state"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(seed, "state", "cache.txt"), []byte("warm"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(filepath.Join(seed, "state"), 0o755))
+	must.OK(t, os.WriteFile(filepath.Join(seed, "state", "cache.txt"), []byte("warm"), 0o644))
 	rt = &fakeTaskRuntime{script: succeedWith(`{}`, "")}
 	rt.onStart = func(spec orker.ContainerSpec) { atStart = listing(mountSource(spec, orker.ContainerShared)) }
 	got = fx.runTaskRun(rt, "--keep", "--from-run", taskRunSourceRun, "--task", "pinned", "--shared", seed).requireExit(t, exitOK)
@@ -1256,9 +1221,7 @@ func TestLocalSecrets(t *testing.T) {
 
 func TestParseTaskArtifactFlag(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "f.bin")
-	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(file, []byte("x"), 0o644))
 	got, err := parseTaskArtifactFlag("build/out=put.tar=" + file)
 	if err == nil {
 		t.Fatalf("a PATH containing '=' after the first split parsed as %+v", got)
@@ -1278,35 +1241,25 @@ func TestParseTaskArtifactFlag(t *testing.T) {
 func TestReplayStore_ServesFetchedBytesByRecordedURIAndWritesLocally(t *testing.T) {
 	ctx := context.Background()
 	store, err := newReplayStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer store.Close()
 	fetched := filepath.Join(t.TempDir(), "fetched")
-	if err := os.WriteFile(fetched, []byte("recorded bytes"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(fetched, []byte("recorded bytes"), 0o600))
 	store.serve("s3://bucket/objects/x", fetched)
 	reader, err := store.Get(ctx, "s3://bucket/objects/x")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	raw, _ := io.ReadAll(reader)
 	_ = reader.Close()
 	if string(raw) != "recorded bytes" {
 		t.Errorf("Get(recorded) = %q", raw)
 	}
 	ref, err := store.Put(ctx, "out.txt", strings.NewReader("local"), artifacts.PutOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !strings.HasPrefix(ref.URI, "file://") {
 		t.Errorf("Put wrote %s, want the session's local store", ref.URI)
 	}
 	reader, err = store.Get(ctx, ref.URI)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	raw, _ = io.ReadAll(reader)
 	_ = reader.Close()
 	if string(raw) != "local" {
@@ -1420,5 +1373,27 @@ func TestRuneCut_NeverSplitsAUTF8Sequence(t *testing.T) {
 				t.Fatalf("runeCut(%q, %d) left an invalid prefix %q", tc.in, tc.limit, tc.in[:got])
 			}
 		})
+	}
+}
+
+// TestTaskRun_ASharedChildRunReadsItsOwnersDefinition: a child run of another
+// namespace's shared Orkflow runs in this namespace and its definition is the
+// owner's, so --from-run reads it from the namespace the run names.
+func TestTaskRun_ASharedChildRunReadsItsOwnersDefinition(t *testing.T) {
+	fx := newTaskRunFixture(t)
+	fx.run("namespace", "create", "platform").requireExit(t, exitOK)
+	owned := proto.Clone(fx.wf).(*orkstackv1.Orkflow)
+	owned.Namespace, owned.Version = "platform", "9"
+	if _, _, err := fx.orkflows.Put(context.Background(), owned, artifacts.NoHeadExpectation()); err != nil {
+		t.Fatal(err)
+	}
+	const shared = "ork-1790000000000000000-4294967298"
+	fx.seedRun(t, shared, func(run *orkstackv1.Run) {
+		run.OrkflowNamespace, run.OrkflowVersion = "platform", "9"
+	})
+	rt := &fakeTaskRuntime{}
+	got := fx.runTaskRun(rt, "--from-run", shared, "--task", "consume", "--render-only").requireExit(t, exitOK)
+	if !strings.Contains(got.stdout, "RENDERED  no container was started") {
+		t.Fatalf("no RENDERED outcome:\n%s\n%s", got.stdout, got.stderr)
 	}
 }

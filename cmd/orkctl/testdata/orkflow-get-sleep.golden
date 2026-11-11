@@ -1,0 +1,13 @@
+Name:         sleeping-cli
+Version:      1.0.0
+Description:  -
+Created:      2026-01-02T03:04:05Z
+
+TASK     USES         NEEDS   TIMEOUT
+deploy   shell        -       300s
+soak     sleep 15m0s  deploy  -
+settle   sleep 1m0s   deploy  -
+promote  shell        soak    300s
+
+JOIN    POLICY    NEEDS
+settle  all_done  deploy

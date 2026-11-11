@@ -8,6 +8,7 @@
 package enumname
 
 import (
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -30,6 +31,18 @@ func Short(enum protoreflect.EnumDescriptor, name string) string {
 		return name // the short spelling is itself a declared value: ambiguous
 	}
 	return trimmed
+}
+
+// Of is Short for one value: orkstackv1.Status_STATUS_SUCCEEDED reads
+// SUCCEEDED. A number the enum does not declare reads as its digits, as
+// String gives it.
+func Of(value protoreflect.Enum) string {
+	enum := value.Descriptor()
+	declared := enum.Values().ByNumber(value.Number())
+	if declared == nil {
+		return strconv.Itoa(int(value.Number()))
+	}
+	return Short(enum, string(declared.Name()))
 }
 
 // Proto restores the enum's type prefix: SUCCEEDED -> STATUS_SUCCEEDED.

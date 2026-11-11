@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests are the task-timing derivation's engine half (docs/UI_CLI_PARITY.md
@@ -42,17 +44,14 @@ func scheduledEventTimes(t *testing.T, h *harness, runID string) map[string]time
 // every dispatched task scheduled_at equals the TASK_SCHEDULED event's own
 // timestamp — one clock read, two views — and a skipped task has none.
 func TestRunWorkflow_ScheduledAtIsTheTaskScheduledEventsTimestamp(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return succeeded(in.TaskId, map[string]any{"stdout": in.TaskId}), nil
 	})
 	h.env.SetStartTime(timingStart)
 
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-scheduled-at",
 		compile(t, conditionDocument), payload(t, map[string]any{"enabled": false}), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	stored, ok := h.store.Get("run-scheduled-at")
 	if !ok {
 		t.Fatal("run read model was not populated")
@@ -116,9 +115,7 @@ tasks:
     uses: shell
     with: {command: "echo only"}
 `), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	stored, _ := h.store.Get("run-started-at")
 	only := taskRunOf(t, stored, "only")
 	if only.GetStartedAt() == nil || !only.GetStartedAt().AsTime().Equal(reported["only"]) {
@@ -136,8 +133,7 @@ tasks:
 // field the failure path already recorded is unchanged.
 func TestRunWorkflow_StartedAtComesFromTheFailureDetail(t *testing.T) {
 	start := timingStart.Add(3 * time.Second)
-	var suite testsuite.WorkflowTestSuite
-	h := newHarness(t, &suite, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarness(t, nil, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return nil, temporal.NewNonRetryableApplicationError(
 			"workload exited 4", task.CategoryActivityFailed, nil,
 			&orkstackv1.ActivityFailureDetail{
@@ -201,8 +197,7 @@ func TestRunWorkflow_LeavesStartedAtUnsetWhenNoOrkerReported(t *testing.T) {
 	}
 	for name, cause := range cases {
 		t.Run(name, func(t *testing.T) {
-			var suite testsuite.WorkflowTestSuite
-			h := newHarness(t, &suite, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+			h := newHarness(t, nil, func(*orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 				return nil, cause
 			})
 			h.env.SetStartTime(timingStart)
@@ -271,9 +266,7 @@ tasks:
     retry: {maximum_attempts: 2}
     with: {command: "echo ok"}
 `), payload(t, nil), defaultPlan(), (*orkstackv1.RunContinuation)(nil))
-	if err := h.env.GetWorkflowError(); err != nil {
-		t.Fatalf("workflow error: %v", err)
-	}
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
 	if calls != 2 {
 		t.Fatalf("ExecuteTask ran %d times, want 2 (fail, then adopt on attempt 2)", calls)
 	}

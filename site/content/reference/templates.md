@@ -45,7 +45,7 @@ Every other field, such as `command`, `env`, `uses` and `needs`, is literal text
 | `.tasks.<id>.artifacts` | The upstream task's artifact references. Prefer the `artifact` helper. |
 | `.each.<as>`, `.each.index`, `.each.count` | The current item of a fan-out, its position from `0`, and the number of items. `as` defaults to `item`. |
 
-A template in a task's `with:` or `condition:` reads only the tasks in `needs:`, directly or through them; naming another task is refused at apply. `outputs:` may read any task except a fan-out.
+A template in a task's `with:` or `condition:` reads only the tasks in `needs:`, directly or through them; naming another task is refused at create. `outputs:` may read any task except a fan-out.
 
 ## Helpers
 

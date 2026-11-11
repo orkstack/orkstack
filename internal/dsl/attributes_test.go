@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestValidateAttributeMap_TableDriven pins ValidateAttributeMap's rules
@@ -87,9 +89,7 @@ func TestValidateAttributeMap_TableDriven(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			err := dsl.ValidateAttributeMap("telemetry attribute", tc.m, tc.max)
 			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("ValidateAttributeMap: unexpected error: %v", err)
-				}
+				must.OKf(t, err, "ValidateAttributeMap: unexpected error")
 				return
 			}
 			if err == nil {
@@ -131,9 +131,7 @@ tasks:
     uses: shell
     with: {command: "echo 1"}
 `))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	if got, want := wf.GetLabels()["Team"], "payments"; got != want {
 		t.Errorf(`labels["Team"] = %q, want %q`, got, want)
 	}
@@ -147,9 +145,7 @@ tasks:
 // — compiles cleanly.
 func TestCompile_Accepts40Labels(t *testing.T) {
 	wf, err := dsl.Compile([]byte(labelsDocument(40)))
-	if err != nil {
-		t.Fatalf("Compile: %v", err)
-	}
+	must.OKf(t, err, "Compile")
 	if got, want := len(wf.GetLabels()), 40; got != want {
 		t.Fatalf("compiled %d labels, want %d", got, want)
 	}
@@ -240,9 +236,7 @@ func uiReservedAttributePrefixes(t *testing.T) []string {
 	t.Helper()
 	path := filepath.Join("..", "..", "ui", "src", "lib", "namespaceRules.ts")
 	data, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("read %s: %v", path, err)
-	}
+	must.OKf(t, err, "read %s", path)
 	m := reservedAttributePrefixesDecl.FindSubmatch(data)
 	if m == nil {
 		t.Fatalf("%s: RESERVED_ATTRIBUTE_PREFIXES declaration not found", path)

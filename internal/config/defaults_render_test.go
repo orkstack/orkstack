@@ -2,6 +2,8 @@ package config
 
 import (
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestRenderDefaults_IsNoOp proves loading RenderDefaults()'s output and
@@ -17,9 +19,7 @@ func TestRenderDefaults_IsNoOp(t *testing.T) {
 
 	for _, binary := range []Binary{BinaryOrk, BinaryOrker} {
 		doc, err := Load(path, binary)
-		if err != nil {
-			t.Fatalf("Load(%s): %v", binary, err)
-		}
+		must.OKf(t, err, "Load(%s)", binary)
 		for _, v := range Schema {
 			if !v.usesBinary(binary) {
 				continue
@@ -54,9 +54,7 @@ func TestRenderDefaults_ApplySetsNothingObservablyDifferent(t *testing.T) {
 
 	for _, binary := range []Binary{BinaryOrk, BinaryOrker} {
 		doc, err := Load(path, binary)
-		if err != nil {
-			t.Fatalf("Load(%s): %v", binary, err)
-		}
+		must.OKf(t, err, "Load(%s)", binary)
 		env := map[string]string{}
 		lookup := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
 		setenv := func(k, v string) error { env[k] = v; return nil }

@@ -8,6 +8,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func cacheDoc(cache string) []byte {
@@ -24,9 +26,7 @@ tasks:
 
 func TestCompile_CacheCompiles(t *testing.T) {
 	wf, err := dsl.CompileFile("testdata/orkflows/cached-pipeline.ork.yaml")
-	if err != nil {
-		t.Fatalf("compile the example: %v", err)
-	}
+	must.OKf(t, err, "compile the example")
 	got := map[string]*orkstackv1.CacheSpec{}
 	for _, task := range wf.GetTasks() {
 		got[task.GetId()] = task.GetCache()
@@ -42,22 +42,16 @@ func TestCompile_CacheCompiles(t *testing.T) {
 	}
 
 	ns, err := dsl.Compile(cacheDoc("    cache: {enabled: true, scope: namespace, ttl_seconds: 60}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if s := ns.GetTasks()[0].GetCache(); s.GetScope() != orkstackv1.CacheScope_CACHE_SCOPE_NAMESPACE || s.GetTtlSeconds() != 60 {
 		t.Fatalf("namespace scope = %v", s)
 	}
 
 	// Absent scope and `scope: orkflow` are one message and one digest.
 	absent, err := dsl.Compile(cacheDoc("    cache: {enabled: true}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	explicit, err := dsl.Compile(cacheDoc("    cache: {enabled: true, scope: orkflow}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	absent.Version = explicit.GetVersion()
 	if !proto.Equal(absent.GetTasks()[0], explicit.GetTasks()[0]) {
 		t.Fatalf("absent scope and scope: orkflow compile to two messages")
@@ -86,13 +80,9 @@ func TestCompile_CacheEnabledIsRequired(t *testing.T) {
 
 func TestCompile_CacheEnabledFalseCompilesToNoCache(t *testing.T) {
 	off, err := dsl.Compile(cacheDoc("    cache: {enabled: false, ttl_seconds: 60, scope: namespace}\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	none, err := dsl.Compile(cacheDoc(""))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if off.GetTasks()[0].GetCache() != nil {
 		t.Fatalf("enabled: false compiled a cache: %v", off.GetTasks()[0].GetCache())
 	}
@@ -196,9 +186,7 @@ func TestCompile_FanOutMayBeCached(t *testing.T) {
     cache: {enabled: true, ttl_seconds: 3600}
     with: {op: exec, x: "{{ .each.item }}"}
 `))
-	if err != nil {
-		t.Fatalf("a cached fan-out: %v", err)
-	}
+	must.OKf(t, err, "a cached fan-out")
 	if wf.GetTasks()[1].GetCache().GetTtlSeconds() != 3600 || wf.GetTasks()[1].GetEach() == nil {
 		t.Fatalf("convert = %v", wf.GetTasks()[1])
 	}

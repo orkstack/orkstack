@@ -14,6 +14,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestTaskRun_EachRunHasItsOwnIdentity: two task runs on one host label their
@@ -46,9 +48,7 @@ func TestTaskRun_EachRunHasItsOwnIdentity(t *testing.T) {
 func lockFiles(t *testing.T, root string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var out []string
 	for _, entry := range entries {
 		if strings.HasPrefix(entry.Name(), taskRunOrkerPrefix) {
@@ -119,9 +119,7 @@ const testFingerprint = "host=test\nruntime=recorder\n"
 func claimForTest(t *testing.T, root, hex, fingerprint string) *taskRunOwner {
 	t.Helper()
 	owner, err := claimTaskRunOwner(root, "local-"+hex, fingerprint)
-	if err != nil {
-		t.Fatalf("claim local-%s: %v", hex, err)
-	}
+	must.OKf(t, err, "claim local-%s", hex)
 	if owner.unlocked != nil {
 		t.Fatalf("claim local-%s could not lock: %v", hex, owner.unlocked)
 	}
@@ -155,19 +153,13 @@ func TestTaskRunOwner_ReapsOnlyRunsThatAreGone(t *testing.T) {
 		"ork-task-run-ffffffffffffffff":             0o600, // a session directory's name
 		"orkctl-task-run-8888888888888888.lock":     0o000, // another user's, in a shared root
 	} {
-		if err := os.WriteFile(filepath.Join(root, name), nil, mode); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(root, name), nil, mode))
 	}
-	if err := os.Mkdir(filepath.Join(root, "orkctl-task-run-1111111111111111.lock"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Mkdir(filepath.Join(root, "orkctl-task-run-1111111111111111.lock"), 0o700))
 
 	rt := &reapRecorder{removed: map[string]int{gone.id: 2}}
 	removed, err := reapGoneTaskRuns(context.Background(), rt, root, testFingerprint, self)
-	if err != nil {
-		t.Fatalf("reapGoneTaskRuns: %v", err)
-	}
+	must.OKf(t, err, "reapGoneTaskRuns")
 	if want := []string{gone.id}; !reflect.DeepEqual(rt.asked, want) {
 		t.Errorf("Reap was asked for %v, want only %v", rt.asked, want)
 	}
@@ -234,9 +226,7 @@ func TestTaskRunOwner_ClaimIsHeldAndRefusesAForeignID(t *testing.T) {
 	root := t.TempDir()
 	owner := claimForTest(t, root, "0123456789abcdef", testFingerprint)
 	file, err := os.OpenFile(owner.path, os.O_RDWR, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	defer func() { _ = file.Close() }()
 	if err := lockTaskRunOwner(file); !errors.Is(err, errTaskRunOwnerHeld) {
 		t.Fatalf("a second lock of a live claim answered %v, want errTaskRunOwnerHeld", err)

@@ -9,6 +9,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/quantity"
+
 	// taskpool is imported for ONE constant: the name of the default pool.
 	// Rule 10 has to know that an absent pool and "main" are one pool, and
 	// QueueForPool (internal/task/pool.go:82) is where that is already true.
@@ -125,6 +126,16 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			return validationError(fmt.Sprintf("tasks[%d].orkflow", taskIndex), fmt.Errorf(
 				"task %q: orkflow %s is set, but uses: %q does not name an orkflow — a composed task's "+
 					"uses: is %s", task.GetId(), ComposedLabel(task.GetOrkflow()), task.GetUses(), orkflowUsesShape))
+		}
+		// Rule 6: a task has exactly one of `uses:`, `await:` and `sleep:`. A
+		// sleeping task runs no image, so it skips the catalog check, 6b and
+		// 6c, and meets rules 49 and 50 instead. A composed task's sleep: is
+		// refused by rule 27, below.
+		if task.GetSleep() != nil && !composed {
+			if err := validateSleepTask(taskIndex, task); err != nil {
+				return err
+			}
+			continue
 		}
 		// Rule 6: a task has exactly one of `uses:` and `await:`. An awaited
 		// task runs no image, so it skips the catalog check, network (6b) and
@@ -310,6 +321,13 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		if err := checker.checkValue("with", task.GetWith().AsMap()); err != nil {
 			return err
 		}
+	}
+
+	// Rule 48: shared_with names other namespaces and their Orkflows, each
+	// once. The Orkflow's own namespace is known here only when the document
+	// names it; internal/api checks again with the namespace it applies into.
+	if err := ValidateSharedWith(wf.GetNamespace(), wf.GetSharedWith()); err != nil {
+		return err
 	}
 
 	// Rule 29: outputs: is a flat map of names to engine-rendered templates

@@ -23,4 +23,5 @@ ui/build
 ui/e2e
 ui/test
 ui/test-results
+ui/test-results-solo
 ui/playwright-report

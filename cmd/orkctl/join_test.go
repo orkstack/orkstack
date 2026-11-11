@@ -11,6 +11,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // branchAndRecoverPath is relative on purpose: goldens stay machine-independent.
@@ -18,7 +20,7 @@ const branchAndRecoverPath = "../../internal/dsl/testdata/orkflows/branch-and-re
 
 func applyBranchAndRecover(t *testing.T, f *fixture) {
 	t.Helper()
-	f.run("apply", branchAndRecoverPath).requireExit(t, exitOK)
+	f.run("orkflow", "create", branchAndRecoverPath).requireExit(t, exitOK)
 }
 
 func TestRunPlan_Golden_RejoinCanary(t *testing.T) {
@@ -61,16 +63,12 @@ func TestRunPlan_ReportsAnAssumptionAnOlderServerIgnored(t *testing.T) {
 		Runs:  1, WaveCount: 1,
 	}
 	var out bytes.Buffer
-	if err := renderPlan(&out, plan, "", []string{"deploy"}); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderPlan(&out, plan, "", []string{"deploy"}))
 	if !strings.Contains(out.String(), "The server did not apply --assume-failed: it predates assumed failures.") {
 		t.Fatalf("plan output:\n%s", out.String())
 	}
 	out.Reset()
-	if err := renderPlan(&out, plan, "", nil); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, renderPlan(&out, plan, "", nil))
 	if strings.Contains(out.String(), "did not apply") {
 		t.Fatalf("a plan with no assumption warns:\n%s", out.String())
 	}
@@ -154,9 +152,7 @@ func handlerDocYAML(t *testing.T) string {
       op: exec
       command: ["sh", "-c", "cat /orkstack/input/task.json"]
 `
-	if err := os.WriteFile(path, []byte(doc), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(path, []byte(doc), 0o644))
 	return path
 }
 

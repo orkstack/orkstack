@@ -25,6 +25,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestLoadConfigThreadsTemporalNamespaceIntoCleanup(t *testing.T) {
@@ -341,6 +343,10 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 		engine.RunWorkflowType:          workflow.VersioningBehaviorPinned,
 		engine.ClaimWorkflowType:        workflow.VersioningBehaviorAutoUpgrade,
 		engine.ScheduleFireWorkflowType: workflow.VersioningBehaviorPinned,
+		// A delivery lives about a minute and never replays on a build it
+		// did not start on (docs/DEPLOY.md, "Why a webhook delivery is
+		// Pinned").
+		engine.WebhookDeliveryWorkflowType: workflow.VersioningBehaviorPinned,
 	}
 	if len(registered) != len(want) {
 		t.Fatalf("registered %d workflow types (%+v), want %d", len(registered), registered, len(want))
@@ -389,9 +395,7 @@ func TestRegisterEngineWorkflows_SurvivesAVersionedWorker(t *testing.T) {
 	t.Setenv(task.EnvBuildID, "v2")
 
 	c, err := client.NewLazyClient(client.Options{HostPort: "127.0.0.1:1"})
-	if err != nil {
-		t.Fatalf("NewLazyClient: %v", err)
-	}
+	must.OKf(t, err, "NewLazyClient")
 	defer c.Close()
 
 	cfg := loadConfig()
@@ -437,9 +441,7 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 	defer cancelHandlers()
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- server.Serve(listener) }()
 
@@ -459,9 +461,7 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 		&http.Client{Transport: transport}, "http://"+listener.Addr().String())
 	stream, err := client.StreamEvents(context.Background(),
 		connect.NewRequest(&orkstackv1.StreamEventsRequest{RunId: "active"}))
-	if err != nil {
-		t.Fatalf("StreamEvents: %v", err)
-	}
+	must.OKf(t, err, "StreamEvents")
 	defer stream.Close()
 
 	if !stream.Receive() {
@@ -470,9 +470,7 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 
 	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancelShutdown()
-	if err := server.Shutdown(shutdownCtx); err != nil {
-		t.Fatalf("Shutdown with active StreamEvents: %v", err)
-	}
+	must.OKf(t, server.Shutdown(shutdownCtx), "Shutdown with active StreamEvents")
 	if stream.Receive() {
 		t.Fatalf("received event after shutdown: %v", stream.Msg())
 	}
@@ -492,9 +490,7 @@ func TestServerShutdownCancelsActiveEventStream(t *testing.T) {
 // channel named on the other cannot silently diverge.
 func TestQueues_ThePoolTheEngineDispatchesToIsTheOneItsOrkersJoin(t *testing.T) {
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool(gpu): %v", err)
-	}
+	must.OKf(t, err, "QueueForPool(gpu)")
 	t.Setenv("ORK_ORKER_POOL", "gpu")
 	t.Setenv("ORK_ORKER_QUEUE", "")
 
@@ -670,9 +666,7 @@ func TestApiHandler_WrapsOnlyWhenSignalsAreOn(t *testing.T) {
 	t.Run("on", func(t *testing.T) {
 		tcfg := telemetry.Config{TracesExporter: telemetry.ExporterOTLP}
 		sinks, err := telemetry.SetupSinks(context.Background(), tcfg)
-		if err != nil {
-			t.Fatalf("SetupSinks: %v", err)
-		}
+		must.OKf(t, err, "SetupSinks")
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 			defer cancel()
@@ -693,9 +687,7 @@ func TestApiHandler_WrapsOnlyWhenSignalsAreOn(t *testing.T) {
 // same turn the caller can still decide not to flip readiness.
 func TestBindAndServe_ReturnsABootErrorWhenThePortIsTaken(t *testing.T) {
 	blocker, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("listen: %v", err)
-	}
+	must.OKf(t, err, "listen")
 	defer blocker.Close()
 
 	server := &http.Server{Addr: blocker.Addr().String()}
@@ -723,9 +715,7 @@ func TestBindAndServe_AcceptsConnectionsAsSoonAsItReturns(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	ln, err := bindAndServe(server, logger, serverErr)
-	if err != nil {
-		t.Fatalf("bindAndServe: %v", err)
-	}
+	must.OKf(t, err, "bindAndServe")
 	defer func() {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
@@ -738,9 +728,7 @@ func TestBindAndServe_AcceptsConnectionsAsSoonAsItReturns(t *testing.T) {
 	}()
 
 	resp, err := http.Get("http://" + ln.Addr().String() + "/ping")
-	if err != nil {
-		t.Fatalf("GET /ping right after bindAndServe returned: %v", err)
-	}
+	must.OKf(t, err, "GET /ping right after bindAndServe returned")
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want %d", resp.StatusCode, http.StatusOK)

@@ -17,6 +17,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // registry is a namespace registry in a map: the documents an operator wrote,
@@ -137,9 +139,7 @@ tasks:
 func poolQueue(t *testing.T, pool string) string {
 	t.Helper()
 	queue, err := task.QueueForPool(pool, "")
-	if err != nil {
-		t.Fatalf("QueueForPool(%q): %v", pool, err)
-	}
+	must.OKf(t, err, "QueueForPool(%q)", pool)
 	return queue
 }
 
@@ -503,9 +503,7 @@ func TestListPools_ReportsEveryPoolWithItsOrkers(t *testing.T) {
 
 	resp, err := svc.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	if got := resp.Msg.GetDefaultPool(); got != task.DefaultPool {
 		t.Errorf("default pool = %q, want %q", got, task.DefaultPool)
 	}
@@ -552,9 +550,7 @@ func TestListPools_ReportsAStalePoolAsEmpty(t *testing.T) {
 	})
 	resp, err := svc.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	if len(resp.Msg.GetPools()) != 1 {
 		t.Fatalf("pools = %v, want one default pool", resp.Msg.GetPools())
 	}
@@ -601,9 +597,7 @@ func TestListPools_IncludesPoolsFromEveryStoredVersion(t *testing.T) {
 	})
 	resp, err := reader.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	if got := strings.Join(poolNames(resp.Msg.GetPools()), ","); got != "gpu,main" {
 		t.Fatalf("pools = %q, want gpu,main from both stored versions", got)
 	}
@@ -646,9 +640,7 @@ func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
 
 	resp, err := svc.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	var main *orkstackv1.Pool
 	for _, pool := range resp.Msg.GetPools() {
 		if pool.GetName() == task.DefaultPool {
@@ -675,9 +667,7 @@ func TestListPools_ReportsThePoolTheEngineActuallyDispatchesTo(t *testing.T) {
 // that gpu's Orkers executed.
 func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 	gpuQueue, err := task.QueueForPool("gpu", "")
-	if err != nil {
-		t.Fatalf("QueueForPool(gpu): %v", err)
-	}
+	must.OKf(t, err, "QueueForPool(gpu)")
 	starter := &fakeStarter{}
 	svc := api.NewService(api.Config{
 		Starter:  starter,
@@ -700,9 +690,7 @@ func TestListPools_OneSetOfOrkersIsReportedOnce(t *testing.T) {
 
 	resp, err := svc.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{}))
-	if err != nil {
-		t.Fatalf("ListPools: %v", err)
-	}
+	must.OKf(t, err, "ListPools")
 	if n := len(resp.Msg.GetPools()); n != 1 {
 		t.Fatalf("ListPools returned %d pools (%v) for one set of Orkers", n, resp.Msg.GetPools())
 	}
@@ -789,9 +777,7 @@ func TestListPools_FallsBackToTheNamespacesOwnPoolsWhenTheOrkflowStoreIsDown(t *
 	}
 	upResp, err := up.ListPools(context.Background(),
 		connect.NewRequest(&orkstackv1.ListPoolsRequest{Namespace: "payments"}))
-	if err != nil {
-		t.Fatalf("ListPools with a healthy store: %v", err)
-	}
+	must.OKf(t, err, "ListPools with a healthy store")
 	if got := poolNames(upResp.Msg.GetPools()); strings.Join(got, ",") != "batch,gpu" {
 		t.Fatalf("ListPools with a healthy store = %v, want [batch gpu]: the fallback below "+
 			"is only meaningful if the store contributes gpu here", got)

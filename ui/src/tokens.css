@@ -7,7 +7,8 @@
  * starts or commits work on a screen's own object, and for the mark; status
  * hues only where a status is drawn, each with its own shape as well
  * (circle running, square succeeded, triangle failed, ring waiting, diamond
- * awaiting, slashed square canceled, outlined square pending). Dark is a
+ * awaiting, half-filled circle sleeping, slashed square canceled, outlined
+ * square pending). Dark is a
  * navy-tinted, low-glare night chart with no pure white text.
  *
  * Plain, portable CSS on purpose: no @import, no url(), no Tailwind
@@ -271,6 +272,13 @@
 	--color-awaiting-fg: var(--await);
 	--color-awaiting-border: var(--await);
 	--color-awaiting-solid: var(--await);
+
+	/* Sleeping shares awaiting's violet — both are a wait the run holds with
+	   no Orker — and is told from it by its mark and its word. */
+	--color-sleeping-bg: var(--await-tint);
+	--color-sleeping-fg: var(--await);
+	--color-sleeping-border: var(--await);
+	--color-sleeping-solid: var(--await);
 
 	--color-succeeded-bg: var(--ok-tint);
 	--color-succeeded-fg: var(--ok);

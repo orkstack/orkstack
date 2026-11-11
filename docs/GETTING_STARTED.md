@@ -1,7 +1,7 @@
 # Getting started
 
 This page takes a machine with Docker to a finished run: the whole stack built
-from a clone of this repository, and one Orkflow applied, planned, run and
+from a clone of this repository, and one Orkflow created, planned, run and
 inspected from the CLI and the UI. Docker and git are the only prerequisites.
 Everything here is a local setup; [DEPLOY.md](./DEPLOY.md) is the reference
 for a real deployment, and [CONTRIBUTING.md](../CONTRIBUTING.md) runs
@@ -10,7 +10,7 @@ OrkStack's processes on the host for working on them.
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="images/ui-demo-dark.webp">
-  <img alt="The OrkStack UI: the each-fan-out Orkflow is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task's merged.txt artifact is opened with its provenance." src="images/ui-demo-light.webp" width="880">
+  <img alt="The OrkStack UI: the each-fan-out Orkflow is created from the Create Orkflow page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task's merged.txt artifact is opened with its provenance." src="images/ui-demo-light.webp" width="880">
 </picture>
 </p>
 
@@ -84,30 +84,30 @@ alias orkctl='docker compose run --rm orkctl'
 ```
 
 The alias works from the clone's directory, and the container sees that
-directory read-only, which is enough for `orkctl apply examples/…`. A build
+directory read-only, which is enough for `orkctl orkflow create examples/…`. A build
 from source calls itself `dev` (`orkctl version`). To install the binary itself, build it
 with Go (`make build` writes `bin/orkctl`, [CONTRIBUTING.md](../CONTRIBUTING.md))
 or take it from a release's archives ([UPGRADING.md](./UPGRADING.md), "Release
 artifacts").
 
-## 4. Apply an Orkflow
+## 4. Create an Orkflow
 
 An Orkflow is a YAML document. [`examples/each-fan-out.ork.yaml`](../examples/each-fan-out.ork.yaml)
 computes a list in one task, converts each element as its own durable item,
 and merges the results:
 
 ```bash
-orkctl apply examples/each-fan-out.ork.yaml
+orkctl orkflow create examples/each-fan-out.ork.yaml
 ```
 
-Applying compiles the document, checks it (names, the dependency graph, every
+Creating an Orkflow compiles the document, checks it (names, the dependency graph, every
 task's configuration), resolves each image to a digest, and stores an
 immutable version. Nothing runs yet.
 
 <p align="center">
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="../site/public/media/ui-orkflow-dark-2x.webp">
-  <img alt="The each-fan-out Orkflow’s page in the OrkStack UI after an apply: its graph of list, convert and merge, its stored version, and its three tasks with their image digests." src="../site/public/media/ui-orkflow-light-2x.webp" width="880">
+  <img alt="The each-fan-out Orkflow’s page in the OrkStack UI after it is created: its graph of list, convert and merge, its stored version, and its three tasks with their image digests." src="../site/public/media/ui-orkflow-light-2x.webp" width="880">
 </picture>
 </p>
 
@@ -115,7 +115,7 @@ immutable version. Nothing runs yet.
 
 ```bash
 orkctl run plan each-fan-out
-orkctl run submit each-fan-out --watch
+orkctl run submit each-fan-out -w
 ```
 
 It needs no inputs, and [`examples/README.md`](../examples/README.md) lists what
@@ -147,7 +147,7 @@ The fan-out task runs one item per element of the list, two at a time
 ## 6. Inspect what it did
 
 ```bash
-orkctl run logs <run-id> --task merge
+orkctl run logs <run-id> -t merge
 orkctl run artifacts <run-id>
 ```
 

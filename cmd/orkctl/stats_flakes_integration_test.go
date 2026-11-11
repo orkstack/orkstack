@@ -4,7 +4,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"os"
 	"strings"
@@ -21,6 +21,8 @@ import (
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // These tests drive the flake index against real retries: a real engine, a
@@ -117,9 +119,7 @@ func seedFlakeCorpus(ctx context.Context, t *testing.T, replicas int) *flakeCorp
 		submitted, err := a.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{
 			OrkflowName: corpus.orkflow, Namespace: corpus.namespace,
 		}))
-		if err != nil {
-			t.Fatalf("SubmitRun %s: %v", corpus.orkflow, err)
-		}
+		must.OKf(t, err, "SubmitRun %s", corpus.orkflow)
 		corpus.runs = append(corpus.runs, submitted.Msg.GetRun().GetId())
 	}
 	for _, id := range corpus.runs {
@@ -196,9 +196,7 @@ func TestIntegration_FlakeIndexCountsTheRetriesASucceededRunHides(t *testing.T) 
 	orkerJSON := orkctlAgainst(t, a, corpus.flakeArgs("--group-by", "task,orker", "--json")...)
 
 	stats := &orkstackv1.GetStatsResponse{}
-	if err := api.UnmarshalJSON([]byte(statsJSON), stats); err != nil {
-		t.Fatalf("decode stats --json: %v", err)
-	}
+	must.OKf(t, api.UnmarshalJSON([]byte(statsJSON), stats), "decode stats --json")
 	if stats.GetRunsByStatus()["failed"] != 0 || !stats.GetSuccessRateDefined() || stats.GetSuccessRate() != 1 {
 		t.Fatalf("stats sees failed=%d success_rate=%v; the retries must be invisible there",
 			stats.GetRunsByStatus()["failed"], stats.GetSuccessRate())
@@ -206,9 +204,7 @@ func TestIntegration_FlakeIndexCountsTheRetriesASucceededRunHides(t *testing.T) 
 	pinned, err := statsClientFor(t, a).GetStats(ctx, connect.NewRequest(&orkstackv1.GetStatsRequest{
 		Namespace: corpus.namespace, Since: timestamppb.New(corpus.since), Until: timestamppb.New(corpus.until),
 	}))
-	if err != nil {
-		t.Fatalf("GetStats for the pinned window: %v", err)
-	}
+	must.OKf(t, err, "GetStats for the pinned window")
 	byStatus := pinned.Msg.GetRunsByStatus()
 	finished := byStatus["succeeded"] + byStatus["failed"] + byStatus["canceled"]
 
@@ -273,9 +269,7 @@ func TestIntegration_FlakeIndexExcludesReclaimedRunsRatherThanCountingThemClean(
 	a := corpus.replicas[0]
 
 	store, err := artifacts.NewRunArchive(corpus.artifactCfg)
-	if err != nil {
-		t.Fatalf("open run archive: %v", err)
-	}
+	must.OKf(t, err, "open run archive")
 	reclaim := func(ids ...string) {
 		t.Helper()
 		for _, id := range ids {

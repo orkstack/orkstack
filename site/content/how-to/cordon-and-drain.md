@@ -5,9 +5,9 @@ Take an Orker out of service without stopping the work it holds. Cordon it so it
 ## Example
 
 ```bash
-orkctl orker list --filter pool=build
+orkctl orker list -F pool=build
 orkctl orker cordon orker-7f3a --reason "runtime patch CVE-2026-1234"
-orkctl orker drain orker-7f3a --timeout 4h --watch
+orkctl orker drain orker-7f3a --timeout 4h -w
 ```
 
 `drain` prints a line each time the running tasks or open pins change. When it exits `0`, the Orker is empty:

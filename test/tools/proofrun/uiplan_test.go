@@ -290,7 +290,7 @@ func runCosts(t *testing.T, from, uiOut string) string {
 	t.Helper()
 	quiet(t)
 	d := t.TempDir()
-	code := cmdCosts([]string{"-from", from, "-costs-out", filepath.Join(d, "costs.tsv"), "-slow-out", filepath.Join(d, "slow.txt"), "-ui-costs-out", uiOut})
+	code := cmdCosts([]string{"-from", from, "-costs-out", filepath.Join(d, "costs.tsv"), "-ui-costs-out", uiOut})
 	if code != 0 {
 		t.Fatalf("costs exit %d", code)
 	}
@@ -334,117 +334,6 @@ func TestCosts_ARoundTripThroughTheUICostsFile(t *testing.T) {
 	}
 	if _, _, err := parseUICosts(strings.NewReader("a.spec.ts\n"), "t"); err == nil {
 		t.Error("a row with no seconds was accepted")
-	}
-}
-
-func TestUILedger_ADeclaredRunnerSizeMissExitsCleanly(t *testing.T) {
-	code, l := runUILedgerMiss(t, "ui-e2e:3", "failed", pwTimingMessage, hsRow, hsRow)
-	if code != 0 {
-		t.Fatalf("exit %d, want 0 for a declared runner-size miss on a CI UI shard", code)
-	}
-	if len(l.Problems) != 0 || len(l.KnownGaps) != 1 || len(l.HostSpeedFailures) != 1 {
-		t.Fatalf("ledger = %+v", l)
-	}
-	if !strings.Contains(l.KnownGaps[0], "8123") || l.HostSpeedFailures[0].Observed != 8.123 {
-		t.Errorf("the gap lacks the measured number: %q, %+v", l.KnownGaps[0], l.HostSpeedFailures[0])
-	}
-}
-
-// runUILedgerMiss runs ui-ledger over one listed test of e2e/a.spec.ts that
-
-// ended with status and message, under a host-speed table whose reference
-
-// CPU count is above any host's, and returns its exit and ledger.
-
-func runUILedgerMiss(t *testing.T, part, status, message, tree, base string) (int, uiLedger) {
-	t.Helper()
-	quiet(t)
-	dir := t.TempDir()
-	listed := listingOf(map[string]int{"e2e/a.spec.ts": 1})
-	report := fixtureReport(uiTestSpec{"e2e/a.spec.ts", "t0", 0, 8})
-	tc := &report.Suites[0].Specs[0].Tests[0]
-	switch status {
-	case "skipped":
-		tc.Status = "skipped"
-		tc.Results[0].Status = "skipped"
-	case "none":
-		report.Suites = nil
-	default:
-		tc.Status = "unexpected"
-		tc.Results[0].Status = "failed"
-		tc.Results[0].Error = &pwError{Message: message}
-	}
-	for name, v := range map[string]any{"list.json": listed, "report.json": report} {
-		if err := writeJSON(filepath.Join(dir, name), v); err != nil {
-			t.Fatal(err)
-		}
-	}
-	cfg := filepath.Join(dir, "playwright.config.ts")
-	host := filepath.Join(dir, "host-speed.tsv")
-	hostBase := filepath.Join(dir, "host-speed-base.txt")
-	for file, text := range map[string]string{cfg: "const NETWORK_CHANGE_RETRY_CEILING = 3\n", host: tree, hostBase: base} {
-		if err := os.WriteFile(file, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-	code := cmdUILedger([]string{"-list", filepath.Join(dir, "list.json"), "-report", filepath.Join(dir, "report.json"),
-		"-config", cfg, "-out", dir, "-host-speed", host, "-host-speed-base", hostBase, "-part", part})
-	var l uiLedger
-	if err := readJSON(filepath.Join(dir, "ui-e2e-tests.json"), &l); err != nil {
-		t.Fatal(err)
-	}
-	return code, l
-}
-
-// pwTimingMessage is Playwright's message for a failed toBeLessThanOrEqual.
-const pwTimingMessage = "Error: live run page\n\nexpect(received).toBeLessThanOrEqual(expected)\n\nExpected: <= 5000\nReceived:    8123"
-
-// hsRow declares e2e/a.spec.ts › t0 with a reference no host reaches.
-const hsRow = "ui\te2e/a.spec.ts\tt0\tlessThan 5000\t5\t9999\tdeclared budget\n"
-
-// Everything but the bound's own timing miss, on a CI UI shard, under a row
-
-// the base carries, stays a shard failure (R2-M1).
-
-func TestUILedger_OnlyTheBoundsOwnTimingMissExitsCleanly(t *testing.T) {
-	cases := []struct {
-		name, part, status, message, tree, base string
-	}{
-		{"a local proof", "local", "failed", pwTimingMessage, hsRow, hsRow},
-		{"another assertion", "ui-e2e:3", "failed", "Error: expect(locator).toBeVisible() failed\n\nLocator: getByRole('row')", hsRow, hsRow},
-		{"a test timeout", "ui-e2e:3", "failed", "Test timeout of 30000ms exceeded.", hsRow, hsRow},
-		{"a skip", "ui-e2e:3", "skipped", "", hsRow, hsRow},
-		{"no outcome", "ui-e2e:3", "none", "", hsRow, hsRow},
-		{"a row the base lacks", "ui-e2e:3", "failed", pwTimingMessage, hsRow, ""},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			code, l := runUILedgerMiss(t, c.part, c.status, c.message, c.tree, c.base)
-			if code != 1 || len(l.Problems) == 0 || len(l.KnownGaps) != 0 || len(l.HostSpeedFailures) != 0 {
-				t.Errorf("exit %d, ledger problems %v gaps %v", code, l.Problems, l.KnownGaps)
-			}
-		})
-	}
-}
-
-// A row declaring the header's visibility timeout lets exactly that failure
-// exit cleanly on a CI UI shard; another locator's timeout does not.
-func TestUILedger_ADeclaredVisibilityTimeoutExitsCleanlyAndNoOther(t *testing.T) {
-	row := "ui\te2e/a.spec.ts\tt0\tvisibleWithin 60000 getByTestId('run-status')\t5\t9999\tthe header never drew\n"
-	msg := func(locator string) string {
-		return "Error: expect(locator).toBeVisible() failed\n\nLocator: " + locator + "\nExpected: visible\nTimeout: 60000ms\nError: element(s) not found\n"
-	}
-	code, l := runUILedgerMiss(t, "ui-e2e:1", "failed", msg("getByTestId('run-status')"), row, row)
-	if code != 0 || len(l.KnownGaps) != 1 || l.HostSpeedFailures[0].Assertion != "visibleWithin 60000 getByTestId('run-status')" {
-		t.Fatalf("the declared timeout: exit %d, %+v", code, l)
-	}
-	code, l = runUILedgerMiss(t, "ui-e2e:1", "failed", msg("getByTestId('task-t3999-inspect')"), row, row)
-	if code != 1 || len(l.KnownGaps) != 0 {
-		t.Errorf("another locator's timeout: exit %d, gaps %v", code, l.KnownGaps)
-	}
-	code, l = runUILedgerMiss(t, "local", "failed", msg("getByTestId('run-status')"), row, row)
-	if code != 1 || len(l.KnownGaps) != 0 {
-		t.Errorf("a local proof: exit %d, gaps %v", code, l.KnownGaps)
 	}
 }
 
@@ -674,9 +563,9 @@ func TestUIPlan_CommandDefersAndNamesTheFilesToRun(t *testing.T) {
 	}
 }
 
-// A feature proof lists only its selected specs, so the nightly spec list's
-// rows cannot be checked against its listing: it plans with no list.
-func TestUIPlan_AFeatureListingNamesNoNightlySpecList(t *testing.T) {
+// A partial listing is checked against the nightly spec list's rows; with no
+// list it plans what it lists.
+func TestUIPlan_APartialListingNamesNoNightlySpecList(t *testing.T) {
 	quiet(t)
 	dir := t.TempDir()
 	listFile := filepath.Join(dir, "list.json")
@@ -692,19 +581,13 @@ func TestUIPlan_AFeatureListingNamesNoNightlySpecList(t *testing.T) {
 		t.Errorf("a partial listing checked against the list: exit %d, want 1 (the row's spec is not listed)", code)
 	}
 	if code := cmdUIPlan([]string{"-list", listFile, "-out", out, "-shards", "1", "-nightly-specs", ""}); code != 0 {
-		t.Errorf("a feature listing with no list: exit %d, want 0", code)
+		t.Errorf("a partial listing with no list: exit %d, want 0", code)
 	}
 }
 
-// scripts/proof.sh gives a feature proof's ui-plan no nightly spec list.
-func TestRepositoryProofScript_AFeatureUIPlanReadsNoNightlySpecList(t *testing.T) {
-	src, err := os.ReadFile(filepath.Join(mustRepoRoot(), "scripts", "proof.sh"))
-	if err != nil {
-		t.Fatal(err)
+func orEmpty(s []string) []string {
+	if s == nil {
+		return []string{}
 	}
-	for _, want := range []string{`feature) plan_specs="" ;;`, `-nightly-specs "$plan_specs"`} {
-		if !strings.Contains(string(src), want) {
-			t.Errorf("scripts/proof.sh lacks %q", want)
-		}
-	}
+	return s
 }

@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var sweepNow = time.Date(2026, 11, 4, 12, 0, 0, 0, time.UTC)
@@ -135,9 +137,7 @@ func TestSweeper_ArchivesAFinishedRunWithNoArchive(t *testing.T) {
 	f.store.bodies["ork-archived"] = true
 
 	result, err := f.sweeper.RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce: %v", err)
-	}
+	must.OKf(t, err, "RunOnce")
 	if !sameStrings(f.store.written, []string{"ork-unarchived"}) {
 		t.Fatalf("archived %v, want the one unarchived run", f.store.written)
 	}
@@ -149,9 +149,7 @@ func TestSweeper_ArchivesAFinishedRunWithNoArchive(t *testing.T) {
 	}
 
 	result, err = f.sweeper.RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("second RunOnce: %v", err)
-	}
+	must.OKf(t, err, "second RunOnce")
 	if len(f.store.written) != 1 || result.Archived != 0 {
 		t.Fatalf("the second pass archived %v (%+v), want nothing more", f.store.written, result)
 	}
@@ -186,9 +184,7 @@ func TestSweeper_AStoreThatIsDownIsSaidAndHealsOnTheNextPass(t *testing.T) {
 
 	f.store.hasErr = nil
 	result, err = f.sweeper.RunOnce(context.Background())
-	if err != nil {
-		t.Fatalf("RunOnce after the store returned: %v", err)
-	}
+	must.OKf(t, err, "RunOnce after the store returned")
 	if result.Archived != 3 || result.Unconfirmed != 0 {
 		t.Fatalf("result = %+v, want all 3 archived", result)
 	}

@@ -1,7 +1,7 @@
 import { expect, test } from './test';
 import { type ChildProcess } from 'node:child_process';
 import { createHmac } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { createServer, type IncomingHttpHeaders, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import path from 'node:path';
@@ -188,7 +188,7 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-	writeFileSync(out('transcript.txt'), transcript.join('\n') + '\n');
+	appendFileSync(out('transcript.txt'), transcript.join('\n') + '\n');
 	const hooks = await rpc<{ webhooks?: { id: string; namespace?: string }[] }>('WebhookService/ListWebhooks', {}).catch(
 		() => ({ webhooks: [] })
 	);

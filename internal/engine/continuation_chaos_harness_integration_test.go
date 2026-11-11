@@ -4,7 +4,6 @@ package engine_test
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net"
@@ -31,10 +30,13 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The harness of the continuation chaos suite (T3,
@@ -197,9 +199,7 @@ func newChaosStack(t *testing.T, ctx context.Context, scenario string) *chaosSta
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	local, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatalf("local run archive: %v", err)
-	}
+	must.OKf(t, err, "local run archive")
 	return newChaosStackWith(t, ctx, scenario, cfg, local)
 }
 
@@ -212,9 +212,7 @@ func newChaosStackWith(t *testing.T, ctx context.Context, scenario string, cfg a
 	namespace := chaosNamespace(scenario)
 	control := dialRoutingCluster(t, ctx, address, namespace)
 	store, err := artifacts.NewS3RunSnapshotStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("snapshot store: %v", err)
-	}
+	must.OKf(t, err, "snapshot store")
 	suffix := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano())
 	label := chaosLabel(scenario)
 	s := &chaosStack{
@@ -263,9 +261,7 @@ func (s *chaosStack) dial(source, address string) client.Client {
 	c, err := client.DialContext(s.ctx, client.Options{
 		HostPort: address, Namespace: s.namespace, Identity: source, Logger: s.logs.logger(source),
 	})
-	if err != nil {
-		s.t.Fatalf("dial %s for %s: %v", address, source, err)
-	}
+	must.OKf(s.t, err, "dial %s for %s", address, source)
 	s.t.Cleanup(c.Close)
 	return c
 }
@@ -277,9 +273,7 @@ func (s *chaosStack) snapshotStoreVia(proxy *faultproxy.Proxy) *artifacts.S3RunS
 	cfg := s.cfg
 	cfg.S3Endpoint = "http://" + proxy.Addr()
 	store, err := artifacts.NewS3RunSnapshotStore(s.ctx, cfg)
-	if err != nil {
-		s.t.Fatalf("snapshot store via proxy: %v", err)
-	}
+	must.OKf(s.t, err, "snapshot store via proxy")
 	return store
 }
 
@@ -362,9 +356,7 @@ func (s *chaosStack) startReplica(name string, o replicaOptions) *chaosReplica {
 	for _, register := range o.extra {
 		register(w)
 	}
-	if err := w.Start(); err != nil {
-		s.t.Fatalf("start replica %s: %v", name, err)
-	}
+	must.OKf(s.t, w.Start(), "start replica %s", name)
 	r := &chaosReplica{name: name, client: c, worker: w, store: store,
 		reader: engine.NewTemporalRunReader(c).WithSnapshotStore(s.store)}
 	s.mu.Lock()
@@ -400,9 +392,7 @@ func (s *chaosStack) startProjection(c client.Client) worker.Worker {
 	w.RegisterActivityWithOptions(
 		engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(s.store).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	if err := w.Start(); err != nil {
-		s.t.Fatalf("start the projection worker: %v", err)
-	}
+	must.OKf(s.t, w.Start(), "start the projection worker")
 	var once sync.Once
 	stoppable := &stoppableWorker{Worker: w, stop: func() { once.Do(w.Stop) }}
 	s.t.Cleanup(stoppable.Stop)
@@ -424,9 +414,7 @@ func (s *chaosStack) startCapableProjection(name string) worker.Worker {
 	w.RegisterActivityWithOptions(
 		engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(s.store).PublishEvent,
 		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
-	if err := w.Start(); err != nil {
-		s.t.Fatalf("start the projection worker: %v", err)
-	}
+	must.OKf(s.t, w.Start(), "start the projection worker")
 	var once sync.Once
 	stoppable := &stoppableWorker{Worker: w, stop: func() { once.Do(w.Stop) }}
 	s.t.Cleanup(stoppable.Stop)
@@ -527,9 +515,7 @@ func (s *chaosStack) startOrkerSized(name, q string, c client.Client, deployment
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	w.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
-	if err := w.Start(); err != nil {
-		s.t.Fatalf("start orker %s: %v", name, err)
-	}
+	must.OKf(s.t, w.Start(), "start orker %s", name)
 	o := &chaosOrker{name: name, worker: w}
 	s.mu.Lock()
 	s.orkers[name] = o
@@ -759,15 +745,20 @@ func (s *chaosStack) newRunID() string {
 	return fmt.Sprintf("ork-chaos-%s-%d", chaosLabel(s.scenario), time.Now().UnixNano())
 }
 
+// recordedRunID is a new run id, already named in the scenario's transcript.
+func (s *chaosStack) recordedRunID() string {
+	runID := s.newRunID()
+	s.transcript.run(runID)
+	return runID
+}
+
 // start starts a run of wf with plan.
 func (s *chaosStack) start(runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload, plan engine.RunPlan) {
 	s.t.Helper()
 	if wf.GetNamespace() == "" {
 		wf.Namespace = "default"
 	}
-	if err := s.starter.StartRun(s.ctx, runID, wf, input, plan); err != nil {
-		s.t.Fatalf("StartRun %s: %v", runID, err)
-	}
+	must.OKf(s.t, s.starter.StartRun(s.ctx, runID, wf, input, plan), "StartRun %s", runID)
 	s.transcript.step("run %s started", runID)
 }
 
@@ -777,9 +768,7 @@ func (s *chaosStack) start(runID string, wf *orkstackv1.Orkflow, input *orkstack
 func (s *chaosStack) current(runID string) (string, enums.WorkflowExecutionStatus) {
 	s.t.Helper()
 	described, err := s.control.DescribeWorkflowExecution(s.ctx, runID, "")
-	if err != nil {
-		s.t.Fatalf("describe %s: %v", runID, err)
-	}
+	must.OKf(s.t, err, "describe %s", runID)
 	info := described.GetWorkflowExecutionInfo()
 	return info.GetExecution().GetRunId(), info.GetStatus()
 }
@@ -818,9 +807,7 @@ func (s *chaosStack) history(runID, execution string) *historypb.History {
 	iter := s.control.GetWorkflowHistory(s.ctx, runID, execution, false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
 	for iter.HasNext() {
 		event, err := iter.Next()
-		if err != nil {
-			s.t.Fatalf("read history of %s/%s: %v", runID, execution, err)
-		}
+		must.OKf(s.t, err, "read history of %s/%s", runID, execution)
 		recorded.Events = append(recorded.Events, event)
 	}
 	return recorded
@@ -930,16 +917,12 @@ func (c *streamCollector) result(t *testing.T, within time.Duration) []*orkstack
 func (s *chaosStack) requireOneRunRead(runID string, stream *streamCollector, status orkstackv1.Status, code string) []*orkstackv1.Event {
 	s.t.Helper()
 	run, err := s.reader.GetRun(s.ctx, runID)
-	if err != nil {
-		s.t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(s.t, err, "GetRun")
 	if run.GetId() != runID || run.GetStatus() != status || (code != "" && run.GetError().GetCode() != code) {
 		s.t.Fatalf("GetRun = %s %v %v, want %v %s", run.GetId(), run.GetStatus(), run.GetError(), status, code)
 	}
 	events, err := s.reader.Events(s.ctx, runID, 0)
-	if err != nil {
-		s.t.Fatalf("Events(0): %v", err)
-	}
+	must.OKf(s.t, err, "Events(0)")
 	requireContiguous(s.t, events)
 	if stream != nil {
 		streamed := stream.result(s.t, time.Minute)
@@ -988,9 +971,7 @@ func factsOf(t *testing.T, h *historypb.History) historyFacts {
 		if attrs := event.GetActivityTaskScheduledEventAttributes(); attrs != nil &&
 			attrs.GetActivityType().GetName() == task.ActivityExecuteTask {
 			var in *orkstackv1.ExecuteTaskInput
-			if err := converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, converter.GetDefaultDataConverter().FromPayload(attrs.GetInput().GetPayloads()[0], &in))
 			key := attemptKey(in)
 			f.tasks[id] = key
 			f.scheduledAt[key] = append(f.scheduledAt[key], id)
@@ -1100,7 +1081,7 @@ func (tr *chaosTranscript) figure(name string, value any) {
 	tr.mu.Lock()
 	tr.figures[name] = value
 	tr.mu.Unlock()
-	encoded, _ := json.Marshal(value)
+	encoded, _ := stablejson.Marshal(value)
 	tr.t.Logf("FIGURE %s %s: %s", tr.group, name, encoded)
 }
 
@@ -1152,28 +1133,20 @@ func (s *chaosStack) realStores() *realOrkerStores {
 	s.t.Helper()
 	requireDockerForCommitE2E(s.t)
 	store, err := artifacts.New(s.cfg)
-	if err != nil {
-		s.t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(s.t, err, "open artifact store")
 	commits, err := artifacts.NewCommitStore(s.ctx, s.cfg)
-	if err != nil {
-		s.t.Fatalf("open commit store: %v", err)
-	}
+	must.OKf(s.t, err, "open commit store")
 	if err := artifacts.ProbeCommitStore(s.ctx, commits); err != nil {
 		infraAbsent(s.t, "the object store's conditional create is not usable: %v", err)
 	}
 	logs, err := artifacts.NewLogStore(s.cfg)
-	if err != nil {
-		s.t.Fatalf("open log store: %v", err)
-	}
+	must.OKf(s.t, err, "open log store")
 	refs, ok := store.(artifacts.RefPredictor)
 	if !ok {
 		s.t.Fatalf("artifact backend %T cannot predict content-addressed references", store)
 	}
 	attempts, err := artifacts.NewAttemptStore(s.cfg)
-	if err != nil {
-		s.t.Fatalf("open attempt store: %v", err)
-	}
+	must.OKf(s.t, err, "open attempt store")
 	return &realOrkerStores{store: store, commits: commits, logs: logs, refs: refs, attempts: attempts}
 }
 
@@ -1246,18 +1219,12 @@ func chaosWorkRoot(t *testing.T, name string) string {
 	parent := os.Getenv(orker.WorkRootVar)
 	if parent == "" {
 		abs, err := filepath.Abs(filepath.Join("..", "..", ".data", "work"))
-		if err != nil {
-			t.Fatalf("resolve work root: %v", err)
-		}
+		must.OKf(t, err, "resolve work root")
 		parent = abs
 	}
-	if err := os.MkdirAll(parent, 0o755); err != nil {
-		t.Fatalf("create work root parent %s: %v", parent, err)
-	}
+	must.OKf(t, os.MkdirAll(parent, 0o755), "create work root parent %s", parent)
 	root, err := os.MkdirTemp(parent, proof.WorkRootPattern("chaos-"+name))
-	if err != nil {
-		t.Fatalf("create work root under %s: %v", parent, err)
-	}
+	must.OKf(t, err, "create work root under %s", parent)
 	t.Cleanup(func() { _ = os.RemoveAll(root) })
 	return root
 }
@@ -1288,9 +1255,7 @@ func tcAPIConfig() api.Config {
 func (s *chaosStack) serveAPI(cfg api.Config) *chaosAPI {
 	s.t.Helper()
 	store, err := artifacts.New(s.cfg)
-	if err != nil {
-		s.t.Fatalf("open artifact store: %v", err)
-	}
+	must.OKf(s.t, err, "open artifact store")
 	if cfg.Orkflows == nil {
 		cfg.Orkflows = engine.NewMemoryOrkflowStore()
 	}
@@ -1317,9 +1282,7 @@ func (s *chaosStack) serveAPI(cfg api.Config) *chaosAPI {
 	}
 	svc := api.NewService(cfg)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		s.t.Fatalf("listen: %v", err)
-	}
+	must.OKf(s.t, err, "listen")
 	server := api.NewServer(listener.Addr().String(), api.NewMux(svc, api.MuxOptions{}))
 	go func() { _ = server.Serve(listener) }()
 	transport := &http.Transport{}
@@ -1350,9 +1313,7 @@ func (a *chaosAPI) apply(t *testing.T, ctx context.Context, yaml string) {
 func (a *chaosAPI) submit(t *testing.T, ctx context.Context, name string) *orkstackv1.SubmitRunResponse {
 	t.Helper()
 	resp, err := a.runs.SubmitRun(ctx, connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: name}))
-	if err != nil {
-		t.Fatalf("SubmitRun %s: %v", name, err)
-	}
+	must.OKf(t, err, "SubmitRun %s", name)
 	return resp.Msg
 }
 
@@ -1360,15 +1321,11 @@ func (a *chaosAPI) submit(t *testing.T, ctx context.Context, name string) *orkst
 func (a *chaosAPI) post(t *testing.T, ctx context.Context, path, token, body string) (int, []byte) {
 	t.Helper()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.baseURL+path, strings.NewReader(body))
-	if err != nil {
-		t.Fatalf("build request: %v", err)
-	}
+	must.OKf(t, err, "build request")
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := a.http.Do(req)
-	if err != nil {
-		t.Fatalf("POST %s: %v", path, err)
-	}
+	must.OKf(t, err, "POST %s", path)
 	defer resp.Body.Close()
 	out, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, out

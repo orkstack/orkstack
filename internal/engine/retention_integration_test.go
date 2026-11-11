@@ -14,6 +14,8 @@ import (
 	"go.temporal.io/sdk/client"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestIntegration_SetNamespaceRetentionReachesTheRealCluster proves the WRITE
@@ -45,18 +47,14 @@ func TestIntegration_SetNamespaceRetentionReachesTheRealCluster(t *testing.T) {
 	// prove the write left this process, rather than proving only that the
 	// reader can echo its own last write back to itself.
 	independent, err := client.DialContext(ctx, client.Options{HostPort: address, Namespace: namespace})
-	if err != nil {
-		t.Fatalf("dial independent verification client: %v", err)
-	}
+	must.OKf(t, err, "dial independent verification client")
 	t.Cleanup(independent.Close)
 
 	describeIndependently := func() time.Duration {
 		t.Helper()
 		resp, err := independent.WorkflowService().DescribeNamespace(ctx,
 			&workflowservice.DescribeNamespaceRequest{Namespace: namespace})
-		if err != nil {
-			t.Fatalf("independent DescribeNamespace(%s): %v", namespace, err)
-		}
+		must.OKf(t, err, "independent DescribeNamespace(%s)", namespace)
 		ttl := resp.GetConfig().GetWorkflowExecutionRetentionTtl()
 		if ttl == nil {
 			t.Fatalf("independent DescribeNamespace(%s) reported no retention", namespace)
@@ -76,9 +74,7 @@ func TestIntegration_SetNamespaceRetentionReachesTheRealCluster(t *testing.T) {
 
 	const want = 2 * time.Hour
 	confirmed, err := reader.SetNamespaceRetention(ctx, namespace, want)
-	if err != nil {
-		t.Fatalf("SetNamespaceRetention(%s, %s): %v", namespace, want, err)
-	}
+	must.OKf(t, err, "SetNamespaceRetention(%s, %s)", namespace, want)
 	if confirmed != want {
 		t.Fatalf("SetNamespaceRetention reported %s, want %s", confirmed, want)
 	}

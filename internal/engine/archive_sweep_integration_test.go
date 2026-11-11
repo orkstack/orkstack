@@ -22,6 +22,8 @@ import (
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 const sweepChainHeader = "apiVersion: orkstack/v1\nkind: Orkflow\nname: archive-sweep\nversion: \"1.0.0\"\ntasks:\n"
@@ -79,9 +81,7 @@ func (s *chaosStack) startAndTerminate(t *testing.T) string {
 	s.transcript.run(runID)
 	s.start(runID, compile(t, sweepChainHeader+guardChain("c", 3, "")), nil, plan)
 	g.waitEntered(t, "c01", 2*time.Minute)
-	if err := s.control.TerminateWorkflow(s.ctx, runID, "", "archive sweep: terminated from outside"); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, s.control.TerminateWorkflow(s.ctx, runID, "", "archive sweep: terminated from outside"))
 	if status, _ := s.wait(runID, time.Minute); status != enums.WORKFLOW_EXECUTION_STATUS_TERMINATED {
 		t.Fatalf("the run closed %v, want Terminated", status)
 	}
@@ -99,17 +99,13 @@ func TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead(t 
 	defer cancel()
 	cfg, _ := privateCleanupBucket(t, ctx)
 	store, err := artifacts.NewS3RunArchive(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	s := newChaosStackWith(t, ctx, "archive-sweep/terminated", cfg, store)
 	runID := s.startAndTerminate(t)
 
 	a := s.serveAPI(api.Config{})
 	before, err := a.svc.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if run := before.Msg.GetRun(); run.GetStatus() != orkstackv1.Status_STATUS_CANCELED ||
 		run.GetError().GetCode() != "RUN_TERMINATED" || len(run.GetTaskRuns()) == 0 {
 		t.Fatalf("the live read = %v, want CANCELED RUN_TERMINATED with its tasks", run)
@@ -130,9 +126,7 @@ func TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead(t 
 	}
 
 	policies, err := artifacts.NewS3RetentionPolicyStore(ctx, cfg)
-	if err != nil {
-		t.Fatalf("NewS3RetentionPolicyStore: %v", err)
-	}
+	must.OKf(t, err, "NewS3RetentionPolicyStore")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	controller := archivecleanup.NewRetentionController(policies, s.reader, s.namespace, archivecleanup.DefaultRetentionBuffer, logger)
 	if _, err := controller.SetMax(ctx, 999*time.Hour); err != nil {
@@ -145,18 +139,14 @@ func TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead(t 
 	sweepUntil(t, ctx, sweepOver(s, s.reader, store, s.archive), func(r archivecleanup.SweepResult) bool { return r.Archived == 1 })
 
 	stats, err := cleaner.RunOnce(ctx)
-	if err != nil {
-		t.Fatalf("cleanup after the sweep: %v", err)
-	}
+	must.OKf(t, err, "cleanup after the sweep")
 	if stats.RunsCleaned != 1 {
 		t.Fatalf("cleanup metrics = %+v, want the archived run retired", stats)
 	}
 	awaitWorkflowGone(t, ctx, s.reader, s.namespace, runID)
 
 	after, err := a.svc.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: runID}))
-	if err != nil {
-		t.Fatalf("GetRun after retirement: %v", err)
-	}
+	must.OKf(t, err, "GetRun after retirement")
 	if !proto.Equal(after.Msg.GetRun(), before.Msg.GetRun()) {
 		t.Fatalf("after retirement the run reads\n%v\nand before it read\n%v", after.Msg.GetRun(), before.Msg.GetRun())
 	}
@@ -182,9 +172,7 @@ func TestIntegration_ArchiveSweep_AStoreThatIsDownSaysSoAndHeals(t *testing.T) {
 	viaProxy := s.cfg
 	viaProxy.S3Endpoint = "http://" + proxy.Addr()
 	store, err := artifacts.NewS3RunArchive(ctx, viaProxy)
-	if err != nil {
-		t.Fatalf("NewS3RunArchive: %v", err)
-	}
+	must.OKf(t, err, "NewS3RunArchive")
 	reader := engine.NewTemporalRunReader(s.control).WithSnapshotStore(s.snapshotStoreVia(proxy))
 	sweeper := sweepOver(s, reader, store, engine.NewRunArchiver(store))
 
@@ -220,9 +208,7 @@ func TestIntegration_ArchiveSweep_AnEndingStorageRefusedIsArchived(t *testing.T)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	store, err := artifacts.NewLocalRunArchive(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	s := newChaosStackWith(t, ctx, "archive-sweep/ending-refused", s3Config(), store)
 	runID, _, _, _ := s.corruptStart(t, func(int, int64) bool { return true })
 	if has, err := store.HasRun(ctx, runID); err != nil || has {
@@ -231,17 +217,13 @@ func TestIntegration_ArchiveSweep_AnEndingStorageRefusedIsArchived(t *testing.T)
 	sweepUntil(t, ctx, sweepOver(s, s.reader, store, s.archive), func(r archivecleanup.SweepResult) bool { return r.Archived == 1 })
 
 	run, err := s.archive.LoadRun(ctx, runID)
-	if err != nil {
-		t.Fatalf("LoadRun: %v", err)
-	}
+	must.OKf(t, err, "LoadRun")
 	if run.GetStatus() != orkstackv1.Status_STATUS_FAILED || run.GetError().GetCode() != engine.RunDefinitionCorruptCode ||
 		!strings.Contains(run.GetError().GetDetails(), "was ever written") {
 		t.Fatalf("the archived run = %v, want FAILED %s saying no record was written", run, engine.RunDefinitionCorruptCode)
 	}
 	events, err := s.archive.LoadRunEvents(ctx, runID)
-	if err != nil {
-		t.Fatalf("LoadRunEvents: %v", err)
-	}
+	must.OKf(t, err, "LoadRunEvents")
 	if got := fmt.Sprint(definitionEventTypes(events)); got != "[1:RUN_FAILED]" {
 		t.Fatalf("the archived stream = %s, want the close at 1", got)
 	}
@@ -295,9 +277,7 @@ func TestIntegration_SkippedNumber_ReadsLiveAndFromTheArchive(t *testing.T) {
 		return events, err
 	}
 	served, err := read(0)
-	if err != nil {
-		t.Fatalf("StreamRunEvents from 0: %v", err)
-	}
+	must.OKf(t, err, "StreamRunEvents from 0")
 	var gap *orkstackv1.Event
 	for _, e := range served {
 		if e.GetType() == orkstackv1.EventType_EVENT_TYPE_STREAM_GAP {

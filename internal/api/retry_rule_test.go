@@ -15,6 +15,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // refusedRetries are retry: blocks docs/DSL.md rule 47 refuses, each with the
@@ -71,9 +73,7 @@ func TestRetryRule_RefusedAtValidateApplyAndInlinePlan(t *testing.T) {
 				t.Fatalf("apply = %v, want invalid_argument saying %q", err, tc.phrase)
 			}
 			listed, err := orkflows.List(context.Background(), "default")
-			if err != nil {
-				t.Fatalf("list the store after a refused apply: %v", err)
-			}
+			must.OKf(t, err, "list the store after a refused apply")
 			if len(listed) != 0 {
 				t.Fatalf("a refused apply stored %d orkflows", len(listed))
 			}
@@ -99,16 +99,12 @@ func TestSubmit_StoredVersionWithARefusedRetryStillStarts(t *testing.T) {
 				t.Fatalf("the retry as a document = %v, want rule 47's refusal", err)
 			}
 			wf, err := dsl.Compile([]byte(retriedDoc("{maximum_attempts: 3}")))
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			wf.GetTasks()[0].Retry = proto.Clone(tc.stored).(*orkstackv1.RetryPolicy)
 			wf.SourceYaml = retriedDoc(tc.retry)
 			wf.Namespace = "default"
 			digest, err := dsl.DefinitionDigest(wf)
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			wf.DefinitionDigest = digest
 			orkflows := engine.NewMemoryOrkflowStore()
 			if _, _, err := orkflows.Put(context.Background(), wf, artifacts.NoHeadExpectation()); err != nil {

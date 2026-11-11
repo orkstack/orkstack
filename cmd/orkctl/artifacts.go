@@ -11,6 +11,7 @@ import (
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/spf13/cobra"
 )
 
@@ -33,7 +34,7 @@ func newRunArtifactsCommand(g *globalFlags) *cobra.Command {
 		}
 		return renderArtifactList(cmd.OutOrStdout(), response.Msg.GetArtifacts())
 	}}
-	cmd.Flags().StringVar(&task, "task", "", "only artifacts for this task")
+	cmd.Flags().StringVarP(&task, "task", "t", "", "only artifacts for this task")
 	item.register(cmd, "only this item of the fan-out --task names (0-based)")
 	return cmd
 }
@@ -105,10 +106,10 @@ func newRunArtifactDownloadCommand(g *globalFlags) *cobra.Command {
 		complete = true
 		return nil
 	}}
-	cmd.Flags().StringVar(&task, "task", "", "task that recorded the artifact")
+	cmd.Flags().StringVarP(&task, "task", "t", "", "task that recorded the artifact")
 	cmd.Flags().StringVar(&kindText, "kind", "", "artifact kind: output, values, stdout, stderr")
 	cmd.Flags().StringVar(&name, "name", "", "exact artifact name returned by run artifacts")
-	cmd.Flags().StringVar(&output, "output", "", "destination file")
+	cmd.Flags().StringVarP(&output, "output", "o", "", "destination file")
 	cmd.Flags().BoolVar(&overwrite, "overwrite", false, "replace an existing destination file")
 	item.register(cmd, "the item of the fan-out --task names (required for a fan-out)")
 	return cmd
@@ -196,7 +197,7 @@ func renderArtifactList(out io.Writer, items []*orkstackv1.RunArtifact) error {
 		fmt.Fprintln(table, "TASK\tATTEMPT\tKIND\tNAME\tSIZE\tSHA256")
 	}
 	for _, item := range items {
-		kind := strings.TrimPrefix(item.GetKind().String(), "ARTIFACT_KIND_")
+		kind := enumname.Of(item.GetKind())
 		if withItems {
 			fmt.Fprintf(table, "%s\t%s\t%d\t%s\t%s\t%d\t%s\n", item.GetTaskId(), itemCell(item.Item), item.GetAttempt(), kind, item.GetArtifact().GetName(), item.GetArtifact().GetSizeBytes(), item.GetArtifact().GetSha256())
 			continue

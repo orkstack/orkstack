@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // stubReleases states what a ReleaseCluster would read from the cluster, and
@@ -141,9 +143,7 @@ func listReleases(t *testing.T, svc *api.Service, build string, texts ...string)
 		texts = append(texts, "build_id="+build)
 	}
 	resp, err := svc.ListReleases(context.Background(), connect.NewRequest(&orkstackv1.ListReleasesRequest{Filters: filters(t, texts...)}))
-	if err != nil {
-		t.Fatalf("ListReleases: %v", err)
-	}
+	must.OKf(t, err, "ListReleases")
 	return resp.Msg
 }
 
@@ -447,9 +447,7 @@ func TestPromoteRelease_KeepsARampThatIsNotTheTarget(t *testing.T) {
 	stub.obs.Routing = engine.Routing{Current: "v1", Ramping: "v3", RampPercent: 20}
 	stub.obs.Releases = append(stub.obs.Releases, engine.ObservedRelease{BuildID: "v3"})
 	resp, err := promote(releaseService(stub, releaseFleet()), "v2", "")
-	if err != nil {
-		t.Fatalf("promote: %v", err)
-	}
+	must.OKf(t, err, "promote")
 	want := engine.Routing{Current: "v2", Ramping: "v3", RampPercent: 20}
 	if w := stub.writes(); len(w) != 1 || w[0] != want {
 		t.Fatalf("writes = %v, want %v", w, want)
@@ -506,9 +504,7 @@ func TestRampRelease_ZeroStopsTheRampWithoutJudging(t *testing.T) {
 	stub.obs.Routing = engine.Routing{Current: "v1", Ramping: "v2", RampPercent: 10}
 	stub.obs.EngineReplicas["v2"] = 0 // a blocker, which stopping a ramp ignores
 	resp, err := ramp(releaseService(stub, releaseFleet()), "v2", 0)
-	if err != nil {
-		t.Fatalf("ramp 0: %v", err)
-	}
+	must.OKf(t, err, "ramp 0")
 	if w := stub.writes(); len(w) != 1 || w[0] != (engine.Routing{Current: "v1"}) {
 		t.Fatalf("writes = %v", w)
 	}

@@ -1,7 +1,6 @@
 package dsl_test
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -12,9 +11,10 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
 
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // The strict YAML-to-JSON mapping (docs/JSON.md, "Data written in an
@@ -183,7 +183,7 @@ func FuzzStrictJSON_AnAcceptedNumberKeepsItsValue(f *testing.F) {
 		if !ok {
 			t.Fatalf("%q accepted as %T", text, got)
 		}
-		encoded, err := json.Marshal(number)
+		encoded, err := stablejson.Marshal(number)
 		if err != nil {
 			t.Fatalf("%q: %v", text, err)
 		}
@@ -307,8 +307,8 @@ func requireAgreement(t *testing.T, source string) {
 	if oldErr != nil {
 		t.Fatalf("%q: the previous decode refused it (%v) and the strict mapping accepted %#v", source, oldErr, got)
 	}
-	a, _ := json.Marshal(old)
-	b, _ := json.Marshal(got)
+	a, _ := stablejson.Marshal(old)
+	b, _ := stablejson.Marshal(got)
 	if string(a) != string(b) {
 		t.Fatalf("%q: the previous decode gave %s, the strict mapping %s", source, a, b)
 	}
@@ -495,7 +495,7 @@ func TestCompile_DataPositionsRefuseADuplicateKey(t *testing.T) {
 	}
 	_, err := dsl.Compile([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: x\ntasks:\n  - id: t\n    uses: shell\n    with: {a: 1}\n    with: {b: 2}\n"))
 	if err == nil || !strings.Contains(err.Error(), `mapping key "with" already defined at line 7`) {
-		t.Errorf("a second with: = %v, want yaml.v3's own refusal", err)
+		t.Errorf("a second with: = %v, want the decoder's own refusal", err)
 	}
 }
 
@@ -525,8 +525,8 @@ func FuzzAuthoredNode_RoundTrips(f *testing.F) {
 		if err != nil {
 			t.Fatalf("%q: %v", out, err)
 		}
-		a, _ := json.Marshal(value)
-		b, _ := json.Marshal(got)
+		a, _ := stablejson.Marshal(value)
+		b, _ := stablejson.Marshal(got)
 		if string(a) != string(b) || !sameSigns(value, got) {
 			t.Fatalf("round trip: %s → %q → %s", a, out, b)
 		}

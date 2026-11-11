@@ -14,6 +14,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata goldens")
@@ -112,9 +114,7 @@ func declaredSpecs(t *testing.T) map[string]*listfilter.Spec {
 			continue
 		}
 		spec, err := listfilter.SpecForDescriptor(m.Input())
-		if err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
+		must.OKf(t, err, "%s", name)
 		out[name] = spec
 	}
 	return out
@@ -166,9 +166,7 @@ func TestSpec_AllowlistsGolden(t *testing.T) {
 	}
 	const path = "testdata/allowlists.golden"
 	if *update {
-		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(path, []byte(b.String()), 0o644))
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {

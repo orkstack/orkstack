@@ -375,12 +375,18 @@ func (x *StatsBucket) GetPartial() bool {
 // Both numbers travel together because neither means anything alone. Three
 // failures out of four is an outage; three out of three thousand is Tuesday.
 type OrkflowFailures struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	OrkflowName   string                 `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
-	Failed        int64                  `protobuf:"varint,2,opt,name=failed,proto3" json:"failed,omitempty"`
-	Total         int64                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	OrkflowName string                 `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	Failed      int64                  `protobuf:"varint,2,opt,name=failed,proto3" json:"failed,omitempty"`
+	Total       int64                  `protobuf:"varint,3,opt,name=total,proto3" json:"total,omitempty"`
+	// orkflow_namespace is set when the row's runs ran another namespace's
+	// shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+	// namespaces"): the namespace that owns it. Such runs are grouped apart from
+	// this namespace's own Orkflow of the same name. Empty for the namespace's
+	// own.
+	OrkflowNamespace string `protobuf:"bytes,4,opt,name=orkflow_namespace,json=orkflowNamespace,proto3" json:"orkflow_namespace,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *OrkflowFailures) Reset() {
@@ -434,6 +440,13 @@ func (x *OrkflowFailures) GetTotal() int64 {
 	return 0
 }
 
+func (x *OrkflowFailures) GetOrkflowNamespace() string {
+	if x != nil {
+		return x.OrkflowNamespace
+	}
+	return ""
+}
+
 type GetStatsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// ONE WINDOW, ONE POPULATION. Every number below is about the same set of
@@ -446,7 +459,7 @@ type GetStatsResponse struct {
 	//
 	// The alternative — counting a run in the window it FINISHED in — was what
 	// the percentiles used to do, and one answer carrying both is a lie no
-	// field could correct: `orkctl stats --since 15m` over hour-long runs
+	// field could correct: `orkctl stats -s 15m` over hour-long runs
 	// reported `succeeded 0 / failed 0 / rate unavailable` beside
 	// `p50 58m over 12 finished runs`, two populations printed as one.
 	//
@@ -833,8 +846,14 @@ type FailureGroup struct {
 	// could not be read, so image and phase were unavailable for them. It is
 	// only ever nonzero when the response's attempt_evidence_read is true.
 	AttemptEvidenceMissing int64 `protobuf:"varint,13,opt,name=attempt_evidence_missing,json=attemptEvidenceMissing,proto3" json:"attempt_evidence_missing,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// orkflow_namespace is set when the row's runs ran another namespace's
+	// shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+	// namespaces"): the namespace that owns it. Such runs are grouped apart from
+	// this namespace's own Orkflow of the same name. Empty for the namespace's
+	// own.
+	OrkflowNamespace string `protobuf:"bytes,14,opt,name=orkflow_namespace,json=orkflowNamespace,proto3" json:"orkflow_namespace,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *FailureGroup) Reset() {
@@ -956,6 +975,13 @@ func (x *FailureGroup) GetAttemptEvidenceMissing() int64 {
 		return x.AttemptEvidenceMissing
 	}
 	return 0
+}
+
+func (x *FailureGroup) GetOrkflowNamespace() string {
+	if x != nil {
+		return x.OrkflowNamespace
+	}
+	return ""
 }
 
 type GetFailureBreakdownResponse struct {
@@ -1294,8 +1320,14 @@ type FlakeGroup struct {
 	// created first, so a row leads to a run page whose attempt timeline
 	// shows the retries. Ids are never compared with each other (AGENTS.md §7).
 	ExampleRunIds []string `protobuf:"bytes,21,rep,name=example_run_ids,json=exampleRunIds,proto3" json:"example_run_ids,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// orkflow_namespace is set when the row's runs ran another namespace's
+	// shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+	// namespaces"): the namespace that owns it. Such runs are grouped apart from
+	// this namespace's own Orkflow of the same name. Empty for the namespace's
+	// own.
+	OrkflowNamespace string `protobuf:"bytes,22,opt,name=orkflow_namespace,json=orkflowNamespace,proto3" json:"orkflow_namespace,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *FlakeGroup) Reset() {
@@ -1473,6 +1505,13 @@ func (x *FlakeGroup) GetExampleRunIds() []string {
 		return x.ExampleRunIds
 	}
 	return nil
+}
+
+func (x *FlakeGroup) GetOrkflowNamespace() string {
+	if x != nil {
+		return x.OrkflowNamespace
+	}
+	return ""
 }
 
 type GetFlakeIndexResponse struct {
@@ -1770,8 +1809,14 @@ type UsageRow struct {
 	// have no record — the Orker running them died or lost its heartbeat
 	// before filing one. Their consumption is unknown and not counted.
 	UnreportedAttempts int64 `protobuf:"varint,12,opt,name=unreported_attempts,json=unreportedAttempts,proto3" json:"unreported_attempts,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// orkflow_namespace is set when the row's runs ran another namespace's
+	// shared Orkflow, composed as a child (docs/DSL.md "Sharing across
+	// namespaces"): the namespace that owns it. Such runs are grouped apart from
+	// this namespace's own Orkflow of the same name. Empty for the namespace's
+	// own.
+	OrkflowNamespace string `protobuf:"bytes,13,opt,name=orkflow_namespace,json=orkflowNamespace,proto3" json:"orkflow_namespace,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
 }
 
 func (x *UsageRow) Reset() {
@@ -1886,6 +1931,13 @@ func (x *UsageRow) GetUnreportedAttempts() int64 {
 		return x.UnreportedAttempts
 	}
 	return 0
+}
+
+func (x *UsageRow) GetOrkflowNamespace() string {
+	if x != nil {
+		return x.OrkflowNamespace
+	}
+	return ""
 }
 
 type GetUsageResponse struct {
@@ -2122,11 +2174,12 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\apartial\x18\x04 \x01(\bR\apartial\x1a?\n" +
 	"\x11RunsByStatusEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"b\n" +
+	"\x05value\x18\x02 \x01(\x03R\x05value:\x028\x01\"\x8f\x01\n" +
 	"\x0fOrkflowFailures\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x16\n" +
 	"\x06failed\x18\x02 \x01(\x03R\x06failed\x12\x14\n" +
-	"\x05total\x18\x03 \x01(\x03R\x05total\"\x84\b\n" +
+	"\x05total\x18\x03 \x01(\x03R\x05total\x12+\n" +
+	"\x11orkflow_namespace\x18\x04 \x01(\tR\x10orkflowNamespace\"\x84\b\n" +
 	"\x10GetStatsResponse\x12U\n" +
 	"\x0eruns_by_status\x18\x01 \x03(\v2/.orkstack.v1.GetStatsResponse.RunsByStatusEntryR\frunsByStatus\x12!\n" +
 	"\fsuccess_rate\x18\x02 \x01(\x01R\vsuccessRate\x120\n" +
@@ -2158,7 +2211,7 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\forkflow_name\x18\x05 \x01(\tR\vorkflowName\x126\n" +
 	"\bgroup_by\x18\x06 \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\x128\n" +
 	"\bcategory\x18\a \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory\x12\x14\n" +
-	"\x05limit\x18\b \x01(\x05R\x05limit\"\xf3\x03\n" +
+	"\x05limit\x18\b \x01(\x05R\x05limit\"\xa0\x04\n" +
 	"\fFailureGroup\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x12\n" +
@@ -2174,7 +2227,8 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\tfirstSeen\x127\n" +
 	"\tlast_seen\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12&\n" +
 	"\x0fexample_run_ids\x18\f \x03(\tR\rexampleRunIds\x128\n" +
-	"\x18attempt_evidence_missing\x18\r \x01(\x03R\x16attemptEvidenceMissing\"\x85\x05\n" +
+	"\x18attempt_evidence_missing\x18\r \x01(\x03R\x16attemptEvidenceMissing\x12+\n" +
+	"\x11orkflow_namespace\x18\x0e \x01(\tR\x10orkflowNamespace\"\x85\x05\n" +
 	"\x1bGetFailureBreakdownResponse\x121\n" +
 	"\x06groups\x18\x01 \x03(\v2\x19.orkstack.v1.FailureGroupR\x06groups\x121\n" +
 	"\x15failed_runs_in_window\x18\x02 \x01(\x03R\x12failedRunsInWindow\x12.\n" +
@@ -2197,7 +2251,7 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\blookback\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\blookback\x12!\n" +
 	"\forkflow_name\x18\x05 \x01(\tR\vorkflowName\x126\n" +
 	"\bgroup_by\x18\x06 \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\x12\x14\n" +
-	"\x05limit\x18\a \x01(\x05R\x05limit\"\xc1\x06\n" +
+	"\x05limit\x18\a \x01(\x05R\x05limit\"\xee\x06\n" +
 	"\n" +
 	"FlakeGroup\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x17\n" +
@@ -2222,7 +2276,8 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\x0edominant_phase\x18\x12 \x01(\tR\rdominantPhase\x12%\n" +
 	"\x0edominant_count\x18\x13 \x01(\x03R\rdominantCount\x12B\n" +
 	"\x0flast_retried_at\x18\x14 \x01(\v2\x1a.google.protobuf.TimestampR\rlastRetriedAt\x12&\n" +
-	"\x0fexample_run_ids\x18\x15 \x03(\tR\rexampleRunIds\"\xf7\x04\n" +
+	"\x0fexample_run_ids\x18\x15 \x03(\tR\rexampleRunIds\x12+\n" +
+	"\x11orkflow_namespace\x18\x16 \x01(\tR\x10orkflowNamespace\"\xf7\x04\n" +
 	"\x15GetFlakeIndexResponse\x12/\n" +
 	"\x06groups\x18\x01 \x03(\v2\x17.orkstack.v1.FlakeGroupR\x06groups\x12$\n" +
 	"\x0eruns_in_window\x18\x02 \x01(\x03R\frunsInWindow\x12!\n" +
@@ -2245,7 +2300,7 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
 	"\x05until\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x125\n" +
 	"\blookback\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\blookback\x126\n" +
-	"\bgroup_by\x18\x05 \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\"\xa5\x03\n" +
+	"\bgroup_by\x18\x05 \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\"\xd2\x03\n" +
 	"\bUsageRow\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x12\n" +
@@ -2261,7 +2316,8 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\x1aattempts_without_resources\x18\n" +
 	" \x01(\x03R\x18attemptsWithoutResources\x12/\n" +
 	"\x13attempts_unmeasured\x18\v \x01(\x03R\x12attemptsUnmeasured\x12/\n" +
-	"\x13unreported_attempts\x18\f \x01(\x03R\x12unreportedAttempts\"\x93\x06\n" +
+	"\x13unreported_attempts\x18\f \x01(\x03R\x12unreportedAttempts\x12+\n" +
+	"\x11orkflow_namespace\x18\r \x01(\tR\x10orkflowNamespace\"\x93\x06\n" +
 	"\x10GetUsageResponse\x12+\n" +
 	"\x05total\x18\x01 \x01(\v2\x15.orkstack.v1.UsageRowR\x05total\x12)\n" +
 	"\x04rows\x18\x02 \x03(\v2\x15.orkstack.v1.UsageRowR\x04rows\x126\n" +

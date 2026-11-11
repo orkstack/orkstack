@@ -50,7 +50,7 @@ orkctl release rollback "$OLD" --yes
 
 ## Releases that add features
 
-An older release cannot run every Orkflow construct. Apply a document that uses a new construct only after the release that added it is current. Constructs such as `await:`, `each:`, `join:` and `cache:` behave differently on an older release. Before you roll back past a construct, stop applying documents that use it.
+An older release cannot run every Orkflow construct. Create an Orkflow that uses a new construct only after the release that added it is current. Constructs such as `await:`, `each:`, `join:` and `cache:` behave differently on an older release. Before you roll back past a construct, stop creating Orkflows that use it.
 
 ## Turning versioning on for a running system
 

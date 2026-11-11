@@ -1,0 +1,11 @@
+PLAN  sleeping-cli@1.0.0  namespace default
+definition  sha256:7563f502538563970c820983cfa50bac609dd1031cf533cc1fce0d8ac4563562
+input       {}
+
+WAVE  TASK     OUTCOME  DETAIL
+1     deploy   runs
+2     soak     sleeps   sleep 15m0s
+2     settle   sleeps   join all_done; sleep 1m0s
+3     promote  runs
+
+2 run, 2 sleeps, 0 skipped, 3 waves. Nothing was started.

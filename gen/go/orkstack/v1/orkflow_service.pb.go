@@ -108,6 +108,10 @@ const (
 	// does, contributes no output, and is where the planned run starts failing
 	// unless an earlier task already did.
 	PlanOutcome_PLAN_OUTCOME_ASSUMED_FAILED PlanOutcome = 6
+	// SLEEPS: the task is a sleeping task the interpreter would start: it
+	// takes a wave as RUNS does, starts no activity, and succeeds with no
+	// values once its time has passed.
+	PlanOutcome_PLAN_OUTCOME_SLEEPS PlanOutcome = 7
 )
 
 // Enum value maps for PlanOutcome.
@@ -120,6 +124,7 @@ var (
 		4: "PLAN_OUTCOME_UNREACHED",
 		5: "PLAN_OUTCOME_AWAITS",
 		6: "PLAN_OUTCOME_ASSUMED_FAILED",
+		7: "PLAN_OUTCOME_SLEEPS",
 	}
 	PlanOutcome_value = map[string]int32{
 		"PLAN_OUTCOME_UNSPECIFIED":    0,
@@ -129,6 +134,7 @@ var (
 		"PLAN_OUTCOME_UNREACHED":      4,
 		"PLAN_OUTCOME_AWAITS":         5,
 		"PLAN_OUTCOME_ASSUMED_FAILED": 6,
+		"PLAN_OUTCOME_SLEEPS":         7,
 	}
 )
 
@@ -393,7 +399,7 @@ type ApplyOrkflowRequest struct {
 	// instead of landing beside a newer version nobody looked at.
 	//
 	// Empty with an empty base_version is unchecked, which is what a plain
-	// `orkctl apply file.yaml` sends. Empty with a non-empty base_version is
+	// `orkctl orkflow create file.yaml` sends. Empty with a non-empty base_version is
 	// InvalidArgument naming both fields: a base is provenance, not a head
 	// claim, and an editor that read a base also read the head it was under.
 	//
@@ -1634,7 +1640,10 @@ type PlanTask struct {
 	// unreached: the first decision-time failure (a FAILS) decided before it,
 	// or else the first ASSUMED_FAILED task of its needs closure in declaration
 	// order. Empty for every other outcome.
-	UnreachedBy   string `protobuf:"bytes,16,opt,name=unreached_by,json=unreachedBy,proto3" json:"unreached_by,omitempty"`
+	UnreachedBy string `protobuf:"bytes,16,opt,name=unreached_by,json=unreachedBy,proto3" json:"unreached_by,omitempty"`
+	// sleep is the task's SleepSpec, set for a sleeping task whatever its
+	// outcome, so a reader sees how long it would sleep.
+	Sleep         *SleepSpec `protobuf:"bytes,17,opt,name=sleep,proto3" json:"sleep,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1781,7 +1790,14 @@ func (x *PlanTask) GetUnreachedBy() string {
 	return ""
 }
 
-// PlanWave lists the RUNS, AWAITS and ASSUMED_FAILED tasks of one wave, in
+func (x *PlanTask) GetSleep() *SleepSpec {
+	if x != nil {
+		return x.Sleep
+	}
+	return nil
+}
+
+// PlanWave lists the RUNS, AWAITS, SLEEPS and ASSUMED_FAILED tasks of one wave, in
 // declaration order. There is one entry per wave from 1 to wave_count;
 // SKIPPED tasks are not members.
 type PlanWave struct {
@@ -1873,6 +1889,7 @@ type PlanRunResponse struct {
 	// The run is planned FAILED exactly when it is set; each UNREACHED task
 	// names its own cause in PlanTask.unreached_by.
 	FailsAt       string `protobuf:"bytes,16,opt,name=fails_at,json=failsAt,proto3" json:"fails_at,omitempty"`
+	Sleeps        int32  `protobuf:"varint,17,opt,name=sleeps,proto3" json:"sleeps,omitempty"` // count of SLEEPS
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2017,6 +2034,13 @@ func (x *PlanRunResponse) GetFailsAt() string {
 		return x.FailsAt
 	}
 	return ""
+}
+
+func (x *PlanRunResponse) GetSleeps() int32 {
+	if x != nil {
+		return x.Sleeps
+	}
+	return 0
 }
 
 // InterfaceFinding is one statement about one declared input, one declared
@@ -2764,7 +2788,7 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\rassume_failed\x18\a \x03(\tR\fassumeFailed\x1aW\n" +
 	"\x13AssumedOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12*\n" +
-	"\x05value\x18\x02 \x01(\v2\x14.orkstack.v1.PayloadR\x05value:\x028\x01\"\xe9\x04\n" +
+	"\x05value\x18\x02 \x01(\v2\x14.orkstack.v1.PayloadR\x05value:\x028\x01\"\x97\x05\n" +
 	"\bPlanTask\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x122\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2\x18.orkstack.v1.PlanOutcomeR\aoutcome\x12\x12\n" +
@@ -2785,11 +2809,12 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\aorkflow\x18\r \x01(\v2\x17.orkstack.v1.OrkflowRefR\aorkflow\x12,\n" +
 	"\x05cache\x18\x0e \x01(\v2\x16.orkstack.v1.CacheSpecR\x05cache\x12+\n" +
 	"\x04join\x18\x0f \x01(\x0e2\x17.orkstack.v1.JoinPolicyR\x04join\x12!\n" +
-	"\funreached_by\x18\x10 \x01(\tR\vunreachedByB\r\n" +
+	"\funreached_by\x18\x10 \x01(\tR\vunreachedBy\x12,\n" +
+	"\x05sleep\x18\x11 \x01(\v2\x16.orkstack.v1.SleepSpecR\x05sleepB\r\n" +
 	"\v_each_count\"9\n" +
 	"\bPlanWave\x12\x12\n" +
 	"\x04wave\x18\x01 \x01(\x05R\x04wave\x12\x19\n" +
-	"\btask_ids\x18\x02 \x03(\tR\ataskIds\"\xda\x04\n" +
+	"\btask_ids\x18\x02 \x03(\tR\ataskIds\"\xf2\x04\n" +
 	"\x0fPlanRunResponse\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12'\n" +
 	"\x0forkflow_version\x18\x02 \x01(\tR\x0eorkflowVersion\x12\x1c\n" +
@@ -2808,7 +2833,8 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x06awaits\x18\r \x01(\x05R\x06awaits\x12%\n" +
 	"\x0eassumed_failed\x18\x0e \x01(\x05R\rassumedFailed\x120\n" +
 	"\x14unused_assume_failed\x18\x0f \x03(\tR\x12unusedAssumeFailed\x12\x19\n" +
-	"\bfails_at\x18\x10 \x01(\tR\afailsAt\"\xd5\x01\n" +
+	"\bfails_at\x18\x10 \x01(\tR\afailsAt\x12\x16\n" +
+	"\x06sleeps\x18\x11 \x01(\x05R\x06sleeps\"\xd5\x01\n" +
 	"\x10InterfaceFinding\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x124\n" +
 	"\x06change\x18\x02 \x01(\x0e2\x1c.orkstack.v1.InterfaceChangeR\x06change\x127\n" +
@@ -2863,7 +2889,7 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x12ValidationSeverity\x12#\n" +
 	"\x1fVALIDATION_SEVERITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19VALIDATION_SEVERITY_ERROR\x10\x01\x12\x1f\n" +
-	"\x1bVALIDATION_SEVERITY_WARNING\x10\x02*\xca\x01\n" +
+	"\x1bVALIDATION_SEVERITY_WARNING\x10\x02*\xe3\x01\n" +
 	"\vPlanOutcome\x12\x1c\n" +
 	"\x18PLAN_OUTCOME_UNSPECIFIED\x10\x00\x12\x15\n" +
 	"\x11PLAN_OUTCOME_RUNS\x10\x01\x12\x18\n" +
@@ -2871,7 +2897,8 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x12PLAN_OUTCOME_FAILS\x10\x03\x12\x1a\n" +
 	"\x16PLAN_OUTCOME_UNREACHED\x10\x04\x12\x17\n" +
 	"\x13PLAN_OUTCOME_AWAITS\x10\x05\x12\x1f\n" +
-	"\x1bPLAN_OUTCOME_ASSUMED_FAILED\x10\x06*\x96\x01\n" +
+	"\x1bPLAN_OUTCOME_ASSUMED_FAILED\x10\x06\x12\x17\n" +
+	"\x13PLAN_OUTCOME_SLEEPS\x10\a*\x96\x01\n" +
 	"\x10InterfaceVerdict\x12!\n" +
 	"\x1dINTERFACE_VERDICT_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cINTERFACE_VERDICT_COMPATIBLE\x10\x01\x12\x1e\n" +
@@ -2971,6 +2998,7 @@ var file_orkstack_v1_orkflow_service_proto_goTypes = []any{
 	(*OrkflowRef)(nil),                       // 41: orkstack.v1.OrkflowRef
 	(*CacheSpec)(nil),                        // 42: orkstack.v1.CacheSpec
 	(JoinPolicy)(0),                          // 43: orkstack.v1.JoinPolicy
+	(*SleepSpec)(nil),                        // 44: orkstack.v1.SleepSpec
 }
 var file_orkstack_v1_orkflow_service_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ValidationIssue.severity:type_name -> orkstack.v1.ValidationSeverity
@@ -2994,44 +3022,45 @@ var file_orkstack_v1_orkflow_service_proto_depIdxs = []int32{
 	41, // 18: orkstack.v1.PlanTask.orkflow:type_name -> orkstack.v1.OrkflowRef
 	42, // 19: orkstack.v1.PlanTask.cache:type_name -> orkstack.v1.CacheSpec
 	43, // 20: orkstack.v1.PlanTask.join:type_name -> orkstack.v1.JoinPolicy
-	37, // 21: orkstack.v1.PlanRunResponse.input:type_name -> orkstack.v1.Payload
-	22, // 22: orkstack.v1.PlanRunResponse.tasks:type_name -> orkstack.v1.PlanTask
-	23, // 23: orkstack.v1.PlanRunResponse.waves:type_name -> orkstack.v1.PlanWave
-	3,  // 24: orkstack.v1.InterfaceFinding.change:type_name -> orkstack.v1.InterfaceChange
-	2,  // 25: orkstack.v1.InterfaceFinding.verdict:type_name -> orkstack.v1.InterfaceVerdict
-	25, // 26: orkstack.v1.CompareInterfacesResponse.findings:type_name -> orkstack.v1.InterfaceFinding
-	2,  // 27: orkstack.v1.CompareInterfacesResponse.verdict:type_name -> orkstack.v1.InterfaceVerdict
-	4,  // 28: orkstack.v1.OrkflowCaller.kind:type_name -> orkstack.v1.OrkflowCallerKind
-	28, // 29: orkstack.v1.ListOrkflowCallersResponse.callers:type_name -> orkstack.v1.OrkflowCaller
-	36, // 30: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
-	37, // 31: orkstack.v1.PlanRunRequest.AssumedOutputsEntry.value:type_name -> orkstack.v1.Payload
-	7,  // 32: orkstack.v1.OrkflowService.ValidateOrkflow:input_type -> orkstack.v1.ValidateOrkflowRequest
-	5,  // 33: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
-	10, // 34: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
-	12, // 35: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
-	15, // 36: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
-	17, // 37: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
-	19, // 38: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
-	31, // 39: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
-	21, // 40: orkstack.v1.OrkflowService.PlanRun:input_type -> orkstack.v1.PlanRunRequest
-	26, // 41: orkstack.v1.OrkflowService.CompareInterfaces:input_type -> orkstack.v1.CompareInterfacesRequest
-	29, // 42: orkstack.v1.OrkflowService.ListOrkflowCallers:input_type -> orkstack.v1.ListOrkflowCallersRequest
-	8,  // 43: orkstack.v1.OrkflowService.ValidateOrkflow:output_type -> orkstack.v1.ValidateOrkflowResponse
-	9,  // 44: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
-	11, // 45: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
-	13, // 46: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
-	16, // 47: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
-	18, // 48: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
-	20, // 49: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
-	32, // 50: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
-	24, // 51: orkstack.v1.OrkflowService.PlanRun:output_type -> orkstack.v1.PlanRunResponse
-	27, // 52: orkstack.v1.OrkflowService.CompareInterfaces:output_type -> orkstack.v1.CompareInterfacesResponse
-	30, // 53: orkstack.v1.OrkflowService.ListOrkflowCallers:output_type -> orkstack.v1.ListOrkflowCallersResponse
-	43, // [43:54] is the sub-list for method output_type
-	32, // [32:43] is the sub-list for method input_type
-	32, // [32:32] is the sub-list for extension type_name
-	32, // [32:32] is the sub-list for extension extendee
-	0,  // [0:32] is the sub-list for field type_name
+	44, // 21: orkstack.v1.PlanTask.sleep:type_name -> orkstack.v1.SleepSpec
+	37, // 22: orkstack.v1.PlanRunResponse.input:type_name -> orkstack.v1.Payload
+	22, // 23: orkstack.v1.PlanRunResponse.tasks:type_name -> orkstack.v1.PlanTask
+	23, // 24: orkstack.v1.PlanRunResponse.waves:type_name -> orkstack.v1.PlanWave
+	3,  // 25: orkstack.v1.InterfaceFinding.change:type_name -> orkstack.v1.InterfaceChange
+	2,  // 26: orkstack.v1.InterfaceFinding.verdict:type_name -> orkstack.v1.InterfaceVerdict
+	25, // 27: orkstack.v1.CompareInterfacesResponse.findings:type_name -> orkstack.v1.InterfaceFinding
+	2,  // 28: orkstack.v1.CompareInterfacesResponse.verdict:type_name -> orkstack.v1.InterfaceVerdict
+	4,  // 29: orkstack.v1.OrkflowCaller.kind:type_name -> orkstack.v1.OrkflowCallerKind
+	28, // 30: orkstack.v1.ListOrkflowCallersResponse.callers:type_name -> orkstack.v1.OrkflowCaller
+	36, // 31: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
+	37, // 32: orkstack.v1.PlanRunRequest.AssumedOutputsEntry.value:type_name -> orkstack.v1.Payload
+	7,  // 33: orkstack.v1.OrkflowService.ValidateOrkflow:input_type -> orkstack.v1.ValidateOrkflowRequest
+	5,  // 34: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
+	10, // 35: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
+	12, // 36: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
+	15, // 37: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
+	17, // 38: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
+	19, // 39: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
+	31, // 40: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
+	21, // 41: orkstack.v1.OrkflowService.PlanRun:input_type -> orkstack.v1.PlanRunRequest
+	26, // 42: orkstack.v1.OrkflowService.CompareInterfaces:input_type -> orkstack.v1.CompareInterfacesRequest
+	29, // 43: orkstack.v1.OrkflowService.ListOrkflowCallers:input_type -> orkstack.v1.ListOrkflowCallersRequest
+	8,  // 44: orkstack.v1.OrkflowService.ValidateOrkflow:output_type -> orkstack.v1.ValidateOrkflowResponse
+	9,  // 45: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
+	11, // 46: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
+	13, // 47: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
+	16, // 48: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
+	18, // 49: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
+	20, // 50: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
+	32, // 51: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
+	24, // 52: orkstack.v1.OrkflowService.PlanRun:output_type -> orkstack.v1.PlanRunResponse
+	27, // 53: orkstack.v1.OrkflowService.CompareInterfaces:output_type -> orkstack.v1.CompareInterfacesResponse
+	30, // 54: orkstack.v1.OrkflowService.ListOrkflowCallers:output_type -> orkstack.v1.ListOrkflowCallersResponse
+	44, // [44:55] is the sub-list for method output_type
+	33, // [33:44] is the sub-list for method input_type
+	33, // [33:33] is the sub-list for extension type_name
+	33, // [33:33] is the sub-list for extension extendee
+	0,  // [0:33] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_orkflow_service_proto_init() }

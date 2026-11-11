@@ -13,6 +13,8 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The durable store is the production implementation of the engine's contract.
@@ -45,9 +47,7 @@ func TestMemoryOrkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	got, err := store.Get(ctx, "", "hello-ork", "0.1.0")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
+	must.OKf(t, err, "Get")
 	if got.GetName() != "hello-ork" || got.GetVersion() != "0.1.0" {
 		t.Fatalf("Get = %s@%s, want hello-ork@0.1.0", got.GetName(), got.GetVersion())
 	}
@@ -55,9 +55,7 @@ func TestMemoryOrkflowStore_ReadsBackWhatWasApplied(t *testing.T) {
 	// The store hands out copies: a caller mutating a result cannot corrupt it.
 	got.Tasks[0].Id = "mutated"
 	again, err := store.Get(ctx, "", "hello-ork", "0.1.0")
-	if err != nil {
-		t.Fatalf("Get: %v", err)
-	}
+	must.OKf(t, err, "Get")
 	if again.GetTasks()[0].GetId() != "fetch" {
 		t.Error("a mutation of a returned orkflow reached the store")
 	}
@@ -76,18 +74,14 @@ func TestMemoryOrkflowStore_EmptyVersionIsTheMostRecentlyApplied(t *testing.T) {
 	}
 
 	latest, err := store.Get(ctx, "", "hello-ork", "")
-	if err != nil {
-		t.Fatalf("Get(latest): %v", err)
-	}
+	must.OKf(t, err, "Get(latest)")
 	if latest.GetVersion() != "0.1.0" {
 		t.Errorf("latest = %q, want 0.1.0 (applied last)", latest.GetVersion())
 	}
 
 	// The earlier version is still addressable: versions are independent.
 	pinned, err := store.Get(ctx, "", "hello-ork", "0.2.0")
-	if err != nil {
-		t.Fatalf("Get(0.2.0): %v", err)
-	}
+	must.OKf(t, err, "Get(0.2.0)")
 	if pinned.GetVersion() != "0.2.0" {
 		t.Errorf("pinned = %q, want 0.2.0", pinned.GetVersion())
 	}
@@ -109,9 +103,7 @@ func TestMemoryOrkflowStore_ListsTheLatestVersionOfEveryOrkflowByName(t *testing
 	}
 
 	listed, err := store.List(ctx, "")
-	if err != nil {
-		t.Fatalf("List: %v", err)
-	}
+	must.OKf(t, err, "List")
 	if len(listed) != 2 {
 		t.Fatalf("List returned %d orkflows, want 2", len(listed))
 	}
@@ -181,17 +173,13 @@ func TestMemoryOrkflowStore_TwoNamespacesHoldTheSameNameIndependently(t *testing
 		{"shipping", "2.0.0", "pack"},
 	} {
 		got, err := store.Get(ctx, tc.namespace, "deploy", "")
-		if err != nil {
-			t.Fatalf("Get(%s/deploy): %v", tc.namespace, err)
-		}
+		must.OKf(t, err, "Get(%s/deploy)", tc.namespace)
 		if got.GetVersion() != tc.version || got.GetTasks()[0].GetId() != tc.task {
 			t.Errorf("%s/deploy = %s task %q, want %s task %q",
 				tc.namespace, got.GetVersion(), got.GetTasks()[0].GetId(), tc.version, tc.task)
 		}
 		listed, err := store.List(ctx, tc.namespace)
-		if err != nil {
-			t.Fatalf("List(%s): %v", tc.namespace, err)
-		}
+		must.OKf(t, err, "List(%s)", tc.namespace)
 		if len(listed) != 1 || listed[0].GetVersion() != tc.version {
 			t.Errorf("List(%s) = %v, want only %s", tc.namespace, listed, tc.version)
 		}
@@ -217,9 +205,7 @@ func TestMemoryOrkflowStore_AnUnnamedNamespaceIsTheDefaultOne(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	got, err := store.Get(ctx, artifacts.DefaultNamespace, "hello-ork", "0.1.0")
-	if err != nil {
-		t.Fatalf("Get(default/hello-ork): %v", err)
-	}
+	must.OKf(t, err, "Get(default/hello-ork)")
 	// The stored document names the namespace it lives in, so a reader never
 	// has to reconstruct it from the key it read.
 	if got.GetNamespace() != artifacts.DefaultNamespace {
@@ -267,9 +253,7 @@ func TestMemoryOrkflowStore_AnApplyCommitsAgainstTheHeadItNamed(t *testing.T) {
 		t.Fatalf("Put naming the head that is there = created %v, %v; want created", created, err)
 	}
 	versions, err := store.Versions(ctx, "", "hello-ork")
-	if err != nil {
-		t.Fatalf("Versions: %v", err)
-	}
+	must.OKf(t, err, "Versions")
 	if versions.Head != "0.9.0" || len(versions.All) != 3 {
 		t.Errorf("after the retargeted apply the store holds %d versions with head %q, "+
 			"want 3 and 0.9.0", len(versions.All), versions.Head)
@@ -293,9 +277,7 @@ func TestMemoryOrkflowStore_DeleteRemovesEveryVersionAndPointerOnlyInTheSelected
 		t.Fatalf("SetCurrentVersion: %v", err)
 	}
 
-	if err := store.Delete(ctx, "", "deploy"); err != nil {
-		t.Fatalf("Delete(default/deploy): %v", err)
-	}
+	must.OKf(t, store.Delete(ctx, "", "deploy"), "Delete(default/deploy)")
 	for _, version := range []string{"", "1.0.0", "2.0.0"} {
 		if _, err := store.Get(ctx, "default", "deploy", version); !errors.Is(err, artifacts.ErrNotFound) {
 			t.Errorf("Get(default/deploy@%q) after delete = %v, want ErrNotFound", version, err)
@@ -306,9 +288,7 @@ func TestMemoryOrkflowStore_DeleteRemovesEveryVersionAndPointerOnlyInTheSelected
 		t.Errorf("List(default) after delete = %v, %v; want empty", listed, err)
 	}
 	versions, err := store.Versions(ctx, "default", "deploy")
-	if err != nil {
-		t.Fatalf("Versions(default/deploy): %v", err)
-	}
+	must.OKf(t, err, "Versions(default/deploy)")
 	if len(versions.All) != 0 || versions.Current != "" || versions.Head != "" {
 		t.Errorf("Versions after delete = %+v, want no versions, current, or head", versions)
 	}

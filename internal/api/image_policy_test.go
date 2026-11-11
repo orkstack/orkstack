@@ -22,6 +22,8 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/cosigntest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // memImagePolicies is an in-memory ImagePolicyStore that refuses exactly what
@@ -155,9 +157,7 @@ type policyOptions struct {
 func newPolicyFixture(t *testing.T, opts policyOptions, namespaces ...*orkstackv1.Namespace) *policyFixture {
 	t.Helper()
 	key, err := cosigntest.GenerateKey()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	f := &policyFixture{
 		orkflows: engine.NewMemoryOrkflowStore(),
 		policies: &memImagePolicies{},
@@ -200,9 +200,7 @@ func (f *policyFixture) validate(t *testing.T, yaml, namespace string) *orkstack
 	t.Helper()
 	resp, err := f.svc.ValidateOrkflow(context.Background(), connect.NewRequest(
 		&orkstackv1.ValidateOrkflowRequest{Yaml: yaml, Namespace: namespace}))
-	if err != nil {
-		t.Fatalf("ValidateOrkflow: %v", err)
-	}
+	must.OKf(t, err, "ValidateOrkflow")
 	return resp.Msg
 }
 
@@ -225,9 +223,7 @@ func (f *policyFixture) submit(name, namespace, key string, allowEmpty bool) (*o
 func (f *policyFixture) stored(t *testing.T, namespace string) int {
 	t.Helper()
 	list, err := f.orkflows.List(context.Background(), namespace)
-	if err != nil {
-		t.Fatalf("list orkflows: %v", err)
-	}
+	must.OKf(t, err, "list orkflows")
 	return len(list)
 }
 
@@ -266,9 +262,7 @@ const alpineRefusal = `task "migrate": image "docker.io/library/alpine:3.20" res
 func TestGetImagePolicy_AnsweresTheEmptyPolicyWhenNoneIsStored(t *testing.T) {
 	f := newPolicyFixture(t, policyOptions{})
 	resp, err := f.svc.GetImagePolicy(context.Background(), connect.NewRequest(&orkstackv1.GetImagePolicyRequest{}))
-	if err != nil {
-		t.Fatalf("GetImagePolicy: %v", err)
-	}
+	must.OKf(t, err, "GetImagePolicy")
 	p := resp.Msg.GetPolicy()
 	if p == nil || p.GetUpdatedAt() != nil || p.GetRequireDigest() || len(p.GetAllowedRegistries()) != 0 || len(p.GetSigningKeys()) != 0 {
 		t.Fatalf("policy = %v, want the empty policy with updated_at unset", p)
@@ -291,9 +285,7 @@ func TestImagePolicy_WithNoStoreAnswersUnimplemented(t *testing.T) {
 	_, err = f.svc.UpdateImagePolicy(context.Background(), connect.NewRequest(&orkstackv1.UpdateImagePolicyRequest{}))
 	requirePolicyCode(t, err, connect.CodeUnimplemented, "no image policy store")
 	// The unit-test configuration treats the floor as empty.
-	if err := f.apply(orkflowUsing("x", "docker.io/library/alpine:3.20"), ""); err != nil {
-		t.Fatalf("apply with no store: %v", err)
-	}
+	must.OKf(t, f.apply(orkflowUsing("x", "docker.io/library/alpine:3.20"), ""), "apply with no store")
 }
 
 func TestUpdateImagePolicy_RefusesABadEntryBeforeAnyWrite(t *testing.T) {
@@ -355,9 +347,7 @@ func TestUpdateImagePolicy_WritesThroughAndStampsUpdatedAt(t *testing.T) {
 			UpdatedAt:         timestamppb.New(time.Unix(1, 0)),
 		},
 	}))
-	if err != nil {
-		t.Fatalf("UpdateImagePolicy: %v", err)
-	}
+	must.OKf(t, err, "UpdateImagePolicy")
 	if resp.Msg.GetPolicy().GetUpdatedAt().AsTime().Equal(time.Unix(1, 0)) {
 		t.Fatal("the caller's updated_at was kept; the store stamps it")
 	}
@@ -436,9 +426,7 @@ func (f *policyFixture) signerNamespace(t *testing.T, name, key string) {
 func (f *policyFixture) imageOf(t *testing.T) *orkstackv1.ImageRef {
 	t.Helper()
 	image, err := (&stampResolver{}).Resolve(context.Background(), "", f.double.Host+"/acme/migrate:v3")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return image
 }
 
@@ -446,9 +434,7 @@ func (f *policyFixture) signImage(t *testing.T) {
 	t.Helper()
 	image := f.imageOf(t)
 	layer, err := f.key.SignatureLayer(image.GetIndexDigest(), image.GetRegistry()+"/"+image.GetRepository())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	f.double.Sign(image.GetRepository(), image.GetIndexDigest(), layer)
 }
 
@@ -473,9 +459,7 @@ func TestApplyOrkflow_VerifiesEachDistinctImageOnce(t *testing.T) {
 	f := newPolicyFixture(t, policyOptions{})
 	f.signerNamespace(t, "prod", "release")
 	f.signImage(t)
-	if err := f.apply(signedDocument(f.double.Host), "prod"); err != nil {
-		t.Fatalf("apply of a signed image: %v", err)
-	}
+	must.OKf(t, f.apply(signedDocument(f.double.Host), "prod"), "apply of a signed image")
 	if n := f.double.CountSuffix(".sig"); n != 1 {
 		t.Fatalf("three tasks of one image made %d .sig GETs, want 1 (requests %v)", n, f.double.Requests())
 	}
@@ -504,9 +488,7 @@ func TestApplyOrkflow_ASignerWithNoVerifierIsFailedPrecondition(t *testing.T) {
 
 func TestSubmitRun_RefusesAStoredDefinitionThePolicyNowForbids(t *testing.T) {
 	f := newPolicyFixture(t, policyOptions{})
-	if err := f.apply(orkflowUsing("deploy", "docker.io/library/alpine:3.20"), ""); err != nil {
-		t.Fatalf("apply under the empty policy: %v", err)
-	}
+	must.OKf(t, f.apply(orkflowUsing("deploy", "docker.io/library/alpine:3.20"), ""), "apply under the empty policy")
 	// The floor tightens on another replica over the same store.
 	f.floor(t, &orkstackv1.ImagePolicy{AllowedRegistries: []string{"ghcr.io/"}})
 	replicaB := f.service(policyOptions{})
@@ -522,9 +504,7 @@ func TestSubmitRun_RefusesAStoredDefinitionThePolicyNowForbids(t *testing.T) {
 	resp, err := replicaB.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
 		OrkflowName: "deploy", IdempotencyKey: "nightly",
 	}))
-	if err != nil {
-		t.Fatalf("submit after widening: %v", err)
-	}
+	must.OKf(t, err, "submit after widening")
 	if started := f.starter.startedRuns(); len(started) != 1 || started[0] != resp.Msg.GetRun().GetId() {
 		t.Fatalf("started %v, want exactly the fresh run %s", started, resp.Msg.GetRun().GetId())
 	}
@@ -532,9 +512,7 @@ func TestSubmitRun_RefusesAStoredDefinitionThePolicyNowForbids(t *testing.T) {
 
 func TestSubmitRun_AllowEmptyPoolDoesNotBypassThePolicy(t *testing.T) {
 	f := newPolicyFixture(t, policyOptions{})
-	if err := f.apply(orkflowUsing("deploy", "docker.io/library/alpine:3.20"), ""); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, f.apply(orkflowUsing("deploy", "docker.io/library/alpine:3.20"), ""))
 	f.floor(t, &orkstackv1.ImagePolicy{AllowedRegistries: []string{"ghcr.io/"}})
 	_, err := f.submit("deploy", "", "", true)
 	requirePolicyCode(t, err, connect.CodeFailedPrecondition, alpineRefusal)
@@ -560,17 +538,13 @@ func TestSubmitRun_PinsTheSelectionAndTheKeyOnThePlan(t *testing.T) {
 		SigningKeys:       map[string]string{"release": f.key.PublicPEM},
 	}
 	f.floor(t, policy)
-	if err := f.apply(signedDocument(f.double.Host), "prod"); err != nil {
-		t.Fatalf("apply: %v", err)
-	}
+	must.OKf(t, f.apply(signedDocument(f.double.Host), "prod"), "apply")
 	if _, err := f.submit("deploy", "prod", "", false); err != nil {
 		t.Fatalf("submit: %v", err)
 	}
 	ns, _ := f.reg.Get(context.Background(), "prod")
 	want, err := task.Selection(policy, ns)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	got := f.lastPlan(t).ImagePolicy.Proto()
 	if !proto.Equal(got, want) || got.GetSigningKeyPem() != f.key.PublicPEM {
 		t.Fatalf("plan selection = %v, want %v (PEM included)", got, want)
@@ -597,13 +571,9 @@ func (f *policyFixture) lastPlan(t *testing.T) engine.RunPlan {
 
 func TestSubmitRun_AnAcceptedRunIsNotRevisitedWhenThePolicyTightens(t *testing.T) {
 	f := newPolicyFixture(t, policyOptions{})
-	if err := f.apply(orkflowUsing("deploy", "docker.io/library/alpine:3.20"), ""); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, f.apply(orkflowUsing("deploy", "docker.io/library/alpine:3.20"), ""))
 	accepted, err := f.submit("deploy", "", "", false)
-	if err != nil {
-		t.Fatalf("submit under the empty policy: %v", err)
-	}
+	must.OKf(t, err, "submit under the empty policy")
 	f.floor(t, &orkstackv1.ImagePolicy{RequireDigest: true, AllowedRegistries: []string{"ghcr.io/"}})
 	// The accepted run is untouched: nothing cancelled, its plan still empty.
 	if canceled := f.starter.canceled; len(canceled) != 0 {
@@ -655,9 +625,7 @@ func TestUpdateNamespace_ChecksTheKeyOnlyWhenTheSignerChanges(t *testing.T) {
 	edited := proto.Clone(stored).(*orkstackv1.Namespace)
 	edited.Description = "payments"
 	updated, err := f.svc.UpdateNamespace(context.Background(), connect.NewRequest(&orkstackv1.UpdateNamespaceRequest{Namespace: edited}))
-	if err != nil {
-		t.Fatalf("an unchanged stale signer was refused: %v", err)
-	}
+	must.OKf(t, err, "an unchanged stale signer was refused")
 	if !strings.Contains(f.logs.String(), "require_signed_by key this deployment no longer holds") {
 		t.Fatalf("no warning logged: %s", f.logs.String())
 	}

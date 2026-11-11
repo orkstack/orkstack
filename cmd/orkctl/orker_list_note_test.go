@@ -8,6 +8,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestOrkerList_SaysAStoppedOrkerStaysListed: after a restart under another id
@@ -34,9 +36,7 @@ func TestOrkerList_SaysAStoppedOrkerStaysListed(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			var out bytes.Buffer
-			if err := renderOrkerList(&out, tt.rows); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, renderOrkerList(&out, tt.rows))
 			if got := strings.Contains(out.String(), stoppedOrkerNote); got != tt.want {
 				t.Errorf("note printed = %v, want %v:\n%s", got, tt.want, out.String())
 			}

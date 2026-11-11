@@ -1,7 +1,7 @@
 package dsl
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +10,10 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/stablejson"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The Orkflow schema's tables, held to the compiler and to docs/DSL.md
@@ -19,10 +23,8 @@ import (
 func orkflowSchemaTree(t *testing.T) map[string]any {
 	t.Helper()
 	tree, err := OrkflowSchema(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	encoded, err := json.Marshal(tree)
+	must.OK(t, err)
+	encoded, err := stablejson.Marshal(tree)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -152,6 +154,10 @@ func awaitDoc(await string) string {
 	return slotHeader + "name: x\ntasks:\n  - id: a\n    await: " + await + "\n"
 }
 
+func sleepDoc(sleep string) string {
+	return slotHeader + "name: x\ntasks:\n  - id: a\n    sleep: " + sleep + "\n"
+}
+
 // slots are the contexts of every key the type test covers.
 func slots() map[string]slot {
 	rootDoc := func(key, rest string) slot {
@@ -185,7 +191,7 @@ func slots() map[string]slot {
 	for key, baseline := range map[string]string{
 		"apiVersion": "orkstack/v1", "kind": "Orkflow", "name": "x", "namespace": "ns", "version": `"1"`,
 		"description": "d", "labels": "{l: v}", "inputs": "{i: {type: string}}", "outputs": "{r: x}",
-		"pins": "{p: {}}", "tasks": "[{id: a, uses: 'busybox:1'}]",
+		"pins": "{p: {}}", "tasks": "[{id: a, uses: 'busybox:1'}]", "shared_with": "[{namespace: b}]",
 	} {
 		s := rootDoc(key, "")
 		s.baseline = baseline
@@ -197,6 +203,11 @@ func slots() map[string]slot {
 	out["pins.*.timeout_seconds"] = slot{doc: slotHeader + "name: x\npins: {p: {timeout_seconds: @V@}}\ntasks: [{id: a, uses: 'busybox:1', pin: p}]\n",
 		field: "pins.p.timeout_seconds", baseline: "60", absent: slotHeader + "name: x\npins: {p: {}}\ntasks: [{id: a, uses: 'busybox:1', pin: p}]\n"}
 	out["tasks[]"] = slot{doc: slotHeader + "name: x\ntasks: [@V@]\n", field: "tasks[0]", baseline: "{id: a, uses: 'busybox:1'}"}
+	out["shared_with[]"] = slot{doc: slotHeader + "name: x\nshared_with: [@V@]\ntasks: [{id: a, uses: 'busybox:1'}]\n", field: "shared_with[0]", baseline: "{namespace: b}"}
+	for key, baseline := range map[string]string{"namespace": "b", "orkflow": "b/c"} {
+		out["shared_with[]."+key] = slot{doc: slotHeader + "name: x\nshared_with: [{" + key + ": @V@}]\ntasks: [{id: a, uses: 'busybox:1'}]\n",
+			field: "shared_with[0]." + key, baseline: baseline}
+	}
 	out["inputs.*"] = slot{doc: slotHeader + "name: x\ninputs: {i: @V@}\ntasks: [{id: a, uses: 'busybox:1'}]\n", field: "inputs.i", baseline: "{type: string}"}
 	for key, baseline := range map[string]string{"type": "string", "required": "true", "default": "x"} {
 		out["inputs.*."+key] = slot{doc: slotHeader + "name: x\ninputs: {i: {" + key + ": @V@}}\ntasks: [{id: a, uses: 'busybox:1'}]\n",
@@ -222,6 +233,9 @@ func slots() map[string]slot {
 	out["tasks[].each"] = slot{doc: taskDocWith("inputs: {l: {type: array}}\n", "    each: @V@\n"), field: "tasks[0].each",
 		baseline: "{over: '{{ .inputs.l }}', max_items: 2}", absent: taskDocWith("inputs: {l: {type: array}}\n", "")}
 	out["tasks[].await"] = slot{doc: awaitDoc("@V@"), field: "tasks[0].await", baseline: "{timeout_seconds: 60}"}
+	out["tasks[].sleep"] = slot{doc: sleepDoc("@V@"), field: "tasks[0].sleep", baseline: "{seconds: 60}"}
+	out["tasks[].sleep.seconds"] = slot{doc: sleepDoc("{seconds: @V@}"), field: "tasks[0].sleep.seconds", baseline: "60",
+		absent: sleepDoc("{}")}
 	out["tasks[].needs[]"] = slot{doc: taskDoc("    needs: [@V@]\n"), field: "tasks[0].needs[0]", baseline: "b"}
 	out["tasks[].command[]"] = slot{doc: taskDoc("    command: [@V@]\n"), field: "tasks[0].command[0]", baseline: "x"}
 	out["tasks[].env.*"] = slot{doc: taskDoc("    env: {A: @V@}\n"), field: "tasks[0].env.A", baseline: "b"}
@@ -325,8 +339,6 @@ func deliberateClass(path string, schema map[string]any, value probeValue) strin
 		return "N"
 	case path == "version" && (value.text == "1" || value.text == "true" || value.text == "1.5"):
 		return "V"
-	case schema["type"] == "integer" && value.text == "1.5":
-		return "I"
 	case schema["type"] == "boolean" && value.text == "yes":
 		return "B"
 	}
@@ -345,7 +357,7 @@ func refusedOn(err error, field string, line int) bool {
 }
 
 // TestOrkflowSchema_TypesAgreeWithTheCompiler: the schema never refuses a
-// document the compiler accepts, except in the deliberate classes V, N, I, B
+// document the compiler accepts, except in the deliberate classes V, N, B
 // and D — and each class excuses at least one pair the compiler accepted, so
 // a class goes stale when the compiler tightens.
 func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
@@ -397,7 +409,7 @@ func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
 			t.Errorf("%s: the schema excludes none of the probe values; the key is untyped", path)
 		}
 	}
-	for _, class := range []string{"V", "N", "I", "B", "D"} {
+	for _, class := range []string{"V", "N", "B", "D"} {
 		if excused[class] == 0 {
 			t.Errorf("class %s excuses nothing the compiler accepts: the compiler tightened, so delete the class", class)
 		}
@@ -430,8 +442,11 @@ func TestOrkflowSchema_RequiredKeysAreRequiredByTheCompiler(t *testing.T) {
 		}
 	}
 	task := tree["definitions"].(map[string]any)["orkflow.task"].(map[string]any)
-	if got := task["else"].(map[string]any)["required"]; !reflect.DeepEqual(got, []any{"uses"}) {
-		t.Errorf("a task that is not awaited requires %v, want uses", got)
+	if got := task["else"].(map[string]any)["if"].(map[string]any)["required"]; !reflect.DeepEqual(got, []any{"sleep"}) {
+		t.Errorf("the second task kind is told by %v, want sleep", got)
+	}
+	if got := task["else"].(map[string]any)["else"].(map[string]any)["required"]; !reflect.DeepEqual(got, []any{"uses"}) {
+		t.Errorf("a task that is neither awaited nor sleeping requires %v, want uses", got)
 	}
 }
 
@@ -512,6 +527,10 @@ func TestOrkflowSchema_TaskKindsComeFromTheRefusalTables(t *testing.T) {
 	if got := keys(task["then"].(map[string]any)); !reflect.DeepEqual(got, sorted(awaitForbiddenKeys())) {
 		t.Errorf("an awaited task forbids %v, want %v", got, sorted(awaitForbiddenKeys()))
 	}
+	sleeping := task["else"].(map[string]any)
+	if got := keys(sleeping["then"].(map[string]any)); !reflect.DeepEqual(got, sorted(sleepForbiddenKeys())) {
+		t.Errorf("a sleeping task forbids %v, want %v", got, sorted(sleepForbiddenKeys()))
+	}
 	composed := task["allOf"].([]any)[0].(map[string]any)
 	if got := keys(composed["then"].(map[string]any)); !reflect.DeepEqual(got, sorted(composeForbiddenKeys())) {
 		t.Errorf("a composed task forbids %v, want %v", got, sorted(composeForbiddenKeys()))
@@ -526,9 +545,7 @@ func normalizedDoc(text string) string {
 
 func TestOrkflowSchema_DescriptionsAreDSLText(t *testing.T) {
 	raw, err := os.ReadFile("../../docs/DSL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	doc := normalizedDoc(string(raw))
 	for path, text := range orkflowDescriptions {
 		if !strings.Contains(doc, normalizedDoc(text)) {

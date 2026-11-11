@@ -14,6 +14,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestLivePollerRecords_KeepsIdentitiesAndTheirNewestLastSeen(t *testing.T) {
@@ -74,9 +76,7 @@ func TestQueueForOrker_IsTheOnlyChannelTemporalStarterUses(t *testing.T) {
 	s := NewTemporalStarter(c, "")
 	var fleet OrkerFleet = s
 	control, err := task.QueueForOrker("orker-7f3a")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	ctx := context.Background()
 	if _, err := fleet.DescribeOrkerByID(ctx, "orker-7f3a"); err != nil {
 		t.Fatal(err)
@@ -143,9 +143,7 @@ func TestOrkersQueue_CarriesNoDispatch(t *testing.T) {
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 	}
 	if checked == 0 {
 		t.Fatal("grepped nothing")

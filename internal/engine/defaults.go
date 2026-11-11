@@ -27,7 +27,7 @@ const DefaultEachMaxItems int32 = 1000
 // it. Tasks that start together share one history, which must also hold
 // what its failure path would append for every task not yet started:
 // ShapeMaxTasks is the closed-form bound on such a stage for the configured
-// settings (4,222 at the defaults), and the boot warns above it too. With
+// settings (4,389 at the defaults), and the boot warns above it too. With
 // continuation off a run has one history, and cmd/ork defaults the ceiling
 // to at most history.max_events / UncontinuedEventsPerTask.
 const DefaultOrkflowMaxTasks int32 = 4000

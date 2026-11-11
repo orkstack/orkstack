@@ -1,7 +1,6 @@
 package automation
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +9,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -117,7 +117,7 @@ func TestParse_AnOrkflowIsNotAnAutomationDocument(t *testing.T) {
 		t.Fatal("an Orkflow was parsed as an automation document")
 	}
 	if len(issues) != 1 || issues[0].GetField() != "kind" ||
-		issues[0].GetMessage() != "line 2: kind: Orkflow is an Orkflow, not an automation document: apply it with orkctl apply or the Apply page" {
+		issues[0].GetMessage() != "line 2: kind: Orkflow is an Orkflow, not an automation document: create it with orkctl orkflow create or the Create Orkflow page" {
 		t.Fatalf("issues = %v", issues)
 	}
 }
@@ -282,7 +282,7 @@ func TestParse_InputIsAYAMLMapping(t *testing.T) {
 		"flow":  " {num: 1, b: true, s: full, l: [1, x], m: {k: v}}",
 	} {
 		doc := mustParse(t, scheduleWithInput(input))
-		got, err := json.Marshal(doc.Schedules["s"].Input.GetData().AsMap())
+		got, err := stablejson.Marshal(doc.Schedules["s"].Input.GetData().AsMap())
 		if err != nil {
 			t.Fatal(err)
 		}

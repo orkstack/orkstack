@@ -10,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // yamlFenceOpen opens a fenced YAML block, at the margin or indented under a
@@ -112,9 +114,7 @@ func TestDocs_YAMLExamplesUseBlockStyle(t *testing.T) {
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 	}
 	files = append(files, filepath.Join(root, "deploy", "orkstack.example.yaml"), filepath.Join(root, "deploy", "orkstack.defaults.yaml"))
 
@@ -122,9 +122,7 @@ func TestDocs_YAMLExamplesUseBlockStyle(t *testing.T) {
 	fences, examples := 0, 0
 	for _, file := range files {
 		rel, err := filepath.Rel(root, file)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		rel = filepath.ToSlash(rel)
 		text := readFile(t, file)
 		if strings.HasSuffix(rel, ".md") {

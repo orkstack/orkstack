@@ -3,7 +3,6 @@ package engine_test
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -27,7 +26,10 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // lineLogger records every log line's message and key-value fields, for a
@@ -645,8 +647,7 @@ tasks:
     needs: [fast]
     with: {op: exec}
 `
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarnessCtx(t, nil, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetTaskId() == "slow" {
 			return runUntilCanceled(ctx, nil)
 		}
@@ -682,8 +683,7 @@ tasks:
 // while the run holds takes the run's fail path as always; a run never
 // switches from it.
 func TestContinuation_FailureDuringHoldTakesTheFailPath(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	h := newHarnessCtx(t, nil, func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		if in.GetEach().GetIndex() == 3 {
 			return nil, temporal.NewNonRetryableApplicationError("workload exited 1", "ActivityFailed", nil)
 		}
@@ -761,6 +761,38 @@ func TestContinuation_LogsHoldSwitchAndGiveUpOncePerDecision(t *testing.T) {
 	for msg, want := range map[string]int{logQuiesce: 1, logSwitched: switches, logRestored: switches, logGiveUp: 0} {
 		if got := logs.count(msg); got != want {
 			t.Fatalf("%q logged %d times, want %d", msg, got, want)
+		}
+	}
+}
+
+// TestContinuation_SwitchDueLogsTheReserveAndTheHoldLine: the switch-due
+// line carries the failure path's reserve and the hold line the hold
+// decision compares history plus reserve against, so a run that crosses its
+// budget and never holds can be read from its log (continuation chaos C6).
+func TestContinuation_SwitchDueLogsTheReserveAndTheHoldLine(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	logs := &lineLogger{}
+	suite.SetLogger(logs)
+	plan := holdPlan()
+	g := runGenerationsIn(t, &suite, "ork-logs-reserve", compile(t, spreadDocument), spreadInput(t, 8), plan, itemBehavior,
+		func(h *harness, generation int) {
+			if generation == 0 {
+				raiseHistoryAt(h, 2, 650)
+			}
+		})
+	generationsOK(t, g, 2)
+	lines := logs.only(logSwitchDue)
+	if len(lines) == 0 {
+		t.Fatal("no switch-due line was logged")
+	}
+	wantLine := plan.History.MaxEvents * plan.Continuation.HoldPercent / 100
+	for i, line := range lines {
+		if got, ok := line.field("hold_line_events").(int64); !ok || got != wantLine {
+			t.Fatalf("switch-due line %d: hold_line_events = %v, want %d", i, line.field("hold_line_events"), wantLine)
+		}
+		if got, ok := line.field("reserve_events").(int64); !ok || got < plan.History.Reserve.Fixed {
+			t.Fatalf("switch-due line %d: reserve_events = %v, want at least the reserve's fixed %d",
+				i, line.field("reserve_events"), plan.History.Reserve.Fixed)
 		}
 	}
 }
@@ -958,7 +990,15 @@ func (o *completionOrder) waitSucceeded(ctx context.Context, taskID string) erro
 	o.mu.Lock()
 	bus := o.bus
 	o.mu.Unlock()
-	events, cancel, _ := bus.Subscribe(o.runID, 0)
+	// Each generation's harness has a bus of its own, holding only that
+	// generation's events, and the bus hands a subscriber its events in
+	// order from the number it subscribes after: subscribing after the first
+	// number this bus holds, not after 0, is what a run's own process sees.
+	from := int64(0)
+	if held := bus.Events(o.runID, 0); len(held) > 0 {
+		from = held[0].GetSequence() - 1
+	}
+	events, cancel, _, _ := bus.Subscribe(o.runID, from)
 	defer cancel()
 	deadline := time.NewTimer(30 * time.Second)
 	defer deadline.Stop()
@@ -1003,9 +1043,7 @@ func comparableInputs(t *testing.T, inputs []*orkstackv1.ExecuteTaskInput) []str
 			in.Pin.InstanceId = ""
 		}
 		data, err := protojson.MarshalOptions{}.Marshal(in)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		out = append(out, fmt.Sprintf("%s#%d %s", in.GetTaskId(), in.GetEach().GetIndex(), compactJSON(data)))
 	}
 	slices.Sort(out)
@@ -1014,7 +1052,7 @@ func comparableInputs(t *testing.T, inputs []*orkstackv1.ExecuteTaskInput) []str
 
 func compactJSON(data []byte) string {
 	var buf bytes.Buffer
-	_ = json.Compact(&buf, data)
+	_ = stablejson.Compact(&buf, data)
 	return buf.String()
 }
 
@@ -1262,8 +1300,7 @@ func TestContinuation_HeldGenerationsReachTheSameOutcome(t *testing.T) {
 // cancellation has been recorded, and still sees the rows exactly as they
 // stood at the switch.
 func TestContinuation_SwitchWritesEncodeACopyACancelCannotChange(t *testing.T) {
-	var suite testsuite.WorkflowTestSuite
-	h := newHarnessCtx(t, &suite, okBehavior)
+	h := newHarnessCtx(t, nil, okBehavior)
 	canceledRecorded := make(chan struct{})
 	var recordedOnce, cancelOnce sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {

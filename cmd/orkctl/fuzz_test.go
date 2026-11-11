@@ -1,7 +1,7 @@
 package main
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"os/exec"
 	"reflect"
 	"strings"
@@ -13,6 +13,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // What the CLI sends is what the user typed. A copied command must reproduce
@@ -25,11 +27,12 @@ import (
 // string otherwise, and a pair wins over the same key in the object. Nothing
 // a shell can pass makes it panic, and an empty result is no payload.
 func FuzzBuildInputPayload(f *testing.F) {
-	for _, seed := range []string{``, `{}`, `{"a":1}`, `{"a":1,"b":{"c":[1,2]}}`, ` {"a":"x"} `, `null`, `[]`, `"x"`, `12`, `{`, `{"a":1}{"b":2}`, "{\"a\":\"\xff\"}", `{"a":1e999}`} {
+	for _, seed := range []string{``, `{}`, `{"a":1}`, `{"a":1,"b":{"c":[1,2]}}`, ` {"a":"x"} `, `null`, `[]`, `"x"`, `12`, `{`, `{"a":1}{"b":2}`, "{\"a\":\"\xff\"}", `{"a":1e999}`, `{"a":1,"a":2}`} {
 		f.Add(seed, "k=v", "n=1", "")
 		f.Add(seed, "a=2", "b={\"x\":1}", "z=")
 		f.Add(seed, "=v", "novalue", "k=true")
 		f.Add(seed, "t=\"s\"", "u=[1,", "w=null")
+		f.Add(seed, "d={\"x\":1,\"x\":2}", "e=[{\"y\":1,\"y\":1}]", "")
 	}
 	f.Fuzz(func(t *testing.T, inputJSON, p1, p2, p3 string) {
 		var pairs []string
@@ -84,9 +87,7 @@ func FuzzAgainInput(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, rawJSON, pair, sourceKey string) {
 		source, err := structpb.NewStruct(map[string]any{"a": 1.0, "b": "kept"})
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if sourceKey != "" && sourceKey != "a" && sourceKey != "b" {
 			source.Fields[sourceKey] = structpb.NewStringValue("s")
 		}
@@ -121,9 +122,7 @@ func FuzzShellQuote(f *testing.F) {
 		f.Add(seed)
 	}
 	shell, err := exec.LookPath("sh")
-	if err != nil {
-		f.Fatalf("shell quoting is proven against a real shell: %v", err)
-	}
+	must.OKf(f, err, "shell quoting is proven against a real shell")
 	f.Fuzz(func(t *testing.T, value string) {
 		if strings.IndexByte(value, 0) >= 0 {
 			return // a NUL byte cannot be part of a command line
@@ -400,9 +399,7 @@ func FuzzBuildAssumedOutputs(f *testing.F) {
 				t.Fatalf("buildAssumedOutputs(%q, %q) holds the task id %q, which is not text", pairs, file, id)
 			}
 			encoded, err := payload.GetData().MarshalJSON()
-			if err != nil {
-				t.Fatalf("the assumed output of %q does not encode: %v", id, err)
-			}
+			must.OKf(t, err, "the assumed output of %q does not encode", id)
 			if strings.Contains(string(encoded), string(utf8.RuneError)) && !spellsReplacement(pair) && !spellsReplacement(file) {
 				t.Fatalf("buildAssumedOutputs(%q, %q) put a replacement character in %s without the text spelling one", pairs, file, encoded)
 			}

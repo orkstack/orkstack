@@ -16,6 +16,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // runIDShape is the documented id shape, `ork-` and a UUIDv7 in base32.
@@ -106,9 +108,7 @@ func TestSubmitRun_DefaultRunIDHasTheDocumentedShape(t *testing.T) {
 	f := newRunIDFixture(t, &fakeStarter{}, nil)
 
 	run, err := f.submit(t, "")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	if id := run.GetId(); !runIDShape.MatchString(id) {
 		t.Fatalf("run id = %q, want a match for %s", id, runIDShape)
 	}
@@ -155,9 +155,7 @@ func TestSubmitRun_ReissuesARunIDAnotherReplicaOwns(t *testing.T) {
 	f := newRunIDFixture(t, starter, nil)
 
 	run, err := f.submit(t, "")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 
 	rejected, started := starter.attempts()
 	if len(rejected) != 1 || len(started) != 1 {
@@ -183,9 +181,7 @@ func TestSubmitRun_ReissuesARunIDAnotherReplicaOwns(t *testing.T) {
 	}
 	listed, err := f.svc.ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if got := len(listed.Msg.GetRuns()); got != 1 {
 		t.Errorf("ListRuns returned %d runs, want 1", got)
 	}
@@ -202,13 +198,9 @@ func TestSubmitRun_KeyedSubmissionFollowsTheReissuedRunID(t *testing.T) {
 	f := newRunIDFixture(t, starter, nil)
 
 	first, err := f.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	second, err := f.submit(t, "order-42")
-	if err != nil {
-		t.Fatalf("repeat SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "repeat SubmitRun")
 	if second.GetId() != first.GetId() {
 		t.Errorf("repeat submission returned %q, want the first run %q", second.GetId(), first.GetId())
 	}
@@ -244,9 +236,7 @@ func TestSubmitRun_FailsWhenTheReissuedRunIDIsAlsoTaken(t *testing.T) {
 	last := rejected[len(rejected)-1]
 	got, err := f.svc.GetRun(context.Background(),
 		connect.NewRequest(&orkstackv1.GetRunRequest{RunId: last}))
-	if err != nil {
-		t.Fatalf("GetRun(%q): %v", last, err)
-	}
+	must.OKf(t, err, "GetRun(%q)", last)
 	if status := got.Msg.GetRun().GetStatus(); status != orkstackv1.Status_STATUS_FAILED {
 		t.Errorf("run %q status = %v, want FAILED", last, status)
 	}
@@ -261,9 +251,7 @@ func TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath(t *testing.T) {
 	f := newRunIDFixture(t, &fakeStarter{}, archive)
 
 	run, err := f.submit(t, "")
-	if err != nil {
-		t.Fatalf("SubmitRun: %v", err)
-	}
+	must.OKf(t, err, "SubmitRun")
 	id := run.GetId()
 	if len(id) > 56 {
 		// pkg/artifacts/s3_manifest.go s3MaxComponent bounds one key segment
@@ -274,9 +262,7 @@ func TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath(t *testing.T) {
 
 	ctx := context.Background()
 	run.Status = orkstackv1.Status_STATUS_SUCCEEDED
-	if err := archive.Archive(ctx, run, f.bus.Events(id, 0)); err != nil {
-		t.Fatalf("Archive: %v", err)
-	}
+	must.OKf(t, archive.Archive(ctx, run, f.bus.Events(id, 0)), "Archive")
 
 	replica := api.NewService(api.Config{
 		Orkflows: engine.NewMemoryOrkflowStore(),
@@ -286,16 +272,12 @@ func TestSubmitRun_GeneratedRunIDSurvivesTheDurablePath(t *testing.T) {
 		Archive:  archive,
 	})
 	got, err := replica.GetRun(ctx, connect.NewRequest(&orkstackv1.GetRunRequest{RunId: id}))
-	if err != nil {
-		t.Fatalf("GetRun(%q) on a replica that never saw the run: %v", id, err)
-	}
+	must.OKf(t, err, "GetRun(%q) on a replica that never saw the run", id)
 	if got.Msg.GetRun().GetId() != id {
 		t.Errorf("archived run id = %q, want %q unchanged", got.Msg.GetRun().GetId(), id)
 	}
 	listed, err := replica.ListRuns(ctx, connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed.Msg.GetRuns()) != 1 || listed.Msg.GetRuns()[0].GetId() != id {
 		t.Errorf("ListRuns = %v, want exactly [%s]", listed.Msg.GetRuns(), id)
 	}
@@ -339,9 +321,7 @@ func TestListRuns_OrdersRunsByTimeNotByRunID(t *testing.T) {
 
 	listed, err := svc.ListRuns(context.Background(),
 		connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	got := make([]string, len(listed.Msg.GetRuns()))
 	for i, run := range listed.Msg.GetRuns() {
 		got[i] = run.GetId()
@@ -391,9 +371,7 @@ func TestRunIDs_OldAndNewShapesCoexist(t *testing.T) {
 	}
 
 	listed, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{}))
-	if err != nil {
-		t.Fatalf("ListRuns: %v", err)
-	}
+	must.OKf(t, err, "ListRuns")
 	if len(listed.Msg.GetRuns()) != len(ordered) {
 		t.Fatalf("ListRuns returned %d runs, want %d", len(listed.Msg.GetRuns()), len(ordered))
 	}

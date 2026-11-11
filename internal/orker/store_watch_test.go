@@ -11,6 +11,8 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // fakeStoreClock is the injected clock: it moves only when a test says so.
@@ -322,9 +324,7 @@ func TestDescribeOrker_ReportsEachCauseOnItsOwnFields(t *testing.T) {
 			activities.dispatcher.Runtime = nil
 			tc.apply(activities.Cordon())
 			got, err := activities.DescribeOrker(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, err)
 			if got.GetCordoned() != tc.wantCordoned || got.GetCordonReason() != tc.wantReason {
 				t.Fatalf("cordoned=%v reason=%q, want %v %q", got.GetCordoned(), got.GetCordonReason(), tc.wantCordoned, tc.wantReason)
 			}
@@ -350,9 +350,7 @@ func TestCordonOrkerActivity_UncordonLeavesAStoreOutage(t *testing.T) {
 	activities.dispatcher.Runtime = nil
 	activities.Cordon().SetStoreOutage("object storage unreachable", time.Now())
 	got, err := activities.CordonOrker(context.Background(), &orkstackv1.CordonOrkerInput{Cordoned: false})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	if !got.GetCordoned() || got.GetStoreOutage() == nil {
 		t.Fatalf("uncordon overrode an outage still failing: cordoned=%v outage=%v", got.GetCordoned(), got.GetStoreOutage())
 	}
@@ -372,9 +370,7 @@ func TestCordonState_NamesTheOutageWhenItIsTheOnlyCause(t *testing.T) {
 // no slot, and a recovery lets the blocked reservation through.
 func TestCordonSlotSupplier_HoldsPollsThroughAStoreOutage(t *testing.T) {
 	inner, err := worker.NewFixedSizeSlotSupplier(1)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	cordon := NewCordon()
 	supplier := &cordonSlotSupplier{inner: inner, cordon: cordon}
 	cordon.SetStoreOutage("object storage unreachable", time.Now())

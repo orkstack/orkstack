@@ -6,8 +6,8 @@ Read the record of every control-plane write: what changed, who the caller says 
 
 ```bash
 orkctl admin audit                                              # the last seven days, newest first
-orkctl admin audit --filter 'action^orker.'                     # Orker cordons and uncordons
-orkctl admin audit --filter 'namespace=payments' --json         # one namespace, as JSON
+orkctl admin audit -F 'action^orker.'                     # Orker cordons and uncordons
+orkctl admin audit -F 'namespace=payments' -j         # one namespace, as JSON
 ```
 
 ## What is recorded

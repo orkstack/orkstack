@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/orker"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The two pin openings this file drives. Both are the shape the engine mints
@@ -88,9 +90,7 @@ func TestIntegration_APinnedAttemptThatDiedAfterCommitIsAdoptedNotRerun(t *testi
 
 	// ── attempt 1: runs, commits, and is then treated as never reported ──
 	first, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("the first pinned attempt failed: %v", err)
-	}
+	must.OKf(t, err, "the first pinned attempt failed")
 	if first.GetCommitAdopted() {
 		t.Fatal("the first attempt adopted a commit that did not exist yet")
 	}
@@ -103,9 +103,7 @@ func TestIntegration_APinnedAttemptThatDiedAfterCommitIsAdoptedNotRerun(t *testi
 
 	// ── attempt 2: the retry a real Temporal redelivery would send ──
 	second, err := dispatcher.Execute(ctx, in)
-	if err != nil {
-		t.Fatalf("the retry of the pinned attempt failed: %v", err)
-	}
+	must.OKf(t, err, "the retry of the pinned attempt failed")
 	if !second.GetCommitAdopted() {
 		t.Fatal("the retry re-ran the container instead of adopting the pinned attempt's durable commit")
 	}
@@ -151,9 +149,7 @@ func TestIntegration_APinnedAttemptThatDiedAfterCommitIsAdoptedNotRerun(t *testi
 	// interrupted attempt left it. Read from the HOST, because that is where a
 	// crash would have destroyed it.
 	stage, err := os.ReadFile(filepath.Join(pinRoot, "shared", "stage.txt"))
-	if err != nil {
-		t.Fatalf("the pin's shared directory did not survive the retry: %v", err)
-	}
+	must.OKf(t, err, "the pin's shared directory did not survive the retry")
 	if string(stage) != stageMarker {
 		t.Errorf("shared/stage.txt reads %q, want %q", stage, stageMarker)
 	}
@@ -267,9 +263,7 @@ func TestIntegration_APinnedRetrySeesTheSharedDirectoryItsFailedAttemptLeft(t *t
 func containerStarts(t *testing.T, pinRoot string) int {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join(pinRoot, "shared", "runs.log"))
-	if err != nil {
-		t.Fatalf("read the container's own start log: %v", err)
-	}
+	must.OKf(t, err, "read the container's own start log")
 	return len(strings.Fields(string(raw)))
 }
 
@@ -280,9 +274,7 @@ func containerStarts(t *testing.T, pinRoot string) int {
 func attemptDirectories(t *testing.T, workRoot, runID string) []string {
 	t.Helper()
 	entries, err := os.ReadDir(workRoot)
-	if err != nil {
-		t.Fatalf("read the work root %s: %v", workRoot, err)
-	}
+	must.OKf(t, err, "read the work root %s", workRoot)
 	var found []string
 	prefix := "ork-" + runID + "-"
 	for _, entry := range entries {

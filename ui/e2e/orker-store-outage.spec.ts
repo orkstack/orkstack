@@ -2,7 +2,7 @@ import AxeBuilder from '@axe-core/playwright';
 import { expect, test, type Page } from './test';
 import { selectTask } from './uiHelpers';
 import { execFileSync, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
 import {
@@ -19,6 +19,7 @@ import {
 	repoRoot,
 	rpc as callEngine,
 	spawnLogged,
+	startTranscript,
 	storeEnv,
 	tcpOpen,
 	temporalAddress,
@@ -150,7 +151,7 @@ async function awaitOutage(page: Page, want: boolean): Promise<void> {
 test.beforeAll(async () => {
 	ensureBucket(BUCKET);
 	mkdirSync(PROOF_DIR, { recursive: true });
-	writeFileSync(
+	startTranscript(
 		outPath(TRANSCRIPT),
 		[
 			'# Admin → Pools during an object storage outage, in a browser.',

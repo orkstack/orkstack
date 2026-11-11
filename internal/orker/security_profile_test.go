@@ -14,6 +14,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/quantity"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestSecurityPolicyFromEnvRefusesInvalidProcessLimits(t *testing.T) {
@@ -421,9 +423,7 @@ func TestSecurityPolicy_ValidateRefusesAnUnreadableCapAtBoot(t *testing.T) {
 			}
 		})
 	}
-	if err := DefaultSecurityPolicy().Validate(); err != nil {
-		t.Fatalf("the default policy must validate: %v", err)
-	}
+	must.OKf(t, DefaultSecurityPolicy().Validate(), "the default policy must validate")
 }
 
 func TestSecurityPolicyFromEnv_ReadsTheSecretFloor(t *testing.T) {
@@ -498,9 +498,7 @@ func TestSecurityPolicy_AllowsSecretSourceIsTheSharedRule(t *testing.T) {
 			t.Errorf("floor %q, source %q: err = %#v, want Why %q", v.Pattern, v.Source, err, why)
 		}
 	}
-	if err := DefaultSecurityPolicy().AllowsSecretSource("env:ANYTHING"); err != nil {
-		t.Fatalf("an empty floor refused: %v", err)
-	}
+	must.OKf(t, DefaultSecurityPolicy().AllowsSecretSource("env:ANYTHING"), "an empty floor refused")
 }
 
 // TestReservedResources_AgreesWithResolveResources pins the numbers an
@@ -627,22 +625,14 @@ func TestSecurityPolicy_TheDefaultFloorRefusesTheOrkersOwnEnvironment(t *testing
 func TestSecurityPolicy_TheDefaultFloorRefusesTheOrkersProcessFiles(t *testing.T) {
 	dir := t.TempDir()
 	link := filepath.Join(dir, "environ")
-	if err := os.Symlink("/proc/self/environ", link); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink("/proc/self/environ", link))
 	dirLink := filepath.Join(dir, "self")
-	if err := os.Symlink("/proc/self", dirLink); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink("/proc/self", dirLink))
 	plain := filepath.Join(dir, "plain")
-	if err := os.WriteFile(plain, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(plain, []byte("x"), 0o600))
 	// A link that leads nowhere yet is judged by where it would lead.
 	dangling := filepath.Join(dir, "dangling")
-	if err := os.Symlink("/proc/self/no-such-file", dangling); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink("/proc/self/no-such-file", dangling))
 	own := []string{
 		"file:/proc", "file:/proc/self/environ", "file:/proc/1/environ", "file:/proc/thread-self/environ",
 		"file:/proc/self/root/etc/hostname", "file:/proc/self/fd/0",
@@ -677,13 +667,9 @@ func TestSecurityPolicy_TheDefaultFloorRefusesTheOrkersProcessFiles(t *testing.T
 func TestSecurityPolicy_AFileSourceIsReadOnlyByAPlainAbsoluteName(t *testing.T) {
 	dir := t.TempDir()
 	deep := filepath.Join(dir, "a", "b")
-	if err := os.MkdirAll(deep, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(deep, 0o755))
 	shallow := filepath.Join(dir, "shallow")
-	if err := os.Symlink(deep, shallow); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(deep, shallow))
 	for _, tc := range []struct{ source, why string }{
 		{"file:/var/run/../proc/self/environ", ".."},
 		{"file:" + shallow + "/../../../proc/self/environ", ".."},
@@ -714,36 +700,24 @@ func TestSecurityPolicy_TheOrkersOwnFilesAreRefusedByNameAndByLink(t *testing.T)
 	dir := t.TempDir()
 	cfg := filepath.Join(dir, "config")
 	dated := filepath.Join(cfg, "..2026_10_30_00_00_00.000000001")
-	if err := os.MkdirAll(dated, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(dated, 0o755))
 	for _, name := range []string{"orker.yaml", "other.yaml"} {
-		if err := os.WriteFile(filepath.Join(dated, name), []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.WriteFile(filepath.Join(dated, name), []byte("x"), 0o600))
 	}
-	if err := os.Symlink(filepath.Base(dated), filepath.Join(cfg, "..data")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(filepath.Base(dated), filepath.Join(cfg, "..data")))
 	for _, name := range []string{"orker.yaml", "other.yaml"} {
-		if err := os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)))
 	}
 	work := filepath.Join(dir, "work")
 	if err := os.MkdirAll(filepath.Join(work, "ork-run-task-1-x", "secrets"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	elsewhere := filepath.Join(dir, "elsewhere")
-	if err := os.Symlink(filepath.Join(work, "ork-run-task-1-x", "secrets"), elsewhere); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(filepath.Join(work, "ork-run-task-1-x", "secrets"), elsewhere))
 	// A link into the work root that leads nowhere yet: a later attempt's
 	// workspace.
 	dangling := filepath.Join(dir, "dangling")
-	if err := os.Symlink(filepath.Join(work, "ork-run-task-2-y", "secrets", "db"), dangling); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(filepath.Join(work, "ork-run-task-2-y", "secrets", "db"), dangling))
 
 	policy := DefaultSecurityPolicy().WithOwnPaths(
 		OwnPath{Path: filepath.Join(cfg, "orker.yaml"), Why: "its configuration file"},
@@ -783,12 +757,8 @@ func TestSecurityPolicy_TheOrkersOwnFilesAreRefusedByNameAndByLink(t *testing.T)
 func TestSecurityPolicy_AnOwnPathIsResolvedAsTheKernelOpensIt(t *testing.T) {
 	dir := t.TempDir()
 	deep := filepath.Join(dir, "a", "b")
-	if err := os.MkdirAll(deep, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(deep, filepath.Join(dir, "link")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(deep, 0o755))
+	must.OK(t, os.Symlink(deep, filepath.Join(dir, "link")))
 	t.Chdir(dir)
 	policy := DefaultSecurityPolicy().WithOwnPaths(
 		OwnPath{Path: filepath.Join(dir, "link") + "/../secret", Why: "its configuration"},
@@ -817,62 +787,38 @@ func TestSecurityPolicy_AnOwnFileIsJudgedAsItIsWhenTheSourceIsJudged(t *testing.
 	cfg := filepath.Join(dir, "config")
 	dated := func(stamp string) string {
 		d := filepath.Join(cfg, "..2026_10_31_00_00_00."+stamp)
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(d, 0o755))
 		for _, name := range []string{"orker.yaml", "other.yaml"} {
-			if err := os.WriteFile(filepath.Join(d, name), []byte(stamp), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(filepath.Join(d, name), []byte(stamp), 0o600))
 		}
 		return d
 	}
 	first := dated("000000001")
-	if err := os.Symlink(filepath.Base(first), filepath.Join(cfg, "..data")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(filepath.Base(first), filepath.Join(cfg, "..data")))
 	for _, name := range []string{"orker.yaml", "other.yaml"} {
-		if err := os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)))
 	}
 	policy := DefaultSecurityPolicy().WithOwnPaths(OwnPath{Path: filepath.Join(cfg, "orker.yaml"), Why: "its configuration"})
 
 	// The update, as the kubelet makes it: a new directory, ..data swapped to
 	// it by a rename, the old one removed.
 	second := dated("000000002")
-	if err := os.Symlink(filepath.Base(second), filepath.Join(cfg, "..data_tmp")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(filepath.Join(cfg, "..data_tmp"), filepath.Join(cfg, "..data")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(filepath.Base(second), filepath.Join(cfg, "..data_tmp")))
+	must.OK(t, os.Rename(filepath.Join(cfg, "..data_tmp"), filepath.Join(cfg, "..data")))
 	if err := os.RemoveAll(first); err != nil {
 		t.Fatal(err)
 	}
 	elsewhere := filepath.Join(dir, "elsewhere")
-	if err := os.Symlink(filepath.Join(second, "orker.yaml"), elsewhere); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(filepath.Join(second, "orker.yaml"), elsewhere))
 	hard := filepath.Join(dir, "hard")
-	if err := os.Link(filepath.Join(second, "orker.yaml"), hard); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Link(filepath.Join(second, "orker.yaml"), hard))
 	// An own path written with ".." after a link is the file the kernel opens
 	// for it, not the file its cleaned name names, and so is a hard link to it.
 	inner := filepath.Join(dir, "deep", "inner")
-	if err := os.MkdirAll(inner, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(inner, filepath.Join(dir, "via")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "deep", "key"), []byte("k"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Link(filepath.Join(dir, "deep", "key"), filepath.Join(dir, "hard-key")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(inner, 0o755))
+	must.OK(t, os.Symlink(inner, filepath.Join(dir, "via")))
+	must.OK(t, os.WriteFile(filepath.Join(dir, "deep", "key"), []byte("k"), 0o600))
+	must.OK(t, os.Link(filepath.Join(dir, "deep", "key"), filepath.Join(dir, "hard-key")))
 	policy = policy.WithOwnPaths(OwnPath{Path: filepath.Join(dir, "via") + "/../key", Why: "its credentials"})
 	assertOwn(t, policy,
 		"file:"+filepath.Join(cfg, "orker.yaml"),
@@ -907,32 +853,20 @@ func TestSecurityPolicy_AnUpdateWhileASourceIsJudgedIsSeen(t *testing.T) {
 	update := func() {
 		stamp++
 		next := dated(stamp)
-		if err := os.MkdirAll(filepath.Join(next, "gcloud"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Join(next, "gcloud"), 0o755))
 		for _, name := range []string{"orker.yaml", "other.yaml", filepath.Join("gcloud", "credentials.db")} {
-			if err := os.WriteFile(filepath.Join(next, name), []byte(next), 0o600); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.WriteFile(filepath.Join(next, name), []byte(next), 0o600))
 		}
-		if err := os.Symlink(filepath.Base(next), filepath.Join(cfg, "..data_tmp")); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Rename(filepath.Join(cfg, "..data_tmp"), filepath.Join(cfg, "..data")); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Symlink(filepath.Base(next), filepath.Join(cfg, "..data_tmp")))
+		must.OK(t, os.Rename(filepath.Join(cfg, "..data_tmp"), filepath.Join(cfg, "..data")))
 		if current != "" {
-			if err := os.RemoveAll(current); err != nil {
-				t.Fatal(err)
-			}
+			must.OK(t, os.RemoveAll(current))
 		}
 		current = next
 	}
 	update()
 	for _, name := range []string{"orker.yaml", "gcloud"} {
-		if err := os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.Symlink(filepath.Join("..data", name), filepath.Join(cfg, name)))
 	}
 	policy := DefaultSecurityPolicy().WithOwnPaths(
 		OwnPath{Path: filepath.Join(cfg, "orker.yaml"), Why: "its configuration"},
@@ -1046,9 +980,7 @@ func TestSecurityPolicy_ARefusalQuotesALongSourceByItsHead(t *testing.T) {
 // as long as a start payload is refused before any look at all.
 func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T) {
 	dir := t.TempDir()
-	if err := os.Symlink(".", filepath.Join(dir, "x")); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.Symlink(".", filepath.Join(dir, "x")))
 	loop := dir
 	for len(loop)+len("/x/secret") <= dsl.MaxSecretPathBytes {
 		loop += "/x"
@@ -1064,22 +996,14 @@ func TestSecurityPolicy_JudgingAFileSourceIsBoundedWhateverItsName(t *testing.T)
 	// deepens outside the Orker's own directories, where a walk stops; a
 	// tree deeper than most hosts hold stands in for it.
 	deep := filepath.Join(dir, "deep") + strings.Repeat("/a", 64)
-	if err := os.MkdirAll(deep, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.MkdirAll(deep, 0o755))
 	deep += "/secret"
-	if err := os.WriteFile(deep, []byte("x"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, os.WriteFile(deep, []byte("x"), 0o600))
 	own := make([]OwnPath, 128)
 	for i := range own {
 		path := filepath.Join(dir, "own", fmt.Sprintf("%03d.yaml", i))
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		must.OK(t, os.WriteFile(path, []byte("x"), 0o600))
 		own[i] = OwnPath{Path: path, Why: "its configuration"}
 	}
 	policy := SecurityPolicyFromEnv().WithWorkRoot(t.TempDir()).WithOwnPaths(own...)

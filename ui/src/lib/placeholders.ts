@@ -7,7 +7,7 @@
 // ui/test/authoredSchemas.test.ts holds it to the generated schemas' const.
 export const API_VERSION = 'orkstack/v1';
 
-// The Apply page's placeholder: a document that actually APPLIES. `uses:`,
+// The Create Orkflow page's placeholder: a document that actually creates a version. `uses:`,
 // the only image-selecting field in the DSL, selects a first-party activity
 // image. It mirrors examples/http-post.ork.yaml.
 export const ORKFLOW_PLACEHOLDER = `apiVersion: ${API_VERSION}

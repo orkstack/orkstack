@@ -205,7 +205,7 @@ const SCREENS: Screen[] = [
 	},
 	{
 		name: 'apply',
-		url: () => `${UI_ORIGIN}/apply?ns=default`,
+		url: () => `${UI_ORIGIN}/orkflows/+new?ns=default`,
 		ready: async (page) => {
 			await expect(page.getByTestId('apply-examples')).toBeVisible();
 		}

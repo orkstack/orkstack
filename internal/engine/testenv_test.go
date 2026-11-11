@@ -11,6 +11,8 @@ import (
 	"go.temporal.io/sdk/workflow"
 
 	"github.com/orkstack/orkstack/internal/engine"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // testDeadlockDetectionTimeout is the deadlock detector's budget in the
@@ -59,9 +61,7 @@ func TestGenerousDeadlock_DefaultsAndYields(t *testing.T) {
 		env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 		env.RegisterWorkflowWithOptions(slow, workflow.RegisterOptions{Name: "slow"})
 		env.ExecuteWorkflow("slow")
-		if err := env.GetWorkflowError(); err != nil {
-			t.Fatalf("slow workflow task under the harness budget: %v", err)
-		}
+		must.OKf(t, env.GetWorkflowError(), "slow workflow task under the harness budget")
 	})
 	t.Run("explicit 1 s", func(t *testing.T) {
 		var suite testsuite.WorkflowTestSuite

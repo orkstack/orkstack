@@ -307,7 +307,7 @@ export function filtersFromUrl(url: URL, param = 'filter'): { filters: FieldFilt
 
 /** `--filter <quoted>` for each filter, for a CLI equivalent. */
 export function filterFlags(filters: Pick<FieldFilter, 'field' | 'op' | 'values'>[]): string[] {
-	return canonicalTexts(filters).map((text) => `--filter ${shellQuote(text)}`);
+	return canonicalTexts(filters).map((text) => `-F ${shellQuote(text)}`);
 }
 
 /** The value of the one non-empty equals filter on path, or null — Equality's rule. */

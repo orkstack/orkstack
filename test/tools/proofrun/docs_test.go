@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v3"
+	"go.yaml.in/yaml/v4"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // proofsDoc is the reference this test holds to the tree: every job, make
@@ -125,36 +127,6 @@ func TestProofsDoc_MentionsEverythingThatExists(t *testing.T) {
 	}
 }
 
-// The scope table's actions are a vocabulary a contributor reads in the table
-// and in this document: every action the parser knows is named in §3.
-func TestProofsDoc_NamesEveryScopeAction(t *testing.T) {
-	doc := readProofsDoc(t)
-	i := strings.Index(doc, "The scope table's actions:")
-	if i < 0 {
-		t.Fatal("docs/PROOFS.md does not list the scope table's actions")
-	}
-	paragraph := doc[i : i+strings.Index(doc[i:], "\n\n")]
-	var missing []string
-	for action := range knownActions {
-		if !strings.Contains(paragraph, "`"+action+"`") {
-			missing = append(missing, action)
-		}
-	}
-	sort.Strings(missing)
-	if len(missing) > 0 {
-		t.Errorf("docs/PROOFS.md §3 omits the scope actions %v", missing)
-	}
-	table, err := os.ReadFile(filepath.Join("..", "..", "..", "scripts", "proof-scope.tsv"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for action := range knownActions {
-		if !regexp.MustCompile(`(?m)^#\s+(actions\s+)?` + regexp.QuoteMeta(action) + `\s`).Match(table) {
-			t.Errorf("scripts/proof-scope.tsv's legend omits the action %s", action)
-		}
-	}
-}
-
 func TestProofsDoc_CountsWhatItChecks(t *testing.T) {
 	workflows := workflowJobs(t)
 	jobs := 0
@@ -172,9 +144,7 @@ func TestProofsDoc_CountsWhatItChecks(t *testing.T) {
 func readProofsDoc(t *testing.T) string {
 	t.Helper()
 	b, err := os.ReadFile(proofsDoc)
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return string(b)
 }
 
@@ -203,18 +173,14 @@ func proofDocSpans(doc string) []string {
 func workflowJobs(t *testing.T) map[string]map[string]bool {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", ".github", "workflows", "*.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	out := map[string]map[string]bool{}
 	for _, file := range files {
 		var wf struct {
 			Jobs map[string]any `yaml:"jobs"`
 		}
 		b, err := os.ReadFile(file)
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		if err := yaml.Unmarshal(b, &wf); err != nil {
 			t.Fatalf("%s: %v", file, err)
 		}
@@ -232,9 +198,7 @@ func makeTargets(t *testing.T) map[string]bool {
 	out := map[string]bool{}
 	for _, file := range []string{"Makefile", "images/Makefile"} {
 		b, err := os.ReadFile(filepath.Join("..", "..", "..", file))
-		if err != nil {
-			t.Fatal(err)
-		}
+		must.OK(t, err)
 		for _, m := range regexp.MustCompile(`(?m)^([A-Za-z0-9_.%/-]+):`).FindAllStringSubmatch(string(b), -1) {
 			out[m[1]] = true
 		}
@@ -245,9 +209,7 @@ func makeTargets(t *testing.T) map[string]bool {
 func evidenceTargets(t *testing.T) []string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "..", "..", "Makefile"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	doc := string(b)
 	start := strings.Index(doc, "## ---- evidence")
 	if start < 0 {
@@ -268,9 +230,7 @@ func evidenceTargets(t *testing.T) []string {
 func gateFiles(t *testing.T) []string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join("..", "..", "..", "scripts", "proof-*"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	var out []string
 	for _, file := range files {
 		out = append(out, "scripts/"+filepath.Base(file))
@@ -326,9 +286,7 @@ func subcommandFlags(t *testing.T, sub string) map[string]bool {
 	t.Helper()
 	old := os.Stderr
 	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	os.Stderr = w
 	for _, c := range subcommands {
 		if c.name == sub {

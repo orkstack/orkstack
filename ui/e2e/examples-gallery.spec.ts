@@ -119,7 +119,7 @@ test.afterAll(async () => {
 });
 
 test('P1: the gallery lists every example with its name and description', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	const cards = page.getByTestId('apply-examples').locator(':scope > div');
 	await expect(cards).toHaveCount(EXAMPLES.length);
 	for (const example of EXAMPLES) {
@@ -135,10 +135,10 @@ test('P1: the gallery lists every example with its name and description', async 
 // F-ui-perf-7: no font face is inlined into the render-blocking stylesheet,
 // and the page every route boots from preloads exactly the two latin faces
 // every page uses. That page is the build's index.html, the SPA fallback the
-// engine answers /apply with; it names its preloads as <link> tags, the fonts
+// engine answers /orkflows/+new with; it names its preloads as <link> tags, the fonts
 // beside the entry scripts, and its stylesheet the same way.
 test('P0: fonts stay out of the stylesheet, and the two latin faces are preloaded', async () => {
-	const response = await fetch(`${UI}/apply?ns=${NS}`);
+	const response = await fetch(`${UI}/orkflows/+new?ns=${NS}`);
 	expect(response.status).toBe(200);
 	expect(response.headers.get('content-type')).toContain('text/html');
 	const html = await response.text();
@@ -157,7 +157,7 @@ test('P0: fonts stay out of the stylesheet, and the two latin faces are preloade
 	const sheets = links.filter((link) => attr(link, 'rel') === 'stylesheet').map((link) => attr(link, 'href'));
 	expect(sheets.length > 0).toBe(true);
 	for (const sheet of sheets) {
-		const css = await (await fetch(new URL(sheet, `${UI}/apply`))).text();
+		const css = await (await fetch(new URL(sheet, `${UI}/orkflows/+new`))).text();
 		expect(css, `${sheet} inlines no font`).not.toContain('data:font/woff2');
 	}
 	note(`P0 font preloads: ${fonts.length}; module preloads: ${scripts.length}; stylesheets checked: ${sheets.join(', ')}`);
@@ -165,8 +165,8 @@ test('P0: fonts stay out of the stylesheet, and the two latin faces are preloade
 
 // F-ui-perf-5: the page ships names and descriptions; a document is served
 // one at a time, byte for byte, only when a card asks for it. The cards are a
-// file of the build (/apply/examples.json) and each document one of its own
-// (/apply/examples/<file>), written from examples/ when the UI is built.
+// file of the build (/orkflows/+new/examples.json) and each document one of its own
+// (/orkflows/+new/examples/<file>), written from examples/ when the UI is built.
 test('P1b: the page carries no example YAML; one example is fetched on demand', async ({ page }) => {
 	// The longest plain line of each document's tasks: in what the page
 	// loads, raw or serialized, only if the document itself were shipped.
@@ -183,7 +183,7 @@ test('P1b: the page carries no example YAML; one example is fetched on demand', 
 	});
 
 	// The cards: one per example, its name and description, and no document.
-	const listed = await fetch(`${UI}/apply/examples.json`);
+	const listed = await fetch(`${UI}/orkflows/+new/examples.json`);
 	expect(listed.status).toBe(200);
 	expect(listed.headers.get('content-type')).toContain('application/json');
 	const listedText = await listed.text();
@@ -196,11 +196,11 @@ test('P1b: the page carries no example YAML; one example is fetched on demand', 
 
 	// One document, as it is in examples/; a document there is not, a 404 and
 	// never the app.
-	const served = await fetch(`${UI}/apply/examples/decide-and-route.ork.yaml`);
+	const served = await fetch(`${UI}/orkflows/+new/examples/decide-and-route.ork.yaml`);
 	expect(served.status).toBe(200);
 	expect(served.headers.get('content-type')).toContain('text/yaml');
 	expect(await served.text()).toBe(readFileSync(path.join(repoRoot, 'examples', 'decide-and-route.ork.yaml'), 'utf8'));
-	const missing = await fetch(`${UI}/apply/examples/nope.ork.yaml`);
+	const missing = await fetch(`${UI}/orkflows/+new/examples/nope.ork.yaml`);
 	expect(missing.status).toBe(404);
 	expect(await missing.text(), 'a missing example is not answered with the app').not.toContain('/_app/');
 
@@ -210,11 +210,11 @@ test('P1b: the page carries no example YAML; one example is fetched on demand', 
 	const fetched: string[] = [];
 	const loads: Promise<{ path: string; body: string }>[] = [];
 	page.on('request', (request) => {
-		if (request.url().includes('/apply/examples/')) fetched.push(new URL(request.url()).pathname);
+		if (request.url().includes('/orkflows/+new/examples/')) fetched.push(new URL(request.url()).pathname);
 	});
 	page.on('response', (response) => {
 		const url = new URL(response.url());
-		if (url.origin !== UI || url.pathname.startsWith('/apply/examples/')) return;
+		if (url.origin !== UI || url.pathname.startsWith('/orkflows/+new/examples/')) return;
 		loads.push(
 			response
 				.text()
@@ -222,24 +222,24 @@ test('P1b: the page carries no example YAML; one example is fetched on demand', 
 				.catch(() => ({ path: url.pathname, body: '' }))
 		);
 	});
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await expect(page.getByTestId('apply-examples').locator(':scope > div')).toHaveCount(EXAMPLES.length);
 	await page.waitForLoadState('networkidle');
 	const loaded = await Promise.all(loads);
-	expect(loaded.map((load) => load.path)).toContain('/apply/examples.json');
+	expect(loaded.map((load) => load.path)).toContain('/orkflows/+new/examples.json');
 	for (const load of loaded) {
 		for (const { slug, needle } of needles) expect(load.body, `${slug}'s document is not in ${load.path}`).not.toContain(needle);
 	}
 	expect(fetched).toEqual([]);
 	await page.getByTestId('apply-example-use-decide-and-route').click();
 	await expect(yamlValue(page, 'apply-yaml')).toHaveValue(/name: decide-and-route/);
-	expect(fetched).toEqual(['/apply/examples/decide-and-route.ork.yaml']);
+	expect(fetched).toEqual(['/orkflows/+new/examples/decide-and-route.ork.yaml']);
 	const bytes = loaded.reduce((n, load) => n + load.body.length, 0);
 	note(`P1b page load: ${loaded.length} responses, ${bytes} bytes, no example document; one fetch on choosing: ${fetched.join(', ')}`);
 });
 
 test('P2: a new example applies, plans and runs from the browser', async ({ page }) => {
-	await page.goto(`${UI}/apply?ns=${NS}`);
+	await page.goto(`${UI}/orkflows/+new?ns=${NS}`);
 	await page.getByTestId('apply-example-use-decide-and-route').click();
 	await expect(yamlValue(page, 'apply-yaml')).toHaveValue(/name: decide-and-route/);
 	await page.getByTestId('apply-validate').click();
@@ -248,7 +248,7 @@ test('P2: a new example applies, plans and runs from the browser', async ({ page
 	await page.getByTestId('apply-submit').click();
 	// An apply with no warning goes straight to the Orkflow's page; the
 	// `apply-success` banner is shown only when warnings remain to be read
-	// (ui/src/routes/apply/+page.svelte).
+	// (ui/src/routes/orkflows/+new/+page.svelte).
 	await page.waitForURL(/\/orkflows\/decide-and-route/, { timeout: 60_000 });
 	await expect(page.getByTestId('orkflow-name')).toContainText('decide-and-route');
 	await expect(page.getByTestId('orkflow-version')).toContainText('0.1.0');

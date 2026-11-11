@@ -37,13 +37,13 @@ test('resolveCli round-trips a value containing a quote', () => {
 		valuesJson: `{"approver":"o'brien"}`
 	});
 	expect(command).toBe(
-		`orkctl --namespace team-a run resolve ork-1 --task approval --values '{"approver":"o'"'"'brien"}'`
+		`orkctl -n team-a run resolve ork-1 -t approval --values '{"approver":"o'"'"'brien"}'`
 	);
 	expect(resolveCli({ namespace: '', runId: 'ork-1', taskId: 'gate', reject: true, reason: 'no' })).toBe(
-		`orkctl --namespace default run resolve ork-1 --task gate --reject --reason no`
+		`orkctl -n default run resolve ork-1 -t gate --reject --reason no`
 	);
 	expect(resolveCli({ namespace: '', runId: 'ork-1', taskId: 'gate', valuesJson: '{}' })).toBe(
-		`orkctl --namespace default run resolve ork-1 --task gate`
+		`orkctl -n default run resolve ork-1 -t gate`
 	);
 });
 

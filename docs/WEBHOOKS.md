@@ -47,6 +47,7 @@ only the events below, and a subscription receives only the ones it names
 | `TASK_STARTED` | a task is dispatched to an Orker; the activity is scheduled, which does not mean a container is running |
 | `TASK_AWAITING` | an awaited task starts waiting to be resolved |
 | `TASK_RESOLVED` | an awaited task is resolved from outside its run: `SUCCEEDED` for a completion, `FAILED` for a rejection |
+| `TASK_SLEEPING` | a sleeping task starts its fixed wait; its message names the wake-up time, and `TASK_SUCCEEDED` follows when it wakes |
 | `TASK_SUCCEEDED` | a task's success is committed |
 | `TASK_FAILED` | a task fails for good, after its retries stop; a task cancelled because its run ended is never delivered as this event |
 
@@ -79,7 +80,7 @@ and an empty field matches every value.
 - Each scope field is a slug (`^[a-z][a-z0-9-]*$`, at most 200 bytes). It is
   validated and never sanitised.
 - Nothing checks that the namespace, Orkflow or task exists, so a subscription
-  may be registered before the Orkflow it names is applied
+  may be created before the Orkflow it names exists
   ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Scoped subscriptions and task outcome
   events").
 
@@ -119,13 +120,13 @@ Parameters such as `; charset=utf-8` are allowed, and the type is read in any
 case. A body declared as anything else, not declared, or declared with a
 malformed `Content-Type` (such as `application/json; charset`) is `415` with the
 error envelope (`invalid_argument`): it is refused before it is read, so it
-registers nothing and is not recorded in the audit trail. A browser sends a
+creates nothing and is not recorded in the audit trail. A browser sends a
 body declared `application/json` to another site only after a CORS preflight,
-and the engine grants none, so a page on another site cannot register a
+and the engine grants none, so a page on another site cannot create a
 subscription ([SECURITY_MODEL.md](SECURITY_MODEL.md), "Transport, listeners and
 configuration").
 
-- **Register** validates the events, the URL, the scope and the name, in that
+- **Create** validates the events, the URL, the scope and the name, in that
   order, before any write. A refused registration writes nothing. A name another
   subscription of the same namespace scope holds is `AlreadyExists` (`409` on the
   adapter).
@@ -148,7 +149,7 @@ The record holds the signing secret in plaintext. Delivery replays the secret
 into a signature, so the secret must be stored where delivery can read it
 ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md), "Storage and secret handling";
 [STORAGE.md](STORAGE.md), "Key layout"). Every replica reads the registry on
-each operation, so a subscription registered through one replica is delivered
+each operation, so a subscription created through one replica is delivered
 by all of them.
 
 ## The delivery
@@ -167,6 +168,7 @@ X-Ork-Webhook-Id: wh-<16 hex>
 X-Ork-Run-Id: ork-…
 X-Ork-Task-Id: <task id>                  (task events only)
 X-Ork-Timestamp: <RFC 3339 instant, UTC>
+X-Ork-Sequence: 7
 X-Ork-Attempt: 1
 X-Ork-Redelivery-Of: dlv-…               (redelivery only)
 ```
@@ -174,9 +176,15 @@ X-Ork-Redelivery-Of: dlv-…               (redelivery only)
 The body is one JSON object, in this field order:
 
 ```json
-{"runId":"ork-…","orkflowName":"…","status":"FAILED","timestamp":"<RFC 3339 instant>","taskId":"…","attempt":2,"run":{…}}
+{"runId":"ork-…","orkflowName":"…","status":"FAILED","timestamp":"<RFC 3339 instant>","sequence":7,"taskId":"…","attempt":2,"run":{…}}
 ```
 
+- `sequence` is the run event's sequence: the number the run's event stream
+  gives the event, counted per run from 1 in the order the run emitted its
+  events (`orkctl run watch --from-sequence` resumes by the same number). It
+  is what a receiver orders deliveries by; see "Duplicates and ordering". A
+  redelivery of a record written before deliveries carried it has none, and
+  then the body and `X-Ork-Sequence` omit it rather than send 0.
 - `taskId` and `attempt` are present only for a task event. `attempt` is the
   task's own attempt number, and it is omitted when the engine has not numbered
   it. It is never invented.
@@ -200,6 +208,7 @@ The headers are listed below. Only the body is signed.
 | `X-Ork-Run-Id` | the run's id | no |
 | `X-Ork-Task-Id` | the task's id; task events only | no |
 | `X-Ork-Timestamp` | the transition's time, RFC 3339 with nanoseconds, UTC | no |
+| `X-Ork-Sequence` | the run event's sequence, the body's `sequence`. The same on every retry and on a redelivery | no |
 | `X-Ork-Attempt` | the HTTP attempt, counted from 1. It is not the task's attempt | no |
 | `X-Ork-Redelivery-Of` | the delivery an operator repeated; redelivery only | no |
 
@@ -232,10 +241,31 @@ not prove that the event is new. See "Duplicates" below.
   delivery has its own `X-Ork-Delivery` id.
 - A `2xx` response ends the attempt series as delivered. A transport error and
   any `5xx` are retried. Any other response ends the series as not delivered, so
-  a `4xx` is never retried (`pkg/webhooks/deliver.go`, `retryable`).
+  a `4xx` is never retried (`pkg/webhooks/deliver.go`, `Attempt.Retryable`).
 - At most four requests are made: the first, then retries after 100 ms, 200 ms
-  and 400 ms. Each request is bounded at 10 s. These are the dispatcher's
-  defaults, which the engine uses unchanged (`cmd/ork/main.go`).
+  and 400 ms. Each request is bounded at 10 s. The engine pins these numbers
+  into each delivery when it queues it, so a release that changes them moves
+  only deliveries queued after it (`engine.DefaultWebhookDeliveryPolicy`).
+- The retries are Temporal's, not a loop in the engine (AGENTS.md §2.1). Each
+  delivery is a short workflow of its own: one activity makes one `POST`, and
+  its retry policy is the ladder above; a second records the delivery and
+  deletes its stored body (`internal/engine/webhook_delivery.go`). Both run on
+  the engine's own channel, which no Orker polls. A pause between attempts
+  is the cluster's timer, so it is at least the ladder's and can be longer: a
+  stock Temporal server spaced the 100 ms and 200 ms pauses about 1 s each
+  (`TestIntegration_WebhookRetriesUntilTheReceiverAccepts`). Each attempt's
+  `backoff` records the pause it actually took.
+- A delivery outlives the replica that queued it. When the replica that made
+  one attempt stops, another engine replica makes the next, and the record
+  holds every attempt, whichever replica made it. An attempt cut short by a
+  replica dying records the attempts before it and one row saying it did not
+  finish within its timeout.
+- Before the first attempt, the engine stores the signed body under
+  `metadata/delivery-bodies/` ([STORAGE.md](STORAGE.md), "Key layout"), because
+  the body carries the whole run and is too large to travel inside the
+  delivery. Every attempt sends exactly those bytes. A delivery whose body or
+  subscription is gone before an attempt is not retried, and its record says
+  which.
 - The body is rendered once. Every attempt sends the same bytes with the same
   signature.
 - The receiver's response body is read for at most 2 KiB, then discarded.
@@ -245,16 +275,38 @@ not prove that the event is new. See "Duplicates" below.
   `Authorization` and `Cookie`, but it copies the other headers, `X-Ork-Signature`
   among them. A subscriber URL should therefore answer without redirecting.
 - Delivery runs off the run's path. Each event's subscription lookup is bounded
-  at 5 s, and each delivery runs in its own goroutine. A failed lookup is logged
-  and never fails the run.
-- At shutdown the engine waits up to 15 s for deliveries in flight
-  (`webhookDrainTimeout`, `cmd/ork/main.go`). Nothing persists a delivery before
-  it is sent, so a delivery not yet settled when the process stops is lost.
+  at 5 s, and queuing each delivery (storing its body, starting it) at 10 s,
+  each off the run's goroutine. A failed lookup is logged and never fails the
+  run. A delivery that could not be queued is never sent; its record has one
+  attempt row saying so, and `orkctl webhook redeliver` sends it.
+- At shutdown the engine waits up to 15 s for deliveries it is still matching
+  or queuing (`webhookDrainTimeout`, `cmd/ork/main.go`). A delivery already
+  queued needs no wait: another replica, or this one after its restart, carries
+  it on. Only a transition whose deliveries were not yet queued when the process
+  stopped is lost.
 
 ### Duplicates and ordering
 
-- Delivery is best-effort, and there is no ordering across deliveries
+- Delivery is best-effort, and deliveries can arrive in any order: a retried
+  delivery lands after events the run emitted later, and a run publishes some
+  events — those of tasks running side by side, a fan-out's items — from
+  separate activities, so even first attempts can cross
   ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Webhook administration").
+- A receiver orders a run's deliveries by `sequence`, never by arrival or by
+  `timestamp`. A delivery with a lower sequence than one already applied for
+  that run is an earlier event, so a receiver that keeps the run's latest
+  status keeps the highest sequence it has applied per run and does not let a
+  lower one overwrite it.
+- The sequence orders the events, not the `run` each body embeds. That is the
+  run as the engine read it when it queued the delivery, which can be newer
+  than its event, and a redelivery embeds the run as it reads now. A receiver
+  that needs the run's current state reads it with `GetRun`.
+- Sequences have gaps. A subscription receives only the events it names, and
+  the run's stream itself can skip numbers, so a receiver never waits for a
+  missing one. Sequences of different runs are not comparable.
+- The sequence is the event's own: every retry, a repeated announcement of the
+  same event by another replica (under another `X-Ork-Delivery` id) and an
+  operator's redelivery carry the original's.
 - Whether an event is announced is decided by each replica's own event bus. An
   activity retry that lands on another replica announces the event again
   (`internal/engine/activities.go`, `EventObserver`). The same transition can
@@ -274,7 +326,8 @@ metadata/deliveries/{yyyy}/{mm}/{dd}/{delivery-id}/{namespace}/{run-id}/{webhook
 A record holds:
 
 - every attempt: its number, status code, error, backoff, duration and start time;
-- the subscription, run, namespace, Orkflow, task, event, status and URL;
+- the subscription, run, namespace, Orkflow, task, event, the event's
+  sequence, status and URL;
 - the signature sent, the SHA-256 and the length of the body, and the instants
   the event happened, the delivery was queued and the delivery settled;
 - the id of the delivery it repeats, for a redelivery.
@@ -318,8 +371,8 @@ synchronously:
 - to the subscription as it is now. If the subscription has been deleted,
   nothing is sent, and the call is refused with `FailedPrecondition`;
 - signed with its current secret;
-- with the run as it reads now, and with the original's event and transition
-  timestamp;
+- with the run as it reads now, and with the original's event, transition
+  timestamp and sequence;
 - with `X-Ork-Redelivery-Of` naming the original.
 
 It makes no retry, since the operator is the retry policy. Its outcome is
@@ -333,7 +386,7 @@ Every `orkctl webhook` subcommand takes `--json`, `-n`, `--server` and
 
 | Command | Flags |
 | --- | --- |
-| `orkctl webhook register URL` | `--event E` (repeatable), `--secret S`, `-n NS`, `--orkflow NAME`, `--task ID`, `--name NAME` |
+| `orkctl webhook create URL` | `--event E` (repeatable), `--secret S`, `-n NS`, `--orkflow NAME`, `--task ID`, `--name NAME` |
 | `orkctl webhook list` | `--filter F` (repeatable) |
 | `orkctl webhook update ID` | `--name NAME`, `--url URL`, `--event E` (repeatable) or `--clear-events`, `-n NS` or `--deployment-wide`, `--orkflow NAME`, `--task ID` |
 | `orkctl webhook delete ID` | none beyond the inherited flags |
@@ -341,7 +394,7 @@ Every `orkctl webhook` subcommand takes `--json`, `-n`, `--server` and
 | `orkctl webhook delivery ID` | none beyond the inherited flags |
 | `orkctl webhook redeliver ID` | none beyond the inherited flags; exits `1` when the receiver did not accept the delivery |
 
-- `register` prints the signing secret once. The default scope is every
+- `create` prints the signing secret once. The default scope is every
   namespace. Only an explicit `-n` narrows it, even when `ORK_NAMESPACE` or the
   saved namespace is set. `--name` needs an explicit `-n`.
 - `update` is read-modify-write: it changes only the flags given. `--clear-events`
@@ -349,10 +402,10 @@ Every `orkctl webhook` subcommand takes `--json`, `-n`, `--server` and
   clears the namespace scope.
 
 ```bash
-orkctl webhook register https://example.test/hooks --event RUN_SUCCEEDED --event RUN_FAILED
-orkctl webhook register https://example.test/load -n analytics --orkflow nightly-etl \
+orkctl webhook create https://example.test/hooks --event RUN_SUCCEEDED --event RUN_FAILED
+orkctl webhook create https://example.test/load -n analytics --orkflow nightly-etl \
   --task extract --event TASK_SUCCEEDED
-orkctl webhook deliveries --filter 'delivered=false' --limit 20
+orkctl webhook deliveries -F 'delivered=false' --limit 20
 orkctl webhook redeliver dlv-…
 ```
 
@@ -382,10 +435,10 @@ secret, which is disclosed once ([AUTOMATION.md](AUTOMATION.md), "webhooks").
   (`internal/automation/parse.go`).
 - `secret_env` names a variable that the **client** reads when it creates the
   subscription. The pre-shared secret never enters the document, the plan or the
-  engine, except as the one `RegisterWebhook` that stores it. An apply never
+  engine, except as the one `RegisterWebhook` that stores it. An automation apply never
   changes the secret of an existing subscription, so `secret_env` has no effect
   on one that already exists ([AUTOMATION.md](AUTOMATION.md), "webhooks").
-- `apply --prune` deletes only named subscriptions that a section declares.
+- `orkctl automation apply --prune` deletes only named subscriptions that a section declares.
   It never deletes an unnamed subscription or a deployment-wide one.
 
 ## The UI
@@ -394,7 +447,7 @@ Admin → Webhooks ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Webhook administratio
 and "Webhook deliveries"; `ui/src/routes/admin/webhooks/+page.svelte`):
 
 - lists every subscription, deployment-wide, with its scope;
-- registers one, with an optional signing secret. The secret is shown once, with
+- creates one, with an optional signing secret. The secret is shown once, with
   the note that it will not be shown again;
 - edits a subscription's name, URL, events and scope. The id and the secret are kept;
 - deletes a subscription;
@@ -418,12 +471,14 @@ trail").
 ## What webhooks do not do
 
 - **No queue and no pacing.** A matching event is sent as it happens. Nothing
-  buffers or spaces deliveries beyond the retry ladder.
+  buffers or spaces deliveries beyond the retry ladder, and nothing reads the
+  stored bodies to decide what to send.
 - **No retry beyond the ladder.** Nothing re-sends a delivery that gave up,
   except an operator's redelivery.
 - **No content filter.** Scope narrows by namespace, Orkflow and task. It does
   not narrow by a field of the run.
-- **No exactly-once and no ordering.** See "Duplicates and ordering".
+- **No exactly-once and no ordered sending.** Deliveries can arrive in any
+  order; a receiver orders them by `sequence`. See "Duplicates and ordering".
 - **No setting that turns webhooks off.** The notifier runs in every engine
   (`cmd/ork/main.go`). A deployment with no subscriptions queues nothing.
 - **No reconciliation.** A webhook is not a state source. Reconcile with `GetRun`.

@@ -5,16 +5,19 @@ import (
 	"os"
 	"strconv"
 
+	"strings"
+	"testing"
+
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
-	"strings"
-	"testing"
 
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestRunObjectIDs_IncludesItemReferences(t *testing.T) {
@@ -64,16 +67,12 @@ func TestTemporalRunReader_KeepsTheLastSnapshotAcrossEventsWithoutOne(t *testing
 	reader, _ := readerOver(history, runID)
 	reader.WithSnapshotStore(store)
 	run, err := reader.GetRun(context.Background(), runID)
-	if err != nil {
-		t.Fatalf("GetRun: %v", err)
-	}
+	must.OKf(t, err, "GetRun")
 	if got := run.GetTaskRuns(); len(got) != 1 || got[0].GetEach().GetCount() != 2 {
 		t.Fatalf("GetRun = %v, want the last snapshot that had one", run)
 	}
 	events, err := reader.Events(context.Background(), runID, 0)
-	if err != nil {
-		t.Fatalf("Events: %v", err)
-	}
+	must.OKf(t, err, "Events")
 	var item *orkstackv1.Event
 	for _, e := range events {
 		if e.GetSequence() == 2 {
@@ -107,9 +106,7 @@ func TestEachHistory_CatchesAReorderedDispatch(t *testing.T) {
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		Interceptors: []interceptor.WorkerInterceptor{recorder},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	replayer.RegisterWorkflowWithOptions(RunWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
 	replayErr := replayer.ReplayWorkflowHistoryFromJSONFile(nil, path)
 	if replayErr != nil {

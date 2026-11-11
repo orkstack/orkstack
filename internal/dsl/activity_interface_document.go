@@ -2,19 +2,19 @@ package dsl
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"reflect"
 	"strings"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/structpb"
-	"gopkg.in/yaml.v3"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 )
 
 // Activity interface documents (docs/ACTIVITY_IMAGES.md, "Declaring the
@@ -65,7 +65,7 @@ type interfaceOpDocument struct {
 // interfaceFieldDocument is one with: key's declaration.
 type interfaceFieldDocument struct {
 	Type string `yaml:"type"`
-	// Required is read through the strict mapping as well: yaml.v3 decodes
+	// Required is read through the strict mapping as well: go-yaml decodes
 	// yes, on and y into a Go bool, and YAML 1.2 readers see a string.
 	Required yaml.Node `yaml:"required"`
 	// Default is authored data, so it becomes JSON through the strict
@@ -137,6 +137,9 @@ func ParseActivityDocument(source []byte) (*ActivityDeclaration, error) {
 	// Strict: a key the document does not define is refused, never ignored,
 	// as an Orkflow's are.
 	var doc interfaceDocument
+	if err := mergeTagRefusal(source, doc); err != nil {
+		return nil, err
+	}
 	strict := yaml.NewDecoder(bytes.NewReader(source))
 	strict.KnownFields(true)
 	if err := strict.Decode(&doc); err != nil {
@@ -372,10 +375,10 @@ func checkInterfaceHeader(body *yaml.Node) error {
 			KindActivityInterface, DescribeNode(kind)))
 	case kind.Value == KindOrkflow:
 		return validationError("kind", fmt.Errorf("kind: %s is an Orkflow, not an activity interface: "+
-			"apply it with orkctl apply; an activity interface says kind: %s", KindOrkflow, KindActivityInterface))
+			"create it with orkctl orkflow create; an activity interface says kind: %s", KindOrkflow, KindActivityInterface))
 	case kind.Value == KindAutomation:
 		return validationError("kind", fmt.Errorf("kind: %s is an automation document, not an activity interface: "+
-			"apply it with orkctl apply; an activity interface says kind: %s", KindAutomation, KindActivityInterface))
+			"apply it with orkctl automation apply; an activity interface says kind: %s", KindAutomation, KindActivityInterface))
 	case kind.Value != KindActivityInterface:
 		return validationError("kind", fmt.Errorf("kind %q is not an activity interface: an activity interface says kind: %s",
 			kind.Value, KindActivityInterface))
@@ -451,7 +454,7 @@ func packLabel(message proto.Message, limit int) (string, error) {
 		return "", fmt.Errorf("encode the label: %w", err)
 	}
 	var compact bytes.Buffer
-	if err := json.Compact(&compact, raw); err != nil {
+	if err := stablejson.Compact(&compact, raw); err != nil {
 		return "", fmt.Errorf("encode the label: %w", err)
 	}
 	label := strings.ReplaceAll(compact.String(), "'", `\u0027`)

@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"strings"
 	"testing"
 	"time"
@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The run-diff goldens pin what both clients print: the UI reproduces these
@@ -102,9 +104,7 @@ func cliDiffTask(id string, edit ...func(*orkstackv1.TaskRun)) *orkstackv1.TaskR
 func cliDiffRun(t *testing.T, id, namespace, name, version, digest, date string, day int, tasks ...*orkstackv1.TaskRun) *orkstackv1.Run {
 	t.Helper()
 	input, err := structpb.NewStruct(map[string]any{"date": date, "limit": 500})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	at := fixedNow.Add(time.Duration(day) * 24 * time.Hour)
 	return &orkstackv1.Run{
 		Id: id, Namespace: namespace, OrkflowName: name, OrkflowVersion: version, OrkflowDefinitionDigest: digest,

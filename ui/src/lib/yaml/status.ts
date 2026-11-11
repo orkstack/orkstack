@@ -55,7 +55,7 @@ export function editorStatus(input: {
 	namespace: string;
 	local: readonly Diagnostic[];
 	engine: EngineState;
-	/** What a clean check did not cover, said after it ("Apply also …"). */
+	/** What a clean check did not cover, said after it ("Create also …"). */
 	cleanNote?: string;
 }): EditorStatus {
 	const { text, namespace, local, engine } = input;

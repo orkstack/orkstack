@@ -240,7 +240,7 @@ func renderEditedApply(
 	base, head string,
 	resp *orkstackv1.ApplyOrkflowResponse,
 ) error {
-	if err := renderApply(out, resp); err != nil {
+	if err := renderCreated(out, resp); err != nil {
 		return err
 	}
 	if base == head || head == "" {

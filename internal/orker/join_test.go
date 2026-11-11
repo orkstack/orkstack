@@ -2,7 +2,7 @@ package orker
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -11,7 +11,10 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // TestWorkspace_TaskJSONCarriesJoinOnlyForAFailureHandler is §3.2's additive
@@ -30,9 +33,7 @@ func TestWorkspace_TaskJSONCarriesJoinOnlyForAFailureHandler(t *testing.T) {
 	read := func(t *testing.T, ws *Workspace) map[string]any {
 		t.Helper()
 		raw, err := os.ReadFile(filepath.Join(ws.Input, "task.json"))
-		if err != nil {
-			t.Fatalf("read task.json: %v", err)
-		}
+		must.OKf(t, err, "read task.json")
 		var doc map[string]any
 		if err := json.Unmarshal(raw, &doc); err != nil {
 			t.Fatalf("task.json is not valid JSON: %v\n%s", err, raw)
@@ -43,9 +44,7 @@ func TestWorkspace_TaskJSONCarriesJoinOnlyForAFailureHandler(t *testing.T) {
 	t.Run("an ordinary task has no join key", func(t *testing.T) {
 		ws := newTestWorkspace(t)
 		in, tc := base()
-		if err := ws.WriteTaskJSON(in, tc); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(in, tc), "WriteTaskJSON")
 		doc := read(t, ws)
 		if _, present := doc["join"]; present {
 			t.Fatalf("join is present for a task that is not a failure handler: %v", doc["join"])
@@ -73,9 +72,7 @@ func TestWorkspace_TaskJSONCarriesJoinOnlyForAFailureHandler(t *testing.T) {
 				{TaskId: "canary", Status: orkstackv1.Status_STATUS_SKIPPED, Error: &orkstackv1.Error{Code: "X", Message: "m"}},
 			},
 		}
-		if err := ws.WriteTaskJSON(in, tc); err != nil {
-			t.Fatalf("WriteTaskJSON: %v", err)
-		}
+		must.OKf(t, ws.WriteTaskJSON(in, tc), "WriteTaskJSON")
 		doc := read(t, ws)
 		want := map[string]any{
 			"policy": "any_failed",
@@ -94,7 +91,7 @@ func TestWorkspace_TaskJSONCarriesJoinOnlyForAFailureHandler(t *testing.T) {
 			},
 		}
 		if !reflect.DeepEqual(doc["join"], any(want)) {
-			got, _ := json.Marshal(doc["join"])
+			got, _ := stablejson.Marshal(doc["join"])
 			t.Fatalf("join = %s", got)
 		}
 		if doc["schemaVersion"] != float64(1) {
@@ -117,9 +114,7 @@ func TestStageInputs_AFailedNeedsArtifactsStageWithoutValues(t *testing.T) {
 	in.With = with
 	in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "deploy", Artifacts: []*orkstackv1.ArtifactRef{log}}}
 	ws, err := NewWorkspace(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, false)
 	if failure != nil {
 		t.Fatal(failure)
@@ -148,15 +143,11 @@ func TestStageInputs_AFailedNeedsArtifactsStageWithoutValues(t *testing.T) {
 
 func TestDescribeOrker_ReportsJoinSupported(t *testing.T) {
 	store, err := artifacts.NewLocalStore(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	activities := NewActivitiesWithOptions(store, Options{Runtime: &reapRecorder{}, WorkRoot: t.TempDir()})
 	result, err := activities.DescribeOrker(context.Background())
-	if err != nil {
-		t.Fatalf("DescribeOrker: %v", err)
-	}
+	must.OKf(t, err, "DescribeOrker")
 	if !result.GetJoinSupported() {
 		t.Fatal("this build reads ExecuteTaskInput.join and must say so")
 	}

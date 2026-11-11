@@ -1,7 +1,7 @@
 package dist_test
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"maps"
 	"os"
 	"path"
@@ -14,6 +14,8 @@ import (
 
 	"github.com/orkstack/orkstack/internal/dist"
 	"github.com/orkstack/orkstack/internal/dsl"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The release images are described by deploy/Dockerfile, one target each. These
@@ -447,9 +449,7 @@ func TestDockerfiles_ToolchainsMatchTheWorkflowPins(t *testing.T) {
 		bunImages := map[string]bool{}
 		for _, s := range externalImages(file.stages) {
 			ref, err := dsl.ParseReference(s.image)
-			if err != nil {
-				t.Fatalf("%s:%d: %v", file.path, s.line, err)
-			}
+			must.OKf(t, err, "%s:%d", file.path, s.line)
 			switch ref.Repository {
 			case "oven/bun":
 				bunImages[s.image] = true
@@ -492,9 +492,7 @@ func builtLinuxBinaries(t *testing.T) []string {
 		built = append(built, "dist/"+filepath.ToSlash(rel)) // the Makefile's DIST
 		return err
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	sort.Strings(built)
 	return built
 }
@@ -745,7 +743,7 @@ func TestReleaseDockerignore_AdmitsOnlyWhatTheBuildCopies(t *testing.T) {
 		"examples/README.md", "examples/each-fan-out.ork.yaml", "examples/automation/examples.ork.yaml",
 		"examples/custom-image/main.go", "ui/package.json", "ui/bun.lock", "ui/src/lib/server/examples.ts",
 		"ui/node_modules/svelte/package.json", "ui/.svelte-kit/tsconfig.json", "ui/build/index.html",
-		"ui/e2e/harness.ts", "ui/test/preload.ts", "ui/test-results/x", "ui/playwright-report/index.html",
+		"ui/e2e/harness.ts", "ui/test/preload.ts", "ui/test-results/x", "ui/test-results-solo/x", "ui/playwright-report/index.html",
 		"internal/webui/dist/index.html",
 	} {
 		if !rules.excluded(file) {
@@ -755,9 +753,7 @@ func TestReleaseDockerignore_AdmitsOnlyWhatTheBuildCopies(t *testing.T) {
 
 	// A new top-level path stays out of the context until someone admits it.
 	entries, err := os.ReadDir(repoRoot(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	for _, e := range entries {
 		switch e.Name() {
 		case "LICENSE", "dist":

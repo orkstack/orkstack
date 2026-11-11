@@ -3,6 +3,8 @@ package telemetry
 import (
 	"context"
 	"testing"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 func TestTemporalMetricsHandlerPrometheus(t *testing.T) {
@@ -10,9 +12,7 @@ func TestTemporalMetricsHandlerPrometheus(t *testing.T) {
 		MetricsExporters: []string{ExporterPrometheus},
 		AdminAddr:        "127.0.0.1:0",
 	})
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	defer p.Shutdown(context.Background())
 
 	handler := TemporalMetricsHandler(p, nil)
@@ -25,15 +25,11 @@ func TestTemporalMetricsHandlerPrometheus(t *testing.T) {
 
 func TestTemporalInterceptorsTracing(t *testing.T) {
 	p, err := Setup(context.Background(), Config{TracesExporter: ExporterOTLP})
-	if err != nil {
-		t.Fatalf("Setup: %v", err)
-	}
+	must.OKf(t, err, "Setup")
 	defer p.Shutdown(context.Background())
 
 	interceptors, err := TemporalInterceptors(p)
-	if err != nil {
-		t.Fatalf("TemporalInterceptors: %v", err)
-	}
+	must.OKf(t, err, "TemporalInterceptors")
 	if len(interceptors) != 1 {
 		t.Fatalf("TemporalInterceptors = %d interceptors, want 1", len(interceptors))
 	}

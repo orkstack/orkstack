@@ -13,6 +13,8 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+
+	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
 // The join-policy CLI scenarios (docs/DSL.md "Joins and failure handlers"): real `ork` and
@@ -24,9 +26,7 @@ import (
 func branchAndRecoverDoc(t *testing.T, name string) string {
 	t.Helper()
 	raw, err := os.ReadFile("../../internal/dsl/testdata/orkflows/branch-and-recover.ork.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
+	must.OK(t, err)
 	return strings.Replace(string(raw), "name: branch-and-recover\n", "name: "+name+"\n", 1)
 }
 
