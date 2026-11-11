@@ -14,7 +14,7 @@ Each release publishes these to `ghcr.io/orkstack`, for linux/amd64 and linux/ar
 
 The release also publishes six first-party activity images: `activity-shell`, `activity-http`, `activity-file`, `activity-json`, `activity-git` and `activity-template`. There is no UI image, because `ork` serves the UI itself.
 
-A version tag such as `0.2.0` never moves. Deploy by it, or by digest. The `ork` and `orker` images are distroless: they have no shell, so `curl` and `wget` are not available.
+A version tag such as `0.3.0` never moves. Deploy by it, or by digest. The `ork` and `orker` images are distroless: they have no shell, so `curl` and `wget` are not available.
 
 ## The engine
 
@@ -34,13 +34,13 @@ ORK_DEPLOYMENT_NAME=orkstack
 # Every name with a dot that clients or a gateway use to reach the engine.
 ORK_ALLOWED_HOSTS=ork.internal
 # Setting ORK_BUILD_ID turns versioning on. Leave it out to run unversioned.
-ORK_BUILD_ID=0.2.0
+ORK_BUILD_ID=0.3.0
 ```
 
 ```yaml
 services:
   ork:
-    image: ghcr.io/orkstack/ork:0.2.0
+    image: ghcr.io/orkstack/ork:0.3.0
     env_file: ork.env
     ports:
       - "127.0.0.1:8080:8080"
@@ -61,16 +61,16 @@ Create the bucket named by `ORK_S3_BUCKET` before the first start. No OrkStack p
 
 ## Run orkctl against this deployment
 
-The `orkctl` image runs the command line against your engine. Set `ORK_SERVER` to the engine's address, and put the command after the image name. This example promotes release `0.2.0`, so it changes which release takes new runs:
+The `orkctl` image runs the command line against your engine. Set `ORK_SERVER` to the engine's address, and put the command after the image name. This example promotes release `0.3.0`, so it changes which release takes new runs:
 
 ```bash
-docker run --rm -it -e ORK_SERVER=http://ork.internal:8080 ghcr.io/orkstack/orkctl:0.2.0 release promote 0.2.0
+docker run --rm -it -e ORK_SERVER=http://ork.internal:8080 ghcr.io/orkstack/orkctl:0.3.0 release promote 0.3.0
 ```
 
 The `-it` flags give the command a terminal, so it can ask you to confirm. A script has no terminal. Add `--yes` there, after the command:
 
 ```bash
-docker run --rm -e ORK_SERVER=http://ork.internal:8080 ghcr.io/orkstack/orkctl:0.2.0 release promote 0.2.0 --yes
+docker run --rm -e ORK_SERVER=http://ork.internal:8080 ghcr.io/orkstack/orkctl:0.3.0 release promote 0.3.0 --yes
 ```
 
 The image's working directory is `/work`. To create an Orkflow from a file, mount its folder there, for example with `-v "$PWD:/work:ro"`, and pass the file's name.
@@ -82,7 +82,7 @@ The image's working directory is `/work`. To create an Orkflow from a file, moun
 ```yaml
 services:
   orker-1:
-    image: ghcr.io/orkstack/orker:0.2.0
+    image: ghcr.io/orkstack/orker:0.3.0
     env_file: orker.env
     environment:
       ORK_ORKER_ID: orker-1
@@ -103,7 +103,7 @@ services:
       retries: 3
 ```
 
-With `ORK_BUILD_ID` set in `ork.env` and `orker.env`, run `orkctl release promote 0.2.0` once, after the first start. Until you do, runs sit idle, because the new release has no traffic. To run unversioned, leave `ORK_BUILD_ID` out.
+With `ORK_BUILD_ID` set in `ork.env` and `orker.env`, run `orkctl release promote 0.3.0` once, after the first start. Until you do, runs sit idle, because the new release has no traffic. To run unversioned, leave `ORK_BUILD_ID` out.
 
 ## What the Orker needs
 
@@ -121,8 +121,8 @@ An Orker's boot runs a probe container. On an overloaded daemon the boot can tak
 
 ## What you choose
 
-- **The release.** Use the version tag or the digest, and the same `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on every `ork` and `orker`. Leaving `ORK_BUILD_ID` unset turns versioning off. Setting it turns versioning on, and then the first versioned release needs one call: `orkctl release promote 0.2.0`. Until that call, submitted runs wait. [Upgrades](/docs/deploy/upgrades/) covers the rest.
-- **Activities.** `uses: shell` resolves to `ghcr.io/orkstack/activity-shell:0.2`. That tag moves with each patch release. To pin an exact release, or to use a mirror, set `ORK_ACTIVITY_CATALOG` on `ork`. See [Configuration](/docs/configuration/#activities).
+- **The release.** Use the version tag or the digest, and the same `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on every `ork` and `orker`. Leaving `ORK_BUILD_ID` unset turns versioning off. Setting it turns versioning on, and then the first versioned release needs one call: `orkctl release promote 0.3.0`. Until that call, submitted runs wait. [Upgrades](/docs/deploy/upgrades/) covers the rest.
+- **Activities.** `uses: shell` resolves to `ghcr.io/orkstack/activity-shell:0.3`. That tag moves with each patch release. To pin an exact release, or to use a mirror, set `ORK_ACTIVITY_CATALOG` on `ork`. See [Configuration](/docs/configuration/#activities).
 - **Temporal.** The address, and one namespace per environment. See [Requirements](/docs/deploy/requirements/).
 - **The bucket.** Its endpoint, region and path style. Every `ork` and `orker` must share it.
 - **The pool.** Set `ORK_ORKER_POOL` on the Orkers that join a pool. Leave it unset on `ork` unless you change the default pool. See [Pools, Orkers and pins](/docs/operate/pools-and-orkers/).

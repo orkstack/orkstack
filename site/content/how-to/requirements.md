@@ -37,7 +37,7 @@ orker --config orkstack.yaml --check
 
 ## Published images
 
-Each release publishes `ork`, `orker` and `orkctl`, plus six first-party activity images: `shell`, `http`, `file`, `json`, `git` and `template`. Each image is built for linux/amd64 and linux/arm64. Tags carry the release version, such as `ghcr.io/orkstack/orker:0.2.0`. Deploy by digest, or by the version tag, which does not move.
+Each release publishes `ork`, `orker` and `orkctl`, plus six first-party activity images: `shell`, `http`, `file`, `json`, `git` and `template`. Each image is built for linux/amd64 and linux/arm64. Tags carry the release version, such as `ghcr.io/orkstack/orker:0.3.0`. Deploy by digest, or by the version tag, which does not move.
 
 There is no UI image. `ork` serves the web UI itself. Each release's images are signed; see [Image policy](/docs/operate/image-policy/) to require the signature.
 

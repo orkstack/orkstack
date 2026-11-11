@@ -13,8 +13,8 @@ import (
 )
 
 // activityImageMention matches a built-in activity image written with a tag:
-// ghcr.io/orkstack/activity-shell:0.2, or the wildcard form
-// ghcr.io/orkstack/activity-*:0.2 the docs use for the whole catalog. A
+// ghcr.io/orkstack/activity-shell:0.3, or the wildcard form
+// ghcr.io/orkstack/activity-*:0.3 the docs use for the whole catalog. A
 // reference pinned by digest has no tag and is not matched, nor is a
 // placeholder tag such as <tag>, which names no real one. A tag ends in a
 // letter or digit, so a sentence's full stop is not part of it.

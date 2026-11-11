@@ -60,8 +60,11 @@ const onlyShots = process.env.SITE_MEDIA_SHOTS?.split(',').map((n) => n.trim()).
 const partial = Boolean(onlyTakes?.length || onlyShots?.length);
 
 const TOUR = { width: 1440, height: 1300 };
-const WIDE = { width: 1280, height: 1500 };
-const NARROW = { width: 1120, height: 1200 };
+// Tall enough for the run page's Tasks card, below its graph and Inputs, with
+// a task open in it: a cut must fit the viewport, and the height lays out
+// nothing.
+const WIDE = { width: 1280, height: 1700 };
+const NARROW = { width: 1120, height: 1700 };
 // The space a cut leaves around its cards, each side.
 const PAD = 12;
 
@@ -175,6 +178,10 @@ async function startBatchOrker(): Promise<ChildProcess> {
 		env: {
 			...process.env,
 			ORK_ARTIFACT_BACKEND: 's3',
+			// The development store's key, which make up's Orker reads from
+			// .run/orkstack.yaml: no binary falls back to a key.
+			ORK_S3_ACCESS_KEY: process.env.ORK_S3_ACCESS_KEY ?? 'orkstack',
+			ORK_S3_SECRET_KEY: process.env.ORK_S3_SECRET_KEY ?? 'orkstack-secret',
 			ORK_ORKER_ID: 'orker-batch',
 			ORK_ORKER_POOL: 'batch',
 			ORK_ORKER_WORKDIR: root,

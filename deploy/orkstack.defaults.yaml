@@ -86,7 +86,7 @@ engine:
     retention_buffer: 24h  # ork
     batch_size: 100  # ork
 
-# activities: {}  # ork; built-in shell/http/file/json/git/template → ghcr.io/orkstack/activity-*:0.2
+# activities: {}  # ork; built-in shell/http/file/json/git/template → ghcr.io/orkstack/activity-*:0.3
 
 orker:
   # id: ""  # orker; hostname-<hash of the work dir>

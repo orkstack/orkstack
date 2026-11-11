@@ -335,7 +335,7 @@ it is never stored in a version document.
 | Field | Type | Description |
 |---|---|---|
 | `name` | `string` | catalog key, e.g. "shell"; empty for InspectActivity of a raw reference |
-| `reference` | `string` | as configured, e.g. ghcr.io/orkstack/activity-shell:0.2 |
+| `reference` | `string` | as configured, e.g. ghcr.io/orkstack/activity-shell:0.3 |
 | `index_digest` | `string` | resolved, "sha256:&lt;64 hex>" |
 | `media_type` | `string` |  |
 | `platforms` | repeated `string` |  |

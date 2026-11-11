@@ -142,7 +142,7 @@ func expandVarTokens(cell string) []string {
 // italic parenthetical, e.g. "*(empty)*" or "*(SDK default: `x`)*" — the
 // form normalizeDefaultCell unwraps to "(empty)" / "(SDK default: `x`)". A
 // bare '*' appearing elsewhere in a cell (e.g. a glob in a literal value
-// like `ghcr.io/orkstack/activity-*:0.2`) is not markdown emphasis and must
+// like `ghcr.io/orkstack/activity-*:0.3`) is not markdown emphasis and must
 // survive normalization untouched.
 var wholeCellItalicParen = regexp.MustCompile(`^\*(\(.*\))\*$`)
 

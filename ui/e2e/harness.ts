@@ -323,7 +323,7 @@ export const activityRef = (name: string) =>
  * catalogEnv is what every ENGINE in this directory is started with.
  *
  * `uses: shell` is a CATALOG name, and the catalog is engine configuration
- * (§4.2). Its built-in default points at `ghcr.io/orkstack/activity-shell:0.2`,
+ * (§4.2). Its built-in default points at `ghcr.io/orkstack/activity-shell:0.3`,
  * which is not published, so an engine booted without this resolves nothing
  * and every apply fails IMAGE_RESOLVE_UNAUTHORIZED — apply-time resolution is
  * a real registry GET (§4.3), not a lookup in a table. The catalog must point

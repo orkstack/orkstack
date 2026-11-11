@@ -109,7 +109,7 @@ message ListActivitiesRequest {
 // it is never stored in a version document.
 message ActivityInfo {
   string name = 1;          // catalog key, e.g. "shell"; empty for InspectActivity of a raw reference
-  string reference = 2;     // as configured, e.g. ghcr.io/orkstack/activity-shell:0.2
+  string reference = 2;     // as configured, e.g. ghcr.io/orkstack/activity-shell:0.3
   string index_digest = 3;  // resolved, "sha256:<64 hex>"
   string media_type = 4;
   repeated string platforms = 5;

@@ -17,12 +17,12 @@ func TestCatalogResolveUses_AppliesTheFourRulesInOrder(t *testing.T) {
 		code string
 	}{
 		{"catalog name resolves to its reference", "shell",
-			"ghcr.io/orkstack/activity-shell:0.2", ""},
-		{"http", "http", "ghcr.io/orkstack/activity-http:0.2", ""},
-		{"file", "file", "ghcr.io/orkstack/activity-file:0.2", ""},
-		{"json", "json", "ghcr.io/orkstack/activity-json:0.2", ""},
-		{"git", "git", "ghcr.io/orkstack/activity-git:0.2", ""},
-		{"template", "template", "ghcr.io/orkstack/activity-template:0.2", ""},
+			"ghcr.io/orkstack/activity-shell:0.3", ""},
+		{"http", "http", "ghcr.io/orkstack/activity-http:0.3", ""},
+		{"file", "file", "ghcr.io/orkstack/activity-file:0.3", ""},
+		{"json", "json", "ghcr.io/orkstack/activity-json:0.3", ""},
+		{"git", "git", "ghcr.io/orkstack/activity-git:0.3", ""},
+		{"template", "template", "ghcr.io/orkstack/activity-template:0.3", ""},
 		{"a full reference is itself", "ghcr.io/acme/migrate:v3",
 			"ghcr.io/acme/migrate:v3", ""},
 		{"a pinned reference is itself", "ghcr.io/acme/m@sha256:" + strings.Repeat("a", 64),
@@ -61,12 +61,12 @@ func TestCatalogResolveUses_AppliesTheFourRulesInOrder(t *testing.T) {
 // TestNames_AreEveryFirstPartyImage and the config completeness tests.
 func TestBuiltinActivityCatalog_IsTheSixFirstPartyImages(t *testing.T) {
 	want := map[string]string{
-		"shell":    "ghcr.io/orkstack/activity-shell:0.2",
-		"http":     "ghcr.io/orkstack/activity-http:0.2",
-		"file":     "ghcr.io/orkstack/activity-file:0.2",
-		"json":     "ghcr.io/orkstack/activity-json:0.2",
-		"git":      "ghcr.io/orkstack/activity-git:0.2",
-		"template": "ghcr.io/orkstack/activity-template:0.2",
+		"shell":    "ghcr.io/orkstack/activity-shell:0.3",
+		"http":     "ghcr.io/orkstack/activity-http:0.3",
+		"file":     "ghcr.io/orkstack/activity-file:0.3",
+		"json":     "ghcr.io/orkstack/activity-json:0.3",
+		"git":      "ghcr.io/orkstack/activity-git:0.3",
+		"template": "ghcr.io/orkstack/activity-template:0.3",
 	}
 	got := BuiltinActivityCatalog()
 	if len(got) != len(want) {
@@ -86,7 +86,7 @@ func TestCatalogResolveUses_CatalogNameBeatsDockerHubRepository(t *testing.T) {
 	if got == "shell" || got == "library/shell" {
 		t.Fatalf("`uses: shell` resolved to %q — rule 3 beat rule 2", got)
 	}
-	if got != "ghcr.io/orkstack/activity-shell:0.2" {
+	if got != "ghcr.io/orkstack/activity-shell:0.3" {
 		t.Fatalf("resolve shell = %q", got)
 	}
 }

@@ -1,13 +1,13 @@
 WEBVTT
 
-00:00.113 --> 00:18.884
+00:00.110 --> 00:19.596
 An order the API will refuse to ship
 
-00:18.884 --> 00:22.889
+00:19.596 --> 00:23.109
 The shipment is refused, and shipped fails
 
-00:22.889 --> 00:35.101
+00:23.109 --> 00:35.874
 Failure handlers run, and the run still fails
 
-00:35.101 --> 00:40.850
+00:35.874 --> 00:41.542
 The failed task, with its error and log

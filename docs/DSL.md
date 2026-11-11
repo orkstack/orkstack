@@ -143,6 +143,9 @@ choice:
 | B | a YAML 1.1 word for a boolean key (`run_as_orker_user: yes`) | reads it as `true` |
 | D | an `inputs:` declaration key or `type` word it does not know | ignores the key, compares the word as written |
 
+Both refuse a number with a fraction for an integer key, such as
+`timeout_seconds: 1.5`, naming its line.
+
 A first-party `with:` value of an undeclared type is an error in the editor
 and a warning at validate.
 

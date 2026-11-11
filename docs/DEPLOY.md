@@ -617,7 +617,7 @@ then the variable it becomes.
 | `temporal.namespace` | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
 | `pool.name` | `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
 | `pool.queue` | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
-| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.2` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest when the Orkflow is created. `make up` points it at the local registry |
+| `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.3` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest when the Orkflow is created. `make up` points it at the local registry |
 | `engine.registry_auth_file` | `ORK_REGISTRY_AUTH_FILE` | *(empty)* | `ork` | a docker `config.json` used only for manifest GETs during create-time resolution; grants no push and no execution |
 | `orker.id` | `ORK_ORKER_ID` | `hostname-<hash of the work dir>` | `orker` | this Orker's identity: labels its containers and keys its startup reaper, so two Orkers must never share one — across the whole deployment, not only on one host: it is also the Orker's address for `orkctl orker` (1–200 bytes of UTF-8, no whitespace or control characters; refused at boot otherwise) |
 | `orker.image_layout` | `ORK_ORKER_IMAGE_LAYOUT` | `/var/lib/orkstack/images` | `orker` | directory of OCI image layouts an Orker may serve a pinned digest from when a pull fails. An absent directory is not an error — the fallback matters only to an air-gapped or rate-limited Orker |
@@ -1177,8 +1177,9 @@ the credential. An `orker` on the `local` backend signs nothing, so it asks
 nothing of the chain, but it still refuses half a key.
 
 The development store's key is set only by what starts the development stack:
-`make up`, `make run-ork`, `make run-orker`, the quickstart's `compose.yaml`,
-the `kind` overlay, the tests and the proofs. The store refuses any other.
+`make up`, `make run-ork`, `make run-orker`, `make site-media`'s own Orker, the
+quickstart's `compose.yaml`, the `kind` overlay, the tests and the proofs. The
+store refuses any other.
 
 **To use an instance or pod role:**
 
@@ -2487,7 +2488,7 @@ follow from the daemon reading paths on the host:
 
 **The activity catalog.** A release's `ork` resolves `uses: shell` and the
 other first-party names by the tag of its release line, for example
-`ghcr.io/orkstack/activity-shell:0.2` for every 0.2 release; that tag moves to
+`ghcr.io/orkstack/activity-shell:0.3` for every 0.3 release; that tag moves to
 each patch release of the line. To pin the exact release instead, set
 `ORK_ACTIVITY_CATALOG` to the images by tag and digest. (The quickstart's
 catalog names the activities it built and pushed to its own registry, by tag;

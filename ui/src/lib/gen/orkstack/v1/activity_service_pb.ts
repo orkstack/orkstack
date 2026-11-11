@@ -108,7 +108,7 @@ export type ActivityInfo = Message<"orkstack.v1.ActivityInfo"> & {
   name: string;
 
   /**
-   * as configured, e.g. ghcr.io/orkstack/activity-shell:0.2
+   * as configured, e.g. ghcr.io/orkstack/activity-shell:0.3
    *
    * @generated from field: string reference = 2;
    */

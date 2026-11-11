@@ -196,7 +196,7 @@ orkctl release wait "$NEW" --timeout 2h
 
 `rollback` makes a release that was current before the current one current again, and runs the same check as `promote`. New runs go back to the old release at once. Runs already pinned to the new release keep finishing there, so keep the new release's workers running until they drain ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
-Rolling back past a release that added Orkflow constructs needs the preparation in the table above. Five cases need more than a rollback:
+Rolling back past a release that added Orkflow constructs needs the preparation in the table above. Six cases need more than a rollback:
 
 | The release being rolled back past added | Before you roll back |
 |---|---|
@@ -205,6 +205,7 @@ Rolling back past a release that added Orkflow constructs needs the preparation 
 | Definitions passed by reference | Set `engine.definition_by_reference` to `false` on every replica, then wait until every run started with its definition by reference has finished. An older release cannot read such a run's definition ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | Snapshot overlays | Set `engine.snapshot_overlays` to `false` on every replica, then wait until every run started while it was on has finished ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 | The Temporal Go SDK 1.50 (0.2.0) | With versioning on, nothing more: a run 0.2.0 started finishes on 0.2.0. With versioning off, hold each namespace that takes runs, wait until `orkctl run list -n NS -F 'status=PENDING,RUNNING'` lists no run in any of them, roll back, then release each hold: `orkctl namespace update NS --release-hold`. Count every open run, however old: any run open while 0.2.0 ran may carry the marker. A run waiting on an await stays open until the await is resolved or its deadline passes, so resolve or cancel it rather than wait. An older engine cannot replay a run in which 0.2.0 recorded an ordered cancellation, and the run stays `RUNNING` until a 0.2.0 engine picks it up. For the same reason, replace every engine replica of an unversioned fleet together when rolling forward to 0.2.0 ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
+| Start events published without a wait for each (0.3.0) | As for 0.2.0: with versioning on, nothing more; with versioning off, the same hold, wait and release. A run a 0.3.0 engine started records markers an older engine cannot replay, so it stays `RUNNING` until a 0.3.0 engine picks it up again. Replace every engine replica of an unversioned fleet together when rolling forward to 0.3.0 ([DEPLOY.md](./DEPLOY.md), "4. Rolling back") |
 
 Two floors do not move. Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it. Turn `engine.continuation.enabled` off first, and let the runs that carry on finish. Also, once any run's archive records a gap in its events (a gap line), a rollback below the release that introduced that line is forbidden for good, because an older release refuses the line ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 
@@ -345,6 +346,29 @@ Every example in `examples/` but the `custom-image` recipe runs as it stands: ap
 - `custom-image` runs images you build, so it is now a recipe beside their build, `examples/custom-image/custom-image.ork.yaml`, whose header gives the steps. It is gone from the Apply page's gallery.
 
 ## Upgrading from 0.2.0 to 0.3.0
+
+Every **BREAKING** entry of 0.3.0's [CHANGELOG.md](../CHANGELOG.md) section is listed here with what to do. Do these before the release's engines and Orkers start. A stored Orkflow version is immutable, so a step that changes a document means creating and promoting a new version ([Orkflow versions](#orkflow-versions)).
+
+| Change | What to do |
+|---|---|
+| orkctl's `apply` is gone | Create Orkflows with `orkctl orkflow create` and apply automation documents with `orkctl automation apply`, as two steps ([Orkflows are created, automation documents applied](#orkflows-are-created-automation-documents-applied)) |
+| The object store's keys have no default | Set `ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY` on every `ork` and `orker`, or leave both unset to sign with an instance or pod role ([The object store](#the-object-store)) |
+| The object store's conditional answers | Check that your store refuses an `If-Match` write to a missing key and honours `If-Match` on a delete ([The object store](#the-object-store)) |
+| A run keeps at most 500 tasks, child runs and pins in flight | Nothing, unless a run must keep more pending at once: then set `ORK_RUN_MAX_IN_FLIGHT`, which applies to runs submitted after it ([DEPLOY.md](./DEPLOY.md), "A run that pauses new tasks") |
+| Time-ordered run ids, and versions for documents that pin none | Upgrade `orkctl` with the engines, because planning a file no longer reports a version for a document that pins none. Older run ids and versions stay valid ([DSL.md](./DSL.md), "`version`") |
+| A second YAML document after `---` | Remove what follows the first document in a configuration file, `ORK_TELEMETRY_SINKS`, `ORK_ACTIVITY_CATALOG` and each Orkflow file ([DEPLOY.md](./DEPLOY.md), "1. Configuration"; [DSL.md](./DSL.md)) |
+| A number with a fraction for an integer key | Write the whole number, such as `timeout_seconds: 2` rather than `1.5`, before you next create the Orkflow. Stored versions keep running ([DSL.md](./DSL.md), "Editor support") |
+| The new YAML library | Replace an explicit `!!merge` tag and any `<<` written as a value, and update a script that matches a YAML error's words ([DSL.md](./DSL.md), "Validation rules (enforced by `internal/dsl`)") |
+| A JSON key written twice | Write each key once in a `values.json`, an await's values and `--input-json`, and spell each key of an HTTP body and of `orkctl`'s configuration exactly, case included ([JSON.md](./JSON.md), "Text the codec will not change") |
+| Start events published without a wait for each | With versioning off, replace every engine replica together when rolling forward, and roll back below 0.3.0 only when no run is open ([Rolling back](#rolling-back)) |
+
+`uses: shell` and the other first-party names resolve to the images' `0.3` tag when an Orkflow is created. A version already created keeps the image it pinned, so an image's new tools reach a task when you next create its Orkflow. A host that mirrors the images needs the `0.3` images before that create. 0.3.0 leaves the `0.2` tag on the v0.2.0 images, so a deployment that stays on v0.2.0 is unaffected by it.
+
+### The object store
+
+The object store's keys no longer default to the development store's key, which only what starts the development stack sets now. A deployment that sets both keys needs nothing. Otherwise, before the release's processes start, set `ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY` on every `ork` and `orker` to the store's key, or, to sign with an instance or pod role, leave both and `ORK_S3_SESSION_TOKEN` unset. A process given one key alone stops at boot, naming both, and one with nothing to sign with stops and says so ([DEPLOY.md](./DEPLOY.md), "The object store's credentials").
+
+Every Orker and every engine also asks the store two more conditional answers at boot: an `If-Match` write to a key that does not exist must be refused (404 or 412), and an `If-Match` delete with a wrong etag must be refused with 412, leaving the object in place. An Orker refuses to start with `COMMIT_STORE_NOT_CONDITIONAL` on a store that gets either wrong, and an engine refuses to start naming the answer it got. SeaweedFS, the development store, does both. Check any other S3-compatible store before you upgrade ([STORAGE.md](./STORAGE.md), "Invariants the layout carries").
 
 ### Orkflows are created, automation documents applied
 

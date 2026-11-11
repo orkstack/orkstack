@@ -16,6 +16,8 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-10
+
 ### Features
 
 - Sleeping tasks ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#sleeping-tasks)).

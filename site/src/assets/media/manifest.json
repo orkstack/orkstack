@@ -1,6 +1,6 @@
 {
 	"$comment": "Written by make site-media (site/media/). Do not edit.",
-	"sourceCommit": "7d3779999650d283fdfc498ae8ff587b5baadfeb",
+	"sourceCommit": "d83e4316a640200a77721d1c4d17d481e596470b",
 	"orkflows": [
 		"examples/each-fan-out.ork.yaml",
 		"examples/notify-block.ork.yaml",
@@ -12,8 +12,8 @@
 	"browserImage": "mcr.microsoft.com/playwright:v1.64.1-noble@sha256:47b510dd9230bf0b9bfc9b20102241e577ea7a99334ab4c3ca19f19770e9b8ea",
 	"items": {
 		"cli-quickstart": {
-			"alt": "A terminal recording: orkctl applies each-fan-out, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.",
-			"caption": "orkctl apply, run plan, run submit --watch and run logs, recorded against the local stack: the run finishes with status SUCCEEDED, and the merge task’s log lists the four parts, a to d.",
+			"alt": "A terminal recording: orkctl creates the each-fan-out Orkflow, plans it, submits it and watches it to SUCCEEDED, then prints the merge task’s log.",
+			"caption": "orkctl orkflow create, run plan, run submit -w and run logs, recorded against the local stack: the run finishes with status SUCCEEDED, and the merge task’s log lists the four parts, a to d.",
 			"mp4Dark": "cli-quickstart-dark.mp4",
 			"posterDark": "cli-quickstart-dark.webp",
 			"mp4": "cli-quickstart-light.mp4",
@@ -56,10 +56,10 @@
 			"captionsDark": "video-task-waits-dark.vtt"
 		},
 		"video-yaml-to-run": {
-			"alt": "A screen recording of the Orkflow editor on greet: a key is added with the suggestions, the engine flags a needs entry that names no task and the fix clears it, the panel beside the code lists the shell activity’s keys, a new version is applied, a plan shows which tasks would run, and the run is submitted and followed until it succeeds.",
-			"caption": "Edit, apply, plan and run, then watch the graph fill in.",
+			"alt": "A screen recording of the Orkflow editor on greet: a key is added with the suggestions, the engine flags a needs entry that names no task and the fix clears it, the panel beside the code lists the shell activity’s keys, a new version is created, a plan shows which tasks would run, and the run is submitted and followed until it succeeds.",
+			"caption": "Edit, create a version, plan and run, then watch the graph fill in.",
 			"title": "From YAML to a running Orkflow",
-			"duration": "1:22",
+			"duration": "0:57",
 			"width": 1280,
 			"height": 800,
 			"mp4": "video-yaml-to-run-light.mp4",
@@ -73,7 +73,7 @@
 			"alt": "A screen recording of a failed run of order-saga: the banner names shipped and its reason, View stderr opens the task’s own output, the side cards say how it failed and how often, the graph shows its failure handlers ran, and Run again opens with the run’s inputs.",
 			"caption": "Open the failed task, read its stderr and how it failed, then run it again.",
 			"title": "Find why a run failed",
-			"duration": "0:32",
+			"duration": "0:30",
 			"width": 1280,
 			"height": 800,
 			"mp4": "video-why-failed-light.mp4",
@@ -84,8 +84,8 @@
 			"captionsDark": "video-why-failed-dark.vtt"
 		},
 		"e2e-demo": {
-			"alt": "A screen recording of the OrkStack UI: the each-fan-out example is applied from the Apply page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is shown with its provenance.",
-			"caption": "Apply, plan and submit, watch, find the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.",
+			"alt": "A screen recording of the OrkStack UI: the each-fan-out example is created from the Create Orkflow page, its run is planned and submitted, the run page follows it live until it succeeds, and the merge task’s merged.txt artifact is shown with its provenance.",
+			"caption": "Create, plan and submit, watch, find the artifact: one run of examples/each-fan-out.ork.yaml on the local stack.",
 			"width": 1280,
 			"height": 800,
 			"mp4": "e2e-demo-light.mp4",
@@ -174,8 +174,8 @@
 			"dark2x": "tour-editor-dark-2x.webp"
 		},
 		"ui-orkflow": {
-			"alt": "The each-fan-out Orkflow’s page in the OrkStack UI after an apply: its graph of list, convert and merge, its stored version, and its three tasks with their image digests.",
-			"caption": "An applied Orkflow: an immutable version, every image pinned to a digest.",
+			"alt": "The each-fan-out Orkflow’s page in the OrkStack UI after it was created: its graph of list, convert and merge, its stored version, and its three tasks with their image digests.",
+			"caption": "A created Orkflow: an immutable version, every image pinned to a digest.",
 			"width": 990,
 			"height": 644,
 			"light": "ui-orkflow-light.webp",
@@ -187,17 +187,17 @@
 			"alt": "A run of each-fan-out while it runs: the graph with list done, convert running and merge pending, and the Tasks card with a row for each task and a grid of convert’s items.",
 			"caption": "A real run of examples/each-fan-out.ork.yaml, caught while its fan-out runs.",
 			"width": 830,
-			"height": 779,
+			"height": 1167,
 			"light": "ui-run-live-light.webp",
 			"light2x": "ui-run-live-light-2x.webp",
 			"dark": "ui-run-live-dark.webp",
 			"dark2x": "ui-run-live-dark-2x.webp"
 		},
 		"ui-run-finished": {
-			"alt": "The merge task of a finished each-fan-out run selected on the run page: its row and log in the Tasks card, and beside them its card with its attempts, Orker, pool, what it reserved, its timing and its phases.",
+			"alt": "The merge task of a finished each-fan-out run selected on the run page: under its row in the Tasks card, its attempts, Orker, pool, what it reserved, its timing, its phases and its log.",
 			"caption": "A finished run’s task: its log, attempts, timing and phases. Inspect, on the same card, lists its artifacts.",
-			"width": 990,
-			"height": 857,
+			"width": 630,
+			"height": 851,
 			"light": "ui-run-finished-light.webp",
 			"light2x": "ui-run-finished-light-2x.webp",
 			"dark": "ui-run-finished-dark.webp",
@@ -207,7 +207,7 @@
 			"alt": "The convert task’s fan-out in the Tasks card: a grid of four items, convert[2] selected, and its log below.",
 			"caption": "Each fan-out item is its own durable activity, with its own attempts and logs.",
 			"width": 830,
-			"height": 503,
+			"height": 812,
 			"light": "ui-fanout-light.webp",
 			"light2x": "ui-fanout-light-2x.webp",
 			"dark": "ui-fanout-dark.webp",

@@ -1,13 +1,13 @@
 WEBVTT
 
-00:00.148 --> 00:09.253
+00:00.105 --> 00:07.087
 Name a task that does not exist
 
-00:09.253 --> 00:17.004
+00:07.087 --> 00:11.356
 The engine flags it, at its line
 
-00:17.004 --> 00:24.653
+00:11.356 --> 00:17.795
 The list says what is wrong
 
-00:24.653 --> 00:34.338
+00:17.795 --> 00:25.860
 Fix it, and the problem clears

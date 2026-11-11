@@ -1,28 +1,31 @@
+<p align="center">
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="site/public/logo/mark-colour-dark.svg">
+  <img alt="The OrkStack mark: a copper S-shaped path crossing a ring from one edge to the other" src="site/public/logo/mark-colour-light.svg" width="104" height="104">
+</picture>
+</p>
+
 <h1 align="center">OrkStack</h1>
 
 <p align="center">
-  Durable workflows without workflow code. Write an <em>Orkflow</em> in YAML,
-  and every step runs as an ordinary OCI container on Temporal, with no SDK
-  in your images.
+  <strong>Durable workflows without workflow code.</strong>
 </p>
 
 <p align="center">
-  <a href="https://orkstack.github.io/orkstack/"><strong>Documentation</strong></a>
-  ·
-  <a href="./docs/GETTING_STARTED.md">Getting started</a>
-  ·
-  <a href="./examples/README.md">Examples</a>
-  ·
-  <a href="./CHANGELOG.md">Changelog</a>
+  Write an <em>Orkflow</em> in YAML, and every step runs as an ordinary
+  OCI container on Temporal, with no SDK in your&nbsp;images.
 </p>
 
-- [What it is](#what-it-is)
-- [Quickstart](#quickstart)
-- [See it run](#see-it-run)
-- [Core concepts](#core-concepts)
-- [What you get](#what-you-get)
-- [What it does not do](#what-it-does-not-do)
-- [Docs](#docs)
+<p align="center">
+  <a href="https://github.com/orkstack/orkstack/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/orkstack/orkstack?label=release&color=1B4058"></a>
+  <a href="https://github.com/orkstack/orkstack/actions/workflows/ci.yml?query=branch%3Amain"><img alt="CI on main" src="https://img.shields.io/github/actions/workflow/status/orkstack/orkstack/ci.yml?branch=main&label=ci"></a>
+  <a href="./LICENSE"><img alt="MIT license" src="https://img.shields.io/github/license/orkstack/orkstack?color=1B4058"></a>
+</p>
+
+<p align="center">
+  <a href="https://orkstack.github.io/orkstack/"><strong>Documentation</strong></a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="./docs/GETTING_STARTED.md">Getting started</a>&emsp;
+  <a href="./examples/README.md">Examples</a>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;<a href="./CHANGELOG.md">Changelog</a>
+</p>
 
 ## What it is
 
@@ -211,13 +214,25 @@ own.
 
 ## What you get
 
-| | |
-|---|---|
-| **Authoring** | [fan-out](./docs/DSL.md#fan-out-each), [approvals and external waits](./docs/DSL.md#awaited-tasks), [caching](./docs/DSL.md#caching-cache), [failure handlers](./docs/DSL.md#joins-and-failure-handlers-join), [composition](./docs/DSL.md#composition-uses-orkflow), pools and [pins](./docs/DSL.md#pins), a YAML editor that checks as you type |
-| **Starting runs** | `orkctl run submit` and `run plan`, [schedules](./docs/ORKFLOW_SCHEDULES.md) with backfill, HTTP [triggers](./docs/ORKFLOW_TRIGGERS.md), [webhooks](./docs/WEBHOOKS.md) |
-| **Testing** | `orkctl activity test` checks an image against the contract; `orkctl task run` runs one task on your machine ([activity images](./docs/ACTIVITY_IMAGES.md)) |
-| **Operating** | namespaces with admission and budgets, image policy, release rollout, [automation documents](./docs/AUTOMATION.md), OpenTelemetry ([DEPLOY.md](./docs/DEPLOY.md)) |
-| **Inspecting** | live attempts, timing, run-to-run diffs, [stats](./docs/STATS.md), and [evidence bundles](./docs/RUN_EVIDENCE.md) you can verify offline |
+- **Authoring:** [fan-out](./docs/DSL.md#fan-out-each),
+  [approvals and external waits](./docs/DSL.md#awaited-tasks),
+  [caching](./docs/DSL.md#caching-cache),
+  [failure handlers](./docs/DSL.md#joins-and-failure-handlers-join),
+  [composition](./docs/DSL.md#composition-uses-orkflow), pools and
+  [pins](./docs/DSL.md#pins), and a YAML editor that checks as you type.
+- **Starting runs:** `orkctl run submit` and `run plan`,
+  [schedules](./docs/ORKFLOW_SCHEDULES.md) with backfill, HTTP
+  [triggers](./docs/ORKFLOW_TRIGGERS.md), and [webhooks](./docs/WEBHOOKS.md)
+  that call your systems when a run, or one of its tasks, changes state.
+- **Testing:** `orkctl activity test` checks an image against the contract,
+  and `orkctl task run` runs one task on your machine
+  ([activity images](./docs/ACTIVITY_IMAGES.md)).
+- **Operating:** namespaces with admission and budgets, image policy, release
+  rollout, [automation documents](./docs/AUTOMATION.md) and OpenTelemetry
+  ([DEPLOY.md](./docs/DEPLOY.md)).
+- **Inspecting:** live attempts, timing, run-to-run diffs,
+  [stats](./docs/STATS.md) and [evidence bundles](./docs/RUN_EVIDENCE.md) you
+  can verify offline.
 
 ## What it does not do
 

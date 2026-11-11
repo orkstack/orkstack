@@ -784,7 +784,7 @@ key; `HOSTNAME` is not (`docs/DSL.md`, "Caching").
 ```
 APPLY TIME (engine, internal/api, once per version)
   uses: "shell"                      catalog lookup
-     └─> ghcr.io/orkstack/activity-shell:0.2   registry GET /v2/<repo>/manifests/<tag>
+     └─> ghcr.io/orkstack/activity-shell:0.3   registry GET /v2/<repo>/manifests/<tag>
           └─> sha256:9ab2…            sha256 of the response body
                └─> ImageRef{pinned: "ghcr.io/orkstack/activity-shell@sha256:9ab2…"}
                     └─> stamped into the immutable Orkflow version document
@@ -808,12 +808,12 @@ probe and not a marketplace. The built-in table:
 
 ```yaml
 activities:
-  shell:    ghcr.io/orkstack/activity-shell:0.2
-  http:     ghcr.io/orkstack/activity-http:0.2
-  file:     ghcr.io/orkstack/activity-file:0.2
-  json:     ghcr.io/orkstack/activity-json:0.2
-  git:      ghcr.io/orkstack/activity-git:0.2
-  template: ghcr.io/orkstack/activity-template:0.2
+  shell:    ghcr.io/orkstack/activity-shell:0.3
+  http:     ghcr.io/orkstack/activity-http:0.3
+  file:     ghcr.io/orkstack/activity-file:0.3
+  json:     ghcr.io/orkstack/activity-json:0.3
+  git:      ghcr.io/orkstack/activity-git:0.3
+  template: ghcr.io/orkstack/activity-template:0.3
 ```
 
 `uses:` resolution order, applied in `internal/dsl` validation and then in

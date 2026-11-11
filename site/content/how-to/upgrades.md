@@ -55,6 +55,7 @@ Some rollbacks need preparation first. Each one below names what to change, then
 - definitions passed by reference: set `engine.definition_by_reference` to `false` on every replica, then wait for the runs started that way to finish;
 - snapshot overlays: set `engine.snapshot_overlays` to `false` on every replica, then wait for the runs started while it was on to finish;
 - the Temporal Go SDK 1.50, which is release 0.2.0, with versioning off: hold each namespace that takes runs, wait until `orkctl run list -n NS -F 'status=PENDING,RUNNING'` lists no run, roll back, then release each hold with `orkctl namespace update NS --release-hold`. Count every open run, however old. Resolve or cancel an awaited task rather than wait for its deadline. With versioning on, this case needs nothing more: a run that 0.2.0 started finishes on 0.2.0.
+- start events published without a wait for each, which is release 0.3.0, with versioning off: the same hold, wait and release as for 0.2.0. With versioning on, a run that 0.3.0 started finishes on 0.3.0.
 
 Do not roll back below the release that introduced reading runs carried into a fresh history. Every release from 0.1.0 contains it.
 
@@ -77,6 +78,16 @@ ork --defaults
 ```
 
 Set any key yourself if you need an older value.
+
+## Upgrading from 0.2.0
+
+These are the changes most likely to stop a deployment that runs 0.2.0. Check each one before you upgrade it. [UPGRADING.md, "Upgrading from 0.2.0 to 0.3.0"](https://github.com/orkstack/orkstack/blob/main/docs/UPGRADING.md#upgrading-from-020-to-030) has every breaking change and its step, including the stricter YAML and JSON reading and the smaller in-flight cap.
+
+- **Commands.** orkctl's `apply` is gone. Create Orkflows with `orkctl orkflow create`, then apply automation documents with `orkctl automation apply`, as two steps. `export` and `webhook register` are now `automation export` and `webhook create`.
+- **Object store keys.** The keys no longer default to the development store's key. Set `ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY` on every `ork` and `orker`, or leave both unset to sign with an instance or pod role.
+- **Object store answers.** The store must refuse an `If-Match` write to a missing key and honour `If-Match` on a delete. An Orker refuses to start with `COMMIT_STORE_NOT_CONDITIONAL` on a store that does not, and so does an engine. SeaweedFS does both.
+- **`orkctl`.** Upgrade it with the engines: planning a file no longer reports a version for a document that pins none.
+- **Catalog names.** The built-in catalog of 0.3.0 names the first-party images by their `0.3` tag, when an Orkflow is created. A version already created keeps the image it pinned. 0.3.0 leaves the `0.2` tag on the v0.2.0 images.
 
 ## Upgrading from 0.1.0
 
