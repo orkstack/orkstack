@@ -207,8 +207,13 @@ to write the bytes `encoding/json` wrote wherever bytes are hashed, compared,
 stored or read by a container (a definition digest, a memo key, a plan digest,
 an evidence manifest, the workspace context files, a stored record): map keys
 sorted, a nil slice or map as `null`, `<`, `>` and `&` escaped where they were,
-U+2028 and U+2029 escaped, a `time.Duration` as integer nanoseconds. Its
-golden tests hold those bytes to the ones `encoding/json` wrote. A Go struct
+U+2028 and U+2029 escaped, a `time.Duration` as integer nanoseconds, and a
+value already encoded (a `RawJSON`, a number's text) with every escape it holds
+kept as written (`"\/"` stays `"\/"`) and nothing in it refused, as
+`encoding/json` kept a `RawMessage`. Checking such a value is its reader's
+job: a webhook body refuses a run that is not one valid JSON value of UTF-8
+text before it is signed. Its golden tests hold those bytes to the ones
+`encoding/json` wrote. A Go struct
 that crosses Temporal is still encoded by the SDK's own `encoding/json`, so a
 raw field in one is a `stablejson.RawJSON`, never a `jsontext.Value`, and none
 carries a v2-only tag option. A `RawJSON` field is tagged `omitzero`, never

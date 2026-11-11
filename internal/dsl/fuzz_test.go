@@ -302,6 +302,12 @@ func awaitVerdict(raw []byte, maxBytes int64, order []string, types map[string]s
 	if !utf8.Valid(raw) {
 		return "values: the values are not valid UTF-8"
 	}
+	// One JSON value, read as encoding/json's json.Valid read it, before any
+	// rule about what its strings or keys hold: half of a pair and a key
+	// written twice are not syntax.
+	if err := json.Unmarshal(raw, new(jsontext.Value), jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true)); err != nil {
+		return "values: the values are not one valid JSON value: " + stablejson.Explain(err)
+	}
 	if escape := halfOfAPair(raw); escape != "" {
 		return "values: the values hold a string that cannot be read as text: the escape " + escape + " is half of a surrogate pair, not a character"
 	}

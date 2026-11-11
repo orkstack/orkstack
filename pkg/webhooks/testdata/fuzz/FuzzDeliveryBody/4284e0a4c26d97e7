@@ -1,0 +1,10 @@
+go test fuzz v1
+string("0")
+string("0")
+string("0")
+string("0")
+int32(-90)
+int64(253402300721)
+int32(999999999)
+int64(9223372036854775807)
+string("\"\xd2\"")

@@ -2,6 +2,8 @@ module github.com/orkstack/orkstack
 
 go 1.27
 
+toolchain go1.27.4
+
 require (
 	connectrpc.com/connect v1.21.1
 	github.com/aws/aws-sdk-go-v2 v1.47.5

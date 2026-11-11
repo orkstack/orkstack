@@ -5,6 +5,7 @@ import (
 	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +39,7 @@ var v1Golden = []struct{ marshal, indent, unescaped string }{
 	{"{\"name\":\"\",\"tags\":null,\"labels\":null,\"bytes\":null,\"when\":\"0001-01-01T00:00:00Z\",\"inner\":{\"y\":\"\"},\"raw\":null,\"num\":0,\"any\":null,\"ratio\":0,\"Untaged\":\"\"}", "{\n  \"name\": \"\",\n  \"tags\": null,\n  \"labels\": null,\n  \"bytes\": null,\n  \"when\": \"0001-01-01T00:00:00Z\",\n  \"inner\": {\n    \"y\": \"\"\n  },\n  \"raw\": null,\n  \"num\": 0,\n  \"any\": null,\n  \"ratio\": 0,\n  \"Untaged\": \"\"\n}", "{\"name\":\"\",\"tags\":null,\"labels\":null,\"bytes\":null,\"when\":\"0001-01-01T00:00:00Z\",\"inner\":{\"y\":\"\"},\"raw\":null,\"num\":0,\"any\":null,\"ratio\":0,\"Untaged\":\"\"}\n"},
 	{"{\"name\":\"n\\u003c\",\"count\":3,\"flag\":true,\"tags\":[\"t\"],\"opt\":[\"o\"],\"labels\":{\"a\":\"2\",\"z\":\"1\"},\"bytes\":\"AAEC\",\"when\":\"2026-11-08T01:02:03.000000004Z\",\"inner\":{\"x\":1,\"y\":\"y\"},\"ptr\":{\"y\":\"\"},\"raw\":{\"k\":[1,\"\\u003c\"]},\"num\":1.50,\"any\":{\"q\":[1,\"2\"]},\"ratio\":0.5,\"Untaged\":\"u\"}", "{\n  \"name\": \"n\\u003c\",\n  \"count\": 3,\n  \"flag\": true,\n  \"tags\": [\n    \"t\"\n  ],\n  \"opt\": [\n    \"o\"\n  ],\n  \"labels\": {\n    \"a\": \"2\",\n    \"z\": \"1\"\n  },\n  \"bytes\": \"AAEC\",\n  \"when\": \"2026-11-08T01:02:03.000000004Z\",\n  \"inner\": {\n    \"x\": 1,\n    \"y\": \"y\"\n  },\n  \"ptr\": {\n    \"y\": \"\"\n  },\n  \"raw\": {\n    \"k\": [\n      1,\n      \"\\u003c\"\n    ]\n  },\n  \"num\": 1.50,\n  \"any\": {\n    \"q\": [\n      1,\n      \"2\"\n    ]\n  },\n  \"ratio\": 0.5,\n  \"Untaged\": \"u\"\n}", "{\"name\":\"n<\",\"count\":3,\"flag\":true,\"tags\":[\"t\"],\"opt\":[\"o\"],\"labels\":{\"a\":\"2\",\"z\":\"1\"},\"bytes\":\"AAEC\",\"when\":\"2026-11-08T01:02:03.000000004Z\",\"inner\":{\"x\":1,\"y\":\"y\"},\"ptr\":{\"y\":\"\"},\"raw\":{\"k\":[1,\"<\"]},\"num\":1.50,\"any\":{\"q\":[1,\"2\"]},\"ratio\":0.5,\"Untaged\":\"u\"}\n"},
 	{"{\"r\":null}", "{\n  \"r\": null\n}", "{\"r\":null}\n"},
+	{"{\"escapes\":\"\\u003c\\/script\\u003e \\u00e9 \\u007f \\u0041 \\u0026 \\t\",\"invalid\":\"\xff\",\"half\":\"\\ud800\",\"twice\":{\"a\":1,\"a\":2},\"spaced\":[1.0E+2,-0.0,\"\\u2028\"]}", "{\n  \"escapes\": \"\\u003c\\/script\\u003e \\u00e9 \\u007f \\u0041 \\u0026 \\t\",\n  \"invalid\": \"\xff\",\n  \"half\": \"\\ud800\",\n  \"twice\": {\n    \"a\": 1,\n    \"a\": 2\n  },\n  \"spaced\": [\n    1.0E+2,\n    -0.0,\n    \"\\u2028\"\n  ]\n}", "{\"escapes\":\"<\\/script> \\u00e9 \\u007f \\u0041 & \\t\",\"invalid\":\"\xff\",\"half\":\"\\ud800\",\"twice\":{\"a\":1,\"a\":2},\"spaced\":[1.0E+2,-0.0,\"\\u2028\"]}\n"},
 }
 
 func TestMarshal_WritesWhatEncodingJSONWrote(t *testing.T) {
@@ -210,10 +212,23 @@ func numberTexts(data []byte) []string {
 }
 
 // FuzzRawJSON: whatever JSON value a RawJSON is decoded from, it holds those
-// bytes exactly and marshals as the same value.
+// bytes exactly, and the module's encoders write it as encoding/json wrote a
+// RawMessage: compacted, every escape it holds kept as spelled, with only the
+// escapes encoding/json added — <, > and & under Options, and U+2028 and
+// U+2029 under both Options and Unescaped. A RawJSON is how a value crosses
+// into a digest, an archive line, a webhook body or task.json byte for byte.
 func FuzzRawJSON(f *testing.F) {
-	for _, seed := range []string{`null`, `{ "a" : 1 }`, `[1, 2]`, `"x"`, `1.50`, ` 1 `} {
+	for _, seed := range []string{
+		`null`, `{ "a" : 1 }`, `[1, 2]`, `"x"`, `1.50`, ` 1 `,
+		`"` + bs + `/"`, `"<` + bs + `/script>"`, `"` + bs + `u007f"`, `"` + bs + `u00e9 & ` + bs + `u0041"`,
+		"\"\xe2\x80\xa8\xe2\x80\xa9\"", `{"k":[1.0E+2,-0.0,"` + bs + `ud83d` + bs + `ude00"]}`,
+	} {
 		f.Add([]byte(seed))
+	}
+	escapes := map[string]*strings.Replacer{
+		"Options": strings.NewReplacer("<", bs+"u003c", ">", bs+"u003e", "&", bs+"u0026",
+			"\xe2\x80\xa8", bs+"u2028", "\xe2\x80\xa9", bs+"u2029"),
+		"Unescaped": strings.NewReplacer("\xe2\x80\xa8", bs+"u2028", "\xe2\x80\xa9", bs+"u2029"),
 	}
 	f.Fuzz(func(t *testing.T, data []byte) {
 		if !jsontext.Value(data).IsValid() {
@@ -227,14 +242,20 @@ func FuzzRawJSON(f *testing.F) {
 		if !bytes.Equal(raw, trimmed) {
 			t.Fatalf("held %q, want %q", raw, trimmed)
 		}
-		out, err := json.Marshal(raw)
-		if err != nil {
+		compact := jsontext.Value(bytes.Clone(trimmed))
+		if err := compact.Compact(); err != nil {
 			t.Fatal(err)
 		}
-		want := jsontext.Value(bytes.Clone(trimmed))
-		_ = want.Compact()
-		if !bytes.Equal(out, want) {
-			t.Fatalf("marshalled %q, want %q", out, want)
+		// The value is valid JSON, so <, >, &, U+2028 and U+2029 occur in it
+		// only inside strings, where encoding/json escaped them.
+		for name, opts := range map[string]json.Options{"Options": Options, "Unescaped": Unescaped} {
+			out, err := json.Marshal(raw, opts)
+			if err != nil {
+				t.Fatalf("Marshal with %s: %v", name, err)
+			}
+			if want := escapes[name].Replace(string(compact)); string(out) != want {
+				t.Fatalf("Marshal with %s = %q, want %q", name, out, want)
+			}
 		}
 	})
 }

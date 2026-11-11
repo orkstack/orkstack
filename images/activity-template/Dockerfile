@@ -47,7 +47,10 @@ FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c03
 # jq builds the root context and checks JSON datasources before the render;
 # tzdata is what makes a task's own TZ (say Europe/Berlin) mean that zone —
 # without zone data, Go reads every zone name as UTC, silently.
-RUN apk add --no-cache 'jq~1.8' tzdata
+# zlib~1.4: zlib 1.4 fixes CVE-2026-4738, and alpine 3.24.4, the newest 3.24
+# base, still ships 1.3.2, so the package is upgraded here. Drop it once the
+# pinned base carries zlib 1.4.
+RUN apk add --no-cache 'zlib~1.4' 'jq~1.8' tzdata
 
 COPY --from=gomplate /out/gomplate /usr/local/bin/gomplate
 COPY entry.sh /usr/local/bin/entry.sh

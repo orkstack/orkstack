@@ -56,5 +56,27 @@ func corpus() []any {
 		struct {
 			R RawJSON `json:"r"`
 		}{},
+		rawCorpus{
+			Escapes: RawJSON(`"<` + bs + `/script> ` + bs + `u00e9 ` + bs + `u007f ` + bs + `u0041 & ` + bs + `t"`),
+			Invalid: RawJSON("\"\xff\""),
+			Half:    RawJSON(`"` + bs + `ud800"`),
+			Twice:   RawJSON(`{"a":1, "a":2}`),
+			Spaced:  RawJSON("[ 1.0E+2 , -0.0 , \"\xe2\x80\xa8\" ]"),
+		},
 	}
+}
+
+// bs is one backslash, so the escapes rawCorpus holds read as written.
+const bs = `\`
+
+// rawCorpus is values already encoded, as encoding/json carried them: every
+// escape kept as spelled, whitespace removed, <, >, & and U+2028 escaped, and
+// what a reader refuses — invalid UTF-8, half of a surrogate pair, a key
+// written twice — written as it is rather than changed or refused.
+type rawCorpus struct {
+	Escapes RawJSON `json:"escapes"`
+	Invalid RawJSON `json:"invalid"`
+	Half    RawJSON `json:"half"`
+	Twice   RawJSON `json:"twice"`
+	Spaced  RawJSON `json:"spaced"`
 }

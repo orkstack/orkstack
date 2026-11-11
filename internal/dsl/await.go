@@ -1,6 +1,7 @@
 package dsl
 
 import (
+	"encoding/json/jsontext"
 	"encoding/json/v2"
 	"fmt"
 	"slices"
@@ -245,8 +246,9 @@ func (e *AwaitValuesError) Error() string {
 //
 //	len(raw) > maxBytes                → "", "the values are N bytes, over the M-byte limit"
 //	!utf8.Valid(raw)                   → "", "the values are not valid UTF-8"
+//	not one JSON value                 → "", "the values are not one valid JSON value: <why>"
 //	half of a surrogate pair in a string → "", "the values hold a string that cannot be read as text: …"
-//	not one JSON value, or a key twice → "", "the values are not one valid JSON value: <why>"
+//	a key twice                        → "", "the values are not one valid JSON value: <why>"
 //	top level is not an object         → "", "the values must be a JSON object, not <kind>"
 //	for each schema entry, sorted by name:
 //	  required and absent              → "values.<k>", "is required by the await's schema"
@@ -257,13 +259,19 @@ func (e *AwaitValuesError) Error() string {
 // being rounded; raw itself is never re-serialized. Keys the schema does not
 // declare are accepted — the schema says what downstream relies on, not
 // everything a caller may send. A nil spec or empty schema checks only the
-// first four rules.
+// first six rules, which judge the body and not its keys.
 func ValidateAwaitValues(spec *orkstackv1.AwaitSpec, raw []byte, maxBytes int64) error {
 	if maxBytes > 0 && int64(len(raw)) > maxBytes {
 		return &AwaitValuesError{Message: fmt.Sprintf("the values are %d bytes, over the %d-byte limit", len(raw), maxBytes)}
 	}
 	if !utf8.Valid(raw) {
 		return &AwaitValuesError{Message: "the values are not valid UTF-8"}
+	}
+	// One JSON value first, read as encoding/json's json.Valid read it: a
+	// text that is not one is refused as such, whatever its strings hold,
+	// and the rules below judge only a value.
+	if err := json.Unmarshal(raw, new(jsontext.Value), jsontext.AllowDuplicateNames(true), jsontext.AllowInvalidUTF8(true)); err != nil {
+		return &AwaitValuesError{Message: "the values are not one valid JSON value: " + stablejson.Explain(err)}
 	}
 	// The values are stored byte for byte; a string that is not text would
 	// not read back as what was sent.

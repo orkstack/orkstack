@@ -156,7 +156,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         timeout-minutes: 5
         with:
@@ -217,7 +217,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         timeout-minutes: 3
         # BuildKit builds the images this proof runs, so it is pinned by
@@ -271,7 +271,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         timeout-minutes: 5
         with:
@@ -377,7 +377,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - name: race
         timeout-minutes: 60
         shell: bash
@@ -414,7 +414,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - name: race-repeat
         timeout-minutes: 165
         shell: bash
@@ -453,7 +453,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - name: fuzz
         timeout-minutes: 145
         shell: bash
@@ -492,7 +492,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       # Named, because the jobs API reports a composite action only as the
       # step that uses it, and the merger's setup-failed rule names it
       # (test/tools/proofrun/merge.go, classify).
@@ -564,7 +564,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         timeout-minutes: 5
         with:
@@ -710,7 +710,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - name: proof host
         uses: ./.github/actions/proof-host
         timeout-minutes: 10
@@ -767,7 +767,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - name: observability stack
         timeout-minutes: 10
         run: |
@@ -873,7 +873,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
       - name: fetch plan
         uses: ./.github/actions/proof-fetch
         timeout-minutes: 10

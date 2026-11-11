@@ -11,6 +11,13 @@
 //     (Unescaped), and U+2028 and U+2029 always escaped, as v1 always did;
 //   - text that is not valid UTF-8 written with U+FFFD in its place, as v1
 //     wrote it, rather than refused;
+//   - a value already encoded (a RawJSON, a Number, what a MarshalJSON method
+//     returns) written as it was spelled, as v1 wrote it: whitespace removed
+//     and the escapes above added, but every escape it holds kept (\/ stays
+//     \/, an escaped DEL stays escaped), and invalid UTF-8, half of a
+//     surrogate pair and a key written twice carried rather than changed or
+//     refused — validating such a value is its reader's job, never the
+//     encoder's;
 //   - a time.Duration written as an integer of nanoseconds.
 //
 // Reading keeps encoding/json/v2's own defaults everywhere: a duplicate key is
@@ -47,7 +54,10 @@ var DurationAsNano = json.JoinOptions(
 	})),
 )
 
-// Options marshals as encoding/json.Marshal did.
+// Options marshals as encoding/json.Marshal did. It is for marshalling only:
+// AllowDuplicateNames and AllowInvalidUTF8 here keep an encoded value's bytes
+// as v1 kept them, and a decode passed them would accept what every OrkStack
+// reader refuses.
 var Options = json.JoinOptions(
 	DurationAsNano,
 	json.Deterministic(true),
@@ -56,6 +66,8 @@ var Options = json.JoinOptions(
 	jsontext.EscapeForHTML(true),
 	jsontext.EscapeForJS(true),
 	jsontext.AllowInvalidUTF8(true),
+	jsontext.PreserveRawStrings(true),
+	jsontext.AllowDuplicateNames(true),
 )
 
 // Unescaped marshals as an encoding/json.Encoder with SetEscapeHTML(false)

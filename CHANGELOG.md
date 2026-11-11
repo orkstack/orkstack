@@ -67,6 +67,8 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - An Orker's boot now removes the attempt directories, and the secret files in them, that its killed predecessor under the same `ORK_ORKER_ID` left behind ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#what-removes-a-tasks-container)).
 - The web UI's content security policy no longer allows `'unsafe-eval'`. A gateway that adds its own policy for the UI can drop it too ([SECURITY_MODEL.md](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#transport-listeners-and-configuration)).
 - `orkctl` now escapes control and format characters in every value it prints, human or `--json`, so a value a task or input holds cannot act on your terminal.
+- `ork`, `orker` and `orkctl` are built with Go 1.27.4, which fixes a crash a request could cause in the engine's HTTP server (GO-2026-6859).
+- The six first-party activity images now carry zlib 1.4, which fixes CVE-2026-4738.
 
 ## [0.2.0] - 2026-11-05
 

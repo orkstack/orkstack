@@ -272,6 +272,11 @@ func TestValidateAwaitValues(t *testing.T) {
 		{"lone low surrogate", nil, `{"a":"\udc00x"}`, 0, "", `the values hold a string that cannot be read as text: the escape \udc00 is half of a surrogate pair, not a character`},
 		{"high surrogate before a character", nil, `{"a":"\ud800A"}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
 		{"lone surrogate in a key", nil, `{"\ud800":1}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
+		// A text that is not one JSON value is refused as such first, as
+		// encoding/json's json.Valid refused it, whatever its strings hold.
+		{"half of a pair in an unterminated string", nil, `"\ud800`, 0, "", `the values are not one valid JSON value: unexpected EOF after offset 7`},
+		{"half of a pair in a text that is not one value", nil, `{"a":"\ud800"`, 0, "", `the values are not one valid JSON value: unexpected EOF after offset 13`},
+		{"half of a pair beside a key written twice", nil, `{"a":"\ud800","a":1}`, 0, "", `the values hold a string that cannot be read as text: the escape \ud800 is half of a surrogate pair, not a character`},
 		{"a surrogate pair is a character", nil, `{"a":"😀"}`, 0, "", ""},
 		{"an escaped backslash before u is no escape", nil, `{"a":"\\ud800"}`, 0, "", ""},
 		{"two values", nil, `{}{}`, 0, "", "the values are not one valid JSON value: invalid character '{' after top-level value after offset 2"},

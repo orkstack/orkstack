@@ -31,6 +31,45 @@ func sampleDelivery() webhooks.Delivery {
 	}
 }
 
+// backslash is one backslash, so the escapes below read as written.
+const backslash = `\`
+
+func TestDelivery_BodyRefusesARunAReceiverCannotRead(t *testing.T) {
+	for _, tc := range []struct{ name, run, why string }{
+		{"invalid UTF-8", "{\"note\":\"\xd2\"}", "the string at /note is not valid UTF-8"},
+		{"half of a surrogate pair", `{"note":"` + backslash + `ud800"}`, "the string at /note holds half of a surrogate pair, not a character"},
+		{"a key twice", `{"id":"a","id":"b"}`, `the key "id" appears twice in the top-level object`},
+		{"not one value", `{"id":"a"} {}`, "after top-level value"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			delivery := sampleDelivery()
+			delivery.Run = stablejson.RawJSON(tc.run)
+			body, err := delivery.Body()
+			if err == nil {
+				t.Fatalf("Body accepted the run %q: %s", tc.run, body)
+			}
+			if want := "webhooks: encode delivery dlv-1: the run is not one valid JSON value: "; !strings.HasPrefix(err.Error(), want) || !strings.Contains(err.Error(), tc.why) {
+				t.Fatalf("Body(run %q) = %v; want %q naming %q", tc.run, err, want, tc.why)
+			}
+		})
+	}
+}
+
+// The run is carried as the bytes its encoder wrote: an escape it holds is
+// kept, so the body is the one 0.2.0 sent for the same run and a receiver
+// that stored a signature for it still sees the same bytes.
+func TestDelivery_BodyKeepsTheRunsEscapes(t *testing.T) {
+	delivery := sampleDelivery()
+	delivery.Run = stablejson.RawJSON(`{"note":"a` + backslash + `u007f` + backslash + `/b<"}`)
+	body, err := delivery.Body()
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if want := `"run":{"note":"a` + backslash + `u007f` + backslash + `/b` + backslash + `u003c"}}`; !strings.HasSuffix(string(body), want) {
+		t.Fatalf("Body = %s, want it to end %s", body, want)
+	}
+}
+
 func TestDelivery_BodyCarriesRunIdOrkflowNameStatusTimestampSequenceAndRun(t *testing.T) {
 	body, err := sampleDelivery().Body()
 	if err != nil {

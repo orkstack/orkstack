@@ -80,7 +80,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: false
       # dist notes writes the release's page with a placeholder of a digest's
       # length for each image, so it refuses a page over GitHub's limit here,
@@ -169,7 +169,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: false
       # The activity images run a package manager at build time; arm64 runs it
       # under QEMU. The other images run nothing for the target platform.
@@ -293,7 +293,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         timeout-minutes: 3
@@ -340,7 +340,7 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
-          go-version: "1.27.3"
+          go-version: "1.27.4"
           cache: false
       - name: fetch the nightly of this commit, waiting for one still running
         timeout-minutes: 70

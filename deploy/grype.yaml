@@ -47,3 +47,14 @@ ignore:
       version: v4.1.4
       type: go-module
       location: /usr/local/bin/gomplate
+  - vulnerability: GO-2026-6865
+    reason: >-
+      review-by 2026-11-30: klauspost/compress v1.19.2 is built into gomplate
+      v5.3.1, its latest release, and is fixed in v1.20.2, which gomplate's
+      main already requires; remove this waiver when gomplate releases with
+      compress v1.20.2 or later.
+    package:
+      name: github.com/klauspost/compress
+      version: v1.19.2
+      type: go-module
+      location: /usr/local/bin/gomplate

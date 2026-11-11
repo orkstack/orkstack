@@ -42,7 +42,7 @@ var prTitleCases = []struct {
 	{"add a thing", "must read type(scope)!: description"},
 	{"Merge branch 'main' into feature", "must read type(scope)!: description"},
 	{`Revert "feat: add a thing"`, "must read type(scope)!: description"},
-	{"Bump golang from 1.27.2 to 1.27.3", "must read type(scope)!: description"},
+	{"Bump golang from 1.27.3 to 1.27.4", "must read type(scope)!: description"},
 	{"feat:add a thing", "must read type(scope)!: description"},
 	{"feat:  add a thing", "starts or ends with whitespace"},
 	{"feat: ", "must read type(scope)!: description"},

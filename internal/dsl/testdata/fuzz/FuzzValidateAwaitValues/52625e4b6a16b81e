@@ -1,0 +1,4 @@
+go test fuzz v1
+[]byte("\"\\ud800")
+int64(-62)
+byte('\x00')

@@ -5,6 +5,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -76,7 +78,19 @@ type payload struct {
 
 // Body renders the signed request body. It is computed once per delivery and
 // reused by every attempt, so the signature is stable across retries.
+//
+// The run is carried as its bytes, every escape kept, so Body first checks it
+// is one JSON value a receiver can read: UTF-8 text, no half of a surrogate
+// pair, no key written twice. A run that is not is refused, naming where, and
+// is never sent; the encoder that renders a run (protojson) writes none of
+// them, so a refusal means the run was not rendered by it.
 func (d Delivery) Body() ([]byte, error) {
+	if d.Run != nil {
+		var run jsontext.Value
+		if err := json.Unmarshal(d.Run, &run); err != nil {
+			return nil, fmt.Errorf("webhooks: encode delivery %s: the run is not one valid JSON value: %s", d.ID, stablejson.Explain(err))
+		}
+	}
 	body, err := stablejson.Marshal(payload{
 		RunID:       d.RunID,
 		OrkflowName: d.OrkflowName,

@@ -3,7 +3,7 @@
 # OrkStack's. Build, push and pin it with (the quickstart's registry; make up's
 # is at localhost:5001):
 #   orkctl activity build examples/custom-image --tag 127.0.0.1:5002/orkstack-examples/custom-image:dev
-FROM golang:1.27-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS build
+FROM golang:1.27.4-alpine@sha256:0a5f7fe796599ff487605987432e7619ae45beeb2fba4c2ce0b907879932aebf AS build
 WORKDIR /src
 COPY main.go ./
 ENV CGO_ENABLED=0

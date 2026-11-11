@@ -14,7 +14,10 @@
 # made.
 FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
 
-RUN apk add --no-cache 'git~2.54' 'jq~1.8' ca-certificates
+# zlib~1.4: zlib 1.4 fixes CVE-2026-4738, and alpine 3.24.4, the newest 3.24
+# base, still ships 1.3.2, so the package is upgraded here. Drop it once the
+# pinned base carries zlib 1.4.
+RUN apk add --no-cache 'zlib~1.4' 'git~2.54' 'jq~1.8' ca-certificates
 
 COPY entry.sh /usr/local/bin/entry.sh
 RUN chmod 0555 /usr/local/bin/entry.sh
