@@ -53,7 +53,7 @@ services:
   # Values are JSON, so a duration string keeps its quotes
   # (docs/DEPLOY.md §4, "Underneath"; TestDevCompose_Temporal...).
   temporal:
-    image: temporalio/temporal:1.9.1@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    image: temporalio/temporal:1.10.0@sha256:003508da05989e7cf0d583cfce521c4bb2732e733574e3040db8f1284783baa2
     command:
       - server
       - start-dev
@@ -94,7 +94,7 @@ services:
   # signs with. With them set, auto-create would let an admin's first upload make a
   # missing bucket, so it is off. Both apply to a store's existing volume.
   seaweedfs:
-    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    image: chrislusf/seaweedfs:4.52@sha256:57877e32bb90073b37dc109b438ba66e84fd5ed9ced5f5c04f56444ef243ce59
     command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts", "-s3.autoCreateBucket=false"]
     environment:
       AWS_ACCESS_KEY_ID: orkstack
@@ -133,7 +133,7 @@ services:
   # images only by digest, and a floating tag is what AGENTS.md §11.1 forbids.
   # An update is a PR that runs the proof (Dependabot opens it).
   registry:
-    image: registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    image: registry:3@sha256:38907510915c3f1604c7e83d6ab602ab3020d092f73bdaed8696773693ff768c
     ports:
       - "127.0.0.1:5001:5000"
     volumes:
@@ -153,7 +153,7 @@ services:
   # as above: each image by its release tag and its multi-arch index digest.
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
+    image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
     profiles: ["observability"]
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
@@ -187,7 +187,7 @@ services:
       - "127.0.0.1:4317:4317"   # OTLP/gRPC, direct or via the collector
 
   prometheus:
-    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     profiles: ["observability"]
     command:
       - --config.file=/etc/prometheus/prometheus.yml
