@@ -36,7 +36,7 @@ COPY --from=ui-build /src/ui/build/ /
 # database linked in). The context never carries internal/webui/dist, so the
 # UI ork embeds (internal/webui) is always the ui stage's, never a build left
 # in the checkout.
-FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:d200d2dd76b03a99b52651fd1325aff7dcd35422c35c01bac56571b0507f3deb AS binaries
+FROM --platform=$BUILDPLATFORM golang:1.27.3-alpine@sha256:fa3d596898d9f126af7c01d14ee7597bab3f39cccf392ef36b69fe77cd681f18 AS binaries
 ARG TARGETARCH
 ARG VERSION=dev
 # The context holds no .git, so a build reports a commit only when told one;
@@ -54,13 +54,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 	CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH GOTOOLCHAIN=local \
 	go build -trimpath -buildvcs=false -tags timetzdata -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/ ./cmd/ork ./cmd/orker ./cmd/orkctl
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99 AS ork
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS ork
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=binaries /out/ork /usr/local/bin/ork
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/ork"]
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99 AS orkctl
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:25ac8f0c3b2334a9eb05452266bd4697864a8c8ef0ef71e5e6480d7f92868329 AS orkctl
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=binaries /out/orkctl /usr/local/bin/orkctl
 WORKDIR /work
@@ -69,9 +69,9 @@ ENTRYPOINT ["/usr/local/bin/orkctl"]
 # The Orker drives the docker CLI against the host's daemon, through the
 # socket compose.yaml mounts: that makes it root on the host whatever user it
 # runs as, so it runs as root and says so.
-FROM docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb AS docker-cli
+FROM docker:29.9.3-cli@sha256:2357639ad1ea7d0194134bf3292622fd4e562483966ed674e5d7c945b5f3b28d AS docker-cli
 
-FROM gcr.io/distroless/static-debian13:latest@sha256:15f8637509792e05b97d83451b0b6ccfa4abd548f997e406ac1e72c87fe1fa78 AS orker
+FROM gcr.io/distroless/static-debian13:latest@sha256:448810357cc8e67b7208988abdba0f5ec3d3aebee0a5b13eb624979792cffc0f AS orker
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=binaries /out/orker /usr/local/bin/orker
