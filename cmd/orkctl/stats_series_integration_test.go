@@ -196,6 +196,11 @@ func TestIntegration_TwoReplicasReportTheSameStatsSeries(t *testing.T) {
 	submit("breakit")
 	slow := submit("crawlit")
 	awaitArchived(ctx, t, artifactCfg, live, 3)
+	// The durations come from the cluster's index of executions, which
+	// reports a run's close a moment after the archive holds the run. Until
+	// the index lists all three as closed, one replica can sample two
+	// durations and the other three, so wait for the settled window first.
+	awaitClosedInIndex(ctx, t, temporalClient, 3)
 	if status := executionStatus(ctx, t, temporalClient, slow); status != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
 		t.Fatalf("the slow run reached %s before the readings", status)
 	}

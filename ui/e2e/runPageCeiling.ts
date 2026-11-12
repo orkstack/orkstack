@@ -243,12 +243,14 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	// every one of its task cards drawn, the last of them in view, and the page
 	// answering a click (the last card's Inspect opens). It returns the
 	// milliseconds from navigation, and records the opening under its phase.
+	// Only a gated open is held to the Inspect bound and screenshotted; an
+	// extra open (EXTRA_OPENS) asserts nothing and only feeds the medians.
 	async function measureRunPage(
 		page: Page,
 		runId: string,
 		tasks: number,
 		phase: string,
-		screenshot = true
+		gated = true
 	): Promise<number> {
 		const started = Date.now();
 		await page.goto(`${UI_ORIGIN}/runs/${runId}?ns=default`);
@@ -280,10 +282,11 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 				`(header ${header} ms, every card ${cards} ms; Inspect drawn ${inspect} ms after its press)`
 		);
 		(openings[phase] ??= []).push({ header, cards, interactive: elapsed, inspect });
+		if (!gated) return elapsed;
 		expect(inspect, `${phase}: the Inspect body drawn after its press`).toBeLessThanOrEqual(INSPECT_DRAWN_BUDGET_MS);
 		// The viewport, not the full page: a page of thousands of cards is taller
 		// than a screenshot may be.
-		if (screenshot) await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
+		await page.screenshot({ path: outPath(`screenshot-run-page-gated-${phase}.png`) });
 		return elapsed;
 	}
 
