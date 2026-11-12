@@ -157,3 +157,38 @@ func TestEngineObserver_ContinuationRecordsAreNilSafe(t *testing.T) {
 		t.Fatalf("a nil observer recorded %v", got)
 	}
 }
+
+// TestEngineObserver_RecordArchiveCleanup: each outcome of a cleanup pass is
+// counted under its own label, a zero adds nothing, and a nil observer
+// records nothing.
+func TestEngineObserver_RecordArchiveCleanup(t *testing.T) {
+	reader := sdkmetric.NewManualReader()
+	var buf bytes.Buffer
+	observer := newTestEngineObserver(t, reader, &buf, false)
+	ctx := context.Background()
+	observer.RecordArchiveCleanup(ctx, 3, 1, 2, 0)
+	observer.RecordArchiveCleanup(ctx, 0, 0, 1, 4)
+	var none *EngineObserver
+	none.RecordArchiveCleanup(ctx, 9, 9, 9, 9)
+
+	counts := map[string]int64{}
+	for _, sm := range collect(t, reader).ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if data, ok := m.Data.(metricdata.Sum[int64]); ok && m.Name == "ork.archive.cleanup.runs" {
+				for _, dp := range data.DataPoints {
+					outcome, _ := dp.Attributes.Value(AttrOutcome)
+					counts[outcome.AsString()] += dp.Value
+				}
+			}
+		}
+	}
+	want := map[string]int64{"retired": 3, "failed": 1, "not_found_not_due": 3, "not_found_held": 4}
+	if len(counts) != len(want) {
+		t.Fatalf("counted %v, want %v", counts, want)
+	}
+	for k, v := range want {
+		if counts[k] != v {
+			t.Fatalf("counted %v, want %v", counts, want)
+		}
+	}
+}

@@ -1321,9 +1321,30 @@ deployment maximum) is left alone. One past it is retired explicitly — the
 cleaner deletes the execution itself rather than waiting for a TTL — and its
 run-scoped storage is removed: logs, attempt records, snapshots, the commit
 records, and its object-reference markers (`docs/STORAGE.md`, "Reclaiming
-space"). An execution the cluster no longer holds is treated as already
-retired. The archive body, its index rows and the cleanup sidecar are
+space"). The archive body, its index rows and the cleanup sidecar are
 permanent, so a retired run stays listable and readable.
+
+**An execution the cluster no longer holds** is retired only once its own
+namespace's run retention, counted from the finish its archive body records,
+has passed. Nothing removes an execution earlier in normal operation — the
+backstop TTL sits past every namespace's retention — so one missing earlier
+means a restored or damaged cluster, or an `ork` replica pointed at the wrong
+`ORK_TEMPORAL_NAMESPACE`. Such a run is kept, logged at error ("kept a run
+whose execution is missing before its run retention") and counted
+(`ork.archive.cleanup.runs{outcome="not_found_not_due"}`; alert on any), and
+every pass examines it again until its retention has passed, when it is retired
+like any other: its retention is the namespace's promise, and a missing
+execution does not shorten it. A run whose body is missing, unreadable or
+records no finish cannot be dated and is never retired; each pass fails on it
+and logs it. When more than a tenth of the runs one pass looked up (at most
+`ORK_CLEANUP_BATCH_SIZE`) are missing before their retention, that pass retires **no** run whose execution is missing,
+even one already due (`not_found_held`), because it is reading the wrong cluster
+or a damaged one, and every later pass holds them too until one whole walk of
+the index has had no pass over that share (a restart forgets the hold; each run
+is still checked against its own retention). Runs the cluster still holds are
+retired as usual. After a
+cluster restore, or before pointing a replica at another Temporal namespace,
+set `ORK_CLEANUP_ENABLED=false` until the cluster is confirmed.
 
 On S3 a run's four run-scoped prefixes are emptied concurrently, one
 `DeleteObjects` request per listing page (up to 1000 keys), so the store must
@@ -1334,12 +1355,17 @@ that run's cleanup — it is not marked cleaned and a later pass retries it.
 pass, not the rate: a pass that processed a full batch starts the next pass at
 once, resuming the index walk after the last run it examined, and the worker
 returns to `ORK_CLEANUP_INTERVAL` after the first pass that reaches the end of
-the index. A backlog of retired runs therefore clears at the store's and the
+the index. A pass whose walk failed, or in which at least half the runs it
+examined failed, does not drain at once: it waits one `ORK_CLEANUP_INTERVAL`
+and then resumes where it stopped, so an outage of the cluster or the store is
+not walked through at full speed. One run that keeps failing among others does
+not slow the drain. A backlog of retired runs therefore clears at the store's and the
 cluster's speed, a batch at a time; the next ticked pass walks from the start
 again, so a run a drain passed before it was due is examined once it is.
 
 Cleanup **fails closed**: if the retention policy or any namespace's own value
-is unreadable, that iteration deletes nothing; an archived run the cluster
+is unreadable, or the stored policy holds no positive maximum run retention,
+that iteration deletes nothing and leaves the backstop as it is; an archived run the cluster
 reports as STILL RUNNING is refused rather than retired (deleting would
 terminate it, and a run is archived only at its end, so it is a defect to
 surface); per-run storage failures are logged and retried by a later
@@ -4716,6 +4742,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.run.continuation.hold.duration` | `ork.namespace` | engine, seconds a run held new tasks before it carried on (0 when it found a moment with nothing running on its own) |
 | `ork.run.continuation.read.attempts` | `ork.namespace` | engine, the attempt each successful read of a saved state succeeded on |
 | `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost) |
+| `ork.archive.cleanup.runs` | `outcome` | engine with cleanup on, once per run a cleanup pass came to and acted on or kept (§1, "Retention cleanup and bucket lifecycle rules"): `retired`, `failed` (left as it was; a later pass tries again), `not_found_not_due` (its execution is missing before its run retention, so it was kept: **alert on any**), or `not_found_held` (due, with its execution missing, but held because too many of that pass's runs were missing early) |
 | `ork.archive.sweep.unconfirmed` | — | engine, each pass: finished runs it could not confirm have an archive. **Alert on this above zero.** While object storage is down it counts every finished run the pass did not reach, archived or not |
 | `ork.archive.sweep.earliest_expiry` | — | engine, each pass that counted any and could date them: seconds left until the first of those runs expires. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
 

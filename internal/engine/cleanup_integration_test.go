@@ -26,6 +26,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/protobuf/types/known/durationpb"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
@@ -227,7 +228,7 @@ func TestIntegration_CleanupRetiresARunAtItsNamespaceRetention(t *testing.T) {
 
 	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
 		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
-	}, runArchive, reader, namespaces, retentionCtrl, logger).WithClock(func() time.Time {
+	}, runArchive, reader, namespaces, retentionCtrl, logger).WithFinishReader(engine.NewRunArchiver(runArchive)).WithClock(func() time.Time {
 		// Past "gone"'s one-minute namespace retention, nowhere near "retained"'s
 		// 999h inherited one.
 		return time.Now().UTC().Add(2 * shortRetention)
@@ -499,10 +500,18 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("seed log chunk: %v", err)
 		}
+		// A real body: with no execution left, cleanup dates the run from
+		// the finish its body records.
+		created := archived.Add(time.Duration(i) * time.Minute)
+		body, err := engine.MarshalRunArchive(&orkstackv1.Run{
+			Id: runID, Namespace: orkNamespace, OrkflowName: "cleanup-cancel", Status: orkstackv1.Status_STATUS_SUCCEEDED,
+			CreatedAt: timestamppb.New(created), FinishedAt: timestamppb.New(created.Add(time.Second)),
+		}, nil)
+		must.OKf(t, err, "MarshalRunArchive")
 		if err := runArchive.PutRun(ctx, artifacts.RunRecord{
 			RunID: runID, Namespace: orkNamespace, Orkflow: "cleanup-cancel", Status: "succeeded",
-			Time: archived.Add(time.Duration(i) * time.Minute), ObjectIDs: []string{objectID},
-			JSONL: []byte(runID + "\n"),
+			Time: created, ObjectIDs: []string{objectID},
+			JSONL: body,
 		}); err != nil {
 			t.Fatalf("PutRun(%s): %v", runID, err)
 		}
@@ -533,15 +542,19 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 		RetentionBuffer: 24 * time.Hour, BatchSize: len(runIDs),
 	}
 
-	stats, err := archivecleanup.NewCleaner(config, wrapped, reader, namespaces, retentionCtrl, logger).RunOnce(iterationCtx)
+	stats, err := archivecleanup.NewCleaner(config, wrapped, reader, namespaces, retentionCtrl, logger).
+		WithFinishReader(engine.NewRunArchiver(runArchive)).RunOnce(iterationCtx)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancelled iteration error = %v, want context.Canceled", err)
 	}
 	// Prompt stop means exactly one run was TOUCHED, not that one run reached
 	// every step. Cancellation can land between the delete and the sidecar
 	// write, which is the interesting case, so it is classified rather than
-	// assumed.
-	if stats.RunsScanned != 1 {
+	// assumed. These runs have no execution, so the pass looks every one of
+	// them up before it retires any (a missing execution is retired at the end
+	// of the pass, once it knows how many are missing early): what it must not
+	// do is touch a second run after the cancel.
+	if stats.RunsCleaned+stats.RunsFailed != 1 {
 		t.Fatalf("cancellation did not stop promptly: %+v", stats)
 	}
 
@@ -583,7 +596,8 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 
 	// Restart on a fresh context and converge: cleaned runs are skipped through
 	// their sidecars, the interrupted remainder is retried and completes.
-	resumed, err := archivecleanup.NewCleaner(config, runArchive, reader, namespaces, retentionCtrl, logger).RunOnce(ctx)
+	resumed, err := archivecleanup.NewCleaner(config, runArchive, reader, namespaces, retentionCtrl, logger).
+		WithFinishReader(engine.NewRunArchiver(runArchive)).RunOnce(ctx)
 	must.OKf(t, err, "resumed iteration")
 	// The interrupted run is cleaned AGAIN — its deletion never got a sidecar,
 	// so the next pass repeats an idempotent delete and then marks it. That is
@@ -766,7 +780,7 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 
 	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
 		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
-	}, runArchive, reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{nsDoc}}, retentionCtrl, logger).WithClock(func() time.Time {
+	}, runArchive, reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{nsDoc}}, retentionCtrl, logger).WithFinishReader(engine.NewRunArchiver(runArchive)).WithClock(func() time.Time {
 		return time.Now().UTC().Add(2 * shortRetention)
 	})
 	stats, err := cleaner.RunOnce(ctx)
@@ -1012,7 +1026,7 @@ func TestIntegration_RunEvidenceReflectsCleanupAsReclaimed(t *testing.T) {
 
 	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
 		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
-	}, runArchive, reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{nsDoc}}, retentionCtrl, logger).WithClock(func() time.Time {
+	}, runArchive, reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{nsDoc}}, retentionCtrl, logger).WithFinishReader(engine.NewRunArchiver(runArchive)).WithClock(func() time.Time {
 		return time.Now().UTC().Add(2 * shortRetention)
 	})
 	stats, err := cleaner.RunOnce(ctx)

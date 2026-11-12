@@ -293,6 +293,10 @@ type EngineInstruments struct {
 	// ArchiveSweepRuns counts what the archive sweep did with finished runs
 	// that had no archive, labelled outcome=archived|failed|expired.
 	ArchiveSweepRuns metric.Int64Counter
+	// ArchiveCleanupRuns counts what cleanup did with the runs it came to, by
+	// outcome; not_found_not_due is a run whose execution went missing before
+	// its retention, which is never cleanup's doing.
+	ArchiveCleanupRuns metric.Int64Counter
 	// ArchiveSweepUnconfirmed is how many finished runs the last sweep could
 	// not confirm have an archive.
 	ArchiveSweepUnconfirmed metric.Int64Gauge
@@ -398,6 +402,12 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	cleanupRuns, err := meter.Int64Counter("ork.archive.cleanup.runs",
+		metric.WithDescription("Finished runs the cleanup worker came to, by outcome."),
+		metric.WithUnit("{run}"))
+	if err != nil {
+		return nil, err
+	}
 	sweepUnconfirmed, err := meter.Int64Gauge("ork.archive.sweep.unconfirmed",
 		metric.WithDescription("Finished runs the last archive sweep could not confirm have an archive."),
 		metric.WithUnit("{run}"))
@@ -412,6 +422,7 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	}
 	return &EngineInstruments{
 		ArchiveSweepRuns:           sweepRuns,
+		ArchiveCleanupRuns:         cleanupRuns,
 		ArchiveSweepUnconfirmed:    sweepUnconfirmed,
 		ArchiveSweepEarliestExpiry: sweepExpiry,
 		Continuations:              continuations,

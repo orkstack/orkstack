@@ -150,6 +150,28 @@ type NamespaceLister interface {
 	List(ctx context.Context) ([]*orkstackv1.Namespace, error)
 }
 
+// RunFinishReader dates a run from its archive body: when it finished, as the
+// run itself recorded it. With no execution left in the cluster, the body is
+// the only record of that, so cleanup reads it before it retires a run whose
+// execution is missing. A body that is not there, cannot be read or records
+// no finish is an error, never a zero time.
+type RunFinishReader interface {
+	RunFinishedAt(ctx context.Context, runID string) (time.Time, error)
+}
+
+// CleanupObserver receives each pass's tally. It is how a run kept because its
+// execution went missing early, or held, reaches a metric.
+type CleanupObserver interface {
+	ObserveCleanup(ctx context.Context, stats CleanupStats)
+}
+
+// MissingHoldShare is the share of a pass's lookups that may come back missing
+// before their run retention without holding the pass: above it, the pass
+// retires no missing execution at all. More than a tenth missing early is a
+// restored or damaged cluster, or a replica pointed at the wrong one, not the
+// backstop TTL at work, which only ever removes runs already past retention.
+const MissingHoldShare = 0.10
+
 // CleanupStats describes one complete scan.
 type CleanupStats struct {
 	RunsScanned    int
@@ -157,6 +179,32 @@ type CleanupStats struct {
 	ObjectsDeleted int
 	BytesReclaimed int64
 	Errors         int
+	// RunsFailed counts the runs whose examination or retirement failed; they
+	// are left as they were and tried again by a later pass. Errors also
+	// counts failures that are no run's (the backstop reconcile).
+	RunsFailed int
+	// Processed counts the runs this pass examined against the cluster: the
+	// runs that count toward BatchSize.
+	Processed int
+	// LookedUp counts the runs the cluster answered a lookup for.
+	LookedUp int
+	// MissingNotDue counts runs whose execution the cluster does not hold
+	// although their own retention, counted from when they finished, has not
+	// passed. They are kept: nothing removes an execution early but a damaged
+	// cluster or the wrong one.
+	MissingNotDue int
+	// MissingHeld counts missing executions past their retention that this
+	// pass did not retire, because more than MissingHoldShare of its lookups
+	// were missing early.
+	MissingHeld int
+}
+
+// missingHeld reports whether a pass's missing-but-due runs are held. The
+// share is the pass's own, over at most BatchSize lookups: a small batch holds
+// sooner, which only delays a retirement. A run it cannot date is not in the
+// share; it is never retired either way.
+func (s CleanupStats) missingHeld() bool {
+	return s.MissingNotDue > 0 && float64(s.MissingNotDue) > MissingHoldShare*float64(s.LookedUp)
 }
 
 // Cleaner periodically retires finished runs at their own namespace's run
@@ -167,8 +215,22 @@ type Cleaner struct {
 	cluster    RunRetirer
 	namespaces NamespaceLister
 	retention  *RetentionController
+	finish     RunFinishReader
+	observer   CleanupObserver
 	logger     *slog.Logger
 	now        func() time.Time
+	// holdMissing holds every missing execution's retirement, in every pass,
+	// until one whole walk of the index has had no pass over
+	// MissingHoldShare; walkOverShare is whether the current walk has had
+	// one. A pass sees at most BatchSize runs, so without this a batch of
+	// only due runs, read from the same wrong or damaged cluster as the batch
+	// before it, would not be held. Both are process-local, as a cordon is:
+	// a restart forgets them, and each run is still checked against its own
+	// retention.
+	holdMissing   bool
+	walkOverShare bool
+	// ticker paces Run; a test replaces it to drive passes by hand.
+	ticker func(time.Duration) (<-chan time.Time, func())
 }
 
 // NewCleaner constructs a cleanup worker.
@@ -198,10 +260,34 @@ func NewCleaner(
 		logger.Warn("cleanup retention buffer is shorter than two cleanup intervals; the backstop may fire before this worker catches up",
 			"retention_buffer", config.RetentionBuffer, "interval", config.Interval)
 	}
-	return &Cleaner{
+	c := &Cleaner{
 		config: config, archive: archive, cluster: cluster,
 		namespaces: namespaces, retention: retention, logger: logger, now: time.Now,
+		ticker: func(d time.Duration) (<-chan time.Time, func()) {
+			t := time.NewTicker(d)
+			return t.C, t.Stop
+		},
 	}
+	// An archive that can date its own runs needs no separate reader.
+	if r, ok := archive.(RunFinishReader); ok {
+		c.finish = r
+	}
+	return c
+}
+
+// WithFinishReader sets how a run whose execution is missing is dated. Without
+// one, no missing execution is ever retired.
+func (c *Cleaner) WithFinishReader(r RunFinishReader) *Cleaner {
+	if r != nil {
+		c.finish = r
+	}
+	return c
+}
+
+// WithObserver sets where each pass's tally goes. Nil keeps the logs only.
+func (c *Cleaner) WithObserver(o CleanupObserver) *Cleaner {
+	c.observer = o
+	return c
 }
 
 // WithClock replaces the wall clock used to decide whether an archived run's
@@ -224,47 +310,60 @@ func (c *Cleaner) WithClock(now func() time.Time) *Cleaner {
 // The first pass that reaches the end of the index returns Run to the ticker,
 // and the next ticked pass walks from the start again, so a run that was not
 // yet due when a drain passed it is examined once it is.
+//
+// A pass that mostly failed does not drain at once: during an outage every
+// lookup fails, each failed run still counts toward the batch, and draining
+// would walk the whole index against a cluster or store that is not
+// answering. It waits for the next tick instead and resumes where it stopped.
+// A pass in which one run fails among others that did not still drains, so
+// one run that keeps failing does not slow the walk behind it.
 func (c *Cleaner) Run(ctx context.Context) {
-	resume := c.runAndLog(ctx, "")
-	ticker := time.NewTicker(c.config.Interval)
-	defer ticker.Stop()
+	tick, stop := c.ticker(c.config.Interval)
+	defer stop()
+	resume, failed := c.runAndLog(ctx, "")
 	for {
-		if resume != "" {
+		if resume != "" && !failed {
 			if ctx.Err() != nil {
 				return
 			}
-			resume = c.runAndLog(ctx, resume)
+			resume, failed = c.runAndLog(ctx, resume)
 			continue
 		}
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			resume = c.runAndLog(ctx, "")
+		case <-tick:
+			resume, failed = c.runAndLog(ctx, resume)
 		}
 	}
 }
 
 // runAndLog runs one pass after startAfter and logs it. It returns where a
-// drain continues: the index key after which the next pass starts, or "" when
-// this pass reached the end of the index.
-func (c *Cleaner) runAndLog(ctx context.Context, startAfter string) string {
+// drain continues — the index key after which the next pass starts, or ""
+// when this pass reached the end of the index — and whether the pass failed.
+func (c *Cleaner) runAndLog(ctx context.Context, startAfter string) (string, bool) {
 	c.logger.Info("artifact cleanup iteration started", "drain", startAfter != "")
 	stats, resume, err := c.pass(ctx, startAfter)
+	backOff := err != nil && 2*stats.RunsFailed >= stats.Processed
+	if c.observer != nil {
+		c.observer.ObserveCleanup(ctx, stats)
+	}
 	args := []any{
 		"runs_scanned", stats.RunsScanned,
 		"runs_cleaned", stats.RunsCleaned,
 		"objects_deleted", stats.ObjectsDeleted,
 		"bytes_reclaimed", stats.BytesReclaimed,
 		"errors", stats.Errors,
+		"runs_missing_not_due", stats.MissingNotDue,
+		"runs_missing_held", stats.MissingHeld,
 	}
 	if err != nil {
 		args = append(args, "error", err)
 		c.logger.Error("artifact cleanup iteration completed", args...)
-		return resume
+		return resume, backOff
 	}
 	c.logger.Info("artifact cleanup iteration completed", args...)
-	return resume
+	return resume, false
 }
 
 // RunOnce performs one fail-closed scan from the start of the index. Per-run
@@ -293,6 +392,15 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 		return stats, "", fmt.Errorf("archive cleanup: read retention policy: %w", err)
 	}
 	max := policy.GetMaxRunRetention().AsDuration()
+	if err := policy.GetMaxRunRetention().CheckValid(); err != nil || max <= 0 {
+		// Only a write checks the policy. One read back with no positive
+		// maximum would make every finished run due at once, and set the
+		// backstop to the margin alone, so it decides nothing.
+		stats.Errors = 1
+		c.logger.Error("artifact cleanup read a retention policy with no positive maximum; deleting nothing",
+			"max_run_retention", policy.GetMaxRunRetention())
+		return stats, "", fmt.Errorf("archive cleanup: retention policy has no positive maximum run retention (%v)", policy.GetMaxRunRetention())
+	}
 	docs, err := c.namespaces.List(ctx)
 	if err != nil {
 		stats.Errors = 1
@@ -337,6 +445,20 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 	// that possible: the stamp is the fourth key segment, so a newest-first page
 	// cannot be produced without reading every key first.
 	var errs []error
+	fail := func(entry artifacts.RunIndexEntry, err error, msg string) {
+		errs = append(errs, fmt.Errorf("run %q: %w", entry.RunID, err))
+		stats.Errors++
+		stats.RunsFailed++
+		c.logger.Error(msg, "run_id", entry.RunID, "namespace", entry.Namespace, "error", err)
+	}
+	// missingDue are the runs past their retention whose execution is
+	// missing. They are retired at the end of the pass, unless it holds them.
+	var missingDue []artifacts.RunIndexEntry
+	if startAfter == "" {
+		c.walkOverShare = false
+	}
+	// reachedEnd is whether this pass walked to the end of the index.
+	reachedEnd := false
 	processed := 0
 	for processed < c.config.BatchSize {
 		entries, err := c.archive.ListRuns(ctx, artifacts.RunQuery{
@@ -347,6 +469,7 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 			return stats, "", errors.Join(errs...)
 		}
 		if len(entries) == 0 {
+			reachedEnd = true
 			break
 		}
 
@@ -389,67 +512,65 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 				continue
 			}
 			processed++
-			cutoff := now.Add(-retentionFor(entry.Namespace))
+			stats.Processed++
+			retention := retentionFor(entry.Namespace)
+			cutoff := now.Add(-retention)
 			found, closedAt, err := c.cluster.LookupWorkflow(ctx, c.config.TemporalNamespace, entry.RunID)
+			if err == nil {
+				stats.LookedUp++
+			}
 			switch {
 			case err != nil:
-				wrapped := fmt.Errorf("run %q: look up execution: %w", entry.RunID, err)
-				errs = append(errs, wrapped)
-				stats.Errors++
-				c.logger.Error("artifact cleanup workflow lookup failed", "run_id", entry.RunID, "error", err)
-			case found && closedAt.IsZero():
+				fail(entry, fmt.Errorf("look up execution: %w", err), "artifact cleanup workflow lookup failed")
+			case !found:
+				// The cluster does not hold it. The backstop TTL removes an
+				// execution only after every namespace's retention, and this
+				// worker deletes one only after its own, so a missing execution
+				// is retired only once its own retention, counted from the
+				// finish its archive body records, has passed. One missing
+				// earlier is not this worker's to act on: it is kept, logged and
+				// counted, and examined again by every pass until it is due.
+				finishedAt, err := c.finishedAt(ctx, entry.RunID)
+				if err != nil {
+					fail(entry, fmt.Errorf("date a run whose execution is missing: %w", err), "artifact cleanup kept a run whose execution is missing and that it cannot date")
+					break
+				}
+				if !finishedAt.Before(cutoff) {
+					stats.MissingNotDue++
+					c.logger.Warn("artifact cleanup kept a run whose execution is missing before its run retention",
+						"run_id", entry.RunID, "namespace", entry.Namespace, "finished_at", finishedAt,
+						"run_retention", retention, "temporal_namespace", c.config.TemporalNamespace)
+					break
+				}
+				// Due, but retired only after the pass has seen how many
+				// executions are missing early (missingHeld).
+				missingDue = append(missingDue, entry)
+			case closedAt.IsZero():
 				// Impossible by construction — the archive is written by the
 				// terminal PublishEvent, or by the sweep once the run has
 				// closed — and the one case where deletion would TERMINATE a
 				// live execution, so it is refused rather than risked.
-				wrapped := fmt.Errorf("run %q: archived run still executing; refusing to retire it", entry.RunID)
-				errs = append(errs, wrapped)
-				stats.Errors++
-				c.logger.Error("artifact cleanup found a still-running archived run", "run_id", entry.RunID)
-			case found && !closedAt.Before(cutoff):
+				fail(entry, errors.New("archived run still executing; refusing to retire it"), "artifact cleanup found a still-running archived run")
+			case !closedAt.Before(cutoff):
 				// Finished, but not yet past ITS namespace's own retention.
 			default:
-				if found {
-					// The history is about to go, so what stands in for it
-					// must be there. An index row with no body is an archive
-					// write that stopped short, which Sweeper finishes.
-					has, err := c.archive.HasRun(ctx, entry.RunID)
-					if err != nil {
-						errs = append(errs, fmt.Errorf("run %q: check its archive body: %w", entry.RunID, err))
-						stats.Errors++
-						c.logger.Error("artifact cleanup archive check failed", "run_id", entry.RunID, "error", err)
-						break
-					}
-					if !has {
-						c.logger.Warn("artifact cleanup left a run its archive body is not written for yet", "run_id", entry.RunID)
-						break
-					}
-					if err := c.cluster.DeleteWorkflow(ctx, c.config.TemporalNamespace, entry.RunID); err != nil {
-						wrapped := fmt.Errorf("run %q: retire execution: %w", entry.RunID, err)
-						errs = append(errs, wrapped)
-						stats.Errors++
-						c.logger.Error("artifact cleanup retire failed", "run_id", entry.RunID, "error", err)
-						break
-					}
-				}
-				result, err := c.archive.DeleteRunArtifacts(ctx, entry.Namespace, entry.RunID)
-				stats.ObjectsDeleted += result.ObjectsDeleted
-				stats.BytesReclaimed += result.BytesReclaimed
+				// The history is about to go, so what stands in for it must
+				// be there. An index row with no body is an archive write that
+				// stopped short, which Sweeper finishes.
+				has, err := c.archive.HasRun(ctx, entry.RunID)
 				if err != nil {
-					wrapped := fmt.Errorf("run %q: delete artifacts: %w", entry.RunID, err)
-					errs = append(errs, wrapped)
-					stats.Errors++
-					c.logger.Error("artifact cleanup delete failed", "run_id", entry.RunID, "error", err)
-				} else if err := c.archive.MarkArtifactsCleaned(ctx, entry.RunID, now); err != nil {
-					wrapped := fmt.Errorf("run %q: mark artifacts cleaned: %w", entry.RunID, err)
-					errs = append(errs, wrapped)
-					stats.Errors++
-					c.logger.Error("artifact cleanup mark failed", "run_id", entry.RunID, "error", err)
-				} else {
-					stats.RunsCleaned++
-					c.logger.Info("run retired", "run_id", entry.RunID, "namespace", entry.Namespace,
-						"objects_deleted", result.ObjectsDeleted, "bytes_reclaimed", result.BytesReclaimed)
+					fail(entry, fmt.Errorf("check its archive body: %w", err), "artifact cleanup archive check failed")
+					break
 				}
+				if !has {
+					c.logger.Warn("artifact cleanup left a run its archive body is not written for yet", "run_id", entry.RunID)
+					break
+				}
+				if err := c.cluster.DeleteWorkflow(ctx, c.config.TemporalNamespace, entry.RunID); err != nil {
+					fail(entry, fmt.Errorf("retire execution: %w", err), "artifact cleanup retire failed")
+					break
+				}
+				c.reclaim(ctx, entry, now, &stats, fail)
 			}
 			if processed >= c.config.BatchSize {
 				// A full batch: a drain resumes after this run. A key that
@@ -462,6 +583,7 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 			}
 		}
 		if processed >= c.config.BatchSize || len(entries) < pageLimit {
+			reachedEnd = processed < c.config.BatchSize
 			break
 		}
 		if cursorErr != nil {
@@ -473,5 +595,71 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 		// cursor only has to advance while full pages keep coming back.
 		cursor = next
 	}
+	if stats.MissingNotDue > 0 {
+		c.logger.Error("artifact cleanup kept runs whose execution is missing before their run retention",
+			"runs_missing_not_due", stats.MissingNotDue, "runs_looked_up", stats.LookedUp,
+			"temporal_namespace", c.config.TemporalNamespace)
+	}
+	if stats.missingHeld() {
+		c.walkOverShare = true
+		c.holdMissing = true
+	}
+	switch {
+	case len(missingDue) == 0:
+	case c.holdMissing:
+		stats.MissingHeld = len(missingDue)
+		c.logger.Error("artifact cleanup held every run whose execution is missing: too many are missing before their run retention",
+			"runs_missing_not_due", stats.MissingNotDue, "runs_looked_up", stats.LookedUp,
+			"runs_held", stats.MissingHeld, "held_since_earlier_pass", !stats.missingHeld(),
+			"temporal_namespace", c.config.TemporalNamespace)
+	default:
+		for _, entry := range missingDue {
+			if err := ctx.Err(); err != nil {
+				errs = append(errs, fmt.Errorf("archive cleanup: canceled: %w", err))
+				return stats, "", errors.Join(errs...)
+			}
+			c.reclaim(ctx, entry, now, &stats, fail)
+		}
+	}
+	if reachedEnd {
+		// A whole walk with no pass over the share lifts the hold.
+		c.holdMissing = c.walkOverShare
+	}
 	return stats, resume, errors.Join(errs...)
+}
+
+// finishedAt dates a run whose execution is missing from its archive body.
+func (c *Cleaner) finishedAt(ctx context.Context, runID string) (time.Time, error) {
+	if c.finish == nil {
+		return time.Time{}, errors.New("no reader of archive bodies is configured")
+	}
+	at, err := c.finish.RunFinishedAt(ctx, runID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if at.IsZero() {
+		return time.Time{}, errors.New("its archive body records no finish time")
+	}
+	return at, nil
+}
+
+// reclaim removes a retired run's run-scoped storage, then marks it cleaned.
+// The mark is last, so a failure leaves the run for a later pass.
+func (c *Cleaner) reclaim(ctx context.Context, entry artifacts.RunIndexEntry, now time.Time, stats *CleanupStats,
+	fail func(artifacts.RunIndexEntry, error, string),
+) {
+	result, err := c.archive.DeleteRunArtifacts(ctx, entry.Namespace, entry.RunID)
+	stats.ObjectsDeleted += result.ObjectsDeleted
+	stats.BytesReclaimed += result.BytesReclaimed
+	if err != nil {
+		fail(entry, fmt.Errorf("delete artifacts: %w", err), "artifact cleanup delete failed")
+		return
+	}
+	if err := c.archive.MarkArtifactsCleaned(ctx, entry.RunID, now); err != nil {
+		fail(entry, fmt.Errorf("mark artifacts cleaned: %w", err), "artifact cleanup mark failed")
+		return
+	}
+	stats.RunsCleaned++
+	c.logger.Info("run retired", "run_id", entry.RunID, "namespace", entry.Namespace,
+		"objects_deleted", result.ObjectsDeleted, "bytes_reclaimed", result.BytesReclaimed)
 }

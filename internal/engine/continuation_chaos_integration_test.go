@@ -1504,7 +1504,7 @@ func TestIntegration_ContinuationChaosC11_RetireDeletesEveryGeneration(t *testin
 	}
 	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
 		TemporalNamespace: s.namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
-	}, runArchive, s.reader, namespaces, retention, logger).WithClock(func() time.Time {
+	}, runArchive, s.reader, namespaces, retention, logger).WithFinishReader(engine.NewRunArchiver(runArchive)).WithClock(func() time.Time {
 		return time.Now().UTC().Add(2 * time.Minute)
 	})
 	stats, err := cleaner.RunOnce(ctx)

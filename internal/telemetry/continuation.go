@@ -79,6 +79,25 @@ func (o *EngineObserver) defaultInstruments() *EngineInstruments {
 	return inst
 }
 
+// RecordArchiveCleanup records one cleanup pass: the runs it retired, the
+// runs it failed on, the runs it kept because their execution was missing
+// before their retention (not_found_not_due: alert on any), and the due runs
+// with a missing execution it held because too many were missing early.
+func (o *EngineObserver) RecordArchiveCleanup(ctx context.Context, retired, failed, notFoundNotDue, notFoundHeld int64) {
+	inst := o.defaultInstruments()
+	if inst == nil {
+		return
+	}
+	for _, o := range [...]struct {
+		outcome string
+		count   int64
+	}{{"retired", retired}, {"failed", failed}, {"not_found_not_due", notFoundNotDue}, {"not_found_held", notFoundHeld}} {
+		if o.count > 0 {
+			inst.ArchiveCleanupRuns.Add(ctx, o.count, metric.WithAttributes(attribute.String(AttrOutcome, o.outcome)))
+		}
+	}
+}
+
 // RecordArchiveSweep records one pass of the archive sweep: what became of the
 // finished runs it came to, and how many it could not confirm have an archive.
 // secondsToExpiry is recorded only when dated says the pass could date them; a

@@ -123,9 +123,15 @@ type fakeNamespaces struct {
 	listErr error
 	// lists counts List calls: one per cleanup pass.
 	lists int
+	// started, when set, is sent on as each pass starts, so a test can tell
+	// which a Run does next: start a pass, or wait on its ticker.
+	started chan struct{}
 }
 
 func (f *fakeNamespaces) List(context.Context) ([]*orkstackv1.Namespace, error) {
+	if f.started != nil {
+		f.started <- struct{}{}
+	}
 	f.lists++
 	if f.listErr != nil {
 		return nil, f.listErr
@@ -153,6 +159,11 @@ type fakeArchive struct {
 	// ignoreUntil models a backend that honours every filter except Until, to
 	// prove cleanup does not trust the query it asked for.
 	ignoreUntil bool
+	// finished and finishErr answer RunFinishedAt: the finish time the run's
+	// archive body records. Unset is the entry's own index time, so an old
+	// entry is an old finish unless a test says otherwise.
+	finished  map[string]time.Time
+	finishErr map[string]error
 }
 
 func newFakeArchive(entries ...artifacts.RunIndexEntry) *fakeArchive {
@@ -271,6 +282,26 @@ func (f *fakeArchive) DeleteRunArtifacts(_ context.Context, _, id string) (artif
 }
 func (f *fakeArchive) DeleteUnreferencedObjects(context.Context, []string) (artifacts.CleanupResult, error) {
 	return artifacts.CleanupResult{}, nil
+}
+
+// RunFinishedAt reads the finish time from the run's archive body: a run with
+// no body has none to read.
+func (f *fakeArchive) RunFinishedAt(_ context.Context, id string) (time.Time, error) {
+	if err := f.finishErr[id]; err != nil {
+		return time.Time{}, err
+	}
+	if f.noBody[id] {
+		return time.Time{}, artifacts.ErrNotFound
+	}
+	if at, ok := f.finished[id]; ok {
+		return at, nil
+	}
+	for _, entry := range f.entries {
+		if entry.RunID == id {
+			return entry.Time, nil
+		}
+	}
+	return time.Time{}, artifacts.ErrNotFound
 }
 
 // HasRun: every run has its body unless a test said otherwise.

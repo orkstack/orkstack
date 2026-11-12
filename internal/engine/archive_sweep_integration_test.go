@@ -135,6 +135,7 @@ func TestIntegration_ArchiveSweep_ATerminatedRunIsArchivedRetiredAndStillRead(t 
 	cleaner := archivecleanup.NewCleaner(
 		archivecleanup.CleanupConfig{TemporalNamespace: s.namespace, Interval: time.Hour, BatchSize: 10},
 		store, s.reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{{Name: "default"}}}, controller, logger).
+		WithFinishReader(engine.NewRunArchiver(store)).
 		WithClock(func() time.Time { return time.Now().Add(1000 * time.Hour) })
 	sweepUntil(t, ctx, sweepOver(s, s.reader, store, s.archive), func(r archivecleanup.SweepResult) bool { return r.Archived == 1 })
 

@@ -511,6 +511,29 @@ func (a *RunArchiver) LoadRun(ctx context.Context, runID string) (*orkstackv1.Ru
 	return run, nil
 }
 
+// RunFinishedAt dates an archived run from its archive body's run line: the
+// finish the run itself recorded. Cleanup reads it for a run whose execution
+// the cluster no longer holds (internal/archive.RunFinishReader). A body that
+// is missing, names another run or records no finish is an error, never a
+// zero time.
+func (a *RunArchiver) RunFinishedAt(ctx context.Context, runID string) (time.Time, error) {
+	if a == nil {
+		return time.Time{}, fmt.Errorf("engine: date run %q: archiving is switched off", runID)
+	}
+	run, err := a.LoadRun(ctx, runID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if run.GetId() != runID {
+		return time.Time{}, fmt.Errorf("engine: archive body of %q names run %q", runID, run.GetId())
+	}
+	finished := run.GetFinishedAt()
+	if !finished.IsValid() || finished.AsTime().IsZero() {
+		return time.Time{}, fmt.Errorf("engine: archive body of %q records no finish time", runID)
+	}
+	return finished.AsTime(), nil
+}
+
 // LoadRunEvents returns just the archived event log, in sequence order. When
 // the body records gaps it returns the events it holds AND an
 // *ArchivedEventsLostError (matching ErrArchivedEventsLost) naming every

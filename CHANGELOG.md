@@ -16,6 +16,18 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-12
+
+### Features
+
+- Cleanup keeps a run whose execution went missing until its own retention passes.
+
+**Upgrading:** Deployments with `ORK_CLEANUP_ENABLED=true` should upgrade now; there is nothing else to do ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
+
+### Fixed
+
+- Cleanup no longer deletes a run whose execution the cluster lost before the run's own retention passed; it keeps it and counts it (`ork.archive.cleanup.runs`) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
+
 ## [0.3.0] - 2026-11-10
 
 ### Features

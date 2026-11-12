@@ -1309,15 +1309,6 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"max_run_retention", policy.GetMaxRunRetention().AsDuration(),
 		"namespace_retention_enforced", cfg.cleanup.Enabled)
 
-	if cfg.cleanup.Enabled {
-		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, namespaces, retention, logger)
-		go cleaner.Run(ctx)
-		logger.Info("artifact cleanup worker started",
-			"interval", cfg.cleanup.Interval,
-			"retention_buffer", cfg.cleanup.RetentionBuffer,
-			"batch_size", cfg.cleanup.BatchSize)
-	}
-
 	// Workflow worker: hosts RunWorkflow and the idempotency claims on the
 	// engine's own queue — NOT ORK_ORKER_QUEUE, which moves task execution
 	// only. Under versioning the two show up separately in
@@ -1397,6 +1388,20 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	go archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, engine.NewHistoryArchiver(reader, archive),
 		reader, archiveSweepObserver, logger).Run(ctx)
+	if cfg.cleanup.Enabled {
+		// A run whose execution is missing is dated from its archive body
+		// before cleanup retires it (docs/DEPLOY.md, "Retention cleanup").
+		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, namespaces, retention, logger)
+		cleaner.WithFinishReader(archive)
+		if wireEventObserver(tcfg) {
+			cleaner.WithObserver(cleanupObserver{o: observer})
+		}
+		go cleaner.Run(ctx)
+		logger.Info("artifact cleanup worker started",
+			"interval", cfg.cleanup.Interval,
+			"retention_buffer", cfg.cleanup.RetentionBuffer,
+			"batch_size", cfg.cleanup.BatchSize)
+	}
 	// The audit counter: ork.audit.records on the default providers, a no-op
 	// when telemetry is off.
 	auditInstruments, err := telemetry.NewAuditInstruments(sinks.Default())
