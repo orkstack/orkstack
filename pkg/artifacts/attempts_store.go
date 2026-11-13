@@ -56,15 +56,20 @@ func (s *BlobAttemptStore) Location() string { return s.b.locate(AttemptPrefix +
 
 // PutAttempt writes one record atomically, so a reader listing the prefix
 // either sees the whole record or does not see it at all: a partially
-// readable record is worse than a missing one. The write is unconditional:
-// Temporal never runs one attempt number twice, so there is no second writer
-// to arbitrate against.
+// readable record is worse than a missing one. The write is create-only: the
+// number is the ordinal its attempt claimed, so no other attempt of this
+// release writes it, and a record already there was written by an Orker of a
+// release that numbered attempts as Temporal does. That one is kept, and
+// ErrAttemptExists says so.
 func (s *BlobAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1.TaskAttempt) error {
 	key, document, err := encodeAttemptForStore(attempt)
 	if err != nil {
 		return err
 	}
-	if err := s.b.put(ctx, key, AttemptContentType, document); err != nil {
+	if err := s.b.create(ctx, key, AttemptContentType, document); err != nil {
+		if errors.Is(err, errBlobExists) {
+			return fmt.Errorf("artifacts: put task attempt %q: %w", s.b.uri(key), ErrAttemptExists)
+		}
 		return fmt.Errorf("artifacts: put task attempt %q: %w", s.b.uri(key), err)
 	}
 	return nil

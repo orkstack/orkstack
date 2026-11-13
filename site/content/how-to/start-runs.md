@@ -44,7 +44,7 @@ For CI, `--assert-runs` and `--assert-skipped` make the plan fail with exit code
 
 ## Repeat a submission safely
 
-Pass `--idempotency-key` with a key of your own. The key is scoped to the namespace. A repeated submission with the same key returns the run that the first one started, not a second run. A key stays bound for 24 hours by default.
+Pass `--idempotency-key` with a key of your own. The key is scoped to the namespace. A repeated submission with the same key returns the run that the first one started, not a second run, even when the first submission's answer was lost. A key belongs to one submission: the same key with another Orkflow, version or input is refused (`already_exists`). A key stays bound for 24 hours by default.
 
 ```bash
 orkctl run submit my-orkflow --idempotency-key nightly-2026-11-03

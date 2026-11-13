@@ -115,7 +115,7 @@ func fleetOf(orkers ...*orkstackv1.DescribeOrkerResult) *stubFleet {
 func currentOrker(id, pool string, maxPins int32) *orkstackv1.DescribeOrkerResult {
 	return &orkstackv1.DescribeOrkerResult{
 		OrkerId: id, Pool: pool, RuntimeName: "docker", MaxConcurrentPins: maxPins,
-		EachSupported: true, CacheSupported: true, JoinSupported: true,
+		EachSupported: true, CacheSupported: true, JoinSupported: true, AttemptOrdinalsSupported: true,
 	}
 }
 

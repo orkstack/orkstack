@@ -31,6 +31,25 @@ type takenIDStarter struct {
 	rejections int
 	rejected   []string
 	started    []string
+	// fingerprints is each started id's idempotency fingerprint.
+	fingerprints map[string]string
+}
+
+// FirstStart reads this starter as the cluster: an id it refused is held by
+// a workflow some other caller started (no fingerprint of this key's), and
+// an id it started carries the plan's fingerprint.
+func (s *takenIDStarter) FirstStart(_ context.Context, runID string) (engine.FirstStartRead, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if fp, ok := s.fingerprints[runID]; ok {
+		return engine.FirstStartRead{Held: true, Fingerprint: fp}, nil
+	}
+	for _, id := range s.rejected {
+		if id == runID {
+			return engine.FirstStartRead{Held: true, Fingerprint: "started-by-someone-else"}, nil
+		}
+	}
+	return engine.FirstStartRead{}, nil
 }
 
 func (s *takenIDStarter) StartRun(
@@ -38,7 +57,7 @@ func (s *takenIDStarter) StartRun(
 	runID string,
 	_ *orkstackv1.Orkflow,
 	_ *orkstackv1.Payload,
-	_ engine.RunPlan,
+	plan engine.RunPlan,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -49,6 +68,10 @@ func (s *takenIDStarter) StartRun(
 			"Workflow execution is already running", "start-request-id", "temporal-run-id"))
 	}
 	s.started = append(s.started, runID)
+	if s.fingerprints == nil {
+		s.fingerprints = map[string]string{}
+	}
+	s.fingerprints[runID] = plan.IdempotencyFingerprint
 	return nil
 }
 
@@ -211,13 +234,16 @@ func TestSubmitRun_KeyedSubmissionFollowsTheReissuedRunID(t *testing.T) {
 
 // TestSubmitRun_FailsWhenTheReissuedRunIDIsAlsoTaken bounds the retry. Two
 // collisions in a row is not bad luck, it is a broken generator, and a
-// submission that keeps drawing ids would hide it.
+// submission that keeps drawing ids would hide it. Both ids are held by
+// something this submission did not start, so it records nothing under
+// either: a failed start there would be a second truth for someone else's id.
 func TestSubmitRun_FailsWhenTheReissuedRunIDIsAlsoTaken(t *testing.T) {
 	starter := &takenIDStarter{rejections: 10}
 	f := newRunIDFixture(t, starter, nil)
 
-	if _, err := f.submit(t, ""); err == nil {
-		t.Fatal("SubmitRun succeeded, want the repeated collision reported")
+	_, err := f.submit(t, "")
+	if connect.CodeOf(err) != connect.CodeUnavailable {
+		t.Fatalf("SubmitRun = %v, want Unavailable for the repeated collision", err)
 	}
 	rejected, started := starter.attempts()
 	if len(started) != 0 {
@@ -231,14 +257,15 @@ func TestSubmitRun_FailsWhenTheReissuedRunIDIsAlsoTaken(t *testing.T) {
 		t.Errorf("the retry reused the taken id %q", rejected[0])
 	}
 
-	// A run that never reached Temporal still ends, exactly as any other
-	// failed start does.
-	last := rejected[len(rejected)-1]
-	got, err := f.svc.GetRun(context.Background(),
-		connect.NewRequest(&orkstackv1.GetRunRequest{RunId: last}))
-	must.OKf(t, err, "GetRun(%q)", last)
-	if status := got.Msg.GetRun().GetStatus(); status != orkstackv1.Status_STATUS_FAILED {
-		t.Errorf("run %q status = %v, want FAILED", last, status)
+	for _, id := range rejected {
+		_, err := f.svc.GetRun(context.Background(),
+			connect.NewRequest(&orkstackv1.GetRunRequest{RunId: id}))
+		if connect.CodeOf(err) != connect.CodeNotFound {
+			t.Errorf("GetRun(%q) = %v, want NotFound: nothing is recorded under an id this submission does not own", id, err)
+		}
+		if events := f.bus.Events(id, 0); len(events) != 0 {
+			t.Errorf("%d events were published under %q", len(events), id)
+		}
 	}
 }
 

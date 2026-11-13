@@ -46,7 +46,14 @@ export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
   input?: Payload | undefined;
 
   /**
-   * optional dedupe
+   * idempotency_key, optional, makes a retry safe: a repeat under the same
+   * key, in the same namespace, is answered with the run the key names
+   * instead of starting a second one, even when the first answer was lost.
+   * A key belongs to one submission: the same key with another
+   * orkflow_name, orkflow_version as written, source_run_id or input is
+   * refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference
+   * are not part of that comparison. A key stays bound for
+   * engine.idempotency_ttl (24h by default).
    *
    * @generated from field: string idempotency_key = 4;
    */
@@ -927,10 +934,11 @@ export type LiveAttempt = Message<"orkstack.v1.LiveAttempt"> & {
   taskId: string;
 
   /**
-   * attempt is Temporal's attempt number for the pending activity
-   * (PendingActivityInfo.attempt). While STARTED it is the number the
-   * Orker's own record will carry; while SCHEDULED between retries it is the
-   * number of the attempt that is ABOUT to run.
+   * attempt is the ordinal the running attempt's Orker claimed, once its
+   * heartbeat names it: the number the attempt's record and log carry
+   * (docs/STORAGE.md, "Attempt ordinals"). Before that, and while SCHEDULED
+   * between retries, it is Temporal's attempt number for the pending activity
+   * (PendingActivityInfo.attempt), which may differ from the ordinal.
    *
    * @generated from field: int32 attempt = 2;
    */

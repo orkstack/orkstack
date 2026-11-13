@@ -194,9 +194,54 @@ func (r *TemporalRunReader) RunningCount(ctx context.Context, namespace string, 
 	if !r.namespaceIndexed {
 		return r.countRunning(ctx, namespace, ceiling)
 	}
+	namespace = artifacts.ResolveNamespace(namespace)
 	base := fmt.Sprintf("WorkflowType = %q AND %s = %q",
-		RunWorkflowType, task.SearchAttrOrkflowNamespace, artifacts.ResolveNamespace(namespace))
-	return r.liveRunCount(ctx, base, ceiling)
+		RunWorkflowType, task.SearchAttrOrkflowNamespace, namespace)
+	stamped, err := r.liveRunCount(ctx, base, ceiling)
+	if err != nil {
+		return 0, err
+	}
+	if ceiling > 0 && stamped >= ceiling {
+		return stamped, nil
+	}
+	// A run started without the attribute (by an engine that booted
+	// unindexed) is not counted by the predicate, and the cluster cannot count
+	// it by a memo. Those are walked and kept by their memo; a chain carries
+	// its attribute, or its absence, into every generation, so no run is in
+	// both halves.
+	// One count first, so a fleet with no such run pays a count, not a walk.
+	unstampedQuery := fmt.Sprintf("WorkflowType = %q AND %s IS NULL AND %s",
+		RunWorkflowType, task.SearchAttrOrkflowNamespace, liveRunPredicate(r.clock()))
+	if candidates, err := r.countAll(ctx, unstampedQuery); err != nil {
+		return 0, err
+	} else if candidates == 0 {
+		return stamped, nil
+	}
+	stopAt := int64(0)
+	if ceiling > 0 {
+		stopAt = ceiling - stamped
+	}
+	unstamped, err := r.walkLiveRuns(ctx, unstampedQuery,
+		func(info *workflowpb.WorkflowExecutionInfo) bool {
+			return inNamespace(r.memoString(info.GetMemo(), MemoNamespace), namespace)
+		}, stopAt)
+	if err != nil {
+		return 0, err
+	}
+	return stamped + unstamped, nil
+}
+
+// scopedNamespacePredicate selects a namespace's runs on a cluster that
+// indexes it: the runs stamped with it, and the runs stamped with nothing.
+//
+// The second half is what keeps a run started by an engine that booted
+// unindexed — before an upgrade, or while the cluster could not yet see a new
+// namespace — readable by namespace. Every caller still applies the memo
+// namespace over the page, so such a run of ANOTHER namespace is read and
+// dropped, and each walk is bounded as an unscoped one is.
+func scopedNamespacePredicate(namespace string) string {
+	return fmt.Sprintf("(%s = %q OR %s IS NULL)", task.SearchAttrOrkflowNamespace,
+		artifacts.ResolveNamespace(namespace), task.SearchAttrOrkflowNamespace)
 }
 
 // countRunning is the unindexed half of RunningCount: the live-run query
@@ -386,12 +431,14 @@ func (r *TemporalRunReader) walkExecutions(
 ) error {
 	scoped := false
 	if w.Namespace != "" && r.namespaceIndexed {
-		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
-			artifacts.ResolveNamespace(w.Namespace))
+		query = fmt.Sprintf("%s AND %s", query, scopedNamespacePredicate(w.Namespace))
 		scoped = true
 	}
+	// A scoped read also returns every run stamped with no namespace, of any
+	// namespace, which the caller's memo filter drops: it is bounded as a
+	// walk that filters, not as one the cluster scoped whole.
 	pages := maxStatsPages
-	if w.Namespace != "" && !scoped {
+	if w.Namespace != "" {
 		pages = maxStatsScanPages
 	}
 	var token []byte

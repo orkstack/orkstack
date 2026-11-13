@@ -18,12 +18,22 @@ type sweepObserver struct {
 var _ archivecleanup.SweepObserver = sweepObserver{}
 
 func (s sweepObserver) ObserveSweep(ctx context.Context, r archivecleanup.SweepResult) {
+	now := s.now()
 	var seconds float64
-	dated := !r.EarliestExpiry.IsZero()
-	if dated {
-		seconds = r.EarliestExpiry.Sub(s.now()).Seconds()
+	if r.Unconfirmed > 0 && !r.EarliestExpiry.IsZero() {
+		seconds = r.EarliestExpiry.Sub(now).Seconds()
 	}
-	s.o.RecordArchiveSweep(ctx, int64(r.Archived), int64(r.Failed), int64(r.Expired), int64(r.Unconfirmed), seconds, dated)
+	s.o.RecordArchiveSweep(ctx, telemetry.ArchiveSweepPass{
+		Archived:        int64(r.Archived),
+		Failed:          int64(r.Failed),
+		Expired:         int64(r.Expired),
+		Unconfirmed:     int64(r.Unconfirmed),
+		SecondsToExpiry: seconds,
+		ListFailed:      r.ListFailed,
+		StoreFailed:     r.StoreFailed,
+		IntervalTooLong: r.IntervalTooLong,
+		At:              now,
+	})
 }
 
 // cleanupObserver adapts the telemetry observer to archive.CleanupObserver.

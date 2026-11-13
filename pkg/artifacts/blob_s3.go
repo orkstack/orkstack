@@ -143,7 +143,8 @@ func (b *s3Blobs) create(ctx context.Context, key, contentType string, body []by
 	// harmless: an audit, trigger or webhook record carries a fresh id; a
 	// delivery record is one settled delivery, whose caller takes one already
 	// there as recorded; a continuation object and a delivery body are
-	// content-addressed; a cleanup record's caller ignores one already there.
+	// content-addressed; a cleanup record's caller ignores one already there;
+	// an attempt claim or release marker carries a fresh nonce.
 	if _, err := putConfirmed(ctx, b.client, in, body); err != nil {
 		if isPreconditionFailed(err) {
 			return errBlobExists

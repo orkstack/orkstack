@@ -281,7 +281,10 @@ are equal field for field.
 Registering the namespace search attribute (the engine provisions it at boot)
 turns the namespace into a predicate the cluster applies, instead of a filter
 applied after reading every namespace's records. The boot log says which
-happened: `run_namespace_index=true`.
+happened: `run_namespace_index=true`. A run started without the attribute
+is still one of its namespace's runs: the scoped read also selects runs that
+carry none and keeps them by their memo, so its walk is bounded as an unscoped
+one is.
 
 ## 6. Failure fingerprints
 

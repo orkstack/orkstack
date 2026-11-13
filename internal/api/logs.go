@@ -175,7 +175,7 @@ func (q TaskLogQuery) item() artifacts.Item { return artifacts.ItemOf(q.Item) }
 // task is picked up by that final sweep.
 //
 // A FOLLOW OF ATTEMPT 0 FOLLOWS THE RETRY. The Orker keys chunks by the
-// Temporal activity attempt (internal/orker/activity.go), and a retry is
+// attempt's ordinal (internal/orker/attempt_ordinal.go), and a retry is
 // invisible in the task's state — the task stays RUNNING while try 2 starts
 // under a new prefix. A stream that resolved "the latest attempt" once would
 // therefore sit on the dead attempt, deliver nothing and stay open until the

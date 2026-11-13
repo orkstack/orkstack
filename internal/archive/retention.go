@@ -81,7 +81,13 @@ type RetentionController struct {
 	// margin is the enforcement margin: how far past the maximum run
 	// retention the backstop TTL sits.
 	margin time.Duration
-	logger *slog.Logger
+	// keyLife is how long an idempotency key's claim lives (its TTL and its
+	// grace). The backstop is never below it: a retry under a key tells a run
+	// that never started from one that finished only by finding it in the
+	// cluster or the archive, so the cluster may not delete a finished run
+	// before its key has expired. Zero when nothing is wired.
+	keyLife time.Duration
+	logger  *slog.Logger
 }
 
 // NewRetentionController builds a controller over the given policy store and
@@ -111,9 +117,38 @@ func (c *RetentionController) Policy(ctx context.Context) (*orkstackv1.Retention
 	return c.policies.Get(ctx)
 }
 
-// Enforced is the backstop TTL for a given maximum: max + margin.
+// WithKeyLife sets the idempotency key's life the backstop is kept above:
+// engine.idempotency_ttl plus the claim's grace. It moves the cluster's own
+// retention only, never a namespace's, and runs are retired exactly when they
+// were.
+func (c *RetentionController) WithKeyLife(life time.Duration) *RetentionController {
+	c.keyLife = life
+	return c
+}
+
+// Enforced is the backstop TTL for a given maximum: the larger of max and a
+// key's life, plus the margin.
 func (c *RetentionController) Enforced(max time.Duration) time.Duration {
-	return max + c.margin
+	return maxDuration(max, c.keyLife) + c.margin
+}
+
+func maxDuration(a, b time.Duration) time.Duration {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// ClusterRetention is the retention the cluster itself reports now, which is
+// what decides when it deletes a closed run: another replica, or an older
+// release, may have set it since this one did, so a caller that must know
+// what the cluster keeps reads this, never Enforced.
+func (c *RetentionController) ClusterRetention(ctx context.Context) (time.Duration, error) {
+	d, err := c.admin.NamespaceRetention(ctx, c.temporalNamespace)
+	if err != nil {
+		return 0, fmt.Errorf("archive: read cluster retention for %q: %w", c.temporalNamespace, err)
+	}
+	return d, nil
 }
 
 // Reconcile makes the cluster's real retention TTL equal Enforced(max),

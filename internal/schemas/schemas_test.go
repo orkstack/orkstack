@@ -25,7 +25,15 @@ const root = "../.."
 func TestSchemas_AreGenerated(t *testing.T) {
 	files, err := schemas.Files(root)
 	must.OK(t, err)
-	for dir, want := range map[string]int{schemas.Dir: 4, schemas.UIDir: len(schemas.UIFiles)} {
+	// Each directory holds exactly what the generator writes there, so a file
+	// it no longer writes cannot linger.
+	written := map[string]int{schemas.Dir: 0, schemas.UIDir: 0}
+	for path := range files {
+		if dir := filepath.Dir(path); dir == schemas.Dir || dir == schemas.UIDir {
+			written[dir]++
+		}
+	}
+	for dir, want := range written {
 		committed, err := filepath.Glob(filepath.Join(root, dir, "*.json"))
 		must.OK(t, err)
 		if len(committed) != want {

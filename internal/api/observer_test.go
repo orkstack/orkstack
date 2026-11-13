@@ -2,8 +2,8 @@ package api_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
+	"go.temporal.io/api/serviceerror"
 	"net"
 	"net/http"
 	"sync"
@@ -99,7 +99,7 @@ func TestSubmitRun_StarterFailureReachesTheObserver(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	f.starter.mu.Lock()
-	f.starter.err = errors.New("temporal is down")
+	f.starter.err = serviceerror.NewFailedPrecondition("temporal is down")
 	f.starter.mu.Unlock()
 
 	_, err := f.runClient().SubmitRun(ctx,
@@ -131,7 +131,7 @@ func TestSubmitRun_StarterFailureWithoutAnObserver(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	f.starter.mu.Lock()
-	f.starter.err = errors.New("temporal is down")
+	f.starter.err = serviceerror.NewFailedPrecondition("temporal is down")
 	f.starter.mu.Unlock()
 
 	_, err := f.runClient().SubmitRun(ctx,

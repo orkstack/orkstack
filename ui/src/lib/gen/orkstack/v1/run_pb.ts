@@ -827,7 +827,7 @@ export const ReservedResourcesSchema: GenMessage<ReservedResources> = /*@__PURE_
   messageDesc(file_orkstack_v1_run, 11);
 
 /**
- * TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+ * TaskAttempt is the immutable record of ONE attempt of one task,
  * written by the Orker that ran it at the end of the attempt (§7.1). It is the
  * failure-side sibling of ActivityCommit: a commit says what the winning
  * attempt produced, an attempt record says what EVERY attempt did, including
@@ -861,7 +861,10 @@ export type TaskAttempt = Message<"orkstack.v1.TaskAttempt"> & {
   taskId: string;
 
   /**
-   * attempt is activity.GetInfo(ctx).Attempt, 1-based.
+   * attempt is the attempt's ordinal, 1-based, which the Orker claimed before
+   * it started anything (docs/STORAGE.md, "Attempt ordinals"). It may differ
+   * from Temporal's attempt count: an attempt stopped before its claim has no
+   * record.
    *
    * @generated from field: int32 attempt = 4;
    */

@@ -228,6 +228,16 @@ type OtherOrkerContainer struct {
 	Orker string
 }
 
+// OwnContainer is one container this Orker labelled, with the attempt it ran:
+// what the boot reap releases once it has removed it.
+type OwnContainer struct {
+	ID      string
+	RunID   string
+	TaskID  string
+	Item    string // ork.item, the item index of a fan-out; empty otherwise
+	Attempt string // ork.attempt, the attempt's ordinal
+}
+
 // RuntimeInfo is a runtime's self-description, for DescribeOrker.
 type RuntimeInfo struct {
 	// Name is the engine that runs the containers ("docker", "podman"), not

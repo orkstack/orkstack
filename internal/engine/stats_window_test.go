@@ -197,10 +197,7 @@ func (s *statsIndex) match(query string) ([]*workflowpb.WorkflowExecutionInfo, e
 	if !strings.Contains(query, fmt.Sprintf("WorkflowType = %q", RunWorkflowType)) {
 		return nil, fmt.Errorf("visibility: unsupported query %q", query)
 	}
-	var wantNamespace string
-	if match := namespacePredicate.FindStringSubmatch(query); match != nil {
-		wantNamespace = match[1]
-	}
+	scopedBy := query
 	bound := func(pattern *regexp.Regexp) (time.Time, bool) {
 		match := pattern.FindStringSubmatch(query)
 		if match == nil {
@@ -232,7 +229,7 @@ func (s *statsIndex) match(query string) ([]*workflowpb.WorkflowExecutionInfo, e
 	for _, record := range records {
 		info := record.info
 		status := info.GetStatus().String()
-		if wantNamespace != "" && record.namespace != wantNamespace {
+		if !namespaceSelects(scopedBy, record.namespace) {
 			continue
 		}
 		if live != nil {

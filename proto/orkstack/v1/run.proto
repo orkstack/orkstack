@@ -454,7 +454,7 @@ message ReservedResources {
   int64 memory_bytes = 2;
 }
 
-// TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+// TaskAttempt is the immutable record of ONE attempt of one task,
 // written by the Orker that ran it at the end of the attempt (§7.1). It is the
 // failure-side sibling of ActivityCommit: a commit says what the winning
 // attempt produced, an attempt record says what EVERY attempt did, including
@@ -472,7 +472,10 @@ message TaskAttempt {
 
   string run_id = 2;
   string task_id = 3;
-  // attempt is activity.GetInfo(ctx).Attempt, 1-based.
+  // attempt is the attempt's ordinal, 1-based, which the Orker claimed before
+  // it started anything (docs/STORAGE.md, "Attempt ordinals"). It may differ
+  // from Temporal's attempt count: an attempt stopped before its claim has no
+  // record.
   int32 attempt = 4;
   AttemptOutcome outcome = 5;
   // error is set only for FAILED, and carries the same shape TaskRun.error

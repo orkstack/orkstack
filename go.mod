@@ -14,6 +14,7 @@ require (
 	github.com/aws/smithy-go v1.28.7
 	github.com/bufbuild/protocompile v0.14.1
 	github.com/coder/websocket v1.8.15
+	github.com/go-jose/go-jose/v4 v4.1.9
 	github.com/google/uuid v1.6.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/spf13/cobra v1.10.2

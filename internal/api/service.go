@@ -98,6 +98,11 @@ type Config struct {
 	// only.
 	Idempotency IdempotencyClaimer
 
+	// OnLegacyPending is called each time a key claimed by an earlier
+	// release is answered with a pending run that could not be found
+	// (ork.idempotency.legacy_pending). Nil counts nothing.
+	OnLegacyPending func(context.Context)
+
 	// Archive is the durable run history. Nil keeps runs in process only.
 	Archive RunArchive
 
@@ -553,6 +558,13 @@ type Service struct {
 	logger          *slog.Logger
 	now             func() time.Time
 	newRunID        func() string
+
+	// starts stands in for the cluster's first-start read when no reader
+	// is wired (a unit test); retentionRead caches the cluster's reported
+	// retention; onLegacyPending counts a legacy key answered PENDING.
+	starts          processStarts
+	retentionRead   retentionReading
+	onLegacyPending func(context.Context)
 }
 
 // NewService builds a Service, filling in defaults for anything omitted.
@@ -581,6 +593,7 @@ func NewService(cfg Config) *Service {
 		commits:               cfg.Commits,
 		logPoll:               cfg.LogPoll,
 		idempotency:           cfg.Idempotency,
+		onLegacyPending:       cfg.OnLegacyPending,
 		webhooks:              cfg.Webhooks,
 		triggers:              cfg.Triggers,
 		schedules:             cfg.Schedules,
@@ -1537,12 +1550,9 @@ func (s *Service) submitFrom(
 	// reach one replica or several, and a failed start stays deduplicated to
 	// its recorded failed run because a claim is never released.
 	if sub.key != "" {
-		return s.submitClaimedRun(ctx, sub)
+		return s.submitKeyed(ctx, sub)
 	}
-
-	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
-	s.runs.Save(run)
-	return s.startPreparedRun(ctx, run, sub)
+	return s.submitUnkeyed(ctx, sub)
 }
 
 // prepare turns a request into a routed submission, or refuses it.
@@ -1698,6 +1708,17 @@ func (s *Service) prepare(
 	// size, measured with placeholder ids; then, last, the child run ids.
 	if err := s.mintChildren(planned, &plan); err != nil {
 		return submission{}, err
+	}
+	// The submission's fingerprint rides the plan of a keyed run, so a retry
+	// under the key can tell the key's own run from a workflow something
+	// else started under its id. A run with no key carries none, and its
+	// plan encodes exactly as before.
+	if msg.GetIdempotencyKey() != "" {
+		fingerprint, err := submissionFingerprint(msg)
+		if err != nil {
+			return submission{}, connect.NewError(connect.CodeInvalidArgument, err)
+		}
+		plan.IdempotencyFingerprint = fingerprint
 	}
 	// The plan is the start's third payload. mintChildren measures it only
 	// when the run composes children; every plan is measured here, after the
@@ -1934,6 +1955,12 @@ func poolPlanError(err error) error {
 	}
 	// A pool whose Orker predates join policies: it could not decode a
 	// failure handler's input, so the run is refused before any id is minted.
+	// A pool holding an Orker that predates attempt ordinals beside ones that
+	// claim them: its records would overwrite theirs.
+	var noOrdinals *engine.PoolNoAttemptOrdinalsError
+	if errors.As(err, &noOrdinals) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
 	var noJoin *engine.PoolNoJoinSupportError
 	if errors.As(err, &noJoin) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
@@ -1949,77 +1976,6 @@ func poolPlanError(err error) error {
 		return connect.NewError(connect.CodeUnavailable, err)
 	}
 	return connect.NewError(connect.CodeInvalidArgument, err)
-}
-
-// submitClaimedRun runs a keyed submission: claim the key, then either start
-// the run this caller proposed or report the one that already holds the key.
-//
-// The candidate run is built inside the claim, not before it, because a
-// process-local claimer can answer a known key without minting a run id at
-// all — which is what keeps a repeated key from burning ids in a single-engine
-// deployment. A cluster-backed claimer has to propose first; there the burnt
-// id costs nothing, because nothing outside this process ever saw it.
-func (s *Service) submitClaimedRun(
-	ctx context.Context,
-	sub submission,
-) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	var candidate *orkstackv1.Run
-	winner, err := s.idempotency.Claim(ctx, sub.claimKey(), func() (engine.Claim, error) {
-		candidate = s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
-		return newClaim(candidate)
-	})
-	if err != nil {
-		// The claim is the dedupe authority: starting a run without it would
-		// be exactly the duplicate the claim exists to prevent, so an
-		// unreachable authority fails the submission instead.
-		return nil, connect.NewError(connect.CodeUnavailable,
-			fmt.Errorf("claim idempotency key %q: %w", sub.key, err))
-	}
-	if candidate == nil || winner.RunID != candidate.GetId() {
-		return s.claimedRun(ctx, sub.key, winner)
-	}
-	s.runs.Save(candidate)
-	return s.startPreparedRun(ctx, candidate, sub)
-}
-
-// claimedRun answers a caller whose candidate lost, with the run that won.
-//
-// The run is read the same way any other read is, so a loser answers for a run
-// another replica started and is still executing — which is exactly the case a
-// process-local read model could not cover. The claim's own snapshot is the
-// last resort, for a winner whose run has not reached the cluster yet.
-func (s *Service) claimedRun(
-	ctx context.Context,
-	key string,
-	winner engine.Claim,
-) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	switch run, err := s.LookupRun(ctx, winner.RunID); {
-	case err == nil:
-		return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
-	case connect.CodeOf(err) != connect.CodeNotFound:
-		return nil, err
-	}
-	run, err := claimedSnapshot(winner)
-	if err != nil {
-		return nil, connect.NewError(connect.CodeInternal,
-			fmt.Errorf("idempotency key %q refers to run %q: %w", key, winner.RunID, err))
-	}
-	if run == nil {
-		return nil, connect.NewError(connect.CodeInternal,
-			fmt.Errorf("idempotency key %q refers to missing run %q", key, winner.RunID))
-	}
-	return connect.NewResponse(&orkstackv1.SubmitRunResponse{Run: run}), nil
-}
-
-// newClaim packs a pending run into the claim that binds a key to it. The
-// snapshot travels so a replica that loses the claim can answer with the
-// winner's run rather than with a plausible reconstruction of its own request.
-func newClaim(run *orkstackv1.Run) (engine.Claim, error) {
-	snapshot, err := proto.Marshal(run)
-	if err != nil {
-		return engine.Claim{}, fmt.Errorf("encode run %s: %w", run.GetId(), err)
-	}
-	return engine.Claim{RunID: run.GetId(), Snapshot: snapshot}, nil
 }
 
 // claimedSnapshot unpacks a claim's run. A claim written by an older engine
@@ -2058,97 +2014,6 @@ func (s *Service) newPendingRun(
 	}
 }
 
-// startPreparedRun starts the run's Temporal workflow.
-//
-// It publishes no RUN_CREATED. That event is emitted by RunWorkflow itself, as
-// event 1 of the run, so it reaches Temporal history and every replica can
-// read it; a copy published here would exist only in this process's memory and
-// would leave a history-derived stream starting at 2, with a gap at 1.
-//
-// A run id Temporal reports as taken is the one start failure that is not
-// about this run: another replica already owns that workflow id. The candidate
-// is discarded and one fresh id is tried. Only one — a second collision is a
-// broken generator rather than bad luck, and a submission that kept drawing
-// ids would hide it.
-func (s *Service) startPreparedRun(
-	ctx context.Context,
-	run *orkstackv1.Run,
-	sub submission,
-) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
-	for attempt := 0; ; attempt++ {
-		runID := run.GetId()
-		// A definition passed by reference is written under THIS id
-		// immediately before the start that uses it — a reissued id gets its
-		// own copy — and a run whose definition could not be stored is never
-		// started.
-		if err := s.writeDefinitionObject(ctx, runID, sub); err != nil {
-			return nil, s.recordFailedStartWith(ctx, run, err, connect.CodeUnavailable)
-		}
-		err := sub.binding.Starter.StartRun(ctx, runID, sub.startDefinition(), sub.input, sub.plan)
-		if err == nil {
-			// The response is the run this call created, not a re-read of it.
-			// A read here would race the run's own first events — the workflow
-			// is already executing — and answer PENDING or RUNNING depending
-			// on which won. What a submission has to report is what it
-			// submitted; everything after that is a read.
-			//
-			// The callback tokens are disclosed here and nowhere else, with
-			// paths built from the FINAL run id, so a reissued id discloses
-			// paths that work: the plan, and every digest, is the same
-			// across the reissue.
-			return connect.NewResponse(&orkstackv1.SubmitRunResponse{
-				Run:            run,
-				AwaitCallbacks: awaitCallbacksFor(runID, sub.callbacks),
-			}), nil
-		}
-		if errors.Is(err, engine.ErrRunIDTaken) && attempt == 0 {
-			next, reissueErr := s.reissueRunID(ctx, run, sub)
-			run = next
-			if reissueErr != nil {
-				// The key could not be moved onto the fresh id, so starting
-				// under it would leave the key naming a run that never
-				// existed. The submission ends here instead.
-				return nil, s.recordFailedStart(ctx, run, reissueErr)
-			}
-			continue
-		}
-		return nil, s.recordFailedStart(ctx, run, err)
-	}
-}
-
-// reissueRunID discards a candidate run whose id Temporal refused and rebuilds
-// it under a fresh one. Nothing outside this process has seen the discarded id
-// — SubmitRun has not returned — so it is removed rather than left behind as a
-// run that never existed.
-//
-// A keyed submission also moves its claim, and moves it *before* the fresh id
-// is started, so the key names a run at every instant: first the discarded
-// candidate, then the one that runs. Releasing it in between would let a
-// concurrent submission of the same key start a second run.
-func (s *Service) reissueRunID(
-	ctx context.Context,
-	discarded *orkstackv1.Run,
-	sub submission,
-) (*orkstackv1.Run, error) {
-	s.runs.Delete(discarded.GetId())
-	s.bus.Discard(discarded.GetId())
-
-	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
-	s.runs.Save(next)
-	if sub.key == "" {
-		return next, nil
-	}
-	claim, err := newClaim(next)
-	if err != nil {
-		return next, err
-	}
-	if err := s.idempotency.Rebind(ctx, sub.claimKey(), claim, discarded.GetId()); err != nil {
-		return next, fmt.Errorf("move idempotency key %q from %s to %s: %w",
-			sub.key, discarded.GetId(), next.GetId(), err)
-	}
-	return next, nil
-}
-
 // recordFailedStart ends a run that never reached Temporal. It is the only
 // place that can: the engine's projection activity covers every run that did
 // start, and nothing covers one that did not.
@@ -2182,8 +2047,7 @@ func (s *Service) recordFailedStartWith(
 	run.Status = orkstackv1.Status_STATUS_FAILED
 	run.Error = &orkstackv1.Error{Code: "RUN_START_FAILED", Message: cause.Error()}
 	run.FinishedAt = failedAt
-	s.runs.Save(run)
-	s.bus.Publish(&orkstackv1.Event{
+	created := &orkstackv1.Event{
 		RunId:    runID,
 		Sequence: 1,
 		Type:     orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
@@ -2191,17 +2055,31 @@ func (s *Service) recordFailedStartWith(
 		Message: fmt.Sprintf("run created for orkflow %s@%s",
 			run.GetOrkflowName(), run.GetOrkflowVersion()),
 		Timestamp: createdAt,
-	}, runID+"#created")
-	s.bus.Publish(&orkstackv1.Event{
+	}
+	failed := &orkstackv1.Event{
 		RunId:     runID,
 		Sequence:  runFailedToStartSequence,
 		Type:      orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		Status:    orkstackv1.Status_STATUS_FAILED,
 		Message:   cause.Error(),
 		Timestamp: failedAt,
-	}, runID+"#failed")
+	}
+	// The archive first: it is the only durable record of a run that never
+	// started, and what every replica and a retry under the key read. If it
+	// cannot be written, nothing is said anywhere — no event, no webhook — so
+	// a retry that then starts the id is never contradicted by a failure
+	// that was announced and not recorded.
+	if s.archive != nil {
+		if err := s.archive.Archive(ctx, run, []*orkstackv1.Event{created, failed}); err != nil {
+			s.forget(runID)
+			return connect.NewError(connect.CodeUnavailable,
+				fmt.Errorf("the start was refused (%w) and could not be recorded: %w; submit again", cause, err))
+		}
+	}
+	s.runs.Save(run)
+	s.bus.Publish(created, runID+"#created")
+	s.bus.Publish(failed, runID+"#failed")
 	s.notifyRunFailedToStart(ctx, runID, failedAt, cause)
-	s.archiveRun(ctx, runID)
 	return connect.NewError(code, cause)
 }
 
@@ -2241,21 +2119,6 @@ func (s *Service) notifyRunFailedToStart(
 	if s.observer != nil {
 		s.observer.ObserveEvent(ctx, event, run)
 	}
-}
-
-// archiveRun writes a terminal run to the archive. Archiving is durability, not
-// orchestration: a failure here must not turn a recorded outcome into a
-// different error for the caller, so it is reported through the run's own
-// error and otherwise dropped.
-func (s *Service) archiveRun(ctx context.Context, runID string) {
-	if s.archive == nil {
-		return
-	}
-	run, ok := s.runs.Get(runID)
-	if !ok {
-		return
-	}
-	_ = s.archive.Archive(ctx, run, s.bus.Events(runID, 0))
 }
 
 // ArchivedEvents returns the events archived for a run, after fromSequence. It

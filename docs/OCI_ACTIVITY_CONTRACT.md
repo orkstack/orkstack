@@ -183,10 +183,13 @@ Rules the field comments state and every change must keep:
   from, the store.** It MUST NEVER be recomputed by re-marshalling a decoded
   `ActivityCommit`: `protojson` deliberately varies its output across builds
   (§14.10).
-- **`ExecuteTaskResult.attempt`** is the Temporal attempt that produced the
-  result — from the activity info on a fresh run, from `commit.attempt` on an
-  adopted one — because workflow code cannot read activity info and an adopted
-  result carries a reference, not the commit body.
+- **`ExecuteTaskResult.attempt`** is the ordinal of the attempt that produced
+  the result (`docs/STORAGE.md`, "Attempt ordinals") — the attempt's own claim
+  on a fresh run, `commit.attempt` on an adopted one — because workflow code
+  cannot read the Orker's claim and an adopted result carries a reference, not
+  the commit body. It is the number the attempt's record, log and container
+  label carry, and it may differ from Temporal's own attempt count: an attempt
+  stopped before its claim takes no ordinal.
 - **A failure produces no `ExecuteTaskResult`.** It is an `ApplicationError`
   whose single details argument is an `ActivityFailureDetail` (reason code,
   category, exit code, the artifacts and logs the failure path uploaded, scan
@@ -566,7 +569,7 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `run.orkflow.version` | string | required | — | pinned version string; for a document never created, run locally by `orkctl task run -f`, its content hash (§4.4) |
 | `run.orkflow.definitionDigest` | string | required | — | `sha256:<64 hex>` (§4.4) |
 | `task.id` | string | required | — | slug |
-| `task.attempt` | integer | required | — | 1-based Temporal attempt |
+| `task.attempt` | integer | required | — | 1-based Temporal attempt; it may differ from the ordinal the attempt's record and log carry (`docs/STORAGE.md`, "Attempt ordinals") |
 | `task.pool` | string | required | `"main"` | resolved pool name |
 | `task.runAsOrkerUser` | boolean | optional | absent = false | present and true when the Orker overrode the image's `USER` (§3.1) |
 | `task.pin` | object | optional | absent | present only for a pinned task |
@@ -738,7 +741,7 @@ the ABI. Three things happen to them:
 
 1. **Live**, they go to the log sink with its framing (`[stderr] ` prefix,
    `[stdout] ` escape), written as numbered chunks under
-   `metadata/logs/{run}/{task}/{attempt}/` throughout the run and served by
+   `metadata/logs/{run}/{task}/{attempt}/` (the attempt's ordinal) throughout the run and served by
    `(run, task, attempt)` to the CLI and UI. The live cap is
    `ORK_ORKER_LOG_MAX_BYTES` per attempt (`docs/DEPLOY.md`, "Live task logs").
 2. **Durably**, on the success and failure paths each stream is uploaded as its
@@ -1421,8 +1424,16 @@ could never cancel it. Required, all four together:
    `ORK_ORKER_HEARTBEAT_INTERVAL` (default 5 s, bounded to 1 s–10 s: above a
    third of the heartbeat timeout two missed ticks would declare live activities
    dead). The detail is `task.HeartbeatProgress` — the phase, the container id,
-   bytes logged, and the Orker's own `ORK_ORKER_ID` — and the engine reads it
-   back for live introspection (§6.6). The container sees none of it.
+   bytes logged, the Orker's own `ORK_ORKER_ID` and, once the attempt has
+   claimed it, its ordinal — and the engine reads it back for live
+   introspection (§6.6). The container sees none of it. The first answer is
+   awaited: an attempt with no commit to adopt and no memo hit claims its
+   ordinal, joins a pin, fetches an input or pulls an image only once the
+   cluster has acknowledged one of its heartbeats (§7.1). A server decision
+   there (a terminated run's `NotFound`, a cancel) ends the attempt with
+   nothing made, and no answer for the heartbeat timeout fails it
+   `ORKER_HEARTBEAT_LOST`, also with nothing made. Adoption never waits on the
+   cluster.
 3. **Orker** sends those heartbeats itself, through the client
    `activity.GetClient` returns, each RPC on a deadline of a third of the
    heartbeat timeout or what is left of it. The SDK's `activity.RecordHeartbeat` is unusable for them:
@@ -1627,26 +1638,29 @@ heard of.
 
 | # | Phase | Step |
 |---|---|---|
-| 1 | — | **Open the log sink**, first, always; closed before return |
+| 1 | — | **Open the log**, first, always; its lines wait for the attempt's ordinal (step 4c or 5b″, or a best-effort claim at step 16) and are dropped for an attempt stopped before its claim; closed before return |
 | 2 | `start` | **Heartbeat loop start**, until step 15; the input checks that are the same on every Orker: a pinned image, a network mode that exists, a well-formed resource request, well-formed secret names |
 | 3 | `commit-check` | **Commit check**: GET `commit_uri` → adopt and jump to 15, or proceed (§5.4) |
+| 3′ | — | **First heartbeat awaited**, a task with no memo step: wait for the cluster to acknowledge one heartbeat (§6.3); a server decision or the heartbeat timeout ends the attempt here with nothing made |
 | 3a | — | **This Orker's policy**, a task with no memo step (uncached or pinned): the request against this Orker's caps, its secret schemes and `ORK_ORKER_SECRET_ALLOW` floor, and whether a task that runs as the Orker's user can (§3.1); a refusal ends the attempt here, recorded in phase `commit-check` |
 | 3b | `image-policy` | **Image policy**, only when the input carries one (§4.7) |
 | 4 | `workspace` | **Workspace**: per-attempt dir `0700`; `input/` `0555`, `output/` `1777`, `tmp/` `1777`; a pinned task's shared directory |
+| 4c | — | **Claim**, a task with no memo step: the attempt's ordinal, `{n}.claim` create-if-absent (`docs/STORAGE.md`, "Attempt ordinals"), four tries over about 10 s, else `ATTEMPT_STORE_UNAVAILABLE` with nothing made; the log opens under the ordinal |
 | 5 | `stage-inputs` | **Input stage**: upstream artifacts → `input/artifacts/`, upstream `values.json` → `input/upstream/`, secrets → `input/secrets/` (a cached task: `values.json` only) |
 | 5b | `memo` | **Memo**, a cached task only: render, key, lookup (§5.4.1); a HIT writes this run's commit and jumps to 15 |
 | 5b′ | — | **This Orker's policy**, a cached task after the memo step, unless it hit: step 3a's checks; a refusal ends the attempt here, recorded in phase `memo`, its workspace removed |
+| 5b″ | — | **First heartbeat awaited, then the claim**, a cached task that did not hit: steps 3′ and 4c |
 | 5c | `stage-artifacts` | **Deferred staging**, a cached task only: the recorded downloads, then secrets |
 | 6 | `image` | **Image**: `Runtime.Pull(image.pinned)`, or the verified embedded layout (§4.6); record platform digest and delivery |
 | 7 | `render` | **Render**: resources and network resolved against policy; `with:` → `config.json`; `run.json`; `task.json`; input tree sealed |
-| 8 | `create` | **Create** from the security profile (§9.2) |
+| 8 | `create` | **Create** from the security profile (§9.2), only if the attempt is still live: a run terminated or cancelled during the pull creates nothing |
 | 9–10 | `run` | **Run and wait**: stream stdout/stderr to the sink and to disk; wait for exit, cancellation (`cancel`) or the task timeout (`timeout`) |
 | 11 | `exit` | **Exit capture**; non-zero → classify and go to 14 |
 | 12 | `validate` | **Validate** `values.json` and `output/artifacts/`, including readability, then bound the projected commit (§5.4 steps 1–4) |
 | 13 | `commit` | **Upload and commit**: artifacts → `values.json` → streams → `commit.json` (§5.4) |
 | 14 | — | **Failure path**: scan `output/artifacts/` under the same §3.5 and readability rules; upload streams and the artifacts that passed; attach refs and any scan note to the error; write NO commit; return the workload's error |
 | 15 | — | **Cleanup**: remove the container (detached context; one that cannot be removed is tried again every 30 s while the Orker runs), remove the workdir and secrets, stop the heartbeat, close the log sink |
-| 16 | — | **Attempt record**: one `TaskAttempt`, best-effort (below) |
+| 16 | — | **Attempt record**: one `TaskAttempt` under the ordinal, best-effort (below); an attempt that ended without a container claims one best-effort first, and an attempt stopped before its claim records nothing. Then `{n}.released`, best-effort, once the container is removed or none was created |
 
 **This Orker's own policy comes after the commit check and the memo step.** Two
 Orkers of one pool may hold different caps, secret schemes, floors or runtimes.
@@ -1836,6 +1850,7 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `VALUES_CORRUPT` | ContractViolation | no | on adoption, the refetched `values.json` does not match `commit.values.sha256` |
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
 | `ORKER_HEARTBEAT_LOST` | InfrastructureError | yes | nothing acknowledged the attempt's heartbeat for the heartbeat timeout, so the Orker stopped the attempt though nobody cancelled the task (§6.3) |
+| `ATTEMPT_STORE_UNAVAILABLE` | InfrastructureError | yes | the attempt store refused or did not answer the attempt's claim on its ordinal for four tries over about 10 s; the attempt did nothing: no container, no record, no log (§7.1) |
 
 One Orker code is recorded on an attempt and never reported:
 `ORKER_STOPPED` (InfrastructureError, retryable) is the record of an attempt

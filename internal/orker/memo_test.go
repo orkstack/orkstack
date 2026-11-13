@@ -278,6 +278,7 @@ func newCacheHarness(t *testing.T) *cacheHarness {
 		Commits:  h.commits,
 		Memos:    h.memos,
 		Attempts: h.attempts,
+		Claims:   h.attempts,
 		Logs:     h.logs,
 		now:      func() time.Time { return h.now },
 		LogSinkObserver: func(_ *orkstackv1.ExecuteTaskInput, line string) {
