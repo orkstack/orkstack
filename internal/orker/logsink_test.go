@@ -926,3 +926,70 @@ func lines(n int) string {
 	}
 	return b.String()
 }
+
+// cancelInFlightStore blocks its first PutLogChunk until that call's own ctx
+// is cancelled, then fails it the way a real store does; later calls succeed.
+type cancelInFlightStore struct {
+	recordingLogStore
+	entered   chan struct{}
+	mu2       sync.Mutex
+	calls     int
+	ctxDone   []bool
+	firstOnce sync.Once
+}
+
+func (s *cancelInFlightStore) PutLogChunk(ctx context.Context, chunk artifacts.LogChunk) error {
+	s.mu2.Lock()
+	s.calls++
+	first := s.calls == 1
+	s.mu2.Unlock()
+	if first {
+		s.firstOnce.Do(func() { close(s.entered) })
+		<-ctx.Done()
+		s.mu2.Lock()
+		s.ctxDone = append(s.ctxDone, true)
+		s.mu2.Unlock()
+		return ctx.Err()
+	}
+	s.mu2.Lock()
+	s.ctxDone = append(s.ctxDone, ctx.Err() != nil)
+	s.mu2.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return s.recordingLogStore.PutLogChunk(ctx, chunk)
+}
+
+// A task cancelled while its last chunk is uploading still gets that chunk
+// stored: the retry runs detached from the cancelled attempt context.
+func TestLogChunkSink_ACancelDuringAnUploadStillStoresTheChunk(t *testing.T) {
+	store := &cancelInFlightStore{entered: make(chan struct{})}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sink := newLogChunkSink(ctx, store, testRef(), LogOptions{})
+	sink.sleep = func(time.Duration) {}
+	sink.Write("last words\n")
+
+	closed := make(chan struct{})
+	go func() {
+		sink.Close()
+		close(closed)
+	}()
+	<-store.entered
+	cancel()
+	<-closed
+
+	if len(store.chunks) != 1 {
+		t.Fatalf("stored %d chunks, want 1", len(store.chunks))
+	}
+	got := store.chunks[0]
+	if got.Seq != 1 || string(got.Data) != "last words\n" {
+		t.Fatalf("stored chunk = seq %d %q, want seq 1 \"last words\\n\"", got.Seq, got.Data)
+	}
+	if sink.dropped != 0 || strings.Contains(string(got.Data), "dropped") {
+		t.Fatalf("a drop was reported: dropped=%d", sink.dropped)
+	}
+	if sink.Sequence() != 1 {
+		t.Fatalf("sequence = %d, want 1", sink.Sequence())
+	}
+}

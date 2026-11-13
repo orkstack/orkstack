@@ -16,6 +16,10 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 
+### Fixed
+
+- Task logs no longer lose a task's last output when the task is cancelled or its Orker stops while a chunk is uploading ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#live-task-logs-where-they-are-what-bounds-them-how-long-they-stay)).
+
 ### Security
 
 - **BREAKING:** webhooks now refuse loopback, link-local (cloud metadata), private and other non-public addresses, at registration and delivery; list receivers' networks in `webhooks.allowed_networks` ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#where-a-delivery-may-go)).
