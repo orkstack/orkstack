@@ -657,7 +657,7 @@ then the variable it becomes.
 | `engine.allowed_hosts` | `ORK_ALLOWED_HOSTS` | *(empty)* | `ork` | comma-separated names the API listener answers to in a request's `Host` header, besides the ones it always admits: an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_HTTP_ADDR` names. An entry is a name (`orkstack.example.com`), `*.suffix` for every name under a suffix of two labels or more, or `*` for any `Host`; space around an entry and empty entries are ignored, and an entry with a scheme, a port or a path, or a pattern over a top-level name (`*.com`), is refused at boot. Any other `Host` is refused `403`, which stops DNS rebinding through a public name. List every name with a dot the engine is reached by: a Kubernetes `svc.namespace` name or FQDN, a proxy that keeps the browser's `Host`, the name `orkctl` or a caller dials (§ "The web UI") |
 | `engine.ui.enabled` | `ORK_UI_ENABLED` | `true` | `ork` | serve the web UI at `/` on the API listener, beside the Connect API and the WebSocket bridge; `false` leaves the listener the API alone (§ "The web UI") |
 | `engine.ui.dir` | `ORK_UI_DIR` | *(empty: the build compiled into `ork`)* | `ork` | serve the UI build in this directory (`ui/build`, written by `cd ui && bun run build`) instead of the one compiled into `ork`; refused at boot if it holds no `index.html`, or if `ORK_UI_ENABLED=false` |
-| `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
+| `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound; the cluster keeps a finished run at least this long plus five minutes (§5, "Ops notes", idempotency keys). Set it the same on every engine |
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Default 1000. Lowers it, or raises it up to the built-in 10,000; above 1,000 it needs `engine.continuation.enabled` (refused at boot otherwise, naming both keys). Checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value. A submit that needs more than 1,000 items is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs a release older than the one that raised the maximum; a draining older build does not block it (§5, "Engine capabilities and the fleet check"). Before rolling back below that release, lower it to 1,000 and wait for such runs (§4) |
 | `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `4000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, create and plan, and again at submit, so lowering it refuses new runs of an Orkflow created above the new value. A deployment lowers or raises it. The default is the largest size the task soak measured (its per-generation history, snapshot, in-flight, workflow-code, read-latency and run-page thresholds, with plain tasks and small outputs); above it a deployment runs unmeasured, and the boot warns naming the measured size. The task soak runs in the nightly and pre-release proofs, not in every merge proof (docs/PROOFS.md). Independently, a stage of more than X plain tasks that start together may stop `RUN_HISTORY_LIMIT` in its first history, explicitly, and the boot warns when this is above X. X is a size to stay within, not a promise: at or below it a flat stage of plain tasks cannot reach that limit before it carries on, and other limits still apply. X is 4,389 at the defaults and moves with `engine.history.max_events`, `engine.continuation.events`, `engine.continuation.bytes`, `engine.continuation.restore_timeout` and `engine.run_max_in_flight`; §5, "Task ceiling and the flat-stage bound", gives its closed form. With `engine.continuation.enabled` off a run has one history: an unset key defaults to the smaller of 4,000 and `engine.history.max_events / 50` (1,024 at the default limit; the boot logs the effective value), and an explicit value above that quotient is refused at boot, naming the three keys |
 | `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage with every task running. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
@@ -2378,6 +2378,51 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   can both submit `nightly` and get their own run
   (`api.submission.claimKey`); unscoped, the second would be answered with the
   first tenant's run id and its work would never start.
+- **Idempotency keys: one key, one submission, one run id, at most one run.**
+  - *A key is bound to what was submitted.* The claim holds the submission's
+    fingerprint: the Orkflow, the version as the caller wrote it (none when
+    it wrote none, so a retry across a promotion is the same submission), the
+    run it asks to run again, and the input as sent (key order and spacing
+    do not matter). The same key with any of those different is refused
+    `already_exists`. `allow_empty_pool`, `no_cache` and `origin_reference`
+    are not part of it.
+  - *A retry reads the key's run id, and what it reads decides.* It looks in
+    the cluster first, then the archive. The key's own run is answered; a
+    run the cluster let go is answered from the archive; and only when both
+    say there is no such run is the id started, by the retry, under its own
+    origin. Anything that cannot be read is `unavailable`, never a start. So
+    a replica lost between its claim and its start strands nothing: the next
+    retry starts the id.
+  - *A start whose answer was lost is never recorded as a failure.* The
+    engine reads the id: a run that landed is answered, and one that did not
+    is `unavailable` with nothing recorded, for the retry to read again. Only
+    a start the cluster refused (invalid, not found, permission, failed
+    precondition, unimplemented) is recorded as `RUN_START_FAILED`; if that
+    record cannot be written, the submission says so (`unavailable`) instead
+    of reporting a failure no replica can find.
+  - *An id held by something else is replaced once.* When the key's id was
+    started by something that is not the key's own run, the key moves to a
+    fresh id once; a second refused id is `unavailable`, and nothing is
+    recorded under an id the submission does not own.
+  - *The engine finishes on its own clock.* Once it has a candidate, it
+    spends up to 30 s on the claim and the start whatever the caller's
+    deadline; a caller that left learns the outcome by submitting again
+    under its key. A callback token is disclosed only to the submission that
+    started the run.
+  - *A key claimed by v0.3.0* (or answered by a v0.3.0 engine during a
+    rollout or a rollback) carries no fingerprint and is answered as v0.3.0
+    answered it: its run if found, its pending run if not, never started.
+    Each pending answer logs a warning and counts
+    `ork.idempotency.legacy_pending`. All such claims end one
+    `engine.idempotency_ttl` after the last engine is upgraded.
+  - *The cluster keeps a finished run at least a key's life.* The retention
+    OrkStack sets on the cluster is the larger of the maximum run retention
+    and `engine.idempotency_ttl` plus five minutes, plus the enforcement
+    margin; no namespace's run retention changes, and runs are retired when
+    they were. Set `engine.idempotency_ttl` the same on every engine. After
+    lowering it, or the maximum run retention, a key claimed before is not
+    started again once its claim is older than the retention the cluster
+    reports: such a submission is `unavailable` and asks for a new key.
 - **One namespace, one deployment.** The engine's queue name is fixed, so two
   OrkStack deployments in one namespace would fight over the current version of
   `ork-tasks`. Give each environment its own namespace, as above.
@@ -3698,7 +3743,9 @@ Internally — never exposed to an operator — OrkStack keeps the single
 Temporal namespace behind the deployment (`internal/engine/router.go`'s
 `SingleRouter`) at a retention TTL of `maximum + margin`, strictly above every
 namespace's own retention, so that TTL can never be what actually retires a
-run. The cleanup worker retires runs itself, explicitly, ahead of that TTL;
+run. Where the maximum is shorter than an idempotency key's life
+(`ORK_IDEMPOTENCY_TTL` plus five minutes), the key's life takes its place, so
+a retry under a key always finds a finished run (§5, "Ops notes", idempotency keys). The cleanup worker retires runs itself, explicitly, ahead of that TTL;
 the TTL is purely a backstop for worker downtime or a large backlog. See
 `internal/archive/retention.go` (`RetentionController`) and the cleanup
 worker's own doc comment (`internal/archive/cleanup.go`) for the mechanism.
@@ -4715,6 +4762,12 @@ audit write, once per audited write RPC: `outcome` is `written`, or `dropped`
 when the audit store refused the write (the RPC itself still answered as it
 would have — see §5 "Attributing control-plane writes"). A rising `dropped`
 rate is an unwritable `metadata/audit/` prefix.
+
+`ork.idempotency.legacy_pending` (engine) counts keyed submissions answered
+with a pending run that was not found, under a key claimed by an earlier
+release (§5 "Ops notes", idempotency keys). It should stay at zero once one
+`engine.idempotency_ttl` has passed after the last engine was upgraded; a
+rising count during a rollout names runs that may never start.
 
 ### Lifecycle metrics
 

@@ -1303,7 +1303,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return fmt.Errorf("open retention policy store: %w", err)
 	}
 	retention := archivecleanup.NewRetentionController(
-		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger)
+		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger).
+		WithKeyLife(engine.ClaimLife(cfg.idempotencyTTL))
 	policy, err := retention.Ensure(ctx)
 	if err != nil {
 		// Fail closed: an engine that cannot establish the ceiling must not
@@ -1421,6 +1422,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	// ork.idempotency.legacy_pending: a key claimed by an earlier release
+	// answered with a pending run that was not found.
+	idempotencyInstruments, err := telemetry.NewIdempotencyInstruments(sinks.Default())
+	if err != nil {
+		return err
+	}
 
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them. The archive body's event log is read back
@@ -1517,25 +1524,26 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Resolver:     resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
-		ImagePolicies: imagePolicies,
-		Signatures:    &dsl.SignatureVerifier{Resolver: resolver},
-		Activities:    activities,
-		RawQueue:      cfg.defaultRouteOverride,
-		Archive:       archive,
-		Logs:          logStore,
-		ArtifactStore: artifactStore,
-		Attempts:      attemptStore,
-		Commits:       commitStore,
-		Idempotency:   idempotency,
-		Webhooks:      webhookRegistry,
-		Deliveries:    deliveryStore,
-		Triggers:      triggerStore,
-		Schedules:     scheduler,
-		AuditStore:    auditStore,
-		AuditCounter:  auditInstruments,
-		Notifier:      runNotifier,
-		Logger:        logger,
-		System:        system,
+		ImagePolicies:   imagePolicies,
+		Signatures:      &dsl.SignatureVerifier{Resolver: resolver},
+		Activities:      activities,
+		RawQueue:        cfg.defaultRouteOverride,
+		Archive:         archive,
+		Logs:            logStore,
+		ArtifactStore:   artifactStore,
+		Attempts:        attemptStore,
+		Commits:         commitStore,
+		Idempotency:     idempotency,
+		OnLegacyPending: idempotencyInstruments.CountLegacyPending,
+		Webhooks:        webhookRegistry,
+		Deliveries:      deliveryStore,
+		Triggers:        triggerStore,
+		Schedules:       scheduler,
+		AuditStore:      auditStore,
+		AuditCounter:    auditInstruments,
+		Notifier:        runNotifier,
+		Logger:          logger,
+		System:          system,
 		// Retention backs SystemService's
 		// GetRetentionPolicy/UpdateRetentionPolicy, and also validates a
 		// namespace's own run_retention against the ceiling

@@ -16,6 +16,14 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** an idempotency key reused for a different Orkflow, version or input is now refused (`already_exists`), not answered with the first run; use one key for one submission ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
+
+### Fixed
+
+- A keyed submission whose claim or start answer was lost no longer leaves its key naming a run that never starts, or a failed run beside a live one; retry under the same key ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
+
 ### Security
 
 - **BREAKING:** webhooks now refuse loopback, link-local (cloud metadata), private and other non-public addresses, at registration and delivery; list receivers' networks in `webhooks.allowed_networks` ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#where-a-delivery-may-go)).

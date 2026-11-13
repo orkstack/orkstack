@@ -46,7 +46,14 @@ export type SubmitRunRequest = Message<"orkstack.v1.SubmitRunRequest"> & {
   input?: Payload | undefined;
 
   /**
-   * optional dedupe
+   * idempotency_key, optional, makes a retry safe: a repeat under the same
+   * key, in the same namespace, is answered with the run the key names
+   * instead of starting a second one, even when the first answer was lost.
+   * A key belongs to one submission: the same key with another
+   * orkflow_name, orkflow_version as written, source_run_id or input is
+   * refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference
+   * are not part of that comparison. A key stays bound for
+   * engine.idempotency_ttl (24h by default).
    *
    * @generated from field: string idempotency_key = 4;
    */

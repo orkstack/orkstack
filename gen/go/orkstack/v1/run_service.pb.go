@@ -276,7 +276,15 @@ type SubmitRunRequest struct {
 	OrkflowName    string                 `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`          // orkflow name
 	OrkflowVersion string                 `protobuf:"bytes,2,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"` // orkflow version; empty = latest
 	Input          *Payload               `protobuf:"bytes,3,opt,name=input,proto3" json:"input,omitempty"`
-	IdempotencyKey string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // optional dedupe
+	// idempotency_key, optional, makes a retry safe: a repeat under the same
+	// key, in the same namespace, is answered with the run the key names
+	// instead of starting a second one, even when the first answer was lost.
+	// A key belongs to one submission: the same key with another
+	// orkflow_name, orkflow_version as written, source_run_id or input is
+	// refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference
+	// are not part of that comparison. A key stays bound for
+	// engine.idempotency_ttl (24h by default).
+	IdempotencyKey string `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	// namespace selects which namespace's orkflow_name is submitted. Empty is
 	// the default namespace. A name is unique WITHIN a namespace, so this is
 	// half of the orkflow's address, not a filter.

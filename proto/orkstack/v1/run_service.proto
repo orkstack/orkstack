@@ -146,7 +146,15 @@ message SubmitRunRequest {
   string orkflow_name = 1;               // orkflow name
   string orkflow_version = 2;            // orkflow version; empty = latest
   Payload input = 3;
-  string idempotency_key = 4;            // optional dedupe
+  // idempotency_key, optional, makes a retry safe: a repeat under the same
+  // key, in the same namespace, is answered with the run the key names
+  // instead of starting a second one, even when the first answer was lost.
+  // A key belongs to one submission: the same key with another
+  // orkflow_name, orkflow_version as written, source_run_id or input is
+  // refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference
+  // are not part of that comparison. A key stays bound for
+  // engine.idempotency_ttl (24h by default).
+  string idempotency_key = 4;
   // namespace selects which namespace's orkflow_name is submitted. Empty is
   // the default namespace. A name is unique WITHIN a namespace, so this is
   // half of the orkflow's address, not a filter.

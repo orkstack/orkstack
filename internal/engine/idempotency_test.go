@@ -7,8 +7,14 @@ import (
 	"testing"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
+	workflowpb "go.temporal.io/api/workflow/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
@@ -32,6 +38,46 @@ type recordingClaimClient struct {
 	winner   engine.Claim
 	startErr error
 	getErr   error
+
+	// describe and query answer Lookup and ClaimedAt.
+	describe    *workflowservice.DescribeWorkflowExecutionResponse
+	describeErr error
+	queried     engine.Claim
+	queryErr    error
+	queries     int
+}
+
+func (c *recordingClaimClient) DescribeWorkflowExecution(
+	context.Context, string, string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	if c.describeErr != nil {
+		return nil, c.describeErr
+	}
+	if c.describe == nil {
+		return nil, serviceerror.NewNotFound("no claim")
+	}
+	return c.describe, nil
+}
+
+func (c *recordingClaimClient) QueryWorkflow(
+	context.Context, string, string, string, ...any,
+) (converter.EncodedValue, error) {
+	c.queries++
+	if c.queryErr != nil {
+		return nil, c.queryErr
+	}
+	payloads, err := converter.GetDefaultDataConverter().ToPayloads(c.queried)
+	if err != nil {
+		return nil, err
+	}
+	return encodedClaim{payloads: payloads}, nil
+}
+
+type encodedClaim struct{ payloads *commonpb.Payloads }
+
+func (e encodedClaim) HasValue() bool { return true }
+func (e encodedClaim) Get(valuePtr any) error {
+	return converter.GetDefaultDataConverter().FromPayloads(e.payloads, valuePtr)
 }
 
 func (c *recordingClaimClient) NewWithStartWorkflowOperation(
@@ -113,9 +159,7 @@ func TestTemporalIdempotency_JoinsTheKeysClaimInOneRoundTrip(t *testing.T) {
 	c := &recordingClaimClient{winner: claimOf("ork-1-1")}
 	idempotency := engine.NewTemporalIdempotency(c, "", time.Hour)
 
-	winner, err := idempotency.Claim(context.Background(), "order-42", func() (engine.Claim, error) {
-		return claimOf("ork-1-1"), nil
-	})
+	winner, err := idempotency.Claim(context.Background(), "order-42", claimOf("ork-1-1"))
 	must.OKf(t, err, "Claim")
 	if winner.RunID != "ork-1-1" {
 		t.Errorf("winner = %q, want ork-1-1", winner.RunID)
@@ -161,9 +205,7 @@ func TestTemporalIdempotency_TheClaimOutlivesItsTTLByAGraceOnly(t *testing.T) {
 	c := &recordingClaimClient{winner: claimOf("ork-1-1")}
 	idempotency := engine.NewTemporalIdempotency(c, "engine-queue", 2*time.Hour)
 
-	if _, err := idempotency.Claim(context.Background(), "order-42", func() (engine.Claim, error) {
-		return claimOf("ork-1-1"), nil
-	}); err != nil {
+	if _, err := idempotency.Claim(context.Background(), "order-42", claimOf("ork-1-1")); err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
 
@@ -194,9 +236,7 @@ func TestTemporalIdempotency_ReportsALostCandidate(t *testing.T) {
 	c := &recordingClaimClient{winner: claimOf("ork-9-9")}
 	idempotency := engine.NewTemporalIdempotency(c, "", 0)
 
-	winner, err := idempotency.Claim(context.Background(), "order-42", func() (engine.Claim, error) {
-		return claimOf("ork-1-1"), nil
-	})
+	winner, err := idempotency.Claim(context.Background(), "order-42", claimOf("ork-1-1"))
 	must.OKf(t, err, "Claim")
 	if winner.RunID != "ork-9-9" || string(winner.Snapshot) != "ork-9-9" {
 		t.Errorf("winner = %+v, want the claim holder ork-9-9 with its own snapshot", winner)
@@ -247,31 +287,10 @@ func TestTemporalIdempotency_ReportsAnUnreachableAuthority(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			idempotency := engine.NewTemporalIdempotency(tc.client, "", time.Hour)
-			if _, err := idempotency.Claim(context.Background(), "k", func() (engine.Claim, error) {
-				return claimOf("ork-1-1"), nil
-			}); err == nil {
+			if _, err := idempotency.Claim(context.Background(), "k", claimOf("ork-1-1")); err == nil {
 				t.Fatal("Claim succeeded with no usable answer from the server")
 			}
 		})
-	}
-}
-
-// TestTemporalIdempotency_APropositionFailureNeverReachesTheServer: building
-// the candidate is the caller's work, and a caller that cannot produce one has
-// nothing to claim with.
-func TestTemporalIdempotency_APropositionFailureNeverReachesTheServer(t *testing.T) {
-	c := &recordingClaimClient{}
-	idempotency := engine.NewTemporalIdempotency(c, "", time.Hour)
-
-	want := errors.New("cannot encode run")
-	_, err := idempotency.Claim(context.Background(), "k", func() (engine.Claim, error) {
-		return engine.Claim{}, want
-	})
-	if !errors.Is(err, want) {
-		t.Fatalf("Claim error = %v, want %v", err, want)
-	}
-	if c.startOptions.ID != "" {
-		t.Errorf("a claim was attempted at %q with no candidate", c.startOptions.ID)
 	}
 }
 
@@ -280,7 +299,7 @@ func TestTemporalIdempotency_APropositionFailureNeverReachesTheServer(t *testing
 // drops would silently disable the reissue path or lose the winner's snapshot.
 func TestClaimRequest_SurvivesTheDefaultDataConverter(t *testing.T) {
 	request := engine.ClaimRequest{
-		Candidate:  engine.Claim{RunID: "ork-1-1", Snapshot: []byte{0x00, 0x01, 0xff}},
+		Candidate:  engine.Claim{RunID: "ork-1-1", Snapshot: []byte{0x00, 0x01, 0xff}, Fingerprint: "fp"},
 		Supersedes: "ork-0-0",
 	}
 	encoded, err := stablejson.Marshal(request)
@@ -295,5 +314,58 @@ func TestClaimRequest_SurvivesTheDefaultDataConverter(t *testing.T) {
 		decoded.Supersedes != request.Supersedes ||
 		string(decoded.Candidate.Snapshot) != string(request.Candidate.Snapshot) {
 		t.Errorf("round trip lost detail: %+v -> %+v", request, decoded)
+	}
+}
+
+func claimDescribe(status enumspb.WorkflowExecutionStatus, started time.Time) *workflowservice.DescribeWorkflowExecutionResponse {
+	return &workflowservice.DescribeWorkflowExecutionResponse{
+		WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{Status: status, StartTime: timestamppb.New(started)},
+	}
+}
+
+// Lookup is the read a submission makes before it mints anything: only a
+// running claim is a binding, and every failure is "no answer", never
+// "unbound".
+func TestTemporalIdempotency_Lookup(t *testing.T) {
+	ctx := context.Background()
+	started := time.Date(2026, 11, 13, 0, 0, 0, 0, time.UTC)
+	held := engine.Claim{RunID: "ork-1-1", Fingerprint: "fp"}
+
+	cases := []struct {
+		name      string
+		client    *recordingClaimClient
+		bound     bool
+		wantErr   bool
+		wantQuery bool
+	}{
+		{"no claim execution", &recordingClaimClient{}, false, false, false},
+		{"a claim that ended", &recordingClaimClient{describe: claimDescribe(enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, started), queried: held}, false, false, false},
+		{"a running claim", &recordingClaimClient{describe: claimDescribe(enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, started), queried: held}, true, false, true},
+		{"a running claim with no winner yet", &recordingClaimClient{describe: claimDescribe(enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, started)}, false, false, true},
+		{"the describe fails", &recordingClaimClient{describeErr: serviceerror.NewUnavailable("down")}, false, true, false},
+		{"the query fails", &recordingClaimClient{describe: claimDescribe(enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, started), queryErr: errors.New("unknown query")}, false, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, bound, err := engine.NewTemporalIdempotency(tc.client, "", time.Hour).Lookup(ctx, "k")
+			if (err != nil) != tc.wantErr || bound != tc.bound {
+				t.Fatalf("Lookup = %+v, %v, %v; want bound=%v err=%v", got, bound, err, tc.bound, tc.wantErr)
+			}
+			if bound && (got.RunID != held.RunID || got.Fingerprint != held.Fingerprint) {
+				t.Fatalf("binding = %+v, want %+v", got, held)
+			}
+			if (tc.client.queries > 0) != tc.wantQuery {
+				t.Fatalf("queried %d times", tc.client.queries)
+			}
+		})
+	}
+
+	at, err := engine.NewTemporalIdempotency(&recordingClaimClient{
+		describe: claimDescribe(enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, started)}, "", time.Hour).ClaimedAt(ctx, "k")
+	if err != nil || !at.Equal(started) {
+		t.Fatalf("ClaimedAt = %v, %v; want %v", at, err, started)
+	}
+	if _, err := engine.NewTemporalIdempotency(&recordingClaimClient{}, "", time.Hour).ClaimedAt(ctx, "k"); !errors.Is(err, engine.ErrClaimEnded) {
+		t.Fatalf("ClaimedAt of no claim = %v, want ErrClaimEnded", err)
 	}
 }

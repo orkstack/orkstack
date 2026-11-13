@@ -8,6 +8,7 @@ import (
 	"encoding/json/v2"
 	"errors"
 	"fmt"
+	"go.temporal.io/api/serviceerror"
 	"io"
 	"log/slog"
 	"maps"
@@ -326,7 +327,7 @@ func TestSubmitRun_RunThatNeverReachedTemporalIsRecorded(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 	fixture := newFixtureWithNotifier(t, f.adapter)
-	fixture.starter.err = fmt.Errorf("temporal is unreachable")
+	fixture.starter.err = serviceerror.NewFailedPrecondition("temporal is unreachable")
 	ctx := context.Background()
 	if _, err := fixture.orkflowClient().ApplyOrkflow(ctx,
 		connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: helloYAML(t)})); err != nil {

@@ -770,3 +770,17 @@ and one that cancels a context's children in another order fails its replay.
   (`ordered_cancel_integration_test.go`). It never skips. The fixture is
   committed, so the replay tests above fail, never skip, when it is missing;
   only this recorder is opt-in (`ORK_RECORD_GOLDEN_HISTORY=1` writes it).
+
+### `run-keyed-v1.json` — a run started under an idempotency key
+
+A two-task run whose plan carries `IdempotencyFingerprint`, the field a retry
+under the key reads from the run's first start to tell the key's own run from
+a workflow something else started under its id. Workflow code never reads
+it, so it enters no command path and needs no gate; this fixture holds that.
+
+- command: `TestRunWorkflow_ReplaysCommittedKeyedHistory`
+- payload: `TestKeyedHistory_ActivityPayloadsMatchWhatCurrentCodeSends`
+- shape: `TestKeyedHistory_StartCarriesTheFingerprint`, and
+  `TestFirstStart_ReadsTheKeyedFixture` reads its fingerprint the way a
+  retry does
+- recorder: `TestIntegration_RecordKeyedRunHistory`
