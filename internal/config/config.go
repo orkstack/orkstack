@@ -146,6 +146,8 @@ var Schema = []Var{
 	// constant idempotency.go binds a non-positive ttl to.
 	{Path: "engine.idempotency_ttl", Env: "ORK_IDEMPOTENCY_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultClaimTTL)},
 	{Path: "engine.registry_auth_file", Env: "ORK_REGISTRY_AUTH_FILE", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault},
+	{Path: "webhooks.allowed_networks", Env: "ORK_WEBHOOK_ALLOWED_NETWORKS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault,
+		DerivedNote: "empty admits public addresses only"},
 	{Path: "engine.stats_cache_ttl", Env: "ORK_STATS_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultStatsCacheTTL)},
 	// ORK_EACH_MAX_ITEMS' fallback is engine.DefaultEachMaxItems: a
 	// deployment default of 1000, which a deployment lowers, or raises up to

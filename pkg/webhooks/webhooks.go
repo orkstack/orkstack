@@ -352,7 +352,14 @@ func ApplyChange(current Webhook, change func(*Webhook) error) (Webhook, error) 
 	case !next.CreatedAt.Equal(current.CreatedAt):
 		return Webhook{}, errors.New("webhooks: an update cannot change a subscription's creation time")
 	}
-	target, err := ValidateURL(next.URL)
+	// A URL left as it was is only syntax-checked: a subscription registered
+	// before the destination policy can still be disabled or renamed, and
+	// delivery refuses its address at dial. A new URL meets the policy.
+	check := ValidateDestination
+	if next.URL == current.URL {
+		check = ValidateURL
+	}
+	target, err := check(next.URL)
 	if err != nil {
 		return Webhook{}, err
 	}
@@ -442,7 +449,7 @@ func (r *Registry) RegisterContext(ctx context.Context, reg Registration) (Webho
 	if r.store != nil {
 		return r.store.Register(ctx, reg)
 	}
-	target, err := ValidateURL(reg.URL)
+	target, err := ValidateDestination(reg.URL)
 	if err != nil {
 		return Webhook{}, err
 	}
@@ -663,7 +670,8 @@ func (r *Registry) LookupForDelivery(ctx context.Context, id string) (Webhook, b
 }
 
 // ValidateURL accepts the absolute http(s) URLs a delivery can actually reach
-// and returns the URL as stored.
+// and returns the URL as stored. It checks syntax only; ValidateDestination
+// adds the destination policy.
 func ValidateURL(raw string) (string, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
@@ -678,6 +686,23 @@ func ValidateURL(raw string) (string, error) {
 	}
 	if parsed.Host == "" {
 		return "", fmt.Errorf("webhooks: invalid url %q: missing host", raw)
+	}
+	return trimmed, nil
+}
+
+// ValidateDestination is ValidateURL plus the destination policy: a host that
+// is an IP literal, or localhost, in a non-public range the operator has not
+// allowed (webhooks.allowed_networks) is refused with ErrDestinationBlocked.
+// A name is judged when it is dialled. Only the engine, which holds the
+// operator's allow-list, calls it; a client's ValidateURL checks syntax alone.
+func ValidateDestination(raw string) (string, error) {
+	trimmed, err := ValidateURL(raw)
+	if err != nil {
+		return "", err
+	}
+	parsed, _ := url.Parse(trimmed)
+	if err := checkHost(parsed.Hostname()); err != nil {
+		return "", fmt.Errorf("webhooks: invalid url %q: %w", raw, err)
 	}
 	return trimmed, nil
 }

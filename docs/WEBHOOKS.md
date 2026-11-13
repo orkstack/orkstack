@@ -235,6 +235,26 @@ secret, which is to say that it came from this deployment
 ([ORKFLOW_TRIGGERS.md](ORKFLOW_TRIGGERS.md), "Trigger versus webhook"). It does
 not prove that the event is new. See "Duplicates" below.
 
+### Where a delivery may go
+
+A delivery connects to public addresses only. A loopback, link-local (including
+the cloud metadata address 169.254.169.254), private (RFC 1918 and ULA), shared
+(100.64.0.0/10), multicast or otherwise reserved address is refused with the
+reason `WEBHOOK_DESTINATION_BLOCKED` ([REASONS.md](REASONS.md), "Webhooks").
+
+- Registration (and update) refuses a URL whose host is such an address, in any
+  spelling, or `localhost`, with that reason as an `invalid_argument`. A name is
+  not resolved at registration.
+- Every connection a delivery makes is checked at the moment it is dialled, on the
+  address the name resolved to. A name that is rebound to an internal address after
+  registration, and a redirect to one, fail the attempt. The attempt records the
+  reason in its error, and a refused attempt is not retried.
+- The operator admits private receivers, such as one inside the cluster or a
+  local stub, by listing their networks in `webhooks.allowed_networks`
+  (`ORK_WEBHOOK_ALLOWED_NETWORKS`, a comma-separated list of CIDRs; [DEPLOY.md](DEPLOY.md), § 1).
+  Empty admits public addresses only. A subscription already registered for a
+  private address is refused at its next delivery until its network is listed.
+
 ### Attempts and retries
 
 - A delivery is one `POST` to one subscription for one event. Every queued
@@ -482,8 +502,8 @@ trail").
 - **No setting that turns webhooks off.** The notifier runs in every engine
   (`cmd/ork/main.go`). A deployment with no subscriptions queues nothing.
 - **No reconciliation.** A webhook is not a state source. Reconcile with `GetRun`.
-- **No destination check.** Any reachable `http` or `https` URL can be named.
-  See [SECURITY_MODEL.md](SECURITY_MODEL.md), "Webhook secrets and destinations".
+- **No call to a non-public address.** See "Where a delivery may go".
+  [SECURITY_MODEL.md](SECURITY_MODEL.md), "Webhook secrets and destinations", has the detail.
 
 ## Related
 

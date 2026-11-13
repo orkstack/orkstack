@@ -45,7 +45,7 @@ Read an input as `{{ .inputs.<name> }}`.
 
 ## Task
 
-`tasks[]:`. A task needs `id`, and either `uses` or `await`.
+`tasks[]:`. A task needs `id`, and exactly one of `uses`, `await` or `sleep`.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -59,6 +59,7 @@ Read an input as `{{ .inputs.<name> }}`.
 | `retry` | one attempt | [Retry](#retry). |
 | `each` | none | Run once per element of an array: [Fan out over a list](/docs/build/fan-out/). |
 | `await` | none | Wait for an outside resolution instead of running a container: [Await](#await). |
+| `sleep` | none | Wait a fixed time instead of running a container: [Sleep](#sleep). |
 | `cache` | none | Reuse an identical earlier result: [Cache](#cache). |
 | `pool` | the default pool | Which Orkers run the task. |
 | `pin` | none | Run on one Orker with the other tasks of this pin. |
@@ -102,6 +103,17 @@ rejected from outside the run.
 | `timeout_seconds` | required | 1 second to 30 days. |
 | `callback` | `false` | `true` issues a one-time token at submit, for a caller to resolve the task. |
 | `schema` | none | The fields a completion must carry, in the `inputs:` form (`type`, `required`). |
+
+## Sleep
+
+`sleep:`. The task runs no container and holds no Orker. It waits a fixed time
+on the run's own timer and then succeeds with no values. Nothing outside the
+run ends it early; cancelling the run does. It takes only `id`, `needs`,
+`condition`, `join` and `sleep`.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `seconds` | required | 1 second to 30 days, counted from when the task starts sleeping. |
 
 ## Cache
 
@@ -163,5 +175,6 @@ Tab indents; to leave the editor with the keyboard, press Escape, then Tab.
 ## See also
 
 - [DSL reference](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md): every rule, default and validation
+- [Sleeping tasks](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#sleeping-tasks): the rules for `sleep:`
 - [JSON Schema](https://github.com/orkstack/orkstack/blob/main/docs/schemas/orkflow.v1.json): for editor completion
 - [Editor support](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#editor-support): what the schema checks, and what only the engine can
