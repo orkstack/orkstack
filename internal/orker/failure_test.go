@@ -28,7 +28,7 @@ var allReasonCodes = []string{
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonCommitStoreUnavailable, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused, ReasonResourceAdmissionMismatch,
-	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped, ReasonHeartbeatLost,
+	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped, ReasonHeartbeatLost, ReasonAttemptStoreUnavailable,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,

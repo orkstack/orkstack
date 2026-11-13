@@ -1880,10 +1880,11 @@ func (x *InspectRunRequest) GetItem() int32 {
 type LiveAttempt struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	// attempt is Temporal's attempt number for the pending activity
-	// (PendingActivityInfo.attempt). While STARTED it is the number the
-	// Orker's own record will carry; while SCHEDULED between retries it is the
-	// number of the attempt that is ABOUT to run.
+	// attempt is the ordinal the running attempt's Orker claimed, once its
+	// heartbeat names it: the number the attempt's record and log carry
+	// (docs/STORAGE.md, "Attempt ordinals"). Before that, and while SCHEDULED
+	// between retries, it is Temporal's attempt number for the pending activity
+	// (PendingActivityInfo.attempt), which may differ from the ordinal.
 	Attempt int32            `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	State   LiveAttemptState `protobuf:"varint,3,opt,name=state,proto3,enum=orkstack.v1.LiveAttemptState" json:"state,omitempty"`
 	// attempt_scheduled_at is Temporal's scheduled_time for the pending

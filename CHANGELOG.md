@@ -16,6 +16,11 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 
+### Changed
+
+- The Orker numbers each task's attempts itself and starts nothing until the cluster answers its first heartbeat; a store that refuses the number fails `ATTEMPT_STORE_UNAVAILABLE` ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#invariants-the-layout-carries)).
+- Upgrade every Orker of a pool together: an older Orker beside a newer one can overwrite its attempt records, and a submit that probes the pool refuses the mix ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#upgrading-a-pools-orkers)).
+
 ### Security
 
 - **BREAKING:** webhooks now refuse loopback, link-local (cloud metadata), private and other non-public addresses, at registration and delivery; list receivers' networks in `webhooks.allowed_networks` ([WEBHOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/WEBHOOKS.md#where-a-delivery-may-go)).

@@ -106,6 +106,7 @@ type Heartbeater struct {
 	phase       atomic.Pointer[string]
 	containerID atomic.Pointer[string]
 	bytesLogged atomic.Int64
+	ordinal     atomic.Int32
 
 	stop     chan struct{}
 	stopped  chan struct{}
@@ -141,6 +142,10 @@ type Heartbeater struct {
 	completeCanceled func(context.Context) error
 	// cancelRPC ends an RPC in flight when the loop is stopped.
 	cancelRPC context.CancelFunc
+	// answered is closed by the first heartbeat the cluster acknowledges, and
+	// never again: AwaitFirstAnswer waits on it. Start makes it.
+	answered     chan struct{}
+	answeredOnce sync.Once
 	// interval is the tick rate. Zero means DefaultHeartbeatInterval. It is
 	// filled from OCIDispatcher.HeartbeatInterval.
 	interval time.Duration
@@ -207,6 +212,7 @@ func NewHeartbeater(ctx context.Context) *Heartbeater {
 func (h *Heartbeater) Start(ctx context.Context) {
 	h.stop = make(chan struct{})
 	h.stopped = make(chan struct{})
+	h.answered = make(chan struct{})
 	interval := h.interval
 	if interval <= 0 {
 		interval = DefaultHeartbeatInterval
@@ -267,6 +273,9 @@ func (h *Heartbeater) report(calls context.Context) {
 		}
 		h.failing = false
 		h.lastAck = h.clock()
+		if h.answered != nil {
+			h.answeredOnce.Do(func() { close(h.answered) })
+		}
 		return
 	case serverDecided(err):
 		h.serverCanceled.Store(temporal.IsCanceledError(err))
@@ -286,6 +295,34 @@ func (h *Heartbeater) report(calls context.Context) {
 	h.failing = true
 	if h.clock().Sub(h.lastAck) >= h.ackWindow() && h.onLost != nil {
 		h.onLost(&heartbeatUnanswered{after: h.ackWindow(), err: err})
+	}
+}
+
+// AwaitFirstAnswer is the latch an attempt passes before it claims its ordinal,
+// joins a pin or fetches anything (docs/OCI_ACTIVITY_CONTRACT.md §7.1): it
+// returns nil once the cluster has acknowledged one heartbeat of this attempt.
+//
+// It is not one RPC. The loop that Start began keeps ticking, each report with
+// its own deadline, and the latch ends the way that loop ends an attempt:
+//
+//   - a decision of the server's (NotFound for a run that was terminated, a
+//     cancel) reaches the SDK through deliver, which cancels the attempt's
+//     context, so the latch returns at once with that context's cause;
+//   - no answer for the heartbeat timeout, counted from Start, stops the
+//     attempt (onLost), so the latch returns heartbeatUnanswered.
+//
+// Either way the attempt has claimed nothing, joined no pin, fetched nothing
+// and created no container. Outside an activity (orkctl task run, orkctl
+// activity test) nothing is sent, and the latch is open.
+func (h *Heartbeater) AwaitFirstAnswer(ctx context.Context) error {
+	if h.send == nil || h.answered == nil {
+		return nil
+	}
+	select {
+	case <-h.answered:
+		return nil
+	case <-ctx.Done():
+		return context.Cause(ctx)
 	}
 }
 
@@ -377,11 +414,15 @@ func (h *Heartbeater) Container(id ContainerID) {
 	h.containerID.Store(&value)
 }
 
+// setOrdinal records the attempt's claimed ordinal, which every beat after it
+// carries.
+func (h *Heartbeater) setOrdinal(n int32) { h.ordinal.Store(n) }
+
 // Logged adds to the byte counter the progress detail carries.
 func (h *Heartbeater) Logged(n int64) { h.bytesLogged.Add(n) }
 
 func (h *Heartbeater) progress() HeartbeatProgress {
-	progress := HeartbeatProgress{BytesLogged: h.bytesLogged.Load(), OrkerID: h.orkerID}
+	progress := HeartbeatProgress{BytesLogged: h.bytesLogged.Load(), OrkerID: h.orkerID, Ordinal: h.ordinal.Load()}
 	if phase := h.phase.Load(); phase != nil {
 		progress.Phase = *phase
 	}

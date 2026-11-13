@@ -74,6 +74,14 @@ type OCIDispatcher struct {
 	// exactly like Logs and Commits, and the write is best-effort on every
 	// path: a record that cannot be stored is logged, never a task failure.
 	Attempts artifacts.AttemptStore
+	// Claims allocates each attempt's ordinal ({n}.claim) and releases it
+	// ({n}.released) beside the records (docs/STORAGE.md, "Attempt
+	// ordinals"). Nil numbers attempts as Temporal does and writes neither:
+	// orkctl task run and orkctl activity test have no attempt store.
+	Claims artifacts.AttemptClaimer
+	// AttemptRecords hears of every attempt record of an earlier release this
+	// Orker meets (ork.orker.attempt_record_legacy). Nil tells nobody.
+	AttemptRecords AttemptRecordObserver
 	// Memos is where cached tasks' memos live. Nil means this Orker reuses
 	// nothing and writes no memo: every cached attempt is a MISS
 	// (MEMO_STORE_ABSENT) and runs, exactly like Commits being nil disables
@@ -287,7 +295,10 @@ func (d *OCIDispatcher) Execute(
 	// a panic out of d.execute — used to leave the sink open. sink is the
 	// durability barrier §7.1 STEP 1 promises, so it closing is not
 	// optional on any exit path.
-	sink := d.openLogSink(ctx, in, attempt)
+	// The attempt's log waits for its ordinal (attempt_ordinal.go): the
+	// claim opens it, and lines written before are written first. Its Close
+	// is the durability barrier, deferred before anything can return.
+	sink := d.newAttemptOrdinal(ctx, in, attempt)
 	defer sink.Close()
 	var export TaskLogWriter
 	if d.TaskLogs != nil {
@@ -381,7 +392,18 @@ func (d *OCIDispatcher) Execute(
 		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
-		d.recordAttempt(ctx, in, attempt, startedAt, beat, result, failure, outcome)
+		// An attempt that reached an outcome of its own without a claim (an
+		// adopted commit, a refusal) takes an ordinal now to record it under.
+		// One aborted before its claim (cancelled, its heartbeat lost, its
+		// Orker stopping, the store refusing the claim) takes none and leaves
+		// nothing (resume/design.md §26.2).
+		if !abortedBeforeClaim(outcome) {
+			sink.ClaimBestEffort(ctx)
+		}
+		if ordinal := sink.Ordinal(); ordinal != 0 {
+			d.recordAttempt(ctx, in, ordinal, startedAt, beat, result, failure, outcome)
+		}
+		sink.Release(ctx)
 	}
 	// A panic out of d.execute — a runtime library panicking instead of
 	// returning an error, say — must still produce exactly one End call
@@ -422,6 +444,7 @@ func (d *OCIDispatcher) Execute(
 	if attemptObs != nil {
 		beat.onPhase = attemptObs.Phase
 	}
+	sink.setBeat(beat)
 	beat.Start(ctx)
 	defer beat.Stop()
 	beat.Phase("start")
@@ -704,7 +727,7 @@ func (d *OCIDispatcher) execute(
 	startedAt *timestamppb.Timestamp,
 	beat *Heartbeater,
 	stdoutLine, stderrLine io.Writer,
-	sink *logChunkSink,
+	sink *attemptOrdinal,
 	trace *memoTrace,
 	cleanup *attemptCleanup,
 ) (*orkstackv1.ExecuteTaskResult, *Failure) {
@@ -721,6 +744,19 @@ func (d *OCIDispatcher) execute(
 		return adopted, failure
 	}
 
+	// STEP 3′. The first heartbeat, awaited (resume/design.md §26.2), for a
+	// task with no memo step: before the policies ask a registry, before the
+	// workspace, the pin, the claim, any staging and the pull. A run that was
+	// terminated or cancelled ends the attempt here with nothing made. A
+	// cached task waits after its memo step instead, which never waits on the
+	// cluster (AGENTS.md §4.1).
+	cached := cachedInput(in)
+	if !cached {
+		if err := beat.AwaitFirstAnswer(ctx); err != nil {
+			return nil, beforeClaimStopped(err)
+		}
+	}
+
 	// STEP 3a. This Orker's own policy, for a task with no memo step (an
 	// uncached or a pinned one; a pinned task is never cached).
 	//
@@ -729,7 +765,6 @@ func (d *OCIDispatcher) execute(
 	// more narrowly (AGENTS.md §15). BEFORE the image policy, which asks a
 	// registry, and before the workspace, the pin directory, the staged
 	// secrets and the pull: a refused task leaves nothing on disk.
-	cached := cachedInput(in)
 	if !cached {
 		if failure := d.checkOrkerPolicy(in); failure != nil {
 			return nil, failure
@@ -803,6 +838,16 @@ func (d *OCIDispatcher) execute(
 		ws.Shared = pinWS.Shared
 	}
 
+	// STEP 4c. The claim, for a task with no memo step: the attempt's
+	// ordinal, before anything is fetched and before any container
+	// (docs/OCI_ACTIVITY_CONTRACT.md §7.1). A cached task claims after its
+	// memo step.
+	if !cached {
+		if failure := sink.Claim(ctx); failure != nil {
+			return nil, failure
+		}
+	}
+
 	// STEP 5. Input staging. A cached task stages only what its memo key
 	// and its render need — the upstream values.json files, verified, and the
 	// fan-in item commits — and RECORDS the artifact fetches and secrets
@@ -868,7 +913,17 @@ func (d *OCIDispatcher) execute(
 			note = "[ork] cache bypassed: the run was submitted with no_cache; running the container"
 		default:
 			if hit := d.lookupMemo(ctx, in, attempt, startedAt, key, trace); hit != nil {
-				return d.commitHit(ctx, in, attempt, startedAt, key, hit, trace)
+				// A hit runs no container and never waits on the cluster: its
+				// ordinal is best-effort, and this run's commit carries it.
+				// Without one (the store refused the claim), the commit keeps
+				// Temporal's count, as it did before ordinals: never 0.
+				sink.ClaimBestEffort(ctx)
+				committing := sink.Ordinal()
+				if committing == 0 {
+					committing = attempt
+				}
+				hit.commit.Attempt = committing
+				return d.commitHit(ctx, in, committing, startedAt, key, hit, trace)
 			}
 			note = fmt.Sprintf("[ork] cache miss (%s): %s; running the container",
 				trace.result.GetMissReason(), trace.result.GetMissDetail())
@@ -882,6 +937,15 @@ func (d *OCIDispatcher) execute(
 		// Orker refuses. The workspace exists by now; its deferred removal
 		// cleans it up as it does after any other failure here.
 		if failure := d.checkOrkerPolicy(in); failure != nil {
+			return nil, failure
+		}
+		// STEP 5b″. The first heartbeat, awaited, then the claim: after the
+		// memo step did not hit, before any artifact is fetched or secret
+		// resolved (resume/design.md §27.7).
+		if err := beat.AwaitFirstAnswer(ctx); err != nil {
+			return nil, beforeClaimStopped(err)
+		}
+		if failure := sink.Claim(ctx); failure != nil {
 			return nil, failure
 		}
 		trace.log("%s", note)
@@ -984,10 +1048,21 @@ func (d *OCIDispatcher) execute(
 
 	// STEP 8. Create.
 	beat.Phase("create")
-	spec, failure := d.containerSpec(in, ws, image, attempt, network, effectiveCPU, effectiveMem, runAsOrkerUser)
+	spec, failure := d.containerSpec(in, ws, image, sink.Ordinal(), network, effectiveCPU, effectiveMem, runAsOrkerUser)
 	if failure != nil {
 		return nil, failure
 	}
+	// Nothing is created for an attempt that is being stopped: a run
+	// terminated during the pull leaves no container (resume/design.md
+	// §26.2). Execute says how it was stopped.
+	if err := ctx.Err(); err != nil {
+		return nil, beforeClaimStopped(context.Cause(ctx))
+	}
+	// The ordinal is held from before the create: a create that failed may
+	// still have made a container the daemon did not name, so an attempt
+	// whose create failed keeps its claim unreleased, and the boot reap
+	// releases it once it removes what the create left.
+	sink.ContainerCreated()
 	id, err := d.Runtime.Create(ctx, spec)
 	if err != nil {
 		if id != "" {
@@ -1017,6 +1092,7 @@ func (d *OCIDispatcher) execute(
 			}
 		}
 		admission.ContainerRemoved(err)
+		sink.ContainerRemoved(err)
 	}()
 
 	// STEP 9-10. Run, stream, and wait for exit, cancellation or the task
@@ -1025,7 +1101,7 @@ func (d *OCIDispatcher) execute(
 	capture, failure := d.runContainer(ctx, in, ws, id, beat, stdoutLine, stderrLine)
 	if failure != nil {
 		// Even a failure publishes what it produced.
-		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 
 	// A cancelled attempt stops here. runContainer has already signalled,
@@ -1053,7 +1129,7 @@ func (d *OCIDispatcher) execute(
 			"task %q: the container exited %d after its runtime was stopping it: its daemon shut down or "+
 				"restarted, or someone stopped or signalled the container through it. So the exit says "+
 				"nothing about the workload", in.GetTaskId(), capture.status.Code)
-		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 	if capture.status.Code != 0 {
 		failure := Fail(ReasonContainerExitNonzero,
@@ -1073,7 +1149,7 @@ func (d *OCIDispatcher) execute(
 			failure.Message += ". The container runtime's events ended before they said how the container ended, so " +
 				stopCauseUnknownWords
 		}
-		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 
 	// STEP 12. Validate — INCLUDING readability — and bound the projected
@@ -1083,26 +1159,26 @@ func (d *OCIDispatcher) execute(
 	// never a host path, so no link it wrote reaches outside it (OutputTree).
 	output, failure := OpenOutputTree(ws.Output)
 	if failure != nil {
-		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 	defer func() { _ = output.Close() }()
 	values, failure := output.ReadValues(in.GetLimits())
 	if failure != nil {
-		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 	scanned, failure := output.ScanArtifacts(in.GetLimits())
 	if failure != nil {
-		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 	for _, artifact := range scanned {
 		if _, failure := artifact.Open(); failure != nil {
-			return nil, d.attachFailureDetail(ctx, in, ws, capture, image, attempt, failure)
+			return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 		}
 	}
 
 	// STEP 13. Hash, bound, upload, commit.
 	beat.Phase("commit")
-	return d.commit(ctx, in, ws, capture, image, scanned, values, attempt, startedAt, trace)
+	return d.commit(ctx, in, ws, capture, image, scanned, values, sink.Ordinal(), startedAt, trace)
 }
 
 // ---------------------------------------------------------------- step 0
@@ -1780,14 +1856,7 @@ func (d *OCIDispatcher) containerSpec(
 		Memory:    memory,
 		PidsLimit: d.Policy.PidsLimit,
 
-		Labels: map[string]string{
-			"ork.run":     in.GetRunId(),
-			"ork.task":    in.GetTaskId(),
-			"ork.attempt": fmt.Sprintf("%d", attempt),
-			// ork.orker is how an Orker recognizes its own previous life's
-			// containers, which is what the startup reaper keys on (§5.5).
-			"ork.orker": d.OrkerID,
-		},
+		Labels: containerLabels(in, attempt, d.OrkerID),
 
 		ReadOnlyRootfs:      true,
 		DropAllCapabilities: true,
@@ -2460,6 +2529,18 @@ func (d *OCIDispatcher) recordAttempt(
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), attemptRecordTimeout)
 	defer cancel()
 	if err := d.Attempts.PutAttempt(writeCtx, record); err != nil {
+		if errors.Is(err, artifacts.ErrAttemptExists) {
+			// Only an Orker that numbers attempts as Temporal does writes a
+			// record under an ordinal this one claimed: the pool runs two
+			// releases (docs/DEPLOY.md, "Upgrading a pool's Orkers").
+			d.logger().Warn("task attempt record not written: an Orker of an earlier release already wrote "+
+				"one under this attempt's number; roll every Orker of the pool to one release",
+				"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "attempt", attempt)
+			if d.AttemptRecords != nil {
+				d.AttemptRecords.LegacyRecordKept()
+			}
+			return
+		}
 		d.logger().Warn("task attempt record not written",
 			"run_id", in.GetRunId(),
 			"task_id", in.GetTaskId(),
@@ -2791,4 +2872,22 @@ func payloadMapOf(p *orkstackv1.Payload) map[string]any {
 		return map[string]any{}
 	}
 	return p.GetData().AsMap()
+}
+
+// containerLabels are what an attempt's container is found and released by:
+// its run, task, item and ordinal, and the Orker that made it. ork.orker is how
+// an Orker recognizes its own previous life's containers, which is what the
+// startup reaper keys on (§5.5); the rest is what that reaper releases
+// (OwnContainer).
+func containerLabels(in *orkstackv1.ExecuteTaskInput, ordinal int32, orkerID string) map[string]string {
+	labels := map[string]string{
+		"ork.run":     in.GetRunId(),
+		"ork.task":    in.GetTaskId(),
+		"ork.attempt": fmt.Sprintf("%d", ordinal),
+		"ork.orker":   orkerID,
+	}
+	if each := in.GetEach(); each != nil {
+		labels["ork.item"] = fmt.Sprintf("%d", each.GetIndex())
+	}
+	return labels
 }

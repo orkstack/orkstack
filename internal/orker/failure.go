@@ -112,6 +112,12 @@ const (
 	// task: the SDK cancels the attempt locally when a heartbeat RPC keeps
 	// failing a retryable status. Retried under the task's policy.
 	ReasonHeartbeatLost = "ORKER_HEARTBEAT_LOST"
+	// ReasonAttemptStoreUnavailable is an attempt that could not claim its
+	// ordinal: the attempt store refused or did not answer the claim on every
+	// try (attempt_ordinal.go). The attempt did nothing: it created no
+	// container, wrote no record and streamed no log. Retried under the
+	// task's policy.
+	ReasonAttemptStoreUnavailable = "ATTEMPT_STORE_UNAVAILABLE"
 
 	// Image supply-chain policy (docs/DEPLOY.md "Image supply-chain policy"), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
@@ -206,6 +212,7 @@ var reasonCategory = map[string]string{
 	ReasonEachItemUnavailable:       CategoryContractViolation,
 	ReasonOrkerStopped:              CategoryInfrastructureError,
 	ReasonHeartbeatLost:             CategoryInfrastructureError,
+	ReasonAttemptStoreUnavailable:   CategoryInfrastructureError,
 
 	ReasonRunAsOrkerUnavailable: CategoryInfrastructureError,
 

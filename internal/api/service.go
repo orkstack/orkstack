@@ -1934,6 +1934,12 @@ func poolPlanError(err error) error {
 	}
 	// A pool whose Orker predates join policies: it could not decode a
 	// failure handler's input, so the run is refused before any id is minted.
+	// A pool holding an Orker that predates attempt ordinals beside ones that
+	// claim them: its records would overwrite theirs.
+	var noOrdinals *engine.PoolNoAttemptOrdinalsError
+	if errors.As(err, &noOrdinals) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
 	var noJoin *engine.PoolNoJoinSupportError
 	if errors.As(err, &noJoin) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)

@@ -1708,7 +1708,7 @@ func (x *ReservedResources) GetMemoryBytes() int64 {
 	return 0
 }
 
-// TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+// TaskAttempt is the immutable record of ONE attempt of one task,
 // written by the Orker that ran it at the end of the attempt (§7.1). It is the
 // failure-side sibling of ActivityCommit: a commit says what the winning
 // attempt produced, an attempt record says what EVERY attempt did, including
@@ -1726,7 +1726,10 @@ type TaskAttempt struct {
 	SchemaVersion int32  `protobuf:"varint,1,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
 	RunId         string `protobuf:"bytes,2,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
 	TaskId        string `protobuf:"bytes,3,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	// attempt is activity.GetInfo(ctx).Attempt, 1-based.
+	// attempt is the attempt's ordinal, 1-based, which the Orker claimed before
+	// it started anything (docs/STORAGE.md, "Attempt ordinals"). It may differ
+	// from Temporal's attempt count: an attempt stopped before its claim has no
+	// record.
 	Attempt int32          `protobuf:"varint,4,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	Outcome AttemptOutcome `protobuf:"varint,5,opt,name=outcome,proto3,enum=orkstack.v1.AttemptOutcome" json:"outcome,omitempty"`
 	// error is set only for FAILED, and carries the same shape TaskRun.error

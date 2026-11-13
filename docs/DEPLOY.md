@@ -1089,6 +1089,44 @@ answered on its own channel, so whether … is unknown`). The probe is a guard
 for a mixed rollout, not a substitute for running every Orker of a pool on one
 release.
 
+### Upgrading a pool's Orkers
+
+From v0.4.0 an Orker numbers each task's attempts itself, claiming an ordinal
+in the attempt store before the attempt starts anything (`docs/STORAGE.md`,
+"Attempt ordinals"). An Orker of an earlier release numbers them as Temporal
+does, so while one pool runs both, an older Orker can write an attempt record
+over a newer one's, and the task's attempt list shows the wrong outcome for
+that attempt. Nothing about the run's result changes: records are a history,
+never what decides whether work reruns. Roll every Orker of a pool to the new
+release together, or cordon the old ones while they drain (`orkctl orker
+drain`).
+
+Three things make a mixed pool visible rather than silent:
+
+- a newer Orker never overwrites a record: records are written create-only,
+  and one already there is kept, with a warning (`task attempt record not
+  written: an Orker of an earlier release already wrote one under this
+  attempt's number`);
+- a newer Orker that finds a record with no claim in a task's scope starts its
+  ordinals past it and logs `an attempt record of this task was written by an
+  Orker of an earlier release`, naming the run, task and attempts; both cases
+  count `ork.orker.attempt_record_legacy`, by where the record was met
+  (`ork.found`: `claim` or `record`), so any count means the pool runs two
+  releases;
+- a submit that already asks a pool's Orkers a question (a fan-out, a cached
+  task, a failure handler, a sized task, a pin) also asks every live pool of
+  the run whether its Orkers claim ordinals (`DescribeOrkerResult`
+  `attempt_ordinals_supported`), and refuses with `FailedPrecondition` naming
+  the pool, the tasks, and the first Orker that does not and its build. A
+  submit that asks nothing else asks nothing for this either, so it is no
+  substitute for rolling a pool whole.
+
+On a versioned deployment (section 2) a run's tasks go to its own release's
+Orkers, so the two numberings meet only when a release has no Orker polling a
+pool and Temporal falls through to the current release's: keep every release
+you ramp or promote serving every pool in use, as `orkctl release` already
+requires.
+
 ### Pins on a versioned deployment
 
 Pins work with Worker Deployment Versioning (`ORK_BUILD_ID`, §2), and what
@@ -4732,6 +4770,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.task.duration` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
 | `ork.task.attempts` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event: the attempt number the task finished on — one observation per fan-out item, none for a composed task |
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Orker, once per attempt (`outcome`: `succeeded`, `failed`, `canceled`, or `adopted` for a retry that found an existing durable commit and ran no container) |
+| `ork.orker.attempt_record_legacy` | `ork.orker_id`, `ork.found` | Orker, each attempt record of an earlier release it met: in the scope it claimed in (`claim`, one per record) or under its own ordinal (`record`); any count means the pool runs two releases ("Upgrading a pool's Orkers") |
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |

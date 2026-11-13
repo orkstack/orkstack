@@ -717,6 +717,16 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// its own cordon, so tasks wait for it without using an attempt. It ticks on
 	// the same signal context, and it is one goroutine and one small request
 	// pair per tick (docs/DEPLOY.md "When object storage goes away").
+	// A pool that runs two releases is counted where an Orker meets the
+	// earlier one's attempt records (docs/DEPLOY.md, "Upgrading a pool's
+	// Orkers").
+	if tcfg.MetricsEnabled() {
+		if metrics, err := telemetry.NewAttemptRecordMetrics(sinks.Default(), activities.Dispatcher().OrkerID); err != nil {
+			logger.Warn("telemetry: the Orker's attempt record metric could not be built; it is not exported", "error", err)
+		} else {
+			activities.Dispatcher().AttemptRecords = metrics
+		}
+	}
 	if cfg.storeWatch.Enabled {
 		check := func(ctx context.Context) error { return artifacts.CheckCommitStore(ctx, commitStore) }
 		go activities.NewStoreWatch(check, cfg.storeWatch, storeOutageObserver(tcfg, sinks, activities, logger)).Run(ctx)

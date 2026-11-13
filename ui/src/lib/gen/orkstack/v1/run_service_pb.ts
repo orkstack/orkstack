@@ -927,10 +927,11 @@ export type LiveAttempt = Message<"orkstack.v1.LiveAttempt"> & {
   taskId: string;
 
   /**
-   * attempt is Temporal's attempt number for the pending activity
-   * (PendingActivityInfo.attempt). While STARTED it is the number the
-   * Orker's own record will carry; while SCHEDULED between retries it is the
-   * number of the attempt that is ABOUT to run.
+   * attempt is the ordinal the running attempt's Orker claimed, once its
+   * heartbeat names it: the number the attempt's record and log carry
+   * (docs/STORAGE.md, "Attempt ordinals"). Before that, and while SCHEDULED
+   * between retries, it is Temporal's attempt number for the pending activity
+   * (PendingActivityInfo.attempt), which may differ from the ordinal.
    *
    * @generated from field: int32 attempt = 2;
    */

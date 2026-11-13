@@ -34,10 +34,13 @@ import (
 // constant the log keys use — the two are read side by side, and an attempt
 // that spelled its number differently in two prefixes could not be joined.
 //
-// The record is written with a PLAIN put, last-writer-wins, unlike commit.json's
-// conditional create. Temporal never runs the same attempt number of the same
-// activity twice, so there is no second writer to arbitrate against; and a
-// record is a projection, never the thing that decides whether work reruns.
+// The number is the attempt's ORDINAL, which the Orker claimed with a
+// conditional create of {n}.claim before the attempt started anything
+// (attempt_claims.go), so only that attempt ever writes {n}.json. The record
+// is written create-only all the same, so a record an Orker of an earlier
+// release wrote under Temporal's count is never overwritten
+// (ErrAttemptExists). A record is a projection, never the thing that decides
+// whether work reruns.
 const (
 	// AttemptPrefix roots every task attempt record in the store. It sits under
 	// metadata/, beside metadata/logs and metadata/commits — and crucially NOT
@@ -102,6 +105,11 @@ type AttemptRef struct {
 	Item    Item
 	Attempt int32
 }
+
+// ErrAttemptExists is a record already stored under the ordinal a new record
+// names: written by an Orker of a release that numbered attempts as Temporal
+// does. It is kept; the new record is not stored.
+var ErrAttemptExists = errors.New("an attempt record with this number already exists")
 
 // AttemptStore reads and writes the per-attempt records.
 //
@@ -260,8 +268,8 @@ func AttemptKey(ref AttemptRef) (string, error) {
 		return "", err
 	}
 	if ref.Attempt < 1 {
-		// Attempts are 1-based (activity.GetInfo(ctx).Attempt), so 0 is a bug
-		// at the call site rather than a record of attempt zero.
+		// Ordinals are 1-based (the first claim of a scope is 1), so 0 is a
+		// bug at the call site rather than a record of attempt zero.
 		return "", fmt.Errorf("artifacts: task attempt key: attempt %d is not 1-based: %w",
 			ref.Attempt, ErrInvalidAttemptKey)
 	}
@@ -272,6 +280,13 @@ func AttemptKey(ref AttemptRef) (string, error) {
 // reports ok=false rather than an error, so a scan skips foreign objects
 // instead of failing on them.
 func ParseAttemptKey(key string) (ref AttemptRef, ok bool) {
+	return parseAttemptObjectKey(key, AttemptObjectSuffix)
+}
+
+// parseAttemptObjectKey reverses the key of one of a scope's per-ordinal
+// objects: the record ({n}.json), the claim ({n}.claim) or the release
+// marker ({n}.released), told apart by suffix.
+func parseAttemptObjectKey(key, suffix string) (ref AttemptRef, ok bool) {
 	rest, found := strings.CutPrefix(key, AttemptPrefix+"/")
 	if !found {
 		return AttemptRef{}, false
@@ -298,7 +313,7 @@ func ParseAttemptKey(key string) (ref AttemptRef, ok bool) {
 	if !ok {
 		return AttemptRef{}, false
 	}
-	segment, cut := strings.CutSuffix(parts[2], AttemptObjectSuffix)
+	segment, cut := strings.CutSuffix(parts[2], suffix)
 	if !cut {
 		return AttemptRef{}, false
 	}
@@ -479,7 +494,7 @@ func NewMemoryAttemptStore() *MemoryAttemptStore {
 	return &MemoryAttemptStore{objects: make(map[string][]byte)}
 }
 
-// PutAttempt stores one record.
+// PutAttempt stores one record, create-only as BlobAttemptStore's is.
 func (s *MemoryAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1.TaskAttempt) error {
 	key, document, err := encodeAttemptForStore(attempt)
 	if err != nil {
@@ -488,9 +503,9 @@ func (s *MemoryAttemptStore) PutAttempt(ctx context.Context, attempt *orkstackv1
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("artifacts: memory task attempt %q: %w", key, err)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.objects[key] = document
+	if s.create(key, document) {
+		return fmt.Errorf("artifacts: memory task attempt %q: %w", key, ErrAttemptExists)
+	}
 	return nil
 }
 

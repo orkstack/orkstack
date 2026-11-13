@@ -153,6 +153,18 @@ func liveRows(t *testing.T) []liveRow {
 		rows = append(rows, liveRow{"L1 started with a heartbeat", pa, hb.Add(3 * time.Second),
 			available(want(stStarted, 1, unspecified), hb, running, false)})
 	}
+	// L1o: Temporal's third attempt, whose Orker claimed ordinal 2 (an
+	// earlier attempt never claimed one): the beat's ordinal is the attempt,
+	// the number its record and log carry.
+	{
+		hb := t0.Add(10 * time.Second)
+		claimed := running
+		claimed.Ordinal = 2
+		pa := base(enumspb.PENDING_ACTIVITY_STATE_STARTED, 3)
+		pa.LastStartedTime, pa.LastHeartbeatTime, pa.HeartbeatDetails = ts(t0), ts(hb), detailsOf(t, claimed)
+		rows = append(rows, liveRow{"L1o a claimed ordinal names the attempt", pa, hb.Add(3 * time.Second),
+			available(want(stStarted, 2, unspecified), hb, claimed, false)})
+	}
 	// L2: started, nothing beat yet.
 	{
 		pa := base(enumspb.PENDING_ACTIVITY_STATE_STARTED, 1)
