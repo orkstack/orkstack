@@ -43,7 +43,8 @@ Look up a word that OrkStack uses in its interface and its docs. The words are i
 | **Saved state** | The state a run keeps when it carries on. If it cannot be read, the run stops with a `RUN_STATE_*` reason. |
 | **Schedule** | An object that starts runs of one Orkflow at times set by cron expressions or an interval. |
 | **Shared Orkflow** | An Orkflow whose definition lists, in `shared_with:`, the other namespaces or other namespaces' Orkflows that may compose it. Composition is the only way one namespace runs another's Orkflow. |
-| **Task** | One step of an Orkflow: an activity, an awaited task or a composed task. Its `needs:` set what must finish first. |
+| **Sleeping task** | A task that declares `sleep:`. It runs no container and waits a fixed time on the run's own timer, then succeeds with no values. It shows `SLEEPING` while it waits. |
+| **Task** | One step of an Orkflow: an activity, an awaited task, a sleeping task or a composed task. Its `needs:` set what must finish first. |
 | **Telemetry policy** | A namespace's choice of telemetry sink, whether its task logs export, and the attributes it stamps. |
 | **Telemetry sink** | A named OpenTelemetry destination that the deployment declares. |
 | **Trigger** | An inbound plain-HTTP starter. A caller that holds its token starts one run. |

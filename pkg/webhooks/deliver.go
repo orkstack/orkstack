@@ -12,6 +12,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/orkstack/orkstack/internal/stablejson"
@@ -213,7 +214,7 @@ func NewDispatcher(options DispatcherOptions) *Dispatcher {
 		if timeout <= 0 {
 			timeout = DefaultRequestTimeout
 		}
-		d.client = &http.Client{Timeout: timeout}
+		d.client = &http.Client{Timeout: timeout, Transport: guardedTransport(), CheckRedirect: checkRedirect}
 	}
 	return d
 }
@@ -275,6 +276,10 @@ func (d *Dispatcher) Send(ctx context.Context, hook Webhook, delivery Delivery, 
 	record := Attempt{Number: n, StatusCode: status, Duration: time.Since(started), At: started.UTC()}
 	if err != nil {
 		record.Error = err.Error()
+		if errors.Is(err, ErrDestinationBlocked) && !strings.HasPrefix(record.Error, ReasonDestinationBlocked) {
+			// The reason leads the error, so Retryable and a reader find it.
+			record.Error = ReasonDestinationBlocked + ": " + record.Error
+		}
 	}
 	return record
 }
@@ -285,11 +290,13 @@ func (a Attempt) Delivered() bool {
 	return a.Error == "" && a.StatusCode >= 200 && a.StatusCode < 300
 }
 
-// Retryable reports whether a failed attempt is worth repeating. A transport
+// Retryable reports whether a failed attempt is worth repeating. A refused
+// destination (ReasonDestinationBlocked) is not: the same address is refused
+// again. A transport
 // failure and a 5xx are the receiver's problem and usually transient; a 4xx is
 // this sender's problem and repeating it only doubles the damage.
 func (a Attempt) Retryable() bool {
-	if a.Delivered() {
+	if a.Delivered() || strings.HasPrefix(a.Error, ReasonDestinationBlocked) {
 		return false
 	}
 	return a.Error != "" || a.StatusCode >= 500

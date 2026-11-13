@@ -21,7 +21,7 @@ func (s *Service) RegisterWebhook(ctx context.Context, req *connect.Request[orks
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	if _, err := webhooks.ValidateURL(req.Msg.GetUrl()); err != nil {
+	if _, err := webhooks.ValidateDestination(req.Msg.GetUrl()); err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if err := webhooks.ValidateScope(req.Msg.GetNamespace(), req.Msg.GetOrkflowName(), req.Msg.GetTaskId(), events); err != nil {
@@ -86,7 +86,7 @@ func (s *Service) UpdateWebhook(ctx context.Context, req *connect.Request[orksta
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
-	target, err := webhooks.ValidateURL(msg.GetUrl())
+	target, err := webhooks.ValidateDestination(msg.GetUrl())
 	if err != nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}

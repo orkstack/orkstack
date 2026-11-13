@@ -1131,6 +1131,19 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open webhook store: %w", err)
 	}
+	// Webhooks call public addresses only, besides the networks the operator
+	// lists (webhooks.allowed_networks): checked when a subscription is
+	// registered and again at every connection a delivery makes.
+	webhookNetworks, err := webhooks.ParseNetworks(strings.FieldsFunc(
+		env("ORK_WEBHOOK_ALLOWED_NETWORKS", ""), func(r rune) bool { return r == ',' || r == ' ' }))
+	if err != nil {
+		return fmt.Errorf("ORK_WEBHOOK_ALLOWED_NETWORKS (webhooks.allowed_networks): %w", err)
+	}
+	webhooks.SetAllowedNetworks(webhookNetworks)
+	for _, wide := range webhooks.WholeFamilyNetworks(webhookNetworks) {
+		logger.Warn("ORK_WEBHOOK_ALLOWED_NETWORKS (webhooks.allowed_networks) admits a whole address family, "+
+			"so webhooks can reach loopback, link-local and private addresses of it", "entry", wide.String())
+	}
 	webhookRegistry := webhooks.NewDurableRegistry(webhookStore)
 	// Delivery records: one immutable object per SETTLED delivery, written by
 	// the delivery's settle step, in the same shared object store, so any

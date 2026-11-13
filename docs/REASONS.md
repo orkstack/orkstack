@@ -242,7 +242,11 @@ A member of an evidence bundle that is reclaimed, unrecorded or rejected carries
 
 ## Webhooks
 
-A webhook delivery does not carry a reason code. Each attempt records its HTTP status, which is 0 when the request never completed, and the transport error, if there was one. [`orkctl webhook deliveries`](./CLI.md#orkctl-webhook-deliveries) lists them. The `pkg/webhooks` package has no reason constants. Its `Event*` constants are event types, which this page does not list.
+A webhook delivery carries a reason code only when OrkStack refuses its destination. Otherwise each attempt records its HTTP status, which is 0 when the request never completed, and the transport error, if there was one. [`orkctl webhook deliveries`](./CLI.md#orkctl-webhook-deliveries) lists them. The `Event*` constants of `pkg/webhooks` are event types, which this page does not list.
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `WEBHOOK_DESTINATION_BLOCKED` | — | The webhook's destination is a loopback, link-local, private, shared, multicast or otherwise non-public address. Registration refuses a URL whose host is one (`invalid_argument`). A delivery attempt that would connect to one fails with this reason at the start of its error, whether the address came from a name or from a redirect, and is not retried ([WEBHOOKS.md](./WEBHOOKS.md#where-a-delivery-may-go), "Where a delivery may go"). | List the receiver's network in `webhooks.allowed_networks` (`ORK_WEBHOOK_ALLOWED_NETWORKS`), or point the webhook at a public address ([DEPLOY.md](./DEPLOY.md), § 1). |
 
 ## Cache memo misses
 

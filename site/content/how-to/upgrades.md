@@ -37,7 +37,7 @@ The full procedure, with its output, is in [Roll out a release](/docs/operate/ro
 
 ## Do not use new constructs too early
 
-A release that predates a construct cannot run it correctly. Create an Orkflow that uses a new construct, such as `await:`, `each:`, `join:`, `cache:` or a composed task, only after the release that added it is current. Schedules must be paused or deleted before a rollback past the release that introduced them.
+A release that predates a construct cannot run it correctly. Create an Orkflow that uses a new construct, such as `await:`, `sleep:`, `each:`, `join:`, `cache:` or a composed task, only after the release that added it is current. Schedules must be paused or deleted before a rollback past the release that introduced them.
 
 ## Roll back
 

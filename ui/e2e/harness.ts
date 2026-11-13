@@ -234,7 +234,12 @@ export function temporalReachable(): Promise<boolean> {
 }
 
 export function clusterEnv(namespace: string) {
-	return { ORK_TEMPORAL_ADDRESS: temporalAddress(), ORK_TEMPORAL_NAMESPACE: namespace };
+	// ORK_WEBHOOK_ALLOWED_NETWORKS: specs deliver webhooks to receivers on loopback.
+	return {
+		ORK_TEMPORAL_ADDRESS: temporalAddress(),
+		ORK_TEMPORAL_NAMESPACE: namespace,
+		ORK_WEBHOOK_ALLOWED_NETWORKS: '127.0.0.0/8'
+	};
 }
 
 /**

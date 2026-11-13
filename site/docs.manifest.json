@@ -745,7 +745,7 @@
 		},
 		{
 			"label": "Reference",
-			"description": "orkctl, configuration, error reasons, API and changelog are generated from the source, so they are always current; Orkflow keys, templates and limits are written guides.",
+			"description": "orkctl, configuration, error reasons and API are generated from the source, so they are always current; the changelog is CHANGELOG.md as it is; Orkflow keys, templates and limits are written guides.",
 			"featured": [
 				"docs/reference/cli",
 				"docs/reference/reasons",
@@ -851,10 +851,11 @@
 					"description": "Every change that may affect you; a breaking change is marked BREAKING.",
 					"parts": [
 						{
-							"source": "CHANGELOG.md"
+							"source": "CHANGELOG.md",
+							"from": "## ["
 						}
 					],
-					"generatedNote": true
+					"generatedNote": false
 				}
 			]
 		},

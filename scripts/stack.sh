@@ -275,6 +275,9 @@ write_run_config() {
 		# A pin host, so examples/pinned-checkout.ork.yaml runs here as shipped.
 		echo "  pins:"
 		echo "    max_concurrent: 1"
+		# The development stack delivers webhooks to local stubs.
+		echo "webhooks:"
+		echo "  allowed_networks: [127.0.0.0/8, \"::1/128\"]"
 		echo "engine:"
 		echo "  http_addr: \"$http_addr\""
 		echo "  ws_allowed_origins: $ws_yaml_list"

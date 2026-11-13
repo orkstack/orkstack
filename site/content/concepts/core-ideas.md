@@ -55,7 +55,7 @@ tasks:
 | **Pin** | A group of tasks that run on one Orker and share `/orkstack/shared`. |
 | **Item** | One element of a fan-out, counted from 0. A fan-out is a task with `each:`. |
 
-Two more words come up in the docs. An **awaited task** waits for someone outside the run to finish it, and a **schedule** starts runs at set times.
+Two more words come up in the docs. An **awaited task** waits for someone outside the run to finish it, a **sleeping task** waits a fixed time, and a **schedule** starts runs at set times.
 
 ## What a run promises
 

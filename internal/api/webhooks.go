@@ -173,7 +173,7 @@ func registerWebhook(w http.ResponseWriter, r *http.Request, registry *webhooks.
 		}
 		events = append(events, event)
 	}
-	if _, err := webhooks.ValidateURL(body.URL); err != nil {
+	if _, err := webhooks.ValidateDestination(body.URL); err != nil {
 		writeWebhookError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return entry
 	}

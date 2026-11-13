@@ -94,9 +94,14 @@ for (const row of rows) {
 	if (!allSettings.includes(`id="${settingId(row)}"`)) problems.push(`All settings has no entry for ${row.keys[0] ?? row.envs[0]}`);
 }
 if (allSettings.includes('## ')) problems.push('All settings prints markdown as text: a block lost its blank line');
-for (const route of ['docs/configuration', 'docs/reference/cli', 'docs/reference/api', 'docs/reference/reasons', 'docs/reference/changelog']) {
+for (const route of ['docs/configuration', 'docs/reference/cli', 'docs/reference/api', 'docs/reference/reasons']) {
 	if (!page(route).includes('Generated from the source, always current')) problems.push(`${route} does not say it is generated from the source`);
 }
+// The changelog is CHANGELOG.md from its first version heading: no pill, no preamble.
+const changelog = page('docs/reference/changelog');
+if (changelog.includes('Generated from the source, always current')) problems.push('docs/reference/changelog still carries the generated-from-source pill');
+if (!/<h2[^>]*>\s*\[Unreleased\]/.test(changelog) && !/id="unreleased"/.test(changelog)) problems.push('docs/reference/changelog does not start at [Unreleased]');
+if (changelog.includes('Keep a Changelog 1.1.0')) problems.push("docs/reference/changelog still carries CHANGELOG.md's preamble");
 
 // ------------------------------------------------------------ the old routes
 for (const group of manifest.groups) {

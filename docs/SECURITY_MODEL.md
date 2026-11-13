@@ -525,14 +525,25 @@ and it is stored in plaintext because delivery must replay it
 
 ### Destinations
 
-- A subscription may name any absolute `http` or `https` URL with a host
-  (`pkg/webhooks/webhooks.go`, `ValidateURL`). There is no allow-list of hosts, and
-  no check that a host is internal or external.
-- The dispatcher sets no redirect policy, so Go's HTTP client follows up to ten
-  redirects. A `307` or `308` re-sends the body. When the host changes, the client
+- A subscription may name an absolute `http` or `https` URL with a host
+  (`pkg/webhooks/webhooks.go`, `ValidateURL`), and a delivery connects to public
+  addresses only. Loopback, link-local (the cloud metadata address
+  169.254.169.254 among them), private (RFC 1918, ULA), shared, multicast and
+  other non-public ranges are refused, so a subscription cannot be aimed at the
+  engine's own network. A URL whose host is such an address, or `localhost`, is
+  refused at registration; any other name is judged on the addresses it resolves
+  to, at every connection a delivery makes (`pkg/webhooks/destination.go`), so a
+  name that is later rebound to an internal address, and a redirect to one, are
+  refused too. The refusal is `WEBHOOK_DESTINATION_BLOCKED`. The operator admits
+  the networks of an in-cluster or development receiver with
+  `webhooks.allowed_networks` ([DEPLOY.md](DEPLOY.md), § 1).
+- The dispatcher follows up to ten redirects, each hop checked as above. A `307`
+  or `308` re-sends the body. When the host changes, the client
   strips the sensitive headers, such as `Authorization` and `Cookie`, and copies
   the rest, `X-Ork-Signature` among them. A subscriber URL should answer without
-  redirecting ([WEBHOOKS.md](WEBHOOKS.md), "Attempts and retries").
+  redirecting ([WEBHOOKS.md](WEBHOOKS.md), "Attempts and retries"). The
+  dispatcher uses no proxy, because a proxy would hide the destination from the
+  check.
 - A delivery's `run` carries the run's input and output, and its origin.
   So choosing a subscription's scope and destination is a disclosure decision.
   A run's inputs may contain secrets ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Rules
