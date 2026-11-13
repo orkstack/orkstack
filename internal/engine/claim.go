@@ -19,6 +19,10 @@ const (
 	// ClaimUpdateName is the update that binds a key to a run.
 	ClaimUpdateName = "claim"
 
+	// ClaimQueryName is the query that reads a key's binding without
+	// recording anything. A binding of no run (RunID "") is no binding.
+	ClaimQueryName = "binding"
+
 	// ClaimWorkflowIDPrefix marks a workflow id as a claim rather than a run.
 	// A run id is `ork-{timestamp}-{sequence}` (AGENTS.md §7) and can never
 	// collide with this.
@@ -48,9 +52,16 @@ var ErrInvalidClaim = errors.New("claim names no run")
 // executing, has not archived either. Carrying it in the claim keeps the
 // answer the *winner's* run rather than a plausible reconstruction from the
 // loser's own request, which could differ in orkflow version or input.
+//
+// Fingerprint is the fingerprint of the submission the key was used for
+// (internal/api, submissionFingerprint). A submission whose fingerprint is
+// not the binding's is refused, never answered with the key's run. A binding
+// with none is a legacy claim: one v0.3.0 made, or one a v0.3.0 worker
+// answered for (it drops the field), and it is answered as v0.3.0 answered.
 type Claim struct {
-	RunID    string `json:"run_id"`
-	Snapshot []byte `json:"snapshot,omitempty"`
+	RunID       string `json:"run_id"`
+	Snapshot    []byte `json:"snapshot,omitempty"`
+	Fingerprint string `json:"fingerprint,omitempty"`
 }
 
 // ClaimRequest is one candidate offered for a key.
@@ -93,17 +104,14 @@ func ClaimWorkflowID(key string) string {
 // execution, so a workflow whose id is derived from the key turns "who saw it
 // first" into a question the server answers once for the whole fleet.
 //
-// The cost of holding it server-side, stated plainly: the binding outlives the
-// replica that won it. If a replica wins a claim and dies before its StartRun
-// reaches the cluster, the key stays bound to a run that will never execute,
-// and every later submission of that key is answered with that PENDING run
-// (internal/api/service.go, claimedRun) until the TTL expires. The
-// process-local map this replaced had no such window — a crash cleared it —
-// and could not have the guarantee either: it let two replicas start two runs
-// for one key. Never two runs is the property that was bought; the window is
-// the price, ORK_IDEMPOTENCY_TTL bounds it for every key, and terminating the
-// claim execution (its id is ClaimWorkflowID(key)) frees one by hand. See
-// docs/DEPLOY.md §5.
+// A binding outlives the replica that won it. If a replica wins a claim and
+// dies before its StartRun reaches the cluster, the key names a run id nobody
+// started. That is not a stranded key: the next submission under the key with
+// the same fingerprint reads the id in the cluster and the archive, finds it
+// in neither, and starts it (internal/api, submitKeyed). Only a legacy binding
+// (no fingerprint) is still answered with its pending snapshot until the TTL
+// frees it, as v0.3.0 answered it. Terminating the claim execution (its id is
+// ClaimWorkflowID(key)) frees one by hand. See docs/DEPLOY.md §5.
 //
 // Determinism (AGENTS.md §2.1): the body sets an update handler, sleeps, and
 // returns. No clock is read, no IO is done, nothing iterates a map, and the
@@ -112,6 +120,14 @@ func IdempotencyClaimWorkflow(ctx workflow.Context, in ClaimWorkflowInput) (Clai
 	state := &claimState{}
 	if err := workflow.SetUpdateHandler(ctx, ClaimUpdateName, state.apply); err != nil {
 		return Claim{}, fmt.Errorf("register %s handler: %w", ClaimUpdateName, err)
+	}
+	// The lookup a submission makes before it mints anything. A query
+	// records no event, so a claim's history is the same with or without it,
+	// and a history recorded before the handler existed replays unchanged.
+	if err := workflow.SetQueryHandler(ctx, ClaimQueryName, func() (Claim, error) {
+		return state.winner, nil
+	}); err != nil {
+		return Claim{}, fmt.Errorf("register %s query: %w", ClaimQueryName, err)
 	}
 
 	ttl := in.TTL

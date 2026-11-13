@@ -276,7 +276,15 @@ type SubmitRunRequest struct {
 	OrkflowName    string                 `protobuf:"bytes,1,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`          // orkflow name
 	OrkflowVersion string                 `protobuf:"bytes,2,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"` // orkflow version; empty = latest
 	Input          *Payload               `protobuf:"bytes,3,opt,name=input,proto3" json:"input,omitempty"`
-	IdempotencyKey string                 `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"` // optional dedupe
+	// idempotency_key, optional, makes a retry safe: a repeat under the same
+	// key, in the same namespace, is answered with the run the key names
+	// instead of starting a second one, even when the first answer was lost.
+	// A key belongs to one submission: the same key with another
+	// orkflow_name, orkflow_version as written, source_run_id or input is
+	// refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference
+	// are not part of that comparison. A key stays bound for
+	// engine.idempotency_ttl (24h by default).
+	IdempotencyKey string `protobuf:"bytes,4,opt,name=idempotency_key,json=idempotencyKey,proto3" json:"idempotency_key,omitempty"`
 	// namespace selects which namespace's orkflow_name is submitted. Empty is
 	// the default namespace. A name is unique WITHIN a namespace, so this is
 	// half of the orkflow's address, not a filter.
@@ -1880,10 +1888,11 @@ func (x *InspectRunRequest) GetItem() int32 {
 type LiveAttempt struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	TaskId string                 `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	// attempt is Temporal's attempt number for the pending activity
-	// (PendingActivityInfo.attempt). While STARTED it is the number the
-	// Orker's own record will carry; while SCHEDULED between retries it is the
-	// number of the attempt that is ABOUT to run.
+	// attempt is the ordinal the running attempt's Orker claimed, once its
+	// heartbeat names it: the number the attempt's record and log carry
+	// (docs/STORAGE.md, "Attempt ordinals"). Before that, and while SCHEDULED
+	// between retries, it is Temporal's attempt number for the pending activity
+	// (PendingActivityInfo.attempt), which may differ from the ordinal.
 	Attempt int32            `protobuf:"varint,2,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	State   LiveAttemptState `protobuf:"varint,3,opt,name=state,proto3,enum=orkstack.v1.LiveAttemptState" json:"state,omitempty"`
 	// attempt_scheduled_at is Temporal's scheduled_time for the pending

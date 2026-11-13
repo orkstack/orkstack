@@ -301,8 +301,18 @@ type EngineInstruments struct {
 	// not confirm have an archive.
 	ArchiveSweepUnconfirmed metric.Int64Gauge
 	// ArchiveSweepEarliestExpiry is how many seconds were left until the first
-	// of them expires, at the last sweep that counted any and could date them.
+	// of them expires, re-recorded every pass: 0 when there is none or the pass
+	// could not date them, negative once that time has passed.
 	ArchiveSweepEarliestExpiry metric.Float64Gauge
+	// ArchiveSweepListFailed is 1 when the last pass could not read the
+	// cluster's index to its end, else 0.
+	ArchiveSweepListFailed metric.Int64Gauge
+	// ArchiveSweepIntervalTooLong is 1 when two cleanup intervals reach the
+	// cluster's retention, else 0.
+	ArchiveSweepIntervalTooLong metric.Int64Gauge
+	// ArchiveSweepLastSuccess is the unix time of the last pass that saw
+	// everything: the index listed to its end and object storage answered.
+	ArchiveSweepLastSuccess metric.Int64Gauge
 	// Cardinality is the label policy EngineObserver applies through
 	// RunAttrs above.
 	Cardinality Cardinality
@@ -420,22 +430,41 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	sweepListFailed, err := meter.Int64Gauge("ork.archive.sweep.list_failed",
+		metric.WithDescription("1 when the last archive sweep could not read the cluster's index of finished runs to its end."))
+	if err != nil {
+		return nil, err
+	}
+	sweepIntervalTooLong, err := meter.Int64Gauge("ork.archive.sweep.interval_too_long",
+		metric.WithDescription("1 when two cleanup intervals reach the cluster's retention, so a run can be deleted before the sweep looks at it."))
+	if err != nil {
+		return nil, err
+	}
+	sweepLastSuccess, err := meter.Int64Gauge("ork.archive.sweep.last_success",
+		metric.WithDescription("Unix time of the last archive sweep that listed every finished run and had object storage answer."),
+		metric.WithUnit("s"))
+	if err != nil {
+		return nil, err
+	}
 	return &EngineInstruments{
-		ArchiveSweepRuns:           sweepRuns,
-		ArchiveCleanupRuns:         cleanupRuns,
-		ArchiveSweepUnconfirmed:    sweepUnconfirmed,
-		ArchiveSweepEarliestExpiry: sweepExpiry,
-		Continuations:              continuations,
-		ContinuationStateBytes:     stateBytes,
-		ContinuationDuration:       continuationDuration,
-		ContinuationHoldDuration:   holdDuration,
-		ContinuationReadAttempts:   readAttempts,
-		Runs:                       runs,
-		RunDuration:                runDuration,
-		Tasks:                      tasks,
-		TaskDuration:               taskDuration,
-		TaskAttempts:               taskAttempts,
-		RunsRefused:                runsRefused,
-		Cardinality:                highCard,
+		ArchiveSweepListFailed:      sweepListFailed,
+		ArchiveSweepIntervalTooLong: sweepIntervalTooLong,
+		ArchiveSweepLastSuccess:     sweepLastSuccess,
+		ArchiveSweepRuns:            sweepRuns,
+		ArchiveCleanupRuns:          cleanupRuns,
+		ArchiveSweepUnconfirmed:     sweepUnconfirmed,
+		ArchiveSweepEarliestExpiry:  sweepExpiry,
+		Continuations:               continuations,
+		ContinuationStateBytes:      stateBytes,
+		ContinuationDuration:        continuationDuration,
+		ContinuationHoldDuration:    holdDuration,
+		ContinuationReadAttempts:    readAttempts,
+		Runs:                        runs,
+		RunDuration:                 runDuration,
+		Tasks:                       tasks,
+		TaskDuration:                taskDuration,
+		TaskAttempts:                taskAttempts,
+		RunsRefused:                 runsRefused,
+		Cardinality:                 highCard,
 	}, nil
 }

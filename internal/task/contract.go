@@ -211,6 +211,11 @@ type HeartbeatProgress struct {
 	// "hostname-<hash of the work dir>" (docs/DEPLOY.md §1), which every
 	// TaskRun.orker_id already shows; nothing new is disclosed.
 	OrkerID string `json:"orker_id,omitempty"`
+	// Ordinal is the attempt ordinal the Orker claimed for this attempt
+	// (docs/STORAGE.md, "Attempt ordinals"): the number its record, its log
+	// and its container label carry. Zero until the claim, so the first beat
+	// after the claim is the first to name it.
+	Ordinal int32 `json:"ordinal,omitzero"`
 }
 
 // CheckInputSize enforces the deployment's replay-pinned input bound without

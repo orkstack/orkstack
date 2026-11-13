@@ -175,8 +175,8 @@ func TestSweeper_AStoreThatIsDownIsSaidAndHealsOnTheNextPass(t *testing.T) {
 		t.Fatalf("asked the store %d times and wrote %v, want one question and no write", f.store.hasCalls, f.store.written)
 	}
 	wantExpiry := sweepNow.Add(-90 * time.Hour).Add(sweepTTL)
-	if result.Examined != 3 || result.Unconfirmed != 3 || !result.EarliestExpiry.Equal(wantExpiry) {
-		t.Fatalf("result = %+v, want 3 unconfirmed, the earliest expiring at %v", result, wantExpiry)
+	if result.Examined != 3 || result.Unconfirmed != 3 || !result.EarliestExpiry.Equal(wantExpiry) || !result.StoreFailed {
+		t.Fatalf("result = %+v, want 3 unconfirmed, the earliest expiring at %v, and the store's failure said", result, wantExpiry)
 	}
 	if len(f.observed.results) != 1 || f.observed.results[0].Unconfirmed != 3 {
 		t.Fatalf("observed %+v, want the risk reported", f.observed.results)
@@ -185,8 +185,8 @@ func TestSweeper_AStoreThatIsDownIsSaidAndHealsOnTheNextPass(t *testing.T) {
 	f.store.hasErr = nil
 	result, err = f.sweeper.RunOnce(context.Background())
 	must.OKf(t, err, "RunOnce after the store returned")
-	if result.Archived != 3 || result.Unconfirmed != 0 {
-		t.Fatalf("result = %+v, want all 3 archived", result)
+	if result.Archived != 3 || result.Unconfirmed != 0 || result.StoreFailed {
+		t.Fatalf("result = %+v, want all 3 archived and the store answering", result)
 	}
 	if last := f.observed.results[len(f.observed.results)-1]; last.Unconfirmed != 0 {
 		t.Fatalf("observed %+v, want the risk cleared", last)

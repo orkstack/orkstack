@@ -2065,12 +2065,14 @@ type ExecuteTaskResult struct {
 	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
 	FinishedAt    *timestamppb.Timestamp `protobuf:"bytes,12,opt,name=finished_at,json=finishedAt,proto3" json:"finished_at,omitempty"`
 	OrkerId       string                 `protobuf:"bytes,13,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
-	// attempt is the Temporal attempt that produced this result: from
-	// activity.GetInfo(ctx).Attempt on a fresh run, and from commit.attempt on
-	// an adopted one (§5.4). Workflow code cannot call GetInfo, and an adopted
-	// result carries a CommitRef rather than the commit body, so without this
-	// field the engine cannot populate TaskRun.attempt identically for fresh and
-	// adopted results.
+	// attempt is the ordinal of the attempt that produced this result
+	// (docs/STORAGE.md, "Attempt ordinals"): the ordinal this attempt claimed
+	// on a fresh run, and commit.attempt on an adopted one (§5.4). It is the
+	// number the attempt's record, log and container label carry, and it may
+	// differ from Temporal's attempt count. The engine cannot read the Orker's
+	// claim, and an adopted result carries a CommitRef rather than the commit
+	// body, so without this field it could not populate TaskRun.attempt
+	// identically for fresh and adopted results.
 	Attempt int32 `protobuf:"varint,14,opt,name=attempt,proto3" json:"attempt,omitempty"`
 	// cache is this attempt's memo decision, key_components cleared. Set if and
 	// only if ExecuteTaskInput.cache was set; on an adopted result it is
@@ -2447,8 +2449,11 @@ type ActivityFailureDetail struct {
 	// notes ON the workload's error, never a replacement for it (§7.1 step 14).
 	ScanNotes []string  `protobuf:"bytes,6,rep,name=scan_notes,json=scanNotes,proto3" json:"scan_notes,omitempty"`
 	Image     *ImageRef `protobuf:"bytes,7,opt,name=image,proto3" json:"image,omitempty"`
-	Attempt   int32     `protobuf:"varint,8,opt,name=attempt,proto3" json:"attempt,omitempty"`
-	OrkerId   string    `protobuf:"bytes,9,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	// attempt is the ordinal the failed attempt claimed, as on
+	// ExecuteTaskResult.attempt; 0 for an attempt that failed before it claimed
+	// one.
+	Attempt int32  `protobuf:"varint,8,opt,name=attempt,proto3" json:"attempt,omitempty"`
+	OrkerId string `protobuf:"bytes,9,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
 	// started_at is when this Orker began the attempt that failed, the same
 	// instant ExecuteTaskResult.started_at carries on the success path, so the
 	// engine can project TaskRun.started_at identically for both outcomes.
@@ -2639,9 +2644,14 @@ type DescribeOrkerResult struct {
 	DefaultRequest *ResourceQuantity `protobuf:"bytes,22,opt,name=default_request,json=defaultRequest,proto3" json:"default_request,omitempty"`
 	// store_outage is set while this Orker has cordoned itself because it cannot
 	// reach object storage (Orker.store_outage). cordoned is true beside it.
-	StoreOutage   *StoreOutage `protobuf:"bytes,23,opt,name=store_outage,json=storeOutage,proto3" json:"store_outage,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	StoreOutage *StoreOutage `protobuf:"bytes,23,opt,name=store_outage,json=storeOutage,proto3" json:"store_outage,omitempty"`
+	// attempt_ordinals_supported is true on an Orker that numbers attempts
+	// with claimed ordinals (docs/STORAGE.md, "Attempt ordinals"). An Orker
+	// built before it numbers them as Temporal does and would write records
+	// over a newer Orker's, so submit refuses a pool that has one.
+	AttemptOrdinalsSupported bool `protobuf:"varint,43,opt,name=attempt_ordinals_supported,json=attemptOrdinalsSupported,proto3" json:"attempt_ordinals_supported,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *DescribeOrkerResult) Reset() {
@@ -2833,6 +2843,13 @@ func (x *DescribeOrkerResult) GetStoreOutage() *StoreOutage {
 		return x.StoreOutage
 	}
 	return nil
+}
+
+func (x *DescribeOrkerResult) GetAttemptOrdinalsSupported() bool {
+	if x != nil {
+		return x.AttemptOrdinalsSupported
+	}
+	return false
 }
 
 // ResourceQuantity is an amount of each resource an Orker reserves for a
@@ -3497,7 +3514,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\borker_id\x18\t \x01(\tR\aorkerId\x129\n" +
 	"\n" +
 	"started_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\xe5\a\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\xa3\b\n" +
 	"\x13DescribeOrkerResult\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12\x12\n" +
@@ -3524,7 +3541,8 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\vmax_request\x18\x15 \x01(\v2\x1d.orkstack.v1.ResourceQuantityR\n" +
 	"maxRequest\x12F\n" +
 	"\x0fdefault_request\x18\x16 \x01(\v2\x1d.orkstack.v1.ResourceQuantityR\x0edefaultRequest\x12;\n" +
-	"\fstore_outage\x18\x17 \x01(\v2\x18.orkstack.v1.StoreOutageR\vstoreOutage\"G\n" +
+	"\fstore_outage\x18\x17 \x01(\v2\x18.orkstack.v1.StoreOutageR\vstoreOutage\x12<\n" +
+	"\x1aattempt_ordinals_supported\x18+ \x01(\bR\x18attemptOrdinalsSupported\"G\n" +
 	"\x10ResourceQuantity\x12\x10\n" +
 	"\x03cpu\x18\x01 \x01(\x01R\x03cpu\x12!\n" +
 	"\fmemory_bytes\x18\x02 \x01(\x03R\vmemoryBytes\"\x9f\x01\n" +

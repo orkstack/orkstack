@@ -49,6 +49,54 @@ type fakeStarter struct {
 	signalIDs []string
 	signalErr error
 	onSignal  func(runID string, sig *orkstackv1.AwaitSignal)
+
+	// cluster, when set, is a stand-in cluster several replicas' starters
+	// share: a run id is started at most once across all of them, and
+	// FirstStart reads it. Without one, the starter is its own cluster.
+	cluster *fakeCluster
+}
+
+// fakeCluster is the run ids a test's cluster holds, with the idempotency
+// fingerprint each first start carried.
+type fakeCluster struct {
+	mu   sync.Mutex
+	held map[string]string
+}
+
+func (c *fakeCluster) start(runID, fingerprint string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, taken := c.held[runID]; taken {
+		return errors.Join(engine.ErrRunIDTaken, fmt.Errorf("run %s already started", runID))
+	}
+	if c.held == nil {
+		c.held = map[string]string{}
+	}
+	c.held[runID] = fingerprint
+	return nil
+}
+
+func (c *fakeCluster) FirstStart(_ context.Context, runID string) (engine.FirstStartRead, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	fp, held := c.held[runID]
+	return engine.FirstStartRead{Held: held, Fingerprint: fp}, nil
+}
+
+// FirstStart reads the starter's cluster: its shared one, or the runs it
+// started itself.
+func (f *fakeStarter) FirstStart(ctx context.Context, runID string) (engine.FirstStartRead, error) {
+	if f.cluster != nil {
+		return f.cluster.FirstStart(ctx, runID)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i, id := range f.started {
+		if id == runID {
+			return engine.FirstStartRead{Held: true, Fingerprint: f.plans[i].IdempotencyFingerprint}, nil
+		}
+	}
+	return engine.FirstStartRead{}, nil
 }
 
 func (f *fakeStarter) SignalAwait(_ context.Context, runID string, sig *orkstackv1.AwaitSignal) error {
@@ -86,6 +134,11 @@ func (f *fakeStarter) StartRun(
 	defer f.mu.Unlock()
 	if f.err != nil {
 		return f.err
+	}
+	if f.cluster != nil {
+		if err := f.cluster.start(runID, plan.IdempotencyFingerprint); err != nil {
+			return err
+		}
 	}
 	f.started = append(f.started, runID)
 	f.inputs = append(f.inputs, input.GetData().AsMap())
@@ -397,7 +450,7 @@ func TestSubmitRunReportsStarterFailure(t *testing.T) {
 		t.Fatalf("Apply: %v", err)
 	}
 	f.starter.mu.Lock()
-	f.starter.err = errors.New("temporal is down")
+	f.starter.err = serviceerror.NewFailedPrecondition("temporal is down")
 	f.starter.mu.Unlock()
 
 	_, err := f.runClient().SubmitRun(ctx,
@@ -422,7 +475,7 @@ func TestSubmitRun_StarterFailureTerminatesConnectAndWebSocketStreams(t *testing
 		t.Fatalf("Apply: %v", err)
 	}
 	f.starter.mu.Lock()
-	f.starter.err = errors.New("temporal is down")
+	f.starter.err = serviceerror.NewFailedPrecondition("temporal is down")
 	f.starter.mu.Unlock()
 
 	_, err := f.runClient().SubmitRun(ctx,
@@ -932,7 +985,10 @@ func TestSubmitRun_ConcurrentIdempotencyKeyStartsExactlyOneRun(t *testing.T) {
 
 	orkflows := engine.NewMemoryOrkflowStore()
 	runs := engine.NewRunStore()
-	starter := &fakeStarter{}
+	// The cluster admits one start of an id: submissions that find the key
+	// bound before its start landed race to start it, and lose to the one
+	// that did.
+	starter := &fakeStarter{cluster: &fakeCluster{}}
 	allocations := make(chan int, requests)
 	releaseFirst := make(chan struct{})
 	var allocationMu sync.Mutex
@@ -997,9 +1053,10 @@ func TestSubmitRun_ConcurrentIdempotencyKeyStartsExactlyOneRun(t *testing.T) {
 	close(results)
 	close(errors)
 
-	if racedAllocation != 0 {
-		t.Fatalf("concurrent request allocated run %d before the key was reserved", racedAllocation)
-	}
+	// A request may mint a candidate while another is still claiming: the
+	// lookup only saves work, and the claim decides. What must hold is one
+	// run for the key, below.
+	_ = racedAllocation
 	for err := range errors {
 		t.Errorf("SubmitRun: %v", err)
 	}

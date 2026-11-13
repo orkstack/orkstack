@@ -327,3 +327,46 @@ func TestClaimWorkflow_HoldsTheKeyForItsTTLOrTheDefault(t *testing.T) {
 		})
 	}
 }
+
+// TestClaimWorkflow_TheBindingQueryReadsTheWinnerAndItsFingerprint: the
+// lookup a submission makes first reads the binding without recording
+// anything, fingerprint included; an unbound claim answers no run.
+func TestClaimWorkflow_TheBindingQueryReadsTheWinnerAndItsFingerprint(t *testing.T) {
+	var suite testsuite.WorkflowTestSuite
+	env := generousDeadlock(suite.NewTestWorkflowEnvironment())
+	env.SetTestTimeout(30 * time.Second)
+	env.RegisterWorkflowWithOptions(engine.IdempotencyClaimWorkflow,
+		workflow.RegisterOptions{Name: engine.ClaimWorkflowType})
+
+	query := func() engine.Claim {
+		t.Helper()
+		value, err := env.QueryWorkflow(engine.ClaimQueryName)
+		must.OKf(t, err, "query %s", engine.ClaimQueryName)
+		var got engine.Claim
+		must.OKf(t, value.Get(&got), "decode binding")
+		return got
+	}
+	var before, after engine.Claim
+	var outcome claimOutcome
+	// After the workflow's first task has registered its handlers.
+	env.RegisterDelayedCallback(func() { before = query() }, time.Second)
+	env.RegisterDelayedCallback(func() {
+		req := candidate("ork-1-1")
+		req.Candidate.Fingerprint = "fp-a"
+		env.UpdateWorkflow(engine.ClaimUpdateName, "", claimRecorder{outcome: &outcome}, req)
+	}, 2*time.Second)
+	env.RegisterDelayedCallback(func() { after = query() }, time.Minute)
+	env.ExecuteWorkflow(engine.ClaimWorkflowType,
+		engine.ClaimWorkflowInput{Key: "order-42", TTL: time.Hour})
+	must.OKf(t, env.GetWorkflowError(), "claim workflow")
+
+	if before.RunID != "" {
+		t.Errorf("an unbound claim answered %q", before.RunID)
+	}
+	if after.RunID != "ork-1-1" || after.Fingerprint != "fp-a" {
+		t.Errorf("binding = %+v, want ork-1-1 with fp-a", after)
+	}
+	if outcome.winner.Fingerprint != "fp-a" {
+		t.Errorf("the update's answer dropped the fingerprint: %+v", outcome.winner)
+	}
+}

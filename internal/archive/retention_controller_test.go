@@ -275,3 +275,34 @@ func TestRetentionController_PolicyPassesThroughNotFound(t *testing.T) {
 		t.Fatalf("err = %v, want it to wrap artifacts.ErrNotFound", err)
 	}
 }
+
+// The cluster keeps a finished run at least as long as an idempotency key's
+// claim lives (workload-identity.md §3.1 rule 7): a retry under a key must
+// find the run in the cluster or the archive, so the cluster's own deletion
+// may not come first. No namespace's retention changes; only the backstop.
+func TestRetentionController_BackstopIsAtLeastAKeysLife(t *testing.T) {
+	cases := []struct {
+		name    string
+		max     time.Duration
+		keyLife time.Duration
+		want    time.Duration
+	}{
+		{"maximum shorter than a key's life", time.Hour, 24*time.Hour + 5*time.Minute, 24*time.Hour + 5*time.Minute + 24*time.Hour},
+		{"maximum longer than a key's life", 72 * time.Hour, 24*time.Hour + 5*time.Minute, 96 * time.Hour},
+		{"no key life wired", time.Hour, 0, 25 * time.Hour},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cluster := newFakeCluster()
+			ctrl := NewRetentionController(&fakePolicyStore{}, cluster, "ork-main", 24*time.Hour, testLogger()).
+				WithKeyLife(tc.keyLife)
+			if got := ctrl.Enforced(tc.max); got != tc.want {
+				t.Fatalf("Enforced(%s) = %s, want %s", tc.max, got, tc.want)
+			}
+			must.OKf(t, ctrl.Reconcile(context.Background(), tc.max), "Reconcile")
+			if cluster.retention != tc.want {
+				t.Fatalf("cluster retention = %s, want %s", cluster.retention, tc.want)
+			}
+		})
+	}
+}

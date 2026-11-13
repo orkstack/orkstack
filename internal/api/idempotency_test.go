@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.temporal.io/api/serviceerror"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -40,25 +42,58 @@ type sharedClaimer struct {
 	proposed int
 	rebinds  []string
 	err      error
+
+	// lookupErr fails every Lookup; claimFailures fails that many Claims,
+	// each after binding the candidate when claimFailuresLand is set (an
+	// answer lost after the claim landed); claimedAt is what ClaimedAt
+	// reports, now when zero.
+	lookupErr         error
+	claimFailures     int
+	claimFailuresLand bool
+	claimedAt         time.Time
+
+	// moveFirst, when set, is a move another submission makes just before
+	// this one's Rebind: the key goes there, and this Rebind loses.
+	moveFirst *engine.Claim
+
+	// cluster is the run ids the replicas sharing this claimer have
+	// started: the cluster they share, as the claimer stands for its
+	// claims.
+	cluster fakeCluster
 }
 
 func newSharedClaimer() *sharedClaimer {
 	return &sharedClaimer{claims: map[string]engine.Claim{}}
 }
 
+func (c *sharedClaimer) Lookup(_ context.Context, key string) (engine.Claim, bool, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lookupErr != nil {
+		return engine.Claim{}, false, c.lookupErr
+	}
+	held, seen := c.claims[key]
+	return held, seen, nil
+}
+
 func (c *sharedClaimer) Claim(
 	_ context.Context,
 	key string,
-	propose func() (engine.Claim, error),
+	candidate engine.Claim,
 ) (engine.Claim, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.claimFailures > 0 {
+		c.claimFailures--
+		if c.claimFailuresLand {
+			if _, seen := c.claims[key]; !seen {
+				c.claims[key] = candidate
+			}
+		}
+		return engine.Claim{}, errors.New("claim answer lost")
+	}
 	if c.err != nil {
 		return engine.Claim{}, c.err
-	}
-	candidate, err := propose()
-	if err != nil {
-		return engine.Claim{}, err
 	}
 	c.proposed++
 	if existing, seen := c.claims[key]; seen {
@@ -66,6 +101,18 @@ func (c *sharedClaimer) Claim(
 	}
 	c.claims[key] = candidate
 	return candidate, nil
+}
+
+func (c *sharedClaimer) ClaimedAt(_ context.Context, key string) (time.Time, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, seen := c.claims[key]; !seen {
+		return time.Time{}, engine.ErrClaimEnded
+	}
+	if c.claimedAt.IsZero() {
+		return time.Now(), nil
+	}
+	return c.claimedAt, nil
 }
 
 func (c *sharedClaimer) Rebind(
@@ -77,8 +124,12 @@ func (c *sharedClaimer) Rebind(
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.rebinds = append(c.rebinds, fmt.Sprintf("%s:%s->%s", key, supersedes, next.RunID))
+	if c.moveFirst != nil {
+		c.claims[key] = *c.moveFirst
+		c.moveFirst = nil
+	}
 	if current, seen := c.claims[key]; seen && current.RunID != supersedes {
-		return nil
+		return fmt.Errorf("rebind idempotency key to run %s: the key names run %s", next.RunID, current.RunID)
 	}
 	c.claims[key] = next
 	return nil
@@ -116,6 +167,9 @@ func newReplica(
 	starter *fakeStarter,
 ) *replica {
 	t.Helper()
+	if shared, ok := claimer.(*sharedClaimer); ok && starter.cluster == nil {
+		starter.cluster = &shared.cluster
+	}
 	runs := engine.NewRunStore()
 	svc := api.NewService(api.Config{
 		Orkflows:    engine.NewMemoryOrkflowStore(),
@@ -205,13 +259,13 @@ func TestSubmitRun_LosingReplicaReportsTheWinnersRunNotItsOwnRequest(t *testing.
 	}
 }
 
-// TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun: the claim is never
-// released, so a repeat submission is told the run that failed rather than
-// being allowed to start a second one — on a binding two replicas share.
+// TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun: a start the
+// cluster refused is recorded in the archive, so a repeat submission is told
+// the run that failed rather than being allowed to start a second one.
 func TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun(t *testing.T) {
 	claimer := newSharedClaimer()
-	starter := &fakeStarter{err: errors.New("temporal is down")}
-	engineA := newReplica(t, claimer, nil, starter)
+	starter := &fakeStarter{err: serviceerror.NewFailedPrecondition("temporal refused the start")}
+	engineA := newReplica(t, claimer, newArchiver(t), starter)
 
 	if _, err := engineA.submit(t, "order-42"); err == nil {
 		t.Fatal("submit succeeded, want the start failure reported")
@@ -225,8 +279,9 @@ func TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun(t *testing.T) {
 	if got := repeat.GetError().GetCode(); got != "RUN_START_FAILED" {
 		t.Errorf("repeat submission error code = %q, want RUN_START_FAILED", got)
 	}
-	if proposed, _ := claimer.counts(); proposed != 2 {
-		t.Errorf("the claimer saw %d candidates, want 2 (one per submission)", proposed)
+	// The repeat looked the key up first and minted nothing.
+	if proposed, _ := claimer.counts(); proposed != 1 {
+		t.Errorf("the claimer saw %d candidates, want 1: a repeat costs a lookup", proposed)
 	}
 }
 
@@ -238,7 +293,7 @@ func TestSubmitRun_FailedStartStaysDeduplicatedToItsFailedRun(t *testing.T) {
 func TestSubmitRun_FailedStartStaysDeduplicatedOnAnotherReplica(t *testing.T) {
 	claimer := newSharedClaimer()
 	archive := newArchiver(t)
-	a := newReplica(t, claimer, archive, &fakeStarter{err: errors.New("temporal is down")})
+	a := newReplica(t, claimer, archive, &fakeStarter{err: serviceerror.NewFailedPrecondition("temporal is down")})
 	b := newReplica(t, claimer, archive, &fakeStarter{})
 
 	if _, err := a.submit(t, "order-42"); err == nil {

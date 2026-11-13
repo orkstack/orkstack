@@ -272,5 +272,12 @@ func (r *TemporalRunReader) liveAttempt(
 	out.ContainerId = progress.ContainerID
 	out.BytesLogged = progress.BytesLogged
 	out.OrkerId = progress.OrkerID
+	// Once the Orker has claimed the attempt's ordinal, its beats name it,
+	// and it is the number the attempt's record, log and container carry
+	// (docs/STORAGE.md, "Attempt ordinals"). Before the claim the attempt has
+	// none, and Temporal's own count stands.
+	if progress.Ordinal > 0 {
+		out.Attempt = progress.Ordinal
+	}
 	return out
 }

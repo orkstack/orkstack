@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/operatorservice/v1"
@@ -21,6 +22,19 @@ type fakeOperator struct {
 	added  []string
 	addErr error
 	listEr error
+	// listErrs are answered, one per call and in order, before listEr: a
+	// namespace the cluster has registered and its operator service does not
+	// see yet answers NotFound for a while, then answers.
+	listErrs []error
+	lists    int
+	// addErrs are answered, one per call and in order, before addErr.
+	addErrs []error
+	// block makes every List call wait for its context to end, as a hung
+	// frontend does.
+	block bool
+	// racer is what another replica registers while this one's registration
+	// fails: it lands in custom even though addErr is returned.
+	racer map[string]enumspb.IndexedValueType
 }
 
 func (f *fakeOperator) AddSearchAttributes(
@@ -31,7 +45,20 @@ func (f *fakeOperator) AddSearchAttributes(
 	for name := range in.GetSearchAttributes() {
 		f.added = append(f.added, name)
 	}
+	if len(f.addErrs) > 0 {
+		err := f.addErrs[0]
+		f.addErrs = f.addErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if f.addErr != nil {
+		for name, kind := range f.racer {
+			if f.custom == nil {
+				f.custom = map[string]enumspb.IndexedValueType{}
+			}
+			f.custom[name] = kind
+		}
 		return nil, f.addErr
 	}
 	if f.custom == nil {
@@ -44,10 +71,22 @@ func (f *fakeOperator) AddSearchAttributes(
 }
 
 func (f *fakeOperator) ListSearchAttributes(
-	_ context.Context,
+	ctx context.Context,
 	_ *operatorservice.ListSearchAttributesRequest,
 	_ ...grpc.CallOption,
 ) (*operatorservice.ListSearchAttributesResponse, error) {
+	f.lists++
+	if f.block {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
+	if len(f.listErrs) > 0 {
+		err := f.listErrs[0]
+		f.listErrs = f.listErrs[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if f.listEr != nil {
 		return nil, f.listEr
 	}
@@ -220,4 +259,125 @@ func TestEnsureRunOriginSearchAttributes_IsIndependentOfNamespace(t *testing.T) 
 			t.Error("the origin registration must not register the namespace attribute")
 		}
 	})
+}
+
+// A namespace this engine just registered is not seen by the cluster's
+// operator service at once: for a moment it answers NotFound. Two replicas
+// booting a second apart must still reach one answer about the run index,
+// because a replica that boots unindexed starts runs without the attribute and
+// the indexed replica's scoped reads then miss them. Each boot waits until the
+// namespace is visible, then registers, and both report the index usable.
+func TestRunIndex_ReplicasBootingAroundANewNamespaceAgree(t *testing.T) {
+	notFound := serviceerror.NewNamespaceNotFound("ork-new")
+	cluster := &fakeOperator{listErrs: []error{notFound, notFound, notFound}}
+	ctx := context.Background()
+
+	boot := func() bool {
+		t.Helper()
+		must.OKf(t, waitNamespaceVisible(ctx, cluster, "ork-new", time.Minute, time.Millisecond),
+			"waitNamespaceVisible")
+		indexed, err := ensureRunSearchAttributes(ctx, cluster, "ork-new")
+		must.OKf(t, err, "ensureRunSearchAttributes")
+		return indexed
+	}
+	first, second := boot(), boot()
+	if !first || !second {
+		t.Fatalf("replica answers = %v, %v; want both indexed: a replica that boots "+
+			"while its namespace is still invisible must not start runs unindexed", first, second)
+	}
+}
+
+// A namespace that never becomes visible fails the boot, naming it, rather
+// than leaving the engine up and unindexed.
+func TestWaitNamespaceVisible_FailsWhenTheNamespaceNeverAppears(t *testing.T) {
+	cluster := &fakeOperator{listEr: serviceerror.NewNamespaceNotFound("ork-gone")}
+	err := waitNamespaceVisible(context.Background(), cluster, "ork-gone", 5*time.Millisecond, time.Millisecond)
+	if err == nil || !strings.Contains(err.Error(), "ork-gone") {
+		t.Fatalf("err = %v, want a failure naming the namespace", err)
+	}
+	if cluster.lists < 2 {
+		t.Errorf("asked %d times; want it to keep asking until the deadline", cluster.lists)
+	}
+}
+
+// Any other answer than NotFound is not this wait's question: a cluster whose
+// operator API is refused is reported by the registration, as before, and is
+// not a boot failure.
+func TestWaitNamespaceVisible_LeavesOtherRefusalsToTheRegistration(t *testing.T) {
+	cluster := &fakeOperator{listEr: serviceerror.NewPermissionDenied("operator api is disabled", "")}
+	if err := waitNamespaceVisible(context.Background(), cluster, "ork-x", time.Minute, time.Millisecond); err != nil {
+		t.Fatalf("err = %v, want nil: only an invisible namespace is waited for", err)
+	}
+	if cluster.lists != 1 {
+		t.Errorf("asked %d times; want one", cluster.lists)
+	}
+}
+
+// Whether the run index is usable is the cluster's answer, not whether this
+// replica's own registration call succeeded: a replica whose registration
+// failed while another replica's landed reads the attribute back and agrees.
+func TestEnsureRunSearchAttributes_AnswersFromTheClusterWhenItsRegistrationFails(t *testing.T) {
+	cluster := &fakeOperator{
+		addErr: serviceerror.NewUnavailable("frontend restarting"),
+		racer:  map[string]enumspb.IndexedValueType{SearchAttrOrkflowNamespace: enumspb.INDEXED_VALUE_TYPE_KEYWORD},
+	}
+	indexed, err := ensureRunSearchAttributes(context.Background(), cluster, DefaultNamespace)
+	if err != nil || !indexed {
+		t.Fatalf("index = %v, %v; want usable: the cluster has the attribute", indexed, err)
+	}
+}
+
+// fastVisibilityPoll makes the NotFound retries ask again at once.
+func fastVisibilityPoll(t *testing.T) {
+	t.Helper()
+	previous := namespaceVisiblePoll
+	namespaceVisiblePoll = time.Millisecond
+	t.Cleanup(func() { namespaceVisiblePoll = previous })
+}
+
+// With several frontends, the one that answers the registration may not see
+// the namespace yet although the one that answered the wait did. The
+// registration keeps asking under the same deadline and the engine ends up
+// indexed.
+func TestEnsureRunSearchAttributes_RetriesANamespaceAFrontendDoesNotSeeYet(t *testing.T) {
+	fastVisibilityPoll(t)
+	cluster := &fakeOperator{addErrs: []error{serviceerror.NewNamespaceNotFound("ork-new")}}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	must.OKf(t, waitNamespaceVisible(ctx, cluster, "ork-new", time.Minute, time.Millisecond), "waitNamespaceVisible")
+	indexed, err := ensureRunSearchAttributes(ctx, cluster, "ork-new")
+	if err != nil || !indexed {
+		t.Fatalf("index = %v, %v; want usable after the frontend caught up", indexed, err)
+	}
+}
+
+// A registration whose frontend never sees the namespace fails the boot with
+// ErrNamespaceNotVisible, not the warning a refusal gets.
+func TestEnsureRunSearchAttributes_FailsTheBootWhenTheNamespaceStaysInvisible(t *testing.T) {
+	fastVisibilityPoll(t)
+	cluster := &fakeOperator{addErr: serviceerror.NewNamespaceNotFound("ork-gone")}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	_, err := ensureRunSearchAttributes(ctx, cluster, "ork-gone")
+	if !errors.Is(err, ErrNamespaceNotVisible) {
+		t.Fatalf("err = %v, want ErrNamespaceNotVisible", err)
+	}
+}
+
+// A call that hangs cannot carry the wait past its deadline: each call is
+// bounded by what is left of it.
+func TestWaitNamespaceVisible_AHungCallEndsAtTheDeadline(t *testing.T) {
+	cluster := &fakeOperator{block: true}
+	done := make(chan error, 1)
+	go func() {
+		done <- waitNamespaceVisible(context.Background(), cluster, "ork-x", 20*time.Millisecond, time.Millisecond)
+	}()
+	select {
+	case err := <-done:
+		if err == nil || !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "ork-x") {
+			t.Fatalf("err = %v, want the deadline, wrapped with the namespace", err)
+		}
+	case <-time.After(operatorCallTimeout):
+		t.Fatal("the wait outlived its deadline behind a hung call")
+	}
 }

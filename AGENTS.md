@@ -1537,6 +1537,8 @@ internal/config/       Configuration file schema and loader
 internal/telemetry/    OpenTelemetry setup, sinks, admin listener, instrumentation
 internal/archive/      Run retirement, the archive sweep and the cluster retention controller
 internal/automation/   Automation documents: parse, plan, export
+internal/authn/        Who a request is from: trusted issuers, service accounts, client certificates, sign-in
+internal/jwt/          The rules OrkStack holds a JWT to, on top of go-jose: algorithms, headers, claims, request binding; signing for the issuer
 internal/authz/        The one decision whether an Orkflow may compose another namespace's (shared_with)
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
@@ -1616,13 +1618,13 @@ are. A change to a behaviour a page describes updates that page too.
 
 Agent ownership is split as follows:
 
-- engine agents: `internal/engine`, `internal/api`, `cmd/ork`;
+- engine agents: `internal/engine`, `internal/api`, `cmd/ork`, `internal/authn`;
 - Orker/activity agents: `internal/orker`, `images/`, `cmd/orker`;
 - CLI agents: `cmd/orkctl`;
 - UI agents: `ui/` and `site/`;
 - artifact agents: `pkg/artifacts`;
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
-  the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`,
+  the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`, `internal/jwt`,
   `internal/listfilter` and `internal/enumname` (engine and CLI agents share
   both), `internal/hostpolicy` (the API and admin listeners share it), `internal/webui` (UI and engine agents share it), and this file.
 

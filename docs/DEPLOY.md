@@ -657,7 +657,7 @@ then the variable it becomes.
 | `engine.allowed_hosts` | `ORK_ALLOWED_HOSTS` | *(empty)* | `ork` | comma-separated names the API listener answers to in a request's `Host` header, besides the ones it always admits: an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_HTTP_ADDR` names. An entry is a name (`orkstack.example.com`), `*.suffix` for every name under a suffix of two labels or more, or `*` for any `Host`; space around an entry and empty entries are ignored, and an entry with a scheme, a port or a path, or a pattern over a top-level name (`*.com`), is refused at boot. Any other `Host` is refused `403`, which stops DNS rebinding through a public name. List every name with a dot the engine is reached by: a Kubernetes `svc.namespace` name or FQDN, a proxy that keeps the browser's `Host`, the name `orkctl` or a caller dials (§ "The web UI") |
 | `engine.ui.enabled` | `ORK_UI_ENABLED` | `true` | `ork` | serve the web UI at `/` on the API listener, beside the Connect API and the WebSocket bridge; `false` leaves the listener the API alone (§ "The web UI") |
 | `engine.ui.dir` | `ORK_UI_DIR` | *(empty: the build compiled into `ork`)* | `ork` | serve the UI build in this directory (`ui/build`, written by `cd ui && bun run build`) instead of the one compiled into `ork`; refused at boot if it holds no `index.html`, or if `ORK_UI_ENABLED=false` |
-| `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound |
+| `engine.idempotency_ttl` | `ORK_IDEMPOTENCY_TTL` | `24h` | `ork` | how long an idempotency key stays bound; the cluster keeps a finished run at least this long plus five minutes (§5, "Ops notes", idempotency keys). Set it the same on every engine |
 | `engine.each_max_items` | `ORK_EACH_MAX_ITEMS` | `1000` | `ork` | the most items one Orkflow's fan-outs (`each:`) may declare in total — the sum of their `max_items`. Default 1000. Lowers it, or raises it up to the built-in 10,000; above 1,000 it needs `engine.continuation.enabled` (refused at boot otherwise, naming both keys). Checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value. A submit that needs more than 1,000 items is refused while an `ork` process of a build that new runs start on (any process, on an unversioned fleet) runs a release older than the one that raised the maximum; a draining older build does not block it (§5, "Engine capabilities and the fleet check"). Before rolling back below that release, lower it to 1,000 and wait for such runs (§4) |
 | `engine.orkflow_max_tasks` | `ORK_ORKFLOW_MAX_TASKS` | `4000` | `ork` | the most tasks one Orkflow may declare (`docs/DSL.md`, "How many tasks an Orkflow may declare"). A fan-out counts once whatever its `max_items`, and a composed task counts once whatever its child declares. A whole number, 1 or more; anything else is refused at boot. Checked at validate, create and plan, and again at submit, so lowering it refuses new runs of an Orkflow created above the new value. A deployment lowers or raises it. The default is the largest size the task soak measured (its per-generation history, snapshot, in-flight, workflow-code, read-latency and run-page thresholds, with plain tasks and small outputs); above it a deployment runs unmeasured, and the boot warns naming the measured size. The task soak runs in the nightly and pre-release proofs, not in every merge proof (docs/PROOFS.md). Independently, a stage of more than X plain tasks that start together may stop `RUN_HISTORY_LIMIT` in its first history, explicitly, and the boot warns when this is above X. X is a size to stay within, not a promise: at or below it a flat stage of plain tasks cannot reach that limit before it carries on, and other limits still apply. X is 4,389 at the defaults and moves with `engine.history.max_events`, `engine.continuation.events`, `engine.continuation.bytes`, `engine.continuation.restore_timeout` and `engine.run_max_in_flight`; §5, "Task ceiling and the flat-stage bound", gives its closed form. With `engine.continuation.enabled` off a run has one history: an unset key defaults to the smaller of 4,000 and `engine.history.max_events / 50` (1,024 at the default limit; the boot logs the effective value), and an explicit value above that quotient is refused at boot, naming the three keys |
 | `engine.history.max_events` | `ORK_HISTORY_MAX_EVENTS` | `51200` | `ork` | the cluster's per-execution history event limit. A run stops `RUN_HISTORY_LIMIT` before reaching it, counting what its own failure path still needs, instead of being terminated by the cluster with no reason. **Set it to the cluster's real limit if an operator changed it:** a value above the real limit defeats the guard, and one below stops runs early. Even at the default, a run that would finish just under the limit with much work still pending now stops `RUN_HISTORY_LIMIT`, because its failure path's reserve is kept back: 16 events per running task, 8 per pending task, 24 per open await, 12 per open pin, 48 per failure handler, plus 96 — about 8,100 for a 1,000-task flat stage with every task running. At least 100; anything else is refused at boot. Read at submit, so a change applies to new runs |
@@ -1089,6 +1089,44 @@ answered on its own channel, so whether … is unknown`). The probe is a guard
 for a mixed rollout, not a substitute for running every Orker of a pool on one
 release.
 
+### Upgrading a pool's Orkers
+
+From v0.4.0 an Orker numbers each task's attempts itself, claiming an ordinal
+in the attempt store before the attempt starts anything (`docs/STORAGE.md`,
+"Attempt ordinals"). An Orker of an earlier release numbers them as Temporal
+does, so while one pool runs both, an older Orker can write an attempt record
+over a newer one's, and the task's attempt list shows the wrong outcome for
+that attempt. Nothing about the run's result changes: records are a history,
+never what decides whether work reruns. Roll every Orker of a pool to the new
+release together, or cordon the old ones while they drain (`orkctl orker
+drain`).
+
+Three things make a mixed pool visible rather than silent:
+
+- a newer Orker never overwrites a record: records are written create-only,
+  and one already there is kept, with a warning (`task attempt record not
+  written: an Orker of an earlier release already wrote one under this
+  attempt's number`);
+- a newer Orker that finds a record with no claim in a task's scope starts its
+  ordinals past it and logs `an attempt record of this task was written by an
+  Orker of an earlier release`, naming the run, task and attempts; both cases
+  count `ork.orker.attempt_record_legacy`, by where the record was met
+  (`ork.found`: `claim` or `record`), so any count means the pool runs two
+  releases;
+- a submit that already asks a pool's Orkers a question (a fan-out, a cached
+  task, a failure handler, a sized task, a pin) also asks every live pool of
+  the run whether its Orkers claim ordinals (`DescribeOrkerResult`
+  `attempt_ordinals_supported`), and refuses with `FailedPrecondition` naming
+  the pool, the tasks, and the first Orker that does not and its build. A
+  submit that asks nothing else asks nothing for this either, so it is no
+  substitute for rolling a pool whole.
+
+On a versioned deployment (section 2) a Pinned run's tasks wait for its own
+release's Orkers even when none of them is polling, so the two numberings meet
+only when the run's release never served the pool and its tasks there go to
+the current release's Orkers: keep every release you ramp or promote serving
+every pool in use, as `orkctl release` already requires.
+
 ### Pins on a versioned deployment
 
 Pins work with Worker Deployment Versioning (`ORK_BUILD_ID`, §2), and what
@@ -1328,7 +1366,9 @@ permanent, so a retired run stays listable and readable.
 **An execution the cluster no longer holds** is retired only once its own
 namespace's run retention, counted from the finish its archive body records,
 has passed. Nothing removes an execution earlier in normal operation — the
-backstop TTL sits past every namespace's retention — so one missing earlier
+backstop TTL sits past every namespace's retention, and never below an
+idempotency key's life (`engine.idempotency_ttl` plus five minutes) plus the
+margin, so a retry under a key finds a finished run — so one missing earlier
 means a restored or damaged cluster, or an `ork` replica pointed at the wrong
 `ORK_TEMPORAL_NAMESPACE`. Such a run is kept, logged at error ("kept a run
 whose execution is missing before its run retention") and counted
@@ -1422,11 +1462,13 @@ not at risk, and neither is a run that has not finished. While the risk stands,
 every pass logs an error naming the runs nearest to expiry and when the first of
 them expires, and sets `ork.archive.sweep.unconfirmed` and
 `ork.archive.sweep.earliest_expiry` (§7, "Lifecycle metrics"); alert on the
-first. While object storage is down the pass cannot tell an archived run from
-one that is not, so it counts every finished run it holds, and its figures are
-an upper bound. A longer outage than you can afford calls for a larger
-`ORK_CLEANUP_RETENTION_BUFFER`, which helps only the runs that close after it is
-set.
+first. A pass that cannot see sets `ork.archive.sweep.list_failed` or stops
+advancing `ork.archive.sweep.last_success`; alert on those too, because a blind
+sweep cannot count what it did not see. While object storage is down the pass
+cannot tell an archived run from one that is not, so it counts every finished
+run it holds, and its figures are an upper bound. A longer outage than you can
+afford calls for a larger `ORK_CLEANUP_RETENTION_BUFFER`, which helps only the
+runs that close after it is set.
 
 An archive write that stops short, on all three attempts of the run's own
 publish, leaves no body, because the body is its last write. The run reads as
@@ -2358,16 +2400,41 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
 
   The boot line reports each answer separately
   (`INFO connected to temporal … run_namespace_index=true run_origin_index=true
-  run_root_index=true`), so a cluster that refuses one keeps the others. A plan
+  run_root_index=true`), so a cluster that refuses one keeps the others. Before
+  registering, the engine waits up to a minute for the cluster to see the
+  Temporal namespace it just ensured (`task.WaitNamespaceVisible`): a namespace
+  created a moment ago answers "not found" until the cluster's namespace cache
+  catches up. The registrations keep asking on "not found" under the same
+  minute, since with several frontends one may not see the namespace yet when
+  another already does, and each call is bounded within it; a namespace still
+  not found then fails the boot, naming it. Whether an
+  attribute is usable is read back from the cluster, not from this engine's
+  own registration call, so every replica gives the same answer. A plan
   pins the root answer at submit, so one run tree has one answer. A cluster that refuses
   the registration — the operator API behind an authorizer, a visibility
   store without custom attributes — still boots and warns once
   (`WARN visibility does not index …`, naming the attribute and the
   consequence); the reader then walks the whole index instead of trusting a
   predicate the cluster cannot apply, and a list that cannot finish that walk
-  fails rather than returning a short one. A run started before
-  `OrkflowNamespace` was stamped carries its namespace only in its memo: it
-  is read by id while live and listed from the archive once finished. A run
+  fails rather than returning a short one. A run started without
+  `OrkflowNamespace` (before the attribute existed, or by an engine that booted
+  unindexed) carries its namespace only in its memo, so a scoped read asks for
+  `(OrkflowNamespace = "x" OR OrkflowNamespace IS NULL)` — `IS NULL` is
+  accepted by every visibility store of a supported Temporal server — and keeps
+  those runs by their memo: a namespace's list, stats and `max_running` count
+  still see them, and another namespace's such runs are read and dropped, under
+  the bound of a walk that filters.
+
+  That has a transitional cost while such runs are within the cluster's
+  retention. They exist only from before v0.3.0, when `OrkflowNamespace` was
+  introduced, or from an engine that booted unindexed (the boot race the wait
+  above closes). Until they age out, a scoped run list reads other namespaces'
+  unstamped runs and, past its page bound, fails explicitly rather than
+  returning a short page; and the `max_running` check walks the live unstamped
+  runs on each submit, after one count finds any. Both end as those runs age
+  out under run retention. Nothing re-stamps them: a closed execution's search
+  attributes cannot be changed from outside its workflow, and OrkStack keeps no
+  database to do it with. A run
   started before origins were recorded renders `unrecorded` and matches no
   origin filter. No setting controls any of this.
 - **A double submit is settled by the cluster, not by a replica.** One
@@ -2378,6 +2445,51 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   can both submit `nightly` and get their own run
   (`api.submission.claimKey`); unscoped, the second would be answered with the
   first tenant's run id and its work would never start.
+- **Idempotency keys: one key, one submission, one run id, at most one run.**
+  - *A key is bound to what was submitted.* The claim holds the submission's
+    fingerprint: the Orkflow, the version as the caller wrote it (none when
+    it wrote none, so a retry across a promotion is the same submission), the
+    run it asks to run again, and the input as sent (key order and spacing
+    do not matter). The same key with any of those different is refused
+    `already_exists`. `allow_empty_pool`, `no_cache` and `origin_reference`
+    are not part of it.
+  - *A retry reads the key's run id, and what it reads decides.* It looks in
+    the cluster first, then the archive. The key's own run is answered; a
+    run the cluster let go is answered from the archive; and only when both
+    say there is no such run is the id started, by the retry, under its own
+    origin. Anything that cannot be read is `unavailable`, never a start. So
+    a replica lost between its claim and its start strands nothing: the next
+    retry starts the id.
+  - *A start whose answer was lost is never recorded as a failure.* The
+    engine reads the id: a run that landed is answered, and one that did not
+    is `unavailable` with nothing recorded, for the retry to read again. Only
+    a start the cluster refused (invalid, not found, permission, failed
+    precondition, unimplemented) is recorded as `RUN_START_FAILED`; if that
+    record cannot be written, the submission says so (`unavailable`) instead
+    of reporting a failure no replica can find.
+  - *An id held by something else is replaced once.* When the key's id was
+    started by something that is not the key's own run, the key moves to a
+    fresh id once; a second refused id is `unavailable`, and nothing is
+    recorded under an id the submission does not own.
+  - *The engine finishes on its own clock.* Once it has a candidate, it
+    spends up to 30 s on the claim and the start whatever the caller's
+    deadline; a caller that left learns the outcome by submitting again
+    under its key. A callback token is disclosed only to the submission that
+    started the run.
+  - *A key claimed by v0.3.0* (or answered by a v0.3.0 engine during a
+    rollout or a rollback) carries no fingerprint and is answered as v0.3.0
+    answered it: its run if found, its pending run if not, never started.
+    Each pending answer logs a warning and counts
+    `ork.idempotency.legacy_pending`. All such claims end one
+    `engine.idempotency_ttl` after the last engine is upgraded.
+  - *The cluster keeps a finished run at least a key's life.* The retention
+    OrkStack sets on the cluster is the larger of the maximum run retention
+    and `engine.idempotency_ttl` plus five minutes, plus the enforcement
+    margin; no namespace's run retention changes, and runs are retired when
+    they were. Set `engine.idempotency_ttl` the same on every engine. After
+    lowering it, or the maximum run retention, a key claimed before is not
+    started again once its claim is older than the retention the cluster
+    reports: such a submission is `unavailable` and asks for a new key.
 - **One namespace, one deployment.** The engine's queue name is fixed, so two
   OrkStack deployments in one namespace would fight over the current version of
   `ork-tasks`. Give each environment its own namespace, as above.
@@ -3698,7 +3810,9 @@ Internally — never exposed to an operator — OrkStack keeps the single
 Temporal namespace behind the deployment (`internal/engine/router.go`'s
 `SingleRouter`) at a retention TTL of `maximum + margin`, strictly above every
 namespace's own retention, so that TTL can never be what actually retires a
-run. The cleanup worker retires runs itself, explicitly, ahead of that TTL;
+run. Where the maximum is shorter than an idempotency key's life
+(`ORK_IDEMPOTENCY_TTL` plus five minutes), the key's life takes its place, so
+a retry under a key always finds a finished run (§5, "Ops notes", idempotency keys). The cleanup worker retires runs itself, explicitly, ahead of that TTL;
 the TTL is purely a backstop for worker downtime or a large backlog. See
 `internal/archive/retention.go` (`RetentionController`) and the cleanup
 worker's own doc comment (`internal/archive/cleanup.go`) for the mechanism.
@@ -4716,6 +4830,12 @@ when the audit store refused the write (the RPC itself still answered as it
 would have — see §5 "Attributing control-plane writes"). A rising `dropped`
 rate is an unwritable `metadata/audit/` prefix.
 
+`ork.idempotency.legacy_pending` (engine) counts keyed submissions answered
+with a pending run that was not found, under a key claimed by an earlier
+release (§5 "Ops notes", idempotency keys). It should stay at zero once one
+`engine.idempotency_ttl` has passed after the last engine was upgraded; a
+rising count during a rollout names runs that may never start.
+
 ### Lifecycle metrics
 
 These are the run and task metrics a dashboard alerts on, distinct from the
@@ -4732,6 +4852,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.task.duration` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
 | `ork.task.attempts` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event: the attempt number the task finished on — one observation per fan-out item, none for a composed task |
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Orker, once per attempt (`outcome`: `succeeded`, `failed`, `canceled`, or `adopted` for a retry that found an existing durable commit and ran no container) |
+| `ork.orker.attempt_record_legacy` | `ork.orker_id`, `ork.found` | Orker, each attempt record of an earlier release it met: in the scope it claimed in (`claim`, one per record) or under its own ordinal (`record`); any count means the pool runs two releases ("Upgrading a pool's Orkers") |
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
@@ -4742,10 +4863,13 @@ policy names one — they can land on a different sink than the process default
 | `ork.run.continuation.duration` | `ork.namespace`, `phase` | engine, seconds a switch's write (`write`) or a whole restore (`restore`) took |
 | `ork.run.continuation.hold.duration` | `ork.namespace` | engine, seconds a run held new tasks before it carried on (0 when it found a moment with nothing running on its own) |
 | `ork.run.continuation.read.attempts` | `ork.namespace` | engine, the attempt each successful read of a saved state succeeded on |
-| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost) |
+| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost). Every outcome's series is present, at zero, from the first pass |
 | `ork.archive.cleanup.runs` | `outcome` | engine with cleanup on, once per run a cleanup pass came to and acted on or kept (§1, "Retention cleanup and bucket lifecycle rules"): `retired`, `failed` (left as it was; a later pass tries again), `not_found_not_due` (its execution is missing before its run retention, so it was kept: **alert on any**), or `not_found_held` (due, with its execution missing, but held because too many of that pass's runs were missing early) |
 | `ork.archive.sweep.unconfirmed` | — | engine, each pass: finished runs it could not confirm have an archive. **Alert on this above zero.** While object storage is down it counts every finished run the pass did not reach, archived or not |
-| `ork.archive.sweep.earliest_expiry` | — | engine, each pass that counted any and could date them: seconds left until the first of those runs expires. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
+| `ork.archive.sweep.earliest_expiry` | — | engine, each pass: seconds left until the first of those runs expires: 0 when the pass has none or could not date them, so an undated risk reads as imminent, and negative once that time has passed. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
+| `ork.archive.sweep.list_failed` | — | engine, each pass: 1 when the pass could not read the cluster's index of finished runs to its end, so its counts are only what it reached; else 0. **Alert on 1** |
+| `ork.archive.sweep.interval_too_long` | — | engine, each pass: 1 when two cleanup intervals reach the cluster's retention, so a run can be deleted before a pass looks at it; else 0. **Alert on 1**, and shorten `ORK_CLEANUP_INTERVAL` |
+| `ork.archive.sweep.last_success` | — | engine: unix time of the last pass that saw everything, its index listed to its end and object storage answering whether each run has an archive. A store that answers but refuses the archive writes still advances it; that shows as `ork.archive.sweep.unconfirmed` above zero. **Alert when it is older than a few cleanup intervals**: the sweep is blind |
 
 (The rows above omit `ork.namespace` even though every run and task metric
 carries it; `ork.runs.refused` names it explicitly. `ork.cache.outcome` —
