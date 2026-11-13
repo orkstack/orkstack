@@ -25,6 +25,7 @@ import (
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
 // Dir is where the schemas live, relative to the repository root.
@@ -277,5 +278,37 @@ func Files(repoRoot string) (map[string][]byte, error) {
 	for _, name := range UIFiles {
 		out[UIDir+"/"+name] = out[Dir+"/"+name]
 	}
+	events, err := webhookEvents()
+	if err != nil {
+		return nil, err
+	}
+	out[WebhookEventsFile] = events
 	return out, nil
+}
+
+// WebhookEventsFile is the UI's copy of the webhook event lists, relative to
+// the repository root. ui/test/webhookEvents.test.ts holds the UI's own lists
+// to it, so an event added to pkg/webhooks cannot be missing from the Admin page.
+const WebhookEventsFile = "ui/src/lib/webhook-events.json"
+
+// webhookEvents renders {known, run, task} from pkg/webhooks.
+func webhookEvents() ([]byte, error) {
+	names := func(events []webhooks.Event) []string {
+		out := make([]string, len(events))
+		for i, event := range events {
+			out[i] = string(event)
+		}
+		return out
+	}
+	var buf bytes.Buffer
+	err := stablejson.Encode(&buf, struct {
+		Known []string `json:"known"`
+		Run   []string `json:"run"`
+		Task  []string `json:"task"`
+	}{names(webhooks.KnownEvents()), names(webhooks.RunEvents()), names(webhooks.TaskEvents())},
+		stablejson.Unescaped, jsontext.WithIndent("  "))
+	if err != nil {
+		return nil, fmt.Errorf("schemas: encode webhook events: %w", err)
+	}
+	return buf.Bytes(), nil
 }

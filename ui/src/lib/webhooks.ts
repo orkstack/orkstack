@@ -12,6 +12,12 @@ export const RUN_EVENTS: EventType[] = [
 ];
 
 /**
+ * Run events a subscription must name to receive: opt-in, like the task
+ * events, and offered beside them. Empty until a design adds one.
+ */
+export const OPT_IN_RUN_EVENTS: EventType[] = [];
+
+/**
  * Task events: opt-in by name, always, in lifecycle order — an awaited task's
  * two sit where it reaches them, before its outcome. TASK_LOG is never offered.
  */

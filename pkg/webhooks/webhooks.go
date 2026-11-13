@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -118,14 +119,18 @@ func isRunEvent(event Event) bool {
 	return false
 }
 
-func isTaskEvent(event Event) bool {
-	switch event {
-	case EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
-		EventTaskSleeping, EventTaskSucceeded, EventTaskFailed:
-		return true
-	}
-	return false
+// taskEvents is every task event, in lifecycle order: the one list
+// isTaskEvent and ValidateScope's message read.
+var taskEvents = []Event{
+	EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
+	EventTaskSleeping, EventTaskSucceeded, EventTaskFailed,
 }
+
+// TaskEvents lists the task events: opt-in by name, and the ones a task scope
+// filters. The result is a copy.
+func TaskEvents() []Event { return slices.Clone(taskEvents) }
+
+func isTaskEvent(event Event) bool { return slices.Contains(taskEvents, event) }
 
 // ParseEvent reads an event name. It accepts the short form a subscriber
 // writes ("RUN_SUCCEEDED"), the proto spelling the engine carries
@@ -294,8 +299,12 @@ func ValidateScope(namespace, orkflowName, taskID string, events []Event) error 
 			return nil
 		}
 	}
-	return fmt.Errorf("webhooks: a task scope %q needs at least one task event (TASK_SCHEDULED, TASK_STARTED, TASK_SUCCEEDED, TASK_FAILED); "+
-		"without one the subscription receives run transitions only and the task filter is never consulted", taskID)
+	names := make([]string, len(taskEvents))
+	for i, event := range taskEvents {
+		names[i] = string(event)
+	}
+	return fmt.Errorf("webhooks: a task scope %q needs at least one task event (%s); "+
+		"without one the subscription receives run transitions only and the task filter is never consulted", taskID, strings.Join(names, ", "))
 }
 
 // ValidateName reports why name cannot be a subscription's name in this
