@@ -18,6 +18,7 @@ stored in the `ork` engine with `orkctl orkflow create`.
 | `outputs`     | no       | Declared return contract: name to template (see below). |
 | `pins`        | no       | Declared task pins (see below).                        |
 | `shared_with` | no       | Other namespaces' Orkflows that may compose this one (see "Sharing across namespaces"). |
+| `timeout`     | no       | optional: a Go duration, 10s to 8760h, bounding the whole run (see "Run timeout"). |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
 `orkctl orkflow create` and `orkctl automation apply` each read a file's `kind:`
@@ -1756,6 +1757,32 @@ Computing — formatting, arithmetic, a decision — is a task's job, never a
 template's: see `docs/ORKFLOW_PATTERNS.md`, "The rule: the platform moves data,
 tasks compute".
 
+## Run timeout (`timeout:`)
+
+`timeout:` is a top-level key that bounds a whole run's time:
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: nightly-etl
+timeout: 6h
+tasks:
+  - id: extract
+    uses: ghcr.io/acme/extract:2
+```
+
+- The value is a Go duration written as a string: `90s`, `45m`, `6h`,
+  `1h30m`, `720h`. There is no `d` unit.
+- It is whole seconds, from `10s` to `8760h` (365 days).
+- An integer is refused (`timeout: 3600`): the run's timeout is a duration such
+  as `3600s` or `1h`, where a task's `timeout_seconds:` is an integer of
+  seconds. `null`, `""`, `0s` and a negative value are refused too; a run with
+  no time limit omits the key.
+- It is part of the definition digest, written in its short form, so `6h` and
+  `360m` are one definition; an Orkflow that omits it keeps its digest. It is
+  not part of the declared interface (`inputs:` and `outputs:`), so changing it
+  is never a breaking promotion.
+
 ## Planning a run (`orkctl run plan`)
 
 `orkctl run plan NAME` (or `--file DOC` for an unapplied document), and the
@@ -2024,6 +2051,12 @@ How each node reads:
     `each.over` reads a sleeping task, which produces no values and no
     artifacts: `.tasks.<sleep>…`, `index .tasks "<sleep>"` and
     `artifact "<sleep>/…"` are refused.
+52. `timeout`, when present, is a string Go duration of whole seconds between
+    `10s` and `8760h` (field `timeout`): `timeout: "<value>" is not a duration
+    such as 30m or 6h`, `timeout: <value> must be a whole number of seconds`
+    and `timeout: <value> is outside 10s … 8760h; omit timeout: for a run with
+    no time limit`. An integer, `null`, an empty string, a tag or an anchor is
+    refused.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

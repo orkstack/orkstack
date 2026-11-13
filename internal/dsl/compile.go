@@ -125,6 +125,11 @@ type document struct {
 	// are one value: no declared outputs.
 	Outputs map[string]string `yaml:"outputs"`
 
+	// Timeout is the run's own time limit, a Go duration (docs/DSL.md "Run
+	// timeout"). A yaml.Node so the strict mapping sees what was written: an
+	// integer, a null and a tag are each refused by name.
+	Timeout yaml.Node `yaml:"timeout"`
+
 	// Pins declares every pin a task may name, by name, each with a
 	// (possibly empty) options object — `pins: {build: {}}` is legal.
 	//
@@ -349,6 +354,11 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		return nil, err
 	}
 	wf.Inputs = inputs
+	timeoutSeconds, err := compileRunTimeout(&doc.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	wf.TimeoutSeconds = timeoutSeconds
 	if len(doc.Outputs) > 0 {
 		wf.Outputs = doc.Outputs
 	}

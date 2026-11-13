@@ -192,6 +192,7 @@ func slots() map[string]slot {
 		"apiVersion": "orkstack/v1", "kind": "Orkflow", "name": "x", "namespace": "ns", "version": `"1"`,
 		"description": "d", "labels": "{l: v}", "inputs": "{i: {type: string}}", "outputs": "{r: x}",
 		"pins": "{p: {}}", "tasks": "[{id: a, uses: 'busybox:1'}]", "shared_with": "[{namespace: b}]",
+		"timeout": "6h",
 	} {
 		s := rootDoc(key, "")
 		s.baseline = baseline

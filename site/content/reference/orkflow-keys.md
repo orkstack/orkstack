@@ -29,6 +29,7 @@ tasks:
 | `inputs` | no | The run's parameters: [Input](#input). |
 | `outputs` | no | What a run returns: a map from a name to a template. |
 | `pins` | no | Named groups of tasks that run on one Orker: [Pin](#pin). |
+| `timeout` | no | A time limit for the whole run, a duration string such as `90s`, `45m` or `6h`: whole seconds, `10s` to `8760h`. An integer or `0s` is refused; omit it for no limit. [Details](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#run-timeout-timeout). |
 | `tasks` | yes | The tasks: [Task](#task). |
 
 ## Input

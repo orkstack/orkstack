@@ -304,4 +304,11 @@ message Orkflow {
   // executes in and whose rules it follows. Never stored, never applied and
   // not part of canonicalOrkflow: definition_digest is the owner's.
   string definition_namespace = 14;
+
+  // timeout_seconds is the run's own time limit from its start, from the
+  // DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of
+  // canonicalOrkflow, in its short form, only when non-zero, so an Orkflow
+  // that declares none keeps its digest. Fields 15 and 16 are reserved for
+  // other v0.4.0 changes.
+  int64 timeout_seconds = 17;
 }

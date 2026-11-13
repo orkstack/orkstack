@@ -617,6 +617,10 @@
           "minItems": 1,
           "type": "array"
         },
+        "timeout": {
+          "description": "optional: a Go duration, 10s to 8760h, bounding the whole run (see \"Run timeout\").",
+          "type": "string"
+        },
         "version": {
           "description": "Author-pinned version; absent, the first create assigns one.",
           "type": "string"

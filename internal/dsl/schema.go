@@ -77,6 +77,7 @@ func orkflowAnnotations() map[string]annotation {
 		"name":                          requiredSlug,
 		"namespace":                     slug,
 		"version":                       {typ: map[string]any{"type": "string"}},
+		"timeout":                       {typ: map[string]any{"type": "string"}},
 		"tasks":                         {required: true, minItems: 1},
 		"pins":                          {keyPattern: slugPattern, keyMax: MaxSlug},
 		"outputs":                       {keyPattern: outputNamePattern, keyMax: maxOutputNameBytes},
@@ -124,6 +125,7 @@ var orkflowDescriptions = map[string]string{
 	"outputs":     "Declared return contract: name to template (see below).",
 	"pins":        "Declared task pins (see below).",
 	"shared_with": "Other namespaces' Orkflows that may compose this one (see \"Sharing across namespaces\").",
+	"timeout":     "optional: a Go duration, 10s to 8760h, bounding the whole run (see \"Run timeout\").",
 	"tasks":       "List of task nodes forming a DAG.",
 
 	"tasks[].id":              "unique within the Orkflow",

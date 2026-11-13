@@ -910,8 +910,14 @@ type Orkflow struct {
 	// executes in and whose rules it follows. Never stored, never applied and
 	// not part of canonicalOrkflow: definition_digest is the owner's.
 	DefinitionNamespace string `protobuf:"bytes,14,opt,name=definition_namespace,json=definitionNamespace,proto3" json:"definition_namespace,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// timeout_seconds is the run's own time limit from its start, from the
+	// DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of
+	// canonicalOrkflow, in its short form, only when non-zero, so an Orkflow
+	// that declares none keeps its digest. Fields 15 and 16 are reserved for
+	// other v0.4.0 changes.
+	TimeoutSeconds int64 `protobuf:"varint,17,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Orkflow) Reset() {
@@ -1042,6 +1048,13 @@ func (x *Orkflow) GetDefinitionNamespace() string {
 	return ""
 }
 
+func (x *Orkflow) GetTimeoutSeconds() int64 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
+}
+
 var File_orkstack_v1_orkflow_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_orkflow_proto_rawDesc = "" +
@@ -1107,7 +1120,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\bcallback\x18\x02 \x01(\bR\bcallback\x12/\n" +
 	"\x06schema\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x06schema\"%\n" +
 	"\tSleepSpec\x12\x18\n" +
-	"\aseconds\x18\x01 \x01(\x05R\aseconds\"\xdd\x05\n" +
+	"\aseconds\x18\x01 \x01(\x05R\aseconds\"\x86\x06\n" +
 	"\aOrkflow\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -1126,7 +1139,8 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\aoutputs\x18\f \x03(\v2!.orkstack.v1.Orkflow.OutputsEntryR\aoutputs\x12:\n" +
 	"\vshared_with\x18\r \x03(\v2\x19.orkstack.v1.OrkflowShareR\n" +
 	"sharedWith\x121\n" +
-	"\x14definition_namespace\x18\x0e \x01(\tR\x13definitionNamespace\x1a9\n" +
+	"\x14definition_namespace\x18\x0e \x01(\tR\x13definitionNamespace\x12'\n" +
+	"\x0ftimeout_seconds\x18\x11 \x01(\x03R\x0etimeoutSeconds\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a:\n" +
