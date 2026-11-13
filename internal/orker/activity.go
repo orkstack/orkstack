@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -216,6 +217,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Logs:              opts.Logs,
 			LogOpts:           opts.Log,
 			Attempts:          opts.Attempts,
+			Claims:            claimerOf(opts.Attempts),
 			Memos:             opts.Memos,
 			Policy:            policy,
 			WorkRoot:          workRoot,
@@ -385,6 +387,10 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// ExecuteTaskInput.join, so submit may send a failure handler to its
 		// pool.
 		JoinSupported: true,
+		// Attempt ordinals (docs/STORAGE.md, "Attempt ordinals"): this Orker
+		// claims each attempt's number, so submit may send any task to its
+		// pool beside other Orkers that do.
+		AttemptOrdinalsSupported: true,
 	}
 	if ceiling, err := a.dispatcher.Policy.ceiling(); err == nil {
 		result.MaxRequest = ceiling.proto()
@@ -597,7 +603,18 @@ func firstOf[T any](list []T, limit int) []T {
 // reapContainers runs the runtime's Reap and logs what it removed and each
 // orphan it could not remove. Only a failure to list is returned.
 func (a *Activities) reapContainers(ctx context.Context) error {
+	// What each container ran, read before they go, so the attempts of the
+	// ones removed are released (resume/design.md §26.7).
+	var own []OwnContainer
+	if lister, ok := a.dispatcher.Runtime.(ownContainerLister); ok && a.dispatcher.Claims != nil {
+		listed, err := lister.OwnContainers(ctx, a.dispatcher.OrkerID)
+		if err != nil {
+			a.dispatcher.logger().Warn("own containers could not be listed; their attempts are not released", "error", err)
+		}
+		own = listed
+	}
 	removed, err := a.dispatcher.Runtime.Reap(ctx, a.dispatcher.OrkerID)
+	defer func() { a.releaseReaped(ctx, own, err) }()
 	if removed > 0 {
 		a.dispatcher.logger().Info("orphaned containers reaped", "removed", removed)
 	}
@@ -625,6 +642,62 @@ func (a *Activities) reapContainers(ctx context.Context) error {
 	default:
 		return fmt.Errorf("reap orphaned containers: %w", err)
 	}
+}
+
+// ownContainerLister is the runtime capability the boot reap asks what each of
+// this Orker's containers ran. A runtime without it releases nothing.
+type ownContainerLister interface {
+	OwnContainers(ctx context.Context, orkerID string) ([]OwnContainer, error)
+}
+
+// releaseReaped writes the release marker of every attempt whose container
+// the reap removed: the attempt ended with this Orker's previous life, and
+// nothing of it runs. A container that stayed keeps its attempt claimed until
+// a later reap removes it. Best-effort, as every marker is.
+func (a *Activities) releaseReaped(ctx context.Context, own []OwnContainer, reapErr error) {
+	stayed := map[string]bool{}
+	var partial *ReapIncompleteError
+	if errors.As(reapErr, &partial) {
+		for _, id := range partial.Containers {
+			stayed[string(id)] = true
+		}
+	} else if reapErr != nil {
+		return
+	}
+	for _, c := range own {
+		if stayed[c.ID] {
+			continue
+		}
+		ref, ok := reapedAttempt(c)
+		if !ok {
+			continue
+		}
+		call, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimTimeout)
+		err := a.dispatcher.Claims.ReleaseAttempt(call, ref, a.dispatcher.OrkerID)
+		cancel()
+		if err != nil {
+			a.dispatcher.logger().Warn("a reaped attempt's release marker was not written",
+				"run_id", c.RunID, "task_id", c.TaskID, "attempt", c.Attempt, "error", err)
+		}
+	}
+}
+
+// reapedAttempt reads the attempt a reaped container's labels name. A label
+// that does not parse names none: nothing is released for it.
+func reapedAttempt(c OwnContainer) (artifacts.AttemptRef, bool) {
+	n, err := strconv.ParseInt(c.Attempt, 10, 32)
+	if err != nil || n < 1 || c.RunID == "" || c.TaskID == "" {
+		return artifacts.AttemptRef{}, false
+	}
+	ref := artifacts.AttemptRef{RunID: c.RunID, TaskID: c.TaskID, Item: artifacts.NoItem, Attempt: int32(n)}
+	if c.Item != "" {
+		index, err := strconv.ParseInt(c.Item, 10, 32)
+		if err != nil || index < 0 {
+			return artifacts.AttemptRef{}, false
+		}
+		ref.Item = artifacts.ItemAt(int32(index))
+	}
+	return ref, true
 }
 
 // otherOrkerLister is the runtime capability Boot asks what other identities
@@ -1053,4 +1126,14 @@ func defaultOrkerID(workRoot string) string {
 	}
 	sum := sha256.Sum256([]byte(root))
 	return fmt.Sprintf("%s-%s", safeNameComponent(host), hex.EncodeToString(sum[:4]))
+}
+
+// claimerOf is the attempt store's own claimer: claims, release markers and
+// records share one prefix and one store (artifacts.AttemptClaimer). A store
+// that cannot claim (a test's) numbers attempts as Temporal does.
+func claimerOf(store artifacts.AttemptStore) artifacts.AttemptClaimer {
+	if claimer, ok := store.(artifacts.AttemptClaimer); ok {
+		return claimer
+	}
+	return nil
 }

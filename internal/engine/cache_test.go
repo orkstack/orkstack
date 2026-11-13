@@ -446,3 +446,49 @@ func TestPoolResolverPlan_JudgesOnlyPoolsOfCachedTasks(t *testing.T) {
 		t.Fatalf("Plan: %v", err)
 	}
 }
+
+// TestPoolResolverPlan_RefusesAPoolMixingAttemptNumberings: once the census
+// is read (here for the cached tasks), every live pool is held to attempt
+// ordinals, the cpu pool included, which carries no cached task.
+func TestPoolResolverPlan_RefusesAPoolMixingAttemptNumberings(t *testing.T) {
+	fleet := cacheFleet(true)
+	fleet.orkers[0].AttemptOrdinalsSupported = false
+	fleet.orkers[0].BuildId = "2026.10.01"
+	_, _, err := cachePoolsResolver(fleet).Plan(context.Background(),
+		&orkstackv1.Namespace{Name: "ml"}, compile(t, cachePoolsDocument), false)
+	refused, ok := err.(*engine.PoolNoAttemptOrdinalsError)
+	if !ok {
+		t.Fatalf("Plan = %v, want PoolNoAttemptOrdinalsError", err)
+	}
+	if refused.Pool != "cpu" || refused.OrkerID != "cpu-1" || refused.BuildID != "2026.10.01" {
+		t.Fatalf("refusal = %+v", refused)
+	}
+	if !strings.Contains(err.Error(), `Orker "cpu-1" (build "2026.10.01"), which predates attempt ordinals`) {
+		t.Fatalf("message = %q", err.Error())
+	}
+	// No Orker answering is logged, not refused.
+	silent := &fakeFleet{silent: []string{"cpu-1", "gpu-3"}}
+	if _, _, err := cachePoolsResolver(silent).Plan(context.Background(),
+		&orkstackv1.Namespace{Name: "ml"}, compile(t, cachePoolsDocument), false); err != nil {
+		t.Fatalf("a describe failure refused the submit: %v", err)
+	}
+}
+
+// TestPoolResolverPlan_APlainSubmitAsksNothingAboutAttemptOrdinals: a submit
+// that asks no other capability question reads no census for this one.
+func TestPoolResolverPlan_APlainSubmitAsksNothingAboutAttemptOrdinals(t *testing.T) {
+	const plain = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: plain
+tasks:
+  - id: build
+    uses: shell
+    pool: cpu
+    with: {command: "echo build"}
+`
+	if _, _, err := cachePoolsResolver(refusingFleet{t}).Plan(context.Background(),
+		&orkstackv1.Namespace{Name: "ml"}, compile(t, plain), false); err != nil {
+		t.Fatalf("Plan: %v", err)
+	}
+}

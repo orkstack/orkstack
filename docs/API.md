@@ -892,6 +892,7 @@ is alive by answering DescribeOrker (§6.5).
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is the per-task cap (orker.resources.max_cpu and max_memory): the largest request this Orker runs. Submit refuses a task whose request no answering Orker of its pool could hold (RESOURCES_UNSATISFIABLE). Unset on an Orker built before it existed. |
 | `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
 | `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage (Orker.store_outage). cordoned is true beside it. |
+| `attempt_ordinals_supported` | `bool` | attempt_ordinals_supported is true on an Orker that numbers attempts with claimed ordinals (docs/STORAGE.md, "Attempt ordinals"). An Orker built before it numbers them as Temporal does and would write records over a newer Orker's, so submit refuses a pool that has one. |
 
 ### DiffOrkflowVersionsRequest
 
@@ -1813,7 +1814,7 @@ answer is the TaskAttempt record the Orker writes.
 | Field | Type | Description |
 |---|---|---|
 | `task_id` | `string` |  |
-| `attempt` | `int32` | attempt is Temporal's attempt number for the pending activity (PendingActivityInfo.attempt). While STARTED it is the number the Orker's own record will carry; while SCHEDULED between retries it is the number of the attempt that is ABOUT to run. |
+| `attempt` | `int32` | attempt is the ordinal the running attempt's Orker claimed, once its heartbeat names it: the number the attempt's record and log carry (docs/STORAGE.md, "Attempt ordinals"). Before that, and while SCHEDULED between retries, it is Temporal's attempt number for the pending activity (PendingActivityInfo.attempt), which may differ from the ordinal. |
 | `state` | [`LiveAttemptState`](#liveattemptstate) |  |
 | `attempt_scheduled_at` | `google.protobuf.Timestamp` | attempt_scheduled_at is Temporal's scheduled_time for the pending attempt: for a retry, the instant the backoff ends. attempt_started_at is Temporal's last_started_time and is set only while STARTED or CANCEL_REQUESTED. Neither is an Orker clock. |
 | `attempt_started_at` | `google.protobuf.Timestamp` |  |
@@ -2698,7 +2699,7 @@ reading of the inventory at most five seconds old, never a record.
 | `orkflow_name` | `string` | orkflow name |
 | `orkflow_version` | `string` | orkflow version; empty = latest |
 | `input` | [`Payload`](#payload) |  |
-| `idempotency_key` | `string` | optional dedupe |
+| `idempotency_key` | `string` | idempotency_key, optional, makes a retry safe: a repeat under the same key, in the same namespace, is answered with the run the key names instead of starting a second one, even when the first answer was lost. A key belongs to one submission: the same key with another orkflow_name, orkflow_version as written, source_run_id or input is refused ALREADY_EXISTS. allow_empty_pool, no_cache and origin_reference are not part of that comparison. A key stays bound for engine.idempotency_ttl (24h by default). |
 | `namespace` | `string` | namespace selects which namespace's orkflow_name is submitted. Empty is the default namespace. A name is unique WITHIN a namespace, so this is half of the orkflow's address, not a filter. |
 | `allow_empty_pool` | `bool` | allow_empty_pool submits even when a task's resolved pool has no live Orkers. Default false: an empty pool is an error at submit, not a run that reaches RUNNING and stays there because nothing will ever pick its tasks up. Setting it is logged with the pool it overrode. |
 | `origin_reference` | `string` | origin_reference is caller-supplied correlation text recorded as RunOrigin.reference: a CI job URL, a ticket key, an event id. Optional. At most 256 bytes and no control characters (INVALID_ARGUMENT otherwise, before a run id is minted). Opaque to OrkStack. On the trigger door the same value arrives as the Ork-Origin-Reference header, so a CI job sets one header and the body stays exactly the run's input. |
@@ -2745,7 +2746,7 @@ execution on an Orker, and an activity is an OCI image.
 
 ### TaskAttempt
 
-TaskAttempt is the immutable record of ONE Temporal attempt of one task,
+TaskAttempt is the immutable record of ONE attempt of one task,
 written by the Orker that ran it at the end of the attempt (§7.1). It is the
 failure-side sibling of ActivityCommit: a commit says what the winning
 attempt produced, an attempt record says what EVERY attempt did, including
@@ -2762,7 +2763,7 @@ change what the attempt itself reported.
 | `schema_version` | `int32` | schema_version is 1. A reader that does not know the value ignores the record rather than guessing, exactly as ActivityCommit's does. |
 | `run_id` | `string` |  |
 | `task_id` | `string` |  |
-| `attempt` | `int32` | attempt is activity.GetInfo(ctx).Attempt, 1-based. |
+| `attempt` | `int32` | attempt is the attempt's ordinal, 1-based, which the Orker claimed before it started anything (docs/STORAGE.md, "Attempt ordinals"). It may differ from Temporal's attempt count: an attempt stopped before its claim has no record. |
 | `outcome` | [`AttemptOutcome`](#attemptoutcome) |  |
 | `error` | [`Error`](#error) | error is set only for FAILED, and carries the same shape TaskRun.error does: the §8.2 reason as code, the category, retryability, the Orker's message, and its scan notes as details. |
 | `exit_code` | `int32` | exit_code is the container's exit status, 0 when the container never ran. |

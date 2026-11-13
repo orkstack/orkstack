@@ -131,6 +131,7 @@ A failed request starts no run.
 | `404` | `not_found` | The trigger was deleted, or its Orkflow or pinned version no longer exists. |
 | `400` | `invalid_argument` | The body is not one JSON object, or it is over 1 MiB. Or `Ork-Origin-Reference` is invalid. |
 | `412` | `failed_precondition` | The namespace is on hold, at its run limit or over an enforced budget, or no live Orker serves the pool. Nothing started. |
+| `409` | `already_exists` | The `Idempotency-Key` was used for another submission. Use one key per submission. Nothing started. |
 | `503` or `500` | `unavailable`, `internal` or `storage_error` | Storage or the engine is unavailable, retry the request. Or an unexpected error, or the trigger store could not be read. |
 
 ### Trigger limits

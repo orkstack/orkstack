@@ -1,0 +1,30 @@
+{
+  "known": [
+    "RUN_STARTED",
+    "TASK_SCHEDULED",
+    "TASK_STARTED",
+    "TASK_AWAITING",
+    "TASK_RESOLVED",
+    "TASK_SLEEPING",
+    "TASK_SUCCEEDED",
+    "TASK_FAILED",
+    "RUN_SUCCEEDED",
+    "RUN_FAILED",
+    "RUN_CANCELED"
+  ],
+  "run": [
+    "RUN_STARTED",
+    "RUN_SUCCEEDED",
+    "RUN_FAILED",
+    "RUN_CANCELED"
+  ],
+  "task": [
+    "TASK_SCHEDULED",
+    "TASK_STARTED",
+    "TASK_AWAITING",
+    "TASK_RESOLVED",
+    "TASK_SLEEPING",
+    "TASK_SUCCEEDED",
+    "TASK_FAILED"
+  ]
+}

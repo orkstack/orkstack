@@ -176,6 +176,7 @@ Every failure is `{"error":{"code":"…","message":"…"}}`:
 | Body not one JSON object, or over 1 MiB; malformed or over-long `Ork-Origin-Reference`; the stored definition names a secret source its namespace does not allow | 400 | `invalid_argument` |
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
 | A resolved pool has no live Orker; the namespace is held, at `max_running`, or over (or unable to measure) an enforced budget; the image policy refuses the definition's image; a composed child can no longer be planned | 412 | `failed_precondition` |
+| `Idempotency-Key` already used for another submission (another Orkflow, version or body) | 409 | `already_exists` |
 | Object storage or Temporal unavailable at submit | 503 | `unavailable` |
 | Anything else | 500 | `internal` |
 
@@ -188,9 +189,11 @@ burnt, no claim taken, no run recorded.
 `Idempotency-Key` is `SubmitRun`'s contract unchanged: the claim is scoped to
 the namespace, so a repeated key on any replica returns the run it names
 (same id, `201`) rather than starting another. It is per namespace, not per
-trigger — two triggers of one namespace presenting one key name one run — so
-a caller that needs one run per external event supplies that event's own
-identifier.
+trigger, and it belongs to one submission: the same key with another
+Orkflow, version or body is refused `409`, so two triggers of one namespace
+that present one key for different Orkflows start one run and refuse the
+other. A caller that needs one run per external event supplies that event's
+own identifier.
 
 Invocation is synchronous. One request is one `SubmitRun`: no queue, no
 retry, no acknowledge-then-start. A `201` means the run exists and is durably

@@ -113,6 +113,7 @@ func newAttemptDispatcher(t *testing.T, runtime ContainerRuntime, attempts artif
 		Refs:     artifacts.MemoryRefPredictor{},
 		Logs:     &recordingLogStore{},
 		Attempts: attempts,
+		Claims:   claimerOf(attempts),
 		Policy:   DefaultSecurityPolicy(),
 		WorkRoot: t.TempDir(),
 		OrkerID:  "orker-attempt-test",
@@ -314,11 +315,11 @@ func TestAttemptRecords_CancellationIsStillRecorded(t *testing.T) {
 	dispatcher := newAttemptDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, attempts)
 	in := baseExportInput("canceled")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	// Cancelled before Execute even starts, so ctx.Err() is non-nil at every
-	// point the record could be written on.
-	cancel()
-	if _, err := dispatcher.Execute(ctx, in); err == nil {
+	// Cancelled while its container runs, after the attempt claimed its
+	// ordinal, so ctx.Err() is non-nil at every point the record could be
+	// written on. (Cancelled before its claim, an attempt records nothing:
+	// TestExecute_StoppedBeforeTheClaimLeavesNothing.)
+	if _, err := executeCancelledRunning(dispatcher, in, context.Canceled); err == nil {
 		t.Fatal("Execute on a cancelled context returned no error")
 	}
 
@@ -347,9 +348,7 @@ func TestAttemptRecords_AnOrkerStoppingRecordsORKER_STOPPED(t *testing.T) {
 	dispatcher := newAttemptDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, attempts)
 	in := baseExportInput("orker-stopped")
 
-	ctx, cancel := context.WithCancelCause(context.Background())
-	cancel(worker.ErrWorkerShutdown)
-	result, err := dispatcher.Execute(ctx, in)
+	result, err := executeCancelledRunning(dispatcher, in, worker.ErrWorkerShutdown)
 	if !errors.Is(err, activity.ErrResultPending) || result != nil {
 		t.Fatalf("Execute while the orker stops = (%v, %v), want (nil, ErrResultPending): "+
 			"anything else is a completion the SDK would report", result, err)
@@ -458,9 +457,7 @@ func TestAttemptRecord_CarriesTheReservationTheContainerIsGiven(t *testing.T) {
 		}
 	}
 	cancel := func(t *testing.T, d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput) {
-		ctx, stop := context.WithCancel(context.Background())
-		stop()
-		if _, err := d.Execute(ctx, in); err == nil {
+		if _, err := executeCancelledRunning(d, in, context.Canceled); err == nil {
 			t.Fatal("Execute on a cancelled context returned no error")
 		}
 	}
@@ -475,7 +472,7 @@ func TestAttemptRecord_CarriesTheReservationTheContainerIsGiven(t *testing.T) {
 	outcomes := []outcome{
 		{"succeeded", succeed, func() ContainerRuntime { return &phaseCapturingRuntime{exitCode: 0} }},
 		{"failed", fail, func() ContainerRuntime { return &phaseCapturingRuntime{exitCode: 8} }},
-		{"canceled", cancel, func() ContainerRuntime { return &phaseCapturingRuntime{exitCode: 0} }},
+		{"canceled", cancel, func() ContainerRuntime { return newHeldRuntime() }},
 		{"panic", panics, func() ContainerRuntime { return panicCreateRuntime{} }},
 	}
 	requests := []struct {
@@ -546,4 +543,22 @@ func TestAttemptRecord_AnAdoptedCommitCarriesTheReservation(t *testing.T) {
 		t.Error("the adopting record does not say commit_adopted")
 	}
 	assertReservation(t, "adopted", record, 1, 2<<30)
+}
+
+// executeCancelledRunning runs Execute on d, whose runtime must be a
+// *heldRuntime (set here when it is not), and cancels the attempt with cause
+// once its container has started: after the attempt claimed its ordinal.
+func executeCancelledRunning(d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput, cause error) (*orkstackv1.ExecuteTaskResult, error) {
+	runtime, ok := d.Runtime.(*heldRuntime)
+	if !ok {
+		runtime = newHeldRuntime()
+		d.Runtime = runtime
+	}
+	ctx, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	go func() {
+		<-runtime.started
+		cancel(cause)
+	}()
+	return d.Execute(ctx, in)
 }

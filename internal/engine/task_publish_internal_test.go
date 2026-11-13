@@ -7,7 +7,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/stretchr/testify/mock"
 	sdklog "go.temporal.io/sdk/log"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
@@ -17,6 +19,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // ownSnapshotNotifier records, for every notification, whether its run is
@@ -162,6 +165,20 @@ func TestTaskPublish_ACompletedPublishLeavesTheCountedSet(t *testing.T) {
 	defer func() { readyLoopProbeForTest = nil }()
 
 	h := newRefusalHarnessOver(t, newMemSnapshotStore())
+	// The bound below is about when a publish leaves the set, not about how
+	// fast publishes are: a publish whose completion is not yet in history is
+	// genuinely outstanding, and a slow projection worker legitimately holds
+	// more than two (the window bounds them, and the in-flight cap counts
+	// them). So the test fixes the order the bound describes, on the test
+	// environment's own clock rather than on goroutine timing: each task
+	// takes an hour of workflow time, and the environment advances its clock
+	// only once no activity is running, so every publish dispatched before a
+	// task completes has completed, in history, before it does. (An hour, so
+	// the environment's wall-clock fallback for a timer, which fires a
+	// delayed completion after the same span of real time, never does inside
+	// the test's own timeout.)
+	h.env.OnActivity(task.ActivityExecuteTask, mock.Anything, mock.Anything).
+		Return(&orkstackv1.ExecuteTaskResult{ValuesJson: []byte(`{}`)}, nil).After(time.Hour)
 	plan := refusalRoutedPlan(t)
 	plan.History, plan.Continuation = nil, nil
 	limit := DefaultInFlightLimit(DefaultRunMaxInFlight)
@@ -185,10 +202,12 @@ func TestTaskPublish_ACompletedPublishLeavesTheCountedSet(t *testing.T) {
 	if passes < tasks {
 		t.Fatalf("%d passes, want at least one a task (%d)", passes, tasks)
 	}
-	// The pass after a task's completion may still see that task's own two
-	// publishes, never an earlier task's.
-	if most > 2 {
-		t.Fatalf("a pass counted %d outstanding publishes, want at most the latest task's 2", most)
+	// Every publish dispatched before a task completed has completed in
+	// history before the pass that follows, so that pass counts none: a
+	// completed publish is let go at once. (Before the fix the set kept them
+	// until the window of 32 filled.)
+	if most != 0 {
+		t.Fatalf("a pass counted %d outstanding publishes, every one of them already completed in history; want 0", most)
 	}
 }
 

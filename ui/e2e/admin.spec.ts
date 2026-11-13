@@ -1225,10 +1225,10 @@ test('maximum run retention is read from the store and a change through the UI r
 	// both values, and accepts only once the new value is typed. Cancel sends
 	// nothing.
 	await expect(page.getByTestId('retention-set-hours')).toHaveValue('72');
-	await page.getByTestId('retention-set-hours').fill('2');
+	await page.getByTestId('retention-set-hours').fill('30');
 	await page.getByTestId('retention-set-submit').click();
 	await expect(page.getByTestId('retention-lower-confirm')).toBeVisible();
-	await expect(page.getByTestId('retention-lower-consequence')).toContainText('from 72h 0m to 2h');
+	await expect(page.getByTestId('retention-lower-consequence')).toContainText('from 72h 0m to 30h');
 	await expect(page.getByTestId('retention-lower-consequence')).toContainText('logs, attempt records, snapshots and commits');
 	await expect(page.getByTestId('retention-lower-cancel')).toBeFocused();
 	await expect(page.getByTestId('retention-lower-accept')).toBeDisabled();
@@ -1243,18 +1243,22 @@ test('maximum run retention is read from the store and a change through the UI r
 
 	await page.getByTestId('retention-set-submit').click();
 	await expect(page.getByTestId('retention-lower-confirm')).toBeVisible();
-	await page.getByTestId('retention-lower-typed').fill('2');
+	await page.getByTestId('retention-lower-typed').fill('30');
 	await expect(page.getByTestId('retention-lower-accept')).toBeEnabled();
 	await page.getByTestId('retention-lower-accept').click();
 	await expect(page.getByTestId('retention-set-success')).toBeVisible();
-	await expect(page.getByTestId('retention-current')).toHaveText('2h 0m');
-	await expect(page.getByTestId('retention-set-hours')).toHaveValue('2');
-	note('lowering to 2h asked first (Cancel kept 72h on the store); typed 2, accepted: maximum run retention is 2h');
+	await expect(page.getByTestId('retention-current')).toHaveText('30h 0m');
+	await expect(page.getByTestId('retention-set-hours')).toHaveValue('30');
+	note('lowering to 30h asked first (Cancel kept 72h on the store); typed 30, accepted: maximum run retention is 30h');
 
 	// The independent check: `temporal operator namespace describe` talks to
 	// the cluster directly, never through `ork`'s Connect API, so this can
 	// only pass if the write actually reached the underlying cluster — and it
-	// must report 26h0m0s (2h + the 24h enforcement margin), never the raw 2h.
+	// must report 54h0m0s (30h + the 24h enforcement margin), never the raw
+	// 30h. 30h is above an idempotency key's life (24h + 5m), so the key-life
+	// floor (archive.RetentionController.WithKeyLife, whose own proof is
+	// TestRetentionController_BackstopIsAtLeastAKeysLife) does not apply and
+	// the margin arithmetic is pinned exactly.
 	const described = execFileSync(
 		'temporal',
 		[
@@ -1268,24 +1272,24 @@ test('maximum run retention is read from the store and a change through the UI r
 		],
 		{ stdio: 'pipe' }
 	).toString();
-	expect(described).toMatch(/WorkflowExecutionRetentionTtl\s+26h0m0s/);
-	note(`verified independently: temporal operator namespace describe reports 26h0m0s (2h maximum + 24h margin) for ${TEMPORAL_NAMESPACE}`);
+	expect(described).toMatch(/WorkflowExecutionRetentionTtl\s+54h0m0s/);
+	note(`verified independently: temporal operator namespace describe reports 54h0m0s (30h maximum + 24h margin) for ${TEMPORAL_NAMESPACE}`);
 	await shot(page, 'screenshot-admin-retention-changed.png');
 
 	// Raising needs no confirmation.
-	await page.getByTestId('retention-set-hours').fill('3');
+	await page.getByTestId('retention-set-hours').fill('31');
 	await page.getByTestId('retention-set-submit').click();
 	await expect(page.getByTestId('retention-set-success')).toBeVisible();
 	await expect(page.getByTestId('retention-lower-confirm')).toHaveCount(0);
-	await expect(page.getByTestId('retention-current')).toHaveText('3h 0m');
-	note('raising to 3h applied with no confirmation');
+	await expect(page.getByTestId('retention-current')).toHaveText('31h 0m');
+	note('raising to 31h applied with no confirmation');
 
 	// A non-positive duration is refused LOCALLY, before any RPC leaves the
 	// browser: no request is made, and the stored maximum is untouched.
 	await page.getByTestId('retention-set-hours').fill('0');
 	await page.getByTestId('retention-set-submit').click();
 	await expect(page.getByTestId('retention-set-error')).toContainText('positive');
-	await expect(page.getByTestId('retention-current')).toHaveText('3h 0m');
+	await expect(page.getByTestId('retention-current')).toHaveText('31h 0m');
 });
 
 // A pool health read that cannot reach the cluster AT ALL

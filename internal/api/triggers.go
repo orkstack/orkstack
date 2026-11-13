@@ -208,6 +208,10 @@ func triggerSubmitStatus(err error) (int, string) {
 		return http.StatusPreconditionFailed, code.String()
 	case connect.CodeUnavailable:
 		return http.StatusServiceUnavailable, code.String()
+	case connect.CodeAlreadyExists:
+		// The Idempotency-Key was used for another submission: a retry of
+		// this request can never succeed, so it is a conflict, not a 500.
+		return http.StatusConflict, code.String()
 	default:
 		return http.StatusInternalServerError, "internal"
 	}

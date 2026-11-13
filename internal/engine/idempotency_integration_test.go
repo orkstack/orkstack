@@ -140,11 +140,9 @@ func TestIntegration_ConcurrentClaimsConvergeOnOneRun(t *testing.T) {
 			defer wg.Done()
 			idempotency := engine.NewTemporalIdempotency(c, queue, time.Hour)
 			<-start
-			winner, err := idempotency.Claim(ctx, key, func() (engine.Claim, error) {
-				return engine.Claim{
-					RunID:    candidates[i],
-					Snapshot: []byte("snapshot of " + candidates[i]),
-				}, nil
+			winner, err := idempotency.Claim(ctx, key, engine.Claim{
+				RunID:    candidates[i],
+				Snapshot: []byte("snapshot of " + candidates[i]),
 			})
 			winners[i], failures[i] = winner, err
 		}(i)
@@ -179,9 +177,7 @@ func TestIntegration_ConcurrentClaimsConvergeOnOneRun(t *testing.T) {
 	// A repeat after the race still gets the same answer: the claim is held,
 	// never released, which is what keeps a failed start deduplicated too.
 	repeat, err := engine.NewTemporalIdempotency(c, queue, time.Hour).
-		Claim(ctx, key, func() (engine.Claim, error) {
-			return engine.Claim{RunID: engine.NewRunID()}, nil
-		})
+		Claim(ctx, key, engine.Claim{RunID: engine.NewRunID()})
 	must.OKf(t, err, "repeat claim")
 	if repeat.RunID != winner.RunID {
 		t.Errorf("a later claim got %q, want the holder %q", repeat.RunID, winner.RunID)
@@ -207,9 +203,7 @@ func TestIntegration_ClaimFollowsAReissuedRunID(t *testing.T) {
 	idempotency := engine.NewTemporalIdempotency(c, queue, time.Hour)
 
 	held := engine.NewRunID()
-	if _, err := idempotency.Claim(ctx, key, func() (engine.Claim, error) {
-		return engine.Claim{RunID: held}, nil
-	}); err != nil {
+	if _, err := idempotency.Claim(ctx, key, engine.Claim{RunID: held}); err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
 
@@ -221,9 +215,7 @@ func TestIntegration_ClaimFollowsAReissuedRunID(t *testing.T) {
 
 	reissued := engine.NewRunID()
 	must.OKf(t, idempotency.Rebind(ctx, key, engine.Claim{RunID: reissued}, held), "rebind")
-	after, err := idempotency.Claim(ctx, key, func() (engine.Claim, error) {
-		return engine.Claim{RunID: engine.NewRunID()}, nil
-	})
+	after, err := idempotency.Claim(ctx, key, engine.Claim{RunID: engine.NewRunID()})
 	must.OKf(t, err, "claim after rebind")
 	if after.RunID != reissued {
 		t.Errorf("the key names %q, want the reissued run %q", after.RunID, reissued)

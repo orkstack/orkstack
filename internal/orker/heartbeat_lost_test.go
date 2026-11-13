@@ -43,9 +43,7 @@ func TestExecute_ALostHeartbeatIsNotACancel(t *testing.T) {
 			dispatcher := newAttemptDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, attempts)
 			in := baseExportInput("heartbeat-lost")
 
-			ctx, cancel := context.WithCancelCause(context.Background())
-			cancel(cause)
-			result, err := dispatcher.Execute(ctx, in)
+			result, err := executeCancelledRunning(dispatcher, in, cause)
 			if result != nil {
 				t.Fatalf("Execute returned a result %v for an attempt it stopped", result)
 			}
@@ -137,9 +135,7 @@ func TestExecute_ACancelNobodyLostStaysACancel(t *testing.T) {
 			dispatcher := newAttemptDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, attempts)
 			in := baseExportInput("still-a-cancel")
 
-			ctx, cancel := context.WithCancelCause(context.Background())
-			cancel(tc.cause)
-			_, err := dispatcher.Execute(ctx, in)
+			_, err := executeCancelledRunning(dispatcher, in, tc.cause)
 			if tc.wantPending {
 				if !errors.Is(err, activity.ErrResultPending) {
 					t.Errorf("Execute error = %v, want ErrResultPending", err)

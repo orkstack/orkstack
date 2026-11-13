@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
+	"go.temporal.io/api/serviceerror"
 	"net/http"
 	"reflect"
 	"strings"
@@ -314,7 +314,7 @@ func TestSubmitRun_KeyedRepeatReturnsTheFirstOrigin(t *testing.T) {
 
 func TestSubmitRun_FailedStartArchivesTheOrigin(t *testing.T) {
 	h := newOriginHarness(t)
-	h.starter.err = errors.New("temporal is down")
+	h.starter.err = serviceerror.NewFailedPrecondition("temporal is down")
 	_, err := h.submit(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", OriginReference: "INC-7"}, "ops")
 	if err == nil {
 		t.Fatal("SubmitRun succeeded against a failing starter")

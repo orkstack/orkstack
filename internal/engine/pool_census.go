@@ -127,6 +127,10 @@ func pausedForStoreOutage(o *orkstackv1.DescribeOrkerResult) bool {
 	return o.GetStoreOutage() != nil && o.GetCordonReason() == ""
 }
 
+// wasRead says the census was taken, successfully, by an earlier question;
+// it never takes one.
+func (c *poolCensus) wasRead() bool { return c.byPool != nil && c.err == nil }
+
 // unansweredCount is how many live Orkers did not answer on their own
 // channel. Zero before the census was read.
 func (c *poolCensus) unansweredCount() int {

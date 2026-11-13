@@ -59,6 +59,24 @@ type indexedRun struct {
 var namespacePredicate = regexp.MustCompile(
 	task.SearchAttrOrkflowNamespace + ` = "([^"]*)"`)
 
+// namespaceSelects applies a query's namespace predicate to one record, as
+// the cluster does: stamped is the attribute the record was indexed under,
+// empty for a run started without it. `OrkflowNamespace IS NULL` selects
+// exactly those, alone or as the other half of an OR beside `= "x"`.
+func namespaceSelects(query, stamped string) bool {
+	isNull := strings.Contains(query, task.SearchAttrOrkflowNamespace+" IS NULL")
+	match := namespacePredicate.FindStringSubmatch(query)
+	switch {
+	case match != nil && isNull:
+		return stamped == match[1] || stamped == ""
+	case match != nil:
+		return stamped == match[1]
+	case isNull:
+		return stamped == ""
+	}
+	return true
+}
+
 func (v *visibilityIndex) GetWorkflowHistory(
 	context.Context, string, string, bool, enumspb.HistoryEventFilterType,
 ) client.HistoryEventIterator {
@@ -88,10 +106,6 @@ func (v *visibilityIndex) ListWorkflow(
 	v.pages++
 	v.queries = append(v.queries, request.GetQuery())
 
-	var wantNamespace string
-	if match := namespacePredicate.FindStringSubmatch(request.GetQuery()); match != nil {
-		wantNamespace = match[1]
-	}
 	if !strings.Contains(request.GetQuery(), fmt.Sprintf("WorkflowType = %q", RunWorkflowType)) {
 		return nil, fmt.Errorf("visibility: unsupported query %q", request.GetQuery())
 	}
@@ -99,7 +113,7 @@ func (v *visibilityIndex) ListWorkflow(
 	// The cluster applies the predicate, then pages what is left.
 	matching := make([]*workflowpb.WorkflowExecutionInfo, 0, len(v.records))
 	for _, record := range v.records {
-		if wantNamespace != "" && record.namespace != wantNamespace {
+		if !namespaceSelects(request.GetQuery(), record.namespace) {
 			continue
 		}
 		matching = append(matching, record.info)
@@ -176,8 +190,8 @@ func TestTemporalRunReader_ScopesAListInTheQueryNotAfterIt(t *testing.T) {
 		t.Fatalf("ListRuns(alpha) = %v, want alpha's one run: a namespace's own runs "+
 			"cannot depend on how busy its neighbours are", runs)
 	}
-	want := fmt.Sprintf("WorkflowType = %q AND %s = %q",
-		RunWorkflowType, task.SearchAttrOrkflowNamespace, "alpha")
+	want := fmt.Sprintf("WorkflowType = %q AND (%s = %q OR %s IS NULL)",
+		RunWorkflowType, task.SearchAttrOrkflowNamespace, "alpha", task.SearchAttrOrkflowNamespace)
 	if index.queries[0] != want {
 		t.Errorf("ListRuns queried %q, want %q", index.queries[0], want)
 	}
@@ -486,5 +500,110 @@ func TestMergeRunSnapshot_KeepsTheIdentityALaterSnapshotOmits(t *testing.T) {
 	if merged.GetStatus() != orkstackv1.Status_STATUS_RUNNING {
 		t.Errorf("merged status = %v, want RUNNING: the newer snapshot still wins on what "+
 			"it does carry", merged.GetStatus())
+	}
+}
+
+// unstamp removes the namespace attribute from the records with these ids, as
+// a run started by an engine that booted unindexed is held: its memo still
+// names its namespace, its index entry names none.
+func unstamp[T any](records []T, set func(*T), ids map[string]bool, id func(T) string) {
+	for i := range records {
+		if ids[id(records[i])] {
+			set(&records[i])
+		}
+	}
+}
+
+// A run started without the namespace attribute — by an engine that booted
+// before its Temporal namespace was visible, or before an upgrade — is still
+// one of its namespace's runs. An indexed replica's scoped reads (the list,
+// the stats durations and the live-run count) return it beside the stamped
+// one, and a run of ANOTHER namespace without the attribute is dropped by its
+// memo.
+func TestScopedReads_KeepRunsStartedWithoutTheNamespaceAttribute(t *testing.T) {
+	ctx := context.Background()
+	dc := converter.GetDefaultDataConverter()
+	unstamped := map[string]bool{"ork-alpha-u": true, "ork-bravo-u": true}
+
+	t.Run("ListRuns", func(t *testing.T) {
+		index := &visibilityIndex{}
+		index.records = append(index.records, namespacedRuns(t, "alpha", 1)...)
+		for _, ns := range []string{"alpha", "bravo"} {
+			run := namespacedRuns(t, ns, 1)[0]
+			run.info.Execution.WorkflowId = "ork-" + ns + "-u"
+			index.records = append(index.records, run)
+		}
+		unstamp(index.records, func(r *indexedRun) { r.namespace = "" }, unstamped,
+			func(r indexedRun) string { return r.info.GetExecution().GetWorkflowId() })
+		reader := newRunReader(index, dc).WithNamespaceIndex(true)
+
+		runs, err := reader.ListRuns(ctx, RunQuery{Namespace: "alpha", Limit: 10})
+		must.OKf(t, err, "ListRuns")
+		got := map[string]bool{}
+		for _, run := range runs {
+			got[run.GetId()] = true
+		}
+		if len(runs) != 2 || !got["ork-alpha-0"] || !got["ork-alpha-u"] {
+			t.Fatalf("ListRuns(alpha) = %v, want ork-alpha-0 and ork-alpha-u", got)
+		}
+	})
+
+	t.Run("Executions", func(t *testing.T) {
+		at := statsWindowStart.Add(time.Hour)
+		corpus := []statsCorpusRun{
+			{id: "ork-alpha-0", namespace: "alpha", orkflow: "deploy", createdAt: at, closedAt: at.Add(10 * time.Minute), status: orkstackv1.Status_STATUS_SUCCEEDED},
+			{id: "ork-alpha-u", namespace: "alpha", orkflow: "deploy", createdAt: at, closedAt: at.Add(20 * time.Minute), status: orkstackv1.Status_STATUS_FAILED},
+			{id: "ork-bravo-u", namespace: "bravo", orkflow: "deploy", createdAt: at, closedAt: at.Add(30 * time.Minute), status: orkstackv1.Status_STATUS_SUCCEEDED},
+		}
+		index := statsIndexOver(t, corpus)
+		unstamp(index.records, func(r *indexedExecution) { r.namespace = "" }, unstamped,
+			func(r indexedExecution) string { return r.info.GetExecution().GetWorkflowId() })
+		reader := newRunReader(index, dc).WithNamespaceIndex(true)
+
+		executions, err := reader.Executions(ctx, StatsWindow{Namespace: "alpha", Since: statsWindowStart, Until: statsWindowEnd})
+		must.OKf(t, err, "Executions")
+		want := []time.Duration{10 * time.Minute, 20 * time.Minute}
+		if len(executions.Durations) != len(want) ||
+			executions.Durations[0] != want[0] || executions.Durations[1] != want[1] {
+			t.Fatalf("alpha's durations = %v, want %v", executions.Durations, want)
+		}
+	})
+
+	t.Run("RunningCount", func(t *testing.T) {
+		now := time.Now()
+		corpus := []statsCorpusRun{
+			{id: "ork-alpha-0", namespace: "alpha", orkflow: "deploy", createdAt: now},
+			{id: "ork-alpha-u", namespace: "alpha", orkflow: "deploy", createdAt: now},
+			{id: "ork-bravo-u", namespace: "bravo", orkflow: "deploy", createdAt: now},
+		}
+		index := statsIndexOver(t, corpus)
+		unstamp(index.records, func(r *indexedExecution) { r.namespace = "" }, unstamped,
+			func(r indexedExecution) string { return r.info.GetExecution().GetWorkflowId() })
+		reader := newRunReader(index, dc).WithNamespaceIndex(true)
+
+		got, err := reader.RunningCount(ctx, "alpha", 10)
+		if err != nil || got != 2 {
+			t.Fatalf("RunningCount(alpha) = %d, %v; want 2", got, err)
+		}
+	})
+}
+
+// A scoped list that read other namespaces' unstamped runs and ran out of
+// pages before its limit fails rather than answering short: those runs are
+// another tenant's traffic, exactly as on a cluster without the index.
+func TestTemporalRunReader_ReportsAScopedListThatUnstampedRunsExhausted(t *testing.T) {
+	const limit = 5
+	index := &visibilityIndex{records: namespacedRuns(t, "bravo", maxRunListPages*limit+1)}
+	for i := range index.records {
+		index.records[i].namespace = ""
+	}
+	reader := newRunReader(index, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
+
+	runs, err := reader.ListRuns(context.Background(), RunQuery{Namespace: "alpha", Limit: limit})
+	if err == nil {
+		t.Fatalf("ListRuns = %v, want a failure: a short page read as a whole one", runs)
+	}
+	if !strings.Contains(err.Error(), "alpha") {
+		t.Errorf("err = %v, want it to name the namespace", err)
 	}
 }

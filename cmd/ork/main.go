@@ -1077,6 +1077,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err := task.EnsureNamespace(ctx, temporalClient, cfg.temporalNamespace); err != nil {
 		return err
 	}
+	// A namespace registered a moment ago is not yet seen by the cluster's
+	// operator service. Registering the index against it then fails, and an
+	// engine that boots unindexed starts runs without the namespace attribute
+	// that every indexed replica's scoped reads select on. The wait and the
+	// three registrations share one deadline: with several frontends, one may
+	// still answer NotFound after another saw the namespace, and each
+	// registration keeps asking under it.
+	indexCtx, cancelIndex := context.WithTimeout(ctx, task.NamespaceVisibleTimeout)
+	defer cancelIndex()
+	if err := task.WaitNamespaceVisible(indexCtx, temporalClient, cfg.temporalNamespace); err != nil {
+		return err
+	}
 	// The run index, provisioned beside the namespace: it is what makes "list
 	// this namespace's runs" a question the cluster answers, instead of a
 	// filter over whatever page walk another tenant's traffic left room for.
@@ -1084,7 +1096,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// everything else works, and the reader falls back to reading the whole
 	// index — but it IS worth a line, because that fallback is slow and its
 	// limit is an error a client would otherwise have to explain.
-	namespaceIndexed, err := task.EnsureRunSearchAttributes(ctx, temporalClient, cfg.temporalNamespace)
+	namespaceIndexed, err := task.EnsureRunSearchAttributes(indexCtx, temporalClient, cfg.temporalNamespace)
+	if errors.Is(err, task.ErrNamespaceNotVisible) {
+		return err
+	}
 	if err != nil {
 		logger.Warn("visibility does not index a run's orkflow namespace",
 			"search_attribute", task.SearchAttrOrkflowNamespace,
@@ -1095,7 +1110,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// accepted OrkflowNamespace in an earlier release and refuses the two
 	// origin attributes now keeps its namespace predicate, and only an
 	// origin-filtered list falls back to the bounded walk.
-	originIndexed, err := task.EnsureRunOriginSearchAttributes(ctx, temporalClient, cfg.temporalNamespace)
+	originIndexed, err := task.EnsureRunOriginSearchAttributes(indexCtx, temporalClient, cfg.temporalNamespace)
+	if errors.Is(err, task.ErrNamespaceNotVisible) {
+		return err
+	}
 	if err != nil {
 		logger.Warn("visibility does not index a run's origin",
 			"search_attribute", task.SearchAttrOrkflowOriginKind+","+task.SearchAttrOrkflowOriginId,
@@ -1104,7 +1122,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	// The root index is a third answer, for the same reason: a cluster at its
 	// limit of custom attributes keeps the two it already has.
-	rootIndexed, err := task.EnsureRunRootSearchAttribute(ctx, temporalClient, cfg.temporalNamespace)
+	rootIndexed, err := task.EnsureRunRootSearchAttribute(indexCtx, temporalClient, cfg.temporalNamespace)
+	if errors.Is(err, task.ErrNamespaceNotVisible) {
+		return err
+	}
 	if err != nil {
 		logger.Warn("visibility does not index a run's composed chain",
 			"search_attribute", task.SearchAttrOrkflowOriginRootRunId,
@@ -1303,7 +1324,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return fmt.Errorf("open retention policy store: %w", err)
 	}
 	retention := archivecleanup.NewRetentionController(
-		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger)
+		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger).
+		WithKeyLife(engine.ClaimLife(cfg.idempotencyTTL))
 	policy, err := retention.Ensure(ctx)
 	if err != nil {
 		// Fail closed: an engine that cannot establish the ceiling must not
@@ -1421,6 +1443,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	// ork.idempotency.legacy_pending: a key claimed by an earlier release
+	// answered with a pending run that was not found.
+	idempotencyInstruments, err := telemetry.NewIdempotencyInstruments(sinks.Default())
+	if err != nil {
+		return err
+	}
 
 	// Projection worker: engine-internal activities on a dedicated queue so
 	// Orkers never receive them. The archive body's event log is read back
@@ -1517,25 +1545,26 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Resolver:     resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
-		ImagePolicies: imagePolicies,
-		Signatures:    &dsl.SignatureVerifier{Resolver: resolver},
-		Activities:    activities,
-		RawQueue:      cfg.defaultRouteOverride,
-		Archive:       archive,
-		Logs:          logStore,
-		ArtifactStore: artifactStore,
-		Attempts:      attemptStore,
-		Commits:       commitStore,
-		Idempotency:   idempotency,
-		Webhooks:      webhookRegistry,
-		Deliveries:    deliveryStore,
-		Triggers:      triggerStore,
-		Schedules:     scheduler,
-		AuditStore:    auditStore,
-		AuditCounter:  auditInstruments,
-		Notifier:      runNotifier,
-		Logger:        logger,
-		System:        system,
+		ImagePolicies:   imagePolicies,
+		Signatures:      &dsl.SignatureVerifier{Resolver: resolver},
+		Activities:      activities,
+		RawQueue:        cfg.defaultRouteOverride,
+		Archive:         archive,
+		Logs:            logStore,
+		ArtifactStore:   artifactStore,
+		Attempts:        attemptStore,
+		Commits:         commitStore,
+		Idempotency:     idempotency,
+		OnLegacyPending: idempotencyInstruments.CountLegacyPending,
+		Webhooks:        webhookRegistry,
+		Deliveries:      deliveryStore,
+		Triggers:        triggerStore,
+		Schedules:       scheduler,
+		AuditStore:      auditStore,
+		AuditCounter:    auditInstruments,
+		Notifier:        runNotifier,
+		Logger:          logger,
+		System:          system,
 		// Retention backs SystemService's
 		// GetRetentionPolicy/UpdateRetentionPolicy, and also validates a
 		// namespace's own run_retention against the ceiling

@@ -665,6 +665,10 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	running := q.Status == orkstackv1.Status_STATUS_RUNNING
 	page := &chainPage{reader: r, query: q, running: running, settled: map[string]chainSettlement{}}
 	out := make([]*orkstackv1.Run, 0, batch)
+	// foreign records that the walk read and dropped another namespace's run:
+	// a scoped query also selects runs stamped with no namespace, of any
+	// namespace (scopedNamespacePredicate).
+	foreign := false
 	var token []byte
 	for read := 0; read < pages; read++ {
 		response, err := r.client.ListWorkflow(ctx, &workflowservice.ListWorkflowExecutionsRequest{
@@ -686,6 +690,9 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 			for _, execution := range response.GetExecutions() {
 				run := r.listedRun(execution)
 				if !matchesRunQuery(run, q) {
+					if q.Namespace != "" && !inNamespace(run.GetNamespace(), q.Namespace) {
+						foreign = true
+					}
 					continue
 				}
 				out = append(out, run)
@@ -718,6 +725,14 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 				"so every other namespace's runs had to be read and discarded, and %d pages "+
 				"were not enough. The engine provisions the index at boot and warns there if "+
 				"it cannot (run_namespace_index, docs/DEPLOY.md)",
+			q.Namespace, pages)
+	}
+	if foreign {
+		return nil, fmt.Errorf(
+			"engine: list runs in namespace %q: runs started without the namespace index "+
+				"belong to other namespaces too, so they had to be read and discarded, and %d "+
+				"pages were not enough. Narrow the list, or let those runs finish and leave "+
+				"the cluster's retention (run_namespace_index, docs/DEPLOY.md)",
 			q.Namespace, pages)
 	}
 	if originUnscoped {
@@ -854,9 +869,10 @@ func completeRunPage(runs []*orkstackv1.Run, q RunQuery) []*orkstackv1.Run {
 // no registration — which is what keeps "is anything still live?" a query over
 // live runs rather than a walk over every run the namespace ever had.
 //
-// A run started before the index existed carries the memo and no attribute, so
-// it is not listed by namespace; it is still readable by id, and once it
-// finishes the archive — whose key begins with the namespace — holds it.
+// A run started without the attribute (before the index existed, or by an
+// engine that booted unindexed) carries the memo and no attribute, so the
+// predicate also selects runs stamped with none (scopedNamespacePredicate),
+// and matchesRunQuery keeps those of this namespace by their memo.
 //
 // The orkflow NAME stays a client-side filter: its memo is unindexed.
 //
@@ -867,8 +883,7 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originS
 	query = fmt.Sprintf("WorkflowType = %q", RunWorkflowType)
 	scoped = q.Namespace != "" && r.namespaceIndexed
 	if scoped {
-		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowNamespace,
-			artifacts.ResolveNamespace(q.Namespace))
+		query = fmt.Sprintf("%s AND %s", query, scopedNamespacePredicate(q.Namespace))
 	}
 	if predicate, ok := executionStatusPredicate(q.Status, r.clock()); ok {
 		query += " AND " + predicate

@@ -592,14 +592,17 @@ func (s *logChunkSink) putLocked(data []byte, truncated bool) {
 		Data:      data,
 		Truncated: truncated,
 	}
-	ctx, cancel := s.uploadContext()
-	defer cancel()
 	var err error
 	for try := 0; try < logChunkUploadTries; try++ {
 		if try > 0 {
 			s.backoff()
 		}
-		if err = s.store.PutLogChunk(ctx, chunk); err == nil {
+		// The context is taken afresh on every try: a task cancelled while a
+		// put is in flight fails that put with the cancellation, and the
+		// retry must then run detached (uploadContext) rather than on the
+		// context that is already dead.
+		err = s.tryPutLocked(chunk)
+		if err == nil {
 			s.seq = chunk.Seq
 			s.stored += int64(len(data))
 			s.coolUntil, s.cooldown = time.Time{}, 0
@@ -618,6 +621,13 @@ func (s *logChunkSink) putLocked(data []byte, truncated bool) {
 		s.onError(fmt.Errorf("orker: store log chunk %d of task %q in run %q: %w",
 			chunk.Seq, s.ref.TaskID, s.ref.RunID, err))
 	}
+}
+
+// tryPutLocked makes one upload try under a context taken for that try.
+func (s *logChunkSink) tryPutLocked(chunk artifacts.LogChunk) error {
+	ctx, cancel := s.uploadContext()
+	defer cancel()
+	return s.store.PutLogChunk(ctx, chunk)
 }
 
 // uploadContext is the context a chunk is uploaded under.

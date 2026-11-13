@@ -100,6 +100,15 @@ type RunPlan struct {
 	// fixture keeps matching without re-recording.
 	Origin *RunOrigin `json:"origin,omitzero"`
 
+	// IdempotencyFingerprint is the fingerprint of the submission that
+	// started this run under an idempotency key (internal/api,
+	// submissionFingerprint), and empty for a run started with none. A retry
+	// under the key reads it from the run's first start event to tell the
+	// claim's own run from a workflow something else started under the id.
+	// Workflow code never reads it, so it decides no command and needs no
+	// gate; omitempty, so a plan with no key encodes exactly as before.
+	IdempotencyFingerprint string `json:"idempotency_fingerprint,omitempty"`
+
 	// Awaits holds, per task id, the callback credential of every `await:`
 	// of this run that declares `callback: true`: a salt and the salted
 	// SHA-256 of a token minted at SUBMIT (internal/api). NEVER the token.

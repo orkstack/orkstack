@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"fmt"
+	"go.temporal.io/api/serviceerror"
 	"net"
 	"net/http"
 	"strings"
@@ -387,7 +388,7 @@ func TestSubmitRun_StarterFailureIsArchived(t *testing.T) {
 
 	first := boot(t, archive, "a", clock(start, time.Minute))
 	first.apply(t, helloYAML(t))
-	first.starter.err = fmt.Errorf("temporal is down")
+	first.starter.err = serviceerror.NewFailedPrecondition("temporal is down")
 	if _, err := first.svc.SubmitRun(context.Background(),
 		connect.NewRequest(&orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork"})); err == nil {
 		t.Fatal("SubmitRun succeeded despite a failing starter")

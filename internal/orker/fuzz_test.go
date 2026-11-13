@@ -762,6 +762,39 @@ func FuzzParseOtherContainers(f *testing.F) {
 	})
 }
 
+// FuzzParseOwnContainers reads a list the engine answers, whose labels anyone
+// with its socket can set, and whose result names the attempts the boot reap
+// releases. The claims: it never returns a container with no id, every field
+// is a whole field of one line, and an attempt is released only for labels
+// that name a whole run, task and positive ordinal.
+func FuzzParseOwnContainers(f *testing.F) {
+	f.Add("c1\tork-r1\tbuild\t\t3\nc2\tork-r1\teach\t7\t1\n")
+	f.Add("c1\tork-r1\tbuild\t\tx\n")
+	f.Add("c1\t\t\t\t\n")
+	f.Add("Emulate Docker CLI using podman.\n\t\t\t\t\n")
+	f.Add("c1\tork-r1\tbuild\t-1\t2\n")
+	f.Add("")
+	f.Fuzz(func(t *testing.T, answer string) {
+		for _, c := range parseOwnContainers(answer) {
+			if c.ID == "" {
+				t.Fatalf("%q listed a container with no id: %+v", answer, c)
+			}
+			for _, field := range []string{c.ID, c.RunID, c.TaskID, c.Item, c.Attempt} {
+				if strings.ContainsAny(field, "\t\n") {
+					t.Fatalf("%q split a line wrongly: %+v", answer, c)
+				}
+			}
+			ref, ok := reapedAttempt(c)
+			if !ok {
+				continue
+			}
+			if ref.Attempt < 1 || ref.RunID == "" || ref.TaskID == "" || (ref.Item.Set && ref.Item.Index < 0) {
+				t.Fatalf("%+v released as %+v", c, ref)
+			}
+		}
+	})
+}
+
 // FuzzStopSeen reads a container's event stream, which the engine decides. The
 // claims: the stream says the container was stopped only if, before any line
 // whose first word is its end's, a line's first word was stop, or kill with no

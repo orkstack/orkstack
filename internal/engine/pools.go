@@ -296,6 +296,26 @@ func (e *PoolNoCacheSupportError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
 }
 
+// PoolNoAttemptOrdinalsError refuses a submit whose tasks would run on a pool
+// that holds an Orker numbering attempts as Temporal does: during a rollout it
+// would write attempt records over those of the Orkers that claim ordinals
+// (docs/STORAGE.md, "Attempt ordinals").
+type PoolNoAttemptOrdinalsError struct {
+	Namespace string
+	Pool      string
+	Tasks     []string
+	OrkerID   string
+	BuildID   string
+}
+
+func (e *PoolNoAttemptOrdinalsError) Error() string {
+	return fmt.Sprintf(
+		"pool %q (namespace %q, tasks: %s) is served by Orker %q (build %q), which predates attempt "+
+			"ordinals: beside this release's Orkers it would write attempt records over theirs. Roll every "+
+			"Orker of the pool to one release before submitting.",
+		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
+}
+
 // PoolNoJoinSupportError refuses a submit whose container failure handler
 // (join any_failed or all_done, docs/DSL.md "Joins and failure handlers")
 // would run on a pool whose Orker predates join policies. Such an Orker
@@ -732,6 +752,7 @@ func (r *PoolResolver) Plan(
 	// it, so a submit whose pools' channels are polled and that needs no
 	// capability probe asks the inventory nothing.
 	census := newPoolCensus(r.Fleet)
+	var livePools []string
 	for _, pool := range order {
 		live, err := r.Probe.ObservePool(ctx, routes[pool])
 		if err != nil {
@@ -796,6 +817,7 @@ func (r *PoolResolver) Plan(
 				sizedTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
+			livePools = append(livePools, pool)
 			continue
 		}
 		empty := &PoolEmptyError{
@@ -826,7 +848,43 @@ func (r *PoolResolver) Plan(
 			"tasks", strings.Join(empty.Tasks, ","),
 			"override", "allow_empty_pool")
 	}
+	// Attempt ordinals, asked of every live pool, but only of a census some
+	// question above already read: a plain submit still asks the inventory
+	// nothing (docs/DEPLOY.md, "Upgrading a pool's Orkers").
+	if census.wasRead() {
+		for _, pool := range livePools {
+			if err := r.checkAttemptOrdinals(ctx, census, namespaceName(ns), wf.GetName(), pool,
+				tasksByPool[pool]); err != nil {
+				return nil, RunPlan{}, err
+			}
+		}
+	}
 	return planned, plan, nil
+}
+
+// checkAttemptOrdinals refuses a live pool with an Orker that numbers attempts
+// as Temporal does, beside Orkers that claim ordinals: it would write attempt
+// records over theirs. Asked only when the census was already read for
+// another question, so it adds no read to any submit. No Orker answering is
+// logged and not refused — nothing was measured.
+func (r *PoolResolver) checkAttemptOrdinals(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []string) error {
+	if len(tasks) == 0 || r.Fleet == nil {
+		return nil
+	}
+	old := lacking(r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: tasks,
+		carrying: "a task", question: "it claims attempt ordinals",
+	}), (*orkstackv1.DescribeOrkerResult).GetAttemptOrdinalsSupported)
+	if old == nil {
+		return nil
+	}
+	return &PoolNoAttemptOrdinalsError{
+		Namespace: namespace,
+		Pool:      pool,
+		Tasks:     tasks,
+		OrkerID:   old.GetOrkerId(),
+		BuildID:   old.GetBuildId(),
+	}
 }
 
 // present decides whether a pool has an Orker that would pick its work up.

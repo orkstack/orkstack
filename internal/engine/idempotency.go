@@ -2,11 +2,15 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/serviceerror"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 
 	"github.com/orkstack/orkstack/internal/task"
 )
@@ -16,6 +20,16 @@ import (
 // catches a claim no worker ever picked up, so it never becomes an execution
 // that outlives the fleet that created it.
 const claimGrace = 5 * time.Minute
+
+// ClaimLife is how long a claim made with ttl can hold its key: its TTL, or
+// DefaultClaimTTL for a non-positive one, plus the grace. The cluster keeps a
+// finished run at least this long (archive.RetentionController.WithKeyLife).
+func ClaimLife(ttl time.Duration) time.Duration {
+	if ttl <= 0 {
+		ttl = DefaultClaimTTL
+	}
+	return ttl + claimGrace
+}
 
 // claimClient is the slice of client.Client the claimer uses. Narrowing it
 // keeps the start options testable without a cluster — the options are the
@@ -30,7 +44,25 @@ type claimClient interface {
 		ctx context.Context,
 		options client.UpdateWithStartWorkflowOptions,
 	) (client.WorkflowUpdateHandle, error)
+	DescribeWorkflowExecution(
+		ctx context.Context,
+		workflowID, runID string,
+	) (*workflowservice.DescribeWorkflowExecutionResponse, error)
+	QueryWorkflow(
+		ctx context.Context,
+		workflowID, runID, queryType string,
+		args ...any,
+	) (converter.EncodedValue, error)
 }
+
+// LookupBound is the most a submission spends asking what its key names
+// before it mints anything (workload-identity.md §3.1 rule 1). The lookup
+// only saves work; the claim decides, so a slow cluster costs this once.
+const LookupBound = 3 * time.Second
+
+// ErrClaimEnded reports a key whose claim execution has ended or never
+// existed: the key names nothing now.
+var ErrClaimEnded = errors.New("the idempotency claim has ended")
 
 // TemporalIdempotency makes Temporal the authority on which run an idempotency
 // key names. It is the production implementation of the API's claimer seam.
@@ -71,24 +103,74 @@ func NewTemporalIdempotency(c client.Client, queue string, ttl time.Duration) *T
 	return &TemporalIdempotency{client: c, queue: queue, ttl: ttl}
 }
 
-// Claim binds key to a run and returns the binding, which is the winner's, not
-// necessarily this caller's.
+// Claim binds key to candidate, or reports the binding that already holds it.
+// Whether candidate won is judged by the run id in the answer and nothing
+// else: a v0.3.0 worker answering for the claim drops the fingerprint.
 //
-// propose is called only when a candidate is actually needed. The seam is a
-// callback rather than a value because the two authorities need the candidate
-// at different moments: this one has to offer a candidate before the server can
-// choose, while an in-process map can answer a known key without minting a run
-// id at all.
-func (t *TemporalIdempotency) Claim(
-	ctx context.Context,
-	key string,
-	propose func() (Claim, error),
-) (Claim, error) {
-	candidate, err := propose()
-	if err != nil {
-		return Claim{}, err
-	}
+// Asking again with the same candidate after an error is safe: a candidate
+// that already won is told itself (see update).
+func (t *TemporalIdempotency) Claim(ctx context.Context, key string, candidate Claim) (Claim, error) {
 	return t.update(ctx, key, ClaimRequest{Candidate: candidate})
+}
+
+// Lookup reads what key names without claiming it, in at most LookupBound.
+// No claim execution, or one that is not running, is no binding (bound
+// false): a claim that has ended has freed its key, and a closed execution
+// would still answer a query with its old winner. Any error is "no answer",
+// never "unbound"; the caller goes on to the claim, which decides.
+func (t *TemporalIdempotency) Lookup(ctx context.Context, key string) (Claim, bool, error) {
+	ctx, cancel := context.WithTimeout(ctx, LookupBound)
+	defer cancel()
+	claimID := ClaimWorkflowID(key)
+	running, _, err := t.describe(ctx, claimID)
+	if errors.Is(err, ErrClaimEnded) {
+		return Claim{}, false, nil
+	}
+	if err != nil {
+		return Claim{}, false, err
+	}
+	if !running {
+		return Claim{}, false, nil
+	}
+	value, err := t.client.QueryWorkflow(ctx, claimID, "", ClaimQueryName)
+	if err != nil {
+		return Claim{}, false, fmt.Errorf("query idempotency claim at %s: %w", claimID, err)
+	}
+	var binding Claim
+	if err := value.Get(&binding); err != nil {
+		return Claim{}, false, fmt.Errorf("decode idempotency claim at %s: %w", claimID, err)
+	}
+	return binding, binding.RunID != "", nil
+}
+
+// ClaimedAt is when key's running claim was made, as the cluster recorded
+// it. A claim that is not running is ErrClaimEnded.
+func (t *TemporalIdempotency) ClaimedAt(ctx context.Context, key string) (time.Time, error) {
+	running, started, err := t.describe(ctx, ClaimWorkflowID(key))
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !running {
+		return time.Time{}, ErrClaimEnded
+	}
+	return started, nil
+}
+
+// describe reports whether a claim execution is running and when it started.
+// The cluster answering that it holds none is ErrClaimEnded; any other error
+// is returned as it is.
+func (t *TemporalIdempotency) describe(ctx context.Context, claimID string) (bool, time.Time, error) {
+	resp, err := t.client.DescribeWorkflowExecution(ctx, claimID, "")
+	if err != nil {
+		var notFound *serviceerror.NotFound
+		if errors.As(err, &notFound) {
+			return false, time.Time{}, ErrClaimEnded
+		}
+		return false, time.Time{}, fmt.Errorf("describe idempotency claim at %s: %w", claimID, err)
+	}
+	info := resp.GetWorkflowExecutionInfo()
+	running := info.GetStatus() == enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING
+	return running, info.GetStartTime().AsTime(), nil
 }
 
 // Rebind moves key from a run id Temporal refused (ErrRunIDTaken) onto the

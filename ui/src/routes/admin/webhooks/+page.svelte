@@ -22,7 +22,7 @@
 	import { webhookClient } from '#lib/clients/webhooks.ts';
 	import { EventType } from '#lib/gen/orkstack/v1/run_pb.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
-	import { RUN_EVENTS, SCOPE_SLUG_PATTERN, TASK_EVENTS, webhookScope } from '#lib/webhooks.ts';
+	import { OPT_IN_RUN_EVENTS, RUN_EVENTS, SCOPE_SLUG_PATTERN, TASK_EVENTS, webhookScope } from '#lib/webhooks.ts';
 	import type { PageProps } from './$types';
 	let { data }: PageProps = $props();
 
@@ -158,7 +158,7 @@
 		</div>
 		<fieldset class="border-y border-rule py-3">
 			<legend class="field-label float-left w-full">Events <span class="field-hint">(none means every run transition; task events are opt-in)</span></legend>
-			<div class="clear-left flex flex-wrap gap-x-4 gap-y-2" data-testid="webhook-run-events">{#each RUN_EVENTS as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-event-{label(event)}" checked={selected.includes(event)} onchange={(e) => toggle(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
+			<div class="clear-left flex flex-wrap gap-x-4 gap-y-2" data-testid="webhook-run-events">{#each [...RUN_EVENTS, ...OPT_IN_RUN_EVENTS] as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-event-{label(event)}" checked={selected.includes(event)} onchange={(e) => toggle(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
 			<div class="mt-2 flex flex-wrap gap-x-4 gap-y-2" data-testid="webhook-task-events">{#each TASK_EVENTS as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-event-{label(event)}" checked={selected.includes(event)} onchange={(e) => toggle(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
 			<p class="mt-2 max-w-prose text-xs text-ink-muted" data-testid="webhook-task-caveat">Task events are best-effort hints with a short retry budget. A subscriber that must not miss one should reconcile with GetRun.</p>
 		</fieldset>
@@ -187,7 +187,7 @@
 					<div><label class="field-label" for="webhook-edit-task">Task</label><input id="webhook-edit-task" data-testid="webhook-edit-task" bind:value={editTask} pattern={SCOPE_SLUG_PATTERN} maxlength={200} data-tip={slugTitle} class={inputClass} /></div>
 				</div>
 				<fieldset class="border-y border-rule py-3"><legend class="field-label float-left w-full">Events <span class="field-hint">(none means every run transition)</span></legend>
-					<div class="clear-left flex flex-wrap gap-x-4 gap-y-2">{#each [...RUN_EVENTS, ...TASK_EVENTS] as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-edit-event-{label(event)}" checked={editEvents.includes(event)} onchange={(e) => toggleEdit(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
+					<div class="clear-left flex flex-wrap gap-x-4 gap-y-2">{#each [...RUN_EVENTS, ...OPT_IN_RUN_EVENTS, ...TASK_EVENTS] as event (event)}<label class="flex items-center gap-1.5 font-mono text-xs text-ink"><input type="checkbox" data-testid="webhook-edit-event-{label(event)}" checked={editEvents.includes(event)} onchange={(e) => toggleEdit(event, e.currentTarget.checked)} />{label(event)}</label>{/each}</div>
 				</fieldset>
 				{#if editError}<ErrorPanel testid="webhook-edit-error" message={editError} />{/if}
 				<div class="flex items-center justify-between gap-3">

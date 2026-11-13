@@ -2,6 +2,7 @@ package task
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -48,6 +49,63 @@ var SearchKeyOrkflowNamespace = temporal.NewSearchAttributeKeyKeyword(SearchAttr
 // Elasticsearch-backed one takes a moment, and a query issued against an
 // attribute the cluster has not caught up on is an error, not an empty page.
 const searchAttributeReadyTimeout = 15 * time.Second
+
+// NamespaceVisibleTimeout bounds the boot's wait for the Temporal namespace
+// it just ensured to be seen by the cluster's operator service. A namespace
+// registered a moment ago is answered NotFound there until the cluster's
+// namespace cache catches up, which Temporal refreshes every few seconds.
+const NamespaceVisibleTimeout = time.Minute
+
+// namespaceVisiblePoll is how often the wait asks again. A variable only so
+// the unit tests can ask without waiting.
+var namespaceVisiblePoll = 200 * time.Millisecond
+
+// operatorCallTimeout bounds one operator-service call inside the wait, so a
+// call that hangs cannot carry the boot past NamespaceVisibleTimeout.
+const operatorCallTimeout = 10 * time.Second
+
+// ErrNamespaceNotVisible is what the boot fails on: the cluster still answers
+// that the Temporal namespace is not found when NamespaceVisibleTimeout has
+// passed, so the run index could not be registered on it. Every other refusal
+// of the registration is reported and survived.
+var ErrNamespaceNotVisible = errors.New("temporal namespace is not visible to the cluster's operator service")
+
+// withVisibilityDeadline gives ctx the overall deadline the wait and the
+// registrations share, unless the caller already set one.
+func withVisibilityDeadline(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, NamespaceVisibleTimeout)
+}
+
+// retryNotFound runs call until it answers anything but NotFound, asking
+// again every poll until ctx's deadline. Each call gets at most
+// operatorCallTimeout of what is left. A namespace still not found at the
+// deadline is ErrNamespaceNotVisible, wrapping the last answer.
+func retryNotFound(ctx context.Context, namespace string, poll time.Duration, call func(context.Context) error) error {
+	for {
+		callCtx, cancel := context.WithTimeout(ctx, operatorCallTimeout)
+		err := call(callCtx)
+		cancel()
+		if err == nil || grpcCode(err) != codes.NotFound {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				return fmt.Errorf(
+					"%w: temporal namespace %q exists but the cluster still answers that it "+
+						"is not found, so the run index cannot be registered on it; check that "+
+						"the cluster has finished starting and that every frontend serves this "+
+						"namespace, then restart the engine: %w",
+					ErrNamespaceNotVisible, namespace, err)
+			}
+			return fmt.Errorf("wait for temporal namespace %q to be visible: %w", namespace, ctx.Err())
+		case <-time.After(poll):
+		}
+	}
+}
 
 // searchAttributeRegistrar is the slice of Temporal's OperatorService this file
 // needs. Narrowing it keeps provisioning testable without a live cluster.
@@ -197,14 +255,34 @@ func ensureRunRootSearchAttribute(
 // not already index, then polls until all of them are queryable. Only the
 // missing ones are sent: a registration that names an attribute the cluster
 // already has is refused whole, which would leave its sibling unregistered.
+//
+// Every call keeps asking while the cluster answers that the namespace is not
+// found, under the deadline the boot's wait set (WaitNamespaceVisible): with
+// several frontends, one may still not see a namespace another already did.
+// Still not found at that deadline is ErrNamespaceNotVisible, which the boot
+// fails on.
 func ensureSearchAttributes(
 	ctx context.Context,
 	svc searchAttributeRegistrar,
 	namespace string,
 	want map[string]enumspb.IndexedValueType,
 ) (bool, error) {
+	ctx, cancel := withVisibilityDeadline(ctx)
+	defer cancel()
+	missingNow := func() (map[string]enumspb.IndexedValueType, error) {
+		var missing map[string]enumspb.IndexedValueType
+		err := retryNotFound(ctx, namespace, namespaceVisiblePoll, func(callCtx context.Context) error {
+			var err error
+			missing, err = missingSearchAttributes(callCtx, svc, namespace, want)
+			return err
+		})
+		return missing, err
+	}
 	names := sortedAttributeNames(want)
-	missing, err := missingSearchAttributes(ctx, svc, namespace, want)
+	missing, err := missingNow()
+	if errors.Is(err, ErrNamespaceNotVisible) {
+		return false, err
+	}
 	if err == nil && len(missing) == 0 {
 		return true, nil
 	}
@@ -213,10 +291,24 @@ func ensureSearchAttributes(
 		// poll below decide.
 		missing = want
 	}
-	if _, err := svc.AddSearchAttributes(ctx, &operatorservice.AddSearchAttributesRequest{
-		Namespace:        namespace,
-		SearchAttributes: missing,
-	}); err != nil && grpcCode(err) != codes.AlreadyExists {
+	err = retryNotFound(ctx, namespace, namespaceVisiblePoll, func(callCtx context.Context) error {
+		_, err := svc.AddSearchAttributes(callCtx, &operatorservice.AddSearchAttributesRequest{
+			Namespace:        namespace,
+			SearchAttributes: missing,
+		})
+		return err
+	})
+	if errors.Is(err, ErrNamespaceNotVisible) {
+		return false, err
+	}
+	if err != nil && grpcCode(err) != codes.AlreadyExists {
+		// Usable is the cluster's answer, not this call's: another replica's
+		// registration may have landed while this one failed, and a replica
+		// that then booted unindexed would start runs the others' scoped reads
+		// cannot see.
+		if stillMissing, listErr := missingNow(); listErr == nil && len(stillMissing) == 0 {
+			return true, nil
+		}
 		return false, fmt.Errorf("register search attribute %s in temporal namespace %q: %w",
 			strings.Join(sortedAttributeNames(missing), ","), namespace, err)
 	}
@@ -225,7 +317,10 @@ func ensureSearchAttributes(
 	// cluster has accepted and not yet indexed.
 	deadline := time.Now().Add(searchAttributeReadyTimeout)
 	for {
-		stillMissing, err := missingSearchAttributes(ctx, svc, namespace, want)
+		stillMissing, err := missingNow()
+		if errors.Is(err, ErrNamespaceNotVisible) {
+			return false, err
+		}
 		if err != nil {
 			return false, fmt.Errorf("read search attributes of temporal namespace %q: %w",
 				namespace, err)
@@ -241,7 +336,8 @@ func ensureSearchAttributes(
 		}
 		select {
 		case <-ctx.Done():
-			return false, ctx.Err()
+			return false, fmt.Errorf("wait for search attribute %s in temporal namespace %q: %w",
+				strings.Join(names, ","), namespace, ctx.Err())
 		case <-time.After(200 * time.Millisecond):
 		}
 	}
@@ -277,4 +373,53 @@ func sortedAttributeNames(attrs map[string]enumspb.IndexedValueType) []string {
 	}
 	sort.Strings(names)
 	return names
+}
+
+// WaitNamespaceVisible waits, up to NamespaceVisibleTimeout or ctx's own
+// earlier deadline, until the
+// cluster's operator service sees the Temporal namespace EnsureNamespace just
+// ensured, so the run index is registered against a namespace that exists
+// there. Without the wait, a replica that boots right after the namespace was
+// created is refused the registration (NotFound), comes up unindexed and
+// starts runs without the namespace attribute, while a replica booting a
+// moment later is indexed: the fleet then answers a namespace's runs
+// differently depending on which replica is asked.
+//
+// Only NotFound is waited for. Any other answer (an operator API behind an
+// authorizer, a cluster without custom attributes) is the registration's to
+// report, as before. A namespace that never becomes visible is
+// ErrNamespaceNotVisible, which the boot fails on. The boot passes the same
+// ctx, with its deadline, to the registrations that follow, which keep asking
+// on NotFound under that one deadline.
+func WaitNamespaceVisible(ctx context.Context, temporalClient client.Client, namespace string) error {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
+	return waitNamespaceVisible(ctx, temporalClient.OperatorService(), namespace,
+		NamespaceVisibleTimeout, namespaceVisiblePoll)
+}
+
+func waitNamespaceVisible(
+	ctx context.Context,
+	svc searchAttributeRegistrar,
+	namespace string,
+	timeout, poll time.Duration,
+) error {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	err := retryNotFound(ctx, namespace, poll, func(callCtx context.Context) error {
+		_, err := svc.ListSearchAttributes(callCtx, &operatorservice.ListSearchAttributesRequest{
+			Namespace: namespace,
+		})
+		return err
+	})
+	switch {
+	case err == nil, errors.Is(err, ErrNamespaceNotVisible):
+		return err
+	case ctx.Err() != nil:
+		// The deadline passed, or the boot was stopped, while a call was out.
+		return fmt.Errorf("wait for temporal namespace %q to be visible: %w", namespace, err)
+	}
+	// Any answer but NotFound is the registration's to report.
+	return nil
 }

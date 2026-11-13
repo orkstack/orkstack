@@ -330,13 +330,14 @@ func TestAttemptStores_AnswerIdentically(t *testing.T) {
 				t.Errorf("attempt 1 error code = %q", got[0].GetError().GetCode())
 			}
 
-			// Temporal never runs one attempt number twice, so a repeat write
-			// is last-writer-wins rather than an arbitration point — and it
-			// must not produce a second row.
+			// A record is create-only: a repeat under the same number (an
+			// Orker of an earlier release numbering attempts as Temporal
+			// does) is refused and keeps the first — and it must not produce
+			// a second row.
 			again := sampleAttempt("ork-1", "flaky", 1)
 			again.Phase = "commit"
-			if err := store.PutAttempt(ctx, again); err != nil {
-				t.Fatalf("PutAttempt (repeat): %v", err)
+			if err := store.PutAttempt(ctx, again); !errors.Is(err, ErrAttemptExists) {
+				t.Fatalf("PutAttempt (repeat) = %v, want ErrAttemptExists", err)
 			}
 			after, err := store.ListAttempts(ctx, "ork-1", "flaky", NoItem)
 			if err != nil {
@@ -345,8 +346,8 @@ func TestAttemptStores_AnswerIdentically(t *testing.T) {
 			if len(after) != 3 {
 				t.Fatalf("a repeat write produced %d records, want 3", len(after))
 			}
-			if after[0].GetPhase() != "commit" {
-				t.Errorf("attempt 1 phase = %q, want the last write to win", after[0].GetPhase())
+			if after[0].GetPhase() == "commit" {
+				t.Errorf("attempt 1 phase = %q: the repeat overwrote the first record", after[0].GetPhase())
 			}
 		})
 	}

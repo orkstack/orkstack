@@ -1321,6 +1321,42 @@ func (d *DockerRuntime) Reap(ctx context.Context, orkerID string) (int, error) {
 	return removed, nil
 }
 
+// ownContainersFormat is one container a line, tab-separated: its id and the
+// attempt labels the boot reap releases it by. Spelled as otherContainersFormat
+// is, so it needs no dialect either.
+const ownContainersFormat = `{{.ID}}` + "\t" + `{{.Label "ork.run"}}` + "\t" + `{{.Label "ork.task"}}` +
+	"\t" + `{{.Label "ork.item"}}` + "\t" + `{{.Label "ork.attempt"}}`
+
+// OwnContainers lists the containers labelled with orkerID, with the attempt
+// each ran, so the boot reap can release the attempts of the ones it removes.
+func (d *DockerRuntime) OwnContainers(ctx context.Context, orkerID string) ([]OwnContainer, error) {
+	if orkerID == "" {
+		return nil, nil
+	}
+	answer, err := d.control(ctx, "ps", "--all", "--filter", "label=ork.orker="+orkerID, "--format", ownContainersFormat)
+	if err != nil {
+		return nil, err
+	}
+	if answer.code != 0 {
+		return nil, fmt.Errorf("list own containers: docker exited %d: %s", answer.code, answer.said())
+	}
+	return parseOwnContainers(answer.stdout), nil
+}
+
+// parseOwnContainers reads ownContainersFormat's answer; a line without its
+// five fields, or without an id, is not one of its answers.
+func parseOwnContainers(answer string) []OwnContainer {
+	var own []OwnContainer
+	for _, line := range strings.Split(answer, "\n") {
+		fields := strings.Split(strings.TrimRight(line, "\r"), "\t")
+		if len(fields) != 5 || fields[0] == "" {
+			continue
+		}
+		own = append(own, OwnContainer{ID: fields[0], RunID: fields[1], TaskID: fields[2], Item: fields[3], Attempt: fields[4]})
+	}
+	return own
+}
+
 // otherContainersFormat is one container a line, tab-separated. Its label
 // template and its state field are spelled the same by the docker CLI, against
 // Docker or Podman's socket, and by the podman CLI (measured on Docker 29.9.2 and

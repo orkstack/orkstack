@@ -555,12 +555,14 @@ message ExecuteTaskResult {
   google.protobuf.Timestamp started_at = 11;
   google.protobuf.Timestamp finished_at = 12;
   string orker_id = 13;
-  // attempt is the Temporal attempt that produced this result: from
-  // activity.GetInfo(ctx).Attempt on a fresh run, and from commit.attempt on
-  // an adopted one (§5.4). Workflow code cannot call GetInfo, and an adopted
-  // result carries a CommitRef rather than the commit body, so without this
-  // field the engine cannot populate TaskRun.attempt identically for fresh and
-  // adopted results.
+  // attempt is the ordinal of the attempt that produced this result
+  // (docs/STORAGE.md, "Attempt ordinals"): the ordinal this attempt claimed
+  // on a fresh run, and commit.attempt on an adopted one (§5.4). It is the
+  // number the attempt's record, log and container label carry, and it may
+  // differ from Temporal's attempt count. The engine cannot read the Orker's
+  // claim, and an adopted result carries a CommitRef rather than the commit
+  // body, so without this field it could not populate TaskRun.attempt
+  // identically for fresh and adopted results.
   int32 attempt = 14;
 
   // cache is this attempt's memo decision, key_components cleared. Set if and
@@ -642,6 +644,9 @@ message ActivityFailureDetail {
   // notes ON the workload's error, never a replacement for it (§7.1 step 14).
   repeated string scan_notes = 6;
   ImageRef image = 7;
+  // attempt is the ordinal the failed attempt claimed, as on
+  // ExecuteTaskResult.attempt; 0 for an attempt that failed before it claimed
+  // one.
   int32 attempt = 8;
   string orker_id = 9;
 
@@ -736,6 +741,11 @@ message DescribeOrkerResult {
   // store_outage is set while this Orker has cordoned itself because it cannot
   // reach object storage (Orker.store_outage). cordoned is true beside it.
   StoreOutage store_outage = 23;
+  // attempt_ordinals_supported is true on an Orker that numbers attempts
+  // with claimed ordinals (docs/STORAGE.md, "Attempt ordinals"). An Orker
+  // built before it numbers them as Temporal does and would write records
+  // over a newer Orker's, so submit refuses a pool that has one.
+  bool attempt_ordinals_supported = 43;
 }
 
 // ResourceQuantity is an amount of each resource an Orker reserves for a

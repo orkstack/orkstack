@@ -35,7 +35,7 @@ func runningCorpus() []statsCorpusRun {
 func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) {
 	ctx := context.Background()
 
-	t.Run("indexed: two counts with the namespace predicate, no list", func(t *testing.T) {
+	t.Run("indexed: counts with the namespace predicate, no list", func(t *testing.T) {
 		index := statsIndexOver(t, runningCorpus())
 		reader := newRunReader(index, converter.GetDefaultDataConverter()).WithNamespaceIndex(true)
 		got, err := reader.RunningCount(ctx, "payments", 10)
@@ -44,9 +44,13 @@ func TestRunningCount_UsesCountWhenIndexedAndTheMemoWalkOtherwise(t *testing.T) 
 			t.Errorf("RunningCount(payments) = %d, want 3", got)
 		}
 		// Open executions, then chains that switched in the last hour: none,
-		// so the open count is the answer.
-		if len(index.counts) != 2 || len(index.queries) != 0 {
-			t.Fatalf("counts %q, lists %q; want two counts and no list", index.counts, index.queries)
+		// so the open count is the stamped answer; then the live runs stamped
+		// with no namespace: none, so nothing is walked.
+		if len(index.counts) != 3 || len(index.queries) != 0 {
+			t.Fatalf("counts %q, lists %q; want three counts and no list", index.counts, index.queries)
+		}
+		if !strings.Contains(index.counts[2], task.SearchAttrOrkflowNamespace+" IS NULL") {
+			t.Errorf("third count %q does not ask for the runs stamped with no namespace", index.counts[2])
 		}
 		want := fmt.Sprintf("WorkflowType = %q AND %s = %q AND %s",
 			RunWorkflowType, task.SearchAttrOrkflowNamespace, "payments", openExecutionsPredicate())
