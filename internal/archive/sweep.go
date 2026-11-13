@@ -104,6 +104,9 @@ type SweepResult struct {
 	// ListFailed says the cluster's index could not be read to its end, so the
 	// numbers above are only what was reached.
 	ListFailed bool
+	// StoreFailed says object storage stopped answering during the pass, so
+	// every run after that was counted unconfirmed without being asked about.
+	StoreFailed bool
 	// IntervalTooLong says two cleanup intervals reach the cluster's retention:
 	// a run can close, wait out the interval a pass leaves it alone for and the
 	// pass after that, and be gone before the sweep ever looks at it.
@@ -247,6 +250,7 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 			cancel()
 			if err != nil {
 				storeErr = fmt.Errorf("archive sweep: object storage did not answer for run %q: %w", runID, err)
+				result.StoreFailed = true
 				note(storeErr)
 				s.logger.Error("archive sweep: object storage did not answer; counting the remaining runs without asking it",
 					"run_id", runID, "error", err)

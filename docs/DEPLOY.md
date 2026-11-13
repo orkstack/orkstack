@@ -1422,11 +1422,13 @@ not at risk, and neither is a run that has not finished. While the risk stands,
 every pass logs an error naming the runs nearest to expiry and when the first of
 them expires, and sets `ork.archive.sweep.unconfirmed` and
 `ork.archive.sweep.earliest_expiry` (§7, "Lifecycle metrics"); alert on the
-first. While object storage is down the pass cannot tell an archived run from
-one that is not, so it counts every finished run it holds, and its figures are
-an upper bound. A longer outage than you can afford calls for a larger
-`ORK_CLEANUP_RETENTION_BUFFER`, which helps only the runs that close after it is
-set.
+first. A pass that cannot see sets `ork.archive.sweep.list_failed` or stops
+advancing `ork.archive.sweep.last_success`; alert on those too, because a blind
+sweep cannot count what it did not see. While object storage is down the pass
+cannot tell an archived run from one that is not, so it counts every finished
+run it holds, and its figures are an upper bound. A longer outage than you can
+afford calls for a larger `ORK_CLEANUP_RETENTION_BUFFER`, which helps only the
+runs that close after it is set.
 
 An archive write that stops short, on all three attempts of the run's own
 publish, leaves no body, because the body is its last write. The run reads as
@@ -4742,10 +4744,13 @@ policy names one — they can land on a different sink than the process default
 | `ork.run.continuation.duration` | `ork.namespace`, `phase` | engine, seconds a switch's write (`write`) or a whole restore (`restore`) took |
 | `ork.run.continuation.hold.duration` | `ork.namespace` | engine, seconds a run held new tasks before it carried on (0 when it found a moment with nothing running on its own) |
 | `ork.run.continuation.read.attempts` | `ork.namespace` | engine, the attempt each successful read of a saved state succeeded on |
-| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost) |
+| `ork.archive.sweep.runs` | `outcome` | engine, once per finished run with no archive the archive sweep came to (§1, "The archive sweep"): `archived`, `failed` (it tries again next pass), or `expired` (the cluster had already let it go: the run is lost). Every outcome's series is present, at zero, from the first pass |
 | `ork.archive.cleanup.runs` | `outcome` | engine with cleanup on, once per run a cleanup pass came to and acted on or kept (§1, "Retention cleanup and bucket lifecycle rules"): `retired`, `failed` (left as it was; a later pass tries again), `not_found_not_due` (its execution is missing before its run retention, so it was kept: **alert on any**), or `not_found_held` (due, with its execution missing, but held because too many of that pass's runs were missing early) |
 | `ork.archive.sweep.unconfirmed` | — | engine, each pass: finished runs it could not confirm have an archive. **Alert on this above zero.** While object storage is down it counts every finished run the pass did not reach, archived or not |
-| `ork.archive.sweep.earliest_expiry` | — | engine, each pass that counted any and could date them: seconds left until the first of those runs expires. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
+| `ork.archive.sweep.earliest_expiry` | — | engine, each pass: seconds left until the first of those runs expires: 0 when the pass has none or could not date them, so an undated risk reads as imminent, and negative once that time has passed. Read it only while `ork.archive.sweep.unconfirmed` is above zero |
+| `ork.archive.sweep.list_failed` | — | engine, each pass: 1 when the pass could not read the cluster's index of finished runs to its end, so its counts are only what it reached; else 0. **Alert on 1** |
+| `ork.archive.sweep.interval_too_long` | — | engine, each pass: 1 when two cleanup intervals reach the cluster's retention, so a run can be deleted before a pass looks at it; else 0. **Alert on 1**, and shorten `ORK_CLEANUP_INTERVAL` |
+| `ork.archive.sweep.last_success` | — | engine: unix time of the last pass that saw everything, its index listed to its end and object storage answering whether each run has an archive. A store that answers but refuses the archive writes still advances it; that shows as `ork.archive.sweep.unconfirmed` above zero. **Alert when it is older than a few cleanup intervals**: the sweep is blind |
 
 (The rows above omit `ork.namespace` even though every run and task metric
 carries it; `ork.runs.refused` names it explicitly. `ork.cache.outcome` —
