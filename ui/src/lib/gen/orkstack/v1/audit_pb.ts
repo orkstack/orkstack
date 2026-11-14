@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/audit.proto.
  */
 export const file_orkstack_v1_audit: GenFile = /*@__PURE__*/
-  fileDesc("ChdvcmtzdGFjay92MS9hdWRpdC5wcm90bxILb3Jrc3RhY2sudjEigQIKC0F1ZGl0UmVjb3JkEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgoKAmlkGAIgASgJEiYKAmF0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCglwcmluY2lwYWwYBCABKAkSFgoOc291cmNlX2FkZHJlc3MYBSABKAkSDgoGYWN0aW9uGAYgASgJEhEKCXByb2NlZHVyZRgHIAEoCRIRCgluYW1lc3BhY2UYCCABKAkSDgoGdGFyZ2V0GAkgASgJEg4KBmRldGFpbBgKIAEoCRIRCglzdWNjZWVkZWQYCyABKAgSEgoKZXJyb3JfY29kZRgMIAEoCSKBAwoXTGlzdEF1ZGl0UmVjb3Jkc1JlcXVlc3QSEQoJcGFnZV9zaXplGAYgASgFEhIKCnBhZ2VfdG9rZW4YByABKAkSKQoHZmlsdGVycxgIIAMoCzIYLm9ya3N0YWNrLnYxLkZpZWxkRmlsdGVyOtoBorsY1QEKF29ya3N0YWNrLnYxLkF1ZGl0UmVjb3JkEg4KAmF0EgRXaGVuGgIGBxIfCgluYW1lc3BhY2USCU5hbWVzcGFjZRoFAQIDBAU4ARIXCgZhY3Rpb24SBkFjdGlvbhoFAQIDBAUSHQoJcHJpbmNpcGFsEglQcmluY2lwYWwaBQECAwQFEhcKBnRhcmdldBIGVGFyZ2V0GgUBAgMEBRIZCglzdWNjZWVkZWQSCVN1Y2NlZWRlZBoBARIdCgplcnJvcl9jb2RlEgpFcnJvciBjb2RlGgMBAgNKBAgBEAZSCW5hbWVzcGFjZVINYWN0aW9uX3ByZWZpeFIJcHJpbmNpcGFsUgVzaW5jZVIFdW50aWwitAEKGExpc3RBdWRpdFJlY29yZHNSZXNwb25zZRIpCgdyZWNvcmRzGAEgAygLMhgub3Jrc3RhY2sudjEuQXVkaXRSZWNvcmQSFwoPbmV4dF9wYWdlX3Rva2VuGAIgASgJEikKBXNpbmNlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIpCgV1bnRpbBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAybwoMQXVkaXRTZXJ2aWNlEl8KEExpc3RBdWRpdFJlY29yZHMSJC5vcmtzdGFjay52MS5MaXN0QXVkaXRSZWNvcmRzUmVxdWVzdBolLm9ya3N0YWNrLnYxLkxpc3RBdWRpdFJlY29yZHNSZXNwb25zZUKmAQoPY29tLm9ya3N0YWNrLnYxQgpBdWRpdFByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_timestamp, file_orkstack_v1_filter]);
+  fileDesc("ChdvcmtzdGFjay92MS9hdWRpdC5wcm90bxILb3Jrc3RhY2sudjEiugMKC0F1ZGl0UmVjb3JkEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgoKAmlkGAIgASgJEiYKAmF0GAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIRCglwcmluY2lwYWwYBCABKAkSFgoOc291cmNlX2FkZHJlc3MYBSABKAkSDgoGYWN0aW9uGAYgASgJEhEKCXByb2NlZHVyZRgHIAEoCRIRCgluYW1lc3BhY2UYCCABKAkSDgoGdGFyZ2V0GAkgASgJEg4KBmRldGFpbBgKIAEoCRIRCglzdWNjZWVkZWQYCyABKAgSEgoKZXJyb3JfY29kZRgMIAEoCRIaChJwcmluY2lwYWxfdmVyaWZpZWQYDSABKAgSEwoLYXV0aF9tZXRob2QYDiABKAkSGAoQcHJpbmNpcGFsX2lzc3VlchgPIAEoCRISCgpwZXJtaXNzaW9uGBAgASgJEg0KBXNjb3BlGBEgASgJEhAKCGRlY2lzaW9uGBIgASgJEgwKBHJ1bGUYEyABKAkSGQoRcG9saWN5X2dlbmVyYXRpb24YFCABKAMSDgoGc2lnbmluGBUgASgJIoEDChdMaXN0QXVkaXRSZWNvcmRzUmVxdWVzdBIRCglwYWdlX3NpemUYBiABKAUSEgoKcGFnZV90b2tlbhgHIAEoCRIpCgdmaWx0ZXJzGAggAygLMhgub3Jrc3RhY2sudjEuRmllbGRGaWx0ZXI62gGiuxjVAQoXb3Jrc3RhY2sudjEuQXVkaXRSZWNvcmQSDgoCYXQSBFdoZW4aAgYHEh8KCW5hbWVzcGFjZRIJTmFtZXNwYWNlGgUBAgMEBTgBEhcKBmFjdGlvbhIGQWN0aW9uGgUBAgMEBRIdCglwcmluY2lwYWwSCVByaW5jaXBhbBoFAQIDBAUSFwoGdGFyZ2V0EgZUYXJnZXQaBQECAwQFEhkKCXN1Y2NlZWRlZBIJU3VjY2VlZGVkGgEBEh0KCmVycm9yX2NvZGUSCkVycm9yIGNvZGUaAwECA0oECAEQBlIJbmFtZXNwYWNlUg1hY3Rpb25fcHJlZml4UglwcmluY2lwYWxSBXNpbmNlUgV1bnRpbCK0AQoYTGlzdEF1ZGl0UmVjb3Jkc1Jlc3BvbnNlEikKB3JlY29yZHMYASADKAsyGC5vcmtzdGFjay52MS5BdWRpdFJlY29yZBIXCg9uZXh0X3BhZ2VfdG9rZW4YAiABKAkSKQoFc2luY2UYAyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEikKBXVudGlsGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcDJvCgxBdWRpdFNlcnZpY2USXwoQTGlzdEF1ZGl0UmVjb3JkcxIkLm9ya3N0YWNrLnYxLkxpc3RBdWRpdFJlY29yZHNSZXF1ZXN0GiUub3Jrc3RhY2sudjEuTGlzdEF1ZGl0UmVjb3Jkc1Jlc3BvbnNlQqYBCg9jb20ub3Jrc3RhY2sudjFCCkF1ZGl0UHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_filter]);
 
 /**
  * AuditRecord is one control-plane WRITE, recorded immutably at the moment
@@ -129,6 +129,69 @@ export type AuditRecord = Message<"orkstack.v1.AuditRecord"> & {
    * @generated from field: string error_code = 12;
    */
   errorCode: string;
+
+  /**
+   * principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool principal_verified = 13;
+   */
+  principalVerified: boolean;
+
+  /**
+   * auth_method is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string auth_method = 14;
+   */
+  authMethod: string;
+
+  /**
+   * principal_issuer is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string principal_issuer = 15;
+   */
+  principalIssuer: string;
+
+  /**
+   * permission is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string permission = 16;
+   */
+  permission: string;
+
+  /**
+   * scope is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string scope = 17;
+   */
+  scope: string;
+
+  /**
+   * decision is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string decision = 18;
+   */
+  decision: string;
+
+  /**
+   * rule is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string rule = 19;
+   */
+  rule: string;
+
+  /**
+   * policy_generation is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: int64 policy_generation = 20;
+   */
+  policyGeneration: bigint;
+
+  /**
+   * signin is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string signin = 21;
+   */
+  signin: string;
 };
 
 /**

@@ -636,6 +636,11 @@ type stepExecutor func(ctx context.Context, g *globalFlags, step *orkstackv1.Aut
 // walks the descriptor so a variant added to the proto without an executor
 // fails a test rather than an apply.
 var stepExecutors = map[protoreflect.Name]stepExecutor{
+	// The event-source variants are declared ahead of their service (the
+	// v0.4.0 proto batch); no engine plans one until event sources land.
+	"create_event_source": notYetExecutable,
+	"update_event_source": notYetExecutable,
+	"delete_event_source": notYetExecutable,
 	"create_namespace": func(ctx context.Context, g *globalFlags, step *orkstackv1.AutomationStep) (string, string, error) {
 		_, err := g.namespaceClient().CreateNamespace(ctx, connect.NewRequest(step.GetCreateNamespace()))
 		return "", "", err
@@ -713,6 +718,13 @@ func executeStep(ctx context.Context, g *globalFlags, step *orkstackv1.Automatio
 		return "", "", fmt.Errorf("this orkctl cannot execute a %s step; upgrade orkctl", field.Name())
 	}
 	return executor(ctx, g, step)
+}
+
+// notYetExecutable answers a step whose service this orkctl does not have
+// yet. No engine of this release plans such a step.
+func notYetExecutable(_ context.Context, _ *globalFlags, step *orkstackv1.AutomationStep) (string, string, error) {
+	field := step.ProtoReflect().WhichOneof(step.ProtoReflect().Descriptor().Oneofs().ByName("request"))
+	return "", "", fmt.Errorf("this orkctl cannot execute a %s step; upgrade orkctl", field.Name())
 }
 
 // secretsFileWrite writes the encoded secrets; a variable so a test can

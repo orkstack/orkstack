@@ -1233,8 +1233,10 @@ type SetCurrentOrkflowVersionResponse struct {
 	// change what runs. BREAKING here means the request acknowledged it.
 	InterfaceVerdict InterfaceVerdict `protobuf:"varint,6,opt,name=interface_verdict,json=interfaceVerdict,proto3,enum=orkstack.v1.InterfaceVerdict" json:"interface_verdict,omitempty"`
 	ComparedVersion  string           `protobuf:"bytes,7,opt,name=compared_version,json=comparedVersion,proto3" json:"compared_version,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	// stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	StaleConsent  []*StaleConsent `protobuf:"bytes,8,rep,name=stale_consent,json=staleConsent,proto3" json:"stale_consent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SetCurrentOrkflowVersionResponse) Reset() {
@@ -1314,6 +1316,13 @@ func (x *SetCurrentOrkflowVersionResponse) GetComparedVersion() string {
 		return x.ComparedVersion
 	}
 	return ""
+}
+
+func (x *SetCurrentOrkflowVersionResponse) GetStaleConsent() []*StaleConsent {
+	if x != nil {
+		return x.StaleConsent
+	}
+	return nil
 }
 
 type DiffOrkflowVersionsRequest struct {
@@ -1643,7 +1652,9 @@ type PlanTask struct {
 	UnreachedBy string `protobuf:"bytes,16,opt,name=unreached_by,json=unreachedBy,proto3" json:"unreached_by,omitempty"`
 	// sleep is the task's SleepSpec, set for a sleeping task whatever its
 	// outcome, so a reader sees how long it would sleep.
-	Sleep         *SleepSpec `protobuf:"bytes,17,opt,name=sleep,proto3" json:"sleep,omitempty"`
+	Sleep *SleepSpec `protobuf:"bytes,17,opt,name=sleep,proto3" json:"sleep,omitempty"`
+	// follows is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+	Follows       []string `protobuf:"bytes,18,rep,name=follows,proto3" json:"follows,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1793,6 +1804,13 @@ func (x *PlanTask) GetUnreachedBy() string {
 func (x *PlanTask) GetSleep() *SleepSpec {
 	if x != nil {
 		return x.Sleep
+	}
+	return nil
+}
+
+func (x *PlanTask) GetFollows() []string {
+	if x != nil {
+		return x.Follows
 	}
 	return nil
 }
@@ -2691,6 +2709,44 @@ func (x *DeleteOrkflowResponse) GetDeletedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+// StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+// batch).
+type StaleConsent struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StaleConsent) Reset() {
+	*x = StaleConsent{}
+	mi := &file_orkstack_v1_orkflow_service_proto_msgTypes[28]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StaleConsent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StaleConsent) ProtoMessage() {}
+
+func (x *StaleConsent) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_orkflow_service_proto_msgTypes[28]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StaleConsent.ProtoReflect.Descriptor instead.
+func (*StaleConsent) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_orkflow_service_proto_rawDescGZIP(), []int{28}
+}
+
 var File_orkstack_v1_orkflow_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
@@ -2757,7 +2813,7 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x121\n" +
-	"\x14acknowledge_breaking\x18\x04 \x01(\bR\x13acknowledgeBreaking\"\xda\x02\n" +
+	"\x14acknowledge_breaking\x18\x04 \x01(\bR\x13acknowledgeBreaking\"\x9a\x03\n" +
 	" SetCurrentOrkflowVersionResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12'\n" +
@@ -2766,7 +2822,8 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\n" +
 	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12J\n" +
 	"\x11interface_verdict\x18\x06 \x01(\x0e2\x1d.orkstack.v1.InterfaceVerdictR\x10interfaceVerdict\x12)\n" +
-	"\x10compared_version\x18\a \x01(\tR\x0fcomparedVersion\"\x90\x01\n" +
+	"\x10compared_version\x18\a \x01(\tR\x0fcomparedVersion\x12>\n" +
+	"\rstale_consent\x18\b \x03(\v2\x19.orkstack.v1.StaleConsentR\fstaleConsent\"\x90\x01\n" +
 	"\x1aDiffOrkflowVersionsRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\ffrom_version\x18\x02 \x01(\tR\vfromVersion\x12\x1d\n" +
@@ -2788,7 +2845,7 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\rassume_failed\x18\a \x03(\tR\fassumeFailed\x1aW\n" +
 	"\x13AssumedOutputsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12*\n" +
-	"\x05value\x18\x02 \x01(\v2\x14.orkstack.v1.PayloadR\x05value:\x028\x01\"\x97\x05\n" +
+	"\x05value\x18\x02 \x01(\v2\x14.orkstack.v1.PayloadR\x05value:\x028\x01\"\xb1\x05\n" +
 	"\bPlanTask\x12\x17\n" +
 	"\atask_id\x18\x01 \x01(\tR\x06taskId\x122\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2\x18.orkstack.v1.PlanOutcomeR\aoutcome\x12\x12\n" +
@@ -2810,7 +2867,8 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x05cache\x18\x0e \x01(\v2\x16.orkstack.v1.CacheSpecR\x05cache\x12+\n" +
 	"\x04join\x18\x0f \x01(\x0e2\x17.orkstack.v1.JoinPolicyR\x04join\x12!\n" +
 	"\funreached_by\x18\x10 \x01(\tR\vunreachedBy\x12,\n" +
-	"\x05sleep\x18\x11 \x01(\v2\x16.orkstack.v1.SleepSpecR\x05sleepB\r\n" +
+	"\x05sleep\x18\x11 \x01(\v2\x16.orkstack.v1.SleepSpecR\x05sleep\x12\x18\n" +
+	"\afollows\x18\x12 \x03(\tR\afollowsB\r\n" +
 	"\v_each_count\"9\n" +
 	"\bPlanWave\x12\x12\n" +
 	"\x04wave\x18\x01 \x01(\x05R\x04wave\x12\x19\n" +
@@ -2885,7 +2943,8 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x129\n" +
 	"\n" +
-	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt*y\n" +
+	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"\x0e\n" +
+	"\fStaleConsent*y\n" +
 	"\x12ValidationSeverity\x12#\n" +
 	"\x1fVALIDATION_SEVERITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19VALIDATION_SEVERITY_ERROR\x10\x01\x12\x1f\n" +
@@ -2952,7 +3011,7 @@ func file_orkstack_v1_orkflow_service_proto_rawDescGZIP() []byte {
 }
 
 var file_orkstack_v1_orkflow_service_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
-var file_orkstack_v1_orkflow_service_proto_msgTypes = make([]protoimpl.MessageInfo, 29)
+var file_orkstack_v1_orkflow_service_proto_msgTypes = make([]protoimpl.MessageInfo, 30)
 var file_orkstack_v1_orkflow_service_proto_goTypes = []any{
 	(ValidationSeverity)(0),                  // 0: orkstack.v1.ValidationSeverity
 	(PlanOutcome)(0),                         // 1: orkstack.v1.PlanOutcome
@@ -2987,80 +3046,82 @@ var file_orkstack_v1_orkflow_service_proto_goTypes = []any{
 	(*ListOrkflowCallersResponse)(nil),       // 30: orkstack.v1.ListOrkflowCallersResponse
 	(*DeleteOrkflowRequest)(nil),             // 31: orkstack.v1.DeleteOrkflowRequest
 	(*DeleteOrkflowResponse)(nil),            // 32: orkstack.v1.DeleteOrkflowResponse
-	nil,                                      // 33: orkstack.v1.PlanRunRequest.AssumedOutputsEntry
-	(*Orkflow)(nil),                          // 34: orkstack.v1.Orkflow
-	(*FieldFilter)(nil),                      // 35: orkstack.v1.FieldFilter
-	(*timestamppb.Timestamp)(nil),            // 36: google.protobuf.Timestamp
-	(*Payload)(nil),                          // 37: orkstack.v1.Payload
-	(*Error)(nil),                            // 38: orkstack.v1.Error
-	(*AwaitSpec)(nil),                        // 39: orkstack.v1.AwaitSpec
-	(*EachSpec)(nil),                         // 40: orkstack.v1.EachSpec
-	(*OrkflowRef)(nil),                       // 41: orkstack.v1.OrkflowRef
-	(*CacheSpec)(nil),                        // 42: orkstack.v1.CacheSpec
-	(JoinPolicy)(0),                          // 43: orkstack.v1.JoinPolicy
-	(*SleepSpec)(nil),                        // 44: orkstack.v1.SleepSpec
+	(*StaleConsent)(nil),                     // 33: orkstack.v1.StaleConsent
+	nil,                                      // 34: orkstack.v1.PlanRunRequest.AssumedOutputsEntry
+	(*Orkflow)(nil),                          // 35: orkstack.v1.Orkflow
+	(*FieldFilter)(nil),                      // 36: orkstack.v1.FieldFilter
+	(*timestamppb.Timestamp)(nil),            // 37: google.protobuf.Timestamp
+	(*Payload)(nil),                          // 38: orkstack.v1.Payload
+	(*Error)(nil),                            // 39: orkstack.v1.Error
+	(*AwaitSpec)(nil),                        // 40: orkstack.v1.AwaitSpec
+	(*EachSpec)(nil),                         // 41: orkstack.v1.EachSpec
+	(*OrkflowRef)(nil),                       // 42: orkstack.v1.OrkflowRef
+	(*CacheSpec)(nil),                        // 43: orkstack.v1.CacheSpec
+	(JoinPolicy)(0),                          // 44: orkstack.v1.JoinPolicy
+	(*SleepSpec)(nil),                        // 45: orkstack.v1.SleepSpec
 }
 var file_orkstack_v1_orkflow_service_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ValidationIssue.severity:type_name -> orkstack.v1.ValidationSeverity
-	34, // 1: orkstack.v1.ValidateOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	35, // 1: orkstack.v1.ValidateOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
 	6,  // 2: orkstack.v1.ValidateOrkflowResponse.issues:type_name -> orkstack.v1.ValidationIssue
-	34, // 3: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
-	34, // 4: orkstack.v1.GetOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
-	35, // 5: orkstack.v1.ListOrkflowsRequest.filters:type_name -> orkstack.v1.FieldFilter
-	34, // 6: orkstack.v1.ListOrkflowsResponse.orkflows:type_name -> orkstack.v1.Orkflow
-	36, // 7: orkstack.v1.OrkflowVersion.applied_at:type_name -> google.protobuf.Timestamp
+	35, // 3: orkstack.v1.ApplyOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	35, // 4: orkstack.v1.GetOrkflowResponse.orkflow:type_name -> orkstack.v1.Orkflow
+	36, // 5: orkstack.v1.ListOrkflowsRequest.filters:type_name -> orkstack.v1.FieldFilter
+	35, // 6: orkstack.v1.ListOrkflowsResponse.orkflows:type_name -> orkstack.v1.Orkflow
+	37, // 7: orkstack.v1.OrkflowVersion.applied_at:type_name -> google.protobuf.Timestamp
 	2,  // 8: orkstack.v1.OrkflowVersion.interface_verdict:type_name -> orkstack.v1.InterfaceVerdict
 	14, // 9: orkstack.v1.ListOrkflowVersionsResponse.versions:type_name -> orkstack.v1.OrkflowVersion
-	36, // 10: orkstack.v1.SetCurrentOrkflowVersionResponse.updated_at:type_name -> google.protobuf.Timestamp
+	37, // 10: orkstack.v1.SetCurrentOrkflowVersionResponse.updated_at:type_name -> google.protobuf.Timestamp
 	2,  // 11: orkstack.v1.SetCurrentOrkflowVersionResponse.interface_verdict:type_name -> orkstack.v1.InterfaceVerdict
-	37, // 12: orkstack.v1.PlanRunRequest.input:type_name -> orkstack.v1.Payload
-	33, // 13: orkstack.v1.PlanRunRequest.assumed_outputs:type_name -> orkstack.v1.PlanRunRequest.AssumedOutputsEntry
-	1,  // 14: orkstack.v1.PlanTask.outcome:type_name -> orkstack.v1.PlanOutcome
-	38, // 15: orkstack.v1.PlanTask.error:type_name -> orkstack.v1.Error
-	39, // 16: orkstack.v1.PlanTask.await:type_name -> orkstack.v1.AwaitSpec
-	40, // 17: orkstack.v1.PlanTask.each:type_name -> orkstack.v1.EachSpec
-	41, // 18: orkstack.v1.PlanTask.orkflow:type_name -> orkstack.v1.OrkflowRef
-	42, // 19: orkstack.v1.PlanTask.cache:type_name -> orkstack.v1.CacheSpec
-	43, // 20: orkstack.v1.PlanTask.join:type_name -> orkstack.v1.JoinPolicy
-	44, // 21: orkstack.v1.PlanTask.sleep:type_name -> orkstack.v1.SleepSpec
-	37, // 22: orkstack.v1.PlanRunResponse.input:type_name -> orkstack.v1.Payload
-	22, // 23: orkstack.v1.PlanRunResponse.tasks:type_name -> orkstack.v1.PlanTask
-	23, // 24: orkstack.v1.PlanRunResponse.waves:type_name -> orkstack.v1.PlanWave
-	3,  // 25: orkstack.v1.InterfaceFinding.change:type_name -> orkstack.v1.InterfaceChange
-	2,  // 26: orkstack.v1.InterfaceFinding.verdict:type_name -> orkstack.v1.InterfaceVerdict
-	25, // 27: orkstack.v1.CompareInterfacesResponse.findings:type_name -> orkstack.v1.InterfaceFinding
-	2,  // 28: orkstack.v1.CompareInterfacesResponse.verdict:type_name -> orkstack.v1.InterfaceVerdict
-	4,  // 29: orkstack.v1.OrkflowCaller.kind:type_name -> orkstack.v1.OrkflowCallerKind
-	28, // 30: orkstack.v1.ListOrkflowCallersResponse.callers:type_name -> orkstack.v1.OrkflowCaller
-	36, // 31: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
-	37, // 32: orkstack.v1.PlanRunRequest.AssumedOutputsEntry.value:type_name -> orkstack.v1.Payload
-	7,  // 33: orkstack.v1.OrkflowService.ValidateOrkflow:input_type -> orkstack.v1.ValidateOrkflowRequest
-	5,  // 34: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
-	10, // 35: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
-	12, // 36: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
-	15, // 37: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
-	17, // 38: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
-	19, // 39: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
-	31, // 40: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
-	21, // 41: orkstack.v1.OrkflowService.PlanRun:input_type -> orkstack.v1.PlanRunRequest
-	26, // 42: orkstack.v1.OrkflowService.CompareInterfaces:input_type -> orkstack.v1.CompareInterfacesRequest
-	29, // 43: orkstack.v1.OrkflowService.ListOrkflowCallers:input_type -> orkstack.v1.ListOrkflowCallersRequest
-	8,  // 44: orkstack.v1.OrkflowService.ValidateOrkflow:output_type -> orkstack.v1.ValidateOrkflowResponse
-	9,  // 45: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
-	11, // 46: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
-	13, // 47: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
-	16, // 48: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
-	18, // 49: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
-	20, // 50: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
-	32, // 51: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
-	24, // 52: orkstack.v1.OrkflowService.PlanRun:output_type -> orkstack.v1.PlanRunResponse
-	27, // 53: orkstack.v1.OrkflowService.CompareInterfaces:output_type -> orkstack.v1.CompareInterfacesResponse
-	30, // 54: orkstack.v1.OrkflowService.ListOrkflowCallers:output_type -> orkstack.v1.ListOrkflowCallersResponse
-	44, // [44:55] is the sub-list for method output_type
-	33, // [33:44] is the sub-list for method input_type
-	33, // [33:33] is the sub-list for extension type_name
-	33, // [33:33] is the sub-list for extension extendee
-	0,  // [0:33] is the sub-list for field type_name
+	33, // 12: orkstack.v1.SetCurrentOrkflowVersionResponse.stale_consent:type_name -> orkstack.v1.StaleConsent
+	38, // 13: orkstack.v1.PlanRunRequest.input:type_name -> orkstack.v1.Payload
+	34, // 14: orkstack.v1.PlanRunRequest.assumed_outputs:type_name -> orkstack.v1.PlanRunRequest.AssumedOutputsEntry
+	1,  // 15: orkstack.v1.PlanTask.outcome:type_name -> orkstack.v1.PlanOutcome
+	39, // 16: orkstack.v1.PlanTask.error:type_name -> orkstack.v1.Error
+	40, // 17: orkstack.v1.PlanTask.await:type_name -> orkstack.v1.AwaitSpec
+	41, // 18: orkstack.v1.PlanTask.each:type_name -> orkstack.v1.EachSpec
+	42, // 19: orkstack.v1.PlanTask.orkflow:type_name -> orkstack.v1.OrkflowRef
+	43, // 20: orkstack.v1.PlanTask.cache:type_name -> orkstack.v1.CacheSpec
+	44, // 21: orkstack.v1.PlanTask.join:type_name -> orkstack.v1.JoinPolicy
+	45, // 22: orkstack.v1.PlanTask.sleep:type_name -> orkstack.v1.SleepSpec
+	38, // 23: orkstack.v1.PlanRunResponse.input:type_name -> orkstack.v1.Payload
+	22, // 24: orkstack.v1.PlanRunResponse.tasks:type_name -> orkstack.v1.PlanTask
+	23, // 25: orkstack.v1.PlanRunResponse.waves:type_name -> orkstack.v1.PlanWave
+	3,  // 26: orkstack.v1.InterfaceFinding.change:type_name -> orkstack.v1.InterfaceChange
+	2,  // 27: orkstack.v1.InterfaceFinding.verdict:type_name -> orkstack.v1.InterfaceVerdict
+	25, // 28: orkstack.v1.CompareInterfacesResponse.findings:type_name -> orkstack.v1.InterfaceFinding
+	2,  // 29: orkstack.v1.CompareInterfacesResponse.verdict:type_name -> orkstack.v1.InterfaceVerdict
+	4,  // 30: orkstack.v1.OrkflowCaller.kind:type_name -> orkstack.v1.OrkflowCallerKind
+	28, // 31: orkstack.v1.ListOrkflowCallersResponse.callers:type_name -> orkstack.v1.OrkflowCaller
+	37, // 32: orkstack.v1.DeleteOrkflowResponse.deleted_at:type_name -> google.protobuf.Timestamp
+	38, // 33: orkstack.v1.PlanRunRequest.AssumedOutputsEntry.value:type_name -> orkstack.v1.Payload
+	7,  // 34: orkstack.v1.OrkflowService.ValidateOrkflow:input_type -> orkstack.v1.ValidateOrkflowRequest
+	5,  // 35: orkstack.v1.OrkflowService.ApplyOrkflow:input_type -> orkstack.v1.ApplyOrkflowRequest
+	10, // 36: orkstack.v1.OrkflowService.GetOrkflow:input_type -> orkstack.v1.GetOrkflowRequest
+	12, // 37: orkstack.v1.OrkflowService.ListOrkflows:input_type -> orkstack.v1.ListOrkflowsRequest
+	15, // 38: orkstack.v1.OrkflowService.ListOrkflowVersions:input_type -> orkstack.v1.ListOrkflowVersionsRequest
+	17, // 39: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:input_type -> orkstack.v1.SetCurrentOrkflowVersionRequest
+	19, // 40: orkstack.v1.OrkflowService.DiffOrkflowVersions:input_type -> orkstack.v1.DiffOrkflowVersionsRequest
+	31, // 41: orkstack.v1.OrkflowService.DeleteOrkflow:input_type -> orkstack.v1.DeleteOrkflowRequest
+	21, // 42: orkstack.v1.OrkflowService.PlanRun:input_type -> orkstack.v1.PlanRunRequest
+	26, // 43: orkstack.v1.OrkflowService.CompareInterfaces:input_type -> orkstack.v1.CompareInterfacesRequest
+	29, // 44: orkstack.v1.OrkflowService.ListOrkflowCallers:input_type -> orkstack.v1.ListOrkflowCallersRequest
+	8,  // 45: orkstack.v1.OrkflowService.ValidateOrkflow:output_type -> orkstack.v1.ValidateOrkflowResponse
+	9,  // 46: orkstack.v1.OrkflowService.ApplyOrkflow:output_type -> orkstack.v1.ApplyOrkflowResponse
+	11, // 47: orkstack.v1.OrkflowService.GetOrkflow:output_type -> orkstack.v1.GetOrkflowResponse
+	13, // 48: orkstack.v1.OrkflowService.ListOrkflows:output_type -> orkstack.v1.ListOrkflowsResponse
+	16, // 49: orkstack.v1.OrkflowService.ListOrkflowVersions:output_type -> orkstack.v1.ListOrkflowVersionsResponse
+	18, // 50: orkstack.v1.OrkflowService.SetCurrentOrkflowVersion:output_type -> orkstack.v1.SetCurrentOrkflowVersionResponse
+	20, // 51: orkstack.v1.OrkflowService.DiffOrkflowVersions:output_type -> orkstack.v1.DiffOrkflowVersionsResponse
+	32, // 52: orkstack.v1.OrkflowService.DeleteOrkflow:output_type -> orkstack.v1.DeleteOrkflowResponse
+	24, // 53: orkstack.v1.OrkflowService.PlanRun:output_type -> orkstack.v1.PlanRunResponse
+	27, // 54: orkstack.v1.OrkflowService.CompareInterfaces:output_type -> orkstack.v1.CompareInterfacesResponse
+	30, // 55: orkstack.v1.OrkflowService.ListOrkflowCallers:output_type -> orkstack.v1.ListOrkflowCallersResponse
+	45, // [45:56] is the sub-list for method output_type
+	34, // [34:45] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_orkflow_service_proto_init() }
@@ -3079,7 +3140,7 @@ func file_orkstack_v1_orkflow_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_orkflow_service_proto_rawDesc), len(file_orkstack_v1_orkflow_service_proto_rawDesc)),
 			NumEnums:      5,
-			NumMessages:   29,
+			NumMessages:   30,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

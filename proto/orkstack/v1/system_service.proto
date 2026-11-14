@@ -145,6 +145,12 @@ message GetSystemInfoResponse {
   // observed field in this message. A client comparing it with its own clock
   // is comparing two clocks, which is what makes a skewed replica visible.
   google.protobuf.Timestamp server_time = 9;
+
+  // auth_mode is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string auth_mode = 10;
+
+  // identity_issuer is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  string identity_issuer = 11;
 }
 
 message GetRetentionPolicyRequest {}
@@ -157,6 +163,9 @@ message GetRetentionPolicyResponse {
   // plus the operator's enforcement margin and a tighter namespace value has
   // no effect yet. CONFIGURATION-DERIVED, like GetSystemInfo's fields.
   bool namespace_retention_enforced = 2;
+
+  // cluster_retention_warning is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+  string cluster_retention_warning = 3;
 }
 
 message UpdateRetentionPolicyRequest {
@@ -319,6 +328,24 @@ message Release {
   // RampRelease and PromoteRelease would pass their check at the moment of
   // this read.
   repeated ReleaseBlocker blockers = 15;
+
+  // open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  int64 open_identity_runs = 16;
+
+  // queued_runs is set from E88; unset until it lands (v0.4.0 proto batch).
+  int64 queued_runs = 17;
+
+  // resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch).
+  int64 resumable_runs = 18;
+
+  // paused_runs is set from E103; unset until it lands (v0.4.0 proto batch).
+  int64 paused_runs = 19;
+
+  // event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch).
+  int64 event_source_instances = 20;
+
+  // event_sources is set from E90; unset until it lands (v0.4.0 proto batch).
+  int32 event_sources = 21;
 }
 
 message ListReleasesRequest {
@@ -376,6 +403,9 @@ message ListReleasesResponse {
   string revision = 7;
   // observed_at is the answering replica's clock at the read.
   google.protobuf.Timestamp observed_at = 8;
+
+  // unversioned_open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  int64 unversioned_open_identity_runs = 9;
 }
 
 message RampReleaseRequest {

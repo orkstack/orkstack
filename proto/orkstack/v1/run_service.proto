@@ -224,6 +224,9 @@ message ResolveAwaitRequest {
   // reason is required with reject and refused without it; at most 1024
   // bytes, no control character other than tab and newline.
   string reason = 6;
+
+  // redeliver is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  bool redeliver = 7;
 }
 
 message ResolveAwaitResponse {
@@ -238,6 +241,15 @@ message ResolveAwaitResponse {
   // already been applied — same values, or same rejection reason — so
   // nothing was stored or delivered.
   bool repeat = 6;
+
+  // delivery_pending is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  bool delivery_pending = 7;
+
+  // told_at is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  google.protobuf.Timestamp told_at = 9;
+
+  // deadline_passed is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  bool deadline_passed = 10;
 }
 
 // A run id addresses a run INSIDE a namespace, exactly as an orkflow name
@@ -641,6 +653,15 @@ message LiveAttempt {
   // same reasons. The attempt has used nothing while it waits, and starts once
   // the store answers.
   StoreOutageWait store_outage_wait = 21;
+
+  // usage is set from E94; unset until it lands (v0.4.0 proto batch).
+  LiveUsage usage = 22;
+
+  // reserved is set from E94; unset until it lands (v0.4.0 proto batch).
+  ReservedResources reserved = 23;
+
+  // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  repeated LiveIdentity identity = 24;
 }
 
 // StoreOutageWait says why a SCHEDULED attempt has not started: no Orker of its
@@ -906,3 +927,11 @@ message TaskLogChunk {
   // item echoes the request's item.
   optional int32 item = 8;
 }
+
+// LiveIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+// batch).
+message LiveIdentity {}
+
+// LiveUsage is E94's; it is empty until E94 lands (v0.4.0 proto
+// batch).
+message LiveUsage {}

@@ -18,7 +18,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/activity.proto.
  */
 export const file_orkstack_v1_activity: GenFile = /*@__PURE__*/
-  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCIuCg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCSI6CgpFYWNoU291cmNlEg0KBWlucHV0GAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSDAoEcGF0aBgDIAMoCSIpCglTZWNyZXRSZWYSDAoEbmFtZRgBIAEoCRIOCgZzb3VyY2UYAiABKAkilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIrIBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSJwoEZWFjaBgFIAEoCzIZLm9ya3N0YWNrLnYxLkVhY2hVcHN0cmVhbSJICgpQaW5Db250ZXh0EgwKBG5hbWUYASABKAkSEwoLaW5zdGFuY2VfaWQYAiABKAkSFwoPdGltZW91dF9zZWNvbmRzGAMgASgFImYKC05lZWRPdXRjb21lEg8KB3Rhc2tfaWQYASABKAkSIwoGc3RhdHVzGAIgASgOMhMub3Jrc3RhY2sudjEuU3RhdHVzEiEKBWVycm9yGAMgASgLMhIub3Jrc3RhY2sudjEuRXJyb3IiXwoLSm9pbkNvbnRleHQSJwoGcG9saWN5GAEgASgOMhcub3Jrc3RhY2sudjEuSm9pblBvbGljeRInCgVuZWVkcxgCIAMoCzIYLm9ya3N0YWNrLnYxLk5lZWRPdXRjb21lIncKDENhY2hlQ29udGV4dBImCgVzY29wZRgBIAEoDjIXLm9ya3N0YWNrLnYxLkNhY2hlU2NvcGUSEwoLdHRsX3NlY29uZHMYAiABKAMSDwoHcmVmcmVzaBgDIAEoCBIZChFvcmtmbG93X25hbWVzcGFjZRgEIAEoCSKWAgoLQ2FjaGVTb3VyY2USDgoGcnVuX2lkGAEgASgJEg8KB3Rhc2tfaWQYAiABKAkSFAoMb3JrZmxvd19uYW1lGAMgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgEIAEoCRISCgpjb21taXRfdXJpGAUgASgJEhUKDWNvbW1pdF9zaGEyNTYYBiABKAkSLgoKc3RhcnRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLwoLZmluaXNoZWRfYXQYCCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKBGl0ZW0YCSABKAVIAIgBARIPCgdhdHRlbXB0GAogASgFQgcKBV9pdGVtIsUCCgtDYWNoZVJlc3VsdBIqCgdvdXRjb21lGAEgASgOMhkub3Jrc3RhY2sudjEuQ2FjaGVPdXRjb21lEgsKA2tleRgCIAEoCRITCgttaXNzX3JlYXNvbhgDIAEoCRITCgttaXNzX2RldGFpbBgEIAEoCRIoCgZzb3VyY2UYBSABKAsyGC5vcmtzdGFjay52MS5DYWNoZVNvdXJjZRIUCgxtZW1vX3dyaXR0ZW4YBiABKAgSGAoQbWVtb193cml0ZV9lcnJvchgHIAEoCRJDCg5rZXlfY29tcG9uZW50cxgIIAMoCzIrLm9ya3N0YWNrLnYxLkNhY2hlUmVzdWx0LktleUNvbXBvbmVudHNFbnRyeRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASKJAwoJQ2FjaGVNZW1vEhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEgsKA2tleRgCIAEoCRIRCgluYW1lc3BhY2UYAyABKAkSJgoFc2NvcGUYBCABKA4yFy5vcmtzdGFjay52MS5DYWNoZVNjb3BlEhQKDG9ya2Zsb3dfbmFtZRgFIAEoCRIPCgd0YXNrX2lkGAYgASgJEigKBnNvdXJjZRgHIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlU291cmNlEkEKDmtleV9jb21wb25lbnRzGAggAygLMikub3Jrc3RhY2sudjEuQ2FjaGVNZW1vLktleUNvbXBvbmVudHNFbnRyeRIuCgpjcmVhdGVkX2F0GAkgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgKIAEoCRIQCghidWlsZF9pZBgLIAEoCRo0ChJLZXlDb21wb25lbnRzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJgCgtFYWNoQ29udGV4dBINCgVpbmRleBgBIAEoBRINCgVjb3VudBgCIAEoBRIKCgJhcxgDIAEoCRInCgZzb3VyY2UYBCABKAsyFy5vcmtzdGFjay52MS5FYWNoU291cmNlIjIKDEVhY2hVcHN0cmVhbRINCgVjb3VudBgBIAEoBRITCgtjb21taXRfcm9vdBgCIAEoCSKGCAoQRXhlY3V0ZVRhc2tJbnB1dBIOCgZydW5faWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIMCgRwb29sGAYgASgJEg8KB3Rhc2tfaWQYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEhIKCmNvbW1pdF91cmkYCSABKAkSJAoFaW1hZ2UYCiABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAsgAygJEiUKBHdpdGgYDCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjMKA2VudhgNIAMoCzImLm9ya3N0YWNrLnYxLkV4ZWN1dGVUYXNrSW5wdXQuRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIXCg90aW1lb3V0X3NlY29uZHMYDyABKAUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBAgASgFEi8KCXJlc291cmNlcxgRIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBIgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSLAoGbGltaXRzGBMgASgLMhwub3Jrc3RhY2sudjEuV29ya3NwYWNlTGltaXRzEicKCXJ1bl9pbnB1dBgUIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKgoIdXBzdHJlYW0YFSADKAsyGC5vcmtzdGFjay52MS5VcHN0cmVhbVJlZhIZChFydW5fYXNfb3JrZXJfdXNlchgWIAEoCBIyCgl0ZWxlbWV0cnkYFyABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJAoDcGluGBggASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dBI3CgxpbWFnZV9wb2xpY3kYGSABKAsyIS5vcmtzdGFjay52MS5JbWFnZVBvbGljeVNlbGVjdGlvbhImCgRlYWNoGBogASgLMhgub3Jrc3RhY2sudjEuRWFjaENvbnRleHQSKAoFY2FjaGUYGyABKAsyGS5vcmtzdGFjay52MS5DYWNoZUNvbnRleHQSJgoEam9pbhgcIAEoCzIYLm9ya3N0YWNrLnYxLkpvaW5Db250ZXh0GioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiWgoPUmVsZWFzZVBpbklucHV0Eg4KBnJ1bl9pZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSJAoDcGluGAMgASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dCJmCglDb21taXRSZWYSCwoDdXJpGAEgASgJEg4KBnNoYTI1NhgCIAEoCRIMCgRldGFnGAMgASgJEi4KCmNyZWF0ZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIoYEChFFeGVjdXRlVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEhEKCWV4aXRfY29kZRgCIAEoBRImCgZjb21taXQYAyABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgFIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEiwKCnZhbHVlc19yZWYYBiABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhITCgt2YWx1ZXNfanNvbhgHIAEoDBIWCg52YWx1ZXNfaW5saW5lZBgIIAEoCBIkCgVpbWFnZRgJIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEhYKDmNvbW1pdF9hZG9wdGVkGAogASgIEi4KCnN0YXJ0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAwgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgNIAEoCRIPCgdhdHRlbXB0GA4gASgFEicKBWNhY2hlGA8gASgLMhgub3Jrc3RhY2sudjEuQ2FjaGVSZXN1bHQiygQKDkFjdGl2aXR5Q29tbWl0EhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEhEKCW5hbWVzcGFjZRgCIAEoCRIOCgZydW5faWQYAyABKAkSDwoHdGFza19pZBgEIAEoCRIUCgxvcmtmbG93X25hbWUYBSABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAYgASgJEiEKGW9ya2Zsb3dfZGVmaW5pdGlvbl9kaWdlc3QYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEiQKBWltYWdlGAkgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSEQoJZXhpdF9jb2RlGAogASgFEigKBnZhbHVlcxgLIAEoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEisKCWFydGlmYWN0cxgMIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYDSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIuCgpzdGFydGVkX2F0GA4gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgPIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgQIAEoBRIQCghvcmtlcl9pZBgRIAEoCRIQCghidWlsZF9pZBgSIAEoCRInCgVjYWNoZRgTIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlUmVzdWx0It0CChVBY3Rpdml0eUZhaWx1cmVEZXRhaWwSEwoLcmVhc29uX2NvZGUYASABKAkSLgoIY2F0ZWdvcnkYAiABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJZXhpdF9jb2RlGAMgASgFEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhISCgpzY2FuX25vdGVzGAYgAygJEiQKBWltYWdlGAcgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSDwoHYXR0ZW1wdBgIIAEoBRIQCghvcmtlcl9pZBgJIAEoCRIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLqBQoTRGVzY3JpYmVPcmtlclJlc3VsdBIQCghvcmtlcl9pZBgBIAEoCRIQCghidWlsZF9pZBgCIAEoCRIMCgRwb29sGAMgASgJEhQKDHJ1bnRpbWVfbmFtZRgEIAEoCRIXCg9ydW50aW1lX3ZlcnNpb24YBSABKAkSGAoQc2VjdXJpdHlfcHJvZmlsZRgGIAEoCRIWCg5tYXhfY29uY3VycmVudBgHIAEoBRIQCghyb290bGVzcxgIIAEoCBIbChNtYXhfY29uY3VycmVudF9waW5zGAkgASgFEhAKCGNvcmRvbmVkGAogASgIEhUKDWNvcmRvbl9yZWFzb24YCyABKAkSLwoLY29yZG9uZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhUKDXJ1bm5pbmdfdGFza3MYDSABKAUSEQoJb3Blbl9waW5zGA4gASgFEiIKBHBpbnMYDyADKAsyFC5vcmtzdGFjay52MS5PcGVuUGluEhYKDmVhY2hfc3VwcG9ydGVkGBAgASgIEhcKD2NhY2hlX3N1cHBvcnRlZBgRIAEoCBIWCg5qb2luX3N1cHBvcnRlZBgSIAEoCBIvCghjYXBhY2l0eRgTIAEoCzIdLm9ya3N0YWNrLnYxLlJlc291cmNlUXVhbnRpdHkSLwoIcmVzZXJ2ZWQYFCABKAsyHS5vcmtzdGFjay52MS5SZXNvdXJjZVF1YW50aXR5EjIKC21heF9yZXF1ZXN0GBUgASgLMh0ub3Jrc3RhY2sudjEuUmVzb3VyY2VRdWFudGl0eRI2Cg9kZWZhdWx0X3JlcXVlc3QYFiABKAsyHS5vcmtzdGFjay52MS5SZXNvdXJjZVF1YW50aXR5Ei4KDHN0b3JlX291dGFnZRgXIAEoCzIYLm9ya3N0YWNrLnYxLlN0b3JlT3V0YWdlEiIKGmF0dGVtcHRfb3JkaW5hbHNfc3VwcG9ydGVkGCsgASgIIjUKEFJlc291cmNlUXVhbnRpdHkSCwoDY3B1GAEgASgBEhQKDG1lbW9yeV9ieXRlcxgCIAEoAyKBAQoHT3BlblBpbhIOCgZydW5faWQYASABKAkSCwoDcGluGAIgASgJEikKBXNpbmNlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpleHBpcmVzX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJICgtTdG9yZU91dGFnZRIOCgZyZWFzb24YASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIjQKEENvcmRvbk9ya2VySW5wdXQSEAoIY29yZG9uZWQYASABKAgSDgoGcmVhc29uGAIgASgJIo8ECgVPcmtlchIQCghvcmtlcl9pZBgBIAEoCRIMCgRwb29sGAIgASgJEhAKCGJ1aWxkX2lkGAMgASgJEhUKDXJ1bm5pbmdfdGFza3MYBCABKAUSEQoJb3Blbl9waW5zGAUgASgFEhsKE21heF9jb25jdXJyZW50X3BpbnMYBiABKAUSEAoIY29yZG9uZWQYByABKAgSFQoNY29yZG9uX3JlYXNvbhgIIAEoCRIvCgtjb3Jkb25lZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLQoJbGFzdF9zZWVuGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YCyABKAkSIgoEcGlucxgMIAMoCzIULm9ya3N0YWNrLnYxLk9wZW5QaW4SLwoIY2FwYWNpdHkYDSABKAsyHS5vcmtzdGFjay52MS5SZXNvdXJjZVF1YW50aXR5Ei8KCHJlc2VydmVkGA4gASgLMh0ub3Jrc3RhY2sudjEuUmVzb3VyY2VRdWFudGl0eRIyCgttYXhfcmVxdWVzdBgPIAEoCzIdLm9ya3N0YWNrLnYxLlJlc291cmNlUXVhbnRpdHkSLgoMc3RvcmVfb3V0YWdlGBAgASgLMhgub3Jrc3RhY2sudjEuU3RvcmVPdXRhZ2UqXAoLTmV0d29ya01vZGUSHAoYTkVUV09SS19NT0RFX1VOU1BFQ0lGSUVEEAASGAoUTkVUV09SS19NT0RFX0RFRkFVTFQQARIVChFORVRXT1JLX01PREVfTk9ORRACKnwKCkpvaW5Qb2xpY3kSGwoXSk9JTl9QT0xJQ1lfVU5TUEVDSUZJRUQQABIbChdKT0lOX1BPTElDWV9OT05FX0ZBSUxFRBABEhoKFkpPSU5fUE9MSUNZX0FOWV9GQUlMRUQQAhIYChRKT0lOX1BPTElDWV9BTExfRE9ORRADKl0KCkNhY2hlU2NvcGUSGwoXQ0FDSEVfU0NPUEVfVU5TUEVDSUZJRUQQABIXChNDQUNIRV9TQ09QRV9PUktGTE9XEAESGQoVQ0FDSEVfU0NPUEVfTkFNRVNQQUNFEAIqeAoMQ2FjaGVPdXRjb21lEh0KGUNBQ0hFX09VVENPTUVfVU5TUEVDSUZJRUQQABIVChFDQUNIRV9PVVRDT01FX0hJVBABEhYKEkNBQ0hFX09VVENPTUVfTUlTUxACEhoKFkNBQ0hFX09VVENPTUVfQllQQVNTRUQQA0KpAQoPY29tLm9ya3N0YWNrLnYxQg1BY3Rpdml0eVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_image_policy, file_orkstack_v1_telemetry]);
+  fileDesc("ChpvcmtzdGFjay92MS9hY3Rpdml0eS5wcm90bxILb3Jrc3RhY2sudjEi4AEKCEltYWdlUmVmEhEKCXJlZmVyZW5jZRgBIAEoCRIQCghyZWdpc3RyeRgCIAEoCRISCgpyZXBvc2l0b3J5GAMgASgJEhQKDGluZGV4X2RpZ2VzdBgEIAEoCRIOCgZwaW5uZWQYBSABKAkSEgoKbWVkaWFfdHlwZRgGIAEoCRIRCglwbGF0Zm9ybXMYByADKAkSFwoPcGxhdGZvcm1fZGlnZXN0GAkgASgJEhAKCHBsYXRmb3JtGAogASgJEhAKCGRlbGl2ZXJ5GAsgASgJSgQICBAJUgtyZXNvbHZlZF9hdCI7Cg9SZXNvdXJjZVJlcXVlc3QSCwoDY3B1GAEgASgJEg4KBm1lbW9yeRgCIAEoCRILCgNncHUYAyABKAUibQoKRWFjaFNvdXJjZRINCgVpbnB1dBgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEgwKBHBhdGgYAyADKAkSMQoIYXJ0aWZhY3QYBCABKAsyHy5vcmtzdGFjay52MS5FYWNoQXJ0aWZhY3RTb3VyY2UiXgoJU2VjcmV0UmVmEgwKBG5hbWUYASABKAkSDgoGc291cmNlGAIgASgJEg0KBWdyYW50GAMgASgJEhIKCmNpcGhlcnRleHQYBCABKAkSEAoIdW5tYXNrZWQYBSABKAgilAEKD1dvcmtzcGFjZUxpbWl0cxIYChB2YWx1ZXNfbWF4X2J5dGVzGAEgASgDEhoKEmFydGlmYWN0X21heF9jb3VudBgCIAEoBRIaChJhcnRpZmFjdF9tYXhfYnl0ZXMYAyABKAMSFQoNbG9nX21heF9ieXRlcxgEIAEoAxIYChBjb21taXRfbWF4X2J5dGVzGAUgASgDIsYBCgtVcHN0cmVhbVJlZhIPCgd0YXNrX2lkGAEgASgJEhIKCmNvbW1pdF91cmkYAiABKAkSKAoGdmFsdWVzGAMgASgLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSJwoEZWFjaBgFIAEoCzIZLm9ya3N0YWNrLnYxLkVhY2hVcHN0cmVhbRISCgpyZWNvcmRfdXJpGAYgASgJIkgKClBpbkNvbnRleHQSDAoEbmFtZRgBIAEoCRITCgtpbnN0YW5jZV9pZBgCIAEoCRIXCg90aW1lb3V0X3NlY29uZHMYAyABKAUiZgoLTmVlZE91dGNvbWUSDwoHdGFza19pZBgBIAEoCRIjCgZzdGF0dXMYAiABKA4yEy5vcmtzdGFjay52MS5TdGF0dXMSIQoFZXJyb3IYAyABKAsyEi5vcmtzdGFjay52MS5FcnJvciJfCgtKb2luQ29udGV4dBInCgZwb2xpY3kYASABKA4yFy5vcmtzdGFjay52MS5Kb2luUG9saWN5EicKBW5lZWRzGAIgAygLMhgub3Jrc3RhY2sudjEuTmVlZE91dGNvbWUidwoMQ2FjaGVDb250ZXh0EiYKBXNjb3BlGAEgASgOMhcub3Jrc3RhY2sudjEuQ2FjaGVTY29wZRITCgt0dGxfc2Vjb25kcxgCIAEoAxIPCgdyZWZyZXNoGAMgASgIEhkKEW9ya2Zsb3dfbmFtZXNwYWNlGAQgASgJIpYCCgtDYWNoZVNvdXJjZRIOCgZydW5faWQYASABKAkSDwoHdGFza19pZBgCIAEoCRIUCgxvcmtmbG93X25hbWUYAyABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAQgASgJEhIKCmNvbW1pdF91cmkYBSABKAkSFQoNY29tbWl0X3NoYTI1NhgGIAEoCRIuCgpzdGFydGVkX2F0GAcgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASEQoEaXRlbRgJIAEoBUgAiAEBEg8KB2F0dGVtcHQYCiABKAVCBwoFX2l0ZW0ixQIKC0NhY2hlUmVzdWx0EioKB291dGNvbWUYASABKA4yGS5vcmtzdGFjay52MS5DYWNoZU91dGNvbWUSCwoDa2V5GAIgASgJEhMKC21pc3NfcmVhc29uGAMgASgJEhMKC21pc3NfZGV0YWlsGAQgASgJEigKBnNvdXJjZRgFIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlU291cmNlEhQKDG1lbW9fd3JpdHRlbhgGIAEoCBIYChBtZW1vX3dyaXRlX2Vycm9yGAcgASgJEkMKDmtleV9jb21wb25lbnRzGAggAygLMisub3Jrc3RhY2sudjEuQ2FjaGVSZXN1bHQuS2V5Q29tcG9uZW50c0VudHJ5GjQKEktleUNvbXBvbmVudHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIokDCglDYWNoZU1lbW8SFgoOc2NoZW1hX3ZlcnNpb24YASABKAUSCwoDa2V5GAIgASgJEhEKCW5hbWVzcGFjZRgDIAEoCRImCgVzY29wZRgEIAEoDjIXLm9ya3N0YWNrLnYxLkNhY2hlU2NvcGUSFAoMb3JrZmxvd19uYW1lGAUgASgJEg8KB3Rhc2tfaWQYBiABKAkSKAoGc291cmNlGAcgASgLMhgub3Jrc3RhY2sudjEuQ2FjaGVTb3VyY2USQQoOa2V5X2NvbXBvbmVudHMYCCADKAsyKS5vcmtzdGFjay52MS5DYWNoZU1lbW8uS2V5Q29tcG9uZW50c0VudHJ5Ei4KCmNyZWF0ZWRfYXQYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhAKCG9ya2VyX2lkGAogASgJEhAKCGJ1aWxkX2lkGAsgASgJGjQKEktleUNvbXBvbmVudHNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBIocBCgtFYWNoQ29udGV4dBINCgVpbmRleBgBIAEoBRINCgVjb3VudBgCIAEoBRIKCgJhcxgDIAEoCRInCgZzb3VyY2UYBCABKAsyFy5vcmtzdGFjay52MS5FYWNoU291cmNlEiUKBWxpbmVzGAUgASgLMhYub3Jrc3RhY2sudjEuRWFjaExpbmVzIjIKDEVhY2hVcHN0cmVhbRINCgVjb3VudBgBIAEoBRITCgtjb21taXRfcm9vdBgCIAEoCSK3CQoQRXhlY3V0ZVRhc2tJbnB1dBIOCgZydW5faWQYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRIhChlvcmtmbG93X2RlZmluaXRpb25fZGlnZXN0GAQgASgJEhEKCW5hbWVzcGFjZRgFIAEoCRIMCgRwb29sGAYgASgJEg8KB3Rhc2tfaWQYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEhIKCmNvbW1pdF91cmkYCSABKAkSJAoFaW1hZ2UYCiABKAsyFS5vcmtzdGFjay52MS5JbWFnZVJlZhIPCgdjb21tYW5kGAsgAygJEiUKBHdpdGgYDCABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0EjMKA2VudhgNIAMoCzImLm9ya3N0YWNrLnYxLkV4ZWN1dGVUYXNrSW5wdXQuRW52RW50cnkSJwoHc2VjcmV0cxgOIAMoCzIWLm9ya3N0YWNrLnYxLlNlY3JldFJlZhIXCg90aW1lb3V0X3NlY29uZHMYDyABKAUSKQohY2FuY2VsbGF0aW9uX2dyYWNlX3BlcmlvZF9zZWNvbmRzGBAgASgFEi8KCXJlc291cmNlcxgRIAEoCzIcLm9ya3N0YWNrLnYxLlJlc291cmNlUmVxdWVzdBIpCgduZXR3b3JrGBIgASgOMhgub3Jrc3RhY2sudjEuTmV0d29ya01vZGUSLAoGbGltaXRzGBMgASgLMhwub3Jrc3RhY2sudjEuV29ya3NwYWNlTGltaXRzEicKCXJ1bl9pbnB1dBgUIAEoCzIULm9ya3N0YWNrLnYxLlBheWxvYWQSKgoIdXBzdHJlYW0YFSADKAsyGC5vcmtzdGFjay52MS5VcHN0cmVhbVJlZhIZChFydW5fYXNfb3JrZXJfdXNlchgWIAEoCBIyCgl0ZWxlbWV0cnkYFyABKAsyHy5vcmtzdGFjay52MS5UZWxlbWV0cnlTZWxlY3Rpb24SJAoDcGluGBggASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dBI3CgxpbWFnZV9wb2xpY3kYGSABKAsyIS5vcmtzdGFjay52MS5JbWFnZVBvbGljeVNlbGVjdGlvbhImCgRlYWNoGBogASgLMhgub3Jrc3RhY2sudjEuRWFjaENvbnRleHQSKAoFY2FjaGUYGyABKAsyGS5vcmtzdGFjay52MS5DYWNoZUNvbnRleHQSJgoEam9pbhgcIAEoCzIYLm9ya3N0YWNrLnYxLkpvaW5Db250ZXh0EigKB2RldmljZXMYHiADKAsyFy5vcmtzdGFjay52MS5Qcm9maWxlUmVmEicKBmVncmVzcxgfIAEoCzIXLm9ya3N0YWNrLnYxLlByb2ZpbGVSZWYSLgoIaWRlbnRpdHkYIiABKAsyHC5vcmtzdGFjay52MS5JZGVudGl0eUNvbnRleHQSLAoLcnVuX2NvbnRleHQYISABKAsyFy5vcmtzdGFjay52MS5SdW5Db250ZXh0GioKCEVudkVudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoCToCOAEiWgoPUmVsZWFzZVBpbklucHV0Eg4KBnJ1bl9pZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSJAoDcGluGAMgASgLMhcub3Jrc3RhY2sudjEuUGluQ29udGV4dCJmCglDb21taXRSZWYSCwoDdXJpGAEgASgJEg4KBnNoYTI1NhgCIAEoCRIMCgRldGFnGAMgASgJEi4KCmNyZWF0ZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIoYEChFFeGVjdXRlVGFza1Jlc3VsdBIPCgd0YXNrX2lkGAEgASgJEhEKCWV4aXRfY29kZRgCIAEoBRImCgZjb21taXQYAyABKAsyFi5vcmtzdGFjay52MS5Db21taXRSZWYSKwoJYXJ0aWZhY3RzGAQgAygLMhgub3Jrc3RhY2sudjEuQXJ0aWZhY3RSZWYSMgoQc3lzdGVtX2FydGlmYWN0cxgFIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEiwKCnZhbHVlc19yZWYYBiABKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhITCgt2YWx1ZXNfanNvbhgHIAEoDBIWCg52YWx1ZXNfaW5saW5lZBgIIAEoCBIkCgVpbWFnZRgJIAEoCzIVLm9ya3N0YWNrLnYxLkltYWdlUmVmEhYKDmNvbW1pdF9hZG9wdGVkGAogASgIEi4KCnN0YXJ0ZWRfYXQYCyABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEi8KC2ZpbmlzaGVkX2F0GAwgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIQCghvcmtlcl9pZBgNIAEoCRIPCgdhdHRlbXB0GA4gASgFEicKBWNhY2hlGA8gASgLMhgub3Jrc3RhY2sudjEuQ2FjaGVSZXN1bHQiygQKDkFjdGl2aXR5Q29tbWl0EhYKDnNjaGVtYV92ZXJzaW9uGAEgASgFEhEKCW5hbWVzcGFjZRgCIAEoCRIOCgZydW5faWQYAyABKAkSDwoHdGFza19pZBgEIAEoCRIUCgxvcmtmbG93X25hbWUYBSABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAYgASgJEiEKGW9ya2Zsb3dfZGVmaW5pdGlvbl9kaWdlc3QYByABKAkSFwoPaWRlbXBvdGVuY3lfa2V5GAggASgJEiQKBWltYWdlGAkgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSEQoJZXhpdF9jb2RlGAogASgFEigKBnZhbHVlcxgLIAEoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEisKCWFydGlmYWN0cxgMIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYDSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhIuCgpzdGFydGVkX2F0GA4gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIvCgtmaW5pc2hlZF9hdBgPIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDwoHYXR0ZW1wdBgQIAEoBRIQCghvcmtlcl9pZBgRIAEoCRIQCghidWlsZF9pZBgSIAEoCRInCgVjYWNoZRgTIAEoCzIYLm9ya3N0YWNrLnYxLkNhY2hlUmVzdWx0It0CChVBY3Rpdml0eUZhaWx1cmVEZXRhaWwSEwoLcmVhc29uX2NvZGUYASABKAkSLgoIY2F0ZWdvcnkYAiABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJZXhpdF9jb2RlGAMgASgFEisKCWFydGlmYWN0cxgEIAMoCzIYLm9ya3N0YWNrLnYxLkFydGlmYWN0UmVmEjIKEHN5c3RlbV9hcnRpZmFjdHMYBSADKAsyGC5vcmtzdGFjay52MS5BcnRpZmFjdFJlZhISCgpzY2FuX25vdGVzGAYgAygJEiQKBWltYWdlGAcgASgLMhUub3Jrc3RhY2sudjEuSW1hZ2VSZWYSDwoHYXR0ZW1wdBgIIAEoBRIQCghvcmtlcl9pZBgJIAEoCRIuCgpzdGFydGVkX2F0GAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCKOCwoTRGVzY3JpYmVPcmtlclJlc3VsdBIQCghvcmtlcl9pZBgBIAEoCRIQCghidWlsZF9pZBgCIAEoCRIMCgRwb29sGAMgASgJEhQKDHJ1bnRpbWVfbmFtZRgEIAEoCRIXCg9ydW50aW1lX3ZlcnNpb24YBSABKAkSGAoQc2VjdXJpdHlfcHJvZmlsZRgGIAEoCRIWCg5tYXhfY29uY3VycmVudBgHIAEoBRIQCghyb290bGVzcxgIIAEoCBIbChNtYXhfY29uY3VycmVudF9waW5zGAkgASgFEhAKCGNvcmRvbmVkGAogASgIEhUKDWNvcmRvbl9yZWFzb24YCyABKAkSLwoLY29yZG9uZWRfYXQYDCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhUKDXJ1bm5pbmdfdGFza3MYDSABKAUSEQoJb3Blbl9waW5zGA4gASgFEiIKBHBpbnMYDyADKAsyFC5vcmtzdGFjay52MS5PcGVuUGluEhYKDmVhY2hfc3VwcG9ydGVkGBAgASgIEhcKD2NhY2hlX3N1cHBvcnRlZBgRIAEoCBIWCg5qb2luX3N1cHBvcnRlZBgSIAEoCBIvCghjYXBhY2l0eRgTIAEoCzIdLm9ya3N0YWNrLnYxLlJlc291cmNlUXVhbnRpdHkSLwoIcmVzZXJ2ZWQYFCABKAsyHS5vcmtzdGFjay52MS5SZXNvdXJjZVF1YW50aXR5EjIKC21heF9yZXF1ZXN0GBUgASgLMh0ub3Jrc3RhY2sudjEuUmVzb3VyY2VRdWFudGl0eRI2Cg9kZWZhdWx0X3JlcXVlc3QYFiABKAsyHS5vcmtzdGFjay52MS5SZXNvdXJjZVF1YW50aXR5Ei4KDHN0b3JlX291dGFnZRgXIAEoCzIYLm9ya3N0YWNrLnYxLlN0b3JlT3V0YWdlEiIKGmF0dGVtcHRfb3JkaW5hbHNfc3VwcG9ydGVkGCsgASgIEiwKCHN0b3BwaW5nGBggASgLMhoub3Jrc3RhY2sudjEuT3JrZXJTdG9wcGluZxI5Chdwcm9maWxlX2tpbmRzX3N1cHBvcnRlZBgaIAMoDjIYLm9ya3N0YWNrLnYxLlByb2ZpbGVLaW5kEisKCHByb2ZpbGVzGBsgAygLMhkub3Jrc3RhY2sudjEuT3JrZXJQcm9maWxlEjMKD3Byb2ZpbGVfY29yZG9ucxgcIAMoCzIaLm9ya3N0YWNrLnYxLlByb2ZpbGVDb3Jkb24SGgoSaWRlbnRpdHlfc3VwcG9ydGVkGCEgASgIEiwKCXByb3ZpZGVycxgiIAMoCzIZLm9ya3N0YWNrLnYxLlByb3ZpZGVySW5mbxIVCg1tYXNrc19zZWNyZXRzGCMgASgIEhoKEm1ldGFkYXRhX3JlYWNoYWJsZRgkIAMoCRIdChVydW5fY29udGV4dF9zdXBwb3J0ZWQYHyABKAgSHAoUZWFjaF9saW5lc19zdXBwb3J0ZWQYICABKAgSMwoPbWV0YWRhdGFfcHJvYmVzGCUgAygLMhoub3Jrc3RhY2sudjEuTWV0YWRhdGFQcm9iZRIsCgtzdG9yZV9zY29wZRgmIAEoDjIXLm9ya3N0YWNrLnYxLlN0b3JlU2NvcGUSGgoSc3RvcmVfc2NvcGVfZGV0YWlsGCcgASgJEjwKGHN0b3JlX3Njb3BlX2NvbmZpcm1lZF9hdBgoIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMAoNcmVzdWx0c19zY29wZRgpIAEoDjIZLm9ya3N0YWNrLnYxLlJlc3VsdHNTY29wZRIuCgxzZXJ2aWNlX2hvc3QYKiABKAsyGC5vcmtzdGFjay52MS5TZXJ2aWNlSG9zdCJPChBSZXNvdXJjZVF1YW50aXR5EgsKA2NwdRgBIAEoARIUCgxtZW1vcnlfYnl0ZXMYAiABKAMSEAoDZ3B1GAMgASgDSACIAQFCBgoEX2dwdSKBAQoHT3BlblBpbhIOCgZydW5faWQYASABKAkSCwoDcGluGAIgASgJEikKBXNpbmNlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIuCgpleHBpcmVzX2F0GAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCJICgtTdG9yZU91dGFnZRIOCgZyZWFzb24YASABKAkSKQoFc2luY2UYAiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wIjQKEENvcmRvbk9ya2VySW5wdXQSEAoIY29yZG9uZWQYASABKAgSDgoGcmVhc29uGAIgASgJIs8FCgVPcmtlchIQCghvcmtlcl9pZBgBIAEoCRIMCgRwb29sGAIgASgJEhAKCGJ1aWxkX2lkGAMgASgJEhUKDXJ1bm5pbmdfdGFza3MYBCABKAUSEQoJb3Blbl9waW5zGAUgASgFEhsKE21heF9jb25jdXJyZW50X3BpbnMYBiABKAUSEAoIY29yZG9uZWQYByABKAgSFQoNY29yZG9uX3JlYXNvbhgIIAEoCRIvCgtjb3Jkb25lZF9hdBgJIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLQoJbGFzdF9zZWVuGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIaChJ1bmF2YWlsYWJsZV9yZWFzb24YCyABKAkSIgoEcGlucxgMIAMoCzIULm9ya3N0YWNrLnYxLk9wZW5QaW4SLwoIY2FwYWNpdHkYDSABKAsyHS5vcmtzdGFjay52MS5SZXNvdXJjZVF1YW50aXR5Ei8KCHJlc2VydmVkGA4gASgLMh0ub3Jrc3RhY2sudjEuUmVzb3VyY2VRdWFudGl0eRIyCgttYXhfcmVxdWVzdBgPIAEoCzIdLm9ya3N0YWNrLnYxLlJlc291cmNlUXVhbnRpdHkSLgoMc3RvcmVfb3V0YWdlGBAgASgLMhgub3Jrc3RhY2sudjEuU3RvcmVPdXRhZ2USLAoIc3RvcHBpbmcYESABKAsyGi5vcmtzdGFjay52MS5PcmtlclN0b3BwaW5nEisKCHByb2ZpbGVzGBIgAygLMhkub3Jrc3RhY2sudjEuT3JrZXJQcm9maWxlEjMKD3Byb2ZpbGVfY29yZG9ucxgTIAMoCzIaLm9ya3N0YWNrLnYxLlByb2ZpbGVDb3Jkb24SLgoMc2VydmljZV9ob3N0GBQgASgLMhgub3Jrc3RhY2sudjEuU2VydmljZUhvc3QiFAoSRWFjaEFydGlmYWN0U291cmNlIgsKCUVhY2hMaW5lcyIRCg9JZGVudGl0eUNvbnRleHQiDwoNTWV0YWRhdGFQcm9iZSIOCgxPcmtlclByb2ZpbGUiDwoNT3JrZXJTdG9wcGluZyIPCg1Qcm9maWxlQ29yZG9uIgwKClByb2ZpbGVSZWYiDgoMUHJvdmlkZXJJbmZvIgwKClJ1bkNvbnRleHQiDQoLU2VydmljZUhvc3QqXAoLTmV0d29ya01vZGUSHAoYTkVUV09SS19NT0RFX1VOU1BFQ0lGSUVEEAASGAoUTkVUV09SS19NT0RFX0RFRkFVTFQQARIVChFORVRXT1JLX01PREVfTk9ORRACKnwKCkpvaW5Qb2xpY3kSGwoXSk9JTl9QT0xJQ1lfVU5TUEVDSUZJRUQQABIbChdKT0lOX1BPTElDWV9OT05FX0ZBSUxFRBABEhoKFkpPSU5fUE9MSUNZX0FOWV9GQUlMRUQQAhIYChRKT0lOX1BPTElDWV9BTExfRE9ORRADKl0KCkNhY2hlU2NvcGUSGwoXQ0FDSEVfU0NPUEVfVU5TUEVDSUZJRUQQABIXChNDQUNIRV9TQ09QRV9PUktGTE9XEAESGQoVQ0FDSEVfU0NPUEVfTkFNRVNQQUNFEAIqeAoMQ2FjaGVPdXRjb21lEh0KGUNBQ0hFX09VVENPTUVfVU5TUEVDSUZJRUQQABIVChFDQUNIRV9PVVRDT01FX0hJVBABEhYKEkNBQ0hFX09VVENPTUVfTUlTUxACEhoKFkNBQ0hFX09VVENPTUVfQllQQVNTRUQQAyorCgtQcm9maWxlS2luZBIcChhQUk9GSUxFX0tJTkRfVU5TUEVDSUZJRUQQACotCgxSZXN1bHRzU2NvcGUSHQoZUkVTVUxUU19TQ09QRV9VTlNQRUNJRklFRBAAKikKClN0b3JlU2NvcGUSGwoXU1RPUkVfU0NPUEVfVU5TUEVDSUZJRUQQAEKpAQoPY29tLm9ya3N0YWNrLnYxQg1BY3Rpdml0eVByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_image_policy, file_orkstack_v1_telemetry]);
 
 /**
  * ImageRef is an OCI image resolved to an immutable reference. The engine
@@ -136,6 +136,13 @@ export type ResourceRequest = Message<"orkstack.v1.ResourceRequest"> & {
    * @generated from field: string memory = 2;
    */
   memory: string;
+
+  /**
+   * gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: int32 gpu = 3;
+   */
+  gpu: number;
 };
 
 /**
@@ -176,6 +183,13 @@ export type EachSource = Message<"orkstack.v1.EachSource"> & {
    * @generated from field: repeated string path = 3;
    */
   path: string[];
+
+  /**
+   * artifact is set from E89; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.EachArtifactSource artifact = 4;
+   */
+  artifact?: EachArtifactSource | undefined;
 };
 
 /**
@@ -207,6 +221,27 @@ export type SecretRef = Message<"orkstack.v1.SecretRef"> & {
    * @generated from field: string source = 2;
    */
   source: string;
+
+  /**
+   * grant is set from identity (E83); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string grant = 3;
+   */
+  grant: string;
+
+  /**
+   * ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string ciphertext = 4;
+   */
+  ciphertext: string;
+
+  /**
+   * unmasked is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool unmasked = 5;
+   */
+  unmasked: boolean;
 };
 
 /**
@@ -324,6 +359,13 @@ export type UpstreamRef = Message<"orkstack.v1.UpstreamRef"> & {
    * @generated from field: orkstack.v1.EachUpstream each = 5;
    */
   each?: EachUpstream | undefined;
+
+  /**
+   * record_uri is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string record_uri = 6;
+   */
+  recordUri: string;
 };
 
 /**
@@ -770,6 +812,13 @@ export type EachContext = Message<"orkstack.v1.EachContext"> & {
    * @generated from field: orkstack.v1.EachSource source = 4;
    */
   source?: EachSource | undefined;
+
+  /**
+   * lines is set from E89; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.EachLines lines = 5;
+   */
+  lines?: EachLines | undefined;
 };
 
 /**
@@ -1059,6 +1108,34 @@ export type ExecuteTaskInput = Message<"orkstack.v1.ExecuteTaskInput"> & {
    * @generated from field: orkstack.v1.JoinContext join = 28;
    */
   join?: JoinContext | undefined;
+
+  /**
+   * devices is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.ProfileRef devices = 30;
+   */
+  devices: ProfileRef[];
+
+  /**
+   * egress is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.ProfileRef egress = 31;
+   */
+  egress?: ProfileRef | undefined;
+
+  /**
+   * identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.IdentityContext identity = 34;
+   */
+  identity?: IdentityContext | undefined;
+
+  /**
+   * run_context is set from E86; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.RunContext run_context = 33;
+   */
+  runContext?: RunContext | undefined;
 };
 
 /**
@@ -1714,6 +1791,118 @@ export type DescribeOrkerResult = Message<"orkstack.v1.DescribeOrkerResult"> & {
    * @generated from field: bool attempt_ordinals_supported = 43;
    */
   attemptOrdinalsSupported: boolean;
+
+  /**
+   * stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.OrkerStopping stopping = 24;
+   */
+  stopping?: OrkerStopping | undefined;
+
+  /**
+   * profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.ProfileKind profile_kinds_supported = 26;
+   */
+  profileKindsSupported: ProfileKind[];
+
+  /**
+   * profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.OrkerProfile profiles = 27;
+   */
+  profiles: OrkerProfile[];
+
+  /**
+   * profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.ProfileCordon profile_cordons = 28;
+   */
+  profileCordons: ProfileCordon[];
+
+  /**
+   * identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool identity_supported = 33;
+   */
+  identitySupported: boolean;
+
+  /**
+   * providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.ProviderInfo providers = 34;
+   */
+  providers: ProviderInfo[];
+
+  /**
+   * masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool masks_secrets = 35;
+   */
+  masksSecrets: boolean;
+
+  /**
+   * metadata_reachable is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated string metadata_reachable = 36;
+   */
+  metadataReachable: string[];
+
+  /**
+   * run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool run_context_supported = 31;
+   */
+  runContextSupported: boolean;
+
+  /**
+   * each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool each_lines_supported = 32;
+   */
+  eachLinesSupported: boolean;
+
+  /**
+   * metadata_probes is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.MetadataProbe metadata_probes = 37;
+   */
+  metadataProbes: MetadataProbe[];
+
+  /**
+   * store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.StoreScope store_scope = 38;
+   */
+  storeScope: StoreScope;
+
+  /**
+   * store_scope_detail is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string store_scope_detail = 39;
+   */
+  storeScopeDetail: string;
+
+  /**
+   * store_scope_confirmed_at is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: google.protobuf.Timestamp store_scope_confirmed_at = 40;
+   */
+  storeScopeConfirmedAt?: Timestamp | undefined;
+
+  /**
+   * results_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.ResultsScope results_scope = 41;
+   */
+  resultsScope: ResultsScope;
+
+  /**
+   * service_host is set from E90; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.ServiceHost service_host = 42;
+   */
+  serviceHost?: ServiceHost | undefined;
 };
 
 /**
@@ -1740,6 +1929,13 @@ export type ResourceQuantity = Message<"orkstack.v1.ResourceQuantity"> & {
    * @generated from field: int64 memory_bytes = 2;
    */
   memoryBytes: bigint;
+
+  /**
+   * gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: optional int64 gpu = 3;
+   */
+  gpu?: bigint | undefined;
 };
 
 /**
@@ -1980,6 +2176,34 @@ export type Orker = Message<"orkstack.v1.Orker"> & {
    * @generated from field: orkstack.v1.StoreOutage store_outage = 16;
    */
   storeOutage?: StoreOutage | undefined;
+
+  /**
+   * stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.OrkerStopping stopping = 17;
+   */
+  stopping?: OrkerStopping | undefined;
+
+  /**
+   * profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.OrkerProfile profiles = 18;
+   */
+  profiles: OrkerProfile[];
+
+  /**
+   * profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: repeated orkstack.v1.ProfileCordon profile_cordons = 19;
+   */
+  profileCordons: ProfileCordon[];
+
+  /**
+   * service_host is set from E90; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.ServiceHost service_host = 20;
+   */
+  serviceHost?: ServiceHost | undefined;
 };
 
 /**
@@ -1988,6 +2212,182 @@ export type Orker = Message<"orkstack.v1.Orker"> & {
  */
 export const OrkerSchema: GenMessage<Orker> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_activity, 26);
+
+/**
+ * EachArtifactSource is E89's; it is empty until E89 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.EachArtifactSource
+ */
+export type EachArtifactSource = Message<"orkstack.v1.EachArtifactSource"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.EachArtifactSource.
+ * Use `create(EachArtifactSourceSchema)` to create a new message.
+ */
+export const EachArtifactSourceSchema: GenMessage<EachArtifactSource> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 27);
+
+/**
+ * EachLines is E89's; it is empty until E89 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.EachLines
+ */
+export type EachLines = Message<"orkstack.v1.EachLines"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.EachLines.
+ * Use `create(EachLinesSchema)` to create a new message.
+ */
+export const EachLinesSchema: GenMessage<EachLines> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 28);
+
+/**
+ * IdentityContext is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.IdentityContext
+ */
+export type IdentityContext = Message<"orkstack.v1.IdentityContext"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.IdentityContext.
+ * Use `create(IdentityContextSchema)` to create a new message.
+ */
+export const IdentityContextSchema: GenMessage<IdentityContext> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 29);
+
+/**
+ * MetadataProbe is identity (E60)'s; it is empty until identity (E60) lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.MetadataProbe
+ */
+export type MetadataProbe = Message<"orkstack.v1.MetadataProbe"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.MetadataProbe.
+ * Use `create(MetadataProbeSchema)` to create a new message.
+ */
+export const MetadataProbeSchema: GenMessage<MetadataProbe> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 30);
+
+/**
+ * OrkerProfile is E91's; it is empty until E91 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.OrkerProfile
+ */
+export type OrkerProfile = Message<"orkstack.v1.OrkerProfile"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.OrkerProfile.
+ * Use `create(OrkerProfileSchema)` to create a new message.
+ */
+export const OrkerProfileSchema: GenMessage<OrkerProfile> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 31);
+
+/**
+ * OrkerStopping is E92's; it is empty until E92 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.OrkerStopping
+ */
+export type OrkerStopping = Message<"orkstack.v1.OrkerStopping"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.OrkerStopping.
+ * Use `create(OrkerStoppingSchema)` to create a new message.
+ */
+export const OrkerStoppingSchema: GenMessage<OrkerStopping> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 32);
+
+/**
+ * ProfileCordon is E91's; it is empty until E91 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.ProfileCordon
+ */
+export type ProfileCordon = Message<"orkstack.v1.ProfileCordon"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.ProfileCordon.
+ * Use `create(ProfileCordonSchema)` to create a new message.
+ */
+export const ProfileCordonSchema: GenMessage<ProfileCordon> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 33);
+
+/**
+ * ProfileRef is E91's; it is empty until E91 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.ProfileRef
+ */
+export type ProfileRef = Message<"orkstack.v1.ProfileRef"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.ProfileRef.
+ * Use `create(ProfileRefSchema)` to create a new message.
+ */
+export const ProfileRefSchema: GenMessage<ProfileRef> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 34);
+
+/**
+ * ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.ProviderInfo
+ */
+export type ProviderInfo = Message<"orkstack.v1.ProviderInfo"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.ProviderInfo.
+ * Use `create(ProviderInfoSchema)` to create a new message.
+ */
+export const ProviderInfoSchema: GenMessage<ProviderInfo> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 35);
+
+/**
+ * RunContext is E86's; it is empty until E86 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.RunContext
+ */
+export type RunContext = Message<"orkstack.v1.RunContext"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.RunContext.
+ * Use `create(RunContextSchema)` to create a new message.
+ */
+export const RunContextSchema: GenMessage<RunContext> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 36);
+
+/**
+ * ServiceHost is E90's; it is empty until E90 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.ServiceHost
+ */
+export type ServiceHost = Message<"orkstack.v1.ServiceHost"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.ServiceHost.
+ * Use `create(ServiceHostSchema)` to create a new message.
+ */
+export const ServiceHostSchema: GenMessage<ServiceHost> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_activity, 37);
 
 /**
  * NetworkMode is the complete set of network configurations an Orkflow may
@@ -2146,4 +2546,61 @@ export enum CacheOutcome {
  */
 export const CacheOutcomeSchema: GenEnum<CacheOutcome> = /*@__PURE__*/
   enumDesc(file_orkstack_v1_activity, 3);
+
+/**
+ * ProfileKind is E91's; it holds only its zero value until E91 lands
+ * (v0.4.0 proto batch).
+ *
+ * @generated from enum orkstack.v1.ProfileKind
+ */
+export enum ProfileKind {
+  /**
+   * @generated from enum value: PROFILE_KIND_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+}
+
+/**
+ * Describes the enum orkstack.v1.ProfileKind.
+ */
+export const ProfileKindSchema: GenEnum<ProfileKind> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_activity, 4);
+
+/**
+ * ResultsScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
+ * (v0.4.0 proto batch).
+ *
+ * @generated from enum orkstack.v1.ResultsScope
+ */
+export enum ResultsScope {
+  /**
+   * @generated from enum value: RESULTS_SCOPE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+}
+
+/**
+ * Describes the enum orkstack.v1.ResultsScope.
+ */
+export const ResultsScopeSchema: GenEnum<ResultsScope> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_activity, 5);
+
+/**
+ * StoreScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
+ * (v0.4.0 proto batch).
+ *
+ * @generated from enum orkstack.v1.StoreScope
+ */
+export enum StoreScope {
+  /**
+   * @generated from enum value: STORE_SCOPE_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+}
+
+/**
+ * Describes the enum orkstack.v1.StoreScope.
+ */
+export const StoreScopeSchema: GenEnum<StoreScope> = /*@__PURE__*/
+  enumDesc(file_orkstack_v1_activity, 6);
 

@@ -82,6 +82,24 @@ message RunContinuation {
   // wrote: a gzipped Run under a content-addressed continuations/ key, never
   // a {seq}.pb key.
   ContinuationObject snapshot = 9;
+
+  // resume is set from E85; unset until it lands (v0.4.0 proto batch).
+  RunResumeCarry resume = 11;
+
+  // pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  RunPause pause = 12;
+
+  // last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  RunPause last_pause = 13;
+
+  // paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+  InheritedPause paused_by_parent = 14;
+
+  // last_cascade_seq is set from E103; unset until it lands (v0.4.0 proto batch).
+  int64 last_cascade_seq = 15;
+
+  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  RunConcurrencyCarry concurrency = 16;
 }
 
 // RunCheckpointPart is one gzip member of a checkpoint. Concatenated
@@ -97,6 +115,9 @@ message RunCheckpointPart {
   // items holds the item rows (task_id and item set), in (definition order,
   // index) order.
   repeated TaskRun items = 3;
+
+  // loss_events is set from E92; unset until it lands (v0.4.0 proto batch).
+  RunLossEvents loss_events = 4;
 }
 
 // RunEventSegment is the body of one event segment, gzip-compressed.
@@ -136,3 +157,15 @@ message RunSnapshotOverlay {
   repeated TaskRun items = 4;
   string base_sha256 = 5;
 }
+
+// RunConcurrencyCarry is E88's; it is empty until E88 lands (v0.4.0 proto
+// batch).
+message RunConcurrencyCarry {}
+
+// RunLossEvents is E92's; it is empty until E92 lands (v0.4.0 proto
+// batch).
+message RunLossEvents {}
+
+// RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
+// batch).
+message RunResumeCarry {}

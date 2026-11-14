@@ -1,0 +1,20 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// EventSourceService's messages arrive with E90 (events/07-surfaces.md §2).
+// The proto batch declares the three an automation step names, empty.
+
+// CreateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
+// batch).
+message CreateEventSourceRequest {}
+
+// DeleteEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
+// batch).
+message DeleteEventSourceRequest {}
+
+// UpdateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
+// batch).
+message UpdateEventSourceRequest {}

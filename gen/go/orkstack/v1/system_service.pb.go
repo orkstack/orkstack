@@ -283,9 +283,13 @@ type GetSystemInfoResponse struct {
 	// server_time is the answering replica's own clock, and is the ONLY
 	// observed field in this message. A client comparing it with its own clock
 	// is comparing two clocks, which is what makes a skewed replica visible.
-	ServerTime    *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ServerTime *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
+	// auth_mode is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	AuthMode string `protobuf:"bytes,10,opt,name=auth_mode,json=authMode,proto3" json:"auth_mode,omitempty"`
+	// identity_issuer is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	IdentityIssuer string `protobuf:"bytes,11,opt,name=identity_issuer,json=identityIssuer,proto3" json:"identity_issuer,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *GetSystemInfoResponse) Reset() {
@@ -381,6 +385,20 @@ func (x *GetSystemInfoResponse) GetServerTime() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *GetSystemInfoResponse) GetAuthMode() string {
+	if x != nil {
+		return x.AuthMode
+	}
+	return ""
+}
+
+func (x *GetSystemInfoResponse) GetIdentityIssuer() string {
+	if x != nil {
+		return x.IdentityIssuer
+	}
+	return ""
+}
+
 type GetRetentionPolicyRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -426,8 +444,10 @@ type GetRetentionPolicyResponse struct {
 	// plus the operator's enforcement margin and a tighter namespace value has
 	// no effect yet. CONFIGURATION-DERIVED, like GetSystemInfo's fields.
 	NamespaceRetentionEnforced bool `protobuf:"varint,2,opt,name=namespace_retention_enforced,json=namespaceRetentionEnforced,proto3" json:"namespace_retention_enforced,omitempty"`
-	unknownFields              protoimpl.UnknownFields
-	sizeCache                  protoimpl.SizeCache
+	// cluster_retention_warning is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+	ClusterRetentionWarning string `protobuf:"bytes,3,opt,name=cluster_retention_warning,json=clusterRetentionWarning,proto3" json:"cluster_retention_warning,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *GetRetentionPolicyResponse) Reset() {
@@ -472,6 +492,13 @@ func (x *GetRetentionPolicyResponse) GetNamespaceRetentionEnforced() bool {
 		return x.NamespaceRetentionEnforced
 	}
 	return false
+}
+
+func (x *GetRetentionPolicyResponse) GetClusterRetentionWarning() string {
+	if x != nil {
+		return x.ClusterRetentionWarning
+	}
+	return ""
 }
 
 type UpdateRetentionPolicyRequest struct {
@@ -956,7 +983,19 @@ type Release struct {
 	// stable order. Always empty for CURRENT. Empty for any other role means
 	// RampRelease and PromoteRelease would pass their check at the moment of
 	// this read.
-	Blockers      []*ReleaseBlocker `protobuf:"bytes,15,rep,name=blockers,proto3" json:"blockers,omitempty"`
+	Blockers []*ReleaseBlocker `protobuf:"bytes,15,rep,name=blockers,proto3" json:"blockers,omitempty"`
+	// open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	OpenIdentityRuns int64 `protobuf:"varint,16,opt,name=open_identity_runs,json=openIdentityRuns,proto3" json:"open_identity_runs,omitempty"`
+	// queued_runs is set from E88; unset until it lands (v0.4.0 proto batch).
+	QueuedRuns int64 `protobuf:"varint,17,opt,name=queued_runs,json=queuedRuns,proto3" json:"queued_runs,omitempty"`
+	// resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch).
+	ResumableRuns int64 `protobuf:"varint,18,opt,name=resumable_runs,json=resumableRuns,proto3" json:"resumable_runs,omitempty"`
+	// paused_runs is set from E103; unset until it lands (v0.4.0 proto batch).
+	PausedRuns int64 `protobuf:"varint,19,opt,name=paused_runs,json=pausedRuns,proto3" json:"paused_runs,omitempty"`
+	// event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch).
+	EventSourceInstances int64 `protobuf:"varint,20,opt,name=event_source_instances,json=eventSourceInstances,proto3" json:"event_source_instances,omitempty"`
+	// event_sources is set from E90; unset until it lands (v0.4.0 proto batch).
+	EventSources  int32 `protobuf:"varint,21,opt,name=event_sources,json=eventSources,proto3" json:"event_sources,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1096,6 +1135,48 @@ func (x *Release) GetBlockers() []*ReleaseBlocker {
 	return nil
 }
 
+func (x *Release) GetOpenIdentityRuns() int64 {
+	if x != nil {
+		return x.OpenIdentityRuns
+	}
+	return 0
+}
+
+func (x *Release) GetQueuedRuns() int64 {
+	if x != nil {
+		return x.QueuedRuns
+	}
+	return 0
+}
+
+func (x *Release) GetResumableRuns() int64 {
+	if x != nil {
+		return x.ResumableRuns
+	}
+	return 0
+}
+
+func (x *Release) GetPausedRuns() int64 {
+	if x != nil {
+		return x.PausedRuns
+	}
+	return 0
+}
+
+func (x *Release) GetEventSourceInstances() int64 {
+	if x != nil {
+		return x.EventSourceInstances
+	}
+	return 0
+}
+
+func (x *Release) GetEventSources() int32 {
+	if x != nil {
+		return x.EventSources
+	}
+	return 0
+}
+
 type ListReleasesRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Filters       []*FieldFilter         `protobuf:"bytes,2,rep,name=filters,proto3" json:"filters,omitempty"`
@@ -1169,9 +1250,11 @@ type ListReleasesResponse struct {
 	// refuse a write if the routing changed since; never parse it.
 	Revision string `protobuf:"bytes,7,opt,name=revision,proto3" json:"revision,omitempty"`
 	// observed_at is the answering replica's clock at the read.
-	ObservedAt    *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ObservedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	// unversioned_open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	UnversionedOpenIdentityRuns int64 `protobuf:"varint,9,opt,name=unversioned_open_identity_runs,json=unversionedOpenIdentityRuns,proto3" json:"unversioned_open_identity_runs,omitempty"`
+	unknownFields               protoimpl.UnknownFields
+	sizeCache                   protoimpl.SizeCache
 }
 
 func (x *ListReleasesResponse) Reset() {
@@ -1258,6 +1341,13 @@ func (x *ListReleasesResponse) GetObservedAt() *timestamppb.Timestamp {
 		return x.ObservedAt
 	}
 	return nil
+}
+
+func (x *ListReleasesResponse) GetUnversionedOpenIdentityRuns() int64 {
+	if x != nil {
+		return x.UnversionedOpenIdentityRuns
+	}
+	return 0
 }
 
 type RampReleaseRequest struct {
@@ -1539,7 +1629,7 @@ var File_orkstack_v1_system_service_proto protoreflect.FileDescriptor
 const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\n" +
 	" orkstack/v1/system_service.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1aorkstack/v1/activity.proto\x1a\x18orkstack/v1/filter.proto\x1a\x1eorkstack/v1/image_policy.proto\x1a\x1borkstack/v1/retention.proto\x1a\x15orkstack/v1/run.proto\"\x16\n" +
-	"\x14GetSystemInfoRequest\"\x8e\x03\n" +
+	"\x14GetSystemInfoRequest\"\xd4\x03\n" +
 	"\x15GetSystemInfoResponse\x12%\n" +
 	"\x0eengine_version\x18\x01 \x01(\tR\rengineVersion\x12\x1d\n" +
 	"\n" +
@@ -1551,11 +1641,15 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\x11artifact_location\x18\a \x01(\tR\x10artifactLocation\x12)\n" +
 	"\x10temporal_address\x18\b \x01(\tR\x0ftemporalAddress\x12;\n" +
 	"\vserver_time\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"serverTime\"\x1b\n" +
-	"\x19GetRetentionPolicyRequest\"\x94\x01\n" +
+	"serverTime\x12\x1b\n" +
+	"\tauth_mode\x18\n" +
+	" \x01(\tR\bauthMode\x12'\n" +
+	"\x0fidentity_issuer\x18\v \x01(\tR\x0eidentityIssuer\"\x1b\n" +
+	"\x19GetRetentionPolicyRequest\"\xd0\x01\n" +
 	"\x1aGetRetentionPolicyResponse\x124\n" +
 	"\x06policy\x18\x01 \x01(\v2\x1c.orkstack.v1.RetentionPolicyR\x06policy\x12@\n" +
-	"\x1cnamespace_retention_enforced\x18\x02 \x01(\bR\x1anamespaceRetentionEnforced\"e\n" +
+	"\x1cnamespace_retention_enforced\x18\x02 \x01(\bR\x1anamespaceRetentionEnforced\x12:\n" +
+	"\x19cluster_retention_warning\x18\x03 \x01(\tR\x17clusterRetentionWarning\"e\n" +
 	"\x1cUpdateRetentionPolicyRequest\x12E\n" +
 	"\x11max_run_retention\x18\x01 \x01(\v2\x19.google.protobuf.DurationR\x0fmaxRunRetention\"\x97\x01\n" +
 	"\x1dUpdateRetentionPolicyResponse\x124\n" +
@@ -1574,7 +1668,7 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\x0eReleaseBlocker\x123\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1f.orkstack.v1.ReleaseBlockerKindR\x04kind\x12\x12\n" +
 	"\x04pool\x18\x02 \x01(\tR\x04pool\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xc6\x05\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xb8\a\n" +
 	"\aRelease\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12,\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x18.orkstack.v1.ReleaseRoleR\x04role\x12!\n" +
@@ -1593,13 +1687,21 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"drainState\x12D\n" +
 	"\x10drain_checked_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\x0edrainCheckedAt\x12\x18\n" +
 	"\adrained\x18\x0e \x01(\bR\adrained\x127\n" +
-	"\bblockers\x18\x0f \x03(\v2\x1b.orkstack.v1.ReleaseBlockerR\bblockers\"\xba\x01\n" +
+	"\bblockers\x18\x0f \x03(\v2\x1b.orkstack.v1.ReleaseBlockerR\bblockers\x12,\n" +
+	"\x12open_identity_runs\x18\x10 \x01(\x03R\x10openIdentityRuns\x12\x1f\n" +
+	"\vqueued_runs\x18\x11 \x01(\x03R\n" +
+	"queuedRuns\x12%\n" +
+	"\x0eresumable_runs\x18\x12 \x01(\x03R\rresumableRuns\x12\x1f\n" +
+	"\vpaused_runs\x18\x13 \x01(\x03R\n" +
+	"pausedRuns\x124\n" +
+	"\x16event_source_instances\x18\x14 \x01(\x03R\x14eventSourceInstances\x12#\n" +
+	"\revent_sources\x18\x15 \x01(\x05R\feventSources\"\xba\x01\n" +
 	"\x13ListReleasesRequest\x122\n" +
 	"\afilters\x18\x02 \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:_\xa2\xbb\x18[\n" +
 	"\x13orkstack.v1.Release\x12\x1a\n" +
 	"\bbuild_id\x12\aRelease\x1a\x05\x01\x02\x03\x04\x05\x12\x11\n" +
 	"\x04role\x12\x04Role\x1a\x03\x01\x02\x03\x12\x15\n" +
-	"\adrained\x12\aDrained\x1a\x01\x01J\x04\b\x01\x10\x02R\bbuild_id\"\xa9\x03\n" +
+	"\adrained\x12\aDrained\x1a\x01\x01J\x04\b\x01\x10\x02R\bbuild_id\"\xee\x03\n" +
 	"\x14ListReleasesResponse\x12'\n" +
 	"\x0fdeployment_name\x18\x01 \x01(\tR\x0edeploymentName\x12\x1c\n" +
 	"\tversioned\x18\x02 \x01(\bR\tversioned\x120\n" +
@@ -1609,7 +1711,8 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\x19orkers_unavailable_reason\x18\x06 \x01(\tR\x17orkersUnavailableReason\x12\x1a\n" +
 	"\brevision\x18\a \x01(\tR\brevision\x12;\n" +
 	"\vobserved_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"observedAt\"v\n" +
+	"observedAt\x12C\n" +
+	"\x1eunversioned_open_identity_runs\x18\t \x01(\x03R\x1bunversionedOpenIdentityRuns\"v\n" +
 	"\x12RampReleaseRequest\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12\x18\n" +
 	"\apercent\x18\x02 \x01(\x05R\apercent\x12+\n" +

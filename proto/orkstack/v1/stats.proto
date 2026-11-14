@@ -278,6 +278,15 @@ message GetStatsResponse {
   // empty timezone answers "UTC". Unset when no series was asked for.
   StatsBucketWidth bucket_width = 16;
   string timezone = 17;
+
+  // paused is set from E103; unset until it lands (v0.4.0 proto batch).
+  int64 paused = 18;
+
+  // queued is set from E88; unset until it lands (v0.4.0 proto batch).
+  int64 queued = 19;
+
+  // executing is set from E103; unset until it lands (v0.4.0 proto batch).
+  int64 executing = 20;
 }
 
 // FailureGroupBy names one dimension of a fingerprint. The order of the
@@ -607,6 +616,33 @@ message UsageRow {
   // this namespace's own Orkflow of the same name. Empty for the namespace's
   // own.
   string orkflow_namespace = 13;
+
+  // measured_cpu_seconds is set from E94; unset until it lands (v0.4.0 proto batch).
+  double measured_cpu_seconds = 14;
+
+  // attempts_measured is set from E94; unset until it lands (v0.4.0 proto batch).
+  int64 attempts_measured = 15;
+
+  // reserved_cpu_seconds_measured is set from E94; unset until it lands (v0.4.0 proto batch).
+  double reserved_cpu_seconds_measured = 16;
+
+  // cpu_efficiency is set from E94; unset until it lands (v0.4.0 proto batch).
+  double cpu_efficiency = 17;
+
+  // memory_peak_bytes_max is set from E94; unset until it lands (v0.4.0 proto batch).
+  int64 memory_peak_bytes_max = 18;
+
+  // memory_utilization_p50 is set from E94; unset until it lands (v0.4.0 proto batch).
+  double memory_utilization_p50 = 19;
+
+  // memory_utilization_p95 is set from E94; unset until it lands (v0.4.0 proto batch).
+  double memory_utilization_p95 = 20;
+
+  // attempts_unmeasured_by_reason is set from E94; unset until it lands (v0.4.0 proto batch).
+  repeated UnmeasuredReasonCount attempts_unmeasured_by_reason = 21;
+
+  // gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch).
+  double gpu_seconds = 22;
 }
 
 message GetUsageResponse {
@@ -680,3 +716,7 @@ message GetUsageResponse {
   google.protobuf.Timestamp window_until = 15;
   google.protobuf.Timestamp computed_at = 16;
 }
+
+// UnmeasuredReasonCount is E94's; it is empty until E94 lands (v0.4.0 proto
+// batch).
+message UnmeasuredReasonCount {}

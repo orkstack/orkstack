@@ -2,9 +2,10 @@ syntax = "proto3";
 
 package orkstack.v1;
 
-import "orkstack/v1/schedule.proto";
+import "orkstack/v1/event_source_service.proto";
 import "orkstack/v1/namespace_service.proto";
 import "orkstack/v1/orkflow_service.proto";
+import "orkstack/v1/schedule.proto";
 import "orkstack/v1/trigger_service.proto";
 import "orkstack/v1/webhook_service.proto";
 
@@ -112,6 +113,15 @@ message AutomationStep {
     RegisterWebhookRequest register_webhook = 28;
     UpdateWebhookRequest update_webhook = 29;
     DeleteWebhookRequest delete_webhook = 30;
+
+    // create_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
+    CreateEventSourceRequest create_event_source = 31;
+
+    // update_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
+    UpdateEventSourceRequest update_event_source = 32;
+
+    // delete_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
+    DeleteEventSourceRequest delete_event_source = 33;
   }
 }
 

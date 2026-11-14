@@ -56,9 +56,11 @@ type Webhook struct {
 	// subscription belongs to none. Empty means unnamed — every subscription
 	// registered before this field existed — and an unnamed subscription is
 	// outside every automation document. It plays no part in delivery.
-	Name          string `protobuf:"bytes,8,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Name string `protobuf:"bytes,8,opt,name=name,proto3" json:"name,omitempty"`
+	// plaintext_runs_acknowledged is set from identity (O74); unset until it lands (v0.4.0 proto batch).
+	PlaintextRunsAcknowledged bool `protobuf:"varint,9,opt,name=plaintext_runs_acknowledged,json=plaintextRunsAcknowledged,proto3" json:"plaintext_runs_acknowledged,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *Webhook) Reset() {
@@ -147,18 +149,27 @@ func (x *Webhook) GetName() string {
 	return ""
 }
 
+func (x *Webhook) GetPlaintextRunsAcknowledged() bool {
+	if x != nil {
+		return x.PlaintextRunsAcknowledged
+	}
+	return false
+}
+
 type RegisterWebhookRequest struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	Url    string                 `protobuf:"bytes,1,opt,name=url,proto3" json:"url,omitempty"`
 	Events []EventType            `protobuf:"varint,2,rep,packed,name=events,proto3,enum=orkstack.v1.EventType" json:"events,omitempty"`
 	Secret string                 `protobuf:"bytes,3,opt,name=secret,proto3" json:"secret,omitempty"`
 	// The scope, on exactly the terms Webhook states them.
-	Namespace     string `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	OrkflowName   string `protobuf:"bytes,5,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
-	TaskId        string `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	Name          string `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"` // optional; see Webhook.name
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Namespace   string `protobuf:"bytes,4,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	OrkflowName string `protobuf:"bytes,5,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	TaskId      string `protobuf:"bytes,6,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	Name        string `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"` // optional; see Webhook.name
+	// acknowledge_plaintext_runs is set from identity (O74); unset until it lands (v0.4.0 proto batch).
+	AcknowledgePlaintextRuns bool `protobuf:"varint,8,opt,name=acknowledge_plaintext_runs,json=acknowledgePlaintextRuns,proto3" json:"acknowledge_plaintext_runs,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *RegisterWebhookRequest) Reset() {
@@ -240,6 +251,13 @@ func (x *RegisterWebhookRequest) GetName() string {
 	return ""
 }
 
+func (x *RegisterWebhookRequest) GetAcknowledgePlaintextRuns() bool {
+	if x != nil {
+		return x.AcknowledgePlaintextRuns
+	}
+	return false
+}
+
 type RegisterWebhookResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Webhook       *Webhook               `protobuf:"bytes,1,opt,name=webhook,proto3" json:"webhook,omitempty"`
@@ -296,16 +314,18 @@ func (x *RegisterWebhookResponse) GetSecret() string {
 // RegisterWebhookRequest states them: empty events means every run
 // transition; each scope field empty means every. It carries no secret.
 type UpdateWebhookRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Id            string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
-	Name          string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
-	Url           string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
-	Events        []EventType            `protobuf:"varint,4,rep,packed,name=events,proto3,enum=orkstack.v1.EventType" json:"events,omitempty"`
-	Namespace     string                 `protobuf:"bytes,5,opt,name=namespace,proto3" json:"namespace,omitempty"`
-	OrkflowName   string                 `protobuf:"bytes,6,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
-	TaskId        string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	Id          string                 `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Url         string                 `protobuf:"bytes,3,opt,name=url,proto3" json:"url,omitempty"`
+	Events      []EventType            `protobuf:"varint,4,rep,packed,name=events,proto3,enum=orkstack.v1.EventType" json:"events,omitempty"`
+	Namespace   string                 `protobuf:"bytes,5,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	OrkflowName string                 `protobuf:"bytes,6,opt,name=orkflow_name,json=orkflowName,proto3" json:"orkflow_name,omitempty"`
+	TaskId      string                 `protobuf:"bytes,7,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// acknowledge_plaintext_runs is set from identity (O74); unset until it lands (v0.4.0 proto batch).
+	AcknowledgePlaintextRuns bool `protobuf:"varint,8,opt,name=acknowledge_plaintext_runs,json=acknowledgePlaintextRuns,proto3" json:"acknowledge_plaintext_runs,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
 }
 
 func (x *UpdateWebhookRequest) Reset() {
@@ -385,6 +405,13 @@ func (x *UpdateWebhookRequest) GetTaskId() string {
 		return x.TaskId
 	}
 	return ""
+}
+
+func (x *UpdateWebhookRequest) GetAcknowledgePlaintextRuns() bool {
+	if x != nil {
+		return x.AcknowledgePlaintextRuns
+	}
+	return false
 }
 
 type UpdateWebhookResponse struct {
@@ -1261,7 +1288,7 @@ var File_orkstack_v1_webhook_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_webhook_service_proto_rawDesc = "" +
 	"\n" +
-	"!orkstack/v1/webhook_service.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x18orkstack/v1/filter.proto\x1a\x15orkstack/v1/run.proto\"\x84\x02\n" +
+	"!orkstack/v1/webhook_service.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x18orkstack/v1/filter.proto\x1a\x15orkstack/v1/run.proto\"\xc4\x02\n" +
 	"\aWebhook\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x10\n" +
 	"\x03url\x18\x02 \x01(\tR\x03url\x12.\n" +
@@ -1271,7 +1298,8 @@ const file_orkstack_v1_webhook_service_proto_rawDesc = "" +
 	"\tnamespace\x18\x05 \x01(\tR\tnamespace\x12!\n" +
 	"\forkflow_name\x18\x06 \x01(\tR\vorkflowName\x12\x17\n" +
 	"\atask_id\x18\a \x01(\tR\x06taskId\x12\x12\n" +
-	"\x04name\x18\b \x01(\tR\x04name\"\xe0\x01\n" +
+	"\x04name\x18\b \x01(\tR\x04name\x12>\n" +
+	"\x1bplaintext_runs_acknowledged\x18\t \x01(\bR\x19plaintextRunsAcknowledged\"\x9e\x02\n" +
 	"\x16RegisterWebhookRequest\x12\x10\n" +
 	"\x03url\x18\x01 \x01(\tR\x03url\x12.\n" +
 	"\x06events\x18\x02 \x03(\x0e2\x16.orkstack.v1.EventTypeR\x06events\x12\x16\n" +
@@ -1279,10 +1307,11 @@ const file_orkstack_v1_webhook_service_proto_rawDesc = "" +
 	"\tnamespace\x18\x04 \x01(\tR\tnamespace\x12!\n" +
 	"\forkflow_name\x18\x05 \x01(\tR\vorkflowName\x12\x17\n" +
 	"\atask_id\x18\x06 \x01(\tR\x06taskId\x12\x12\n" +
-	"\x04name\x18\a \x01(\tR\x04name\"a\n" +
+	"\x04name\x18\a \x01(\tR\x04name\x12<\n" +
+	"\x1aacknowledge_plaintext_runs\x18\b \x01(\bR\x18acknowledgePlaintextRuns\"a\n" +
 	"\x17RegisterWebhookResponse\x12.\n" +
 	"\awebhook\x18\x01 \x01(\v2\x14.orkstack.v1.WebhookR\awebhook\x12\x16\n" +
-	"\x06secret\x18\x02 \x01(\tR\x06secret\"\xd6\x01\n" +
+	"\x06secret\x18\x02 \x01(\tR\x06secret\"\x94\x02\n" +
 	"\x14UpdateWebhookRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12\x10\n" +
@@ -1290,7 +1319,8 @@ const file_orkstack_v1_webhook_service_proto_rawDesc = "" +
 	"\x06events\x18\x04 \x03(\x0e2\x16.orkstack.v1.EventTypeR\x06events\x12\x1c\n" +
 	"\tnamespace\x18\x05 \x01(\tR\tnamespace\x12!\n" +
 	"\forkflow_name\x18\x06 \x01(\tR\vorkflowName\x12\x17\n" +
-	"\atask_id\x18\a \x01(\tR\x06taskId\"G\n" +
+	"\atask_id\x18\a \x01(\tR\x06taskId\x12<\n" +
+	"\x1aacknowledge_plaintext_runs\x18\b \x01(\bR\x18acknowledgePlaintextRuns\"G\n" +
 	"\x15UpdateWebhookResponse\x12.\n" +
 	"\awebhook\x18\x01 \x01(\v2\x14.orkstack.v1.WebhookR\awebhook\"\xa9\x02\n" +
 	"\x13ListWebhooksRequest\x122\n" +

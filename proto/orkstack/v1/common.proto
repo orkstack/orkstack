@@ -63,4 +63,15 @@ message Error {
   // is recorded in history, so it is part of the replay-visible contract and
   // not merely display data.
   FailureCategory category = 5;
+
+  // task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  string task_code = 6;
 }
+
+// AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+// batch).
+message AsksFor {}
+
+// ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+// batch).
+message ConsentView {}
