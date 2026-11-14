@@ -76,6 +76,33 @@ message AuditRecord {
   // error_code is the Connect code name ("failed_precondition",
   // "not_found", …) when succeeded is false; empty otherwise.
   string error_code = 12;
+
+  // principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool principal_verified = 13;
+
+  // auth_method is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string auth_method = 14;
+
+  // principal_issuer is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string principal_issuer = 15;
+
+  // permission is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string permission = 16;
+
+  // scope is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string scope = 17;
+
+  // decision is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string decision = 18;
+
+  // rule is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string rule = 19;
+
+  // policy_generation is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  int64 policy_generation = 20;
+
+  // signin is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string signin = 21;
 }
 
 // ListAuditRecordsRequest lists the deployment's audit trail. It is a

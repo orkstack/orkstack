@@ -67,6 +67,9 @@ message ImageRef {
 message ResourceRequest {
   string cpu = 1;     // Kubernetes spelling: "2", "500m"
   string memory = 2;  // Kubernetes spelling: "4Gi", "512Mi"
+
+  // gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+  int32 gpu = 3;
 }
 
 // EachSource is where a fan-out task's array lives: compiled at apply from
@@ -83,6 +86,9 @@ message EachSource {
   // least one key, because a values.json is an object. There is no array
   // index and no wildcard.
   repeated string path = 3;
+
+  // artifact is set from E89; unset until it lands (v0.4.0 proto batch).
+  EachArtifactSource artifact = 4;
 }
 
 // NetworkMode is the complete set of network configurations an Orkflow may
@@ -102,6 +108,15 @@ message SecretRef {
   // source is an Orker-resolvable locator, e.g. "env:DB_PASSWORD" or
   // "file:/etc/orkstack/secrets/db". Orker policy decides which schemes exist.
   string source = 2;
+
+  // grant is set from identity (E83); unset until it lands (v0.4.0 proto batch).
+  string grant = 3;
+
+  // ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+  string ciphertext = 4;
+
+  // unmasked is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+  bool unmasked = 5;
 }
 // WorkspaceLimits are the deployment-wide CONTRACT limits the Orker enforces
 // after the container exits. They also appear verbatim in
@@ -147,6 +162,9 @@ message UpstreamRef {
   // output artifacts contributes a ref with task_id and artifacts only —
   // commit_uri and values unset.
   EachUpstream each = 5;
+
+  // record_uri is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  string record_uri = 6;
 }
 
 // ---------------------------------------------------------------- pins
@@ -360,6 +378,9 @@ message EachContext {
   // [index]. The array is the one the engine counted; the Orker verifies its
   // length equals count and fails the attempt EACH_ITEM_UNAVAILABLE if not.
   EachSource source = 4;
+
+  // lines is set from E89; unset until it lands (v0.4.0 proto batch).
+  EachLines lines = 5;
 }
 
 // EachUpstream is a fan-out ancestor's contribution to a DIRECT dependent: not
@@ -491,6 +512,18 @@ message ExecuteTaskInput {
   // (the golden history fixtures have no failure handler and must keep
   // matching without re-recording).
   JoinContext join = 28;
+
+  // devices is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated ProfileRef devices = 30;
+
+  // egress is set from E91; unset until it lands (v0.4.0 proto batch).
+  ProfileRef egress = 31;
+
+  // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  IdentityContext identity = 34;
+
+  // run_context is set from E86; unset until it lands (v0.4.0 proto batch).
+  RunContext run_context = 33;
 }
 
 // ReleasePinInput asks the pin host to remove the pin's shared directory.
@@ -746,6 +779,54 @@ message DescribeOrkerResult {
   // built before it numbers them as Temporal does and would write records
   // over a newer Orker's, so submit refuses a pool that has one.
   bool attempt_ordinals_supported = 43;
+
+  // stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+  OrkerStopping stopping = 24;
+
+  // profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated ProfileKind profile_kinds_supported = 26;
+
+  // profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated OrkerProfile profiles = 27;
+
+  // profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated ProfileCordon profile_cordons = 28;
+
+  // identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  bool identity_supported = 33;
+
+  // providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+  repeated ProviderInfo providers = 34;
+
+  // masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+  bool masks_secrets = 35;
+
+  // metadata_reachable is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+  repeated string metadata_reachable = 36;
+
+  // run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch).
+  bool run_context_supported = 31;
+
+  // each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch).
+  bool each_lines_supported = 32;
+
+  // metadata_probes is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+  repeated MetadataProbe metadata_probes = 37;
+
+  // store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  StoreScope store_scope = 38;
+
+  // store_scope_detail is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  string store_scope_detail = 39;
+
+  // store_scope_confirmed_at is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  google.protobuf.Timestamp store_scope_confirmed_at = 40;
+
+  // results_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  ResultsScope results_scope = 41;
+
+  // service_host is set from E90; unset until it lands (v0.4.0 proto batch).
+  ServiceHost service_host = 42;
 }
 
 // ResourceQuantity is an amount of each resource an Orker reserves for a
@@ -754,6 +835,9 @@ message DescribeOrkerResult {
 message ResourceQuantity {
   double cpu = 1;
   int64 memory_bytes = 2;
+
+  // gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+  optional int64 gpu = 3;
 }
 
 // OpenPin is one pin this Orker currently hosts: a pin it has accepted and
@@ -839,4 +923,78 @@ message Orker {
   // CordonOrker neither sets nor clears it. Unset from an Orker of a release
   // without these checks.
   StoreOutage store_outage = 16;
+
+  // stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+  OrkerStopping stopping = 17;
+
+  // profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated OrkerProfile profiles = 18;
+
+  // profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated ProfileCordon profile_cordons = 19;
+
+  // service_host is set from E90; unset until it lands (v0.4.0 proto batch).
+  ServiceHost service_host = 20;
+}
+
+// EachArtifactSource is E89's; it is empty until E89 lands (v0.4.0 proto
+// batch).
+message EachArtifactSource {}
+
+// EachLines is E89's; it is empty until E89 lands (v0.4.0 proto
+// batch).
+message EachLines {}
+
+// IdentityContext is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+// batch).
+message IdentityContext {}
+
+// MetadataProbe is identity (E60)'s; it is empty until identity (E60) lands (v0.4.0 proto
+// batch).
+message MetadataProbe {}
+
+// OrkerProfile is E91's; it is empty until E91 lands (v0.4.0 proto
+// batch).
+message OrkerProfile {}
+
+// OrkerStopping is E92's; it is empty until E92 lands (v0.4.0 proto
+// batch).
+message OrkerStopping {}
+
+// ProfileCordon is E91's; it is empty until E91 lands (v0.4.0 proto
+// batch).
+message ProfileCordon {}
+
+// ProfileKind is E91's; it holds only its zero value until E91 lands
+// (v0.4.0 proto batch).
+enum ProfileKind {
+  PROFILE_KIND_UNSPECIFIED = 0;
+}
+
+// ProfileRef is E91's; it is empty until E91 lands (v0.4.0 proto
+// batch).
+message ProfileRef {}
+
+// ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
+// batch).
+message ProviderInfo {}
+
+// ResultsScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
+// (v0.4.0 proto batch).
+enum ResultsScope {
+  RESULTS_SCOPE_UNSPECIFIED = 0;
+}
+
+// RunContext is E86's; it is empty until E86 lands (v0.4.0 proto
+// batch).
+message RunContext {}
+
+// ServiceHost is E90's; it is empty until E90 lands (v0.4.0 proto
+// batch).
+message ServiceHost {}
+
+// StoreScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
+// (v0.4.0 proto batch).
+enum StoreScope {
+  STORE_SCOPE_UNSPECIFIED = 0;
 }

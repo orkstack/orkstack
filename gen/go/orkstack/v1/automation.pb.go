@@ -362,6 +362,9 @@ type AutomationStep struct {
 	//	*AutomationStep_RegisterWebhook
 	//	*AutomationStep_UpdateWebhook
 	//	*AutomationStep_DeleteWebhook
+	//	*AutomationStep_CreateEventSource
+	//	*AutomationStep_UpdateEventSource
+	//	*AutomationStep_DeleteEventSource
 	Request       isAutomationStep_Request `protobuf_oneof:"request"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -559,6 +562,33 @@ func (x *AutomationStep) GetDeleteWebhook() *DeleteWebhookRequest {
 	return nil
 }
 
+func (x *AutomationStep) GetCreateEventSource() *CreateEventSourceRequest {
+	if x != nil {
+		if x, ok := x.Request.(*AutomationStep_CreateEventSource); ok {
+			return x.CreateEventSource
+		}
+	}
+	return nil
+}
+
+func (x *AutomationStep) GetUpdateEventSource() *UpdateEventSourceRequest {
+	if x != nil {
+		if x, ok := x.Request.(*AutomationStep_UpdateEventSource); ok {
+			return x.UpdateEventSource
+		}
+	}
+	return nil
+}
+
+func (x *AutomationStep) GetDeleteEventSource() *DeleteEventSourceRequest {
+	if x != nil {
+		if x, ok := x.Request.(*AutomationStep_DeleteEventSource); ok {
+			return x.DeleteEventSource
+		}
+	}
+	return nil
+}
+
 type isAutomationStep_Request interface {
 	isAutomationStep_Request()
 }
@@ -607,6 +637,21 @@ type AutomationStep_DeleteWebhook struct {
 	DeleteWebhook *DeleteWebhookRequest `protobuf:"bytes,30,opt,name=delete_webhook,json=deleteWebhook,proto3,oneof"`
 }
 
+type AutomationStep_CreateEventSource struct {
+	// create_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
+	CreateEventSource *CreateEventSourceRequest `protobuf:"bytes,31,opt,name=create_event_source,json=createEventSource,proto3,oneof"`
+}
+
+type AutomationStep_UpdateEventSource struct {
+	// update_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
+	UpdateEventSource *UpdateEventSourceRequest `protobuf:"bytes,32,opt,name=update_event_source,json=updateEventSource,proto3,oneof"`
+}
+
+type AutomationStep_DeleteEventSource struct {
+	// delete_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
+	DeleteEventSource *DeleteEventSourceRequest `protobuf:"bytes,33,opt,name=delete_event_source,json=deleteEventSource,proto3,oneof"`
+}
+
 func (*AutomationStep_CreateNamespace) isAutomationStep_Request() {}
 
 func (*AutomationStep_UpdateNamespace) isAutomationStep_Request() {}
@@ -628,6 +673,12 @@ func (*AutomationStep_RegisterWebhook) isAutomationStep_Request() {}
 func (*AutomationStep_UpdateWebhook) isAutomationStep_Request() {}
 
 func (*AutomationStep_DeleteWebhook) isAutomationStep_Request() {}
+
+func (*AutomationStep_CreateEventSource) isAutomationStep_Request() {}
+
+func (*AutomationStep_UpdateEventSource) isAutomationStep_Request() {}
+
+func (*AutomationStep_DeleteEventSource) isAutomationStep_Request() {}
 
 // PendingOrkflow is an orkflow version the same client invocation applies
 // BEFORE it executes this plan (an orkflow document beside the automation
@@ -1362,11 +1413,11 @@ var File_orkstack_v1_automation_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_automation_proto_rawDesc = "" +
 	"\n" +
-	"\x1corkstack/v1/automation.proto\x12\vorkstack.v1\x1a\x1aorkstack/v1/schedule.proto\x1a#orkstack/v1/namespace_service.proto\x1a!orkstack/v1/orkflow_service.proto\x1a!orkstack/v1/trigger_service.proto\x1a!orkstack/v1/webhook_service.proto\"[\n" +
+	"\x1corkstack/v1/automation.proto\x12\vorkstack.v1\x1a&orkstack/v1/event_source_service.proto\x1a#orkstack/v1/namespace_service.proto\x1a!orkstack/v1/orkflow_service.proto\x1a\x1aorkstack/v1/schedule.proto\x1a!orkstack/v1/trigger_service.proto\x1a!orkstack/v1/webhook_service.proto\"[\n" +
 	"\x15AutomationFieldChange\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12\x16\n" +
 	"\x06before\x18\x02 \x01(\tR\x06before\x12\x14\n" +
-	"\x05after\x18\x03 \x01(\tR\x05after\"\x99\t\n" +
+	"\x05after\x18\x03 \x01(\tR\x05after\"\xa4\v\n" +
 	"\x0eAutomationStep\x125\n" +
 	"\x06action\x18\x01 \x01(\x0e2\x1d.orkstack.v1.AutomationActionR\x06action\x125\n" +
 	"\x04kind\x18\x02 \x01(\x0e2!.orkstack.v1.AutomationObjectKindR\x04kind\x12\x12\n" +
@@ -1387,7 +1438,10 @@ const file_orkstack_v1_automation_proto_rawDesc = "" +
 	"\x0edelete_trigger\x18\x1b \x01(\v2!.orkstack.v1.DeleteTriggerRequestH\x00R\rdeleteTrigger\x12P\n" +
 	"\x10register_webhook\x18\x1c \x01(\v2#.orkstack.v1.RegisterWebhookRequestH\x00R\x0fregisterWebhook\x12J\n" +
 	"\x0eupdate_webhook\x18\x1d \x01(\v2!.orkstack.v1.UpdateWebhookRequestH\x00R\rupdateWebhook\x12J\n" +
-	"\x0edelete_webhook\x18\x1e \x01(\v2!.orkstack.v1.DeleteWebhookRequestH\x00R\rdeleteWebhookB\t\n" +
+	"\x0edelete_webhook\x18\x1e \x01(\v2!.orkstack.v1.DeleteWebhookRequestH\x00R\rdeleteWebhook\x12W\n" +
+	"\x13create_event_source\x18\x1f \x01(\v2%.orkstack.v1.CreateEventSourceRequestH\x00R\x11createEventSource\x12W\n" +
+	"\x13update_event_source\x18  \x01(\v2%.orkstack.v1.UpdateEventSourceRequestH\x00R\x11updateEventSource\x12W\n" +
+	"\x13delete_event_source\x18! \x01(\v2%.orkstack.v1.DeleteEventSourceRequestH\x00R\x11deleteEventSourceB\t\n" +
 	"\arequest\"\\\n" +
 	"\x0ePendingOrkflow\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x12\n" +
@@ -1514,9 +1568,12 @@ var file_orkstack_v1_automation_proto_goTypes = []any{
 	(*RegisterWebhookRequest)(nil),   // 25: orkstack.v1.RegisterWebhookRequest
 	(*UpdateWebhookRequest)(nil),     // 26: orkstack.v1.UpdateWebhookRequest
 	(*DeleteWebhookRequest)(nil),     // 27: orkstack.v1.DeleteWebhookRequest
-	(*ValidationIssue)(nil),          // 28: orkstack.v1.ValidationIssue
-	(*ValidateOrkflowResponse)(nil),  // 29: orkstack.v1.ValidateOrkflowResponse
-	(*ApplyOrkflowResponse)(nil),     // 30: orkstack.v1.ApplyOrkflowResponse
+	(*CreateEventSourceRequest)(nil), // 28: orkstack.v1.CreateEventSourceRequest
+	(*UpdateEventSourceRequest)(nil), // 29: orkstack.v1.UpdateEventSourceRequest
+	(*DeleteEventSourceRequest)(nil), // 30: orkstack.v1.DeleteEventSourceRequest
+	(*ValidationIssue)(nil),          // 31: orkstack.v1.ValidationIssue
+	(*ValidateOrkflowResponse)(nil),  // 32: orkstack.v1.ValidateOrkflowResponse
+	(*ApplyOrkflowResponse)(nil),     // 33: orkstack.v1.ApplyOrkflowResponse
 }
 var file_orkstack_v1_automation_proto_depIdxs = []int32{
 	1,  // 0: orkstack.v1.AutomationStep.action:type_name -> orkstack.v1.AutomationAction
@@ -1533,30 +1590,33 @@ var file_orkstack_v1_automation_proto_depIdxs = []int32{
 	25, // 11: orkstack.v1.AutomationStep.register_webhook:type_name -> orkstack.v1.RegisterWebhookRequest
 	26, // 12: orkstack.v1.AutomationStep.update_webhook:type_name -> orkstack.v1.UpdateWebhookRequest
 	27, // 13: orkstack.v1.AutomationStep.delete_webhook:type_name -> orkstack.v1.DeleteWebhookRequest
-	6,  // 14: orkstack.v1.PlanAutomationRequest.pending_orkflows:type_name -> orkstack.v1.PendingOrkflow
-	0,  // 15: orkstack.v1.PlanAutomationResponse.managed:type_name -> orkstack.v1.AutomationObjectKind
-	5,  // 16: orkstack.v1.PlanAutomationResponse.steps:type_name -> orkstack.v1.AutomationStep
-	28, // 17: orkstack.v1.PlanAutomationResponse.issues:type_name -> orkstack.v1.ValidationIssue
-	5,  // 18: orkstack.v1.ExportAutomationResponse.unmanaged:type_name -> orkstack.v1.AutomationStep
-	2,  // 19: orkstack.v1.AutomationStepResult.outcome:type_name -> orkstack.v1.AutomationStepOutcome
-	29, // 20: orkstack.v1.OrkflowDocumentReport.validated:type_name -> orkstack.v1.ValidateOrkflowResponse
-	3,  // 21: orkstack.v1.OrkflowDocumentReport.stored:type_name -> orkstack.v1.OrkflowStoredState
-	30, // 22: orkstack.v1.OrkflowDocumentReport.applied:type_name -> orkstack.v1.ApplyOrkflowResponse
-	8,  // 23: orkstack.v1.AutomationDocumentReport.plan:type_name -> orkstack.v1.PlanAutomationResponse
-	11, // 24: orkstack.v1.AutomationDocumentReport.results:type_name -> orkstack.v1.AutomationStepResult
-	12, // 25: orkstack.v1.ApplyReport.orkflows:type_name -> orkstack.v1.OrkflowDocumentReport
-	13, // 26: orkstack.v1.ApplyReport.automation:type_name -> orkstack.v1.AutomationDocumentReport
-	0,  // 27: orkstack.v1.DisclosedSecret.kind:type_name -> orkstack.v1.AutomationObjectKind
-	15, // 28: orkstack.v1.DisclosedSecrets.secrets:type_name -> orkstack.v1.DisclosedSecret
-	7,  // 29: orkstack.v1.AutomationService.PlanAutomation:input_type -> orkstack.v1.PlanAutomationRequest
-	9,  // 30: orkstack.v1.AutomationService.ExportAutomation:input_type -> orkstack.v1.ExportAutomationRequest
-	8,  // 31: orkstack.v1.AutomationService.PlanAutomation:output_type -> orkstack.v1.PlanAutomationResponse
-	10, // 32: orkstack.v1.AutomationService.ExportAutomation:output_type -> orkstack.v1.ExportAutomationResponse
-	31, // [31:33] is the sub-list for method output_type
-	29, // [29:31] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	28, // 14: orkstack.v1.AutomationStep.create_event_source:type_name -> orkstack.v1.CreateEventSourceRequest
+	29, // 15: orkstack.v1.AutomationStep.update_event_source:type_name -> orkstack.v1.UpdateEventSourceRequest
+	30, // 16: orkstack.v1.AutomationStep.delete_event_source:type_name -> orkstack.v1.DeleteEventSourceRequest
+	6,  // 17: orkstack.v1.PlanAutomationRequest.pending_orkflows:type_name -> orkstack.v1.PendingOrkflow
+	0,  // 18: orkstack.v1.PlanAutomationResponse.managed:type_name -> orkstack.v1.AutomationObjectKind
+	5,  // 19: orkstack.v1.PlanAutomationResponse.steps:type_name -> orkstack.v1.AutomationStep
+	31, // 20: orkstack.v1.PlanAutomationResponse.issues:type_name -> orkstack.v1.ValidationIssue
+	5,  // 21: orkstack.v1.ExportAutomationResponse.unmanaged:type_name -> orkstack.v1.AutomationStep
+	2,  // 22: orkstack.v1.AutomationStepResult.outcome:type_name -> orkstack.v1.AutomationStepOutcome
+	32, // 23: orkstack.v1.OrkflowDocumentReport.validated:type_name -> orkstack.v1.ValidateOrkflowResponse
+	3,  // 24: orkstack.v1.OrkflowDocumentReport.stored:type_name -> orkstack.v1.OrkflowStoredState
+	33, // 25: orkstack.v1.OrkflowDocumentReport.applied:type_name -> orkstack.v1.ApplyOrkflowResponse
+	8,  // 26: orkstack.v1.AutomationDocumentReport.plan:type_name -> orkstack.v1.PlanAutomationResponse
+	11, // 27: orkstack.v1.AutomationDocumentReport.results:type_name -> orkstack.v1.AutomationStepResult
+	12, // 28: orkstack.v1.ApplyReport.orkflows:type_name -> orkstack.v1.OrkflowDocumentReport
+	13, // 29: orkstack.v1.ApplyReport.automation:type_name -> orkstack.v1.AutomationDocumentReport
+	0,  // 30: orkstack.v1.DisclosedSecret.kind:type_name -> orkstack.v1.AutomationObjectKind
+	15, // 31: orkstack.v1.DisclosedSecrets.secrets:type_name -> orkstack.v1.DisclosedSecret
+	7,  // 32: orkstack.v1.AutomationService.PlanAutomation:input_type -> orkstack.v1.PlanAutomationRequest
+	9,  // 33: orkstack.v1.AutomationService.ExportAutomation:input_type -> orkstack.v1.ExportAutomationRequest
+	8,  // 34: orkstack.v1.AutomationService.PlanAutomation:output_type -> orkstack.v1.PlanAutomationResponse
+	10, // 35: orkstack.v1.AutomationService.ExportAutomation:output_type -> orkstack.v1.ExportAutomationResponse
+	34, // [34:36] is the sub-list for method output_type
+	32, // [32:34] is the sub-list for method input_type
+	32, // [32:32] is the sub-list for extension type_name
+	32, // [32:32] is the sub-list for extension extendee
+	0,  // [0:32] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_automation_proto_init() }
@@ -1564,9 +1624,10 @@ func file_orkstack_v1_automation_proto_init() {
 	if File_orkstack_v1_automation_proto != nil {
 		return
 	}
-	file_orkstack_v1_schedule_proto_init()
+	file_orkstack_v1_event_source_service_proto_init()
 	file_orkstack_v1_namespace_service_proto_init()
 	file_orkstack_v1_orkflow_service_proto_init()
+	file_orkstack_v1_schedule_proto_init()
 	file_orkstack_v1_trigger_service_proto_init()
 	file_orkstack_v1_webhook_service_proto_init()
 	file_orkstack_v1_automation_proto_msgTypes[1].OneofWrappers = []any{
@@ -1581,6 +1642,9 @@ func file_orkstack_v1_automation_proto_init() {
 		(*AutomationStep_RegisterWebhook)(nil),
 		(*AutomationStep_UpdateWebhook)(nil),
 		(*AutomationStep_DeleteWebhook)(nil),
+		(*AutomationStep_CreateEventSource)(nil),
+		(*AutomationStep_UpdateEventSource)(nil),
+		(*AutomationStep_DeleteEventSource)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

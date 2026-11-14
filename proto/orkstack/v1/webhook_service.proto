@@ -83,6 +83,9 @@ message Webhook {
   // registered before this field existed — and an unnamed subscription is
   // outside every automation document. It plays no part in delivery.
   string name = 8;
+
+  // plaintext_runs_acknowledged is set from identity (O74); unset until it lands (v0.4.0 proto batch).
+  bool plaintext_runs_acknowledged = 9;
 }
 
 message RegisterWebhookRequest {
@@ -94,6 +97,9 @@ message RegisterWebhookRequest {
   string orkflow_name = 5;
   string task_id = 6;
   string name = 7;                         // optional; see Webhook.name
+
+  // acknowledge_plaintext_runs is set from identity (O74); unset until it lands (v0.4.0 proto batch).
+  bool acknowledge_plaintext_runs = 8;
 }
 
 message RegisterWebhookResponse {
@@ -112,6 +118,9 @@ message UpdateWebhookRequest {
   string namespace = 5;
   string orkflow_name = 6;
   string task_id = 7;
+
+  // acknowledge_plaintext_runs is set from identity (O74); unset until it lands (v0.4.0 proto batch).
+  bool acknowledge_plaintext_runs = 8;
 }
 
 message UpdateWebhookResponse { Webhook webhook = 1; }

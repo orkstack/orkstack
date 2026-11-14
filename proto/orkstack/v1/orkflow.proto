@@ -14,6 +14,9 @@ message RetryPolicy {
   int32 initial_interval_seconds = 2;    // default 1
   double backoff_coefficient = 3;        // default 2.0
   int32 maximum_interval_seconds = 4;    // default 60, or initial_interval_seconds when longer
+
+  // max_interruptions is set from E92; unset until it lands (v0.4.0 proto batch).
+  optional int32 max_interruptions = 5;
 }
 
 // Pin is a named group of tasks that execute on ONE Orker process and share
@@ -162,6 +165,27 @@ message Task {
   // rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin),
   // so a definition with no sleep keeps its digest.
   SleepSpec sleep = 25;
+
+  // devices is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated string devices = 26;
+
+  // network_profile is set from E91; unset until it lands (v0.4.0 proto batch).
+  string network_profile = 27;
+
+  // child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  repeated ChildArtifact child_artifacts = 30;
+
+  // input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  repeated string input_artifacts = 31;
+
+  // identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  repeated IdentityRef identities = 28;
+
+  // credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+  repeated CredentialRef credentials = 29;
+
+  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  ConcurrencySpec concurrency = 32;
 }
 
 // CacheSpec opts ONE task into memoization across runs (docs/DSL.md
@@ -203,6 +227,12 @@ message EachSpec {
   int32 max_parallel = 4;
   // source is over, compiled at apply (EachSource).
   EachSource source = 5;
+
+  // over_artifact is set from E89; unset until it lands (v0.4.0 proto batch).
+  string over_artifact = 6;
+
+  // format is set from E89; unset until it lands (v0.4.0 proto batch).
+  EachLineFormat format = 7;
 }
 
 // AwaitSpec makes a Task an awaited task: it starts no container and reaches
@@ -304,4 +334,36 @@ message Orkflow {
   // executes in and whose rules it follows. Never stored, never applied and
   // not part of canonicalOrkflow: definition_digest is the owner's.
   string definition_namespace = 14;
+
+  // output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  map<string, OutputArtifact> output_artifacts = 15;
+
+  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  ConcurrencySpec concurrency = 16;
 }
+
+// ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
+// batch).
+message ChildArtifact {}
+
+// ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
+// batch).
+message ConcurrencySpec {}
+
+// CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
+// batch).
+message CredentialRef {}
+
+// EachLineFormat is E89's; it holds only its zero value until E89 lands
+// (v0.4.0 proto batch).
+enum EachLineFormat {
+  EACH_LINE_FORMAT_UNSPECIFIED = 0;
+}
+
+// IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+// batch).
+message IdentityRef {}
+
+// OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
+// batch).
+message OutputArtifact {}

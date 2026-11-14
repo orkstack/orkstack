@@ -11,7 +11,7 @@ import type { JsonObject, Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/common.proto.
  */
 export const file_orkstack_v1_common: GenFile = /*@__PURE__*/
-  fileDesc("ChhvcmtzdGFjay92MS9jb21tb24ucHJvdG8SC29ya3N0YWNrLnYxIs0BCgtBcnRpZmFjdFJlZhIMCgRuYW1lGAEgASgJEgsKA3VyaRgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoAxIOCgZzaGEyNTYYBSABKAkSOAoIbWV0YWRhdGEYBiADKAsyJi5vcmtzdGFjay52MS5BcnRpZmFjdFJlZi5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIwCgdQYXlsb2FkEiUKBGRhdGEYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0InoKBUVycm9yEgwKBGNvZGUYASABKAkSDwoHbWVzc2FnZRgCIAEoCRIPCgdkZXRhaWxzGAMgASgJEhEKCXJldHJ5YWJsZRgEIAEoCBIuCghjYXRlZ29yeRgFIAEoDjIcLm9ya3N0YWNrLnYxLkZhaWx1cmVDYXRlZ29yeSrEAQoGU3RhdHVzEhYKElNUQVRVU19VTlNQRUNJRklFRBAAEhIKDlNUQVRVU19QRU5ESU5HEAESEgoOU1RBVFVTX1JVTk5JTkcQAhIUChBTVEFUVVNfU1VDQ0VFREVEEAMSEQoNU1RBVFVTX0ZBSUxFRBAEEhMKD1NUQVRVU19DQU5DRUxFRBAFEhIKDlNUQVRVU19TS0lQUEVEEAYSEwoPU1RBVFVTX0FXQUlUSU5HEAcSEwoPU1RBVFVTX1NMRUVQSU5HEAgq7QEKD0ZhaWx1cmVDYXRlZ29yeRIgChxGQUlMVVJFX0NBVEVHT1JZX1VOU1BFQ0lGSUVEEAASJAogRkFJTFVSRV9DQVRFR09SWV9BQ1RJVklUWV9GQUlMRUQQARIpCiVGQUlMVVJFX0NBVEVHT1JZX0lORlJBU1RSVUNUVVJFX0VSUk9SEAISJwojRkFJTFVSRV9DQVRFR09SWV9DT05UUkFDVF9WSU9MQVRJT04QAxIeChpGQUlMVVJFX0NBVEVHT1JZX1RJTUVEX09VVBAEEh4KGkZBSUxVUkVfQ0FURUdPUllfQ0FOQ0VMTEVEEAVCpwEKD2NvbS5vcmtzdGFjay52MUILQ29tbW9uUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_struct]);
+  fileDesc("ChhvcmtzdGFjay92MS9jb21tb24ucHJvdG8SC29ya3N0YWNrLnYxIs0BCgtBcnRpZmFjdFJlZhIMCgRuYW1lGAEgASgJEgsKA3VyaRgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoAxIOCgZzaGEyNTYYBSABKAkSOAoIbWV0YWRhdGEYBiADKAsyJi5vcmtzdGFjay52MS5BcnRpZmFjdFJlZi5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIwCgdQYXlsb2FkEiUKBGRhdGEYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Io0BCgVFcnJvchIMCgRjb2RlGAEgASgJEg8KB21lc3NhZ2UYAiABKAkSDwoHZGV0YWlscxgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSLgoIY2F0ZWdvcnkYBSABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJdGFza19jb2RlGAYgASgJIgkKB0Fza3NGb3IiDQoLQ29uc2VudFZpZXcqxAEKBlN0YXR1cxIWChJTVEFUVVNfVU5TUEVDSUZJRUQQABISCg5TVEFUVVNfUEVORElORxABEhIKDlNUQVRVU19SVU5OSU5HEAISFAoQU1RBVFVTX1NVQ0NFRURFRBADEhEKDVNUQVRVU19GQUlMRUQQBBITCg9TVEFUVVNfQ0FOQ0VMRUQQBRISCg5TVEFUVVNfU0tJUFBFRBAGEhMKD1NUQVRVU19BV0FJVElORxAHEhMKD1NUQVRVU19TTEVFUElORxAIKu0BCg9GYWlsdXJlQ2F0ZWdvcnkSIAocRkFJTFVSRV9DQVRFR09SWV9VTlNQRUNJRklFRBAAEiQKIEZBSUxVUkVfQ0FURUdPUllfQUNUSVZJVFlfRkFJTEVEEAESKQolRkFJTFVSRV9DQVRFR09SWV9JTkZSQVNUUlVDVFVSRV9FUlJPUhACEicKI0ZBSUxVUkVfQ0FURUdPUllfQ09OVFJBQ1RfVklPTEFUSU9OEAMSHgoaRkFJTFVSRV9DQVRFR09SWV9USU1FRF9PVVQQBBIeChpGQUlMVVJFX0NBVEVHT1JZX0NBTkNFTExFRBAFQqcBCg9jb20ub3Jrc3RhY2sudjFCC0NvbW1vblByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct]);
 
 /**
  * ArtifactRef is a pointer to a stored artifact in the object store.
@@ -126,6 +126,13 @@ export type Error = Message<"orkstack.v1.Error"> & {
    * @generated from field: orkstack.v1.FailureCategory category = 5;
    */
   category: FailureCategory;
+
+  /**
+   * task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string task_code = 6;
+   */
+  taskCode: string;
 };
 
 /**
@@ -134,6 +141,38 @@ export type Error = Message<"orkstack.v1.Error"> & {
  */
 export const ErrorSchema: GenMessage<Error> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_common, 2);
+
+/**
+ * AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.AsksFor
+ */
+export type AsksFor = Message<"orkstack.v1.AsksFor"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.AsksFor.
+ * Use `create(AsksForSchema)` to create a new message.
+ */
+export const AsksForSchema: GenMessage<AsksFor> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_common, 3);
+
+/**
+ * ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.ConsentView
+ */
+export type ConsentView = Message<"orkstack.v1.ConsentView"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.ConsentView.
+ * Use `create(ConsentViewSchema)` to create a new message.
+ */
+export const ConsentViewSchema: GenMessage<ConsentView> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_common, 4);
 
 /**
  * Status is the lifecycle state shared by runs and task runs.

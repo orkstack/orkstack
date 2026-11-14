@@ -72,7 +72,25 @@ type AuditRecord struct {
 	Succeeded bool `protobuf:"varint,11,opt,name=succeeded,proto3" json:"succeeded,omitempty"`
 	// error_code is the Connect code name ("failed_precondition",
 	// "not_found", …) when succeeded is false; empty otherwise.
-	ErrorCode     string `protobuf:"bytes,12,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	ErrorCode string `protobuf:"bytes,12,opt,name=error_code,json=errorCode,proto3" json:"error_code,omitempty"`
+	// principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	PrincipalVerified bool `protobuf:"varint,13,opt,name=principal_verified,json=principalVerified,proto3" json:"principal_verified,omitempty"`
+	// auth_method is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	AuthMethod string `protobuf:"bytes,14,opt,name=auth_method,json=authMethod,proto3" json:"auth_method,omitempty"`
+	// principal_issuer is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	PrincipalIssuer string `protobuf:"bytes,15,opt,name=principal_issuer,json=principalIssuer,proto3" json:"principal_issuer,omitempty"`
+	// permission is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Permission string `protobuf:"bytes,16,opt,name=permission,proto3" json:"permission,omitempty"`
+	// scope is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Scope string `protobuf:"bytes,17,opt,name=scope,proto3" json:"scope,omitempty"`
+	// decision is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Decision string `protobuf:"bytes,18,opt,name=decision,proto3" json:"decision,omitempty"`
+	// rule is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Rule string `protobuf:"bytes,19,opt,name=rule,proto3" json:"rule,omitempty"`
+	// policy_generation is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	PolicyGeneration int64 `protobuf:"varint,20,opt,name=policy_generation,json=policyGeneration,proto3" json:"policy_generation,omitempty"`
+	// signin is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Signin        string `protobuf:"bytes,21,opt,name=signin,proto3" json:"signin,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -187,6 +205,69 @@ func (x *AuditRecord) GetSucceeded() bool {
 func (x *AuditRecord) GetErrorCode() string {
 	if x != nil {
 		return x.ErrorCode
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetPrincipalVerified() bool {
+	if x != nil {
+		return x.PrincipalVerified
+	}
+	return false
+}
+
+func (x *AuditRecord) GetAuthMethod() string {
+	if x != nil {
+		return x.AuthMethod
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetPrincipalIssuer() string {
+	if x != nil {
+		return x.PrincipalIssuer
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetPermission() string {
+	if x != nil {
+		return x.Permission
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetScope() string {
+	if x != nil {
+		return x.Scope
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetDecision() string {
+	if x != nil {
+		return x.Decision
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetRule() string {
+	if x != nil {
+		return x.Rule
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetPolicyGeneration() int64 {
+	if x != nil {
+		return x.PolicyGeneration
+	}
+	return 0
+}
+
+func (x *AuditRecord) GetSignin() string {
+	if x != nil {
+		return x.Signin
 	}
 	return ""
 }
@@ -341,7 +422,7 @@ var File_orkstack_v1_audit_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_audit_proto_rawDesc = "" +
 	"\n" +
-	"\x17orkstack/v1/audit.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/filter.proto\"\xf6\x02\n" +
+	"\x17orkstack/v1/audit.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/filter.proto\"\x9c\x05\n" +
 	"\vAuditRecord\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12*\n" +
@@ -356,7 +437,19 @@ const file_orkstack_v1_audit_proto_rawDesc = "" +
 	" \x01(\tR\x06detail\x12\x1c\n" +
 	"\tsucceeded\x18\v \x01(\bR\tsucceeded\x12\x1d\n" +
 	"\n" +
-	"error_code\x18\f \x01(\tR\terrorCode\"\x9f\x03\n" +
+	"error_code\x18\f \x01(\tR\terrorCode\x12-\n" +
+	"\x12principal_verified\x18\r \x01(\bR\x11principalVerified\x12\x1f\n" +
+	"\vauth_method\x18\x0e \x01(\tR\n" +
+	"authMethod\x12)\n" +
+	"\x10principal_issuer\x18\x0f \x01(\tR\x0fprincipalIssuer\x12\x1e\n" +
+	"\n" +
+	"permission\x18\x10 \x01(\tR\n" +
+	"permission\x12\x14\n" +
+	"\x05scope\x18\x11 \x01(\tR\x05scope\x12\x1a\n" +
+	"\bdecision\x18\x12 \x01(\tR\bdecision\x12\x12\n" +
+	"\x04rule\x18\x13 \x01(\tR\x04rule\x12+\n" +
+	"\x11policy_generation\x18\x14 \x01(\x03R\x10policyGeneration\x12\x16\n" +
+	"\x06signin\x18\x15 \x01(\tR\x06signin\"\x9f\x03\n" +
 	"\x17ListAuditRecordsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x06 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +

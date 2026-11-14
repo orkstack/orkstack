@@ -6,7 +6,7 @@ import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
-import type { Event, Run, TaskRun } from "./run_pb";
+import type { Event, InheritedPause, Run, RunPause, TaskRun } from "./run_pb";
 import { file_orkstack_v1_run } from "./run_pb";
 import type { Message } from "@bufbuild/protobuf";
 
@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/continuation.proto.
  */
 export const file_orkstack_v1_continuation: GenFile = /*@__PURE__*/
-  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QizgMKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QaNwoVVmVyc2lvbkRlY2lzaW9uc0VudHJ5EgsKA2tleRgBIAEoCRINCgV2YWx1ZRgCIAEoBToCOAEigwEKEVJ1bkNoZWNrcG9pbnRQYXJ0EiAKBmhlYWRlchgBIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAiADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1biKIAQoPUnVuRXZlbnRTZWdtZW50Eg4KBnJ1bl9pZBgBIAEoCRISCgpnZW5lcmF0aW9uGAIgASgDEhYKDmZpcnN0X3NlcXVlbmNlGAMgASgDEhUKDWxhc3Rfc2VxdWVuY2UYBCABKAMSIgoGZXZlbnRzGAUgAygLMhIub3Jrc3RhY2sudjEuRXZlbnQiqwEKElJ1blNuYXBzaG90T3ZlcmxheRIQCghiYXNlX3VyaRgBIAEoCRIgCgZoZWFkZXIYAiABKAsyEC5vcmtzdGFjay52MS5SdW4SJwoJdGFza19ydW5zGAMgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIjCgVpdGVtcxgEIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SEwoLYmFzZV9zaGEyNTYYBSABKAlCrQEKD2NvbS5vcmtzdGFjay52MUIRQ29udGludWF0aW9uUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_run]);
+  fileDesc("Ch5vcmtzdGFjay92MS9jb250aW51YXRpb24ucHJvdG8SC29ya3N0YWNrLnYxIlkKEENvbnRpbnVhdGlvblBhcnQSDgoGb2Zmc2V0GAEgASgDEhIKCnNpemVfYnl0ZXMYAiABKAMSEQoJcmF3X2J5dGVzGAMgASgDEg4KBnNoYTI1NhgEIAEoCSKGAQoSQ29udGludWF0aW9uT2JqZWN0EgsKA3VyaRgBIAEoCRIOCgZzaGEyNTYYAiABKAkSEgoKc2l6ZV9ieXRlcxgDIAEoAxIRCglyYXdfYnl0ZXMYBCABKAMSLAoFcGFydHMYBSADKAsyHS5vcmtzdGFjay52MS5Db250aW51YXRpb25QYXJ0IrABCg9FdmVudFNlZ21lbnRSZWYSEgoKZ2VuZXJhdGlvbhgBIAEoAxIUCgxleGVjdXRpb25faWQYAiABKAkSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxITCgtldmVudF9jb3VudBgFIAEoAxIvCgZvYmplY3QYBiABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3Qi1AUKD1J1bkNvbnRpbnVhdGlvbhIPCgd2ZXJzaW9uGAEgASgFEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZXZlbnRfc2VxdWVuY2UYAyABKAMSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKc3RhcnRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASMwoKY2hlY2twb2ludBgGIAEoCzIfLm9ya3N0YWNrLnYxLkNvbnRpbnVhdGlvbk9iamVjdBIuCghzZWdtZW50cxgHIAMoCzIcLm9ya3N0YWNrLnYxLkV2ZW50U2VnbWVudFJlZhJNChF2ZXJzaW9uX2RlY2lzaW9ucxgIIAMoCzIyLm9ya3N0YWNrLnYxLlJ1bkNvbnRpbnVhdGlvbi5WZXJzaW9uRGVjaXNpb25zRW50cnkSMQoIc25hcHNob3QYCSABKAsyHy5vcmtzdGFjay52MS5Db250aW51YXRpb25PYmplY3QSKwoGcmVzdW1lGAsgASgLMhsub3Jrc3RhY2sudjEuUnVuUmVzdW1lQ2FycnkSJAoFcGF1c2UYDCABKAsyFS5vcmtzdGFjay52MS5SdW5QYXVzZRIpCgpsYXN0X3BhdXNlGA0gASgLMhUub3Jrc3RhY2sudjEuUnVuUGF1c2USNQoQcGF1c2VkX2J5X3BhcmVudBgOIAEoCzIbLm9ya3N0YWNrLnYxLkluaGVyaXRlZFBhdXNlEhgKEGxhc3RfY2FzY2FkZV9zZXEYDyABKAMSNQoLY29uY3VycmVuY3kYECABKAsyIC5vcmtzdGFjay52MS5SdW5Db25jdXJyZW5jeUNhcnJ5GjcKFVZlcnNpb25EZWNpc2lvbnNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAU6AjgBIrQBChFSdW5DaGVja3BvaW50UGFydBIgCgZoZWFkZXIYASABKAsyEC5vcmtzdGFjay52MS5SdW4SJwoJdGFza19ydW5zGAIgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhIjCgVpdGVtcxgDIAMoCzIULm9ya3N0YWNrLnYxLlRhc2tSdW4SLwoLbG9zc19ldmVudHMYBCABKAsyGi5vcmtzdGFjay52MS5SdW5Mb3NzRXZlbnRzIogBCg9SdW5FdmVudFNlZ21lbnQSDgoGcnVuX2lkGAEgASgJEhIKCmdlbmVyYXRpb24YAiABKAMSFgoOZmlyc3Rfc2VxdWVuY2UYAyABKAMSFQoNbGFzdF9zZXF1ZW5jZRgEIAEoAxIiCgZldmVudHMYBSADKAsyEi5vcmtzdGFjay52MS5FdmVudCKrAQoSUnVuU25hcHNob3RPdmVybGF5EhAKCGJhc2VfdXJpGAEgASgJEiAKBmhlYWRlchgCIAEoCzIQLm9ya3N0YWNrLnYxLlJ1bhInCgl0YXNrX3J1bnMYAyADKAsyFC5vcmtzdGFjay52MS5UYXNrUnVuEiMKBWl0ZW1zGAQgAygLMhQub3Jrc3RhY2sudjEuVGFza1J1bhITCgtiYXNlX3NoYTI1NhgFIAEoCSIVChNSdW5Db25jdXJyZW5jeUNhcnJ5Ig8KDVJ1bkxvc3NFdmVudHMiEAoOUnVuUmVzdW1lQ2FycnlCrQEKD2NvbS5vcmtzdGFjay52MUIRQ29udGludWF0aW9uUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_run]);
 
 /**
  * ContinuationPart is one gzip member of a checkpoint object: the unit a
@@ -234,6 +234,48 @@ export type RunContinuation = Message<"orkstack.v1.RunContinuation"> & {
    * @generated from field: orkstack.v1.ContinuationObject snapshot = 9;
    */
   snapshot?: ContinuationObject | undefined;
+
+  /**
+   * resume is set from E85; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.RunResumeCarry resume = 11;
+   */
+  resume?: RunResumeCarry | undefined;
+
+  /**
+   * pause is set from E103; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.RunPause pause = 12;
+   */
+  pause?: RunPause | undefined;
+
+  /**
+   * last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.RunPause last_pause = 13;
+   */
+  lastPause?: RunPause | undefined;
+
+  /**
+   * paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.InheritedPause paused_by_parent = 14;
+   */
+  pausedByParent?: InheritedPause | undefined;
+
+  /**
+   * last_cascade_seq is set from E103; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: int64 last_cascade_seq = 15;
+   */
+  lastCascadeSeq: bigint;
+
+  /**
+   * concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.RunConcurrencyCarry concurrency = 16;
+   */
+  concurrency?: RunConcurrencyCarry | undefined;
 };
 
 /**
@@ -274,6 +316,13 @@ export type RunCheckpointPart = Message<"orkstack.v1.RunCheckpointPart"> & {
    * @generated from field: repeated orkstack.v1.TaskRun items = 3;
    */
   items: TaskRun[];
+
+  /**
+   * loss_events is set from E92; unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.RunLossEvents loss_events = 4;
+   */
+  lossEvents?: RunLossEvents | undefined;
 };
 
 /**
@@ -384,4 +433,52 @@ export type RunSnapshotOverlay = Message<"orkstack.v1.RunSnapshotOverlay"> & {
  */
 export const RunSnapshotOverlaySchema: GenMessage<RunSnapshotOverlay> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_continuation, 6);
+
+/**
+ * RunConcurrencyCarry is E88's; it is empty until E88 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.RunConcurrencyCarry
+ */
+export type RunConcurrencyCarry = Message<"orkstack.v1.RunConcurrencyCarry"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.RunConcurrencyCarry.
+ * Use `create(RunConcurrencyCarrySchema)` to create a new message.
+ */
+export const RunConcurrencyCarrySchema: GenMessage<RunConcurrencyCarry> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 7);
+
+/**
+ * RunLossEvents is E92's; it is empty until E92 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.RunLossEvents
+ */
+export type RunLossEvents = Message<"orkstack.v1.RunLossEvents"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.RunLossEvents.
+ * Use `create(RunLossEventsSchema)` to create a new message.
+ */
+export const RunLossEventsSchema: GenMessage<RunLossEvents> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 8);
+
+/**
+ * RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
+ * batch).
+ *
+ * @generated from message orkstack.v1.RunResumeCarry
+ */
+export type RunResumeCarry = Message<"orkstack.v1.RunResumeCarry"> & {
+};
+
+/**
+ * Describes the message orkstack.v1.RunResumeCarry.
+ * Use `create(RunResumeCarrySchema)` to create a new message.
+ */
+export const RunResumeCarrySchema: GenMessage<RunResumeCarry> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_continuation, 9);
 

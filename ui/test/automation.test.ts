@@ -80,13 +80,27 @@ function recordingClient(calls: string[]): AutomationWriters {
 test('executeStep has a case for every request oneof variant', async () => {
 	const oneof = AutomationStepSchema.oneofs.find((o) => o.name === 'request');
 	expect(oneof === undefined).toBe(false);
-	expect(oneof!.fields.length).toBe(11);
+	expect(oneof!.fields.length).toBe(14);
+	// The event-source variants are declared ahead of their service (the
+	// v0.4.0 proto batch); until event sources land the page refuses them.
+	const notYet = new Set(['createEventSource', 'updateEventSource', 'deleteEventSource']);
 	for (const field of oneof!.fields) {
 		const calls: string[] = [];
 		const step = create(AutomationStepSchema, {
 			name: 'x',
 			request: { case: field.localName, value: create(field.message!) } as never
 		});
+		if (notYet.has(field.localName)) {
+			let refusal = '';
+			try {
+				await executeStep(recordingClient(calls), step, {});
+			} catch (err) {
+				refusal = String(err);
+			}
+			expect(refusal.includes('carries no request this page can send')).toBe(true);
+			expect(calls.length).toBe(0);
+			continue;
+		}
 		await executeStep(recordingClient(calls), step, {});
 		expect(calls.length).toBe(1);
 	}

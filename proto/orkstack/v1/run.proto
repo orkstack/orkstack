@@ -6,6 +6,7 @@ import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
+import "orkstack/v1/orkflow.proto";
 import "orkstack/v1/telemetry.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -22,6 +23,9 @@ message TaskEach {
   bool expanded = 1;
   // count is the number of items, equal to len(TaskRun.items), once expanded.
   int32 count = 2;
+
+  // lines is set from E89; unset until it lands (v0.4.0 proto batch).
+  EachLines lines = 3;
 }
 
 // TaskChild is a composed task's own state on the run snapshot. It is SET for
@@ -220,6 +224,34 @@ message TaskRun {
   // sleep is this task's sleep state, set for a task whose definition
   // declares `sleep:` and unset otherwise (see TaskSleep).
   TaskSleep sleep = 27;
+
+  // interruptions is set from E92; unset until it lands (v0.4.0 proto batch).
+  TaskInterruptions interruptions = 28;
+
+  // queued is set from E88; unset until it lands (v0.4.0 proto batch).
+  ConcurrencyQueued queued = 29;
+
+  // pending_reason is set from E92; unset until it lands (v0.4.0 proto batch).
+  string pending_reason = 30;
+
+  // result_epoch is set from E85; unset until it lands (v0.4.0 proto batch).
+  int64 result_epoch = 31;
+
+  // resume_disposition is set from E85; unset until it lands (v0.4.0 proto batch).
+  ResumeDisposition resume_disposition = 32;
+
+
+  // wake_at is set from E85; unset until it lands (v0.4.0 proto batch).
+  google.protobuf.Timestamp wake_at = 34;
+
+  // adopted is set from E85; unset until it lands (v0.4.0 proto batch).
+  bool adopted = 35;
+
+  // reading_back is set from E85; unset until it lands (v0.4.0 proto batch).
+  bool reading_back = 36;
+
+  // record is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  RecordRef record = 37;
 }
 
 // TimingReason is why one timing quantity cannot be known. Each names a cause
@@ -362,6 +394,9 @@ message TaskAwait {
   // word control-plane-audit-trail and run-origin use. Empty when none was
   // sent.
   string resolved_by = 4;
+
+  // resolved_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool resolved_by_verified = 5;
 }
 
 // TaskSleep is a sleeping task's own state on the run snapshot. It is SET for
@@ -452,6 +487,9 @@ message ReservedResources {
   double cpu = 1;
   // memory_bytes is the memory limit in bytes: "4Gi" is 4294967296.
   int64 memory_bytes = 2;
+
+  // gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+  int64 gpu = 3;
 }
 
 // TaskAttempt is the immutable record of ONE attempt of one task,
@@ -544,6 +582,21 @@ message TaskAttempt {
   // timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker
   // never writes it.
   AttemptTiming timing = 21;
+
+  // profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+  repeated EffectiveProfile profiles = 22;
+
+  // measured is set from E94; unset until it lands (v0.4.0 proto batch).
+  MeasuredUsage measured = 23;
+
+  // identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  repeated AttemptIdentity identities = 24;
+
+  // credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
+  repeated AttemptCredential credentials = 25;
+
+  // masked_occurrences is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+  int64 masked_occurrences = 26;
 }
 
 // RetryState is why Temporal stopped retrying a task. It mirrors
@@ -640,6 +693,57 @@ message Run {
   // timing is the run's half of the task-timing derivation (RunTiming), set
   // by GetRun and never stored; each TaskRun carries its own half.
   RunTiming timing = 18;
+
+  // input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  repeated NamedArtifact input_artifacts = 20;
+
+  // output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
+  repeated NamedArtifact output_artifacts = 21;
+
+  // trace_id is set from E87; unset until it lands (v0.4.0 proto batch).
+  string trace_id = 22;
+
+  // run_context is set from E86; unset until it lands (v0.4.0 proto batch).
+  RunContextState run_context = 23;
+
+  // canceled_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool canceled_by_verified = 19;
+
+  // queued is set from E88; unset until it lands (v0.4.0 proto batch).
+  ConcurrencyQueued queued = 24;
+
+  // superseded_by is set from E88; unset until it lands (v0.4.0 proto batch).
+  string superseded_by = 25;
+
+  // resumes is set from E85; unset until it lands (v0.4.0 proto batch).
+  repeated RunResume resumes = 26;
+
+  // resume_hint is set from E85; unset until it lands (v0.4.0 proto batch).
+  ResumeHint resume_hint = 27;
+
+  // interruptions_off_reason is set from E92; unset until it lands (v0.4.0 proto batch).
+  string interruptions_off_reason = 28;
+
+  // pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  RunPause pause = 29;
+
+  // last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  RunPause last_pause = 30;
+
+  // pausable is set from E103; unset until it lands (v0.4.0 proto batch).
+  bool pausable = 31;
+
+  // paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+  InheritedPause paused_by_parent = 32;
+
+  // pause_warnings is set from E103; unset until it lands (v0.4.0 proto batch).
+  repeated PauseWarning pause_warnings = 33;
+
+  // pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch).
+  bool pause_slot_kept = 34;
+
+  // timeout is set from E107; unset until it lands (v0.4.0 proto batch).
+  RunTimeout timeout = 35;
 }
 
 // RunCancelRequest is ENGINE-INTERNAL: the record CancelRun writes as the
@@ -732,6 +836,27 @@ message RunOrigin {
   // of a child, a new top-level run, has none. An empty value names no root.
   // Opaque, like id.
   string root_run_id = 6;
+
+  // schedule is set from E86; unset until it lands (v0.4.0 proto batch).
+  RunScheduleFire schedule = 9;
+
+  // parent_task_id is set from E87; unset until it lands (v0.4.0 proto batch).
+  string parent_task_id = 10;
+
+  // parent_orkflow is set from E87; unset until it lands (v0.4.0 proto batch).
+  OrkflowRef parent_orkflow = 11;
+
+  // root_orkflow is set from E87; unset until it lands (v0.4.0 proto batch).
+  OrkflowRef root_orkflow = 12;
+
+  // root_origin is set from E87; unset until it lands (v0.4.0 proto batch).
+  RunOrigin root_origin = 13;
+
+  // principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool principal_verified = 7;
+
+  // auth_method is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string auth_method = 8;
 }
 
 // EventType classifies a run event on the realtime stream.
@@ -791,4 +916,106 @@ message Event {
   // the Event contract has no item type — and TaskRun.items is the
   // authoritative record. Unset on every other event.
   optional int32 item = 9;
+
+  // resumed is set from E85; unset until it lands (v0.4.0 proto batch).
+  RunResumed resumed = 10;
+
+  // interruption is set from E92; unset until it lands (v0.4.0 proto batch).
+  TaskInterruption interruption = 11;
+
+  // request_id is set from E103; unset until it lands (v0.4.0 proto batch).
+  string request_id = 12;
+
+  // pause_transition is set from E103; unset until it lands (v0.4.0 proto batch).
+  PauseTransition pause_transition = 13;
 }
+
+// AttemptCredential is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
+// batch).
+message AttemptCredential {}
+
+// AttemptIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+// batch).
+message AttemptIdentity {}
+
+// ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
+// batch).
+message ConcurrencyQueued {}
+
+// EffectiveProfile is E91's; it is empty until E91 lands (v0.4.0 proto
+// batch).
+message EffectiveProfile {}
+
+// InheritedPause is E103's; it is empty until E103 lands (v0.4.0 proto
+// batch).
+message InheritedPause {}
+
+// MeasuredUsage is E94's; it is empty until E94 lands (v0.4.0 proto
+// batch).
+message MeasuredUsage {}
+
+// NamedArtifact is one artifact a run takes in or hands out, by the name
+// the Orkflow gives it (E87, composed-artifacts/01-design.md §5). Declared
+// whole by the v0.4.0 proto batch; nothing sets it until E87 lands.
+message NamedArtifact {
+  string name = 1;
+  ArtifactRef artifact = 2;
+  string run_id = 3;
+  string task_id = 4;
+}
+
+// PauseTransition is E103's; it holds only its zero value until E103 lands
+// (v0.4.0 proto batch).
+enum PauseTransition {
+  PAUSE_TRANSITION_UNSPECIFIED = 0;
+}
+
+// PauseWarning is E103's; it is empty until E103 lands (v0.4.0 proto
+// batch).
+message PauseWarning {}
+
+// RecordRef is identity (O39)'s; it is empty until identity (O39) lands (v0.4.0 proto
+// batch).
+message RecordRef {}
+
+// ResumeDisposition is E85's; it holds only its zero value until E85 lands
+// (v0.4.0 proto batch).
+enum ResumeDisposition {
+  RESUME_DISPOSITION_UNSPECIFIED = 0;
+}
+
+// ResumeHint is E85's; it is empty until E85 lands (v0.4.0 proto
+// batch).
+message ResumeHint {}
+
+// RunContextState is E86's; it is empty until E86 lands (v0.4.0 proto
+// batch).
+message RunContextState {}
+
+// RunPause is E103's; it is empty until E103 lands (v0.4.0 proto
+// batch).
+message RunPause {}
+
+// RunResume is E85's; it is empty until E85 lands (v0.4.0 proto
+// batch).
+message RunResume {}
+
+// RunResumed is E85's; it is empty until E85 lands (v0.4.0 proto
+// batch).
+message RunResumed {}
+
+// RunScheduleFire is E86's; it is empty until E86 lands (v0.4.0 proto
+// batch).
+message RunScheduleFire {}
+
+// RunTimeout is E107's; it is empty until E107 lands (v0.4.0 proto
+// batch).
+message RunTimeout {}
+
+// TaskInterruption is E92's; it is empty until E92 lands (v0.4.0 proto
+// batch).
+message TaskInterruption {}
+
+// TaskInterruptions is E92's; it is empty until E92 lands (v0.4.0 proto
+// batch).
+message TaskInterruptions {}

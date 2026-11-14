@@ -3,6 +3,7 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/timestamp.proto";
+import "orkstack/v1/common.proto";
 import "orkstack/v1/filter.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
@@ -51,6 +52,21 @@ message Trigger {
   // document. The name is not part of the invoke URL and never selects what
   // a run starts: the stored namespace and orkflow do, as before.
   string name = 7;
+
+  // created_by is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string created_by = 8;
+
+  // created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool created_by_verified = 9;
+
+  // consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool consent_stale = 10;
+
+  // consented is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  ConsentView consented = 11;
+
+  // asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  AsksFor asks_for = 12;
 }
 
 message CreateTriggerRequest {
@@ -59,6 +75,9 @@ message CreateTriggerRequest {
   string orkflow_version = 3;
   string description = 4;
   string name = 5;                         // optional; see Trigger.name
+
+  // consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string consent = 6;
 }
 
 message CreateTriggerResponse {
@@ -128,6 +147,12 @@ message UpdateTriggerRequest {
   string name = 3;
   string orkflow_version = 4;
   string description = 5;
+
+  // consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string consent = 6;
+
+  // rebind is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool rebind = 7;
 }
 
 message UpdateTriggerResponse { Trigger trigger = 1; }

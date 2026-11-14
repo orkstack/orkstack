@@ -184,6 +184,9 @@ message Namespace {
   // (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch
   // is first in, first out, whatever the weights.
   double fair_share_weight = 16;
+
+  // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  NamespaceIdentity identity = 17;
 }
 
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
@@ -293,3 +296,7 @@ message Pool {
   // something is already wrong. Each pool carries its own verdict now.
   string unavailable_reason = 6;
 }
+
+// NamespaceIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+// batch).
+message NamespaceIdentity {}

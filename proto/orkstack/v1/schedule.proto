@@ -214,6 +214,24 @@ message Schedule {
   // that cannot describe is an error instead, because it would have nothing
   // to return.
   string unavailable_reason = 18;
+
+  // created_by is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string created_by = 19;
+
+  // created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool created_by_verified = 20;
+
+  // overlap_skipped is set from E88; unset until it lands (v0.4.0 proto batch).
+  int64 overlap_skipped = 21;
+
+  // consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool consent_stale = 22;
+
+  // consented is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  ConsentView consented = 23;
+
+  // asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  AsksFor asks_for = 24;
 }
 
 // ScheduleFire is one fire of a schedule as the cluster and the fire's own
@@ -236,6 +254,12 @@ message ScheduleFire {
   // or `pool "gpu" has no live Orker`.
   string refusal = 4;
   bool details_available = 5;
+
+  // skip_code is set from E88; unset until it lands (v0.4.0 proto batch).
+  string skip_code = 6;
+
+  // skip_message is set from E88; unset until it lands (v0.4.0 proto batch).
+  string skip_message = 7;
 }
 
 message CreateScheduleRequest {
@@ -249,6 +273,9 @@ message CreateScheduleRequest {
   // paused creates the schedule paused, so a spec can be reviewed with
   // `schedule get` — next fire times and all — before it ever fires.
   bool paused = 8;
+
+  // consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string consent = 9;
 }
 message CreateScheduleResponse { Schedule schedule = 1; }
 message ListSchedulesRequest {
@@ -327,6 +354,12 @@ message UpdateScheduleRequest {
   Payload input = 4;
   string description = 5;
   ScheduleSpec spec = 6;
+
+  // consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  string consent = 7;
+
+  // rebind is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  bool rebind = 8;
 }
 message UpdateScheduleResponse { Schedule schedule = 1; }
 message PauseScheduleRequest {
@@ -398,4 +431,10 @@ message ScheduledRunPreparation {
   bytes plan = 4;               // engine.RunPlan, encoding/json
   bool namespace_indexed = 5;   // the engine's boot answers, so the child is stamped
   bool origin_indexed = 6;      //   exactly as StartRun stamps a top-level run
+
+  // fire_unavailable_retry is set from E88; unset until it lands (v0.4.0 proto batch).
+  google.protobuf.Duration fire_unavailable_retry = 7;
+
+  // fire_record_retry is set from E88; unset until it lands (v0.4.0 proto batch).
+  google.protobuf.Duration fire_record_retry = 8;
 }

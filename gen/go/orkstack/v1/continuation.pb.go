@@ -295,7 +295,19 @@ type RunContinuation struct {
 	// snapshot is the full snapshot of the run's exact state that the switch
 	// wrote: a gzipped Run under a content-addressed continuations/ key, never
 	// a {seq}.pb key.
-	Snapshot      *ContinuationObject `protobuf:"bytes,9,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	Snapshot *ContinuationObject `protobuf:"bytes,9,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
+	// resume is set from E85; unset until it lands (v0.4.0 proto batch).
+	Resume *RunResumeCarry `protobuf:"bytes,11,opt,name=resume,proto3" json:"resume,omitempty"`
+	// pause is set from E103; unset until it lands (v0.4.0 proto batch).
+	Pause *RunPause `protobuf:"bytes,12,opt,name=pause,proto3" json:"pause,omitempty"`
+	// last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+	LastPause *RunPause `protobuf:"bytes,13,opt,name=last_pause,json=lastPause,proto3" json:"last_pause,omitempty"`
+	// paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+	PausedByParent *InheritedPause `protobuf:"bytes,14,opt,name=paused_by_parent,json=pausedByParent,proto3" json:"paused_by_parent,omitempty"`
+	// last_cascade_seq is set from E103; unset until it lands (v0.4.0 proto batch).
+	LastCascadeSeq int64 `protobuf:"varint,15,opt,name=last_cascade_seq,json=lastCascadeSeq,proto3" json:"last_cascade_seq,omitempty"`
+	// concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+	Concurrency   *RunConcurrencyCarry `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -393,6 +405,48 @@ func (x *RunContinuation) GetSnapshot() *ContinuationObject {
 	return nil
 }
 
+func (x *RunContinuation) GetResume() *RunResumeCarry {
+	if x != nil {
+		return x.Resume
+	}
+	return nil
+}
+
+func (x *RunContinuation) GetPause() *RunPause {
+	if x != nil {
+		return x.Pause
+	}
+	return nil
+}
+
+func (x *RunContinuation) GetLastPause() *RunPause {
+	if x != nil {
+		return x.LastPause
+	}
+	return nil
+}
+
+func (x *RunContinuation) GetPausedByParent() *InheritedPause {
+	if x != nil {
+		return x.PausedByParent
+	}
+	return nil
+}
+
+func (x *RunContinuation) GetLastCascadeSeq() int64 {
+	if x != nil {
+		return x.LastCascadeSeq
+	}
+	return 0
+}
+
+func (x *RunContinuation) GetConcurrency() *RunConcurrencyCarry {
+	if x != nil {
+		return x.Concurrency
+	}
+	return nil
+}
+
 // RunCheckpointPart is one gzip member of a checkpoint. Concatenated
 // serializations of this message MERGE (repeated fields append, and only part
 // 0 sets header), so the whole object gunzipped as one multistream and
@@ -406,7 +460,9 @@ type RunCheckpointPart struct {
 	TaskRuns []*TaskRun `protobuf:"bytes,2,rep,name=task_runs,json=taskRuns,proto3" json:"task_runs,omitempty"`
 	// items holds the item rows (task_id and item set), in (definition order,
 	// index) order.
-	Items         []*TaskRun `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	Items []*TaskRun `protobuf:"bytes,3,rep,name=items,proto3" json:"items,omitempty"`
+	// loss_events is set from E92; unset until it lands (v0.4.0 proto batch).
+	LossEvents    *RunLossEvents `protobuf:"bytes,4,opt,name=loss_events,json=lossEvents,proto3" json:"loss_events,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -458,6 +514,13 @@ func (x *RunCheckpointPart) GetTaskRuns() []*TaskRun {
 func (x *RunCheckpointPart) GetItems() []*TaskRun {
 	if x != nil {
 		return x.Items
+	}
+	return nil
+}
+
+func (x *RunCheckpointPart) GetLossEvents() *RunLossEvents {
+	if x != nil {
+		return x.LossEvents
 	}
 	return nil
 }
@@ -636,6 +699,120 @@ func (x *RunSnapshotOverlay) GetBaseSha256() string {
 	return ""
 }
 
+// RunConcurrencyCarry is E88's; it is empty until E88 lands (v0.4.0 proto
+// batch).
+type RunConcurrencyCarry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunConcurrencyCarry) Reset() {
+	*x = RunConcurrencyCarry{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunConcurrencyCarry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunConcurrencyCarry) ProtoMessage() {}
+
+func (x *RunConcurrencyCarry) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunConcurrencyCarry.ProtoReflect.Descriptor instead.
+func (*RunConcurrencyCarry) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{7}
+}
+
+// RunLossEvents is E92's; it is empty until E92 lands (v0.4.0 proto
+// batch).
+type RunLossEvents struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunLossEvents) Reset() {
+	*x = RunLossEvents{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunLossEvents) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunLossEvents) ProtoMessage() {}
+
+func (x *RunLossEvents) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunLossEvents.ProtoReflect.Descriptor instead.
+func (*RunLossEvents) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{8}
+}
+
+// RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
+// batch).
+type RunResumeCarry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RunResumeCarry) Reset() {
+	*x = RunResumeCarry{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RunResumeCarry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RunResumeCarry) ProtoMessage() {}
+
+func (x *RunResumeCarry) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RunResumeCarry.ProtoReflect.Descriptor instead.
+func (*RunResumeCarry) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{9}
+}
+
 var File_orkstack_v1_continuation_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_continuation_proto_rawDesc = "" +
@@ -663,7 +840,7 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\rlast_sequence\x18\x04 \x01(\x03R\flastSequence\x12\x1f\n" +
 	"\vevent_count\x18\x05 \x01(\x03R\n" +
 	"eventCount\x127\n" +
-	"\x06object\x18\x06 \x01(\v2\x1f.orkstack.v1.ContinuationObjectR\x06object\"\xc6\x04\n" +
+	"\x06object\x18\x06 \x01(\v2\x1f.orkstack.v1.ContinuationObjectR\x06object\"\x93\a\n" +
 	"\x0fRunContinuation\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x05R\aversion\x12\x1e\n" +
 	"\n" +
@@ -679,14 +856,23 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"checkpoint\x128\n" +
 	"\bsegments\x18\a \x03(\v2\x1c.orkstack.v1.EventSegmentRefR\bsegments\x12_\n" +
 	"\x11version_decisions\x18\b \x03(\v22.orkstack.v1.RunContinuation.VersionDecisionsEntryR\x10versionDecisions\x12;\n" +
-	"\bsnapshot\x18\t \x01(\v2\x1f.orkstack.v1.ContinuationObjectR\bsnapshot\x1aC\n" +
+	"\bsnapshot\x18\t \x01(\v2\x1f.orkstack.v1.ContinuationObjectR\bsnapshot\x123\n" +
+	"\x06resume\x18\v \x01(\v2\x1b.orkstack.v1.RunResumeCarryR\x06resume\x12+\n" +
+	"\x05pause\x18\f \x01(\v2\x15.orkstack.v1.RunPauseR\x05pause\x124\n" +
+	"\n" +
+	"last_pause\x18\r \x01(\v2\x15.orkstack.v1.RunPauseR\tlastPause\x12E\n" +
+	"\x10paused_by_parent\x18\x0e \x01(\v2\x1b.orkstack.v1.InheritedPauseR\x0epausedByParent\x12(\n" +
+	"\x10last_cascade_seq\x18\x0f \x01(\x03R\x0elastCascadeSeq\x12B\n" +
+	"\vconcurrency\x18\x10 \x01(\v2 .orkstack.v1.RunConcurrencyCarryR\vconcurrency\x1aC\n" +
 	"\x15VersionDecisionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\x9c\x01\n" +
+	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\xd9\x01\n" +
 	"\x11RunCheckpointPart\x12(\n" +
 	"\x06header\x18\x01 \x01(\v2\x10.orkstack.v1.RunR\x06header\x121\n" +
 	"\ttask_runs\x18\x02 \x03(\v2\x14.orkstack.v1.TaskRunR\btaskRuns\x12*\n" +
-	"\x05items\x18\x03 \x03(\v2\x14.orkstack.v1.TaskRunR\x05items\"\xc0\x01\n" +
+	"\x05items\x18\x03 \x03(\v2\x14.orkstack.v1.TaskRunR\x05items\x12;\n" +
+	"\vloss_events\x18\x04 \x01(\v2\x1a.orkstack.v1.RunLossEventsR\n" +
+	"lossEvents\"\xc0\x01\n" +
 	"\x0fRunEventSegment\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x1e\n" +
 	"\n" +
@@ -701,7 +887,10 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\ttask_runs\x18\x03 \x03(\v2\x14.orkstack.v1.TaskRunR\btaskRuns\x12*\n" +
 	"\x05items\x18\x04 \x03(\v2\x14.orkstack.v1.TaskRunR\x05items\x12\x1f\n" +
 	"\vbase_sha256\x18\x05 \x01(\tR\n" +
-	"baseSha256B\xad\x01\n" +
+	"baseSha256\"\x15\n" +
+	"\x13RunConcurrencyCarry\"\x0f\n" +
+	"\rRunLossEvents\"\x10\n" +
+	"\x0eRunResumeCarryB\xad\x01\n" +
 	"\x0fcom.orkstack.v1B\x11ContinuationProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -716,7 +905,7 @@ func file_orkstack_v1_continuation_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_continuation_proto_rawDescData
 }
 
-var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*ContinuationPart)(nil),      // 0: orkstack.v1.ContinuationPart
 	(*ContinuationObject)(nil),    // 1: orkstack.v1.ContinuationObject
@@ -725,33 +914,44 @@ var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*RunCheckpointPart)(nil),     // 4: orkstack.v1.RunCheckpointPart
 	(*RunEventSegment)(nil),       // 5: orkstack.v1.RunEventSegment
 	(*RunSnapshotOverlay)(nil),    // 6: orkstack.v1.RunSnapshotOverlay
-	nil,                           // 7: orkstack.v1.RunContinuation.VersionDecisionsEntry
-	(*timestamppb.Timestamp)(nil), // 8: google.protobuf.Timestamp
-	(*Run)(nil),                   // 9: orkstack.v1.Run
-	(*TaskRun)(nil),               // 10: orkstack.v1.TaskRun
-	(*Event)(nil),                 // 11: orkstack.v1.Event
+	(*RunConcurrencyCarry)(nil),   // 7: orkstack.v1.RunConcurrencyCarry
+	(*RunLossEvents)(nil),         // 8: orkstack.v1.RunLossEvents
+	(*RunResumeCarry)(nil),        // 9: orkstack.v1.RunResumeCarry
+	nil,                           // 10: orkstack.v1.RunContinuation.VersionDecisionsEntry
+	(*timestamppb.Timestamp)(nil), // 11: google.protobuf.Timestamp
+	(*RunPause)(nil),              // 12: orkstack.v1.RunPause
+	(*InheritedPause)(nil),        // 13: orkstack.v1.InheritedPause
+	(*Run)(nil),                   // 14: orkstack.v1.Run
+	(*TaskRun)(nil),               // 15: orkstack.v1.TaskRun
+	(*Event)(nil),                 // 16: orkstack.v1.Event
 }
 var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ContinuationObject.parts:type_name -> orkstack.v1.ContinuationPart
 	1,  // 1: orkstack.v1.EventSegmentRef.object:type_name -> orkstack.v1.ContinuationObject
-	8,  // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
-	8,  // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
+	11, // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
+	11, // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
 	1,  // 4: orkstack.v1.RunContinuation.checkpoint:type_name -> orkstack.v1.ContinuationObject
 	2,  // 5: orkstack.v1.RunContinuation.segments:type_name -> orkstack.v1.EventSegmentRef
-	7,  // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
+	10, // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
 	1,  // 7: orkstack.v1.RunContinuation.snapshot:type_name -> orkstack.v1.ContinuationObject
-	9,  // 8: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
-	10, // 9: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
-	10, // 10: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
-	11, // 11: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
-	9,  // 12: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
-	10, // 13: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
-	10, // 14: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	9,  // 8: orkstack.v1.RunContinuation.resume:type_name -> orkstack.v1.RunResumeCarry
+	12, // 9: orkstack.v1.RunContinuation.pause:type_name -> orkstack.v1.RunPause
+	12, // 10: orkstack.v1.RunContinuation.last_pause:type_name -> orkstack.v1.RunPause
+	13, // 11: orkstack.v1.RunContinuation.paused_by_parent:type_name -> orkstack.v1.InheritedPause
+	7,  // 12: orkstack.v1.RunContinuation.concurrency:type_name -> orkstack.v1.RunConcurrencyCarry
+	14, // 13: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
+	15, // 14: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
+	15, // 15: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
+	8,  // 16: orkstack.v1.RunCheckpointPart.loss_events:type_name -> orkstack.v1.RunLossEvents
+	16, // 17: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
+	14, // 18: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
+	15, // 19: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
+	15, // 20: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
+	21, // [21:21] is the sub-list for method output_type
+	21, // [21:21] is the sub-list for method input_type
+	21, // [21:21] is the sub-list for extension type_name
+	21, // [21:21] is the sub-list for extension extendee
+	0,  // [0:21] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_continuation_proto_init() }
@@ -766,7 +966,7 @@ func file_orkstack_v1_continuation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_continuation_proto_rawDesc), len(file_orkstack_v1_continuation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

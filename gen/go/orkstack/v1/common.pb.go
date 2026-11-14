@@ -298,7 +298,9 @@ type Error struct {
 	// category is the AGENTS.md §4 failure category this error belongs to. It
 	// is recorded in history, so it is part of the replay-visible contract and
 	// not merely display data.
-	Category      FailureCategory `protobuf:"varint,5,opt,name=category,proto3,enum=orkstack.v1.FailureCategory" json:"category,omitempty"`
+	Category FailureCategory `protobuf:"varint,5,opt,name=category,proto3,enum=orkstack.v1.FailureCategory" json:"category,omitempty"`
+	// task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+	TaskCode      string `protobuf:"bytes,6,opt,name=task_code,json=taskCode,proto3" json:"task_code,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -368,6 +370,89 @@ func (x *Error) GetCategory() FailureCategory {
 	return FailureCategory_FAILURE_CATEGORY_UNSPECIFIED
 }
 
+func (x *Error) GetTaskCode() string {
+	if x != nil {
+		return x.TaskCode
+	}
+	return ""
+}
+
+// AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+// batch).
+type AsksFor struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *AsksFor) Reset() {
+	*x = AsksFor{}
+	mi := &file_orkstack_v1_common_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AsksFor) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AsksFor) ProtoMessage() {}
+
+func (x *AsksFor) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_common_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AsksFor.ProtoReflect.Descriptor instead.
+func (*AsksFor) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_common_proto_rawDescGZIP(), []int{3}
+}
+
+// ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+// batch).
+type ConsentView struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ConsentView) Reset() {
+	*x = ConsentView{}
+	mi := &file_orkstack_v1_common_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ConsentView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ConsentView) ProtoMessage() {}
+
+func (x *ConsentView) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_common_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ConsentView.ProtoReflect.Descriptor instead.
+func (*ConsentView) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_common_proto_rawDescGZIP(), []int{4}
+}
+
 var File_orkstack_v1_common_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_common_proto_rawDesc = "" +
@@ -385,13 +470,16 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"6\n" +
 	"\aPayload\x12+\n" +
-	"\x04data\x18\x01 \x01(\v2\x17.google.protobuf.StructR\x04data\"\xa7\x01\n" +
+	"\x04data\x18\x01 \x01(\v2\x17.google.protobuf.StructR\x04data\"\xc4\x01\n" +
 	"\x05Error\x12\x12\n" +
 	"\x04code\x18\x01 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x12\x18\n" +
 	"\adetails\x18\x03 \x01(\tR\adetails\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\x128\n" +
-	"\bcategory\x18\x05 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory*\xc4\x01\n" +
+	"\bcategory\x18\x05 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory\x12\x1b\n" +
+	"\ttask_code\x18\x06 \x01(\tR\btaskCode\"\t\n" +
+	"\aAsksFor\"\r\n" +
+	"\vConsentView*\xc4\x01\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x12\n" +
@@ -424,19 +512,21 @@ func file_orkstack_v1_common_proto_rawDescGZIP() []byte {
 }
 
 var file_orkstack_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_orkstack_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_orkstack_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_orkstack_v1_common_proto_goTypes = []any{
 	(Status)(0),             // 0: orkstack.v1.Status
 	(FailureCategory)(0),    // 1: orkstack.v1.FailureCategory
 	(*ArtifactRef)(nil),     // 2: orkstack.v1.ArtifactRef
 	(*Payload)(nil),         // 3: orkstack.v1.Payload
 	(*Error)(nil),           // 4: orkstack.v1.Error
-	nil,                     // 5: orkstack.v1.ArtifactRef.MetadataEntry
-	(*structpb.Struct)(nil), // 6: google.protobuf.Struct
+	(*AsksFor)(nil),         // 5: orkstack.v1.AsksFor
+	(*ConsentView)(nil),     // 6: orkstack.v1.ConsentView
+	nil,                     // 7: orkstack.v1.ArtifactRef.MetadataEntry
+	(*structpb.Struct)(nil), // 8: google.protobuf.Struct
 }
 var file_orkstack_v1_common_proto_depIdxs = []int32{
-	5, // 0: orkstack.v1.ArtifactRef.metadata:type_name -> orkstack.v1.ArtifactRef.MetadataEntry
-	6, // 1: orkstack.v1.Payload.data:type_name -> google.protobuf.Struct
+	7, // 0: orkstack.v1.ArtifactRef.metadata:type_name -> orkstack.v1.ArtifactRef.MetadataEntry
+	8, // 1: orkstack.v1.Payload.data:type_name -> google.protobuf.Struct
 	1, // 2: orkstack.v1.Error.category:type_name -> orkstack.v1.FailureCategory
 	3, // [3:3] is the sub-list for method output_type
 	3, // [3:3] is the sub-list for method input_type
@@ -456,7 +546,7 @@ func file_orkstack_v1_common_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_common_proto_rawDesc), len(file_orkstack_v1_common_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   4,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

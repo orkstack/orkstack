@@ -193,8 +193,10 @@ type Namespace struct {
 	// (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch
 	// is first in, first out, whatever the weights.
 	FairShareWeight float64 `protobuf:"fixed64,16,opt,name=fair_share_weight,json=fairShareWeight,proto3" json:"fair_share_weight,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	Identity      *NamespaceIdentity `protobuf:"bytes,17,opt,name=identity,proto3" json:"identity,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *Namespace) Reset() {
@@ -337,6 +339,13 @@ func (x *Namespace) GetFairShareWeight() float64 {
 		return x.FairShareWeight
 	}
 	return 0
+}
+
+func (x *Namespace) GetIdentity() *NamespaceIdentity {
+	if x != nil {
+		return x.Identity
+	}
+	return nil
 }
 
 // NamespaceHold stops this namespace ACCEPTING new runs. It is an admission
@@ -617,11 +626,49 @@ func (x *Pool) GetUnavailableReason() string {
 	return ""
 }
 
+// NamespaceIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+// batch).
+type NamespaceIdentity struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NamespaceIdentity) Reset() {
+	*x = NamespaceIdentity{}
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NamespaceIdentity) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NamespaceIdentity) ProtoMessage() {}
+
+func (x *NamespaceIdentity) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_namespace_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NamespaceIdentity.ProtoReflect.Descriptor instead.
+func (*NamespaceIdentity) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{4}
+}
+
 var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
-	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\x85\x06\n" +
+	"\x1borkstack/v1/namespace.proto\x12\vorkstack.v1\x1a\x1egoogle/protobuf/duration.proto\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x1borkstack/v1/telemetry.proto\"\xc1\x06\n" +
 	"\tNamespace\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12 \n" +
 	"\vdescription\x18\x02 \x01(\tR\vdescription\x12:\n" +
@@ -642,7 +689,8 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\x0fallowed_secrets\x18\r \x03(\tR\x0eallowedSecrets\x12*\n" +
 	"\x11require_signed_by\x18\x0e \x01(\tR\x0frequireSignedBy\x12+\n" +
 	"\x06budget\x18\x0f \x01(\v2\x13.orkstack.v1.BudgetR\x06budget\x12*\n" +
-	"\x11fair_share_weight\x18\x10 \x01(\x01R\x0ffairShareWeight\x1a9\n" +
+	"\x11fair_share_weight\x18\x10 \x01(\x01R\x0ffairShareWeight\x12:\n" +
+	"\bidentity\x18\x11 \x01(\v2\x1e.orkstack.v1.NamespaceIdentityR\bidentity\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"Y\n" +
@@ -662,7 +710,8 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
 	"is_default\x18\x04 \x01(\bR\tisDefault\x127\n" +
 	"\tlast_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12-\n" +
-	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonJ\x04\b\x03\x10\x04R\apluginsB\xaa\x01\n" +
+	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonJ\x04\b\x03\x10\x04R\aplugins\"\x13\n" +
+	"\x11NamespaceIdentityB\xaa\x01\n" +
 	"\x0fcom.orkstack.v1B\x0eNamespaceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (
@@ -677,33 +726,35 @@ func file_orkstack_v1_namespace_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_namespace_proto_rawDescData
 }
 
-var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_orkstack_v1_namespace_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_orkstack_v1_namespace_proto_goTypes = []any{
 	(*Namespace)(nil),             // 0: orkstack.v1.Namespace
 	(*NamespaceHold)(nil),         // 1: orkstack.v1.NamespaceHold
 	(*Budget)(nil),                // 2: orkstack.v1.Budget
 	(*Pool)(nil),                  // 3: orkstack.v1.Pool
-	nil,                           // 4: orkstack.v1.Namespace.LabelsEntry
-	(*timestamppb.Timestamp)(nil), // 5: google.protobuf.Timestamp
-	(*durationpb.Duration)(nil),   // 6: google.protobuf.Duration
-	(*TelemetryPolicy)(nil),       // 7: orkstack.v1.TelemetryPolicy
+	(*NamespaceIdentity)(nil),     // 4: orkstack.v1.NamespaceIdentity
+	nil,                           // 5: orkstack.v1.Namespace.LabelsEntry
+	(*timestamppb.Timestamp)(nil), // 6: google.protobuf.Timestamp
+	(*durationpb.Duration)(nil),   // 7: google.protobuf.Duration
+	(*TelemetryPolicy)(nil),       // 8: orkstack.v1.TelemetryPolicy
 }
 var file_orkstack_v1_namespace_proto_depIdxs = []int32{
-	4,  // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
-	5,  // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
-	5,  // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
-	6,  // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
-	7,  // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
+	5,  // 0: orkstack.v1.Namespace.labels:type_name -> orkstack.v1.Namespace.LabelsEntry
+	6,  // 1: orkstack.v1.Namespace.created_at:type_name -> google.protobuf.Timestamp
+	6,  // 2: orkstack.v1.Namespace.updated_at:type_name -> google.protobuf.Timestamp
+	7,  // 3: orkstack.v1.Namespace.run_retention:type_name -> google.protobuf.Duration
+	8,  // 4: orkstack.v1.Namespace.telemetry:type_name -> orkstack.v1.TelemetryPolicy
 	1,  // 5: orkstack.v1.Namespace.hold:type_name -> orkstack.v1.NamespaceHold
 	2,  // 6: orkstack.v1.Namespace.budget:type_name -> orkstack.v1.Budget
-	5,  // 7: orkstack.v1.NamespaceHold.since:type_name -> google.protobuf.Timestamp
-	6,  // 8: orkstack.v1.Budget.period:type_name -> google.protobuf.Duration
-	5,  // 9: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	4,  // 7: orkstack.v1.Namespace.identity:type_name -> orkstack.v1.NamespaceIdentity
+	6,  // 8: orkstack.v1.NamespaceHold.since:type_name -> google.protobuf.Timestamp
+	7,  // 9: orkstack.v1.Budget.period:type_name -> google.protobuf.Duration
+	6,  // 10: orkstack.v1.Pool.last_seen:type_name -> google.protobuf.Timestamp
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_namespace_proto_init() }
@@ -718,7 +769,7 @@ func file_orkstack_v1_namespace_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_namespace_proto_rawDesc), len(file_orkstack_v1_namespace_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

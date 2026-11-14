@@ -6,6 +6,8 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
 import type { Timestamp } from "@bufbuild/protobuf/wkt";
 import { file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
+import type { AsksFor, ConsentView } from "./common_pb";
+import { file_orkstack_v1_common } from "./common_pb";
 import type { FieldFilter } from "./filter_pb";
 import { file_orkstack_v1_filter } from "./filter_pb";
 import type { Message } from "@bufbuild/protobuf";
@@ -14,7 +16,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/trigger_service.proto.
  */
 export const file_orkstack_v1_trigger_service: GenFile = /*@__PURE__*/
-  fileDesc("CiFvcmtzdGFjay92MS90cmlnZ2VyX3NlcnZpY2UucHJvdG8SC29ya3N0YWNrLnYxIqoBCgdUcmlnZ2VyEgoKAmlkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCRIUCgxvcmtmbG93X25hbWUYAyABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAQgASgJEhMKC2Rlc2NyaXB0aW9uGAUgASgJEi4KCmNyZWF0ZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEgwKBG5hbWUYByABKAkiewoUQ3JlYXRlVHJpZ2dlclJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEhQKDG9ya2Zsb3dfbmFtZRgCIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YAyABKAkSEwoLZGVzY3JpcHRpb24YBCABKAkSDAoEbmFtZRgFIAEoCSJOChVDcmVhdGVUcmlnZ2VyUmVzcG9uc2USJQoHdHJpZ2dlchgBIAEoCzIULm9ya3N0YWNrLnYxLlRyaWdnZXISDgoGc2VjcmV0GAIgASgJIrQCChNMaXN0VHJpZ2dlcnNSZXF1ZXN0EhEKCW5hbWVzcGFjZRgBIAEoCRIpCgdmaWx0ZXJzGAMgAygLMhgub3Jrc3RhY2sudjEuRmllbGRGaWx0ZXI6ygGiuxjFAQoTb3Jrc3RhY2sudjEuVHJpZ2dlchINCgJpZBICSWQaAwECAxIVCgRuYW1lEgROYW1lGgUBAgMEBTgBEiAKDG9ya2Zsb3dfbmFtZRIHT3JrZmxvdxoFAQIDBAU4ARIoCg9vcmtmbG93X3ZlcnNpb24SDlBpbm5lZCB2ZXJzaW9uGgUBAgMEBRIhCgtkZXNjcmlwdGlvbhILRGVzY3JpcHRpb24aBQECAwQFEhkKCmNyZWF0ZWRfYXQSB0NyZWF0ZWQaAgYHSgQIAhADUgxvcmtmbG93X25hbWUiPgoUTGlzdFRyaWdnZXJzUmVzcG9uc2USJgoIdHJpZ2dlcnMYASADKAsyFC5vcmtzdGFjay52MS5UcmlnZ2VyIjUKFERlbGV0ZVRyaWdnZXJSZXF1ZXN0EgoKAmlkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCSIXChVEZWxldGVUcmlnZ2VyUmVzcG9uc2UicQoUVXBkYXRlVHJpZ2dlclJlcXVlc3QSCgoCaWQYASABKAkSEQoJbmFtZXNwYWNlGAIgASgJEgwKBG5hbWUYAyABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAQgASgJEhMKC2Rlc2NyaXB0aW9uGAUgASgJIj4KFVVwZGF0ZVRyaWdnZXJSZXNwb25zZRIlCgd0cmlnZ2VyGAEgASgLMhQub3Jrc3RhY2sudjEuVHJpZ2dlcjLtAgoOVHJpZ2dlclNlcnZpY2USVgoNQ3JlYXRlVHJpZ2dlchIhLm9ya3N0YWNrLnYxLkNyZWF0ZVRyaWdnZXJSZXF1ZXN0GiIub3Jrc3RhY2sudjEuQ3JlYXRlVHJpZ2dlclJlc3BvbnNlElMKDExpc3RUcmlnZ2VycxIgLm9ya3N0YWNrLnYxLkxpc3RUcmlnZ2Vyc1JlcXVlc3QaIS5vcmtzdGFjay52MS5MaXN0VHJpZ2dlcnNSZXNwb25zZRJWCg1VcGRhdGVUcmlnZ2VyEiEub3Jrc3RhY2sudjEuVXBkYXRlVHJpZ2dlclJlcXVlc3QaIi5vcmtzdGFjay52MS5VcGRhdGVUcmlnZ2VyUmVzcG9uc2USVgoNRGVsZXRlVHJpZ2dlchIhLm9ya3N0YWNrLnYxLkRlbGV0ZVRyaWdnZXJSZXF1ZXN0GiIub3Jrc3RhY2sudjEuRGVsZXRlVHJpZ2dlclJlc3BvbnNlQq8BCg9jb20ub3Jrc3RhY2sudjFCE1RyaWdnZXJTZXJ2aWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_timestamp, file_orkstack_v1_filter]);
+  fileDesc("CiFvcmtzdGFjay92MS90cmlnZ2VyX3NlcnZpY2UucHJvdG8SC29ya3N0YWNrLnYxIscCCgdUcmlnZ2VyEgoKAmlkGAEgASgJEhEKCW5hbWVzcGFjZRgCIAEoCRIUCgxvcmtmbG93X25hbWUYAyABKAkSFwoPb3JrZmxvd192ZXJzaW9uGAQgASgJEhMKC2Rlc2NyaXB0aW9uGAUgASgJEi4KCmNyZWF0ZWRfYXQYBiABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEgwKBG5hbWUYByABKAkSEgoKY3JlYXRlZF9ieRgIIAEoCRIbChNjcmVhdGVkX2J5X3ZlcmlmaWVkGAkgASgIEhUKDWNvbnNlbnRfc3RhbGUYCiABKAgSKwoJY29uc2VudGVkGAsgASgLMhgub3Jrc3RhY2sudjEuQ29uc2VudFZpZXcSJgoIYXNrc19mb3IYDCABKAsyFC5vcmtzdGFjay52MS5Bc2tzRm9yIowBChRDcmVhdGVUcmlnZ2VyUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSFAoMb3JrZmxvd19uYW1lGAIgASgJEhcKD29ya2Zsb3dfdmVyc2lvbhgDIAEoCRITCgtkZXNjcmlwdGlvbhgEIAEoCRIMCgRuYW1lGAUgASgJEg8KB2NvbnNlbnQYBiABKAkiTgoVQ3JlYXRlVHJpZ2dlclJlc3BvbnNlEiUKB3RyaWdnZXIYASABKAsyFC5vcmtzdGFjay52MS5UcmlnZ2VyEg4KBnNlY3JldBgCIAEoCSK0AgoTTGlzdFRyaWdnZXJzUmVxdWVzdBIRCgluYW1lc3BhY2UYASABKAkSKQoHZmlsdGVycxgDIAMoCzIYLm9ya3N0YWNrLnYxLkZpZWxkRmlsdGVyOsoBorsYxQEKE29ya3N0YWNrLnYxLlRyaWdnZXISDQoCaWQSAklkGgMBAgMSFQoEbmFtZRIETmFtZRoFAQIDBAU4ARIgCgxvcmtmbG93X25hbWUSB09ya2Zsb3caBQECAwQFOAESKAoPb3JrZmxvd192ZXJzaW9uEg5QaW5uZWQgdmVyc2lvbhoFAQIDBAUSIQoLZGVzY3JpcHRpb24SC0Rlc2NyaXB0aW9uGgUBAgMEBRIZCgpjcmVhdGVkX2F0EgdDcmVhdGVkGgIGB0oECAIQA1IMb3JrZmxvd19uYW1lIj4KFExpc3RUcmlnZ2Vyc1Jlc3BvbnNlEiYKCHRyaWdnZXJzGAEgAygLMhQub3Jrc3RhY2sudjEuVHJpZ2dlciI1ChREZWxldGVUcmlnZ2VyUmVxdWVzdBIKCgJpZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkiFwoVRGVsZXRlVHJpZ2dlclJlc3BvbnNlIpIBChRVcGRhdGVUcmlnZ2VyUmVxdWVzdBIKCgJpZBgBIAEoCRIRCgluYW1lc3BhY2UYAiABKAkSDAoEbmFtZRgDIAEoCRIXCg9vcmtmbG93X3ZlcnNpb24YBCABKAkSEwoLZGVzY3JpcHRpb24YBSABKAkSDwoHY29uc2VudBgGIAEoCRIOCgZyZWJpbmQYByABKAgiPgoVVXBkYXRlVHJpZ2dlclJlc3BvbnNlEiUKB3RyaWdnZXIYASABKAsyFC5vcmtzdGFjay52MS5UcmlnZ2VyMu0CCg5UcmlnZ2VyU2VydmljZRJWCg1DcmVhdGVUcmlnZ2VyEiEub3Jrc3RhY2sudjEuQ3JlYXRlVHJpZ2dlclJlcXVlc3QaIi5vcmtzdGFjay52MS5DcmVhdGVUcmlnZ2VyUmVzcG9uc2USUwoMTGlzdFRyaWdnZXJzEiAub3Jrc3RhY2sudjEuTGlzdFRyaWdnZXJzUmVxdWVzdBohLm9ya3N0YWNrLnYxLkxpc3RUcmlnZ2Vyc1Jlc3BvbnNlElYKDVVwZGF0ZVRyaWdnZXISIS5vcmtzdGFjay52MS5VcGRhdGVUcmlnZ2VyUmVxdWVzdBoiLm9ya3N0YWNrLnYxLlVwZGF0ZVRyaWdnZXJSZXNwb25zZRJWCg1EZWxldGVUcmlnZ2VyEiEub3Jrc3RhY2sudjEuRGVsZXRlVHJpZ2dlclJlcXVlc3QaIi5vcmtzdGFjay52MS5EZWxldGVUcmlnZ2VyUmVzcG9uc2VCrwEKD2NvbS5vcmtzdGFjay52MUITVHJpZ2dlclNlcnZpY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_timestamp, file_orkstack_v1_common, file_orkstack_v1_filter]);
 
 /**
  * @generated from message orkstack.v1.Trigger
@@ -65,6 +67,41 @@ export type Trigger = Message<"orkstack.v1.Trigger"> & {
    * @generated from field: string name = 7;
    */
   name: string;
+
+  /**
+   * created_by is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string created_by = 8;
+   */
+  createdBy: string;
+
+  /**
+   * created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool created_by_verified = 9;
+   */
+  createdByVerified: boolean;
+
+  /**
+   * consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool consent_stale = 10;
+   */
+  consentStale: boolean;
+
+  /**
+   * consented is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.ConsentView consented = 11;
+   */
+  consented?: ConsentView | undefined;
+
+  /**
+   * asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: orkstack.v1.AsksFor asks_for = 12;
+   */
+  asksFor?: AsksFor | undefined;
 };
 
 /**
@@ -104,6 +141,13 @@ export type CreateTriggerRequest = Message<"orkstack.v1.CreateTriggerRequest"> &
    * @generated from field: string name = 5;
    */
   name: string;
+
+  /**
+   * consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string consent = 6;
+   */
+  consent: string;
 };
 
 /**
@@ -250,6 +294,20 @@ export type UpdateTriggerRequest = Message<"orkstack.v1.UpdateTriggerRequest"> &
    * @generated from field: string description = 5;
    */
   description: string;
+
+  /**
+   * consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: string consent = 6;
+   */
+  consent: string;
+
+  /**
+   * rebind is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   *
+   * @generated from field: bool rebind = 7;
+   */
+  rebind: boolean;
 };
 
 /**

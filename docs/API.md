@@ -418,6 +418,27 @@ recorded the same object under two tasks yields two references.
 | `run_created_at` | `google.protobuf.Timestamp` |  |
 | `item` | optional `int32` | item is set when the referencing run recorded the object under one item. |
 
+### AsksFor
+
+AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### AttemptCredential
+
+AttemptCredential is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### AttemptIdentity
+
+AttemptIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### AttemptTiming
 
 AttemptTiming is the derivation over one TaskAttempt, set on every row
@@ -447,6 +468,15 @@ the handler returned — succeeded or refused.
 | `detail` | `string` | detail is a short human-readable summary of what was asked — never a secret, never a token, never a request body. Bounded. |
 | `succeeded` | `bool` | succeeded is whether the handler returned success. A refused write is a record too: who tried is evidence. |
 | `error_code` | `string` | error_code is the Connect code name ("failed_precondition", "not_found", …) when succeeded is false; empty otherwise. |
+| `principal_verified` | `bool` | principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `auth_method` | `string` | auth_method is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `principal_issuer` | `string` | principal_issuer is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `permission` | `string` | permission is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `scope` | `string` | scope is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `decision` | `string` | decision is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `rule` | `string` | rule is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `policy_generation` | `int64` | policy_generation is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `signin` | `string` | signin is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### AutomationFieldChange
 
@@ -486,6 +516,9 @@ and what an apply would do to it.
 | `register_webhook` | [`RegisterWebhookRequest`](#registerwebhookrequest) | One of `request`. |
 | `update_webhook` | [`UpdateWebhookRequest`](#updatewebhookrequest) | One of `request`. |
 | `delete_webhook` | [`DeleteWebhookRequest`](#deletewebhookrequest) | One of `request`. |
+| `create_event_source` | [`CreateEventSourceRequest`](#createeventsourcerequest) | One of `request`. create_event_source is set from E90; unset until it lands (v0.4.0 proto batch). |
+| `update_event_source` | [`UpdateEventSourceRequest`](#updateeventsourcerequest) | One of `request`. update_event_source is set from E90; unset until it lands (v0.4.0 proto batch). |
+| `delete_event_source` | [`DeleteEventSourceRequest`](#deleteeventsourcerequest) | One of `request`. delete_event_source is set from E90; unset until it lands (v0.4.0 proto batch). |
 
 ### AwaitCallback
 
@@ -657,6 +690,13 @@ reading of the inventory at most five seconds old, never a record.
 | `reserved` | [`ResourceQuantity`](#resourcequantity) | reserved sums what stands reserved on those Orkers (DescribeOrkerResult.reserved): each outstanding poll at the per-task cap, each task's request and each container not yet removed. |
 | `capacity` | [`ResourceQuantity`](#resourcequantity) | capacity sums what those Orkers admit tasks within (DescribeOrkerResult.capacity). A dimension is 0 when any of them leaves it unbounded; a client then reports that dimension of neither capacity nor reserved. |
 
+### ChildArtifact
+
+ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### CommitRef
 
 CommitRef points at a written ActivityCommit object.
@@ -689,6 +729,27 @@ sibling read, field for field.
 | `from_version` | `string` | resolved |
 | `to_version` | `string` | resolved |
 
+### ConcurrencyQueued
+
+ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### ConcurrencySpec
+
+ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### ConsentView
+
+ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### CordonOrkerRequest
 
 | Field | Type | Description |
@@ -702,6 +763,13 @@ sibling read, field for field.
 | Field | Type | Description |
 |---|---|---|
 | `orker` | [`Orker`](#orker) |  |
+
+### CreateEventSourceRequest
+
+CreateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### CreateNamespaceRequest
 
@@ -728,6 +796,7 @@ sibling read, field for field.
 | `description` | `string` |  |
 | `spec` | [`ScheduleSpec`](#schedulespec) |  |
 | `paused` | `bool` | paused creates the schedule paused, so a spec can be reviewed with `schedule get` — next fire times and all — before it ever fires. |
+| `consent` | `string` | consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### CreateScheduleResponse
 
@@ -744,6 +813,7 @@ sibling read, field for field.
 | `orkflow_version` | `string` |  |
 | `description` | `string` |  |
 | `name` | `string` | optional; see Trigger.name |
+| `consent` | `string` | consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### CreateTriggerResponse
 
@@ -751,6 +821,20 @@ sibling read, field for field.
 |---|---|---|
 | `trigger` | [`Trigger`](#trigger) |  |
 | `secret` | `string` | shown exactly once, like RegisterWebhookResponse.secret |
+
+### CredentialRef
+
+CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### DeleteEventSourceRequest
+
+DeleteEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### DeleteNamespaceRequest
 
@@ -893,6 +977,22 @@ is alive by answering DescribeOrker (§6.5).
 | `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
 | `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage (Orker.store_outage). cordoned is true beside it. |
 | `attempt_ordinals_supported` | `bool` | attempt_ordinals_supported is true on an Orker that numbers attempts with claimed ordinals (docs/STORAGE.md, "Attempt ordinals"). An Orker built before it numbers them as Temporal does and would write records over a newer Orker's, so submit refuses a pool that has one. |
+| `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `profile_kinds_supported` | repeated [`ProfileKind`](#profilekind) | profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `identity_supported` | `bool` | identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `providers` | repeated [`ProviderInfo`](#providerinfo) | providers is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
+| `masks_secrets` | `bool` | masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+| `metadata_reachable` | repeated `string` | metadata_reachable is set from identity (E60); unset until it lands (v0.4.0 proto batch). |
+| `run_context_supported` | `bool` | run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch). |
+| `each_lines_supported` | `bool` | each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch). |
+| `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is set from identity (E60); unset until it lands (v0.4.0 proto batch). |
+| `store_scope` | [`StoreScope`](#storescope) | store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `store_scope_detail` | `string` | store_scope_detail is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `store_scope_confirmed_at` | `google.protobuf.Timestamp` | store_scope_confirmed_at is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `results_scope` | [`ResultsScope`](#resultsscope) | results_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `service_host` | [`ServiceHost`](#servicehost) | service_host is set from E90; unset until it lands (v0.4.0 proto batch). |
 
 ### DiffOrkflowVersionsRequest
 
@@ -935,6 +1035,20 @@ is alive by answering DescribeOrker (§6.5).
 | `evidence_unavailable` | `int32` | evidence_unavailable counts rows with at least one unavailable side. |
 | `fields_compared` | repeated `string` | fields_compared is the resolved field list — every field when `only` is empty, else `only` plus "presence" — in canonical order, so a client can say what was and was not compared. It is exhaustive: every RunFieldDiff.field in differences is one of its entries. |
 
+### EachArtifactSource
+
+EachArtifactSource is E89's; it is empty until E89 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### EachLines
+
+EachLines is E89's; it is empty until E89 lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### EachSource
 
 EachSource is where a fan-out task's array lives: compiled at apply from
@@ -947,6 +1061,7 @@ parse `over`.
 | `input` | `string` | input names a declared input (.inputs.&lt;input>); task_id names a task in the fan-out's needs closure (.tasks.&lt;task_id>.output). Exactly one is set. |
 | `task_id` | `string` |  |
 | `path` | repeated `string` | path is the object keys below that root, outermost first. It is empty only for an input declared `type: array`; a task source always has at least one key, because a values.json is an object. There is no array index and no wildcard. |
+| `artifact` | [`EachArtifactSource`](#eachartifactsource) | artifact is set from E89; unset until it lands (v0.4.0 proto batch). |
 
 ### EachSpec
 
@@ -963,6 +1078,15 @@ Task.pin).
 | `max_items` | `int32` | max_items is the author's bound, 1..10000; the sum over every fan-out of one Orkflow is at most 10000, and at most the deployment's ORK_EACH_MAX_ITEMS (1000 unless the deployment raises it). An array longer than this fails the task EACH_TOO_MANY_ITEMS before any item runs. |
 | `max_parallel` | `int32` | max_parallel bounds how many items are in flight at once; 0 means no bound of the task's own. |
 | `source` | [`EachSource`](#eachsource) | source is over, compiled at apply (EachSource). |
+| `over_artifact` | `string` | over_artifact is set from E89; unset until it lands (v0.4.0 proto batch). |
+| `format` | [`EachLineFormat`](#eachlineformat) | format is set from E89; unset until it lands (v0.4.0 proto batch). |
+
+### EffectiveProfile
+
+EffectiveProfile is E91's; it is empty until E91 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### Error
 
@@ -975,6 +1099,7 @@ Error captures a structured failure for a run or task run.
 | `details` | `string` | optional stack/context |
 | `retryable` | `bool` |  |
 | `category` | [`FailureCategory`](#failurecategory) | category is the AGENTS.md §4 failure category this error belongs to. It is recorded in history, so it is part of the replay-visible contract and not merely display data. |
+| `task_code` | `string` | task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
 
 ### Event
 
@@ -992,6 +1117,10 @@ server-streaming RPC and the WebSocket bridge.
 | `data` | [`Payload`](#payload) | optional structured detail |
 | `timestamp` | `google.protobuf.Timestamp` |  |
 | `item` | optional `int32` | item is set on an event about ONE ITEM of a fan-out task: the item's 0-based index. Such an event is EVENT_TYPE_TASK_LOG carrying the item's terminal status — the precedent markSkipped and markCanceled set, since the Event contract has no item type — and TaskRun.items is the authoritative record. Unset on every other event. |
+| `resumed` | [`RunResumed`](#runresumed) | resumed is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `interruption` | [`TaskInterruption`](#taskinterruption) | interruption is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `request_id` | `string` | request_id is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `pause_transition` | [`PauseTransition`](#pausetransition) | pause_transition is set from E103; unset until it lands (v0.4.0 proto batch). |
 
 ### EvidenceChunk
 
@@ -1298,6 +1427,7 @@ No fields.
 |---|---|---|
 | `policy` | [`RetentionPolicy`](#retentionpolicy) |  |
 | `namespace_retention_enforced` | `bool` | namespace_retention_enforced reports whether this deployment runs the worker that retires runs at their namespace's retention (ORK_CLEANUP_ENABLED). When false, every run is kept for the maximum plus the operator's enforcement margin and a tighter namespace value has no effect yet. CONFIGURATION-DERIVED, like GetSystemInfo's fields. |
+| `cluster_retention_warning` | `string` | cluster_retention_warning is set from identity (E60); unset until it lands (v0.4.0 proto batch). |
 
 ### GetRunRequest
 
@@ -1367,6 +1497,9 @@ not name the namespace that the id exists.
 | `buckets` | repeated [`StatsBucket`](#statsbucket) | buckets is the series the request asked for, oldest first. It tiles [window_since, window_until) exactly: the first bucket starts at window_since, each ends where the next starts, and the last ends at window_until. With bucket_count, window_since is the start of the first whole bucket, so every number above describes exactly the span the buckets tile. Empty when the request asked for no series. |
 | `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width and timezone are the series actually drawn, resolved: an empty timezone answers "UTC". Unset when no series was asked for. |
 | `timezone` | `string` |  |
+| `paused` | `int64` | paused is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `queued` | `int64` | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `executing` | `int64` | executing is set from E103; unset until it lands (v0.4.0 proto batch). |
 
 ### GetSystemInfoRequest
 
@@ -1385,6 +1518,8 @@ No fields.
 | `artifact_location` | `string` | artifact_location is the bucket or directory that backend addresses, never a credential. CONFIGURATION-DERIVED. |
 | `temporal_address` | `string` | temporal_address is the cluster endpoint this replica dials. CONFIGURATION-DERIVED — that the address is configured is not a claim that it answers; pool health is the read that proves the cluster is reachable, and a connectivity flag here would be stale the moment it was sent. |
 | `server_time` | `google.protobuf.Timestamp` | server_time is the answering replica's own clock, and is the ONLY observed field in this message. A client comparing it with its own clock is comparing two clocks, which is what makes a skewed replica visible. |
+| `auth_mode` | `string` | auth_mode is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `identity_issuer` | `string` | identity_issuer is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 
 ### GetUsageRequest
 
@@ -1437,6 +1572,13 @@ IconElement is one element of an ActivityIcon.
 | `attributes` | repeated [`IconAttribute`](#iconattribute) | attributes are its geometry and presentation attributes, in the order the SVG gave them. |
 | `children` | repeated [`IconElement`](#iconelement) | children are a g's elements; every other element has none. |
 
+### IdentityRef
+
+IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### ImagePolicy
 
 ImagePolicy is the deployment's supply-chain floor (AGENTS.md §5): which
@@ -1474,6 +1616,13 @@ what `pinned` names, whatever a tag does later.
 | `platform_digest` | `string` | platform_digest is the manifest digest the Orker actually ran, and the platform it ran on. The engine leaves both empty; only an Orker fills them, and only into ExecuteTaskResult.image and ActivityCommit.image. |
 | `platform` | `string` |  |
 | `delivery` | `string` | delivery records how the Orker obtained the image for this execution: "registry" (pulled) or "embedded" (loaded from the OCI image layout, §4.6). The engine leaves it empty; only an Orker fills it, beside platform_digest. It exists because objective deliverable 10's embedded fallback is otherwise invisible after the fact: an operator debugging a stale builtin needs to know the pull did not happen. |
+
+### InheritedPause
+
+InheritedPause is E103's; it is empty until E103 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### InspectActivityRequest
 
@@ -1697,6 +1846,7 @@ end). A window whose end is not after its start is INVALID_ARGUMENT.
 | `orkers_unavailable_reason` | `string` | orkers_unavailable_reason is set when the Orker inventory itself could not be read. Every release's orkers and pools_served are then empty and every non-current release carries an UNVERIFIED blocker. |
 | `revision` | `string` | revision identifies the routing this answer saw (current release, ramping release, ramp percent). OPAQUE: echo it as expected_revision to refuse a write if the routing changed since; never parse it. |
 | `observed_at` | `google.protobuf.Timestamp` | observed_at is the answering replica's clock at the read. |
+| `unversioned_open_identity_runs` | `int64` | unversioned_open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 
 ### ListRunArtifactsRequest
 
@@ -1834,6 +1984,50 @@ answer is the TaskAttempt record the Orker writes.
 | `item` | optional `int32` | item is set when the pending activity is one item of a fan-out (read off the scheduled ExecuteTaskInput.each.index). |
 | `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read from the Orker inventory ListOrkers reports, in a reading at most five seconds old that one engine replica shares among every caller. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
 | `store_outage_wait` | [`StoreOutageWait`](#storeoutagewait) | store_outage_wait is set when this attempt is waiting out an object storage outage: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, at least one Orker of its pool is cordoned only because the store does not answer it, and no Orker of the pool takes new tasks. Derived on read like capacity_wait, and unset for the same reasons. The attempt has used nothing while it waits, and starts once the store answers. |
+| `usage` | [`LiveUsage`](#liveusage) | usage is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `reserved` | [`ReservedResources`](#reservedresources) | reserved is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `identity` | repeated [`LiveIdentity`](#liveidentity) | identity is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+
+### LiveIdentity
+
+LiveIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### LiveUsage
+
+LiveUsage is E94's; it is empty until E94 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### MeasuredUsage
+
+MeasuredUsage is E94's; it is empty until E94 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### MetadataProbe
+
+MetadataProbe is identity (E60)'s; it is empty until identity (E60) lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### NamedArtifact
+
+NamedArtifact is one artifact a run takes in or hands out, by the name
+the Orkflow gives it (E87, composed-artifacts/01-design.md §5). Declared
+whole by the v0.4.0 proto batch; nothing sets it until E87 lands.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `artifact` | [`ArtifactRef`](#artifactref) |  |
+| `run_id` | `string` |  |
+| `task_id` | `string` |  |
 
 ### Namespace
 
@@ -1867,6 +2061,7 @@ nothing still has one namespace, and every orkflow that names none is in it.
 | `require_signed_by` | `string` | require_signed_by names a signer every image executed in this namespace must satisfy: "cosign:&lt;key-name>", where &lt;key-name> is one of the deployment's ImagePolicy.signing_keys. Unset means no signature is required, which is what every namespace has today and what an upgrade preserves. A namespace may only TIGHTEN the deployment policy: this is its one field for doing so, and there is none for loosening.<br><br>It is enforced in the three places an image passes: at apply and validate, with the file in hand (a field-anchored issue on tasks[i].uses); at submit, before a run id is minted, which catches a definition stored before the requirement existed; and by the Orker at dispatch, which verifies the signature itself against the key the run pinned at submit. Only "cosign:" exists; it is a closed set, not an extension point (AGENTS.md §13). |
 | `budget` | [`Budget`](#budget) | budget bounds this namespace's reserved consumption over a rolling period. Unset means unbounded, which is what every namespace has today and what an upgrade preserves.<br><br>An enforced budget is checked in exactly one place — the admission gate in SubmitRun's preparation, after the hold and max_running — by reading the namespace's usage over the trailing period. That read is a read-then-act with no lock, cached for at most ORK_USAGE_CACHE_TTL, and counts a run only once it has finished, so enforcement is best-effort by a bounded margin: the runs that finished inside one cache lifetime, every run still in flight, and submits racing the check. A lock would remove the margin and AGENTS.md §2.1 forbids building one. |
 | `fair_share_weight` | `double` | fair_share_weight is this namespace's share of dispatch when tasks of several namespaces wait for the same pool's Orkers: every task of a run carries its namespace as a fairness key, and the cluster dispatches the keys in proportion to their weights. 0, the default, is a weight of 1; otherwise from 0.001 to 1000.<br><br>It is pinned in each run's plan at submit, so a change applies to runs submitted after it and never reorders work already waiting. It takes effect only on a cluster whose operator enabled fair dispatch (docs/DEPLOY.md, "Fair dispatch across namespaces"); without it dispatch is first in, first out, whatever the weights. |
+| `identity` | [`NamespaceIdentity`](#namespaceidentity) | identity is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 
 ### NamespaceHold
 
@@ -1883,6 +2078,13 @@ presence check (hold != nil) and a hold can never be half-set.
 |---|---|---|
 | `reason` | `string` | reason is required. A hold with no reason is refused by the registry: the next operator to read this document is the one who has to decide whether to release it, and "on hold" with no why is not a decision they can make. It is a short human line, bounded at 512 bytes with no control characters, never a secret and never machine-parsed. |
 | `since` | `google.protobuf.Timestamp` | since is written by the registry on the write that SET the hold and preserved on every later write while it stays set, never supplied by a client — the same rule created_at/updated_at follow. Editing the reason of a hold does not move it: the door has been closed since the first write, whatever the sign on it now says. |
+
+### NamespaceIdentity
+
+NamespaceIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### OpDocs
 
@@ -1938,6 +2140,24 @@ Orker is one execution process, observed live.
 | `reserved` | [`ResourceQuantity`](#resourcequantity) |  |
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is DescribeOrkerResult's: the per-task cap, the largest request this Orker runs, which submit holds a task's declared request to. |
 | `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage. It clears by itself once the store answers again; CordonOrker neither sets nor clears it. Unset from an Orker of a release without these checks. |
+| `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `service_host` | [`ServiceHost`](#servicehost) | service_host is set from E90; unset until it lands (v0.4.0 proto batch). |
+
+### OrkerProfile
+
+OrkerProfile is E91's; it is empty until E91 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### OrkerStopping
+
+OrkerStopping is E92's; it is empty until E92 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### Orkflow
 
@@ -1959,6 +2179,8 @@ Orkflow is the compiled, validated form of a DSL document.
 | `outputs` | map&lt;`string`, `string`&gt; | outputs is this Orkflow's declared return contract: output name to a template over .inputs and .tasks.&lt;id>.output, rendered ONCE, by the engine, when a run succeeds; every value renders to a string. When non-empty the rendered map IS Run.output, and is what a composing parent's task receives as its values. When empty, Run.output is the values of the tasks no other task needs, and a composing parent's task receives {}. Part of canonicalOrkflow only when non-empty (see pins). |
 | `shared_with` | repeated [`OrkflowShare`](#orkflowshare) | shared_with is who in other namespaces may compose this version through `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing across namespaces"). Empty means nobody: an Orkflow is closed to every other namespace unless its definition says otherwise. Composition is the only door — a submit, a schedule or a trigger runs only its own namespace's Orkflows. It is part of the definition, so a new version changes who may call it, and part of canonicalOrkflow only when non-empty (see pins). |
 | `definition_namespace` | `string` | definition_namespace is set ONLY on a run's planned copy of an Orkflow that another namespace's Orkflow composed: the namespace that owns the stored definition, while namespace names the namespace the child run executes in and whose rules it follows. Never stored, never applied and not part of canonicalOrkflow: definition_digest is the owner's. |
+| `output_artifacts` | map&lt;`string`, [`OutputArtifact`](#outputartifact)&gt; | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
 
 ### OrkflowCaller
 
@@ -2034,6 +2256,13 @@ coordinates, not the document.
 | `description` | `string` |  |
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is this version's declared interface compared with the version marked is_current — "what would promoting this version break" (CompareInterfaces with from = current, to = this). UNSPECIFIED on the is_current row itself. Computed on read from documents the listing already reads; stored nowhere. |
 
+### OutputArtifact
+
+OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### PauseScheduleRequest
 
 | Field | Type | Description |
@@ -2047,6 +2276,13 @@ coordinates, not the document.
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | [`Schedule`](#schedule) |  |
+
+### PauseWarning
+
+PauseWarning is E103's; it is empty until E103 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### Payload
 
@@ -2189,6 +2425,7 @@ order, the order readyTasks scans them in.
 | `join` | [`JoinPolicy`](#joinpolicy) | join is the task's join policy, set whatever its outcome when the definition declares one other than all_succeeded. |
 | `unreached_by` | `string` | unreached_by is, for UNREACHED, the task whose failure leaves this one unreached: the first decision-time failure (a FAILS) decided before it, or else the first ASSUMED_FAILED task of its needs closure in declaration order. Empty for every other outcome. |
 | `sleep` | [`SleepSpec`](#sleepspec) | sleep is the task's SleepSpec, set for a sleeping task whatever its outcome, so a reader sees how long it would sleep. |
+| `follows` | repeated `string` | follows is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
 
 ### PlanWave
 
@@ -2217,6 +2454,13 @@ one that started nothing and holds no state of its own.
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment an Orker of this pool was observed STILL POLLING.<br><br>Temporal remembers a poller for minutes after its worker died, so the probe drops a record older than the freshness window before counting or timestamping anything (internal/engine/pool_probe.go). One consequence is load-bearing and stated here rather than discovered: a pool whose Orkers have all gone quiet reports NO last_seen at all, not the moment the last of them was heard. This field answers "how fresh is the number beside it", never "when did this pool die". |
 | `unavailable_reason` | `string` | unavailable_reason says that this pool COULD NOT BE ASKED, and why.<br><br>Empty is the normal case: live_orker_count is a measurement. Non-empty means nothing was measured — the cluster did not answer for this pool — and live_orker_count is 0 because there is no number to report, NOT because nobody is serving it. The two need opposite reactions: an empty pool is fixed by starting an Orker, an unreachable one by asking again, and a renderer that showed them alike would tell an operator to scale a pool that may be perfectly healthy.<br><br>It exists so that ListPools can NARROW instead of refusing. One pool the cluster could not answer for used to fail the whole call, hiding every healthy pool beside it — and an admin read is opened precisely when something is already wrong. Each pool carries its own verdict now. |
 
+### ProfileCordon
+
+ProfileCordon is E91's; it is empty until E91 lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### PromoteReleaseRequest
 
 | Field | Type | Description |
@@ -2232,6 +2476,13 @@ one that started nothing and holds no state of its own.
 | `previous_build_id` | `string` | previous_build_id is the release that was current before; empty when no release was (the deployment's first promotion). |
 | `routing_confirmed` | `bool` |  |
 | `revision` | `string` |  |
+
+### ProviderInfo
+
+ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### PurgeCacheRequest
 
@@ -2282,6 +2533,13 @@ one that started nothing and holds no state of its own.
 | `name` | `string` |  |
 | `item` | optional `int32` | item names the item of a fan-out task_id whose artifact is read; required for a fan-out task (two items may record the same name), refused for any other task. |
 
+### RecordRef
+
+RecordRef is identity (O39)'s; it is empty until identity (O39) lands (v0.4.0 proto
+batch).
+
+No fields.
+
 ### RedeliverWebhookRequest
 
 | Field | Type | Description |
@@ -2305,6 +2563,7 @@ one that started nothing and holds no state of its own.
 | `orkflow_name` | `string` |  |
 | `task_id` | `string` |  |
 | `name` | `string` | optional; see Webhook.name |
+| `acknowledge_plaintext_runs` | `bool` | acknowledge_plaintext_runs is set from identity (O74); unset until it lands (v0.4.0 proto batch). |
 
 ### RegisterWebhookResponse
 
@@ -2337,6 +2596,12 @@ as a pool and a pin are (§7.1).
 | `drain_checked_at` | `google.protobuf.Timestamp` | drain_checked_at is when the cluster last evaluated drain_state; unset when it has not, or drain_state is UNSPECIFIED. |
 | `drained` | `bool` | drained is the one condition under which this release's processes may be stopped: PREVIOUS with drain_state DRAINED (or a CANDIDATE with no runs), no run counted in flight, no open pin on any of its Orkers, and an Orker inventory in which every Orker answered. `orkctl release wait` exits 0 on it and on nothing else. |
 | `blockers` | repeated [`ReleaseBlocker`](#releaseblocker) | blockers are every reason this release may not take new runs now, in a stable order. Always empty for CURRENT. Empty for any other role means RampRelease and PromoteRelease would pass their check at the moment of this read. |
+| `open_identity_runs` | `int64` | open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `queued_runs` | `int64` | queued_runs is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `resumable_runs` | `int64` | resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `paused_runs` | `int64` | paused_runs is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `event_source_instances` | `int64` | event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch). |
+| `event_sources` | `int32` | event_sources is set from E90; unset until it lands (v0.4.0 proto batch). |
 
 ### ReleaseBlocker
 
@@ -2362,6 +2627,7 @@ of it the workload used.
 |---|---|---|
 | `cpu` | `double` | cpu is the cpu limit in cores: "2" is 2, "500m" is 0.5. |
 | `memory_bytes` | `int64` | memory_bytes is the memory limit in bytes: "4Gi" is 4294967296. |
+| `gpu` | `int64` | gpu is set from E91; unset until it lands (v0.4.0 proto batch). |
 
 ### ResolveAwaitRequest
 
@@ -2373,6 +2639,7 @@ of it the workload used.
 | `values_json` | `string` | values_json is the completion's values.json, as exact JSON text: it is stored byte for byte, never re-encoded. Empty means {}. Must be empty when reject is set. |
 | `reject` | `bool` |  |
 | `reason` | `string` | reason is required with reject and refused without it; at most 1024 bytes, no control character other than tab and newline. |
+| `redeliver` | `bool` | redeliver is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
 
 ### ResolveAwaitResponse
 
@@ -2384,6 +2651,9 @@ of it the workload used.
 | `reject` | `bool` |  |
 | `values_sha256` | `string` | values_sha256 is the hex sha256 of the stored values.json; empty for a rejection. |
 | `repeat` | `bool` | repeat is true when this request repeated the resolution that had already been applied — same values, or same rejection reason — so nothing was stored or delivered. |
+| `delivery_pending` | `bool` | delivery_pending is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `told_at` | `google.protobuf.Timestamp` | told_at is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `deadline_passed` | `bool` | deadline_passed is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
 
 ### ResourceQuantity
 
@@ -2395,6 +2665,7 @@ task: cpu in cores ("500m" is 0.5) and memory in bytes ("4Gi" is
 |---|---|---|
 | `cpu` | `double` |  |
 | `memory_bytes` | `int64` |  |
+| `gpu` | optional `int64` | gpu is set from E91; unset until it lands (v0.4.0 proto batch). |
 
 ### ResourceRequest
 
@@ -2405,6 +2676,14 @@ ResourceRequest is what a task asks the Orker for. Orker policy may cap it
 |---|---|---|
 | `cpu` | `string` | Kubernetes spelling: "2", "500m" |
 | `memory` | `string` | Kubernetes spelling: "4Gi", "512Mi" |
+| `gpu` | `int32` | gpu is set from E91; unset until it lands (v0.4.0 proto batch). |
+
+### ResumeHint
+
+ResumeHint is E85's; it is empty until E85 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### ResumeScheduleRequest
 
@@ -2441,6 +2720,7 @@ RetryPolicy mirrors Temporal retry semantics for a task.
 | `initial_interval_seconds` | `int32` | default 1 |
 | `backoff_coefficient` | `double` | default 2.0 |
 | `maximum_interval_seconds` | `int32` | default 60, or initial_interval_seconds when longer |
+| `max_interruptions` | optional `int32` | max_interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
 
 ### Run
 
@@ -2466,6 +2746,23 @@ Run is one execution of an Orkflow.
 | `canceled_by` | `string` | canceled_by is what the deployment's gateway asserted in the Ork-Principal request header on the CancelRun request that canceled this run — recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8 replaced, as RunOrigin.principal is, and NEVER authenticated: the same assertion as RunOrigin.principal and AuditRecord.principal. Every rendering says it was asserted.<br><br>It is set only on a run whose status is CANCELED with error code RUN_CANCELED, when a CancelRun carrying the header was accepted before the run recorded its own end. That is the request that canceled it, or — if the run was already ending canceled for another cause, such as a composed task's child run canceled from outside — the request that arrived while it ended, which is named too. It is empty for every other run: a CancelRun with no header; a run canceled with its parent run, or by any other cause; a run that succeeded, failed or was terminated (RUN_TERMINATED); a run canceled before this field existed. A client then shows nothing rather than a blank that could be mistaken for a name.<br><br>It is on GetRun, on the archived run, on ListRuns rows answered from the archive and in the embedded run of a RUN_CANCELED webhook delivery. |
 | `orkflow_namespace` | `string` | orkflow_namespace is set only on a child run of an Orkflow another namespace shared through composition: the namespace that owns the definition it ran. Empty means the orkflow is namespace's own. A run whose orkflow belongs to another namespace is always a child run: nothing else starts one. |
 | `timing` | [`RunTiming`](#runtiming) | timing is the run's half of the task-timing derivation (RunTiming), set by GetRun and never stored; each TaskRun carries its own half. |
+| `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `output_artifacts` | repeated [`NamedArtifact`](#namedartifact) | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `trace_id` | `string` | trace_id is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `run_context` | [`RunContextState`](#runcontextstate) | run_context is set from E86; unset until it lands (v0.4.0 proto batch). |
+| `canceled_by_verified` | `bool` | canceled_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `superseded_by` | `string` | superseded_by is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `resumes` | repeated [`RunResume`](#runresume) | resumes is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `resume_hint` | [`ResumeHint`](#resumehint) | resume_hint is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `interruptions_off_reason` | `string` | interruptions_off_reason is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `pause` | [`RunPause`](#runpause) | pause is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `last_pause` | [`RunPause`](#runpause) | last_pause is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `pausable` | `bool` | pausable is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `paused_by_parent` | [`InheritedPause`](#inheritedpause) | paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `pause_warnings` | repeated [`PauseWarning`](#pausewarning) | pause_warnings is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `pause_slot_kept` | `bool` | pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `timeout` | [`RunTimeout`](#runtimeout) | timeout is set from E107; unset until it lands (v0.4.0 proto batch). |
 
 ### RunArtifact
 
@@ -2476,6 +2773,13 @@ Run is one execution of an Orkflow.
 | `artifact` | [`ArtifactRef`](#artifactref) |  |
 | `attempt` | `int32` |  |
 | `item` | optional `int32` | item is set when the artifact was recorded by one item of a fan-out task. |
+
+### RunContextState
+
+RunContextState is E86's; it is empty until E86 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### RunFieldDiff
 
@@ -2512,6 +2816,48 @@ in OrkStack reads it to decide anything.
 | `description` | `string` | description is the originating object's own human label at the moment of submit — Trigger.description for TRIGGER, the schedule's name for SCHEDULE — copied so a run stays explainable after the trigger is deleted. Empty for SUBMIT, RUN_AGAIN and PARENT_RUN. Bounded to 256 bytes by truncation. |
 | `principal` | `string` | principal is what the deployment's gateway asserted in the Ork-Principal request header on the submitting request — the trigger invoke, the Connect SubmitRun — recorded verbatim, bounded to 256 bytes by truncation, and NEVER authenticated: it is the same assertion, on the same terms, as AuditRecord.principal. Empty when no header was present; a client then omits the line entirely rather than showing a blank that could be mistaken for a name. |
 | `root_run_id` | `string` | root_run_id is the id of the run at the top of this run's composed chain: the run that started the chain, which id names only for a direct child. Set on a PARENT_RUN origin and empty on every other kind, so a run-again of a child, a new top-level run, has none. An empty value names no root. Opaque, like id. |
+| `schedule` | [`RunScheduleFire`](#runschedulefire) | schedule is set from E86; unset until it lands (v0.4.0 proto batch). |
+| `parent_task_id` | `string` | parent_task_id is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `parent_orkflow` | [`OrkflowRef`](#orkflowref) | parent_orkflow is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `root_orkflow` | [`OrkflowRef`](#orkflowref) | root_orkflow is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `root_origin` | [`RunOrigin`](#runorigin) | root_origin is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `principal_verified` | `bool` | principal_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `auth_method` | `string` | auth_method is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+
+### RunPause
+
+RunPause is E103's; it is empty until E103 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### RunResume
+
+RunResume is E85's; it is empty until E85 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### RunResumed
+
+RunResumed is E85's; it is empty until E85 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### RunScheduleFire
+
+RunScheduleFire is E86's; it is empty until E86 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### RunTimeout
+
+RunTimeout is E107's; it is empty until E107 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### RunTiming
 
@@ -2551,6 +2897,12 @@ the cluster's live state, merged for this one read and never stored.
 | `created_at` | `google.protobuf.Timestamp` |  |
 | `updated_at` | `google.protobuf.Timestamp` |  |
 | `unavailable_reason` | `string` | unavailable_reason is set on a LIST row whose live state the cluster did not answer for. The identity fields (1–4) are then from the list entry and fields 5–17 are unset — never zero, never a guess. A GetSchedule that cannot describe is an error instead, because it would have nothing to return. |
+| `created_by` | `string` | created_by is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `created_by_verified` | `bool` | created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `overlap_skipped` | `int64` | overlap_skipped is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `consent_stale` | `bool` | consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `consented` | [`ConsentView`](#consentview) | consented is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `asks_for` | [`AsksFor`](#asksfor) | asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### ScheduleFire
 
@@ -2568,6 +2920,8 @@ case a client renders "unavailable", never a blank that reads as success.
 | `run_id` | `string` | run_id is the run this fire started, once known. The run's own status is a run read (GetRun); this record does not repeat it. |
 | `refusal` | `string` | refusal is why this fire started no run: the ordinary submit refusal, e.g. `orkflow "reconcile" version "3" in namespace "payments" not found` or `pool "gpu" has no live Orker`. |
 | `details_available` | `bool` |  |
+| `skip_code` | `string` | skip_code is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `skip_message` | `string` | skip_message is set from E88; unset until it lands (v0.4.0 proto batch). |
 
 ### ScheduleSpec
 
@@ -2598,6 +2952,16 @@ appears in a proto message, in Temporal history, or in the archive.
 |---|---|---|
 | `name` | `string` | name is the file name the workload reads under /orkstack/input/secrets/. Validated: ^[A-Za-z0-9._-]{1,128}$. |
 | `source` | `string` | source is an Orker-resolvable locator, e.g. "env:DB_PASSWORD" or "file:/etc/orkstack/secrets/db". Orker policy decides which schemes exist. |
+| `grant` | `string` | grant is set from identity (E83); unset until it lands (v0.4.0 proto batch). |
+| `ciphertext` | `string` | ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+| `unmasked` | `bool` | unmasked is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+
+### ServiceHost
+
+ServiceHost is E90's; it is empty until E90 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### SetCurrentOrkflowVersionRequest
 
@@ -2619,6 +2983,7 @@ appears in a proto message, in Temporal history, or in the archive.
 | `updated_at` | `google.protobuf.Timestamp` |  |
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is the promoted version's declared interface compared with compared_version — what ran when no version was named, until now. UNSPECIFIED, with compared_version empty, when the promotion did not change what runs. BREAKING here means the request acknowledged it. |
 | `compared_version` | `string` |  |
+| `stale_consent` | repeated [`StaleConsent`](#staleconsent) | stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### SleepSpec
 
@@ -2630,6 +2995,13 @@ ONLY when set (see Task.pin).
 | Field | Type | Description |
 |---|---|---|
 | `seconds` | `int32` | seconds is how long the task sleeps, from the moment it starts sleeping. Required: 1 to 2592000 (30 days), the bound AwaitSpec.timeout_seconds has, for the same reason. |
+
+### StaleConsent
+
+StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### StatsBucket
 
@@ -2743,6 +3115,13 @@ execution on an Orker, and an activity is an OCI image.
 | `cache` | [`CacheSpec`](#cachespec) | cache opts this container task into memoization across runs. It may not name a pin (docs/DSL.md rule 36), and an awaited or composed task may not carry it (rules 15, 27). |
 | `join` | [`JoinPolicy`](#joinpolicy) | join is when this task may start, decided from how its needs ended (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no join keeps its digest. A task whose join is ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry each or carry cache (docs/DSL.md rule 39). |
 | `sleep` | [`SleepSpec`](#sleepspec) | sleep makes this a sleeping task: it starts no container, reaches no Orker, and succeeds once its fixed time has passed. Mutually exclusive with uses, await and every field that shapes a container (docs/DSL.md rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no sleep keeps its digest. |
+| `devices` | repeated `string` | devices is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `network_profile` | `string` | network_profile is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `input_artifacts` | repeated `string` | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
+| `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `credentials` | repeated [`CredentialRef`](#credentialref) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
 
 ### TaskAttempt
 
@@ -2781,6 +3160,11 @@ change what the attempt itself reported.
 | `item` | optional `int32` | item is set when this attempt ran one item of a fan-out task: that item's 0-based index. The record then lives under the item's own key (metadata/attempts/{run}/{task}/{item}/{attempt}.json). schema_version stays 1: the field is additive and UnmarshalAttempt discards unknown fields. |
 | `cache` | [`CacheResult`](#cacheresult) | cache is this attempt's memo decision, key_components included. Set only for an attempt of a cached task that reached the memo step; a HIT records outcome SUCCEEDED, phase "memo", exit_code 0, no system_artifacts (it uploaded none) and image equal to the input's pinned ImageRef with no platform (it pulled nothing). |
 | `timing` | [`AttemptTiming`](#attempttiming) | timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker never writes it. |
+| `profiles` | repeated [`EffectiveProfile`](#effectiveprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `measured` | [`MeasuredUsage`](#measuredusage) | measured is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `identities` | repeated [`AttemptIdentity`](#attemptidentity) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `credentials` | repeated [`AttemptCredential`](#attemptcredential) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
+| `masked_occurrences` | `int64` | masked_occurrences is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
 
 ### TaskAttemptsTiming
 
@@ -2809,6 +3193,7 @@ task from a container task without reading the definition.
 | `deadline` | `google.protobuf.Timestamp` | deadline is when the await times out, on the workflow's clock. Unset until the task starts awaiting. |
 | `resolved_via` | [`AwaitResolvedVia`](#awaitresolvedvia) | resolved_via and resolved_by are set when a resolution was APPLIED — completed or rejected — and never for a timeout or a cancellation. |
 | `resolved_by` | `string` | resolved_by is the Ork-Principal assertion on the resolving request, bounded to 256 bytes: recorded as asserted and NEVER authenticated, the word control-plane-audit-trail and run-origin use. Empty when none was sent. |
+| `resolved_by_verified` | `bool` | resolved_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### TaskChild
 
@@ -2838,6 +3223,21 @@ before this message existed.
 |---|---|---|
 | `expanded` | `bool` | expanded is true once the array was counted and the items created. It stays false while PENDING, when the task was SKIPPED, and when the array could not be counted (the task then FAILED with an EACH_* code). |
 | `count` | `int32` | count is the number of items, equal to len(TaskRun.items), once expanded. |
+| `lines` | [`EachLines`](#eachlines) | lines is set from E89; unset until it lands (v0.4.0 proto batch). |
+
+### TaskInterruption
+
+TaskInterruption is E92's; it is empty until E92 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### TaskInterruptions
+
+TaskInterruptions is E92's; it is empty until E92 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### TaskLogChunk
 
@@ -2887,6 +3287,15 @@ TaskRun is the execution record of a single Task within a Run.
 | `join` | [`JoinPolicy`](#joinpolicy) | join is the task's join policy, set from the run's first snapshot for every task whose definition declares one other than all_succeeded, and UNSET otherwise — so a snapshot of a run with no join is byte-identical to what it was before this field existed. Its presence is how a client tells a failure handler from an ordinary task without reading the definition (the precedent of TaskRun.await, .each and .child). |
 | `timing` | [`TaskTiming`](#tasktiming) | timing is where this task's time went, derived from scheduled_at, started_at and finished_at above (TaskTiming). It is DERIVED ON READ: GetRun sets it on every row, a fan-out's items included, and nothing stores it — the engine never writes it, and a copy read back from anywhere else is not one GetRun answered. |
 | `sleep` | [`TaskSleep`](#tasksleep) | sleep is this task's sleep state, set for a task whose definition declares `sleep:` and unset otherwise (see TaskSleep). |
+| `interruptions` | [`TaskInterruptions`](#taskinterruptions) | interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `pending_reason` | `string` | pending_reason is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `result_epoch` | `int64` | result_epoch is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `resume_disposition` | [`ResumeDisposition`](#resumedisposition) | resume_disposition is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `wake_at` | `google.protobuf.Timestamp` | wake_at is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `adopted` | `bool` | adopted is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `reading_back` | `bool` | reading_back is set from E85; unset until it lands (v0.4.0 proto batch). |
+| `record` | [`RecordRef`](#recordref) | record is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
 
 ### TaskSleep
 
@@ -2984,6 +3393,25 @@ A zero duration is only ever a value somebody measured.
 | `description` | `string` | optional operator label |
 | `created_at` | `google.protobuf.Timestamp` |  |
 | `name` | `string` | name is the operator's handle for this trigger: a slug (^[a-z][a-z0-9-]*$, at most 200 bytes), unique among the named triggers of its namespace. Empty means unnamed, which every trigger created before this field existed is; an unnamed trigger is outside every automation document. The name is not part of the invoke URL and never selects what a run starts: the stored namespace and orkflow do, as before. |
+| `created_by` | `string` | created_by is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `created_by_verified` | `bool` | created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `consent_stale` | `bool` | consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `consented` | [`ConsentView`](#consentview) | consented is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `asks_for` | [`AsksFor`](#asksfor) | asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+
+### UnmeasuredReasonCount
+
+UnmeasuredReasonCount is E94's; it is empty until E94 lands (v0.4.0 proto
+batch).
+
+No fields.
+
+### UpdateEventSourceRequest
+
+UpdateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
+batch).
+
+No fields.
 
 ### UpdateImagePolicyRequest
 
@@ -3043,6 +3471,8 @@ implying otherwise.
 | `input` | [`Payload`](#payload) |  |
 | `description` | `string` |  |
 | `spec` | [`ScheduleSpec`](#schedulespec) |  |
+| `consent` | `string` | consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `rebind` | `bool` | rebind is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### UpdateScheduleResponse
 
@@ -3066,6 +3496,8 @@ trigger's orkflow cannot change.
 | `name` | `string` |  |
 | `orkflow_version` | `string` |  |
 | `description` | `string` |  |
+| `consent` | `string` | consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `rebind` | `bool` | rebind is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 
 ### UpdateTriggerResponse
 
@@ -3088,6 +3520,7 @@ transition; each scope field empty means every. It carries no secret.
 | `namespace` | `string` |  |
 | `orkflow_name` | `string` |  |
 | `task_id` | `string` |  |
+| `acknowledge_plaintext_runs` | `bool` | acknowledge_plaintext_runs is set from identity (O74); unset until it lands (v0.4.0 proto batch). |
 
 ### UpdateWebhookResponse
 
@@ -3117,6 +3550,15 @@ grouped by". The total row has every key empty.
 | `attempts_unmeasured` | `int64` | attempts_unmeasured counts recorded attempts missing started_at or finished_at, or finishing before they started. They contribute to no sum. No Orker of this tree writes one; the count exists so a record from another writer is visible instead of silently zero. |
 | `unreported_attempts` | `int64` | unreported_attempts counts attempts numbered below a task's highest that have no record — the Orker running them died or lost its heartbeat before filing one. Their consumption is unknown and not counted. |
 | `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
+| `measured_cpu_seconds` | `double` | measured_cpu_seconds is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `attempts_measured` | `int64` | attempts_measured is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `reserved_cpu_seconds_measured` | `double` | reserved_cpu_seconds_measured is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `cpu_efficiency` | `double` | cpu_efficiency is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `memory_peak_bytes_max` | `int64` | memory_peak_bytes_max is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `memory_utilization_p50` | `double` | memory_utilization_p50 is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `memory_utilization_p95` | `double` | memory_utilization_p95 is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `attempts_unmeasured_by_reason` | repeated [`UnmeasuredReasonCount`](#unmeasuredreasoncount) | attempts_unmeasured_by_reason is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `gpu_seconds` | `double` | gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch). |
 
 ### ValidateOrkflowRequest
 
@@ -3152,6 +3594,7 @@ grouped by". The total row has every key empty.
 | `orkflow_name` | `string` | orkflow_name narrows to runs of one orkflow, by the name the author wrote. Empty means every orkflow. It composes with namespace by conjunction and does not require it: a name alone matches that name in every namespace. |
 | `task_id` | `string` | task_id narrows the task outcome events to one task. Empty means every task. It is consulted only for TASK_* events: a RUN_* event has no task and passes this filter unconditionally, so one subscription can want TASK_SUCCEEDED of `extract` and RUN_FAILED of the whole run. Registration refuses a task_id when events names no TASK_* event, because the filter could then never be consulted. |
 | `name` | `string` | name is the operator's handle: a slug, at most 200 bytes, unique among the named subscriptions of its namespace scope. It REQUIRES namespace: a name is unique within one namespace, and a deployment-wide subscription belongs to none. Empty means unnamed — every subscription registered before this field existed — and an unnamed subscription is outside every automation document. It plays no part in delivery. |
+| `plaintext_runs_acknowledged` | `bool` | plaintext_runs_acknowledged is set from identity (O74); unset until it lands (v0.4.0 proto batch). |
 
 ## Enums
 
@@ -3238,6 +3681,15 @@ CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
 | `CACHE_SCOPE_UNSPECIFIED` | 0 | Never stored: the compiler writes ORKFLOW when `scope:` is absent. |
 | `CACHE_SCOPE_ORKFLOW` | 1 | Runs of the same Orkflow, in the same namespace. |
 | `CACHE_SCOPE_NAMESPACE` | 2 | Runs of any Orkflow of the same namespace whose task of the same id computes the same key. The Orkflow's name is then not part of the key. |
+
+### EachLineFormat
+
+EachLineFormat is E89's; it holds only its zero value until E89 lands
+(v0.4.0 proto batch).
+
+| Value | Number | Description |
+|---|---|---|
+| `EACH_LINE_FORMAT_UNSPECIFIED` | 0 |  |
 
 ### EventType
 
@@ -3438,6 +3890,15 @@ that switch; it never reaches the cluster.
 | `OVERLAP_POLICY_CANCEL_OTHER` | 4 | CANCEL_OTHER: the earlier run is cancelled — SIGTERM, grace, SIGKILL, exactly as `run cancel` — and the due fire starts without waiting for it to finish; the two overlap for the cancelled run's grace period. |
 | `OVERLAP_POLICY_ALLOW_ALL` | 6 | ALLOW_ALL: fires never wait for one another. 6, not 5: see above. |
 
+### PauseTransition
+
+PauseTransition is E103's; it holds only its zero value until E103 lands
+(v0.4.0 proto batch).
+
+| Value | Number | Description |
+|---|---|---|
+| `PAUSE_TRANSITION_UNSPECIFIED` | 0 |  |
+
 ### PlanOutcome
 
 PlanOutcome is what the interpreter would do with one task, given the
@@ -3457,6 +3918,15 @@ request's assumption, never a prediction that the task fails.
 | `PLAN_OUTCOME_AWAITS` | 5 | AWAITS: the task is an awaited task the interpreter would open: it takes a wave as RUNS does and starts no activity. |
 | `PLAN_OUTCOME_ASSUMED_FAILED` | 6 | ASSUMED_FAILED: the request's assume_failed names this task and it would run; it is planned as having run and FAILED. It takes a wave as RUNS does, contributes no output, and is where the planned run starts failing unless an earlier task already did. |
 | `PLAN_OUTCOME_SLEEPS` | 7 | SLEEPS: the task is a sleeping task the interpreter would start: it takes a wave as RUNS does, starts no activity, and succeeds with no values once its time has passed. |
+
+### ProfileKind
+
+ProfileKind is E91's; it holds only its zero value until E91 lands
+(v0.4.0 proto batch).
+
+| Value | Number | Description |
+|---|---|---|
+| `PROFILE_KIND_UNSPECIFIED` | 0 |  |
 
 ### ReferenceState
 
@@ -3506,6 +3976,24 @@ already executing: those finish on the release that started them.
 | `RELEASE_ROLE_RAMPING` | 2 | RAMPING takes ramp_percent of new runs. |
 | `RELEASE_ROLE_PREVIOUS` | 3 | PREVIOUS took new runs once and takes none now. It may still be finishing some; drain_state says whether it is. |
 | `RELEASE_ROLE_CANDIDATE` | 4 | CANDIDATE has registered — at least one of its processes polled with ORK_BUILD_ID set — and has never taken new runs. |
+
+### ResultsScope
+
+ResultsScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
+(v0.4.0 proto batch).
+
+| Value | Number | Description |
+|---|---|---|
+| `RESULTS_SCOPE_UNSPECIFIED` | 0 |  |
+
+### ResumeDisposition
+
+ResumeDisposition is E85's; it holds only its zero value until E85 lands
+(v0.4.0 proto batch).
+
+| Value | Number | Description |
+|---|---|---|
+| `RESUME_DISPOSITION_UNSPECIFIED` | 0 |  |
 
 ### RetryState
 
@@ -3580,6 +4068,15 @@ Status is the lifecycle state shared by runs and task runs.
 | `STATUS_SKIPPED` | 6 |  |
 | `STATUS_AWAITING` | 7 | AWAITING is a TASK status only, like SKIPPED: the task is waiting to be resolved from outside the run. A run with an awaiting task is RUNNING. |
 | `STATUS_SLEEPING` | 8 | SLEEPING is a TASK status only, like AWAITING: a sleeping task is waiting out its fixed time on the run's own timer, and nothing outside the run can end it early. A run with a sleeping task is RUNNING. |
+
+### StoreScope
+
+StoreScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
+(v0.4.0 proto batch).
+
+| Value | Number | Description |
+|---|---|---|
+| `STORE_SCOPE_UNSPECIFIED` | 0 |  |
 
 ### TaskLogExport
 

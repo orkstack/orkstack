@@ -36,7 +36,17 @@ type Trigger struct {
 	// this field existed is; an unnamed trigger is outside every automation
 	// document. The name is not part of the invoke URL and never selects what
 	// a run starts: the stored namespace and orkflow do, as before.
-	Name          string `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
+	Name string `protobuf:"bytes,7,opt,name=name,proto3" json:"name,omitempty"`
+	// created_by is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	CreatedBy string `protobuf:"bytes,8,opt,name=created_by,json=createdBy,proto3" json:"created_by,omitempty"`
+	// created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	CreatedByVerified bool `protobuf:"varint,9,opt,name=created_by_verified,json=createdByVerified,proto3" json:"created_by_verified,omitempty"`
+	// consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	ConsentStale bool `protobuf:"varint,10,opt,name=consent_stale,json=consentStale,proto3" json:"consent_stale,omitempty"`
+	// consented is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Consented *ConsentView `protobuf:"bytes,11,opt,name=consented,proto3" json:"consented,omitempty"`
+	// asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	AsksFor       *AsksFor `protobuf:"bytes,12,opt,name=asks_for,json=asksFor,proto3" json:"asks_for,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -120,6 +130,41 @@ func (x *Trigger) GetName() string {
 	return ""
 }
 
+func (x *Trigger) GetCreatedBy() string {
+	if x != nil {
+		return x.CreatedBy
+	}
+	return ""
+}
+
+func (x *Trigger) GetCreatedByVerified() bool {
+	if x != nil {
+		return x.CreatedByVerified
+	}
+	return false
+}
+
+func (x *Trigger) GetConsentStale() bool {
+	if x != nil {
+		return x.ConsentStale
+	}
+	return false
+}
+
+func (x *Trigger) GetConsented() *ConsentView {
+	if x != nil {
+		return x.Consented
+	}
+	return nil
+}
+
+func (x *Trigger) GetAsksFor() *AsksFor {
+	if x != nil {
+		return x.AsksFor
+	}
+	return nil
+}
+
 type CreateTriggerRequest struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Namespace      string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
@@ -127,8 +172,10 @@ type CreateTriggerRequest struct {
 	OrkflowVersion string                 `protobuf:"bytes,3,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"`
 	Description    string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
 	Name           string                 `protobuf:"bytes,5,opt,name=name,proto3" json:"name,omitempty"` // optional; see Trigger.name
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Consent       string `protobuf:"bytes,6,opt,name=consent,proto3" json:"consent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CreateTriggerRequest) Reset() {
@@ -192,6 +239,13 @@ func (x *CreateTriggerRequest) GetDescription() string {
 func (x *CreateTriggerRequest) GetName() string {
 	if x != nil {
 		return x.Name
+	}
+	return ""
+}
+
+func (x *CreateTriggerRequest) GetConsent() string {
+	if x != nil {
+		return x.Consent
 	}
 	return ""
 }
@@ -445,8 +499,12 @@ type UpdateTriggerRequest struct {
 	Name           string                 `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
 	OrkflowVersion string                 `protobuf:"bytes,4,opt,name=orkflow_version,json=orkflowVersion,proto3" json:"orkflow_version,omitempty"`
 	Description    string                 `protobuf:"bytes,5,opt,name=description,proto3" json:"description,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Consent string `protobuf:"bytes,6,opt,name=consent,proto3" json:"consent,omitempty"`
+	// rebind is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	Rebind        bool `protobuf:"varint,7,opt,name=rebind,proto3" json:"rebind,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *UpdateTriggerRequest) Reset() {
@@ -514,6 +572,20 @@ func (x *UpdateTriggerRequest) GetDescription() string {
 	return ""
 }
 
+func (x *UpdateTriggerRequest) GetConsent() string {
+	if x != nil {
+		return x.Consent
+	}
+	return ""
+}
+
+func (x *UpdateTriggerRequest) GetRebind() bool {
+	if x != nil {
+		return x.Rebind
+	}
+	return false
+}
+
 type UpdateTriggerResponse struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Trigger       *Trigger               `protobuf:"bytes,1,opt,name=trigger,proto3" json:"trigger,omitempty"`
@@ -562,7 +634,7 @@ var File_orkstack_v1_trigger_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_trigger_service_proto_rawDesc = "" +
 	"\n" +
-	"!orkstack/v1/trigger_service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/filter.proto\"\xf4\x01\n" +
+	"!orkstack/v1/trigger_service.proto\x12\vorkstack.v1\x1a\x1fgoogle/protobuf/timestamp.proto\x1a\x18orkstack/v1/common.proto\x1a\x18orkstack/v1/filter.proto\"\xd1\x03\n" +
 	"\aTrigger\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12!\n" +
@@ -571,13 +643,21 @@ const file_orkstack_v1_trigger_service_proto_rawDesc = "" +
 	"\vdescription\x18\x05 \x01(\tR\vdescription\x129\n" +
 	"\n" +
 	"created_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\tcreatedAt\x12\x12\n" +
-	"\x04name\x18\a \x01(\tR\x04name\"\xb6\x01\n" +
+	"\x04name\x18\a \x01(\tR\x04name\x12\x1d\n" +
+	"\n" +
+	"created_by\x18\b \x01(\tR\tcreatedBy\x12.\n" +
+	"\x13created_by_verified\x18\t \x01(\bR\x11createdByVerified\x12#\n" +
+	"\rconsent_stale\x18\n" +
+	" \x01(\bR\fconsentStale\x126\n" +
+	"\tconsented\x18\v \x01(\v2\x18.orkstack.v1.ConsentViewR\tconsented\x12/\n" +
+	"\basks_for\x18\f \x01(\v2\x14.orkstack.v1.AsksForR\aasksFor\"\xd0\x01\n" +
 	"\x14CreateTriggerRequest\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
 	"\x0forkflow_version\x18\x03 \x01(\tR\x0eorkflowVersion\x12 \n" +
 	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x12\n" +
-	"\x04name\x18\x05 \x01(\tR\x04name\"_\n" +
+	"\x04name\x18\x05 \x01(\tR\x04name\x12\x18\n" +
+	"\aconsent\x18\x06 \x01(\tR\aconsent\"_\n" +
 	"\x15CreateTriggerResponse\x12.\n" +
 	"\atrigger\x18\x01 \x01(\v2\x14.orkstack.v1.TriggerR\atrigger\x12\x16\n" +
 	"\x06secret\x18\x02 \x01(\tR\x06secret\"\xc8\x02\n" +
@@ -597,13 +677,15 @@ const file_orkstack_v1_trigger_service_proto_rawDesc = "" +
 	"\x14DeleteTriggerRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\"\x17\n" +
-	"\x15DeleteTriggerResponse\"\xa3\x01\n" +
+	"\x15DeleteTriggerResponse\"\xd5\x01\n" +
 	"\x14UpdateTriggerRequest\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x12'\n" +
 	"\x0forkflow_version\x18\x04 \x01(\tR\x0eorkflowVersion\x12 \n" +
-	"\vdescription\x18\x05 \x01(\tR\vdescription\"G\n" +
+	"\vdescription\x18\x05 \x01(\tR\vdescription\x12\x18\n" +
+	"\aconsent\x18\x06 \x01(\tR\aconsent\x12\x16\n" +
+	"\x06rebind\x18\a \x01(\bR\x06rebind\"G\n" +
 	"\x15UpdateTriggerResponse\x12.\n" +
 	"\atrigger\x18\x01 \x01(\v2\x14.orkstack.v1.TriggerR\atrigger2\xed\x02\n" +
 	"\x0eTriggerService\x12V\n" +
@@ -637,27 +719,31 @@ var file_orkstack_v1_trigger_service_proto_goTypes = []any{
 	(*UpdateTriggerRequest)(nil),  // 7: orkstack.v1.UpdateTriggerRequest
 	(*UpdateTriggerResponse)(nil), // 8: orkstack.v1.UpdateTriggerResponse
 	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
-	(*FieldFilter)(nil),           // 10: orkstack.v1.FieldFilter
+	(*ConsentView)(nil),           // 10: orkstack.v1.ConsentView
+	(*AsksFor)(nil),               // 11: orkstack.v1.AsksFor
+	(*FieldFilter)(nil),           // 12: orkstack.v1.FieldFilter
 }
 var file_orkstack_v1_trigger_service_proto_depIdxs = []int32{
 	9,  // 0: orkstack.v1.Trigger.created_at:type_name -> google.protobuf.Timestamp
-	0,  // 1: orkstack.v1.CreateTriggerResponse.trigger:type_name -> orkstack.v1.Trigger
-	10, // 2: orkstack.v1.ListTriggersRequest.filters:type_name -> orkstack.v1.FieldFilter
-	0,  // 3: orkstack.v1.ListTriggersResponse.triggers:type_name -> orkstack.v1.Trigger
-	0,  // 4: orkstack.v1.UpdateTriggerResponse.trigger:type_name -> orkstack.v1.Trigger
-	1,  // 5: orkstack.v1.TriggerService.CreateTrigger:input_type -> orkstack.v1.CreateTriggerRequest
-	3,  // 6: orkstack.v1.TriggerService.ListTriggers:input_type -> orkstack.v1.ListTriggersRequest
-	7,  // 7: orkstack.v1.TriggerService.UpdateTrigger:input_type -> orkstack.v1.UpdateTriggerRequest
-	5,  // 8: orkstack.v1.TriggerService.DeleteTrigger:input_type -> orkstack.v1.DeleteTriggerRequest
-	2,  // 9: orkstack.v1.TriggerService.CreateTrigger:output_type -> orkstack.v1.CreateTriggerResponse
-	4,  // 10: orkstack.v1.TriggerService.ListTriggers:output_type -> orkstack.v1.ListTriggersResponse
-	8,  // 11: orkstack.v1.TriggerService.UpdateTrigger:output_type -> orkstack.v1.UpdateTriggerResponse
-	6,  // 12: orkstack.v1.TriggerService.DeleteTrigger:output_type -> orkstack.v1.DeleteTriggerResponse
-	9,  // [9:13] is the sub-list for method output_type
-	5,  // [5:9] is the sub-list for method input_type
-	5,  // [5:5] is the sub-list for extension type_name
-	5,  // [5:5] is the sub-list for extension extendee
-	0,  // [0:5] is the sub-list for field type_name
+	10, // 1: orkstack.v1.Trigger.consented:type_name -> orkstack.v1.ConsentView
+	11, // 2: orkstack.v1.Trigger.asks_for:type_name -> orkstack.v1.AsksFor
+	0,  // 3: orkstack.v1.CreateTriggerResponse.trigger:type_name -> orkstack.v1.Trigger
+	12, // 4: orkstack.v1.ListTriggersRequest.filters:type_name -> orkstack.v1.FieldFilter
+	0,  // 5: orkstack.v1.ListTriggersResponse.triggers:type_name -> orkstack.v1.Trigger
+	0,  // 6: orkstack.v1.UpdateTriggerResponse.trigger:type_name -> orkstack.v1.Trigger
+	1,  // 7: orkstack.v1.TriggerService.CreateTrigger:input_type -> orkstack.v1.CreateTriggerRequest
+	3,  // 8: orkstack.v1.TriggerService.ListTriggers:input_type -> orkstack.v1.ListTriggersRequest
+	7,  // 9: orkstack.v1.TriggerService.UpdateTrigger:input_type -> orkstack.v1.UpdateTriggerRequest
+	5,  // 10: orkstack.v1.TriggerService.DeleteTrigger:input_type -> orkstack.v1.DeleteTriggerRequest
+	2,  // 11: orkstack.v1.TriggerService.CreateTrigger:output_type -> orkstack.v1.CreateTriggerResponse
+	4,  // 12: orkstack.v1.TriggerService.ListTriggers:output_type -> orkstack.v1.ListTriggersResponse
+	8,  // 13: orkstack.v1.TriggerService.UpdateTrigger:output_type -> orkstack.v1.UpdateTriggerResponse
+	6,  // 14: orkstack.v1.TriggerService.DeleteTrigger:output_type -> orkstack.v1.DeleteTriggerResponse
+	11, // [11:15] is the sub-list for method output_type
+	7,  // [7:11] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_trigger_service_proto_init() }
@@ -665,6 +751,7 @@ func file_orkstack_v1_trigger_service_proto_init() {
 	if File_orkstack_v1_trigger_service_proto != nil {
 		return
 	}
+	file_orkstack_v1_common_proto_init()
 	file_orkstack_v1_filter_proto_init()
 	type x struct{}
 	out := protoimpl.TypeBuilder{

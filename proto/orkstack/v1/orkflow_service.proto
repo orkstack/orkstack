@@ -313,6 +313,9 @@ message SetCurrentOrkflowVersionResponse {
   // change what runs. BREAKING here means the request acknowledged it.
   InterfaceVerdict interface_verdict = 6;
   string compared_version = 7;
+
+  // stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  repeated StaleConsent stale_consent = 8;
 }
 
 message DiffOrkflowVersionsRequest {
@@ -486,6 +489,9 @@ message PlanTask {
   // sleep is the task's SleepSpec, set for a sleeping task whatever its
   // outcome, so a reader sees how long it would sleep.
   SleepSpec sleep = 17;
+
+  // follows is set from identity (O39); unset until it lands (v0.4.0 proto batch).
+  repeated string follows = 18;
 }
 
 // PlanWave lists the RUNS, AWAITS, SLEEPS and ASSUMED_FAILED tasks of one wave, in
@@ -696,3 +702,7 @@ message DeleteOrkflowResponse {
   string namespace = 2;
   google.protobuf.Timestamp deleted_at = 3;
 }
+
+// StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
+// batch).
+message StaleConsent {}
