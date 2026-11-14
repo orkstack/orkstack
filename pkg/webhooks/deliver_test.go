@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -172,7 +173,7 @@ func TestDispatcher_SignsTheBodyItPostsAndLabelsTheDelivery(t *testing.T) {
 	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s3cr3t"}
 	delivery := sampleDelivery()
 
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}).
 		Deliver(context.Background(), hook, delivery)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -210,7 +211,7 @@ func TestDispatcher_OmitsTheSignatureWhenTheSubscriptionHasNoSecret(t *testing.T
 	rec := newReceiver(t, http.StatusOK)
 	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}
 
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}).
 		Deliver(context.Background(), hook, sampleDelivery())
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
@@ -227,7 +228,7 @@ func TestDispatcher_OmitsTheSignatureWhenTheSubscriptionHasNoSecret(t *testing.T
 // (internal/engine, WebhookDeliveryWorkflow), so a crash cannot lose one.
 func TestDispatcher_MakesOneAttemptAndNeverRetries(t *testing.T) {
 	rec := newReceiver(t, http.StatusInternalServerError)
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).Deliver(context.Background(),
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}).Deliver(context.Background(),
 		webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}, sampleDelivery())
 	if err == nil || result.Delivered {
 		t.Fatalf("Deliver = %+v, %v; want a failure against a 500", result, err)
@@ -277,7 +278,7 @@ func TestDispatcher_RecordsAReceiverItCannotReach(t *testing.T) {
 	url := closed.URL
 	closed.Close()
 
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{RequestTimeout: 2 * time.Second}).
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy(), RequestTimeout: 2 * time.Second}).
 		Deliver(context.Background(), webhooks.Webhook{ID: "wh-1", URL: url}, sampleDelivery())
 	if err == nil {
 		t.Fatal("Deliver reported success against a receiver that is not listening")
@@ -299,7 +300,7 @@ func TestDispatcher_SendNumbersTheAttemptAndKeepsTheBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	signature := webhooks.Sign(hook.Secret, body)
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
 	for n := 1; n <= 3; n++ {
 		if attempt := dispatcher.Send(context.Background(), hook, delivery, body, signature, n); attempt.Number != n || attempt.At.IsZero() {
 			t.Fatalf("Send(%d) = %+v", n, attempt)
@@ -330,7 +331,7 @@ func TestDispatcher_OmitsASequenceTheEventDidNotCarry(t *testing.T) {
 	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}
 	delivery := sampleDelivery()
 	delivery.Sequence = 0
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).Deliver(context.Background(), hook, delivery)
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}).Deliver(context.Background(), hook, delivery)
 	if err != nil {
 		t.Fatalf("Deliver: %v", err)
 	}

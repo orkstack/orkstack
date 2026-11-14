@@ -8,7 +8,6 @@ import (
 	"net/netip"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -25,23 +24,23 @@ const ReasonDestinationBlocked = "WEBHOOK_DESTINATION_BLOCKED"
 // ReasonDestinationBlocked.
 var ErrDestinationBlocked = errors.New(ReasonDestinationBlocked)
 
-// allowed is the operator's allow-list of networks that may be called though
-// they are not public. It is process-wide: it is set once at boot, before any
-// delivery, and read at every dial.
-var allowed atomic.Pointer[[]netip.Prefix]
+// DestinationPolicy decides which addresses a webhook may call: public ones,
+// and those inside the networks the operator allowed though they are not
+// public (webhooks.allowed_networks). The zero value admits public addresses
+// only. It is a value: the engine builds one at boot and gives it to the
+// registry and to every dispatcher, and it never changes afterwards.
+type DestinationPolicy struct {
+	allowed []netip.Prefix
+}
 
-// SetAllowedNetworks replaces the operator's allow-list and returns the
-// previous one. An empty list allows nothing beyond public addresses.
-func SetAllowedNetworks(prefixes []netip.Prefix) []netip.Prefix {
+// NewDestinationPolicy returns the policy that admits public addresses and
+// every address inside prefixes. An empty list admits public addresses only.
+func NewDestinationPolicy(prefixes []netip.Prefix) DestinationPolicy {
 	cleaned := make([]netip.Prefix, 0, len(prefixes))
 	for _, p := range prefixes {
 		cleaned = append(cleaned, netip.PrefixFrom(p.Addr().Unmap(), unmappedBits(p)).Masked())
 	}
-	var previous []netip.Prefix
-	if old := allowed.Swap(&cleaned); old != nil {
-		previous = *old
-	}
-	return previous
+	return DestinationPolicy{allowed: cleaned}
 }
 
 // unmappedBits is p's length when p is an IPv4-mapped prefix, so one rule
@@ -117,13 +116,11 @@ var blockedRanges = []netip.Prefix{
 // CheckAddr reports whether a delivery may connect to addr: it must be public,
 // or inside a network the operator allowed. The error wraps
 // ErrDestinationBlocked.
-func CheckAddr(addr netip.Addr) error {
+func (p DestinationPolicy) CheckAddr(addr netip.Addr) error {
 	addr = addr.Unmap().WithZone("")
-	if p := allowed.Load(); p != nil {
-		for _, prefix := range *p {
-			if prefix.Contains(addr) {
-				return nil
-			}
+	for _, prefix := range p.allowed {
+		if prefix.Contains(addr) {
+			return nil
 		}
 	}
 	if blocked(addr) {
@@ -149,29 +146,31 @@ func blocked(addr netip.Addr) bool {
 // checkHost refuses a URL host that names a blocked address outright: an IP
 // literal (in any spelling inet_aton reads) or localhost. A name is resolved,
 // and judged, only when it is dialled.
-func checkHost(host string) error {
+func (p DestinationPolicy) checkHost(host string) error {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
 		// localhost resolves to either loopback address; one allowed is enough,
 		// and the dial judges the one actually used.
-		if CheckAddr(netip.MustParseAddr("127.0.0.1")) != nil && CheckAddr(netip.MustParseAddr("::1")) != nil {
+		if p.CheckAddr(netip.MustParseAddr("127.0.0.1")) != nil && p.CheckAddr(netip.MustParseAddr("::1")) != nil {
 			return fmt.Errorf("%w: %s is a loopback name; allow loopback with webhooks.allowed_networks (ORK_WEBHOOK_ALLOWED_NETWORKS)",
 				ErrDestinationBlocked, host)
 		}
 		return nil
 	}
 	if addr, err := netip.ParseAddr(host); err == nil {
-		return CheckAddr(addr)
+		return p.CheckAddr(addr)
 	}
 	if addr, ok := parseLegacyIPv4(host); ok {
-		return CheckAddr(addr)
+		return p.CheckAddr(addr)
 	}
 	return nil
 }
 
 // parseLegacyIPv4 reads the inet_aton spellings a system resolver accepts:
 // one to four dot-separated numbers, decimal, octal (leading 0) or hex (0x),
-// the last filling the remaining bytes (2130706433, 0x7f.1, 127.1).
+// the last filling the remaining bytes (2130706433, 0x7f.1, 127.1). It reads
+// a few spellings a resolver would not (strconv's 0b, 0o and underscores);
+// such a host is a name to the resolver, so the dial judges it again.
 func parseLegacyIPv4(host string) (netip.Addr, bool) {
 	parts := strings.Split(host, ".")
 	if len(parts) > 4 {
@@ -206,7 +205,7 @@ func parseLegacyIPv4(host string) (netip.Addr, bool) {
 // guardedDialer judges the address of every connection at the moment it is
 // made, after name resolution, so a name that resolves to an internal address
 // (DNS rebinding) and a redirect to one are refused like a literal.
-func guardedDialer() *net.Dialer {
+func (p DestinationPolicy) guardedDialer() *net.Dialer {
 	return &net.Dialer{
 		Timeout: 10 * time.Second,
 		Control: func(_, address string, _ syscall.RawConn) error {
@@ -214,7 +213,7 @@ func guardedDialer() *net.Dialer {
 			if err != nil {
 				return fmt.Errorf("%w: cannot read the destination address %q", ErrDestinationBlocked, address)
 			}
-			return CheckAddr(ap.Addr())
+			return p.CheckAddr(ap.Addr())
 		},
 	}
 }
@@ -222,18 +221,18 @@ func guardedDialer() *net.Dialer {
 // guardedTransport is the default transport of a Dispatcher: the standard
 // one with every connection judged at dial. It uses no proxy, because a proxy
 // would hide the destination from that check.
-func guardedTransport() *http.Transport {
+func (p DestinationPolicy) guardedTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
-	transport.DialContext = guardedDialer().DialContext
+	transport.DialContext = p.guardedDialer().DialContext
 	return transport
 }
 
 // checkRedirect refuses a redirect to a blocked literal before it is dialled,
 // and ends a chain of more than ten.
-func checkRedirect(req *http.Request, via []*http.Request) error {
+func (p DestinationPolicy) checkRedirect(req *http.Request, via []*http.Request) error {
 	if len(via) >= 10 {
 		return errors.New("stopped after 10 redirects")
 	}
-	return checkHost(req.URL.Hostname())
+	return p.checkHost(req.URL.Hostname())
 }

@@ -29,6 +29,7 @@ import (
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -118,8 +119,8 @@ func TestIntegration_WebhookFiresOnRunStateTransitions(t *testing.T) {
 
 	bus := engine.NewEventBus()
 	runs := engine.NewRunStore()
-	registry := webhooks.NewRegistry()
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{})
 	notifier.Observe(subscriber.record)
 	runNotifier := api.NewWebhookNotifier(notifier, nil)

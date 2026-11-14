@@ -15,6 +15,7 @@ import (
 	"math"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"os/signal"
 	"runtime"
@@ -143,6 +144,11 @@ type config struct {
 	// it look like their document is wrong.
 	activityCatalog dsl.Catalog
 	catalogErr      error
+	// webhookNetworks are the networks besides public addresses webhooks may
+	// call (webhooks.allowed_networks). webhookNetworksErr is a malformed
+	// entry, reported at boot.
+	webhookNetworks    []netip.Prefix
+	webhookNetworksErr error
 
 	// registryAuthFile is ORK_REGISTRY_AUTH_FILE (§4.5): a docker
 	// config.json used ONLY for manifest GETs during apply-time resolution.
@@ -211,6 +217,11 @@ func loadConfig() config {
 	}
 	cfg.cleanup.TemporalNamespace = cfg.temporalNamespace
 	cfg.activityCatalog, cfg.catalogErr = dsl.ParseCatalog([]byte(env("ORK_ACTIVITY_CATALOG", "")))
+	cfg.webhookNetworks, cfg.webhookNetworksErr = webhooks.ParseNetworks(strings.FieldsFunc(
+		env("ORK_WEBHOOK_ALLOWED_NETWORKS", ""), func(r rune) bool { return r == ',' || r == ' ' }))
+	if cfg.webhookNetworksErr != nil {
+		cfg.webhookNetworksErr = fmt.Errorf("ORK_WEBHOOK_ALLOWED_NETWORKS (webhooks.allowed_networks): %w", cfg.webhookNetworksErr)
+	}
 	rawPool := env("ORK_ORKER_POOL", "")
 	rawQueue := env("ORK_ORKER_QUEUE", "")
 	binding, err := task.ResolvePoolBinding(rawPool, rawQueue)
@@ -1194,17 +1205,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// Webhooks call public addresses only, besides the networks the operator
 	// lists (webhooks.allowed_networks): checked when a subscription is
 	// registered and again at every connection a delivery makes.
-	webhookNetworks, err := webhooks.ParseNetworks(strings.FieldsFunc(
-		env("ORK_WEBHOOK_ALLOWED_NETWORKS", ""), func(r rune) bool { return r == ',' || r == ' ' }))
-	if err != nil {
-		return fmt.Errorf("ORK_WEBHOOK_ALLOWED_NETWORKS (webhooks.allowed_networks): %w", err)
+	if cfg.webhookNetworksErr != nil {
+		return cfg.webhookNetworksErr
 	}
-	webhooks.SetAllowedNetworks(webhookNetworks)
-	for _, wide := range webhooks.WholeFamilyNetworks(webhookNetworks) {
+	webhookPolicy := webhooks.NewDestinationPolicy(cfg.webhookNetworks)
+	for _, wide := range webhooks.WholeFamilyNetworks(cfg.webhookNetworks) {
 		logger.Warn("ORK_WEBHOOK_ALLOWED_NETWORKS (webhooks.allowed_networks) admits a whole address family, "+
 			"so webhooks can reach loopback, link-local and private addresses of it", "entry", wide.String())
 	}
-	webhookRegistry := webhooks.NewDurableRegistry(webhookStore)
+	webhookRegistry := webhooks.NewDurableRegistry(webhookStore, webhooks.WithDestinationPolicy(webhookPolicy))
 	// Delivery records: one immutable object per SETTLED delivery, written by
 	// the delivery's settle step, in the same shared object store, so any
 	// replica lists a delivery another replica made. It is a log, never a
@@ -1226,7 +1235,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	// Each delivery is a workflow of its own, so Temporal retries it and it
 	// outlives this replica (engine.WebhookDeliveryWorkflow).
-	webhookDispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	webhookDispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhookPolicy})
 	webhookNotifier := webhooks.NewNotifier(
 		webhookRegistry,
 		webhookDispatcher,
@@ -1596,6 +1605,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Idempotency:     idempotency,
 		OnLegacyPending: idempotencyInstruments.CountLegacyPending,
 		Webhooks:        webhookRegistry,
+		Redelivery:      webhookDispatcher,
 		Deliveries:      deliveryStore,
 		Triggers:        triggerStore,
 		Schedules:       scheduler,

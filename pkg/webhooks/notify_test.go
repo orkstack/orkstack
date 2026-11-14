@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -52,7 +53,7 @@ func TestNotifier_FansOneTransitionOutToEverySubscriberThatWantsIt(t *testing.T)
 	failedOnly := newReceiver(t, http.StatusOK)
 	everything := newReceiver(t, http.StatusOK)
 
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{
 		URL: succeededOnly.server.URL, Events: []webhooks.Event{webhooks.EventRunSucceeded},
 	})
@@ -62,7 +63,7 @@ func TestNotifier_FansOneTransitionOutToEverySubscriberThatWantsIt(t *testing.T)
 	mustRegister(t, registry, webhooks.Registration{URL: everything.server.URL})
 
 	results := &collector{}
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{})
 	notifier.Observe(results.observe)
 
@@ -89,11 +90,11 @@ func TestNotifier_FansOneTransitionOutToEverySubscriberThatWantsIt(t *testing.T)
 func TestNotifier_GivesEachSubscriberItsOwnDeliveryID(t *testing.T) {
 	first := newReceiver(t, http.StatusOK)
 	second := newReceiver(t, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: first.server.URL})
 	mustRegister(t, registry, webhooks.Registration{URL: second.server.URL})
 
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{})
 	notifier.Notify(context.Background(), sampleDelivery())
 	drain(t, notifier)
@@ -111,7 +112,7 @@ func TestNotifier_GivesEachSubscriberItsOwnDeliveryID(t *testing.T) {
 }
 
 func TestNotifier_DeliversNothingWhenNobodySubscribed(t *testing.T) {
-	notifier := webhooks.NewNotifier(webhooks.NewRegistry(), nil, webhooks.NotifierOptions{})
+	notifier := webhooks.NewNotifier(webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())), nil, webhooks.NotifierOptions{})
 	if queued := notifier.Notify(context.Background(), sampleDelivery()); queued != 0 {
 		t.Errorf("queued %d deliveries with an empty registry", queued)
 	}
@@ -130,10 +131,10 @@ func TestNotifier_OutlivesTheContextThatObservedTheTransition(t *testing.T) {
 	}))
 	defer server.Close()
 
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: server.URL})
 	results := &collector{}
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{})
 	notifier.Observe(results.observe)
 
@@ -164,9 +165,9 @@ func TestNotifier_WaitReturnsWhenTheCallerGivesUp(t *testing.T) {
 	defer server.Close()
 	defer close(block)
 
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: server.URL})
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{})
 	notifier.Notify(context.Background(), sampleDelivery())
 
@@ -179,9 +180,9 @@ func TestNotifier_WaitReturnsWhenTheCallerGivesUp(t *testing.T) {
 
 func TestNotifier_StampsADeliveryThatArrivedWithoutATimestamp(t *testing.T) {
 	rec := newReceiver(t, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: rec.server.URL})
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{})
 
 	delivery := sampleDelivery()
@@ -227,7 +228,7 @@ func TestNotifier_WarnsWhenAMatchedSubscriptionHasNoSecret(t *testing.T) {
 	// hook is served by a durable store, which is also where this can happen.
 	store := &countingStore{hooks: []webhooks.Webhook{{ID: "whk-nosecret", URL: target.server.URL}}}
 	logs := &syncBuffer{}
-	notifier := webhooks.NewNotifier(webhooks.NewDurableRegistry(store), webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	notifier := webhooks.NewNotifier(webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())), webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{Logger: slog.New(slog.NewTextHandler(logs, nil))})
 
 	notifier.Notify(context.Background(), webhooks.Delivery{

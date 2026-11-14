@@ -196,6 +196,10 @@ type DispatcherOptions struct {
 	Client *http.Client
 	// RequestTimeout bounds one attempt.
 	RequestTimeout time.Duration
+	// Policy judges every connection the built client makes, and every
+	// redirect. It is unused when Client is set. The zero value admits public
+	// addresses only.
+	Policy DestinationPolicy
 }
 
 // Dispatcher makes one signed POST of one delivery to one subscriber. It
@@ -214,7 +218,7 @@ func NewDispatcher(options DispatcherOptions) *Dispatcher {
 		if timeout <= 0 {
 			timeout = DefaultRequestTimeout
 		}
-		d.client = &http.Client{Timeout: timeout, Transport: guardedTransport(), CheckRedirect: checkRedirect}
+		d.client = &http.Client{Timeout: timeout, Transport: options.Policy.guardedTransport(), CheckRedirect: options.Policy.checkRedirect}
 	}
 	return d
 }

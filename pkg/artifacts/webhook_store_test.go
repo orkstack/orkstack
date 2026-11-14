@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -169,7 +170,7 @@ func TestWebhookStore_DurableMatchingCarriesTheSigningSecret(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewLocalWebhookStore: %v", err)
 	}
-	registry := webhooks.NewDurableRegistry(store)
+	registry := webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	hook, err := registry.RegisterContext(context.Background(), webhooks.Registration{
 		URL: "https://example.test/hooks", Secret: "s3cr3t", Namespace: "analytics",
 	})

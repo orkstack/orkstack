@@ -31,6 +31,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
@@ -101,7 +102,7 @@ func newDeliveryFixture(t *testing.T, receiverStatus int) *deliveryFixture {
 	t.Helper()
 	f := &deliveryFixture{
 		store:    artifacts.NewMemoryDeliveryStore(),
-		registry: webhooks.NewRegistry(),
+		registry: webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())),
 		spaces:   newFakeRegistry(&orkstackv1.Namespace{Name: "payments"}),
 		runs:     engine.NewRunStore(),
 		receiver: newDeliveryReceiver(t, receiverStatus),
@@ -113,13 +114,14 @@ func newDeliveryFixture(t *testing.T, receiverStatus int) *deliveryFixture {
 	}
 	logger := slog.New(slog.NewTextHandler(f.logs, nil))
 	f.notifier = webhooks.NewNotifier(f.registry,
-		webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+		webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{Logger: logger, Record: api.NewDeliveryRecorder(f.store, logger).RecordContext})
 	f.adapter = api.NewWebhookNotifier(f.notifier, logger)
 	f.svc = api.NewService(api.Config{
 		Runs:       f.runs,
 		Namespaces: f.spaces,
 		Webhooks:   f.registry,
+		Redelivery: webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		Deliveries: f.store,
 		Logger:     logger,
 		Now:        func() time.Time { return f.now },
@@ -1032,7 +1034,8 @@ func TestRedeliverWebhook_UnwritableRecordIsUnavailableNamingTheOutcome(t *testi
 	f.receiver.answer(http.StatusOK)
 	svc := api.NewService(api.Config{
 		Runs: f.runs, Namespaces: f.spaces, Webhooks: f.registry, Deliveries: putFailingStore{f.store},
-		Now: func() time.Time { return f.now },
+		Redelivery: webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
+		Now:        func() time.Time { return f.now },
 	})
 	before := f.receiver.count()
 	_, err := svc.RedeliverWebhook(context.Background(),
@@ -1054,7 +1057,8 @@ func TestAuditInterceptor_RecordsRedeliverWithoutSecrets(t *testing.T) {
 	audit := artifacts.NewMemoryAuditStore()
 	svc := api.NewService(api.Config{
 		Runs: f.runs, Namespaces: f.spaces, Webhooks: f.registry, Deliveries: f.store, AuditStore: audit,
-		Now: func() time.Time { return f.now },
+		Redelivery: webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
+		Now:        func() time.Time { return f.now },
 	})
 	server := httptest.NewServer(api.NewMux(svc, api.MuxOptions{}))
 	t.Cleanup(server.Close)

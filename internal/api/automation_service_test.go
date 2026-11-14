@@ -16,6 +16,7 @@ import (
 	"github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -185,7 +186,7 @@ func newAutomationHarness(t *testing.T, configure func(*api.Config)) *automation
 		counter:   counter,
 		registry:  &countingRegistry{fakeRegistry: newFakeRegistry(&orkstackv1.Namespace{Name: "payments"}), counter: counter},
 		triggers:  &countingTriggers{Store: triggers.NewMemoryStore(), counter: counter},
-		webhooks:  &countingWebhooks{registry: webhooks.NewRegistry(), counter: counter},
+		webhooks:  &countingWebhooks{registry: webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())), counter: counter},
 		schedules: &countingSchedules{fakeSchedules: newFakeSchedules(), counter: counter},
 		orkflows:  engine.NewMemoryOrkflowStore(),
 	}
@@ -198,7 +199,7 @@ func newAutomationHarness(t *testing.T, configure func(*api.Config)) *automation
 		Bus:        engine.NewEventBus(),
 		Starter:    &fakeStarter{},
 		Triggers:   h.triggers,
-		Webhooks:   webhooks.NewDurableRegistry(h.webhooks),
+		Webhooks:   webhooks.NewDurableRegistry(h.webhooks, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())),
 		Schedules:  h.schedules,
 		Retention:  archive.NewRetentionController(policies, admin, "ork-main", 24*time.Hour, nil),
 		Now:        func() time.Time { return time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC) },

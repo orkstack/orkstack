@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -52,7 +53,7 @@ func TestSign_RejectsATamperedBodyAWrongSecretAndNoSecret(t *testing.T) {
 }
 
 func TestRegistry_RegisterAssignsAnIDAndSecretAndDisclosesTheSecretOnce(t *testing.T) {
-	registry := webhooks.NewRegistry(
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()),
 		webhooks.WithIDGenerator(func() (string, error) { return "wh-fixed", nil }),
 		webhooks.WithSecretGenerator(func() (string, error) { return "generated-secret", nil }),
 		webhooks.WithClock(func() time.Time { return time.Unix(1755302400, 0).UTC() }),
@@ -97,7 +98,7 @@ func TestRegistry_RegisterAssignsAnIDAndSecretAndDisclosesTheSecretOnce(t *testi
 }
 
 func TestRegistry_RegisterKeepsACallerSuppliedSecret(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	hook, err := registry.Register(webhooks.Registration{
 		URL:    "https://example.test/hooks",
 		Secret: "mine",
@@ -111,7 +112,7 @@ func TestRegistry_RegisterKeepsACallerSuppliedSecret(t *testing.T) {
 }
 
 func TestRegistry_RejectsAURLNoDeliveryCouldReach(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	for _, target := range []string{"", "   ", "example.test/hooks", "ftp://example.test", "https://"} {
 		if _, err := registry.Register(webhooks.Registration{URL: target}); err == nil {
 			t.Errorf("Register(%q) succeeded, want a rejection", target)
@@ -123,7 +124,7 @@ func TestRegistry_RejectsAURLNoDeliveryCouldReach(t *testing.T) {
 }
 
 func TestRegistry_RejectsAnUnknownEvent(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	_, err := registry.Register(webhooks.Registration{
 		URL:    "https://example.test/hooks",
 		Events: []webhooks.Event{"RUN_EXPLODED"},
@@ -137,7 +138,7 @@ func TestRegistry_RejectsAnUnknownEvent(t *testing.T) {
 }
 
 func TestRegistry_DeleteRemovesASubscriptionAndReportsAnUnknownID(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	first := mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/one"})
 	second := mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/two"})
 
@@ -160,7 +161,7 @@ func TestRegistry_DeleteRemovesASubscriptionAndReportsAnUnknownID(t *testing.T) 
 }
 
 func TestRegistry_ListKeepsRegistrationOrder(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	var want []string
 	for _, target := range []string{"https://a.test", "https://b.test", "https://c.test", "https://d.test"} {
 		want = append(want, mustRegister(t, registry, webhooks.Registration{URL: target}).ID)
@@ -193,7 +194,7 @@ func TestParseEvent_AcceptsShortProtoAndLowerCaseSpellings(t *testing.T) {
 }
 
 func TestRegistry_NormalizesEventsToLifecycleOrderWithoutDuplicates(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	hook := mustRegister(t, registry, webhooks.Registration{
 		URL: "https://example.test/hooks",
 		Events: []webhooks.Event{
@@ -323,7 +324,7 @@ func TestRegistry_DurableMatchingReadsTheDeliveryListNeverThePublicOne(t *testin
 		{ID: "whk-a", URL: "https://a.example/hook", Secret: "secret-a"},
 		{ID: "whk-b", URL: "https://b.example/hook", Secret: "secret-b", Events: []webhooks.Event{webhooks.EventRunSucceeded}},
 	}}
-	registry := webhooks.NewDurableRegistry(store)
+	registry := webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	ctx := context.Background()
 
 	matched, err := registry.MatchingContext(ctx, webhooks.Match{Event: webhooks.EventRunSucceeded})
@@ -383,7 +384,7 @@ func TestValidateName_RequiresANamespaceScope(t *testing.T) {
 
 func TestRegistry_UpdateInMemoryKeepsIDAndSecret(t *testing.T) {
 	ctx := context.Background()
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	created, err := registry.RegisterContext(ctx, webhooks.Registration{
 		URL: "https://a.example/hook", Secret: "original", Namespace: "payments",
 	})
@@ -432,7 +433,7 @@ func TestRegistry_UpdateInMemoryKeepsIDAndSecret(t *testing.T) {
 
 func TestRegistry_UpdateRefusesATakenNameInTheScope(t *testing.T) {
 	ctx := context.Background()
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	if _, err := registry.RegisterContext(ctx, webhooks.Registration{URL: "https://a.example/", Namespace: "payments", Name: "taken"}); err != nil {
 		t.Fatalf("Register: %v", err)
 	}
@@ -464,7 +465,7 @@ func TestRegistry_DurableUpdateCallsStoreUpdate(t *testing.T) {
 	store := &countingStore{hooks: []webhooks.Webhook{
 		{ID: "wh-0011223344556677", URL: "https://a.example/hook", Secret: "secret-a", Namespace: "payments"},
 	}}
-	registry := webhooks.NewDurableRegistry(store)
+	registry := webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	updated, ok, err := registry.UpdateContext(context.Background(), "wh-0011223344556677", func(w *webhooks.Webhook) error {
 		w.Name = "etl-loader"
 		return nil

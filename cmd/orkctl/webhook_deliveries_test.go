@@ -18,6 +18,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
@@ -84,7 +85,8 @@ func deliveriesFixture(t *testing.T) (*fixture, *recordingDeliveryStore, *cliRec
 	}))
 	t.Cleanup(receiver.server.Close)
 
-	registry := webhooks.NewRegistry(webhooks.WithIDGenerator(func() (string, error) { return deliveriesWebhook, nil }))
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()),
+		webhooks.WithIDGenerator(func() (string, error) { return deliveriesWebhook, nil }))
 	if _, err := registry.Register(webhooks.Registration{
 		URL: receiver.server.URL, Secret: "s3cr3t",
 		Events: []webhooks.Event{webhooks.EventRunStarted, webhooks.EventRunFailed, webhooks.EventTaskFailed},
@@ -95,6 +97,7 @@ func deliveriesFixture(t *testing.T) (*fixture, *recordingDeliveryStore, *cliRec
 	f := newFixtureWith(t, func(cfg *api.Config) {
 		cfg.Deliveries = store
 		cfg.Webhooks = registry
+		cfg.Redelivery = webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
 	})
 	if _, err := f.namespaces.Put(context.Background(), &orkstackv1.Namespace{Name: "payments"}, artifacts.PutConditions{}); err != nil {
 		t.Fatalf("namespace: %v", err)

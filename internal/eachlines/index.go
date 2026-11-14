@@ -42,14 +42,14 @@ type Options struct {
 const gapFlushBytes = 64 << 10
 
 // Index reads r, the source, in one pass and builds its line index for batches
-// of k lines. It reads at most min(cap, o.SourceSize) bytes: a source larger
-// than cap is refused (EACH_SOURCE_TOO_LARGE) without a read, and the scan
+// of k lines. It reads at most min(readCap, o.SourceSize) bytes: a source larger
+// than readCap is refused (EACH_SOURCE_TOO_LARGE) without a read, and the scan
 // stops, reading no further, at the first refusal: a line passing the limit,
 // an invalid line, line max_items*k + 1, or a span over the slice limit.
 // Memory is one read buffer plus one line (at most values_max_bytes + 2 bytes)
 // and the entries, whatever the source. It checks ctx once per read, and a
 // reader's own error comes back wrapped and is not a refusal.
-func Index(ctx context.Context, r io.Reader, cap int64, k int, o Options) (*Table, error) {
+func Index(ctx context.Context, r io.Reader, readCap int64, k int, o Options) (*Table, error) {
 	switch {
 	case !o.Format.valid():
 		return nil, fmt.Errorf("eachlines: unknown format %d", o.Format)
@@ -60,12 +60,16 @@ func Index(ctx context.Context, r io.Reader, cap int64, k int, o Options) (*Tabl
 	case o.ValuesMaxBytes < 1 || o.ValuesMaxBytes > 1<<31 || o.SliceMaxBytes < 1 || o.SourceSize < 0:
 		return nil, errors.New("eachlines: limits out of range")
 	}
-	if o.SourceSize > cap {
+	if o.SourceSize > readCap {
 		return nil, refuse(ReasonSourceTooLarge,
 			"the source is %d bytes, over the %d bytes a fan-out of %d items of %d lines reads; the limit counts bytes, so long runs of empty lines count too",
-			o.SourceSize, cap, o.MaxItems, k)
+			o.SourceSize, readCap, o.MaxItems, k)
 	}
-	s := &scanner{o: o, k: k, src: sha256.New(), span: sha256.New(), buf: make([]byte, ReadBufferSize), lineStart: 0, physLine: 1}
+	span, ok := sha256.New().(spanHash)
+	if !ok {
+		return nil, errors.New("eachlines: this build's SHA-256 cannot save its state")
+	}
+	s := newScanner(o, k, span)
 	src := io.LimitReader(r, o.SourceSize)
 	var read int64
 	var refusal error // a line or batch refusal, held while the rest is hashed
@@ -133,6 +137,18 @@ func drains(err error) bool {
 	return r == ReasonLineInvalid || r == ReasonBatchTooLarge
 }
 
+// spanHash is a hash whose state can be saved and taken back: a gap hashed
+// ahead of knowing whether it belongs to the span is undone that way.
+type spanHash interface {
+	hash.Hash
+	encoding.BinaryMarshaler
+	encoding.BinaryUnmarshaler
+}
+
+func newScanner(o Options, k int, span spanHash) *scanner {
+	return &scanner{o: o, k: k, src: sha256.New(), span: span, buf: make([]byte, ReadBufferSize), lineStart: 0, physLine: 1}
+}
+
 // scanner is the state of one pass.
 type scanner struct {
 	o   Options
@@ -150,7 +166,7 @@ type scanner struct {
 
 	// the open item
 	inBatch   int
-	span      hash.Hash // the open item's span so far
+	span      spanHash // the open item's span so far
 	spanStart int64
 	spanEnd   int64 // end of the last content in the item
 	first     int64
@@ -231,7 +247,7 @@ func (s *scanner) finish() error {
 	}
 	if s.inBatch > 0 {
 		if s.snap != nil { // a gap was hashed ahead; it is not in the span
-			if err := s.span.(encoding.BinaryUnmarshaler).UnmarshalBinary(s.snap); err != nil {
+			if err := s.span.UnmarshalBinary(s.snap); err != nil {
 				return fmt.Errorf("restoring a hash: %w", err)
 			}
 		}
@@ -251,8 +267,7 @@ func (s *scanner) handle(raw []byte, hasLF bool) error {
 		term = "\r" + term
 	}
 	if len(content) == 0 {
-		s.addGap(term)
-		return nil
+		return s.addGap(term)
 	}
 	s.nonEmpty++
 	if s.nonEmpty > int64(s.o.MaxItems)*int64(s.k) {
@@ -289,14 +304,15 @@ func (s *scanner) handle(raw []byte, hasLF bool) error {
 	if s.inBatch == s.k {
 		return s.emit()
 	}
-	s.addGap(term)
-	return nil
+	return s.addGap(term)
 }
 
-// addGap records terminator bytes after the open item's last content.
-func (s *scanner) addGap(term string) {
+// addGap records terminator bytes after the open item's last content. Its
+// only error is the span hash failing to save its state, which is not a
+// refusal of the source.
+func (s *scanner) addGap(term string) error {
 	if s.inBatch == 0 || term == "" {
-		return
+		return nil
 	}
 	s.gap = append(s.gap, term...)
 	if len(s.gap) >= gapFlushBytes {
@@ -304,11 +320,16 @@ func (s *scanner) addGap(term string) {
 		// Remember the span as it stands, and hash them: a following line keeps
 		// them, the end of the source takes the remembered state back.
 		if s.snap == nil {
-			s.snap, _ = s.span.(encoding.BinaryMarshaler).MarshalBinary()
+			snap, err := s.span.MarshalBinary()
+			if err != nil {
+				return fmt.Errorf("saving a hash: %w", err)
+			}
+			s.snap = snap
 		}
 		s.span.Write(s.gap)
 		s.gap = s.gap[:0]
 	}
+	return nil
 }
 
 func (s *scanner) emit() error {

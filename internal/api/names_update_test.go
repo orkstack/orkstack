@@ -16,6 +16,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
@@ -189,7 +190,7 @@ func newDurableNotifier(t *testing.T) *durableNotifier {
 	t.Helper()
 	store, err := artifacts.NewLocalWebhookStore(t.TempDir())
 	must.OKf(t, err, "NewLocalWebhookStore")
-	d := &durableNotifier{registry: webhooks.NewDurableRegistry(store), posts: make(chan delivered, 8)}
+	d := &durableNotifier{registry: webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())), posts: make(chan delivered, 8)}
 	d.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body bytes.Buffer
 		_, _ = body.ReadFrom(r.Body)
@@ -197,7 +198,7 @@ func newDurableNotifier(t *testing.T) *durableNotifier {
 		d.posts <- delivered{path: r.URL.Path, body: body.Bytes(), headers: r.Header.Clone()}
 	}))
 	t.Cleanup(d.server.Close)
-	d.notifier = webhooks.NewNotifier(d.registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}), webhooks.NotifierOptions{})
+	d.notifier = webhooks.NewNotifier(d.registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}), webhooks.NotifierOptions{})
 	d.adapter = api.NewWebhookNotifier(d.notifier, nil)
 	return d
 }

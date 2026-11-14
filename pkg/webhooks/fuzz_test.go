@@ -20,6 +20,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -219,7 +220,7 @@ func FuzzDispatcher_WhatTheReceiverReadsVerifiesAndIsWhatTheResultRecords(f *tes
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	f.Cleanup(server.Close)
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
 
 	f.Add("s3cr3t", "wh-0123456789abcdef", "dlv-1", "ork-1-1", "", "redeliver-1", "hello-ork", "FAILED", int32(0), int64(9), `{"id":"x"}`)
 	f.Add("", "wh-1", "dlv-2", "ork-2-2", "extract", "", "o", "s", int32(3), int64(0), `{"a":[1,2]}`)

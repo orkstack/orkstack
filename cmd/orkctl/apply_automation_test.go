@@ -17,6 +17,7 @@ import (
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/enumname"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -36,7 +37,7 @@ func newAutomationFixture(t *testing.T) *automationFixture {
 	t.Helper()
 	schedules := &cliSchedules{records: map[string]*orkstackv1.ScheduleRecord{}}
 	next := 0
-	registry := webhooks.NewRegistry(
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()),
 		webhooks.WithIDGenerator(func() (string, error) {
 			next++
 			return fmt.Sprintf("wh-%016x", next), nil

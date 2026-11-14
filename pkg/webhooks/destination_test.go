@@ -12,21 +12,18 @@ import (
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
-// withNetworks sets the operator's allow-list for one test and restores the
-// previous one, so a test of the refusal is not undone by the package's
-// loopback allowance (allow_loopback_test.go).
-func withNetworks(t *testing.T, cidrs ...string) {
+// policy is a destination policy allowing cidrs.
+func policy(t *testing.T, cidrs ...string) webhooks.DestinationPolicy {
 	t.Helper()
 	prefixes, err := webhooks.ParseNetworks(cidrs)
 	if err != nil {
 		t.Fatalf("ParseNetworks(%q): %v", cidrs, err)
 	}
-	previous := webhooks.SetAllowedNetworks(prefixes)
-	t.Cleanup(func() { webhooks.SetAllowedNetworks(previous) })
+	return webhooks.NewDestinationPolicy(prefixes)
 }
 
 func TestCheckAddr_RefusesInternalDestinations(t *testing.T) {
-	withNetworks(t)
+	p := policy(t)
 	for _, raw := range []string{
 		"127.0.0.1", "127.8.9.10", "::1", "0.0.0.0", "::",
 		"169.254.169.254", "169.254.0.1", "fe80::1", "fd00:ec2::254",
@@ -36,7 +33,7 @@ func TestCheckAddr_RefusesInternalDestinations(t *testing.T) {
 		"64:ff9b::7f00:1", "2002:7f00:1::1", "fec0::1",
 		"::ffff:0:127.0.0.1", "::ffff:0:7f00:1", "2001:1::1", "2001:3::1", "2001:4:112::1", "2001:20::1", "2001:10::1", "5f00::1", "3fff::1", "::7f00:1",
 	} {
-		err := webhooks.CheckAddr(netip.MustParseAddr(raw))
+		err := p.CheckAddr(netip.MustParseAddr(raw))
 		if !errors.Is(err, webhooks.ErrDestinationBlocked) {
 			t.Errorf("CheckAddr(%s) = %v, want ErrDestinationBlocked", raw, err)
 		}
@@ -44,21 +41,21 @@ func TestCheckAddr_RefusesInternalDestinations(t *testing.T) {
 }
 
 func TestCheckAddr_AcceptsPublicDestinations(t *testing.T) {
-	withNetworks(t)
+	p := policy(t)
 	for _, raw := range []string{"8.8.8.8", "1.1.1.1", "93.184.216.34", "2606:4700:4700::1111", "::ffff:8.8.8.8"} {
-		if err := webhooks.CheckAddr(netip.MustParseAddr(raw)); err != nil {
+		if err := p.CheckAddr(netip.MustParseAddr(raw)); err != nil {
 			t.Errorf("CheckAddr(%s) = %v, want nil", raw, err)
 		}
 	}
 }
 
 func TestCheckAddr_AllowListAdmitsOnlyItsOwnRanges(t *testing.T) {
-	withNetworks(t, "10.1.0.0/16", "127.0.0.1/32")
+	p := policy(t, "10.1.0.0/16", "127.0.0.1/32")
 	for raw, wantBlocked := range map[string]bool{
 		"10.1.2.3": false, "127.0.0.1": false, "::ffff:10.1.2.3": false,
 		"10.2.0.1": true, "127.0.0.2": true, "169.254.169.254": true, "192.168.0.1": true,
 	} {
-		err := webhooks.CheckAddr(netip.MustParseAddr(raw))
+		err := p.CheckAddr(netip.MustParseAddr(raw))
 		if blocked := errors.Is(err, webhooks.ErrDestinationBlocked); blocked != wantBlocked {
 			t.Errorf("CheckAddr(%s) = %v, blocked want %v", raw, err, wantBlocked)
 		}
@@ -78,14 +75,14 @@ func TestParseNetworks(t *testing.T) {
 }
 
 func TestValidateDestination_RefusesLiteralInternalHosts(t *testing.T) {
-	withNetworks(t)
+	p := policy(t)
 	for _, raw := range []string{
 		"http://127.0.0.1/hook", "http://localhost:8080/hook", "https://LOCALHOST./x", "http://a.localhost/x",
 		"http://[::1]:9000/", "http://169.254.169.254/latest/meta-data/", "http://10.0.0.5/", "http://192.168.0.1:81/",
 		"http://[fd00::1]/", "http://[::ffff:127.0.0.1]/", "http://0.0.0.0/", "http://2130706433/", "http://0x7f.1/",
 		"http://017700000001/", "http://127.1/",
 	} {
-		_, err := webhooks.ValidateDestination(raw)
+		_, err := p.ValidateDestination(raw)
 		if !errors.Is(err, webhooks.ErrDestinationBlocked) {
 			t.Errorf("ValidateURL(%q) = %v, want ErrDestinationBlocked", raw, err)
 		}
@@ -93,30 +90,30 @@ func TestValidateDestination_RefusesLiteralInternalHosts(t *testing.T) {
 }
 
 func TestValidateDestination_AcceptsPublicAndNamedHosts(t *testing.T) {
-	withNetworks(t)
+	p := policy(t)
 	for _, raw := range []string{"https://example.com/hook", "http://8.8.8.8/x", "https://hooks.internal.example:8443/p"} {
-		if _, err := webhooks.ValidateDestination(raw); err != nil {
+		if _, err := p.ValidateDestination(raw); err != nil {
 			t.Errorf("ValidateURL(%q) = %v, want nil (a name is checked when it is dialled)", raw, err)
 		}
 	}
 }
 
 func TestValidateDestination_AllowListAdmitsLiteralHost(t *testing.T) {
-	withNetworks(t, "10.0.0.0/8", "127.0.0.0/8")
+	p := policy(t, "10.0.0.0/8", "127.0.0.0/8")
 	for _, raw := range []string{"http://10.1.2.3/x", "http://127.0.0.1:1/x", "http://localhost/x"} {
-		if _, err := webhooks.ValidateDestination(raw); err != nil {
+		if _, err := p.ValidateDestination(raw); err != nil {
 			t.Errorf("ValidateURL(%q) = %v, want nil with the range allowed", raw, err)
 		}
 	}
-	if _, err := webhooks.ValidateDestination("http://192.168.0.1/"); !errors.Is(err, webhooks.ErrDestinationBlocked) {
+	if _, err := p.ValidateDestination("http://192.168.0.1/"); !errors.Is(err, webhooks.ErrDestinationBlocked) {
 		t.Errorf("an address outside the allow-list was accepted: %v", err)
 	}
 }
 
 func TestDispatcher_RefusesLoopbackAtDialWithReason(t *testing.T) {
-	withNetworks(t)
+	p := policy(t)
 	rec := newReceiver(t, http.StatusOK)
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).Deliver(context.Background(),
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: p}).Deliver(context.Background(),
 		webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}, sampleDelivery())
 	if err == nil || result.Delivered {
 		t.Fatalf("Deliver = %+v, %v; want a refusal", result, err)
@@ -133,14 +130,44 @@ func TestDispatcher_RefusesLoopbackAtDialWithReason(t *testing.T) {
 	}
 }
 
+// Each dispatcher holds its own policy: one that allows loopback and one
+// that does not deliver side by side in one process.
+func TestDispatcher_PolicyIsPerInstance(t *testing.T) {
+	rec := newReceiver(t, http.StatusOK)
+	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}
+	open := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: policy(t, "127.0.0.0/8", "::1/128")})
+	closed := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	if result, err := open.Deliver(context.Background(), hook, sampleDelivery()); err != nil || !result.Delivered {
+		t.Fatalf("the loopback-allowing dispatcher: %+v, %v; want delivered", result, err)
+	}
+	result, err := closed.Deliver(context.Background(), hook, sampleDelivery())
+	if err == nil || !strings.Contains(result.LastAttempt().Error, webhooks.ReasonDestinationBlocked) {
+		t.Fatalf("the default dispatcher: %+v, %v; want %s", result, err, webhooks.ReasonDestinationBlocked)
+	}
+	if rec.count() != 1 {
+		t.Errorf("the receiver saw %d requests, want 1", rec.count())
+	}
+}
+
+// The zero policy admits public addresses only.
+func TestDestinationPolicy_ZeroValueAdmitsPublicOnly(t *testing.T) {
+	var p webhooks.DestinationPolicy
+	if err := p.CheckAddr(netip.MustParseAddr("8.8.8.8")); err != nil {
+		t.Errorf("CheckAddr(8.8.8.8) = %v", err)
+	}
+	if err := p.CheckAddr(netip.MustParseAddr("127.0.0.1")); !errors.Is(err, webhooks.ErrDestinationBlocked) {
+		t.Errorf("CheckAddr(127.0.0.1) = %v, want ErrDestinationBlocked", err)
+	}
+}
+
 func TestDispatcher_RefusesARedirectToAnInternalAddress(t *testing.T) {
 	hop := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusTemporaryRedirect)
 	}))
 	t.Cleanup(hop.Close)
 	// The first hop is allowed; the address it redirects to is not.
-	withNetworks(t, "127.0.0.1/32")
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).Deliver(context.Background(),
+	p := policy(t, "127.0.0.1/32")
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: p}).Deliver(context.Background(),
 		webhooks.Webhook{ID: "wh-1", URL: hop.URL}, sampleDelivery())
 	if err == nil || result.Delivered {
 		t.Fatalf("Deliver = %+v, %v; want the redirect refused", result, err)
@@ -166,17 +193,16 @@ func FuzzParseNetworks(f *testing.F) {
 }
 
 func TestValidateURL_ChecksSyntaxOnly(t *testing.T) {
-	withNetworks(t)
 	if _, err := webhooks.ValidateURL("http://169.254.169.254/x"); err != nil {
 		t.Errorf("ValidateURL consulted the destination policy, which a client does not hold: %v", err)
 	}
 }
 
 func TestDispatcher_RefusesANameThatResolvesToLoopback(t *testing.T) {
-	withNetworks(t)
+	p := policy(t)
 	rec := newReceiver(t, http.StatusOK)
 	port := rec.server.URL[strings.LastIndex(rec.server.URL, ":"):]
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).Deliver(context.Background(),
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: p}).Deliver(context.Background(),
 		webhooks.Webhook{ID: "wh-1", URL: "http://localhost" + port}, sampleDelivery())
 	if err == nil || rec.count() != 0 {
 		t.Fatalf("Deliver = %+v, %v; receiver saw %d; want a refusal at dial", result, err, rec.count())
@@ -186,16 +212,22 @@ func TestDispatcher_RefusesANameThatResolvesToLoopback(t *testing.T) {
 	}
 }
 
-func TestApplyChange_AnUpdateThatLeavesTheURLAloneIsNotRefusedForIt(t *testing.T) {
-	withNetworks(t)
-	legacy := webhooks.Webhook{ID: "wh-1", URL: "http://10.0.0.5/hook", Secret: "s"}
-	next, err := webhooks.ApplyChange(legacy, func(w *webhooks.Webhook) error { w.Name = ""; return nil })
-	if err != nil || next.URL != legacy.URL {
-		t.Fatalf("ApplyChange without a URL change = %+v, %v; want it accepted", next, err)
+// A subscription registered before the destination policy keeps its URL
+// through an update that leaves it alone; a new URL meets the registry's
+// policy.
+func TestRegistry_AnUpdateThatLeavesTheURLAloneIsNotRefusedForIt(t *testing.T) {
+	store := &countingStore{hooks: []webhooks.Webhook{{ID: "wh-1", URL: "http://10.0.0.5/hook", Secret: "s"}}}
+	registry := webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(policy(t, "10.0.0.6/32")))
+	next, _, err := registry.UpdateContext(context.Background(), "wh-1", func(w *webhooks.Webhook) error { w.Name = ""; return nil })
+	if err != nil || next.URL != "http://10.0.0.5/hook" {
+		t.Fatalf("an update without a URL change = %+v, %v; want it accepted", next, err)
 	}
-	_, err = webhooks.ApplyChange(legacy, func(w *webhooks.Webhook) error { w.URL = "http://10.0.0.6/hook"; return nil })
+	_, _, err = registry.UpdateContext(context.Background(), "wh-1", func(w *webhooks.Webhook) error { w.URL = "http://10.0.0.7/hook"; return nil })
 	if !errors.Is(err, webhooks.ErrDestinationBlocked) {
-		t.Errorf("ApplyChange to a new internal URL = %v, want ErrDestinationBlocked", err)
+		t.Errorf("an update to a new internal URL = %v, want ErrDestinationBlocked", err)
+	}
+	if _, _, err := registry.UpdateContext(context.Background(), "wh-1", func(w *webhooks.Webhook) error { w.URL = "http://10.0.0.6/hook"; return nil }); err != nil {
+		t.Errorf("an update to a URL the policy allows = %v", err)
 	}
 }
 
@@ -219,5 +251,15 @@ func TestWholeFamilyNetworks(t *testing.T) {
 	}
 	if got := webhooks.WholeFamilyNetworks(parse("10.0.0.0/8", "::1/128")); len(got) != 0 {
 		t.Errorf("WholeFamilyNetworks(narrow) = %v, want none", got)
+	}
+}
+
+// A store-backed registry judges a registration's URL before the store sees
+// it, as the in-memory one does.
+func TestRegistry_DurableRegistrationMeetsThePolicy(t *testing.T) {
+	registry := webhooks.NewDurableRegistry(&countingStore{})
+	_, err := registry.RegisterContext(context.Background(), webhooks.Registration{URL: "http://169.254.169.254/latest/meta-data/"})
+	if !errors.Is(err, webhooks.ErrDestinationBlocked) {
+		t.Fatalf("RegisterContext = %v, want ErrDestinationBlocked before the store is asked", err)
 	}
 }

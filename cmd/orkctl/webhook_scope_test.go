@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -17,7 +18,7 @@ import (
 func newWebhookFixture(t *testing.T) (*fixture, *webhooks.Registry) {
 	t.Helper()
 	next := 0
-	registry := webhooks.NewRegistry(
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()),
 		webhooks.WithIDGenerator(func() (string, error) {
 			next++
 			return fmt.Sprintf("wh-%016x", next), nil

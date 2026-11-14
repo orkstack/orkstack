@@ -21,6 +21,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -42,7 +43,7 @@ func startDeliveryReplica(t *testing.T, c client.Client, runQueue string, bodies
 ) *deliveryReplica {
 	t.Helper()
 	r := &deliveryReplica{}
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
 	r.notifier = webhooks.NewNotifier(registry, dispatcher, webhooks.NotifierOptions{
 		Launcher: engine.NewWebhookLauncher(c, runQueue, bodies, policy),
 	})
@@ -117,7 +118,7 @@ func TestIntegration_WebhookRetriesUntilTheReceiverAccepts(t *testing.T) {
 	defer cancel()
 	c := scopedCluster(t, ctx)
 	receiver := newDeliveryReceiver(t, http.StatusServiceUnavailable, http.StatusServiceUnavailable, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	hook, err := registry.Register(webhooks.Registration{URL: receiver.server.URL, Events: []webhooks.Event{webhooks.EventRunSucceeded}})
 	if err != nil {
 		t.Fatal(err)
@@ -162,7 +163,7 @@ func TestIntegration_WebhookDeliveryOutlivesTheReplicaThatQueuedIt(t *testing.T)
 	defer cancel()
 	c := scopedCluster(t, ctx)
 	receiver := newDeliveryReceiver(t, http.StatusServiceUnavailable, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	if _, err := registry.Register(webhooks.Registration{URL: receiver.server.URL}); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +217,7 @@ func TestIntegration_RecordWebhookDeliveryHistory(t *testing.T) {
 	defer cancel()
 	c := scopedCluster(t, ctx)
 	receiver := newDeliveryReceiver(t, http.StatusServiceUnavailable, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	if _, err := registry.Register(webhooks.Registration{URL: receiver.server.URL, Secret: "fixture-secret"}); err != nil {
 		t.Fatal(err)
 	}

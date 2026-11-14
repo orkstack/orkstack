@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -144,7 +145,7 @@ func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.
 }
 
 func TestRegistry_NormalizesAMixedRunAndTaskListToLifecycleOrder(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	hook := mustRegister(t, registry, webhooks.Registration{
 		URL: "https://example.test/hooks",
 		Events: []webhooks.Event{
@@ -200,7 +201,7 @@ func TestValidateScope_RefusesANonSlugAnOverlongComponentAndATaskWithoutATaskEve
 }
 
 func TestRegistry_RefusesAnInvalidScopeAndStoresNothing(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	if _, err := registry.Register(webhooks.Registration{URL: "https://example.test/hooks", Namespace: "Bad Name"}); err == nil {
 		t.Fatal("Register accepted a namespace that is not a slug")
 	}
@@ -213,7 +214,7 @@ func TestRegistry_RefusesAnInvalidScopeAndStoresNothing(t *testing.T) {
 }
 
 func TestRegistry_MatchingSelectsByEventAndScope(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	analytics := mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/analytics", Namespace: "analytics"})
 	etl := mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/etl", OrkflowName: "nightly-etl",
 		Events: []webhooks.Event{webhooks.EventTaskSucceeded, webhooks.EventRunSucceeded}})
@@ -322,7 +323,7 @@ func TestDelivery_RunTransitionBodyIsByteIdenticalToBeforeScope(t *testing.T) {
 func TestDispatcher_SetsTheTaskHeaderOnlyForTaskDeliveries(t *testing.T) {
 	rec := newReceiver(t, http.StatusOK)
 	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s3cr3t"}
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
 	if _, err := dispatcher.Deliver(context.Background(), hook, taskDelivery()); err != nil {
 		t.Fatalf("Deliver task: %v", err)
 	}
@@ -350,12 +351,12 @@ func TestDispatcher_SetsTheTaskHeaderOnlyForTaskDeliveries(t *testing.T) {
 func TestNotifier_FansOutByScope(t *testing.T) {
 	inScope := newReceiver(t, http.StatusOK)
 	outOfScope := newReceiver(t, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: inScope.server.URL, Namespace: "analytics"})
 	mustRegister(t, registry, webhooks.Registration{URL: outOfScope.server.URL, Namespace: "payments"})
 
 	results := &collector{}
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}), webhooks.NotifierOptions{})
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}), webhooks.NotifierOptions{})
 	notifier.Observe(results.observe)
 	delivery := sampleDelivery()
 	delivery.Namespace = "analytics"

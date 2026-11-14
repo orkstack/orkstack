@@ -89,12 +89,12 @@ func (o *EngineObserver) RecordArchiveCleanup(ctx context.Context, retired, fail
 	if inst == nil {
 		return
 	}
-	for _, o := range [...]struct {
+	for _, c := range [...]struct {
 		outcome string
 		count   int64
 	}{{"retired", retired}, {"failed", failed}, {"not_found_not_due", notFoundNotDue}, {"not_found_held", notFoundHeld}} {
-		if o.count > 0 {
-			inst.ArchiveCleanupRuns.Add(ctx, o.count, metric.WithAttributes(attribute.String(AttrOutcome, o.outcome)))
+		if c.count > 0 {
+			inst.ArchiveCleanupRuns.Add(ctx, c.count, metric.WithAttributes(attribute.String(AttrOutcome, c.outcome)))
 		}
 	}
 }

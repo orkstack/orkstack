@@ -21,6 +21,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -185,7 +186,7 @@ func FuzzRegisterWebhook(f *testing.F) {
 		f.Add(contentType, []byte(`{"url":"https://example.test/hooks"}`))
 	}
 	f.Fuzz(func(t *testing.T, contentType string, body []byte) {
-		registry := webhooks.NewRegistry()
+		registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 		handler := NewWebhookHandler(registry, nil)
 		request := httptest.NewRequest(http.MethodPost, WebhookCollectionPath, bytes.NewReader(body))
 		if contentType != "" {

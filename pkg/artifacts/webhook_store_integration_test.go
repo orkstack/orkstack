@@ -12,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -201,7 +202,7 @@ func TestIntegration_S3WebhookStoreListForDeliveryCarriesTheSecretAndListDoesNot
 		}
 	}
 
-	matched := ours(webhooks.NewDurableRegistry(store).Matching(webhooks.Match{Event: webhooks.EventRunSucceeded}))
+	matched := ours(webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())).Matching(webhooks.Match{Event: webhooks.EventRunSucceeded}))
 	if len(matched) != 2 {
 		t.Fatalf("the durable registry matched %d of our subscriptions, want 2", len(matched))
 	}

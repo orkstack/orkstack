@@ -28,6 +28,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
@@ -87,7 +88,7 @@ func newDeliveryHarness(t *testing.T) *deliveryHarness {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = bodies.Close() })
-	h := &deliveryHarness{bodies: bodies, registry: webhooks.NewRegistry(), options: &activityOptionsCapture{}}
+	h := &deliveryHarness{bodies: bodies, registry: webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())), options: &activityOptionsCapture{}}
 	notifier := webhooks.NewNotifier(h.registry, nil, webhooks.NotifierOptions{
 		Record: func(_ context.Context, result webhooks.Result) error {
 			h.mu.Lock()
@@ -109,7 +110,8 @@ func newDeliveryHarness(t *testing.T) *deliveryHarness {
 	h.env = suite.NewTestWorkflowEnvironment()
 	h.env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{h.options}})
 	h.env.RegisterWorkflowWithOptions(engine.WebhookDeliveryWorkflow, workflow.RegisterOptions{Name: engine.WebhookDeliveryWorkflowType})
-	activities := engine.NewWebhookDeliveryActivities(bodies, h.registry, nil, notifier, nil)
+	activities := engine.NewWebhookDeliveryActivities(bodies, h.registry,
+		webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}), notifier, nil)
 	h.env.RegisterActivityWithOptions(activities.SendWebhookAttempt, activity.RegisterOptions{Name: engine.ActivitySendWebhookAttempt})
 	h.env.RegisterActivityWithOptions(activities.SettleWebhookDelivery, activity.RegisterOptions{Name: engine.ActivitySettleWebhookDelivery})
 	return h

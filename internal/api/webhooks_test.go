@@ -21,6 +21,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -206,8 +207,8 @@ func newNotifierFixture(t *testing.T) *notifierFixture {
 	}))
 	t.Cleanup(f.server.Close)
 
-	f.registry = webhooks.NewRegistry()
-	f.notifier = webhooks.NewNotifier(f.registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	f.registry = webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
+	f.notifier = webhooks.NewNotifier(f.registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{})
 	f.adapter = api.NewWebhookNotifier(f.notifier, nil)
 	return f

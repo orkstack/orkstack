@@ -36,6 +36,9 @@ type Store interface {
 	// Events, Namespace, OrkflowName and TaskID; ID, Secret and CreatedAt are
 	// carried over and any change to them is refused before anything is
 	// written. The returned Webhook is Public(): the secret never leaves.
+	// It judges URL syntax only (ApplyChange): Registry.UpdateContext wraps
+	// change so that a new URL meets the registry's destination policy, so a
+	// store is never updated except through the registry.
 	Update(ctx context.Context, id string, change func(*Webhook) error) (Webhook, bool, error)
 }
 
@@ -361,14 +364,12 @@ func ApplyChange(current Webhook, change func(*Webhook) error) (Webhook, error) 
 	case !next.CreatedAt.Equal(current.CreatedAt):
 		return Webhook{}, errors.New("webhooks: an update cannot change a subscription's creation time")
 	}
-	// A URL left as it was is only syntax-checked: a subscription registered
-	// before the destination policy can still be disabled or renamed, and
-	// delivery refuses its address at dial. A new URL meets the policy.
-	check := ValidateDestination
-	if next.URL == current.URL {
-		check = ValidateURL
-	}
-	target, err := check(next.URL)
+	// The URL is syntax-checked here; a new one has met the destination
+	// policy in the change itself (Registry.UpdateContext), and one left as it
+	// was is not judged again, so a subscription registered before the policy
+	// can still be disabled or renamed while delivery refuses its address at
+	// dial.
+	target, err := ValidateURL(next.URL)
 	if err != nil {
 		return Webhook{}, err
 	}
@@ -400,12 +401,17 @@ type Registry struct {
 	newSecret func() (string, error)
 	now       func() time.Time
 	store     Store
+	policy    DestinationPolicy
 }
 
 // NewDurableRegistry adapts a shared store to the existing registry API. It
 // deliberately retains no subscription cache.
-func NewDurableRegistry(store Store) *Registry {
-	return &Registry{store: store}
+func NewDurableRegistry(store Store, options ...RegistryOption) *Registry {
+	r := &Registry{store: store}
+	for _, option := range options {
+		option(r)
+	}
+	return r
 }
 
 // Durable reports whether reads leave this process. It lets the notifier keep
@@ -425,6 +431,18 @@ func WithIDGenerator(gen func() (string, error)) RegistryOption {
 // WithSecretGenerator replaces the signing-secret source.
 func WithSecretGenerator(gen func() (string, error)) RegistryOption {
 	return func(r *Registry) { r.newSecret = gen }
+}
+
+// WithDestinationPolicy sets the policy a registration's or an update's new
+// URL must meet. Without it the registry admits public addresses only.
+func WithDestinationPolicy(p DestinationPolicy) RegistryOption {
+	return func(r *Registry) { r.policy = p }
+}
+
+// ValidateDestination is the registry's policy applied to raw: what a
+// registration or a change of URL must meet.
+func (r *Registry) ValidateDestination(raw string) (string, error) {
+	return r.policy.ValidateDestination(raw)
 }
 
 // WithClock replaces the registration clock.
@@ -456,9 +474,13 @@ func (r *Registry) Register(reg Registration) (Webhook, error) {
 // Store. The in-memory fallback is retained for unit tests.
 func (r *Registry) RegisterContext(ctx context.Context, reg Registration) (Webhook, error) {
 	if r.store != nil {
+		// The store judges syntax only; the destination is the registry's.
+		if _, err := r.policy.ValidateDestination(reg.URL); err != nil {
+			return Webhook{}, err
+		}
 		return r.store.Register(ctx, reg)
 	}
-	target, err := ValidateDestination(reg.URL)
+	target, err := r.policy.ValidateDestination(reg.URL)
 	if err != nil {
 		return Webhook{}, err
 	}
@@ -579,6 +601,7 @@ func (r *Registry) DeleteContext(ctx context.Context, id string) (bool, error) {
 // the store on every lookup, so the next delivery on every replica honours
 // the update with no cache to refresh.
 func (r *Registry) UpdateContext(ctx context.Context, id string, change func(*Webhook) error) (Webhook, bool, error) {
+	change = r.policy.guardURLChange(change)
 	if r.store != nil {
 		return r.store.Update(ctx, id, change)
 	}
@@ -682,38 +705,61 @@ func (r *Registry) LookupForDelivery(ctx context.Context, id string) (Webhook, b
 // and returns the URL as stored. It checks syntax only; ValidateDestination
 // adds the destination policy.
 func ValidateURL(raw string) (string, error) {
+	trimmed, _, err := parseURL(raw)
+	return trimmed, err
+}
+
+// parseURL is ValidateURL's check, returning the parsed URL too, so a caller
+// that judges the host never parses it a second time.
+func parseURL(raw string) (string, *url.URL, error) {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return "", fmt.Errorf("webhooks: url is required")
+		return "", nil, fmt.Errorf("webhooks: url is required")
 	}
 	parsed, err := url.Parse(trimmed)
 	if err != nil {
-		return "", fmt.Errorf("webhooks: invalid url %q: %w", raw, err)
+		return "", nil, fmt.Errorf("webhooks: invalid url %q: %w", raw, err)
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return "", fmt.Errorf("webhooks: invalid url %q: scheme must be http or https", raw)
+		return "", nil, fmt.Errorf("webhooks: invalid url %q: scheme must be http or https", raw)
 	}
 	if parsed.Host == "" {
-		return "", fmt.Errorf("webhooks: invalid url %q: missing host", raw)
+		return "", nil, fmt.Errorf("webhooks: invalid url %q: missing host", raw)
+	}
+	return trimmed, parsed, nil
+}
+
+// ValidateDestination is ValidateURL plus the policy: a host that is an IP
+// literal, or localhost, in a non-public range p does not allow is refused
+// with ErrDestinationBlocked. A name is judged when it is dialled. Only the
+// engine, which holds the operator's allow-list, calls it; a client's
+// ValidateURL checks syntax alone.
+func (p DestinationPolicy) ValidateDestination(raw string) (string, error) {
+	trimmed, parsed, err := parseURL(raw)
+	if err != nil {
+		return "", err
+	}
+	if err := p.checkHost(parsed.Hostname()); err != nil {
+		return "", fmt.Errorf("webhooks: invalid url %q: %w", raw, err)
 	}
 	return trimmed, nil
 }
 
-// ValidateDestination is ValidateURL plus the destination policy: a host that
-// is an IP literal, or localhost, in a non-public range the operator has not
-// allowed (webhooks.allowed_networks) is refused with ErrDestinationBlocked.
-// A name is judged when it is dialled. Only the engine, which holds the
-// operator's allow-list, calls it; a client's ValidateURL checks syntax alone.
-func ValidateDestination(raw string) (string, error) {
-	trimmed, err := ValidateURL(raw)
-	if err != nil {
-		return "", err
+// guardURLChange wraps an update so that a URL it changes meets p. A URL it
+// leaves as it was is not judged again.
+func (p DestinationPolicy) guardURLChange(change func(*Webhook) error) func(*Webhook) error {
+	return func(w *Webhook) error {
+		before := w.URL
+		if err := change(w); err != nil {
+			return err
+		}
+		if w.URL != before {
+			if _, err := p.ValidateDestination(w.URL); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
-	parsed, _ := url.Parse(trimmed)
-	if err := checkHost(parsed.Hostname()); err != nil {
-		return "", fmt.Errorf("webhooks: invalid url %q: %w", raw, err)
-	}
-	return trimmed, nil
 }
 
 // normalizeEvents validates a subscription's events and removes duplicates,

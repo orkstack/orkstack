@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -60,13 +61,13 @@ func TestNewDeliveryID_ShapeAndOrder(t *testing.T) {
 }
 
 func TestNotifier_MintsEveryDeliveryOfOneEventFromOneInstant(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	for range 3 {
 		mustRegister(t, registry, webhooks.Registration{URL: newReceiver(t, http.StatusOK).server.URL})
 	}
 	var mu sync.Mutex
 	var instants []time.Time
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}),
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}),
 		webhooks.NotifierOptions{NewDeliveryID: func(queuedAt time.Time) (string, error) {
 			mu.Lock()
 			instants = append(instants, queuedAt)
@@ -112,7 +113,7 @@ func TestDispatcher_ResultCarriesCoordinatesDigestAndTimestamps(t *testing.T) {
 	delivery.QueuedAt = time.Date(2025, 8, 16, 0, 0, 1, 5, time.UTC)
 
 	before := time.Now().UTC()
-	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).
+	result, err := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}).
 		Deliver(context.Background(), webhooks.Webhook{ID: "wh-1", URL: rec.server.URL, Secret: "s"}, delivery)
 	after := time.Now().UTC()
 	if err != nil {
@@ -169,7 +170,7 @@ func TestDispatcher_SettledAtIsStampedOnEveryReturnPath(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			rec := newReceiver(t, tc.statuses...)
-			result, _ := webhooks.NewDispatcher(webhooks.DispatcherOptions{}).
+			result, _ := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}).
 				Deliver(context.Background(), webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}, tc.delivery)
 			if result.SettledAt.IsZero() {
 				t.Errorf("SettledAt is zero on the %s path", name)
@@ -185,7 +186,7 @@ func TestDispatcher_SettledAtIsStampedOnEveryReturnPath(t *testing.T) {
 
 func TestDispatcher_SetsTheRedeliveryHeaderOnlyForRedeliveries(t *testing.T) {
 	rec := newReceiver(t, http.StatusOK)
-	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+	dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
 	hook := webhooks.Webhook{ID: "wh-1", URL: rec.server.URL}
 
 	plain := sampleDelivery()
@@ -227,7 +228,7 @@ func TestRegistry_LookupForDeliveryFindsOneSubscriptionWithItsSecret(t *testing.
 			{ID: "wh-a", URL: "https://a.example/hook", Secret: "secret-a"},
 			{ID: "wh-b", URL: "https://b.example/hook", Secret: "secret-b"},
 		}}
-		registry := webhooks.NewDurableRegistry(store)
+		registry := webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 		hook, ok, err := registry.LookupForDelivery(ctx, "wh-b")
 		if err != nil || !ok {
 			t.Fatalf("LookupForDelivery(wh-b) = %v, %v", ok, err)
@@ -246,14 +247,14 @@ func TestRegistry_LookupForDeliveryFindsOneSubscriptionWithItsSecret(t *testing.
 	})
 	t.Run("durable store error", func(t *testing.T) {
 		boom := errors.New("bucket unreachable")
-		registry := webhooks.NewDurableRegistry(&countingStore{deliveryErr: boom})
+		registry := webhooks.NewDurableRegistry(&countingStore{deliveryErr: boom}, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 		_, ok, err := registry.LookupForDelivery(ctx, "wh-a")
 		if ok || !errors.Is(err, boom) || !strings.Contains(err.Error(), "wh-a") {
 			t.Errorf("store error = (%v, %v), want a wrapped error naming wh-a", ok, err)
 		}
 	})
 	t.Run("in memory", func(t *testing.T) {
-		registry := webhooks.NewRegistry()
+		registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 		registered := mustRegister(t, registry, webhooks.Registration{URL: "https://a.example/hook", Secret: "mine"})
 		hook, ok, err := registry.LookupForDelivery(ctx, registered.ID)
 		if err != nil || !ok || hook.Secret != "mine" {
@@ -270,11 +271,11 @@ func TestRegistry_LookupForDeliveryFindsOneSubscriptionWithItsSecret(t *testing.
 // written first and the observer then sees the final result once.
 func TestObserve_IsCalledAfterTheRecordWithTheSettledResult(t *testing.T) {
 	rec := newReceiver(t, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: rec.server.URL})
 	var mu sync.Mutex
 	var order []string
-	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{}), webhooks.NotifierOptions{
+	notifier := webhooks.NewNotifier(registry, webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}), webhooks.NotifierOptions{
 		Record: func(_ context.Context, result webhooks.Result) error {
 			mu.Lock()
 			defer mu.Unlock()
@@ -313,7 +314,7 @@ func TestObserve_IsCalledAfterTheRecordWithTheSettledResult(t *testing.T) {
 // delivery: the engine's settle activity retries until the record exists.
 func TestNotifier_SettleReturnsTheRecordErrorAndObservesNothing(t *testing.T) {
 	refused := errors.New("store is down")
-	notifier := webhooks.NewNotifier(webhooks.NewRegistry(), nil, webhooks.NotifierOptions{
+	notifier := webhooks.NewNotifier(webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())), nil, webhooks.NotifierOptions{
 		Record: func(context.Context, webhooks.Result) error { return refused },
 	})
 	observed := 0
@@ -347,7 +348,7 @@ func (l *fakeLauncher) Launch(_ context.Context, _ webhooks.Webhook, delivery we
 // off, whole, to be sent and retried durably.
 func TestNotifier_HandsEachDeliveryToTheLauncherAndSendsNothing(t *testing.T) {
 	rec := newReceiver(t, http.StatusOK)
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: rec.server.URL})
 	mustRegister(t, registry, webhooks.Registration{URL: rec.server.URL})
 	launcher := &fakeLauncher{}
@@ -370,7 +371,7 @@ func TestNotifier_HandsEachDeliveryToTheLauncherAndSendsNothing(t *testing.T) {
 // A delivery the launcher could not queue is never sent, and its record says
 // so: one attempt row, no status, naming why.
 func TestNotifier_RecordsADeliveryThatCouldNotBeQueued(t *testing.T) {
-	registry := webhooks.NewRegistry()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	mustRegister(t, registry, webhooks.Registration{URL: "https://example.test/hook"})
 	var recorded []webhooks.Result
 	var mu sync.Mutex

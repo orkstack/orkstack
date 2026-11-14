@@ -24,6 +24,7 @@ import (
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
@@ -124,7 +125,7 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 	t.Helper()
 	e := &scopedEngine{bus: engine.NewEventBus(), runs: engine.NewRunStore(), registry: cfg.registry}
 	if e.registry == nil {
-		e.registry = webhooks.NewRegistry()
+		e.registry = webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	}
 	var runNotifier engine.RunNotifier
 	if cfg.project {
@@ -132,7 +133,7 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 		// body in a store every replica of the test shares, its record
 		// written by its settle step.
 		bodies := sharedDeliveryBodies(t)
-		dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{})
+		dispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
 		e.temporal = cfg.temporal
 		e.launched = &trackingLauncher{inner: engine.NewWebhookLauncher(cfg.temporal, cfg.runQueue, bodies, engine.DefaultWebhookDeliveryPolicy())}
 		options := webhooks.NotifierOptions{Launcher: e.launched}
@@ -168,6 +169,9 @@ func startScopedEngine(t *testing.T, cfg scopedEngineConfig) *scopedEngine {
 	config.Runs = e.runs
 	config.Bus = e.bus
 	config.Webhooks = e.registry
+	if config.Redelivery == nil {
+		config.Redelivery = webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()})
+	}
 	if cfg.deliveries != nil {
 		config.Deliveries = cfg.deliveries
 	}
@@ -310,7 +314,7 @@ func TestIntegration_TaskOutcomeWebhookFiresWhenTheTaskCommits(t *testing.T) {
 	must.OKf(t, err, "NewLocalWebhookStore")
 	e := startScopedEngine(t, scopedEngineConfig{
 		temporal: temporalClient, runQueue: queue, project: true, snapshots: newTestSnapshotStore(),
-		registry: webhooks.NewDurableRegistry(webhookStore),
+		registry: webhooks.NewDurableRegistry(webhookStore, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())),
 		config: api.Config{
 			Orkflows: engine.NewMemoryOrkflowStore(),
 			Starter:  engine.NewTemporalStarter(temporalClient, queue),
@@ -760,7 +764,7 @@ func TestIntegration_ScopedWebhookRegisteredOnOneReplicaMatchesOnAnother(t *test
 		if err != nil {
 			infraAbsent(t, "cannot open the webhook registry: %v", err)
 		}
-		return webhooks.NewDurableRegistry(store)
+		return webhooks.NewDurableRegistry(store, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
 	}
 	replicaA := startScopedEngine(t, scopedEngineConfig{
 		temporal: temporalClient, runQueue: queue, registry: durable(),

@@ -31,6 +31,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/webhooktest"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
@@ -188,7 +189,7 @@ func startRecordsHarness(t *testing.T, ctx context.Context, fail bool, subscribe
 		events:     events,
 	}
 	h.engine = startScopedEngine(t, scopedEngineConfig{
-		temporal: temporalClient, runQueue: queue, registry: webhooks.NewDurableRegistry(webhookStore),
+		temporal: temporalClient, runQueue: queue, registry: webhooks.NewDurableRegistry(webhookStore, webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy())),
 		project: true, snapshots: newTestSnapshotStore(), deliveries: store,
 		config: api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Starter: engine.NewTemporalStarter(temporalClient, queue)},
 	})
