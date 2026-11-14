@@ -3,6 +3,7 @@ package api_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -52,8 +53,9 @@ type scriptedStarter struct {
 }
 
 type startScript struct {
-	land bool  // the start lands in the cluster
-	err  error // what the caller is answered
+	land   bool   // the start lands in the cluster
+	err    error  // what the caller is answered
+	before func() // runs as the start is asked, before it is answered
 }
 
 func (s *scriptedStarter) StartRun(
@@ -74,6 +76,9 @@ func (s *scriptedStarter) StartRun(
 	}
 	foreign := s.foreign[runID]
 	s.mu.Unlock()
+	if step != nil && step.before != nil {
+		step.before()
+	}
 	if foreign {
 		return errors.Join(engine.ErrRunIDTaken, serviceerror.NewWorkflowExecutionAlreadyStarted("held", "", ""))
 	}
@@ -176,6 +181,11 @@ func newKeyedHarness(t *testing.T, mutate ...func(*api.Config)) *keyedHarness {
 }
 
 func (h *keyedHarness) submit(key, url string) (*orkstackv1.SubmitRunResponse, error) {
+	return h.submitIn(context.Background(), key, url)
+}
+
+// submitIn is submit under the caller's own context.
+func (h *keyedHarness) submitIn(ctx context.Context, key, url string) (*orkstackv1.SubmitRunResponse, error) {
 	msg := &orkstackv1.SubmitRunRequest{OrkflowName: "hello-ork", IdempotencyKey: key}
 	if url != "" {
 		data, err := structpb.NewStruct(map[string]any{"url": url})
@@ -184,7 +194,7 @@ func (h *keyedHarness) submit(key, url string) (*orkstackv1.SubmitRunResponse, e
 		}
 		msg.Input = &orkstackv1.Payload{Data: data}
 	}
-	resp, err := h.svc.SubmitRun(context.Background(), connect.NewRequest(msg))
+	resp, err := h.svc.SubmitRun(ctx, connect.NewRequest(msg))
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +292,6 @@ func TestSubmitKeyed_StartAnswersAreClassified(t *testing.T) {
 		"canceled":    serviceerror.NewCanceled("x"),
 		"unavailable": serviceerror.NewUnavailable("x"),
 		"internal":    serviceerror.NewInternal("x"),
-		"exhausted":   serviceerror.NewResourceExhausted(0, "x"),
 		"aborted":     serviceerror.NewAborted("x"),
 		"transport":   errors.New("connection reset"),
 		"own bound":   context.DeadlineExceeded,
@@ -326,6 +335,84 @@ func TestSubmitKeyed_StartAnswersAreClassified(t *testing.T) {
 					retry.GetRun().GetStatus(), h.starter.startedRuns())
 			}
 		})
+	}
+}
+
+// A start the cluster did not answer because it was rate-limiting answers
+// ResourceExhausted, not Unavailable, keyed or not, whichever of the start
+// and the read said so, wrapped or not; it is still an unknown outcome, so
+// nothing is recorded and the key's retry reads the id (docs/DEPLOY.md,
+// "Idempotency keys").
+func TestSubmit_ARateLimitedClusterAnswersResourceExhausted(t *testing.T) {
+	exhausted := fmt.Errorf("start workflow: %w", serviceerror.NewResourceExhausted(0, "namespace rate limit exceeded"))
+	cases := map[string]struct {
+		key     string
+		start   error
+		readErr error
+	}{
+		"keyed, the start":        {key: "k", start: exhausted},
+		"unkeyed, the start":      {start: exhausted},
+		"keyed, the read":         {key: "k", start: serviceerror.NewUnavailable("frontend gone"), readErr: exhausted},
+		"unkeyed, the read":       {start: serviceerror.NewUnavailable("frontend gone"), readErr: exhausted},
+		"keyed, the engine bound": {key: "k", start: errors.Join(context.DeadlineExceeded, exhausted)},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newKeyedHarness(t)
+			h.starter.next(startScript{land: false, err: tc.start, before: func() {
+				h.starter.mu.Lock()
+				h.starter.readErr = tc.readErr
+				h.starter.mu.Unlock()
+			}})
+			_, err := h.submit(tc.key, "")
+			if connect.CodeOf(err) != connect.CodeResourceExhausted {
+				t.Fatalf("submit = %v (%s), want ResourceExhausted", err, connect.CodeOf(err))
+			}
+			if tc.key != "" {
+				h.recordedNothing(t, h.binding(t, tc.key).RunID)
+			}
+			if started := h.starter.startedRuns(); len(started) != 0 {
+				t.Fatalf("started %v", started)
+			}
+		})
+	}
+}
+
+// A caller that gave up while the cluster was unavailable is told so: the
+// engine still finishes the submission on its own clock, but the answer is
+// Canceled or DeadlineExceeded, never Unavailable, as CancelRun answers.
+func TestSubmit_ACallerThatGaveUpIsToldSo(t *testing.T) {
+	cases := map[string]struct {
+		caller func() (context.Context, context.CancelFunc)
+		want   connect.Code
+	}{
+		"canceled": {caller: func() (context.Context, context.CancelFunc) {
+			return context.WithCancel(context.Background())
+		}, want: connect.CodeCanceled},
+		"deadline": {caller: func() (context.Context, context.CancelFunc) {
+			return context.WithTimeout(context.Background(), 50*time.Millisecond)
+		}, want: connect.CodeDeadlineExceeded},
+	}
+	for name, tc := range cases {
+		for _, key := range []string{"", "k"} {
+			t.Run(fmt.Sprintf("%s/key=%q", name, key), func(t *testing.T) {
+				h := newKeyedHarness(t)
+				ctx, cancel := tc.caller()
+				defer cancel()
+				// The caller leaves while the cluster has not answered the
+				// start: canceled outright, or its deadline passes.
+				h.starter.next(startScript{land: false, err: serviceerror.NewUnavailable("frontend gone"), before: func() {
+					if tc.want == connect.CodeCanceled {
+						cancel()
+					}
+					<-ctx.Done()
+				}})
+				_, err := h.submitIn(ctx, key, "")
+				if connect.CodeOf(err) != tc.want {
+					t.Fatalf("submit = %v (%s), want %s", err, connect.CodeOf(err), tc.want)
+				}
+			})
+		}
 	}
 }
 

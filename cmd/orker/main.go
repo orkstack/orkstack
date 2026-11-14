@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync"
 	"syscall"
 	"time"
 
@@ -767,11 +768,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// control channel keeps answering DescribeOrker (and the presence channel
 	// keeps this Orker in the inventory) while the task worker stops and
 	// drains its in-flight work on SIGTERM.
+	// stopTasks stops the task worker once, from the stop sequence below or
+	// from this defer, whichever comes first.
+	stopTasks := sync.OnceFunc(taskWorker.Stop)
 	var controlStarted, presenceStarted bool
 	defer func() {
 		// Stop cancels every running task and returns at once; the tasks then
 		// stop on their own goroutines, and the process must outlive them.
-		taskWorker.Stop()
+		stopTasks()
 		awaitStoppedTasks(logger, activities)
 		if controlStarted {
 			controlWorker.Stop()
@@ -839,13 +843,72 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"version", cfg.deployment.String())
 
 	<-ctx.Done()
-	// The first SIGINT or SIGTERM stops this Orker gracefully. Restoring the
-	// default action makes a second one end the process at once, leaving
-	// what a crash leaves (docs/DEPLOY.md "Removing an Orker safely").
+	// The first SIGINT or SIGTERM stops this Orker carefully
+	// (docs/OCI_ACTIVITY_CONTRACT.md §6.3, docs/DEPLOY.md "Removing an Orker
+	// safely"). Later ones are counted from here, registered before the first
+	// one's handler is removed so none takes the default action meanwhile: a
+	// third ends the process at once, killing the runtime CLIs it started.
+	later := make(chan os.Signal, 4)
+	signal.Notify(later, syscall.SIGINT, syscall.SIGTERM)
 	stop()
+	go countStopSignals(later, func() {
+		logger.Warn("a second stop signal: the orker is already handing its tasks back; a third exits at once")
+	}, func() {
+		killed := activities.KillRuntimeChildren()
+		logger.Warn("a third stop signal: exiting at once", "runtime_processes_killed", killed,
+			"running_tasks", activities.RunningTasks())
+		os.Exit(1)
+	})
 	sinks.Default().Ready.Set(false)
-	logger.Info("shutting down", "running_tasks", activities.RunningTasks())
+	// The cordon first, so the Orker asks for no new task and opens no new pin
+	// while it hands back what runs: a task that reaches it after the signal
+	// would only be handed back unstarted, spending an attempt of its own.
+	activities.Cordon().Set("the orker is stopping", time.Now())
+	// Every attempt not committing its own result is handed back. Then the
+	// task worker stops, so the Orker polls no more: a poll still open would
+	// deliver a retry of a handed-back task to this Orker, only to be handed
+	// back again, spending an attempt. Its Stop cancels a running pinned
+	// member, whose pin fails PIN_HOST_LOST; every unpinned attempt outlives
+	// it and reports itself, and the Orker waits until each has.
+	running := activities.RunningTasks()
+	handedBack := activities.HandBack()
+	logger.Info("shutting down: handing back running tasks", "running_tasks", running, "handed_back", handedBack)
+	stopTasks()
+	started := time.Now()
+	awaitHandedBack(logger, activities, 30*time.Second)
+	logger.Info("every handed-back task has reported", "took", time.Since(started).Round(time.Millisecond))
 	return nil
+}
+
+// awaitHandedBack waits until every handed-back attempt has reported, saying
+// every interval how many it still waits for, so a long wait (a task's long
+// grace, a report the cluster does not take) is never silent.
+func awaitHandedBack(logger *slog.Logger, activities *orker.Activities, interval time.Duration) {
+	for {
+		ctx, cancel := context.WithTimeout(context.Background(), interval)
+		err := activities.AwaitHandedBack(ctx)
+		cancel()
+		if err == nil {
+			return
+		}
+		logger.Info("still waiting for handed-back tasks to report", "running_tasks", activities.RunningTasks())
+	}
+}
+
+// countStopSignals counts the stop signals that follow the first: onSecond
+// runs on the second, and onThird on the third, which does not return.
+func countStopSignals(signals <-chan os.Signal, onSecond, onThird func()) {
+	n := 1
+	for range signals {
+		n++
+		switch n {
+		case 2:
+			onSecond()
+		case 3:
+			onThird()
+			return
+		}
+	}
 }
 
 // commitProbeRefusal names why the Orker will not start after its boot probe of

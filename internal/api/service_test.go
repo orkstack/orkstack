@@ -664,8 +664,10 @@ func TestCancelRun_PassesTheAssertedPrincipal(t *testing.T) {
 }
 
 // A cluster that is unavailable or rate-limiting answers so, worth asking
-// again; a caller that gave up is told so, not that the cluster refused; a
-// starter that cannot record the name is an internal error.
+// again, and so does a deadline or cancellation the cluster or the engine hit
+// while the caller still waits; a starter that cannot record the name is an
+// internal error. A caller whose own context ended is
+// TestCancelErrorCode_TheCallersOwnContextDecidesWhetherItGaveUp's.
 func TestCancelRun_SaysWhetherAskingAgainCanHelp(t *testing.T) {
 	tests := []struct {
 		name string
@@ -674,10 +676,10 @@ func TestCancelRun_SaysWhetherAskingAgainCanHelp(t *testing.T) {
 	}{
 		{"the cluster is unavailable", fmt.Errorf("cancel run run-001: %w", serviceerror.NewUnavailable("frontend down")), connect.CodeUnavailable},
 		{"the cluster is rate-limiting", fmt.Errorf("cancel run run-001: %w", serviceerror.NewResourceExhausted(0, "busy")), connect.CodeResourceExhausted},
-		{"the caller gave up", fmt.Errorf("cancel run run-001: %w (the cluster last answered: %v)", context.Canceled,
-			serviceerror.NewUnavailable("frontend down")), connect.CodeCanceled},
-		{"the cluster's own deadline", fmt.Errorf("cancel run run-001: %w", serviceerror.NewDeadlineExceeded("timed out")), connect.CodeDeadlineExceeded},
-		{"the cluster's own cancellation", fmt.Errorf("cancel run run-001: %w", serviceerror.NewCanceled("canceled")), connect.CodeCanceled},
+		{"the engine's own bound, the caller waiting", fmt.Errorf("cancel run run-001: %w (the cluster last answered: %v)", context.DeadlineExceeded,
+			serviceerror.NewUnavailable("frontend down")), connect.CodeUnavailable},
+		{"the cluster's own deadline, the caller waiting", fmt.Errorf("cancel run run-001: %w", serviceerror.NewDeadlineExceeded("timed out")), connect.CodeUnavailable},
+		{"the cluster's own cancellation, the caller waiting", fmt.Errorf("cancel run run-001: %w", serviceerror.NewCanceled("canceled")), connect.CodeUnavailable},
 		{"the starter cannot record the name", fmt.Errorf("cancel run run-001: %w", engine.ErrCancelNotWired), connect.CodeInternal},
 		{"anything else", errors.New("boom"), connect.CodeInternal},
 	}
@@ -999,11 +1001,14 @@ func TestSubmitRun_ConcurrentIdempotencyKeyStartsExactlyOneRun(t *testing.T) {
 		Bus:      engine.NewEventBus(),
 		Starter:  starter,
 		NewRunID: func() string {
+			// The count and its send are one step under the lock, so the
+			// channel receives allocations in the order they were counted
+			// (it is buffered for every request, so the send never blocks).
 			allocationMu.Lock()
 			allocationCount++
 			n := allocationCount
-			allocationMu.Unlock()
 			allocations <- n
+			allocationMu.Unlock()
 			if n == 1 {
 				<-releaseFirst
 			}

@@ -28,7 +28,7 @@ var allReasonCodes = []string{
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonCommitStoreUnavailable, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused, ReasonResourceAdmissionMismatch,
-	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped, ReasonHeartbeatLost, ReasonAttemptStoreUnavailable,
+	ReasonNetworkModeRefused, ReasonEachItemUnavailable, ReasonOrkerStopped, ReasonReportUndelivered, ReasonHeartbeatLost, ReasonAttemptStoreUnavailable,
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
@@ -108,6 +108,8 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"the cluster did not answer in time; nothing about the workload, and the next attempt may find it answering"},
 		{ReasonOrkerStopped, CategoryInfrastructureError, true,
 			"the host went away, not the workload: what the heartbeat timeout it stands beside says"},
+		{ReasonReportUndelivered, CategoryInfrastructureError, true,
+			"recorded only: the cluster, which never took the report, times the attempt out and retries it"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.reason, func(t *testing.T) {

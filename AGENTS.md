@@ -172,6 +172,14 @@ Temporal cancellation → Orker receives it → SIGTERM
 The 30-second cancellation grace period is the default. Ordinary Unix signal
 handling must be enough for cleanup; no custom cancellation API is required.
 
+An Orker that is itself stopped stops what it runs carefully: an unpinned
+attempt whose container has not ended by itself gets the cancellation
+sequence, heartbeated throughout, and the Orker reports it `ORKER_STOPPED`
+itself before it exits. An attempt whose container ended by itself, or that is
+adopting or writing a commit, completes and reports first. A pinned member
+still running fails its pin `PIN_HOST_LOST`. A signal sent to the Orker's
+process group never reaches a task's container.
+
 The Orker should heartbeat the Temporal Activity while the container exists. A
 heartbeat the cluster does not answer is not a cancellation: only an answer ends
 an attempt, until nothing has answered for the heartbeat timeout.
@@ -750,11 +758,15 @@ chain ends. A generation never re-asks a version decision an earlier
 generation made; on an unversioned fleet a later generation may run a newer
 build, so a change whose mid-run adoption would alter a run's observable
 behaviour must be decided where every run first meets it, not where a later
-generation might. A pinned workflow
-uses its own activity-worker version only while that version has workers
-polling its activity channel; otherwise Temporal falls through to that
-channel's current version. A task pin (§7.1) is the one exception to that
-rule, and it is stricter rather than looser: its session is opened through a
+generation might. A pinned workflow's activity goes to its own version on
+every activity channel that version has ever served, whether or not any of
+its workers polls it now, and waits there for one; only on a channel that
+version never served does Temporal send it to that channel's current version.
+So stopping or cordoning every Orker of a version that still serves a pool,
+before the version drains, strands its runs' tasks there until one returns.
+That wait is the wait of a task on a pool no Orker serves: explicit, named
+by the task's pending reason, and bounded only by the run's own `timeout:`.
+A task pin (§7.1) is stricter still: its session is opened through a
 version-routed activity, but its member activities ride the session's own
 per-host channel, which is unversioned and polled by exactly one process — so
 a pin stays on the process that opened it across a rollout and never falls
@@ -1207,6 +1219,18 @@ Every code change follows this order:
    names those tests and specs.
 9. Merge through §11.3. The full proof of the merged tree is what makes the
    change done.
+
+An AI coding agent that has the ECC plugin follows its language skills, not its
+own defaults. Before it writes Go, it loads `ecc:golang-patterns`,
+`ecc:golang-testing` and `ecc:tdd-workflow`. It reviews a Go diff with
+`ecc:go-reviewer`, and failure paths with `ecc:silent-failure-hunter`, both on
+a model other than the one that wrote the diff, and repeats until no CRITICAL
+or HIGH finding remains. It resolves a build or vet failure with
+`ecc:go-build-resolver`. UI and TypeScript changes use
+`ecc:typescript-reviewer` and the `impeccable` skill. A change touching
+authentication, secrets or a trust boundary also gets an
+`ecc:security-reviewer` pass. The skills inform the work; they never excuse a
+rule of this file.
 
 Unit tests are pure and table-driven. A parser of input OrkStack does not
 control (a request body, a flag, an authored document, an object read back from
