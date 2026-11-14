@@ -2462,7 +2462,10 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
     retry starts the id.
   - *A start whose answer was lost is never recorded as a failure.* The
     engine reads the id: a run that landed is answered, and one that did not
-    is `unavailable` with nothing recorded, for the retry to read again. Only
+    is `unavailable` with nothing recorded, for the retry to read again
+    (`resource_exhausted` when the cluster said it was rate-limiting, and
+    `canceled` or `deadline_exceeded` when the caller left first, as a
+    `CancelRun` or schedule call the cluster could not answer is). Only
     a start the cluster refused (invalid, not found, permission, failed
     precondition, unimplemented) is recorded as `RUN_START_FAILED`; if that
     record cannot be written, the submission says so (`unavailable`) instead
