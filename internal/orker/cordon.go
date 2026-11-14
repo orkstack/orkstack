@@ -346,12 +346,16 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		// Orker's own ExecuteTask is counted exactly as the shipped one is.
 		i.a.running.add()
 		defer i.a.running.done()
+		// The attempt's stage, entered first, so this Orker's stop sees
+		// every attempt it admitted (stop.go).
+		stage := i.a.stops.admit()
+		defer i.a.stops.leave(stage)
 		admission, err := i.a.admit(info.TaskQueue, executeTaskRequest(i.a.dispatcher.Policy, in))
 		if err != nil {
 			return nil, err
 		}
 		defer admission.Done()
-		return i.Next.ExecuteActivity(withAdmission(ctx, admission), in)
+		return i.Next.ExecuteActivity(withStage(withAdmission(ctx, admission), stage), in)
 	case sessionCreationActivityName:
 	default:
 		// Anything else polled on the pool channel (DescribeOrker) holds a

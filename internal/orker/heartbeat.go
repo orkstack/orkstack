@@ -120,6 +120,10 @@ type Heartbeater struct {
 	// cancel the activity's context with the cause that makes a cancel a cancel
 	// on the wire, and it does so from the answer to one more heartbeat.
 	deliver func(context.Context, HeartbeatProgress)
+	// onServerDecision, when set, hears every decision of the server's before
+	// deliver hands it to the SDK (oci_dispatcher.go: once the worker has
+	// stopped, the SDK's cancel no longer reaches the attempt).
+	onServerDecision func(error)
 	// onLost stops the attempt: nothing acknowledged a heartbeat for ackTimeout.
 	onLost func(error)
 	// ackTimeout is the attempt's heartbeat timeout, past which the cluster has
@@ -279,6 +283,9 @@ func (h *Heartbeater) report(calls context.Context) {
 		return
 	case serverDecided(err):
 		h.serverCanceled.Store(temporal.IsCanceledError(err))
+		if h.onServerDecision != nil {
+			h.onServerDecision(err)
+		}
 		if h.deliver != nil {
 			h.deliver(calls, progress)
 		}

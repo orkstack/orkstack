@@ -145,7 +145,7 @@ func (s *Service) readAutomationLive(ctx context.Context, ns string, schedules, 
 	if live.Namespace != nil && schedules {
 		views, err := s.schedules.List(ctx, ns, nil)
 		if err != nil {
-			return live, scheduleConnectError(err, ns, "")
+			return live, scheduleConnectError(ctx, err, ns, "")
 		}
 		for _, view := range views {
 			live.Schedules = append(live.Schedules, scheduleProto(view))

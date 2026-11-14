@@ -1,5 +1,5 @@
 PLAN  cached-pipeline@0.1.0  namespace default
-definition  sha256:8f71581a6cff27e657cb022013db0c82ec1f279e86a73c5f2397790c67527c93
+definition  sha256:ff31413ca129eb9d1f542759d4042041cee501bf9b9008545c0d41202e432412
 input       {"rows":1000}
 
 WAVE  TASK       OUTCOME  DETAIL

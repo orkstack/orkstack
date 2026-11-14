@@ -468,6 +468,48 @@ func classifyStart(err error) startOutcome {
 	return startUnknown
 }
 
+// unknownStartCode is the code a start whose outcome is unknown answers
+// with: ResourceExhausted when the cluster said, on the start or the read
+// after it, that it was rate-limiting, and Unavailable otherwise. Both ask
+// the caller to submit again, and neither records anything. A deadline here
+// is the engine's own bound (submitWorkBound), never the caller's, so it is
+// Unavailable too; a caller that left is told so by callerGaveUp.
+func unknownStartCode(errs ...error) connect.Code {
+	var exhausted *serviceerror.ResourceExhausted
+	for _, err := range errs {
+		if errors.As(err, &exhausted) {
+			return connect.CodeResourceExhausted
+		}
+		if st, ok := status.FromError(err); ok && st.Code() == codes.ResourceExhausted {
+			return connect.CodeResourceExhausted
+		}
+	}
+	return connect.CodeUnavailable
+}
+
+// callerGaveUp answers a caller whose own context ended before its
+// submission was answered: an answer that asks it to ask again (Unavailable,
+// ResourceExhausted) becomes Canceled or DeadlineExceeded, as CancelRun
+// answers, with the same message. The engine finished the submission on its
+// own clock either way; a refusal, or a run, is answered as it is.
+func callerGaveUp(ctx context.Context, err error) error {
+	if ctx.Err() == nil {
+		return err
+	}
+	var ce *connect.Error
+	if !errors.As(err, &ce) {
+		return err
+	}
+	if code := ce.Code(); code != connect.CodeUnavailable && code != connect.CodeResourceExhausted {
+		return err
+	}
+	gone := connect.CodeCanceled
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		gone = connect.CodeDeadlineExceeded
+	}
+	return connect.NewError(gone, ce.Unwrap())
+}
+
 // startRun writes the run's definition when it is passed by reference, then
 // starts it, and decides what each answer means. reissued is true for a
 // fresh id that already replaced a refused one: a second refusal ends the
@@ -526,7 +568,7 @@ func (s *Service) startRun(
 	read, readErr := s.readRunID(ctx, sub.binding, runID, fingerprint)
 	if readErr != nil {
 		forgetFresh()
-		return nil, connect.NewError(connect.CodeUnavailable,
+		return nil, connect.NewError(unknownStartCode(err, readErr),
 			fmt.Errorf("start run %s: %w; whether it started could not be read (%w); %s",
 				runID, err, readErr, submitAgain(sub)))
 	}
@@ -553,7 +595,7 @@ func (s *Service) startRun(
 		return s.replaceForeignID(ctx, sub, runID)
 	default: // idAbsent
 		forgetFresh()
-		return nil, connect.NewError(connect.CodeUnavailable,
+		return nil, connect.NewError(unknownStartCode(err),
 			fmt.Errorf("start run %s: %w; it may still start; %s", runID, err, submitAgain(sub)))
 	}
 }

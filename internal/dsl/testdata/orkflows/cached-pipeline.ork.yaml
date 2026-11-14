@@ -36,7 +36,10 @@ tasks:
       command:
         - sh
         - -c
-        - "date +%s%N"
+        # The run's own id: a value no two runs share, so train's memo key
+        # moves on every run. (The image's date has no nanoseconds, so two
+        # runs within one second once printed the same stamp.)
+        - "grep -o 'ork-[0-9a-z-]*' /orkstack/input/task.json | head -n 1"
 
   - id: train
     uses: shell

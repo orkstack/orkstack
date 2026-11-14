@@ -18,13 +18,12 @@ import (
 )
 
 // An Orker stopped with SIGTERM (a pod deletion, `systemctl stop`, `docker
-// stop`) cancels its running tasks. These scenarios hold it to what a
-// cancellation owes each of them before the process exits (docs/DEPLOY.md
-// "Removing an Orker safely"): the container is sent SIGTERM and, after the
-// task's own grace, SIGKILL; the attempt's record names ORKER_STOPPED; and the
-// lines the workload printed after SIGTERM reach the task's log. Temporal is
-// told nothing, exactly as for an Orker that died: the task ends
-// ORKER_HEARTBEAT_TIMEOUT, or is retried on another Orker under its policy.
+// stop`) hands its running tasks back. These scenarios hold it to what that
+// owes each of them before the process exits (docs/DEPLOY.md "Removing an
+// Orker safely"): the container is sent SIGTERM and, after the task's own
+// grace, SIGKILL; the lines the workload printed after SIGTERM reach the
+// task's log; and the Orker reports the attempt ORKER_STOPPED itself, so the
+// task ends ORKER_STOPPED, or is retried on another Orker under its policy.
 
 // stubbornGraceSeconds is how long the task that ignores SIGTERM keeps its
 // container before the SIGKILL. The Orker cannot exit sooner.
@@ -188,8 +187,16 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 					byTask[row.TaskID] = row
 				}
 			}
+			noRetry := variant.retry == "    retry:\n      maximum_attempts: 1\n"
 			for _, task := range []string{"graceful", "stubborn"} {
 				row := byTask[task]
+				// With no retry, graceful's report (sent the moment its trap
+				// exits) fails the run, and the run cancels stubborn unless
+				// stubborn's own report, after its grace, landed first.
+				if noRetry && task == "stubborn" && row.Outcome == "CANCELED" && row.OrkerID == firstID {
+					t.Logf("(%s) stubborn attempt 1: CANCELED by the run graceful's failure ended", variant.name)
+					continue
+				}
 				if row.Outcome != "FAILED" || row.Error.Code != "ORKER_STOPPED" ||
 					row.Error.Category != "INFRASTRUCTURE_ERROR" || !row.Error.Retryable || row.OrkerID != firstID {
 					t.Errorf("%s attempt 1 = %+v, want FAILED ORKER_STOPPED (INFRASTRUCTURE_ERROR, retryable) on %s",
@@ -208,9 +215,9 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 			}
 			s.mustCLI(0, "run", "attempts", runID)
 
-			// Temporal was told nothing: the outcome is the one a dead Orker
-			// gets.
-			if variant.retry == "    retry:\n      maximum_attempts: 1\n" {
+			// The Orker reported both itself: the task ends ORKER_STOPPED, not
+			// as a dead Orker's would.
+			if noRetry {
 				awaitTerminalOnB(ctx, t, s.replicas[0], runID)
 				got := s.mustCLI(0, "--json", "run", "get", runID)
 				var doc struct {
@@ -231,12 +238,13 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 					t.Fatalf("run = %s, want FAILED with two tasks:\n%s", doc.Run.Status, got)
 				}
 				for _, taskRun := range doc.Run.TaskRuns {
-					if taskRun.Error.Code != "ORKER_HEARTBEAT_TIMEOUT" {
-						t.Fatalf("task %s ended %q, want ORKER_HEARTBEAT_TIMEOUT:\n%s",
-							taskRun.TaskID, taskRun.Error.Code, got)
+					code := taskRun.Error.Code
+					if code != "ORKER_STOPPED" && !(taskRun.TaskID == "stubborn" && code == "TASK_CANCELED") {
+						t.Fatalf("task %s ended %q, want ORKER_STOPPED (stubborn: or TASK_CANCELED by the run):\n%s",
+							taskRun.TaskID, code, got)
 					}
 				}
-				t.Logf("(%s) the run FAILED with both tasks ORKER_HEARTBEAT_TIMEOUT", variant.name)
+				t.Logf("(%s) the run FAILED, its tasks reported by the stopping orker", variant.name)
 				return
 			}
 

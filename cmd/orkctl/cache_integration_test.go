@@ -43,6 +43,19 @@ func cachedRun(ctx context.Context, t *testing.T, s *timingStack, name string, e
 	return run
 }
 
+// cacheTrace renders what each task of run did with the cache: its outcome,
+// its key, and whether its memo was written.
+func cacheTrace(label string, run *orkstackv1.Run) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "%s run %s:", label, run.GetId())
+	for _, tr := range run.GetTaskRuns() {
+		c := tr.GetCache()
+		fmt.Fprintf(&b, "\n  %s: %s key=%s memo_written=%v memo_write_error=%q miss=%s",
+			tr.GetTaskId(), c.GetOutcome(), c.GetKey(), c.GetMemoWritten(), c.GetMemoWriteError(), c.GetMissReason())
+	}
+	return b.String()
+}
+
 func cacheOutcomeOf(run *orkstackv1.Run, task string) orkstackv1.CacheOutcome {
 	for _, tr := range run.GetTaskRuns() {
 		if tr.GetTaskId() == task {
@@ -147,7 +160,7 @@ func TestIntegration_CacheReadsOnASecondReplica(t *testing.T) {
 	name := cachedCLIName()
 	s.apply(cachedCLIDoc(t, name))
 	awaitOrkflowVisible(ctx, t, s.replicas[1].flows, name)
-	cachedRun(ctx, t, s, name)
+	first := cachedRun(ctx, t, s, name)
 	second := cachedRun(ctx, t, s, name)
 	awaitTerminalOnB(ctx, t, s.replicas[1], second.GetId())
 	got := s.mustCLI(1, "run", "get", second.GetId())
@@ -159,9 +172,13 @@ func TestIntegration_CacheReadsOnASecondReplica(t *testing.T) {
 		t.Fatalf("replica B's featurize hits = %q", hits)
 	}
 	// featurize's one memo and train's two (stamp moves train's key every run).
+	// What each run's tasks did with the cache, and what the store holds, are
+	// read first, so a purge that finds another count says why.
+	inventory := s.mustCLI(1, "--json", "cache", "stats", "--orkflow", name)
 	purged := s.mustCLI(1, "cache", "purge", "--orkflow", name, "--yes")
 	if !strings.Contains(purged, "Purged 3 memos") {
-		t.Fatalf("replica B's purge:\n%s", purged)
+		t.Fatalf("replica B's purge:\n%s\nbefore it:\n%s\n%s\ncache stats --json:\n%s",
+			purged, cacheTrace("first", first), cacheTrace("second", second), inventory)
 	}
 	s.writeTranscript("cache-C2.txt")
 }

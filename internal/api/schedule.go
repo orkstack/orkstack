@@ -9,7 +9,6 @@ import (
 	"unicode/utf8"
 
 	"connectrpc.com/connect"
-	"go.temporal.io/api/serviceerror"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
@@ -202,11 +201,12 @@ func scheduleProto(view engine.ScheduleView) *orkstackv1.Schedule {
 }
 
 // scheduleConnectError maps a controller failure onto a Connect code. The
-// three sentinels are the caller's to act on; an unreachable cluster is
-// Unavailable; anything else — ErrOverlapPolicyUnknown included, since the
-// API refuses every undeclared value first — is Internal. A cluster failure
-// never reads as an empty list or a successful delete.
-func scheduleConnectError(err error, namespace, name string) error {
+// three sentinels are the caller's to act on; a cluster that could not be
+// reached or was rate-limiting, and a caller whose own ctx ended, answer as
+// CancelRun does (clusterErrorCode); anything else — ErrOverlapPolicyUnknown included,
+// since the API refuses every undeclared value first — is Internal. A cluster
+// failure never reads as an empty list or a successful delete.
+func scheduleConnectError(ctx context.Context, err error, namespace, name string) error {
 	switch {
 	case errors.Is(err, engine.ErrScheduleNotFound):
 		return connect.NewError(connect.CodeNotFound,
@@ -216,12 +216,6 @@ func scheduleConnectError(err error, namespace, name string) error {
 			fmt.Errorf("schedule %q already exists in namespace %q", name, namespace))
 	case errors.Is(err, engine.ErrScheduleSpecRefused):
 		return connect.NewError(connect.CodeInvalidArgument, err)
-	case errors.Is(err, context.Canceled):
-		return connect.NewError(connect.CodeCanceled, err)
 	}
-	var unavailable *serviceerror.Unavailable
-	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &unavailable) {
-		return connect.NewError(connect.CodeUnavailable, err)
-	}
-	return connect.NewError(connect.CodeInternal, err)
+	return connect.NewError(clusterErrorCode(ctx, err, connect.CodeInternal), err)
 }

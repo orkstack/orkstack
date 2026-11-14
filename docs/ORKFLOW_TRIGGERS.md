@@ -177,7 +177,7 @@ Every failure is `{"error":{"code":"…","message":"…"}}`:
 | Orkflow or pinned version no longer exists | 404 | `not_found` |
 | A resolved pool has no live Orker; the namespace is held, at `max_running`, or over (or unable to measure) an enforced budget; the image policy refuses the definition's image; a composed child can no longer be planned | 412 | `failed_precondition` |
 | `Idempotency-Key` already used for another submission (another Orkflow, version or body) | 409 | `already_exists` |
-| Object storage or Temporal unavailable at submit | 503 | `unavailable` |
+| Object storage or Temporal unavailable, or Temporal rate-limiting, at submit, or the client left before the answer | 503 | `unavailable` |
 | Anything else | 500 | `internal` |
 
 Rows from `400` down are `SubmitRun`'s own Connect codes carried through; the

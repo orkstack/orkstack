@@ -206,8 +206,12 @@ func triggerSubmitStatus(err error) (int, string) {
 		return http.StatusNotFound, code.String()
 	case connect.CodeFailedPrecondition:
 		return http.StatusPreconditionFailed, code.String()
-	case connect.CodeUnavailable:
-		return http.StatusServiceUnavailable, code.String()
+	case connect.CodeUnavailable, connect.CodeResourceExhausted,
+		connect.CodeCanceled, connect.CodeDeadlineExceeded:
+		// An unreachable cluster, a rate-limiting one, and a submit the
+		// caller left before it was answered are all worth sending again,
+		// and this route names them as one.
+		return http.StatusServiceUnavailable, connect.CodeUnavailable.String()
 	case connect.CodeAlreadyExists:
 		// The Idempotency-Key was used for another submission: a retry of
 		// this request can never succeed, so it is a conflict, not a 500.

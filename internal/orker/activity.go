@@ -150,6 +150,9 @@ type Activities struct {
 	// cordon interceptor at the SDK seam (running_tasks), and is what a
 	// stopping Orker waits on (WaitForTasks).
 	running taskCount
+	// stops is every ExecuteTask attempt in flight with its stage, which this
+	// Orker's own stop hands back (stop.go).
+	stops *stopRegistry
 	// pins is the set of sessions this Orker accepted and has not completed
 	// (open_pins), maintained by the same interceptor.
 	pins *openPins
@@ -237,6 +240,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		maxPins:     opts.MaxPins,
 		cordon:      NewCordon(),
 		pins:        newOpenPins(),
+		stops:       newStopRegistry(),
 		capacity:    capacity,
 		capacityErr: capacityErr,
 		taskQueue:   opts.TaskQueue,
@@ -295,6 +299,34 @@ func (a *Activities) WaitForTasks(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// HandBack begins this Orker's stop (docs/OCI_ACTIVITY_CONTRACT.md §6.3).
+// Every attempt that has not started its container, and every running one
+// that is not a pinned member, is taken back: its work is cancelled, its
+// container gets the cancellation sequence while its heartbeats go on, and it
+// reports itself ORKER_STOPPED. An attempt with a result of its own (an
+// adopted commit, a memo hit, a container that ended by itself) completes and
+// reports first. An attempt that reaches the Orker after this starts nothing.
+// It returns how many attempts it took back.
+func (a *Activities) HandBack() int { return a.stops.handBack() }
+
+// AwaitHandedBack returns once every attempt HandBack waits for has reported
+// itself: every unpinned attempt, and every pinned member not running a
+// container. A running pinned member is left to the task worker's Stop, which
+// ends it, and its pin fails PIN_HOST_LOST. It returns early when ctx is done.
+func (a *Activities) AwaitHandedBack(ctx context.Context) error { return a.stops.awaitReported(ctx) }
+
+// KillRuntimeChildren kills every process this Orker started to drive its
+// container runtime, with its process group, and reports how many it
+// signalled: the Orker's last act on a third stop signal, so no CLI outlives
+// it. What those processes drove is left to the daemon; the next boot's reap
+// removes what this Orker labelled.
+func (a *Activities) KillRuntimeChildren() int {
+	if killer, ok := a.dispatcher.Runtime.(interface{ KillChildren() int }); ok {
+		return killer.KillChildren()
+	}
+	return 0
 }
 
 // taskCount is a count that can be waited on until it is zero. The zero value

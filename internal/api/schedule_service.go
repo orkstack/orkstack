@@ -98,7 +98,7 @@ func (s *Service) CreateSchedule(
 	}
 	view, err := s.schedules.Create(ctx, rec, msg.GetPaused())
 	if err != nil {
-		return nil, scheduleConnectError(err, ns, msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, msg.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.CreateScheduleResponse{Schedule: scheduleProto(view)}), nil
 }
@@ -139,7 +139,7 @@ func (s *Service) ListSchedules(
 	}
 	views, err := s.schedules.List(ctx, ns.GetName(), keep)
 	if err != nil {
-		return nil, scheduleConnectError(err, ns.GetName(), "")
+		return nil, scheduleConnectError(ctx, err, ns.GetName(), "")
 	}
 	out := make([]*orkstackv1.Schedule, 0, len(views))
 	for _, view := range views {
@@ -162,7 +162,7 @@ func (s *Service) GetSchedule(
 	}
 	view, err := s.schedules.Describe(ctx, ns, req.Msg.GetName())
 	if err != nil {
-		return nil, scheduleConnectError(err, ns, req.Msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.GetScheduleResponse{Schedule: scheduleProto(view)}), nil
 }
@@ -207,7 +207,7 @@ func (s *Service) UpdateSchedule(
 		return nil, pinErr
 	}
 	if err != nil {
-		return nil, scheduleConnectError(err, ns, msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, msg.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.UpdateScheduleResponse{Schedule: scheduleProto(view)}), nil
 }
@@ -217,7 +217,7 @@ func (s *Service) UpdateSchedule(
 func (s *Service) describeAfter(ctx context.Context, ns, name string) (*orkstackv1.Schedule, error) {
 	view, err := s.schedules.Describe(ctx, ns, name)
 	if err != nil {
-		return nil, scheduleConnectError(err, ns, name)
+		return nil, scheduleConnectError(ctx, err, ns, name)
 	}
 	return scheduleProto(view), nil
 }
@@ -235,7 +235,7 @@ func (s *Service) PauseSchedule(
 		return nil, connect.NewError(connect.CodeInvalidArgument, err)
 	}
 	if err := s.schedules.Pause(ctx, ns, req.Msg.GetName(), req.Msg.GetReason()); err != nil {
-		return nil, scheduleConnectError(err, ns, req.Msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
 	}
 	schedule, err := s.describeAfter(ctx, ns, req.Msg.GetName())
 	if err != nil {
@@ -254,7 +254,7 @@ func (s *Service) ResumeSchedule(
 		return nil, err
 	}
 	if err := s.schedules.Resume(ctx, ns, req.Msg.GetName()); err != nil {
-		return nil, scheduleConnectError(err, ns, req.Msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
 	}
 	schedule, err := s.describeAfter(ctx, ns, req.Msg.GetName())
 	if err != nil {
@@ -279,7 +279,7 @@ func (s *Service) FireSchedule(
 			fmt.Errorf("overlap: unknown overlap policy %d", int32(req.Msg.GetOverlap())))
 	}
 	if err := s.schedules.Fire(ctx, ns, req.Msg.GetName(), req.Msg.GetOverlap()); err != nil {
-		return nil, scheduleConnectError(err, ns, req.Msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
 	}
 	schedule, err := s.describeAfter(ctx, ns, req.Msg.GetName())
 	if err != nil {
@@ -314,7 +314,7 @@ func (s *Service) BackfillSchedule(
 			fmt.Errorf("backfill window is %s; the limit is 366 days", end.Sub(start)))
 	}
 	if err := s.schedules.Backfill(ctx, ns, msg.GetName(), start, end, msg.GetOverlap()); err != nil {
-		return nil, scheduleConnectError(err, ns, msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, msg.GetName())
 	}
 	schedule, err := s.describeAfter(ctx, ns, msg.GetName())
 	if err != nil {
@@ -334,7 +334,7 @@ func (s *Service) DeleteSchedule(
 		return nil, err
 	}
 	if err := s.schedules.Delete(ctx, ns, req.Msg.GetName()); err != nil {
-		return nil, scheduleConnectError(err, ns, req.Msg.GetName())
+		return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
 	}
 	return connect.NewResponse(&orkstackv1.DeleteScheduleResponse{}), nil
 }

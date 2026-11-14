@@ -48,11 +48,12 @@ It can't protect everything: an attempt that reaches the store before the Orker 
 
 ## Stop the process safely
 
-A stop cancels the tasks still running on the Orker. Each container gets `SIGTERM`, then `SIGKILL` after its cancellation grace period (30 seconds by default). Each cancelled attempt is recorded as `ORKER_STOPPED`, and the task ends `ORKER_HEARTBEAT_TIMEOUT`, or runs again on another Orker if its retry policy allows.
+A stop hands back the tasks still running on the Orker. Each container gets `SIGTERM`, then `SIGKILL` after its cancellation grace period (30 seconds by default), and the Orker reports each attempt `ORKER_STOPPED` before it exits. The task runs again on another Orker if its retry policy allows, or fails `ORKER_STOPPED`. A task whose container already finished reports its own result.
 
-- Give the process manager at least the longest grace period its tasks use. A stop takes that long, plus a few seconds to write the records.
-- A second `SIGTERM` exits at once, and leaves what a crash leaves.
-- `SIGTERM` does not cordon the Orker. To let work finish first, cordon and drain, then stop.
+- Give the process manager at least the longest grace period its tasks use. A stop takes that long, plus a few seconds to report and record the attempts.
+- A signal to the Orker's whole process group, such as Ctrl-C, never reaches a task's container.
+- A second `SIGTERM` changes nothing. A third exits at once, and leaves what a crash leaves.
+- `SIGTERM` cordons the Orker, so it takes no new task, but it does not wait for running ones. To let work finish first, cordon and drain, then stop.
 
 In Compose, give the Orker's container a longer stop grace than its tasks' grace, and run it with an init so the stop reaches the process:
 
