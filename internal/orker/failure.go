@@ -102,11 +102,18 @@ const (
 	// unreachable while the store honours its digests, stated rather than
 	// guessed at.
 	ReasonEachItemUnavailable = "EACH_ITEM_UNAVAILABLE"
-	// ReasonOrkerStopped is an attempt this Orker stopped because the process
-	// itself was shutting down (SIGTERM, SIGINT). It is written to the
-	// attempt's record and never reported to Temporal, which sees what it sees
-	// of an Orker that died: no heartbeat, then ORKER_HEARTBEAT_TIMEOUT.
+	// ReasonOrkerStopped is an attempt this Orker took back because the
+	// process itself was stopping (SIGTERM, SIGINT): its container, if it had
+	// one, got the cancellation sequence, and the Orker reports the attempt
+	// itself before it exits (stop.go). A pinned member it stopped is
+	// recorded so and not reported: its pin fails PIN_HOST_LOST. Retried under
+	// the task's policy.
 	ReasonOrkerStopped = "ORKER_STOPPED"
+	// ReasonReportUndelivered is a handed-back attempt whose report the
+	// cluster never took before the Orker's report deadline. It is written to
+	// the attempt's record only: the cluster, which never heard of it, times
+	// the attempt out once its heartbeats stop.
+	ReasonReportUndelivered = "REPORT_UNDELIVERED"
 	// ReasonHeartbeatLost is an attempt stopped because its heartbeat could not
 	// reach the cluster within the heartbeat interval. Nobody cancelled the
 	// task: the SDK cancels the attempt locally when a heartbeat RPC keeps
@@ -211,6 +218,7 @@ var reasonCategory = map[string]string{
 	ReasonNetworkModeRefused:        CategoryContractViolation,
 	ReasonEachItemUnavailable:       CategoryContractViolation,
 	ReasonOrkerStopped:              CategoryInfrastructureError,
+	ReasonReportUndelivered:         CategoryInfrastructureError,
 	ReasonHeartbeatLost:             CategoryInfrastructureError,
 	ReasonAttemptStoreUnavailable:   CategoryInfrastructureError,
 

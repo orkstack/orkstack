@@ -26,6 +26,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - The cluster now keeps a finished run at least `engine.idempotency_ttl` plus 5 minutes, plus the cleanup margin, when the maximum run retention is shorter; runs are retired when they were ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 - The Orker numbers each task's attempts itself and starts nothing until the cluster answers its first heartbeat; a store that refuses the number fails `ATTEMPT_STORE_UNAVAILABLE` ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#invariants-the-layout-carries)).
 - Upgrade every Orker of a pool together: an older Orker beside a newer one can overwrite its attempt records, and a submit that probes the pool refuses the mix ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#upgrading-a-pools-orkers)).
+- A stopped Orker now lets finished tasks report, reports the rest `ORKER_STOPPED` at once instead of timing out, and a signal to its process group no longer reaches containers ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#removing-an-orker-safely-cordon-and-drain)).
 
 ### Fixed
 

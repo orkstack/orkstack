@@ -3242,31 +3242,56 @@ An Orker also cordons itself, with these same effects on tasks and pins, while
 object storage does not answer it. That cordon does keep its pool live ("When
 object storage goes away", below).
 
-`SIGTERM` (or `SIGINT`) stops polling and cancels in-flight work; the Orker
-does not cordon itself on it. An operator who wants in-flight work to finish
-first cordons and drains. What a stop owes the work it cancels, the Orker
-does before it exits:
+`SIGTERM` (or `SIGINT`) stops the Orker carefully. It cordons itself at once
+(`orkctl orker list` shows the reason `the orker is stopping`), so it asks for
+no new task and opens no new pin, but it does not wait for in-flight work to
+finish: an operator who wants that cordons and drains first. What a stop
+does, before the Orker exits:
 
-- each running container gets the cancellation sequence: `SIGTERM`, then
-  `SIGKILL` once the task's `cancellation_grace_period_seconds` (30 by
-  default) has passed;
-- each attempt it stopped gets its record, `FAILED` with `ORKER_STOPPED`
-  (`orkctl run attempts`), and its log keeps every line the workload printed,
-  the ones after `SIGTERM` included (`orkctl run logs`);
-- the run is told nothing, exactly as if the Orker had died: the task ends
-  `ORKER_HEARTBEAT_TIMEOUT` about 30 s after the stop, or, under its `retry:`
-  policy, runs again on another Orker. A pin it hosts fails `PIN_HOST_LOST`.
-  A task whose grace outlasts that timeout can start again elsewhere while
-  this Orker still waits it out: execution is at-least-once (`AGENTS.md` §4).
+- an attempt with a result of its own finishes and reports it as usual: one
+  adopting a commit or writing a memo hit's commit, and one whose container
+  ended by itself, whatever its exit;
+- every other unpinned attempt is handed back. Its container gets the
+  cancellation sequence — `SIGTERM`, then `SIGKILL` once the task's
+  `cancellation_grace_period_seconds` (30 by default) has passed — while the
+  attempt keeps heartbeating, and nothing it left is committed. The Orker then
+  reports the attempt `ORKER_STOPPED` itself, so the task runs again under its
+  `retry:` policy at once, not after a heartbeat timeout; a task with no
+  `retry:` fails `ORKER_STOPPED`. Its record says `FAILED` with
+  `ORKER_STOPPED` (`orkctl run attempts`), and its log keeps every line the
+  workload printed, the ones after `SIGTERM` included (`orkctl run logs`). A
+  report the cluster never takes within 10 minutes is recorded
+  `REPORT_UNDELIVERED`, and the task then ends `ORKER_HEARTBEAT_TIMEOUT`, or
+  runs again, as for an Orker that died;
+- a task that reaches the Orker after the signal starts nothing, leaves no
+  record, and is handed back the same way;
+- a pin it hosts fails `PIN_HOST_LOST`: a member still running is ended when
+  the Orker stops its workers, and one not yet started is refused.
+
+On a versioned fleet (`ORK_BUILD_ID` set) a handed-back task runs again only
+on an Orker of its run's own release that serves its pool, and waits, still
+`PENDING`, until one takes work: the cluster sends a run's task to the run's
+own release on every pool that release has served, whether or not any of its
+Orkers polls now (§3, "Rolling a release forward"). Nothing is lost while it
+waits.
 
 So a stop takes as long as the longest grace among its running tasks, plus a
-few seconds to write the records. Give the process manager at least that
-long before it kills the Orker — Kubernetes' `terminationGracePeriodSeconds`,
-systemd's `TimeoutStopSec`, `docker stop --time` (the quickstart's
-`compose.yaml` sets `stop_grace_period: 45s`). A second `SIGTERM` or `SIGINT`
-exits at once and leaves what a crash leaves: the attempts `UNREPORTED`, and
-a container still inside its grace running until this Orker's next boot
-reaps it.
+few seconds to report and record them. Give the process manager at least
+that long before it kills the Orker — Kubernetes'
+`terminationGracePeriodSeconds`, systemd's `TimeoutStopSec`, `docker stop
+--time` (the quickstart's `compose.yaml` sets `stop_grace_period: 45s`).
+
+Every container-runtime CLI the Orker starts runs in a process group of its
+own, so a signal sent to the Orker's whole process group — a terminal's
+Ctrl-C, `make down`, a process manager that signals the group — reaches the
+Orker alone and never a task's container. Under rootless Podman the
+container's monitor (`conmon`) may still run inside the Orker's own service
+cgroup, where a process manager that signals the whole cgroup (systemd's
+default `KillMode=control-group`) signals the container directly; run such an
+Orker with `KillMode=mixed`. A second `SIGTERM` or `SIGINT` changes nothing.
+A third exits at once, killing every runtime CLI the Orker started, and leaves
+what a crash leaves: the attempts `UNREPORTED`, and a container still inside
+its grace running until this Orker's next boot reaps it.
 
 **Why the cordon lives only in the process.** An Orker is stateless and
 disposable (`AGENTS.md` §5): a stored cordon would be durable state about a
