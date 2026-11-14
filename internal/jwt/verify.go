@@ -57,15 +57,15 @@ func (p Policy) Validate() error {
 	return errors.Join(errs...)
 }
 
-// ownAlgorithmCheck is off only in a test that proves the library's parse
-// refuses an algorithm outside the list by itself.
-var ownAlgorithmCheck = true
-
 // options are what differs between the kinds of token one Policy judges.
 type options struct {
 	types typeRule
 	// audience replaces Policy.Audiences's check when set (an ID token's).
 	audience func(c *Claims) *Error
+	// libraryAlgorithmsOnly leaves the issuer's list to the library's own
+	// parse alone. Only the test that proves the library refuses an
+	// algorithm outside the list by itself sets it; no exported path can.
+	libraryAlgorithmsOnly bool
 }
 
 // Verify checks a bearer token from a trusted issuer: every rule of
@@ -122,7 +122,7 @@ func verify(ctx context.Context, token string, p Policy, keys KeySource, now tim
 		return nil, rErr
 	}
 	ours := p.Algorithms
-	if !ownAlgorithmCheck {
+	if opts.libraryAlgorithmsOnly {
 		ours = Algorithms()
 	}
 	h, rErr := checkHeader(headerJSON, ours, opts.types)

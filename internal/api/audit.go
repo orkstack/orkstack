@@ -18,6 +18,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/listfilter"
@@ -38,8 +39,9 @@ import (
 // stop an operator holding a namespace during an incident.
 
 // AuditPrincipalHeader is the request header a deployment's gateway asserts
-// the caller's identity in. OrkStack records its value and does not verify it.
-const AuditPrincipalHeader = "Ork-Principal"
+// the caller's identity in. In asserted mode OrkStack records its value and
+// does not verify it; it is read only by authn.Recorded.
+const AuditPrincipalHeader = authn.PrincipalHeader
 
 // auditWriteTimeout bounds the synchronous store write after a handler
 // returns. It runs on a context detached from the request's cancellation
@@ -112,12 +114,21 @@ func NewAuditRecorder(store artifacts.AuditStore, counter AuditCounter, logger *
 // caller's cancellation and bounded by auditWriteTimeout. A record with no id
 // or time is stamped here from the recorder's clock.
 func (r *AuditRecorder) Record(ctx context.Context, rec *orkstackv1.AuditRecord) {
+	_ = r.RecordErr(ctx, rec)
+}
+
+// RecordErr is Record that also returns the store's failure, for the few
+// records that are not best-effort: a break-glass use is logged whole when
+// it fails, and `ork --set-mode-record` changes nothing without its record.
+func (r *AuditRecorder) RecordErr(ctx context.Context, rec *orkstackv1.AuditRecord) error {
 	if r == nil || rec == nil {
-		return
+		return errors.New("no audit store is configured")
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), auditWriteTimeout)
 	defer cancel()
-	rec.SchemaVersion = artifacts.AuditSchemaVersion
+	if rec.GetSchemaVersion() != artifacts.AuditSchemaVersionVerified {
+		rec.SchemaVersion = artifacts.AuditSchemaVersion
+	}
 	if rec.GetAt() == nil {
 		rec.At = timestamppb.New(r.now().UTC())
 	}
@@ -144,6 +155,7 @@ func (r *AuditRecorder) Record(ctx context.Context, rec *orkstackv1.AuditRecord)
 	if r.counter != nil {
 		r.counter.CountAudit(ctx, rec.GetAction(), outcome)
 	}
+	return err
 }
 
 // auditEntry is what an extractor derives from one call.
@@ -165,6 +177,18 @@ type auditExtractor func(req, resp proto.Message) auditEntry
 // "default"), because the handler never resolved anything; a successful one
 // reads the resolved coordinate from the response where it carries one.
 var auditedProcedures = map[string]auditExtractor{
+	// The mode record comes down by this command, never by one replica's
+	// configuration: its record names the mode it replaced and whether the
+	// wait for duplicate retries was skipped.
+	orkstackv1connect.AccessServiceLowerAuthModeProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.LowerAuthModeRequest)
+		entry := auditEntry{Action: "auth.mode.lowered", Target: in.GetMode(),
+			Detail: fmt.Sprintf("accept_duplicate_retries=%t", in.GetAcceptDuplicateRetries())}
+		if out, ok := resp.(*orkstackv1.LowerAuthModeResponse); ok && out != nil {
+			entry.Detail = "from=" + out.GetPreviousMode() + " " + entry.Detail
+		}
+		return entry
+	},
 	// A purge deletes memos and nothing else: no run, commit, attempt, log
 	// or artifact. Its fact is how many memos it deleted and kept.
 	orkstackv1connect.CacheServicePurgeCacheProcedure: func(req, resp proto.Message) auditEntry {
@@ -594,7 +618,6 @@ var unauditedWrites = map[string]string{
 	orkstackv1connect.AccessServiceSetPrincipalDisabledProcedure:      notYetServed,
 	orkstackv1connect.AccessServiceRevokeSigninsProcedure:             notYetServed,
 	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure: notYetServed,
-	orkstackv1connect.AccessServiceLowerAuthModeProcedure:             notYetServed,
 }
 
 // notYetServed is the reason a declared write is not yet recorded: no engine
@@ -798,7 +821,7 @@ func (s *Service) auditUnary(
 		SchemaVersion: artifacts.AuditSchemaVersion,
 		Id:            artifacts.NewAuditID(at),
 		At:            timestamppb.New(at),
-		Principal:     req.Header().Get(AuditPrincipalHeader),
+		Principal:     authn.Recorded(ctx, req.Header()).ID,
 		SourceAddress: req.Peer().Addr,
 		Action:        entry.Action,
 		Procedure:     procedure,
@@ -810,6 +833,7 @@ func (s *Service) auditUnary(
 	if err != nil {
 		rec.ErrorCode = connect.CodeOf(err).String()
 	}
+	stampDecision(ctx, rec, decisionFrom(ctx))
 	s.audit.Record(ctx, rec)
 	return resp, err
 }

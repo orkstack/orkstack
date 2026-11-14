@@ -5,6 +5,11 @@ stored in the `ork` engine with `orkctl orkflow create`.
 
 ## Top-level fields
 
+Each top-level key is written out as a plain string. A merge key (`<<`), an
+alias used as a key, and an anchored or tagged key are refused at validate and
+create, naming the key, so every reader of the document, OrkStack's access
+check among them, reads the same keys ([ACCESS.md](ACCESS.md#how-a-request-is-decided)).
+
 | field         | required | description                                            |
 |---------------|----------|--------------------------------------------------------|
 | `apiVersion`  | yes      | The document format's version: exactly `orkstack/v1` (see "The document header"). |
@@ -1168,9 +1173,11 @@ A completion's values are bounded by the deployment's values limit and stored
 as an immutable object; they reach a downstream container only as its
 upstream `values.json`. Neither door queues, retries or rate-limits: one
 request is one delivery, and what to expose, to whom and how fast is the
-operator's gateway. A resolution records the `Ork-Principal` the gateway
-asserted (`resolved_by`), as asserted, not authenticated — `ResolveAwait`
-has `CancelRun`'s trust model.
+operator's gateway. In `asserted` mode a resolution records the
+`Ork-Principal` the gateway asserted (`resolved_by`), as asserted, not
+authenticated — `ResolveAwait` has `CancelRun`'s trust model; with
+authentication on it records the verified caller, and the callback door
+records none ([AUTHENTICATION.md](AUTHENTICATION.md)).
 
 **Who receives a callback token.** The token is disclosed once, to whoever
 submitted the run — `orkctl run submit`/`run again` print it, the UI's submit
@@ -1569,10 +1576,12 @@ tasks:
   (`SHARED_ORKFLOW_NOT_ROOT`), because nothing starts another namespace's
   Orkflow as a root run.
 
-Until OrkStack authenticates its callers, `shared_with:` is a guardrail
-between cooperating teams, not access control: it is checked against what
-the composing definition says it is, and a principal is asserted, never
-verified ([SECURITY_MODEL.md](SECURITY_MODEL.md)).
+In `asserted` mode, the default, `shared_with:` is a guardrail between
+cooperating teams, not access control: it is checked against what the
+composing definition says it is, and a principal is asserted, never verified
+([SECURITY_MODEL.md](SECURITY_MODEL.md)). With `auth.mode: enforce`, who may
+create the composing Orkflow is the access document's decision
+([ACCESS.md](ACCESS.md)).
 
 ## Caching (`cache:`)
 

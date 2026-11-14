@@ -41,9 +41,11 @@ Each row shows when, who, what, which namespace and target, and the result.
 - A page holds 50 records by default, and 200 at most. Use `--page-token` for the next page.
 - A window that would scan more than 5000 records is refused. Narrow the window and page through it.
 
-## The principal is asserted
+## Who the principal is
 
-The principal is the `Ork-Principal` header, copied as the caller sent it. OrkStack does not authenticate it, so it is an assertion, not a verified identity. A request with no header shows as `unattributed`.
+With authentication on (`auth.mode` `observe` or `enforce`), the principal is the identity OrkStack verified, and the record says it was verified. A record then also names the permission, the scope and the decision, and a refused read is recorded too, at most one a minute for one caller, procedure and scope.
+
+With authentication off, the default, the principal is the `Ork-Principal` header, copied as the caller sent it. OrkStack does not authenticate it, so it is an assertion, not a verified identity. A request with no header shows as `unattributed`.
 
 - A gateway that authenticates callers must **overwrite** `Ork-Principal` with the identity it established. A gateway that passes a client's value through lets any caller claim any name.
 - `ORK_PRINCIPAL` sets the header from `orkctl`. It is useful on a deployment with no gateway. It proves nothing about who typed the command.
@@ -60,6 +62,6 @@ The write is best-effort. If the audit store refuses a record, the write still s
 
 - [DEPLOY.md, "Attributing control-plane writes"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#attributing-control-plane-writes): what is recorded, the principal, and the listing bounds
 - [SECURITY_MODEL.md, "The audit trail"](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-audit-trail): where the trail is kept
-- [SECURITY_MODEL.md, "The principal is asserted, not authenticated"](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-principal-is-asserted-not-authenticated): what the principal means
+- [SECURITY_MODEL.md, "The principal is verified or asserted, and says which"](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-principal-is-verified-or-asserted-and-says-which): what the principal means
 - [UI_CLI_PARITY.md, "Control-plane audit trail"](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#control-plane-audit-trail): the recorded actions, and the same trail in the web UI
 - [CLI.md, "orkctl admin audit"](https://github.com/orkstack/orkstack/blob/main/docs/CLI.md#orkctl-admin-audit): every filter and flag

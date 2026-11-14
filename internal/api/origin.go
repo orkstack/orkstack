@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -68,16 +69,28 @@ func boundOriginAssertion(s string) string {
 	return s[:keep] + artifacts.AttemptTruncationMarker
 }
 
+// recordOriginPrincipal records who a request is from on origin, and how:
+// the asserted header, verbatim and unverified, in asserted mode, or the
+// verified principal with its method (authn.Recorded). An origin never
+// presents an asserted principal as a verified one.
+func recordOriginPrincipal(origin *orkstackv1.RunOrigin, who authn.RecordedPrincipal) {
+	origin.Principal = boundOriginAssertion(who.ID)
+	origin.PrincipalVerified = who.Verified && who.ID != ""
+	if origin.PrincipalVerified {
+		origin.AuthMethod = who.Method
+	}
+}
+
 // submitOrigin is the SUBMIT/RUN_AGAIN origin for one Connect request. It is
 // the ONLY place a public request becomes an origin, and it can produce
 // exactly two kinds. It is called by originForRequest only, after that
 // function has validated the reference and confirmed sourceRunID exists.
-func submitOrigin(req *connect.Request[orkstackv1.SubmitRunRequest], sourceRunID string) *orkstackv1.RunOrigin {
+func submitOrigin(ctx context.Context, req *connect.Request[orkstackv1.SubmitRunRequest], sourceRunID string) *orkstackv1.RunOrigin {
 	origin := &orkstackv1.RunOrigin{
 		Kind:      orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT,
 		Reference: req.Msg.GetOriginReference(),
-		Principal: boundOriginAssertion(req.Header().Get(AuditPrincipalHeader)),
 	}
+	recordOriginPrincipal(origin, authn.Recorded(ctx, req.Header()))
 	if sourceRunID != "" {
 		origin.Kind = orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_RUN_AGAIN
 		origin.Id = sourceRunID
@@ -110,5 +123,5 @@ func (s *Service) originForRequest(
 			return nil, sharedRootRefusal(sourceRunID, facts.OrkflowNamespace, facts.Orkflow, facts.RootRunID)
 		}
 	}
-	return submitOrigin(req, sourceRunID), nil
+	return submitOrigin(ctx, req, sourceRunID), nil
 }

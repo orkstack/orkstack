@@ -18,10 +18,13 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- OrkStack can now authenticate API callers itself and decide each request with roles: set `auth.mode` to `observe`, then `enforce`; off by default ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
+- `orkctl admin auth status` and `orkctl admin auth lower` show and lower the deployment's authentication mode ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#the-mode-record)).
 - The archive sweep now says when it is blind: alert on `ork.archive.sweep.list_failed` and a stale `ork.archive.sweep.last_success`; an undated expiry reads 0 ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 
 ### Changed
 
+- **BREAKING:** an Orkflow whose top-level key is a merge key (`<<`), an alias, or anchored or tagged is now refused; write each top-level key out as a plain name ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#top-level-fields)).
 - **BREAKING:** an idempotency key reused for a different Orkflow, version or input is now refused (`already_exists`), not answered with the first run; use one key for one submission ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - The cluster now keeps a finished run at least `engine.idempotency_ttl` plus 5 minutes, plus the cleanup margin, when the maximum run retention is shorter; runs are retired when they were ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 - The Orker numbers each task's attempts itself and starts nothing until the cluster answers its first heartbeat; a store that refuses the number fails `ATTEMPT_STORE_UNAVAILABLE` ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#invariants-the-layout-carries)).

@@ -97,7 +97,7 @@ func TestVerify_AcceptsWhatTheRulesAllow(t *testing.T) {
 }
 
 func TestVerify_RefusesBeforeTheLibrary(t *testing.T) {
-	r, e := testKeys(t)
+	_, e := testKeys(t)
 	valid := claimsJSON()
 	es := func(header string) string { return craft(t, e, header, valid) }
 	good := es(`{"alg":"ES256","kid":"ec-1"}`)
@@ -149,7 +149,6 @@ func TestVerify_RefusesBeforeTheLibrary(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			spy := newSpy(t)
-			_ = r
 			_, err := Verify(context.Background(), tc.token, testPolicy(), spy, testNow)
 			if ReasonOf(err) != tc.want {
 				t.Fatalf("got %v (%s), want %s", err, ReasonOf(err), tc.want)
@@ -175,9 +174,7 @@ func TestVerify_TheIssuersAlgorithmListIsEnforcedTwice(t *testing.T) {
 		}
 	})
 	t.Run("by the library's own parse", func(t *testing.T) {
-		ownAlgorithmCheck = false
-		t.Cleanup(func() { ownAlgorithmCheck = true })
-		_, err := Verify(context.Background(), token, p, newSpy(t), testNow)
+		_, err := verify(context.Background(), token, p, newSpy(t), testNow, options{types: typeIssued, libraryAlgorithmsOnly: true})
 		var unexpected *jose.ErrUnexpectedSignatureAlgorithm
 		if ReasonOf(err) != ReasonAlgorithm || !errors.As(err, &unexpected) {
 			t.Fatalf("with our check bypassed the library must refuse ES256: got %v", err)

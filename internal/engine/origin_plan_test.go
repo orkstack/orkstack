@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
@@ -208,4 +209,37 @@ func TestStartRun_StampsOriginMemoAndAttributesFromPlan(t *testing.T) {
 			t.Fatalf("OrkflowOriginId = %q, %v; want an empty keyword", id, ok)
 		}
 	})
+}
+
+// TestRunOrigin_CarriesHowThePrincipalWasKnown holds the plan's origin to the
+// wire one for a verified principal: principal_verified and auth_method cross
+// into the plan and back, so the run's snapshot and archive say what the
+// submit recorded. An origin without them encodes exactly as before.
+func TestRunOrigin_CarriesHowThePrincipalWasKnown(t *testing.T) {
+	verified := &orkstackv1.RunOrigin{
+		Kind:              orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT,
+		Principal:         "user:corp:ada",
+		PrincipalVerified: true,
+		AuthMethod:        "oidc",
+	}
+	if got := engine.OriginFromProto(verified).Proto(); !proto.Equal(got, verified) {
+		t.Fatalf("round trip = %v, want %v", got, verified)
+	}
+	asserted, err := stablejson.Marshal(engine.OriginFromProto(&orkstackv1.RunOrigin{
+		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, Principal: "alice",
+	}))
+	must.OKf(t, err, "marshal")
+	want := `{"kind":"RUN_ORIGIN_KIND_SUBMIT","principal":"alice"}`
+	if string(asserted) != want {
+		t.Fatalf("asserted origin encodes %s, want %s", asserted, want)
+	}
+	// The plan travels through the cluster's default data converter, which
+	// is the encoder a recorded history holds: the same bytes there.
+	payload, err := converter.GetDefaultDataConverter().ToPayload(engine.OriginFromProto(&orkstackv1.RunOrigin{
+		Kind: orkstackv1.RunOriginKind_RUN_ORIGIN_KIND_SUBMIT, Principal: "alice",
+	}))
+	must.OKf(t, err, "data converter")
+	if got := string(payload.GetData()); got != want {
+		t.Fatalf("data converter encodes %s, want %s", got, want)
+	}
 }

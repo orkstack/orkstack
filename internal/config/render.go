@@ -59,13 +59,14 @@ var rawMachineOverride = map[string]string{
 // out regardless of Default, because its documented Default text is
 // descriptive prose rather than a value config.Load could actually be fed
 // back (writing it verbatim would set the variable to that prose, not
-// leave it unset): the OrkStack activity catalog, the OTel sinks document,
+// leave it unset): the OrkStack activity catalog, the OTel sinks document, the trusted issuers,
 // and the three literal-but-dynamic Orker settings whose Default field is
 // a sentence, not a placeholder (config.go's own comment on each explains
 // why they are not one of the two standardized placeholders either).
 var alwaysCommentedEnv = map[string]bool{
 	"ORK_ACTIVITY_CATALOG": true,
 	"ORK_TELEMETRY_SINKS":  true,
+	"ORK_AUTH_ISSUERS":     true,
 	"ORK_ORKER_ID":         true,
 	"ORK_ORKER_WORKDIR":    true,
 	"ORK_DOCKER_BIN":       true,

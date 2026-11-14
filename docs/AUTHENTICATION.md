@@ -1,0 +1,176 @@
+# Authentication
+
+OrkStack can authenticate the callers of its API itself, and decide what
+each may do ([ACCESS.md](./ACCESS.md)). It is off by default: an engine in
+`asserted` mode behaves exactly as v0.3.0 did, and a deployment's gateway
+names the caller in the `Ork-Principal` header.
+
+## Modes
+
+`auth.mode` (`ORK_AUTH_MODE`), on `ork`:
+
+| Mode | Authentication | Authorization | The principal on records |
+|---|---|---|---|
+| `asserted` (default) | none | none | the `Ork-Principal` header, recorded as sent and labelled asserted |
+| `observe` | a credential that is presented is verified; a request with none is still served | computed and recorded as `would-deny`, never enforced | verified when a credential was presented, else none |
+| `enforce` | required | enforced | verified |
+
+In `asserted` mode no middleware is installed and no new route is mounted.
+In `observe` and `enforce` mode the `Ork-Principal` header is read nowhere:
+every record takes the principal from the verified credential, or records
+none. A deployment that moves from a gateway's header to `observe` therefore
+loses the gateway's name for every caller that sends no token yet. The trigger invoke and the await callback keep their own bearer
+tokens in every mode; outside `asserted` mode they record no caller-chosen
+name. A client learns the mode from `GetSystemInfo`.
+
+The access document and the mode record are the exception: their service
+(`AccessService`) is enforced in `observe` mode too, so nobody reads who
+holds what, or lowers the mode, without `access.read` or `access.write`.
+
+Every engine of a deployment runs the same mode. `observe` is the step
+between: turn it on everywhere, read the audit trail's `would-deny`
+records (`orkctl admin audit -j`) until they are the refusals you mean,
+then set `enforce` everywhere.
+
+## What the API accepts
+
+One middleware wraps the API listener. It classifies each request by the
+route pattern that serves it, never by its path, and authenticates every
+route except:
+
+| Route | Why |
+|---|---|
+| the web UI's static files (`/`) | the page must load to sign in; it holds no data |
+| `POST /v1/triggers/{id}` | the trigger's own bearer token is the capability |
+| `POST /v1/runs/{run_id}/awaits/{task_id}[/reject]` | the await callback's own token is the capability |
+
+A request carries one credential, as `Authorization: Bearer`. A credential
+that is presented and refused is refused (`401`), never passed on to
+another method.
+
+- **A token from a trusted issuer.** `auth.issuers` (`ORK_AUTH_ISSUERS`) is
+  one YAML document of the issuers whose JWTs the engine accepts: a person's
+  identity provider, or a CI or cluster issuer for services. Every claim rule
+  is equality; a service issuer must name `required_claims` or say
+  `dedicated: true`. The engine checks the signature against the issuer's
+  published keys, the audience, the expiry and the issuer's maximum
+  lifetime, with `auth.clock_skew` (1 minute) of leeway.
+- **Break-glass**, for an identity provider that is down
+  (below).
+
+A person is `user:<issuer>:<username>`, a service of a trusted issuer
+`service:<issuer>:<sub>`. Groups come from the issuer's `groups_claim` (at
+most 200), and only the claims the issuer's `claims` list names are kept.
+
+## The first admin, and break-glass
+
+- **`auth.admins`** (`ORK_AUTH_ADMINS`, a list of subjects) hold `admin` at
+  the deployment by configuration, whatever the access document says. They
+  are shown as "from configuration" and cannot be removed through the API.
+  This is the bootstrap: name one group, sign in, create bindings. It is
+  also the way back from a wrong document, since whoever can edit the
+  engine's configuration already controls the engine.
+- **Break-glass.** `auth.break_glass_key_file` names one public key (PEM,
+  RSA 2048 or more, or P-256), and needs `auth.public_url`. A request
+  authenticated by an assertion signed with the private half is
+  `serviceaccount:break-glass` with `admin`. The assertion is valid for at
+  most 60 seconds and bound to its one request: its method, its URL, the
+  SHA-256 of its body and a `jti` this replica has not seen. It must carry
+  an `Ork-Reason` header (1 to 256 bytes, one line), and its body is at most
+1 MiB, since it is read whole to be hashed. A replica remembers the
+  assertions it accepted for their life, in its own memory, so the identical
+  request can be played once more at each other replica within its minute;
+  it cannot be turned into another call, and each use is recorded and
+  alarmed. Whoever can capture it in flight already sits inside the
+  deployment's own path. Each use writes the
+  audit record `auth.break-glass.used` before the request is served and
+  logs at error level; if the record cannot be written, the whole record is
+  logged at error level and the request is served, since break-glass exists
+  for the day things are broken. Keep the private key offline.
+
+`enforce` with no trusted issuer and no break-glass key refuses to start:
+nobody could ever authenticate.
+
+## The mode record
+
+The first engine to run in `observe` or `enforce` writes
+`metadata/identity/mode.json`: the highest mode the deployment runs. It
+needs no key to read, because the engine it must stop is the one started
+from an old or mistyped configuration.
+
+| What an engine finds | At boot | While running (read again each minute) |
+|---|---|---|
+| a record naming its own mode or a lower one | starts, and raises the record to its own mode | nothing |
+| a record naming a higher mode | refuses to start, naming both | logs at error; keeps serving, since its own configuration is what to fix |
+| no record | starts; in `observe` or `enforce` writes it | a record it saw that is now gone is logged at error, and written again at its own mode |
+| a record that does not decode, or names a mode or format it does not know | refuses to start, naming the object | logs at error; keeps serving on the mode it booted with |
+| a store that cannot be read | waits for it: it cannot serve without the store | nothing new |
+
+**Lowering is a command, then a restart.** `orkctl admin auth lower MODE`,
+by a caller with `access.write`, rewrites the record and writes
+`auth.mode.lowered`; then restart the engines in the lower mode. There is no
+setting to leave behind. `enforce` to `observe` is never refused. To
+`asserted` is refused until the deployment has been out of `enforce` for one
+idempotency key's life (`engine.idempotency_ttl` and five minutes):
+`orkctl admin auth status` shows when. `--accept-duplicate-retries` skips
+the wait, accepting that a retried submission may start a second run, and
+the audit record says it was given. A lowering is refused by an engine that
+runs below the record's mode, and an engine that finds the record lowered
+beneath its own mode while running logs it at error level until it is
+restarted in that mode.
+
+**A record no engine can read** refuses every engine's boot, and `orkctl`
+needs a running engine. `ork --set-mode-record MODE --reason TEXT` reads the
+engine's own configuration, prints the store it is about to change, refuses
+a record that still decodes (that one is lowered with `orkctl`; `--force`
+overrides it when no engine can start at all), writes the audit record
+`auth.mode.record.set` and stops, changing nothing, if that record cannot be
+written, then overwrites the record and exits without serving.
+
+What the record cannot stop: someone who deletes it while every engine is
+down, a bucket lifecycle rule or a restore that removes it, or an engine of
+an earlier release, which knows nothing of it. Exclude `metadata/identity/`
+from every lifecycle rule, and turn on versioning (and object lock, where
+the store has it) for it.
+
+## Every engine enforces
+
+Each enforcing engine advertises `authn-enforce` beside its build, and once
+a minute asks the cluster for a fresh engine that does not. One that it
+sees is logged at error level and shown by `orkctl admin auth status`. It
+refuses nothing: a poller stays listed for minutes after its process is
+gone, so a refusal would turn every deploy into an outage. The guard against
+an engine that does not enforce is the mode record.
+
+## The admin listener
+
+`/metrics` and `/debug/pprof/` answer without authentication on
+`ORK_ADMIN_ADDR`. A heap profile of a process that holds keys is those keys:
+with a mode other than `asserted`, `ork` refuses to start with
+`telemetry.pprof_enabled` unless the admin address is loopback. Keep the
+admin listener on a private network.
+
+## Settings
+
+| Setting | Environment | Default |
+|---|---|---|
+| `auth.mode` | `ORK_AUTH_MODE` | `asserted` |
+| `auth.public_url` | `ORK_AUTH_PUBLIC_URL` | (empty) |
+| `auth.issuers` | `ORK_AUTH_ISSUERS` | (empty document) |
+| `auth.admins` | `ORK_AUTH_ADMINS` | (empty list) |
+| `auth.break_glass_key_file` | `ORK_AUTH_BREAK_GLASS_KEY_FILE` | (empty) |
+| `auth.clock_skew` | `ORK_AUTH_CLOCK_SKEW` | `1m` |
+| `auth.policy_refresh` | `ORK_AUTH_POLICY_REFRESH` | `10s` |
+| `auth.policy_stale_limit` | `ORK_AUTH_POLICY_STALE_LIMIT` | `5m` |
+
+[DEPLOY.md](./DEPLOY.md) §1 is the complete table of settings.
+
+## Metrics
+
+On the default sink, with no principal id and no token in any of them:
+`ork.auth.requests{method,outcome}` (requests that presented a credential:
+authenticated, refused or unavailable), `ork.auth.decisions{permission,decision}`
+(allowed, denied, would-deny), `ork.auth.streams_closed{reason}` (denied,
+disabled, unavailable, expired), `ork.auth.break_glass` (page on any),
+`ork.auth.mode_record_missing` and `ork.auth.fleet_unenforced` (engines the
+last fleet check saw that do not enforce).

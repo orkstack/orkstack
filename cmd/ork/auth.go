@@ -1,0 +1,416 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+	"time"
+
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
+	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/jwt"
+	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+)
+
+// authConfig is the auth.* settings (docs/AUTHENTICATION.md).
+type authConfig struct {
+	mode              string
+	publicURL         string
+	issuers           authn.Issuers
+	admins            []string
+	breakGlassKeyFile string
+	clockSkew         time.Duration
+	policyRefresh     time.Duration
+	policyStaleLimit  time.Duration
+}
+
+// The auth.* defaults.
+const (
+	// maxBreakGlassKeyBytes bounds the break-glass key file: one PEM key.
+	maxBreakGlassKeyBytes = 64 << 10
+)
+
+// authFromEnv reads the auth.* settings. Every error refuses the boot,
+// naming its setting.
+func authFromEnv(lookup func(string) (string, bool)) (authConfig, error) {
+	get := func(key string) string {
+		v, _ := lookup(key)
+		return strings.TrimSpace(v)
+	}
+	c := authConfig{
+		mode:              get("ORK_AUTH_MODE"),
+		publicURL:         get("ORK_AUTH_PUBLIC_URL"),
+		breakGlassKeyFile: get("ORK_AUTH_BREAK_GLASS_KEY_FILE"),
+	}
+	if c.mode == "" {
+		c.mode = authn.ModeAsserted
+	}
+	if artifacts.AuthModeRank(c.mode) == 0 {
+		return c, fmt.Errorf("auth.mode (ORK_AUTH_MODE) %q is not asserted, observe or enforce", c.mode)
+	}
+	for _, s := range strings.Split(get("ORK_AUTH_ADMINS"), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			c.admins = append(c.admins, s)
+		}
+	}
+	var err error
+	if c.clockSkew, err = authDuration(get, "ORK_AUTH_CLOCK_SKEW", "auth.clock_skew", authn.DefaultClockSkew, false); err != nil {
+		return c, err
+	}
+	if c.policyRefresh, err = authDuration(get, "ORK_AUTH_POLICY_REFRESH", "auth.policy_refresh", api.DefaultPolicyRefresh, false); err != nil {
+		return c, err
+	}
+	if c.policyStaleLimit, err = authDuration(get, "ORK_AUTH_POLICY_STALE_LIMIT", "auth.policy_stale_limit", api.DefaultPolicyStaleLimit, true); err != nil {
+		return c, err
+	}
+	if doc := get("ORK_AUTH_ISSUERS"); doc != "" {
+		if c.issuers, err = authn.ParseIssuers([]byte(doc)); err != nil {
+			return c, fmt.Errorf("auth.issuers (ORK_AUTH_ISSUERS): %w", err)
+		}
+	}
+	if _, err := authz.CompileConfiguration(authz.Configuration{Admins: c.admins}); err != nil {
+		return c, fmt.Errorf("auth.admins (ORK_AUTH_ADMINS): %w", err)
+	}
+	if c.publicURL != "" {
+		u, err := url.Parse(c.publicURL)
+		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.User != nil ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+			return c, fmt.Errorf("auth.public_url (ORK_AUTH_PUBLIC_URL) %q is not an http(s) URL of a host alone", c.publicURL)
+		}
+	}
+	return c, nil
+}
+
+func authDuration(get func(string) string, env, setting string, fallback time.Duration, zeroOK bool) (time.Duration, error) {
+	raw := get(env)
+	if raw == "" {
+		return fallback, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 || (d == 0 && !zeroOK) {
+		return 0, fmt.Errorf("%s (%s) %q is not a positive duration", setting, env, raw)
+	}
+	return d, nil
+}
+
+// enabled reports a mode that authenticates.
+func (c authConfig) enabled() bool { return c.mode != authn.ModeAsserted }
+
+// capabilities are what this engine's poller identity advertises of its
+// mode: an enforcing engine says so, for the fleet check.
+func (c authConfig) capabilities() []string {
+	if c.mode == authn.ModeEnforce {
+		return []string{engine.CapabilityAuthnEnforce}
+	}
+	return nil
+}
+
+// checkBoot refuses what could never work: enforce with no way to
+// authenticate, break-glass with no public URL to bind its assertions to,
+// and a heap profile served off loopback by a process that may hold keys.
+func (c authConfig) checkBoot(adminAddr string, pprofEnabled bool) error {
+	if !c.enabled() {
+		return nil
+	}
+	if c.mode == authn.ModeEnforce && c.issuers.Len() == 0 && c.breakGlassKeyFile == "" {
+		return errors.New("auth.mode enforce with no auth.issuers and no auth.break_glass_key_file: nobody could ever authenticate")
+	}
+	if c.breakGlassKeyFile != "" && c.publicURL == "" {
+		return errors.New("auth.break_glass_key_file needs auth.public_url: a break-glass assertion is bound to the deployment's public URL")
+	}
+	if pprofEnabled && adminAddr != "" && !loopbackAddr(adminAddr) {
+		return fmt.Errorf("telemetry.pprof_enabled with auth.mode %s needs a loopback telemetry.admin_addr (%q is not): a heap profile of a process that holds keys is those keys", c.mode, adminAddr)
+	}
+	return nil
+}
+
+func loopbackAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// breakGlassFrom reads the one public key of auth.break_glass_key_file.
+func breakGlassFrom(c authConfig) (*authn.BreakGlass, error) {
+	if c.breakGlassKeyFile == "" {
+		return nil, nil
+	}
+	f, err := os.Open(c.breakGlassKeyFile)
+	if err != nil {
+		return nil, fmt.Errorf("auth.break_glass_key_file: %w", err)
+	}
+	defer f.Close()
+	raw, err := io.ReadAll(io.LimitReader(f, maxBreakGlassKeyBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("auth.break_glass_key_file: %w", err)
+	}
+	if len(raw) > maxBreakGlassKeyBytes {
+		return nil, fmt.Errorf("auth.break_glass_key_file: more than %d bytes", maxBreakGlassKeyBytes)
+	}
+	key, err := jwt.ParsePublicKeyPEM(raw)
+	if err != nil {
+		return nil, fmt.Errorf("auth.break_glass_key_file: %w", err)
+	}
+	keys, err := jwt.StaticByThumbprint(key)
+	if err != nil {
+		return nil, fmt.Errorf("auth.break_glass_key_file: %w", err)
+	}
+	public, _ := url.Parse(c.publicURL)
+	return &authn.BreakGlass{Keys: keys, Audience: strings.TrimSuffix(c.publicURL, "/"), PublicURL: public, Replay: jwt.NewReplayCache()}, nil
+}
+
+// accessSetup is what run needs of authentication.
+type accessSetup struct {
+	access     *api.AccessControl
+	breakGlass func(r *http.Request, p *authn.Principal, reason string)
+}
+
+// setupAccess reads the mode record, refusing to start beneath it, and, for
+// an engine whose mode is observe or enforce, builds authentication and
+// authorization: the trusted issuers' key caches, the access document's
+// cache and, in enforce mode, the fleet check. In asserted mode it builds
+// nothing else.
+func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCfg artifacts.Config,
+	hostAllowed func(string) bool, claimTTL time.Duration, checker engine.CapabilityChecker,
+	audit *api.AuditRecorder, metrics *telemetry.AuthInstruments,
+) (accessSetup, error) {
+	modes, err := artifacts.NewS3ModeStore(ctx, storeCfg)
+	if err != nil {
+		return accessSetup{}, fmt.Errorf("open the mode record: %w", err)
+	}
+	host, _ := os.Hostname()
+	guard := &api.ModeGuard{Store: modes, Mode: c.mode, ClaimTTL: claimTTL, Logger: logger, Host: host,
+		Missing: metrics.CountModeRecordMissing}
+	if err := bootModeRecord(ctx, guard, logger); err != nil {
+		return accessSetup{}, err
+	}
+	go guard.Watch(ctx)
+	if !c.enabled() {
+		return accessSetup{}, nil
+	}
+	glass, err := breakGlassFrom(c)
+	if err != nil {
+		return accessSetup{}, err
+	}
+	configured, err := authz.CompileConfiguration(authz.Configuration{Admins: c.admins, BreakGlass: glass != nil})
+	if err != nil {
+		return accessSetup{}, err
+	}
+	keys := map[string]jwt.KeySource{}
+	for _, name := range c.issuers.Names() {
+		issuer, _ := c.issuers.ByName(name)
+		cache, err := authn.NewKeyCache(issuer, nil, nil)
+		if err != nil {
+			return accessSetup{}, fmt.Errorf("auth.issuers: %w", err)
+		}
+		keys[name] = cache
+	}
+	documents, err := artifacts.NewS3AccessStore(ctx, storeCfg)
+	if err != nil {
+		return accessSetup{}, fmt.Errorf("open the access document: %w", err)
+	}
+	policies := api.NewPolicyCache(documents, api.PolicyCacheOptions{Configured: configured, Refresh: c.policyRefresh,
+		StaleLimit: staleLimitOption(c.policyStaleLimit), Logger: logger,
+		OnRead:       func(outcome string) { metrics.CountPolicyRefresh(context.Background(), outcome) },
+		OnUnexpected: func() { metrics.CountDocumentUnexpected(context.Background()) }})
+	if err := metrics.WatchPolicy(func() (int64, float64) {
+		st := policies.State()
+		return st.Revision, st.Age.Seconds()
+	}); err != nil {
+		return accessSetup{}, fmt.Errorf("auth metrics: %w", err)
+	}
+	go policies.Run(ctx)
+	access := &api.AccessControl{
+		Mode: c.mode, Policies: policies, Configured: configured, ModeRecord: guard, Logger: logger, Counter: metrics,
+		Authenticator: &authn.Authenticator{Issuers: c.issuers, Keys: keys, Leeway: c.clockSkew, BreakGlass: glass,
+			HostAllowed: hostAllowed},
+	}
+	if c.mode == authn.ModeEnforce {
+		access.Fleet = &api.FleetReport{Checker: checker, Logger: logger, Unenforced: metrics.SetFleetUnenforced}
+		go access.Fleet.Run(ctx)
+	}
+	logger.Info("authentication",
+		"mode", c.mode, "issuers", c.issuers.Names(), "admins", len(c.admins), "break_glass", glass != nil,
+		"policy_store", documents.Location(), "policy_refresh", c.policyRefresh, "policy_stale_limit", c.policyStaleLimit)
+	return accessSetup{access: access, breakGlass: breakGlassRecorder(audit, logger, metrics)}, nil
+}
+
+// staleLimitOption turns auth.policy_stale_limit into the cache's option:
+// 0 closes at once, which the cache spells as negative.
+func staleLimitOption(d time.Duration) time.Duration {
+	if d == 0 {
+		return -1
+	}
+	return d
+}
+
+// bootModeRecord applies the record's boot rules. A store that cannot be
+// read is waited for: the engine already cannot serve without the store. A
+// record that refuses (higher, or unreadable) stops the boot.
+func bootModeRecord(ctx context.Context, guard *api.ModeGuard, logger *slog.Logger) error {
+	backoff := time.Second
+	for {
+		err := guard.Boot(ctx)
+		if err == nil || errors.Is(err, api.ErrModeRecordHigher) || errors.Is(err, artifacts.ErrModeRecordUnreadable) {
+			return err
+		}
+		logger.Warn("mode record: the store did not answer; this engine does not serve until it does", "error", err)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff = min(2*backoff, 30*time.Second)
+	}
+}
+
+// breakGlassRecorder writes auth.break-glass.used before the request is
+// served. If the record cannot be written, the whole record goes to the
+// engine's log at error level and the request is served: break-glass
+// exists for the day things are broken.
+func breakGlassRecorder(audit *api.AuditRecorder, logger *slog.Logger, metrics *telemetry.AuthInstruments) func(r *http.Request, p *authn.Principal, reason string) {
+	return func(r *http.Request, p *authn.Principal, reason string) {
+		metrics.CountBreakGlass(r.Context())
+		at := time.Now().UTC()
+		rec := &orkstackv1.AuditRecord{
+			SchemaVersion: artifacts.AuditSchemaVersionVerified, Id: artifacts.NewAuditID(at), At: timestamppb.New(at),
+			Principal: p.ID, PrincipalVerified: true, AuthMethod: p.Method, PrincipalIssuer: p.Issuer,
+			SourceAddress: r.RemoteAddr, Action: "auth.break-glass.used", Procedure: r.Method + " " + r.URL.Path,
+			Target: "-", Detail: "reason=" + fmt.Sprintf("%q", reason), Succeeded: true, Rule: authz.BreakGlassRule,
+		}
+		logger.Error("break-glass used", "path", r.URL.Path, "method", r.Method, "reason", reason, "source", r.RemoteAddr)
+		if err := audit.RecordErr(r.Context(), rec); err != nil {
+			logger.Error("break-glass audit record could not be written; this log line is its trail",
+				"error", err, "id", rec.GetId(), "at", at, "principal", rec.GetPrincipal(), "procedure", rec.GetProcedure(),
+				"source", rec.GetSourceAddress(), "detail", rec.GetDetail())
+		}
+	}
+}
+
+// setModeRecordArgs is `ork --set-mode-record MODE --reason TEXT [--force]`,
+// taken out of the arguments before the configuration flags are parsed.
+type setModeRecordArgs struct {
+	requested bool
+	mode      string
+	reason    string
+	force     bool
+}
+
+// splitSetModeRecord separates the --set-mode-record command's own
+// arguments from the configuration's.
+func splitSetModeRecord(args []string) (setModeRecordArgs, []string, error) {
+	var out setModeRecordArgs
+	var rest []string
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		value := func(name string) (string, error) {
+			if v, ok := strings.CutPrefix(arg, name+"="); ok {
+				return v, nil
+			}
+			i++
+			if i >= len(args) {
+				return "", fmt.Errorf("%s requires a value", name)
+			}
+			return args[i], nil
+		}
+		var err error
+		switch {
+		case arg == "--set-mode-record" || strings.HasPrefix(arg, "--set-mode-record="):
+			out.requested = true
+			out.mode, err = value("--set-mode-record")
+		case arg == "--reason" || strings.HasPrefix(arg, "--reason="):
+			out.reason, err = value("--reason")
+		case arg == "--force":
+			out.force = true
+		default:
+			rest = append(rest, arg)
+		}
+		if err != nil {
+			return out, nil, err
+		}
+	}
+	if !out.requested && (out.reason != "" || out.force) {
+		return out, nil, errors.New("--reason and --force belong to --set-mode-record")
+	}
+	if out.requested {
+		if artifacts.AuthModeRank(out.mode) == 0 {
+			return out, nil, fmt.Errorf("--set-mode-record %q is not asserted, observe or enforce", out.mode)
+		}
+		if strings.TrimSpace(out.reason) == "" || len(out.reason) > 256 || strings.ContainsAny(out.reason, "\r\n") {
+			return out, nil, errors.New("--set-mode-record needs --reason, 1 to 256 bytes on one line")
+		}
+	}
+	return out, rest, nil
+}
+
+// setModeRecord is the way back from a mode record no engine can read: it
+// prints the store it is about to change, refuses a record that decodes
+// unless --force, writes auth.mode.record.set (and stops, changing nothing,
+// if that cannot be written), then overwrites the record and exits without
+// serving.
+func setModeRecord(ctx context.Context, a setModeRecordArgs, storeCfg artifacts.Config, audit *api.AuditRecorder, out io.Writer, logger *slog.Logger) error {
+	modes, err := artifacts.NewS3ModeStore(ctx, storeCfg)
+	if err != nil {
+		return err
+	}
+	return setModeRecordIn(ctx, a, modes, storeCfg.S3Endpoint, audit, out, logger)
+}
+
+func setModeRecordIn(ctx context.Context, a setModeRecordArgs, modes *artifacts.ModeStore, endpoint string, audit *api.AuditRecorder, out io.Writer, logger *slog.Logger) error {
+	fmt.Fprintf(out, "mode record: %s (endpoint %s)\n", modes.Location(), endpoint)
+	rec, etag, err := modes.Get(ctx)
+	replacing := "none"
+	switch {
+	case err == nil:
+		replacing = rec.Mode
+		if !a.force {
+			return fmt.Errorf("the mode record decodes and names %q: lower a readable record with `orkctl admin auth lower`, or pass --force when no engine can start", rec.Mode)
+		}
+	case errors.Is(err, artifacts.ErrModeRecordUnreadable):
+		replacing = "unreadable"
+	case errors.Is(err, artifacts.ErrNotFound):
+	default:
+		return fmt.Errorf("read the mode record: %w", err)
+	}
+	host, _ := os.Hostname()
+	at := time.Now().UTC()
+	entry := &orkstackv1.AuditRecord{
+		SchemaVersion: artifacts.AuditSchemaVersion, Id: artifacts.NewAuditID(at), At: timestamppb.New(at),
+		Action: "auth.mode.record.set", Procedure: "ork --set-mode-record", Target: a.mode,
+		Detail: fmt.Sprintf("host=%s replacing=%s reason=%q force=%t", host, replacing, a.reason, a.force), Succeeded: true,
+	}
+	if err := audit.RecordErr(ctx, entry); err != nil {
+		return fmt.Errorf("the audit record auth.mode.record.set could not be written, so nothing was changed: %w", err)
+	}
+	cond := artifacts.PutConditions{IfMatch: etag}
+	if etag == "" {
+		cond = artifacts.PutConditions{IfAbsent: true}
+	}
+	next := artifacts.ModeRecord{Mode: a.mode, RaisedAt: at, UpdatedAt: at, UpdatedBy: "ork --set-mode-record on " + host, Reason: a.reason}
+	if _, err := modes.Put(ctx, next, cond); err != nil {
+		return fmt.Errorf("write the mode record: %w", err)
+	}
+	logger.Error("mode record overwritten by ork --set-mode-record", "record", modes.Location(), "mode", a.mode,
+		"replacing", replacing, "reason", a.reason, "host", host)
+	fmt.Fprintf(out, "mode record set to %s (was %s)\n", a.mode, replacing)
+	return nil
+}

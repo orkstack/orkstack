@@ -14,6 +14,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/listfilter"
@@ -303,6 +305,11 @@ func (s *Service) ListDeliveries(
 			// otherwise the ordinary lookback — a run whose history is gone
 			// can still have records.
 			run, err := s.LookupRun(ctx, runID)
+			if err == nil && !s.mayReadRun(ctx, run) {
+				// A run the caller may not read is one it cannot see: the
+				// window must not say it exists.
+				run, err = nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
+			}
 			switch {
 			case err == nil && run.GetCreatedAt().IsValid():
 				since = run.GetCreatedAt().AsTime().UTC()
@@ -466,4 +473,21 @@ func (s *Service) RedeliverWebhook(
 			rec.GetId(), original.GetId(), result.Delivered, result.LastAttempt().StatusCode, err))
 	}
 	return connect.NewResponse(&orkstackv1.RedeliverWebhookResponse{Delivery: rec}), nil
+}
+
+// mayReadRun reports whether the caller may read run: always in asserted
+// mode; otherwise only with run.read at the run's Orkflow.
+func (s *Service) mayReadRun(ctx context.Context, run *orkstackv1.Run) bool {
+	if !s.access.enabled() {
+		return true
+	}
+	ns, _ := namespaceOf(run.GetNamespace())
+	orkflow := run.GetOrkflowName()
+	if owner := run.GetOrkflowNamespace(); owner != "" {
+		orkflow = owner + "/" + orkflow
+	}
+	policy, _ := s.access.policy(ctx)
+	_, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermRunRead),
+		Subject: subjectOf(authn.FromContext(ctx)), Resource: authz.Resource{Namespace: ns, Orkflow: orkflow}, Policy: policy})
+	return err == nil
 }

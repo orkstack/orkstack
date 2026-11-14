@@ -1,0 +1,8 @@
+go test fuzz v1
+string("viewer")
+string("namespace:payments")
+string("group:corp:eng")
+string("eng")
+string("payments")
+string("")
+string("run")

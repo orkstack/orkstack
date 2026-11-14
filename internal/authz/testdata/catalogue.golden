@@ -1,0 +1,61 @@
+permissions: 51
+
+access.bind [namespace] roles=admin,namespace-admin
+access.read [deployment] roles=admin,auditor
+access.write [deployment] roles=admin
+audit.read [namespace] roles=admin,auditor,namespace-admin
+automation.plan [namespace] roles=admin,developer,namespace-admin
+cache.purge [namespace] roles=admin,developer,namespace-admin
+catalog.read [deployment] roles=admin,auditor
+concurrency.reset [namespace] roles=admin,namespace-admin
+identity.keys.retire [deployment] roles=admin
+identity.read [namespace] roles=admin,auditor
+identity.token.mint [pool] roles=orker
+image-policy.update [deployment] roles=admin
+namespace.create [deployment] roles=admin
+namespace.delete [deployment] roles=admin
+namespace.policy.update [namespace] roles=admin
+namespace.read [namespace] roles=admin,auditor,developer,namespace-admin,operator,viewer
+namespace.update [namespace] roles=admin,namespace-admin
+orker.cordon [deployment] roles=admin
+orker.read [deployment] roles=admin,auditor,developer,namespace-admin,operator,viewer
+orkflow.delete [orkflow] roles=admin,namespace-admin
+orkflow.promote [orkflow] roles=admin,developer,namespace-admin
+orkflow.read [orkflow] roles=admin,auditor,developer,namespace-admin,operator,viewer
+orkflow.validate [namespace] roles=admin,developer,namespace-admin
+orkflow.write [orkflow] roles=admin,developer,namespace-admin
+payload.key.use [pool] roles=orker
+payload.keys.manage [namespace] roles=admin,namespace-admin
+release.operate [deployment] roles=admin
+retention.update [deployment] roles=admin
+run.artifacts.read [orkflow] roles=admin,developer,namespace-admin,operator
+run.await.resolve [orkflow] roles=admin,developer,namespace-admin,operator
+run.cancel [orkflow] roles=admin,developer,namespace-admin,operator
+run.cancel.bulk [namespace] roles=admin,namespace-admin
+run.cancel.force [orkflow] roles=admin,namespace-admin
+run.evidence.export [orkflow] roles=admin,auditor,developer,namespace-admin
+run.history.decode [orkflow] roles=admin
+run.logs.read [orkflow] roles=admin,developer,namespace-admin,operator
+run.pause [orkflow] roles=admin,developer,namespace-admin,operator
+run.read [orkflow] roles=admin,auditor,developer,namespace-admin,operator,viewer
+run.resume [orkflow] roles=admin,developer,namespace-admin,operator
+run.submit [orkflow] roles=admin,developer,namespace-admin,operator
+schedule.operate [orkflow] roles=admin,developer,namespace-admin,operator
+schedule.read [orkflow] roles=admin,auditor,developer,namespace-admin,operator,viewer
+schedule.write [orkflow] roles=admin,developer,namespace-admin
+stats.read [namespace] roles=admin,auditor,developer,namespace-admin,operator,viewer
+system.read [deployment] roles=admin,auditor,developer,namespace-admin,operator,viewer
+task.result.commit [pool] roles=orker
+trigger.read [orkflow] roles=admin,auditor,developer,namespace-admin,operator,viewer
+trigger.write [orkflow] roles=admin,developer,namespace-admin
+webhook.read [namespace] roles=admin,auditor,developer,namespace-admin,operator,viewer
+webhook.redeliver [namespace] roles=admin,developer,namespace-admin,operator
+webhook.write [namespace] roles=admin,namespace-admin
+
+admin (48): access.bind access.read access.write audit.read automation.plan cache.purge catalog.read concurrency.reset identity.keys.retire identity.read image-policy.update namespace.create namespace.delete namespace.policy.update namespace.read namespace.update orker.cordon orker.read orkflow.delete orkflow.promote orkflow.read orkflow.validate orkflow.write payload.keys.manage release.operate retention.update run.artifacts.read run.await.resolve run.cancel run.cancel.bulk run.cancel.force run.evidence.export run.history.decode run.logs.read run.pause run.read run.resume run.submit schedule.operate schedule.read schedule.write stats.read system.read trigger.read trigger.write webhook.read webhook.redeliver webhook.write
+auditor (14): access.read audit.read catalog.read identity.read namespace.read orker.read orkflow.read run.evidence.export run.read schedule.read stats.read system.read trigger.read webhook.read
+developer (26): automation.plan cache.purge namespace.read orker.read orkflow.promote orkflow.read orkflow.validate orkflow.write run.artifacts.read run.await.resolve run.cancel run.evidence.export run.logs.read run.pause run.read run.resume run.submit schedule.operate schedule.read schedule.write stats.read system.read trigger.read trigger.write webhook.read webhook.redeliver
+namespace-admin (35): access.bind audit.read automation.plan cache.purge concurrency.reset namespace.read namespace.update orker.read orkflow.delete orkflow.promote orkflow.read orkflow.validate orkflow.write payload.keys.manage run.artifacts.read run.await.resolve run.cancel run.cancel.bulk run.cancel.force run.evidence.export run.logs.read run.pause run.read run.resume run.submit schedule.operate schedule.read schedule.write stats.read system.read trigger.read trigger.write webhook.read webhook.redeliver webhook.write
+operator (18): namespace.read orker.read orkflow.read run.artifacts.read run.await.resolve run.cancel run.logs.read run.pause run.read run.resume run.submit schedule.operate schedule.read stats.read system.read trigger.read webhook.read webhook.redeliver
+orker (3): identity.token.mint payload.key.use task.result.commit
+viewer (9): namespace.read orker.read orkflow.read run.read schedule.read stats.read system.read trigger.read webhook.read

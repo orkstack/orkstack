@@ -1,6 +1,7 @@
 package jwt
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/ecdsa"
@@ -53,7 +54,7 @@ func ParsePublicKeyPEM(data []byte) (PublicKey, error) {
 	if block.Type != "PUBLIC KEY" {
 		return PublicKey{}, fmt.Errorf("PEM block is %q; a PUBLIC KEY is required", block.Type)
 	}
-	if len(trimSpace(rest)) != 0 {
+	if len(bytes.TrimSpace(rest)) != 0 {
 		return PublicKey{}, errors.New("more than one PEM block; give one key at a time")
 	}
 	key, err := x509.ParsePKIXPublicKey(block.Bytes)
@@ -61,13 +62,6 @@ func ParsePublicKeyPEM(data []byte) (PublicKey, error) {
 		return PublicKey{}, fmt.Errorf("parse public key: %w", err)
 	}
 	return NewPublicKey(key)
-}
-
-func trimSpace(b []byte) []byte {
-	for len(b) > 0 && (b[0] == ' ' || b[0] == '\n' || b[0] == '\r' || b[0] == '\t') {
-		b = b[1:]
-	}
-	return b
 }
 
 // checkPublic refuses every key that is not RSA of at least MinRSABits or

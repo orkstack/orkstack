@@ -93,6 +93,16 @@ func checkHeader(source []byte) error {
 		return fmt.Errorf("an Orkflow is a YAML mapping that begins with %q and %q, got %s",
 			"apiVersion: "+APIVersion, "kind: "+KindOrkflow, DescribeNode(body))
 	}
+	// Every top-level key is a plain string: a merge key, an alias used as a
+	// key, an anchor or a tag could make one reader of the document see a
+	// key, such as namespace:, that another does not.
+	for i := 0; i+1 < len(body.Content); i += 2 {
+		if key := body.Content[i]; !plainTopLevelKey(key) {
+			return validationError(topLevelKeyName(key), fmt.Errorf(
+				"a top-level key must be a plain string, not %s: write each key out, with no merge key (<<), alias, anchor or tag",
+				describeTopLevelKey(key)))
+		}
+	}
 	var apiVersion, kind *yaml.Node
 	for i := 0; i+1 < len(body.Content); i += 2 {
 		switch body.Content[i].Value {
@@ -151,4 +161,34 @@ func stringScalarNode(node *yaml.Node) bool { return IsStringScalar(node) }
 // YAML reads as a string whatever the text.
 func IsStringScalar(node *yaml.Node) bool {
 	return node.Kind == yaml.ScalarNode && (node.Tag == "!!str" || node.Tag == "!")
+}
+
+// plainTopLevelKey is an untagged, unanchored string scalar that is not a
+// merge key.
+func plainTopLevelKey(key *yaml.Node) bool {
+	return key.Kind == yaml.ScalarNode && key.Style&yaml.TaggedStyle == 0 && key.Anchor == "" &&
+		key.ShortTag() == "!!str" && key.Value != "<<"
+}
+
+func topLevelKeyName(key *yaml.Node) string {
+	if key.Kind == yaml.ScalarNode && key.Value != "" {
+		return key.Value
+	}
+	return "(top-level key)"
+}
+
+// describeTopLevelKey names what a top-level key that is not a plain string
+// is, for a refusal.
+func describeTopLevelKey(key *yaml.Node) string {
+	switch {
+	case key.Kind == yaml.AliasNode:
+		return "an alias (*" + key.Value + ")"
+	case key.Kind == yaml.ScalarNode && key.Value == "<<":
+		return "a merge key (<<)"
+	case key.Anchor != "":
+		return "a key anchored &" + key.Anchor
+	case key.Kind == yaml.ScalarNode && key.Style&yaml.TaggedStyle != 0:
+		return "a key tagged " + key.Tag
+	}
+	return DescribeNode(key)
 }

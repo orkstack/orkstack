@@ -12,6 +12,7 @@ import (
 	"connectrpc.com/connect"
 
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/webui"
 )
@@ -42,6 +43,16 @@ type MuxOptions struct {
 	// DefaultRequestMaxBytes: there is no unbounded setting.
 	RequestMaxBytes int64
 
+	// Access, when its mode is observe or enforce, authenticates every
+	// request and authorizes every RPC, stream, socket and route
+	// (docs/ACCESS.md). Nil, or asserted, installs nothing: the mux is
+	// v0.3.0's.
+	Access *AccessControl
+
+	// BreakGlassUsed, when set, is told of every break-glass request before
+	// it is served (its audit record and its log line).
+	BreakGlassUsed func(r *http.Request, p *authn.Principal, reason string)
+
 	// UI, when set, answers every path no API route takes: the web UI
 	// (internal/webui), mounted at / on this same listener so the browser
 	// reaches the API and the sockets on the page's own origin. Nil leaves
@@ -59,8 +70,37 @@ type MuxOptions struct {
 // pattern: it panics as the route is mounted, in every test that builds a
 // mux (TestNewMux_EveryRouteIsReservedFromTheUI).
 func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
+	serveMux, _ := newMux(svc, opts)
+	if !opts.Access.enabled() {
+		return serveMux
+	}
+	// Authentication wraps the whole mux, and classifies each request by
+	// the pattern serveMux says serves it, never by its path.
+	outer := http.NewServeMux()
+	outer.Handle("/", authn.Middleware(serveMux, authn.MiddlewareOptions{
+		Mode:          opts.Access.Mode,
+		Mux:           serveMux,
+		Exempt:        func(pattern string) bool { _, ok := exemptPatterns[pattern]; return ok },
+		Authenticator: opts.Access.Authenticator,
+		OnBreakGlass:  opts.BreakGlassUsed,
+		Observe: func(r *http.Request, method, outcome string) {
+			if opts.Access.Counter != nil {
+				opts.Access.Counter.CountRequest(r.Context(), method, outcome)
+			}
+		},
+	}))
+	return outer
+}
+
+// newMux builds the mux and lists every pattern it mounted, for the test
+// that holds each to a classification.
+func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
+	if opts.Access.enabled() {
+		svc.access = opts.Access
+	}
 	serveMux := http.NewServeMux()
-	mux := reservedMux{serveMux: serveMux}
+	patterns := []string{}
+	mux := reservedMux{serveMux: serveMux, patterns: &patterns}
 	// No Connect request carries more than one message (the API has no
 	// client stream), so every Connect route's body is bounded at
 	// ConnectBodyFactor times the read cap (reservedMux.Handle).
@@ -78,8 +118,14 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 		requestMaxBytes = DefaultRequestMaxBytes
 	}
 	mux.connectBodyMax = ConnectBodyFactor * requestMaxBytes
+	interceptors := []connect.Interceptor{svc.auditInterceptor()}
+	if opts.Access.enabled() {
+		// Authorization is first in the chain: a request it refuses reaches
+		// neither the audit interceptor nor a handler.
+		interceptors = append([]connect.Interceptor{svc.accessInterceptor()}, interceptors...)
+	}
 	handlerOptions := append(HandlerOptions(),
-		connect.WithInterceptors(svc.auditInterceptor()),
+		connect.WithInterceptors(interceptors...),
 		connect.WithReadMaxBytes(int(requestMaxBytes)),
 		connect.WithCompression("gzip",
 			func() connect.Decompressor { return &boundedGzip{limit: requestMaxBytes + 1} },
@@ -155,8 +201,8 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 
 	// The legacy webhook adapter is plain HTTP, outside Connect, so the
 	// interceptor cannot see it: it records its two writes itself.
-	mux.Handle(WebhookCollectionPath, NewWebhookHandler(svc.Webhooks(), svc.audit))
-	mux.Handle(WebhookItemPath, NewWebhookHandler(svc.Webhooks(), svc.audit))
+	mux.Handle(WebhookCollectionPath, svc.guardLegacyWebhooks(NewWebhookHandler(svc.Webhooks(), svc.audit)))
+	mux.Handle(WebhookItemPath, svc.guardLegacyWebhooks(NewWebhookHandler(svc.Webhooks(), svc.audit)))
 
 	// The invoke route is plain JSON so an arbitrary external caller — a CI
 	// job, a cron host, one curl line — starts a run without a Connect client.
@@ -175,10 +221,17 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	// The UI takes what no route above takes. "/" is less specific than every
 	// pattern above, so it never conflicts with one, and the UI answers the
 	// reserved paths none of them matched with a 404 itself (webui.Handler).
+	if opts.Access.enabled() {
+		// The access document's own service, mounted procedure by
+		// procedure: only what this release serves (access_service.go).
+		mountAccessService(svc, mux, handlerOptions)
+	}
+
 	if opts.UI != nil {
 		serveMux.Handle("/", opts.UI)
+		patterns = append(patterns, "/")
 	}
-	return serveMux
+	return serveMux, patterns
 }
 
 // boundedGzip is Connect's gzip decompressor with a ceiling on what one
@@ -232,6 +285,7 @@ func (d *boundedGzip) Close() error { return d.reader.Close() }
 type reservedMux struct {
 	serveMux       *http.ServeMux
 	connectBodyMax int64
+	patterns       *[]string
 }
 
 func (m reservedMux) Handle(pattern string, handler http.Handler) {
@@ -242,6 +296,9 @@ func (m reservedMux) Handle(pattern string, handler http.Handler) {
 		handler = http.MaxBytesHandler(handler, m.connectBodyMax)
 	}
 	m.serveMux.Handle(pattern, handler)
+	if m.patterns != nil {
+		*m.patterns = append(*m.patterns, pattern)
+	}
 }
 
 // The API listener's bounds (docs/DEPLOY.md, "The API listener's bounds").

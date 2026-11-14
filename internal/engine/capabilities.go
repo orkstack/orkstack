@@ -63,7 +63,20 @@ const capabilitySuffix = " ork-caps="
 // keeps one distinct identity, so the releases page's per-process count is
 // unchanged.
 func EngineIdentity(base string) string {
-	return base + capabilitySuffix + strings.Join(EngineCapabilities, ",")
+	return EngineIdentityWith(base)
+}
+
+// CapabilityAuthnEnforce is advertised by an engine running in enforce
+// mode. Every enforcing engine asks for it each minute and reports a fresh
+// poller that lacks it (the fleet report, docs/ACCESS.md); it refuses
+// nothing, since a mode is not a build capability.
+const CapabilityAuthnEnforce = "authn-enforce"
+
+// EngineIdentityWith is EngineIdentity advertising extra capabilities of
+// this process's configuration beside the build's own.
+func EngineIdentityWith(base string, extra ...string) string {
+	caps := append(append([]string(nil), EngineCapabilities...), extra...)
+	return base + capabilitySuffix + strings.Join(caps, ",")
 }
 
 // IdentityCapabilities parses what identity advertises: the tokens after its

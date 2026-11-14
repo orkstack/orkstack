@@ -44,10 +44,14 @@ const (
 	// objects/, so a workload artifact can never collide with a record and an
 	// operator can express one lifecycle rule over the prefix.
 	AuditPrefix = "metadata/audit"
-	// AuditSchemaVersion is the only AuditRecord schema this build writes or
-	// returns. A reader skips a record of any other version rather than
-	// guessing at its fields.
+	// AuditSchemaVersion is the AuditRecord schema an asserted deployment
+	// writes, byte for byte as before authentication existed.
 	AuditSchemaVersion = 1
+	// AuditSchemaVersionVerified is the schema of a record written in
+	// observe or enforce mode: it carries the verified principal and the
+	// decision. A reader skips a record of any version it does not know
+	// rather than guessing at its fields.
+	AuditSchemaVersionVerified = 2
 	// AuditContentType is what an audit record is stored as.
 	AuditContentType = "application/json"
 	// AuditObjectSuffix is the fixed leaf suffix of every audit key.
@@ -483,7 +487,7 @@ func readAuditCandidate(
 		slog.Default().Warn("audit record skipped: undecodable", "key", key, "error", err)
 		return nil, false, nil
 	}
-	if rec.GetSchemaVersion() != AuditSchemaVersion {
+	if v := rec.GetSchemaVersion(); v != AuditSchemaVersion && v != AuditSchemaVersionVerified {
 		slog.Default().Warn("audit record skipped: unknown schema version",
 			"key", key, "schema_version", rec.GetSchemaVersion())
 		return nil, false, nil

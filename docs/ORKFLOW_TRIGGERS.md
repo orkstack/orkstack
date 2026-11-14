@@ -111,7 +111,7 @@ Authorization: Bearer <token>
 Content-Type: application/json
 Idempotency-Key: <key>          (optional)
 Ork-Origin-Reference: <text>    (optional; e.g. the CI job URL, recorded on the run)
-Ork-Principal: <name>           (optional; recorded, never authenticated)
+Ork-Principal: <name>           (optional; recorded, never authenticated, in asserted mode; ignored otherwise)
 
 <the run's input JSON object>
 ```

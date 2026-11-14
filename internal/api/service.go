@@ -15,6 +15,7 @@ import (
 	"connectrpc.com/connect"
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/listfilter"
@@ -489,7 +490,10 @@ type Service struct {
 	// audit writes the control-plane audit trail and auditStore reads it
 	// back. Both are nil when no store is wired: nothing is recorded and
 	// ListAuditRecords is refused.
-	audit      *AuditRecorder
+	audit *AuditRecorder
+	// access is authentication's and authorization's state; nil in asserted
+	// mode, where nothing is installed.
+	access     *AccessControl
 	auditStore artifacts.AuditStore
 	notifier   engine.RunNotifier
 	observer   engine.EventObserver
@@ -745,6 +749,10 @@ func (s *Service) Runs() *engine.RunStore { return s.runs }
 
 // Webhooks exposes the callback registry (used by the management endpoints).
 func (s *Service) Webhooks() *webhooks.Registry { return s.webhooks }
+
+// AuditRecorder is the service's audit trail writer; nil when no audit
+// store is configured.
+func (s *Service) AuditRecorder() *AuditRecorder { return s.audit }
 
 // Triggers exposes the inbound run-starter registry, on the same terms: the
 // management RPCs and the plain-HTTP invoke adapter both read it, and it is
@@ -2823,7 +2831,7 @@ func (s *Service) CancelRun(
 	}
 	request := engine.CancelRequest{
 		Reason:    req.Msg.GetReason(),
-		Principal: boundOriginAssertion(req.Header().Get(AuditPrincipalHeader)),
+		Principal: boundOriginAssertion(authn.Recorded(ctx, req.Header()).ID),
 	}
 	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), request); err != nil {
 		return nil, connect.NewError(cancelErrorCode(ctx, err), err)

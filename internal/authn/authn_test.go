@@ -196,8 +196,12 @@ type fakeIssuer struct {
 	issuer       string // what discovery states; the server's URL by default
 	jwksURI      string // what discovery states; the server's /keys by default
 	down         atomic.Bool
-	discoveries  atomic.Int32
-	fetches      atomic.Int32
+	// hold, when set, keeps a key-set fetch waiting until it is closed;
+	// arrived is told when one starts to wait.
+	hold        chan struct{}
+	arrived     chan struct{}
+	discoveries atomic.Int32
+	fetches     atomic.Int32
 }
 
 func newFakeIssuer(t *testing.T, keys ...jwt.PublicKey) *fakeIssuer {
@@ -208,6 +212,10 @@ func newFakeIssuer(t *testing.T, keys ...jwt.PublicKey) *fakeIssuer {
 		if f.down.Load() {
 			http.Error(w, "down", http.StatusServiceUnavailable)
 			return
+		}
+		if r.URL.Path == "/keys" && f.hold != nil {
+			f.arrived <- struct{}{}
+			<-f.hold
 		}
 		f.mu.Lock()
 		defer f.mu.Unlock()
@@ -477,5 +485,37 @@ func TestKeyCache_ConcurrentLookupsFetchOnce(t *testing.T) {
 	wg.Wait()
 	if n := f.fetches.Load(); n != 1 {
 		t.Fatalf("32 concurrent lookups fetched %d times", n)
+	}
+}
+
+// TestKeyCache_ALeaderThatLeavesDoesNotPoisonTheRefresh: the caller whose
+// request starts a refresh hangs up mid-fetch. The fetch is the cache's,
+// not that caller's: it completes, and the next caller is answered from it
+// rather than from a cancellation recorded as a failure (Go audit H1).
+func TestKeyCache_ALeaderThatLeavesDoesNotPoisonTheRefresh(t *testing.T) {
+	a := newSigner(t).Public()
+	f := newFakeIssuer(t, a)
+	f.hold, f.arrived = make(chan struct{}), make(chan struct{}, 1)
+	c := newClock()
+	k := cacheFor(t, f, c, time.Hour)
+
+	leader, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { _, _, err := k.Key(leader, kidOf(a)); done <- err }()
+	<-f.arrived
+	cancel()
+	if err := <-done; err == nil {
+		t.Fatal("the leader that hung up got an answer")
+	}
+	close(f.hold)
+
+	ctx, stop := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stop()
+	key, ok, err := k.Key(ctx, kidOf(a))
+	if err != nil || !ok || kidOf(key) != kidOf(a) {
+		t.Fatalf("the next caller = %v, %v, %v; want the key the refresh fetched", kidOf(key), ok, err)
+	}
+	if n := f.fetches.Load(); n != 1 {
+		t.Fatalf("fetches = %d; want the leader's one, completed", n)
 	}
 }

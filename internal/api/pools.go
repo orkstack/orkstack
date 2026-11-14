@@ -10,6 +10,8 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -67,6 +69,15 @@ func (s *Service) namespace(ctx context.Context, name string) (*orkstackv1.Names
 func (s *Service) existingNamespaces(ctx context.Context) string {
 	if s.namespaces == nil {
 		return ""
+	}
+	if s.access.enabled() {
+		// With authentication on, only a caller who may read every
+		// namespace is told which exist.
+		policy, _ := s.access.policy(ctx)
+		if _, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermNamespaceRead),
+			Subject: subjectOf(authn.FromContext(ctx)), Policy: policy}); err != nil {
+			return ""
+		}
 	}
 	registered, err := s.namespaces.List(ctx)
 	if err != nil || len(registered) == 0 {

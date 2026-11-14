@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/enumname"
@@ -416,7 +417,7 @@ func (s *Service) ResolveAwait(
 		reason:    msg.GetReason(),
 		values:    []byte(msg.GetValuesJson()),
 		via:       orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_API,
-		principal: boundOriginAssertion(req.Header().Get(AuditPrincipalHeader)),
+		principal: boundOriginAssertion(authn.Recorded(ctx, req.Header()).ID),
 	})
 	if err != nil {
 		return nil, err

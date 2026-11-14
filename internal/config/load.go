@@ -508,8 +508,11 @@ func percentEncode(s string) string {
 // ORK_TELEMETRY_SINKS are wrapped under in their own env var text, matching
 // dsl.catalogDocument and telemetry.sinksDocument.
 func documentWrapKey(v Var) string {
-	if v.Env == "ORK_ACTIVITY_CATALOG" {
+	switch v.Env {
+	case "ORK_ACTIVITY_CATALOG":
 		return "activities"
+	case "ORK_AUTH_ISSUERS":
+		return "issuers"
 	}
 	return "sinks"
 }

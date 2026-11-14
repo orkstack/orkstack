@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 )
@@ -173,15 +174,17 @@ func resolveAwaitCallback(w http.ResponseWriter, r *http.Request, svc *Service, 
 
 	// 9. One core, shared with ResolveAwait.
 	response, err := svc.resolveAwait(ctx, awaitResolution{
-		binding:   binding,
-		run:       run,
-		start:     start,
-		taskID:    taskID,
-		reject:    reject,
-		reason:    reason,
-		values:    values,
-		via:       orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_CALLBACK,
-		principal: boundOriginAssertion(r.Header.Get(AuditPrincipalHeader)),
+		binding: binding,
+		run:     run,
+		start:   start,
+		taskID:  taskID,
+		reject:  reject,
+		reason:  reason,
+		values:  values,
+		via:     orkstackv1.AwaitResolvedVia_AWAIT_RESOLVED_VIA_CALLBACK,
+		// The callback door verifies nobody: outside asserted mode the
+		// resolution says it came by callback, and no header is read.
+		principal: boundOriginAssertion(authn.Recorded(r.Context(), r.Header).ID),
 	})
 	if err != nil {
 		status, code := awaitDoorStatus(err)

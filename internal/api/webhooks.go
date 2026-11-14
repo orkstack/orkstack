@@ -13,6 +13,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
 
@@ -251,7 +252,7 @@ func recordLegacyWebhook(r *http.Request, recorder *AuditRecorder, procedure str
 		return
 	}
 	rec := &orkstackv1.AuditRecord{
-		Principal:     r.Header.Get(AuditPrincipalHeader),
+		Principal:     authn.Recorded(r.Context(), r.Header).ID,
 		SourceAddress: r.RemoteAddr,
 		Action:        entry.Action,
 		Procedure:     procedure,
@@ -260,6 +261,7 @@ func recordLegacyWebhook(r *http.Request, recorder *AuditRecorder, procedure str
 		Detail:        entry.Detail,
 		Succeeded:     status >= 200 && status < 300,
 	}
+	stampDecision(r.Context(), rec, decisionFrom(r.Context()))
 	if !rec.Succeeded {
 		rec.ErrorCode = legacyWebhookErrorCode(status)
 	}

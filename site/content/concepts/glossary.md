@@ -35,7 +35,7 @@ Look up a word that OrkStack uses in its interface and its docs. The words are i
 | **Pin** | A named group of tasks that run on one Orker and share `/orkstack/shared`. |
 | **Pin host** | An Orker that accepts pins. It is an Orker with `ORK_ORKER_MAX_PINS` above zero. |
 | **Pool** | The set of Orkers a task may run on. `main` is the default pool. |
-| **Principal** | The name a gateway asserts in the `Ork-Principal` header. OrkStack records it as asserted, and never as verified. |
+| **Principal** | Who a request is from. With authentication on, the identity OrkStack verified; by default, the name a gateway asserts in the `Ork-Principal` header, recorded as asserted and never as verified. |
 | **Release** | One build of OrkStack: `ork` and `orker` deployed together. A release is current, ramping, previous or candidate. It is drained when no run on it remains and none of its Orkers hosts an open pin. |
 | **Run** | One execution of an Orkflow version. It has its own ID and its own event stream. |
 | **Run ID** | The ID of a run. Address a run with it inside its namespace. Treat it as opaque. |

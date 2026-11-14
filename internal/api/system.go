@@ -86,7 +86,15 @@ func (s *Service) GetSystemInfo(
 	_ context.Context,
 	_ *connect.Request[orkstackv1.GetSystemInfoRequest],
 ) (*connect.Response[orkstackv1.GetSystemInfoResponse], error) {
+	// auth_mode is set only where authentication is on: an asserted
+	// engine answers exactly as before, and a client reads unset as
+	// asserted.
+	authMode := ""
+	if s.access.enabled() {
+		authMode = s.access.Mode
+	}
 	return connect.NewResponse(&orkstackv1.GetSystemInfoResponse{
+		AuthMode:         authMode,
 		EngineVersion:    s.system.EngineVersion,
 		GoVersion:        s.system.GoVersion,
 		DeploymentName:   s.system.DeploymentName,

@@ -305,11 +305,11 @@ func validateIssuer(name string, d issuerDocument) (*Issuer, error) {
 		}
 	}
 	if d.OrkerIDClaim != "" {
-		path := strings.Split(d.OrkerIDClaim, "/")
-		if slices.Contains(path, "") {
+		segments := strings.Split(d.OrkerIDClaim, "/")
+		if slices.Contains(segments, "") {
 			fail("orker_id_claim %q is a /-separated path of non-empty object keys", d.OrkerIDClaim)
 		}
-		i.OrkerIDClaim = path
+		i.OrkerIDClaim = segments
 	}
 
 	if d.JWKSURI != "" && d.JWKSFile != "" {

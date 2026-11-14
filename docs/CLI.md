@@ -247,6 +247,59 @@ Inherited flags:
 - `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 
+## `orkctl admin auth`
+
+Read or lower the deployment's authentication mode
+
+auth reads the deployment's authentication mode and lowers it. The mode record
+holds the highest mode the deployment runs; an engine does not start beneath
+it, so a mode comes down by a command and a restart, never by one replica's
+configuration.
+
+Inherited flags:
+
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl admin auth lower`
+
+Lower the deployment's authentication mode to observe or asserted
+
+lower rewrites the mode record to MODE (observe or asserted), below the mode it
+names; then restart the engines in MODE. It never raises one: an engine raises
+the record when it starts in a higher mode.
+
+enforce to observe is never refused. To asserted is refused until the
+deployment has been out of enforce for one idempotency key's life
+(engine.idempotency_ttl and five minutes): a retried submission under a key
+claimed by a principal would otherwise start a second run. Lower to observe
+first; --accept-duplicate-retries skips the wait and is recorded in the audit
+trail. It needs access.write at the deployment.
+
+Flags:
+
+- `--accept-duplicate-retries` — lower to asserted now, accepting that a retried submission may start a second run
+
+Inherited flags:
+
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
+## `orkctl admin auth status`
+
+Show the authentication mode, the mode record and the engines that do not enforce
+
+Inherited flags:
+
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+
 ## `orkctl admin image-policy`
 
 Read or change the deployment's image supply-chain policy

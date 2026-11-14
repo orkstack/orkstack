@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
@@ -184,6 +185,9 @@ func (s *Service) loadComposeTree(ctx context.Context, ns string, wf *orkstackv1
 				problem.TaskIndex = index
 				if problem.Kind == "missing" {
 					problem.Message = s.missingChildSentence(ctx, owner, ref)
+					if foreign, opaque := s.opaqueForeignRef(ctx, composer, def.GetName(), owner, ref); opaque {
+						problem.Kind, problem.Message = "not-shared", foreign
+					}
 				}
 				if depth > 0 {
 					problem.Message = fmt.Sprintf("%s: %s",
@@ -196,7 +200,11 @@ func (s *Service) loadComposeTree(ctx context.Context, ns string, wf *orkstackv1
 			// pinned version's shared_with admits the Orkflow writing uses:.
 			if owner != composer {
 				if _, err := authorizeChild(composer, def.GetName(), owner, ref, stored); err != nil {
-					report(&composeProblem{Path: append(append([]string(nil), path...), key), Kind: "not-shared", Message: err.Error()})
+					message := err.Error()
+					if foreign, opaque := s.opaqueForeignRef(ctx, composer, def.GetName(), owner, ref); opaque {
+						message = foreign
+					}
+					report(&composeProblem{Path: append(append([]string(nil), path...), key), Kind: "not-shared", Message: message})
 					continue
 				}
 			}
@@ -224,6 +232,19 @@ func (s *Service) loadComposeTree(ctx context.Context, ns string, wf *orkstackv1
 		return nil, nil, err
 	}
 	return nodes, problems, nil
+}
+
+// opaqueForeignRef is the one sentence a caller who may not read another
+// namespace's Orkflow gets for it, whether it is missing, lacks that version
+// or is not shared: a composition must not be a way to list another
+// namespace's Orkflows or their versions. opaque is false where the caller
+// may read it, or in asserted mode, and the precise sentence stands.
+func (s *Service) opaqueForeignRef(ctx context.Context, composer, composerName, owner string, ref *orkstackv1.OrkflowRef) (string, bool) {
+	if !s.access.enabled() || owner == composer || s.mayListVersions(ctx, owner, ref.GetName()) {
+		return "", false
+	}
+	return fmt.Sprintf("%s: orkflow %q is not shared with %q, or no such Orkflow or version exists in a namespace you may read",
+		authz.ReasonNotShared, owner+"/"+ref.GetName()+"@"+ref.GetVersion(), composer+"/"+composerName), true
 }
 
 // missingChildSentence is rule 31 item 1: the versions that exist, newest
@@ -282,6 +303,9 @@ func (s *Service) enrichVersionRequired(ctx context.Context, requestedNamespace 
 	if nsErr != nil {
 		return err
 	}
+	if !s.mayListVersions(ctx, ns.GetName(), missing.Name) {
+		return err
+	}
 	versions, vErr := s.orkflows.Versions(ctx, ns.GetName(), missing.Name)
 	if vErr != nil {
 		return err
@@ -294,6 +318,25 @@ func (s *Service) enrichVersionRequired(ctx context.Context, requestedNamespace 
 		Field: fmt.Sprintf("tasks[%d].uses", missing.TaskIndex),
 		Err:   &composeVersionRefusal{missing: missing, suffix: suffix},
 	}
+}
+
+// mayListVersions reports whether a refusal may name the versions of
+// namespace/name: always in asserted mode; with authentication on, only in
+// the namespace the request was decided in, or where the caller may read
+// that Orkflow. A refusal must not be a way to list another namespace.
+func (s *Service) mayListVersions(ctx context.Context, namespace, name string) bool {
+	if !s.access.enabled() {
+		return true
+	}
+	if d := decisionFrom(ctx); d != nil {
+		if scope, err := authz.ParseScope(d.Scope); err == nil && scope.Namespace != "" && scope.Namespace == namespace {
+			return true
+		}
+	}
+	policy, _ := s.access.policy(ctx)
+	_, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermOrkflowRead),
+		Subject: subjectOf(authn.FromContext(ctx)), Resource: authz.Resource{Namespace: namespace, Orkflow: name}, Policy: policy})
+	return err == nil
 }
 
 func composeIssue(field, message string, severity orkstackv1.ValidationSeverity) *orkstackv1.ValidationIssue {

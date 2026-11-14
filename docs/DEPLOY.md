@@ -713,6 +713,14 @@ then the variable it becomes.
 | `telemetry.batch.metric_export_interval` | `OTEL_METRIC_EXPORT_INTERVAL` | *(SDK default)* | both | the metric export interval |
 | environment only | `OTEL_BSP_*`, `OTEL_BLRP_*` | *(SDK defaults)* | both | batch/backpressure bounds on the span and log processors; a record that cannot be queued is dropped, never waited for. **Environment only** — no config file key exists for these |
 | `telemetry.sinks:` | `ORK_TELEMETRY_SINKS` | *(empty)* | both | YAML table of named OTLP destinations a namespace may select by name, in place of the deployment's single `OTEL_*` environment — see §7, "Named sinks" |
+| `auth.mode` | `ORK_AUTH_MODE` | `asserted` | `ork` | `asserted`, `observe` or `enforce`: who a request is from, and whether a permission is required — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
+| `auth.public_url` | `ORK_AUTH_PUBLIC_URL` | *(empty)* | `ork` | the URL callers reach the API at, a scheme and host alone; break-glass assertions name it as their audience |
+| `auth.issuers:` | `ORK_AUTH_ISSUERS` | *(empty)* | `ork` | YAML table of the trusted issuers whose JWTs the engine accepts: in the file, one entry by name under `auth.issuers`; in the environment, the same table under a top-level `issuers:` — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
+| `auth.admins` | `ORK_AUTH_ADMINS` | *(empty)* | `ork` | subjects that hold `admin` at the deployment whatever the access document says (`user:…`, `group:…`, `service:…`) |
+| `auth.break_glass_key_file` | `ORK_AUTH_BREAK_GLASS_KEY_FILE` | *(empty)* | `ork` | a PEM public key whose request-bound assertions authenticate as `serviceaccount:break-glass`; break-glass is off when unset |
+| `auth.clock_skew` | `ORK_AUTH_CLOCK_SKEW` | `1m` | `ork` | leeway a token's expiry, not-before and issued-at get against this engine's clock |
+| `auth.policy_refresh` | `ORK_AUTH_POLICY_REFRESH` | `10s` | `ork` | how old a replica's copy of the access document may be before it reads it again |
+| `auth.policy_stale_limit` | `ORK_AUTH_POLICY_STALE_LIMIT` | `5m` | `ork` | how long a replica decides from a stale copy while the store cannot be read; then it fails closed |
 
 The table above is the reference for what each key *means*; for the full,
 always-current set of every key at its exact built-in default, see the
@@ -3676,11 +3684,18 @@ principal is the identity the deployment's gateway asserted in Ork-Principal;
 OrkStack records it and does not authenticate it.
 ```
 
+- **With `auth.mode` `observe` or `enforce` the principal is verified.** A
+  record then carries the identity OrkStack verified, says so
+  (`principal_verified`), and is schema version 2: it also names the method,
+  the issuer, the permission, the scope, the decision and the binding that
+  admitted it, and denials of reads are recorded too
+  ([ACCESS.md](./ACCESS.md), "Denials and the audit trail"). The header is read
+  nowhere. The bullets below are `asserted` mode, the default.
 - **`principal` is an assertion, not an identity.** It is the value of the
   `Ork-Principal` request header, recorded verbatim (bounded, control
-  characters replaced). OrkStack has no authentication and does not verify
-  it. A request without the header is recorded with an empty principal,
-  which both clients render as `unattributed`.
+  characters replaced). OrkStack does not verify it. A request without the
+  header is recorded with an empty principal, which both clients render as
+  `unattributed`.
 - **A gateway that authenticates callers must OVERWRITE `Ork-Principal`**
   with the identity it established, never pass a client's value through —
   otherwise any caller can claim any name. The UI's calls go from the

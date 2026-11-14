@@ -163,13 +163,24 @@ func (k *KeyCache) Key(ctx context.Context, kid string) (jwt.PublicKey, bool, er
 // refreshOnce fetches the key set unless another caller refreshed it while
 // this one waited. forUnknown counts the attempt against the unknown-kid
 // interval.
+//
+// The fetch is the cache's own work, not its caller's: it runs detached
+// from the caller's cancellation, bounded by fetchTimeout, and holds the
+// refresh slot until it ends. A caller whose context ends leaves at once,
+// and its departure is never recorded as the issuer's failure, so one
+// client that hangs up cannot put every other caller on the backoff.
 func (k *KeyCache) refreshOnce(ctx context.Context, forUnknown bool) error {
 	select {
 	case k.refresh <- struct{}{}:
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	defer func() { <-k.refresh }()
+	release := true
+	defer func() {
+		if release {
+			<-k.refresh
+		}
+	}()
 	k.mu.Lock()
 	now := k.now()
 	if !k.lastFailure.IsZero() && now.Sub(k.lastFailure) < FailureBackoff {
@@ -190,8 +201,25 @@ func (k *KeyCache) refreshOnce(ctx context.Context, forUnknown bool) error {
 	jwksURI := k.jwksURI
 	k.mu.Unlock()
 
+	result := make(chan error, 1)
+	release = false // the fetch owns the slot now
+	go func() {
+		defer func() { <-k.refresh }()
+		result <- k.fetchAndStore(context.WithoutCancel(ctx), jwksURI)
+	}()
+	select {
+	case err := <-result:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// fetchAndStore fetches the key set and stores the outcome: the set and its
+// age, or the failure that starts the backoff.
+func (k *KeyCache) fetchAndStore(ctx context.Context, jwksURI string) error {
 	set, header, uri, err := k.fetch(ctx, jwksURI)
-	now = k.now()
+	now := k.now()
 	k.mu.Lock()
 	defer k.mu.Unlock()
 	if err != nil {
@@ -239,6 +267,13 @@ func (k *KeyCache) discover(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("discovery: %w", err)
 	}
+	return checkDiscovery(raw, k.issuer.Issuer)
+}
+
+// checkDiscovery reads an issuer's discovery document: it must state the
+// configured issuer exactly, and its jwks_uri must be https on the issuer's
+// own host, with no user information.
+func checkDiscovery(raw []byte, configured string) (string, error) {
 	var doc struct {
 		Issuer  string `json:"issuer"`
 		JWKSURI string `json:"jwks_uri"`
@@ -246,11 +281,11 @@ func (k *KeyCache) discover(ctx context.Context) (string, error) {
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		return "", fmt.Errorf("discovery document: %w", err)
 	}
-	if doc.Issuer != k.issuer.Issuer {
-		return "", fmt.Errorf("discovery document states issuer %q, not the configured %q", doc.Issuer, k.issuer.Issuer)
+	if doc.Issuer != configured {
+		return "", fmt.Errorf("discovery document states issuer %q, not the configured %q", doc.Issuer, configured)
 	}
 	jwks, err := url.Parse(doc.JWKSURI)
-	issuer, issErr := url.Parse(k.issuer.Issuer)
+	issuer, issErr := url.Parse(configured)
 	if err != nil || issErr != nil || jwks.Scheme != "https" || !strings.EqualFold(jwks.Host, issuer.Host) || jwks.User != nil {
 		return "", fmt.Errorf("discovery's jwks_uri %q is not https on the issuer's own host; pin jwks_uri or supply jwks_file", doc.JWKSURI)
 	}

@@ -15,6 +15,7 @@ import (
 
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
@@ -56,8 +57,8 @@ const (
 	// KindString leaves are too (see Var.Secret), but a KindSecret leaf is
 	// ALWAYS redacted by Effective regardless of how its value arrived.
 	KindSecret
-	// KindDocument is one of the two YAML subtrees (activities,
-	// telemetry.sinks) that round-trip as YAML text rather than a scalar.
+	// KindDocument is one of the three YAML subtrees (activities,
+	// telemetry.sinks, auth.issuers) that round-trip as YAML text rather than a scalar.
 	KindDocument
 )
 
@@ -305,6 +306,18 @@ var Schema = []Var{
 	// filtered per binary, so both binaries see every sink a file defines,
 	// whatever it is named.
 	{Path: "telemetry.sinks", Env: "ORK_TELEMETRY_SINKS", Binaries: usesBoth, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no named sinks"},
+
+	// auth.* is the engine's alone (docs/AUTHENTICATION.md). auth.issuers is
+	// a document: it re-serializes to ORK_AUTH_ISSUERS exactly like a
+	// standalone authn.ParseIssuers document, under one `issuers:` key.
+	{Path: "auth.mode", Env: "ORK_AUTH_MODE", Binaries: usesOrk, Kind: KindString, Default: authn.ModeAsserted},
+	{Path: "auth.public_url", Env: "ORK_AUTH_PUBLIC_URL", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no break-glass audience"},
+	{Path: "auth.issuers", Env: "ORK_AUTH_ISSUERS", Binaries: usesOrk, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no trusted issuer"},
+	{Path: "auth.admins", Env: "ORK_AUTH_ADMINS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
+	{Path: "auth.break_glass_key_file", Env: "ORK_AUTH_BREAK_GLASS_KEY_FILE", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "break-glass off"},
+	{Path: "auth.clock_skew", Env: "ORK_AUTH_CLOCK_SKEW", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(authn.DefaultClockSkew)},
+	{Path: "auth.policy_refresh", Env: "ORK_AUTH_POLICY_REFRESH", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultPolicyRefresh)},
+	{Path: "auth.policy_stale_limit", Env: "ORK_AUTH_POLICY_STALE_LIMIT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultPolicyStaleLimit)},
 }
 
 // byEnv indexes Schema by environment variable name, built once at init so

@@ -108,6 +108,14 @@ subscriptions and reads the delivery records. Its RPCs are:
 - `RegisterWebhook`, `ListWebhooks`, `UpdateWebhook` and `DeleteWebhook`;
 - `ListDeliveries`, `GetDelivery` and `RedeliverWebhook`.
 
+With authentication on ([ACCESS.md](ACCESS.md)), each is decided at the
+subscription's scope: its namespace, or the deployment for a subscription that
+names none. Reading needs `webhook.read` and a redelivery `webhook.redeliver`.
+Registering or changing a subscription needs `webhook.write` **and** `run.read`
+there, at the old scope and the new: a subscription is a standing read of every
+run in its scope, sent to an address its author chooses. The legacy JSON routes
+below are decided at the deployment.
+
 Plain JSON routes remain as compatibility adapters over the same registry
 (`internal/api/webhooks.go`): `POST /v1/webhooks` answers `201` with the
 subscription and its secret, `GET /v1/webhooks` lists, and
@@ -191,8 +199,13 @@ The body is one JSON object, in this field order:
 - `status` is the status the event carries.
 - `run` is the run in the JSON dialect of [JSON.md](JSON.md), with its input,
   its output and its origin, and on a `RUN_CANCELED` delivery who canceled it
-  (`canceledBy`, the asserted `Ork-Principal`, never authenticated) when the
-  engine could read it; a delivery whose read failed goes out without it.
+  (`canceledBy`) when the engine could read it; a delivery whose read failed
+  goes out without it. A principal in the body (`origin.principal`,
+  `canceledBy`, an awaited task's `resolvedBy`) is as recorded: verified only
+  when its flag is true (`origin.principalVerified`, `canceledByVerified`,
+  `resolvedByVerified`). An absent or false flag means it was asserted in the
+  `Ork-Principal` header and never authenticated, so a receiver that does not
+  read the flag must not treat the name as verified.
   Fan-out items are removed (`engine.WithoutItems`).
   It is the run as the engine's projection held it when the transition was
   published. A redelivery carries the run as it reads now.
@@ -482,9 +495,10 @@ Every webhook write is an audited control-plane write: `webhook.register`,
 `webhook.update`, `webhook.delete` and `webhook.redeliver`. An audit record is
 deployment-wide. It carries the URL with any password redacted, the event names
 and the scope. It never carries the secret or the body (`internal/api/audit.go`,
-`webhookAuditDetail`). Its principal is the `Ork-Principal` the gateway asserted,
-which OrkStack does not authenticate ([SECURITY_MODEL.md](SECURITY_MODEL.md), "The
-principal is asserted, not authenticated"). Delivery itself is not audited, because the delivery
+`webhookAuditDetail`). Its principal is the verified caller with authentication
+on, and otherwise the `Ork-Principal` the gateway asserted, which OrkStack does
+not authenticate ([SECURITY_MODEL.md](SECURITY_MODEL.md), "The principal is
+verified or asserted, and says which"). Delivery itself is not audited, because the delivery
 record is its record ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Control-plane audit
 trail").
 

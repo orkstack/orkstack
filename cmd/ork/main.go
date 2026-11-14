@@ -148,6 +148,11 @@ type config struct {
 	// config.json used ONLY for manifest GETs during apply-time resolution.
 	// It grants no push and no execution.
 	registryAuthFile string
+
+	// auth is the auth.* settings; authErr refuses the boot, naming the
+	// setting.
+	auth    authConfig
+	authErr error
 }
 
 func loadConfig() config {
@@ -216,6 +221,7 @@ func loadConfig() config {
 	if origins := env("ORK_WS_ALLOWED_ORIGINS", ""); origins != "" {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
+	cfg.auth, cfg.authErr = authFromEnv(os.LookupEnv)
 	cfg.ui, cfg.uiErr = uiFromEnv()
 	cfg.listener, cfg.listenerErr = listenerFromEnv(tasks.value)
 	return cfg
@@ -405,7 +411,7 @@ func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, lo
 	if err != nil {
 		return nil, "", err
 	}
-	temporalOptions.Identity = engine.EngineIdentity(sdkIdentity())
+	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(), cfg.auth.capabilities()...)
 	if dialing != nil {
 		dialing(temporalOptions)
 	}
@@ -583,7 +589,15 @@ func main() {
 	// applyConfigFile's own cfgfile.ParseArgs call (which also sees this
 	// flag but, per its own doc, otherwise ignores it) does anything that
 	// could fail on a bad --config path irrelevant to this request.
-	requested, argsErr := cfgfile.ParseArgs(os.Args[1:], os.LookupEnv)
+	// `ork --set-mode-record MODE --reason TEXT [--force]` is the way back
+	// from a mode record no engine can read (docs/AUTHENTICATION.md); its
+	// arguments are taken out before the configuration's are parsed.
+	modeArgs, args, modeArgsErr := splitSetModeRecord(os.Args[1:])
+	if modeArgsErr != nil {
+		fmt.Fprintf(os.Stderr, "ork: %v\n", modeArgsErr)
+		os.Exit(2)
+	}
+	requested, argsErr := cfgfile.ParseArgs(args, os.LookupEnv)
 	if argsErr == nil && requested.Defaults {
 		fmt.Print(cfgfile.RenderDefaults())
 		os.Exit(0)
@@ -603,7 +617,7 @@ func main() {
 	// *FromEnv reader below (loadConfig included) works unchanged whether its
 	// value came from a file or, as always, straight from the environment.
 	cfgDoc, cfgPath, cfgCheck, cfgSet, err := applyConfigFile(
-		os.Args[1:], cfgfile.BinaryOrk, os.LookupEnv, os.Setenv)
+		args, cfgfile.BinaryOrk, os.LookupEnv, os.Setenv)
 	if err != nil {
 		if cfgDoc == nil && cfgPath == "" {
 			fmt.Fprintln(os.Stderr, err)
@@ -651,10 +665,29 @@ func main() {
 	if cfgPath != "" {
 		logger.Info("configuration file applied", "path", cfgPath, "applied", len(cfgSet))
 	}
+	if modeArgs.requested {
+		if err := runSetModeRecord(modeArgs, logger); err != nil {
+			logger.Error("ork --set-mode-record changed nothing", "error", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
 	if err := run(logger, tcfg, sinks, cfg); err != nil {
 		logger.Error("ork stopped", "error", err)
 		os.Exit(1)
 	}
+}
+
+// runSetModeRecord opens only what the command needs: the engine's own
+// bucket, for the record and its audit trail.
+func runSetModeRecord(a setModeRecordArgs, logger *slog.Logger) error {
+	ctx := context.Background()
+	storeCfg := artifacts.ConfigFromEnv()
+	auditStore, err := artifacts.NewAuditStore(ctx, storeCfg)
+	if err != nil {
+		return fmt.Errorf("open audit store: %w", err)
+	}
+	return setModeRecord(ctx, a, storeCfg, api.NewAuditRecorder(auditStore, nil, logger, nil), os.Stdout, logger)
 }
 
 // queues names every Temporal queue this engine touches. It exists because
@@ -1009,6 +1042,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// believe a ceiling is active when the process discarded it.
 	if cfg.limitsErr != nil {
 		return cfg.limitsErr
+	}
+	if cfg.authErr != nil {
+		return cfg.authErr
+	}
+	if err := cfg.auth.checkBoot(tcfg.AdminAddr, tcfg.PprofEnabled); err != nil {
+		return err
 	}
 	// Fail on a deployment identity the cluster would reject later, while the
 	// error can still name the variable that caused it.
@@ -1609,6 +1648,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		api.NewScheduleActivities(svc, starter).PrepareScheduledRun,
 		activity.RegisterOptions{Name: engine.ActivityPrepareScheduledRun},
 	)
+	// Authentication, before any worker polls: the mode record first,
+	// whatever the mode (an engine never starts beneath it), then, in
+	// observe or enforce mode, the access document and the trusted issuers.
+	authInstruments, err := telemetry.NewAuthInstruments(sinks.Default())
+	if err != nil {
+		return err
+	}
+	auth, err := setupAccess(ctx, cfg.auth, logger, artifacts.ConfigFromEnv(), cfg.listener.hosts.Allows,
+		cfg.idempotencyTTL, releases, svc.AuditRecorder(), authInstruments)
+	if err != nil {
+		return err
+	}
 	if err := runWorker.Start(); err != nil {
 		return err
 	}
@@ -1638,6 +1689,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		AllowedOrigins:  cfg.allowedOrigins,
 		RequestMaxBytes: cfg.listener.requestMaxBytes,
 		UI:              ui,
+		Access:          auth.access,
+		BreakGlassUsed:  auth.breakGlass,
 	})
 	// The Host allowlist is outermost: a request it refuses reaches no route,
 	// the UI and the sockets included, and is not traced.

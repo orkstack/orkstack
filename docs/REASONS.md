@@ -26,6 +26,16 @@ A refusal here happens before a run ID is minted and before an idempotency key i
 | `SHARED_ORKFLOW_NOT_ROOT` | — | Run again names a child run of another namespace's shared Orkflow. Such an Orkflow runs only as a child, never as a root run ([DSL.md](./DSL.md#sharing-across-namespaces), "Sharing across namespaces"). | Run its root run again; the message names it. |
 | `INPUT_TOO_LARGE` | ContractViolation | The run's input is over 256 KiB, so it is refused at submit and at a schedule's fire. The same code is raised when a task's input would exceed the limit at dispatch ([DSL.md](./DSL.md#inputs), "Inputs"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#82-reason-codes), "§8.2"). | Pass a reference to large data, such as a URL or an object key, instead of its bytes. A deep chain that fails at dispatch is split into composed Orkflows ([DSL.md](./DSL.md#how-many-tasks-an-orkflow-may-declare), "How many tasks an Orkflow may declare"). |
 
+## Authorization
+
+With `auth.mode` `observe` or `enforce`, a request is decided against the access document before any handler runs ([ACCESS.md](./ACCESS.md#how-a-request-is-decided), "How a request is decided"). In `enforce` mode these refuse the request; in `observe` mode they are recorded as `would-deny` and the request is served. A run the caller may not read is answered `not_found` instead, as one that does not exist.
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `PERMISSION_DENIED` | — | No binding grants the caller the permission at a scope that covers what the request names. The message names the caller, the permission and the scope, and never a binding ([ACCESS.md](./ACCESS.md#permissions), "Permissions"). | Ask an administrator for a binding of a role that holds the permission, at that scope or a wider one. A list paged by a key walk names the filter to add instead. |
+| `PRINCIPAL_DISABLED` | — | The caller's id is under `disabled` in the access document, so it is refused whatever it presents, and its open streams are closed ([ACCESS.md](./ACCESS.md#subjects), "Subjects"). | An administrator enables the principal again, or the caller stops using it. |
+| `UNAUTHENTICATED` | — | The request carries no verified caller, where the permission needs one ([AUTHENTICATION.md](./AUTHENTICATION.md#what-the-api-accepts), "What the API accepts"). | Send `Authorization: Bearer` with a token from a trusted issuer. |
+
 ## The Orker and the container
 
 The Orker runs each task attempt, and an attempt reports at most one of these reasons. Five are boot refusals, marked below: the Orker refuses to start, so no task carries them. `RUN_AS_ORKER_UNAVAILABLE` is a task failure, and a boot refusal only on an Orker that runs every task as its own user.

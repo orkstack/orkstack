@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
@@ -122,7 +123,9 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 		Id:          record.ID,
 		Reference:   reference,
 		Description: boundOriginAssertion(record.Description),
-		Principal:   boundOriginAssertion(r.Header.Get(AuditPrincipalHeader)),
+		// In observe and enforce mode a trigger's door verifies nobody: the
+		// origin names the trigger, and a caller-chosen header reaches nothing.
+		Principal: boundOriginAssertion(authn.Recorded(r.Context(), r.Header).ID),
 	})
 	if err != nil {
 		status, code := triggerSubmitStatus(err)

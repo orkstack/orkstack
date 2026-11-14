@@ -79,7 +79,17 @@ from recorded bytes; it is never an artifact's bytes, and nothing else may use
 it.
 
 Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
-and immutable activity completion and per-attempt records. Object-store data is
+and immutable activity completion and per-attempt records. It also holds what
+decides access and identity, where only an engine's credential should reach:
+the access document (roles, bindings, service accounts) and each namespace's
+identity policy, with an immutable revision per change; the identity issuer's
+published public keys; the authentication mode the deployment runs; sign-in
+records; and, with each run's saved state, its admission record and the record
+of the execution that started it, both written once and removed only with the
+run's own objects. None is execution state, and the presence of none is read as
+a run being alive: Temporal alone says whether a run is open and who holds its
+attempt. None holds a private key, a task's token or a secret value; a sign-in
+record holds its identity provider's refresh token, encrypted. Object-store data is
 not mutable workflow execution state (Temporal workflow state) and must never
 become a second state machine. Temporal remains authoritative for execution state.
 
@@ -407,6 +417,14 @@ such a value only under a source of the task's own. A bearer credential
 OrkStack mints for a caller (a trigger token, an await callback token) is
 disclosed once and stored only as a salted hash.
 
+With `auth.mode: enforce` every request is authenticated and every RPC
+requires a permission (`docs/ACCESS.md`). Roles and bindings are one document
+in object storage, changed by compare-and-swap; each replica decides from a
+copy at most `auth.policy_refresh` old, serves it stale for at most
+`auth.policy_stale_limit` when the store cannot be read, and then fails
+closed. An engine does not start in a lower mode than the deployment runs; the
+mode is lowered by a command, never by one replica's configuration.
+
 ## 7. Orkflow execution model
 
 Compile each Orkflow into an immutable internal representation and execute it
@@ -513,8 +531,8 @@ internal never appears on any of those surfaces.
   another namespace's Orkflow: its child run executes in the parent's
   namespace under that namespace's rules, and a submit, schedule or trigger
   never starts another namespace's Orkflow. The decision is
-  `internal/authz.Authorize`'s alone, the seam later authentication and RBAC
-  wrap.
+  `internal/authz.Authorize`'s alone, as is every decision whether a caller
+  may do something.
 - **Awaited task** means a task declaring `await:`: it runs no container and
   waits until it is **resolved** from outside the run (completed with values
   or rejected with a reason) or its deadline passes. A **callback token** is
@@ -546,10 +564,13 @@ internal never appears on any of those surfaces.
   started it. A child run's origin names it beside its parent
   (`origin.root_run_id`), copied down at each child start. A top-level run holds
   none. `origin.root_run_id=` lists every run below a root; the root is not one of them.
-- **Principal** means the `Ork-Principal` request header a deployment's
-  gateway asserted, recorded verbatim on audit records and origins. It is not
-  authenticated, and no surface may present it as a verified identity: every
-  rendering says it was asserted.
+- **Principal** means who a request is from, as audit records and origins
+  record it. With `auth.mode` `asserted`, the default, it is the
+  `Ork-Principal` request header a deployment's gateway asserted, recorded
+  verbatim and not authenticated. With `observe` or `enforce` it is the
+  identity OrkStack verified from a credential, recorded with how, and the
+  header is read nowhere. Every record and every rendering says which: no
+  surface may present an asserted principal as a verified one.
 - **Automation document** means one authored YAML file
   (`kind: Automation`) declaring a namespace's settings, schedules, triggers
   and webhooks by name (`docs/AUTOMATION.md`). Its plan

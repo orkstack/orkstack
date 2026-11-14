@@ -226,3 +226,24 @@ func FuzzMatchStrings(f *testing.F) {
 		}
 	})
 }
+
+// FuzzParsePublicKeyPEM: a client-supplied PEM never panics the parser, and
+// an accepted key is one checkPublic admits (RSA of at least MinRSABits, or
+// P-256) with a thumbprint.
+func FuzzParsePublicKeyPEM(f *testing.F) {
+	f.Add([]byte("-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE\n-----END PUBLIC KEY-----\n"))
+	f.Add([]byte("not pem"))
+	f.Add([]byte("-----BEGIN RSA PRIVATE KEY-----\nAAAA\n-----END RSA PRIVATE KEY-----\n"))
+	f.Fuzz(func(t *testing.T, raw []byte) {
+		key, err := ParsePublicKeyPEM(raw)
+		if err != nil {
+			return
+		}
+		if err := checkPublic(key.Public()); err != nil {
+			t.Fatalf("an accepted key fails checkPublic: %v", err)
+		}
+		if _, err := key.Thumbprint(); err != nil {
+			t.Fatalf("an accepted key has no thumbprint: %v", err)
+		}
+	})
+}

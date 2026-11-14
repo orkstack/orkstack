@@ -1,25 +1,22 @@
-// Package authz is the one place OrkStack decides whether a caller may run
-// an Orkflow of another namespace.
+// Package authz is the one place OrkStack decides whether a caller may do
+// something: compose another namespace's Orkflow, and, with authentication
+// on, call the API (docs/ACCESS.md).
 //
-// Today the only such caller is a composing Orkflow — `uses:
-// orkflow:<namespace>/<name>@<version>` — and the only rule is the callee
-// version's own shared_with (docs/DSL.md "Sharing across namespaces"). A
-// submit, a schedule and a trigger never cross a namespace, so they never
-// reach this package.
+// Composition is decided from definitions alone: `uses:
+// orkflow:<namespace>/<name>@<version>` and the callee version's own
+// shared_with (docs/DSL.md "Sharing across namespaces"). No caller exists
+// when a parent starts a child, so a composition ignores Subject and Policy.
 //
-// It is the seam an authentication and RBAC layer wraps later: that layer
-// adds a verified caller to Request and may narrow a Decision, and every
-// check site keeps calling Authorize. Nothing here reads the Ork-Principal
-// header: a principal is asserted, never verified, so it can never satisfy a
-// rule.
-//
-// Authorize is pure: it reads only its request, so validate, apply and every
-// submit that plans a child reach the same answer from the same definitions.
+// A permission is decided from the verified caller, the resource the request
+// names and the compiled access document the caller passes in. Nothing here
+// reads the Ork-Principal header, a store or a clock: Authorize is pure, so
+// one request reaches one answer.
 package authz
 
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -63,11 +60,18 @@ type Caller struct {
 	Orkflow   string
 }
 
-// Request is one question.
+// Request is one question. A composition (ActionRun) reads Callee and
+// Caller; a permission reads Subject, Resource and Policy.
 type Request struct {
 	Action Action
-	Callee Callee
-	Caller Caller
+	Callee Callee // composition only
+	Caller Caller // composition only
+	// Subject is the verified caller; nil when nobody was authenticated.
+	Subject *Subject
+	// Resource is what the request acts on.
+	Resource Resource
+	// Policy is the compiled access document the decision is made against.
+	Policy *Policy
 }
 
 // Decision is what admitted a request. It is pinned in the run plan of every
@@ -81,6 +85,17 @@ type Decision struct {
 	// Callee is "<namespace>/<name>@<version>", Caller "<namespace>/<name>".
 	Callee string `json:"callee"`
 	Caller string `json:"caller"`
+	// Subject, Scope and Generation say, for a permission, who was admitted,
+	// at which scope and against which revision of the access document.
+	Subject    string `json:"subject,omitzero"`
+	Scope      string `json:"scope,omitzero"`
+	Generation int64  `json:"generation,omitzero"`
+	// DocumentReadAt is when the read of the document the decision used was
+	// sent, so a caller can ask for one over a document read later.
+	DocumentReadAt time.Time `json:"-"`
+	// Granted is the binding that admitted a permission. It is recorded by
+	// its name, never shown to a caller who does not hold it.
+	Granted *GrantedBinding `json:"-"`
 }
 
 // CrossNamespace reports whether the decision admitted a call across a
@@ -110,7 +125,7 @@ func (e *NotSharedError) Error() string {
 type UnknownActionError struct{ Action Action }
 
 func (e *UnknownActionError) Error() string {
-	return fmt.Sprintf("authorization: unknown action %q; this build decides only %q", e.Action, ActionRun)
+	return fmt.Sprintf("authorization: unknown action %q; this build decides %q and the catalogue's permissions", e.Action, ActionRun)
 }
 
 // Authorize decides one request. A call within one namespace is admitted
@@ -119,9 +134,15 @@ func (e *UnknownActionError) Error() string {
 // "*" — so the recorded rule is the narrowest that holds. A malformed entry
 // in a stored definition is an error, never a non-match: it would otherwise
 // hide a corrupt definition behind a refusal that blames the caller.
+//
+// Any other action is a permission of the catalogue, decided by
+// authorizePermission.
 func Authorize(req Request) (Decision, error) {
 	if req.Action != ActionRun {
-		return Decision{}, &UnknownActionError{Action: req.Action}
+		if !Known(Permission(req.Action)) {
+			return Decision{}, &UnknownActionError{Action: req.Action}
+		}
+		return authorizePermission(req)
 	}
 	calleeNS, callerNS := resolve(req.Callee.Namespace), resolve(req.Caller.Namespace)
 	decision := Decision{

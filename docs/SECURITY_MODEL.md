@@ -10,8 +10,9 @@ Orker is the security boundary), §6 (security and resource controls) and §15
 [OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), "Security".
 
 ```text
-caller ──> gateway (authenticates; asserts Ork-Principal) ──> ork API port
-                                                                │ Connect RPCs and the web UI; OrkStack does not authenticate them
+caller ──> (gateway) ──> ork API port
+                                                                │ Connect RPCs and the web UI: authenticated and authorized by
+                                                                │ OrkStack in observe and enforce mode; in asserted mode, by the gateway
 bearer holder ──> trigger invoke, await callback (plain HTTP) ──┤ checked against a salted digest
                                                                 │
 ork ──> Temporal ──> orker ──> OCI runtime ──> container        │ the container holds no platform credential
@@ -424,24 +425,45 @@ it names a variable in the Orker's environment, and the Orker reads it.
 
 ## Callers, principals and bearer credentials
 
-### Callers are authenticated by the gateway
+### Who authenticates callers depends on the mode
 
-OrkStack does not authenticate callers. The deployment's gateway does, and it may
-assert a principal in the `Ork-Principal` header ([ARCHITECTURE.md](../ARCHITECTURE.md),
-"API"). The Connect services and the webhook management routes accept any caller
-that reaches the API port. The only server-side checks on an `Authorization`
-header are on the two plain-HTTP routes that face outside callers: trigger invoke
-and the await callback ([DEPLOY.md](DEPLOY.md), "Ops notes").
+`auth.mode` decides ([AUTHENTICATION.md](AUTHENTICATION.md)):
 
-Which callers may reach the API port, and what the gateway lets them do, is the
-gateway's decision. It is not configured in OrkStack.
+- **`observe` and `enforce`.** OrkStack authenticates every request itself (a
+  token from a trusted issuer, or a break-glass assertion bound to its
+  request) and decides every RPC, stream, socket and route against the access
+  document ([ACCESS.md](ACCESS.md)). `enforce` refuses a request with no
+  credential and every denial; `observe` serves them and records `would-deny`.
+  Each replica decides from a copy of the access document at most
+  `auth.policy_refresh` old, serves it stale for at most
+  `auth.policy_stale_limit` when the store cannot be read, and then fails
+  closed: a binding removed while the store is unreachable stays effective on
+  a replica for that window. An engine does not start in a lower mode than the
+  deployment's mode record names.
+- **`asserted`, the default.** OrkStack does not authenticate callers. The
+  deployment's gateway does, and it may assert a principal in the
+  `Ork-Principal` header ([ARCHITECTURE.md](../ARCHITECTURE.md), "API"). The
+  Connect services and the webhook management routes accept any caller that
+  reaches the API port, and which callers may reach it is the gateway's
+  decision.
 
-### The principal is asserted, not authenticated
+In every mode the only server-side checks of a bearer token on the two
+plain-HTTP routes that face outside callers, trigger invoke and the await
+callback, are their own ([DEPLOY.md](DEPLOY.md), "Ops notes").
 
-The `Ork-Principal` header is the principal. It is recorded as the gateway
-sent it, subject to the bounds below, and it is never verified. No surface may
-present it as a verified identity, and every rendering says it was asserted
-([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Control-plane audit trail").
+`enforce` does not bound a stolen Orker: its Temporal and storage credentials
+reach the cluster and the bucket without the API.
+
+### The principal is verified or asserted, and says which
+
+Outside `asserted` mode the principal is the identity OrkStack verified, and
+records say so (an audit record's `principal_verified`, a run origin's
+`principal_verified`); the `Ork-Principal` header is read nowhere. In
+`asserted` mode the `Ork-Principal` header is the principal. It is recorded as
+the gateway sent it, subject to the bounds below, and it is never verified. No
+surface may present an asserted principal as a verified identity, and every
+rendering says it was asserted ([UI_CLI_PARITY.md](UI_CLI_PARITY.md),
+"Control-plane audit trail").
 
 - In an audit record it is bounded to 256 bytes, and control characters are
   replaced by spaces (`pkg/artifacts/audit.go`, `AuditPrincipalMaxBytes`,
@@ -469,11 +491,11 @@ Orkflow ([DSL.md](DSL.md#sharing-across-namespaces), "Sharing across
 namespaces"). The decision is made by one function, `internal/authz.Authorize`,
 from the composing and the composed definitions alone, at validate, at create
 and at every submit that plans the child; the admitting entry is pinned in the
-child's plan. Until callers are authenticated it protects cooperating teams
-from mistakes, not from an adversary: any caller that reaches the API port may
-create an Orkflow in any namespace. A later authentication and RBAC layer
-wraps `Authorize` rather than adding a second decision point, and a
-principal never satisfies a rule, because it is asserted.
+child's plan. In `asserted` mode it protects cooperating teams from mistakes,
+not from an adversary: any caller that reaches the API port may create an
+Orkflow in any namespace. In `enforce` mode who may create an Orkflow in a
+namespace is the access document's decision, made by the same
+`internal/authz.Authorize`.
 
 A shared child runs in the composing namespace under that namespace's rules:
 its pools, secret policy, image policy and retention. An empty
@@ -720,11 +742,12 @@ its own writes (`internal/api/audit.go`). A record is written once to
 
 ## What this model does not cover
 
-- **Caller authentication and authorisation.** The gateway does them. That covers
-  who may reach the Connect API and the UI, who may register or change a
-  webhook, and what the gateway lets a bearer-token holder reach. OrkStack does
-  not configure any of it ([ARCHITECTURE.md](../ARCHITECTURE.md), "API";
-  [DEPLOY.md](DEPLOY.md), "Ops notes").
+- **Caller authentication and authorisation in `asserted` mode.** The gateway
+  does them: who may reach the Connect API and the UI, who may register or
+  change a webhook, and what a bearer-token holder may reach
+  ([ARCHITECTURE.md](../ARCHITECTURE.md), "API"; [DEPLOY.md](DEPLOY.md), "Ops
+  notes"). In `observe` and `enforce` mode OrkStack does them
+  ([AUTHENTICATION.md](AUTHENTICATION.md)).
 - **Transport security.** The engine serves plain HTTP, and the configuration has
   no TLS setting for Temporal. Encryption of the listeners and of the connections to
   Temporal and to object storage is the deployment's to provide.

@@ -58,7 +58,7 @@ func TestAuditStore_SkipsUnknownSchemaAndVanishedBody(t *testing.T) {
 		return rec, key, body
 	}
 	good, goodKey, goodBody := mk(0, AuditSchemaVersion)
-	_, futureKey, futureBody := mk(time.Minute, AuditSchemaVersion+1)
+	_, futureKey, futureBody := mk(time.Minute, AuditSchemaVersionVerified+1)
 	_, vanishedKey, _ := mk(2*time.Minute, AuditSchemaVersion)
 	_, garbageKey, _ := mk(3*time.Minute, AuditSchemaVersion)
 	// A body whose `at` is on another day than its key.

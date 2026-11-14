@@ -13,6 +13,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 )
 
 // NewWebSocketBridge returns the /ws/runs/{id} handler. It forwards the same
@@ -73,6 +74,13 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		// rather than a socket that opens and immediately dies. It is resolved
 		// INSIDE the namespace asked for, so the 404 also covers a run of
 		// another one.
+		// Authorized as StreamEvents is, before anything is read for a
+		// caller who may not read the run (docs/ACCESS.md).
+		r, admitted, ok := svc.authorizeRoute(w, r, orkstackv1connect.RunServiceStreamEventsProcedure,
+			&orkstackv1.StreamEventsRequest{RunId: runID, Namespace: namespace})
+		if !ok {
+			return
+		}
 		if err := svc.runNamespaceIn(r.Context(), runID, namespace); err != nil {
 			status, message := http.StatusInternalServerError, "read run"
 			switch connect.CodeOf(err) {
@@ -105,7 +113,8 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 		}
 		defer conn.CloseNow()
 
-		ctx := conn.CloseRead(r.Context())
+		ctx, stopWatch := svc.watchAccess(conn.CloseRead(r.Context()), admitted)
+		defer stopWatch()
 		terminal := false
 		streamErr := svc.streamCheckedRunEvents(ctx, runID, fromSequence,
 			func(event *orkstackv1.Event) error {
@@ -123,6 +132,9 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 			})
 		var gap *streamGapError
 		switch {
+		case socketWithdrawn(ctx):
+			// The caller's access was withdrawn while the socket was open.
+			_ = conn.Close(websocket.StatusPolicyViolation, "access withdrawn")
 		case errors.As(streamErr, &gap):
 			// The stream reached a gap in the run's events — DataLoss on the
 			// Connect stream — and the socket says which, and why, as the
@@ -303,6 +315,13 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 		// Resolving the run before the upgrade keeps a missing run an HTTP
 		// 404 rather than a socket that opens and immediately dies, and it is
 		// resolved INSIDE the namespace asked for.
+		// Authorized as StreamTaskLogs is: logs are one permission wherever
+		// they are read.
+		r, admitted, ok := svc.authorizeRoute(w, r, orkstackv1connect.RunServiceStreamTaskLogsProcedure,
+			&orkstackv1.StreamTaskLogsRequest{RunId: runID, TaskId: taskID, Namespace: query.Namespace})
+		if !ok {
+			return
+		}
 		if err := svc.runNamespaceIn(r.Context(), runID, query.Namespace); err != nil {
 			status, message := http.StatusInternalServerError, "read run"
 			switch connect.CodeOf(err) {
@@ -329,7 +348,8 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 		}
 		defer conn.CloseNow()
 
-		ctx := conn.CloseRead(r.Context())
+		ctx, stopWatch := svc.watchAccess(conn.CloseRead(r.Context()), admitted)
+		defer stopWatch()
 		finished := false
 		streamErr := svc.StreamRunTaskLogs(ctx, query, func(chunk *orkstackv1.TaskLogChunk) error {
 			payload, err := MarshalJSONOptions(marshaler, chunk)
@@ -345,6 +365,8 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 			return nil
 		})
 		switch {
+		case socketWithdrawn(ctx):
+			_ = conn.Close(websocket.StatusPolicyViolation, "access withdrawn")
 		case streamErr != nil:
 			_ = conn.Close(websocket.StatusInternalError, "task log stream failed")
 		case finished:

@@ -486,6 +486,16 @@
 					]
 				},
 				{
+					"route": "docs/operate/authentication",
+					"title": "Turn on authentication",
+					"description": "Make OrkStack check who calls its API and decide what each caller may do with roles.",
+					"parts": [
+						{
+							"source": "site/content/how-to/authentication.md"
+						}
+					]
+				},
+				{
 					"route": "docs/operate/audit",
 					"title": "Audit",
 					"description": "Read who changed what: the immutable records of control-plane writes.",

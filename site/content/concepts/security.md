@@ -36,7 +36,7 @@ An `env:` value in a task is configuration. It is stored in the Orkflow, so put 
 
 ## Callers and the principal
 
-OrkStack does not authenticate callers. Your gateway does. The gateway may assert a caller's name in the `Ork-Principal` header, and OrkStack records that name as asserted. It never presents the name as a verified identity.
+With `auth.mode` set to `observe` or `enforce`, OrkStack checks each caller's token itself, decides every request against roles, and records the caller as verified. By default it does not: your gateway authenticates callers and may assert a caller's name in the `Ork-Principal` header, which OrkStack records as asserted and never presents as a verified identity.
 
 Trigger tokens and await callback tokens are shown once. OrkStack stores only a salted hash of each.
 

@@ -493,6 +493,11 @@ type RunOrigin struct {
 	Description string `json:"description,omitempty"`
 	Principal   string `json:"principal,omitempty"`
 	RootRunID   string `json:"root_run_id,omitempty"`
+	// PrincipalVerified and AuthMethod say how Principal was known: set
+	// only for an identity the API verified, absent for an asserted one,
+	// so a plan recorded before them encodes and decodes unchanged.
+	PrincipalVerified bool   `json:"principal_verified,omitzero"`
+	AuthMethod        string `json:"auth_method,omitempty"`
 }
 
 // Proto renders the origin as the wire message the snapshot carries.
@@ -515,6 +520,9 @@ func (o *RunOrigin) Proto() *orkstackv1.RunOrigin {
 		Description: o.Description,
 		Principal:   o.Principal,
 		RootRunId:   o.RootRunID,
+
+		PrincipalVerified: o.PrincipalVerified,
+		AuthMethod:        o.AuthMethod,
 	}
 }
 
@@ -531,6 +539,9 @@ func OriginFromProto(o *orkstackv1.RunOrigin) *RunOrigin {
 		Description: o.GetDescription(),
 		Principal:   o.GetPrincipal(),
 		RootRunID:   o.GetRootRunId(),
+
+		PrincipalVerified: o.GetPrincipalVerified(),
+		AuthMethod:        o.GetAuthMethod(),
 	}
 }
 

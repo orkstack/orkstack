@@ -58,9 +58,13 @@ meant for callers outside the operator's boundary: trigger invoke
 UI at `/` (`internal/webui`): its static build, compiled into `ork` or read
 from `ORK_UI_DIR`, where a path that names no file is a route of the app and
 gets its page, and a path the API owns (`/orkstack.v1.*`, `/v1/`, `/ws/`)
-never does. OrkStack does not authenticate callers; the deployment's gateway
-does, and may assert a principal in `Ork-Principal`. An interceptor writes one
-immutable audit record for every control-plane write.
+never does. Who authenticates callers is `auth.mode`'s choice
+(docs/AUTHENTICATION.md): in `asserted` mode, the default, the deployment's
+gateway does, and may assert a principal in `Ork-Principal`; in `observe` and
+`enforce` mode a middleware around the mux authenticates every request and an
+interceptor, first in the chain, decides every RPC against the access
+document (`internal/authz`). An interceptor writes one immutable audit record
+for every control-plane write.
 
 **Submit preparation** is the last point where anything outside the
 definition can shape a run, because workflow code may read nothing but its

@@ -119,7 +119,7 @@ The token is shown once, and a listing never shows it. To rotate a token, delete
 | `Authorization: Bearer <token>` | yes | The trigger's token. |
 | `Idempotency-Key` | no | A repeated key returns the run it started, not a new one. The key is scoped to the namespace. |
 | `Ork-Origin-Reference` | no | A reference recorded on the run, such as a CI job's URL. Up to 256 bytes. |
-| `Ork-Principal` | no | A name recorded on the run. OrkStack records it as asserted, and does not check it. |
+| `Ork-Principal` | no | A name recorded on the run, as asserted, when authentication is off. With it on, the header is ignored. |
 
 ### When a request fails
 

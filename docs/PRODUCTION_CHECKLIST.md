@@ -75,13 +75,13 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 ## Gateway and identity
 
-- [ ] Put a gateway in front of `ork` that authenticates callers. OrkStack does not authenticate callers, except that the trigger invoke and the await callback check their own bearer tokens. The UI is served by `ork` on the same port, so the gateway's authentication covers it too ([ARCHITECTURE.md](../ARCHITECTURE.md), "API (`internal/api`, served by `cmd/ork`)").
+- [ ] Decide who authenticates callers. With `auth.mode: enforce` OrkStack authenticates every request and decides it against the access document ([AUTHENTICATION.md](./AUTHENTICATION.md), [ACCESS.md](./ACCESS.md)); go through `observe` first. In `asserted` mode, the default, put a gateway in front of `ork` that authenticates callers: the UI is served by `ork` on the same port, so the gateway's authentication covers it too ([ARCHITECTURE.md](../ARCHITECTURE.md), "API (`internal/api`, served by `cmd/ork`)").
 - [ ] Terminate TLS at the gateway. The engine's API listener serves plain HTTP/1.1 and unencrypted HTTP/2 ([LIMITATIONS.md](./LIMITATIONS.md), "Engine, cluster and gateway").
-- [ ] Have the gateway overwrite `Ork-Principal` with the identity it established, and never pass a client's value through. The engine records the header verbatim, and it is an assertion, not a verified identity ([DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
+- [ ] In `asserted` mode, have the gateway overwrite `Ork-Principal` with the identity it established, and never pass a client's value through. The engine records the header verbatim, and it is an assertion, not a verified identity ([DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
 - [ ] Decide what faces callers. `POST /v1/triggers/{id}` and the await callback are the two routes outside the operator's boundary, and OrkStack queues, retries and rate-limits neither. The UI at `/`, with its assets and routes, is operator surface on the same port, so a gateway that routes by path sends it to `ork` too ([DEPLOY.md](./DEPLOY.md), "5. Ops notes").
 - [ ] Keep `ORK_ADMIN_ADDR` on a private address. It serves the health, readiness and metrics endpoints and never the API port, and it must never be bound to a Docker bridge gateway in a deployment ([DEPLOY.md](./DEPLOY.md), "7. Telemetry"; [README.md](../README.md), "Linux hosts").
 - [ ] Rotate a trigger token by deleting the trigger and creating a new one. Rotation yields a new id and URL, and the new token is shown once ([ORKFLOW_TRIGGERS.md](./ORKFLOW_TRIGGERS.md), "What triggers do not do").
-- [ ] Read the audit trail with `orkctl admin audit`, and treat each principal in it as asserted rather than verified ([DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
+- [ ] Read the audit trail with `orkctl admin audit`, and treat a principal as verified only where its record says so ([DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
 
 ## Run retention and cleanup
 

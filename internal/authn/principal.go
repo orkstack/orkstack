@@ -11,6 +11,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -51,6 +52,9 @@ type Principal struct {
 	Claims  map[string]string // only the issuer's listed claims
 	Signin  string            // the sign-in's public id, for a cookie
 	OrkerID string            // the one Orker this credential names; empty otherwise
+	// Expires is when the credential stops being valid; zero when it does
+	// not say. An open stream is closed then.
+	Expires time.Time
 }
 
 // UserID is a person's principal id: user:<issuer>:<username>.

@@ -167,3 +167,13 @@ telemetry:
   batch: {}
     # batch.metric_export_interval: ""  # SDK default
   # sinks: {}  # no named sinks
+
+auth:
+  mode: asserted  # ork
+  public_url: ""  # ork; no break-glass audience
+  # issuers: {}  # ork; no trusted issuer
+  admins: []  # ork
+  break_glass_key_file: ""  # ork; break-glass off
+  clock_skew: 1m  # ork
+  policy_refresh: 10s  # ork
+  policy_stale_limit: 5m  # ork
