@@ -154,6 +154,12 @@ type OCIDispatcher struct {
 	// heartbeaters builds an attempt's heartbeat loop. Nil means NewHeartbeater;
 	// a test plays the cluster through it.
 	heartbeaters func(context.Context) *Heartbeater
+	// completers builds an attempt's own report to the cluster, for an
+	// attempt the stop hands back (stop.go). Nil means activityCompleter; a
+	// test plays the cluster through it.
+	completers func(context.Context) completer
+	// reportPause waits between a report's tries. Nil means sleepCtx.
+	reportPause func(context.Context, time.Duration) bool
 	// unremoved is the removals this process still owes (removal.go).
 	unremoved unremovedContainers
 }
@@ -286,8 +292,47 @@ func (d *OCIDispatcher) Execute(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,
 ) (*orkstackv1.ExecuteTaskResult, error) {
+	// An unpinned attempt of an Orker outlives the task worker's Stop, which
+	// the Orker's own stop calls at once so that it polls no more (stop.go):
+	// the attempt is handed back or completes, and reports itself. A pinned
+	// member keeps the worker's Stop as its end.
+	stage := stageFrom(ctx)
+	if stage == nil || in.GetPin() != nil {
+		return d.executeAttempt(ctx, in)
+	}
+	attemptCtx, release := detachFromWorkerStop(ctx)
+	defer release()
+	result, err := d.executeAttempt(attemptCtx, in)
+	if !workerStopped(ctx) || errors.Is(err, activity.ErrResultPending) {
+		return result, err
+	}
+	// The worker stopped while this attempt ran, so the SDK sends nothing for
+	// it: the Orker reports the outcome itself.
+	if sent, _ := d.report(attemptCtx, in, result, err); sent {
+		return nil, activity.ErrResultPending
+	}
+	return result, err
+}
+
+// executeAttempt is one attempt, on the context its outcome is decided on.
+func (d *OCIDispatcher) executeAttempt(
+	ctx context.Context,
+	in *orkstackv1.ExecuteTaskInput,
+) (*orkstackv1.ExecuteTaskResult, error) {
 	startedAt := timestamppb.New(time.Now().UTC())
 	attempt := attemptOf(ctx)
+
+	// STEP 0. The attempt's stage (stop.go). A pinned member says so before
+	// anything can move its stage, so a stop's sweep that sees its container
+	// started sees it pinned. An attempt that reached an Orker already
+	// stopping starts nothing: no log, no heartbeat, no claim, no record.
+	stage := stageFrom(ctx)
+	if in.GetPin() != nil {
+		stage.setPinned()
+	}
+	if stage.handedBack() {
+		return d.handBackUnstarted(ctx, in, attempt)
+	}
 
 	// STEP 1. The live log sink, first and always. Its Close is deferred
 	// IMMEDIATELY, before anything that could return or panic between here
@@ -449,7 +494,13 @@ func (d *OCIDispatcher) Execute(
 	defer beat.Stop()
 	beat.Phase("start")
 
-	result, failure = d.execute(ctx, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace, cleanup)
+	// The work runs on a context the stop's sweep also cancels, with
+	// errHandBack; the heartbeats run on ctx, which it never does, so a
+	// handed-back attempt beats through its container's cancellation sequence
+	// and its own report.
+	work, endWork := handBackWork(ctx, stage)
+	defer endWork()
+	result, failure = d.execute(work, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace, cleanup)
 
 	// The line writers are flushed before the sink closes, so a workload's
 	// last unterminated line is not lost.
@@ -469,13 +520,29 @@ func (d *OCIDispatcher) Execute(
 	// Returning nil here would be worse still: it would report success for
 	// work that was torn down, which §6.3 forbids outright.
 	if err := ctx.Err(); err != nil {
+		if orkerStopping(ctx) && result != nil {
+			// The worker's Stop cancelled an attempt whose commit is written:
+			// its work is done, and the retry a failure would ask for would
+			// only adopt it. Its result is reported, by the Orker itself,
+			// because the SDK reports nothing for an attempt its Stop
+			// cancelled (§6.3).
+			d.logger().Warn("the orker stopped after this attempt committed; reporting its result",
+				"run", in.GetRunId(), "task", in.GetTaskId())
+			end(AttemptOutcome{CommitAdopted: result.GetCommitAdopted(), ExitCode: result.GetExitCode()})
+			if sent, _ := d.report(ctx, in, result, nil); !sent {
+				return result, nil
+			}
+			return nil, activity.ErrResultPending
+		}
 		if orkerStopping(ctx) {
 			// Nobody cancelled the task: this Orker is stopping, and the
-			// worker's Stop cancelled every attempt it runs. The record says
-			// so, and Temporal is told nothing — ErrResultPending is the SDK's
-			// one way to send no completion — so it sees what it sees of an
-			// Orker that died: no heartbeat, ORKER_HEARTBEAT_TIMEOUT, a retry
-			// elsewhere under the task's policy (§6.3).
+			// worker's Stop cancelled an attempt it runs: a pinned member,
+			// whose pin fails PIN_HOST_LOST once the worker stops, or one that
+			// reached the Orker as it stopped. The record says so, and
+			// Temporal is told nothing — ErrResultPending is the SDK's one way
+			// to send no completion — so it sees what it sees of an Orker that
+			// died: no heartbeat, ORKER_HEARTBEAT_TIMEOUT, a retry elsewhere
+			// under the task's policy (§6.3).
 			failure = Fail(ReasonOrkerStopped,
 				"orker %s was stopped while this attempt ran: it stopped the attempt as it stops a "+
 					"cancelled one (SIGTERM to a running container, SIGKILL after the task's %ds grace) "+
@@ -526,6 +593,11 @@ func (d *OCIDispatcher) Execute(
 					"it can, so it runs again if its retry policy allows",
 				d.OrkerID, graceSecondsOf(in), cause)
 		}
+	}
+	// A failure collected before the sweep took the attempt back (a
+	// refusal, say) is replaced too: the retry meets it again on its own.
+	if ctx.Err() == nil && stage.handedBack() {
+		return d.handBackStarted(ctx, in, startedAt, end)
 	}
 	if failure != nil {
 		// Every failure carries the attempt's start, detail or not, so the
@@ -741,6 +813,12 @@ func (d *OCIDispatcher) execute(
 	// before any container starts.
 	beat.Phase("commit-check")
 	if adopted, failure := d.adopt(ctx, in, attempt); adopted != nil || failure != nil {
+		// An adoption is committing from its successful read: the stop's
+		// sweep no longer takes it back. One the sweep took first adopts
+		// nothing here; its retry adopts the same commit.
+		if adopted != nil && !stageFrom(ctx).toCommitting() {
+			return nil, nil
+		}
 		return adopted, failure
 	}
 
@@ -913,6 +991,11 @@ func (d *OCIDispatcher) execute(
 			note = "[ork] cache bypassed: the run was submitted with no_cache; running the container"
 		default:
 			if hit := d.lookupMemo(ctx, in, attempt, startedAt, key, trace); hit != nil {
+				// A hit is committing before it writes anything; one the
+				// stop's sweep took first writes nothing.
+				if !stageFrom(ctx).toCommitting() {
+					return nil, nil
+				}
 				// A hit runs no container and never waits on the cluster: its
 				// ordinal is best-effort, and this run's commit carries it.
 				// Without one (the store refused the claim), the commit keeps
@@ -1099,6 +1182,13 @@ func (d *OCIDispatcher) execute(
 	// timeout.
 	beat.Phase("run")
 	capture, failure := d.runContainer(ctx, in, ws, id, beat, stdoutLine, stderrLine)
+	// A container that ended without this Orker taking it back (by itself, or
+	// at the task's own timeout) is committing: its attempt reports how it
+	// ended. One the stop's sweep took first is handed back, and nothing it
+	// left is committed, even an exit 0 from a workload that traps SIGTERM.
+	if ctx.Err() == nil && !stageFrom(ctx).toCommitting() {
+		return nil, nil
+	}
 	if failure != nil {
 		// Even a failure publishes what it produced.
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
@@ -1933,9 +2023,16 @@ func (d *OCIDispatcher) runContainer(
 	stdout := io.MultiWriter(stdoutLine, newCappedWriter(stdoutFile, logMax, beat))
 	stderr := io.MultiWriter(stderrLine, newCappedWriter(stderrFile, logMax, beat))
 
-	if err := d.Runtime.Start(ctx, id, stdout, stderr); err != nil {
+	// The start runs on a context the stop's sweep never cancels: a start in
+	// flight returns, and the CAS below decides. A container the sweep took
+	// back as it started is stopped by the cancellation sequence, below.
+	if err := d.Runtime.Start(startContext(ctx), id, stdout, stderr); err != nil {
 		return capture, d.runtimeFailure(err, "start the container")
 	}
+	// Its answer is not needed here: a start the sweep took back has its work
+	// context cancelled, and the select below then runs the cancellation
+	// sequence.
+	stageFrom(ctx).toRevocable()
 
 	// Wait runs on a context of its OWN, not the activity's, so cancellation
 	// does not abort the wait before the kill sequence has finished. The
