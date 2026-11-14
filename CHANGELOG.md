@@ -29,6 +29,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- Schedule calls no longer answer `internal` while Temporal is down or rate-limiting, and a submit Temporal rate-limited answers `resource_exhausted`; ask again ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - Task logs no longer lose a task's last output when the task is cancelled or its Orker stops while a chunk is uploading ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#live-task-logs-where-they-are-what-bounds-them-how-long-they-stay)).
 - With more than one engine, a namespace's run list, stats and running count could miss runs started by an engine that booted before its Temporal namespace was ready; they are now included ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - A keyed submission whose claim or start answer was lost no longer leaves its key naming a run that never starts, or a failed run beside a live one; retry under the same key ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
