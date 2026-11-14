@@ -77,6 +77,16 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
+== ListPrincipals (orkstack.v1.SeenPrincipal)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD       OPERATORS       VALUES
+  id          = != =a,b ~ ^   text
+  display     = != =a,b ~ ^   text
+  issuer      = != =a,b       text
+  last_seen   >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
 == ListReleases (orkstack.v1.Release)
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD      OPERATORS       VALUES

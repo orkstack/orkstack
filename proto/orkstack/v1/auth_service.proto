@@ -1,0 +1,102 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/access.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// AuthService is sign-in and "who am I". It is
+// mounted only when auth.mode is not `asserted`; a client learns the mode
+// from SystemService.GetSystemInfo. The browser's redirects are plain HTTP
+// beside it: GET /v1/auth/login/{issuer} and GET /v1/auth/callback/{issuer}.
+service AuthService {
+  // GetAuthConfig is public: the issuers a person can sign in with.
+  rpc GetAuthConfig(GetAuthConfigRequest) returns (GetAuthConfigResponse);
+  // GetSignin answers for the caller itself, however it authenticated:
+  // who it is, what it may do, and, for a sign-in, its CSRF token. It is the
+  // one cookie-authenticated call exempt from Ork-CSRF, because it is the
+  // call that hands the token out; RefreshSignin and SignOut require it.
+  rpc GetSignin(GetSigninRequest) returns (GetSigninResponse);
+  // RefreshSignin revalidates the caller's sign-in with its issuer. The page
+  // calls it one call at a time across tabs, so two replicas never redeem
+  // one rotating refresh token at once.
+  rpc RefreshSignin(RefreshSigninRequest) returns (RefreshSigninResponse);
+  // SignOut ends the caller's sign-in.
+  rpc SignOut(SignOutRequest) returns (SignOutResponse);
+}
+
+message GetAuthConfigRequest {}
+
+message GetAuthConfigResponse {
+  // mode is `observe` or `enforce`: the service is not mounted in
+  // `asserted`.
+  string mode = 1;
+  // issuers are the trusted issuers that offer sign-in.
+  repeated SigninIssuer issuers = 2;
+}
+
+// SigninIssuer is one issuer a person can sign in with.
+message SigninIssuer {
+  // name is the issuer's name in auth.issuers; it appears in principal ids.
+  string name = 1;
+  // issuer_url is the issuer's URL, exactly as configured.
+  string issuer_url = 2;
+  // login_path is the page's path that starts a sign-in:
+  // /v1/auth/login/{name}.
+  string login_path = 3;
+  // cli_client_id is the client id a terminal signs in with.
+  string cli_client_id = 4;
+  repeated string scopes = 5;
+  // device_flow says whether a terminal may sign in with the device grant.
+  bool device_flow = 6;
+}
+
+message GetSigninRequest {}
+
+message GetSigninResponse {
+  string principal_id = 1;
+  // display is a name or an email, for the UI.
+  string display = 2;
+  // issuer is the trusted issuer's name, or "serviceaccount", "cert" or
+  // "config".
+  string issuer = 3;
+  // method is how the caller authenticated: oidc, jwt, service-account,
+  // mtls or break-glass.
+  string method = 4;
+  // kind is `user` or `service`.
+  string kind = 5;
+  repeated string groups = 6;
+  // bindings are the bindings that grant the caller something,
+  // configuration's included: each with its role, its scope and the one
+  // subject that matched the caller. A binding's other subjects are never
+  // shown here; reading them needs access.read.
+  repeated ExplainedBinding bindings = 7;
+  // permissions are what the caller may do, per scope.
+  repeated ScopedPermissions permissions = 8;
+  // signin is set for a caller signed in with a cookie.
+  Signin signin = 9;
+  // csrf_token is set with signin: every request of the page that is not a
+  // GET carries it as Ork-CSRF. The page keeps it in memory only.
+  string csrf_token = 10;
+  // access_revision is the access document's revision the answer was
+  // computed against.
+  int64 access_revision = 11;
+}
+
+message RefreshSigninRequest {}
+
+message RefreshSigninResponse {
+  google.protobuf.Timestamp validated_until = 1;
+  google.protobuf.Timestamp idle_expires_at = 2;
+  google.protobuf.Timestamp expires_at = 3;
+}
+
+message SignOutRequest {}
+
+message SignOutResponse {
+  // end_session_url is the issuer's end_session_endpoint, when it has one,
+  // for the page to visit after the sign-in has ended here.
+  string end_session_url = 1;
+}

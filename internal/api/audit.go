@@ -579,8 +579,27 @@ func orDashAudit(s string) string {
 // unauditedWrites are write RPCs deliberately NOT recorded, each with the
 // reason a reader will look for. Adding a name here is a contract decision.
 var unauditedWrites = map[string]string{
-	orkstackv1connect.RunServiceSubmitRunProcedure: "a run's own record is the durable fact; provenance is run-origin's",
+	orkstackv1connect.RunServiceSubmitRunProcedure:                    "a run's own record is the durable fact; provenance is run-origin's",
+	orkstackv1connect.AuthServiceRefreshSigninProcedure:               notYetServed,
+	orkstackv1connect.AuthServiceSignOutProcedure:                     notYetServed,
+	orkstackv1connect.AccessServiceCreateRoleProcedure:                notYetServed,
+	orkstackv1connect.AccessServiceUpdateRoleProcedure:                notYetServed,
+	orkstackv1connect.AccessServiceDeleteRoleProcedure:                notYetServed,
+	orkstackv1connect.AccessServiceCreateBindingProcedure:             notYetServed,
+	orkstackv1connect.AccessServiceUpdateBindingProcedure:             notYetServed,
+	orkstackv1connect.AccessServiceDeleteBindingProcedure:             notYetServed,
+	orkstackv1connect.AccessServiceCreateServiceAccountProcedure:      notYetServed,
+	orkstackv1connect.AccessServiceUpdateServiceAccountProcedure:      notYetServed,
+	orkstackv1connect.AccessServiceDeleteServiceAccountProcedure:      notYetServed,
+	orkstackv1connect.AccessServiceSetPrincipalDisabledProcedure:      notYetServed,
+	orkstackv1connect.AccessServiceRevokeSigninsProcedure:             notYetServed,
+	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure: notYetServed,
+	orkstackv1connect.AccessServiceLowerAuthModeProcedure:             notYetServed,
 }
+
+// notYetServed is the reason a declared write is not yet recorded: no engine
+// mounts its service yet.
+const notYetServed = "declared ahead of its handler (identity P6); no engine serves it until the access change (P7, P8), which records it and moves it out of this list"
 
 // auditNameSuffix is the " name=NAME" a create or register detail gains when
 // the object was given a name, and nothing otherwise.

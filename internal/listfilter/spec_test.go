@@ -62,6 +62,9 @@ var exempt = map[string]string{
 	"ListRunArtifacts":    "a child listing of one run",
 	"ListTaskAttempts":    "a child listing of one run",
 	"ListTelemetrySinks":  "a handful of names from one setting",
+	"ListPermissions":     "the closed catalogue, compiled in",
+	"ListSignins":         "a child listing of one principal",
+	"ListAccessRevisions": "a child listing of one document",
 }
 
 func TestSpec_EveryListRequestDeclaresItsFilters(t *testing.T) {

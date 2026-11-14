@@ -1,0 +1,309 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// The access document and what is shown of a sign-in: the domain messages
+// AuthService and AccessService share. The document is one
+// object, written only by compare-and-swap on the etag a read returned, as a
+// namespace is; every write RPC sends back the etag it read.
+
+// ScopeKind is the kind of scope a permission can be held at and a binding
+// is made at.
+enum ScopeKind {
+  SCOPE_KIND_UNSPECIFIED = 0;
+  // The whole deployment: covers every namespace, Orkflow and pool.
+  SCOPE_KIND_DEPLOYMENT = 1;
+  // One namespace and everything in it.
+  SCOPE_KIND_NAMESPACE = 2;
+  // One Orkflow of a namespace, with its runs, schedules and triggers.
+  SCOPE_KIND_ORKFLOW = 3;
+  // One pool of Orkers.
+  SCOPE_KIND_POOL = 4;
+}
+
+// Role is a named set of permissions. A custom role lists permissions by
+// exact name, with no wildcard, so a permission a later release adds is
+// never granted by accident. Built-in roles are defined in code, never
+// stored, and their names are reserved.
+message Role {
+  // name is a slug; a built-in role's name is refused for a custom one.
+  string name = 1;
+  string description = 2;
+  // permissions are exact names from the catalogue (ListPermissions).
+  repeated string permissions = 3;
+  // built_in is true for a role defined in code. Output only: a write that
+  // sets it is refused.
+  bool built_in = 4;
+}
+
+// BindingPin is what a binding at namespace or Orkflow scope is pinned to.
+enum BindingPin {
+  BINDING_PIN_UNSPECIFIED = 0;
+  // The binding's scope is the deployment or a pool, which is never made
+  // again under a name: nothing to pin.
+  BINDING_PIN_NONE = 1;
+  // Pinned to the incarnation of the namespace or Orkflow that existed when
+  // the binding was saved (scope_id). It matches that incarnation only.
+  BINDING_PIN_PINNED = 2;
+  // Saved before its namespace or Orkflow existed: it matches by name until
+  // its next save pins it.
+  BINDING_PIN_BY_NAME = 3;
+  // Pinned to an incarnation that no longer exists: it matches nothing until
+  // it is pinned again (UpdateBindingRequest.repin).
+  BINDING_PIN_STALE = 4;
+}
+
+// Binding grants a role to subjects at a scope.
+message Binding {
+  // name is a slug, unique in the document.
+  string name = 1;
+  // role names a built-in or custom role.
+  string role = 2;
+  // scope is `deployment`, `namespace:<ns>`, `orkflow:<ns>/<name>` or
+  // `pool:<pool>`. A role bound at a scope grants only its permissions of
+  // that scope's kind or narrower.
+  string scope = 3;
+  // subjects, at most 64: `user:<issuer>:<name>`, `group:<issuer>:<group>`,
+  // `claims:<issuer>:<k>=<v>,…`, `serviceaccount:<name>` or `cert:<name>`. A
+  // value is literal or ends in one `*` that matches any remainder.
+  repeated string subjects = 4;
+  // scope_id is the immutable id of the namespace or Orkflow the binding is
+  // pinned to; empty when it is not pinned. Set by the engine only: a write
+  // that sets scope_id, pin or pinned_at is refused, and an update that
+  // changes scope pins again to what exists under the new scope. A pin is
+  // never carried from one scope to another.
+  string scope_id = 5;
+  // pin says what scope_id means for this binding now. Output only.
+  BindingPin pin = 6;
+  // pinned_at is when the binding was last pinned. Output only.
+  google.protobuf.Timestamp pinned_at = 7;
+  // orker_ids_any lets a binding to the `orker` role accept the Orker id
+  // the request's attempt names, for a pool whose Orkers share one
+  // credential. One stolen Orker of that pool can then claim to be any
+  // other, and such a binding hosts no event source.
+  bool orker_ids_any = 8;
+  // from_configuration is true for a binding that comes from configuration
+  // (auth.admins, auth.orkers), not from the document; it is shown, never
+  // written. Output only: a write that sets it is refused.
+  bool from_configuration = 9;
+}
+
+// ServiceAccountKey is one public key a service account signs its
+// request-bound assertions with.
+message ServiceAccountKey {
+  // kid is the key's RFC 7638 thumbprint, computed by the engine from
+  // public_key_pem; a value a request sends is ignored.
+  string kid = 1;
+  // public_key_pem is a PEM "PUBLIC KEY" block: RSA of 2048 bits or more, or
+  // ECDSA P-256.
+  string public_key_pem = 2;
+  // added_at is when the key was added, set by the engine; a value a request
+  // sends is ignored.
+  google.protobuf.Timestamp added_at = 3;
+}
+
+// ServiceAccount is a principal that authenticates with a key pair. It
+// stores no secret, so nothing in object storage can impersonate it.
+message ServiceAccount {
+  // name is a slug; the principal is serviceaccount:<name>.
+  string name = 1;
+  string description = 2;
+  // keys, at most four.
+  repeated ServiceAccountKey keys = 3;
+  // orker_id, when set, is the one Orker this account's credential names.
+  string orker_id = 4;
+}
+
+// AccessDocument is the stored access document.
+message AccessDocument {
+  int32 schema_version = 1;
+  // revision increases with every write; each decision names the
+  // revision it was made against.
+  int64 revision = 2;
+  // roles are the custom roles. Built-in roles are in built_in_roles.
+  repeated Role roles = 3;
+  repeated Binding bindings = 4;
+  repeated ServiceAccount service_accounts = 5;
+  // disabled lists principal ids refused whatever they present.
+  repeated string disabled = 6;
+  // etag is the store's compare-and-swap token for this document, as
+  // Namespace.etag is. Never stored inside the document.
+  string etag = 7;
+  // built_in_roles are the roles defined in code. Output only.
+  repeated Role built_in_roles = 8;
+  // configured_bindings are the bindings that come from configuration.
+  // Output only.
+  repeated Binding configured_bindings = 9;
+  // written_around_api is true when the stored head's predecessor is not
+  // the revision this replica last saw, or it has no recorded revision: it
+  // was written around the API. It stays true until an admin acknowledges
+  // that revision (AccessService.AcknowledgeAccessRevision). Output only.
+  bool written_around_api = 10;
+}
+
+// Permission is one entry of the closed catalogue.
+message Permission {
+  // name is `<resource>.<verb>`.
+  string name = 1;
+  // scope_kinds are where it can be held.
+  repeated ScopeKind scope_kinds = 2;
+  // allows says, in one sentence, what it lets its holder do.
+  string allows = 3;
+  // built_in_roles are the built-in roles that hold it.
+  repeated string built_in_roles = 4;
+}
+
+// ScopedPermissions are the permissions a principal holds at one scope.
+message ScopedPermissions {
+  string scope = 1;
+  repeated string permissions = 2;
+}
+
+// Signin is what is shown of a sign-in: never its cookie, refresh token or
+// CSRF token.
+message Signin {
+  // public_id is what lists and audit records show.
+  string public_id = 1;
+  string principal_id = 2;
+  google.protobuf.Timestamp created_at = 3;
+  google.protobuf.Timestamp expires_at = 4;
+  // validated_until is when it must next be validated with its issuer.
+  google.protobuf.Timestamp validated_until = 5;
+  // idle_expires_at is when it ends unless refreshed.
+  google.protobuf.Timestamp idle_expires_at = 6;
+}
+
+// SeenPrincipal is a principal this deployment has seen sign in, derived on
+// read from sign-in records and the audit trail; nothing is stored for it.
+message SeenPrincipal {
+  string id = 1;
+  // display is a name or an email, for people.
+  string display = 2;
+  // issuer is the trusted issuer's name, or "serviceaccount", "cert" or
+  // "config".
+  string issuer = 3;
+  // groups as of last_seen.
+  repeated string groups = 4;
+  google.protobuf.Timestamp first_seen = 5;
+  google.protobuf.Timestamp last_seen = 6;
+  bool disabled = 7;
+  // active_signins counts the sign-ins that have not ended.
+  int32 active_signins = 8;
+}
+
+// AccessDecision is the answer to "may this principal do this here".
+enum AccessDecision {
+  ACCESS_DECISION_UNSPECIFIED = 0;
+  ACCESS_DECISION_ALLOWED = 1;
+  ACCESS_DECISION_DENIED = 2;
+}
+
+// BindingMatch says why a binding did or did not grant a permission.
+enum BindingMatch {
+  BINDING_MATCH_UNSPECIFIED = 0;
+  // The binding granted it.
+  BINDING_MATCH_GRANTED = 1;
+  // No subject of the binding matches the principal.
+  BINDING_MATCH_SUBJECT_DIFFERS = 2;
+  // The binding's scope does not cover the resource.
+  BINDING_MATCH_SCOPE_DIFFERS = 3;
+  // The binding's role does not hold the permission at that scope's kind.
+  BINDING_MATCH_ROLE_LACKS_PERMISSION = 4;
+  // It would have matched by name, and is pinned to an earlier incarnation
+  // of the namespace or Orkflow.
+  BINDING_MATCH_PINNED_ELSEWHERE = 5;
+}
+
+// ExplainedBinding is one binding's part in a decision.
+message ExplainedBinding {
+  string binding = 1;
+  BindingMatch match = 2;
+  // subject is the selector that matched the principal, when one did.
+  string subject = 3;
+  string role = 4;
+  string scope = 5;
+  // claims_relied_on are the claims a `claims:` subject matched on, for a
+  // service principal.
+  repeated string claims_relied_on = 6;
+}
+
+// AccessRevision is one immutable revision of the access document. A
+// revision is a record: nothing reads one to decide anything.
+message AccessRevision {
+  int64 revision = 1;
+  // sha256 is the digest of this revision's bytes.
+  string sha256 = 2;
+  // previous_sha256 is the digest of the revision before it.
+  string previous_sha256 = 3;
+  google.protobuf.Timestamp written_at = 4;
+  // written_by is the principal whose write made it.
+  string written_by = 5;
+  bool written_by_verified = 6;
+  // change says in one line what the write changed.
+  string change = 7;
+}
+
+// AccessObjectKind is what an access plan's step changes.
+enum AccessObjectKind {
+  ACCESS_OBJECT_KIND_UNSPECIFIED = 0;
+  ACCESS_OBJECT_KIND_ROLE = 1;
+  ACCESS_OBJECT_KIND_BINDING = 2;
+  ACCESS_OBJECT_KIND_SERVICE_ACCOUNT = 3;
+  ACCESS_OBJECT_KIND_DISABLED_PRINCIPAL = 4;
+}
+
+// EngineSeen is one engine of this deployment, polling or not, as the
+// answering replica last saw it.
+message EngineSeen {
+  // id names the engine process.
+  string id = 1;
+  // build_id is the release the engine runs; empty for an unversioned one.
+  string build_id = 2;
+  // mode is the auth.mode the engine runs in.
+  string mode = 3;
+  google.protobuf.Timestamp last_seen = 4;
+}
+
+// AccessStatus is what the Access page's banners and `auth lower` read: the
+// state of the deployment's authentication, as the answering replica sees
+// it.
+message AccessStatus {
+  // engine_mode is the auth.mode this replica runs in.
+  string engine_mode = 1;
+  // recorded_mode is the mode record's mode; empty when there is none.
+  string recorded_mode = 2;
+  // mode_record_missing is true when this replica saw a mode record that is
+  // now gone.
+  bool mode_record_missing = 3;
+  // document_read_at is when this replica last read the access document,
+  // and document_age how old its copy is now.
+  google.protobuf.Timestamp document_read_at = 4;
+  google.protobuf.Duration document_age = 5;
+  // document_stale is true when that copy is older than its refresh bound
+  // and is served stale because the store did not answer.
+  bool document_stale = 6;
+  // engines are the engines seen; one whose mode is below enforce is a peer
+  // that does not enforce.
+  repeated EngineSeen engines = 7;
+  // orkers_reaching_control_plane are the Orkers whose storage credential
+  // reaches the control plane's objects, and orkers_unchecked those whose
+  // credential was never checked.
+  repeated string orkers_reaching_control_plane = 8;
+  repeated string orkers_unchecked = 9;
+  // asserted_safe_from is the earliest instant the mode may be lowered to
+  // `asserted` without accepting duplicate retries: one idempotency key's
+  // life after the deployment last ran in `enforce`. Unset when it is safe
+  // now or the deployment never enforced.
+  google.protobuf.Timestamp asserted_safe_from = 10;
+  // acknowledged_revision is the latest revision written around the API
+  // that an admin acknowledged (AcknowledgeAccessRevision).
+  int64 acknowledged_revision = 11;
+  // mode_record_etag is the mode record's compare-and-swap token, which
+  // LowerAuthModeRequest.record_etag sends back.
+  string mode_record_etag = 12;
+}

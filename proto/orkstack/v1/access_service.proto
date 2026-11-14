@@ -1,0 +1,403 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/access.proto";
+import "orkstack/v1/automation.proto";
+import "orkstack/v1/filter.proto";
+import "orkstack/v1/orkflow_service.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// AccessService reads and writes the access document: roles, bindings,
+// service accounts and disabled principals. Every write
+// reads the document, changes one thing, validates the whole, writes an
+// immutable revision and swaps the head under the etag the caller read. A
+// write whose etag is no longer the stored one is refused, and the caller
+// reads again.
+//
+// Permissions (the identity design's catalogue): every read needs
+// access.read at the deployment; every write needs access.write at the
+// deployment, except CreateBinding and DeleteBinding, which access.bind at a
+// namespace also allows for a binding at that namespace or one of its
+// Orkflows, to a role whose every permission the caller holds there, never
+// `admin`. access.bind allows no UpdateBinding, no repin and no other
+// write.
+service AccessService {
+  // GetAccess answers the document, with built-in roles and the bindings
+  // configuration defines.
+  rpc GetAccess(GetAccessRequest) returns (GetAccessResponse);
+  // ListPermissions answers the closed catalogue.
+  rpc ListPermissions(ListPermissionsRequest) returns (ListPermissionsResponse);
+
+  rpc CreateRole(CreateRoleRequest) returns (CreateRoleResponse);
+  rpc UpdateRole(UpdateRoleRequest) returns (UpdateRoleResponse);
+  // DeleteRole is refused while a binding names the role.
+  rpc DeleteRole(DeleteRoleRequest) returns (DeleteRoleResponse);
+
+  rpc CreateBinding(CreateBindingRequest) returns (CreateBindingResponse);
+  rpc UpdateBinding(UpdateBindingRequest) returns (UpdateBindingResponse);
+  rpc DeleteBinding(DeleteBindingRequest) returns (DeleteBindingResponse);
+
+  rpc CreateServiceAccount(CreateServiceAccountRequest) returns (CreateServiceAccountResponse);
+  rpc UpdateServiceAccount(UpdateServiceAccountRequest) returns (UpdateServiceAccountResponse);
+  rpc DeleteServiceAccount(DeleteServiceAccountRequest) returns (DeleteServiceAccountResponse);
+
+  // SetPrincipalDisabled disables or enables a principal; disabling also
+  // revokes its sign-ins.
+  rpc SetPrincipalDisabled(SetPrincipalDisabledRequest) returns (SetPrincipalDisabledResponse);
+  // ListPrincipals answers the principals seen to sign in over a window,
+  // derived on read; nothing is stored for it.
+  rpc ListPrincipals(ListPrincipalsRequest) returns (ListPrincipalsResponse);
+  rpc ListSignins(ListSigninsRequest) returns (ListSigninsResponse);
+  rpc RevokeSignins(RevokeSigninsRequest) returns (RevokeSigninsResponse);
+
+  // LowerAuthMode rewrites the mode record downward, before the engines are
+  // restarted in the lower mode. It never raises one.
+  rpc LowerAuthMode(LowerAuthModeRequest) returns (LowerAuthModeResponse);
+  // ExplainAccess answers, for a principal, a permission and a resource, the
+  // decision and the bindings behind it.
+  rpc ExplainAccess(ExplainAccessRequest) returns (ExplainAccessResponse);
+
+  // PlanAccess answers the writes that would make the stored document match
+  // an authored one (`kind: Access`); the client sends them, as with
+  // AutomationService.PlanAutomation.
+  rpc PlanAccess(PlanAccessRequest) returns (PlanAccessResponse);
+  // ExportAccess answers the stored document as an authored one.
+  rpc ExportAccess(ExportAccessRequest) returns (ExportAccessResponse);
+
+  rpc ListAccessRevisions(ListAccessRevisionsRequest) returns (ListAccessRevisionsResponse);
+  rpc GetAccessRevision(GetAccessRevisionRequest) returns (GetAccessRevisionResponse);
+  // AcknowledgeAccessRevision clears the banner for a revision written
+  // around the API, once an admin has read it (ListAccessRevisions).
+  rpc AcknowledgeAccessRevision(AcknowledgeAccessRevisionRequest) returns (AcknowledgeAccessRevisionResponse);
+}
+
+message GetAccessRequest {}
+
+message GetAccessResponse {
+  AccessDocument document = 1;
+  // status is what the Access page's banners read.
+  AccessStatus status = 2;
+}
+
+message ListPermissionsRequest {}
+
+message ListPermissionsResponse {
+  repeated Permission permissions = 1;
+}
+
+// Every write request carries etag, the AccessDocument.etag its caller
+// read, and every write response the document's new etag.
+
+message CreateRoleRequest {
+  Role role = 1;
+  string etag = 2;
+}
+
+message CreateRoleResponse {
+  Role role = 1;
+  string etag = 2;
+}
+
+message UpdateRoleRequest {
+  // role replaces the stored role of the same name.
+  Role role = 1;
+  string etag = 2;
+}
+
+message UpdateRoleResponse {
+  Role role = 1;
+  string etag = 2;
+}
+
+message DeleteRoleRequest {
+  string name = 1;
+  string etag = 2;
+}
+
+message DeleteRoleResponse {
+  string etag = 1;
+}
+
+message CreateBindingRequest {
+  Binding binding = 1;
+  string etag = 2;
+}
+
+message CreateBindingResponse {
+  Binding binding = 1;
+  string etag = 2;
+}
+
+message UpdateBindingRequest {
+  // binding replaces the stored binding of the same name. A save that
+  // changes nothing else never moves a pin.
+  Binding binding = 1;
+  string etag = 2;
+  // repin pins the binding again to the namespace or Orkflow that exists
+  // under its scope now: a named act, never a side effect.
+  bool repin = 3;
+}
+
+message UpdateBindingResponse {
+  Binding binding = 1;
+  string etag = 2;
+}
+
+message DeleteBindingRequest {
+  string name = 1;
+  string etag = 2;
+}
+
+message DeleteBindingResponse {
+  string etag = 1;
+}
+
+message CreateServiceAccountRequest {
+  ServiceAccount service_account = 1;
+  string etag = 2;
+}
+
+message CreateServiceAccountResponse {
+  ServiceAccount service_account = 1;
+  string etag = 2;
+}
+
+message UpdateServiceAccountRequest {
+  // service_account replaces the stored account of the same name; its keys
+  // are the account's whole key set.
+  ServiceAccount service_account = 1;
+  string etag = 2;
+}
+
+message UpdateServiceAccountResponse {
+  ServiceAccount service_account = 1;
+  string etag = 2;
+}
+
+message DeleteServiceAccountRequest {
+  string name = 1;
+  string etag = 2;
+}
+
+message DeleteServiceAccountResponse {
+  string etag = 1;
+}
+
+message SetPrincipalDisabledRequest {
+  string principal_id = 1;
+  bool disabled = 2;
+  string etag = 3;
+}
+
+message SetPrincipalDisabledResponse {
+  string etag = 1;
+  // signins_revoked counts the sign-ins a disable ended.
+  int32 signins_revoked = 2;
+}
+
+message ListPrincipalsRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.SeenPrincipal"
+    fields: [
+      {
+        path: "id"
+        label: "Principal"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "display"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "issuer"
+        label: "Issuer"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "last_seen"
+        label: "Last seen"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  // window is how far back sign-ins are read; zero means the default
+  // (30 days), and a value above the audit trail's retention is cut to it.
+  google.protobuf.Duration window = 1;
+  // page_size caps the rows answered; 0 means the default (100).
+  int32 page_size = 2;
+  // page_token continues a listing; it is opaque and binds the window and
+  // the filter set.
+  string page_token = 3;
+  // filters narrow the list, all of them at once (docs/UI_CLI_PARITY.md
+  // "Filtering lists").
+  repeated FieldFilter filters = 4;
+}
+
+message ListPrincipalsResponse {
+  repeated SeenPrincipal principals = 1;
+  string next_page_token = 2;
+  // window_start is the earliest instant the answer read.
+  google.protobuf.Timestamp window_start = 3;
+}
+
+message ListSigninsRequest {
+  string principal_id = 1;
+}
+
+message ListSigninsResponse {
+  repeated Signin signins = 1;
+}
+
+message RevokeSigninsRequest {
+  string principal_id = 1;
+  // public_ids names the sign-ins to end; empty ends every sign-in of the
+  // principal.
+  repeated string public_ids = 2;
+}
+
+message RevokeSigninsResponse {
+  int32 revoked = 1;
+}
+
+message LowerAuthModeRequest {
+  // mode is `observe` or `asserted`, below the record's.
+  string mode = 1;
+  // record_etag is the AccessStatus.mode_record_etag the caller read; the
+  // change is refused if the record has been written since, so an old
+  // request cannot be replayed after the mode was raised again.
+  string record_etag = 3;
+  // accept_duplicate_retries lowers to `asserted` before the deployment has
+  // been out of `enforce` for one idempotency key's life, accepting that a
+  // retried submission may then start a second run.
+  bool accept_duplicate_retries = 2;
+}
+
+message LowerAuthModeResponse {
+  string previous_mode = 1;
+  string mode = 2;
+}
+
+message ExplainAccessRequest {
+  string principal_id = 1;
+  string permission = 2;
+  // The resource, as narrow as given: a namespace, an Orkflow of it, or a
+  // pool. None means the deployment.
+  string namespace = 3;
+  string orkflow = 4;
+  string pool = 5;
+}
+
+message ExplainAccessResponse {
+  AccessDecision decision = 1;
+  // reason is a machine-readable code for a denial (PRINCIPAL_DISABLED,
+  // NO_BINDING, …); empty when allowed.
+  string reason = 2;
+  // explanation says the same in a sentence.
+  string explanation = 3;
+  // granted_by is the binding that granted it, when one did.
+  ExplainedBinding granted_by = 4;
+  // considered are the bindings that name the principal or the scope, each
+  // with why it did or did not grant.
+  repeated ExplainedBinding considered = 5;
+  // access_revision is the access document's revision the decision was made
+  // against.
+  int64 access_revision = 6;
+}
+
+message PlanAccessRequest {
+  // yaml is the authored document (`kind: Access`), as read.
+  string yaml = 1;
+  // prune turns every stored role, binding and service account the document
+  // does not declare into a delete step.
+  bool prune = 2;
+  // repin pins these bindings again in the plan.
+  repeated string repin = 3;
+}
+
+message PlanAccessResponse {
+  // steps, in execution order. Each request's etag is left empty: the
+  // client sends the etag the previous step answered.
+  repeated AccessStep steps = 1;
+  // issues: any ERROR means no step may be executed.
+  repeated ValidationIssue issues = 2;
+  // warnings name, among other things, each stale pin and the command that
+  // pins it again. A warning is not a step and not in a drift check.
+  repeated string warnings = 3;
+  // etag is the stored document's etag the plan was made against: the
+  // first step's.
+  string etag = 4;
+  // plan_digest is "sha256:<64 lowercase hex>" over the actionable steps,
+  // as PlanAutomationResponse.plan_digest is: what `access apply --check`
+  // compares. Warnings, a stale pin's among them, are not in it, so a drift
+  // check stays quiet about them. Empty when nothing was planned.
+  string plan_digest = 5;
+}
+
+// AccessStep is one write a plan asks the client to send.
+message AccessStep {
+  // name is the role, binding, service account or principal it changes.
+  string name = 1;
+  AutomationAction action = 2;
+  AccessObjectKind kind = 3;
+  // summary says in one line what the step does.
+  string summary = 4;
+  // changes are the fields an update changes, as an automation step's are.
+  repeated AutomationFieldChange changes = 5;
+  repeated string notes = 6;
+  oneof request {
+    CreateRoleRequest create_role = 10;
+    UpdateRoleRequest update_role = 11;
+    DeleteRoleRequest delete_role = 12;
+    CreateBindingRequest create_binding = 13;
+    UpdateBindingRequest update_binding = 14;
+    DeleteBindingRequest delete_binding = 15;
+    CreateServiceAccountRequest create_service_account = 16;
+    UpdateServiceAccountRequest update_service_account = 17;
+    DeleteServiceAccountRequest delete_service_account = 18;
+    SetPrincipalDisabledRequest set_principal_disabled = 19;
+  }
+}
+
+message ExportAccessRequest {}
+
+message ExportAccessResponse {
+  string yaml = 1;
+}
+
+message ListAccessRevisionsRequest {
+  // page_size caps the rows answered; 0 means the default (50).
+  int32 page_size = 1;
+  string page_token = 2;
+}
+
+message ListAccessRevisionsResponse {
+  // revisions, newest first, followed from the head by each revision's link
+  // to the one before it.
+  repeated AccessRevision revisions = 1;
+  string next_page_token = 2;
+}
+
+message GetAccessRevisionRequest {
+  int64 revision = 1;
+}
+
+message GetAccessRevisionResponse {
+  AccessRevision revision = 1;
+  AccessDocument document = 2;
+}
+
+message AcknowledgeAccessRevisionRequest {
+  int64 revision = 1;
+  // sha256 is the AccessRevision.sha256 the admin read. The acknowledgement
+  // is refused unless that revision exists, was written around the API, and
+  // still has this digest; AccessStatus.acknowledged_revision never moves
+  // backwards.
+  string sha256 = 2;
+}
+
+message AcknowledgeAccessRevisionResponse {}

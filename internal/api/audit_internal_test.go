@@ -69,6 +69,20 @@ var auditReadRPCs = map[string]bool{
 	// requests to the audited write RPCs, each recorded under its own action.
 	orkstackv1connect.AutomationServicePlanAutomationProcedure:   true,
 	orkstackv1connect.AutomationServiceExportAutomationProcedure: true,
+	// AuthService and AccessService reads. PlanAccess and
+	// ExportAccess write nothing, as their automation twins do; ExplainAccess
+	// asks Authorize and writes nothing.
+	orkstackv1connect.AuthServiceGetAuthConfigProcedure:         true,
+	orkstackv1connect.AuthServiceGetSigninProcedure:             true,
+	orkstackv1connect.AccessServiceGetAccessProcedure:           true,
+	orkstackv1connect.AccessServiceListPermissionsProcedure:     true,
+	orkstackv1connect.AccessServiceListPrincipalsProcedure:      true,
+	orkstackv1connect.AccessServiceListSigninsProcedure:         true,
+	orkstackv1connect.AccessServiceExplainAccessProcedure:       true,
+	orkstackv1connect.AccessServicePlanAccessProcedure:          true,
+	orkstackv1connect.AccessServiceExportAccessProcedure:        true,
+	orkstackv1connect.AccessServiceListAccessRevisionsProcedure: true,
+	orkstackv1connect.AccessServiceGetAccessRevisionProcedure:   true,
 }
 
 // auditStreamingReads is every streaming RPC. The audit interceptor is unary
@@ -90,8 +104,9 @@ var auditStreamingReads = map[string]bool{
 // verb of ExportAutomation, which renders a namespace as a document and writes
 // nothing (docs/AUTOMATION.md). Compare is the verb of
 // CompareInterfaces, which classifies two stored documents and writes nothing
-// (docs/UI_CLI_PARITY.md "Interface compatibility").
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare"}
+// (docs/UI_CLI_PARITY.md "Interface compatibility"). Explain is the verb of
+// ExplainAccess, which answers a decision and writes nothing.
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare", "Explain"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.

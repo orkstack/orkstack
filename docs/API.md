@@ -19,6 +19,50 @@ deployment's gateway does, and may assert a principal in `Ork-Principal`
 
 ## Services
 
+### AccessService
+
+AccessService reads and writes the access document: roles, bindings,
+service accounts and disabled principals. Every write
+reads the document, changes one thing, validates the whole, writes an
+immutable revision and swaps the head under the etag the caller read. A
+write whose etag is no longer the stored one is refused, and the caller
+reads again.
+
+Permissions (the identity design's catalogue): every read needs
+access.read at the deployment; every write needs access.write at the
+deployment, except CreateBinding and DeleteBinding, which access.bind at a
+namespace also allows for a binding at that namespace or one of its
+Orkflows, to a role whose every permission the caller holds there, never
+`admin`. access.bind allows no UpdateBinding, no repin and no other
+write.
+
+Defined in `proto/orkstack/v1/access_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `GetAccess` | [`GetAccessRequest`](#getaccessrequest) | [`GetAccessResponse`](#getaccessresponse) | GetAccess answers the document, with built-in roles and the bindings configuration defines. |
+| `ListPermissions` | [`ListPermissionsRequest`](#listpermissionsrequest) | [`ListPermissionsResponse`](#listpermissionsresponse) | ListPermissions answers the closed catalogue. |
+| `CreateRole` | [`CreateRoleRequest`](#createrolerequest) | [`CreateRoleResponse`](#createroleresponse) |  |
+| `UpdateRole` | [`UpdateRoleRequest`](#updaterolerequest) | [`UpdateRoleResponse`](#updateroleresponse) |  |
+| `DeleteRole` | [`DeleteRoleRequest`](#deleterolerequest) | [`DeleteRoleResponse`](#deleteroleresponse) | DeleteRole is refused while a binding names the role. |
+| `CreateBinding` | [`CreateBindingRequest`](#createbindingrequest) | [`CreateBindingResponse`](#createbindingresponse) |  |
+| `UpdateBinding` | [`UpdateBindingRequest`](#updatebindingrequest) | [`UpdateBindingResponse`](#updatebindingresponse) |  |
+| `DeleteBinding` | [`DeleteBindingRequest`](#deletebindingrequest) | [`DeleteBindingResponse`](#deletebindingresponse) |  |
+| `CreateServiceAccount` | [`CreateServiceAccountRequest`](#createserviceaccountrequest) | [`CreateServiceAccountResponse`](#createserviceaccountresponse) |  |
+| `UpdateServiceAccount` | [`UpdateServiceAccountRequest`](#updateserviceaccountrequest) | [`UpdateServiceAccountResponse`](#updateserviceaccountresponse) |  |
+| `DeleteServiceAccount` | [`DeleteServiceAccountRequest`](#deleteserviceaccountrequest) | [`DeleteServiceAccountResponse`](#deleteserviceaccountresponse) |  |
+| `SetPrincipalDisabled` | [`SetPrincipalDisabledRequest`](#setprincipaldisabledrequest) | [`SetPrincipalDisabledResponse`](#setprincipaldisabledresponse) | SetPrincipalDisabled disables or enables a principal; disabling also revokes its sign-ins. |
+| `ListPrincipals` | [`ListPrincipalsRequest`](#listprincipalsrequest) | [`ListPrincipalsResponse`](#listprincipalsresponse) | ListPrincipals answers the principals seen to sign in over a window, derived on read; nothing is stored for it. |
+| `ListSignins` | [`ListSigninsRequest`](#listsigninsrequest) | [`ListSigninsResponse`](#listsigninsresponse) |  |
+| `RevokeSignins` | [`RevokeSigninsRequest`](#revokesigninsrequest) | [`RevokeSigninsResponse`](#revokesigninsresponse) |  |
+| `LowerAuthMode` | [`LowerAuthModeRequest`](#lowerauthmoderequest) | [`LowerAuthModeResponse`](#lowerauthmoderesponse) | LowerAuthMode rewrites the mode record downward, before the engines are restarted in the lower mode. It never raises one. |
+| `ExplainAccess` | [`ExplainAccessRequest`](#explainaccessrequest) | [`ExplainAccessResponse`](#explainaccessresponse) | ExplainAccess answers, for a principal, a permission and a resource, the decision and the bindings behind it. |
+| `PlanAccess` | [`PlanAccessRequest`](#planaccessrequest) | [`PlanAccessResponse`](#planaccessresponse) | PlanAccess answers the writes that would make the stored document match an authored one (`kind: Access`); the client sends them, as with AutomationService.PlanAutomation. |
+| `ExportAccess` | [`ExportAccessRequest`](#exportaccessrequest) | [`ExportAccessResponse`](#exportaccessresponse) | ExportAccess answers the stored document as an authored one. |
+| `ListAccessRevisions` | [`ListAccessRevisionsRequest`](#listaccessrevisionsrequest) | [`ListAccessRevisionsResponse`](#listaccessrevisionsresponse) |  |
+| `GetAccessRevision` | [`GetAccessRevisionRequest`](#getaccessrevisionrequest) | [`GetAccessRevisionResponse`](#getaccessrevisionresponse) |  |
+| `AcknowledgeAccessRevision` | [`AcknowledgeAccessRevisionRequest`](#acknowledgeaccessrevisionrequest) | [`AcknowledgeAccessRevisionResponse`](#acknowledgeaccessrevisionresponse) | AcknowledgeAccessRevision clears the banner for a revision written around the API, once an admin has read it (ListAccessRevisions). |
+
 ### ActivityService
 
 ActivityService reports what this deployment can run: an activity is an
@@ -52,6 +96,22 @@ Defined in `proto/orkstack/v1/audit.proto`.
 | Method | Request | Response | Description |
 |---|---|---|---|
 | `ListAuditRecords` | [`ListAuditRecordsRequest`](#listauditrecordsrequest) | [`ListAuditRecordsResponse`](#listauditrecordsresponse) | ListAuditRecords returns records newest first, bounded and paginated.<br><br>A scan that would examine more objects than the engine's budget allows before filling a page is REFUSED (RESOURCE_EXHAUSTED) naming the budget, never answered from the subset it managed to read: a partial audit listing that looks complete is worse than none. |
+
+### AuthService
+
+AuthService is sign-in and "who am I". It is
+mounted only when auth.mode is not `asserted`; a client learns the mode
+from SystemService.GetSystemInfo. The browser's redirects are plain HTTP
+beside it: GET /v1/auth/login/{issuer} and GET /v1/auth/callback/{issuer}.
+
+Defined in `proto/orkstack/v1/auth_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `GetAuthConfig` | [`GetAuthConfigRequest`](#getauthconfigrequest) | [`GetAuthConfigResponse`](#getauthconfigresponse) | GetAuthConfig is public: the issuers a person can sign in with. |
+| `GetSignin` | [`GetSigninRequest`](#getsigninrequest) | [`GetSigninResponse`](#getsigninresponse) | GetSignin answers for the caller itself, however it authenticated: who it is, what it may do, and, for a sign-in, its CSRF token. It is the one cookie-authenticated call exempt from Ork-CSRF, because it is the call that hands the token out; RefreshSignin and SignOut require it. |
+| `RefreshSignin` | [`RefreshSigninRequest`](#refreshsigninrequest) | [`RefreshSigninResponse`](#refreshsigninresponse) | RefreshSignin revalidates the caller's sign-in with its issuer. The page calls it one call at a time across tabs, so two replicas never redeem one rotating refresh token at once. |
+| `SignOut` | [`SignOutRequest`](#signoutrequest) | [`SignOutResponse`](#signoutresponse) | SignOut ends the caller's sign-in. |
 
 ### AutomationService
 
@@ -289,6 +349,93 @@ Defined in `proto/orkstack/v1/webhook_service.proto`.
 | `RedeliverWebhook` | [`RedeliverWebhookRequest`](#redeliverwebhookrequest) | [`RedeliverWebhookResponse`](#redeliverwebhookresponse) | RedeliverWebhook POSTs one delivery again — once, now, synchronously, signed with the subscription's current secret, embedding the run as it reads today — and returns the NEW record. The operator is the retry policy: this RPC never queues, never retries, and never runs unattended. |
 
 ## Messages
+
+### AccessDocument
+
+AccessDocument is the stored access document.
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | `int32` |  |
+| `revision` | `int64` | revision increases with every write; each decision names the revision it was made against. |
+| `roles` | repeated [`Role`](#role) | roles are the custom roles. Built-in roles are in built_in_roles. |
+| `bindings` | repeated [`Binding`](#binding) |  |
+| `service_accounts` | repeated [`ServiceAccount`](#serviceaccount) |  |
+| `disabled` | repeated `string` | disabled lists principal ids refused whatever they present. |
+| `etag` | `string` | etag is the store's compare-and-swap token for this document, as Namespace.etag is. Never stored inside the document. |
+| `built_in_roles` | repeated [`Role`](#role) | built_in_roles are the roles defined in code. Output only. |
+| `configured_bindings` | repeated [`Binding`](#binding) | configured_bindings are the bindings that come from configuration. Output only. |
+| `written_around_api` | `bool` | written_around_api is true when the stored head's predecessor is not the revision this replica last saw, or it has no recorded revision: it was written around the API. It stays true until an admin acknowledges that revision (AccessService.AcknowledgeAccessRevision). Output only. |
+
+### AccessRevision
+
+AccessRevision is one immutable revision of the access document. A
+revision is a record: nothing reads one to decide anything.
+
+| Field | Type | Description |
+|---|---|---|
+| `revision` | `int64` |  |
+| `sha256` | `string` | sha256 is the digest of this revision's bytes. |
+| `previous_sha256` | `string` | previous_sha256 is the digest of the revision before it. |
+| `written_at` | `google.protobuf.Timestamp` |  |
+| `written_by` | `string` | written_by is the principal whose write made it. |
+| `written_by_verified` | `bool` |  |
+| `change` | `string` | change says in one line what the write changed. |
+
+### AccessStatus
+
+AccessStatus is what the Access page's banners and `auth lower` read: the
+state of the deployment's authentication, as the answering replica sees
+it.
+
+| Field | Type | Description |
+|---|---|---|
+| `engine_mode` | `string` | engine_mode is the auth.mode this replica runs in. |
+| `recorded_mode` | `string` | recorded_mode is the mode record's mode; empty when there is none. |
+| `mode_record_missing` | `bool` | mode_record_missing is true when this replica saw a mode record that is now gone. |
+| `document_read_at` | `google.protobuf.Timestamp` | document_read_at is when this replica last read the access document, and document_age how old its copy is now. |
+| `document_age` | `google.protobuf.Duration` |  |
+| `document_stale` | `bool` | document_stale is true when that copy is older than its refresh bound and is served stale because the store did not answer. |
+| `engines` | repeated [`EngineSeen`](#engineseen) | engines are the engines seen; one whose mode is below enforce is a peer that does not enforce. |
+| `orkers_reaching_control_plane` | repeated `string` | orkers_reaching_control_plane are the Orkers whose storage credential reaches the control plane's objects, and orkers_unchecked those whose credential was never checked. |
+| `orkers_unchecked` | repeated `string` |  |
+| `asserted_safe_from` | `google.protobuf.Timestamp` | asserted_safe_from is the earliest instant the mode may be lowered to `asserted` without accepting duplicate retries: one idempotency key's life after the deployment last ran in `enforce`. Unset when it is safe now or the deployment never enforced. |
+| `acknowledged_revision` | `int64` | acknowledged_revision is the latest revision written around the API that an admin acknowledged (AcknowledgeAccessRevision). |
+| `mode_record_etag` | `string` | mode_record_etag is the mode record's compare-and-swap token, which LowerAuthModeRequest.record_etag sends back. |
+
+### AccessStep
+
+AccessStep is one write a plan asks the client to send.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the role, binding, service account or principal it changes. |
+| `action` | [`AutomationAction`](#automationaction) |  |
+| `kind` | [`AccessObjectKind`](#accessobjectkind) |  |
+| `summary` | `string` | summary says in one line what the step does. |
+| `changes` | repeated [`AutomationFieldChange`](#automationfieldchange) | changes are the fields an update changes, as an automation step's are. |
+| `notes` | repeated `string` |  |
+| `create_role` | [`CreateRoleRequest`](#createrolerequest) | One of `request`. |
+| `update_role` | [`UpdateRoleRequest`](#updaterolerequest) | One of `request`. |
+| `delete_role` | [`DeleteRoleRequest`](#deleterolerequest) | One of `request`. |
+| `create_binding` | [`CreateBindingRequest`](#createbindingrequest) | One of `request`. |
+| `update_binding` | [`UpdateBindingRequest`](#updatebindingrequest) | One of `request`. |
+| `delete_binding` | [`DeleteBindingRequest`](#deletebindingrequest) | One of `request`. |
+| `create_service_account` | [`CreateServiceAccountRequest`](#createserviceaccountrequest) | One of `request`. |
+| `update_service_account` | [`UpdateServiceAccountRequest`](#updateserviceaccountrequest) | One of `request`. |
+| `delete_service_account` | [`DeleteServiceAccountRequest`](#deleteserviceaccountrequest) | One of `request`. |
+| `set_principal_disabled` | [`SetPrincipalDisabledRequest`](#setprincipaldisabledrequest) | One of `request`. |
+
+### AcknowledgeAccessRevisionRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `revision` | `int64` |  |
+| `sha256` | `string` | sha256 is the AccessRevision.sha256 the admin read. The acknowledgement is refused unless that revision exists, was written around the API, and still has this digest; AccessStatus.acknowledged_revision never moves backwards. |
+
+### AcknowledgeAccessRevisionResponse
+
+No fields.
 
 ### ActivityDocs
 
@@ -560,6 +707,22 @@ Part of canonicalOrkflow(Task), emitted ONLY when set (see Task.pin).
 |---|---|---|
 | `schedule` | [`Schedule`](#schedule) |  |
 
+### Binding
+
+Binding grants a role to subjects at a scope.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is a slug, unique in the document. |
+| `role` | `string` | role names a built-in or custom role. |
+| `scope` | `string` | scope is `deployment`, `namespace:<ns>`, `orkflow:<ns>/<name>` or `pool:<pool>`. A role bound at a scope grants only its permissions of that scope's kind or narrower. |
+| `subjects` | repeated `string` | subjects, at most 64: `user:<issuer>:<name>`, `group:<issuer>:<group>`, `claims:<issuer>:<k>=<v>,…`, `serviceaccount:<name>` or `cert:<name>`. A value is literal or ends in one `*` that matches any remainder. |
+| `scope_id` | `string` | scope_id is the immutable id of the namespace or Orkflow the binding is pinned to; empty when it is not pinned. Set by the engine only: a write that sets scope_id, pin or pinned_at is refused, and an update that changes scope pins again to what exists under the new scope. A pin is never carried from one scope to another. |
+| `pin` | [`BindingPin`](#bindingpin) | pin says what scope_id means for this binding now. Output only. |
+| `pinned_at` | `google.protobuf.Timestamp` | pinned_at is when the binding was last pinned. Output only. |
+| `orker_ids_any` | `bool` | orker_ids_any lets a binding to the `orker` role accept the Orker id the request's attempt names, for a pool whose Orkers share one credential. One stolen Orker of that pool can then claim to be any other, and such a binding hosts no event source. |
+| `from_configuration` | `bool` | from_configuration is true for a binding that comes from configuration (auth.admins, auth.orkers), not from the document; it is shown, never written. Output only: a write that sets it is refused. |
+
 ### Budget
 
 Budget bounds how much of the fleet one namespace may RESERVE over a
@@ -764,6 +927,20 @@ No fields.
 |---|---|---|
 | `orker` | [`Orker`](#orker) |  |
 
+### CreateBindingRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `binding` | [`Binding`](#binding) |  |
+| `etag` | `string` |  |
+
+### CreateBindingResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `binding` | [`Binding`](#binding) |  |
+| `etag` | `string` |  |
+
 ### CreateEventSourceRequest
 
 CreateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
@@ -784,6 +961,20 @@ No fields.
 | `namespace` | [`Namespace`](#namespace) |  |
 | `created` | `bool` | created is false when an identical namespace already existed, so an idempotent repeat is distinguishable from the write that did it. |
 
+### CreateRoleRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `role` | [`Role`](#role) |  |
+| `etag` | `string` |  |
+
+### CreateRoleResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `role` | [`Role`](#role) |  |
+| `etag` | `string` |  |
+
 ### CreateScheduleRequest
 
 | Field | Type | Description |
@@ -803,6 +994,20 @@ No fields.
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | [`Schedule`](#schedule) |  |
+
+### CreateServiceAccountRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `service_account` | [`ServiceAccount`](#serviceaccount) |  |
+| `etag` | `string` |  |
+
+### CreateServiceAccountResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `service_account` | [`ServiceAccount`](#serviceaccount) |  |
+| `etag` | `string` |  |
 
 ### CreateTriggerRequest
 
@@ -828,6 +1033,19 @@ CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.
 batch).
 
 No fields.
+
+### DeleteBindingRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `etag` | `string` |  |
+
+### DeleteBindingResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `etag` | `string` |  |
 
 ### DeleteEventSourceRequest
 
@@ -861,6 +1079,19 @@ No fields.
 | `namespace` | `string` |  |
 | `deleted_at` | `google.protobuf.Timestamp` |  |
 
+### DeleteRoleRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `etag` | `string` |  |
+
+### DeleteRoleResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `etag` | `string` |  |
+
 ### DeleteScheduleRequest
 
 | Field | Type | Description |
@@ -871,6 +1102,19 @@ No fields.
 ### DeleteScheduleResponse
 
 No fields.
+
+### DeleteServiceAccountRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `etag` | `string` |  |
+
+### DeleteServiceAccountResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `etag` | `string` |  |
 
 ### DeleteTriggerRequest
 
@@ -1088,6 +1332,18 @@ batch).
 
 No fields.
 
+### EngineSeen
+
+EngineSeen is one engine of this deployment, polling or not, as the
+answering replica last saw it.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | id names the engine process. |
+| `build_id` | `string` | build_id is the release the engine runs; empty for an unversioned one. |
+| `mode` | `string` | mode is the auth.mode the engine runs in. |
+| `last_seen` | `google.protobuf.Timestamp` |  |
+
 ### Error
 
 Error captures a structured failure for a run or task run.
@@ -1133,6 +1389,50 @@ bundle, and a client must discard what it received.
 |---|---|---|
 | `data` | `bytes` |  |
 | `last` | `bool` |  |
+
+### ExplainAccessRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `principal_id` | `string` |  |
+| `permission` | `string` |  |
+| `namespace` | `string` | The resource, as narrow as given: a namespace, an Orkflow of it, or a pool. None means the deployment. |
+| `orkflow` | `string` |  |
+| `pool` | `string` |  |
+
+### ExplainAccessResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `decision` | [`AccessDecision`](#accessdecision) |  |
+| `reason` | `string` | reason is a machine-readable code for a denial (PRINCIPAL_DISABLED, NO_BINDING, …); empty when allowed. |
+| `explanation` | `string` | explanation says the same in a sentence. |
+| `granted_by` | [`ExplainedBinding`](#explainedbinding) | granted_by is the binding that granted it, when one did. |
+| `considered` | repeated [`ExplainedBinding`](#explainedbinding) | considered are the bindings that name the principal or the scope, each with why it did or did not grant. |
+| `access_revision` | `int64` | access_revision is the access document's revision the decision was made against. |
+
+### ExplainedBinding
+
+ExplainedBinding is one binding's part in a decision.
+
+| Field | Type | Description |
+|---|---|---|
+| `binding` | `string` |  |
+| `match` | [`BindingMatch`](#bindingmatch) |  |
+| `subject` | `string` | subject is the selector that matched the principal, when one did. |
+| `role` | `string` |  |
+| `scope` | `string` |  |
+| `claims_relied_on` | repeated `string` | claims_relied_on are the claims a `claims:` subject matched on, for a service principal. |
+
+### ExportAccessRequest
+
+No fields.
+
+### ExportAccessResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `yaml` | `string` |  |
 
 ### ExportAutomationRequest
 
@@ -1262,6 +1562,30 @@ in runs_evidence_missing instead.
 | `example_run_ids` | repeated `string` | example_run_ids holds at most 3 of the group's retried runs, newest created first, so a row leads to a run page whose attempt timeline shows the retries. Ids are never compared with each other (AGENTS.md §7). |
 | `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
 
+### GetAccessRequest
+
+No fields.
+
+### GetAccessResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `document` | [`AccessDocument`](#accessdocument) |  |
+| `status` | [`AccessStatus`](#accessstatus) | status is what the Access page's banners read. |
+
+### GetAccessRevisionRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `revision` | `int64` |  |
+
+### GetAccessRevisionResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `revision` | [`AccessRevision`](#accessrevision) |  |
+| `document` | [`AccessDocument`](#accessdocument) |  |
+
 ### GetArtifactProvenanceRequest
 
 | Field | Type | Description |
@@ -1285,6 +1609,17 @@ in runs_evidence_missing instead.
 | `references` | repeated [`ArtifactReference`](#artifactreference) | references is every marker on this object whose run is in the calling namespace, newest run_created_at first. It includes the addressed run when own_reference is HELD. Runs of other namespaces are omitted and not counted. |
 | `references_unreadable` | `int64` | references_unreadable counts markers whose run body is not in the archive (an archive write that stopped short of its body, which a later write finishes, docs/STORAGE.md). Such a marker's namespace cannot be known, so it is counted here and listed nowhere. A body that fails to read for any other reason fails the call. |
 | `computed_at` | `google.protobuf.Timestamp` |  |
+
+### GetAuthConfigRequest
+
+No fields.
+
+### GetAuthConfigResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `mode` | `string` | mode is `observe` or `enforce`: the service is not mounted in `asserted`. |
+| `issuers` | repeated [`SigninIssuer`](#signinissuer) | issuers are the trusted issuers that offer sign-in. |
 
 ### GetCacheStatsRequest
 
@@ -1463,6 +1798,26 @@ not name the namespace that the id exists.
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | [`Schedule`](#schedule) |  |
+
+### GetSigninRequest
+
+No fields.
+
+### GetSigninResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `principal_id` | `string` |  |
+| `display` | `string` | display is a name or an email, for the UI. |
+| `issuer` | `string` | issuer is the trusted issuer's name, or "serviceaccount", "cert" or "config". |
+| `method` | `string` | method is how the caller authenticated: oidc, jwt, service-account, mtls or break-glass. |
+| `kind` | `string` | kind is `user` or `service`. |
+| `groups` | repeated `string` |  |
+| `bindings` | repeated [`ExplainedBinding`](#explainedbinding) | bindings are the bindings that grant the caller something, configuration's included: each with its role, its scope and the one subject that matched the caller. A binding's other subjects are never shown here; reading them needs access.read. |
+| `permissions` | repeated [`ScopedPermissions`](#scopedpermissions) | permissions are what the caller may do, per scope. |
+| `signin` | [`Signin`](#signin) | signin is set for a caller signed in with a cookie. |
+| `csrf_token` | `string` | csrf_token is set with signin: every request of the page that is not a GET carries it as Ork-CSRF. The page keeps it in memory only. |
+| `access_revision` | `int64` | access_revision is the access document's revision the answer was computed against. |
 
 ### GetStatsRequest
 
@@ -1668,6 +2023,20 @@ output, or the outputs: block as a whole.
 | `to` | `string` |  |
 | `message` | `string` | message is the one sentence every client prints for this finding, verbatim. |
 
+### ListAccessRevisionsRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `page_size` | `int32` | page_size caps the rows answered; 0 means the default (50). |
+| `page_token` | `string` |  |
+
+### ListAccessRevisionsResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `revisions` | repeated [`AccessRevision`](#accessrevision) | revisions, newest first, followed from the head by each revision's link to the one before it. |
+| `next_page_token` | `string` |  |
+
 ### ListActivitiesRequest
 
 | Field | Type | Description |
@@ -1814,6 +2183,16 @@ end). A window whose end is not after its start is INVALID_ARGUMENT.
 | `orkflows` | repeated [`Orkflow`](#orkflow) |  |
 | `next_page_token` | `string` |  |
 
+### ListPermissionsRequest
+
+No fields.
+
+### ListPermissionsResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `permissions` | repeated [`Permission`](#permission) |  |
+
 ### ListPoolsRequest
 
 | Field | Type | Description |
@@ -1827,6 +2206,23 @@ end). A window whose end is not after its start is INVALID_ARGUMENT.
 |---|---|---|
 | `pools` | repeated [`Pool`](#pool) | ordered by name |
 | `default_pool` | `string` | where a task naming no pool runs |
+
+### ListPrincipalsRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `window` | `google.protobuf.Duration` | window is how far back sign-ins are read; zero means the default (30 days), and a value above the audit trail's retention is cut to it. |
+| `page_size` | `int32` | page_size caps the rows answered; 0 means the default (100). |
+| `page_token` | `string` | page_token continues a listing; it is opaque and binds the window and the filter set. |
+| `filters` | repeated [`FieldFilter`](#fieldfilter) | filters narrow the list, all of them at once (docs/UI_CLI_PARITY.md "Filtering lists"). |
+
+### ListPrincipalsResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `principals` | repeated [`SeenPrincipal`](#seenprincipal) |  |
+| `next_page_token` | `string` |  |
+| `window_start` | `google.protobuf.Timestamp` | window_start is the earliest instant the answer read. |
 
 ### ListReleasesRequest
 
@@ -1903,6 +2299,18 @@ and is not one of them.
 | Field | Type | Description |
 |---|---|---|
 | `schedules` | repeated [`Schedule`](#schedule) |  |
+
+### ListSigninsRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `principal_id` | `string` |  |
+
+### ListSigninsResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `signins` | repeated [`Signin`](#signin) |  |
 
 ### ListTaskAttemptsRequest
 
@@ -2001,6 +2409,21 @@ LiveUsage is E94's; it is empty until E94 lands (v0.4.0 proto
 batch).
 
 No fields.
+
+### LowerAuthModeRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `mode` | `string` | mode is `observe` or `asserted`, below the record's. |
+| `record_etag` | `string` | record_etag is the AccessStatus.mode_record_etag the caller read; the change is refused if the record has been written since, so an old request cannot be replayed after the mode was raised again. |
+| `accept_duplicate_retries` | `bool` | accept_duplicate_retries lowers to `asserted` before the deployment has been out of `enforce` for one idempotency key's life, accepting that a retried submission may then start a second run. |
+
+### LowerAuthModeResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `previous_mode` | `string` |  |
+| `mode` | `string` |  |
 
 ### MeasuredUsage
 
@@ -2304,6 +2727,17 @@ document). The planner treats a reference to it as satisfied.
 | `name` | `string` |  |
 | `version` | `string` |  |
 
+### Permission
+
+Permission is one entry of the closed catalogue.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is `<resource>.<verb>`. |
+| `scope_kinds` | repeated [`ScopeKind`](#scopekind) | scope_kinds are where it can be held. |
+| `allows` | `string` | allows says, in one sentence, what it lets its holder do. |
+| `built_in_roles` | repeated `string` | built_in_roles are the built-in roles that hold it. |
+
 ### PhaseSpan
 
 PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
@@ -2337,6 +2771,24 @@ implements it is internal, as a pool's routing is (AGENTS.md §7).
 |---|---|---|
 | `name` | `string` | slug, unique within the orkflow |
 | `timeout_seconds` | `int32` | timeout_seconds bounds the whole pin, from the moment its first task is dispatched until its last task ends. 0 means derived: the sum of every member task's wall-clock budget, which is the sequential worst case. |
+
+### PlanAccessRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `yaml` | `string` | yaml is the authored document (`kind: Access`), as read. |
+| `prune` | `bool` | prune turns every stored role, binding and service account the document does not declare into a delete step. |
+| `repin` | repeated `string` | repin pins these bindings again in the plan. |
+
+### PlanAccessResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `steps` | repeated [`AccessStep`](#accessstep) | steps, in execution order. Each request's etag is left empty: the client sends the etag the previous step answered. |
+| `issues` | repeated [`ValidationIssue`](#validationissue) | issues: any ERROR means no step may be executed. |
+| `warnings` | repeated `string` | warnings name, among other things, each stale pin and the command that pins it again. A warning is not a step and not in a drift check. |
+| `etag` | `string` | etag is the stored document's etag the plan was made against: the first step's. |
+| `plan_digest` | `string` | plan_digest is "sha256:&lt;64 lowercase hex>" over the actionable steps, as PlanAutomationResponse.plan_digest is: what `access apply --check` compares. Warnings, a stale pin's among them, are not in it, so a drift check stays quiet about them. Empty when nothing was planned. |
 
 ### PlanAutomationRequest
 
@@ -2552,6 +3004,18 @@ No fields.
 |---|---|---|
 | `delivery` | [`Delivery`](#delivery) | delivery is the NEW record: its own id, its one attempt, its own signature and body digest, and redelivery_of naming the request's id. |
 
+### RefreshSigninRequest
+
+No fields.
+
+### RefreshSigninResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `validated_until` | `google.protobuf.Timestamp` |  |
+| `idle_expires_at` | `google.protobuf.Timestamp` |  |
+| `expires_at` | `google.protobuf.Timestamp` |  |
+
 ### RegisterWebhookRequest
 
 | Field | Type | Description |
@@ -2721,6 +3185,33 @@ RetryPolicy mirrors Temporal retry semantics for a task.
 | `backoff_coefficient` | `double` | default 2.0 |
 | `maximum_interval_seconds` | `int32` | default 60, or initial_interval_seconds when longer |
 | `max_interruptions` | optional `int32` | max_interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
+
+### RevokeSigninsRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `principal_id` | `string` |  |
+| `public_ids` | repeated `string` | public_ids names the sign-ins to end; empty ends every sign-in of the principal. |
+
+### RevokeSigninsResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `revoked` | `int32` |  |
+
+### Role
+
+Role is a named set of permissions. A custom role lists permissions by
+exact name, with no wildcard, so a permission a later release adds is
+never granted by accident. Built-in roles are defined in code, never
+stored, and their names are reserved.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is a slug; a built-in role's name is refused for a custom one. |
+| `description` | `string` |  |
+| `permissions` | repeated `string` | permissions are exact names from the catalogue (ListPermissions). |
+| `built_in` | `bool` | built_in is true for a role defined in code. Output only: a write that sets it is refused. |
 
 ### Run
 
@@ -2943,6 +3434,15 @@ authored text travels with the record.
 | `catchup_window` | `google.protobuf.Duration` | catchup_window is how late a fire missed while the cluster was down may still be taken once it is back. Unset leaves Temporal's default (one year at the SDK version pinned in go.mod); set, it must be at least 10s, the cluster's minimum. A short window is how a nightly job says "if I could not run last night, do not run at 09:00 when Temporal comes back". |
 | `pause_on_failure` | `bool` | pause_on_failure pauses the schedule when a fire ends in failure — a run that failed, or a fire that was refused — so a broken nightly does not fail five nights in a row unobserved. The cluster writes why into the note. Default false. |
 
+### ScopedPermissions
+
+ScopedPermissions are the permissions a principal holds at one scope.
+
+| Field | Type | Description |
+|---|---|---|
+| `scope` | `string` |  |
+| `permissions` | repeated `string` |  |
+
 ### SecretRef
 
 SecretRef names a secret and where the Orker gets it. The value never
@@ -2955,6 +3455,45 @@ appears in a proto message, in Temporal history, or in the archive.
 | `grant` | `string` | grant is set from identity (E83); unset until it lands (v0.4.0 proto batch). |
 | `ciphertext` | `string` | ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
 | `unmasked` | `bool` | unmasked is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+
+### SeenPrincipal
+
+SeenPrincipal is a principal this deployment has seen sign in, derived on
+read from sign-in records and the audit trail; nothing is stored for it.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` |  |
+| `display` | `string` | display is a name or an email, for people. |
+| `issuer` | `string` | issuer is the trusted issuer's name, or "serviceaccount", "cert" or "config". |
+| `groups` | repeated `string` | groups as of last_seen. |
+| `first_seen` | `google.protobuf.Timestamp` |  |
+| `last_seen` | `google.protobuf.Timestamp` |  |
+| `disabled` | `bool` |  |
+| `active_signins` | `int32` | active_signins counts the sign-ins that have not ended. |
+
+### ServiceAccount
+
+ServiceAccount is a principal that authenticates with a key pair. It
+stores no secret, so nothing in object storage can impersonate it.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is a slug; the principal is serviceaccount:&lt;name>. |
+| `description` | `string` |  |
+| `keys` | repeated [`ServiceAccountKey`](#serviceaccountkey) | keys, at most four. |
+| `orker_id` | `string` | orker_id, when set, is the one Orker this account's credential names. |
+
+### ServiceAccountKey
+
+ServiceAccountKey is one public key a service account signs its
+request-bound assertions with.
+
+| Field | Type | Description |
+|---|---|---|
+| `kid` | `string` | kid is the key's RFC 7638 thumbprint, computed by the engine from public_key_pem; a value a request sends is ignored. |
+| `public_key_pem` | `string` | public_key_pem is a PEM "PUBLIC KEY" block: RSA of 2048 bits or more, or ECDSA P-256. |
+| `added_at` | `google.protobuf.Timestamp` | added_at is when the key was added, set by the engine; a value a request sends is ignored. |
 
 ### ServiceHost
 
@@ -2984,6 +3523,58 @@ No fields.
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is the promoted version's declared interface compared with compared_version — what ran when no version was named, until now. UNSPECIFIED, with compared_version empty, when the promotion did not change what runs. BREAKING here means the request acknowledged it. |
 | `compared_version` | `string` |  |
 | `stale_consent` | repeated [`StaleConsent`](#staleconsent) | stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+
+### SetPrincipalDisabledRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `principal_id` | `string` |  |
+| `disabled` | `bool` |  |
+| `etag` | `string` |  |
+
+### SetPrincipalDisabledResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `etag` | `string` |  |
+| `signins_revoked` | `int32` | signins_revoked counts the sign-ins a disable ended. |
+
+### SignOutRequest
+
+No fields.
+
+### SignOutResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `end_session_url` | `string` | end_session_url is the issuer's end_session_endpoint, when it has one, for the page to visit after the sign-in has ended here. |
+
+### Signin
+
+Signin is what is shown of a sign-in: never its cookie, refresh token or
+CSRF token.
+
+| Field | Type | Description |
+|---|---|---|
+| `public_id` | `string` | public_id is what lists and audit records show. |
+| `principal_id` | `string` |  |
+| `created_at` | `google.protobuf.Timestamp` |  |
+| `expires_at` | `google.protobuf.Timestamp` |  |
+| `validated_until` | `google.protobuf.Timestamp` | validated_until is when it must next be validated with its issuer. |
+| `idle_expires_at` | `google.protobuf.Timestamp` | idle_expires_at is when it ends unless refreshed. |
+
+### SigninIssuer
+
+SigninIssuer is one issuer a person can sign in with.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the issuer's name in auth.issuers; it appears in principal ids. |
+| `issuer_url` | `string` | issuer_url is the issuer's URL, exactly as configured. |
+| `login_path` | `string` | login_path is the page's path that starts a sign-in: /v1/auth/login/{name}. |
+| `cli_client_id` | `string` | cli_client_id is the client id a terminal signs in with. |
+| `scopes` | repeated `string` |  |
+| `device_flow` | `bool` | device_flow says whether a terminal may sign in with the device grant. |
 
 ### SleepSpec
 
@@ -3406,6 +3997,21 @@ batch).
 
 No fields.
 
+### UpdateBindingRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `binding` | [`Binding`](#binding) | binding replaces the stored binding of the same name. A save that changes nothing else never moves a pin. |
+| `etag` | `string` |  |
+| `repin` | `bool` | repin pins the binding again to the namespace or Orkflow that exists under its scope now: a named act, never a side effect. |
+
+### UpdateBindingResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `binding` | [`Binding`](#binding) |  |
+| `etag` | `string` |  |
+
 ### UpdateEventSourceRequest
 
 UpdateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
@@ -3450,6 +4056,20 @@ No fields.
 | `policy` | [`RetentionPolicy`](#retentionpolicy) |  |
 | `namespace_retention_enforced` | `bool` |  |
 
+### UpdateRoleRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `role` | [`Role`](#role) | role replaces the stored role of the same name. |
+| `etag` | `string` |  |
+
+### UpdateRoleResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `role` | [`Role`](#role) |  |
+| `etag` | `string` |  |
+
 ### UpdateScheduleRequest
 
 UpdateScheduleRequest replaces every mutable field with the value here: an
@@ -3479,6 +4099,20 @@ implying otherwise.
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | [`Schedule`](#schedule) |  |
+
+### UpdateServiceAccountRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `service_account` | [`ServiceAccount`](#serviceaccount) | service_account replaces the stored account of the same name; its keys are the account's whole key set. |
+| `etag` | `string` |  |
+
+### UpdateServiceAccountResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `service_account` | [`ServiceAccount`](#serviceaccount) |  |
+| `etag` | `string` |  |
 
 ### UpdateTriggerRequest
 
@@ -3598,6 +4232,28 @@ grouped by". The total row has every key empty.
 
 ## Enums
 
+### AccessDecision
+
+AccessDecision is the answer to "may this principal do this here".
+
+| Value | Number | Description |
+|---|---|---|
+| `ACCESS_DECISION_UNSPECIFIED` | 0 |  |
+| `ACCESS_DECISION_ALLOWED` | 1 |  |
+| `ACCESS_DECISION_DENIED` | 2 |  |
+
+### AccessObjectKind
+
+AccessObjectKind is what an access plan's step changes.
+
+| Value | Number | Description |
+|---|---|---|
+| `ACCESS_OBJECT_KIND_UNSPECIFIED` | 0 |  |
+| `ACCESS_OBJECT_KIND_ROLE` | 1 |  |
+| `ACCESS_OBJECT_KIND_BINDING` | 2 |  |
+| `ACCESS_OBJECT_KIND_SERVICE_ACCOUNT` | 3 |  |
+| `ACCESS_OBJECT_KIND_DISABLED_PRINCIPAL` | 4 |  |
+
 ### ArtifactKind
 
 | Value | Number | Description |
@@ -3660,6 +4316,31 @@ AwaitResolvedVia names the door an await's resolution came through.
 | `AWAIT_RESOLVED_VIA_UNSPECIFIED` | 0 |  |
 | `AWAIT_RESOLVED_VIA_API` | 1 | API: RunService.ResolveAwait — orkctl, the UI, or another Connect client. |
 | `AWAIT_RESOLVED_VIA_CALLBACK` | 2 | CALLBACK: the plain-HTTP callback door, authenticated by the await's callback token. |
+
+### BindingMatch
+
+BindingMatch says why a binding did or did not grant a permission.
+
+| Value | Number | Description |
+|---|---|---|
+| `BINDING_MATCH_UNSPECIFIED` | 0 |  |
+| `BINDING_MATCH_GRANTED` | 1 | The binding granted it. |
+| `BINDING_MATCH_SUBJECT_DIFFERS` | 2 | No subject of the binding matches the principal. |
+| `BINDING_MATCH_SCOPE_DIFFERS` | 3 | The binding's scope does not cover the resource. |
+| `BINDING_MATCH_ROLE_LACKS_PERMISSION` | 4 | The binding's role does not hold the permission at that scope's kind. |
+| `BINDING_MATCH_PINNED_ELSEWHERE` | 5 | It would have matched by name, and is pinned to an earlier incarnation of the namespace or Orkflow. |
+
+### BindingPin
+
+BindingPin is what a binding at namespace or Orkflow scope is pinned to.
+
+| Value | Number | Description |
+|---|---|---|
+| `BINDING_PIN_UNSPECIFIED` | 0 |  |
+| `BINDING_PIN_NONE` | 1 | The binding's scope is the deployment or a pool, which is never made again under a name: nothing to pin. |
+| `BINDING_PIN_PINNED` | 2 | Pinned to the incarnation of the namespace or Orkflow that existed when the binding was saved (scope_id). It matches that incarnation only. |
+| `BINDING_PIN_BY_NAME` | 3 | Saved before its namespace or Orkflow existed: it matches by name until its next save pins it. |
+| `BINDING_PIN_STALE` | 4 | Pinned to an incarnation that no longer exists: it matches nothing until it is pinned again (UpdateBindingRequest.repin). |
 
 ### CacheOutcome
 
@@ -4034,6 +4715,19 @@ audit fact, so no request field carries a kind.
 | `RUN_ORIGIN_KIND_SCHEDULE` | 3 | SCHEDULE: a schedule fired. id is the schedule id (sch-…). Defined here so orkflow-schedules stamps it without touching Run; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_PARENT_RUN` | 4 | PARENT_RUN: a child run started by a composing parent. id is the PARENT run's id. Defined here so composed-orkflows adds no Run field of its own; nothing produces it until that proposal lands. |
 | `RUN_ORIGIN_KIND_RUN_AGAIN` | 5 | RUN_AGAIN: `orkctl run again` or the run page's Run again. id is the SOURCE run's id, which the server confirmed exists in this namespace. |
+
+### ScopeKind
+
+ScopeKind is the kind of scope a permission can be held at and a binding
+is made at.
+
+| Value | Number | Description |
+|---|---|---|
+| `SCOPE_KIND_UNSPECIFIED` | 0 |  |
+| `SCOPE_KIND_DEPLOYMENT` | 1 | The whole deployment: covers every namespace, Orkflow and pool. |
+| `SCOPE_KIND_NAMESPACE` | 2 | One namespace and everything in it. |
+| `SCOPE_KIND_ORKFLOW` | 3 | One Orkflow of a namespace, with its runs, schedules and triggers. |
+| `SCOPE_KIND_POOL` | 4 | One pool of Orkers. |
 
 ### StatsBucketWidth
 
