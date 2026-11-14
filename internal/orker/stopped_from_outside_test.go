@@ -396,6 +396,20 @@ func TestDockerRuntime_Wait_AsksEachCLIInItsOwnWords(t *testing.T) {
 // awaitGone waits until the process the fake CLI recorded under flag is gone.
 func awaitGone(t *testing.T, fake *countingDocker, flag string) {
 	t.Helper()
+	pid := awaitRecorded(t, fake, flag)
+	deadline := time.Now().Add(20 * time.Second)
+	for syscall.Kill(pid, 0) == nil {
+		if time.Now().After(deadline) {
+			t.Fatalf("the stream's process %d outlived what it watched", pid)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+// awaitRecorded waits, by deadline, until the fake CLI's process has recorded
+// its pid under flag, and returns it.
+func awaitRecorded(t *testing.T, fake *countingDocker, flag string) int {
+	t.Helper()
 	deadline := time.Now().Add(20 * time.Second)
 	var pid int
 	for {
@@ -410,12 +424,7 @@ func awaitGone(t *testing.T, fake *countingDocker, flag string) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	for syscall.Kill(pid, 0) == nil {
-		if time.Now().After(deadline) {
-			t.Fatalf("the stream's process %d outlived what it watched", pid)
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	return pid
 }
 
 // TestDockerRuntime_TheStreamEndsWithTheContainer: a CLI following one
@@ -437,6 +446,10 @@ func TestDockerRuntime_TheStreamEndsWithTheContainer(t *testing.T) {
 		defer cancel()
 		var stdout, stderr bytes.Buffer
 		must.OKf(t, runtime.Start(ctx, "cid-0123", &stdout, &stderr), "Start")
+		// The stream must be running before Remove, or a Remove that killed it
+		// before its first line ran would leave nothing to observe: what is
+		// proven is that Remove ends a stream that follows the container.
+		awaitRecorded(t, fake, "eventspid")
 		must.OKf(t, runtime.Remove(ctx, "cid-0123"), "Remove")
 		awaitGone(t, fake, "eventspid")
 	})
