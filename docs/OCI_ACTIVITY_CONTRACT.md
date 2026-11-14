@@ -1355,7 +1355,7 @@ containers run.
 | Object store unusable at boot: unreachable, credential refused, no such bucket | — | The boot probe gets no answer → Orker refuses to start (`COMMIT_STORE_UNAVAILABLE`). | refuses to run, never runs unsafely |
 | Container exceeds its own timeout | logs, no commit | SIGTERM → grace → SIGKILL, `TimedOut/CONTAINER_TIMEOUT`, terminal by default (§8.1). | explicit failure |
 | Cancellation, or SIGTERM ignored | logs, no commit | SIGTERM → grace → SIGKILL (§14.5); the Orker returns `ctx.Err()`. | canceled, never auto-retried |
-| Orker stopped (`SIGTERM`, `SIGINT`) mid-container | logs to the last line, the attempt record (`ORKER_STOPPED`), no commit | SIGTERM → grace → SIGKILL, then the process exits (§6.3); Temporal is told nothing, so the heartbeat timeout retries per the task's policy, as for a dead Orker. | correct, container ran twice (at-least-once) |
+| Orker stopped (`SIGTERM`, `SIGINT`) mid-container | logs to the last line, the attempt record (`ORKER_STOPPED`), no commit | SIGTERM → grace → SIGKILL, heartbeated throughout, then the Orker reports the attempt `ORKER_STOPPED` and retries it per the task's policy (§6.3) | correct, container ran twice (at-least-once) |
 | Input artifact unavailable / image pull fails | nothing | `INPUT_ARTIFACT_UNAVAILABLE` / `IMAGE_PULL_FAILED` → retried. | explicit failure |
 | Tag moved between two executions | — | Impossible: the run pins a digest at create (§4). | correct |
 
@@ -1494,15 +1494,45 @@ though the host may be well: the run is told only that the session ended, and
 cannot tell a dead host from a silent frontend. The pin is never re-opened
 elsewhere.
 
-**An Orker that is itself stopped** (`SIGTERM`, `SIGINT`) stops polling, and
-the worker's stop cancels every running attempt. Each runs the same sequence,
-then writes its attempt record `FAILED` with `ORKER_STOPPED` and closes its log
-sink, and the process exits only once every attempt has: the `SIGKILL` at the
-end of a grace is sent by the Orker, so an Orker that exited first would leave
-a container that ignores `SIGTERM` running. Such an attempt returns nothing to
-Temporal (the SDK's pending result), which then sees exactly what it sees of an
-Orker that died: no heartbeat, a heartbeat timeout, and a retry under the
-task's policy (`ORKER_HEARTBEAT_TIMEOUT`, §8.1). A second signal exits at once.
+**An Orker that is itself stopped** (`SIGTERM`, `SIGINT`) stops what it runs
+carefully. It cordons itself first (`docs/DEPLOY.md`, "Removing an Orker safely"), so it asks for no new task and
+opens no new pin. Every attempt it admitted moves through stages by compare-and-swap
+(`internal/orker/stop.go`): admitted, then revocable once its container
+started, or committing once it has a result of its own — a commit it adopted,
+a memo hit it is writing, or a container that ended by itself. The signal's
+sweep hands back every attempt that is admitted, and every revocable one that
+is not a pinned member; an attempt's own move fails once it is handed back,
+and the sweep's fails once the attempt is committing, so exactly one side
+decides. An unpinned attempt whose container has not ended by itself gets the
+cancellation sequence, heartbeated throughout, and the Orker reports it
+`ORKER_STOPPED` itself (`CompleteActivity`, retried from 1 s to 10 s apart for
+up to 10 minutes; an answer that the attempt already ended counts as taken),
+then writes its attempt record and closes its log sink. Nothing such an
+attempt left is committed, even an exit 0 from a workload that traps
+`SIGTERM`. An attempt whose container ended by itself, or that is adopting or
+writing a commit, completes and reports first, and so does one the worker's
+own stop cancels after its commit is written. An attempt that reaches the
+Orker after the signal starts nothing and leaves nothing, no record and no
+log, and is reported `ORKER_STOPPED` too. A pinned member still running fails
+its pin `PIN_HOST_LOST` when the Orker then stops its workers, as does one not
+yet started, which is refused. Right after the sweep the Orker stops its task
+worker, so no poll still open delivers a task to it; every unpinned attempt,
+and a pinned member that is committing, outlives that stop and reports
+itself, whatever its outcome, heartbeating until the report lands. A cancel
+the server sends meanwhile still ends the attempt as cancelled. The process exits
+only once every attempt has returned: the `SIGKILL` at the end of a grace is sent by the Orker, so an
+Orker that exited first would leave a container that ignores `SIGTERM`
+running. A report the cluster never takes is recorded `REPORT_UNDELIVERED`,
+and the cluster then sees what it sees of an Orker that died: a heartbeat
+timeout, and a retry under the task's policy (`ORKER_HEARTBEAT_TIMEOUT`,
+§8.1).
+
+Every runtime CLI the Orker starts leads a process group of its own, so a
+signal sent to the Orker's process group (a terminal's Ctrl-C, a process
+manager that signals the whole group) never reaches a task's container. A
+second stop signal changes nothing; a third exits at once, killing every
+runtime CLI the Orker started, and leaves what a crash leaves: the attempts
+`UNREPORTED`, and their containers until the next boot's reap.
 
 Timeouts, which must not be confused:
 
@@ -1851,11 +1881,13 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `VALUES_REFETCH_FAILED` | InfrastructureError | yes | on adoption, `commit.values.uri` could not be fetched |
 | `ORKER_HEARTBEAT_LOST` | InfrastructureError | yes | nothing acknowledged the attempt's heartbeat for the heartbeat timeout, so the Orker stopped the attempt though nobody cancelled the task (§6.3) |
 | `ATTEMPT_STORE_UNAVAILABLE` | InfrastructureError | yes | the attempt store refused or did not answer the attempt's claim on its ordinal for four tries over about 10 s; the attempt did nothing: no container, no record, no log (§7.1) |
+| `ORKER_STOPPED` | InfrastructureError | yes | the attempt's Orker was stopping and handed the attempt back: a running container got the cancellation sequence, heartbeated throughout, and the Orker reported the attempt itself; one that reached the Orker after the signal started nothing (§6.3). A pinned member it stopped is recorded so and never reported: its pin fails `PIN_HOST_LOST` |
 
 One Orker code is recorded on an attempt and never reported:
-`ORKER_STOPPED` (InfrastructureError, retryable) is the record of an attempt
-its Orker stopped because the Orker itself was stopping (§6.3). Temporal hears
-nothing for it, so the task's own outcome is `ORKER_HEARTBEAT_TIMEOUT`.
+`REPORT_UNDELIVERED` (InfrastructureError, retryable) is the record of an
+attempt its stopping Orker handed back but could not report within 10 minutes
+(§6.3). Temporal never heard of it, so the task's own outcome is
+`ORKER_HEARTBEAT_TIMEOUT`.
 
 Two Orker codes are not task-attempt reasons: `ORKER_CORDON_INVALID`
 (ContractViolation) refuses a malformed cordon control request, and `PANIC`

@@ -26,9 +26,11 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - The cluster now keeps a finished run at least `engine.idempotency_ttl` plus 5 minutes, plus the cleanup margin, when the maximum run retention is shorter; runs are retired when they were ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 - The Orker numbers each task's attempts itself and starts nothing until the cluster answers its first heartbeat; a store that refuses the number fails `ATTEMPT_STORE_UNAVAILABLE` ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#invariants-the-layout-carries)).
 - Upgrade every Orker of a pool together: an older Orker beside a newer one can overwrite its attempt records, and a submit that probes the pool refuses the mix ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#upgrading-a-pools-orkers)).
+- A stopped Orker now lets finished tasks report, reports the rest `ORKER_STOPPED` at once instead of timing out, and a signal to its process group no longer reaches containers ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#removing-an-orker-safely-cordon-and-drain)).
 
 ### Fixed
 
+- Schedule calls no longer answer `internal` while Temporal is down or rate-limiting, and a submit Temporal rate-limited answers `resource_exhausted`; ask again ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - Task logs no longer lose a task's last output when the task is cancelled or its Orker stops while a chunk is uploading ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#live-task-logs-where-they-are-what-bounds-them-how-long-they-stay)).
 - With more than one engine, a namespace's run list, stats and running count could miss runs started by an engine that booted before its Temporal namespace was ready; they are now included ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - A keyed submission whose claim or start answer was lost no longer leaves its key naming a run that never starts, or a failed run beside a live one; retry under the same key ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
