@@ -9,6 +9,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/dsl"
 )
 
@@ -231,6 +232,11 @@ func (s *Service) ListOrkflowCallers(
 		if o.GetName() == name {
 			continue
 		}
+		// A caller learns of the namespace's other Orkflows only those it
+		// may read: one bound at this Orkflow alone is told of none.
+		if !s.mayAnswer(ctx, authz.PermOrkflowRead, authz.Resource{Namespace: namespace, Orkflow: o.GetName()}) {
+			continue
+		}
 		type scanned struct {
 			wf      *orkstackv1.Orkflow
 			current bool
@@ -260,9 +266,13 @@ func (s *Service) ListOrkflowCallers(
 
 	// Triggers, oldest first: the store's own order. List carries no
 	// verification material, and none is copied.
+	here := authz.Resource{Namespace: namespace, Orkflow: name}
 	trigs, err := s.triggers.List(ctx, namespace, name)
 	if err != nil {
 		return nil, triggerConnectError(err)
+	}
+	if !s.mayAnswer(ctx, authz.PermTriggerRead, here) {
+		trigs = nil
 	}
 	for _, t := range trigs {
 		resp.Callers = append(resp.Callers, &orkstackv1.OrkflowCaller{
@@ -276,7 +286,7 @@ func (s *Service) ListOrkflowCallers(
 
 	// Schedules, by name. A partial answer would read as "no schedule
 	// follows current", so a failed list is Unavailable, never empty.
-	if s.schedules != nil {
+	if s.schedules != nil && s.mayAnswer(ctx, authz.PermScheduleRead, here) {
 		views, err := s.schedules.List(ctx, namespace, nil)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(

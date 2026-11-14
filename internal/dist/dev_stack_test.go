@@ -95,6 +95,57 @@ func TestDevStack_TheEngineListensWhereTheContributorSays(t *testing.T) {
 	s.assertClientsDial("http://127.0.0.1:9090")
 }
 
+// TestDevStack_IdentityEnforces: IDENTITY=1 writes a configuration on which
+// the engine enforces, trusting the development issuer, with dev-admin in
+// auth.admins and the Orker bound by auth.orkers and reaching the engine
+// with its own token; the tokens are signed afresh, and the script's own
+// orkctl calls present the admin's (CONTRIBUTING.md).
+func TestDevStack_IdentityEnforces(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	code, out := s.up("IDENTITY=1")
+
+	if code != 0 {
+		t.Fatalf("scripts/stack.sh up exited %d; want 0:\n%s", code, out)
+	}
+	file := filepath.Join(s.root, ".run", "orkstack.yaml")
+	s.await("ork")
+	read := func(bin config.Binary) map[string]string {
+		doc, err := config.Load(file, bin)
+		must.OK(t, err)
+		env := map[string]string{}
+		unset := func(string) (string, bool) { return "", false }
+		if _, err := doc.Apply(unset, func(name, value string) error { env[name] = value; return nil }); err != nil {
+			t.Fatal(err)
+		}
+		return env
+	}
+	ork := read(config.BinaryOrk)
+	if ork["ORK_AUTH_MODE"] != "enforce" || !strings.Contains(ork["ORK_AUTH_ADMINS"], "claims:dev:sub=dev-admin") ||
+		!strings.Contains(ork["ORK_AUTH_ORKERS"], "claims:dev:sub=dev-orker") || !strings.Contains(ork["ORK_AUTH_ISSUERS"], "jwks_file:") {
+		t.Fatalf("the engine's auth settings = %v", ork)
+	}
+	orkerEnv := read(config.BinaryOrker)
+	settings := orker.EngineSettingsFromEnv(func(k string) string { return orkerEnv[k] })
+	if err := settings.Validate(); err != nil || settings.Method != orker.EngineAuthTokenFile || orkerEnv["ORK_ORKER_ID"] != "dev-orker" {
+		t.Fatalf("the Orker's engine settings = %+v (%v), id %q", settings, err, orkerEnv["ORK_ORKER_ID"])
+	}
+	signed, err := os.ReadFile(filepath.Join(s.logs, "devtoken"))
+	must.OK(t, err)
+	if strings.Count(string(signed), "sign ") != 2 || !strings.Contains(string(signed), "init ") {
+		t.Fatalf("devtoken was called %q; want init and two signs", signed)
+	}
+	token, err := os.ReadFile(filepath.Join(s.logs, "orkctl-token"))
+	must.OK(t, err)
+	if !strings.Contains(string(token), filepath.Join(".data", "identity", "admin.token")) {
+		t.Fatalf("the script's orkctl calls presented %q; want the admin's token", token)
+	}
+	if !strings.Contains(out, "export ORK_TOKEN_FILE=") {
+		t.Fatalf("up printed no ORK_TOKEN_FILE line:\n%s", out)
+	}
+}
+
 // stackRepo is a throwaway repository holding the committed scripts/stack.sh,
 // with stand-ins for the docker CLI, make, curl, sleep and bun first on PATH and
 // for ork, orker and orkctl in its bin/, so `scripts/stack.sh up` runs as `make
@@ -141,11 +192,15 @@ func newStackRepo(t *testing.T) *stackRepo {
 *http_code*) printf 200 ;;
 esac
 `,
-		filepath.Join(standIns, "sleep"):      "",
+		filepath.Join(standIns, "sleep"): "",
+		// `go build -o OUT` writes a devtoken stand-in that records its calls.
+		filepath.Join(standIns, "go"): `out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; shift; }; shift; done
+printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "devtoken")) + `\n' > "$out"; chmod +x "$out"
+`,
 		filepath.Join(standIns, "bun"):        record("ui", "$ORK_SERVER") + stay,
 		filepath.Join(s.root, "bin", "ork"):   record("ork", "$*") + stay,
 		filepath.Join(s.root, "bin", "orker"): stay,
-		filepath.Join(s.root, "bin", "orkctl"): record("orkctl", "$*") +
+		filepath.Join(s.root, "bin", "orkctl"): record("orkctl-token", "$ORK_TOKEN_FILE") + record("orkctl", "$*") +
 			`echo '"liveOrkerCount": 1'` + "\n",
 	} {
 		s.write(path, "#!/bin/sh\n"+body)

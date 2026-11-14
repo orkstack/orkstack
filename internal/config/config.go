@@ -57,8 +57,8 @@ const (
 	// KindString leaves are too (see Var.Secret), but a KindSecret leaf is
 	// ALWAYS redacted by Effective regardless of how its value arrived.
 	KindSecret
-	// KindDocument is one of the three YAML subtrees (activities,
-	// telemetry.sinks, auth.issuers) that round-trip as YAML text rather than a scalar.
+	// KindDocument is one of the YAML subtrees (activities,
+	// telemetry.sinks, auth.issuers, auth.orkers) that round-trip as YAML text rather than a scalar.
 	KindDocument
 )
 
@@ -307,6 +307,16 @@ var Schema = []Var{
 	// whatever it is named.
 	{Path: "telemetry.sinks", Env: "ORK_TELEMETRY_SINKS", Binaries: usesBoth, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no named sinks"},
 
+	// orker.engine.* is how an Orker reaches the engine's API as itself
+	// (docs/AUTHENTICATION.md, "An Orker's credential"); empty, it reaches
+	// none.
+	{Path: "orker.engine.url", Env: orker.EngineURLVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "no engine: no identities"},
+	{Path: "orker.engine.ca_file", Env: orker.EngineCAFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "the system's roots"},
+	{Path: "orker.engine.auth.method", Env: orker.EngineAuthMethodVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "token_file or mtls"},
+	{Path: "orker.engine.auth.token_file", Env: orker.EngineAuthTokenFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
+	{Path: "orker.engine.auth.cert_file", Env: orker.EngineAuthCertFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
+	{Path: "orker.engine.auth.key_file", Env: orker.EngineAuthKeyFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
+
 	// auth.* is the engine's alone (docs/AUTHENTICATION.md). auth.issuers is
 	// a document: it re-serializes to ORK_AUTH_ISSUERS exactly like a
 	// standalone authn.ParseIssuers document, under one `issuers:` key.
@@ -314,6 +324,7 @@ var Schema = []Var{
 	{Path: "auth.public_url", Env: "ORK_AUTH_PUBLIC_URL", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no break-glass audience"},
 	{Path: "auth.issuers", Env: "ORK_AUTH_ISSUERS", Binaries: usesOrk, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no trusted issuer"},
 	{Path: "auth.admins", Env: "ORK_AUTH_ADMINS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
+	{Path: "auth.orkers", Env: "ORK_AUTH_ORKERS", Binaries: usesOrk, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no Orker bound by configuration"},
 	{Path: "auth.break_glass_key_file", Env: "ORK_AUTH_BREAK_GLASS_KEY_FILE", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "break-glass off"},
 	{Path: "auth.clock_skew", Env: "ORK_AUTH_CLOCK_SKEW", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(authn.DefaultClockSkew)},
 	{Path: "auth.policy_refresh", Env: "ORK_AUTH_POLICY_REFRESH", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultPolicyRefresh)},

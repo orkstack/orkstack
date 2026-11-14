@@ -47,3 +47,7 @@ func (s *Service) SetInventoryTimerForTest(afterFunc func(d time.Duration, f fun
 
 // MostFailingForTest is GetStats' most-failing table, from a tally.
 var MostFailingForTest = mostFailing
+
+// SetAccessForTest installs access control on a service built without a
+// mux, so an external test can call a handler as an authenticated caller.
+func (s *Service) SetAccessForTest(a *AccessControl) { s.access = a }

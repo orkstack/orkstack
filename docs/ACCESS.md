@@ -156,6 +156,94 @@ exist yet is a warning), a stored field that is output only, and a change
 that would leave nobody but `auth.admins` able to hold `access.write` while
 `auth.admins` is empty.
 
+### Bindings from configuration
+
+`auth.admins` binds `admin` at the deployment, and `auth.orkers`
+(`ORK_AUTH_ORKERS`) binds the `orker` role at a pool, from the file that
+configures the engine, before anyone has signed in:
+
+```yaml
+auth:
+  orkers:
+    - subject: cert:spiffe://acme.dev/orker/gpu-*
+      pool: gpu
+    - subject: serviceaccount:orker-main
+      pool: main
+      orker_ids: any
+```
+
+They are in force whatever the document says, are listed as from
+configuration, and no write removes them; the boot refuses a subject or a
+pool that is not one. `orker_ids: any` is for a pool whose Orkers share one
+credential: the engine then takes the Orker id the request's attempt names,
+so one stolen Orker of that pool can claim to be any other. Every engine
+runs the same `auth.orkers`.
+
+### Changing it
+
+Each `AccessService` write changes one role, binding, service account or
+disabled principal: it reads the document, changes that one thing,
+validates the whole, writes the revision and swaps the head. A request
+carries the etag its caller read; if the document has moved since, nothing
+is written and the request is `aborted`, so read it again and retry. A
+request that carries no etag is retried from a fresh read three times, then
+`aborted`. A write that changes nothing writes nothing and answers the same
+etag. The replica that wrote decides from the new document at once; the
+others within `auth.policy_refresh`.
+
+Writes need `access.write` at the deployment, with one exception: a holder
+of `access.bind` at a namespace creates and deletes bindings there, at the
+namespace or one of its Orkflows, for a role whose every permission the
+binding would grant it holds there itself. It cannot bind `admin`, the
+deployment or a pool, a role whose binding would grant nothing at that
+scope (`orker`, at a namespace), or a role with a permission it lacks; a
+deployment permission a role holds is inert at a namespace and is not asked
+of it. Only `access.write` updates a binding. The decision is made against
+the exact document the write replaces. A delegated binding may name any
+subject, a group or a claims pattern of any trusted issuer included, and it
+grants whatever its role grants later: a custom role widened by
+`UpdateRole` widens every binding of it, delegated or not.
+
+`SetPrincipalDisabled` does not disable break-glass, a principal
+`auth.admins` makes admin, or the caller itself: a disabled principal holds
+nothing, configuration's grants included, and either would leave access to
+be repaired in the bucket. An Orker `auth.orkers` binds is disabled like any
+other principal.
+
+A service account's keys are named by their RFC 7638 thumbprint, and each
+records when it was added. Namespaces and Orkflows carry no immutable id in
+this release, so every binding matches its scope by name, and
+`UpdateBinding` with `repin` is refused.
+
+Every write is audited (`access.role.create`, `.update`, `.delete`;
+`access.binding.*`; `access.service-account.*`; `access.principal.disable`,
+`.enable`), its detail naming the revision it produced.
+
+From the command line: `orkctl admin role list|get|create|update|delete`,
+`orkctl admin binding list|create|update|delete` (`--role`, `--scope`,
+`--subject`), `orkctl admin service-account list|get|create|delete` and
+`key add|remove` (`create --generate-key FILE` writes the private key once,
+mode 0600), and `orkctl admin principal disable|enable`. Each reads the
+document first and sends back its etag.
+
+### Explaining a decision, and the history
+
+`ExplainAccess` decides one permission for one principal against the
+replica's copy of the document, names the binding that granted it, and
+lists every binding that names the principal or covers the resource with why
+it did not: the subject differs, the scope differs, the role lacks the
+permission at that scope, or the binding is pinned elsewhere. A denial's
+reason is `NO_BINDING` or `PRINCIPAL_DISABLED`. A principal is known there by
+its id alone, so a binding that selects by group or by a claim other than
+`sub` is shown as not matching it.
+
+`ListAccessRevisions` lists the history newest first, by following each
+revision's link back from the head; `GetAccessRevision` reads one by number,
+at most 4096 revisions behind the head. `orkctl admin access explain
+PRINCIPAL PERMISSION [--namespace N] [--orkflow O] [--pool P]`, `orkctl
+admin access history` and `orkctl admin access diff FROM TO` are their
+commands.
+
 ### Revisions, and a document written around the API
 
 Before the head moves, the new document is written create-only to
@@ -197,7 +285,7 @@ permissions at the deployment.
 `ExportRunEvidence` `run.evidence.export`, and `run.logs.read` unless `exclude_logs` and `run.artifacts.read` unless `exclude_artifacts`; `DiffRuns` `run.read` on both; `SubmitRun` `run.submit`, and `run.read` on a `source_run_id` |
 | Schedule, Trigger | the object's permission at its Orkflow; a create or update also `run.submit`; a fire or backfill `schedule.operate` and `run.submit` |
 | Webhook | at the subscription's scope (its namespace, or the deployment when unscoped); a register or update `webhook.write` and `run.read`, at the old scope and the new |
-| Stats, Cache, Automation, Namespace | at the namespace; `PurgeCache` with `all` at the deployment; `UpdateNamespace` also `namespace.policy.update` when a policy field changes; `CreateNamespace` and `DeleteNamespace` at the deployment |
+| Stats, Cache, Automation, Namespace | at the namespace; `PurgeCache` with `all` at the deployment; `UpdateNamespace` also `namespace.policy.update` when a policy field changes, decided by the handler against the exact document its compare-and-swap replaces; `CreateNamespace` and `DeleteNamespace` at the deployment |
 | Activity, System, Audit, Access | at the deployment; `ListAuditRecords` also of one namespace with a namespace filter |
 
 **A request that carries a document is decided where the document acts.**
@@ -225,8 +313,13 @@ in, whose every value the caller may read, or it is refused
 `permission_denied` naming the filter to add: `ListRuns` an `orkflow_name`
 filter, `ListOrkflows` and `ListNamespaces` a `name` filter, and
 `ListAuditRecords` and `ListDeliveries` a `namespace` filter. So no page and
-no page token names a row the caller may not see. `ListRunArtifacts` needs
+no page token names a row the caller may not see. `ListDeliveries` also
+passes over the deliveries of a webhook the caller may not read, so a page
+fills, and its token ends, on rows it may. `ListRunArtifacts` needs
 `run.read` and leaves out the logs and artifacts the caller may not read.
+`ListOrkflowCallers` names only the composing Orkflows the caller may read,
+and the triggers and schedules only with `trigger.read` and `schedule.read`
+at the Orkflow; `scanned_versions` counts those definitions alone.
 
 **Open streams.** A stream or socket is decided again at every change of the
 access document. One whose principal was disabled, or lost the permission,

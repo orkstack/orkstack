@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/authn"
@@ -22,6 +23,10 @@ func TestLoad_AuthSection(t *testing.T) {
   clock_skew: 30s
   policy_refresh: 5s
   policy_stale_limit: 2m
+  orkers:
+    - subject: serviceaccount:orker-main
+      pool: main
+      orker_ids: any
   issuers:
     corp:
       issuer: https://login.example.com/realms/acme
@@ -56,6 +61,9 @@ func TestLoad_AuthSection(t *testing.T) {
 		t.Errorf("issuers: want corp in %q", doc.values["ORK_AUTH_ISSUERS"].value)
 	}
 
+	if got := doc.values["ORK_AUTH_ORKERS"].value; !strings.Contains(got, "orkers:") || !strings.Contains(got, "serviceaccount:orker-main") {
+		t.Errorf("ORK_AUTH_ORKERS = %q; want the orkers document", got)
+	}
 	orker, err := Load(path, BinaryOrker)
 	must.OKf(t, err, "Load(orker)")
 	for env := range want {

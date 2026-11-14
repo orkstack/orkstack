@@ -11,6 +11,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -37,6 +38,9 @@ type check struct {
 	perm authz.Permission
 	res  *resolver
 	when func(msg proto.Message) bool
+	// orElse is the check that admits a request this one refuses: its own
+	// permission, at its own resource (which must be set).
+	orElse *check
 }
 
 // listRule is how a list row answers a caller who does not hold the
@@ -121,6 +125,41 @@ func namespaceOf(name string) (string, error) {
 // --- resolvers -----------------------------------------------------------
 
 var deployment = resolver{shallow: func(proto.Message) (authz.Resource, error) { return authz.Resource{}, nil }}
+
+// bindingRequested is the namespace of the binding a request carries: the
+// deployment for a binding of any other scope, which no delegation makes.
+var bindingRequested = resolver{shallow: func(msg proto.Message) (authz.Resource, error) {
+	return bindingNamespace(strField(msgField(msg, "binding"), "scope")), nil
+}}
+
+// bindingStored is the namespace of the stored binding a request names, read
+// from this replica's copy of the access document; the deployment when there
+// is none of that name.
+var bindingStored = resolver{
+	shallow: func(proto.Message) (authz.Resource, error) { return authz.Resource{}, nil },
+	deep: func(_ context.Context, s *Service, msg proto.Message) (authz.Resource, error) {
+		if s.access.Policies == nil {
+			return authz.Resource{}, nil
+		}
+		name := strField(msg, "name")
+		if p := s.access.Policies.Last(); p != nil {
+			for _, b := range p.Bindings() {
+				if b.Name == name && !b.FromConfiguration {
+					return bindingNamespace(b.Scope.String()), nil
+				}
+			}
+		}
+		return authz.Resource{}, nil
+	},
+}
+
+func bindingNamespace(scope string) authz.Resource {
+	sc, err := authz.ParseScope(scope)
+	if err != nil || (sc.Kind != authz.ScopeNamespace && sc.Kind != authz.ScopeOrkflow) {
+		return authz.Resource{}
+	}
+	return authz.Resource{Namespace: sc.Namespace}
+}
 
 // inNamespace is the namespace a field names.
 func inNamespace(nsField string) resolver {
@@ -402,6 +441,18 @@ var purgeResource = resolver{shallow: func(msg proto.Message) (authz.Resource, e
 	return inNamespace("namespace").shallow(msg)
 }}
 
+// mayAnswer is, in enforce, whether the caller holds perm at res: what a
+// handler asks before a row of an answer names something the request did
+// not. Observe changes no answer, and asserted mode decides nothing.
+func (s *Service) mayAnswer(ctx context.Context, perm authz.Permission, res authz.Resource) bool {
+	if !s.access.enabled() || !s.access.enforcing() {
+		return true
+	}
+	policy, _ := s.access.policy(ctx)
+	_, err := authz.Authorize(authz.Request{Action: authz.Action(perm), Subject: subjectOf(authn.FromContext(ctx)), Resource: res, Policy: policy})
+	return err == nil
+}
+
 // --- request-dependent permissions ----------------------------------------
 
 func artifactKind(msg proto.Message) orkstackv1.ArtifactKind {
@@ -453,6 +504,13 @@ func (s *Service) policyChange(ctx context.Context, msg proto.Message) bool {
 	if err != nil {
 		return true
 	}
+	return namespacePolicyDiffers(next, stored)
+}
+
+// namespacePolicyDiffers reports whether next changes a policy field of
+// stored. The interceptor asks it of the namespace it reads; the handler,
+// which decides, asks it of the exact document its write replaces.
+func namespacePolicyDiffers(next, stored *orkstackv1.Namespace) bool {
 	a, b := next.ProtoReflect(), stored.ProtoReflect()
 	for _, name := range namespacePolicyFields {
 		fd := a.Descriptor().Fields().ByName(protoreflect.Name(name))
@@ -464,6 +522,31 @@ func (s *Service) policyChange(ctx context.Context, msg proto.Message) bool {
 		}
 	}
 	return false
+}
+
+// mayChangeNamespacePolicy is namespace.policy.update, decided by the
+// UpdateNamespace handler against stored, the document its compare-and-swap
+// replaces: a write whose etag is not stored's replaces nothing and is
+// refused before anything is compared. Only enforce refuses; the
+// interceptor has already recorded what observe would deny.
+func (s *Service) mayChangeNamespacePolicy(ctx context.Context, next, stored *orkstackv1.Namespace) error {
+	if !s.access.enabled() || authn.ModeFrom(ctx) != authn.ModeEnforce {
+		return nil
+	}
+	if next.GetEtag() != stored.GetEtag() {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"namespace %q was written by somebody else since it was read; read it again and retry", stored.GetName()))
+	}
+	if !namespacePolicyDiffers(next, stored) {
+		return nil
+	}
+	policy, unavailable := s.access.policy(ctx)
+	_, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermNamespacePolicyUpdate),
+		Subject: subjectOf(authn.FromContext(ctx)), Resource: authz.Resource{Namespace: stored.GetName()}, Policy: policy})
+	if err != nil && unavailable {
+		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; only configuration's principals are served", ErrPolicyUnavailable))
+	}
+	return deniedAsConnect(err)
 }
 
 // --- the table -----------------------------------------------------------
@@ -633,22 +716,25 @@ var accessRows = map[string]accessRow{
 
 	// AccessService: reads need access.read and writes access.write, at the
 	// deployment. CreateBinding and DeleteBinding also admit access.bind at
-	// the binding's own namespace; their handlers decide that (P8).
-	orkstackv1connect.AccessServiceGetAccessProcedure:                 {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceListPermissionsProcedure:           {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceListPrincipalsProcedure:            {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceListSigninsProcedure:               {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceExplainAccessProcedure:             {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServicePlanAccessProcedure:                {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceExportAccessProcedure:              {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceListAccessRevisionsProcedure:       {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceGetAccessRevisionProcedure:         {res: deployment, checks: perms(authz.PermAccessRead)},
-	orkstackv1connect.AccessServiceCreateRoleProcedure:                {res: deployment, checks: perms(authz.PermAccessWrite)},
-	orkstackv1connect.AccessServiceUpdateRoleProcedure:                {res: deployment, checks: perms(authz.PermAccessWrite)},
-	orkstackv1connect.AccessServiceDeleteRoleProcedure:                {res: deployment, checks: perms(authz.PermAccessWrite)},
-	orkstackv1connect.AccessServiceCreateBindingProcedure:             {res: deployment, checks: perms(authz.PermAccessWrite)},
-	orkstackv1connect.AccessServiceUpdateBindingProcedure:             {res: deployment, checks: perms(authz.PermAccessWrite)},
-	orkstackv1connect.AccessServiceDeleteBindingProcedure:             {res: deployment, checks: perms(authz.PermAccessWrite)},
+	// the binding's own namespace; their handlers then hold it to the
+	// delegation rule against the document they change (authz.MayDelegate).
+	orkstackv1connect.AccessServiceGetAccessProcedure:           {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceListPermissionsProcedure:     {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceListPrincipalsProcedure:      {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceListSigninsProcedure:         {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceExplainAccessProcedure:       {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServicePlanAccessProcedure:          {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceExportAccessProcedure:        {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceListAccessRevisionsProcedure: {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceGetAccessRevisionProcedure:   {res: deployment, checks: perms(authz.PermAccessRead)},
+	orkstackv1connect.AccessServiceCreateRoleProcedure:          {res: deployment, checks: perms(authz.PermAccessWrite)},
+	orkstackv1connect.AccessServiceUpdateRoleProcedure:          {res: deployment, checks: perms(authz.PermAccessWrite)},
+	orkstackv1connect.AccessServiceDeleteRoleProcedure:          {res: deployment, checks: perms(authz.PermAccessWrite)},
+	orkstackv1connect.AccessServiceCreateBindingProcedure: {res: deployment, checks: []check{{perm: authz.PermAccessWrite,
+		orElse: &check{perm: authz.PermAccessBind, res: &bindingRequested}}}},
+	orkstackv1connect.AccessServiceUpdateBindingProcedure: {res: deployment, checks: perms(authz.PermAccessWrite)},
+	orkstackv1connect.AccessServiceDeleteBindingProcedure: {res: deployment, checks: []check{{perm: authz.PermAccessWrite,
+		orElse: &check{perm: authz.PermAccessBind, res: &bindingStored}}}},
 	orkstackv1connect.AccessServiceCreateServiceAccountProcedure:      {res: deployment, checks: perms(authz.PermAccessWrite)},
 	orkstackv1connect.AccessServiceUpdateServiceAccountProcedure:      {res: deployment, checks: perms(authz.PermAccessWrite)},
 	orkstackv1connect.AccessServiceDeleteServiceAccountProcedure:      {res: deployment, checks: perms(authz.PermAccessWrite)},

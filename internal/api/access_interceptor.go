@@ -229,6 +229,21 @@ func (a *AccessControl) decide(ctx context.Context, s *Service, procedure string
 			}
 			decision, err = authz.Authorize(authz.Request{Action: authz.Action(c.perm), Subject: subject, Resource: res, Policy: policy})
 		}
+		if err != nil && c.orElse != nil && subject != nil && !unavailable {
+			// The row's own permission is refused: the one it admits instead
+			// (access.bind for a binding of the caller's namespace) is asked
+			// at its own resource. The handler then decides the rest.
+			alt := *c.orElse
+			altRes, rerr := resolve(alt.res, false)
+			if rerr != nil && connect.CodeOf(rerr) == connect.CodeUnavailable {
+				return adm, rerr
+			}
+			if rerr == nil {
+				if d, aerr := authz.Authorize(authz.Request{Action: authz.Action(alt.perm), Subject: subject, Resource: altRes, Policy: policy}); aerr == nil {
+					decision, err, res, c = d, nil, altRes, alt
+				}
+			}
+		}
 		if err != nil && i == 0 && row.list != nil && subject != nil {
 			// A list a caller holds part of: its own rows, or its filter.
 			ok, lerr := a.listAdmits(row.list, msg, subject, policy, c.perm)

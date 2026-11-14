@@ -20,6 +20,11 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 - OrkStack can now authenticate API callers itself and decide each request with roles: set `auth.mode` to `observe`, then `enforce`; off by default ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
 - `orkctl admin auth status` and `orkctl admin auth lower` show and lower the deployment's authentication mode ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#the-mode-record)).
+- `orkctl --token-file` (`ORK_TOKEN_FILE`) presents a bearer token, and `--ca-file`, `--client-cert` and `--client-key` set TLS roots and a client certificate ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#from-orkctl)).
+- An Orker reaches the engine as itself with `orker.engine.*` (a token file or a client certificate) and refuses to boot if the engine does not accept it ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#an-orkers-credential)).
+- `auth.orkers` binds Orkers to the `orker` role at a pool from configuration ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#bindings-from-configuration)).
+- `orkctl whoami` shows who the engine verified you as and what you may do; `orkctl` warns when `ORK_PRINCIPAL` is set but not used ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#who-am-i)).
+- With authentication on, `orkctl admin role`, `binding`, `service-account`, `principal` and `access` manage and explain access; a namespace admin binds roles in its own namespace ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#changing-it)).
 - The archive sweep now says when it is blind: alert on `ork.archive.sweep.list_failed` and a stale `ork.archive.sweep.last_success`; an undated expiry reads 0 ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 
 ### Changed

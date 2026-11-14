@@ -73,6 +73,18 @@ proofs start engines of their own, at addresses of their own.
 running keeps its address until `make down`.
 `TestDevStack_EngineListensOnlyOnLoopback` holds the default.
 
+`make up IDENTITY=1` runs the stack the way a deployment that authenticates
+does: the engine in `enforce`, with a development issuer `dev` whose key pair
+`test/tools/devtoken` makes once under `.data/identity/`, and two tokens it
+signs afresh at every `make up`, each living thirty days. `dev-admin` is in
+`auth.admins`; `dev-orker` is the Orker's own credential
+(`orker.engine.auth.method: token_file`), bound to the `orker` role at `main`
+by `auth.orkers`, so the engine starts before the Orker. Present the admin's
+token to `orkctl` with the line `make up` prints,
+`export ORK_TOKEN_FILE=.data/identity/admin.token`. Until sign-in lands, the
+UI cannot sign in under the flag; the CLI is the way. Without the flag the
+stack is in `asserted` mode, as before.
+
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl orkflow create examples/each-fan-out.ork.yaml` and the
 rest of [docs/GETTING_STARTED.md](./docs/GETTING_STARTED.md) work as written,

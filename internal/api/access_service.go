@@ -22,6 +22,19 @@ var accessServiceServed = []string{
 	orkstackv1connect.AccessServiceGetAccessProcedure,
 	orkstackv1connect.AccessServiceListPermissionsProcedure,
 	orkstackv1connect.AccessServiceLowerAuthModeProcedure,
+	orkstackv1connect.AccessServiceCreateRoleProcedure,
+	orkstackv1connect.AccessServiceUpdateRoleProcedure,
+	orkstackv1connect.AccessServiceDeleteRoleProcedure,
+	orkstackv1connect.AccessServiceCreateBindingProcedure,
+	orkstackv1connect.AccessServiceUpdateBindingProcedure,
+	orkstackv1connect.AccessServiceDeleteBindingProcedure,
+	orkstackv1connect.AccessServiceCreateServiceAccountProcedure,
+	orkstackv1connect.AccessServiceUpdateServiceAccountProcedure,
+	orkstackv1connect.AccessServiceDeleteServiceAccountProcedure,
+	orkstackv1connect.AccessServiceSetPrincipalDisabledProcedure,
+	orkstackv1connect.AccessServiceExplainAccessProcedure,
+	orkstackv1connect.AccessServiceListAccessRevisionsProcedure,
+	orkstackv1connect.AccessServiceGetAccessRevisionProcedure,
 }
 
 // accessHandler serves them; the rest of AccessService is unimplemented.

@@ -132,6 +132,14 @@ orker:
     cli: docker  # orker
     pull_timeout: 5m  # orker
     bind_probe_timeout: 2m  # orker
+  engine:
+    url: ""  # orker; no engine: no identities
+    ca_file: ""  # orker; the system's roots
+    auth:
+      method: ""  # orker; token_file or mtls
+      token_file: ""  # orker
+      cert_file: ""  # orker
+      key_file: ""  # orker
 
 telemetry:
   log_format: text
@@ -173,6 +181,7 @@ auth:
   public_url: ""  # ork; no break-glass audience
   # issuers: {}  # ork; no trusted issuer
   admins: []  # ork
+  # orkers: {}  # ork; no Orker bound by configuration
   break_glass_key_file: ""  # ork; break-glass off
   clock_skew: 1m  # ork
   policy_refresh: 10s  # ork

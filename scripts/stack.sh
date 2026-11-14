@@ -40,6 +40,17 @@ UI_URL="http://localhost:$UI_PORT"
 # works everywhere without asking. `make reset` wipes it with the rest of .data.
 WORK_DIR="${ORK_ORKER_WORKDIR:-$REPO/.data/work}"
 
+# IDENTITY=1 makes the stack authenticate (CONTRIBUTING.md, "The development
+# stack"): the engine in enforce, a development issuer `dev` whose key pair
+# lives under .data/identity, and two tokens test/tools/devtoken signs afresh
+# at every `make up`, each living thirty days: dev-admin, which auth.admins
+# lists and orkctl presents through ORK_TOKEN_FILE, and dev-orker, the
+# Orker's own, bound to the orker role at main by auth.orkers. Without it the
+# stack is asserted, exactly as before.
+IDENTITY="${IDENTITY:-}"
+IDENTITY_DIR="$REPO/.data/identity"
+DEV_ORKER_ID="dev-orker"
+
 # The image the mount probe uses. A small image most machines already hold, so
 # the probe usually pulls nothing.
 PROBE_IMAGE="${ORK_PROBE_IMAGE:-alpine:3.24}"
@@ -272,6 +283,14 @@ write_run_config() {
 		echo "    secret_key: orkstack-secret"
 		echo "orker:"
 		echo "  workdir: $workdir"
+		if [ -n "$IDENTITY" ]; then
+			echo "  id: $DEV_ORKER_ID"
+			echo "  engine:"
+			echo "    url: $ENGINE_URL"
+			echo "    auth:"
+			echo "      method: token_file"
+			echo "      token_file: $IDENTITY_DIR/orker.token"
+		fi
 		# A pin host, so examples/pinned-checkout.ork.yaml runs here as shipped.
 		echo "  pins:"
 		echo "    max_concurrent: 1"
@@ -283,6 +302,27 @@ write_run_config() {
 		echo "  ws_allowed_origins: $ws_yaml_list"
 		if [ -n "$catalog" ]; then
 			printf '%s\n' "$catalog"
+		fi
+		if [ -n "$IDENTITY" ]; then
+			echo "auth:"
+			echo "  mode: enforce"
+			echo "  admins:"
+			echo "    - claims:dev:sub=dev-admin"
+			echo "  orkers:"
+			echo "    - subject: claims:dev:sub=$DEV_ORKER_ID"
+			echo "      pool: main"
+			echo "  issuers:"
+			echo "    dev:"
+			echo "      issuer: orkstack-dev"
+			echo "      kind: service"
+			echo "      dedicated: true"
+			echo "      audiences:"
+			echo "        - orkstack"
+			echo "      algorithms:"
+			echo "        - ES256"
+			echo "      max_lifetime: 720h"
+			echo "      orker_id_claim: orker_id"
+			echo "      jwks_file: $IDENTITY_DIR/dev-issuer.jwks.json"
 		fi
 		if wants_admin_addr; then
 			# The observability profile's Prometheus scrapes these listeners
@@ -310,6 +350,9 @@ cmd_up() {
 	say "== binaries =="
 	make build >/dev/null
 	say "  bin/ork bin/orker bin/orkctl"
+	if [ -n "$IDENTITY" ]; then
+		setup_identity
+	fi
 
 	say "== engine and orker =="
 	# Both processes get the SAME artifact backend. The engine archives runs
@@ -334,9 +377,17 @@ cmd_up() {
 	mkdir -p "$WORK_DIR"
 	check_workdir_mountable
 	write_run_config "$backend" "$WORK_DIR" "$ENGINE_ADDR" "$ws_origins" "$catalog"
-	start orker "$REPO/bin/orker" --config "$RUN_DIR/orkstack.yaml"
-	start ork "$REPO/bin/ork" --config "$RUN_DIR/orkstack.yaml"
-	wait_for "engine api" 60 "$REPO/bin/orkctl" --server "$ENGINE_URL" orkflow list
+	if [ -n "$IDENTITY" ]; then
+		# The Orker asks the engine who its credential is at boot, so the
+		# engine comes first.
+		start ork "$REPO/bin/ork" --config "$RUN_DIR/orkstack.yaml"
+		wait_for "engine api" 60 "$REPO/bin/orkctl" --server "$ENGINE_URL" orkflow list
+		start orker "$REPO/bin/orker" --config "$RUN_DIR/orkstack.yaml"
+	else
+		start orker "$REPO/bin/orker" --config "$RUN_DIR/orkstack.yaml"
+		start ork "$REPO/bin/ork" --config "$RUN_DIR/orkstack.yaml"
+		wait_for "engine api" 60 "$REPO/bin/orkctl" --server "$ENGINE_URL" orkflow list
+	fi
 	# DescribeOrker is an activity the engine schedules onto the Orker's queue
 	# (docs/OCI_ACTIVITY_CONTRACT.md §6.5), so a live count answers only when the Orker is actually
 	# polling. A liveness check on the process alone would pass with an Orker
@@ -373,6 +424,8 @@ cmd_up() {
 		"$UI_URL/ws/runs/ork-probe-nonexistent?from_sequence=0" || true)"
 	case "$ws_probe" in
 	404) say "  websocket ready (through the dev server, origin $UI_URL accepted)" ;;
+	401) [ -n "$IDENTITY" ] || die "the engine asked the websocket probe for a credential, and IDENTITY is not set"
+		say "  websocket reaches the engine, which asks for a credential (IDENTITY=1; the UI signs in once sign-in lands)" ;;
 	403) die "the engine refuses the websockets the dev server proxies from $UI_URL: the proxy must pass the browser's Host through (ui/vite.config.ts); the UI would never go live" ;;
 	*) die "unexpected websocket probe response through the dev server: $ws_probe" ;;
 	esac
@@ -384,7 +437,28 @@ cmd_up() {
 	say "  SeaweedFS filer  http://localhost:8888  (S3 API: http://localhost:9000)"
 	say ""
 	say "  logs           $RUN_DIR/{ork,orker,ui}.log"
+	if [ -n "$IDENTITY" ]; then
+		say ""
+		say "  The engine enforces. Present the development admin's token to orkctl:"
+		say "    export ORK_TOKEN_FILE=$IDENTITY_DIR/admin.token"
+		say "  Both tokens live thirty days; make up signs them afresh."
+	fi
 	say "  stop           make down"
+}
+
+# setup_identity makes the development issuer's key pair once and signs the
+# admin's and the Orker's tokens afresh, and exports the admin's for the
+# orkctl calls this script makes.
+setup_identity() {
+	say "== identity (IDENTITY=1) =="
+	(cd "$REPO" && go build -o "$REPO/bin/devtoken" ./test/tools/devtoken)
+	"$REPO/bin/devtoken" init -dir "$IDENTITY_DIR"
+	"$REPO/bin/devtoken" sign -dir "$IDENTITY_DIR" -iss orkstack-dev -aud orkstack -sub dev-admin \
+		-ttl 720h -out "$IDENTITY_DIR/admin.token"
+	"$REPO/bin/devtoken" sign -dir "$IDENTITY_DIR" -iss orkstack-dev -aud orkstack -sub "$DEV_ORKER_ID" \
+		-claim "orker_id=$DEV_ORKER_ID" -ttl 720h -out "$IDENTITY_DIR/orker.token"
+	export ORK_TOKEN_FILE="$IDENTITY_DIR/admin.token"
+	say "  issuer dev, tokens under $IDENTITY_DIR"
 }
 
 cmd_down() {

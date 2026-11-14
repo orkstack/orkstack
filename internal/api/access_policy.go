@@ -383,6 +383,31 @@ func (c *PolicyCache) read(outcome string) {
 	}
 }
 
+// Wrote adopts a head this replica has just written: a write through a
+// replica is seen by it at once (authn-authz.md §6.2). It waits out a read
+// in flight, so an older head that read found is never adopted after this
+// one. A head that does not compile is left to the next read.
+func (c *PolicyCache) Wrote(head *artifacts.AccessHead) {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	p, err := authz.Compile(head.Document, c.configured, c.now())
+	if err != nil {
+		// It was validated before it was written: a head this replica wrote
+		// that does not compile is an anomaly, left to the next read.
+		c.logger.Error("the access document this replica just wrote does not compile", "revision", head.Meta.Revision, "error", err)
+		return
+	}
+	c.mu.Lock()
+	newer := c.policy != nil && c.policy.Revision >= p.Revision
+	c.mu.Unlock()
+	if newer {
+		// A read already adopted this revision or a later one (another
+		// replica's write since): going back to this one would undo it.
+		return
+	}
+	c.adopt(p, head.ETag, head.Meta.SHA256, c.now(), false)
+}
+
 // Acknowledge clears the written-around banner up to revision.
 func (c *PolicyCache) Acknowledge(revision int64) {
 	c.mu.Lock()

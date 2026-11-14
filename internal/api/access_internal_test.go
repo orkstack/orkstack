@@ -149,6 +149,12 @@ func requestFor(t testing.TB, procedure string) proto.Message {
 // generated matrix has one case for each (docs/ACCESS.md, "Where it is
 // enforced").
 var matrixVariants = map[string]map[string]func(proto.Message){
+	orkstackv1connect.AccessServiceCreateBindingProcedure: {
+		"no binding": func(proto.Message) {},
+		"at a namespace": func(m proto.Message) {
+			m.(*orkstackv1.CreateBindingRequest).Binding = &orkstackv1.Binding{Name: "b", Role: authz.RoleViewer, Scope: "namespace:payments"}
+		},
+	},
 	orkstackv1connect.RunServiceReadArtifactProcedure: {
 		"stdout": func(m proto.Message) {
 			m.(*orkstackv1.ReadArtifactRequest).Kind = orkstackv1.ArtifactKind_ARTIFACT_KIND_STDOUT
@@ -271,15 +277,47 @@ func TestAuthz_PermissionMatrix(t *testing.T) {
 				if _, err := a.decide(asAlice(authn.ModeEnforce), s, procedure, msg); err != nil {
 					t.Fatalf("exactly the row's permissions at its scopes are refused: %v", err)
 				}
-				// Every other permission, at the deployment.
+				// Every other permission, at the deployment: a check's
+				// alternative (orElse) is left out with it, and admits alone
+				// at its own resource.
 				for _, c := range checks {
 					if c.perm == authz.PermCatalogRead {
 						continue
 					}
+					var alt *check
+					for _, rc := range row.checks {
+						if rc.perm == c.perm && rc.orElse != nil {
+							alt = rc.orElse
+						}
+					}
 					others := []string{}
 					for _, p := range everything {
-						if p != c.perm {
+						if p != c.perm && (alt == nil || p != alt.perm) {
 							others = append(others, string(p))
+						}
+					}
+					if alt != nil {
+						res, err := alt.res.shallow(msg)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if alt.res.deep != nil {
+							res, err = alt.res.deep(context.Background(), s, msg)
+							if err != nil {
+								t.Fatal(err)
+							}
+						}
+						// Held at a namespace: it admits a request of that
+						// namespace, and one that names none is refused.
+						a, _ := accessFor(t, authn.ModeEnforce, []*orkstackv1.Role{{Name: "only-alt", Permissions: []string{string(alt.perm)}}},
+							&orkstackv1.Binding{Name: "b", Role: "only-alt", Scope: "namespace:payments", Subjects: []string{"user:corp:alice"}})
+						s.access = a
+						_, err = a.decide(asAlice(authn.ModeEnforce), s, procedure, msg)
+						switch {
+						case res.Namespace == "payments" && err != nil:
+							t.Errorf("%s alone at namespace:payments is refused: %v", alt.perm, err)
+						case res.Namespace == "" && err == nil:
+							t.Errorf("%s held at a namespace admitted a request that names none", alt.perm)
 						}
 					}
 					a, _ := accessFor(t, authn.ModeEnforce, []*orkstackv1.Role{{Name: "all-but", Permissions: others}},

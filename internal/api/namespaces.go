@@ -669,6 +669,9 @@ func (s *Service) UpdateNamespace(
 	if err != nil {
 		return nil, err
 	}
+	if err := s.mayChangeNamespacePolicy(ctx, spec, stored); err != nil {
+		return nil, err
+	}
 	// Sink existence is enforced only when the caller is actually changing
 	// it. A namespace whose stored sink an operator later removed from
 	// ORK_TELEMETRY_SINKS would otherwise be uneditable in every other way —

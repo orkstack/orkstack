@@ -309,6 +309,7 @@ only the Orker's own sources stops the Orker at boot
 | `env:DOCKER_*`, `env:CONTAINERS_*`, `env:CONTAINER_HOST`, `env:CONTAINER_CONNECTION`, `env:CONTAINER_SSHKEY`, `env:CONTAINER_PASSPHRASE`, `env:REGISTRY_AUTH_FILE` | the settings of the container CLI the Orker drives, which runs with the Orker's environment: the daemon it reaches, its registry credentials, its TLS key, a remote engine's SSH identity |
 | `env:AWS_*`, `env:AZURE_*`, `env:GOOGLE_APPLICATION_CREDENTIALS`, `env:CLOUDSDK_*` | the cloud credentials a registry credential helper (ecr-login, gcr, acr) reads when the CLI pulls an image, from the environment it inherits: the Orker's. `AWS_*` is also what the Orker's object-store client reads when no key is set |
 | each telemetry sink header's `env:` source (`ORK_TELEMETRY_SINKS`) | a collector's credentials |
+| the files `orker.engine.auth.token_file`, `cert_file` and `key_file` name | the Orker's credential to the engine |
 | `file:/proc` | the Orker's process: its environment, memory and descriptors, and every other process it can see |
 | `file:/dev` | its devices, `/dev/fd` and `/dev/stdin` among them, which are its own descriptors |
 | `file:/run/secrets`, `file:/var/run/secrets` | the credentials of the Orker's own pod or container: a Kubernetes service-account or projected token, a Docker or Compose secret |

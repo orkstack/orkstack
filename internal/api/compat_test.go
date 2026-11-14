@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/encoding/protojson"
@@ -14,6 +15,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -843,5 +846,50 @@ func TestListOrkflowCallers_RefusesAnInvalidName(t *testing.T) {
 		if connect.CodeOf(err) != connect.CodeInvalidArgument {
 			t.Errorf("%q: %v, want InvalidArgument", name, err)
 		}
+	}
+}
+
+// TestListOrkflowCallers_ShowsOnlyCallersItsReaderMayRead: in enforce a
+// reader bound at one Orkflow learns of the namespace's other Orkflows only
+// those it may read (security re-check LOW), and the count of definitions
+// read is of those alone.
+func TestListOrkflowCallers_ShowsOnlyCallersItsReaderMayRead(t *testing.T) {
+	svc, _ := callersFixture(t, nil)
+	applyIn(t, svc, "team-a", strings.Replace(compatCheckout420, "name: checkout-service", "name: hidden-caller", 1))
+	ask := func(t *testing.T, scopes ...string) *orkstackv1.ListOrkflowCallersResponse {
+		t.Helper()
+		var bindings []*orkstackv1.Binding
+		for i, sc := range scopes {
+			bindings = append(bindings, &orkstackv1.Binding{Name: fmt.Sprintf("b-%d", i), Role: authz.RoleViewer, Scope: sc, Subjects: []string{"user:corp:alice"}})
+		}
+		cas := artifacts.NewMemoryCAS()
+		store := artifacts.NewAccessStoreOn(cas)
+		if _, err := store.Write(context.Background(), &orkstackv1.AccessDocument{SchemaVersion: 1, Bindings: bindings}, nil, artifacts.AccessWrite{At: time.Now()}); err != nil {
+			t.Fatal(err)
+		}
+		svc.SetAccessForTest(&api.AccessControl{Mode: authn.ModeEnforce, Policies: api.NewPolicyCache(store, api.PolicyCacheOptions{})})
+		ctx := authn.WithPrincipal(authn.WithMode(context.Background(), authn.ModeEnforce),
+			&authn.Principal{Kind: authn.KindUser, ID: "user:corp:alice", Issuer: "corp", Method: authn.MethodJWT})
+		resp, err := svc.ListOrkflowCallers(ctx, connect.NewRequest(&orkstackv1.ListOrkflowCallersRequest{Name: "release-block", Namespace: "team-a"}))
+		must.OKf(t, err, "ListOrkflowCallers")
+		return resp.Msg
+	}
+	composers := func(resp *orkstackv1.ListOrkflowCallersResponse) []string {
+		var out []string
+		for _, c := range resp.GetCallers() {
+			if c.GetKind() == orkstackv1.OrkflowCallerKind_ORKFLOW_CALLER_KIND_ORKFLOW {
+				out = append(out, c.GetName())
+			}
+		}
+		return out
+	}
+	if got := ask(t, "orkflow:team-a/release-block"); len(composers(got)) != 0 || got.GetScannedVersions() != 0 {
+		t.Fatalf("a reader of release-block alone saw composers %v (%d definitions read)", composers(got), got.GetScannedVersions())
+	}
+	if got := ask(t, "orkflow:team-a/release-block", "orkflow:team-a/checkout-service"); strings.Join(composers(got), ",") != "checkout-service" || got.GetScannedVersions() != 1 {
+		t.Fatalf("a reader of checkout-service saw composers %v (%d read); want checkout-service alone", composers(got), got.GetScannedVersions())
+	}
+	if got := ask(t, "namespace:team-a"); strings.Join(composers(got), ",") != "checkout-service,hidden-caller" {
+		t.Fatalf("a reader of the namespace saw composers %v; want both", composers(got))
 	}
 }

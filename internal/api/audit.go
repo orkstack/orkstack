@@ -163,6 +163,21 @@ type auditEntry struct {
 	Action, Namespace, Target, Detail string
 }
 
+// auditNote is what a handler adds to its own record's detail, such as the
+// access revision a write produced, which neither its request nor its
+// response carries.
+type auditNote struct{ detail string }
+
+type auditNoteKey struct{}
+
+// noteAudit adds detail to the record the audit interceptor writes for this
+// request; outside an audited write it does nothing.
+func noteAudit(ctx context.Context, detail string) {
+	if n, ok := ctx.Value(auditNoteKey{}).(*auditNote); ok {
+		n.detail = strings.TrimSpace(n.detail + " " + detail)
+	}
+}
+
 // auditExtractor derives the entry from the request and, on success, the
 // response. resp is nil when the handler returned an error.
 type auditExtractor func(req, resp proto.Message) auditEntry
@@ -177,6 +192,54 @@ type auditExtractor func(req, resp proto.Message) auditEntry
 // "default"), because the handler never resolved anything; a successful one
 // reads the resolved coordinate from the response where it carries one.
 var auditedProcedures = map[string]auditExtractor{
+	// Access changes: every AccessService write, with the revision it
+	// produced (the handler notes it); the diff is the revision itself.
+	orkstackv1connect.AccessServiceCreateRoleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CreateRoleRequest)
+		return auditEntry{Action: "access.role.create", Target: in.GetRole().GetName()}
+	},
+	orkstackv1connect.AccessServiceUpdateRoleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateRoleRequest)
+		return auditEntry{Action: "access.role.update", Target: in.GetRole().GetName()}
+	},
+	orkstackv1connect.AccessServiceDeleteRoleProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.DeleteRoleRequest)
+		return auditEntry{Action: "access.role.delete", Target: in.GetName()}
+	},
+	orkstackv1connect.AccessServiceCreateBindingProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CreateBindingRequest)
+		b := in.GetBinding()
+		return auditEntry{Action: "access.binding.create", Target: b.GetName(), Detail: "role=" + b.GetRole() + " scope=" + b.GetScope()}
+	},
+	orkstackv1connect.AccessServiceUpdateBindingProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateBindingRequest)
+		b := in.GetBinding()
+		return auditEntry{Action: "access.binding.update", Target: b.GetName(), Detail: "role=" + b.GetRole() + " scope=" + b.GetScope()}
+	},
+	orkstackv1connect.AccessServiceDeleteBindingProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.DeleteBindingRequest)
+		return auditEntry{Action: "access.binding.delete", Target: in.GetName()}
+	},
+	orkstackv1connect.AccessServiceCreateServiceAccountProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CreateServiceAccountRequest)
+		return auditEntry{Action: "access.service-account.create", Target: in.GetServiceAccount().GetName()}
+	},
+	orkstackv1connect.AccessServiceUpdateServiceAccountProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateServiceAccountRequest)
+		return auditEntry{Action: "access.service-account.update", Target: in.GetServiceAccount().GetName()}
+	},
+	orkstackv1connect.AccessServiceDeleteServiceAccountProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.DeleteServiceAccountRequest)
+		return auditEntry{Action: "access.service-account.delete", Target: in.GetName()}
+	},
+	orkstackv1connect.AccessServiceSetPrincipalDisabledProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.SetPrincipalDisabledRequest)
+		action := "access.principal.enable"
+		if in.GetDisabled() {
+			action = "access.principal.disable"
+		}
+		return auditEntry{Action: action, Target: in.GetPrincipalId()}
+	},
 	// The mode record comes down by this command, never by one replica's
 	// configuration: its record names the mode it replaced and whether the
 	// wait for duplicate retries was skipped.
@@ -606,16 +669,6 @@ var unauditedWrites = map[string]string{
 	orkstackv1connect.RunServiceSubmitRunProcedure:                    "a run's own record is the durable fact; provenance is run-origin's",
 	orkstackv1connect.AuthServiceRefreshSigninProcedure:               notYetServed,
 	orkstackv1connect.AuthServiceSignOutProcedure:                     notYetServed,
-	orkstackv1connect.AccessServiceCreateRoleProcedure:                notYetServed,
-	orkstackv1connect.AccessServiceUpdateRoleProcedure:                notYetServed,
-	orkstackv1connect.AccessServiceDeleteRoleProcedure:                notYetServed,
-	orkstackv1connect.AccessServiceCreateBindingProcedure:             notYetServed,
-	orkstackv1connect.AccessServiceUpdateBindingProcedure:             notYetServed,
-	orkstackv1connect.AccessServiceDeleteBindingProcedure:             notYetServed,
-	orkstackv1connect.AccessServiceCreateServiceAccountProcedure:      notYetServed,
-	orkstackv1connect.AccessServiceUpdateServiceAccountProcedure:      notYetServed,
-	orkstackv1connect.AccessServiceDeleteServiceAccountProcedure:      notYetServed,
-	orkstackv1connect.AccessServiceSetPrincipalDisabledProcedure:      notYetServed,
 	orkstackv1connect.AccessServiceRevokeSigninsProcedure:             notYetServed,
 	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure: notYetServed,
 }
@@ -809,13 +862,17 @@ func (s *Service) auditUnary(
 	if !audited || s.audit == nil {
 		return next(ctx, req)
 	}
-	resp, err := next(ctx, req)
+	note := &auditNote{}
+	resp, err := next(context.WithValue(ctx, auditNoteKey{}, note), req)
 	reqMsg, _ := req.Any().(proto.Message)
 	var respMsg proto.Message
 	if err == nil && resp != nil {
 		respMsg, _ = resp.Any().(proto.Message)
 	}
 	entry := extract(reqMsg, respMsg)
+	if err == nil && note.detail != "" {
+		entry.Detail = strings.TrimSpace(entry.Detail + " " + note.detail)
+	}
 	at := s.audit.now().UTC()
 	rec := &orkstackv1.AuditRecord{
 		SchemaVersion: artifacts.AuditSchemaVersion,

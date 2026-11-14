@@ -467,7 +467,22 @@ type Configuration struct {
 	// BreakGlass is true when auth.break_glass_key_file is set: the
 	// break-glass principal then holds admin at the deployment.
 	BreakGlass bool
+	// Orkers are auth.orkers: subjects that hold the orker role at a pool.
+	Orkers []OrkerEntry
 }
+
+// OrkerEntry is one auth.orkers entry: a subject bound to the orker role at
+// a pool by configuration, optionally for any Orker id the request's attempt
+// names (orker_ids: any).
+type OrkerEntry struct {
+	Subject     string
+	Pool        string
+	OrkerIDsAny bool
+}
+
+// ConfigOrkersRule prefixes the rule a decision admitted by an auth.orkers
+// entry records: config:orkers/<index>.
+const ConfigOrkersRule = "config:orkers"
 
 // CompileConfiguration validates configuration's subjects, once, at boot.
 func CompileConfiguration(c Configuration) ([]Binding, error) {
@@ -479,6 +494,23 @@ func CompileConfiguration(c Configuration) ([]Binding, error) {
 		}
 		out = append(out, Binding{Name: BreakGlassRule, Role: RoleAdmin, Scope: Scope{Kind: ScopeDeployment},
 			Subjects: []Selector{sel}, Rule: BreakGlassRule, FromConfiguration: true})
+	}
+	seenOrker := map[OrkerEntry]bool{}
+	for i, o := range c.Orkers {
+		sel, err := ParseSubject(o.Subject)
+		if err != nil {
+			return nil, fmt.Errorf("auth.orkers[%d]: %w", i, err)
+		}
+		if err := dsl.ValidSlug("pool", o.Pool); err != nil {
+			return nil, fmt.Errorf("auth.orkers[%d]: %w", i, err)
+		}
+		if seenOrker[o] {
+			return nil, fmt.Errorf("auth.orkers lists subject %q at pool %q twice", o.Subject, o.Pool)
+		}
+		seenOrker[o] = true
+		name := fmt.Sprintf("%s/%d", ConfigOrkersRule, i)
+		out = append(out, Binding{Name: name, Role: RoleOrker, Scope: Scope{Kind: ScopePool, Pool: o.Pool},
+			Subjects: []Selector{sel}, OrkerIDsAny: o.OrkerIDsAny, Rule: name, FromConfiguration: true})
 	}
 	if len(c.Admins) == 0 {
 		return out, nil

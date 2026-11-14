@@ -1,0 +1,179 @@
+package orker
+
+import (
+	"context"
+	"crypto/tls"
+	"crypto/x509"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/url"
+	"os"
+	"strings"
+
+	"connectrpc.com/connect"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/authn"
+)
+
+// The orker.engine.* settings: how this Orker reaches the engine's API as
+// itself (docs/DEPLOY.md §1; docs/AUTHENTICATION.md, "An Orker's
+// credential"). Empty, the Orker reaches no engine and supports no
+// identity.
+const (
+	EngineURLVar           = "ORK_ORKER_ENGINE_URL"
+	EngineCAFileVar        = "ORK_ORKER_ENGINE_CA_FILE"
+	EngineAuthMethodVar    = "ORK_ORKER_ENGINE_AUTH_METHOD"
+	EngineAuthTokenFileVar = "ORK_ORKER_ENGINE_AUTH_TOKEN_FILE"
+	EngineAuthCertFileVar  = "ORK_ORKER_ENGINE_AUTH_CERT_FILE"
+	EngineAuthKeyFileVar   = "ORK_ORKER_ENGINE_AUTH_KEY_FILE"
+)
+
+// The methods an Orker authenticates with.
+const (
+	EngineAuthTokenFile = "token_file"
+	EngineAuthMTLS      = "mtls"
+)
+
+// EngineSettings are orker.engine.*.
+type EngineSettings struct {
+	URL       string
+	CAFile    string
+	Method    string
+	TokenFile string
+	CertFile  string
+	KeyFile   string
+}
+
+// EngineSettingsFromEnv reads orker.engine.* through get.
+func EngineSettingsFromEnv(get func(string) string) EngineSettings {
+	trim := func(k string) string { return strings.TrimSpace(get(k)) }
+	return EngineSettings{URL: trim(EngineURLVar), CAFile: trim(EngineCAFileVar), Method: trim(EngineAuthMethodVar),
+		TokenFile: trim(EngineAuthTokenFileVar), CertFile: trim(EngineAuthCertFileVar), KeyFile: trim(EngineAuthKeyFileVar)}
+}
+
+// Configured reports whether the Orker reaches an engine at all.
+func (s EngineSettings) Configured() bool { return s.URL != "" }
+
+// Validate refuses settings an Orker must not boot with: a URL that is
+// neither https nor loopback, a method that is not one, or a method without
+// its files. Each refusal names its setting.
+func (s EngineSettings) Validate() error {
+	if s.URL == "" {
+		if s.Method != "" || s.TokenFile != "" || s.CertFile != "" || s.KeyFile != "" || s.CAFile != "" {
+			return fmt.Errorf("orker.engine.auth.* is set without orker.engine.url (%s)", EngineURLVar)
+		}
+		return nil
+	}
+	u, err := url.Parse(s.URL)
+	if err != nil || u.Host == "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("orker.engine.url (%s) %q is not a scheme and a host alone", EngineURLVar, s.URL)
+	}
+	switch u.Scheme {
+	case "https":
+	case "http":
+		if !authn.LoopbackHost(u.Hostname()) {
+			return fmt.Errorf("orker.engine.url (%s) %q is plain http to a host that is not loopback: a credential would cross the network in the clear", EngineURLVar, s.URL)
+		}
+		if s.CAFile != "" || s.Method == EngineAuthMTLS {
+			return fmt.Errorf("orker.engine.ca_file and the mtls method are for an https engine; %q is not one", s.URL)
+		}
+	default:
+		return fmt.Errorf("orker.engine.url (%s) %q is neither https nor http", EngineURLVar, s.URL)
+	}
+	switch s.Method {
+	case EngineAuthTokenFile:
+		if s.TokenFile == "" {
+			return fmt.Errorf("orker.engine.auth.method token_file needs orker.engine.auth.token_file (%s)", EngineAuthTokenFileVar)
+		}
+	case EngineAuthMTLS:
+		if s.CertFile == "" || s.KeyFile == "" {
+			return fmt.Errorf("orker.engine.auth.method mtls needs orker.engine.auth.cert_file and key_file (%s, %s)", EngineAuthCertFileVar, EngineAuthKeyFileVar)
+		}
+	case "":
+		return fmt.Errorf("orker.engine.url is set and orker.engine.auth.method (%s) is not: token_file or mtls", EngineAuthMethodVar)
+	default:
+		return fmt.Errorf("orker.engine.auth.method (%s) %q is neither token_file nor mtls", EngineAuthMethodVar, s.Method)
+	}
+	return nil
+}
+
+// EngineClient is this Orker's client of the engine's API, presenting its
+// own credential on every request.
+type EngineClient struct {
+	auth      orkstackv1connect.AuthServiceClient
+	transport *http.Transport
+}
+
+// Close releases the client's idle connections to the engine.
+func (c *EngineClient) Close() { c.transport.CloseIdleConnections() }
+
+// NewEngineClient builds the client the settings describe. It reads the
+// TLS files now and the token file at every request, so a token something
+// else rotates is presented as it is then.
+func NewEngineClient(s EngineSettings) (*EngineClient, error) {
+	if err := s.Validate(); err != nil {
+		return nil, err
+	}
+	if !s.Configured() {
+		return nil, errors.New("orker.engine.url is not set: this Orker reaches no engine")
+	}
+	transport := &http.Transport{Protocols: new(http.Protocols)}
+	if strings.HasPrefix(s.URL, "https://") {
+		transport.Protocols.SetHTTP1(true)
+		transport.Protocols.SetHTTP2(true)
+		cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+		if s.CAFile != "" {
+			raw, err := os.ReadFile(s.CAFile)
+			if err != nil {
+				return nil, fmt.Errorf("orker.engine.ca_file: %w", err)
+			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(raw) {
+				return nil, fmt.Errorf("orker.engine.ca_file %s holds no PEM certificate", s.CAFile)
+			}
+			cfg.RootCAs = pool
+		}
+		if s.Method == EngineAuthMTLS {
+			pair, err := tls.LoadX509KeyPair(s.CertFile, s.KeyFile)
+			if err != nil {
+				return nil, fmt.Errorf("orker.engine.auth.cert_file and key_file: %w", err)
+			}
+			cfg.Certificates = []tls.Certificate{pair}
+		}
+		transport.TLSClientConfig = cfg
+	} else {
+		transport.Protocols.SetUnencryptedHTTP2(true)
+	}
+	var opts []connect.ClientOption
+	if s.Method == EngineAuthTokenFile {
+		opts = append(opts, connect.WithInterceptors(authn.BearerFromFile{Path: s.TokenFile, Label: "orker.engine.auth.token_file"}))
+	}
+	base := strings.TrimSuffix(s.URL, "/")
+	return &EngineClient{auth: orkstackv1connect.NewAuthServiceClient(&http.Client{Transport: transport}, base, opts...), transport: transport}, nil
+}
+
+// Whoami asks the engine which principal this Orker's credential is, and
+// what it holds (AuthService.GetSignin): the boot check that the credential
+// is accepted.
+func (c *EngineClient) Whoami(ctx context.Context) (*orkstackv1.GetSigninResponse, error) {
+	resp, err := c.auth.GetSignin(ctx, connect.NewRequest(&orkstackv1.GetSigninRequest{}))
+	if err != nil {
+		return nil, err
+	}
+	return resp.Msg, nil
+}
+
+// CredentialFiles are the files that make this Orker's credential: its own
+// sources, which its secret floor admits as no task's (AGENTS.md §6).
+func (s EngineSettings) CredentialFiles() []string {
+	var out []string
+	for _, p := range []string{s.TokenFile, s.CertFile, s.KeyFile} {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}

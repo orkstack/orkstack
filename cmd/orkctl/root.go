@@ -11,13 +11,16 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/orker"
 )
 
@@ -81,6 +84,7 @@ func exitCodeFor(err error) int {
 // process exit code. main is the only caller that turns it into os.Exit.
 func Execute(args []string, stdout, stderr io.Writer) int {
 	root, flags := newRootCommand()
+	flags.stderr = stderr
 	// The CLI is one shot: release the engine connection when the command ends.
 	defer flags.closeIdleConnections()
 	root.SetArgs(args)
@@ -141,6 +145,15 @@ type globalFlags struct {
 	// commands (`task run`, `activity test`) check before they start
 	// (local_platform.go). Empty means runtime.GOOS; no flag sets it.
 	goos string
+
+	// creds are how requests authenticate and which roots they trust.
+	creds cliCredentials
+
+	// stderr is where a warning goes (Execute's); os.Stderr when unset.
+	stderr io.Writer
+	// principalChecked asks the engine, once a run of orkctl, whether it
+	// records ORK_PRINCIPAL at all.
+	principalChecked sync.Once
 }
 
 // newRootCommand builds the command tree and the shared flag state.
@@ -177,7 +190,10 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 				return err
 			}
 			g.timeoutChanged = cmd.Flags().Changed("timeout")
-			return g.validate()
+			if err := g.validate(); err != nil {
+				return err
+			}
+			return g.resolveCredentials()
 		},
 	}
 	root.PersistentFlags().StringVar(&g.server, "server", defaultServer,
@@ -192,6 +208,14 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		"emit machine-readable JSON instead of human tables")
 	root.PersistentFlags().DurationVar(&g.timeout, "timeout", 30*time.Second,
 		"timeout for each API request (0 disables it)")
+	root.PersistentFlags().StringVar(&g.creds.tokenFile, "token-file", "",
+		"a file holding the bearer token to present, read at every request (env "+tokenFileEnvVar+")")
+	root.PersistentFlags().StringVar(&g.creds.caFile, "ca-file", "",
+		"PEM roots to trust for an https server, in place of the system's")
+	root.PersistentFlags().StringVar(&g.creds.clientCert, "client-cert", "",
+		"a PEM client certificate to present to an https server (with --client-key)")
+	root.PersistentFlags().StringVar(&g.creds.clientKey, "client-key", "",
+		"the PEM private key of --client-cert")
 
 	root.AddCommand(
 		newAdminCommand(g),
@@ -210,6 +234,7 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newTriggerCommand(g),
 		newWebhookCommand(g),
 		newVersionCommand(g),
+		newWhoamiCommand(g),
 	)
 	for _, child := range root.Commands() {
 		refuseUnknownSubcommands(child)
@@ -342,6 +367,7 @@ func (g *globalFlags) httpClient() *http.Client {
 	if strings.HasPrefix(g.server, "https://") {
 		transport.Protocols.SetHTTP1(true)
 		transport.Protocols.SetHTTP2(true)
+		transport.TLSClientConfig = g.creds.tls
 	} else {
 		transport.Protocols.SetUnencryptedHTTP2(true)
 	}
@@ -471,20 +497,68 @@ const principalHeader = "Ork-Principal"
 // ORK_PRINCIPAL set, every request — unary or streaming — carries
 // Ork-Principal: $ORK_PRINCIPAL; unset, nothing is added.
 func (g *globalFlags) clientOptions() []connect.ClientOption {
-	principal := os.Getenv(principalEnvVar)
-	if principal == "" {
+	var interceptors []connect.Interceptor
+	if g.creds.tokenFile != "" && g.creds.clientCert == "" {
+		interceptors = append(interceptors, authn.BearerFromFile{Path: g.creds.tokenFile, Label: "token file"})
+	}
+	if principal := os.Getenv(principalEnvVar); principal != "" {
+		interceptors = append(interceptors, principalInterceptor{principal: principal, g: g})
+	}
+	if len(interceptors) == 0 {
 		return nil
 	}
-	return []connect.ClientOption{connect.WithInterceptors(principalInterceptor{principal: principal})}
+	return []connect.ClientOption{connect.WithInterceptors(interceptors...)}
+}
+
+// principalCheckTimeout bounds the one question of the engine's mode: an
+// engine that does not answer in time is not warned about.
+const principalCheckTimeout = 3 * time.Second
+
+// checkPrincipal warns, once, when the engine does not record ORK_PRINCIPAL:
+// one that authenticates its callers (auth mode observe or enforce, or one
+// that refuses an unauthenticated caller) reads the header nowhere
+// (authn-authz.md §1). An engine that predates auth modes, or that does not
+// answer, is not warned about.
+func (g *globalFlags) checkPrincipal(ctx context.Context, principal string) {
+	g.principalChecked.Do(func() {
+		ctx, cancel := context.WithTimeout(ctx, principalCheckTimeout)
+		defer cancel()
+		client := orkstackv1connect.NewSystemServiceClient(g.httpClient(), g.baseURL(),
+			connect.WithInterceptors(principalInterceptor{principal: principal}))
+		resp, err := client.GetSystemInfo(ctx, connect.NewRequest(&orkstackv1.GetSystemInfoRequest{}))
+		mode := ""
+		switch {
+		case connect.CodeOf(err) == connect.CodeUnauthenticated:
+			mode = "observe or enforce"
+		case err == nil && (resp.Msg.GetAuthMode() == "observe" || resp.Msg.GetAuthMode() == "enforce"):
+			mode = resp.Msg.GetAuthMode()
+		}
+		if mode == "" {
+			return
+		}
+		w := g.stderr
+		if w == nil {
+			w = os.Stderr
+		}
+		fmt.Fprintf(w, "orkctl: warning: ORK_PRINCIPAL is set, but this engine authenticates its callers (auth mode %s): "+
+			"it records the caller it verified and never reads ORK_PRINCIPAL\n", mode)
+	})
 }
 
 // principalInterceptor sets the Ork-Principal header on every outgoing
 // request. It is a full interceptor rather than a unary one so a streaming
-// read carries the same assertion as a write.
-type principalInterceptor struct{ principal string }
+// read carries the same assertion as a write. With g set, the first
+// request first checks, once, that the engine records the header at all.
+type principalInterceptor struct {
+	principal string
+	g         *globalFlags
+}
 
 func (p principalInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		if p.g != nil {
+			p.g.checkPrincipal(ctx, p.principal)
+		}
 		req.Header().Set(principalHeader, p.principal)
 		return next(ctx, req)
 	}
@@ -492,6 +566,9 @@ func (p principalInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFun
 
 func (p principalInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
 	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		if p.g != nil {
+			p.g.checkPrincipal(ctx, p.principal)
+		}
 		conn := next(ctx, spec)
 		conn.RequestHeader().Set(principalHeader, p.principal)
 		return conn

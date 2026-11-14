@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -13,12 +14,14 @@ import (
 	"strings"
 	"time"
 
+	"go.yaml.in/yaml/v4"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/authz"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/jwt"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -31,6 +34,7 @@ type authConfig struct {
 	publicURL         string
 	issuers           authn.Issuers
 	admins            []string
+	orkers            []authz.OrkerEntry
 	breakGlassKeyFile string
 	clockSkew         time.Duration
 	policyRefresh     time.Duration
@@ -42,6 +46,44 @@ const (
 	// maxBreakGlassKeyBytes bounds the break-glass key file: one PEM key.
 	maxBreakGlassKeyBytes = 64 << 10
 )
+
+// orkersDocument is ORK_AUTH_ORKERS: auth.orkers, as its own document.
+type orkersDocument struct {
+	Orkers []struct {
+		Subject  string `yaml:"subject"`
+		Pool     string `yaml:"pool"`
+		OrkerIDs string `yaml:"orker_ids"`
+	} `yaml:"orkers"`
+}
+
+// parseOrkers decodes auth.orkers strictly: one document, no unknown key,
+// no merge key, and orker_ids either absent or `any`. Whether each subject
+// and pool is one is CompileConfiguration's to say.
+func parseOrkers(raw []byte) ([]authz.OrkerEntry, error) {
+	if line, found := dsl.SecondDocumentLine(raw); found {
+		return nil, fmt.Errorf("line %d: a second YAML document begins here; the setting holds one", line)
+	}
+	var doc orkersDocument
+	if err := dsl.RefuseMergeTags(raw, doc); err != nil {
+		return nil, err
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(raw))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&doc); err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("parse yaml: %w", err)
+	}
+	out := make([]authz.OrkerEntry, 0, len(doc.Orkers))
+	for i, o := range doc.Orkers {
+		if o.Subject == "" || o.Pool == "" {
+			return nil, fmt.Errorf("orkers[%d]: subject and pool are required", i)
+		}
+		if o.OrkerIDs != "" && o.OrkerIDs != "any" {
+			return nil, fmt.Errorf("orkers[%d]: orker_ids is `any` or absent, not %q", i, o.OrkerIDs)
+		}
+		out = append(out, authz.OrkerEntry{Subject: o.Subject, Pool: o.Pool, OrkerIDsAny: o.OrkerIDs == "any"})
+	}
+	return out, nil
+}
 
 // authFromEnv reads the auth.* settings. Every error refuses the boot,
 // naming its setting.
@@ -83,6 +125,14 @@ func authFromEnv(lookup func(string) (string, bool)) (authConfig, error) {
 	}
 	if _, err := authz.CompileConfiguration(authz.Configuration{Admins: c.admins}); err != nil {
 		return c, fmt.Errorf("auth.admins (ORK_AUTH_ADMINS): %w", err)
+	}
+	if doc := get("ORK_AUTH_ORKERS"); doc != "" {
+		if c.orkers, err = parseOrkers([]byte(doc)); err != nil {
+			return c, fmt.Errorf("auth.orkers (ORK_AUTH_ORKERS): %w", err)
+		}
+		if _, err := authz.CompileConfiguration(authz.Configuration{Orkers: c.orkers}); err != nil {
+			return c, fmt.Errorf("auth.orkers (ORK_AUTH_ORKERS): %w", err)
+		}
 	}
 	if c.publicURL != "" {
 		u, err := url.Parse(c.publicURL)
@@ -211,7 +261,7 @@ func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCf
 	if err != nil {
 		return accessSetup{}, err
 	}
-	configured, err := authz.CompileConfiguration(authz.Configuration{Admins: c.admins, BreakGlass: glass != nil})
+	configured, err := authz.CompileConfiguration(authz.Configuration{Admins: c.admins, BreakGlass: glass != nil, Orkers: c.orkers})
 	if err != nil {
 		return accessSetup{}, err
 	}

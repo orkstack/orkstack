@@ -62,6 +62,43 @@ A person is `user:<issuer>:<username>`, a service of a trusted issuer
 `service:<issuer>:<sub>`. Groups come from the issuer's `groups_claim` (at
 most 200), and only the claims the issuer's `claims` list names are kept.
 
+## From orkctl
+
+`--token-file FILE` (`ORK_TOKEN_FILE`) presents the file's one token as
+`Authorization: Bearer`, read again at every request, so a token something
+else rotates (a CI job's GitHub or Kubernetes token) is sent as it is now. It
+is presented only to an `https://` server or a loopback `http://` one, and
+refused for any other: it would cross the network in the clear.
+`--ca-file` sets the roots an `https://` server is verified against, in
+place of the system's, and `--client-cert` with `--client-key` presents a
+client certificate; a client certificate takes precedence over a token
+file. This release's engine authenticates bearer tokens and break-glass
+assertions; it does not yet take a principal from a client certificate.
+
+## An Orker's credential
+
+An Orker reaches the engine's API as itself with `orker.engine.*`:
+`orker.engine.url` (`https`, or `http` to a loopback address), an optional
+`ca_file`, and `auth.method` `token_file` (`auth.token_file`, read at every
+request) or `mtls` (`auth.cert_file` and `auth.key_file`). At boot it asks
+the engine who its credential is (`AuthService.GetSignin`) and refuses to
+start if the engine does not accept it, or if the settings are incomplete;
+with no `orker.engine.url` it asks nothing and supports no identity. The
+files that make the credential are the Orker's own: no task may name them
+as a secret source. Bind the Orker with `auth.orkers` or a binding to the
+`orker` role at its pool (docs/ACCESS.md). The check that `orker.id` equals
+the id its credential names lands with the engine answering that id.
+
+## Who am I
+
+`orkctl whoami` (`AuthService.GetSignin`) answers any authenticated caller,
+with no permission: the principal the engine verified, how (`jwt`,
+`break-glass`, …), its issuer and groups, each binding that matched it with
+only the subject that matched, and its permissions by scope, against the
+replica's copy of the access document. An engine in `asserted` mode verifies
+nobody, so it serves no `whoami`. With `ORK_PRINCIPAL` set against an engine
+in `observe` or `enforce`, `orkctl` warns once that the variable is not used.
+
 ## The first admin, and break-glass
 
 - **`auth.admins`** (`ORK_AUTH_ADMINS`, a list of subjects) hold `admin` at

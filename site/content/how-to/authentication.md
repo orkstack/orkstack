@@ -23,6 +23,10 @@ auth:
 
 Every caller then sends `Authorization: Bearer <token>`, a token your identity provider issued for the `orkstack` audience. The group in `admins` holds `admin` across the deployment.
 
+## Check who you are
+
+Run `orkctl whoami`. It shows the principal the engine verified you as, the bindings that matched you, and what you may do at each scope.
+
 ## Go through observe
 
 1. Set `auth.mode: observe` on every engine. Requests with a token are verified, requests without one are still served, and nothing is refused.

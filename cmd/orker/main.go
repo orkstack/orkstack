@@ -125,6 +125,9 @@ type config struct {
 	// and every {file:} it read (config.Document.Files): the Orker's own,
 	// which its secret floor admits as no task's source (orkerPolicy).
 	configFiles []string
+	// engine is orker.engine.*: how this Orker reaches the engine's API as
+	// itself. Empty, it reaches none.
+	engine orker.EngineSettings
 }
 
 // TaskLogExportVar turns on the OTel log export path for a task's
@@ -177,6 +180,7 @@ func loadConfig() config {
 		capacityCPU:       env(orker.CapacityCPUVar, ""),
 		capacityMemory:    env(orker.CapacityMemoryVar, ""),
 		deployment:        task.DeploymentFromEnv(),
+		engine:            orker.EngineSettingsFromEnv(os.Getenv),
 	}
 }
 
@@ -631,6 +635,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return cfg.storeWatchErr
 	}
 
+	if err := checkEngineCredential(ctx, cfg.engine, logger); err != nil {
+		return err
+	}
 	if err := checkStoreCredentials(ctx, artifacts.ConfigFromEnv(), logger); err != nil {
 		return err
 	}
@@ -1010,6 +1017,36 @@ func configFrom(doc *cfgfile.Document) config {
 	return cfg
 }
 
+// engineCheckTimeout bounds the boot's one question of the engine.
+const engineCheckTimeout = 15 * time.Second
+
+// checkEngineCredential refuses a boot whose orker.engine.* the Orker could
+// not use: settings that do not validate, or a credential the engine does
+// not accept. It asks the engine once (AuthService.GetSignin) and logs the
+// principal the engine verified. With no orker.engine.url it asks nothing.
+func checkEngineCredential(ctx context.Context, s orker.EngineSettings, logger *slog.Logger) error {
+	if err := s.Validate(); err != nil {
+		return err
+	}
+	if !s.Configured() {
+		return nil
+	}
+	client, err := orker.NewEngineClient(s)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	ctx, cancel := context.WithTimeout(ctx, engineCheckTimeout)
+	defer cancel()
+	who, err := client.Whoami(ctx)
+	if err != nil {
+		return fmt.Errorf("orker.engine: the engine at %s did not accept this Orker's credential (%s): %w", s.URL, s.Method, err)
+	}
+	logger.Info("the engine verified this Orker's credential", "principal", who.GetPrincipalId(), "method", who.GetMethod(),
+		"bindings", len(who.GetBindings()))
+	return nil
+}
+
 // orkerPolicy is the policy this Orker enforces: the environment's, with what
 // its own configuration read — the configuration file, every {file:} in it,
 // every telemetry sink header's file or variable — among the sources its
@@ -1022,6 +1059,9 @@ func orkerPolicy(cfg config, tcfg telemetry.Config) orker.SecurityPolicy {
 	}
 	for _, path := range tcfg.Sinks.SourceFiles() {
 		paths = append(paths, orker.OwnPath{Path: path, Why: "its telemetry credentials"})
+	}
+	for _, path := range cfg.engine.CredentialFiles() {
+		paths = append(paths, orker.OwnPath{Path: path, Why: "its credential to the engine"})
 	}
 	var vars []orker.OwnVar
 	for _, name := range tcfg.Sinks.SourceVars() {

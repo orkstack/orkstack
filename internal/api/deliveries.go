@@ -328,10 +328,19 @@ func (s *Service) ListDeliveries(
 		}
 	}
 
+	keep := deliveryKeep(set)
+	if visible := s.deliveryVisible(ctx); visible != nil {
+		// The caller's own rows are chosen by the scan, not after it, so a
+		// page fills with them and its cursor ends on one of them.
+		filtered := keep
+		keep = func(k artifacts.DeliveryKeyFields) bool {
+			return (filtered == nil || filtered(k)) && visible(k.WebhookID)
+		}
+	}
 	page, err := s.deliveries.ListDeliveries(ctx, artifacts.DeliveryQuery{
 		Since:     since,
 		Until:     until,
-		Keep:      deliveryKeep(set),
+		Keep:      keep,
 		BeforeKey: beforeKey,
 		Limit:     pageSize,
 	})
@@ -367,6 +376,32 @@ func (s *Service) ListDeliveries(
 		out.NextPageToken = token
 	}
 	return connect.NewResponse(out), nil
+}
+
+// deliveryVisible is, in enforce, whether the caller may read a delivery of
+// a webhook (webhook.read at the webhook's own scope), asked once a webhook
+// for the listing; nil when nothing is hidden. A webhook that cannot be
+// looked up hides its deliveries.
+func (s *Service) deliveryVisible(ctx context.Context) func(webhookID string) bool {
+	if !s.access.enabled() || !s.access.enforcing() {
+		return nil
+	}
+	subject := subjectOf(authn.FromContext(ctx))
+	policy, _ := s.access.policy(ctx)
+	seen := map[string]bool{}
+	return func(id string) bool {
+		if ok, done := seen[id]; done {
+			return ok
+		}
+		res, err := s.webhookResource(ctx, id)
+		ok := err == nil
+		if ok {
+			_, err = authz.Authorize(authz.Request{Action: authz.Action(authz.PermWebhookRead), Subject: subject, Resource: res, Policy: policy})
+			ok = err == nil
+		}
+		seen[id] = ok
+		return ok
+	}
 }
 
 // GetDelivery returns one record by id, from the shared store.

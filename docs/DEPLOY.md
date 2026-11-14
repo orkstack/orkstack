@@ -713,10 +713,16 @@ then the variable it becomes.
 | `telemetry.batch.metric_export_interval` | `OTEL_METRIC_EXPORT_INTERVAL` | *(SDK default)* | both | the metric export interval |
 | environment only | `OTEL_BSP_*`, `OTEL_BLRP_*` | *(SDK defaults)* | both | batch/backpressure bounds on the span and log processors; a record that cannot be queued is dropped, never waited for. **Environment only** — no config file key exists for these |
 | `telemetry.sinks:` | `ORK_TELEMETRY_SINKS` | *(empty)* | both | YAML table of named OTLP destinations a namespace may select by name, in place of the deployment's single `OTEL_*` environment — see §7, "Named sinks" |
+| `orker.engine.url` | `ORK_ORKER_ENGINE_URL` | *(empty)* | `orker` | the engine's API this Orker reaches as itself, `https` or a loopback `http`; empty, it reaches none and supports no identity — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
+| `orker.engine.ca_file` | `ORK_ORKER_ENGINE_CA_FILE` | *(empty)* | `orker` | PEM roots the engine's certificate is verified against, in place of the system's |
+| `orker.engine.auth.method` | `ORK_ORKER_ENGINE_AUTH_METHOD` | *(empty)* | `orker` | `token_file` or `mtls`: how the Orker authenticates; required with `orker.engine.url` |
+| `orker.engine.auth.token_file` | `ORK_ORKER_ENGINE_AUTH_TOKEN_FILE` | *(empty)* | `orker` | a file holding the Orker's token, read at every request (`token_file`) |
+| `orker.engine.auth.cert_file`, `orker.engine.auth.key_file` | `ORK_ORKER_ENGINE_AUTH_CERT_FILE`, `ORK_ORKER_ENGINE_AUTH_KEY_FILE` | *(empty)* | `orker` | the Orker's PEM client certificate and key (`mtls`) |
 | `auth.mode` | `ORK_AUTH_MODE` | `asserted` | `ork` | `asserted`, `observe` or `enforce`: who a request is from, and whether a permission is required — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
 | `auth.public_url` | `ORK_AUTH_PUBLIC_URL` | *(empty)* | `ork` | the URL callers reach the API at, a scheme and host alone; break-glass assertions name it as their audience |
 | `auth.issuers:` | `ORK_AUTH_ISSUERS` | *(empty)* | `ork` | YAML table of the trusted issuers whose JWTs the engine accepts: in the file, one entry by name under `auth.issuers`; in the environment, the same table under a top-level `issuers:` — see [AUTHENTICATION.md](./AUTHENTICATION.md) |
 | `auth.admins` | `ORK_AUTH_ADMINS` | *(empty)* | `ork` | subjects that hold `admin` at the deployment whatever the access document says (`user:…`, `group:…`, `service:…`) |
+| `auth.orkers:` | `ORK_AUTH_ORKERS` | *(empty)* | `ork` | entries of a `subject` and a `pool`, optionally `orker_ids: any`: each subject holds the `orker` role at that pool by configuration, whatever the access document says — see [ACCESS.md](./ACCESS.md) |
 | `auth.break_glass_key_file` | `ORK_AUTH_BREAK_GLASS_KEY_FILE` | *(empty)* | `ork` | a PEM public key whose request-bound assertions authenticate as `serviceaccount:break-glass`; break-glass is off when unset |
 | `auth.clock_skew` | `ORK_AUTH_CLOCK_SKEW` | `1m` | `ork` | leeway a token's expiry, not-before and issued-at get against this engine's clock |
 | `auth.policy_refresh` | `ORK_AUTH_POLICY_REFRESH` | `10s` | `ork` | how old a replica's copy of the access document may be before it reads it again |
@@ -3704,7 +3710,10 @@ OrkStack records it and does not authenticate it.
 - **`ORK_PRINCIPAL` makes `orkctl` assert one.** Set in `orkctl`'s
   environment, every request it sends carries `Ork-Principal:
   $ORK_PRINCIPAL`. It is an assertion like any other: useful on a `make up`
-  deployment with no gateway, never proof of who typed the command.
+  deployment with no gateway, never proof of who typed the command. An
+  engine that authenticates its callers (`auth.mode` `observe` or
+  `enforce`) reads the header nowhere, and `orkctl` asks the engine's mode
+  once and warns on stderr that `ORK_PRINCIPAL` is not used.
 - **A canceled run records the same assertion** as `Run.canceled_by`, which
   `orkctl run get`, `orkctl run list` and the API render as asserted. The
   engine carries it in the cancellation it asks Temporal for: the request's

@@ -225,6 +225,7 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 		// The access document's own service, mounted procedure by
 		// procedure: only what this release serves (access_service.go).
 		mountAccessService(svc, mux, handlerOptions)
+		mountAuthService(svc, mux, handlerOptions)
 	}
 
 	if opts.UI != nil {

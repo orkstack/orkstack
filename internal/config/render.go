@@ -67,6 +67,7 @@ var alwaysCommentedEnv = map[string]bool{
 	"ORK_ACTIVITY_CATALOG": true,
 	"ORK_TELEMETRY_SINKS":  true,
 	"ORK_AUTH_ISSUERS":     true,
+	"ORK_AUTH_ORKERS":      true,
 	"ORK_ORKER_ID":         true,
 	"ORK_ORKER_WORKDIR":    true,
 	"ORK_DOCKER_BIN":       true,
