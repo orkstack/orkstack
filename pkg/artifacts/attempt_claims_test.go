@@ -77,7 +77,7 @@ func TestClaimAttempt_ALostRaceTakesTheNextOrdinal(t *testing.T) {
 	calls := 0
 	got, err := claimNext(ctx, scope, "orker-a",
 		func(string) ([]string, error) { return nil, nil },
-		func(key string, body []byte) (bool, error) {
+		func(_ context.Context, key string, body []byte) (bool, error) {
 			calls++
 			if calls <= 2 { // two other attempts got there first
 				return true, nil
@@ -90,7 +90,7 @@ func TestClaimAttempt_ALostRaceTakesTheNextOrdinal(t *testing.T) {
 
 	_, err = claimNext(ctx, scope, "orker-a",
 		func(string) ([]string, error) { return nil, nil },
-		func(string, []byte) (bool, error) { return true, nil })
+		func(context.Context, string, []byte) (bool, error) { return true, nil })
 	if !errors.Is(err, ErrAttemptClaimContended) {
 		t.Fatalf("every ordinal taken: err = %v, want ErrAttemptClaimContended", err)
 	}
@@ -98,15 +98,46 @@ func TestClaimAttempt_ALostRaceTakesTheNextOrdinal(t *testing.T) {
 	broken := errors.New("store down")
 	_, err = claimNext(ctx, scope, "orker-a",
 		func(string) ([]string, error) { return nil, broken },
-		func(string, []byte) (bool, error) { return false, nil })
+		func(context.Context, string, []byte) (bool, error) { return false, nil })
 	if !errors.Is(err, broken) {
 		t.Fatalf("listing fails: err = %v, want the store's error", err)
 	}
 	_, err = claimNext(ctx, scope, "orker-a",
 		func(string) ([]string, error) { return nil, nil },
-		func(string, []byte) (bool, error) { return false, broken })
+		func(context.Context, string, []byte) (bool, error) { return false, broken })
 	if !errors.Is(err, broken) {
 		t.Fatalf("create fails: err = %v, want the store's error", err)
+	}
+}
+
+// TestClaimAttempt_AFailedClaimIsReleasedOnAContextOfItsOwn: a claim whose
+// create timed out or was cancelled may have landed, so the attempt writes
+// its release marker at once. That write must not share the context that just
+// failed, or it fails the same way and the claim reads as an attempt that may
+// still be running.
+func TestClaimAttempt_AFailedClaimIsReleasedOnAContextOfItsOwn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	scope := AttemptRef{RunID: "ork-r1", TaskID: "t"}
+	var released []string
+	_, err := claimNext(ctx, scope, "orker-a",
+		func(string) ([]string, error) { return nil, nil },
+		func(call context.Context, key string, _ []byte) (bool, error) {
+			if strings.HasSuffix(key, AttemptClaimSuffix) {
+				cancel() // the claim's answer is lost as its context ends
+				return false, context.Canceled
+			}
+			if err := call.Err(); err != nil {
+				return false, err
+			}
+			released = append(released, key)
+			return false, nil
+		})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("claim = %v, want the cancel", err)
+	}
+	if len(released) != 1 || !strings.HasSuffix(released[0], AttemptReleasedSuffix) {
+		t.Fatalf("release markers written = %v, want the claimed ordinal's", released)
 	}
 }
 
@@ -245,7 +276,7 @@ func TestClaimAttempt_ALostAnswerReleasesTheOrdinal(t *testing.T) {
 	lost := errors.New("connection reset after the PUT was sent")
 	_, err := claimNext(context.Background(), scope, "orker-a",
 		func(string) ([]string, error) { return nil, nil },
-		func(key string, body []byte) (bool, error) {
+		func(_ context.Context, key string, body []byte) (bool, error) {
 			store.create(key, body) // it landed
 			if strings.HasSuffix(key, AttemptClaimSuffix) {
 				return false, lost

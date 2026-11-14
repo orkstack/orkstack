@@ -3,6 +3,7 @@ package orker
 import (
 	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -73,18 +74,20 @@ func TestHeartbeater_TheServersDecisionClosesTheLatchAtOnce(t *testing.T) {
 	ctx, stop := context.WithCancelCause(context.Background())
 	defer stop(nil)
 	terminated := serviceerror.NewNotFound("workflow execution already completed")
-	h := latchHeartbeater(func() error { return terminated }, time.Hour, stop,
+	var calls atomic.Int32
+	h := latchHeartbeater(func() error { calls.Add(1); return terminated }, time.Hour, stop,
 		func(context.Context, HeartbeatProgress) { stop(terminated) })
 	h.Start(ctx)
 	defer h.Stop()
-	began := time.Now()
 	err := h.AwaitFirstAnswer(ctx)
 	var nf *serviceerror.NotFound
 	if !errors.As(err, &nf) {
 		t.Fatalf("AwaitFirstAnswer = %v, want the server's NotFound", err)
 	}
-	if took := time.Since(began); took > 5*time.Second {
-		t.Errorf("the latch took %s to see the server's decision", took)
+	// At once: the first heartbeat carries the decision, and the latch does
+	// not wait for another.
+	if n := calls.Load(); n > 2 {
+		t.Errorf("the latch saw the server's decision only after %d heartbeats", n)
 	}
 }
 
@@ -94,9 +97,18 @@ func TestHeartbeater_TheServersDecisionClosesTheLatchAtOnce(t *testing.T) {
 func TestHeartbeater_TheLatchFailsLostAfterTheTimeout(t *testing.T) {
 	ctx, stop := context.WithCancelCause(context.Background())
 	defer stop(nil)
-	const timeout = 60 * time.Millisecond
-	h := latchHeartbeater(func() error { return context.DeadlineExceeded }, timeout, stop, nil)
-	began := time.Now()
+	// The loop's own clock, advanced a minute per reading: the timeout is
+	// counted on it, never on the wall.
+	const timeout = 10 * time.Minute
+	start := time.Unix(1_700_000_000, 0)
+	var readings atomic.Int64
+	clock := func() time.Time { return start.Add(time.Duration(readings.Add(1)) * time.Minute) }
+	var lostAt atomic.Int64
+	h := latchHeartbeater(func() error { return context.DeadlineExceeded }, timeout, func(err error) {
+		lostAt.Store(readings.Load())
+		stop(err)
+	}, nil)
+	h.now = clock
 	h.Start(ctx)
 	defer h.Stop()
 	err := h.AwaitFirstAnswer(ctx)
@@ -104,8 +116,8 @@ func TestHeartbeater_TheLatchFailsLostAfterTheTimeout(t *testing.T) {
 	if !errors.As(err, &lost) {
 		t.Fatalf("AwaitFirstAnswer = %v, want heartbeatUnanswered", err)
 	}
-	if took := time.Since(began); took < timeout {
-		t.Errorf("the latch gave up after %s, inside the %s timeout", took, timeout)
+	if elapsed := time.Duration(lostAt.Load()-1) * time.Minute; elapsed < timeout {
+		t.Errorf("the latch gave up %s after Start on the loop's clock, inside the %s timeout", elapsed, timeout)
 	}
 	if lostNow, _ := heartbeatLost(ctx); !lostNow {
 		t.Error("the attempt's context does not read as lost")

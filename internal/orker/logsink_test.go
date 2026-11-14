@@ -20,6 +20,10 @@ type recordingLogStore struct {
 	mu     sync.Mutex
 	chunks []artifacts.LogChunk
 	fail   func(seq int64) error
+	// puts, when set, receives one value per stored chunk, so a test waits
+	// for an upload rather than polling for it. A put past its buffer is not
+	// signalled: size it for the uploads a test waits on.
+	puts chan struct{}
 }
 
 func (s *recordingLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogChunk) error {
@@ -33,7 +37,23 @@ func (s *recordingLogStore) PutLogChunk(_ context.Context, chunk artifacts.LogCh
 	stored := chunk
 	stored.Data = append([]byte(nil), chunk.Data...)
 	s.chunks = append(s.chunks, stored)
+	if s.puts != nil {
+		select { // never blocks while the store's lock is held
+		case s.puts <- struct{}{}:
+		default:
+		}
+	}
 	return nil
+}
+
+// awaitPut waits for the store's next upload, by deadline.
+func awaitPut(t *testing.T, s *recordingLogStore, what string) {
+	t.Helper()
+	select {
+	case <-s.puts:
+	case <-time.After(2 * time.Second):
+		t.Fatal(what)
+	}
 }
 
 func (s *recordingLogStore) ReadLogChunks(
@@ -181,7 +201,7 @@ func TestLogChunkSink_FlushesOnSize(t *testing.T) {
 // one line a second would be invisible until it produced 64 KiB — which for
 // most tasks is never.
 func TestLogChunkSink_FlushesOnElapsedTime(t *testing.T) {
-	store := &recordingLogStore{}
+	store := &recordingLogStore{puts: make(chan struct{}, 4)}
 	sink := newLogChunkSink(context.Background(), store, testRef(), LogOptions{
 		FlushBytes:    1 << 20, // far above anything this test writes
 		FlushInterval: 25 * time.Millisecond,
@@ -190,17 +210,8 @@ func TestLogChunkSink_FlushesOnElapsedTime(t *testing.T) {
 	defer sink.Close()
 
 	sink.Write("first")
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(store.stored()) > 0 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	awaitPut(t, store, "a single short line never reached the store; the elapsed-time bound does not fire")
 	chunks := store.stored()
-	if len(chunks) == 0 {
-		t.Fatal("a single short line never reached the store; the elapsed-time bound does not fire")
-	}
 	if got := string(chunks[0].Data); got != "first\n" {
 		t.Errorf("first chunk = %q, want %q", got, "first\n")
 	}
@@ -208,16 +219,7 @@ func TestLogChunkSink_FlushesOnElapsedTime(t *testing.T) {
 	// And the timer re-arms: a second line must not wait for the first to be
 	// written again.
 	sink.Write("second")
-	deadline = time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if len(store.stored()) > 1 {
-			break
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	if len(store.stored()) < 2 {
-		t.Fatal("the flush timer did not re-arm after the first flush")
-	}
+	awaitPut(t, store, "the flush timer did not re-arm after the first flush")
 }
 
 // TestLogChunkSink_ABytesBoundOfOneStillBatchesAChattyTask.

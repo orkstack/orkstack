@@ -170,11 +170,15 @@ func claimBody(ref AttemptRef, orkerID string, now time.Time, released bool) ([]
 	return stablejson.Marshal(c)
 }
 
+// claimReleaseTimeout bounds the release marker a failed claim writes. It is
+// short: the write is best-effort, and the attempt's claim retries wait on it.
+const claimReleaseTimeout = 2 * time.Second
+
 // claimNext runs the allocation loop over one store's two primitives.
 func claimNext(
 	ctx context.Context, scope AttemptRef, orkerID string,
 	list func(prefix string) ([]string, error),
-	create func(key string, body []byte) (exists bool, err error),
+	create func(ctx context.Context, key string, body []byte) (exists bool, err error),
 ) (AttemptClaimed, error) {
 	prefix, err := AttemptScopePrefix(scope.RunID, scope.TaskID, scope.Item)
 	if err != nil {
@@ -200,15 +204,18 @@ func claimNext(
 		if err != nil {
 			return AttemptClaimed{}, err
 		}
-		exists, err := create(key, body)
+		exists, err := create(ctx, key, body)
 		if err != nil {
 			// The create may have landed though its answer did not (a lost
 			// response, a timeout). This attempt will not use the ordinal, so
 			// it is released at once, best-effort: a claim nobody holds must
-			// not read as an attempt that may still be running.
+			// not read as an attempt that may still be running. On a context
+			// of its own, because the claim's may be what just failed.
 			if releasedKey, kerr := AttemptReleasedKey(ref); kerr == nil {
 				if marker, berr := claimBody(ref, orkerID, time.Now(), true); berr == nil {
-					_, _ = create(releasedKey, marker)
+					releaseCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), claimReleaseTimeout)
+					_, _ = create(releaseCtx, releasedKey, marker)
+					cancel()
 				}
 			}
 			return AttemptClaimed{}, fmt.Errorf("artifacts: attempt claim %s: %w", key, err)
@@ -232,8 +239,8 @@ func (s *BlobAttemptStore) ClaimAttempt(ctx context.Context, scope AttemptRef, o
 			})
 			return keys, err
 		},
-		func(key string, body []byte) (bool, error) {
-			err := s.b.create(ctx, key, AttemptMarkerContentType, body)
+		func(call context.Context, key string, body []byte) (bool, error) {
+			err := s.b.create(call, key, AttemptMarkerContentType, body)
 			if errors.Is(err, errBlobExists) {
 				return true, nil
 			}
@@ -271,7 +278,7 @@ func (s *MemoryAttemptStore) ClaimAttempt(ctx context.Context, scope AttemptRef,
 			}
 			return keys, nil
 		},
-		func(key string, body []byte) (bool, error) { return s.create(key, body), nil })
+		func(_ context.Context, key string, body []byte) (bool, error) { return s.create(key, body), nil })
 }
 
 // ReleaseAttempt implements AttemptClaimer in memory.

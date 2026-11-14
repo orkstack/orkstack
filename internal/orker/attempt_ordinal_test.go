@@ -336,6 +336,8 @@ func TestExecute_TheFirstBeatAfterTheClaimNamesTheOrdinal(t *testing.T) {
 	d := newAttemptDispatcher(t, runtime, attempts)
 	var mu sync.Mutex
 	var sent []HeartbeatProgress
+	named := make(chan struct{})
+	var nameOnce sync.Once
 	d.heartbeaters = func(context.Context) *Heartbeater {
 		return &Heartbeater{
 			interval: 2 * time.Millisecond,
@@ -343,6 +345,9 @@ func TestExecute_TheFirstBeatAfterTheClaimNamesTheOrdinal(t *testing.T) {
 				mu.Lock()
 				sent = append(sent, p)
 				mu.Unlock()
+				if p.Ordinal != 0 {
+					nameOnce.Do(func() { close(named) })
+				}
 				return nil
 			},
 			ackTimeout: time.Minute,
@@ -355,9 +360,9 @@ func TestExecute_TheFirstBeatAfterTheClaimNamesTheOrdinal(t *testing.T) {
 	}
 	go func() {
 		<-runtime.started
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) && lastOrdinal() == 0 {
-			time.Sleep(2 * time.Millisecond)
+		select {
+		case <-named:
+		case <-time.After(5 * time.Second):
 		}
 		runtime.signaled <- SIGTERM
 	}()
