@@ -1541,7 +1541,7 @@ func (s *Service) submitFrom(
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	sub, err := s.prepare(ctx, msg, origin)
 	if err != nil {
-		return nil, err
+		return nil, callerGaveUp(ctx, err)
 	}
 
 	// A keyed submission asks the claimer which run the key names before it
@@ -1549,10 +1549,16 @@ func (s *Service) submitFrom(
 	// the cluster, so concurrent requests converge on one run whether they
 	// reach one replica or several, and a failed start stays deduplicated to
 	// its recorded failed run because a claim is never released.
+	var resp *connect.Response[orkstackv1.SubmitRunResponse]
 	if sub.key != "" {
-		return s.submitKeyed(ctx, sub)
+		resp, err = s.submitKeyed(ctx, sub)
+	} else {
+		resp, err = s.submitUnkeyed(ctx, sub)
 	}
-	return s.submitUnkeyed(ctx, sub)
+	if err != nil {
+		return nil, callerGaveUp(ctx, err)
+	}
+	return resp, nil
 }
 
 // prepare turns a request into a routed submission, or refuses it.
@@ -2820,7 +2826,7 @@ func (s *Service) CancelRun(
 		Principal: boundOriginAssertion(req.Header().Get(AuditPrincipalHeader)),
 	}
 	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), request); err != nil {
-		return nil, connect.NewError(cancelErrorCode(err), err)
+		return nil, connect.NewError(cancelErrorCode(ctx, err), err)
 	}
 	return connect.NewResponse(&orkstackv1.CancelRunResponse{Run: run}), nil
 }
@@ -2830,26 +2836,44 @@ func (s *Service) CancelRun(
 // is worth asking again later, and a caller that gave up is told so. Anything
 // else — engine.ErrCancelNotWired, a mis-wired process, included — is the
 // internal error it always was.
-func cancelErrorCode(err error) connect.Code {
+func cancelErrorCode(ctx context.Context, err error) connect.Code {
+	return clusterErrorCode(ctx, err, connect.CodeInternal)
+}
+
+// clusterErrorCode is the code a call the cluster did not answer maps to.
+// Unavailable when the cluster could not be reached, or a deadline or
+// cancellation ended the call while the caller still waited (the SDK's own
+// per-call deadline on a silent frontend, an engine bound); ResourceExhausted
+// when it was rate-limiting. Only a caller whose own ctx ended is told
+// Canceled or DeadlineExceeded, read from ctx and never from the error, as
+// callerGaveUp does for a submit. Anything else is fallback. CancelRun and the
+// schedule RPCs share it (docs/DEPLOY.md, "Idempotency keys").
+func clusterErrorCode(ctx context.Context, err error, fallback connect.Code) connect.Code {
 	var (
 		unavailable *serviceerror.Unavailable
 		exhausted   *serviceerror.ResourceExhausted
 		canceled    *serviceerror.Canceled
 		deadline    *serviceerror.DeadlineExceeded
 	)
+	var code connect.Code
 	switch {
-	// The cluster's own spellings of the two, which unwrap to neither.
-	case errors.Is(err, context.Canceled), errors.As(err, &canceled):
-		return connect.CodeCanceled
-	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &deadline):
-		return connect.CodeDeadlineExceeded
-	case errors.As(err, &unavailable):
-		return connect.CodeUnavailable
 	case errors.As(err, &exhausted):
-		return connect.CodeResourceExhausted
+		code = connect.CodeResourceExhausted
+	case errors.As(err, &unavailable),
+		// The cluster's own spellings of the two, which unwrap to neither.
+		errors.Is(err, context.Canceled), errors.As(err, &canceled),
+		errors.Is(err, context.DeadlineExceeded), errors.As(err, &deadline):
+		code = connect.CodeUnavailable
 	default:
-		return connect.CodeInternal
+		return fallback
 	}
+	switch ctxErr := ctx.Err(); {
+	case errors.Is(ctxErr, context.DeadlineExceeded):
+		return connect.CodeDeadlineExceeded
+	case ctxErr != nil:
+		return connect.CodeCanceled
+	}
+	return code
 }
 
 // StreamEvents server-streams a run's events: everything after from_sequence,

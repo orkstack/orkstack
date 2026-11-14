@@ -20,3 +20,27 @@ func TestTriggerSubmitStatus_AKeyUsedElsewhereIsAConflict(t *testing.T) {
 		t.Fatalf("an internal error answered %d", status)
 	}
 }
+
+// A submit the cluster refused for its rate limit is, on the trigger's plain
+// HTTP route, the same 503 `unavailable` an unreachable cluster is: both are
+// worth sending again (docs/ORKFLOW_TRIGGERS.md).
+func TestTriggerSubmitStatus_ARateLimitedClusterIsUnavailable(t *testing.T) {
+	for _, code := range []connect.Code{connect.CodeUnavailable, connect.CodeResourceExhausted} {
+		status, name := triggerSubmitStatus(connect.NewError(code, errors.New("x")))
+		if status != http.StatusServiceUnavailable || name != connect.CodeUnavailable.String() {
+			t.Errorf("triggerSubmitStatus(%s) = %d %q, want 503 unavailable", code, status, name)
+		}
+	}
+}
+
+// A submit the caller gave up on is, on the trigger's plain HTTP route, the
+// same 503 `unavailable`: the engine finished on its own clock, and sending
+// again under the same key reads what it did (docs/ORKFLOW_TRIGGERS.md).
+func TestTriggerSubmitStatus_ACallerThatGaveUpIsUnavailable(t *testing.T) {
+	for _, code := range []connect.Code{connect.CodeCanceled, connect.CodeDeadlineExceeded} {
+		status, name := triggerSubmitStatus(connect.NewError(code, errors.New("x")))
+		if status != http.StatusServiceUnavailable || name != connect.CodeUnavailable.String() {
+			t.Errorf("triggerSubmitStatus(%s) = %d %q, want 503 unavailable", code, status, name)
+		}
+	}
+}

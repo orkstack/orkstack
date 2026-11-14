@@ -99,6 +99,10 @@ type DockerRuntime struct {
 	// Zero reads ORK_DOCKER_BIND_PROBE_TIMEOUT, then DefaultBindProbeTimeout.
 	BindProbeTimeout time.Duration
 
+	// children is every CLI process this runtime started and has not yet
+	// waited for, each in a process group of its own (procgroup.go).
+	children cliChildren
+
 	// mu guards attaches, described and spoken.
 	mu sync.Mutex
 	// attaches tracks, per container, the `docker start --attach` process
@@ -311,7 +315,7 @@ func (d *DockerRuntime) runWithin(
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = pipeDrainDelay
-	runErr := cmd.Run()
+	runErr := d.children.run(cmd)
 	overran = runErr != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
 	answer = cliAnswer{stdout: stdout.String(), stderr: stderr.String()}
 	switch {
@@ -752,14 +756,15 @@ func (d *DockerRuntime) Start(ctx context.Context, id ContainerID, stdout, stder
 	cmd := exec.Command(bin, "start", "--attach", string(id))
 	cmd.Stdout = stdout
 	cmd.Stderr = io.MultiWriter(stderr, diagnostics)
-	if err := cmd.Start(); err != nil {
+	wait, err := d.children.start(cmd)
+	if err != nil {
 		return fmt.Errorf("start container %s: %w", id, err)
 	}
 	// The attach process outlives Start deliberately: Start returns once the
 	// container is running, and Wait is what blocks on the exit. Registered
 	// before awaitLeftCreated runs so Wait can find it even if this container
 	// exits (and Wait is called) before Start itself returns.
-	attach := newDockerAttach(cmd)
+	attach := newDockerAttach(wait)
 	d.trackAttach(id, attach)
 
 	return d.awaitLeftCreated(ctx, id, attach, diagnostics)
@@ -776,10 +781,10 @@ type dockerAttach struct {
 	err  error
 }
 
-func newDockerAttach(cmd *exec.Cmd) *dockerAttach {
+func newDockerAttach(wait func() error) *dockerAttach {
 	a := &dockerAttach{done: make(chan struct{})}
 	go func() {
-		a.err = cmd.Wait()
+		a.err = wait()
 		close(a.done)
 	}()
 	return a
@@ -870,7 +875,7 @@ func (d *DockerRuntime) watchStops(ctx context.Context, bin string, id Container
 	watch.pipe = read
 	cmd := exec.Command(bin, d.grammar().eventArgs(string(id), since)...)
 	cmd.Stdout = write
-	err = cmd.Start()
+	wait, err := d.children.start(cmd)
 	_ = write.Close()
 	if err != nil {
 		_ = read.Close()
@@ -878,7 +883,7 @@ func (d *DockerRuntime) watchStops(ctx context.Context, bin string, id Container
 		return watch
 	}
 	watch.cmd = cmd
-	go func() { _ = cmd.Wait() }()
+	go func() { _ = wait() }()
 	go watch.read(read)
 	return watch
 }
@@ -1155,7 +1160,7 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 	cmd := exec.CommandContext(ctx, bin, "wait", string(id))
 	cmd.Stdout = &out
 	cmd.Stderr = said
-	if err := cmd.Run(); err != nil {
+	if err := d.children.run(cmd); err != nil {
 		return ExitStatus{}, fmt.Errorf("wait for container %s: %w: %s", id, err, strings.TrimSpace(said.String()))
 	}
 	code, err := strconv.Atoi(strings.TrimSpace(out.String()))
@@ -1975,3 +1980,9 @@ func memoryReadsAsUnlimited(raw string) bool {
 	bytes, err := quantity.ParseMemory(raw)
 	return err == nil && !quantity.ByteCount(bytes)
 }
+
+// KillChildren kills every CLI process this runtime started and has not yet
+// waited for, with its process group, and reports how many it signalled. It is
+// the Orker's last act on a third stop signal; the containers they drove are
+// left to the daemon, and the next boot's reap removes them.
+func (d *DockerRuntime) KillChildren() int { return d.children.killAll() }
