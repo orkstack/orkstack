@@ -919,3 +919,48 @@ func newHTTPTestServer(t *testing.T, svc *api.Service) *httptest.Server {
 	t.Cleanup(server.Close)
 	return server
 }
+
+// A schedule RPC the cluster could not answer says whether asking again can
+// help, exactly as CancelRun does: unavailable or rate-limited is worth
+// asking again, and so is a deadline or cancellation the cluster or the
+// engine hit while the caller still waits (a silent frontend); only a caller
+// whose own context ended is told canceled or deadline_exceeded. Anything
+// else is internal (docs/DEPLOY.md, "Idempotency keys").
+func TestListSchedules_AClusterFailureSaysWhetherAskingAgainCanHelp(t *testing.T) {
+	tests := []struct {
+		name   string
+		err    error
+		caller string // "", "canceled" or "deadline": how the caller's own context ended
+		want   connect.Code
+	}{
+		{"the cluster is unavailable", fmt.Errorf("list schedules: %w", serviceerror.NewUnavailable("frontend down")), "", connect.CodeUnavailable},
+		{"the cluster is rate-limiting", fmt.Errorf("list schedules: %w", serviceerror.NewResourceExhausted(0, "busy")), "", connect.CodeResourceExhausted},
+		{"the cluster's own deadline, the caller waiting", fmt.Errorf("list schedules: %w", serviceerror.NewDeadlineExceeded("timed out")), "", connect.CodeUnavailable},
+		{"the cluster's own cancellation, the caller waiting", fmt.Errorf("list schedules: %w", serviceerror.NewCanceled("canceled")), "", connect.CodeUnavailable},
+		{"an engine bound, the caller waiting", fmt.Errorf("list schedules: %w", context.DeadlineExceeded), "", connect.CodeUnavailable},
+		{"the caller gave up", fmt.Errorf("list schedules: %w", context.Canceled), "canceled", connect.CodeCanceled},
+		{"the caller's deadline", fmt.Errorf("list schedules: %w", serviceerror.NewDeadlineExceeded("timed out")), "deadline", connect.CodeDeadlineExceeded},
+		{"anything else", errors.New("boom"), "", connect.CodeInternal},
+		{"anything else, the caller gone", errors.New("boom"), "canceled", connect.CodeInternal},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newScheduleHarness(t)
+			h.schedules.listErr = tt.err
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			switch tt.caller {
+			case "canceled":
+				cancel()
+			case "deadline":
+				var stop context.CancelFunc
+				ctx, stop = context.WithDeadline(ctx, time.Now().Add(-time.Second))
+				defer stop()
+			}
+			_, err := h.svc.ListSchedules(ctx, connect.NewRequest(&orkstackv1.ListSchedulesRequest{}))
+			if connect.CodeOf(err) != tt.want {
+				t.Fatalf("ListSchedules = %v (%s), want %s", err, connect.CodeOf(err), tt.want)
+			}
+		})
+	}
+}
