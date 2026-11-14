@@ -573,8 +573,11 @@ check_shape() { # check_shape SHAPE
 	orkctl run get "$run" -j | jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-")"' | tee "$dir/pod-delete-tasks.txt"
 	# The stopping Orker hands both back and reports them itself: graceful's
 	# exit 0 after SIGTERM is never committed (docs/OCI_ACTIVITY_CONTRACT.md §6.3).
+	# graceful is reported first, 5 s before stubborn's SIGKILL; with no retry:
+	# its failure fails the run, which cancels stubborn unless stubborn's own
+	# report landed first. Either way stubborn ends explicitly.
 	expect "$dir/pod-delete-tasks.txt" '^graceful FAILED ORKER_STOPPED$' "$shape: a task with no retry: ends explicitly when its Orker stops"
-	expect "$dir/pod-delete-tasks.txt" '^stubborn FAILED ORKER_STOPPED$' "$shape: a task that ignores SIGTERM is handed back too"
+	expect "$dir/pod-delete-tasks.txt" '^stubborn (FAILED ORKER_STOPPED|CANCELED TASK_CANCELED)$' "$shape: a task that ignores SIGTERM ends explicitly too"
 	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the replacement pod never became ready"
 	log "ok: $shape: the Deployment replaced the pod"
 	remove_orkers
