@@ -571,7 +571,10 @@ check_shape() { # check_shape SHAPE
 	log "ok: $shape: the engine outlived the Orker and delivered every signal"
 	wait_terminal "$run"
 	orkctl run get "$run" -j | jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-")"' | tee "$dir/pod-delete-tasks.txt"
-	expect "$dir/pod-delete-tasks.txt" '^graceful FAILED ORKER_HEARTBEAT_TIMEOUT$' "$shape: a task with no retry: ends explicitly when its Orker stops"
+	# The stopping Orker hands both back and reports them itself: graceful's
+	# exit 0 after SIGTERM is never committed (docs/OCI_ACTIVITY_CONTRACT.md §6.3).
+	expect "$dir/pod-delete-tasks.txt" '^graceful FAILED ORKER_STOPPED$' "$shape: a task with no retry: ends explicitly when its Orker stops"
+	expect "$dir/pod-delete-tasks.txt" '^stubborn FAILED ORKER_STOPPED$' "$shape: a task that ignores SIGTERM is handed back too"
 	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the replacement pod never became ready"
 	log "ok: $shape: the Deployment replaced the pod"
 	remove_orkers
