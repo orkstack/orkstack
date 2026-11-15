@@ -1021,7 +1021,7 @@ type runProjection struct {
 	// cleared when an execution starts or continues as new. applyCanceledBy
 	// decides whether the run shows it. cancelSeen records that the
 	// execution's first request was read, so no later one replaces it.
-	canceledBy string
+	canceledBy CanceledBy
 	cancelSeen bool
 }
 
@@ -1238,7 +1238,7 @@ func (r *TemporalRunReader) scanExecution(
 			// A request belongs to the execution that recorded it, and a
 			// restarted read may land on a successor without passing the
 			// switch that clears it.
-			projection.canceledBy, projection.cancelSeen = "", false
+			projection.canceledBy, projection.cancelSeen = CanceledBy{}, false
 			carry, err := r.decodeCarry(attrs)
 			if err != nil {
 				return "", fmt.Errorf("engine: run %s: %w", runID, err)
@@ -1278,7 +1278,7 @@ func (r *TemporalRunReader) scanExecution(
 			// must still read the successor to be complete. A run does not
 			// switch while its cancellation is requested (continueAsNew), so
 			// no request of this execution is the successor's.
-			projection.canceledBy, projection.cancelSeen = "", false
+			projection.canceledBy, projection.cancelSeen = CanceledBy{}, false
 			return attrs.GetNewExecutionRunId(), nil
 		}
 		if r.isPublishEvent(historyEvent) {

@@ -23,10 +23,11 @@ func TestCancelRun_RecordsThePrincipalOfItsMode(t *testing.T) {
 		principal *authn.Principal
 		header    string
 		want      string
+		verified  bool
 	}{
 		{name: "asserted names the header", mode: authn.ModeAsserted, principal: verified, header: "dana@acme", want: "dana@acme"},
-		{name: "observe names the verified principal", mode: authn.ModeObserve, principal: verified, header: "mallory", want: "user:corp:ada"},
-		{name: "enforce names the verified principal", mode: authn.ModeEnforce, principal: verified, header: "mallory", want: "user:corp:ada"},
+		{name: "observe names the verified principal", mode: authn.ModeObserve, principal: verified, header: "mallory", want: "user:corp:ada", verified: true},
+		{name: "enforce names the verified principal", mode: authn.ModeEnforce, principal: verified, header: "mallory", want: "user:corp:ada", verified: true},
 		{name: "observe without a credential names nobody", mode: authn.ModeObserve, header: "mallory"},
 	}
 	for _, tt := range tests {
@@ -53,6 +54,9 @@ func TestCancelRun_RecordsThePrincipalOfItsMode(t *testing.T) {
 			defer f.starter.mu.Unlock()
 			if len(f.starter.cancelRequests) != 1 {
 				t.Fatalf("cancel requests = %v, want one", f.starter.cancelRequests)
+			}
+			if got := f.starter.cancelRequests[0].Verified; got != tt.verified {
+				t.Fatalf("the cancellation is verified %t, want %t", got, tt.verified)
 			}
 			if got := f.starter.cancelRequests[0].Principal; got != tt.want {
 				t.Fatalf("the cancellation names %q, want %q", got, tt.want)

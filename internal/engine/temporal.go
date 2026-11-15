@@ -283,7 +283,7 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 	if s.clusterNamespace == "" {
 		return fmt.Errorf("cancel run %s: %w", runID, ErrCancelNotWired)
 	}
-	reason, err := encodeCancelRequest(request.Principal)
+	reason, err := encodeCancelRequest(CanceledBy{Principal: request.Principal, Verified: request.Verified})
 	if err != nil {
 		return fmt.Errorf("cancel run %s: %w", runID, err)
 	}

@@ -234,6 +234,11 @@ func newOrkerUncordonCommand(g *globalFlags) *cobra.Command {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
 			row := resp.Msg.GetOrker()
+			if row.GetStopping() != nil {
+				fmt.Fprintf(cmd.OutOrStdout(), "cleared the operator's cordon on %s; it stays cordoned because it is stopping, and takes no new work before it exits.\n",
+					row.GetOrkerId())
+				return nil
+			}
 			if row.GetStoreOutage() != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "cleared the operator's cordon on %s; it stays cordoned while %s, and resumes by itself once object storage answers.\n",
 					row.GetOrkerId(), row.GetStoreOutage().GetReason())
@@ -512,11 +517,14 @@ func isAre(n int32) string {
 	return "are"
 }
 
-// operatorCordoned says an operator's cordon holds. An Orker of a release with
-// no store check only ever reports that cause, so a row with no store_outage
-// reads exactly as it always has.
+// operatorCordoned says an operator's cordon holds: it always carries a reason.
+// An Orker of a release with no store check and no stop grace only ever
+// reports that cause, so a row with neither reads exactly as it always has.
 func operatorCordoned(row *orkstackv1.Orker) bool {
-	return row.GetCordoned() && (row.GetStoreOutage() == nil || row.GetCordonReason() != "")
+	if !row.GetCordoned() {
+		return false
+	}
+	return row.GetCordonReason() != "" || row.GetStoreOutage() == nil && row.GetStopping() == nil
 }
 
 // orkerState is the STATE column.
@@ -524,6 +532,10 @@ func orkerState(row *orkstackv1.Orker) string {
 	switch {
 	case row.GetUnavailableReason() != "":
 		return "unknown (unreachable)"
+	case row.GetStopping() != nil && operatorCordoned(row):
+		return "stopping (cordoned by an operator)"
+	case row.GetStopping() != nil:
+		return "stopping"
 	case row.GetStoreOutage() != nil && operatorCordoned(row):
 		return "cordoned (operator; object storage unreachable)"
 	case row.GetStoreOutage() != nil:
@@ -598,7 +610,7 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 	}
 	table := newTable(out)
 	fmt.Fprintln(table, "ORKER\tPOOL\tBUILD\tSTATE\tTASKS\tPINS\tCAPACITY\tRESERVED\tLAST SEEN")
-	var cordoned, outages, unreachable []*orkstackv1.Orker
+	var cordoned, outages, stopping, unreachable []*orkstackv1.Orker
 	for _, row := range rows {
 		if row.GetUnavailableReason() != "" {
 			unreachable = append(unreachable, row)
@@ -608,6 +620,9 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 			}
 			if row.GetStoreOutage() != nil {
 				outages = append(outages, row)
+			}
+			if row.GetStopping() != nil {
+				stopping = append(stopping, row)
 			}
 		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
@@ -632,6 +647,14 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 		for _, row := range outages {
 			fmt.Fprintf(out, "  %s: %s, since %s\n", row.GetOrkerId(), row.GetStoreOutage().GetReason(),
 				formatTime(row.GetStoreOutage().GetSince()))
+		}
+	}
+	if len(stopping) > 0 {
+		fmt.Fprintf(out, "\n%s stopping: %s no new work and %s what %s already runs, then %s:\n",
+			orkerCount(len(stopping)), takeTakes(len(stopping)), finishFinishes(len(stopping)),
+			itThey(len(stopping)), exitExits(len(stopping)))
+		for _, row := range stopping {
+			fmt.Fprintf(out, "  %s: %s%s\n", row.GetOrkerId(), orkerTasks(row), stoppingTimes(row.GetStopping()))
 		}
 	}
 	if len(unreachable) > 0 {
@@ -694,6 +717,15 @@ func renderOrker(out io.Writer, row *orkstackv1.Orker) error {
 		fmt.Fprintf(table, "outage since\t%s\n", formatTime(outage.GetSince()))
 		fmt.Fprintf(table, "resumes\tby itself once object storage answers\n")
 	}
+	if stop := row.GetStopping(); stop != nil {
+		fmt.Fprintf(table, "stopping\ttakes no new work; finishes what it runs, then exits\n")
+		if stop.GetSince() != nil {
+			fmt.Fprintf(table, "stopping since\t%s\n", formatTime(stop.GetSince()))
+		}
+		if stop.GetGraceEndsAt() != nil {
+			fmt.Fprintf(table, "grace ends\t%s\n", formatTime(stop.GetGraceEndsAt()))
+		}
+	}
 	fmt.Fprintf(table, "tasks\t%s\n", orkerTasks(row))
 	fmt.Fprintf(table, "pins\t%s\n", orkerPins(row))
 	fmt.Fprintf(table, "last seen\t%s\n", formatTime(row.GetLastSeen()))
@@ -709,4 +741,30 @@ func renderOrker(out io.Writer, row *orkstackv1.Orker) error {
 			name, pin.GetRunId(), formatTime(pin.GetSince()), formatTime(pin.GetExpiresAt()))
 	}
 	return nil
+}
+
+// stoppingTimes is a stopping row's ", since T, grace ends T" in the list's
+// footer; empty for an Orker of a release that reports neither.
+func stoppingTimes(stop *orkstackv1.OrkerStopping) string {
+	text := ""
+	if stop.GetSince() != nil {
+		text += ", since " + formatTime(stop.GetSince())
+	}
+	if stop.GetGraceEndsAt() != nil {
+		text += ", grace ends " + formatTime(stop.GetGraceEndsAt())
+	}
+	return text
+}
+
+// The verb forms of the stopping footer, for one Orker or several.
+func takeTakes(n int) string      { return pick(n, "it takes", "they take") }
+func finishFinishes(n int) string { return pick(n, "finishes", "finish") }
+func itThey(n int) string         { return pick(n, "it", "they") }
+func exitExits(n int) string      { return pick(n, "exits", "exit") }
+
+func pick(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }

@@ -660,12 +660,13 @@ message Run {
   // archived run, and therefore in every webhook payload's embedded run.
   RunOrigin origin = 15;
 
-  // canceled_by is what the deployment's gateway asserted in the
-  // Ork-Principal request header on the CancelRun request that canceled this
-  // run — recorded verbatim, bounded to 256 bytes by truncation with invalid
-  // UTF-8 replaced, as RunOrigin.principal is, and NEVER authenticated: the
-  // same assertion as RunOrigin.principal and AuditRecord.principal. Every
-  // rendering says it was asserted.
+  // canceled_by is who asked for the CancelRun request that canceled this
+  // run. With auth.mode observe or enforce it is the principal OrkStack
+  // authenticated, and canceled_by_verified is set. With asserted it is what
+  // the deployment's gateway asserted in the Ork-Principal request header —
+  // recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8
+  // replaced, as RunOrigin.principal is, and never authenticated. Every
+  // rendering says which (canceled_by_verified).
   //
   // It is set only on a run whose status is CANCELED with error code
   // RUN_CANCELED, when a CancelRun carrying the header was accepted before
@@ -706,7 +707,9 @@ message Run {
   // run_context is set from E86; unset until it lands (v0.4.0 proto batch).
   RunContextState run_context = 23;
 
-  // canceled_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+  // canceled_by_verified says canceled_by is a principal OrkStack
+  // authenticated (auth.mode observe or enforce). Unset, canceled_by is what
+  // the deployment's gateway asserted in Ork-Principal, unauthenticated.
   bool canceled_by_verified = 19;
 
   // queued is set from E88; unset until it lands (v0.4.0 proto batch).
@@ -758,9 +761,13 @@ message RunCancelRequest {
   // records nobody: an operator's own reason text, a parent run's request, a
   // cancellation an earlier release requested with no reason at all.
   int32 format = 1;
-  // principal is the Ork-Principal assertion on the CancelRun request,
-  // bounded as Run.canceled_by is. Empty when the request carried none.
+  // principal is who asked: the verified principal's id when the engine
+  // authenticated the CancelRun request, otherwise its Ork-Principal
+  // assertion, bounded as Run.canceled_by is. Empty when there was none.
   string principal = 2;
+  // principal_verified says principal was authenticated, not asserted
+  // (Run.canceled_by_verified).
+  bool principal_verified = 3;
 }
 
 // RunOriginKind is WHAT started a run. It is decided by the process that

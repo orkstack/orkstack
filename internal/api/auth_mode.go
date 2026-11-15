@@ -46,8 +46,14 @@ type ModeGuard struct {
 	Host string
 	// Missing counts a record this process saw and then found gone.
 	Missing func(ctx context.Context)
+	// PeerClaimTTL reads the longest engine.idempotency_ttl the engines on
+	// the presence channel advertise (engine.LargestClaimTTL). Lowering to
+	// asserted waits the longer of it and ClaimTTL, because a claim made by
+	// any engine lives that long. Nil reads none: only ClaimTTL counts.
+	PeerClaimTTL func(ctx context.Context) (time.Duration, error)
 
 	mu      sync.Mutex
+	peerTTL time.Duration // the longest PeerClaimTTL this process has read
 	seen    bool
 	record  artifacts.ModeRecord
 	etag    string
@@ -221,16 +227,19 @@ func (g *ModeGuard) setProblem(p string) {
 	g.mu.Unlock()
 }
 
-// Watch runs Check every ModeRecordWatchInterval until ctx ends.
+// Watch runs Check and RefreshPeers every ModeRecordWatchInterval until ctx
+// ends.
 func (g *ModeGuard) Watch(ctx context.Context) {
 	t := time.NewTicker(ModeRecordWatchInterval)
 	defer t.Stop()
+	g.RefreshPeers(ctx)
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 			g.Check(ctx)
+			g.RefreshPeers(ctx)
 		}
 	}
 }
@@ -254,28 +263,56 @@ func (g *ModeGuard) Status() ModeStatus {
 }
 
 func (g *ModeGuard) assertedSafeLocked() time.Time {
+	life := g.claimLife(g.peerTTL)
 	switch g.record.Mode {
 	case artifacts.AuthModeEnforce:
-		return g.now().Add(g.claimLife())
+		return g.now().Add(life)
 	case "", artifacts.AuthModeAsserted:
 		return time.Time{}
 	}
 	if g.record.LeftEnforceAt.IsZero() {
 		return time.Time{}
 	}
-	safe := g.record.LeftEnforceAt.Add(g.claimLife())
+	safe := g.record.LeftEnforceAt.Add(life)
 	if !safe.After(g.now()) {
 		return time.Time{}
 	}
 	return safe
 }
 
-func (g *ModeGuard) claimLife() time.Duration {
+// longestClaim is the longer of this engine's claim life and peer, the
+// longest a peer advertises.
+func (g *ModeGuard) longestClaim(peer time.Duration) time.Duration {
 	ttl := g.ClaimTTL
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	return ttl + claimGrace
+	return max(ttl, peer)
+}
+
+// claimLife is one claim's life and its grace.
+func (g *ModeGuard) claimLife(peer time.Duration) time.Duration {
+	return g.longestClaim(peer) + claimGrace
+}
+
+// RefreshPeers reads PeerClaimTTL again for the Access page's "asserted
+// safe" (Status). The longest life this process has read is kept, so an
+// engine that has left, whose claims outlive its last poll, still counts
+// while this process runs. A read that fails is logged and changes nothing;
+// Lower reads it afresh in any case.
+func (g *ModeGuard) RefreshPeers(ctx context.Context) {
+	if g.PeerClaimTTL == nil {
+		return
+	}
+	ttl, err := g.PeerClaimTTL(ctx)
+	if err != nil {
+		g.logger().Warn("mode record: the engines could not be listed; asserted's wait keeps the claim life last read",
+			"error", err)
+		return
+	}
+	g.mu.Lock()
+	g.peerTTL = max(g.peerTTL, ttl)
+	g.mu.Unlock()
 }
 
 // LowerRefusal is a lowering the record's rules refuse; Code says how.
@@ -320,12 +357,22 @@ func (g *ModeGuard) Lower(ctx context.Context, target, etag string, acceptDuplic
 		next.LeftEnforceAt = now
 	}
 	if target == artifacts.AuthModeAsserted && !acceptDuplicates {
-		left := next.LeftEnforceAt
-		if !left.IsZero() {
-			if safe := left.Add(g.claimLife()); safe.After(now) {
+		if left := next.LeftEnforceAt; !left.IsZero() {
+			var peer time.Duration
+			if g.PeerClaimTTL != nil {
+				if peer, err = g.PeerClaimTTL(ctx); err != nil {
+					return "", &LowerRefusal{Precondition: true, Err: fmt.Errorf(
+						"the engines could not be listed, so how long their idempotency keys live is not known and asserted is not written; try again (accept_duplicate_retries skips the wait): %w", err)}
+				}
+				g.mu.Lock()
+				g.peerTTL = max(g.peerTTL, peer)
+				peer = g.peerTTL
+				g.mu.Unlock()
+			}
+			if safe := left.Add(g.claimLife(peer)); safe.After(now) {
 				return "", &LowerRefusal{Precondition: true, Err: fmt.Errorf(
-					"lower to observe first; asserted is safe from %s, one idempotency key's life after the deployment last left enforce (accept_duplicate_retries skips the wait)",
-					safe.Format(time.RFC3339))}
+					"lower to observe first; asserted is safe from %s, one idempotency key's life (the longest engine.idempotency_ttl the engines advertise, %s, and five minutes; this engine's log names the engine that advertises it) after the deployment last left enforce (accept_duplicate_retries skips the wait)",
+					safe.Format(time.RFC3339), g.longestClaim(peer))}
 			}
 		}
 	}

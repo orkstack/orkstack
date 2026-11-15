@@ -294,7 +294,7 @@ The mark is **Strata**: three bars joined by round turns inside a ring, a dot wh
 A key cell (surface-2, ink-3, semibold) and a mono value, 6 px radius: the one way a run id, version or digest is set. A run id has full and short forms and a copy button; a version never copies and looks the same on every page. On the run page the version plate names the run's version and links to it on the Orkflow's page. `.plate-sm` in rows.
 
 ### Facts strip `.fstrip`
-A `<dl>` of 12 px labels over 14 px tabular values, separated by vertical rules; on the run, failed run, Runs and editor headers. Principals always carry the **asserted tag** (`.atag`, `Asserted`/`Principal`): "asserted by your gateway, not verified by OrkStack".
+A `<dl>` of 12 px labels over 14 px tabular values, separated by vertical rules; on the run, failed run, Runs and editor headers. Principals always carry their tag (`.atag`, `Principal`, `principalMark`): the outlined **asserted** tag, "asserted by your gateway, not verified by OrkStack", or, only when the record says OrkStack verified it, the navy-tint **verified** tag, "verified by OrkStack", naming the method when known.
 
 ### Progress ring `.pring`
 20 px (16 px in rows) with the percentage beside it; counts in the tooltip and sr text. Basis (`lib/progress.ts`): ended tasks plus fan-out items over all of them, Skipped and Canceled counting as ended. Its stroke is the status it shows, from the status tokens: `--run` while running, `--ok-mark` when succeeded, `--fail-mark` when failed, `--ink-3` when canceled, and `--meter` before there is one. The Runs list shares the component.

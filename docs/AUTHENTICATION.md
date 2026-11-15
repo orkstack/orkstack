@@ -86,16 +86,21 @@ start if the engine does not accept it, or if the settings are incomplete;
 with no `orker.engine.url` it asks nothing and supports no identity. The
 files that make the credential are the Orker's own: no task may name them
 as a secret source. Bind the Orker with `auth.orkers` or a binding to the
-`orker` role at its pool (docs/ACCESS.md). The check that `orker.id` equals
-the id its credential names lands with the engine answering that id.
+`orker` role at its pool (docs/ACCESS.md). The engine answers the Orker id
+the credential names (`GetSigninResponse.orker_id`: its issuer's
+`orker_id_claim`, a service account's `orker_id`, a certificate's SAN), and
+an Orker whose `orker.id` differs refuses to start, naming both. A credential
+that names no Orker, shared by a pool bound with `orker_ids: any`, lets the
+Orker keep its own id.
 
 ## Who am I
 
 `orkctl whoami` (`AuthService.GetSignin`) answers any authenticated caller,
 with no permission: the principal the engine verified, how (`jwt`,
 `break-glass`, …), its issuer and groups, each binding that matched it with
-only the subject that matched, and its permissions by scope, against the
-replica's copy of the access document. An engine in `asserted` mode verifies
+only the subject that matched, its permissions by scope, against the
+replica's copy of the access document, and the Orker id its credential
+names, when it names one. An engine in `asserted` mode verifies
 nobody, so it serves no `whoami`. With `ORK_PRINCIPAL` set against an engine
 in `observe` or `enforce`, `orkctl` warns once that the variable is not used.
 
@@ -148,8 +153,11 @@ by a caller with `access.write`, rewrites the record and writes
 `auth.mode.lowered`; then restart the engines in the lower mode. There is no
 setting to leave behind. `enforce` to `observe` is never refused. To
 `asserted` is refused until the deployment has been out of `enforce` for one
-idempotency key's life (`engine.idempotency_ttl` and five minutes):
-`orkctl admin auth status` shows when. `--accept-duplicate-retries` skips
+idempotency key's life: the longest `engine.idempotency_ttl` any engine
+advertises on the engines' presence channel (below), or has advertised
+since the answering engine started, and five minutes.
+`orkctl admin auth status` shows when. A lowering whose engine cannot list
+the engines is refused rather than guessed. `--accept-duplicate-retries` skips
 the wait, accepting that a retried submission may start a second run, and
 the audit record says it was given. A lowering is refused by an engine that
 runs below the record's mode, and an engine that finds the record lowered
@@ -172,12 +180,39 @@ the store has it) for it.
 
 ## Every engine enforces
 
-Each enforcing engine advertises `authn-enforce` beside its build, and once
-a minute asks the cluster for a fresh engine that does not. One that it
-sees is logged at error level and shown by `orkctl admin auth status`. It
-refuses nothing: a poller stays listed for minutes after its process is
-gone, so a refusal would turn every deploy into an outage. The guard against
-an engine that does not enforce is the mode record.
+Every `ork` process, whatever it serves, polls one more Temporal task queue
+that nothing dispatches to, the engines' presence channel `ork-engines`, and
+says what it is in the identity it polls with, after its capabilities:
+`mode=`, `claim-ttl=` (its `engine.idempotency_ttl`), `deployment=`,
+`build=` and, when it authenticates, `admins=` and `orkers=`, the first 16
+hex digits of the SHA-256 of its `auth.admins` and `auth.orkers` (entries
+sorted, so the order they are written in does not matter). For example
+`48213@engine-2@ ork-caps=…,authn-enforce,mode=enforce,claim-ttl=24h0m0s,deployment=orkstack`.
+
+Once a minute each enforcing engine reads that channel. An engine whose mode
+is below `enforce` is logged at error level and shown by
+`orkctl admin auth status` (`not enforcing:`); so is an engine polling the
+workflow channel without advertising `authn-enforce`, which is how an engine
+of an earlier release, polling no presence channel, is still seen. An
+authenticating engine whose `auth.admins` or `auth.orkers` differs from the
+reading engine's is logged at error level and shown (`differs:`): set the
+same lists on every replica. `fleet checked:` says when the cluster was last
+read; a check that cannot read it keeps its last report, and that time stays
+where it was. Each engine says these things of itself: nothing authenticates
+a poller's identity, so the report is advice for an operator, never a
+decision. It refuses nothing: a poller stays listed for minutes after its
+process is gone, so a refusal would turn every deploy into an outage. The
+guard against an engine that does not enforce is the mode record.
+
+A value the identity cannot carry (over 100 bytes, or holding a space, a
+comma, `=` or anything but printable ASCII) is left unsaid and logged at
+boot; a claim life over ten years is said as ten years. Anyone who can read
+the cluster's pollers can test a guessed `auth.admins` or `auth.orkers` list
+against its digest, which is unsalted: a digest says whether two lists are
+equal, never who is on one, but a short list of guessable ids can be
+confirmed. A poller that advertises a longer claim life than an engine's own
+holds the lowering to `asserted` off for that long; the engine logs it at
+warn level, naming it.
 
 ## The admin listener
 

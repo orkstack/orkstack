@@ -127,8 +127,10 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 			s := newTimingStack(ctx, t, 1)
 			defer s.writeTranscript(variant.file)
 			firstID := uniqueName("orker-sigterm")
+			// No grace: what is held here is what the Orker owes the tasks it
+			// hands back at the grace's end.
 			orker := startOrkerWith(ctx, t, s.orkerPath, s.address, s.namespace, s.queue,
-				"ORK_ORKER_ID="+firstID, "ORK_ORKER_HEARTBEAT_INTERVAL=1s")
+				"ORK_ORKER_ID="+firstID, "ORK_ORKER_HEARTBEAT_INTERVAL=1s", "ORK_ORKER_STOP_GRACE=0s")
 			awaitActivityPoller(ctx, t, s.temporal, s.queue)
 			name := uniqueName("orker-sigterm")
 			s.apply(stoppableOrkflow(name, variant.retry))
@@ -263,5 +265,167 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 			s.mustCLI(0, "run", "attempts", runID)
 			t.Logf("(%s) attempt 2 of both tasks SUCCEEDED on %s", variant.name, secondID)
 		})
+	}
+}
+
+// finishingOrkflow is one task that runs for a while and succeeds, once.
+func finishingOrkflow(name string, seconds int) string {
+	return fmt.Sprintf(`apiVersion: orkstack/v1
+kind: Orkflow
+name: %s
+version: "0.1.0"
+description: one task a stopping Orker lets finish.
+tasks:
+  - id: work
+    uses: shell
+    network: none
+    timeout_seconds: 300
+    retry:
+      maximum_attempts: 1
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        echo "work: started"
+        sleep %d
+        echo "work: done"
+`, name, seconds)
+}
+
+// orkerRow is one `orker list --json` row, as much of it as a stop shows.
+type orkerRow struct {
+	OrkerID      string    `json:"orkerId"`
+	Cordoned     bool      `json:"cordoned"`
+	CordonReason string    `json:"cordonReason"`
+	Stopping     *struct{} `json:"stopping"`
+	RunningTasks int       `json:"runningTasks"`
+}
+
+func (s *timingStack) orkerRows() map[string]orkerRow {
+	s.t.Helper()
+	var doc struct {
+		Orkers []orkerRow `json:"orkers"`
+	}
+	if err := json.Unmarshal([]byte(s.mustCLI(0, "--json", "orker", "list")), &doc); err != nil {
+		s.t.Fatalf("orker list --json: %v", err)
+	}
+	rows := map[string]orkerRow{}
+	for _, row := range doc.Orkers {
+		rows[row.OrkerID] = row
+	}
+	return rows
+}
+
+// TestIntegration_AStoppingOrkerFinishesItsTaskWithinTheGrace: SIGTERMed with
+// a grace, an Orker takes no new task, lets the one it runs finish in its one
+// attempt, and exits as soon as nothing is in flight, long before the grace
+// ends. Positive control: in the same window a second Orker of the pool takes a
+// run submitted while the first was stopping, so the stopping one taking
+// nothing is its own decision, not an idle pool.
+func TestIntegration_AStoppingOrkerFinishesItsTaskWithinTheGrace(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
+	defer cancel()
+	s := newTimingStack(ctx, t, 1)
+	defer s.writeTranscript("orker-stop-grace.txt")
+
+	firstID := uniqueName("orker-grace")
+	first := startOrkerWith(ctx, t, s.orkerPath, s.address, s.namespace, s.queue,
+		"ORK_ORKER_ID="+firstID, "ORK_ORKER_HEARTBEAT_INTERVAL=1s", "ORK_ORKER_STOP_GRACE=10m")
+	awaitActivityPoller(ctx, t, s.temporal, s.queue)
+	name := uniqueName("orker-grace")
+	s.apply(finishingOrkflow(name, 15))
+	runID := s.submit(name)
+	t.Cleanup(func() { removeRunContainers(t, runID) })
+	deadline := time.Now().Add(2 * time.Minute)
+	for {
+		out, _, _ := s.cli(0, "run", "logs", runID)
+		if strings.Contains(out, "work: started") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the task never started within 2m; logs:\n%s", out)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	exited := make(chan error, 1)
+	go func() { exited <- first.Wait() }()
+	must.OKf(t, first.Process.Signal(syscall.SIGTERM), "SIGTERM the orker")
+	stoppedAt := time.Now()
+
+	// It reads stopping, not an operator's cordon, while its task runs.
+	deadline = time.Now().Add(30 * time.Second)
+	for {
+		row := s.orkerRows()[firstID]
+		if row.Stopping != nil {
+			if !row.Cordoned || row.CordonReason != "" || row.RunningTasks != 1 {
+				t.Fatalf("the stopping orker reads %+v, want cordoned by its stop alone with its task running", row)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the orker never read stopping within 30s of SIGTERM: %+v", row)
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+
+	// The positive control: a second Orker takes new runs submitted now. A
+	// poll the stopping Orker still had open at the signal may hand it one of
+	// the first two, which it runs in flight in one attempt, as any cordon
+	// does (docs/DEPLOY.md, "Removing an Orker safely"); after those, every
+	// run lands on the second Orker.
+	secondID := uniqueName("orker-grace-2")
+	startOrkerWith(ctx, t, s.orkerPath, s.address, s.namespace, s.queue,
+		"ORK_ORKER_ID="+secondID, "ORK_ORKER_HEARTBEAT_INTERVAL=1s", "ORK_ORKER_STOP_GRACE=0s")
+	controlName := uniqueName("orker-grace-control")
+	s.apply(finishingOrkflow(controlName, 1))
+	onStopping, onSecond := 0, 0
+	for i := 1; i <= 6 && onSecond == 0; i++ {
+		controlID := s.submit(controlName)
+		t.Cleanup(func() { removeRunContainers(t, controlID) })
+		if final := awaitTerminalOnB(ctx, t, s.replicas[0], controlID); final.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+			t.Fatalf("control run %d ended %s, want SUCCEEDED", i, final.GetStatus())
+		}
+		attempts := s.stoppedAttempts(controlID)
+		if len(attempts) != 1 || attempts[0].Outcome != "SUCCEEDED" {
+			t.Fatalf("control run %d's attempts = %+v, want one, SUCCEEDED: a delivery to a stopping orker spends no extra attempt", i, attempts)
+		}
+		switch attempts[0].OrkerID {
+		case secondID:
+			onSecond++
+		case firstID:
+			onStopping++
+			if i > 2 {
+				t.Fatalf("control run %d ran on the stopping orker; only the first two, from polls open at the signal, may", i)
+			}
+		}
+		t.Logf("control run %d %s ran on %s", i, controlID, attempts[0].OrkerID)
+	}
+	if onSecond == 0 {
+		t.Fatalf("no control run landed on %s; the second orker took no work", secondID)
+	}
+	t.Logf("EVIDENCE stopping intake: %d control runs ran in flight on the stopping orker, then the second orker took new work", onStopping)
+
+	select {
+	case err := <-exited:
+		if err != nil {
+			t.Fatalf("the orker exited with %v, want status 0", err)
+		}
+	case <-time.After(3 * time.Minute):
+		_ = first.Process.Kill()
+		t.Fatal("the orker did not exit within 3m of SIGTERM, though its one task ended")
+	}
+	took := time.Since(stoppedAt)
+	t.Logf("the orker exited %s after SIGTERM, its grace 10m", took.Round(time.Millisecond))
+
+	if final := awaitTerminalOnB(ctx, t, s.replicas[0], runID); final.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("the run ended %s, want SUCCEEDED on the stopping orker", final.GetStatus())
+	}
+	attempts := s.stoppedAttempts(runID)
+	if len(attempts) != 1 || attempts[0].Outcome != "SUCCEEDED" || attempts[0].OrkerID != firstID {
+		t.Fatalf("attempts = %+v, want one, SUCCEEDED on %s", attempts, firstID)
+	}
+	if logs := s.mustCLI(0, "run", "logs", runID); !strings.Contains(logs, "work: done") {
+		t.Fatalf("the task's log lacks its last line:\n%s", logs)
 	}
 }

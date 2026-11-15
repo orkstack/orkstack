@@ -83,6 +83,10 @@ message GetSigninResponse {
   // access_revision is the access document's revision the answer was
   // computed against.
   int64 access_revision = 11;
+  // orker_id is the one Orker the caller's credential names (its issuer's
+  // orker_id_claim, or a service account's or certificate's Orker); empty
+  // when it names none. An Orker refuses to boot unless it is its own id.
+  string orker_id = 12;
 }
 
 message RefreshSigninRequest {}

@@ -16,7 +16,7 @@ import { FilterOperator, equalityOf, filterFlags, type FieldFilter } from './lis
 
 /** The caption every rendering carries, empty page included (spec: Attribution). */
 export const AUDIT_CAPTION =
-	"principal is the identity the deployment's gateway asserted in Ork-Principal; OrkStack records it and does not authenticate it.";
+	"principal is marked verified when OrkStack verified it; otherwise it is the identity the deployment's gateway asserted in Ork-Principal, which OrkStack records and does not authenticate it.";
 
 /** An empty principal is an honest gap, never a blank that could pass for a name. */
 export const UNATTRIBUTED = 'unattributed';

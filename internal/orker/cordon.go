@@ -43,17 +43,29 @@ type CordonCause struct {
 	Since  time.Time
 }
 
+// StoppingCause is the cordon an Orker sets itself on its first stop signal:
+// since when, and when its stop grace ends.
+type StoppingCause struct {
+	Since       time.Time
+	GraceEndsAt time.Time
+}
+
+// stoppingReason is how a refusal names the stopping cause.
+const stoppingReason = "the orker is stopping"
+
 // Cordon is one Orker's process-local cordon. It is the only place the flag
 // exists: not on disk, not in the bucket, not in the engine.
 //
-// Two causes hold it independently: an operator's (Set, Clear) and a store
+// Three causes hold it independently: an operator's (Set, Clear), a store
 // outage the Orker found itself (SetStoreOutage, ClearStoreOutage,
-// store_watch.go). The Orker is cordoned while either holds, and neither
-// cause's clearing touches the other.
+// store_watch.go), and the Orker's own stop (SetStopping), which only the
+// process's exit ends. The Orker is cordoned while any holds, and no cause's
+// clearing touches another.
 type Cordon struct {
 	mu       sync.Mutex
 	operator *CordonCause
 	outage   *CordonCause
+	stopping *StoppingCause
 	// changed is closed and replaced whenever the last cause clears, so a
 	// blocked slot reservation wakes without polling.
 	changed chan struct{}
@@ -104,10 +116,36 @@ func (c *Cordon) ClearStoreOutage() {
 	c.wakeIfClear()
 }
 
+// SetStopping holds the cordon for the Orker's own stop, from since until the
+// process exits; graceEndsAt is when its stop grace ends. Only the first call
+// counts: the stop has one first signal.
+func (c *Cordon) SetStopping(since, graceEndsAt time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopping == nil {
+		c.stopping = &StoppingCause{Since: since, GraceEndsAt: graceEndsAt}
+	}
+}
+
+// Stopping is the stopping cause, and whether it holds.
+func (c *Cordon) Stopping() (StoppingCause, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.stopping == nil {
+		return StoppingCause{}, false
+	}
+	return *c.stopping, true
+}
+
+// held reports whether any cause holds. The caller holds the lock.
+func (c *Cordon) held() bool {
+	return c.operator != nil || c.outage != nil || c.stopping != nil
+}
+
 // wakeIfClear wakes the blocked reservations once no cause holds. The caller
 // holds the lock.
 func (c *Cordon) wakeIfClear() {
-	if c.operator != nil || c.outage != nil {
+	if c.held() {
 		return
 	}
 	close(c.changed)
@@ -124,6 +162,8 @@ func (c *Cordon) State() (bool, string, time.Time) {
 		return true, c.operator.Reason, c.operator.Since
 	case c.outage != nil:
 		return true, c.outage.Reason, c.outage.Since
+	case c.stopping != nil:
+		return true, stoppingReason, c.stopping.Since
 	}
 	return false, "", time.Time{}
 }
@@ -150,7 +190,7 @@ func (c *Cordon) Causes() (operator, storeOutage *CordonCause) {
 func (c *Cordon) Wait(ctx context.Context) error {
 	for {
 		c.mu.Lock()
-		cordoned, changed := c.operator != nil || c.outage != nil, c.changed
+		cordoned, changed := c.held(), c.changed
 		c.mu.Unlock()
 		if !cordoned {
 			return nil
@@ -206,11 +246,31 @@ var _ worker.SlotSupplier = (*cordonSlotSupplier)(nil)
 
 // ReserveSlot is called before every poll. A poller that cannot reserve does
 // not poll, and a poller that does not poll is handed no task.
+//
+// A reservation can wait on the inner supplier for a free slot while the
+// cordon lands. A slot granted then is given back and the reservation waits on
+// the cordon again, so a cordoned Orker polls for nothing past the polls it
+// already had open.
 func (s *cordonSlotSupplier) ReserveSlot(ctx context.Context, info worker.SlotReservationInfo) (*worker.SlotPermit, error) {
-	if err := s.cordon.Wait(ctx); err != nil {
-		return nil, err
+	for {
+		if err := s.cordon.Wait(ctx); err != nil {
+			return nil, err
+		}
+		permit, err := s.inner.ReserveSlot(ctx, info)
+		if err != nil {
+			return nil, err
+		}
+		// A declared capacity's ledger refuses a grant once cordoned by
+		// itself (capacity.go), and reads the permit it is given back; the
+		// fixed-size supplier's release ignores what it is given.
+		if _, ledger := s.inner.(*capacitySlotSupplier); ledger {
+			return permit, nil
+		}
+		if cordoned, _, _ := s.cordon.State(); !cordoned {
+			return permit, nil
+		}
+		s.inner.ReleaseSlot(nil)
 	}
-	return s.inner.ReserveSlot(ctx, info)
 }
 
 // TryReserveSlot is the eager-dispatch path; a cordoned Orker takes nothing
@@ -342,6 +402,10 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 	info := activity.GetInfo(ctx)
 	switch info.ActivityType.Name {
 	case task.ActivityExecuteTask:
+		// A task an open poll still delivers to a stopping Orker runs here in
+		// flight, as any cordon's does: at most one per poller, within the
+		// grace. Once the grace has ended, the stop's
+		// registry hands it back before it starts (stop.go).
 		// The running_tasks measurement, taken at the SDK seam so a test
 		// Orker's own ExecuteTask is counted exactly as the shipped one is.
 		i.a.running.add()
@@ -371,6 +435,9 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		return i.Next.ExecuteActivity(ctx, in)
 	}
 
+	if stopping, ok := i.a.cordon.Stopping(); ok {
+		return nil, i.a.refuseStoppingPinCreation(stopping, info)
+	}
 	cordoned, reason, _ := i.a.cordon.State()
 	if refuse, retryable := refusePinCreation(cordoned, info.Attempt); refuse {
 		id := i.a.dispatcher.OrkerID
@@ -394,6 +461,62 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 	i.a.pins.add(key, info.WorkflowExecution.ID, time.Now())
 	defer i.a.pins.remove(key)
 	return i.Next.ExecuteActivity(ctx, in)
+}
+
+// The bounds of a stopping pin host's refusal of a pin's creation. The SDK's
+// creation poller cannot be stopped alone, so it keeps polling until the
+// worker stops, and every creation that reaches a stopping pin host is
+// refused: retryably, 5 s apart, within 45 refusals (cordonPinRefusalAttempts,
+// about 4 minutes at that spacing), while the creation is younger than 5
+// minutes and the grace has not ended, the grace counting at least 15 s so a creation that reaches a host
+// stopping with no grace is retried on another pin host rather than failing at
+// once; then finally.
+const (
+	stoppingPinRetryDelay = 5 * time.Second
+	stoppingPinWindow     = 5 * time.Minute
+	stoppingPinFloor      = 15 * time.Second
+)
+
+// stoppingPinRefusal decides whether a stopping pin host's refusal of a pin's
+// creation lets the SDK retry it, and when it does not, which bound ended the
+// retries. scheduled is the creation's original schedule
+// (activity.Info.ScheduledTime, unchanged across its retries); zero counts
+// from the first signal.
+func stoppingPinRefusal(stopping StoppingCause, now, scheduled time.Time, attempt int32) (retryable bool, why string) {
+	if attempt > cordonPinRefusalAttempts {
+		return false, fmt.Sprintf("its creation was refused %d times", cordonPinRefusalAttempts)
+	}
+	if scheduled.IsZero() {
+		scheduled = stopping.Since
+	}
+	if !now.Before(scheduled.Add(stoppingPinWindow)) {
+		return false, "five minutes have passed since its creation was scheduled"
+	}
+	graceEnds := stopping.GraceEndsAt
+	if floor := stopping.Since.Add(stoppingPinFloor); graceEnds.Before(floor) {
+		graceEnds = floor
+	}
+	if !now.Before(graceEnds) {
+		return false, "its stop grace has ended"
+	}
+	return true, ""
+}
+
+// refuseStoppingPinCreation is a stopping pin host's refusal of a pin's
+// creation, which never opens a pin.
+func (a *Activities) refuseStoppingPinCreation(stopping StoppingCause, info activity.Info) error {
+	id := a.dispatcher.OrkerID
+	retryable, why := stoppingPinRefusal(stopping, time.Now(), info.ScheduledTime, info.Attempt)
+	a.dispatcher.logger().Info("pin creation refused: orker is stopping",
+		"run_id", info.WorkflowExecution.ID, "attempt", info.Attempt, "retryable", retryable, "final_because", why)
+	if retryable {
+		return temporal.NewApplicationErrorWithOptions(fmt.Sprintf(
+			"orker %s is stopping and opens no new pin; the pin's creation is retried on another host", id),
+			ReasonOrkerCordoned, temporal.ApplicationErrorOptions{NextRetryDelay: stoppingPinRetryDelay})
+	}
+	return temporal.NewNonRetryableApplicationError(fmt.Sprintf(
+		"orker %s is stopping and opens no new pin, and no other pin host of this pool opened it: %s",
+		id, why), ReasonOrkerCordoned, nil)
 }
 
 // admit admits one activity against the declared capacity, if there is one.
@@ -439,6 +562,8 @@ func executeTaskRequest(policy SecurityPolicy, in *interceptor.ExecuteActivityIn
 type openPins struct {
 	mu      sync.Mutex
 	entries map[string]openPin
+	// zero is closed when the set empties, and replaced when it leaves empty.
+	zero chan struct{}
 }
 
 type openPin struct {
@@ -451,13 +576,39 @@ func newOpenPins() *openPins { return &openPins{entries: map[string]openPin{}} }
 func (p *openPins) add(key, runID string, since time.Time) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if len(p.entries) == 0 {
+		p.zero = make(chan struct{})
+	}
 	p.entries[key] = openPin{runID: runID, since: since}
 }
 
 func (p *openPins) remove(key string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if _, ok := p.entries[key]; !ok {
+		return
+	}
 	delete(p.entries, key)
+	if len(p.entries) == 0 {
+		close(p.zero)
+	}
+}
+
+// count is how many pins are open.
+func (p *openPins) count() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return len(p.entries)
+}
+
+// idle is closed once no pin is open: already, or when the last one closes.
+func (p *openPins) idle() <-chan struct{} {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if len(p.entries) == 0 {
+		return closedChan
+	}
+	return p.zero
 }
 
 // snapshot is every open pin, ordered by run id then since.
@@ -548,9 +699,10 @@ func (a *Activities) CordonOrker(ctx context.Context, in *orkstackv1.CordonOrker
 		operator, outage := a.cordon.Causes()
 		a.cordon.Clear()
 		if operator != nil {
+			_, stopping := a.cordon.Stopping()
 			logger.Info("orker uncordoned",
 				"was_cordoned_for", time.Since(operator.Since).Round(time.Second),
-				"store_outage_holds", outage != nil)
+				"store_outage_holds", outage != nil, "stopping", stopping)
 		}
 	}
 	return a.DescribeOrker(ctx)

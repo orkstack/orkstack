@@ -12,6 +12,8 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -74,6 +76,50 @@ func TestAuthConfig_CheckBoot(t *testing.T) {
 	asserted, _ := authFromEnv(lookupFrom(nil))
 	if err := asserted.checkBoot("0.0.0.0:9090", true); err != nil {
 		t.Errorf("asserted mode is unchanged: %v", err)
+	}
+}
+
+// TestEngineDescription_FromConfiguration: what an engine says of itself on
+// the presence channel is its configuration: its mode, its idempotency key's
+// life, its deployment and build, and, only when it authenticates, the
+// digests of auth.admins and auth.orkers, which are the same whatever order
+// they were written in.
+func TestEngineDescription_FromConfiguration(t *testing.T) {
+	asserted, _ := authFromEnv(lookupFrom(nil))
+	cfg := config{auth: asserted, idempotencyTTL: 36 * time.Hour, deployment: task.Deployment{Name: "orkstack", BuildID: "b7"}}
+	if d := engineDescription(cfg); d != (engine.EngineDescription{Mode: "asserted", ClaimTTL: 36 * time.Hour, Deployment: "orkstack", BuildID: "b7"}) {
+		t.Fatalf("asserted = %+v; want no digests", d)
+	}
+	orkers := "orkers:\n- subject: serviceaccount:orker-main\n  pool: main\n- subject: serviceaccount:orker-gpu\n  pool: gpu\n  orker_ids: any\n"
+	enforce, err := authFromEnv(lookupFrom(map[string]string{"ORK_AUTH_MODE": "enforce", "ORK_AUTH_ISSUERS": testIssuers,
+		"ORK_AUTH_ADMINS": "group:corp:sre, user:corp:root", "ORK_AUTH_ORKERS": orkers}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.auth = enforce
+	d := engineDescription(cfg)
+	if d.Mode != "enforce" || len(d.AdminsDigest) != engine.ConfigDigestLen || len(d.OrkersDigest) != engine.ConfigDigestLen {
+		t.Fatalf("enforce = %+v; want both digests", d)
+	}
+	reordered, err := authFromEnv(lookupFrom(map[string]string{"ORK_AUTH_MODE": "enforce", "ORK_AUTH_ISSUERS": testIssuers,
+		"ORK_AUTH_ADMINS": "user:corp:root,group:corp:sre",
+		"ORK_AUTH_ORKERS": "orkers:\n- subject: serviceaccount:orker-gpu\n  pool: gpu\n  orker_ids: any\n- subject: serviceaccount:orker-main\n  pool: main\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.auth = reordered
+	if again := engineDescription(cfg); again != d {
+		t.Fatalf("the same lists in another order describe %+v, want %+v", again, d)
+	}
+	other, err := authFromEnv(lookupFrom(map[string]string{"ORK_AUTH_MODE": "enforce", "ORK_AUTH_ISSUERS": testIssuers,
+		"ORK_AUTH_ADMINS": "group:corp:sre, user:corp:root",
+		"ORK_AUTH_ORKERS": "orkers:\n- subject: serviceaccount:orker-main\n  pool: main\n  orker_ids: any\n- subject: serviceaccount:orker-gpu\n  pool: gpu\n  orker_ids: any\n"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.auth = other
+	if differs := engineDescription(cfg); differs.OrkersDigest == d.OrkersDigest || differs.AdminsDigest != d.AdminsDigest {
+		t.Fatalf("auth.orkers differing only in orker_ids digests alike: %+v and %+v", differs, d)
 	}
 }
 

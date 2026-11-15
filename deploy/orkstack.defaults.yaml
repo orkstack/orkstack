@@ -110,6 +110,8 @@ orker:
   registry_auth_file: ""  # orker
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
+  stop:
+    grace: 24h  # orker
   max_concurrent: 16  # orker
   store_check:
     enabled: true  # orker

@@ -396,12 +396,13 @@ it.
 | `document_read_at` | `google.protobuf.Timestamp` | document_read_at is when this replica last read the access document, and document_age how old its copy is now. |
 | `document_age` | `google.protobuf.Duration` |  |
 | `document_stale` | `bool` | document_stale is true when that copy is older than its refresh bound and is served stale because the store did not answer. |
-| `engines` | repeated [`EngineSeen`](#engineseen) | engines are the engines seen; one whose mode is below enforce is a peer that does not enforce. |
+| `engines` | repeated [`EngineSeen`](#engineseen) | engines are the engines the last fleet check saw that do not enforce (mode below enforce) or hold another auth.admins or auth.orkers (settings_differ). The engines say these of themselves on the cluster; nothing authenticates them. |
 | `orkers_reaching_control_plane` | repeated `string` | orkers_reaching_control_plane are the Orkers whose storage credential reaches the control plane's objects, and orkers_unchecked those whose credential was never checked. |
 | `orkers_unchecked` | repeated `string` |  |
-| `asserted_safe_from` | `google.protobuf.Timestamp` | asserted_safe_from is the earliest instant the mode may be lowered to `asserted` without accepting duplicate retries: one idempotency key's life after the deployment last ran in `enforce`. Unset when it is safe now or the deployment never enforced. |
+| `asserted_safe_from` | `google.protobuf.Timestamp` | asserted_safe_from is the earliest instant the mode may be lowered to `asserted` without accepting duplicate retries: one idempotency key's life, the longest engine.idempotency_ttl any engine advertised, after the deployment last ran in `enforce`. Unset when it is safe now or the deployment never enforced. |
 | `acknowledged_revision` | `int64` | acknowledged_revision is the latest revision written around the API that an admin acknowledged (AcknowledgeAccessRevision). |
 | `mode_record_etag` | `string` | mode_record_etag is the mode record's compare-and-swap token, which LowerAuthModeRequest.record_etag sends back. |
+| `fleet_checked_at` | `google.protobuf.Timestamp` | fleet_checked_at is when the fleet check last read the cluster; engines is what it saw then. Unset before the first check that could read it, and on an engine that runs no fleet check (below enforce). |
 
 ### AccessStep
 
@@ -431,7 +432,7 @@ AccessStep is one write a plan asks the client to send.
 | Field | Type | Description |
 |---|---|---|
 | `revision` | `int64` |  |
-| `sha256` | `string` | sha256 is the AccessRevision.sha256 the admin read. The acknowledgement is refused unless that revision exists, was written around the API, and still has this digest; AccessStatus.acknowledged_revision never moves backwards. |
+| `sha256` | `string` | sha256 is the AccessRevision.sha256 the admin read. The acknowledgement is accepted for the revision the answering engine found written around the API, or for the access document's current head, and only while it still has this digest; any other is refused. The record is written once: a revision acknowledged again keeps its first record. It decides whether the banner shows, never access. |
 
 ### AcknowledgeAccessRevisionResponse
 
@@ -1221,7 +1222,7 @@ is alive by answering DescribeOrker (§6.5).
 | `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
 | `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage (Orker.store_outage). cordoned is true beside it. |
 | `attempt_ordinals_supported` | `bool` | attempt_ordinals_supported is true on an Orker that numbers attempts with claimed ordinals (docs/STORAGE.md, "Attempt ordinals"). An Orker built before it numbers them as Temporal does and would write records over a newer Orker's, so submit refuses a pool that has one. |
-| `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set while this Orker is stopping (OrkerStopping). cordoned is true beside it. |
 | `profile_kinds_supported` | repeated [`ProfileKind`](#profilekind) | profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
@@ -1343,6 +1344,7 @@ answering replica last saw it.
 | `build_id` | `string` | build_id is the release the engine runs; empty for an unversioned one. |
 | `mode` | `string` | mode is the auth.mode the engine runs in. |
 | `last_seen` | `google.protobuf.Timestamp` |  |
+| `settings_differ` | repeated `string` | settings_differ names the settings every replica must hold alike that this engine holds otherwise than the answering one: `auth.admins`, `auth.orkers`. Empty when they agree, or the engine does not say. |
 
 ### Error
 
@@ -1818,6 +1820,7 @@ No fields.
 | `signin` | [`Signin`](#signin) | signin is set for a caller signed in with a cookie. |
 | `csrf_token` | `string` | csrf_token is set with signin: every request of the page that is not a GET carries it as Ork-CSRF. The page keeps it in memory only. |
 | `access_revision` | `int64` | access_revision is the access document's revision the answer was computed against. |
+| `orker_id` | `string` | orker_id is the one Orker the caller's credential names (its issuer's orker_id_claim, or a service account's or certificate's Orker); empty when it names none. An Orker refuses to boot unless it is its own id. |
 
 ### GetStatsRequest
 
@@ -2563,7 +2566,7 @@ Orker is one execution process, observed live.
 | `reserved` | [`ResourceQuantity`](#resourcequantity) |  |
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is DescribeOrkerResult's: the per-task cap, the largest request this Orker runs, which submit holds a task's declared request to. |
 | `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage. It clears by itself once the store answers again; CordonOrker neither sets nor clears it. Unset from an Orker of a release without these checks. |
-| `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set from E92; unset until it lands (v0.4.0 proto batch). |
+| `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set while this Orker is stopping: it takes no new task and opens no new pin, and keeps its pool live until it exits. Unset from an Orker of a release without a stop grace. |
 | `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `service_host` | [`ServiceHost`](#servicehost) | service_host is set from E90; unset until it lands (v0.4.0 proto batch). |
@@ -2577,10 +2580,15 @@ No fields.
 
 ### OrkerStopping
 
-OrkerStopping is E92's; it is empty until E92 lands (v0.4.0 proto
-batch).
+OrkerStopping is set while an Orker is stopping: from its first stop signal
+it takes no new task and opens no new pin, and what it runs carries on until
+the grace ends (docs/DEPLOY.md, "Removing an Orker safely"). cordoned is true beside
+it. It ends only with the process.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `since` | `google.protobuf.Timestamp` | since is when the Orker received its first stop signal. |
+| `grace_ends_at` | `google.protobuf.Timestamp` | grace_ends_at is when the Orker stops what it still runs: since plus orker.stop.grace. A second signal ends the grace sooner. |
 
 ### Orkflow
 
@@ -3066,6 +3074,7 @@ as a pool and a pin are (§7.1).
 | `paused_runs` | `int64` | paused_runs is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `event_source_instances` | `int64` | event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch). |
 | `event_sources` | `int32` | event_sources is set from E90; unset until it lands (v0.4.0 proto batch). |
+| `unserved_pools` | repeated `string` | unserved_pools are the pools this release has served, sorted, on which no ANSWERED Orker of it takes work now (every one cordoned, stopping or gone), listed only while the release has runs in flight. Their tasks wait for an Orker of this release and never move to another (docs/DEPLOY.md §3, "Rolling a release forward"). Empty when runs_unavailable_reason is set. |
 
 ### ReleaseBlocker
 
@@ -3234,14 +3243,14 @@ Run is one execution of an Orkflow.
 | `orkflow_definition_digest` | `string` | orkflow_definition_digest is the canonical digest of the definition this run pinned (§4.4). A run that started before a pointer moved is still explainable by the exact bytes it ran. |
 | `telemetry` | [`TelemetrySelection`](#telemetryselection) | telemetry is the selection this run was pinned with (see ExecuteTaskInput.telemetry). Unset when none was configured. |
 | `origin` | [`RunOrigin`](#runorigin) | origin is what started this run (RunOrigin). Unset only on a run recorded before origins existed; every run started since carries at least a kind. It is present on every snapshot the run writes, on the archived run, and therefore in every webhook payload's embedded run. |
-| `canceled_by` | `string` | canceled_by is what the deployment's gateway asserted in the Ork-Principal request header on the CancelRun request that canceled this run — recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8 replaced, as RunOrigin.principal is, and NEVER authenticated: the same assertion as RunOrigin.principal and AuditRecord.principal. Every rendering says it was asserted.<br><br>It is set only on a run whose status is CANCELED with error code RUN_CANCELED, when a CancelRun carrying the header was accepted before the run recorded its own end. That is the request that canceled it, or — if the run was already ending canceled for another cause, such as a composed task's child run canceled from outside — the request that arrived while it ended, which is named too. It is empty for every other run: a CancelRun with no header; a run canceled with its parent run, or by any other cause; a run that succeeded, failed or was terminated (RUN_TERMINATED); a run canceled before this field existed. A client then shows nothing rather than a blank that could be mistaken for a name.<br><br>It is on GetRun, on the archived run, on ListRuns rows answered from the archive and in the embedded run of a RUN_CANCELED webhook delivery. |
+| `canceled_by` | `string` | canceled_by is who asked for the CancelRun request that canceled this run. With auth.mode observe or enforce it is the principal OrkStack authenticated, and canceled_by_verified is set. With asserted it is what the deployment's gateway asserted in the Ork-Principal request header — recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8 replaced, as RunOrigin.principal is, and never authenticated. Every rendering says which (canceled_by_verified).<br><br>It is set only on a run whose status is CANCELED with error code RUN_CANCELED, when a CancelRun carrying the header was accepted before the run recorded its own end. That is the request that canceled it, or — if the run was already ending canceled for another cause, such as a composed task's child run canceled from outside — the request that arrived while it ended, which is named too. It is empty for every other run: a CancelRun with no header; a run canceled with its parent run, or by any other cause; a run that succeeded, failed or was terminated (RUN_TERMINATED); a run canceled before this field existed. A client then shows nothing rather than a blank that could be mistaken for a name.<br><br>It is on GetRun, on the archived run, on ListRuns rows answered from the archive and in the embedded run of a RUN_CANCELED webhook delivery. |
 | `orkflow_namespace` | `string` | orkflow_namespace is set only on a child run of an Orkflow another namespace shared through composition: the namespace that owns the definition it ran. Empty means the orkflow is namespace's own. A run whose orkflow belongs to another namespace is always a child run: nothing else starts one. |
 | `timing` | [`RunTiming`](#runtiming) | timing is the run's half of the task-timing derivation (RunTiming), set by GetRun and never stored; each TaskRun carries its own half. |
 | `input_artifacts` | repeated [`NamedArtifact`](#namedartifact) | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `output_artifacts` | repeated [`NamedArtifact`](#namedartifact) | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `trace_id` | `string` | trace_id is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `run_context` | [`RunContextState`](#runcontextstate) | run_context is set from E86; unset until it lands (v0.4.0 proto batch). |
-| `canceled_by_verified` | `bool` | canceled_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `canceled_by_verified` | `bool` | canceled_by_verified says canceled_by is a principal OrkStack authenticated (auth.mode observe or enforce). Unset, canceled_by is what the deployment's gateway asserted in Ork-Principal, unauthenticated. |
 | `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `superseded_by` | `string` | superseded_by is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `resumes` | repeated [`RunResume`](#runresume) | resumes is set from E85; unset until it lands (v0.4.0 proto batch). |

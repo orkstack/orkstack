@@ -237,6 +237,7 @@ var Schema = []Var{
 	{Path: "orker.registry_auth_file", Env: "ORK_ORKER_REGISTRY_AUTH_FILE", Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
+	{Path: "orker.stop.grace", Env: orker.StopGraceVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStopGrace)},
 	{Path: "orker.max_concurrent", Env: orker.MaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultMaxConcurrent))},
 	{Path: "orker.store_check.enabled", Env: orker.StoreCheckEnabledVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultStoreCheckEnabled)},
 	{Path: "orker.store_check.interval", Env: orker.StoreCheckIntervalVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStoreCheckInterval)},

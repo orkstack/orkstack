@@ -29,6 +29,7 @@
 	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import type { AwaitSpec } from '#lib/gen/orkstack/v1/orkflow_pb.ts';
 	import type { TaskAwait } from '#lib/gen/orkstack/v1/run_pb.ts';
+	import Principal from './Principal.svelte';
 
 	interface Props {
 		runId: string;
@@ -237,10 +238,10 @@
 			</div>
 		{/if}
 		{#if task.await?.resolvedBy}
-			<div data-tip="Asserted by the resolving request's gateway, never authenticated by OrkStack.">
+			<div>
 				<dt class="inline">Resolved by</dt>
 				<dd class="ml-1 inline text-ink-secondary" data-testid="task-{task.id}-await-resolved-by">
-					{task.await.resolvedBy} (asserted)
+					<Principal name={task.await.resolvedBy} verified={task.await.resolvedByVerified} />
 				</dd>
 			</div>
 		{/if}

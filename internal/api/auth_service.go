@@ -41,7 +41,7 @@ func (h authHandler) GetSignin(ctx context.Context, _ *connect.Request[orkstackv
 		return nil, connect.NewError(connect.CodeUnauthenticated, errors.New("an authenticated caller is required"))
 	}
 	out := &orkstackv1.GetSigninResponse{PrincipalId: p.ID, Display: p.Display, Issuer: p.Issuer, Method: p.Method,
-		Kind: string(p.Kind), Groups: slices.Clone(p.Groups)}
+		Kind: string(p.Kind), Groups: slices.Clone(p.Groups), OrkerId: p.OrkerID}
 	policy, _ := h.svc.access.policy(ctx)
 	if policy == nil {
 		return connect.NewResponse(out), nil

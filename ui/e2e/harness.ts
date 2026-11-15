@@ -308,7 +308,10 @@ export function orkerEnv(name: string) {
 		root = mkdtempSync(path.join(parent, `e2e-${name}-p${process.pid}-`));
 		orkerRoots.set(name, root);
 	}
-	return { ORK_ORKER_WORKDIR: root };
+	// No stop grace unless the spec sets one: an Orker defaults to a day's,
+	// and a spec that stops an Orker while it runs a task must not wait it
+	// out. The proof's own ORK_ORKER_STOP_GRACE, when exported, wins.
+	return { ORK_ORKER_WORKDIR: root, ORK_ORKER_STOP_GRACE: process.env.ORK_ORKER_STOP_GRACE ?? '0s' };
 }
 
 /**

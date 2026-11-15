@@ -202,6 +202,9 @@ services:
       # A pin host, so examples/pinned-checkout.ork.yaml runs here as shipped:
       # one pin at a time (docs/DEPLOY.md, "Pin hosting is a pool-wide setting").
       ORK_ORKER_MAX_PINS: "1"
+      # A minute's stop grace, so `docker compose down` lets a running task
+      # finish briefly and never waits a day (docs/DEPLOY.md, "Stop timeouts").
+      ORK_ORKER_STOP_GRACE: 60s
     # The work directory is under your home, never a shared /tmp: whoever owns
     # it could swap a task's directories for links to the host's, and the
     # daemon would mount them. It is mounted at the same path, because the
@@ -210,9 +213,10 @@ services:
       - ${ORKSTACK_DOCKER_SOCKET-/var/run/docker.sock}:/var/run/docker.sock
       - ${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}:${ORKSTACK_WORKDIR-${HOME}/.cache/orkstack-quickstart}
     init: true
-    # Longer than a task container's 30 s cancellation grace, so a stop
-    # reaches every running container before the Orker itself is killed.
-    stop_grace_period: 45s
+    # The Orker's 60 s stop grace plus the stop's tail (a task's 30 s
+    # cancellation grace, a hand-back's report, the longest open poll), so a
+    # stop hands back what still runs before the Orker itself is killed.
+    stop_grace_period: 15m
     depends_on:
       temporal:
         condition: service_healthy

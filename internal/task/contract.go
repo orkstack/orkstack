@@ -216,6 +216,10 @@ type HeartbeatProgress struct {
 	// and its container label carry. Zero until the claim, so the first beat
 	// after the claim is the first to name it.
 	Ordinal int32 `json:"ordinal,omitzero"`
+	// StoppingSince is the instant, RFC 3339, the sender's stop began: set on
+	// every beat of an attempt that was running when its Orker began to stop,
+	// so a loss after it can be told from one with no stop behind it.
+	StoppingSince string `json:"stopping_since,omitempty"`
 }
 
 // CheckInputSize enforces the deployment's replay-pinned input bound without

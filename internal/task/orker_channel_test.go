@@ -35,10 +35,11 @@ func TestQueueForOrker_UsesTheOrkerPrefix(t *testing.T) {
 }
 
 // TestQueueForPool_RefusesTheOrkerChannels: a deployment cannot bind its
-// default pool to the presence channel or to any Orker's control channel,
+// default pool to a presence channel (the Orkers' or the engines') or to any
+// Orker's control channel,
 // while a legal pool NAMED orkers still routes to its own, different queue.
 func TestQueueForPool_RefusesTheOrkerChannels(t *testing.T) {
-	for _, bound := range []string{task.OrkersQueue, "ork-orker-x", task.EngineEventQueue} {
+	for _, bound := range []string{task.OrkersQueue, "ork-orker-x", task.EngineEventQueue, task.EnginesQueue} {
 		if queue, err := task.QueueForPool("", bound); !errors.Is(err, task.ErrReservedQueue) {
 			t.Errorf("QueueForPool(\"\", %q) = %q, %v; want ErrReservedQueue", bound, queue, err)
 		}
@@ -52,7 +53,7 @@ func TestQueueForPool_RefusesTheOrkerChannels(t *testing.T) {
 // TestResolvePoolBinding_RefusesTheOrkerChannels: ORK_ORKER_QUEUE naming an
 // Orker channel refuses boot with a message naming the variable.
 func TestResolvePoolBinding_RefusesTheOrkerChannels(t *testing.T) {
-	for _, raw := range []string{task.OrkersQueue, "ork-orker-x"} {
+	for _, raw := range []string{task.OrkersQueue, "ork-orker-x", task.EnginesQueue} {
 		_, err := task.ResolvePoolBinding("", raw)
 		if !errors.Is(err, task.ErrReservedQueue) || !strings.Contains(err.Error(), "ORK_ORKER_QUEUE") {
 			t.Errorf("ResolvePoolBinding(\"\", %q) = %v; want ErrReservedQueue naming ORK_ORKER_QUEUE", raw, err)
@@ -65,7 +66,7 @@ func TestResolvePoolBinding_RefusesTheOrkerChannels(t *testing.T) {
 func TestPoolForQueue_NeverNamesAnOrkerChannel(t *testing.T) {
 	control, err := task.QueueForOrker("orker-7f3a")
 	must.OK(t, err)
-	for _, queue := range []string{task.OrkersQueue, control} {
+	for _, queue := range []string{task.OrkersQueue, control, task.EnginesQueue} {
 		if pool, ok := task.PoolForQueue(queue); ok {
 			t.Errorf("PoolForQueue(%q) = %q, true; an Orker channel is no pool", queue, pool)
 		}

@@ -80,9 +80,14 @@ func requireEngineDial(t *testing.T, got client.Options, identity string, cfg co
 		t.Fatalf("dialed %q in namespace %q with logger %v, want %q, %q and the process logger",
 			got.HostPort, got.Namespace, got.Logger, cfg.temporalAddress, cfg.temporalNamespace)
 	}
-	if !slices.Equal(engine.IdentityCapabilities(got.Identity), engine.EngineCapabilities) || !strings.HasPrefix(got.Identity, sdkIdentity()) {
+	caps := engine.IdentityCapabilities(got.Identity)
+	if len(caps) < len(engine.EngineCapabilities) || !slices.Equal(caps[:len(engine.EngineCapabilities)], engine.EngineCapabilities) ||
+		!strings.HasPrefix(got.Identity, sdkIdentity()) {
 		t.Fatalf("identity %q advertises %v, want the SDK's identity followed by %v",
-			got.Identity, engine.IdentityCapabilities(got.Identity), engine.EngineCapabilities)
+			got.Identity, caps, engine.EngineCapabilities)
+	}
+	if d := engine.ParseEngineDescription(got.Identity); d != engineDescription(cfg) {
+		t.Fatalf("identity %q describes %+v, want %+v", got.Identity, d, engineDescription(cfg))
 	}
 	if identity != got.Identity {
 		t.Fatalf("connectTemporal returned identity %q, but dialed as %q", identity, got.Identity)

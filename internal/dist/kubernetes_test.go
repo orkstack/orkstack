@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"go.yaml.in/yaml/v4"
 
@@ -238,8 +239,17 @@ func TestKubernetesOrker_TheEngineIsANativeSidecarThatOutlivesTheOrker(t *testin
 		if engine.StartupProbe == nil || orker.StartupProbe == nil {
 			t.Errorf("%s: the engine and the orker each need a startup probe", shape)
 		}
-		if pod.TerminationGracePeriodSeconds <= 30 {
-			t.Errorf("%s: terminationGracePeriodSeconds is %d, want longer than a task's default 30 s grace", shape, pod.TerminationGracePeriodSeconds)
+		// The pod outlives the Orker's whole stop: its stop grace, then the
+		// hand-back of what still runs (docs/DEPLOY.md, "Stop timeouts").
+		stopGrace := orkerpkg.DefaultStopGrace
+		if e, ok := envOf(orker, "ORK_ORKER_STOP_GRACE"); ok {
+			parsed, err := time.ParseDuration(e.Value)
+			must.OKf(t, err, "%s: ORK_ORKER_STOP_GRACE %q", shape, e.Value)
+			stopGrace = parsed
+		}
+		if need := stopGrace + orkerpkg.StopTimeoutTail; time.Duration(pod.TerminationGracePeriodSeconds)*time.Second < need {
+			t.Errorf("%s: terminationGracePeriodSeconds is %d, want at least the stop grace %s plus the stop's tail, %s",
+				shape, pod.TerminationGracePeriodSeconds, stopGrace, need)
 		}
 		if !strings.Contains(engineScript(t, shape, engine), "exec docker-init -- dockerd ") {
 			t.Errorf("%s: the engine does not exec dockerd under docker-init", shape)

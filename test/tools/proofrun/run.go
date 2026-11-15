@@ -338,7 +338,7 @@ func (r *runner) runJob(ctx context.Context, j job, slot int) jobResult {
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.WaitDelay = 15 * time.Second
 	cmd.Dir = r.dirs[j.Package]
-	cmd.Env = append([]string{}, r.baseEnv...)
+	cmd.Env = withStopGrace(append([]string{}, r.baseEnv...))
 	if r.nsPrefix != "" {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("ORK_TEMPORAL_NAMESPACE=%s-w%d", r.nsPrefix, slot))
 	}
@@ -1576,3 +1576,15 @@ var stdout io.Writer = os.Stdout
 
 // stdin is what a subcommand that filters reads (job-log); tests replace it.
 var stdin io.Reader = os.Stdin
+
+// withStopGrace gives every Orker a test starts no stop grace unless the
+// environment already names one: an Orker defaults to a day's grace, and a
+// test that stops one while it runs a task must not wait it out.
+func withStopGrace(env []string) []string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, "ORK_ORKER_STOP_GRACE=") {
+			return env
+		}
+	}
+	return append(env, "ORK_ORKER_STOP_GRACE=0s")
+}

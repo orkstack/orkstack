@@ -22,7 +22,8 @@
 		orkerState,
 		orkerStateLabel,
 		orkerTasks,
-		STORE_OUTAGE_LABEL
+		STORE_OUTAGE_LABEL,
+		stoppingNote
 	} from '#lib/orkers.ts';
 	import { fmtTimestamp } from '#lib/status.ts';
 	import CliPopover from './CliPopover.svelte';
@@ -131,6 +132,7 @@
 		ready: 'bg-ok-tint text-ok mark-square',
 		cordoned: 'pill-wait',
 		'store-outage': 'bg-fail-tint text-fail mark-tri',
+		stopping: 'pill-wait',
 		unreachable: 'bg-fail-tint text-fail mark-tri'
 	};
 </script>
@@ -191,6 +193,9 @@
 									<span class="sr">, </span>
 									<span class="stamp {stateClass['store-outage']} capitalize" data-testid="orker-outage-stamp-{orker.orkerId}">{STORE_OUTAGE_LABEL}</span>
 								{/if}
+								{#if orker.stopping}
+									<small class="ork-sub ork-note" data-testid="orker-stopping-{orker.orkerId}">{stoppingNote(orker, fmtTimestamp)}</small>
+								{/if}
 								{#if operatorCordoned(orker)}
 									<small class="ork-sub ork-note" data-testid="orker-reason-{orker.orkerId}">Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”</small>
 								{/if}
@@ -212,7 +217,7 @@
 								{#if rowState !== 'unreachable'}
 									{#if operatorCordoned(orker)}
 										<button type="button" data-testid="orker-uncordon-{orker.orkerId}" disabled={uncordonBusy === orker.orkerId} onclick={() => void uncordon(orker)} class="btn btn-sm">Uncordon</button>
-									{:else}
+									{:else if !orker.stopping}
 										<button type="button" data-testid="orker-cordon-{orker.orkerId}" onclick={() => openCordon(orker)} class="btn btn-sm"><Icon name="pause" />Cordon</button>
 									{/if}
 									<CliPopover testid="orker-cli-{orker.orkerId}" title="Command line: {orker.orkerId}" commands={[{ label: 'This Orker', command: orkerCommand(orker) }]} />

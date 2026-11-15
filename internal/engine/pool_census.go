@@ -103,28 +103,37 @@ func (c *poolCensus) taking(ctx context.Context, pool string) ([]FleetOrker, err
 }
 
 // serving is the Orkers of one pool that answered on their own channel and
-// either take a new task now or will once object storage answers them. An
+// either take a new task now or keep their pool live while they do not. An
 // Orker waiting out a store outage has only paused: work sent to its pool waits
-// and then runs, so it keeps the pool live and speaks for what the pool can
-// run. An operator's cordon says the opposite, that this Orker is leaving, so
-// one that holds both does not count. In identity order.
+// and then runs. A stopping Orker finishes what it runs and keeps the pool live
+// until its process exits. Each speaks for what the pool can run. An operator's
+// cordon says the opposite, that this Orker is leaving, so one that holds it
+// beside either does not count. In identity order.
 func (c *poolCensus) serving(ctx context.Context, pool string) ([]FleetOrker, error) {
 	if err := c.read(ctx); err != nil {
 		return nil, err
 	}
 	var orkers []FleetOrker
 	for _, orker := range c.byPool[pool] {
-		if !orker.Described.GetCordoned() || pausedForStoreOutage(orker.Described) {
+		if !orker.Described.GetCordoned() || keepsPoolLive(orker.Described) {
 			orkers = append(orkers, orker)
 		}
 	}
 	return orkers, nil
 }
 
-// pausedForStoreOutage says a store outage alone holds this Orker's cordon: an
-// operator's cordon always carries a reason.
+// pausedForStoreOutage says a store outage alone holds this Orker's cordon, so
+// it takes new tasks again once object storage answers: an operator's cordon
+// always carries a reason, and a stopping Orker never takes one again.
 func pausedForStoreOutage(o *orkstackv1.DescribeOrkerResult) bool {
-	return o.GetStoreOutage() != nil && o.GetCordonReason() == ""
+	return o.GetStoreOutage() != nil && o.GetCordonReason() == "" && o.GetStopping() == nil
+}
+
+// keepsPoolLive says every cause that holds this Orker's cordon keeps its pool
+// live: a store outage and the Orker's own stop do, an operator's cordon does
+// not (AGENTS.md §7, Cordon).
+func keepsPoolLive(o *orkstackv1.DescribeOrkerResult) bool {
+	return o.GetCordonReason() == "" && (o.GetStoreOutage() != nil || o.GetStopping() != nil)
 }
 
 // wasRead says the census was taken, successfully, by an earlier question;

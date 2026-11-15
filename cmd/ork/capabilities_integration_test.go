@@ -125,20 +125,39 @@ func TestIntegration_EngineIdentityAdvertisesCapabilities(t *testing.T) {
 	}
 	runPoller := waitForPoller(t, ctx, control, ns, task.DefaultQueue, enumspb.TASK_QUEUE_TYPE_WORKFLOW, time.Minute, ours)
 	eventPoller := waitForPoller(t, ctx, control, ns, engine.EventQueue, enumspb.TASK_QUEUE_TYPE_ACTIVITY, time.Minute, ours)
-	for _, p := range []*taskqueuepb.PollerInfo{runPoller, eventPoller} {
-		if !strings.HasSuffix(p.GetIdentity(), " ork-caps="+strings.Join(engine.EngineCapabilities, ",")) {
-			t.Fatalf("the ork process polls as %q, want its identity to end in ork-caps=%s",
+	// The engines' presence channel: the same process polls it, describing
+	// itself in the same identity.
+	presencePoller := waitForPoller(t, ctx, control, ns, task.EnginesQueue, enumspb.TASK_QUEUE_TYPE_ACTIVITY, time.Minute, ours)
+	for _, p := range []*taskqueuepb.PollerInfo{runPoller, eventPoller, presencePoller} {
+		if !strings.Contains(p.GetIdentity(), " ork-caps="+strings.Join(engine.EngineCapabilities, ",")+",") {
+			t.Fatalf("the ork process polls as %q, want its identity to carry ork-caps=%s and its description",
 				p.GetIdentity(), strings.Join(engine.EngineCapabilities, ","))
 		}
 		caps := engine.IdentityCapabilities(p.GetIdentity())
 		if len(caps) == 0 || caps[0] != engine.CapabilityEachItems10k {
 			t.Fatalf("parsed %v from %q", caps, p.GetIdentity())
 		}
+		if d := engine.ParseEngineDescription(p.GetIdentity()); d.Mode != "asserted" || d.ClaimTTL <= 0 || d.Deployment != task.DefaultDeploymentName {
+			t.Fatalf("the ork process describes itself as %+v in %q, want asserted, its claim life and its deployment", d, p.GetIdentity())
+		}
 	}
 	note("$ temporal task-queue describe --task-queue %s --task-queue-type workflow", task.DefaultQueue)
 	note("  identity: %s", runPoller.GetIdentity())
 	note("$ temporal task-queue describe --task-queue %s --task-queue-type activity", engine.EventQueue)
 	note("  identity: %s", eventPoller.GetIdentity())
+	note("$ temporal task-queue describe --task-queue %s --task-queue-type activity", task.EnginesQueue)
+	note("  identity: %s", presencePoller.GetIdentity())
+	listed, err := func() ([]engine.EnginePresence, error) {
+		c, err := engine.NewTemporalReleaseCluster(control, nil, ns, task.DefaultDeploymentName, task.DefaultQueue, "")
+		if err != nil {
+			return nil, err
+		}
+		return c.ObserveEngines(ctx)
+	}()
+	must.OKf(t, err, "ObserveEngines")
+	if len(listed) != 1 || listed[0].Identity != presencePoller.GetIdentity() {
+		t.Fatalf("ObserveEngines = %+v, want the one ork process", listed)
+	}
 
 	// The fleet check, over the same cluster, with a freshness window short
 	// enough that a stopped worker ages out within the test.

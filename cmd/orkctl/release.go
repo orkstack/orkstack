@@ -392,6 +392,9 @@ func renderReleases(out io.Writer, resp *orkstackv1.ListReleasesResponse, now ti
 
 	var notes []string
 	for _, r := range resp.GetReleases() {
+		notes = append(notes, unservedWarnings(r)...)
+	}
+	for _, r := range resp.GetReleases() {
 		if reason := r.GetRunsUnavailableReason(); reason != "" {
 			notes = append(notes, fmt.Sprintf("runs in flight could not be counted for %s: %s", r.GetBuildId(), reason))
 		}
@@ -693,6 +696,9 @@ type releaseWaiter struct {
 	timeout time.Duration
 	out     io.Writer
 	last    *orkstackv1.ListReleasesResponse
+	// warned are the unserved pools already warned about: each is said once,
+	// and again only after a poll that could tell saw it served.
+	warned map[string]bool
 }
 
 func (w *releaseWaiter) poll() (*orkstackv1.Release, error) {
@@ -765,6 +771,38 @@ func pluralWord(count, one, many string) string {
 	return many
 }
 
+// unservedWarnings are a release's warnings about pools it served on which no
+// Orker of it takes work now: its runs' tasks there wait for one. Advisory
+// only; no exit code depends on them.
+func unservedWarnings(r *orkstackv1.Release) []string {
+	var lines []string
+	for _, pool := range r.GetUnservedPools() {
+		lines = append(lines, fmt.Sprintf("release %s has %s and no Orker taking work on pool %s; a task they send there waits until one does",
+			r.GetBuildId(), orkerPlural(int(r.GetRunsInFlight()), "run", "runs"), pool))
+	}
+	return lines
+}
+
+// warnUnserved says each unserved pool's warning once. A pool is forgotten only
+// when the release is seen serving it again (pools_served), a positive
+// observation: a poll that cannot tell — a run count, the release's own
+// description or an Orker unreadable — lists no pool and repeats nothing.
+func (w *releaseWaiter) warnUnserved(r *orkstackv1.Release) {
+	if w.warned == nil {
+		w.warned = map[string]bool{}
+	}
+	for _, pool := range r.GetPoolsServed() {
+		delete(w.warned, pool)
+	}
+	lines := unservedWarnings(r)
+	for i, pool := range r.GetUnservedPools() {
+		if !w.warned[pool] {
+			w.warned[pool] = true
+			w.say("%s\n", lines[i])
+		}
+	}
+}
+
 // incompleteInventory names why drained cannot be reported, or "".
 func incompleteInventory(resp *orkstackv1.ListReleasesResponse) string {
 	if reason := resp.GetOrkersUnavailableReason(); reason != "" {
@@ -804,6 +842,7 @@ func (w *releaseWaiter) run() error {
 		return w.drainedLine(releaseClock.Now(), r)
 	}
 	w.progress(releaseClock.Now(), r)
+	w.warnUnserved(r)
 	lastKey := waitKey(r)
 	reportedIncomplete := false
 	if why := incompleteInventory(w.last); why != "" {
@@ -859,6 +898,7 @@ func (w *releaseWaiter) run() error {
 			w.progress(now, r)
 			lastKey = key
 		}
+		w.warnUnserved(r)
 		if why := incompleteInventory(w.last); why != "" && !reportedIncomplete {
 			w.say("the Orker list is incomplete (%s); drained is not reported until every Orker answers\n", why)
 			reportedIncomplete = true
@@ -894,6 +934,9 @@ func (w *releaseWaiter) timedOut(now time.Time) error {
 			that = "that run"
 		}
 		w.say("stopping its last engine, or its last Orker of a pool, now leaves %s unable to finish;\n", that)
+	}
+	for _, line := range unservedWarnings(r) {
+		w.say("%s\n", line)
 	}
 	if len(hosts) > 0 {
 		names := make([]string, 0, len(hosts))

@@ -182,6 +182,14 @@ Temporal cancellation → Orker receives it → SIGTERM
 The 30-second cancellation grace period is the default. Ordinary Unix signal
 handling must be enough for cleanup; no custom cancellation API is required.
 
+An Orker that is itself stopped accepts no new work: its first SIGTERM or
+SIGINT makes it ask for none (a cordon whose cause is stopping, §7), and a pin
+creation that still reaches it is refused before it opens, while running
+tasks, the tasks its open polls still deliver and pins it opened before the
+signal carry on for its stop grace (`orker.stop.grace`). Only then does it
+stop what remains, and from then it refuses an open pin's next member. A
+second signal ends the grace; a third exits at once.
+
 An Orker that is itself stopped stops what it runs carefully: an unpinned
 attempt whose container has not ended by itself gets the cancellation
 sequence, heartbeated throughout, and the Orker reports it `ORKER_STOPPED`
@@ -349,7 +357,7 @@ polling Orker receives a task, and OrkStack never chooses a host.
 
 Every Orker of a pool has the same settings — caps, default request,
 capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
-registry credentials, runtime, pin hosting — so a run never fails because of
+registry credentials, runtime, pin hosting, stop grace — so a run never fails because of
 which Orker took a task. Where they differ, a task fails explicitly with its
 own reason. A committed result is never refused for any of them. A memo hit
 is never refused for the caps, secret schemes, floor or runtime, but a cached
@@ -634,21 +642,30 @@ internal never appears on any of those surfaces.
   it remains and no Orker of it hosts an open pin; a drained release's
   processes may be stopped.
 - **Cordon** means a process-local state of one Orker that stops it accepting
-  new tasks and opening new pins while leaving everything in flight alone. Two
-  independent causes hold it, and it stands while either does: an operator's,
-  delivered over the Orker's own control channel, and a store outage, which
-  the Orker declares itself after consecutive failed object-storage checks and
-  ends itself after consecutive good ones. Clearing one never touches the
-  other, and neither is stored: both are lost when the process exits. A store
-  outage only pauses an Orker, so unlike an operator's cordon it still keeps its
-  pool live: a run sent there is accepted and waits.
+  new tasks and opening new pins while leaving everything in flight alone,
+  members of an open pin included. It stands while any of its causes holds;
+  clearing one never touches another, and none is stored: all are lost when
+  the process exits. Keeping a pool live decides only submit's admission: a
+  run sent there is accepted and waits for an Orker that takes work. It never
+  sends a task to a cordoned Orker, and a cordoned Orker keeps its pool live
+  only if every cause it holds does.
+
+  | Cause | Set by | Ended by | Pool stays live |
+  |---|---|---|---|
+  | operator | an operator, over the Orker's control channel | the operator | no |
+  | store outage | the Orker, after consecutive failed object-storage checks | the Orker, after consecutive good ones | yes |
+  | stopping | the Orker, on its first stop signal; from then it accepts no new task, pin or pin creation, and what its open polls still deliver runs in flight | the process's exit | yes, until the process exits |
 - **Drain** means setting an operator's cordon on an Orker and waiting until it
   reports no running task and no open pin. It is a client-side wait over the inventory read
-  (`orkctl orker drain`); nothing server-side holds drain state.
+  (`orkctl orker drain`); nothing server-side holds drain state. An Orker's
+  own wait during its stop grace is called **stopping**, never draining.
 - **Control channel** and **presence channel** are internal, exactly as
   **queue** is: the Temporal task queue `ork-orker-<orker_id>` that one Orker
   polls for `DescribeOrker` and `CordonOrker`, and `ork-orkers`, which every
   Orker polls and nothing dispatches to, whose poller list is the fleet.
+  So is the engines' presence channel, `ork-engines`, which every engine
+  polls and nothing dispatches to, whose poller list is the deployment's
+  engines.
 
 The Temporal mechanisms behind these words are internal, exactly as a queue is
 internal to a pool: no CLI string, UI string, HTTP body, client-rendered proto
@@ -731,14 +748,16 @@ group of tasks to *one* member of that set. Neither exposes a queue, a session,
 or a host name. No user-facing surface may expose `queue:` or a queue name.
 `internal/task/pool.go` builds every channel name and is the complete mapping:
 `QueueForPool`, `RouteForPool`, `DefaultRoute`, `PoolForQueue`, the single
-`ork-pool-` prefix construction, and the Orker control (`ork-orker-<id>`) and
-presence (`ork-orkers`) channels.
+`ork-pool-` prefix construction, the Orker control (`ork-orker-<id>`) and
+presence (`ork-orkers`) channels, and the engines' presence channel
+(`ork-engines`).
 
 An empty pool and `main` both mean the deployment's configured default pool.
 Other valid pools resolve to `ork-pool-<slug>`. The reserved
-`ork-engine-events` channel and the Orker control and presence channels cannot
-be a bound default. A task's pool must be resolved inside the engine; Temporal
-queue names must not leak into the user contract.
+`ork-engine-events` channel, the Orker control and presence channels and the
+engines' presence channel cannot be a bound default. A task's pool must be
+resolved inside the engine; Temporal queue names must not leak into the user
+contract.
 
 The deployment's engine workflows use fixed internal channels: `RunWorkflow`
 (including every child run) uses `ork-tasks` and engine events use
@@ -949,6 +968,17 @@ includes:
   untouched, plain or pinned; a cancel during a stall still reaches the container;
   past the timeout the Orker stops the container and the attempt is retried
   under its policy, never reported cancelled;
+- an Orker stopped while a container runs: the task finishes on it within the
+  stop grace and runs once; past the grace it is reported `ORKER_STOPPED` and
+  its container is never running beside its next attempt; a stop during upload
+  or commit commits; a pin finishes within the grace and fails `PIN_HOST_LOST`
+  past it; a stopping Orker opens no pin and polls for no new task, a task its
+  open polls deliver runs in flight and spends no attempt, and a pin asked of
+  a stopping pin host opens on another that takes work or fails
+  `PIN_UNAVAILABLE` within its bound; a task it hands back runs only on an
+  Orker of its run's release, waiting for one rather than moving to another
+  release; a second signal ends the grace, a third exits, and a signal to its
+  process group never reaches a container;
 - exit `1`, exit `0` without `values.json`, malformed JSON, output-size excess,
   timeout, cancellation, ignored SIGTERM, unavailable input artifact, failed
   image pull, and a tag changing between executions;

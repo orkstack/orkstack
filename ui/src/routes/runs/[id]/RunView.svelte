@@ -108,7 +108,6 @@
 	import { runWindowFilters } from '#lib/browsing.ts';
 	import { NAMESPACE_PARAM, namespaceLabel, withNamespace } from '#lib/namespace.ts';
 	import {
-		PRINCIPAL_CAPTION,
 		UNRECORDED,
 		UNRECORDED_CAPTION,
 		originKindSlug,
@@ -2358,7 +2357,7 @@
 						<span data-testid="run-origin-reference" class="font-mono text-sm break-all text-ink-2">{origin.reference}</span>
 					{/if}
 				{/if}
-				{#if origin?.principal}<span data-testid="run-origin-principal"><span class={originSlug === 'submit' ? 'sr' : ''}>{'by '}</span><Principal name={origin.principal} /></span>{:else if originSlug === 'submit'}<span class="text-ink-3" data-testid="run-origin-unasserted">no principal asserted</span>{/if}
+				{#if origin?.principal}<span data-testid="run-origin-principal"><span class={originSlug === 'submit' ? 'sr' : ''}>{'by '}</span><Principal name={origin.principal} verified={origin.principalVerified} method={origin.authMethod} /></span>{:else if originSlug === 'submit'}<span class="text-ink-3" data-testid="run-origin-unasserted">no principal asserted</span>{/if}
 			{:else}
 				<span data-testid="run-origin-kind" class="text-ink-3" data-tip={UNRECORDED_CAPTION}>{UNRECORDED}</span>
 			{/if}
@@ -2368,7 +2367,7 @@
 	{#snippet finishedWhen()}<TimeAgo at={finishedAt ?? run?.finishedAt} since={startedAt ?? run?.startedAt ?? run?.createdAt} testid="run-finished" />{/snippet}
 	{#snippet lastedFor()}<b class="num" data-testid="run-lasted">{lasted}</b>{/snippet}
 	{#snippet progressFact()}<ProgressRing {progress} status={runStatus} testid="run-progress" />{#if isTerminal(runStatus) && (progress.skipped > 0 || neverTasks.length > 0)}<span class="text-sm text-ink-3" data-testid="run-progress-words">{[`${progress.ran} ran`, progress.skipped ? `${progress.skipped} skipped` : '', neverTasks.length ? `${neverTasks.length} never started` : ''].filter(Boolean).join(' · ')}</span>{/if}{/snippet}
-	{#snippet canceledBy()}{#if run?.canceledBy}<span data-testid="run-canceled-by">by <Principal name={run.canceledBy} /></span>{/if}{/snippet}
+	{#snippet canceledBy()}{#if run?.canceledBy}<span data-testid="run-canceled-by">by <Principal name={run.canceledBy} verified={run.canceledByVerified} /></span>{/if}{/snippet}
 
 	<header class="rh" data-testid="run-header">
 		<h1 class="page-h1 rh-title">

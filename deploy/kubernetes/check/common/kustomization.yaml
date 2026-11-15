@@ -42,9 +42,14 @@ patches:
                     cpu: "2"
                     memory: 2Gi
                     ephemeral-storage: 8Gi
+            # No stop grace in the check: what it holds is the hand-back at a
+            # pod deletion, within the old 120 s stop timeout.
+            terminationGracePeriodSeconds: 120
             containers:
               - name: orker
                 env:
+                  - name: ORK_ORKER_STOP_GRACE
+                    value: 0s
                   # The check's own pool: its Orkers take only its runs, and
                   # its runs land only on them.
                   - name: ORK_ORKER_POOL

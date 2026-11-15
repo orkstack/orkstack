@@ -55,8 +55,17 @@ func cancelRequestedByParent() *historypb.HistoryEvent {
 // mustCancelCause is the cause CancelRun gives for principal.
 func mustCancelCause(t *testing.T, principal string) string {
 	t.Helper()
-	cause, err := encodeCancelRequest(principal)
+	cause, err := encodeCancelRequest(CanceledBy{Principal: principal})
 	must.OKf(t, err, "encodeCancelRequest(%q)", principal)
+	return cause
+}
+
+// mustVerifiedCancelCause is the cause CancelRun gives for a principal it
+// authenticated.
+func mustVerifiedCancelCause(t *testing.T, principal string) string {
+	t.Helper()
+	cause, err := encodeCancelRequest(CanceledBy{Principal: principal, Verified: true})
+	must.OKf(t, err, "encodeCancelRequest(%q, verified)", principal)
 	return cause
 }
 
@@ -121,10 +130,42 @@ func TestCancelPrincipal_ReadsOnlyWhatCancelRunWrote(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := cancelPrincipal(tt.cause); got != tt.want {
-				t.Fatalf("cancelPrincipal(%q) = %q, want %q", tt.cause, got, tt.want)
+			if got := cancelPrincipal(tt.cause); got.Principal != tt.want || got.Verified {
+				t.Fatalf("cancelPrincipal(%q) = %+v, want %q, asserted", tt.cause, got, tt.want)
 			}
 		})
+	}
+}
+
+// TestCancelPrincipal_RecordsWhetherItWasVerified: a principal the engine
+// authenticated reads back verified, an asserted one never does, and a
+// verified mark with no principal names nobody.
+func TestCancelPrincipal_RecordsWhetherItWasVerified(t *testing.T) {
+	for _, tt := range []struct {
+		name  string
+		cause string
+		want  CanceledBy
+	}{
+		{"authenticated", mustVerifiedCancelCause(t, "user:corp:dana"), CanceledBy{Principal: "user:corp:dana", Verified: true}},
+		{"asserted", mustCancelCause(t, "dana@acme"), CanceledBy{Principal: "dana@acme"}},
+		{"verified with nobody", `{"format":1,"principalVerified":true}`, CanceledBy{}},
+		{"verified in another format", `{"format":2,"principal":"user:corp:dana","principalVerified":true}`, CanceledBy{}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := cancelPrincipal(tt.cause); got != tt.want {
+				t.Fatalf("cancelPrincipal(%q) = %+v, want %+v", tt.cause, got, tt.want)
+			}
+		})
+	}
+	run := &orkstackv1.Run{Status: orkstackv1.Status_STATUS_CANCELED, Error: &orkstackv1.Error{Code: runCanceledCode}}
+	applyCanceledBy(run, CanceledBy{Principal: "user:corp:dana", Verified: true})
+	if run.GetCanceledBy() != "user:corp:dana" || !run.GetCanceledByVerified() {
+		t.Fatalf("run = %q verified %t", run.GetCanceledBy(), run.GetCanceledByVerified())
+	}
+	asserted := &orkstackv1.Run{Status: orkstackv1.Status_STATUS_CANCELED, Error: &orkstackv1.Error{Code: runCanceledCode}}
+	applyCanceledBy(asserted, CanceledBy{Principal: "dana@acme"})
+	if asserted.GetCanceledByVerified() {
+		t.Fatal("an asserted principal was marked verified")
 	}
 }
 
@@ -148,13 +189,13 @@ func TestApplyCanceledBy_OnlyARunACancellationEnded(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			applyCanceledBy(tt.run, tt.principal)
+			applyCanceledBy(tt.run, CanceledBy{Principal: tt.principal})
 			if got := tt.run.GetCanceledBy(); got != tt.want {
 				t.Fatalf("canceled_by = %q, want %q", got, tt.want)
 			}
 		})
 	}
-	applyCanceledBy(nil, "dana@acme") // a nil run is no run: nothing to set, no panic
+	applyCanceledBy(nil, CanceledBy{Principal: "dana@acme"}) // a nil run is no run: nothing to set, no panic
 }
 
 // GetRun names who canceled a run from the run's own record of the request
@@ -168,10 +209,13 @@ func TestTemporalRunReader_GetRunNamesWhoCanceledTheRun(t *testing.T) {
 		// request, when set, is a request event the history holds besides
 		// cause's own (none when cause is empty): the shapes of request a
 		// cancellation can arrive as with no record of a principal.
-		request *historypb.HistoryEvent
-		want    string
+		request  *historypb.HistoryEvent
+		want     string
+		verified bool
 	}{
 		{name: "closed, CancelRun recorded a principal", cause: mustCancelCause(t, "dana@acme"), closed: true, want: "dana@acme"},
+		{name: "closed, CancelRun recorded a verified principal", cause: mustVerifiedCancelCause(t, "user:corp:dana"), closed: true,
+			want: "user:corp:dana", verified: true},
 		// The stream delivers RUN_CANCELED before the execution closes; a
 		// read in that window must not show the name only to drop it later.
 		{name: "terminal event published, execution still open", cause: mustCancelCause(t, "dana@acme"), want: "dana@acme"},
@@ -206,8 +250,8 @@ func TestTemporalRunReader_GetRunNamesWhoCanceledTheRun(t *testing.T) {
 			if run.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
 				t.Fatalf("status = %s, want CANCELED", run.GetStatus())
 			}
-			if got := run.GetCanceledBy(); got != tt.want {
-				t.Fatalf("canceled_by = %q, want %q", got, tt.want)
+			if got := run.GetCanceledBy(); got != tt.want || run.GetCanceledByVerified() != tt.verified {
+				t.Fatalf("canceled_by = %q verified %t, want %q verified %t", got, run.GetCanceledByVerified(), tt.want, tt.verified)
 			}
 		})
 	}
@@ -291,8 +335,8 @@ func TestTemporalRunReader_ARequestAfterTheRunsEndNamesNobody(t *testing.T) {
 		t.Fatalf("canceled_by = %q, want nobody: the request came after the run's end", run.GetCanceledBy())
 	}
 	reader, _ = readerOver(history, runID)
-	if read, err := reader.EventsForArchive(context.Background(), runID); err != nil || read.CanceledBy != "" {
-		t.Fatalf("EventsForArchive = %q, %v; want nobody", read.CanceledBy, err)
+	if read, err := reader.EventsForArchive(context.Background(), runID); err != nil || read.CanceledBy != (CanceledBy{}) {
+		t.Fatalf("EventsForArchive = %+v, %v; want nobody", read.CanceledBy, err)
 	}
 }
 
@@ -357,8 +401,8 @@ func TestTemporalRunReader_EventsForArchiveReadsWhoCanceled(t *testing.T) {
 	reader, _ := readerOver(history, runID)
 	read, err := reader.EventsForArchive(context.Background(), runID)
 	must.OKf(t, err, "EventsForArchive")
-	if read.CanceledBy != "dana@acme" || len(read.Events) != 3 {
-		t.Fatalf("read %d events by %q, want 3 by dana@acme", len(read.Events), read.CanceledBy)
+	if read.CanceledBy.Principal != "dana@acme" || len(read.Events) != 3 {
+		t.Fatalf("read %d events by %+v, want 3 by dana@acme", len(read.Events), read.CanceledBy)
 	}
 }
 
@@ -381,16 +425,20 @@ func FuzzCancelPrincipal(f *testing.F) {
 		f.Add(seed)
 	}
 	f.Fuzz(func(t *testing.T, cause string) {
-		got := cancelPrincipal(cause)
+		read := cancelPrincipal(cause)
+		got := read.Principal
+		if read.Verified && got == "" {
+			t.Fatalf("cancelPrincipal(%q) = %+v: verified with nobody", cause, read)
+		}
 		if got != "" && (len(got) > CanceledByMaxBytes || !utf8.ValidString(got)) {
 			t.Fatalf("cancelPrincipal(%q) = %q: over the bound or not UTF-8", cause, got)
 		}
 		// The text as a principal: what CancelRun writes for it, when it is
 		// one CancelRun can write, reads back unchanged.
 		if len(cause) <= CanceledByMaxBytes && utf8.ValidString(cause) {
-			written, err := encodeCancelRequest(cause)
+			written, err := encodeCancelRequest(CanceledBy{Principal: cause})
 			must.OKf(t, err, "encodeCancelRequest(%q)", cause)
-			if back := cancelPrincipal(written); back != cause {
+			if back := cancelPrincipal(written).Principal; back != cause {
 				t.Fatalf("round trip of %q read back %q", cause, back)
 			}
 		}

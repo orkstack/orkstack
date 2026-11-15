@@ -154,7 +154,8 @@ reaches keeps the one it already has.
 A run page, Runs, a comparison and an Orkflow page state their facts in one
 strip under the heading (who started a run, when, for how long, its progress;
 an Orkflow's current version, definition digest and when it was created). A
-principal is always marked asserted.
+principal is always marked: verified when OrkStack verified it, and asserted
+otherwise.
 
 ## Filtering lists
 
@@ -539,7 +540,8 @@ unrecorded), and `Origin:`, `Root run:`, `Reference:` and `Principal:` lines on
 UI: the run header's origin line — kind chip, the id linked to the source run
 or the Triggers/Schedules tab, **Root run** and a link to it when it is not the
 parent the line already links, the description, the reference linked only when
-it is an http(s) URL, and `asserted by …` with a not-authenticated title; the
+it is an http(s) URL, and `by …` tagged asserted, with a not-authenticated
+title, or verified when the engine authenticated the submit; the
 runs list's **Started by** (`origin.kind`) and **Origin id** (`origin.id`)
 filters, kept in the URL as `filter` keys, and its **Origin** column; on a
 top-level run that composes, **Chain runs** beside **Child runs** opens the runs
@@ -1376,7 +1378,9 @@ detail is `url=… events=[…]`, plus `scope=ns/orkflow/task` when scoped.
 - `principal` is what a gateway asserted in `Ork-Principal`, never
   authenticated; an empty one renders `unattributed`, and both clients print
   the "asserted, not authenticated" caption under every rendering, empty
-  page included. `ORK_PRINCIPAL` makes `orkctl` assert one.
+  page included. The UI marks each row's principal verified or asserted from
+  the record's `principal_verified`; `orkctl admin audit` does not yet.
+  `ORK_PRINCIPAL` makes `orkctl` assert one.
 
 CLI: `admin audit [--filter F…] [--limit N] [--page-token TOKEN]`, e.g.
 `admin audit --filter 'action^namespace.' --filter 'at>=2026-10-01T00:00:00Z'`;
@@ -1553,7 +1557,7 @@ both, in [STATS.md](STATS.md).
 
 | Capability | Contract both clients honour |
 | --- | --- |
-| Cancellation | `run cancel --reason`; the UI's cancel action takes an optional reason, disables duplicate requests and shows "cancellation requested" until the authoritative status changes; the reason survives and the terminal state comes from the server. A run the request canceled records who asked, `canceled_by`: the `Ork-Principal` asserted on it, never authenticated. `run get` prints it as `Canceled by:` with the asserted caption and `run list` as `CANCELED by … (asserted)`; the UI does not render it yet. |
+| Cancellation | `run cancel --reason`; the UI's cancel action takes an optional reason, disables duplicate requests and shows "cancellation requested" until the authoritative status changes; the reason survives and the terminal state comes from the server. A run the request canceled records who asked, `canceled_by`: the `Ork-Principal` asserted on it, never authenticated, or, where the engine authenticates, the verified principal (`canceled_by_verified`). `run get` prints it as `Canceled by:` with the asserted or `(verified)` caption and `run list` as `CANCELED by … (asserted)` or `(verified)`; the UI shows it on the run and under the runs list's Canceled pill, tagged asserted or verified the same way. |
 | Version-safe submission | The version picker marks current; links from a definition or a run keep the pinned version, so an old version is submitted even after current moves. Idempotency key and empty-pool override (`--allow-empty-pool`) are explicit, advanced inputs; a repeated key deduplicates per the server contract. |
 | Inputs and results | Run inputs/outputs, task values and metadata with copy and JSON export (`run get --json`); empty values are distinct from unavailable values. |
 | Typed inputs | String/number/boolean controls with required/default hints; object and array use JSON editors, with a JSON alternative for the whole input. Switching modes preserves values; false/zero/empty string not dropped; invalid numeric/JSON data cannot silently coerce; unknown user-supplied keys are kept; unknown or complex declarations keep the JSON editor. The submitted JSON equals `run submit --input`'s. |

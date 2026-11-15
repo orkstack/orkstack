@@ -2829,9 +2829,11 @@ func (s *Service) CancelRun(
 	if binding.Starter == nil {
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("no run starter configured"))
 	}
+	asked := authn.Recorded(ctx, req.Header())
 	request := engine.CancelRequest{
 		Reason:    req.Msg.GetReason(),
-		Principal: boundOriginAssertion(authn.Recorded(ctx, req.Header()).ID),
+		Principal: boundOriginAssertion(asked.ID),
+		Verified:  asked.Verified,
 	}
 	if err := binding.Starter.CancelRun(ctx, req.Msg.GetRunId(), request); err != nil {
 		return nil, connect.NewError(cancelErrorCode(ctx, err), err)

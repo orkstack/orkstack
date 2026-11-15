@@ -597,3 +597,69 @@ func TestAudit_ReleaseWritesAreClassified(t *testing.T) {
 		t.Fatalf("ramp record = %v", rampRec)
 	}
 }
+
+// TestListReleases_UnservedPoolsNameAPoolWithNoOrkerTakingWork: a release
+// with runs in flight lists every pool it has served on which no answered Orker
+// of it takes work now — its tasks there wait for one — and lists nothing it
+// cannot be sure of.
+func TestListReleases_UnservedPoolsNameAPoolWithNoOrkerTakingWork(t *testing.T) {
+	// v1, the current release, served main, gpu and build; its gpu Orker is
+	// stopping, its build
+	// Orker is cordoned by an operator, and main is still served. Every role
+	// is judged alike: the current release's tasks wait the same way.
+	base := func() (*stubReleases, *stubFleet) {
+		stub := rolloutReleases()
+		stub.obs.Releases[1].RegisteredPools = []string{"build", "gpu", "main"}
+		fleet := releaseFleet()
+		fleet.presence = append(fleet.presence,
+			engine.OrkerPresence{Identity: "orker-a2", LastSeen: fleetSeen},
+			engine.OrkerPresence{Identity: "orker-a3", LastSeen: fleetSeen})
+		fleet.described["orker-a2"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-a2", Pool: "gpu", BuildId: "v1",
+			Cordoned: true, Stopping: &orkstackv1.OrkerStopping{}}
+		fleet.described["orker-a3"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-a3", Pool: "build", BuildId: "v1",
+			Cordoned: true, CordonReason: "patching"}
+		return stub, fleet
+	}
+	cases := []struct {
+		name  string
+		tweak func(*stubReleases, *stubFleet)
+		want  string
+	}{
+		{name: "runs in flight", want: "build,gpu"},
+		{name: "no runs", tweak: func(s *stubReleases, _ *stubFleet) { s.counts["v1"] = 0; s.runs["v1"] = nil }},
+		{name: "runs unknown", tweak: func(s *stubReleases, _ *stubFleet) { s.runErr["v1"] = errors.New("index down") }},
+		{name: "its pools unknown", tweak: func(s *stubReleases, _ *stubFleet) {
+			s.obs.Releases[1].RegisteredPools = nil
+			s.obs.Releases[1].DescribeErr = errors.New("describe failed")
+		}},
+		{name: "an Orker did not answer", tweak: func(_ *stubReleases, f *stubFleet) {
+			f.failures["orker-a2"] = errors.New("deadline")
+		}},
+		{name: "a pool served again", want: "build", tweak: func(_ *stubReleases, f *stubFleet) {
+			f.described["orker-a2"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-a2", Pool: "gpu", BuildId: "v1"}
+		}},
+		// An Orker that cordoned itself for a store outage takes no task
+		// either, so the pool's tasks wait just the same.
+		{name: "a store outage", want: "build,gpu", tweak: func(_ *stubReleases, f *stubFleet) {
+			f.described["orker-a2"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-a2", Pool: "gpu", BuildId: "v1",
+				Cordoned: true, StoreOutage: &orkstackv1.StoreOutage{Reason: "object storage unreachable"}}
+		}},
+		// An answered Orker of another release serves none of v1's tasks.
+		{name: "another release's Orker", want: "build,gpu", tweak: func(_ *stubReleases, f *stubFleet) {
+			f.presence = append(f.presence, engine.OrkerPresence{Identity: "orker-b9", LastSeen: fleetSeen})
+			f.described["orker-b9"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-b9", Pool: "gpu", BuildId: "v2"}
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub, fleet := base()
+			if tc.tweak != nil {
+				tc.tweak(stub, fleet)
+			}
+			v1 := releaseByBuild(listReleases(t, releaseService(stub, fleet), ""), "v1")
+			if got := strings.Join(v1.GetUnservedPools(), ","); got != tc.want {
+				t.Fatalf("unserved pools = %q; want %q", got, tc.want)
+			}
+		})
+	}
+}

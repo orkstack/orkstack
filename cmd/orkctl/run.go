@@ -455,7 +455,7 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 		fmt.Fprintf(header, "Error:\t%s\n", errorLine(run.GetError()))
 	}
 	if by := run.GetCanceledBy(); by != "" {
-		fmt.Fprintf(header, "Canceled by:\t%s  %s\n", assertedName(by), principalCaption)
+		fmt.Fprintf(header, "Canceled by:\t%s  %s\n", assertedName(by), canceledByCaption(run))
 	}
 	if err := header.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
@@ -522,13 +522,27 @@ func runStatusLabel(run *orkstackv1.Run) string {
 }
 
 // runListStatus is the run list's STATUS cell: the status, and for a run a
-// CancelRun ended, who asked, marked as asserted — the list has no room for
-// the full caption `run get` prints.
+// CancelRun ended, who asked, marked verified or asserted — the list has no
+// room for the full caption `run get` prints.
 func runListStatus(run *orkstackv1.Run) string {
 	if by := run.GetCanceledBy(); by != "" {
-		return statusLabel(run.GetStatus()) + " by " + assertedName(by) + " (asserted)"
+		mark := " (asserted)"
+		if run.GetCanceledByVerified() {
+			mark = " (verified)"
+		}
+		return statusLabel(run.GetStatus()) + " by " + assertedName(by) + mark
 	}
 	return statusLabel(run.GetStatus())
+}
+
+// canceledByCaption is the caption after who canceled a run: verified when
+// OrkStack authenticated them (Run.canceled_by_verified), otherwise the
+// asserted caption every unauthenticated principal carries.
+func canceledByCaption(run *orkstackv1.Run) string {
+	if run.GetCanceledByVerified() {
+		return "(verified)"
+	}
+	return principalCaption
 }
 
 // renderRunJoinTable is one row per task whose TaskRun.join is set, in run

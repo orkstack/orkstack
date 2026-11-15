@@ -344,6 +344,7 @@ func (d *OCIDispatcher) executeAttempt(
 	// started sees it pinned. An attempt that reached an Orker already
 	// stopping starts nothing: no log, no heartbeat, no claim, no record.
 	stage := stageFrom(ctx)
+	stage.setLabel(fmt.Sprintf("run %s task %s attempt %d", in.GetRunId(), in.GetTaskId(), attempt))
 	if in.GetPin() != nil {
 		stage.setPinned()
 	}
@@ -518,6 +519,19 @@ func (d *OCIDispatcher) executeAttempt(
 	sink.setBeat(beat)
 	beat.Start(ctx)
 	defer beat.Stop()
+	// An unpinned attempt's loop sends the t0 beat when its Orker begins to
+	// stop; it is taken away before the loop stops (a deferred call runs
+	// before the one registered above it). A pinned member needs none: a lost
+	// pin host is PIN_HOST_LOST, never an interruption.
+	if in.GetPin() == nil {
+		stage.setStoppingBeat(func(since time.Time) error {
+			if err := beat.beatStopping(since); err != nil {
+				return fmt.Errorf("run %s task %s attempt %d: %w", in.GetRunId(), in.GetTaskId(), attempt, err)
+			}
+			return nil
+		})
+		defer stage.setStoppingBeat(nil)
+	}
 	// Registered after the loop's Stop, so it runs first: the outcome is
 	// settled while the attempt still beats.
 	if settle != nil {

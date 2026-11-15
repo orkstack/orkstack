@@ -135,9 +135,12 @@ start() {
 
 # stop NAME — terminate the recorded process group politely, then firmly. A
 # pidfile written before the stack started each process in its own group
-# names a plain pid; that pid alone is signalled.
+# names a plain pid; that pid alone is signalled. The Orker is given 15
+# minutes: its 60 s stop grace, then the hand-back of what still runs
+# (docs/DEPLOY.md, "Stop timeouts"); an idle one exits at once.
 stop() {
-	local name="$1" pf pid target
+	local name="$1" pf pid target ticks=40
+	[ "$name" = orker ] && ticks=3600
 	pf="$(pidfile "$name")"
 	[ -f "$pf" ] || return 0
 	pid="$(cat "$pf")"
@@ -147,7 +150,7 @@ stop() {
 	fi
 	if kill -0 -- "$target" 2>/dev/null; then
 		kill -TERM -- "$target" 2>/dev/null || true
-		for _ in $(seq 1 40); do
+		for _ in $(seq 1 "$ticks"); do
 			kill -0 -- "$target" 2>/dev/null || break
 			sleep 0.25
 		done
@@ -283,6 +286,10 @@ write_run_config() {
 		echo "    secret_key: orkstack-secret"
 		echo "orker:"
 		echo "  workdir: $workdir"
+		# A minute's stop grace, so `make down` lets a running task finish
+		# briefly and never waits a day; stop() gives the Orker 15 minutes.
+		echo "  stop:"
+		echo "    grace: 60s"
 		if [ -n "$IDENTITY" ]; then
 			echo "  id: $DEV_ORKER_ID"
 			echo "  engine:"

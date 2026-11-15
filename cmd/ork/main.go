@@ -453,7 +453,15 @@ func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, lo
 	if err != nil {
 		return nil, "", err
 	}
-	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(), cfg.auth.capabilities()...)
+	// The identity says what this build can run, then what this engine is:
+	// the engines' presence channel lists it (engine.EngineDescription).
+	described := engineDescription(cfg)
+	if unsaid := described.Unsaid(); len(unsaid) > 0 {
+		logger.Warn("the engines' presence channel cannot carry these settings, so this engine does not say them: keep them under 100 bytes with no space, comma, = or control character",
+			"settings", unsaid)
+	}
+	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(),
+		append(cfg.auth.capabilities(), described.Tokens()...)...)
 	if dialing != nil {
 		dialing(temporalOptions)
 	}
@@ -1704,7 +1712,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	auth, err := setupAccess(ctx, cfg.auth, logger, artifacts.ConfigFromEnv(), cfg.listener.hosts.Allows,
-		cfg.idempotencyTTL, releases, svc.AuditRecorder(), authInstruments)
+		cfg.idempotencyTTL, releases, releases, engineDescription(cfg), svc.AuditRecorder(), authInstruments)
 	if err != nil {
 		return err
 	}
@@ -1716,8 +1724,16 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	defer eventWorker.Stop()
+	// The engines' presence channel: every ork process polls it, so the
+	// fleet check and the mode record's lowering see this one whatever it
+	// serves.
+	presenceWorker := engine.NewPresenceWorker(temporalClient)
+	if err := presenceWorker.Start(); err != nil {
+		return err
+	}
+	defer presenceWorker.Stop()
 	logger.Info("temporal workers started",
-		"task_queue", q.run, "event_queue", q.events,
+		"task_queue", q.run, "event_queue", q.events, "presence_queue", task.EnginesQueue,
 		"orker_queue", q.orker, "pool", cfg.pool)
 	// The versioning line is separate and always printed, because "which
 	// version am I" is the first question of any rollout. The Orker must

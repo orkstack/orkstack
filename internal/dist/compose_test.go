@@ -942,11 +942,16 @@ func TestQuickstartCompose_TheOrkerOutlastsItsContainersGrace(t *testing.T) {
 	orkerService := loadCompose(t).service(t, "orker")
 	grace, err := time.ParseDuration(orkerService.StopGracePeriod)
 	must.OKf(t, err, "stop_grace_period %q", orkerService.StopGracePeriod)
-	// The Orker's own SIGTERM waits this long for each task container before
-	// it kills it (AGENTS.md section 3.3); Docker kills the Orker after
-	// stop_grace_period, so it must be longer than a container's grace.
-	if grace <= orker.DefaultCancellationGrace || grace <= 30*time.Second {
-		t.Errorf("stop_grace_period is %v, want more than a task container's %v cancellation grace", grace, orker.DefaultCancellationGrace)
+	// The quickstart's Orker stops with a minute's grace, so `docker compose
+	// down` never waits a day; Docker kills it after stop_grace_period, which
+	// must cover that grace and the hand-back of what still runs.
+	stopGrace, err := time.ParseDuration(orkerService.Environment["ORK_ORKER_STOP_GRACE"])
+	must.OKf(t, err, "the orker's ORK_ORKER_STOP_GRACE %q", orkerService.Environment["ORK_ORKER_STOP_GRACE"])
+	if stopGrace != time.Minute {
+		t.Errorf("the quickstart's ORK_ORKER_STOP_GRACE is %v, want 60s", stopGrace)
+	}
+	if need := stopGrace + orker.StopTimeoutTail; grace < need || grace != 15*time.Minute {
+		t.Errorf("stop_grace_period is %v, want 15m, at least the stop grace plus the stop's tail (%v)", grace, need)
 	}
 	if !orkerService.Init {
 		t.Error("the orker has no init: true; a task container it kills would leave a zombie in a process that is not PID 1-aware")

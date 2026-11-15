@@ -346,6 +346,13 @@ message Release {
 
   // event_sources is set from E90; unset until it lands (v0.4.0 proto batch).
   int32 event_sources = 21;
+
+  // unserved_pools are the pools this release has served, sorted, on which no
+  // ANSWERED Orker of it takes work now (every one cordoned, stopping or gone),
+  // listed only while the release has runs in flight. Their tasks wait for an
+  // Orker of this release and never move to another (docs/DEPLOY.md §3,
+  // "Rolling a release forward"). Empty when runs_unavailable_reason is set.
+  repeated string unserved_pools = 22;
 }
 
 message ListReleasesRequest {

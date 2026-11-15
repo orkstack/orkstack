@@ -398,11 +398,11 @@ names; then restart the engines in MODE. It never raises one: an engine raises
 the record when it starts in a higher mode.
 
 enforce to observe is never refused. To asserted is refused until the
-deployment has been out of enforce for one idempotency key's life
-(engine.idempotency_ttl and five minutes): a retried submission under a key
-claimed by a principal would otherwise start a second run. Lower to observe
-first; --accept-duplicate-retries skips the wait and is recorded in the audit
-trail. It needs access.write at the deployment.
+deployment has been out of enforce for one idempotency key's life (the
+longest engine.idempotency_ttl any engine advertises, and five minutes): a
+retried submission under a key claimed by a principal would otherwise start a
+second run. Lower to observe first; --accept-duplicate-retries skips the wait
+and is recorded in the audit trail. It needs access.write at the deployment.
 
 Flags:
 

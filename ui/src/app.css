@@ -644,7 +644,7 @@
 		}
 	}
 
-	/* ---- Asserted: beside every principal (AGENTS.md §7) ------------- */
+	/* ---- Principal tag: asserted or verified (AGENTS.md §7) --------- */
 	.atag {
 		display: inline-flex;
 		align-items: center;
@@ -658,6 +658,11 @@
 		font-weight: var(--font-weight-semibold);
 		line-height: var(--leading-none);
 		white-space: nowrap;
+	}
+	.atag-verified {
+		border-color: transparent;
+		background-color: var(--color-navy-tint);
+		color: var(--color-navy-text);
 	}
 
 	/* ---- Facts strip: label and value pairs with vertical rules ------- */

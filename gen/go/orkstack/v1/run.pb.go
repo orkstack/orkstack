@@ -2258,12 +2258,13 @@ type Run struct {
 	// least a kind. It is present on every snapshot the run writes, on the
 	// archived run, and therefore in every webhook payload's embedded run.
 	Origin *RunOrigin `protobuf:"bytes,15,opt,name=origin,proto3" json:"origin,omitempty"`
-	// canceled_by is what the deployment's gateway asserted in the
-	// Ork-Principal request header on the CancelRun request that canceled this
-	// run — recorded verbatim, bounded to 256 bytes by truncation with invalid
-	// UTF-8 replaced, as RunOrigin.principal is, and NEVER authenticated: the
-	// same assertion as RunOrigin.principal and AuditRecord.principal. Every
-	// rendering says it was asserted.
+	// canceled_by is who asked for the CancelRun request that canceled this
+	// run. With auth.mode observe or enforce it is the principal OrkStack
+	// authenticated, and canceled_by_verified is set. With asserted it is what
+	// the deployment's gateway asserted in the Ork-Principal request header —
+	// recorded verbatim, bounded to 256 bytes by truncation with invalid UTF-8
+	// replaced, as RunOrigin.principal is, and never authenticated. Every
+	// rendering says which (canceled_by_verified).
 	//
 	// It is set only on a run whose status is CANCELED with error code
 	// RUN_CANCELED, when a CancelRun carrying the header was accepted before
@@ -2297,7 +2298,9 @@ type Run struct {
 	TraceId string `protobuf:"bytes,22,opt,name=trace_id,json=traceId,proto3" json:"trace_id,omitempty"`
 	// run_context is set from E86; unset until it lands (v0.4.0 proto batch).
 	RunContext *RunContextState `protobuf:"bytes,23,opt,name=run_context,json=runContext,proto3" json:"run_context,omitempty"`
-	// canceled_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	// canceled_by_verified says canceled_by is a principal OrkStack
+	// authenticated (auth.mode observe or enforce). Unset, canceled_by is what
+	// the deployment's gateway asserted in Ork-Principal, unauthenticated.
 	CanceledByVerified bool `protobuf:"varint,19,opt,name=canceled_by_verified,json=canceledByVerified,proto3" json:"canceled_by_verified,omitempty"`
 	// queued is set from E88; unset until it lands (v0.4.0 proto batch).
 	Queued *ConcurrencyQueued `protobuf:"bytes,24,opt,name=queued,proto3" json:"queued,omitempty"`
@@ -2615,11 +2618,15 @@ type RunCancelRequest struct {
 	// records nobody: an operator's own reason text, a parent run's request, a
 	// cancellation an earlier release requested with no reason at all.
 	Format int32 `protobuf:"varint,1,opt,name=format,proto3" json:"format,omitempty"`
-	// principal is the Ork-Principal assertion on the CancelRun request,
-	// bounded as Run.canceled_by is. Empty when the request carried none.
-	Principal     string `protobuf:"bytes,2,opt,name=principal,proto3" json:"principal,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// principal is who asked: the verified principal's id when the engine
+	// authenticated the CancelRun request, otherwise its Ork-Principal
+	// assertion, bounded as Run.canceled_by is. Empty when there was none.
+	Principal string `protobuf:"bytes,2,opt,name=principal,proto3" json:"principal,omitempty"`
+	// principal_verified says principal was authenticated, not asserted
+	// (Run.canceled_by_verified).
+	PrincipalVerified bool `protobuf:"varint,3,opt,name=principal_verified,json=principalVerified,proto3" json:"principal_verified,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *RunCancelRequest) Reset() {
@@ -2664,6 +2671,13 @@ func (x *RunCancelRequest) GetPrincipal() string {
 		return x.Principal
 	}
 	return ""
+}
+
+func (x *RunCancelRequest) GetPrincipalVerified() bool {
+	if x != nil {
+		return x.PrincipalVerified
+	}
+	return false
 }
 
 // RunOrigin is the immutable record of what started a run. It is decided
@@ -3905,10 +3919,11 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x10paused_by_parent\x18  \x01(\v2\x1b.orkstack.v1.InheritedPauseR\x0epausedByParent\x12@\n" +
 	"\x0epause_warnings\x18! \x03(\v2\x19.orkstack.v1.PauseWarningR\rpauseWarnings\x12&\n" +
 	"\x0fpause_slot_kept\x18\" \x01(\bR\rpauseSlotKept\x121\n" +
-	"\atimeout\x18# \x01(\v2\x17.orkstack.v1.RunTimeoutR\atimeout\"H\n" +
+	"\atimeout\x18# \x01(\v2\x17.orkstack.v1.RunTimeoutR\atimeout\"w\n" +
 	"\x10RunCancelRequest\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\x05R\x06format\x12\x1c\n" +
-	"\tprincipal\x18\x02 \x01(\tR\tprincipal\"\xae\x04\n" +
+	"\tprincipal\x18\x02 \x01(\tR\tprincipal\x12-\n" +
+	"\x12principal_verified\x18\x03 \x01(\bR\x11principalVerified\"\xae\x04\n" +
 	"\tRunOrigin\x12.\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1a.orkstack.v1.RunOriginKindR\x04kind\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x1c\n" +

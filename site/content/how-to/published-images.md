@@ -87,11 +87,12 @@ services:
     environment:
       ORK_ORKER_ID: orker-1
       ORK_ORKER_WORKDIR: /var/lib/orkstack/work
+      ORK_ORKER_STOP_GRACE: 60s
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /var/lib/orkstack/work:/var/lib/orkstack/work
     init: true
-    stop_grace_period: 45s
+    stop_grace_period: 15m
     healthcheck:
       test:
         - CMD
@@ -111,7 +112,7 @@ With `ORK_BUILD_ID` set in `ork.env` and `orker.env`, run `orkctl release promot
 - **Root.** The `orker` image runs as root. The `ork` and `orkctl` images run as non-root.
 - **The same path inside and out.** The daemon mounts each task's workspace from the host, so the work directory must be mounted at the same path. Where the Docker daemon runs in a virtual machine, as on colima, that machine must share the directory too. Otherwise the Orker refuses to boot with `WORKDIR_NOT_BINDABLE`.
 - **One `ORK_ORKER_ID` per Orker,** unique across the whole deployment, not only on one host.
-- **`init: true` and a longer stop grace.** A stopped Orker hands its tasks back, and each gets 30 seconds before it is killed. `stop_grace_period: 45s` leaves time for that.
+- **`init: true` and a stop timeout that covers the grace.** A stopped Orker takes no new work and lets running tasks finish for `ORK_ORKER_STOP_GRACE`, 24 hours by default, then hands back what remains. Give its container the grace plus about 12 minutes: `stop_grace_period: 15m` for the 60 seconds above, or `24h15m` for the default.
 
 ## Health checks
 

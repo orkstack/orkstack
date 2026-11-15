@@ -3,6 +3,7 @@ package orker
 import (
 	"context"
 	"errors"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,6 +62,12 @@ type attemptStage struct {
 	reg    *stopRegistry
 	stage  atomic.Int32
 	pinned atomic.Bool
+	// label names the attempt (run, task, attempt) in the stop's logs.
+	// Guarded by reg.mu.
+	label string
+	// stoppingBeat sends the attempt's t0 beat; nil for a pinned member and
+	// before the attempt's loop starts. Guarded by reg.mu.
+	stoppingBeat func(time.Time) error
 	// handBack is done, with errHandBack as its cause, once the sweep took
 	// the attempt back. The attempt's work context follows it.
 	handBack       context.Context
@@ -117,12 +124,42 @@ func (s *attemptStage) owed() bool {
 	return !s.pinned.Load() || s.stage.Load() != stageRevocable
 }
 
+// setLabel names the attempt in the stop's logs.
+func (s *attemptStage) setLabel(label string) {
+	if s == nil {
+		return
+	}
+	s.reg.mu.Lock()
+	s.label = label
+	s.reg.mu.Unlock()
+}
+
+// setStoppingBeat gives an unpinned attempt's t0 beat, once its loop runs, or
+// takes it away (nil) once the loop is about to stop. An attempt whose loop
+// starts after the Orker's stop began sends it at once.
+func (s *attemptStage) setStoppingBeat(beat func(time.Time) error) {
+	if s == nil {
+		return
+	}
+	s.reg.mu.Lock()
+	s.stoppingBeat = beat
+	since := s.reg.stoppingSince
+	s.reg.mu.Unlock()
+	if beat != nil && !since.IsZero() {
+		go s.reg.sendStoppingBeat(beat, since)
+	}
+}
+
 // stopRegistry is every ExecuteTask attempt this Orker has admitted and not
 // yet returned from.
 type stopRegistry struct {
 	mu       sync.Mutex
 	entries  map[*attemptStage]struct{}
 	stopping bool
+	// stoppingSince is when this Orker's stop began, zero before; warn says
+	// a t0 beat the cluster did not take.
+	stoppingSince time.Time
+	warn          func(error)
 	// change is closed, and replaced, whenever an entry leaves or moves.
 	change chan struct{}
 }
@@ -195,6 +232,36 @@ func (r *stopRegistry) handBack() int {
 	return len(taken)
 }
 
+// beatStopping sends the t0 beat of every attempt whose loop runs, at once and
+// concurrently, and returns once each has been taken or its bound passed. An
+// attempt whose loop starts later sends its own (setStoppingBeat).
+func (r *stopRegistry) beatStopping(since time.Time, warn func(error)) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.warn = warn
+	r.stoppingSince = since
+	var beats []func(time.Time) error
+	for s := range r.entries {
+		if s.stoppingBeat != nil {
+			beats = append(beats, s.stoppingBeat)
+		}
+	}
+	r.mu.Unlock()
+	var wg sync.WaitGroup
+	for _, beat := range beats {
+		wg.Go(func() { r.sendStoppingBeat(beat, since) })
+	}
+	wg.Wait()
+}
+
+func (r *stopRegistry) sendStoppingBeat(beat func(time.Time) error, since time.Time) {
+	if err := beat(since); err != nil && r.warn != nil {
+		r.warn(err)
+	}
+}
+
 // owed counts the attempts the stop still waits for, and returns the channel
 // that is closed at the next change.
 func (r *stopRegistry) owed() (int, <-chan struct{}) {
@@ -207,6 +274,26 @@ func (r *stopRegistry) owed() (int, <-chan struct{}) {
 		}
 	}
 	return n, r.change
+}
+
+// owedLabels names up to limit of the attempts the stop still waits for,
+// sorted.
+func (r *stopRegistry) owedLabels(limit int) []string {
+	r.mu.Lock()
+	var labels []string
+	for s := range r.entries {
+		// An attempt not yet named (it has just been admitted) says nothing,
+		// and takes no place in the list.
+		if s.owed() && s.label != "" {
+			labels = append(labels, s.label)
+		}
+	}
+	r.mu.Unlock()
+	sort.Strings(labels)
+	if len(labels) > limit {
+		labels = labels[:limit]
+	}
+	return labels
 }
 
 // isStopping reports whether the stop's sweep has run.

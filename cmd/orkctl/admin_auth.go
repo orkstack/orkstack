@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strings"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
@@ -65,8 +66,16 @@ func newAdminAuthStatusCommand(g *globalFlags) *cobra.Command {
 			if t := st.GetAssertedSafeFrom(); t != nil {
 				fmt.Fprintf(out, "asserted safe:  from %s\n", t.AsTime().Format("2006-01-02T15:04:05Z07:00"))
 			}
+			if t := st.GetFleetCheckedAt(); t != nil {
+				fmt.Fprintf(out, "fleet checked:  %s\n", t.AsTime().Format("2006-01-02T15:04:05Z07:00"))
+			}
 			for _, e := range st.GetEngines() {
-				fmt.Fprintf(out, "not enforcing:  %s\n", e.GetId())
+				if e.GetMode() != "enforce" {
+					fmt.Fprintf(out, "not enforcing:  %s (%s)\n", assertedName(e.GetId()), assertedName(e.GetMode()))
+				}
+				if differ := e.GetSettingsDiffer(); len(differ) > 0 {
+					fmt.Fprintf(out, "differs:        %s holds another %s\n", assertedName(e.GetId()), assertedName(strings.Join(differ, " and ")))
+				}
 			}
 			return nil
 		},
@@ -82,11 +91,11 @@ func newAdminAuthLowerCommand(g *globalFlags) *cobra.Command {
 			"names; then restart the engines in MODE. It never raises one: an engine raises\n" +
 			"the record when it starts in a higher mode.\n\n" +
 			"enforce to observe is never refused. To asserted is refused until the\n" +
-			"deployment has been out of enforce for one idempotency key's life\n" +
-			"(engine.idempotency_ttl and five minutes): a retried submission under a key\n" +
-			"claimed by a principal would otherwise start a second run. Lower to observe\n" +
-			"first; --accept-duplicate-retries skips the wait and is recorded in the audit\n" +
-			"trail. It needs access.write at the deployment.",
+			"deployment has been out of enforce for one idempotency key's life (the\n" +
+			"longest engine.idempotency_ttl any engine advertises, and five minutes): a\n" +
+			"retried submission under a key claimed by a principal would otherwise start a\n" +
+			"second run. Lower to observe first; --accept-duplicate-retries skips the wait\n" +
+			"and is recorded in the audit trail. It needs access.write at the deployment.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			mode := args[0]

@@ -1314,10 +1314,14 @@ type EngineSeen struct {
 	// build_id is the release the engine runs; empty for an unversioned one.
 	BuildId string `protobuf:"bytes,2,opt,name=build_id,json=buildId,proto3" json:"build_id,omitempty"`
 	// mode is the auth.mode the engine runs in.
-	Mode          string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
-	LastSeen      *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Mode     string                 `protobuf:"bytes,3,opt,name=mode,proto3" json:"mode,omitempty"`
+	LastSeen *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=last_seen,json=lastSeen,proto3" json:"last_seen,omitempty"`
+	// settings_differ names the settings every replica must hold alike that
+	// this engine holds otherwise than the answering one: `auth.admins`,
+	// `auth.orkers`. Empty when they agree, or the engine does not say.
+	SettingsDiffer []string `protobuf:"bytes,5,rep,name=settings_differ,json=settingsDiffer,proto3" json:"settings_differ,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *EngineSeen) Reset() {
@@ -1378,6 +1382,13 @@ func (x *EngineSeen) GetLastSeen() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *EngineSeen) GetSettingsDiffer() []string {
+	if x != nil {
+		return x.SettingsDiffer
+	}
+	return nil
+}
+
 // AccessStatus is what the Access page's banners and `auth lower` read: the
 // state of the deployment's authentication, as the answering replica sees
 // it.
@@ -1397,8 +1408,10 @@ type AccessStatus struct {
 	// document_stale is true when that copy is older than its refresh bound
 	// and is served stale because the store did not answer.
 	DocumentStale bool `protobuf:"varint,6,opt,name=document_stale,json=documentStale,proto3" json:"document_stale,omitempty"`
-	// engines are the engines seen; one whose mode is below enforce is a peer
-	// that does not enforce.
+	// engines are the engines the last fleet check saw that do not enforce
+	// (mode below enforce) or hold another auth.admins or auth.orkers
+	// (settings_differ). The engines say these of themselves on the cluster;
+	// nothing authenticates them.
 	Engines []*EngineSeen `protobuf:"bytes,7,rep,name=engines,proto3" json:"engines,omitempty"`
 	// orkers_reaching_control_plane are the Orkers whose storage credential
 	// reaches the control plane's objects, and orkers_unchecked those whose
@@ -1407,7 +1420,8 @@ type AccessStatus struct {
 	OrkersUnchecked            []string `protobuf:"bytes,9,rep,name=orkers_unchecked,json=orkersUnchecked,proto3" json:"orkers_unchecked,omitempty"`
 	// asserted_safe_from is the earliest instant the mode may be lowered to
 	// `asserted` without accepting duplicate retries: one idempotency key's
-	// life after the deployment last ran in `enforce`. Unset when it is safe
+	// life, the longest engine.idempotency_ttl any engine advertised, after the
+	// deployment last ran in `enforce`. Unset when it is safe
 	// now or the deployment never enforced.
 	AssertedSafeFrom *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=asserted_safe_from,json=assertedSafeFrom,proto3" json:"asserted_safe_from,omitempty"`
 	// acknowledged_revision is the latest revision written around the API
@@ -1416,6 +1430,10 @@ type AccessStatus struct {
 	// mode_record_etag is the mode record's compare-and-swap token, which
 	// LowerAuthModeRequest.record_etag sends back.
 	ModeRecordEtag string `protobuf:"bytes,12,opt,name=mode_record_etag,json=modeRecordEtag,proto3" json:"mode_record_etag,omitempty"`
+	// fleet_checked_at is when the fleet check last read the cluster; engines
+	// is what it saw then. Unset before the first check that could read it,
+	// and on an engine that runs no fleet check (below enforce).
+	FleetCheckedAt *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=fleet_checked_at,json=fleetCheckedAt,proto3" json:"fleet_checked_at,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -1534,6 +1552,13 @@ func (x *AccessStatus) GetModeRecordEtag() string {
 	return ""
 }
 
+func (x *AccessStatus) GetFleetCheckedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.FleetCheckedAt
+	}
+	return nil
+}
+
 var File_orkstack_v1_access_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_access_proto_rawDesc = "" +
@@ -1620,13 +1645,14 @@ const file_orkstack_v1_access_proto_rawDesc = "" +
 	"\n" +
 	"written_by\x18\x05 \x01(\tR\twrittenBy\x12.\n" +
 	"\x13written_by_verified\x18\x06 \x01(\bR\x11writtenByVerified\x12\x16\n" +
-	"\x06change\x18\a \x01(\tR\x06change\"\x84\x01\n" +
+	"\x06change\x18\a \x01(\tR\x06change\"\xad\x01\n" +
 	"\n" +
 	"EngineSeen\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12\x12\n" +
 	"\x04mode\x18\x03 \x01(\tR\x04mode\x127\n" +
-	"\tlast_seen\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\"\xf9\x04\n" +
+	"\tlast_seen\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12'\n" +
+	"\x0fsettings_differ\x18\x05 \x03(\tR\x0esettingsDiffer\"\xbf\x05\n" +
 	"\fAccessStatus\x12\x1f\n" +
 	"\vengine_mode\x18\x01 \x01(\tR\n" +
 	"engineMode\x12#\n" +
@@ -1641,7 +1667,8 @@ const file_orkstack_v1_access_proto_rawDesc = "" +
 	"\x12asserted_safe_from\x18\n" +
 	" \x01(\v2\x1a.google.protobuf.TimestampR\x10assertedSafeFrom\x123\n" +
 	"\x15acknowledged_revision\x18\v \x01(\x03R\x14acknowledgedRevision\x12(\n" +
-	"\x10mode_record_etag\x18\f \x01(\tR\x0emodeRecordEtag*\x89\x01\n" +
+	"\x10mode_record_etag\x18\f \x01(\tR\x0emodeRecordEtag\x12D\n" +
+	"\x10fleet_checked_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\x0efleetCheckedAt*\x89\x01\n" +
 	"\tScopeKind\x12\x1a\n" +
 	"\x16SCOPE_KIND_UNSPECIFIED\x10\x00\x12\x19\n" +
 	"\x15SCOPE_KIND_DEPLOYMENT\x10\x01\x12\x18\n" +
@@ -1734,11 +1761,12 @@ var file_orkstack_v1_access_proto_depIdxs = []int32{
 	19, // 20: orkstack.v1.AccessStatus.document_age:type_name -> google.protobuf.Duration
 	16, // 21: orkstack.v1.AccessStatus.engines:type_name -> orkstack.v1.EngineSeen
 	18, // 22: orkstack.v1.AccessStatus.asserted_safe_from:type_name -> google.protobuf.Timestamp
-	23, // [23:23] is the sub-list for method output_type
-	23, // [23:23] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	18, // 23: orkstack.v1.AccessStatus.fleet_checked_at:type_name -> google.protobuf.Timestamp
+	24, // [24:24] is the sub-list for method output_type
+	24, // [24:24] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_access_proto_init() }

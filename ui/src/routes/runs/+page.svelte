@@ -328,13 +328,13 @@
 	});
 
 	/** The one line under a failed or canceled run's pill. */
-	function reasonOf(run: Run): { kind: 'fail' | 'canceled'; code?: string; task?: string; principal?: string } | null {
+	function reasonOf(run: Run): { kind: 'fail' | 'canceled'; code?: string; task?: string; principal?: string; verified?: boolean } | null {
 		const status = statusOf(run);
 		if (status === Status.FAILED) {
 			const task = run.taskRuns.find((t) => t.status === Status.FAILED);
 			return { kind: 'fail', code: task?.error?.code || run.error?.code, task: task?.taskId };
 		}
-		if (status === Status.CANCELED && run.canceledBy) return { kind: 'canceled', principal: run.canceledBy };
+		if (status === Status.CANCELED && run.canceledBy) return { kind: 'canceled', principal: run.canceledBy, verified: run.canceledByVerified };
 		return null;
 	}
 </script>
@@ -532,7 +532,7 @@
 									{#if reason?.kind === 'fail'}
 										<div class="reason text-fail">{#if reason.code}<code>{reason.code}</code>{/if}{#if reason.task}{' '}in {reason.task}{/if}</div>
 									{:else if reason?.kind === 'canceled' && reason.principal}
-										<div class="reason text-ink-3">by <Principal name={reason.principal} testid="run-row-canceled-by-{run.id}" /></div>
+										<div class="reason text-ink-3">by <Principal name={reason.principal} verified={reason.verified === true} testid="run-row-canceled-by-{run.id}" /></div>
 									{/if}
 								</td>
 								<td>{#if progress.total > 0}<ProgressRing {progress} {status} small />{:else}<span class="text-ink-3" data-tip="Not read yet">—</span>{/if}</td>

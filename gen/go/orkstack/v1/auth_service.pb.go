@@ -269,8 +269,12 @@ type GetSigninResponse struct {
 	// access_revision is the access document's revision the answer was
 	// computed against.
 	AccessRevision int64 `protobuf:"varint,11,opt,name=access_revision,json=accessRevision,proto3" json:"access_revision,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// orker_id is the one Orker the caller's credential names (its issuer's
+	// orker_id_claim, or a service account's or certificate's Orker); empty
+	// when it names none. An Orker refuses to boot unless it is its own id.
+	OrkerId       string `protobuf:"bytes,12,opt,name=orker_id,json=orkerId,proto3" json:"orker_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetSigninResponse) Reset() {
@@ -378,6 +382,13 @@ func (x *GetSigninResponse) GetAccessRevision() int64 {
 		return x.AccessRevision
 	}
 	return 0
+}
+
+func (x *GetSigninResponse) GetOrkerId() string {
+	if x != nil {
+		return x.OrkerId
+	}
+	return ""
 }
 
 type RefreshSigninRequest struct {
@@ -577,7 +588,7 @@ const file_orkstack_v1_auth_service_proto_rawDesc = "" +
 	"\x06scopes\x18\x05 \x03(\tR\x06scopes\x12\x1f\n" +
 	"\vdevice_flow\x18\x06 \x01(\bR\n" +
 	"deviceFlow\"\x12\n" +
-	"\x10GetSigninRequest\"\x9e\x03\n" +
+	"\x10GetSigninRequest\"\xb9\x03\n" +
 	"\x11GetSigninResponse\x12!\n" +
 	"\fprincipal_id\x18\x01 \x01(\tR\vprincipalId\x12\x18\n" +
 	"\adisplay\x18\x02 \x01(\tR\adisplay\x12\x16\n" +
@@ -591,7 +602,8 @@ const file_orkstack_v1_auth_service_proto_rawDesc = "" +
 	"\n" +
 	"csrf_token\x18\n" +
 	" \x01(\tR\tcsrfToken\x12'\n" +
-	"\x0faccess_revision\x18\v \x01(\x03R\x0eaccessRevision\"\x16\n" +
+	"\x0faccess_revision\x18\v \x01(\x03R\x0eaccessRevision\x12\x19\n" +
+	"\borker_id\x18\f \x01(\tR\aorkerId\"\x16\n" +
 	"\x14RefreshSigninRequest\"\xdb\x01\n" +
 	"\x15RefreshSigninResponse\x12C\n" +
 	"\x0fvalidated_until\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x0evalidatedUntil\x12B\n" +

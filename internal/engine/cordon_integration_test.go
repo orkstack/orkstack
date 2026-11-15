@@ -26,6 +26,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -857,4 +858,90 @@ func orkersWhere(field, value string) *orkstackv1.ListOrkersRequest {
 	return &orkstackv1.ListOrkersRequest{Filters: []*orkstackv1.FieldFilter{{
 		Field: field, Op: orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS, Values: []string{value},
 	}}}
+}
+
+// TestIntegration_PinCreationAtTheStoppingInstantIsRefused: a pin host that
+// begins to stop refuses every pin creation that reaches it, retryably, so a
+// pinned run submitted then opens its pin on another pin host that takes
+// work; the pin it opened before the stop keeps executing on it. The SDK's
+// creation poller cannot be stopped alone, so the refusal is the stop's only
+// way to keep a new pin off it.
+func TestIntegration_PinCreationAtTheStoppingInstantIsRefused(t *testing.T) {
+	ctx := cordonContext(t, 12*time.Minute)
+	pool := fmt.Sprintf("pinstop-%d", time.Now().UnixNano()%1_000_000)
+	d := newCordonDeployment(t, ctx, "pinstop", pool)
+	logsA := &syncBuffer{}
+	// maxPins 2: a host at its cap does not poll the creation channel, and
+	// the refusal could not be observed.
+	a := d.orker("orker-sa-"+d.token, pool, pinOrkerConfig{
+		maxPins: 2, logger: slog.New(slog.NewTextHandler(logsA, nil))})
+	probe := engine.NewTemporalPoolProbe(d.temporal)
+	awaitPoolServedBy(t, ctx, probe, pool, a.queue, 1)
+	awaitPoolServedBy(t, ctx, probe, pool+" (session creation)", a.queue+"__internal_session_creation", 1)
+	const hold = 30
+	d.storeOrkflow("hold-"+d.token, pool, cordonHoldPinYAML, hold)
+	d.storeOrkflow("quick-"+d.token, pool, cordonQuickPinYAML, 0)
+
+	d.transcript.section("a pin opens on A; A begins to stop")
+	run1 := d.submit("hold-" + d.token)
+	d.awaitFleet(orkersWhere("orker_id", a.id), 3*time.Minute, "A reporting run 1's open pin",
+		func(rows []*orkstackv1.Orker) bool { return len(rows) == 1 && rows[0].GetOpenPins() == 1 })
+	// The stop's first phase, as cmd/orker begins it on SIGTERM; its end is
+	// the test's teardown.
+	a.activities.BeginStop(orker.StopSequence{Grace: 10 * time.Minute})
+	stopped := time.Now()
+	d.transcript.line("A %s stopping, grace 10m", a.id)
+	rows := d.awaitFleet(orkersWhere("orker_id", a.id), time.Minute, "A reading stopping",
+		func(rows []*orkstackv1.Orker) bool { return len(rows) == 1 && rows[0].GetStopping() != nil })
+	if rows[0].GetCordonReason() != "" {
+		t.Fatalf("a stopping Orker reads an operator's cordon %q", rows[0].GetCordonReason())
+	}
+
+	run2 := d.submit("quick-" + d.token)
+	d.transcript.line("run 2 %s submitted while A is the only pin host, and stopping", run2)
+	refusalDeadline := time.Now().Add(time.Minute)
+	for !strings.Contains(logsA.String(), "pin creation refused: orker is stopping") {
+		if time.Now().After(refusalDeadline) {
+			t.Fatalf("A never refused run 2's pin creation; A's log:\n%s", logsA.String())
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	for _, l := range strings.Split(logsA.String(), "\n") {
+		if strings.Contains(l, "pin creation refused: orker is stopping") {
+			d.transcript.line("A's log               %s", l)
+			t.Logf("EVIDENCE A refused: %s", l)
+			break
+		}
+	}
+
+	b := d.orker("orker-sb-"+d.token, pool, pinOrkerConfig{maxPins: 1})
+	d.transcript.line("B %s started", b.id)
+	second := d.await(run2)
+	if second.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("run 2 ended %v: %v", second.GetStatus(), second.GetError())
+	}
+	for _, member := range []string{"first", "second"} {
+		if got := pinTaskRun(t, second, member).GetOrkerId(); got != b.id {
+			t.Fatalf("run 2's %s ran on %s; a new pin must open on the pin host taking work, %s", member, got, b.id)
+		}
+	}
+	if len(a.ranFor(run2)) != 0 {
+		t.Fatalf("the stopping host was handed run 2's members %v", a.ranFor(run2))
+	}
+
+	first := d.await(run1)
+	if first.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+		t.Fatalf("run 1 ended %v: %v", first.GetStatus(), first.GetError())
+	}
+	after := pinTaskRun(t, first, "after")
+	if after.GetOrkerId() != a.id || !a.sawTask(run1, "after") {
+		t.Fatalf("run 1's member after the stop ran on %s; a pin opened before the stop keeps executing on %s",
+			after.GetOrkerId(), a.id)
+	}
+	if started := after.GetStartedAt().AsTime(); after.GetStartedAt() == nil || !started.After(stopped) {
+		t.Fatalf("run 1's after started at %v, not after the stop at %v: the %ds hold ended first",
+			started, stopped, hold)
+	}
+	t.Logf("EVIDENCE stopping pin host: run 1's member after the stop ran on A (%s); run 2's pin opened on B (%s)",
+		after.GetOrkerId(), b.id)
 }

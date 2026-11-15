@@ -78,9 +78,5 @@ export function originRootRunPath(origin: RunOrigin | undefined): string | null 
 	return `/runs/${encodeURIComponent(origin.rootRunId)}`;
 }
 
-/** The caption every rendering of a principal carries. */
-export const PRINCIPAL_CAPTION =
-	"Ork-Principal as asserted by the deployment's gateway; OrkStack records it and does not authenticate it.";
-
 /** The caption on an unrecorded origin. */
 export const UNRECORDED_CAPTION = 'This run started before origins were recorded.';

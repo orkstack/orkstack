@@ -36,6 +36,15 @@ func TestAdminAuthLower(t *testing.T) {
 	access := &api.AccessControl{Mode: authn.ModeObserve, ModeRecord: guard, Configured: admins,
 		Policies:      api.NewPolicyCache(artifacts.NewAccessStoreOn(cas), api.PolicyCacheOptions{Configured: admins}),
 		Authenticator: &authn.Authenticator{}}
+	self := engine.EngineDescription{Mode: "enforce", AdminsDigest: engine.ConfigDigest([]string{"user:corp:root"})}
+	other := self
+	other.AdminsDigest = engine.ConfigDigest(nil)
+	access.Fleet = &api.FleetReport{Self: self, Presence: enginesListed{
+		{Identity: "1@api@", Description: engine.EngineDescription{Mode: "asserted"}},
+		{Identity: "2@other@", Description: other},
+		{Identity: "3@self@", Description: self},
+	}}
+	access.Fleet.Check(ctx)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -56,13 +65,22 @@ func TestAdminAuthLower(t *testing.T) {
 		code := Execute(append(args, "--server", base), &out, &errOut)
 		return out.String(), errOut.String(), code
 	}
-	if out, errOut, code := run("admin", "auth", "status"); code != 0 || !strings.Contains(out, "recorded mode:  observe") {
+	out, errOut, code := run("admin", "auth", "status")
+	if code != 0 || !strings.Contains(out, "recorded mode:  observe") {
 		t.Fatalf("status = %d %q %q", code, out, errOut)
+	}
+	for _, want := range []string{"fleet checked:", "not enforcing:  1@api@ (asserted)", "differs:        2@other@ holds another auth.admins"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("status lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "3@self@") || strings.Contains(out, "not enforcing:  2@other@") {
+		t.Errorf("status lists an engine that enforces with this engine's lists:\n%s", out)
 	}
 	if _, errOut, code := run("admin", "auth", "lower", "enforce"); code == 0 {
 		t.Fatalf("lowering to enforce succeeded: %q", errOut)
 	}
-	out, errOut, code := run("admin", "auth", "lower", "asserted")
+	out, errOut, code = run("admin", "auth", "lower", "asserted")
 	if code != 0 || !strings.Contains(out, "from observe to asserted") {
 		t.Fatalf("lower = %d %q %q", code, out, errOut)
 	}
@@ -70,4 +88,11 @@ func TestAdminAuthLower(t *testing.T) {
 	if err != nil || rec.Mode != authn.ModeAsserted {
 		t.Fatalf("record = %+v, %v", rec, err)
 	}
+}
+
+// enginesListed is a presence channel that lists these engines.
+type enginesListed []engine.EnginePresence
+
+func (e enginesListed) ObserveEngines(context.Context) ([]engine.EnginePresence, error) {
+	return e, nil
 }

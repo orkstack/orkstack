@@ -515,3 +515,41 @@ func TestOrkerDrain_StopsWhenOnlyAStoreOutageIsLeft(t *testing.T) {
 		t.Fatalf("stdout=%q stderr=%q", out.stdout, out.stderr)
 	}
 }
+
+// A stopping Orker reads as stopping, not as an operator's cordon, whether or
+// not an operator's cordon holds beside it, and the list says what it does.
+func TestOrkerState_StoppingIsItsOwnState(t *testing.T) {
+	since := time.Date(2026, 11, 14, 9, 0, 0, 0, time.UTC)
+	stopping := &orkstackv1.Orker{OrkerId: "orker-a", Cordoned: true, RunningTasks: 2, Stopping: &orkstackv1.OrkerStopping{
+		Since: timestamppb.New(since), GraceEndsAt: timestamppb.New(since.Add(time.Hour))}}
+	operatorToo := &orkstackv1.Orker{OrkerId: "orker-b", Cordoned: true, CordonReason: "cve", Stopping: &orkstackv1.OrkerStopping{}}
+	if got := orkerState(stopping); got != "stopping" {
+		t.Fatalf("orkerState(stopping) = %q", got)
+	}
+	if operatorCordoned(stopping) {
+		t.Fatal("a stopping Orker read as an operator's cordon")
+	}
+	if got := orkerState(operatorToo); got != "stopping (cordoned by an operator)" {
+		t.Fatalf("orkerState(stopping and operator) = %q", got)
+	}
+	var out strings.Builder
+	if err := renderOrkerList(&out, []*orkstackv1.Orker{stopping}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "1 orker stopping: it takes no new work and finishes what it already runs, then exits:") ||
+		!strings.Contains(out.String(), "orker-a: 2, since 2026-11-14T09:00:00Z, grace ends 2026-11-14T10:00:00Z") {
+		t.Fatalf("list = %q; want the stopping footer naming orker-a, its tasks and its grace", out.String())
+	}
+	if strings.Contains(out.String(), "accepting no new work:\n  orker-a") {
+		t.Fatalf("list = %q; a stopping Orker is listed as an operator's cordon", out.String())
+	}
+	var get strings.Builder
+	if err := renderOrker(&get, stopping); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"stopping since  2026-11-14T09:00:00Z", "grace ends      2026-11-14T10:00:00Z"} {
+		if !strings.Contains(get.String(), want) {
+			t.Fatalf("get = %q; want a line %q", get.String(), want)
+		}
+	}
+}

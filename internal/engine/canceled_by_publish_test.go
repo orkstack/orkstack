@@ -50,7 +50,7 @@ func (s *canceledSource) EventsForArchive(context.Context, string) (engine.Archi
 		name = fmt.Sprintf("%s (read %d)", s.canceledBy, s.reads)
 	}
 	s.answered = append(s.answered, name)
-	return engine.ArchiveRead{Events: s.events, CanceledBy: name}, nil
+	return engine.ArchiveRead{Events: s.events, CanceledBy: engine.CanceledBy{Principal: name}}, nil
 }
 
 // publishCanceled publishes a canceled run's RUN_CANCELED through the

@@ -31,7 +31,7 @@ Use the `orkctl` of the release you operate. An older `orkctl` that writes a hel
 3. Optionally send a share of new runs to it: `orkctl release ramp "$NEW" --percent 10`.
 4. Make it current: `orkctl release promote "$NEW"`.
 5. Wait for the old release to drain: `orkctl release wait "$OLD" --timeout 2h`. It exits `0` once no run of the old release is executing, and no Orker of it holds an open pin.
-6. Stop the old processes only after `release wait` exits `0`. Drain any Orker that hosts a pin first.
+6. Stop the old processes only after `release wait` exits `0`. Drain any Orker that hosts a pin first. Until then, keep one old Orker taking work in every pool: if `release status` warns that a pool has no Orker taking work, the old release's tasks there wait until one does.
 
 The full procedure, with its output, is in [Roll out a release](/docs/operate/roll-out-a-release/).
 

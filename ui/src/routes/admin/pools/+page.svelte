@@ -78,6 +78,8 @@
 		operatorCordons: number;
 		/** Orkers cordoned because object storage does not answer them. */
 		storeOutages: number;
+		/** Orkers stopping: they take no new work and finish what they run. */
+		stopping: number;
 		tasks: number;
 		pins: number;
 		cpu: { reserved: number; capacity: number };
@@ -91,6 +93,7 @@
 			cordoned: mine.filter((o) => o.cordoned).length,
 			operatorCordons: mine.filter(operatorCordoned).length,
 			storeOutages: mine.filter((o) => o.storeOutage).length,
+			stopping: mine.filter((o) => o.stopping).length,
 			tasks: sum((o) => o.runningTasks),
 			pins: sum((o) => o.openPins),
 			cpu: { reserved: sum((o) => o.reserved?.cpu ?? 0), capacity: sum((o) => o.capacity?.cpu ?? 0) },
@@ -103,9 +106,11 @@
 		if (load && load.orkers > 0 && load.storeOutages === load.orkers) return { word: 'Object storage unreachable', tone: 'fail' };
 		if (pool.liveOrkerCount === 0) return { word: 'No Orkers', tone: 'fail' };
 		if (load && load.storeOutages > 0) return { word: `${load.storeOutages} cannot reach object storage`, tone: 'fail' };
+		if (load && load.orkers > 0 && load.stopping === load.orkers) return { word: 'Stopping', tone: 'wait' };
 		if (load && load.orkers > 0 && load.cordoned === load.orkers) return { word: 'Cordoned', tone: 'wait' };
 		if (load && isFull(load)) return { word: 'Full', tone: 'wait' };
 		if (load && load.operatorCordons > 0) return { word: `${load.operatorCordons} cordoned`, tone: 'wait' };
+		if (load && load.stopping > 0) return { word: `${load.stopping} stopping`, tone: 'wait' };
 		return { word: 'Ready', tone: 'ok' };
 	}
 	/** Every Orker has reserved all it declared, in a dimension their capacity bounds. */
@@ -254,7 +259,7 @@
 	</div>
 	<div class="mt-auto flex items-center gap-3 px-4 pt-1 pb-3.5 text-dense text-ink-2">
 		{#if !pool.unavailableReason}
-			<span class="min-w-0"><span class="num" data-testid="pool-orker-count-{pool.name}">{orkerLabel(pool)}</span> {pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}{#if load}{' · '}{load.tasks} running {load.tasks === 1 ? 'task' : 'tasks'}{' · '}{load.pins} open {load.pins === 1 ? 'pin' : 'pins'}{/if}{#if load && load.operatorCordons > 0}{' · '}{load.operatorCordons} cordoned{/if}{#if load && load.storeOutages > 0}{' · '}<span data-testid="pool-store-outages-{pool.name}">{load.storeOutages} cannot reach object storage</span>{/if}</span>
+			<span class="min-w-0"><span class="num" data-testid="pool-orker-count-{pool.name}">{orkerLabel(pool)}</span> {pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}{#if load}{' · '}{load.tasks} running {load.tasks === 1 ? 'task' : 'tasks'}{' · '}{load.pins} open {load.pins === 1 ? 'pin' : 'pins'}{/if}{#if load && load.operatorCordons > 0}{' · '}{load.operatorCordons} cordoned{/if}{#if load && load.stopping > 0}{' · '}<span data-testid="pool-stopping-{pool.name}">{load.stopping} stopping</span>{/if}{#if load && load.storeOutages > 0}{' · '}<span data-testid="pool-store-outages-{pool.name}">{load.storeOutages} cannot reach object storage</span>{/if}</span>
 			<button
 				type="button"
 				class="btn btn-sm ml-auto shrink-0"

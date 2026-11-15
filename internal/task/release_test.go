@@ -27,6 +27,7 @@ func TestPoolForChannel_NamesTheDefaultRouteByItsPool(t *testing.T) {
 		{"a pool channel bound as the default", task.Route{Pool: "gpu", Queue: "ork-pool-gpu"}, "ork-pool-gpu", "gpu", true},
 		{"the presence channel", task.Route{Pool: "main", Queue: "ork-tasks"}, task.OrkersQueue, "", false},
 		{"the engine's projection channel", task.Route{Pool: "main", Queue: "ork-tasks"}, task.EngineEventQueue, "", false},
+		{"the engines' presence channel", task.Route{Pool: "main", Queue: "ork-tasks"}, task.EnginesQueue, "", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

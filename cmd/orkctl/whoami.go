@@ -52,6 +52,9 @@ func newWhoamiCommand(g *globalFlags) *cobra.Command {
 			if len(m.GetGroups()) > 0 {
 				fmt.Fprintf(out, "groups:     %s\n", strings.Join(m.GetGroups(), ", "))
 			}
+			if id := m.GetOrkerId(); id != "" {
+				fmt.Fprintf(out, "orker:      %s\n", assertedName(id))
+			}
 			if len(m.GetBindings()) == 0 {
 				fmt.Fprintln(out, "bindings:   none: this principal holds nothing")
 			}

@@ -168,6 +168,28 @@ func (c authConfig) capabilities() []string {
 	return nil
 }
 
+// engineDescription is what this engine says of itself on the engines'
+// presence channel (engine.EngineDescription): its mode, its idempotency key's
+// life, its deployment and build, and, when it authenticates, the digests of
+// auth.admins and auth.orkers, which every replica must hold alike.
+func engineDescription(cfg config) engine.EngineDescription {
+	ttl := cfg.idempotencyTTL
+	if ttl <= 0 {
+		ttl = engine.DefaultClaimTTL // what engine.ClaimLife holds a claim for
+	}
+	d := engine.EngineDescription{Mode: cfg.auth.mode, ClaimTTL: ttl,
+		Deployment: cfg.deployment.Name, BuildID: cfg.deployment.BuildID}
+	if cfg.auth.enabled() {
+		d.AdminsDigest = engine.ConfigDigest(cfg.auth.admins)
+		orkers := make([]string, 0, len(cfg.auth.orkers))
+		for _, o := range cfg.auth.orkers {
+			orkers = append(orkers, fmt.Sprintf("%s\x00%s\x00%t", o.Subject, o.Pool, o.OrkerIDsAny))
+		}
+		d.OrkersDigest = engine.ConfigDigest(orkers)
+	}
+	return d
+}
+
 // checkBoot refuses what could never work: enforce with no way to
 // authenticate, break-glass with no public URL to bind its assertions to,
 // and a heap profile served off loopback by a process that may hold keys.
@@ -241,6 +263,7 @@ type accessSetup struct {
 // nothing else.
 func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCfg artifacts.Config,
 	hostAllowed func(string) bool, claimTTL time.Duration, checker engine.CapabilityChecker,
+	presence engine.EnginePresenceReader, self engine.EngineDescription,
 	audit *api.AuditRecorder, metrics *telemetry.AuthInstruments,
 ) (accessSetup, error) {
 	modes, err := artifacts.NewS3ModeStore(ctx, storeCfg)
@@ -250,6 +273,26 @@ func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCf
 	host, _ := os.Hostname()
 	guard := &api.ModeGuard{Store: modes, Mode: c.mode, ClaimTTL: claimTTL, Logger: logger, Host: host,
 		Missing: metrics.CountModeRecordMissing}
+	if presence != nil {
+		// Lowering to asserted waits the longest claim life any engine
+		// advertises on the presence channel, not this engine's alone.
+		guard.PeerClaimTTL = func(ctx context.Context) (time.Duration, error) {
+			engines, err := presence.ObserveEngines(ctx)
+			if err != nil {
+				return 0, err
+			}
+			ttl, by := engine.LargestClaimTTL(engines)
+			if ttl > claimTTL {
+				// The engine a lowering waits for is named here, on the
+				// operator's surface, never in the API's refusal: an identity
+				// carries a host name. A poller of the namespace may say
+				// anything, so an unexpected one here is worth a look.
+				logger.Warn("mode record: an engine advertises a longer idempotency key life than this one; lowering to asserted waits for it",
+					"engine", by, "claim_ttl", ttl, "own_claim_ttl", claimTTL)
+			}
+			return ttl, nil
+		}
+	}
 	if err := bootModeRecord(ctx, guard, logger); err != nil {
 		return accessSetup{}, err
 	}
@@ -295,7 +338,8 @@ func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCf
 			HostAllowed: hostAllowed},
 	}
 	if c.mode == authn.ModeEnforce {
-		access.Fleet = &api.FleetReport{Checker: checker, Logger: logger, Unenforced: metrics.SetFleetUnenforced}
+		access.Fleet = &api.FleetReport{Presence: presence, Checker: checker, Self: self, Logger: logger,
+			Unenforced: metrics.SetFleetUnenforced}
 		go access.Fleet.Run(ctx)
 	}
 	logger.Info("authentication",

@@ -352,9 +352,15 @@ func TestPoolResolver_ARequestMustFitOneOrkerInEveryDimension(t *testing.T) {
 	}
 }
 
-// An Orker waiting out a store outage has paused, so it keeps its pool live and
-// answers for it; an operator's cordon, alone or beside the outage, does not.
+// An Orker waiting out a store outage has paused, and a stopping one finishes
+// what it runs, so each keeps its pool live and answers for it; an operator's
+// cordon, alone or beside either, does not.
 func TestPoolResolver_APoolPausedForAStoreOutageIsLive(t *testing.T) {
+	stopping := func(o *orkstackv1.DescribeOrkerResult) *orkstackv1.DescribeOrkerResult {
+		o.Cordoned = true
+		o.Stopping = &orkstackv1.OrkerStopping{}
+		return o
+	}
 	storeOutage := func(o *orkstackv1.DescribeOrkerResult) *orkstackv1.DescribeOrkerResult {
 		o.Cordoned = true
 		o.StoreOutage = &orkstackv1.StoreOutage{Reason: "object storage unreachable"}
@@ -374,6 +380,9 @@ func TestPoolResolver_APoolPausedForAStoreOutageIsLive(t *testing.T) {
 		{"a store outage beside a cordoned sibling", fleetOf(storeOutage(currentOrker("gpu-1", "gpu", 0)), operator(currentOrker("gpu-2", "gpu", 0))), false},
 		{"an operator's cordon alone", fleetOf(operator(currentOrker("gpu-1", "gpu", 0))), true},
 		{"an operator's cordon beside a store outage on one Orker", fleetOf(storeOutage(operator(currentOrker("gpu-1", "gpu", 0)))), true},
+		{"a stopping Orker alone", fleetOf(stopping(currentOrker("gpu-1", "gpu", 0))), false},
+		{"a stopping Orker in a store outage", fleetOf(stopping(storeOutage(currentOrker("gpu-1", "gpu", 0)))), false},
+		{"an operator's cordon beside stopping on one Orker", fleetOf(stopping(operator(currentOrker("gpu-1", "gpu", 0)))), true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

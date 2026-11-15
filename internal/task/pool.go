@@ -32,6 +32,13 @@ const (
 	// holds no work (TestOrkersQueue_CarriesNoDispatch keeps it so).
 	OrkersQueue = "ork-orkers"
 
+	// EnginesQueue is the engines' presence channel: every `ork` process
+	// polls it, whatever it serves, and nothing dispatches to it. Its poller
+	// list is the deployment's engines, each describing itself in the
+	// identity it polls with (engine.EngineDescription); it holds no work
+	// (TestEnginesQueue_CarriesNoDispatch keeps it so).
+	EnginesQueue = "ork-engines"
+
 	// MaxOrkerID bounds an Orker id, the same bound a pool name has.
 	MaxOrkerID = 200
 )
@@ -75,8 +82,8 @@ func QueueForOrker(orkerID string) (string, error) {
 }
 
 // reservedQueue refuses the channels no pool may be routed to: the engine's
-// own projection channel, the Orker presence channel, and every Orker's
-// control channel. It is the one place those shapes are listed, so QueueForPool
+// own projection channel, the Orker and engine presence channels, and every
+// Orker's control channel. It is the one place those shapes are listed, so QueueForPool
 // and ResolvePoolBinding (through DefaultRoute) refuse the same set.
 func reservedQueue(queue string) error {
 	switch {
@@ -85,6 +92,9 @@ func reservedQueue(queue string) error {
 			"so no pool may be routed to it", ErrReservedQueue, queue)
 	case queue == OrkersQueue:
 		return fmt.Errorf("%w: %q is the Orker presence channel, which nothing may be "+
+			"dispatched to, so no pool may be routed to it", ErrReservedQueue, queue)
+	case queue == EnginesQueue:
+		return fmt.Errorf("%w: %q is the engines' presence channel, which nothing may be "+
 			"dispatched to, so no pool may be routed to it", ErrReservedQueue, queue)
 	case strings.HasPrefix(queue, orkerQueuePrefix):
 		return fmt.Errorf("%w: %q is shaped like one Orker's own control channel, "+
@@ -136,8 +146,9 @@ var ErrReservedQueue = fmt.Errorf("reserved task queue")
 // The DEFAULT pool reaches the bound channel and nothing else, because that
 // channel is what the word means; the channels that are refused rather than
 // routed are EngineEventQueue, which carries the engine's own projection work,
-// and the Orker presence and control channels (reservedQueue; ErrReservedQueue,
-// and both binaries refuse to boot on any of them).
+// the Orker presence and control channels, and the engines' presence channel
+// (reservedQueue; ErrReservedQueue, and both binaries refuse to boot on any of
+// them).
 //
 // What it is NOT is one-to-one from pool names onto queues, and one shape
 // shows why: bind ork-pool-gpu as the default channel and `main` and `gpu`

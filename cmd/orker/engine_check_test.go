@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"connectrpc.com/connect"
@@ -26,7 +27,7 @@ func (e acceptingEngine) GetSignin(_ context.Context, req *connect.Request[orkst
 	if req.Header().Get("Authorization") != "Bearer "+e.accept {
 		return nil, connect.NewError(connect.CodeUnauthenticated, nil)
 	}
-	return connect.NewResponse(&orkstackv1.GetSigninResponse{PrincipalId: "service:dev:orker-1"}), nil
+	return connect.NewResponse(&orkstackv1.GetSigninResponse{PrincipalId: "service:dev:orker-1", OrkerId: "orker-1"}), nil
 }
 
 // TestCheckEngineCredential: an Orker boots only with an orker.engine.* it
@@ -49,16 +50,44 @@ func TestCheckEngineCredential(t *testing.T) {
 		return p
 	}
 	ctx := context.Background()
-	if err := checkEngineCredential(ctx, orker.EngineSettings{}, logger); err != nil {
+	if named, err := checkEngineCredential(ctx, orker.EngineSettings{}, logger); err != nil || named != "" {
 		t.Fatalf("no engine: %v", err)
 	}
-	if err := checkEngineCredential(ctx, orker.EngineSettings{URL: server.URL, Method: orker.EngineAuthTokenFile, TokenFile: token("good")}, logger); err != nil {
+	if named, err := checkEngineCredential(ctx, orker.EngineSettings{URL: server.URL, Method: orker.EngineAuthTokenFile, TokenFile: token("good")}, logger); err != nil || named != "orker-1" {
 		t.Fatalf("an accepted credential: %v", err)
 	}
-	if err := checkEngineCredential(ctx, orker.EngineSettings{URL: server.URL, Method: orker.EngineAuthTokenFile, TokenFile: token("bad")}, logger); err == nil {
+	if _, err := checkEngineCredential(ctx, orker.EngineSettings{URL: server.URL, Method: orker.EngineAuthTokenFile, TokenFile: token("bad")}, logger); err == nil {
 		t.Fatal("a refused credential booted")
 	}
-	if err := checkEngineCredential(ctx, orker.EngineSettings{URL: server.URL}, logger); err == nil {
+	if _, err := checkEngineCredential(ctx, orker.EngineSettings{URL: server.URL}, logger); err == nil {
 		t.Fatal("an engine URL with no method booted")
+	}
+}
+
+// TestCheckCredentialOrker: an Orker whose credential names an Orker boots
+// only as that Orker; one whose credential names none (a binding with
+// orker_ids: any) boots as the id it has, and so does one with no
+// credential at all.
+func TestCheckCredentialOrker(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	for _, tt := range []struct {
+		name               string
+		orkerID, named     string
+		configured, refuse bool
+	}{
+		{"the credential names this Orker", "orker-1", "orker-1", true, false},
+		{"the credential names another", "orker-1", "orker-2", true, true},
+		{"the credential names none", "orker-1", "", true, false},
+		{"no credential", "orker-1", "", false, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := checkCredentialOrker(tt.orkerID, tt.named, tt.configured, logger)
+			if (err != nil) != tt.refuse {
+				t.Fatalf("checkCredentialOrker = %v, want refused %t", err, tt.refuse)
+			}
+			if tt.refuse && (!strings.Contains(err.Error(), tt.named) || !strings.Contains(err.Error(), "orker.id")) {
+				t.Fatalf("refusal %q names neither the credential's Orker nor orker.id", err)
+			}
+		})
 	}
 }

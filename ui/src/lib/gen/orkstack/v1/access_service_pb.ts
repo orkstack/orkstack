@@ -1170,9 +1170,11 @@ export type AcknowledgeAccessRevisionRequest = Message<"orkstack.v1.AcknowledgeA
 
   /**
    * sha256 is the AccessRevision.sha256 the admin read. The acknowledgement
-   * is refused unless that revision exists, was written around the API, and
-   * still has this digest; AccessStatus.acknowledged_revision never moves
-   * backwards.
+   * is accepted for the revision the answering engine found written around
+   * the API, or for the access document's current head, and only while it
+   * still has this digest; any other is refused. The record is written once:
+   * a revision acknowledged again keeps its first record. It decides whether
+   * the banner shows, never access.
    *
    * @generated from field: string sha256 = 2;
    */

@@ -132,6 +132,9 @@ func (h accessHandler) GetAccess(ctx context.Context, _ *connect.Request[orkstac
 	}
 	if a.Fleet != nil {
 		status.Engines = a.Fleet.Engines()
+		if at := a.Fleet.CheckedAt(); !at.IsZero() {
+			status.FleetCheckedAt = timestamppb.New(at)
+		}
 	}
 	return connect.NewResponse(&orkstackv1.GetAccessResponse{Document: doc, Status: status}), nil
 }

@@ -165,6 +165,13 @@ type Heartbeater struct {
 	// OCIDispatcher.OrkerID before Start; never changes for the attempt.
 	orkerID string
 
+	// stoppingSince is the instant this Orker's stop began, RFC 3339, once it
+	// has; every beat after it carries it.
+	stoppingSince atomic.Pointer[string]
+	// calls is the loop's RPC context, which only the loop's end cancels: the
+	// t0 beat is sent on it.
+	calls context.Context
+
 	// mu guards marks. Phase is called from the dispatcher's own sequence and,
 	// on the wait path, from the step that observes the timeout or the
 	// cancellation; progress() and PhaseSpans() read it from the record path.
@@ -225,6 +232,7 @@ func (h *Heartbeater) Start(ctx context.Context) {
 	// never carries the attempt's own deadline or cause into the SDK.
 	calls, cancelRPC := context.WithCancel(context.WithoutCancel(ctx))
 	h.cancelRPC = cancelRPC
+	h.calls = calls
 	stopWatching := context.AfterFunc(ctx, cancelRPC)
 	h.lastAck = h.clock()
 	go func() {
@@ -436,7 +444,44 @@ func (h *Heartbeater) progress() HeartbeatProgress {
 	if id := h.containerID.Load(); id != nil {
 		progress.ContainerID = *id
 	}
+	if since := h.stoppingSince.Load(); since != nil {
+		progress.StoppingSince = *since
+	}
 	return progress
+}
+
+// stoppingBeatTimeout bounds the t0 beat: the cluster acknowledges it within
+// this, or the stop logs that it did not.
+const stoppingBeatTimeout = 2 * time.Second
+
+// beatStopping is the t0 beat: it records the instant the Orker's stop began,
+// which every later beat carries, and sends one beat at once by task token,
+// outside the loop's throttle, returning once the cluster has taken it or the
+// bound passed.
+func (h *Heartbeater) beatStopping(since time.Time) error {
+	text := since.UTC().Format(time.RFC3339Nano)
+	h.stoppingSince.Store(&text)
+	if h.send == nil {
+		return nil
+	}
+	base := h.calls
+	if base == nil {
+		base = context.Background()
+	}
+	call, cancel := context.WithTimeout(base, stoppingBeatTimeout)
+	defer cancel()
+	err := h.send(call, h.progress())
+	switch {
+	case err != nil && base.Err() != nil:
+		// The attempt's loop ended while the beat was on its way: the
+		// attempt has ended, and there is nothing left to tell.
+		return nil
+	case serverDecided(err):
+		// The cluster answered with a decision (a cancel, a run it no longer
+		// knows): it took the beat, and the loop's next beat acts on it.
+		return nil
+	}
+	return err
 }
 
 // TerminateContainer performs the §6.3 shutdown sequence on a running

@@ -647,6 +647,7 @@ then the variable it becomes.
 | `orker.log.flush_interval` | `ORK_ORKER_LOG_FLUSH_INTERVAL` | `500ms` | `orker` | live task logs: the longest a line waits before it is stored. This is the floor on how late a follower can see a slow task's output |
 | `orker.log.max_bytes` | `ORK_ORKER_LOG_MAX_BYTES` | `16 MiB` | `orker` | live task logs: the cap on ONE task attempt. Past it the Orker stores a truncation notice and nothing more |
 | `orker.heartbeat_interval` | `ORK_ORKER_HEARTBEAT_INTERVAL` | `5s` | `orker` | how often a running task's heartbeat goes to Temporal, and so the longest a **cancellation** waits before the Orker acts on it: Temporal delivers cancellation only in a heartbeat's response, so a failing run's still-running siblings keep burning resources for up to this long. It does not bound how long a **Temporal frontend outage** a container survives: that is the 30 s heartbeat timeout, whatever the tick, after which the Orker stops the container and the attempt fails `ORKER_HEARTBEAT_LOST`; an open pin rides out 24 s. Must be between `1s` and `10s` (a third of the 30 s heartbeat timeout); anything else is refused at boot rather than clamped. Lower it towards `2s` for faster cancels |
+| `orker.stop.grace` | `ORK_ORKER_STOP_GRACE` | `24h` | `orker` | how long a stopping Orker lets its running tasks and the pins it opened before its first stop signal finish before it hands back what remains; it takes no new task or pin meanwhile, and an Orker with nothing in flight exits at once. From `0s` to `744h` (31 days, written in hours); anything else is refused at boot. The platform's stop timeout must be at least this plus about 12 minutes ("Stop timeouts") |
 | `orker.max_concurrent` | `ORK_ORKER_MAX_CONCURRENT` | `16` | `orker` | how many tasks this Orker runs at once — the size of its task worker's activity slots, and the **Max concurrent** Admin → Activities reports. A whole number, 1 or more; anything else is refused at boot. The default fits a 16-CPU, 64 GiB host running default-sized tasks; size it to the host — see "Sizing an Orker's task ceiling" below |
 | `orker.store_check.enabled` | `ORK_ORKER_STORE_CHECK_ENABLED` | `true` | `orker` | whether this Orker checks object storage and cordons itself while the checks keep failing, so tasks wait without using attempts. `false` turns it off, and then an outage fails attempts as they arrive — see §5, "When object storage goes away" |
 | `orker.store_check.interval` | `ORK_ORKER_STORE_CHECK_INTERVAL` | `15s` | `orker` | how often the store is checked: one conditional write the store refuses and one read of one small object, per Orker, per check. `1s` to `1h`; anything else is refused at boot |
@@ -947,7 +948,10 @@ the pool offers. Give each Orker of a pool the same:
   it cannot, not both (a rootless or user-namespaced daemon cannot;
   [REASONS.md](./REASONS.md), `RUN_AS_ORKER_UNAVAILABLE`);
 - pin hosting, `ORK_ORKER_MAX_PINS` ("Pin hosting is a pool-wide setting",
-  below).
+  below);
+- stop grace, `orker.stop.grace` ("Removing an Orker safely"). Orkers of one
+  pool that differ in it break nothing; the same grace makes a scale-in
+  predictable.
 
 Network modes need no setting: every Orker offers `default` and `none`.
 
@@ -1962,8 +1966,27 @@ release runs nothing at all (§1).
    (`TestIntegration_APinnedRunStrandsWhenItsVersionsOrkerStopsBeforeDrained`
    fails the day that changes).
 
+   **This order is required, not advice.** Until `release wait` exits 0, keep
+   at least one Orker of v1 taking work, **uncordoned and not stopping**, on
+   every pool v1 served. A stopping Orker finishes what it runs but takes no
+   new task, and a cordoned one polls nothing, so stopping *or cordoning* the
+   last Orker of v1 on a pool strands its runs' next tasks exactly as above: the
+   next step of a DAG, a fan-out item, and a task an Orker handed back all wait
+   for an Orker of v1 on that pool (`TestIntegration_HandBackDuringARolloutWaitsForItsOwnRelease`).
+   While v1 has runs in flight, `orkctl release status` and `wait` name such a
+   pool, as a warning that changes no exit code: `release v1 has 3 runs and no
+   Orker taking work on pool gpu; a task they send there waits until one does`
+   (`Release.unserved_pools`). To recover, start an
+   Orker with v1's `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on that pool, or
+   uncordon one; the tasks then run on it. Run each release's Orkers as their
+   own Deployment (or ECS service, or systemd unit) and remove the old one only
+   after `release wait`: a rolling update of one Orker Deployment from v1 to v2
+   stops v1's last Orkers early, which is exactly the stranding above.
+
 6. **Stop v1** once `release wait` exits 0 — every replica and every Orker
-   carrying that build id. Stopping *some* of them earlier is safe (§5); the
+   carrying that build id. Its Orkers are idle by then and exit at once,
+   whatever their stop grace. Stopping *some* of them earlier is safe while
+   another Orker of v1 keeps taking work on each pool v1 served (step 5); the
    release is what must not disappear while runs are pinned to it. An Orker
    that hosts an open pin must not be stopped before the pin closes:
    `orkctl orker drain <orker>` waits for exactly that. A run holds its release
@@ -2700,10 +2723,12 @@ follow from the daemon reading paths on the host:
   from the container's host name and work directory, and the identity lock
   lives in the container's own `/tmp`: two Orker containers on one daemon
   must each be given a distinct id.
-- **A stop grace longer than a task's.** A stopped Orker cancels its running
-  tasks, each with its own grace (30 s by default) before SIGKILL; give the
-  Orker's container longer than that (`stop_grace_period: 45s`) and run it
-  with an init (`init: true`), so a signal reaches the process.
+- **A stop timeout that covers the Orker's stop grace.** A stopped Orker lets
+  its running tasks finish for `ORK_ORKER_STOP_GRACE` (24h by default), then
+  hands back what remains; give its container the grace plus about 12 minutes
+  (`stop_grace_period: 24h15m`, or `ORK_ORKER_STOP_GRACE: 60s` with
+  `stop_grace_period: 15m`, "Stop timeouts") and run it with an init
+  (`init: true`), so a signal reaches the process.
 
 **The activity catalog.** A release's `ork` resolves `uses: shell` and the
 other first-party names by the tag of its release line, for example
@@ -3322,11 +3347,42 @@ An Orker also cordons itself, with these same effects on tasks and pins, while
 object storage does not answer it. That cordon does keep its pool live ("When
 object storage goes away", below).
 
-`SIGTERM` (or `SIGINT`) stops the Orker carefully. It cordons itself at once
-(`orkctl orker list` shows the reason `the orker is stopping`), so it asks for
-no new task and opens no new pin, but it does not wait for in-flight work to
-finish: an operator who wants that cordons and drains first. What a stop
-does, before the Orker exits:
+`SIGTERM` (or `SIGINT`) stops the Orker **drain-first**, in two phases.
+
+**At the first signal (t0)** the Orker sets a cordon of its own, `stopping`, so
+it asks for no new task and opens no new pin, and it lets what runs carry on:
+
+- running tasks, and pins it opened before the signal, finish on it for up to
+  its stop grace, `orker.stop.grace` (`ORK_ORKER_STOP_GRACE`, `24h` by default,
+  `0s` to `744h`: 31 days, written in hours). Heartbeats, completions and the
+  task's own `timeout:` carry on unchanged;
+- a task that an open poll still delivers in the first minute or so after the
+  signal (at most two, as for any cordon) runs on it, in flight, like the tasks
+  it already ran. Handing it back would spend one of the task's own attempts,
+  and fail a task with no `retry:`, for no gain: running it costs one task's
+  share of the grace. Once the grace has ended, a task that still reaches the
+  Orker starts nothing and is handed back, `ORKER_STOPPED`;
+- a pin asked of it is refused retryably, so the SDK opens it on another pin
+  host that takes work. Its creation is refused finally, failing the triggering
+  task `PIN_UNAVAILABLE` "the pin host is stopping", once five minutes have
+  passed since the creation was scheduled, once the grace has ended (counting
+  at least 15 seconds), or after 45 refusals, whichever comes first;
+- every running unpinned task sends one heartbeat at once carrying the instant
+  of the stop, which every later heartbeat carries too, so a loss after it
+  reads as one with a stop behind it;
+- `orkctl orker list` and `get`, and Admin → Pools, show it **stopping**,
+  apart from an operator's cordon, with when its stop began and when its grace
+  ends (`OrkerStopping.since`, `grace_ends_at`; a second signal ends the grace
+  sooner and leaves that time as it was). A stopping Orker keeps its pool live until it exits: a run
+  sent to its pool is accepted and waits, as for a store outage.
+
+An Orker with nothing running and no open pin exits at once, so scaling in an
+idle Orker costs nothing. A second signal ends the grace early; platforms that
+send one `SIGTERM` need it sent by hand (`kubectl exec <pod> -- kill -TERM 1`,
+`docker kill --signal TERM <container>`, `systemctl kill -s TERM <unit>`).
+
+**At the grace's end (t1)**, or at the second signal, the Orker stops what
+remains, before it exits:
 
 - an attempt with a result of its own finishes and reports it as usual: one
   adopting a commit or writing a memo hit's commit, and one whose container
@@ -3343,23 +3399,78 @@ does, before the Orker exits:
   report the cluster never takes within 10 minutes is recorded
   `REPORT_UNDELIVERED`, and the task then ends `ORKER_HEARTBEAT_TIMEOUT`, or
   runs again, as for an Orker that died;
-- a task that reaches the Orker after the signal starts nothing, leaves no
-  record, and is handed back the same way;
 - a pin it hosts fails `PIN_HOST_LOST`: a member still running is ended when
   the Orker stops its workers, and one not yet started is refused.
+
+The Orker stops polling right after it hands back what remains, not after the
+hand-backs have reported: a poll left open would deliver the retry of a task
+it just handed back to this same Orker, only to be handed back again before it
+starts, spending another attempt. Each handed-back attempt reports itself
+after that. With a grace longer than about a minute, no poll is open by then
+anyway. With a shorter one, a task the cluster hands a poll at the very instant
+the worker stops is never delivered: it ends on its heartbeat timeout and runs
+again under its `retry:` policy, as for an Orker that died.
+
+A hand-back now happens only to work that outlives the grace, so it is rarer,
+and each one may discard up to the grace's worth of compute: size the grace to
+the work. A pin host whose runs pause holds its paused pins for the whole
+grace, and they fail `PIN_HOST_LOST` at its end, which the run meets when it
+resumes; drain a pin host (`orkctl orker drain`) before stopping it, or give
+it a shorter grace.
 
 On a versioned fleet (`ORK_BUILD_ID` set) a handed-back task runs again only
 on an Orker of its run's own release that serves its pool, and waits, still
 `PENDING`, until one takes work: the cluster sends a run's task to the run's
 own release on every pool that release has served, whether or not any of its
-Orkers polls now (§3, "Rolling a release forward"). Nothing is lost while it
-waits.
+Orkers polls now (§3, "Rolling a release forward", step 5). Nothing is lost
+while it waits.
 
-So a stop takes as long as the longest grace among its running tasks, plus a
-few seconds to report and record them. Give the process manager at least
-that long before it kills the Orker — Kubernetes'
-`terminationGracePeriodSeconds`, systemd's `TimeoutStopSec`, `docker stop
---time` (the quickstart's `compose.yaml` sets `stop_grace_period: 45s`).
+#### Stop timeouts
+
+A process manager kills an Orker some time after its first signal. Killed
+before the grace and what follows it have passed, its running tasks are
+**lost**, not handed back: the cluster times them out once their heartbeats
+stop, and they run again under their policy, as for an Orker that died. So the
+stop timeout must be at least the grace plus the stop's tail: the longest task
+cancellation grace (30 s by default), a hand-back's report (at most 10
+minutes), the longest poll the cluster holds open (75 s) and 10 s. With the
+24h default that is **24h15m (87,300 s)**, which the shipped bases set.
+
+| Platform | Setting | Shipped or documented figure | What can cut it short |
+|---|---|---|---|
+| Kubernetes | `terminationGracePeriodSeconds` | 87300 in the bases | Cluster Autoscaler scale-down (`--max-graceful-termination-sec`, 600 s by default), kubelet graceful node shutdown (`shutdownGracePeriod`), Karpenter's NodePool `terminationGracePeriod`, spot or preemptible notice (about 2 minutes on AWS, 30 s on Google Cloud) |
+| systemd | `TimeoutStopSec=24h15min`, `KillMode=mixed` | the unit you write | systemd's default `TimeoutStopSec` (90 s) |
+| Docker, Compose | `docker stop -t 87300`; `stop_grace_period: 24h15m` | the quickstart and `make up` run their Orker with `ORK_ORKER_STOP_GRACE=60s` and a 15-minute stop timeout | Docker's default 10 s |
+| ECS | the container's `stopTimeout` | on Fargate set `ORK_ORKER_STOP_GRACE=0s`; on EC2 a `stopTimeout` of the grace plus the tail | Fargate (and Fargate Spot): at most 120 s, 30 s by default; EC2: the task definition's `stopTimeout`, else the agent's `ECS_CONTAINER_STOP_TIMEOUT`, 30 s by default |
+| Nomad | `kill_timeout` | 24h15m | the client's `max_kill_timeout` (30 s by default) |
+
+On a platform whose stop timeout cannot reach the grace plus the tail, lower
+the grace to fit, or accept that what runs past it is lost. A grace that fits
+gives a clean hand-back; one that does not gives a loss. On Kubernetes, raise
+`--max-graceful-termination-sec`, Karpenter's `terminationGracePeriod` and your
+node-upgrade drain timeout to the grace, or set a grace that fits them; give
+spot capacity a grace that fits its notice.
+
+The Orker reads its stop timeout where it can without new credentials, and
+only warns, at boot and again when a stop begins: under systemd it finds its
+unit from `/proc/self/cgroup` and warns when `TimeoutStopSec` is below the
+grace plus the tail or `KillMode` is not `mixed`; on ECS
+(`ECS_CONTAINER_METADATA_URI_V4` set), where the timeout cannot be read, it
+warns when the grace is above Fargate's 120 s cap. Every stop also logs when
+its grace ends and the stop timeout it needs. A short timeout never changes
+what the Orker does.
+
+**Autoscaling.** A stopping Orker is never capacity. An autoscaler scales a
+pool from `max by (ork_pool) (ork_pool_backlog_tasks)` and
+`ork_pool_backlog_age_seconds`, and must also act when the oldest task's age
+never clears even with a flat count
+(`min_over_time(ork_pool_backlog_age_seconds[30m]) > 900`). On a versioned
+fleet, autoscale only the current release's Orkers: never let an autoscaler or
+a rolling update stop the last Orkers of an older release on a pool before
+`orkctl release wait` exits 0 (§3 step 5). Scale-in picks its victim: a busy
+Orker may sit stopping for its grace. The platform's own levers choose
+better (Kubernetes `controller.kubernetes.io/pod-deletion-cost` from
+`ork_orker_running_tasks`, ECS task scale-in protection); OrkStack sets none.
 
 Every container-runtime CLI the Orker starts runs in a process group of its
 own, so a signal sent to the Orker's whole process group — a terminal's
@@ -3368,8 +3479,8 @@ Orker alone and never a task's container. Under rootless Podman the
 container's monitor (`conmon`) may still run inside the Orker's own service
 cgroup, where a process manager that signals the whole cgroup (systemd's
 default `KillMode=control-group`) signals the container directly; run such an
-Orker with `KillMode=mixed`. A second `SIGTERM` or `SIGINT` changes nothing.
-A third exits at once, killing every runtime CLI the Orker started, and leaves
+Orker with `KillMode=mixed`. A second `SIGTERM` or `SIGINT` ends the grace, and
+signals within a second of each other count as one. A third exits at once, killing every runtime CLI the Orker started, and leaves
 what a crash leaves: the attempts `UNREPORTED`, and a container still inside
 its grace running until this Orker's next boot reaps it.
 
@@ -3778,10 +3889,15 @@ OrkStack records it and does not authenticate it.
   `enforce`) reads the header nowhere, and `orkctl` asks the engine's mode
   once and warns on stderr that `ORK_PRINCIPAL` is not used.
 - **A canceled run records the same assertion** as `Run.canceled_by`, which
-  `orkctl run get`, `orkctl run list` and the API render as asserted. The
+  `orkctl run get` and `orkctl run list` render as asserted; an engine that
+  authenticates records the verified principal instead and sets
+  `Run.canceled_by_verified`, and they render it as verified. The
   engine carries it in the cancellation it asks Temporal for: the request's
-  reason is `{"format":1,"principal":"…"}` (`RunCancelRequest`, as
-  protojson, whose spacing may vary), which the cluster keeps as the `cause`
+  reason is `{"format":1,"principal":"…"}`, with `"principalVerified":true`
+  for a verified one (`RunCancelRequest`, as protojson, whose spacing may
+  vary; the mark rides the cluster's own record, so whoever can cancel a
+  workflow through the cluster directly can write it too, and the audit
+  trail's `run.cancel` record is the one OrkStack wrote itself), which the cluster keeps as the `cause`
   of the run's `WorkflowExecutionCancelRequested` event, and the reader takes
   the name from there and from the archived run, never from the audit trail.
   Only the first request, recorded before the run published its end, counts,
@@ -4341,7 +4457,12 @@ processes could decide it, and refuses while any of them is too old.
   `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay`, as
   `temporal task-queue describe --task-queue ork-tasks` shows it. The run
   worker and the projection worker share the process's client, so both carry
-  it. The releases page still counts one process per identity.
+  it. The releases page still counts one process per identity. After the
+  capabilities come `key=value` tokens that describe the engine (its mode,
+  claim life, deployment, build and configuration digests), which a
+  capability check never matches; every process also polls `ork-engines`,
+  the engines' presence channel, with the same identity
+  ([AUTHENTICATION.md](AUTHENTICATION.md), "Every engine enforces").
 - **Which pollers a submit checks.** The engine channel's fresh pollers of
   this deployment that a run started now can land on: under versioning, the
   current build's (the unversioned processes when no current version is set)

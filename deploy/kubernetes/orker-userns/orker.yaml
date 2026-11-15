@@ -33,10 +33,12 @@ spec:
       # Orker drives the engine over their shared socket), so the pod holds
       # no service-account token.
       automountServiceAccountToken: false
-      # Longer than the longest cancellation grace a task may ask for: a
-      # stopped Orker cancels each running task with its own grace (30 s by
-      # default) before the engine stops.
-      terminationGracePeriodSeconds: 120
+      # The Orker's stop grace (ORK_ORKER_STOP_GRACE, 24h by default) plus the
+      # stop's tail (a task's cancellation grace, a hand-back's report, the
+      # longest open poll, about 12 minutes): a pod deletion lets running
+      # tasks finish, then hands back what remains. Lower both together
+      # (docs/DEPLOY.md, "Stop timeouts").
+      terminationGracePeriodSeconds: 87300
       initContainers:
         # The engine is a native sidecar: it starts, and passes its startup
         # probe, before the Orker boots, and it stops only after the Orker

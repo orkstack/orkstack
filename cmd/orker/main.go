@@ -122,6 +122,12 @@ type config struct {
 	// empty declare none.
 	capacityCPU    string
 	capacityMemory string
+	// stopGrace is orker.stop.grace: how long a stopping Orker lets running
+	// tasks and open pins finish before it hands back what remains.
+	stopGrace time.Duration
+	// stopGraceErr is a malformed or out-of-range grace, refused at boot by
+	// the same rule as the errors above.
+	stopGraceErr error
 	// configFiles is the configuration file this process was started with
 	// and every {file:} it read (config.Document.Files): the Orker's own,
 	// which its secret floor admits as no task's source (orkerPolicy).
@@ -159,6 +165,7 @@ func loadConfig() config {
 	maxPins, maxPinsErr := envMaxPins()
 	maxConcurrent, maxConcurrentErr := envMaxConcurrent()
 	storeWatch, storeWatchErr := envStoreWatch()
+	stopGrace, stopGraceErr := orker.ParseStopGrace(env(orker.StopGraceVar, ""))
 	return config{
 		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		registryAuthFile:  env(orker.RegistryAuthFileVar, ""),
@@ -178,6 +185,8 @@ func loadConfig() config {
 		maxConcurrentErr:  maxConcurrentErr,
 		storeWatch:        storeWatch,
 		storeWatchErr:     storeWatchErr,
+		stopGrace:         stopGrace,
+		stopGraceErr:      stopGraceErr,
 		capacityCPU:       env(orker.CapacityCPUVar, ""),
 		capacityMemory:    env(orker.CapacityMemoryVar, ""),
 		deployment:        task.DeploymentFromEnv(),
@@ -660,13 +669,17 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.maxConcurrentErr != nil {
 		return cfg.maxConcurrentErr
 	}
+	if cfg.stopGraceErr != nil {
+		return cfg.stopGraceErr
+	}
 
 	// And for the store check.
 	if cfg.storeWatchErr != nil {
 		return cfg.storeWatchErr
 	}
 
-	if err := checkEngineCredential(ctx, cfg.engine, logger); err != nil {
+	credentialOrker, err := checkEngineCredential(ctx, cfg.engine, logger)
+	if err != nil {
 		return err
 	}
 	if err := checkStoreCredentials(ctx, artifacts.ConfigFromEnv(), logger); err != nil {
@@ -722,6 +735,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// lookup: an activity is an OCI image (§6.1). Built before the dial, which
 	// names the Orker id it resolves.
 	activities := orker.NewActivitiesWithOptions(store, opts)
+	if err := checkCredentialOrker(activities.Dispatcher().OrkerID, credentialOrker, cfg.engine.Configured(), logger); err != nil {
+		return err
+	}
 
 	temporalClient, err := connectTemporal(ctx, cfg, activities.Dispatcher().OrkerID, sinks, logger, nil)
 	if err != nil {
@@ -809,6 +825,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// stopTasks stops the task worker once, from the stop sequence below or
 	// from this defer, whichever comes first.
 	stopTasks := sync.OnceFunc(taskWorker.Stop)
+	// endGrace is closed by a second stop signal, once.
+	endGrace := make(chan struct{})
+	closeEndGrace := sync.OnceFunc(func() { close(endGrace) })
 	var controlStarted, presenceStarted bool
 	defer func() {
 		// Stop cancels every running task and returns at once; the tasks then
@@ -856,11 +875,20 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"store_check_interval", cfg.storeWatch.Interval,
 		"store_check_failures", cfg.storeWatch.FailureThreshold,
 		"store_check_recoveries", cfg.storeWatch.RecoveryThreshold,
+		// How long a stopping Orker lets its running tasks finish.
+		"stop_grace", cfg.stopGrace,
 		// The cancellation latency an operator is running with, said out loud:
 		// this is how long a running container can keep running after the
 		// engine asks for it to stop, and the longest Temporal outage one
 		// survives.
 		"heartbeat_interval", cfg.tick())
+	// Where the platform's stop timeout is readable, a timeout too short for
+	// the stop grace is said now, and again when a stop begins; it never
+	// changes what the Orker does.
+	stopWarnings := orker.StopTimeoutWarnings(ctx, cfg.stopGrace)
+	for _, warning := range stopWarnings {
+		logger.Warn(warning)
+	}
 	logger.Info("task log streaming ready",
 		"flush_bytes", logOptions.FlushBytes,
 		"flush_interval", logOptions.FlushInterval,
@@ -881,63 +909,78 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"version", cfg.deployment.String())
 
 	<-ctx.Done()
+	// When the first signal came, read before anything else, so a second one
+	// sent while the stop begins is counted from it.
+	firstSignal := time.Now()
 	// The first SIGINT or SIGTERM stops this Orker carefully
 	// (docs/OCI_ACTIVITY_CONTRACT.md §6.3, docs/DEPLOY.md "Removing an Orker
 	// safely"). Later ones are counted from here, registered before the first
 	// one's handler is removed so none takes the default action meanwhile: a
-	// third ends the process at once, killing the runtime CLIs it started.
+	// second ends the grace, and a third ends the process at once, killing the
+	// runtime CLIs it started.
 	later := make(chan os.Signal, 4)
 	signal.Notify(later, syscall.SIGINT, syscall.SIGTERM)
+	arrivals := stampSignals(later, time.Now)
 	stop()
-	go countStopSignals(later, func() {
-		logger.Warn("a second stop signal: the orker is already handing its tasks back; a third exits at once")
+	sinks.Default().Ready.Set(false)
+	// t0: the stopping cordon, so the Orker asks for no new task and opens no
+	// new pin, while running tasks and pins opened before the signal carry on
+	// for the grace.
+	stopping := activities.BeginStop(orker.StopSequence{
+		Grace:      cfg.stopGrace,
+		EndGrace:   endGrace,
+		StopWorker: stopTasks,
+		Warnings:   stopWarnings,
+	})
+	go countStopSignals(arrivals, firstSignal, func() {
+		logger.Info("a stop signal within a second of the last one is the same stop; send another to end the grace")
+	}, func() {
+		logger.Warn("a second stop signal: the grace ends now and running tasks are handed back; a third exits at once")
+		closeEndGrace()
 	}, func() {
 		killed := activities.KillRuntimeChildren()
 		logger.Warn("a third stop signal: exiting at once", "runtime_processes_killed", killed,
 			"running_tasks", activities.RunningTasks())
 		os.Exit(1)
 	})
-	sinks.Default().Ready.Set(false)
-	// The cordon first, so the Orker asks for no new task and opens no new pin
-	// while it hands back what runs: a task that reaches it after the signal
-	// would only be handed back unstarted, spending an attempt of its own.
-	activities.Cordon().Set("the orker is stopping", time.Now())
-	// Every attempt not committing its own result is handed back. Then the
-	// task worker stops, so the Orker polls no more: a poll still open would
-	// deliver a retry of a handed-back task to this Orker, only to be handed
-	// back again, spending an attempt. Its Stop cancels a running pinned
-	// member, whose pin fails PIN_HOST_LOST; every unpinned attempt outlives
-	// it and reports itself, and the Orker waits until each has.
-	running := activities.RunningTasks()
-	handedBack := activities.HandBack()
-	logger.Info("shutting down: handing back running tasks", "running_tasks", running, "handed_back", handedBack)
-	stopTasks()
-	started := time.Now()
-	awaitHandedBack(logger, activities, 30*time.Second)
-	logger.Info("every handed-back task has reported", "took", time.Since(started).Round(time.Millisecond))
+	outcome := stopping.Finish()
+	logger.Info("stopped", "why", outcome.Ended.String(), "handed_back", outcome.HandedBack)
 	return nil
 }
 
-// awaitHandedBack waits until every handed-back attempt has reported, saying
-// every interval how many it still waits for, so a long wait (a task's long
-// grace, a report the cluster does not take) is never silent.
-func awaitHandedBack(logger *slog.Logger, activities *orker.Activities, interval time.Duration) {
-	for {
-		ctx, cancel := context.WithTimeout(context.Background(), interval)
-		err := activities.AwaitHandedBack(ctx)
-		cancel()
-		if err == nil {
-			return
+// stopSignalDebounce is how close together two stop signals count as one: a
+// process manager that sends SIGTERM to a process and its group, or SIGINT and
+// SIGTERM together, means one stop.
+const stopSignalDebounce = time.Second
+
+// stampSignals stamps each signal when it arrives, so a signal read late (the
+// stop's first steps can take seconds) is still judged by when it was sent.
+func stampSignals(signals <-chan os.Signal, now func() time.Time) <-chan time.Time {
+	stamps := make(chan time.Time, cap(signals))
+	go func() {
+		defer close(stamps)
+		for range signals {
+			stamps <- now()
 		}
-		logger.Info("still waiting for handed-back tasks to report", "running_tasks", activities.RunningTasks())
-	}
+	}()
+	return stamps
 }
 
-// countStopSignals counts the stop signals that follow the first: onSecond
-// runs on the second, and onThird on the third, which does not return.
-func countStopSignals(signals <-chan os.Signal, onSecond, onThird func()) {
+// countStopSignals counts the stop signals that follow the first, which came
+// at first, by when each arrived: onSecond runs on the second, and onThird on
+// the third, which does not return. A signal within stopSignalDebounce of the
+// last one counted is the same stop, and onMerged says so.
+func countStopSignals(arrivals <-chan time.Time, first time.Time, onMerged, onSecond, onThird func()) {
 	n := 1
-	for range signals {
+	last := first
+	for at := range arrivals {
+		if at.Sub(last) < stopSignalDebounce {
+			if onMerged != nil {
+				onMerged()
+			}
+			continue
+		}
+		last = at
 		n++
 		switch n {
 		case 2:
@@ -1054,27 +1097,47 @@ const engineCheckTimeout = 15 * time.Second
 // checkEngineCredential refuses a boot whose orker.engine.* the Orker could
 // not use: settings that do not validate, or a credential the engine does
 // not accept. It asks the engine once (AuthService.GetSignin) and logs the
-// principal the engine verified. With no orker.engine.url it asks nothing.
-func checkEngineCredential(ctx context.Context, s orker.EngineSettings, logger *slog.Logger) error {
+// principal the engine verified, returning the Orker id its credential
+// names (empty for none). With no orker.engine.url it asks nothing.
+func checkEngineCredential(ctx context.Context, s orker.EngineSettings, logger *slog.Logger) (string, error) {
 	if err := s.Validate(); err != nil {
-		return err
+		return "", err
 	}
 	if !s.Configured() {
-		return nil
+		return "", nil
 	}
 	client, err := orker.NewEngineClient(s)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer client.Close()
 	ctx, cancel := context.WithTimeout(ctx, engineCheckTimeout)
 	defer cancel()
 	who, err := client.Whoami(ctx)
 	if err != nil {
-		return fmt.Errorf("orker.engine: the engine at %s did not accept this Orker's credential (%s): %w", s.URL, s.Method, err)
+		return "", fmt.Errorf("orker.engine: the engine at %s did not accept this Orker's credential (%s): %w", s.URL, s.Method, err)
 	}
 	logger.Info("the engine verified this Orker's credential", "principal", who.GetPrincipalId(), "method", who.GetMethod(),
-		"bindings", len(who.GetBindings()))
+		"orker_id", who.GetOrkerId(), "bindings", len(who.GetBindings()))
+	return who.GetOrkerId(), nil
+}
+
+// checkCredentialOrker refuses an Orker whose credential names another
+// Orker: the id is taken from the credential, never from the Orker's own
+// configuration (docs/ACCESS.md, "An Orker's credential"). A credential that
+// names none, for a pool whose Orkers share one bound with orker_ids: any,
+// lets the Orker keep its own id.
+func checkCredentialOrker(orkerID, named string, configured bool, logger *slog.Logger) error {
+	switch {
+	case !configured:
+		return nil
+	case named == "":
+		logger.Info("this Orker's credential names no Orker; its binding must say orker_ids: any", "orker_id", orkerID)
+		return nil
+	case named != orkerID:
+		return fmt.Errorf("orker.id is %q and this Orker's credential names the Orker %q: set orker.id (ORK_ORKER_ID) to %q, or give this Orker its own credential",
+			orkerID, named, named)
+	}
 	return nil
 }
 

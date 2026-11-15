@@ -37,6 +37,15 @@ func TestGetSignin_AnswersTheCallerItself(t *testing.T) {
 	if _, err := h.GetSignin(authn.WithMode(asNina(), authn.ModeEnforce), connect.NewRequest(&orkstackv1.GetSigninRequest{})); err != nil {
 		t.Fatal(err)
 	}
+	if m.GetOrkerId() != "" {
+		t.Fatalf("a person's credential names the Orker %q", m.GetOrkerId())
+	}
+	orkerCtx := authn.WithPrincipal(t.Context(), &authn.Principal{Kind: authn.KindService, ID: "service:dev:orker-1",
+		Method: authn.MethodJWT, Issuer: "dev", OrkerID: "orker-1"})
+	resp, err = h.GetSignin(orkerCtx, connect.NewRequest(&orkstackv1.GetSigninRequest{}))
+	if err != nil || resp.Msg.GetOrkerId() != "orker-1" {
+		t.Fatalf("an Orker's credential = %v, %v; want it to name orker-1", resp, err)
+	}
 	anonymous := authn.WithMode(t.Context(), authn.ModeObserve)
 	if _, err := h.GetSignin(anonymous, connect.NewRequest(&orkstackv1.GetSigninRequest{})); connect.CodeOf(err) != connect.CodeUnauthenticated {
 		t.Fatalf("an anonymous caller = %v; want unauthenticated", err)

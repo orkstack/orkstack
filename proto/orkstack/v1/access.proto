@@ -267,6 +267,10 @@ message EngineSeen {
   // mode is the auth.mode the engine runs in.
   string mode = 3;
   google.protobuf.Timestamp last_seen = 4;
+  // settings_differ names the settings every replica must hold alike that
+  // this engine holds otherwise than the answering one: `auth.admins`,
+  // `auth.orkers`. Empty when they agree, or the engine does not say.
+  repeated string settings_differ = 5;
 }
 
 // AccessStatus is what the Access page's banners and `auth lower` read: the
@@ -287,8 +291,10 @@ message AccessStatus {
   // document_stale is true when that copy is older than its refresh bound
   // and is served stale because the store did not answer.
   bool document_stale = 6;
-  // engines are the engines seen; one whose mode is below enforce is a peer
-  // that does not enforce.
+  // engines are the engines the last fleet check saw that do not enforce
+  // (mode below enforce) or hold another auth.admins or auth.orkers
+  // (settings_differ). The engines say these of themselves on the cluster;
+  // nothing authenticates them.
   repeated EngineSeen engines = 7;
   // orkers_reaching_control_plane are the Orkers whose storage credential
   // reaches the control plane's objects, and orkers_unchecked those whose
@@ -297,7 +303,8 @@ message AccessStatus {
   repeated string orkers_unchecked = 9;
   // asserted_safe_from is the earliest instant the mode may be lowered to
   // `asserted` without accepting duplicate retries: one idempotency key's
-  // life after the deployment last ran in `enforce`. Unset when it is safe
+  // life, the longest engine.idempotency_ttl any engine advertised, after the
+  // deployment last ran in `enforce`. Unset when it is safe
   // now or the deployment never enforced.
   google.protobuf.Timestamp asserted_safe_from = 10;
   // acknowledged_revision is the latest revision written around the API
@@ -306,4 +313,8 @@ message AccessStatus {
   // mode_record_etag is the mode record's compare-and-swap token, which
   // LowerAuthModeRequest.record_etag sends back.
   string mode_record_etag = 12;
+  // fleet_checked_at is when the fleet check last read the cluster; engines
+  // is what it saw then. Unset before the first check that could read it,
+  // and on an engine that runs no fleet check (below enforce).
+  google.protobuf.Timestamp fleet_checked_at = 13;
 }

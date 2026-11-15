@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json/v2"
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -684,4 +685,66 @@ func TestReleaseGoldens_NeverNameTheCluster(t *testing.T) {
 		}
 	}
 	walk(release)
+}
+
+// TestRelease_StatusNamesAPoolWithNoOrkerTakingWork: a release with runs in
+// flight whose Orkers on a pool it served all take no work (here its one main
+// Orker is stopping) is warned about by status and by wait, naming the pool
+// and the run count; the warning changes no exit code.
+func TestRelease_StatusNamesAPoolWithNoOrkerTakingWork(t *testing.T) {
+	useReleaseClock(t, releaseClockStart)
+	step := rolloutStep()
+	step.obs.Releases[1].RegisteredPools = []string{"build", "main"}
+	fleet := releaseFleetFor()
+	fleet.described["orker-p1"] = &orkstackv1.DescribeOrkerResult{OrkerId: "orker-p1", Pool: "main", BuildId: relP,
+		Cordoned: true, Stopping: &orkstackv1.OrkerStopping{}}
+	want := "release " + relP + " has 3 runs and no Orker taking work on pool main; a task they send there waits until one does"
+
+	f := newReleaseFixture(t, newScriptedReleases(step), fleet)
+	status := f.run("release", "status").requireExit(t, exitOK)
+	if !strings.Contains(status.stdout, want) || strings.Contains(status.stdout, "on pool build;") {
+		t.Fatalf("status lacks the warning for main alone:\n%s", status.stdout)
+	}
+
+	wait := f.run("release", "wait", relP, "--timeout", "1s").requireExit(t, exitDrainTimedOut)
+	// Once at its poll, once in the timeout's summary.
+	if strings.Count(wait.stdout, want) != 2 {
+		t.Fatalf("wait says the warning %d times; want twice:\n%s", strings.Count(wait.stdout, want), wait.stdout)
+	}
+}
+
+// TestReleaseWait_WarnsOfEachUnservedPoolOnce: wait says a pool's warning once,
+// not again while polls cannot tell (a run count or the release's own
+// description unreadable), and again only after an Orker of the release was
+// seen taking work there and the pool is unserved anew; the timeout restates it.
+func TestReleaseWait_WarnsOfEachUnservedPoolOnce(t *testing.T) {
+	useReleaseClock(t, releaseClockStart)
+	releaseWaitEvery = 10 * time.Second
+	step := func() releaseStep {
+		s := rolloutStep()
+		s.obs.Releases[1].RegisteredPools = []string{"build", "gpu", "main"}
+		return s
+	}
+	noDescribe := step()
+	noDescribe.obs.Releases[1].RegisteredPools = nil
+	noDescribe.obs.Releases[1].DescribeErr = errors.New("describe failed")
+	noRuns := step()
+	noRuns.runErr = map[string]error{relP: errors.New("index down")}
+	// 1 warns; 2 and 4 cannot tell; 3 is still unserved; 5 is served; 6 warns.
+	steps := []releaseStep{step(), noDescribe, step(), noRuns, step(), step()}
+	fleet := releaseFleetFor()
+	seen := releaseClockStart.Add(-2 * time.Second)
+	fleet.presence = append(fleet.presence, engine.OrkerPresence{Identity: "orker-pg", LastSeen: seen})
+	stopping := &orkstackv1.DescribeOrkerResult{OrkerId: "orker-pg", Pool: "gpu", BuildId: relP,
+		Cordoned: true, Stopping: &orkstackv1.OrkerStopping{}}
+	ready := &orkstackv1.DescribeOrkerResult{OrkerId: "orker-pg", Pool: "gpu", BuildId: relP}
+	fleet.described["orker-pg"] = stopping
+	// Stopping at polls 1-4, taking work at poll 5, stopping again at poll 6.
+	fleet.script["orker-pg"] = []*orkstackv1.DescribeOrkerResult{stopping, stopping, stopping, stopping, ready, stopping}
+	f := newReleaseFixture(t, newScriptedReleases(steps...), fleet)
+	out := f.run("release", "wait", relP, "--timeout", "55s").requireExit(t, exitDrainTimedOut)
+	gpu := "release " + relP + " has 3 runs and no Orker taking work on pool gpu"
+	if got := strings.Count(out.stdout, gpu); got != 3 {
+		t.Fatalf("the gpu warning appears %d times; want 3 (poll 1, poll 6, the timeout):\n%s", got, out.stdout)
+	}
 }

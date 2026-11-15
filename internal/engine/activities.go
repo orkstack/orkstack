@@ -59,7 +59,7 @@ type ArchiveRead struct {
 	// CanceledBy is the principal the run's cancellation request recorded
 	// (cancelPrincipal), or empty; applyCanceledBy decides whether the run
 	// shows it.
-	CanceledBy string
+	CanceledBy CanceledBy
 }
 
 // EventActivities projects workflow-produced state into the in-process read

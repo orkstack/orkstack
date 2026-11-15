@@ -813,6 +813,10 @@ STACK_ENV=(
 	ORK_TEST_BIN_DIR="$DIR/bin"
 	ORK_TEST_IMAGE_TAG="$IMAGE_TAG"
 	ORK_TEST_REGISTRY="$REGISTRY"
+	# No stop grace for any Orker a gate starts: the default is a day, and a
+	# test, spec or smoke that stops an Orker while it runs a task must not
+	# wait it out. One that sets its own wins.
+	ORK_ORKER_STOP_GRACE="${ORK_ORKER_STOP_GRACE:-0s}"
 )
 
 # ---- P2: integration, with the Docker-only activity fixture beside it -----------

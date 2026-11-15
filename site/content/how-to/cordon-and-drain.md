@@ -48,20 +48,24 @@ It can't protect everything: an attempt that reaches the store before the Orker 
 
 ## Stop the process safely
 
-A stop hands back the tasks still running on the Orker. Each container gets `SIGTERM`, then `SIGKILL` after its cancellation grace period (30 seconds by default), and the Orker reports each attempt `ORKER_STOPPED` before it exits. The task runs again on another Orker if its retry policy allows, or fails `ORKER_STOPPED`. A task whose container already finished reports its own result.
+A stop is drain-first. The first `SIGTERM` makes the Orker take no new task or pin, and lets running tasks and its open pins finish, for up to its stop grace: `ORK_ORKER_STOP_GRACE`, 24 hours by default, at most `744h`. An Orker with nothing running exits at once. `orkctl orker list` shows it **stopping**, with when its grace ends.
 
-- Give the process manager at least the longest grace period its tasks use. A stop takes that long, plus a few seconds to report and record the attempts.
+When the grace ends, the Orker hands back what still runs. Each container gets `SIGTERM`, then `SIGKILL` after its cancellation grace period (30 seconds by default), and the Orker reports each attempt `ORKER_STOPPED` before it exits. The task runs again on another Orker if its retry policy allows, or fails `ORKER_STOPPED`. A task whose container already finished reports its own result.
+
+- Give the process manager a stop timeout of at least the grace plus about 12 minutes: 24h15m for the default. Killed sooner, the Orker's running tasks are lost, not handed back.
+- A second `SIGTERM` ends the grace now. A third exits at once, and leaves what a crash leaves.
 - A signal to the Orker's whole process group, such as Ctrl-C, never reaches a task's container.
-- A second `SIGTERM` changes nothing. A third exits at once, and leaves what a crash leaves.
-- `SIGTERM` cordons the Orker, so it takes no new task, but it does not wait for running ones. To let work finish first, cordon and drain, then stop.
+- A pin host keeps its open pins, paused ones included, for the whole grace. Drain it first, or give it a shorter grace.
 
-In Compose, give the Orker's container a longer stop grace than its tasks' grace, and run it with an init so the stop reaches the process:
+In Compose, give the Orker's container a stop grace that covers the Orker's, and run it with an init so the stop reaches the process:
 
 ```yaml
 services:
   orker:
     init: true
-    stop_grace_period: 45s
+    environment:
+      ORK_ORKER_STOP_GRACE: 60s
+    stop_grace_period: 15m
 ```
 
 ## Bring the Orker back

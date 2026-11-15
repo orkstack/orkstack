@@ -904,6 +904,86 @@ func TestModeGuard_Lower(t *testing.T) {
 	}
 }
 
+// TestModeGuard_LowerWaitsTheLongestClaimAnyEngineAdvertises (R2): asserted
+// is safe one claim's life after the deployment left enforce, measured by the
+// longest engine.idempotency_ttl any engine on the presence channel
+// advertises, not this engine's own; a presence channel that cannot be read
+// refuses rather than guess, unless the duplicates are accepted.
+func TestModeGuard_LowerWaitsTheLongestClaimAnyEngineAdvertises(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0).UTC()
+	peerTTL, peerErr := 72*time.Hour, error(nil)
+	reads := 0
+	g := &ModeGuard{Store: artifacts.NewModeStoreOn(artifacts.NewMemoryCAS()), Mode: authn.ModeEnforce, ClaimTTL: 24 * time.Hour,
+		Now: func() time.Time { return now },
+		PeerClaimTTL: func(context.Context) (time.Duration, error) {
+			reads++
+			return peerTTL, peerErr
+		}}
+	if err := g.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Lower(ctx, authn.ModeObserve, g.Status().ETag, false, "user:corp:a", ""); err != nil {
+		t.Fatal(err)
+	}
+	etag := g.Status().ETag
+	g.RefreshPeers(ctx)
+	if safe := g.Status().AssertedSafe; !safe.Equal(now.Add(72*time.Hour + claimGrace)) {
+		t.Fatalf("asserted safe from %v; want the peer's 72h and the grace after leaving enforce", safe)
+	}
+	now = now.Add(24*time.Hour + claimGrace)
+	var refused *LowerRefusal
+	if _, err := g.Lower(ctx, authn.ModeAsserted, etag, false, "user:corp:a", ""); !errors.As(err, &refused) || !refused.Precondition ||
+		!strings.Contains(err.Error(), "72h0m0s") {
+		t.Fatalf("asserted past this engine's own claim life, inside a peer's = %v; want refused naming 72h0m0s", err)
+	}
+	peerTTL = time.Hour // the 72h engine has left; its claims have not
+	if _, err := g.Lower(ctx, authn.ModeAsserted, etag, false, "user:corp:a", ""); !errors.As(err, &refused) ||
+		!strings.Contains(err.Error(), "72h0m0s") {
+		t.Fatalf("a peer that left shortened the wait: %v", err)
+	}
+	peerErr = errors.New("cluster down")
+	if _, err := g.Lower(ctx, authn.ModeAsserted, etag, false, "user:corp:a", ""); !errors.As(err, &refused) || !refused.Precondition ||
+		!strings.Contains(err.Error(), "engines could not be listed") {
+		t.Fatalf("a presence read that failed = %v; want refused", err)
+	}
+	g.RefreshPeers(ctx) // a failed refresh keeps the last value read
+	if safe := g.Status().AssertedSafe; safe.IsZero() {
+		t.Fatal("a failed refresh forgot the peer's claim life")
+	}
+	before := reads
+	if _, err := g.Lower(ctx, authn.ModeAsserted, etag, true, "user:corp:a", "duplicates accepted"); err != nil {
+		t.Fatalf("accept_duplicate_retries still waited: %v", err)
+	}
+	if reads != before {
+		t.Fatal("a lowering that accepts duplicates read the presence channel")
+	}
+}
+
+// TestModeGuard_APeerShorterThanThisEngineWaitsThisEngines: the wait is the
+// longest life, so a peer advertising less, or none, never shortens it.
+func TestModeGuard_APeerShorterThanThisEngineWaitsThisEngines(t *testing.T) {
+	ctx := context.Background()
+	now := time.Unix(1_700_000_000, 0).UTC()
+	g := &ModeGuard{Store: artifacts.NewModeStoreOn(artifacts.NewMemoryCAS()), Mode: authn.ModeEnforce, ClaimTTL: 24 * time.Hour,
+		Now:          func() time.Time { return now },
+		PeerClaimTTL: func(context.Context) (time.Duration, error) { return time.Hour, nil }}
+	if err := g.Boot(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.Lower(ctx, authn.ModeObserve, g.Status().ETag, false, "user:corp:a", ""); err != nil {
+		t.Fatal(err)
+	}
+	g.RefreshPeers(ctx)
+	if safe := g.Status().AssertedSafe; !safe.Equal(now.Add(24*time.Hour + claimGrace)) {
+		t.Fatalf("asserted safe from %v; want this engine's 24h", safe)
+	}
+	now = now.Add(2 * time.Hour)
+	if _, err := g.Lower(ctx, authn.ModeAsserted, g.Status().ETag, false, "user:corp:a", ""); err == nil {
+		t.Fatal("a peer's shorter claim life shortened the wait")
+	}
+}
+
 func TestModeGuard_CheckWritesAMissingRecordAgain(t *testing.T) {
 	ctx := context.Background()
 	cas := artifacts.NewMemoryCAS()

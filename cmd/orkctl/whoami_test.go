@@ -44,7 +44,7 @@ func TestWhoami(t *testing.T) {
 		PrincipalId: "user:corp:nina", Method: "jwt", Issuer: "corp", Kind: "user", Groups: []string{"eng"},
 		Bindings:       []*orkstackv1.ExplainedBinding{{Binding: "payments-admins", Role: "namespace-admin", Scope: "namespace:payments", Subject: "user:corp:nina"}},
 		Permissions:    []*orkstackv1.ScopedPermissions{{Scope: "namespace:payments", Permissions: []string{"orkflow.read", "run.read"}}},
-		AccessRevision: 7,
+		AccessRevision: 7, OrkerId: "orker-1",
 	}}))
 	url := startFakeEngine(t, mux)
 	var out, errOut strings.Builder
@@ -52,7 +52,7 @@ func TestWhoami(t *testing.T) {
 		t.Fatalf("whoami = %d: %s", code, errOut.String())
 	}
 	for _, want := range []string{"user:corp:nina (verified, jwt, issuer corp)", "groups:     eng",
-		"payments-admins: namespace-admin at namespace:payments, as user:corp:nina", "at namespace:payments: orkflow.read run.read", "revision 7"} {
+		"payments-admins: namespace-admin at namespace:payments, as user:corp:nina", "at namespace:payments: orkflow.read run.read", "revision 7", "orker:      orker-1"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("whoami printed %q; want it to contain %q", out.String(), want)
 		}

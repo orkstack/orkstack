@@ -1,7 +1,8 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
 import { OrkerSchema } from '../src/lib/gen/orkstack/v1/activity_pb';
-import { cordonCommand, operatorCordoned, orkerCommand, orkerLoad, orkerPins, orkerState, orkerStateLabel, orkerTasks } from '../src/lib/orkers';
+import { cordonCommand, operatorCordoned, orkerCommand, orkerLoad, orkerPins, orkerState, orkerStateLabel, orkerTasks, stoppingNote } from '../src/lib/orkers';
+import { timestampFromDate } from '@bufbuild/protobuf/wkt';
 
 test('an Orker that could not be asked is unreachable and has no numbers, never zero', () => {
 	const o = create(OrkerSchema, { orkerId: 'orker-c001', unavailableReason: 'describe orker: deadline' });
@@ -56,4 +57,34 @@ test('the CLI equivalent of a store outage reads the Orker, because no command c
 	expect(orkerCommand(outage)).toBe('orkctl orker get orker-7f3a');
 	const both = create(OrkerSchema, { orkerId: 'orker-7f3a', cordoned: true, cordonReason: 'cve', storeOutage: { reason: 'x' } });
 	expect(orkerCommand(both)).toBe('orkctl orker cordon orker-7f3a --reason cve');
+});
+
+test('a stopping Orker reads as stopping, not as an operator\'s cordon, and offers no cordon', () => {
+	const stopping = create(OrkerSchema, { orkerId: 'orker-7f3a', cordoned: true, stopping: {}, runningTasks: 2 });
+	expect(orkerState(stopping)).toBe('stopping');
+	expect(orkerStateLabel('stopping')).toBe('stopping');
+	expect(operatorCordoned(stopping)).toBe(false);
+	expect(orkerCommand(stopping)).toBe('orkctl orker get orker-7f3a');
+
+	const both = create(OrkerSchema, { orkerId: 'orker-7f3a', cordoned: true, cordonReason: 'cve', stopping: {} });
+	expect(orkerState(both)).toBe('stopping');
+	expect(operatorCordoned(both)).toBe(true);
+	expect(orkerCommand(both)).toBe('orkctl orker cordon orker-7f3a --reason cve');
+});
+
+test('a stopping Orker says when it began and when its grace ends', () => {
+	const at = (iso: string) => timestampFromDate(new Date(iso));
+	const iso = (ts: { seconds: bigint } | undefined) => (ts ? new Date(Number(ts.seconds) * 1000).toISOString() : '—');
+	const o = create(OrkerSchema, {
+		orkerId: 'orker-a', cordoned: true,
+		stopping: { since: at('2026-11-14T09:00:00Z'), graceEndsAt: at('2026-11-14T10:00:00Z') }
+	});
+	expect(stoppingNote(o, iso)).toBe(
+		'Stopping since 2026-11-14T09:00:00.000Z: it takes no new work and finishes what it runs, then exits; its grace ends 2026-11-14T10:00:00.000Z. A task it hands back runs again on another Orker of its release.'
+	);
+	// An Orker of a release that reports neither time keeps the plain sentence.
+	const bare = create(OrkerSchema, { orkerId: 'orker-b', cordoned: true, stopping: {} });
+	expect(stoppingNote(bare, iso)).toBe(
+		'Stopping: it takes no new work and finishes what it runs, then exits. A task it hands back runs again on another Orker of its release.'
+	);
 });

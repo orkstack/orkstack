@@ -311,6 +311,29 @@ func (a *Activities) WaitForTasks(ctx context.Context) error {
 // It returns how many attempts it took back.
 func (a *Activities) HandBack() int { return a.stops.handBack() }
 
+// AwaitIdle returns once this Orker runs no task and holds no open pin, or
+// when ctx is done: a stopping Orker with nothing in flight need not wait out
+// its grace.
+func (a *Activities) AwaitIdle(ctx context.Context) error {
+	for {
+		// Idle is read first, so an idle Orker answers so even on a done
+		// context: a stop with no grace and nothing in flight ends idle.
+		if a.running.load() == 0 && a.pins.count() == 0 {
+			return nil
+		}
+		select {
+		case <-a.running.idle():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case <-a.pins.idle():
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
 // AwaitHandedBack returns once every attempt HandBack waits for has reported
 // itself: every unpinned attempt, and every pinned member not running a
 // container. A running pinned member is left to the task worker's Stop, which
@@ -445,6 +468,15 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 	if outage != nil {
 		result.Cordoned = true
 		result.StoreOutage = &orkstackv1.StoreOutage{Reason: outage.Reason, Since: timestamppb.New(outage.Since)}
+	}
+	// Stopping is its own cause, never an operator's reason: the census keeps
+	// the pool live while only it, or a store outage, holds.
+	if stop, stopping := a.cordon.Stopping(); stopping {
+		result.Cordoned = true
+		result.Stopping = &orkstackv1.OrkerStopping{
+			Since:       timestamppb.New(stop.Since),
+			GraceEndsAt: timestamppb.New(stop.GraceEndsAt),
+		}
 	}
 	result.Pins = a.describePins()
 	result.OpenPins = int32(len(result.Pins))

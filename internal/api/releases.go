@@ -262,6 +262,7 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 			release.Blockers = judgeRelease(observed.BuildID, obs, inventory, invErr, runs, running, runningErr)
 		}
 		release.Drained = releaseDrained(release, incomplete)
+		release.UnservedPools = unservedPools(release, observed, incomplete)
 		resp.Releases = append(resp.Releases, release)
 	}
 	sortReleases(resp.Releases)
@@ -303,6 +304,30 @@ func poolsServed(rows []*orkstackv1.Orker) []string {
 		}
 		seen[row.GetPool()] = true
 		pools = append(pools, row.GetPool())
+	}
+	sort.Strings(pools)
+	return pools
+}
+
+// unservedPools are the pools a release with runs in flight has served on
+// which no answered Orker of it takes work now, sorted: its tasks there wait
+// for one, because a pinned run's tasks never move to another release
+// (AGENTS.md §7.2). Nothing is listed that cannot be known: an unreadable run
+// count, release description or Orker inventory lists none.
+func unservedPools(release *orkstackv1.Release, observed engine.ObservedRelease, inventoryIncomplete bool) []string {
+	if release.GetRunsUnavailableReason() != "" || release.GetRunsInFlight() == 0 ||
+		observed.DescribeErr != nil || inventoryIncomplete {
+		return nil
+	}
+	served := map[string]bool{}
+	for _, pool := range release.GetPoolsServed() {
+		served[pool] = true
+	}
+	var pools []string
+	for _, pool := range observed.RegisteredPools {
+		if !served[pool] {
+			pools = append(pools, pool)
+		}
 	}
 	sort.Strings(pools)
 	return pools
@@ -483,8 +508,12 @@ func judgeRelease(target string, obs engine.ReleaseObservation, inventory []*ork
 			nobody := "no Orker of release " + target + " serves it"
 			if row := cordonedIn[pool]; row != nil {
 				why := row.GetCordonReason()
-				if why == "" {
+				switch {
+				case why != "":
+				case row.GetStoreOutage() != nil:
 					why = row.GetStoreOutage().GetReason()
+				case row.GetStopping() != nil:
+					why = "the orker is stopping"
 				}
 				nobody = fmt.Sprintf("no uncordoned Orker of release %s serves it (%s of release %s is cordoned: %s)",
 					target, row.GetOrkerId(), target, strconv.Quote(why))
@@ -580,6 +609,8 @@ func orkerServesEvidence(row *orkstackv1.Orker) string {
 	switch {
 	case row.GetStoreOutage() != nil:
 		text += " (cordoned: object storage unreachable)"
+	case row.GetStopping() != nil && row.GetCordonReason() == "":
+		text += " (stopping)"
 	case row.GetCordoned():
 		text += " (cordoned)"
 	}

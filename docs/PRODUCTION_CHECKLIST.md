@@ -105,7 +105,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Make the first versioned release current with `orkctl release promote` before you rely on it. Until a release is current it runs nothing ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
 - [ ] Check `orkctl release status` before every change. Each blocker is listed with what to start ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
 - [ ] Ramp a new release before you promote it, which the reference recommends, and watch error rates while the ramp runs ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
-- [ ] Wait for the old release to drain with `orkctl release wait`, and stop it only after the wait exits 0 ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
+- [ ] Wait for the old release to drain with `orkctl release wait`, and stop or cordon its last Orker on a pool only after the wait exits 0: until then its runs' tasks can run nowhere else ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward").
 - [ ] Know the rollback path before you need it. `orkctl release rollback` returns new runs to the release that was current before, and runs pinned to the release you left keep finishing there, so its workers must keep running until they drain ([DEPLOY.md](./DEPLOY.md), "4. Rolling back").
 - [ ] Keep the last replica of a release up until that release reports drained ([DEPLOY.md](./DEPLOY.md), "5. Ops notes").
 - [ ] Before a rollback below a release, check the floors in [UPGRADING.md](./UPGRADING.md), "Rolling back". Never roll back below the build that introduced reading runs carried into a fresh history; every release from 0.1.0 contains it.
@@ -116,8 +116,8 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Stop the process only when `orkctl orker drain` exits 0. Exit 4 means the timeout passed with work still on the host, and stopping then fails the runs whose pins it holds with `PIN_HOST_LOST` ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Remember that a cordon is a flag in the Orker process, so a restarted Orker comes back ready ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
 - [ ] Alert on `ork.orker.store_outage.active`. An Orker cordons itself while object storage does not answer it and resumes by itself, and tasks wait for it meanwhile ([DEPLOY.md](./DEPLOY.md), "When object storage goes away").
-- [ ] Remember that `SIGTERM` stops polling and cancels in-flight work, and does not cordon the Orker first ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
-- [ ] Give the Orker's process manager longer to stop it than the longest `cancellation_grace_period_seconds` its tasks use, 30 s by default: `terminationGracePeriodSeconds`, `TimeoutStopSec` or `docker stop --time`. A stopped Orker sends each container `SIGKILL` after that grace and writes each attempt's record before it exits ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
+- [ ] Remember that `SIGTERM` stops an Orker drain-first: it takes no new work and lets running tasks finish for up to `orker.stop.grace`, 24h by default, then hands back what remains ([DEPLOY.md](./DEPLOY.md), "Removing an Orker safely: cordon and drain").
+- [ ] Give the Orker's process manager a stop timeout of at least `orker.stop.grace` plus about 12 minutes, 24h15m (87,300 s) for the default: `terminationGracePeriodSeconds`, `TimeoutStopSec` with `KillMode=mixed`, or `docker stop --time`. Killed sooner, its running tasks are lost rather than handed back; where the platform caps the timeout lower, lower the grace to fit ([DEPLOY.md](./DEPLOY.md), "Stop timeouts").
 
 ## Observability
 

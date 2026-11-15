@@ -1,3 +1,4 @@
+import type { Timestamp } from '@bufbuild/protobuf/wkt';
 import type { Orker } from './gen/orkstack/v1/activity_pb';
 import { shellQuote } from './runDetail';
 
@@ -6,19 +7,25 @@ import { shellQuote } from './runDetail';
 // (cmd/orkctl/orker.go): an Orker that could not be asked is unreachable,
 // never idle, and none of its numbers are drawn.
 
-export type OrkerState = 'ready' | 'cordoned' | 'store-outage' | 'unreachable';
+export type OrkerState = 'ready' | 'cordoned' | 'store-outage' | 'stopping' | 'unreachable';
 
 /**
- * An operator's cordon holds. An Orker of a release with no store check only
- * ever reports that cause, so a row with no storeOutage reads as it always has.
+ * An operator's cordon holds: it always carries a reason. An Orker of a release
+ * with no store check and no stop grace only ever reports that cause, so a row
+ * with neither reads as it always has.
  */
 export function operatorCordoned(orker: Orker): boolean {
-	return orker.cordoned && (!orker.storeOutage || orker.cordonReason !== '');
+	if (!orker.cordoned) return false;
+	return orker.cordonReason !== '' || (!orker.storeOutage && !orker.stopping);
 }
 
-/** The row's one state: an operator's cordon wins, and a store outage beside it has its own stamp. */
+/**
+ * The row's one state: a stopping Orker never takes work again, so it wins;
+ * then an operator's cordon, and a store outage beside it has its own stamp.
+ */
 export function orkerState(orker: Orker): OrkerState {
 	if (orker.unavailableReason) return 'unreachable';
+	if (orker.stopping) return 'stopping';
 	if (operatorCordoned(orker)) return 'cordoned';
 	return orker.storeOutage ? 'store-outage' : 'ready';
 }
@@ -55,17 +62,30 @@ export function orkerLoad(orker: Orker): string {
  * The CLI equivalent of the row's state: the cordon that produced a cordoned
  * row, with its reason shell-quoted so a quote in it cannot become shell
  * syntax, the uncordon that produced a ready one, and, for an Orker a store
- * outage alone holds, which no command produced or can clear, the read of it.
+ * outage or its own stop alone holds, which no command produced or can clear,
+ * the read of it.
  */
 export function orkerCommand(orker: Orker): string {
 	if (operatorCordoned(orker)) {
 		return `orkctl orker cordon ${shellQuote(orker.orkerId)} --reason ${shellQuote(orker.cordonReason)}`;
 	}
-	if (orker.storeOutage) return `orkctl orker get ${shellQuote(orker.orkerId)}`;
+	if (orker.storeOutage || orker.stopping) return `orkctl orker get ${shellQuote(orker.orkerId)}`;
 	return `orkctl orker uncordon ${shellQuote(orker.orkerId)}`;
 }
 
 /** The command the cordon dialog is about to run, previewed as the reason is typed. */
 export function cordonCommand(orkerId: string, reason: string): string {
 	return `orkctl orker cordon ${shellQuote(orkerId)} --reason ${shellQuote(reason)}`;
+}
+
+/**
+ * The sentence a stopping Orker's row carries: when its stop began and when
+ * its grace ends, as `orkctl orker get` prints them. An Orker of a release that
+ * reports neither keeps the plain sentence.
+ */
+export function stoppingNote(orker: Orker, fmt: (ts: Timestamp | undefined) => string): string {
+	const stop = orker.stopping;
+	const since = stop?.since ? ` since ${fmt(stop.since)}` : '';
+	const ends = stop?.graceEndsAt ? `; its grace ends ${fmt(stop.graceEndsAt)}` : '';
+	return `Stopping${since}: it takes no new work and finishes what it runs, then exits${ends}. A task it hands back runs again on another Orker of its release.`;
 }

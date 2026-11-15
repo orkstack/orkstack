@@ -291,3 +291,27 @@ func TestRunWorkflow_ACarriedGenerationKeepsThePlansFairness(t *testing.T) {
 		}
 	}
 }
+
+// TestActivityOptions_NoScheduleToStart holds what makes a run's task wait for
+// an Orker of its own release rather than time out unstarted: no task activity,
+// plain, fan-out item or pinned member, carries a ScheduleToStart, so nothing on
+// the cluster ends that wait (docs/DEPLOY.md, "Rolling a release forward").
+func TestActivityOptions_NoScheduleToStart(t *testing.T) {
+	capture := &dispatchCapture{}
+	h := newHarnessCtx(t, &testsuite.WorkflowTestSuite{}, itemBehavior)
+	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{capture}}))
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "run-no-schedule-to-start",
+		compile(t, spreadDocument), spreadInput(t, 3), fairPlan(), (*orkstackv1.RunContinuation)(nil))
+	must.OKf(t, h.env.GetWorkflowError(), "workflow error")
+	pinned := runPinned(t, pinnedDocument, fairPlan())
+	all := append(capture.of(task.ActivityExecuteTask), pinned.of(task.ActivityExecuteTask)...)
+	if len(all) < 4 {
+		t.Fatalf("captured %d ExecuteTask option sets, want at least 4", len(all))
+	}
+	for i, options := range all {
+		if options.ScheduleToStartTimeout != 0 || options.ScheduleToCloseTimeout != 0 {
+			t.Fatalf("ExecuteTask %d carries ScheduleToStart %s and ScheduleToClose %s; want neither",
+				i, options.ScheduleToStartTimeout, options.ScheduleToCloseTimeout)
+		}
+	}
+}

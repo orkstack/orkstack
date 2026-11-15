@@ -995,7 +995,13 @@ type Release struct {
 	// event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch).
 	EventSourceInstances int64 `protobuf:"varint,20,opt,name=event_source_instances,json=eventSourceInstances,proto3" json:"event_source_instances,omitempty"`
 	// event_sources is set from E90; unset until it lands (v0.4.0 proto batch).
-	EventSources  int32 `protobuf:"varint,21,opt,name=event_sources,json=eventSources,proto3" json:"event_sources,omitempty"`
+	EventSources int32 `protobuf:"varint,21,opt,name=event_sources,json=eventSources,proto3" json:"event_sources,omitempty"`
+	// unserved_pools are the pools this release has served, sorted, on which no
+	// ANSWERED Orker of it takes work now (every one cordoned, stopping or gone),
+	// listed only while the release has runs in flight. Their tasks wait for an
+	// Orker of this release and never move to another (docs/DEPLOY.md §3,
+	// "Rolling a release forward"). Empty when runs_unavailable_reason is set.
+	UnservedPools []string `protobuf:"bytes,22,rep,name=unserved_pools,json=unservedPools,proto3" json:"unserved_pools,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1175,6 +1181,13 @@ func (x *Release) GetEventSources() int32 {
 		return x.EventSources
 	}
 	return 0
+}
+
+func (x *Release) GetUnservedPools() []string {
+	if x != nil {
+		return x.UnservedPools
+	}
+	return nil
 }
 
 type ListReleasesRequest struct {
@@ -1668,7 +1681,7 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\x0eReleaseBlocker\x123\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\x1f.orkstack.v1.ReleaseBlockerKindR\x04kind\x12\x12\n" +
 	"\x04pool\x18\x02 \x01(\tR\x04pool\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage\"\xb8\a\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"\xdf\a\n" +
 	"\aRelease\x12\x19\n" +
 	"\bbuild_id\x18\x01 \x01(\tR\abuildId\x12,\n" +
 	"\x04role\x18\x02 \x01(\x0e2\x18.orkstack.v1.ReleaseRoleR\x04role\x12!\n" +
@@ -1695,7 +1708,8 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\vpaused_runs\x18\x13 \x01(\x03R\n" +
 	"pausedRuns\x124\n" +
 	"\x16event_source_instances\x18\x14 \x01(\x03R\x14eventSourceInstances\x12#\n" +
-	"\revent_sources\x18\x15 \x01(\x05R\feventSources\"\xba\x01\n" +
+	"\revent_sources\x18\x15 \x01(\x05R\feventSources\x12%\n" +
+	"\x0eunserved_pools\x18\x16 \x03(\tR\runservedPools\"\xba\x01\n" +
 	"\x13ListReleasesRequest\x122\n" +
 	"\afilters\x18\x02 \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:_\xa2\xbb\x18[\n" +
 	"\x13orkstack.v1.Release\x12\x1a\n" +

@@ -119,3 +119,14 @@ func (w logWriter) Write(b []byte) (int, error) {
 	w.t.Log(strings.TrimRight(string(b), "\n"))
 	return len(b), nil
 }
+
+func TestWithStopGrace_DefaultsAnOrkersGraceToNone(t *testing.T) {
+	got := withStopGrace([]string{"PATH=/bin"})
+	if got[len(got)-1] != "ORK_ORKER_STOP_GRACE=0s" {
+		t.Fatalf("withStopGrace without a grace = %v; want ORK_ORKER_STOP_GRACE=0s added", got)
+	}
+	set := []string{"ORK_ORKER_STOP_GRACE=90s"}
+	if got := withStopGrace(set); len(got) != 1 || got[0] != set[0] {
+		t.Fatalf("withStopGrace with a grace = %v; want it kept", got)
+	}
+}

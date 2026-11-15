@@ -2884,7 +2884,8 @@ type DescribeOrkerResult struct {
 	// built before it numbers them as Temporal does and would write records
 	// over a newer Orker's, so submit refuses a pool that has one.
 	AttemptOrdinalsSupported bool `protobuf:"varint,43,opt,name=attempt_ordinals_supported,json=attemptOrdinalsSupported,proto3" json:"attempt_ordinals_supported,omitempty"`
-	// stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+	// stopping is set while this Orker is stopping (OrkerStopping). cordoned is
+	// true beside it.
 	Stopping *OrkerStopping `protobuf:"bytes,24,opt,name=stopping,proto3" json:"stopping,omitempty"`
 	// profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch).
 	ProfileKindsSupported []ProfileKind `protobuf:"varint,26,rep,packed,name=profile_kinds_supported,json=profileKindsSupported,proto3,enum=orkstack.v1.ProfileKind" json:"profile_kinds_supported,omitempty"`
@@ -3533,7 +3534,9 @@ type Orker struct {
 	// CordonOrker neither sets nor clears it. Unset from an Orker of a release
 	// without these checks.
 	StoreOutage *StoreOutage `protobuf:"bytes,16,opt,name=store_outage,json=storeOutage,proto3" json:"store_outage,omitempty"`
-	// stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+	// stopping is set while this Orker is stopping: it takes no new task and
+	// opens no new pin, and keeps its pool live until it exits. Unset from an
+	// Orker of a release without a stop grace.
 	Stopping *OrkerStopping `protobuf:"bytes,17,opt,name=stopping,proto3" json:"stopping,omitempty"`
 	// profiles is set from E91; unset until it lands (v0.4.0 proto batch).
 	Profiles []*OrkerProfile `protobuf:"bytes,18,rep,name=profiles,proto3" json:"profiles,omitempty"`
@@ -3905,10 +3908,17 @@ func (*OrkerProfile) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_activity_proto_rawDescGZIP(), []int{31}
 }
 
-// OrkerStopping is E92's; it is empty until E92 lands (v0.4.0 proto
-// batch).
+// OrkerStopping is set while an Orker is stopping: from its first stop signal
+// it takes no new task and opens no new pin, and what it runs carries on until
+// the grace ends (docs/DEPLOY.md, "Removing an Orker safely"). cordoned is true beside
+// it. It ends only with the process.
 type OrkerStopping struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// since is when the Orker received its first stop signal.
+	Since *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=since,proto3" json:"since,omitempty"`
+	// grace_ends_at is when the Orker stops what it still runs: since plus
+	// orker.stop.grace. A second signal ends the grace sooner.
+	GraceEndsAt   *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=grace_ends_at,json=graceEndsAt,proto3" json:"grace_ends_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -3941,6 +3951,20 @@ func (x *OrkerStopping) ProtoReflect() protoreflect.Message {
 // Deprecated: Use OrkerStopping.ProtoReflect.Descriptor instead.
 func (*OrkerStopping) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_activity_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *OrkerStopping) GetSince() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Since
+	}
+	return nil
+}
+
+func (x *OrkerStopping) GetGraceEndsAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.GraceEndsAt
+	}
+	return nil
 }
 
 // ProfileCordon is E91's; it is empty until E91 lands (v0.4.0 proto
@@ -4460,8 +4484,10 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\tEachLines\"\x11\n" +
 	"\x0fIdentityContext\"\x0f\n" +
 	"\rMetadataProbe\"\x0e\n" +
-	"\fOrkerProfile\"\x0f\n" +
-	"\rOrkerStopping\"\x0f\n" +
+	"\fOrkerProfile\"\x81\x01\n" +
+	"\rOrkerStopping\x120\n" +
+	"\x05since\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12>\n" +
+	"\rgrace_ends_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\vgraceEndsAt\"\x0f\n" +
 	"\rProfileCordon\"\f\n" +
 	"\n" +
 	"ProfileRef\"\x0e\n" +
@@ -4664,11 +4690,13 @@ var file_orkstack_v1_activity_proto_depIdxs = []int32{
 	38, // 89: orkstack.v1.Orker.profiles:type_name -> orkstack.v1.OrkerProfile
 	40, // 90: orkstack.v1.Orker.profile_cordons:type_name -> orkstack.v1.ProfileCordon
 	44, // 91: orkstack.v1.Orker.service_host:type_name -> orkstack.v1.ServiceHost
-	92, // [92:92] is the sub-list for method output_type
-	92, // [92:92] is the sub-list for method input_type
-	92, // [92:92] is the sub-list for extension type_name
-	92, // [92:92] is the sub-list for extension extendee
-	0,  // [0:92] is the sub-list for field type_name
+	51, // 92: orkstack.v1.OrkerStopping.since:type_name -> google.protobuf.Timestamp
+	51, // 93: orkstack.v1.OrkerStopping.grace_ends_at:type_name -> google.protobuf.Timestamp
+	94, // [94:94] is the sub-list for method output_type
+	94, // [94:94] is the sub-list for method input_type
+	94, // [94:94] is the sub-list for extension type_name
+	94, // [94:94] is the sub-list for extension extendee
+	0,  // [0:94] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_proto_init() }

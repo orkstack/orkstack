@@ -21,6 +21,7 @@
 	// this page, so there is nothing to confirm.
 	import { goto, invalidateAll } from '$app/navigation';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import { principalMark } from '#lib/principal.ts';
 	import ListFilter from '#lib/components/ListFilter.svelte';
 	import Pagination from '#lib/components/Pagination.svelte';
 	import {
@@ -131,7 +132,7 @@
 			<thead>
 				<tr>
 					<th scope="col">When</th>
-					<th scope="col">Principal <span class="font-normal normal-case tracking-normal">(asserted)</span></th>
+					<th scope="col">Principal</th>
 					<th scope="col">Action</th>
 					<th scope="col">Namespace</th>
 					<th scope="col" class="w-[38%]">Target</th>
@@ -143,7 +144,7 @@
 					<tr class="align-top {rec.succeeded ? '' : 'bg-red-tint'}" data-testid="audit-row" data-record-id={rec.id}>
 						<td class="figure text-xs whitespace-nowrap text-ink-secondary" data-testid="audit-when">{fmtTimestamp(rec.at)}</td>
 						<td>
-							{#if rec.principal}<span class="block text-2xs text-ink-muted">asserted by</span>{/if}
+							{#if rec.principal}<span class="block text-2xs text-ink-muted" data-principal-mark={principalMark(rec.principalVerified).word}>{principalMark(rec.principalVerified).word} by</span>{/if}
 							<span
 								class={rec.principal ? 'font-mono text-xs text-ink' : 'italic text-ink-muted'}
 								data-testid="audit-principal">{auditPrincipalLabel(rec.principal)}</span

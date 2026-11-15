@@ -780,7 +780,8 @@ message DescribeOrkerResult {
   // over a newer Orker's, so submit refuses a pool that has one.
   bool attempt_ordinals_supported = 43;
 
-  // stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+  // stopping is set while this Orker is stopping (OrkerStopping). cordoned is
+  // true beside it.
   OrkerStopping stopping = 24;
 
   // profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch).
@@ -924,7 +925,9 @@ message Orker {
   // without these checks.
   StoreOutage store_outage = 16;
 
-  // stopping is set from E92; unset until it lands (v0.4.0 proto batch).
+  // stopping is set while this Orker is stopping: it takes no new task and
+  // opens no new pin, and keeps its pool live until it exits. Unset from an
+  // Orker of a release without a stop grace.
   OrkerStopping stopping = 17;
 
   // profiles is set from E91; unset until it lands (v0.4.0 proto batch).
@@ -957,9 +960,17 @@ message MetadataProbe {}
 // batch).
 message OrkerProfile {}
 
-// OrkerStopping is E92's; it is empty until E92 lands (v0.4.0 proto
-// batch).
-message OrkerStopping {}
+// OrkerStopping is set while an Orker is stopping: from its first stop signal
+// it takes no new task and opens no new pin, and what it runs carries on until
+// the grace ends (docs/DEPLOY.md, "Removing an Orker safely"). cordoned is true beside
+// it. It ends only with the process.
+message OrkerStopping {
+  // since is when the Orker received its first stop signal.
+  google.protobuf.Timestamp since = 1;
+  // grace_ends_at is when the Orker stops what it still runs: since plus
+  // orker.stop.grace. A second signal ends the grace sooner.
+  google.protobuf.Timestamp grace_ends_at = 2;
+}
 
 // ProfileCordon is E91's; it is empty until E91 lands (v0.4.0 proto
 // batch).

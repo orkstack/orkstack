@@ -1494,9 +1494,21 @@ though the host may be well: the run is told only that the session ended, and
 cannot tell a dead host from a silent frontend. The pin is never re-opened
 elsewhere.
 
-**An Orker that is itself stopped** (`SIGTERM`, `SIGINT`) stops what it runs
-carefully. It cordons itself first (`docs/DEPLOY.md`, "Removing an Orker safely"), so it asks for no new task and
-opens no new pin. Every attempt it admitted moves through stages by compare-and-swap
+**An Orker that is itself stopped** (`SIGTERM`, `SIGINT`) accepts no new work
+and lets what runs finish first (`docs/DEPLOY.md`, "Removing an Orker safely").
+Its first signal sets a cordon whose cause is stopping, so it asks for no new
+task and opens no new pin. A task an open poll still delivers runs in flight,
+as for any cordon, so a stop never spends a task's attempt on what it was
+handed in its first minute; every pin creation that
+reaches it is refused retryably, 5 s apart, until five minutes after the
+creation was scheduled, the grace's end (at least 15 s after the signal) or 45
+refusals, whichever is first, and then finally; a member of a pin it opened
+before the signal runs. Every running unpinned attempt sends one heartbeat at
+once carrying `stopping_since`, the instant of the signal, which its later
+heartbeats carry too. Running tasks and open pins carry on, heartbeating as
+before, for its stop grace (`orker.stop.grace`, 24 h by default); an Orker with
+nothing running and no open pin ends the grace at once, and a second signal
+ends it early. Only then does it stop what remains. Every attempt it admitted moves through stages by compare-and-swap
 (`internal/orker/stop.go`): admitted, then revocable once its container
 started, or committing once it has a result of its own — a commit it adopted,
 a memo hit it is writing, or a container that ended by itself. The signal's
@@ -1512,11 +1524,13 @@ attempt left is committed, even an exit 0 from a workload that traps
 `SIGTERM`. An attempt whose container ended by itself, or that is adopting or
 writing a commit, completes and reports first, and so does one the worker's
 own stop cancels after its commit is written. An attempt that reaches the
-Orker after the signal starts nothing and leaves nothing, no record and no
+Orker after the sweep starts nothing and leaves nothing, no record and no
 log, and is reported `ORKER_STOPPED` too. A pinned member still running fails
 its pin `PIN_HOST_LOST` when the Orker then stops its workers, as does one not
 yet started, which is refused. Right after the sweep the Orker stops its task
-worker, so no poll still open delivers a task to it; every unpinned attempt,
+worker, so no poll still open delivers a task to it — a poll left open would
+hand it the retry of a task it just handed back, only to be handed back again
+before it starts; every unpinned attempt,
 and a pinned member that is committing, outlives that stop and reports
 itself, whatever its outcome, heartbeating until the report lands. A cancel
 the server sends meanwhile still ends the attempt as cancelled. The process exits
@@ -1530,7 +1544,8 @@ timeout, and a retry under the task's policy (`ORKER_HEARTBEAT_TIMEOUT`,
 Every runtime CLI the Orker starts leads a process group of its own, so a
 signal sent to the Orker's process group (a terminal's Ctrl-C, a process
 manager that signals the whole group) never reaches a task's container. A
-second stop signal changes nothing; a third exits at once, killing every
+second stop signal ends the grace (signals within a second of each other are
+one); a third exits at once, killing every
 runtime CLI the Orker started, and leaves what a crash leaves: the attempts
 `UNREPORTED`, and their containers until the next boot's reap.
 

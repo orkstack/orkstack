@@ -192,6 +192,36 @@ func TestRenderRunList_SaysWhoCanceledEachRun(t *testing.T) {
 	}
 }
 
+// TestRender_CaptionsWhoCanceledByHowItIsKnown: a canceller OrkStack
+// authenticated is never shown as asserted, and an asserted one never as
+// verified, in `run get` and in `run list`.
+func TestRender_CaptionsWhoCanceledByHowItIsKnown(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		verified bool
+		get      string
+		list     string
+	}{
+		{"verified", true, "Canceled by: user:corp:dana (verified)", "CANCELED by user:corp:dana (verified)"},
+		{"asserted", false, "Canceled by: user:corp:dana " + principalCaption, "CANCELED by user:corp:dana (asserted)"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			run := canceledRun("user:corp:dana")
+			run.CanceledByVerified = tt.verified
+			var out bytes.Buffer
+			must.OKf(t, renderRun(&out, run), "renderRun")
+			if got := collapseSpaces(detailLine(t, out.String(), "Canceled by:")); got != tt.get {
+				t.Fatalf("run get = %q, want %q", got, tt.get)
+			}
+			out.Reset()
+			must.OKf(t, renderRunList(&out, []*orkstackv1.Run{run}), "renderRunList")
+			if row := collapseSpaces(out.String()); !strings.Contains(row, tt.list) {
+				t.Fatalf("run list = %q, want it to hold %q", row, tt.list)
+			}
+		})
+	}
+}
+
 func collapseSpaces(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
