@@ -804,7 +804,8 @@ func TestPolicyCache_WrittenAroundTheAPI(t *testing.T) {
 	if !st.WrittenAroundAPI || st.Revision != 9 {
 		t.Fatalf("a head written around the API = %+v; want it reported, and used", st)
 	}
-	c.Acknowledge(9)
+	_, aroundMeta, _ := artifacts.DecodeAccessObject(body)
+	c.Acknowledge(9, aroundMeta.SHA256)
 	if c.State().WrittenAroundAPI {
 		t.Fatal("acknowledged, still reported")
 	}
@@ -1342,12 +1343,12 @@ func TestPolicyCache_UnexpectedHeads(t *testing.T) {
 	if !c.State().WrittenAroundAPI || unexpected != 1 {
 		t.Fatalf("a head gone = %+v, %d reports; want it reported", c.State(), unexpected)
 	}
-	c.Acknowledge(c.State().Revision)
+	c.Acknowledge(c.State().Revision, "")
 	cas.PutRaw(artifacts.AccessDocumentKey, body)
 	c.Refresh(ctx)
 
 	// Restored to revision 1 after revision 2 was acknowledged.
-	c.Acknowledge(h2.Meta.Revision)
+	c.Acknowledge(h2.Meta.Revision, h2.Meta.SHA256)
 	old, _ := cas.Raw(artifacts.AccessRevisionKey(1, h1.Meta.SHA256))
 	cas.PutRaw(artifacts.AccessDocumentKey, old)
 	c.Refresh(ctx)

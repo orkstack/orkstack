@@ -111,3 +111,44 @@ func TestModeStore_S3CompareAndSwap(t *testing.T) {
 		t.Fatalf("Get = %+v, %v", rec, err)
 	}
 }
+
+// TestAccessStore_S3ListsAcknowledgementsPastOnePage: more records than one
+// S3 listing page answers are all listed, in revision order, through the
+// continuation the store hands back (Go review MEDIUM 3).
+func TestAccessStore_S3ListsAcknowledgementsPastOnePage(t *testing.T) {
+	cfg := privateIdentityBucket(t)
+	ctx := context.Background()
+	store, err := artifacts.NewS3AccessStore(ctx, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n = 1003 // one page of 1000, and a second
+	digest := strings.Repeat("d", 64)
+	errs := make(chan error, n)
+	sem := make(chan struct{}, 16)
+	for i := 1; i <= n; i++ {
+		sem <- struct{}{}
+		go func(rev int64) {
+			defer func() { <-sem }()
+			_, err := store.Acknowledge(ctx, artifacts.AccessAck{Revision: rev, SHA256: digest, At: time.Now()})
+			errs <- err
+		}(int64(i))
+	}
+	for i := 0; i < n; i++ {
+		if err := <-errs; err != nil {
+			t.Fatal(err)
+		}
+	}
+	acks, truncated, err := store.ListAcknowledged(ctx)
+	if err != nil || truncated {
+		t.Fatalf("ListAcknowledged = %d records, truncated %t, %v", len(acks), truncated, err)
+	}
+	if len(acks) != n {
+		t.Fatalf("listed %d records; want %d", len(acks), n)
+	}
+	for i, a := range acks {
+		if a.Revision != int64(i+1) {
+			t.Fatalf("record %d names revision %d; want %d, in order", i, a.Revision, i+1)
+		}
+	}
+}

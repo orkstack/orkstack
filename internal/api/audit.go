@@ -240,6 +240,10 @@ var auditedProcedures = map[string]auditExtractor{
 		}
 		return auditEntry{Action: action, Target: in.GetPrincipalId()}
 	},
+	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.AcknowledgeAccessRevisionRequest)
+		return auditEntry{Action: "access.revision.acknowledge", Target: strconv.FormatInt(in.GetRevision(), 10), Detail: "sha256=" + in.GetSha256()}
+	},
 	// The mode record comes down by this command, never by one replica's
 	// configuration: its record names the mode it replaced and whether the
 	// wait for duplicate retries was skipped.
@@ -666,11 +670,10 @@ func orDashAudit(s string) string {
 // unauditedWrites are write RPCs deliberately NOT recorded, each with the
 // reason a reader will look for. Adding a name here is a contract decision.
 var unauditedWrites = map[string]string{
-	orkstackv1connect.RunServiceSubmitRunProcedure:                    "a run's own record is the durable fact; provenance is run-origin's",
-	orkstackv1connect.AuthServiceRefreshSigninProcedure:               notYetServed,
-	orkstackv1connect.AuthServiceSignOutProcedure:                     notYetServed,
-	orkstackv1connect.AccessServiceRevokeSigninsProcedure:             notYetServed,
-	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure: notYetServed,
+	orkstackv1connect.RunServiceSubmitRunProcedure:        "a run's own record is the durable fact; provenance is run-origin's",
+	orkstackv1connect.AuthServiceRefreshSigninProcedure:   notYetServed,
+	orkstackv1connect.AuthServiceSignOutProcedure:         notYetServed,
+	orkstackv1connect.AccessServiceRevokeSigninsProcedure: notYetServed,
 }
 
 // notYetServed is the reason a declared write is not yet recorded: no engine

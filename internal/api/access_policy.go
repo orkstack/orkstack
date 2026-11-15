@@ -57,12 +57,19 @@ type PolicyCache struct {
 	failedAt  time.Time
 	lastErr   error
 	// aroundPending is a head written around the API (or gone) that no
-	// admin has acknowledged; aroundRevision is its revision.
+	// admin has acknowledged; aroundRevision and aroundSHA name it (both
+	// empty for a head gone). acknowledged is the highest revision an
+	// acknowledgement record names, as last listed.
 	aroundPending  bool
 	aroundRevision int64
-	onRead         func(outcome string)
-	onUnexpected   func()
-	subs           map[chan struct{}]struct{}
+	aroundSHA      string
+	acknowledged   int64
+	// ackStale is a listing of the records that failed: the next read
+	// lists them again, whether or not the head moved.
+	ackStale     bool
+	onRead       func(outcome string)
+	onUnexpected func()
+	subs         map[chan struct{}]struct{}
 }
 
 // PolicyCacheOptions configures a cache. Zero durations take the defaults;
@@ -117,6 +124,9 @@ type PolicyState struct {
 	Stale            bool // past its refresh bound, served because the store did not answer
 	Unavailable      bool // past its stale limit
 	WrittenAroundAPI bool
+	// AcknowledgedRevision is the highest revision an acknowledgement
+	// record names (AccessStatus.acknowledged_revision).
+	AcknowledgedRevision int64
 }
 
 // State reports the cache's state now, without reading the store.
@@ -124,7 +134,7 @@ func (c *PolicyCache) State() PolicyState {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	now := c.now()
-	s := PolicyState{ReadAt: c.readAt, WrittenAroundAPI: c.aroundPending}
+	s := PolicyState{ReadAt: c.readAt, WrittenAroundAPI: c.aroundPending, AcknowledgedRevision: c.acknowledged}
 	if c.policy != nil {
 		s.Revision = c.policy.Revision
 		s.Age = now.Sub(c.readAt)
@@ -270,6 +280,7 @@ func (c *PolicyCache) revalidate(ctx context.Context) {
 		// Compiling no document cannot fail: configuration was validated at boot.
 		p, _ := authz.Compile(nil, c.configured, sent)
 		c.adopt(p, "", "", sent, seen)
+		c.checkAcknowledged(ctx, true)
 		return
 	}
 	if err != nil {
@@ -286,6 +297,7 @@ func (c *PolicyCache) revalidate(ctx context.Context) {
 		c.mu.Lock()
 		c.readAt, c.failedAt, c.lastErr = sent, time.Time{}, nil
 		c.mu.Unlock()
+		c.checkAcknowledged(ctx, false)
 		return
 	}
 	p, err := authz.Compile(head.Document, c.configured, sent)
@@ -297,6 +309,81 @@ func (c *PolicyCache) revalidate(ctx context.Context) {
 	}
 	around := c.writtenAround(ctx, head)
 	c.adopt(p, head.ETag, head.Meta.SHA256, sent, around)
+	c.checkAcknowledged(ctx, true)
+}
+
+// checkAcknowledged reads the acknowledgement records: their highest
+// revision when the head changed, the last listing failed or a banner is
+// up, and, while a
+// banner is up, whether the head it was raised for, or the head the
+// deployment has now, has one. A record decides the banner only, never
+// access, and a store that does not answer clears nothing. The caller holds
+// refreshMu.
+func (c *PolicyCache) checkAcknowledged(ctx context.Context, changed bool) {
+	c.mu.Lock()
+	pending, aroundRev, aroundSHA := c.aroundPending, c.aroundRevision, c.aroundSHA
+	var headRev int64
+	if c.policy != nil {
+		headRev = c.policy.Revision
+	}
+	headSHA := c.sha
+	if c.etag == "" {
+		headSHA = "" // no head: the document is gone
+	}
+	// While a banner is up the records are listed at every read, so the
+	// highest reported follows another replica's acknowledgement.
+	list := changed || c.ackStale || pending
+	c.mu.Unlock()
+	if !list {
+		return
+	}
+	highest := int64(-1)
+	listFailed := false
+	if acks, truncated, err := c.store.ListAcknowledged(ctx); err != nil {
+		listFailed = true
+		c.logger.Warn("access acknowledgements could not be listed; looked at again at the next read", "store", c.store.Location(), "error", err)
+	} else {
+		highest = 0
+		for _, a := range acks {
+			highest = max(highest, a.Revision)
+		}
+		if truncated {
+			c.logger.Warn("more access acknowledgements than one listing reads: the highest reported may be lower than the store's",
+				"store", c.store.Location(), "listed", len(acks))
+		}
+	}
+	cleared := false
+	if pending {
+		for i, want := range []struct {
+			rev int64
+			sha string
+		}{{aroundRev, aroundSHA}, {headRev, headSHA}} {
+			rev, sha := want.rev, want.sha
+			if rev < aroundRev || sha == "" || (i == 1 && rev == aroundRev && sha == aroundSHA) {
+				continue // nothing to look for, or the same record looked for already
+			}
+			ok, err := c.store.IsAcknowledged(ctx, rev, sha)
+			if err != nil {
+				c.logger.Warn("whether the access document's revision was acknowledged could not be read; looked at again at the next read",
+					"store", c.store.Location(), "revision", rev, "error", err)
+				continue
+			}
+			if ok {
+				cleared = true
+				break
+			}
+		}
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if highest >= 0 {
+		c.acknowledged = max(c.acknowledged, highest)
+	}
+	c.ackStale = listFailed
+	// A banner raised for another head while this replica looked is left.
+	if cleared && c.aroundPending && c.aroundRevision == aroundRev && c.aroundSHA == aroundSHA {
+		c.aroundPending = false
+	}
 }
 
 // writtenAround reports a head that has no revision, or whose chain does
@@ -346,7 +433,7 @@ func (c *PolicyCache) adopt(p *authz.Policy, etag, sha string, sent time.Time, a
 		c.sha = sha
 	}
 	if around {
-		c.aroundPending, c.aroundRevision = true, p.Revision
+		c.aroundPending, c.aroundRevision, c.aroundSHA = true, p.Revision, sha
 	}
 	subs := make([]chan struct{}, 0, len(c.subs))
 	for ch := range c.subs {
@@ -408,11 +495,19 @@ func (c *PolicyCache) Wrote(head *artifacts.AccessHead) {
 	c.adopt(p, head.ETag, head.Meta.SHA256, c.now(), false)
 }
 
-// Acknowledge clears the written-around banner up to revision.
-func (c *PolicyCache) Acknowledge(revision int64) {
+// Acknowledge is this replica's own acknowledgement, recorded: it clears
+// the written-around banner at once when revision and sha name the head it
+// was raised for, or the head this replica has now at or after it.
+func (c *PolicyCache) Acknowledge(revision int64, sha string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.aroundPending && revision >= c.aroundRevision {
+	c.acknowledged = max(c.acknowledged, revision)
+	if !c.aroundPending {
+		return
+	}
+	found := revision == c.aroundRevision && sha == c.aroundSHA
+	current := c.policy != nil && c.etag != "" && revision == c.policy.Revision && sha == c.sha && revision >= c.aroundRevision
+	if found || current {
 		c.aroundPending = false
 	}
 }

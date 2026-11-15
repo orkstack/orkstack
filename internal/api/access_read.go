@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -183,6 +184,7 @@ func (h accessHandler) ListAccessRevisions(ctx context.Context, req *connect.Req
 	}
 	var rev int64
 	var sha string
+	out := &orkstackv1.ListAccessRevisionsResponse{}
 	if token := req.Msg.GetPageToken(); token != "" {
 		parts := revisionToken.FindStringSubmatch(token)
 		if parts == nil {
@@ -193,11 +195,14 @@ func (h accessHandler) ListAccessRevisions(ctx context.Context, req *connect.Req
 	} else {
 		head, err := h.head(ctx)
 		if err != nil || head == nil {
-			return connect.NewResponse(&orkstackv1.ListAccessRevisionsResponse{}), err
+			return connect.NewResponse(out), err
 		}
-		rev, sha = head.Meta.Revision, head.Meta.SHA256
+		// The history begins at the head as it is: its bytes are its
+		// revision's, and a head written around the API that has no revision
+		// is still listed, with the digest an acknowledgement names.
+		out.Revisions = append(out.Revisions, revisionProto(head.Meta))
+		rev, sha = head.Meta.Revision-1, head.Meta.PreviousSHA256
 	}
-	out := &orkstackv1.ListAccessRevisionsResponse{}
 	for len(out.Revisions) < size && rev >= 1 && sha != "" {
 		got, ok, err := h.revision(ctx, rev, sha)
 		if err != nil {
@@ -234,7 +239,11 @@ func (h accessHandler) GetAccessRevision(ctx context.Context, req *connect.Reque
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"revision %d is more than %d revisions behind the head; list the history to read it", want, maxRevisionWalk))
 	}
-	rev, sha := head.Meta.Revision, head.Meta.SHA256
+	if want == head.Meta.Revision {
+		// The head itself, whether or not it has a revision of its own.
+		return connect.NewResponse(&orkstackv1.GetAccessRevisionResponse{Revision: revisionProto(head.Meta), Document: revisionDocument(head)}), nil
+	}
+	rev, sha := head.Meta.Revision-1, head.Meta.PreviousSHA256
 	for rev >= want && sha != "" {
 		got, ok, err := h.revision(ctx, rev, sha)
 		if err != nil {
@@ -249,4 +258,12 @@ func (h accessHandler) GetAccessRevision(ctx context.Context, req *connect.Reque
 		rev, sha = got.Meta.Revision-1, got.Meta.PreviousSHA256
 	}
 	return nil, missing
+}
+
+// revisionDocument is a head's document as a revision's reads: the etag is
+// the head's compare-and-swap token, not part of any revision.
+func revisionDocument(head *artifacts.AccessHead) *orkstackv1.AccessDocument {
+	doc := proto.Clone(head.Document).(*orkstackv1.AccessDocument)
+	doc.Etag = ""
+	return doc
 }

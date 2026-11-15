@@ -119,6 +119,15 @@ func TestAdminAccessCommands(t *testing.T) {
 		t.Fatalf("history has %d revisions, want 5:\n%s", lines, history)
 	}
 	must(`+ binding {"name":"rm"`, "admin", "access", "diff", "1", "2")
+	// The newest revision's digest is the history's second column, and the
+	// head as it is now may be acknowledged.
+	head := strings.Split(strings.SplitN(history, "\n", 2)[0], "\t")
+	if len(head) < 2 || head[0] != "5" || len(head[1]) != 64 {
+		t.Fatalf("history's first line = %q; want revision 5 and its digest", head)
+	}
+	must("acknowledged revision 5", "admin", "access", "acknowledge", "5", head[1])
+	refused("invalid_argument", "admin", "access", "acknowledge", "5", "abc")
+	refused("revision", "admin", "access", "acknowledge", "five", head[1])
 
 	must("deleted binding rm", "admin", "binding", "delete", "rm")
 	must("deleted role release-manager", "admin", "role", "delete", "release-manager")

@@ -528,3 +528,41 @@ func (h accessHandler) mayDisable(ctx context.Context, cur *authz.Policy, id str
 	}
 	return nil
 }
+
+// AcknowledgeAccessRevision records that an admin has read a revision
+// written around the API: one create-only record naming who and when
+// (docs/ACCESS.md, "Written around the API"). It accepts the revision and
+// digest this replica found written around the API, or the head the
+// deployment has now. A record decides whether a banner shows on every
+// replica, never access; one already recorded is kept and answered as done.
+func (h accessHandler) AcknowledgeAccessRevision(ctx context.Context, req *connect.Request[orkstackv1.AcknowledgeAccessRevisionRequest]) (*connect.Response[orkstackv1.AcknowledgeAccessRevisionResponse], error) {
+	rev, sha := req.Msg.GetRevision(), req.Msg.GetSha256()
+	if _, ok := artifacts.ParseAccessAckKey(artifacts.AccessAckKey(rev, sha)); !ok {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"revision %d with digest %q names no revision: a revision is at least 1 and its digest a lowercase SHA-256", rev, sha))
+	}
+	head, err := h.head(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c := h.svc.access.Policies
+	c.mu.Lock()
+	found := c.aroundPending && c.aroundRevision == rev && c.aroundSHA == sha
+	c.mu.Unlock()
+	current := head != nil && head.Meta.Revision == rev && head.Meta.SHA256 == sha
+	if !found && !current {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"revision %d with digest %s is neither the access document's head nor the revision this engine found written around the API; read the document again and acknowledge what it holds now",
+			rev, sha))
+	}
+	who := authn.Recorded(ctx, req.Header())
+	created, err := c.store.Acknowledge(ctx, artifacts.AccessAck{Revision: rev, SHA256: sha, At: c.now(), By: who.ID, ByVerified: who.Verified})
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("record the acknowledgement: %w", err))
+	}
+	c.Acknowledge(rev, sha)
+	if !created {
+		noteAudit(ctx, "already-acknowledged")
+	}
+	return connect.NewResponse(&orkstackv1.AcknowledgeAccessRevisionResponse{}), nil
+}

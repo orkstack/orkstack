@@ -231,7 +231,24 @@ Inherited flags:
 
 ## `orkctl admin access`
 
-Explain a decision, and read the access document's history
+Explain a decision, read the access document's history, and acknowledge a revision written around the API
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin access acknowledge`
+
+Acknowledge a revision written around the API, once you have read it, clearing its banner
+
+Acknowledge a revision written around the API, named by its number and digest as `admin access history` lists them, or the head as it is now. The acknowledgement is recorded once, naming who made it and when; it clears the banner on every engine and changes no access.
 
 Inherited flags:
 

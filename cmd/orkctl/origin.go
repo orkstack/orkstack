@@ -12,10 +12,22 @@ import (
 // originKindPrefix is the proto enum prefix no user-facing spelling carries.
 const originKindPrefix = "RUN_ORIGIN_KIND_"
 
-// principalCaption is said beside every principal this CLI prints, in the
-// words the audit trail uses: the value is the gateway's assertion, recorded
-// and never checked.
+// principalCaption is said beside every principal this CLI prints that the
+// engine did not verify, in the words the audit trail uses: the value is the
+// gateway's assertion, recorded and never checked.
 const principalCaption = "(asserted by the gateway; not authenticated)"
+
+// originPrincipalCaption says how an origin's principal is known: the
+// engine verified it, by the method it records, or the gateway asserted it.
+func originPrincipalCaption(origin *orkstackv1.RunOrigin) string {
+	if !origin.GetPrincipalVerified() {
+		return principalCaption
+	}
+	if method := origin.GetAuthMethod(); method != "" {
+		return "(verified, " + assertedName(method) + ")"
+	}
+	return "(verified)"
+}
 
 // assertedName is an asserted principal as this CLI prints it, with every
 // control character (the tab an HTTP header may carry included), format
@@ -94,6 +106,6 @@ func writeOriginLines(table io.Writer, origin *orkstackv1.RunOrigin) {
 		fmt.Fprintf(table, "Reference:\t%s\n", terminalSafe(reference))
 	}
 	if principal := origin.GetPrincipal(); principal != "" {
-		fmt.Fprintf(table, "Principal:\t%s  %s\n", assertedName(principal), principalCaption)
+		fmt.Fprintf(table, "Principal:\t%s  %s\n", assertedName(principal), originPrincipalCaption(origin))
 	}
 }

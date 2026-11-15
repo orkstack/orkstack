@@ -237,12 +237,14 @@ reason is `NO_BINDING` or `PRINCIPAL_DISABLED`. A principal is known there by
 its id alone, so a binding that selects by group or by a claim other than
 `sub` is shown as not matching it.
 
-`ListAccessRevisions` lists the history newest first, by following each
-revision's link back from the head; `GetAccessRevision` reads one by number,
-at most 4096 revisions behind the head. `orkctl admin access explain
-PRINCIPAL PERMISSION [--namespace N] [--orkflow O] [--pool P]`, `orkctl
-admin access history` and `orkctl admin access diff FROM TO` are their
-commands.
+`ListAccessRevisions` lists the history newest first: the head as it is,
+then each revision found by following the links back from it;
+`GetAccessRevision` reads one by number, the head included, at most 4096
+revisions behind the head. A head written around the API that has no
+revision of its own is still listed, with its digest. `orkctl admin access
+explain PRINCIPAL PERMISSION [--namespace N] [--orkflow O] [--pool P]`,
+`orkctl admin access history` (revision, digest, when, who, change) and
+`orkctl admin access diff FROM TO` are their commands.
 
 ### Revisions, and a document written around the API
 
@@ -257,6 +259,26 @@ A head that has no revision, or whose chain does not lead back to the
 revision a replica last saw, was written around the API (a bucket writer, a
 restore from backup). The replica uses it, logs at error, and reports it
 (`AccessDocument.written_around_api`) until an admin acknowledges it.
+
+`AcknowledgeAccessRevision` (`access.write`; `orkctl admin access
+acknowledge REVISION SHA256`) acknowledges the revision a replica found
+written around the API, or the head as it is now, named by its number and
+digest as the history lists them; any other is refused
+`failed_precondition`. It writes one create-only record,
+`metadata/identity/access-acks/{revision:012}-{sha256}.json`, naming who
+acknowledged it and when; a second acknowledgement of the same revision
+keeps the first record and succeeds. A replica that finds a head written
+around the API looks for that head's record, or one for the head it has
+now, first, and again at every read while the banner is up, so an
+acknowledgement made through one replica clears the banner on all of them
+within `auth.policy_refresh`. A store that cannot be read clears nothing. A
+document removed around the API names no revision to acknowledge: its
+banner clears once a document is written again and that head is
+acknowledged.
+`AccessStatus.acknowledged_revision` is the highest revision a record
+names. A record decides whether the banner shows, never access: no decision
+reads one, and a bucket writer who can write one can as well write the head
+it hides.
 
 ### Every replica's copy
 

@@ -49,14 +49,21 @@ func (k knownNamespaces) Delete(context.Context, string) error { return nil }
 // the deployment and nina namespace-admin of payments.
 func accessWriter(t *testing.T) (*Service, accessHandler) {
 	t.Helper()
+	s, h, _ := accessWriterOn(t)
+	return s, h
+}
+
+// accessWriterOn is accessWriter with the bucket under its store.
+func accessWriterOn(t *testing.T) (*Service, accessHandler, *artifacts.MemoryCAS) {
+	t.Helper()
 	s := NewService(Config{Orkflows: engine.NewMemoryOrkflowStore(), Runs: engine.NewRunStore(), Bus: engine.NewEventBus(),
 		AuditStore: artifacts.NewMemoryAuditStore(), Namespaces: knownNamespaces{"payments", "billing"}})
-	a, _ := accessFor(t, authn.ModeEnforce, nil,
+	a, cas := accessFor(t, authn.ModeEnforce, nil,
 		&orkstackv1.Binding{Name: "admins", Role: authz.RoleAdmin, Scope: "deployment", Subjects: []string{"user:corp:alice"}},
 		&orkstackv1.Binding{Name: "payments-admins", Role: authz.RoleNamespaceAdmin, Scope: "namespace:payments", Subjects: []string{"user:corp:nina"}},
 	)
 	s.access = a
-	return s, accessHandler{svc: s}
+	return s, accessHandler{svc: s}, cas
 }
 
 func etagOf(t *testing.T, h accessHandler) (string, int64) {

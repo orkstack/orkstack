@@ -505,7 +505,7 @@ func newAdminPrincipalCommand(g *globalFlags) *cobra.Command {
 }
 
 func newAdminAccessCommand(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{Use: "access", Short: "Explain a decision, and read the access document's history"}
+	cmd := &cobra.Command{Use: "access", Short: "Explain a decision, read the access document's history, and acknowledge a revision written around the API"}
 	var ns, orkflow, pool string
 	explain := &cobra.Command{
 		Use: "explain PRINCIPAL PERMISSION", Short: "Say whether a principal holds a permission, and which bindings decided it", Args: cobra.ExactArgs(2),
@@ -572,7 +572,7 @@ func newAdminAccessCommand(g *globalFlags) *cobra.Command {
 				if r.GetWrittenAt() != nil {
 					at = r.GetWrittenAt().AsTime().Format("2006-01-02T15:04:05Z07:00")
 				}
-				fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\t%s\t%s\n", r.GetRevision(), at, who, r.GetChange())
+				fmt.Fprintf(cmd.OutOrStdout(), "%d\t%s\t%s\t%s\t%s\n", r.GetRevision(), r.GetSha256(), at, who, r.GetChange())
 			}
 			return nil
 		},
@@ -609,7 +609,32 @@ func newAdminAccessCommand(g *globalFlags) *cobra.Command {
 			return nil
 		},
 	}
-	cmd.AddCommand(explain, history, diff)
+	acknowledge := &cobra.Command{
+		Use:   "acknowledge REVISION SHA256",
+		Short: "Acknowledge a revision written around the API, once you have read it, clearing its banner",
+		Long: "Acknowledge a revision written around the API, named by its number and digest as `admin access history` lists them, " +
+			"or the head as it is now. The acknowledgement is recorded once, naming who made it and when; it clears the banner " +
+			"on every engine and changes no access.",
+		Args: cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			rev, err := strconv.ParseInt(args[0], 10, 64)
+			if err != nil {
+				return fmt.Errorf("admin access acknowledge: %q is not a revision number", args[0])
+			}
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+			if _, err := g.accessClient().AcknowledgeAccessRevision(ctx, connect.NewRequest(&orkstackv1.AcknowledgeAccessRevisionRequest{
+				Revision: rev, Sha256: args[1]})); err != nil {
+				return rpcError("admin access acknowledge", err)
+			}
+			if g.json {
+				return writeJSON(cmd.OutOrStdout(), &orkstackv1.AcknowledgeAccessRevisionResponse{})
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "acknowledged revision %d\n", rev)
+			return nil
+		},
+	}
+	cmd.AddCommand(explain, history, diff, acknowledge)
 	return cmd
 }
 

@@ -35,6 +35,7 @@ var accessServiceServed = []string{
 	orkstackv1connect.AccessServiceExplainAccessProcedure,
 	orkstackv1connect.AccessServiceListAccessRevisionsProcedure,
 	orkstackv1connect.AccessServiceGetAccessRevisionProcedure,
+	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure,
 }
 
 // accessHandler serves them; the rest of AccessService is unimplemented.
@@ -114,6 +115,7 @@ func (h accessHandler) GetAccess(ctx context.Context, _ *connect.Request[orkstac
 	if a.Policies != nil {
 		st := a.Policies.State()
 		doc.WrittenAroundApi = st.WrittenAroundAPI
+		status.AcknowledgedRevision = st.AcknowledgedRevision
 		if !st.ReadAt.IsZero() {
 			status.DocumentReadAt = timestamppb.New(st.ReadAt)
 			status.DocumentAge = durationpb.New(st.Age)

@@ -114,6 +114,53 @@ func TestRenderRun_PrintsTheOriginPrincipalAsAsserted(t *testing.T) {
 	}
 }
 
+// An origin's principal is captioned by how it is known, and by nothing
+// else: a verified one is never said to be asserted, an asserted one is
+// never said to be verified (a method recorded beside it included), and a
+// run with no principal prints no Principal line.
+func TestRenderRun_CaptionsTheOriginPrincipalByHowItIsKnown(t *testing.T) {
+	tests := []struct {
+		name      string
+		principal string
+		verified  bool
+		method    string
+		want      string // "" when no Principal line is printed
+	}{
+		{"verified", "service:dev:dev-admin", true, "jwt", "Principal: service:dev:dev-admin (verified, jwt)"},
+		{"verified with no method", "user:corp:a", true, "", "Principal: user:corp:a (verified)"},
+		{"asserted", "dana@acme", false, "", "Principal: dana@acme " + principalCaption},
+		{"asserted with a method beside it", "dana@acme", false, "jwt", "Principal: dana@acme " + principalCaption},
+		{"absent", "", false, "", ""},
+		{"absent but marked verified", "", true, "jwt", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			run := canceledRun("")
+			run.Origin.Principal = tt.principal
+			run.Origin.PrincipalVerified = tt.verified
+			run.Origin.AuthMethod = tt.method
+			var out bytes.Buffer
+			must.OKf(t, renderRun(&out, run), "renderRun")
+			if tt.want == "" {
+				if strings.Contains(out.String(), "Principal:") {
+					t.Fatalf("a run with no principal printed one:\n%s", out.String())
+				}
+				return
+			}
+			line := collapseSpaces(detailLine(t, out.String(), "Principal:"))
+			if line != tt.want {
+				t.Fatalf("Principal line = %q, want %q", line, tt.want)
+			}
+			if tt.verified && strings.Contains(line, "asserted") {
+				t.Fatalf("a verified principal is said to be asserted: %q", line)
+			}
+			if !tt.verified && strings.Contains(line, "verified") {
+				t.Fatalf("an asserted principal is said to be verified: %q", line)
+			}
+		})
+	}
+}
+
 // `run list` carries the name in the STATUS cell, marked asserted, and a
 // gateway's control characters cannot split the row's columns.
 func TestRenderRunList_SaysWhoCanceledEachRun(t *testing.T) {

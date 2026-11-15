@@ -12,7 +12,9 @@ import (
 	"io"
 	"net/http"
 	"regexp"
+	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -200,6 +202,9 @@ type blobCAS interface {
 	put(ctx context.Context, key string, body []byte, cond PutConditions) (etag string, err error)
 	// exists reports whether key is stored.
 	exists(ctx context.Context, key string) (bool, error)
+	// list answers up to limit keys under prefix that sort after
+	// startAfter, in key order.
+	list(ctx context.Context, prefix, startAfter string, limit int) ([]string, error)
 	location(key string) string
 }
 
@@ -388,6 +393,36 @@ func (c *s3CAS) exists(ctx context.Context, key string) (bool, error) {
 	return false, err
 }
 
+func (c *s3CAS) list(ctx context.Context, prefix, startAfter string, limit int) ([]string, error) {
+	in := &s3.ListObjectsV2Input{Bucket: aws.String(c.bucket), Prefix: aws.String(prefix)}
+	if startAfter != "" {
+		in.StartAfter = aws.String(startAfter)
+	}
+	var keys []string
+	for len(keys) < limit {
+		in.MaxKeys = aws.Int32(int32(min(limit-len(keys), 1000)))
+		out, err := c.client.ListObjectsV2(ctx, in)
+		if err != nil {
+			return nil, err
+		}
+		for _, object := range out.Contents {
+			keys = append(keys, aws.ToString(object.Key))
+		}
+		if !aws.ToBool(out.IsTruncated) {
+			break
+		}
+		if aws.ToString(out.NextContinuationToken) == "" {
+			return nil, fmt.Errorf("a truncated listing of %q gave no continuation token", prefix)
+		}
+		// A continuation carries the position: StartAfter is for the first
+		// page only, and a store that does not ignore it on later pages
+		// would skip keys.
+		in.StartAfter = nil
+		in.ContinuationToken = out.NextContinuationToken
+	}
+	return keys, nil
+}
+
 // isNotModified reports a conditional get whose object still carries the
 // etag asked about.
 func isNotModified(err error) bool {
@@ -408,6 +443,7 @@ type MemoryCAS struct {
 	etags   map[string]string
 	seq     int
 	fail    error
+	listErr error
 	hang    chan struct{}
 	arrived chan<- struct{}
 }
@@ -432,6 +468,14 @@ func (m *MemoryCAS) SetFailure(err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.fail = err
+}
+
+// SetListFailure makes every listing fail with err until it is set to nil,
+// while reads and writes still answer.
+func (m *MemoryCAS) SetListFailure(err error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.listErr = err
 }
 
 // PutRaw writes key as a writer around the API would: unconditionally.
@@ -531,4 +575,26 @@ func (m *MemoryCAS) exists(_ context.Context, key string) (bool, error) {
 	}
 	_, ok := m.objects[key]
 	return ok, nil
+}
+
+func (m *MemoryCAS) list(_ context.Context, prefix, startAfter string, limit int) ([]string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.fail != nil {
+		return nil, m.fail
+	}
+	if m.listErr != nil {
+		return nil, m.listErr
+	}
+	var keys []string
+	for k := range m.objects {
+		if strings.HasPrefix(k, prefix) && k > startAfter {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	if len(keys) > limit {
+		keys = keys[:limit]
+	}
+	return keys, nil
 }
