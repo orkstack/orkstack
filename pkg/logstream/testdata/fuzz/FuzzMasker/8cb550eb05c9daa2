@@ -1,0 +1,5 @@
+go test fuzz v1
+string("b|abc")
+string("0bab")
+uint16(55)
+uint16(4)
