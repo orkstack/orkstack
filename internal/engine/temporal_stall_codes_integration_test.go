@@ -23,6 +23,7 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/internal/temporalconn"
 	"github.com/orkstack/orkstack/internal/testsupport/faultproxy"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 
@@ -79,7 +80,7 @@ func TestIntegration_TemporalStall_ClientFailureMetricAndCodes(t *testing.T) {
 	t.Cleanup(func() { _ = stopAdmin(context.Background()) })
 
 	proxy := faultproxy.New(t, address)
-	options, err := telemetry.ClientOptions(proxy.Addr(), namespace, providers, slog.Default())
+	options, err := telemetry.ClientOptions(proxy.Addr(), namespace, providers, slog.Default(), temporalconn.Security{})
 	must.OKf(t, err, "the engine's client options")
 	engineClient, err := client.DialContext(ctx, options)
 	must.OKf(t, err, "dial temporal through the proxy")

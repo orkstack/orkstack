@@ -719,9 +719,15 @@ its own writes (`internal/api/audit.go`). A record is written once to
   asked for. `/debug/pprof/` is mounted only when `ORK_PPROF_ENABLED=true`
   (`internal/telemetry/admin.go`; `internal/config/config.go`). None of these
   endpoints is served on the API port.
-- **Temporal has no TLS or credential setting.** The configuration schema sets the
-  Temporal address and namespace for the engine and the Orker. It has no TLS or
-  credential key for that connection (`internal/config/config.go`, `temporal.*`).
+- **Temporal over TLS is a setting of each binary.** `ork` and `orker` dial
+  Temporal in plaintext unless a `temporal.tls.*` setting or
+  `temporal.api_key_file` is set. Any of them turns TLS on, verified against
+  the system roots or `temporal.tls.ca_file`, and no setting skips that
+  verification. A client certificate and an API key are never sent in
+  plaintext, and their files are re-read when they change
+  (`internal/temporalconn`; [DEPLOY.md](DEPLOY.md), "Temporal over TLS").
+  An Orker's Temporal credential files are its own paths: no secret floor
+  admits one to a task.
 - **Loopback is not an authentication boundary.** The quickstart publishes its
   ports on `127.0.0.1` only (`compose.yaml`). That keeps other machines out,
   but any process on the machine reaches the API. A web page can reach it only
@@ -749,9 +755,10 @@ its own writes (`internal/api/audit.go`). A record is written once to
   ([ARCHITECTURE.md](../ARCHITECTURE.md), "API"; [DEPLOY.md](DEPLOY.md), "Ops
   notes"). In `observe` and `enforce` mode OrkStack does them
   ([AUTHENTICATION.md](AUTHENTICATION.md)).
-- **Transport security.** The engine serves plain HTTP, and the configuration has
-  no TLS setting for Temporal. Encryption of the listeners and of the connections to
-  Temporal and to object storage is the deployment's to provide.
+- **Transport security.** The engine serves plain HTTP. Encryption of the
+  listeners and of the connection to object storage is the deployment's to
+  provide; the connection to Temporal is encrypted only when the deployment
+  sets it up ([DEPLOY.md](DEPLOY.md), "Temporal over TLS").
 - **Network policy.** OrkStack configures no firewall and no network policy. Which
   hosts reach the API port, the admin listener, Temporal, the object store and the
   registry is the deployment's decision.

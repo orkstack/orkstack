@@ -456,6 +456,13 @@ func ownPathsFromEnv(getenv func(string) string) []OwnPath {
 			add(getenv("OTEL_EXPORTER_OTLP_"+signal+kind), "its telemetry TLS files, OTEL_EXPORTER_OTLP_*")
 		}
 	}
+	// The Temporal connection's TLS files and API key (internal/temporalconn).
+	for _, name := range []string{
+		"ORK_TEMPORAL_TLS_CA_FILE", "ORK_TEMPORAL_TLS_CERT_FILE",
+		"ORK_TEMPORAL_TLS_KEY_FILE", "ORK_TEMPORAL_API_KEY_FILE",
+	} {
+		add(strings.TrimSpace(getenv(name)), "its Temporal credentials, "+name) // trimmed as temporalconn trims it
+	}
 	// The local artifact store holds every run's artifacts, commits and
 	// logs, of every namespace.
 	backend, dir := getenv("ORK_ARTIFACT_BACKEND"), getenv("ORK_ARTIFACT_DIR")

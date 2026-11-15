@@ -41,6 +41,7 @@ import (
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/internal/temporalconn"
 	"github.com/orkstack/orkstack/internal/webui"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/webhooks"
@@ -397,6 +398,32 @@ func composeMaxDepthFromEnv() (int32, error) {
 	return value, nil
 }
 
+// temporalSecurity reads the connection's TLS and API key settings, checks
+// them as boot does and builds what the client dials with
+// (internal/temporalconn): the zero Security, plaintext, when none is set.
+// With TLS on it watches the files for the process's life, so a rotation or
+// an approaching end is seen on a connection that stays up.
+func temporalSecurity(ctx context.Context, address string, sinks *telemetry.Sinks, logger *slog.Logger) (temporalconn.Security, error) {
+	settings, err := temporalconn.SettingsFromEnv(os.Getenv)
+	if err != nil {
+		return temporalconn.Security{}, err
+	}
+	metrics, err := telemetry.NewTLSMetrics(sinks.Default(), logger)
+	if err != nil {
+		return temporalconn.Security{}, err
+	}
+	sec, err := temporalconn.New(settings, address, temporalconn.Options{Logger: logger, Observer: metrics})
+	if err != nil {
+		return temporalconn.Security{}, err
+	}
+	if sec.Enabled() {
+		go sec.Watch(ctx)
+	}
+	logger.Info("temporal connection", "tls", sec.Enabled(),
+		"client_certificate", settings.CertFile != "", "api_key", settings.APIKeyFile != "")
+	return sec, nil
+}
+
 // connectTemporal dials the cluster with the options this process runs on:
 // the telemetry package's (telemetry.ClientOptions is the one way a client's
 // options are built, TestClientOptions_IsHowOrkAndOrkerDialTemporal), under
@@ -418,7 +445,11 @@ func composeMaxDepthFromEnv() (int32, error) {
 func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, logger *slog.Logger,
 	dialing func(client.Options),
 ) (temporalClient client.Client, identity string, err error) {
-	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger)
+	sec, err := temporalSecurity(ctx, cfg.temporalAddress, sinks, logger)
+	if err != nil {
+		return nil, "", err
+	}
+	temporalOptions, err := telemetry.ClientOptions(cfg.temporalAddress, cfg.temporalNamespace, sinks.Default(), logger, sec)
 	if err != nil {
 		return nil, "", err
 	}

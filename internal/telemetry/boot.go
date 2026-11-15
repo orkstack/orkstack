@@ -6,6 +6,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/client"
+
+	"github.com/orkstack/orkstack/internal/temporalconn"
 )
 
 // Boot is cmd/ork's and cmd/orker's shared telemetry bring-up: read the
@@ -50,13 +52,23 @@ func Boot(service string, attrs ...attribute.KeyValue) (Config, *Sinks, error) {
 // SDK's name and version, the task queue and the deployment version.
 // cmd/ork and cmd/orker dial only with these options
 // (TestClientOptions_IsHowOrkAndOrkerDialTemporal holds that).
-func ClientOptions(hostPort, namespace string, p *Providers, logger *slog.Logger) (client.Options, error) {
+//
+// sec is the connection's TLS and API key (internal/temporalconn): with TLS
+// on, its configuration, credentials and dial options are copied in whole;
+// the zero Security, nothing set, adds nothing, so the options stay
+// byte-identical to the literal above.
+func ClientOptions(hostPort, namespace string, p *Providers, logger *slog.Logger, sec temporalconn.Security) (client.Options, error) {
 	opts := client.Options{
 		HostPort:                     hostPort,
 		Namespace:                    namespace,
 		Logger:                       logger,
 		MetricsHandler:               TemporalMetricsHandler(p, logger),
 		DisableWorkerEnvironmentInfo: true,
+	}
+	if sec.Enabled() {
+		opts.ConnectionOptions.TLS = sec.TLS
+		opts.ConnectionOptions.DialOptions = append(opts.ConnectionOptions.DialOptions, sec.DialOptions...)
+		opts.Credentials = sec.Credentials
 	}
 	interceptors, err := TemporalInterceptors(p)
 	if err != nil {

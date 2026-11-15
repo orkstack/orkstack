@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"maps"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strconv"
@@ -17,6 +18,7 @@ import (
 
 	"go.temporal.io/sdk/client"
 
+	"github.com/orkstack/orkstack/internal/temporalconn"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -48,7 +50,7 @@ func TestClientOptionsZeroConfigIsByteIdentical(t *testing.T) {
 	must.OKf(t, err, "Setup")
 	logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))
 
-	got, err := ClientOptions("127.0.0.1:7233", "default", p, logger)
+	got, err := ClientOptions("127.0.0.1:7233", "default", p, logger, temporalconn.Security{})
 	must.OKf(t, err, "ClientOptions")
 	want := client.Options{
 		HostPort:                     "127.0.0.1:7233",
@@ -73,7 +75,7 @@ func TestClientOptionsMetricsAndTracesOnSetsHandlerAndInterceptors(t *testing.T)
 	must.OKf(t, err, "Setup")
 	defer p.Shutdown(context.Background())
 
-	got, err := ClientOptions("127.0.0.1:7233", "default", p, slog.Default())
+	got, err := ClientOptions("127.0.0.1:7233", "default", p, slog.Default(), temporalconn.Security{})
 	must.OKf(t, err, "ClientOptions")
 	if got.MetricsHandler == nil {
 		t.Error("MetricsHandler = nil, want a handler (metrics are on)")
@@ -83,6 +85,27 @@ func TestClientOptionsMetricsAndTracesOnSetsHandlerAndInterceptors(t *testing.T)
 	}
 	if !got.DisableWorkerEnvironmentInfo {
 		t.Error("DisableWorkerEnvironmentInfo = false with telemetry on, want true: no telemetry setting asks for the worker's environment to be reported")
+	}
+}
+
+// TestClientOptions_CarriesTheConnectionsSecurity: a Security with TLS on is
+// copied into the options whole: the TLS configuration, the API key's
+// credentials and the dial options that count refused calls.
+func TestClientOptions_CarriesTheConnectionsSecurity(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "api.key")
+	must.OK(t, os.WriteFile(key, []byte("k"), 0o600))
+	sec, err := temporalconn.New(temporalconn.Settings{APIKeyFile: key}, "127.0.0.1:7233", temporalconn.Options{})
+	must.OKf(t, err, "temporalconn.New")
+	p, err := Setup(context.Background(), Config{})
+	must.OKf(t, err, "Setup")
+	got, err := ClientOptions("127.0.0.1:7233", "default", p, slog.Default(), sec)
+	must.OKf(t, err, "ClientOptions")
+	if got.ConnectionOptions.TLS != sec.TLS || got.Credentials == nil || len(got.ConnectionOptions.DialOptions) != len(sec.DialOptions) {
+		t.Fatalf("ClientOptions = %+v, want the Security's TLS, credentials and dial options", got)
+	}
+	if got.ConnectionOptions.TLSDisabled {
+		t.Fatal("TLSDisabled set beside a TLS configuration")
 	}
 }
 

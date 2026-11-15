@@ -26,6 +26,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `orkctl whoami` shows who the engine verified you as and what you may do; `orkctl` warns when `ORK_PRINCIPAL` is set but not used ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#who-am-i)).
 - With authentication on, `orkctl admin role`, `binding`, `service-account`, `principal` and `access` manage and explain access; a namespace admin binds roles in its own namespace ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#changing-it)).
 - `orkctl admin access acknowledge REVISION SHA256` clears, on every engine, the banner for an access document written around the API; `admin access history` now shows each digest ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#revisions-and-a-document-written-around-the-api)).
+- `ork` and `orker` can reach Temporal over TLS, mutual TLS or with an API key (`temporal.tls.*`, `temporal.api_key_file`); the files are re-read when rotated, with no restart ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#temporal-over-tls)).
 - The archive sweep now says when it is blind: alert on `ork.archive.sweep.list_failed` and a stale `ork.archive.sweep.last_success`; an undated expiry reads 0 ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 
 ### Changed

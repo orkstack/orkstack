@@ -112,6 +112,17 @@ var Schema = []Var{
 	// themselves fall back to.
 	{Path: "temporal.address", Env: "ORK_TEMPORAL_ADDRESS", Binaries: usesBoth, Kind: KindString, Default: client.DefaultHostPort},
 	{Path: "temporal.namespace", Env: "ORK_TEMPORAL_NAMESPACE", Binaries: usesBoth, Kind: KindString, Default: task.DefaultNamespace},
+	// The connection's TLS and API key (internal/temporalconn). enabled has
+	// no default of its own: unset, TLS is on exactly when a file or a server
+	// name below is set, and false beside one of them is refused. A string,
+	// since a boolean has no empty value: temporalconn.SettingsFromEnv refuses
+	// anything but true, false, 1 or 0, naming the setting.
+	{Path: "temporal.tls.enabled", Env: "ORK_TEMPORAL_TLS_ENABLED", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty is off unless a file or server_name below is set; false beside one is refused"},
+	{Path: "temporal.tls.ca_file", Env: "ORK_TEMPORAL_TLS_CA_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty verifies against the system roots"},
+	{Path: "temporal.tls.cert_file", Env: "ORK_TEMPORAL_TLS_CERT_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "set with key_file, for mutual TLS"},
+	{Path: "temporal.tls.key_file", Env: "ORK_TEMPORAL_TLS_KEY_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "set with cert_file"},
+	{Path: "temporal.tls.server_name", Env: "ORK_TEMPORAL_TLS_SERVER_NAME", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty is the address's host"},
+	{Path: "temporal.api_key_file", Env: "ORK_TEMPORAL_API_KEY_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "a file holding the key, never the key"},
 
 	{Path: "deployment.name", Env: "ORK_DEPLOYMENT_NAME", Binaries: usesBoth, Kind: KindString, Default: task.DefaultDeploymentName},
 	{Path: "deployment.build_id", Env: "ORK_BUILD_ID", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty means versioning is off"},

@@ -22,6 +22,13 @@
 temporal:
   address: localhost:7233
   namespace: ork-main
+  tls:
+    enabled: ""  # empty is off unless a file or server_name below is set; false beside one is refused
+    ca_file: ""  # empty verifies against the system roots
+    cert_file: ""  # set with key_file, for mutual TLS
+    key_file: ""  # set with cert_file
+    server_name: ""  # empty is the address's host
+  api_key_file: ""  # a file holding the key, never the key
 
 deployment:
   name: orkstack

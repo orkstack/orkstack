@@ -1122,8 +1122,8 @@ func TestSecurityPolicy_ValidateRefusesAFloorEntryThatAdmitsOnlyTheOrkersOwn(t *
 }
 
 // TestSecurityPolicyFromEnv_OwnsTheFilesItsSettingsName: a credential file an
-// OrkStack or telemetry setting of this process names, and the local artifact
-// store, are the Orker's own.
+// OrkStack or telemetry setting of this process names (its Temporal TLS files
+// and API key among them), and the local artifact store, are the Orker's own.
 func TestSecurityPolicyFromEnv_OwnsTheFilesItsSettingsName(t *testing.T) {
 	dir := t.TempDir()
 	settings := map[string]string{
@@ -1137,6 +1137,10 @@ func TestSecurityPolicyFromEnv_OwnsTheFilesItsSettingsName(t *testing.T) {
 		"OTEL_EXPORTER_OTLP_LOGS_CLIENT_KEY":    filepath.Join(dir, "logs.key"),
 		"ORK_ARTIFACT_BACKEND":                  "local",
 		"ORK_ARTIFACT_DIR":                      filepath.Join(dir, "artifacts"),
+		"ORK_TEMPORAL_TLS_CA_FILE":              filepath.Join(dir, "temporal-ca.pem"),
+		"ORK_TEMPORAL_TLS_CERT_FILE":            filepath.Join(dir, "temporal.pem"),
+		"ORK_TEMPORAL_TLS_KEY_FILE":             filepath.Join(dir, "temporal.key"),
+		"ORK_TEMPORAL_API_KEY_FILE":             " " + filepath.Join(dir, "temporal-api.key") + " ",
 	}
 	for key, value := range settings {
 		t.Setenv(key, value)
@@ -1145,7 +1149,7 @@ func TestSecurityPolicyFromEnv_OwnsTheFilesItsSettingsName(t *testing.T) {
 	var own []string
 	for key, value := range settings {
 		if key != "ORK_ARTIFACT_BACKEND" {
-			own = append(own, "file:"+value)
+			own = append(own, "file:"+strings.TrimSpace(value))
 		}
 	}
 	own = append(own, "file:"+filepath.Join(dir, "artifacts", "runs", "ork-1", "commit.json"))

@@ -615,6 +615,12 @@ then the variable it becomes.
 |---|---|---|---|---|
 | `temporal.address` | `ORK_TEMPORAL_ADDRESS` | `localhost:7233` | both | Temporal frontend. The default is the SDK's `client.DefaultHostPort` |
 | `temporal.namespace` | `ORK_TEMPORAL_NAMESPACE` | `ork-main` | both | hard partition; nothing crosses it. Provisioned at boot |
+| `temporal.tls.enabled` | `ORK_TEMPORAL_TLS_ENABLED` | *(empty)* | both | `true` dials Temporal with TLS, verifying the server against the system roots. Empty is off unless one of the five settings below is set, which turns TLS on; `false` beside one of them is refused, so a key is never sent in plaintext ("Temporal over TLS", §5) |
+| `temporal.tls.ca_file` | `ORK_TEMPORAL_TLS_CA_FILE` | *(empty)* | both | PEM roots to verify the server against instead of the system's; re-read when it changes. No setting skips verification |
+| `temporal.tls.cert_file` | `ORK_TEMPORAL_TLS_CERT_FILE` | *(empty)* | both | PEM client certificate chain, for mutual TLS; set with `key_file`, or the boot is refused. Re-read when it changes |
+| `temporal.tls.key_file` | `ORK_TEMPORAL_TLS_KEY_FILE` | *(empty)* | both | the client certificate's private key; it must match the certificate |
+| `temporal.tls.server_name` | `ORK_TEMPORAL_TLS_SERVER_NAME` | *(empty)* | both | the name the server's certificate must hold, when it is not `temporal.address`'s host |
+| `temporal.api_key_file` | `ORK_TEMPORAL_API_KEY_FILE` | *(empty)* | both | a file holding an API key, sent as a bearer on every call and re-read when it changes; never the key itself |
 | `pool.name` | `ORK_ORKER_POOL` | `main` | **both** | the pool an Orker joins, and the pool the engine dispatches a task naming none to. The OrkStack-level setting; prefer it |
 | `pool.queue` | `ORK_ORKER_QUEUE` | *(derived from the pool)* | **both** | operator escape hatch: the raw execution channel, for test harnesses that isolate concurrent runs (AGENTS.md §11.1). Set with `ORK_ORKER_POOL` and the two must agree or the process refuses to boot. It does not move the engine's own channels (§2) |
 | `activities:` | `ORK_ACTIVITY_CATALOG` | built-in `shell`/`http`/`file`/`json`/`git`/`template` → `ghcr.io/orkstack/activity-*:0.3` | `ork` | the activity catalog: a YAML `activities:` map from catalog name to registry reference, resolved to a digest when the Orkflow is created. `make up` points it at the local registry |
@@ -2528,6 +2534,63 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   worktree's dev stack, including any process whose executable is this
   worktree's `bin/ork` or `bin/orker`, and `scripts/proof-stop.sh
   proof/<name>` stops a proof you started.
+
+### Temporal over TLS
+
+`ork` and `orker` dial Temporal in plaintext by default. Each binary has its
+own settings (§1), so the engine and the Orkers can hold different
+credentials:
+
+| Setting | What it does |
+|---|---|
+| `temporal.tls.enabled` | TLS, verifying the server against the system roots |
+| `temporal.tls.ca_file` | verify the server against these PEM roots instead |
+| `temporal.tls.cert_file`, `temporal.tls.key_file` | a client certificate and its key, for mutual TLS; set both or neither |
+| `temporal.tls.server_name` | the name the server's certificate must hold, when it is not `temporal.address`'s host |
+| `temporal.api_key_file` | a file holding an API key, sent as a bearer on every call |
+
+Any of the files, or `server_name`, turns TLS on. `enabled: false` beside one
+of them is refused, so a client key or an API key is never sent in
+plaintext. There is no setting that skips verification of the server: a
+cluster with a private CA uses `ca_file`. The minimum is TLS 1.2.
+
+At boot each file must be a regular file of at most 1 MiB that reads and
+parses, the key must match its certificate, and an API key must be printable
+ASCII with no space; a refusal names the setting and never a file's content.
+
+**Rotation without a restart.** A file is re-read when its inode, size or
+modification time changes, and once a minute in any case, so a Kubernetes
+projected volume (whose files are links to a directory that is swapped) and
+a replacement within one second are both seen. A changed certificate is
+used at the next handshake, a changed API key at the next call. A re-read is
+checked as boot checks it: half a pair, or a file that does not parse, is
+not adopted, the last good value stays in use, and the refusal is logged and
+counted (below). A path or a server name of white space alone is refused at
+boot rather than read as unset. An environment variable that is set but
+empty still wins over the configuration file (§1), so a template that
+renders `ORK_TEMPORAL_TLS_CA_FILE=` empty turns that setting off: the boot
+line `temporal connection` says `tls=false` when no setting is in force.
+
+**Expiry.** Each process also looks at its files once a minute, so a
+connection that stays up for weeks still sees a rotation and an approaching
+end. A certificate within seven days of its end, or past it, is logged at
+warn once a day; it is still used, since the server is what refuses it.
+
+| Metric | Labels | What it counts |
+|---|---|---|
+| `ork.tls.reload` | `ork.file`, `ork.outcome` | each re-read of a changed file: `adopted`, or `refused` (the last good value stays in use) |
+| `ork.tls.cert.not_after` | `ork.file` | the end, in Unix seconds, of the certificates a file holds; for a CA file, the earliest |
+| `ork.temporal.auth_failures` | | calls the cluster refused as unauthenticated: a revoked key or an expired certificate shows here |
+
+`ork.file` is the setting that names the file (`temporal.tls.cert_file`, …),
+never its path. A refused file is logged at error, again each hour while it
+stays refused, and at info when it holds the value in force again; a look at
+a file that has not returned after a minute (a hung network mount) is logged
+at error.
+
+On an Orker, every file these settings name is one of its own paths, which
+no secret floor admits as a task's secret (§5, "Secrets on a shared pool").
+`orkctl` never dials Temporal and needs none of this.
 
 ### Health checks
 
@@ -4885,7 +4948,9 @@ workflow task latency, poll counts, failures — arrive via
 along on the same `/metrics`. An Orker that declares a capacity adds
 `ork.orker.capacity.*` and `ork.orker.admission.*` ("Declaring an Orker's
 capacity", above). Every Orker adds `ork.orker.store_outage.*` ("When object
-storage goes away", above).
+storage goes away", above). Both binaries add `ork.tls.reload`,
+`ork.tls.cert.not_after` and `ork.temporal.auth_failures` when Temporal is
+dialed over TLS ("Temporal over TLS", §5).
 
 `ork.audit.records{action,outcome}` (engine) counts every control-plane
 audit write, once per audited write RPC: `outcome` is `written`, or `dropped`
