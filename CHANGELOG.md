@@ -28,6 +28,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `orkctl admin access acknowledge REVISION SHA256` clears, on every engine, the banner for an access document written around the API; `admin access history` now shows each digest ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#revisions-and-a-document-written-around-the-api)).
 - `ork` and `orker` can reach Temporal over TLS, mutual TLS or with an API key (`temporal.tls.*`, `temporal.api_key_file`); the files are re-read when rotated, with no restart ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#temporal-over-tls)).
 - With authentication on, who started or canceled a run is marked verified, not asserted, on the run page, in the runs list and by `orkctl run get` and `run list` ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
+- `orkctl admin audit` marks each principal `(verified)` or `(asserted)`, so a caller OrkStack verified is no longer shown as asserted ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
 - The archive sweep now says when it is blind: alert on `ork.archive.sweep.list_failed` and a stale `ork.archive.sweep.last_success`; an undated expiry reads 0 ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 
 ### Changed

@@ -12,10 +12,11 @@ import (
 )
 
 // auditCaption is printed under every human rendering of the trail, an empty
-// page included: the principal column is an assertion, and a reader must not
-// have to find a footnote to learn that.
-const auditCaption = "principal is the identity the deployment's gateway asserted in Ork-Principal;\n" +
-	"OrkStack records it and does not authenticate it.\n"
+// page included: a principal is verified or only asserted, and a reader must
+// not have to find a footnote to learn which.
+const auditCaption = "principal is (verified) when OrkStack verified it. An (asserted) one is what\n" +
+	"the deployment's gateway asserted in Ork-Principal; OrkStack records it and\n" +
+	"does not authenticate it.\n"
 
 // auditUnattributed is what an empty principal renders as. A blank cell would
 // look like a name that happens to be empty; this reads as the gap it is.
@@ -52,10 +53,12 @@ func newAdminAuditCommand(g *globalFlags) *cobra.Command {
 			"starts it (default seven days before its end), both RFC 3339 instants with a\n" +
 			"zone. A window with more records than the engine will scan for one page is\n" +
 			"refused — narrow it.\n\n" +
-			"PRINCIPAL is whatever the caller's gateway asserted in the Ork-Principal\n" +
-			"header (ORK_PRINCIPAL makes this CLI assert one); OrkStack records it and\n" +
-			"does not authenticate it, so a gateway that authenticates callers must\n" +
-			"overwrite the header rather than pass it through.",
+			"PRINCIPAL is marked (verified) when the engine authenticated the caller\n" +
+			"(auth.mode observe or enforce). Otherwise it is (asserted): whatever the\n" +
+			"caller's gateway asserted in the Ork-Principal header (ORK_PRINCIPAL makes\n" +
+			"this CLI assert one), which OrkStack records and does not authenticate, so\n" +
+			"a gateway that authenticates callers must overwrite the header rather\n" +
+			"than pass it through.",
 		Example: "  orkctl admin audit --filter 'action^namespace.' --filter 'at>=2026-10-01T00:00:00Z'\n" +
 			"  orkctl admin audit --filter 'namespace='",
 		Args: cobra.NoArgs,
@@ -118,7 +121,7 @@ func renderAuditRecords(out io.Writer, filters []*orkstackv1.FieldFilter, resp *
 		for _, rec := range records {
 			fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\n",
 				formatTime(rec.GetAt()),
-				auditPrincipalLabel(rec.GetPrincipal()),
+				auditPrincipalLabel(rec),
 				orDash(rec.GetAction()),
 				orDash(rec.GetNamespace()),
 				orDash(rec.GetTarget()),
@@ -137,11 +140,22 @@ func renderAuditRecords(out io.Writer, filters []*orkstackv1.FieldFilter, resp *
 	return nil
 }
 
-func auditPrincipalLabel(principal string) string {
-	if principal == "" {
+// auditPrincipalLabel is a record's principal and how it is known: (verified)
+// only when the record says OrkStack verified it, (asserted) otherwise. An
+// empty principal is unattributed, whatever the record claims of it. The
+// principal goes through assertedName, so a tab, a bidi override or a
+// zero-width character in it can neither shift the table nor reorder or hide
+// the mark after it.
+func auditPrincipalLabel(rec *orkstackv1.AuditRecord) string {
+	principal := assertedName(rec.GetPrincipal())
+	switch {
+	case principal == "":
 		return auditUnattributed
+	case rec.GetPrincipalVerified():
+		return principal + " (verified)"
+	default:
+		return principal + " (asserted)"
 	}
-	return principal
 }
 
 func auditResultLabel(rec *orkstackv1.AuditRecord) string {

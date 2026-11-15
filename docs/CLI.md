@@ -335,10 +335,12 @@ starts it (default seven days before its end), both RFC 3339 instants with a
 zone. A window with more records than the engine will scan for one page is
 refused — narrow it.
 
-PRINCIPAL is whatever the caller's gateway asserted in the Ork-Principal
-header (ORK_PRINCIPAL makes this CLI assert one); OrkStack records it and
-does not authenticate it, so a gateway that authenticates callers must
-overwrite the header rather than pass it through.
+PRINCIPAL is marked (verified) when the engine authenticated the caller
+(auth.mode observe or enforce). Otherwise it is (asserted): whatever the
+caller's gateway asserted in the Ork-Principal header (ORK_PRINCIPAL makes
+this CLI assert one), which OrkStack records and does not authenticate, so
+a gateway that authenticates callers must overwrite the header rather
+than pass it through.
 
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD        OPERATORS       VALUES

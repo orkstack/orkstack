@@ -226,3 +226,46 @@ func TestPrincipalHeader_SentOnlyWhenEnvSet(t *testing.T) {
 		}
 	}
 }
+
+// TestAuditPrincipalLabel_SaysHowThePrincipalIsKnown: every principal in the
+// trail says whether OrkStack verified it or a gateway only asserted it
+// (AGENTS.md §7); an empty one is unattributed, whatever the record claims.
+func TestAuditPrincipalLabel_SaysHowThePrincipalIsKnown(t *testing.T) {
+	cases := []struct {
+		name string
+		rec  *orkstackv1.AuditRecord
+		want string
+	}{
+		{"asserted", &orkstackv1.AuditRecord{Principal: "dsantos"}, "dsantos (asserted)"},
+		{"verified", &orkstackv1.AuditRecord{Principal: "user:corp:alice", PrincipalVerified: true}, "user:corp:alice (verified)"},
+		{"unattributed", &orkstackv1.AuditRecord{}, auditUnattributed},
+		{"unattributed though marked verified", &orkstackv1.AuditRecord{PrincipalVerified: true}, auditUnattributed},
+		{"a tab cannot add a column", &orkstackv1.AuditRecord{Principal: "a\tb"}, "a b (asserted)"},
+		{"a bidi override cannot reorder the mark", &orkstackv1.AuditRecord{Principal: "eve\u202e(deifirev)"}, "eve (deifirev) (asserted)"},
+		{"a zero-width character is shown as a space", &orkstackv1.AuditRecord{Principal: "al\u200bice"}, "al ice (asserted)"},
+		{"a claimed mark stays the principal's own text", &orkstackv1.AuditRecord{Principal: "alice (verified)"}, "alice (verified) (asserted)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := auditPrincipalLabel(tc.rec); got != tc.want {
+				t.Fatalf("auditPrincipalLabel(%v) = %q, want %q", tc.rec, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAdminAudit_MarksAVerifiedPrincipal: a record an authenticating engine
+// wrote reads verified in the table; the asserted ones beside it do not.
+func TestAdminAudit_MarksAVerifiedPrincipal(t *testing.T) {
+	f, store := auditFixture(t)
+	at := fixedNow.Add(-time.Minute)
+	rec := &orkstackv1.AuditRecord{SchemaVersion: artifacts.AuditSchemaVersion,
+		Id: "aud-" + artifacts.RunStamp(at) + "-" + strings.Repeat("e", 16), At: timestamppb.New(at), Principal: "user:corp:alice", PrincipalVerified: true,
+		AuthMethod: "oidc", Action: "webhook.create", Target: "wh-1", Succeeded: true}
+	must.OKf(t, store.PutAuditRecord(context.Background(), rec), "seed")
+	out := f.run("admin", "audit").requireExit(t, exitOK)
+	out.requireContains(t, "user:corp:alice (verified)", "dsantos (asserted)")
+	if strings.Contains(out.stdout, "alice (asserted)") || strings.Contains(out.stdout, "dsantos (verified)") {
+		t.Fatalf("a principal was marked otherwise than its record says:\n%s", out.stdout)
+	}
+}

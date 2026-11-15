@@ -1375,11 +1375,12 @@ detail is `url=… events=[…]`, plus `scope=ns/orkflow/task` when scoped.
 - The page token binds the filter set and carries the resolved window; a
   token presented with other filters is `InvalidArgument` ("page_token was
   issued for other filters; drop it and list from the first page").
-- `principal` is what a gateway asserted in `Ork-Principal`, never
-  authenticated; an empty one renders `unattributed`, and both clients print
-  the "asserted, not authenticated" caption under every rendering, empty
-  page included. The UI marks each row's principal verified or asserted from
-  the record's `principal_verified`; `orkctl admin audit` does not yet.
+- `principal` is the caller OrkStack verified when the engine authenticates
+  (`principal_verified`), and otherwise what a gateway asserted in
+  `Ork-Principal`, never authenticated; an empty one renders `unattributed`.
+  Both clients mark each one verified or asserted (`orkctl admin audit`
+  prints `(verified)` or `(asserted)`), and both print the "asserted, not
+  authenticated" caption under every rendering, empty page included.
   `ORK_PRINCIPAL` makes `orkctl` assert one.
 
 CLI: `admin audit [--filter F…] [--limit N] [--page-token TOKEN]`, e.g.

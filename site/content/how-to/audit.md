@@ -43,7 +43,7 @@ Each row shows when, who, what, which namespace and target, and the result.
 
 ## Who the principal is
 
-With authentication on (`auth.mode` `observe` or `enforce`), the principal is the identity OrkStack verified, and the record says it was verified. A record then also names the permission, the scope and the decision, and a refused read is recorded too, at most one a minute for one caller, procedure and scope.
+With authentication on (`auth.mode` `observe` or `enforce`), the principal is the identity OrkStack verified, and the record says it was verified: `orkctl admin audit` prints it `(verified)`, and an asserted one `(asserted)`. A record then also names the permission, the scope and the decision, and a refused read is recorded too, at most one a minute for one caller, procedure and scope.
 
 With authentication off, the default, the principal is the `Ork-Principal` header, copied as the caller sent it. OrkStack does not authenticate it, so it is an assertion, not a verified identity. A request with no header shows as `unattributed`.
 
