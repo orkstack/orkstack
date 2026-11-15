@@ -48,10 +48,19 @@ const CapabilityDefinitionRef = "definition-ref"
 // without it the run writes full snapshots, as it always has.
 const CapabilitySnapshotOverlay = "snapshot-overlay"
 
+// CapabilityWebhookByID is what a webhook delivery queued without its URL
+// needs of every process that could run its attempts: a build whose attempt
+// reads the subscription's URL from the registry by the webhook's id. An
+// older build sends to the URL in the delivery's input, so without one it
+// would send nowhere. Like snapshot overlays it never refuses anything: while
+// a process lacks it, deliveries carry the URL as they always have
+// (WebhookLauncher).
+const CapabilityWebhookByID = "webhook-by-id"
+
 // EngineCapabilities is what this build can run, in the order it advertises
 // them. A later stage appends its own token; a token is never removed while a
 // release that relies on it may still poll.
-var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay}
+var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay, CapabilityWebhookByID}
 
 // capabilitySuffix separates a process's SDK identity from what it advertises.
 const capabilitySuffix = " ork-caps="

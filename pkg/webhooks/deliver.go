@@ -135,7 +135,13 @@ type Attempt struct {
 	// StatusCode is the response status, or 0 when the request never
 	// completed.
 	StatusCode int `json:"statusCode"`
-	// Error is the transport failure, if any.
+	// Code is what kind of failure ended the attempt before the receiver
+	// answered (AttemptCodeConnect and the rest), or empty when it answered.
+	// An attempt the engine recorded without a request carries its own code
+	// (internal/engine). A record written before codes existed has none.
+	Code string `json:"code,omitempty"`
+	// Error is OrkStack's sentence for that failure, if any: never the
+	// transport's own words, which quote the URL.
 	Error string `json:"error,omitempty"`
 	// Backoff is the pause taken before this attempt: from the end of the
 	// one before it to this one's start.
@@ -146,20 +152,44 @@ type Attempt struct {
 	// recorded without a request (one that never ran), it is when that was
 	// found.
 	At time.Time `json:"at"`
+
+	// cause is the transport's error with its URL taken off, as text, for
+	// the process that made the request to log. It is never serialized, and
+	// as a string it keeps Attempt comparable.
+	cause string
+}
+
+// Cause is the transport's error behind a failed request, without the URL,
+// or nil. It is known only in the process that made the request: a record
+// read back, or an attempt handed over as a heartbeat, has none.
+func (a Attempt) Cause() error {
+	if a.cause == "" {
+		return nil
+	}
+	return errors.New(a.cause)
 }
 
 // Result is the outcome of a delivery: whether it landed, and every attempt it
 // took. It is the record an operator reads when a subscriber says it saw
 // nothing.
 type Result struct {
-	DeliveryID string    `json:"deliveryId"`
-	WebhookID  string    `json:"webhookId"`
-	Event      Event     `json:"event"`
-	RunID      string    `json:"runId"`
-	URL        string    `json:"url"`
-	Delivered  bool      `json:"delivered"`
-	Signature  string    `json:"signature,omitempty"`
-	Attempts   []Attempt `json:"attempts"`
+	DeliveryID string `json:"deliveryId"`
+	WebhookID  string `json:"webhookId"`
+	Event      Event  `json:"event"`
+	RunID      string `json:"runId"`
+	// URL is the subscription's. An engine's delivery fills it in when the
+	// delivery settles, from the registry as it is then (or, for a
+	// subscription deleted before, the URL the delivery was queued with, if
+	// it carried one), so it is the URL of the last attempt unless the
+	// subscription was changed between that attempt and the settle.
+	URL       string `json:"url"`
+	Delivered bool   `json:"delivered"`
+	// Signature is the X-Ork-Signature every request sent. An engine's
+	// delivery recomputes it when it settles; it is empty when no attempt
+	// sent a request, or when the subscription or the stored body could not
+	// be read by then (the engine logs which).
+	Signature string    `json:"signature,omitempty"`
+	Attempts  []Attempt `json:"attempts"`
 	// Namespace, OrkflowName, Sequence, TaskID, Attempt and Status are the delivery's
 	// coordinates as the body carried them: what a record needs to say WHICH
 	// transition of which run was sent, without keeping the body.
@@ -279,11 +309,9 @@ func (d *Dispatcher) Send(ctx context.Context, hook Webhook, delivery Delivery, 
 	status, err := d.send(ctx, hook, delivery, body, signature, n)
 	record := Attempt{Number: n, StatusCode: status, Duration: time.Since(started), At: started.UTC()}
 	if err != nil {
-		record.Error = err.Error()
-		if errors.Is(err, ErrDestinationBlocked) && !strings.HasPrefix(record.Error, ReasonDestinationBlocked) {
-			// The reason leads the error, so Retryable and a reader find it.
-			record.Error = ReasonDestinationBlocked + ": " + record.Error
-		}
+		record.Code = classifyTransport(err)
+		record.Error = AttemptSentence(record.Code)
+		record.cause = withoutURL(err).Error()
 	}
 	return record
 }
@@ -300,7 +328,7 @@ func (a Attempt) Delivered() bool {
 // failure and a 5xx are the receiver's problem and usually transient; a 4xx is
 // this sender's problem and repeating it only doubles the damage.
 func (a Attempt) Retryable() bool {
-	if a.Delivered() || strings.HasPrefix(a.Error, ReasonDestinationBlocked) {
+	if a.Delivered() || a.Code == AttemptCodeDestinationBlocked || strings.HasPrefix(a.Error, ReasonDestinationBlocked) {
 		return false
 	}
 	return a.Error != "" || a.StatusCode >= 500
@@ -325,7 +353,7 @@ func (d *Dispatcher) send(
 ) (int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, hook.URL, bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return 0, &requestError{err: err}
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", UserAgent)

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"go.temporal.io/api/enums/v1"
@@ -72,14 +73,20 @@ func DefaultWebhookDeliveryPolicy() WebhookDeliveryPolicy {
 }
 
 // WebhookDeliveryInput is a delivery workflow's whole input. It never carries
-// the body (the run is too large for a payload, AGENTS.md §2.2) or the
-// signing secret (history is no place for one): the body is in the store under
-// BodySHA256, and each attempt reads the secret from the registry.
+// the body (the run is too large for a payload, AGENTS.md §2.2), the signing
+// secret or, once every engine reads it from the registry, the URL (history
+// is no place for either: a webhook URL often carries a credential): the body
+// is in the store under BodySHA256, and each attempt reads the subscription —
+// its URL and its secret — from the registry by WebhookID.
 type WebhookDeliveryInput struct {
 	// Delivery is the delivery's coordinates, with no Run.
-	Delivery   webhooks.Delivery     `json:"delivery"`
-	WebhookID  string                `json:"webhookId"`
-	URL        string                `json:"url"`
+	Delivery  webhooks.Delivery `json:"delivery"`
+	WebhookID string            `json:"webhookId"`
+	// URL is set only on a delivery queued while an engine process that could
+	// run its attempts lacked CapabilityWebhookByID, or by a release before
+	// it: such a process sends to this URL. This build never sends to it; when
+	// set, the record of a subscription deleted before it settled names it.
+	URL        string                `json:"url,omitempty"`
 	BodySHA256 string                `json:"bodySha256"`
 	BodyBytes  int                   `json:"bodyBytes"`
 	Policy     WebhookDeliveryPolicy `json:"policy"`
@@ -123,7 +130,7 @@ func WebhookDeliveryWorkflow(ctx workflow.Context, in WebhookDeliveryInput) erro
 // last did not finish. It reads only the input, the error and the workflow's
 // clock, so it is deterministic.
 func unsentWebhookResult(in WebhookDeliveryInput, cause error, now time.Time) webhooks.Result {
-	result := webhooks.NewResult(webhooks.Webhook{ID: in.WebhookID, URL: in.URL}, in.Delivery, nil)
+	result := webhooks.NewResult(webhooks.Webhook{ID: in.WebhookID}, in.Delivery, nil)
 	result.BodySHA256, result.BodyBytes, result.Signature = in.BodySHA256, in.BodyBytes, ""
 	var timeout *temporal.TimeoutError
 	if errors.As(cause, &timeout) && timeout.HasLastHeartbeatDetails() {
@@ -140,6 +147,7 @@ func unsentWebhookResult(in WebhookDeliveryInput, cause error, now time.Time) we
 	}
 	result.Attempts = append(result.Attempts, webhooks.Attempt{
 		Number: len(result.Attempts) + 1,
+		Code:   webhooks.AttemptCodeUnreported,
 		Error:  reason,
 		At:     now.UTC(),
 	})
@@ -184,19 +192,32 @@ func NewWebhookDeliveryActivities(
 // every attempt so far as its heartbeat, which Temporal hands the next
 // attempt, and returns WebhookAttemptFailedType, which asks Temporal for that
 // next attempt after the policy's pause. Nothing here waits or loops.
+//
+// What it returns, heartbeats and fails with is held by the cluster, so it
+// names no URL and none of the transport's words: an attempt is a code and
+// OrkStack's sentence (webhooks.AttemptCode*), and the transport's error goes
+// to this process's log only. The record's URL is filled in when it settles.
 func (a *WebhookDeliveryActivities) SendWebhookAttempt(ctx context.Context, in WebhookDeliveryInput) (webhooks.Result, error) {
 	n := int(activity.GetInfo(ctx).Attempt)
 	var prior []webhooks.Attempt
 	if activity.HasHeartbeatDetails(ctx) {
 		if err := activity.GetHeartbeatDetails(ctx, &prior); err != nil {
+			// The record then starts at this attempt; its number still says
+			// how many came before.
+			a.logger.Warn("webhook delivery's earlier attempts could not be read back",
+				"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID, "attempt", n, "error", err)
 			prior = nil
 		}
 	}
 	delivery := in.Delivery
-	result := webhooks.NewResult(webhooks.Webhook{ID: in.WebhookID, URL: in.URL}, delivery, nil)
+	result := webhooks.NewResult(webhooks.Webhook{ID: in.WebhookID}, delivery, nil)
 	result.BodySHA256, result.BodyBytes, result.Signature = in.BodySHA256, in.BodyBytes, ""
 
 	attempt, final := a.attempt(ctx, in, &result, n)
+	// The result goes through the cluster: no URL, and no signature, which
+	// with the stored body would let a holder of history guess the secret.
+	// SettleWebhookDelivery puts both back into the record.
+	result.URL, result.Signature = "", ""
 	if len(prior) > 0 {
 		last := prior[len(prior)-1]
 		if pause := attempt.At.Sub(last.At.Add(last.Duration)); pause > 0 {
@@ -211,57 +232,126 @@ func (a *WebhookDeliveryActivities) SendWebhookAttempt(ctx context.Context, in W
 	}
 	activity.RecordHeartbeat(ctx, result.Attempts)
 	return webhooks.Result{}, temporal.NewApplicationError(
-		fmt.Sprintf("webhook delivery %s attempt %d to %s: %v", delivery.ID, n, in.URL, attempt.Failure()),
+		fmt.Sprintf("webhook delivery %s attempt %d did not land: %v", delivery.ID, n, attempt.Failure()),
 		WebhookAttemptFailedType)
 }
 
 // attempt makes one attempt, or records why none could be made. final says
 // a repeat cannot help.
 func (a *WebhookDeliveryActivities) attempt(ctx context.Context, in WebhookDeliveryInput, result *webhooks.Result, n int) (webhooks.Attempt, bool) {
-	now := func() time.Time { return time.Now().UTC() }
+	unsent := func(code, sentence string, cause error) webhooks.Attempt {
+		if cause != nil {
+			a.logger.Warn("webhook delivery attempt made no request",
+				"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID, "attempt", n, "code", code, "error", cause)
+		}
+		return webhooks.Attempt{Number: n, At: time.Now().UTC(), Code: code, Error: "no request was made: " + sentence}
+	}
 	body, err := a.bodies.GetDeliveryBody(ctx, in.Delivery.ID, in.BodySHA256)
 	switch {
 	case errors.Is(err, artifacts.ErrNotFound), errors.Is(err, artifacts.ErrDeliveryBodyAltered):
-		return webhooks.Attempt{Number: n, At: now(), Error: "no request was made: the delivery's stored body cannot be read back: " + err.Error()}, true
+		return unsent(webhooks.AttemptCodeBodyLost, "the delivery's stored body cannot be read back", err), true
 	case err != nil:
-		return webhooks.Attempt{Number: n, At: now(), Error: "no request was made: reading the delivery's stored body: " + err.Error()}, false
+		return unsent(webhooks.AttemptCodeStoreUnavailable, "the delivery's stored body could not be read", err), false
 	}
 	hook, found, err := a.registry.LookupForDelivery(ctx, in.WebhookID)
 	switch {
 	case err != nil:
-		return webhooks.Attempt{Number: n, At: now(), Error: "no request was made: reading the subscription's signing secret: " + err.Error()}, false
+		return unsent(webhooks.AttemptCodeSubscriptionUnavailable, "the subscription could not be read", err), false
 	case !found:
-		return webhooks.Attempt{Number: n, At: now(), Error: "no request was made: the subscription was deleted"}, true
+		return unsent(webhooks.AttemptCodeSubscriptionDeleted, "the subscription was deleted", nil), true
 	}
-	// The URL the delivery was queued for, signed with the subscription's
-	// secret, which never changes.
-	hook.URL = in.URL
+	// The subscription as the registry holds it now: its URL and its secret,
+	// read by id, never from the delivery's input.
 	*result = webhooks.NewResult(hook, in.Delivery, body)
-	return a.dispatcher.Send(ctx, hook, in.Delivery, body, result.Signature, n), false
+	attempt := a.dispatcher.Send(ctx, hook, in.Delivery, body, result.Signature, n)
+	if cause := attempt.Cause(); cause != nil {
+		a.logger.Warn("webhook delivery attempt failed",
+			"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID, "attempt", n, "code", attempt.Code, "error", cause)
+	}
+	return attempt, false
 }
 
 // SettleWebhookDelivery writes a settled delivery's record, then deletes its
 // body. A record that already exists is a retried settle's success, so the
 // write is idempotent; an observer runs once the record exists.
+//
+// The result it is handed came through the cluster, so it names no URL; the
+// record, in object storage, names the subscription's URL as the registry
+// holds it now, or the input's for a subscription since deleted.
 func (a *WebhookDeliveryActivities) SettleWebhookDelivery(ctx context.Context, in WebhookDeliveryInput, result webhooks.Result) error {
+	ids := []any{"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID}
+	hook, found, err := a.registry.LookupForDelivery(ctx, in.WebhookID)
+	switch {
+	case err != nil && !lastSettle(ctx, in.Policy):
+		return fmt.Errorf("read webhook %s for the record of delivery %s: %w", in.WebhookID, in.Delivery.ID, err)
+	case err != nil:
+		// The record matters more than its URL: the last attempt writes it
+		// without the URL and the signature rather than lose it.
+		a.logger.Warn("webhook delivery recorded without its URL and signature: the subscription could not be read",
+			append(ids, "error", err)...)
+		result.URL = in.URL
+	case found:
+		result.URL = hook.URL
+	default:
+		a.logger.Info("webhook delivery recorded for a subscription deleted before it settled", ids...)
+		result.URL = in.URL
+	}
+	if result.Signature == "" && found && sentRequest(result.Attempts) {
+		// Every request sent this body signed with this secret, which never
+		// changes.
+		body, err := a.bodies.GetDeliveryBody(ctx, in.Delivery.ID, in.BodySHA256)
+		switch {
+		case err == nil:
+			result.Signature = webhooks.Sign(hook.Secret, body)
+		case errors.Is(err, artifacts.ErrNotFound):
+			// A settle retried after it deleted the body.
+			a.logger.Warn("webhook delivery recorded without its signature: its stored body is already deleted", ids...)
+		case errors.Is(err, artifacts.ErrDeliveryBodyAltered):
+			a.logger.Error("webhook delivery recorded without its signature: its stored body does not match its digest",
+				append(ids, "error", err)...)
+		default:
+			return fmt.Errorf("read the body of webhook delivery %s for its record: %w", in.Delivery.ID, err)
+		}
+	}
 	if err := a.notifier.Settle(ctx, result); err != nil {
 		return fmt.Errorf("record webhook delivery %s: %w", in.Delivery.ID, err)
 	}
 	if result.Delivered {
 		a.logger.Info("webhook delivered",
-			"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID, "url", in.URL,
+			"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID,
 			"event", string(in.Delivery.Event), "run_id", in.Delivery.RunID,
 			"attempts", len(result.Attempts), "status", result.LastAttempt().StatusCode)
 	} else {
 		a.logger.Error("webhook delivery failed",
-			"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID, "url", in.URL,
+			"webhook_id", in.WebhookID, "delivery_id", in.Delivery.ID,
 			"event", string(in.Delivery.Event), "run_id", in.Delivery.RunID,
-			"attempts", len(result.Attempts), "error", result.LastAttempt().Failure())
+			"attempts", len(result.Attempts), "code", result.LastAttempt().Code, "error", result.LastAttempt().Failure())
 	}
 	if err := a.bodies.DeleteDeliveryBody(ctx, in.Delivery.ID, in.BodySHA256); err != nil {
 		return fmt.Errorf("delete the body of webhook delivery %s: %w", in.Delivery.ID, err)
 	}
 	return nil
+}
+
+// lastSettle reports whether this is the settle's last attempt under policy.
+func lastSettle(ctx context.Context, policy WebhookDeliveryPolicy) bool {
+	return policy.SettleAttempts > 0 && activity.GetInfo(ctx).Attempt >= policy.SettleAttempts
+}
+
+// sentRequest reports whether any attempt sent the body: one the receiver
+// answered, or one that failed on the way there. An attempt that read no
+// body or no subscription, or never reported, sent nothing.
+func sentRequest(attempts []webhooks.Attempt) bool {
+	for _, attempt := range attempts {
+		switch attempt.Code {
+		case webhooks.AttemptCodeBodyLost, webhooks.AttemptCodeStoreUnavailable,
+			webhooks.AttemptCodeSubscriptionUnavailable, webhooks.AttemptCodeSubscriptionDeleted,
+			webhooks.AttemptCodeUnreported:
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 // WebhookLauncher queues each delivery durably: it stores the signed body and
@@ -272,6 +362,91 @@ type WebhookLauncher struct {
 	queue  string
 	bodies artifacts.DeliveryBodyStore
 	policy WebhookDeliveryPolicy
+
+	// Capabilities is the fleet check (CapabilityWebhookByID): a delivery
+	// carries its URL only while it reports a process that could run the
+	// delivery's attempts and lacks the capability, so that process sends it
+	// somewhere. Nil, an error, or no such process leaves the URL out. Set it
+	// before the first Launch.
+	Capabilities CapabilityChecker
+	// Logger reports that deliveries carry their URL, at most once a minute.
+	Logger *slog.Logger
+
+	mu        sync.Mutex
+	verdict   bool      // the last good answer: carry the URL
+	checkedAt time.Time // when that answer was given
+	failedAt  time.Time // when the fleet check last failed
+	checking  bool      // a fleet check is in flight
+	warnedAt  time.Time
+	clock     func() time.Time // time.Now; a test's clock
+}
+
+// webhookFleetCheckEvery is how long one fleet check's answer decides
+// whether deliveries carry their URL. A delivery is queued per event per
+// subscription, so asking the cluster for each would put two describes on
+// every event; an older engine that starts polling within this window can be
+// handed a URL-less delivery, whose attempt then fails and is retried.
+const webhookFleetCheckEvery = 30 * time.Second
+
+// webhookFleetRetryAfter is how soon a failed fleet check is asked again.
+const webhookFleetRetryAfter = 5 * time.Second
+
+// carryURL reports whether the delivery being queued must carry its URL.
+//
+// Once the fleet has answered, one check is in flight at a time, made without
+// the lock, so a slow describe holds up no other Launch: while it runs, and
+// after it fails, the last good answer decides. Until the fleet has answered
+// once, each Launch asks for itself rather than guess. A check that fails
+// with no good answer leaves the URL out, which keeps it out of the cluster;
+// on a mixed fleet such a delivery's attempt on an older process fails
+// (docs/DEPLOY.md §5). A failed check is asked again after
+// webhookFleetRetryAfter.
+func (l *WebhookLauncher) carryURL(ctx context.Context) bool {
+	l.mu.Lock()
+	now := time.Now()
+	if l.clock != nil {
+		now = l.clock()
+	}
+	checker := l.Capabilities
+	answered := !l.checkedAt.IsZero()
+	fresh := answered && now.Sub(l.checkedAt) < webhookFleetCheckEvery
+	if checker == nil || fresh || (answered && l.checking) || (!l.failedAt.IsZero() && now.Sub(l.failedAt) < webhookFleetRetryAfter) {
+		verdict := checker != nil && l.verdict
+		l.mu.Unlock()
+		return verdict
+	}
+	l.checking = true
+	l.mu.Unlock()
+	defer func() {
+		l.mu.Lock()
+		l.checking = false
+		l.mu.Unlock()
+	}()
+
+	lacking, err := checker.MissingCapability(ctx, CapabilityWebhookByID, ScopeWorkflowAndEvents)
+
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err != nil {
+		l.failedAt = now
+	} else {
+		l.verdict, l.checkedAt, l.failedAt = len(lacking) > 0, now, time.Time{}
+	}
+	if l.Logger != nil && (err != nil || l.verdict) && now.Sub(l.warnedAt) >= time.Minute {
+		l.warnedAt = now
+		if err != nil {
+			// The last good answer stands; with none, the URL stays out of
+			// the cluster, and a process of an older release, if any polls,
+			// fails such an attempt and it is retried.
+			l.Logger.Warn("webhook deliveries keep the fleet's last answer: the engine processes could not be listed",
+				"carry_url", l.verdict, "error", err)
+		} else {
+			// The identities carry host names (pid@host): this log only.
+			l.Logger.Warn("webhook deliveries carry their URL in the cluster: engine processes run a release that sends to it",
+				"missing_capability", CapabilityWebhookByID, "identities", lacking)
+		}
+	}
+	return l.verdict
 }
 
 var _ webhooks.Launcher = (*WebhookLauncher)(nil)
@@ -294,8 +469,11 @@ func (l *WebhookLauncher) Launch(ctx context.Context, hook webhooks.Webhook, del
 		return &webhooks.NotQueuedError{Reason: "its body could not be stored", Err: err}
 	}
 	in := WebhookDeliveryInput{
-		Delivery: delivery, WebhookID: hook.ID, URL: hook.URL,
+		Delivery: delivery, WebhookID: hook.ID,
 		BodySHA256: sum, BodyBytes: len(body), Policy: l.policy,
+	}
+	if l.carryURL(ctx) {
+		in.URL = hook.URL
 	}
 	in.Delivery.Run = nil
 	_, err = l.client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{

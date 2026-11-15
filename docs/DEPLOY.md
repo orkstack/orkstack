@@ -4295,7 +4295,18 @@ processes could decide it, and refuses while any of them is too old.
   polling `ork-engine-events`, and never refuses — a tree it cannot be sure of
   writes full snapshots (§5, "Snapshot overlays"). Only such a submit — a
   direct submit, a trigger or a schedule fire — reads the poller list, once,
-  never cached.
+  never cached. `webhook-by-id`: an engine that reads a webhook delivery's URL
+  from the registry; it checks the same pollers as `snapshot-overlay` and
+  never refuses — while a process lacks it, deliveries carry their URL in the
+  cluster, as before ([WEBHOOKS.md](WEBHOOKS.md), "What the cluster holds").
+  Queuing a delivery reads the poller list at most once every 30 s, and the
+  answer decides every delivery queued meanwhile; until the list has been
+  read once, each delivery reads it. A delivery queued without its URL
+  whose attempts reach a process of an older release — one that joined
+  within those 30 s, as in a rollback, or while the list could not be read —
+  fails each attempt and settles failed: send it again with
+  `orkctl webhook redeliver`. Before rolling back below the release that
+  added `webhook-by-id`, wait for deliveries in flight to settle.
 - **What a refused submit says.** `FAILED_PRECONDITION`, naming the Orkflow,
   how many items it declares and how many engine processes run a release
   that cannot run them ("2 engine processes … finish the rollout first") —

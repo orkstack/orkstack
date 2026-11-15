@@ -261,7 +261,8 @@ reason `WEBHOOK_DESTINATION_BLOCKED` ([REASONS.md](REASONS.md), "Webhooks").
 - Every connection a delivery makes is checked at the moment it is dialled, on the
   address the name resolved to. A name that is rebound to an internal address after
   registration, and a redirect to one, fail the attempt. The attempt records the
-  reason in its error, and a refused attempt is not retried.
+  code `destination_blocked`, its error leads with the reason, and a refused
+  attempt is not retried.
 - The operator admits private receivers, such as one inside the cluster or a
   local stub, by listing their networks in `webhooks.allowed_networks`
   (`ORK_WEBHOOK_ALLOWED_NETWORKS`, a comma-separated list of CIDRs; [DEPLOY.md](DEPLOY.md), § 1).
@@ -301,6 +302,10 @@ reason `WEBHOOK_DESTINATION_BLOCKED` ([REASONS.md](REASONS.md), "Webhooks").
   which.
 - The body is rendered once. Every attempt sends the same bytes with the same
   signature.
+- Each attempt reads the subscription, its URL and its signing secret, from
+  the registry by the webhook's id when it runs. A subscription whose URL is
+  updated while a delivery is being retried gets that delivery's next attempt
+  at its new URL.
 - The receiver's response body is read for at most 2 KiB, then discarded.
 - The dispatcher sets no redirect policy, so Go's HTTP client applies its
   default: it follows up to ten redirects. A `307` or `308` re-sends the body.
@@ -347,6 +352,52 @@ reason `WEBHOOK_DESTINATION_BLOCKED` ([REASONS.md](REASONS.md), "Webhooks").
 - A receiver that cannot tolerate a repeat should record what it has processed.
   It should reconcile with `GetRun` when it must not miss a transition.
 
+### What the cluster holds
+
+A webhook URL often carries a credential, so none of a delivery's state in
+the execution cluster names it. The delivery's workflow input, its
+activities' arguments and results, each attempt's heartbeat and each failure
+hold the webhook's id, the delivery's id, the body's digest and length, and,
+for each attempt, a code and OrkStack's own sentence for it — never the URL
+and never the HTTP client's error, which quotes the URL
+(`internal/engine/webhook_delivery.go`;
+`TestIntegration_WebhookDeliveryHistoryHoldsNoURL`). The record in object
+storage names the URL ("Delivery records", below), and the signature sent:
+the activities' results carry none, since with the stored body it would let
+a reader of the cluster guess the secret. The HTTP client's error goes to
+the engine's log only, with the URL taken off it; the error for a URL that
+cannot be parsed can still quote the part it could not parse.
+
+A delivery carries its URL in the cluster only while an engine process that
+could make its attempts runs a release that sends to the URL in the
+delivery's input: the engine checks the fleet for the `webhook-by-id`
+capability ([DEPLOY.md](DEPLOY.md), §5, "Engine capabilities and the fleet
+check") and logs, at most once a minute, that deliveries carry their URL.
+Once every engine process runs this release, deliveries leave it out.
+Deliveries queued by an earlier release carry their URL until they settle.
+A URL that holds a credential and was subscribed under an earlier release
+was written into the cluster with each of its deliveries, and should be
+rotated.
+
+| Code | The attempt | Retried |
+|---|---|---|
+| `destination_blocked` | was refused: the destination is not a public address the operator admits | no |
+| `dns` | found no address for the receiver's host name | yes |
+| `connect` | could not connect to the receiver | yes |
+| `tls` | failed the TLS handshake with the receiver | yes |
+| `timeout` | did not finish in time | yes |
+| `request` | could not build a request from the subscription's URL | yes |
+| `transport` | failed before the receiver answered, for another reason | yes |
+| `body_lost` | made no request: the stored body is gone or altered | no |
+| `store_unavailable` | made no request: the stored body could not be read | yes |
+| `subscription_unavailable` | made no request: the subscription could not be read | yes |
+| `subscription_deleted` | made no request: the subscription was deleted | no |
+| `unreported` | ended without reporting its outcome (its engine replica died, or it outran its timeout) | — |
+
+An attempt the receiver answered has no code: its status code says what
+happened. A record written by an earlier release has no codes, and its
+errors are the HTTP client's own words.
+
 ## Delivery records
 
 Every delivery that settles, whether it landed or was given up, is written once
@@ -358,9 +409,12 @@ metadata/deliveries/{yyyy}/{mm}/{dd}/{delivery-id}/{namespace}/{run-id}/{webhook
 
 A record holds:
 
-- every attempt: its number, status code, error, backoff, duration and start time;
+- every attempt: its number, status code, code, error, backoff, duration and
+  start time;
 - the subscription, run, namespace, Orkflow, task, event, the event's
-  sequence, status and URL;
+  sequence, status and URL. The URL is the subscription's when the delivery
+  settled, or, for a subscription deleted before then, the one the delivery
+  was queued with, when it carried one;
 - the signature sent, the SHA-256 and the length of the body, and the instants
   the event happened, the delivery was queued and the delivery settled;
 - the id of the delivery it repeats, for a redelivery.

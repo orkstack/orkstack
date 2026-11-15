@@ -118,7 +118,8 @@ func newDeliveryHarness(t *testing.T) *deliveryHarness {
 }
 
 // queue registers a subscription to url and stores a delivery's body as the
-// launcher would, returning the workflow's input.
+// launcher would, returning the workflow's input: the subscription's id and
+// no URL, which each attempt reads from the registry.
 func (h *deliveryHarness) queue(t *testing.T, url string) (engine.WebhookDeliveryInput, []byte) {
 	t.Helper()
 	hook, err := h.registry.Register(webhooks.Registration{URL: url, Secret: "s3cr3t"})
@@ -145,7 +146,7 @@ func (h *deliveryHarness) queue(t *testing.T, url string) (engine.WebhookDeliver
 	}
 	delivery.Run = nil
 	return engine.WebhookDeliveryInput{
-		Delivery: delivery, WebhookID: hook.ID, URL: hook.URL,
+		Delivery: delivery, WebhookID: hook.ID,
 		BodySHA256: sum, BodyBytes: len(body), Policy: engine.DefaultWebhookDeliveryPolicy(),
 	}, body
 }
@@ -348,8 +349,8 @@ func TestWebhookDelivery_RecordsALastAttemptThatNeverReported(t *testing.T) {
 
 // TestWebhookLauncher_StartsOneWorkflowPerDeliveryWithoutTheBody: the
 // launcher stores the body, starts the delivery's workflow under the delivery
-// id on the run channel with the policy pinned, and carries neither the body
-// nor the secret in its input.
+// id on the run channel with the policy pinned, and carries neither the body,
+// the secret nor the URL in its input.
 func TestWebhookLauncher_StartsOneWorkflowPerDeliveryWithoutTheBody(t *testing.T) {
 	bodies, err := artifacts.NewLocalDeliveryBodyStore(t.TempDir())
 	if err != nil {
@@ -379,13 +380,14 @@ func TestWebhookLauncher_StartsOneWorkflowPerDeliveryWithoutTheBody(t *testing.T
 		options.WorkflowIDReusePolicy != enums.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE {
 		t.Errorf("started with %+v, want the delivery id on the run channel, never reused", options)
 	}
-	if input.Delivery.Run != nil || input.URL != hook.URL || input.WebhookID != hook.ID || input.Policy != policy ||
+	if input.Delivery.Run != nil || input.URL != "" || input.WebhookID != hook.ID || input.Policy != policy ||
 		input.Delivery.Sequence != 11 {
-		t.Errorf("input = %+v, want no run, the subscription's id and URL, the pinned policy and the event's sequence 11", input)
+		t.Errorf("input = %+v, want no run, the subscription's id and no URL, the pinned policy and the event's sequence 11", input)
 	}
 	encoded, _ := stablejson.Marshal(input)
-	if strings.Contains(string(encoded), hook.Secret) || strings.Contains(string(encoded), "secretlooking") {
-		t.Errorf("the workflow input carries the secret or the body: %s", encoded)
+	if strings.Contains(string(encoded), hook.Secret) || strings.Contains(string(encoded), "secretlooking") ||
+		strings.Contains(string(encoded), "example.test") {
+		t.Errorf("the workflow input carries the secret, the URL or the body: %s", encoded)
 	}
 	if !strings.Contains(string(encoded), `"Sequence":11`) {
 		t.Errorf("the workflow input does not carry the event's sequence 11: %s", encoded)

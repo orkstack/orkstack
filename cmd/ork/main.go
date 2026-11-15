@@ -1236,14 +1236,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// Each delivery is a workflow of its own, so Temporal retries it and it
 	// outlives this replica (engine.WebhookDeliveryWorkflow).
 	webhookDispatcher := webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhookPolicy})
+	// The launcher's fleet check (Capabilities) is set once the release
+	// cluster is built, below, before any worker or listener starts.
+	webhookLauncher := engine.NewWebhookLauncher(temporalClient, task.DefaultQueue, deliveryBodies,
+		engine.DefaultWebhookDeliveryPolicy())
+	webhookLauncher.Logger = logger
 	webhookNotifier := webhooks.NewNotifier(
 		webhookRegistry,
 		webhookDispatcher,
 		webhooks.NotifierOptions{
-			Logger: logger,
-			Launcher: engine.NewWebhookLauncher(temporalClient, task.DefaultQueue, deliveryBodies,
-				engine.DefaultWebhookDeliveryPolicy()),
-			Record: deliveryRecorder.RecordContext,
+			Logger:   logger,
+			Launcher: webhookLauncher,
+			Record:   deliveryRecorder.RecordContext,
 		},
 	)
 	webhookActivities := engine.NewWebhookDeliveryActivities(deliveryBodies, webhookRegistry, webhookDispatcher,
@@ -1571,6 +1575,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	releases.Logger = logger
+	// A delivery leaves its URL out of the cluster once every engine process
+	// that could make its attempts reads it from the registry.
+	webhookLauncher.Capabilities = releases
 
 	// Schedules: every field lives in a Temporal Schedule on this cluster,
 	// and each fire starts on the engine's own run channel.

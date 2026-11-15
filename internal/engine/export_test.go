@@ -273,3 +273,6 @@ func DisableCrossNamespaceGateForTest() (restore func()) {
 	crossNamespaceGateDisabledForTest.Store(true)
 	return func() { crossNamespaceGateDisabledForTest.Store(false) }
 }
+
+// SetWebhookLauncherClockForTest makes l read the time from clock.
+func SetWebhookLauncherClockForTest(l *WebhookLauncher, clock func() time.Time) { l.clock = clock }

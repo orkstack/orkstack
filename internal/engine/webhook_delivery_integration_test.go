@@ -3,12 +3,15 @@
 package engine_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +20,7 @@ import (
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
@@ -255,4 +259,101 @@ func TestIntegration_RecordWebhookDeliveryHistory(t *testing.T) {
 		written = webhookDeliveryFixture
 	}
 	t.Logf("recorded %d events of delivery %s into %s, replayed clean", len(recorded.GetEvents()), settled.DeliveryID, written)
+}
+
+// TestIntegration_WebhookDeliveryHistoryHoldsNoURL reads every event of two
+// real deliveries' histories, raw, for the subscription's URL: one that lands
+// after a retry and one whose receiver never answers, so the histories hold
+// retried sends, their failures and a settle. A webhook URL often carries a
+// credential, and the cluster is no place for one (P4d).
+func TestIntegration_WebhookDeliveryHistoryHoldsNoURL(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	c := scopedCluster(t, ctx)
+	receiver := newDeliveryReceiver(t, http.StatusServiceUnavailable, http.StatusOK)
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := l.Addr().String()
+	_ = l.Close()
+	registry := webhooks.NewRegistry(webhooks.WithDestinationPolicy(webhooktest.LoopbackPolicy()))
+	for _, url := range []string{
+		receiver.server.URL + "/" + urlCanary + "?token=" + urlCanary,
+		"http://" + closed + "/" + urlCanary + "?token=" + urlCanary,
+	} {
+		if _, err := registry.Register(webhooks.Registration{URL: url, Secret: "fixture-secret"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bodies, err := artifacts.NewLocalDeliveryBodyStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replica := startDeliveryReplica(t, c, uniquePool("webhook-no-url"), bodies, registry, engine.DefaultWebhookDeliveryPolicy())
+	replica.notifier.Notify(ctx, deliveryFixtureRun("ork-webhook-no-url"))
+	settled := replica.awaitSettledN(t, ctx, 2)
+
+	var delivered, failed int
+	for _, result := range settled {
+		if result.Delivered {
+			delivered++
+		} else {
+			failed++
+		}
+		if !strings.Contains(result.URL, urlCanary) {
+			t.Errorf("record %s names URL %q, want the subscription's", result.DeliveryID, result.URL)
+		}
+		if err := c.GetWorkflow(ctx, result.DeliveryID, "").Get(ctx, nil); err != nil {
+			t.Fatalf("the delivery workflow ended %v", err)
+		}
+		var events, payloadBytes int
+		iter := c.GetWorkflowHistory(ctx, result.DeliveryID, "", false, enums.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+		for iter.HasNext() {
+			event, err := iter.Next()
+			if err != nil {
+				t.Fatalf("read history: %v", err)
+			}
+			raw, err := proto.Marshal(event)
+			if err != nil {
+				t.Fatal(err)
+			}
+			events++
+			payloadBytes += len(raw)
+			for _, forbidden := range []string{urlCanary, closed, "connection refused", "dial tcp"} {
+				if bytes.Contains(raw, []byte(forbidden)) {
+					t.Errorf("delivery %s event %d (%s) holds %q", result.DeliveryID, event.GetEventId(), event.GetEventType(), forbidden)
+				}
+			}
+		}
+		if events < 5 {
+			t.Errorf("delivery %s has %d events, want a send and a settle at least", result.DeliveryID, events)
+		}
+		t.Logf("EVIDENCE delivery %s (delivered %v, %d attempts): %d events, %d bytes, none holds the URL",
+			result.DeliveryID, result.Delivered, len(result.Attempts), events, payloadBytes)
+	}
+	if delivered != 1 || failed != 1 {
+		t.Fatalf("settled %d delivered and %d failed, want one of each", delivered, failed)
+	}
+}
+
+// awaitSettledN waits for the replica to settle n deliveries.
+func (r *deliveryReplica) awaitSettledN(t *testing.T, ctx context.Context, n int) []webhooks.Result {
+	t.Helper()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		r.mu.Lock()
+		if len(r.settled) >= n {
+			out := append([]webhooks.Result(nil), r.settled...)
+			r.mu.Unlock()
+			return out
+		}
+		r.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			t.Fatalf("%d deliveries did not settle before the deadline", n)
+		case <-ticker.C:
+		}
+	}
 }
