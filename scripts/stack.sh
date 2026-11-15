@@ -6,13 +6,18 @@
 #   scripts/stack.sh status  what is running, and where
 #
 # Everything it starts is recorded in .run/: one pidfile and one log per
-# process, each the leader of a process group of its own. down stops exactly
-# those groups, then stops any other process whose executable IS this
-# worktree's bin/ork or bin/orker (read from /proc/<pid>/exe, never matched by
-# name or pattern), because a stray Orker started by hand steals activities
-# from every later run and looks like a code bug. Nothing else on the host —
-# another worktree's stack, a proof, a test's binaries — is touched
-# (AGENTS.md §11.1).
+# process, each the leader of a process group of its own. A pidfile holds the
+# pid and the process's start time (/proc/<pid>/stat), and down stops exactly
+# those groups, each only while its pid still has that start time, so a pid the
+# kernel has since given another process is never signalled. Then it stops any
+# other process whose executable IS this worktree's bin/ork or bin/orker (read
+# from /proc/<pid>/exe, never matched by name or pattern), because a stray
+# Orker started by hand steals activities from every later run and looks like
+# a code bug. ork and orker make themselves undumpable, which hides
+# /proc/<pid>/exe from their own user, so such a stray is found only when it
+# runs with process.allow_debug or predates that: a process make up never
+# recorded is otherwise not found. Nothing else on the host — another
+# worktree's stack, a proof, a test's binaries — is touched (AGENTS.md §11.1).
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
@@ -61,6 +66,41 @@ die() { printf '%s\n' "$*" >&2; exit 1; }
 pidfile() { echo "$RUN_DIR/$1.pid"; }
 logfile() { echo "$RUN_DIR/$1.log"; }
 
+# proc_identity PID — what tells this process from any other that ever had its
+# pid: on Linux the boot's id and the process's start time (field 22 of
+# /proc/<pid>/stat, which an undumpable process still shows its own user);
+# without /proc (macOS), what ps says it started at. Empty when there is no
+# such process, or it is a zombie, which has ended.
+proc_identity() {
+	local stat state start boot
+	if [ -e /proc/self/stat ]; then
+		stat="$(sed -E 's/^.*\) //' "/proc/$1/stat" 2>/dev/null)" || return 0
+		read -r state _ <<<"$stat" || return 0
+		[ -n "$state" ] && [ "$state" != Z ] || return 0
+		start="$(awk '{print $20}' <<<"$stat")"
+		boot="$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)"
+		[ -n "$start" ] && echo "$start@$boot"
+	else
+		ps -o lstart= -p "$1" 2>/dev/null | tr -s ' ' | tr ' ' '_'
+	fi
+	return 0
+}
+
+# recorded NAME — the pid NAME's pidfile records, when that pid is still the
+# process it recorded: the same identity. Nothing otherwise, and nothing for a
+# pidfile that holds no identity (one an earlier release wrote) or a pid that
+# is not a positive number: what cannot be confirmed is never signalled.
+recorded() {
+	local pf pid ident
+	pf="$(pidfile "$1")"
+	[ -f "$pf" ] || return 1
+	read -r pid ident <"$pf" || true
+	[[ "${pid:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+	[ -n "${ident:-}" ] || return 1
+	[ "$(proc_identity "$pid")" = "$ident" ] || return 1
+	echo "$pid"
+}
+
 # worktree_binary_pids — the pids whose executable is this worktree's
 # bin/ork or bin/orker, by identity: /proc/<pid>/exe resolved and compared
 # exactly, so bin/orkctl, another worktree's binaries and a proof's
@@ -86,13 +126,9 @@ worktree_binary_pids() {
 	done
 }
 
-# alive NAME — true when the recorded pid is still running.
-alive() {
-	local pf
-	pf="$(pidfile "$1")"
-	[ -f "$pf" ] || return 1
-	kill -0 "$(cat "$pf")" 2>/dev/null
-}
+# alive NAME — true when the recorded process is still running: its pid, with
+# the start time recorded with it.
+alive() { recorded "$1" >/dev/null; }
 
 # start NAME CMD... — run in the background, record pid and log, and confirm
 # it is still alive a moment later. A process that exits during startup (the
@@ -103,11 +139,11 @@ start() {
 	local name="$1"
 	shift
 	if alive "$name"; then
-		say "  $name already running (pid $(cat "$(pidfile "$name")"))"
+		say "  $name already running (pid $(recorded "$name"))"
 		return 0
 	fi
 	mkdir -p "$RUN_DIR"
-	local attempt pid
+	local attempt pid ident
 	for attempt in 1 2 3; do
 		# Its own session and process group, so stop reaches what it spawns
 		# (bun's vite) and nothing else. A background job of this
@@ -120,11 +156,34 @@ start() {
 			"$@" >"$(logfile "$name")" 2>&1 &
 		fi
 		pid=$!
-		echo "$pid" >"$(pidfile "$name")"
-		sleep 2
-		if kill -0 "$pid" 2>/dev/null; then
-			say "  $name started (pid $pid), log $(logfile "$name")"
-			return 0
+		ident=""
+		for _ in 1 2 3 4 5; do
+			ident="$(proc_identity "$pid")"
+			[ -z "$ident" ] && kill -0 "$pid" 2>/dev/null || break
+			sleep 0.1
+		done
+		if [ -z "$ident" ] && kill -0 "$pid" 2>/dev/null; then
+			# Running, but what would tell it apart later cannot be read: this
+			# shell's own child, signalled at once, never left unrecorded.
+			say "  $name started but its identity cannot be read (attempt $attempt/3); stopping it"
+			kill -KILL "$pid" 2>/dev/null || true
+		elif [ -n "$ident" ]; then
+			echo "$pid $ident" >"$(pidfile "$name")"
+			sleep 2
+			if alive "$name"; then
+				say "  $name started (pid $pid), log $(logfile "$name")"
+				return 0
+			fi
+			# Still the process it started but not up: it goes, with its group
+			# when it leads one, and only while it is confirmed. One that has
+			# ended took its record with it; what its group left is not touched.
+			if [ "$(proc_identity "$pid")" = "$ident" ]; then
+				if [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
+					kill -KILL -- "-$pid" 2>/dev/null || true
+				else
+					kill -KILL "$pid" 2>/dev/null || true
+				fi
+			fi
 		fi
 		say "  $name exited during startup (attempt $attempt/3)"
 		sed -n '$p' "$(logfile "$name")" | sed 's/^/    /'
@@ -133,31 +192,76 @@ start() {
 	die "$name would not stay up; full log at $(logfile "$name")"
 }
 
-# stop NAME — terminate the recorded process group politely, then firmly. A
-# pidfile written before the stack started each process in its own group
-# names a plain pid; that pid alone is signalled. The Orker is given 15
-# minutes: its 60 s stop grace, then the hand-back of what still runs
-# (docs/DEPLOY.md, "Stop timeouts"); an idle one exits at once.
+# stop NAME — terminate the recorded process group politely, then firmly,
+# and signal it only while it is confirmed to be what make up started. Its
+# leader still has the identity recorded with it (recorded), or, once the
+# leader has ended, the group it led still has members: a pid that names a
+# live group is never given to a new process, so that group is still the one
+# make up started. A pid the kernel has given another process, a pidfile that
+# records no identity, and a pid that is not a positive number are left
+# alone. The Orker is given 15 minutes: its 60 s stop grace, then the
+# hand-back of what still runs (docs/DEPLOY.md, "Stop timeouts"); an idle one
+# exits at once.
 stop() {
-	local name="$1" pf pid target ticks=40
+	local name="$1" pf pid ident group="" ticks=40 gone=""
 	[ "$name" = orker ] && ticks=3600
 	pf="$(pidfile "$name")"
 	[ -f "$pf" ] || return 0
-	pid="$(cat "$pf")"
-	target="$pid"
-	if [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
-		target="-$pid"
+	read -r pid ident <"$pf" || true
+	if recorded "$name" >/dev/null; then
+		if [ "$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')" = "$pid" ]; then
+			group=1
+		fi
+	elif command -v setsid >/dev/null 2>&1 && [[ "${pid:-}" =~ ^[1-9][0-9]*$ ]] && [ -n "${ident:-}" ] &&
+		[ -z "$(proc_identity "$pid")" ] && kill -0 -- "-$pid" 2>/dev/null; then
+		# Its leader, which setsid made a group leader, has ended and the group
+		# it led still has members (bun's vite): still what make up started,
+		# since a pid that names a live group is never given to another
+		# process. Without setsid (macOS) the recorded pid led no group.
+		group=1
+	else
+		say "  $name is not running (its recorded pid is gone, now another process's, or unconfirmed; left alone)"
+		rm -f "$pf"
+		return 0
 	fi
-	if kill -0 -- "$target" 2>/dev/null; then
-		kill -TERM -- "$target" 2>/dev/null || true
-		for _ in $(seq 1 "$ticks"); do
-			kill -0 -- "$target" 2>/dev/null || break
+	stop_signal "$name" "$pid" "$group" TERM
+	for _ in $(seq 1 "$ticks"); do
+		stop_confirmed "$name" "$pid" "$group" || { gone=1; break; }
+		sleep 0.25
+	done
+	if [ -z "$gone" ]; then
+		stop_signal "$name" "$pid" "$group" KILL
+		for _ in $(seq 1 20); do
+			stop_confirmed "$name" "$pid" "$group" || { gone=1; break; }
 			sleep 0.25
 		done
-		kill -KILL -- "$target" 2>/dev/null || true
-		say "  $name stopped (pid $pid)"
 	fi
+	if [ -z "$gone" ]; then
+		say "  $name still runs after SIGKILL (pid $pid); its pidfile is kept"
+		return 1
+	fi
+	say "  $name stopped (pid $pid)"
 	rm -f "$pf"
+}
+
+# stop_confirmed NAME PID GROUP — what stop may still signal is the process it
+# recorded: its leader with the recorded identity, or, for a group whose
+# leader has ended, that group while it has members (no process can hold the
+# leader's pid meanwhile).
+stop_confirmed() {
+	recorded "$1" >/dev/null && return 0
+	[ -n "$3" ] && [ -z "$(proc_identity "$2")" ] && kill -0 -- "-$2" 2>/dev/null
+}
+
+# stop_signal NAME PID GROUP SIG — SIG to the recorded group, or to its pid
+# alone, and only while stop_confirmed says it is still the one recorded.
+stop_signal() {
+	stop_confirmed "$1" "$2" "$3" || return 0
+	if [ -n "$3" ]; then
+		kill "-$4" -- "-$2" 2>/dev/null || true
+	else
+		kill "-$4" "$2" 2>/dev/null || true
+	fi
 }
 
 # wait_for LABEL SECONDS CMD... — poll until the command succeeds.
@@ -469,13 +573,16 @@ setup_identity() {
 }
 
 cmd_down() {
+	local survived=""
 	say "== stopping engine, orker and ui =="
-	stop ui
-	stop ork
-	stop orker
+	stop ui || survived="$survived ui"
+	stop ork || survived="$survived ork"
+	stop orker || survived="$survived orker"
 	# A worker started by hand from this worktree's bin/ outlives any pidfile
 	# and steals activities from every later run. It is found by the identity
-	# of its executable, never by name or pattern (AGENTS.md §11.1).
+	# of its executable, never by name or pattern (AGENTS.md §11.1), and only
+	# where its own user may read it: an undumpable ork or orker that make up
+	# did not start is not found.
 	local pid stray
 	for pid in $(worktree_binary_pids); do
 		say "  stopping pid $pid: it runs this worktree's bin/ork or bin/orker, and make up did not start it"
@@ -489,6 +596,9 @@ cmd_down() {
 	say "== stopping infrastructure =="
 	"${COMPOSE[@]}" down
 
+	# What make up recorded is checked by its record; a stray by its exe,
+	# which an undumpable one hides (AGENTS.md §11.1).
+	[ -z "$survived" ] || die "what make up started survived SIGKILL:$survived (their pidfiles are kept in $RUN_DIR)"
 	stray="$(worktree_binary_pids | tr '\n' ' ')"
 	[ -z "$stray" ] || die "processes running this worktree's bin/ork or bin/orker survived: pids $stray"
 	say "OrkStack is down. Data is kept; make reset wipes it."
@@ -498,7 +608,7 @@ cmd_status() {
 	local any=0
 	for name in orker ork ui; do
 		if alive "$name"; then
-			say "  $name    running (pid $(cat "$(pidfile "$name")"))"
+			say "  $name    running (pid $(recorded "$name"))"
 			any=1
 		else
 			say "  $name    stopped"

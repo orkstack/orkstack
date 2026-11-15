@@ -13,7 +13,9 @@
 #      is recorded too, so a recycled pid is never signalled);
 #   2. every process whose executable is one of the proof's own binaries,
 #      under proof/<name>/bin/ (test binaries, engines and Orkers a crashed
-#      test left behind);
+#      test left behind). An engine or Orker makes itself undumpable, which
+#      hides its executable from its own user: one still in the proof's
+#      process group was stopped by 1, and one that left it is not found;
 #   3. the proof's Temporal container, by its exact name;
 #   4. every container whose ork.orker label carries the proof's id
 #      (internal/testsupport/proof.OrkerID).

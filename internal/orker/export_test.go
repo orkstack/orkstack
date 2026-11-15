@@ -71,3 +71,37 @@ func SetRemovalRetryEvery(a *Activities, every time.Duration) { a.removalRetryEv
 func SetSignalProbeGrace(a *Activities, grace time.Duration) {
 	a.dispatcher.signalProbeGrace = grace
 }
+
+// MetadataTargetForTest is one address the metadata probe asks, for the
+// integration tests' Orkers: a plain GET of /, and with TokenRequest EC2's
+// token PUT after it.
+type MetadataTargetForTest struct {
+	Address, Host string
+	Port          int
+	TokenRequest  bool
+}
+
+// SetMetadataTargets points the metadata probe at stand-ins.
+func SetMetadataTargets(a *Activities, targets []MetadataTargetForTest) {
+	a.dispatcher.metadataTargets = nil
+	for _, t := range targets {
+		host := t.Host
+		if strings.Contains(host, ":") {
+			host = "[" + host + "]"
+		}
+		reqs := []metadataRequest{httpGet(host, "/", "")}
+		if t.TokenRequest {
+			reqs = append(reqs, ec2TokenRequest(host))
+		}
+		a.dispatcher.metadataTargets = append(a.dispatcher.metadataTargets,
+			metadataTarget{Address: t.Address, Host: t.Host, Port: t.Port, Requests: reqs})
+	}
+}
+
+// MetadataFindings is what Boot's metadata probe found, nil when none ran.
+func MetadataFindings(a *Activities) []MetadataFinding {
+	if f := a.metadata.Load(); f != nil {
+		return *f
+	}
+	return nil
+}

@@ -632,6 +632,7 @@ then the variable it becomes.
 | `orker.docker.cli` | `ORK_DOCKER_CLI` | `docker` | `orker` | the grammar that CLI speaks: `docker` (the docker CLI, against Docker or against Podman's Docker-compatible socket) or `podman` (the podman CLI); any other value fails every container command, naming the setting. The engine behind the CLI is asked at boot, logged, and verified by the boot probe ([Running on Podman](#running-on-podman)). `orkctl activity test` and `orkctl task run` read it too |
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container, which the Orker then removes. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 230 seconds for removing what it gave up on and the first container, and for that cancellation (17 minutes 50 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
+| `orker.metadata_probe` | `ORK_ORKER_METADATA_PROBE` | `off` | `orker` | whether boot asks the host's instance metadata endpoints from a container on the `default` network: `off` runs no extra container, `warn` logs an endpoint that answered, `refuse` refuses boot when one answered or the probe failed, `METADATA_ENDPOINT_REACHABLE`. Set `refuse` on a cloud host ([Keeping tasks away from the host's identity](#keeping-tasks-away-from-the-hosts-identity)) |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
 | `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
@@ -657,6 +658,7 @@ then the variable it becomes.
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
+| `process.allow_debug` | `ORK_PROCESS_ALLOW_DEBUG` | `false` | **both** | on Linux, both binaries make themselves undumpable at start: no core dump, `/proc` entries owned by root, no trace by another process of the same user. `true` leaves the process as it was, for a debugger or a dump, and is logged at warning at every boot. Off Linux it does nothing ([The processes themselves](#the-processes-themselves)) |
 | `engine.http_addr` | `ORK_HTTP_ADDR` | `:8080` | `ork` | Connect API, WebSocket bridge, plain-HTTP routes and the web UI at `/` (§ "The web UI") |
 | `engine.ws_allowed_origins` | `ORK_WS_ALLOWED_ORIGINS` | *(empty)* | `ork` | comma-separated browser origins allowed onto `/ws/runs/{id}` and `/ws/runs/{id}/tasks/{task}/logs` (space around an entry and empty entries are ignored). Empty admits the engine's own origin only, which is all the UI it serves needs; list a page served from another origin, or the browser's origin behind a proxy that rewrites `Host` |
 | `engine.http_idle_timeout` | `ORK_HTTP_IDLE_TIMEOUT` | `15m` | `ork` | how long a keep-alive connection to the API listener may sit with no request in flight before the engine closes it; at least `1s`, refused at boot otherwise. Set it above the backend keep-alive timeout of a load balancer in front, so the balancer always closes first. A stream in flight is never idle (§ "The API listener's bounds") |
@@ -1257,23 +1259,66 @@ store refuses any other.
    `kubectl create secret generic orkstack-s3`. The bases require that Secret,
    so a forgotten one stops the pod rather than falling through to the node's
    role.
-5. Keep tasks away from the role. A container on the `default` network can
-   reach the host's instance metadata service unless the host stops it, and
-   that service hands out the role's credentials, which a task must never get
-   ([AGENTS.md](../AGENTS.md) §2.3). OrkStack cannot stop it from inside a
-   container's network. On EC2, require IMDSv2 with a hop limit of 1, which a
-   container on a bridge network cannot answer across:
-   `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required --http-put-response-hop-limit 1`.
-   A rootless engine's user-space network sends a container's packets from a
-   process on the host, so the hop limit may not stop them: block the address
-   with a firewall rule there. On Kubernetes, prefer a role bound to the pod
-   over a role on the node. A container's credentials endpoint (ECS, EKS Pod
-   Identity) answers only with a path or token the Orker holds, under `AWS_*`
-   and the token file those variables name, and no secret floor admits either
-   to a task. A task with `network: none` reaches none of these services.
+5. Keep tasks away from the role: a container on the `default` network may
+   reach the host's instance metadata service, which hands out that role.
+   [Keeping tasks away from the host's identity](#keeping-tasks-away-from-the-hosts-identity)
+   says how to close it on each platform, and how an Orker checks it at boot.
 
 The SDK refreshes a role's temporary credentials. When it cannot, requests fail
 as they do in any object-store outage.
+
+### Keeping tasks away from the host's identity
+
+A container on the `default` network may be able to reach the host's instance
+metadata service, which hands out the host's role, and a task must never get
+that role ([AGENTS.md](../AGENTS.md) §2.3). OrkStack cannot close the service
+from inside a container's network, and adds no host-network setting to a
+container to try (AGENTS.md §6). Close it on the host:
+
+| Platform | Endpoint | What closes it |
+| --- | --- | --- |
+| EC2 | `169.254.169.254`, `fd00:ec2::254` | IMDSv2 required with a hop limit of 1, which a container on a bridge network cannot answer across: `aws ec2 modify-instance-metadata-options --instance-id <id> --http-tokens required --http-put-response-hop-limit 1` |
+| ECS, EKS Pod Identity | `169.254.170.2`, `169.254.170.23` | the endpoint answers only with a path or token the Orker holds, under `AWS_*` and the token file those variables name, which no secret floor admits to a task; block the address as well |
+| GCE, GKE | `169.254.169.254`, `metadata.google.internal` | no hop limit exists: a firewall rule on the host; on GKE, Workload Identity with the node's own scopes reduced |
+| Azure | `169.254.169.254`, `168.63.129.16` | a firewall rule on the host |
+| Any host with Docker | | a rule in the `DOCKER-USER` chain dropping `169.254.0.0/16` from the bridge |
+| Rootless Podman | | the user-space network sends a container's packets from a process on the host, so a hop limit does not stop them: an `owner` match rule for the Orker's user |
+| Kubernetes | | a role bound to the pod, never the node; a `NetworkPolicy` that excludes `169.254.0.0/16` |
+| Any | | `network: none` on a task that needs no network reaches nothing |
+
+**The check at boot.** With `orker.metadata_probe` (`ORK_ORKER_METADATA_PROBE`)
+set to `warn` or `refuse`, an Orker runs one more container at boot, built as a
+task's is, on the `default` network, after the boot probe's. For each address
+above it makes the request a task would make: an HTTP `GET` and, on EC2's two
+addresses, the `PUT` that asks for a session token, with the header each
+platform asks for. Only an HTTP answer counts, whatever its status: with a hop
+limit of 1 the connection can open while the token request is what fails.
+
+| Value | Does |
+| --- | --- |
+| `off` (default) | nothing: no extra container at boot |
+| `warn` | probes; an endpoint that answered is logged at warn, naming the address and the request answered; a probe that failed is logged at error |
+| `refuse` | probes; an endpoint that answered refuses boot, `METADATA_ENDPOINT_REACHABLE`, and a probe that failed refuses it too, `METADATA_PROBE_FAILED` |
+
+Each address has one of three outcomes: **answered**, **no answer**, or **probe
+failed** (the container did not run, its image was missing, the runtime
+refused it, or it ended before it reported every request). A probe that failed
+is never read as safe. `orkctl orker get` shows each address's outcome,
+`orkctl orker list` names every Orker where an endpoint answered or the probe
+failed, the Orkers page shows both, and `DescribeOrker` carries them (`metadata_probes`, and the
+addresses that answered in `metadata_reachable`). A message or a log names an
+address, the request and the HTTP status, and never what the endpoint sent.
+
+What a clean result means: from this host's `default` network, at boot,
+nothing answered within 3 seconds. The check is one sample, not repeated
+while the Orker runs, it asks
+`metadata.google.internal` only through the container's own DNS, and a
+firewall changed afterwards is not seen. It is off by default because it
+costs every boot a container and has nothing to find on a laptop; set
+`refuse` on every cloud host.
+
+The structural answer is that an Orker host needs no broad role at all: then
+the object store's role is the only thing a metadata endpoint could give away.
 
 ### Live task logs: where they are, what bounds them, how long they stay
 
@@ -2614,6 +2659,30 @@ at error.
 On an Orker, every file these settings name is one of its own paths, which
 no secret floor admits as a task's secret (§5, "Secrets on a shared pool").
 `orkctl` never dials Temporal and needs none of this.
+
+### The processes themselves
+
+`ork` holds signing keys and `orker` holds tokens and the forms of the secrets
+it masks. On Linux a process's memory can be read by its own user through a
+core dump, `/proc/<pid>/mem` or a debugger, so at start, before the
+configuration file is read, both binaries make themselves undumpable
+(`prctl(PR_SET_DUMPABLE, 0)`): the kernel writes no core dump for them, gives
+their `/proc` entries to root, and refuses a trace by another process of the
+same user.
+
+- It is not inherited by what they start: the flag is reset when a program is
+  executed, so the container CLI an Orker runs, and the containers behind it,
+  are untouched. The core-size limit, which is inherited, is not lowered.
+- `process.allow_debug: true` (`ORK_PROCESS_ALLOW_DEBUG`) leaves the process
+  as it was, for an operator who must attach a debugger or take a dump, and is
+  logged at warning at every boot while set. The admin listener's profiling
+  endpoints are unaffected either way.
+- A `prctl` that fails is logged at error and the process starts all the
+  same.
+- Off Linux it does nothing.
+- It does not stop root, a kernel debugger, a hypervisor or the host's
+  hibernation image. Set `kernel.yama.ptrace_scope` to `1` or more, and keep
+  swap off or encrypted, on a host where that matters.
 
 ### Health checks
 

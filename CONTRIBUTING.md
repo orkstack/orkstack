@@ -96,7 +96,10 @@ make reset   # wipe every local run, object and build output
 ```
 
 `make down` also stops the infrastructure `make infra-up` started, which
-other checkouts on the same machine may be using. `make reset` returns the
+other checkouts on the same machine may be using. It stops the `ork` and
+`orker` that `make up` started, by the pid and start time it recorded; one
+you started by hand from `bin/` is not found, because both make themselves
+undumpable (docs/DEPLOY.md, "The processes themselves"), so stop it yourself. A process `make up` started that survives `make down` fails it, and its pidfile stays in `.run/`. `make reset` returns the
 machine to a vanilla state: it deletes Temporal history, every object-store
 object (artifacts, archived runs, and the Orkflow catalogue), the
 observability profile's containers and volumes, the local artifact store,

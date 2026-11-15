@@ -1,5 +1,5 @@
 import type { Timestamp } from '@bufbuild/protobuf/wkt';
-import type { Orker } from './gen/orkstack/v1/activity_pb';
+import { MetadataProbeOutcome, type MetadataProbe, type Orker } from './gen/orkstack/v1/activity_pb';
 import { shellQuote } from './runDetail';
 
 // The Orker inventory's rendering rules, shared by Admin → Pools and its
@@ -89,3 +89,37 @@ export function stoppingNote(orker: Orker, fmt: (ts: Timestamp | undefined) => s
 	const ends = stop?.graceEndsAt ? `; its grace ends ${fmt(stop.graceEndsAt)}` : '';
 	return `Stopping${since}: it takes no new work and finishes what it runs, then exits${ends}. A task it hands back runs again on another Orker of its release.`;
 }
+
+/** One address's outcome in words, as `orkctl orker get` prints it: "answered (HTTP 200 to GET /)". */
+export function metadataProbeText(probe: MetadataProbe): string {
+	const outcome =
+		probe.outcome === MetadataProbeOutcome.ANSWERED
+			? 'answered'
+			: probe.outcome === MetadataProbeOutcome.NO_ANSWER
+				? 'no answer'
+				: probe.outcome === MetadataProbeOutcome.PROBE_FAILED
+					? 'probe failed'
+					: 'unknown';
+	return probe.detail ? `${outcome} (${probe.detail})` : outcome;
+}
+
+/**
+ * What the Orker's boot metadata probe found that a reader must see: every
+ * address that answered or could not be told about, as `orkctl orker list`
+ * names them (docs/DEPLOY.md "Keeping tasks away from the host's identity").
+ * An address with no answer is none; an Orker that ran no probe has none.
+ */
+export function metadataConcerns(orker: Orker): string[] {
+	return orker.metadataProbes
+		.filter((p) => p.outcome !== MetadataProbeOutcome.NO_ANSWER)
+		.map((p) => `${p.address} ${metadataProbeText(p)}`);
+}
+
+/** Whether an endpoint answered: a task on this Orker could reach the host's identity. */
+export function metadataReachable(orker: Orker): boolean {
+	return orker.metadataProbes.some((p) => p.outcome === MetadataProbeOutcome.ANSWERED);
+}
+
+/** The stamp beside the state when the probe found an answer, or could not tell. */
+export const METADATA_REACHABLE_LABEL = 'host identity reachable';
+export const METADATA_UNKNOWN_LABEL = 'host identity unchecked';

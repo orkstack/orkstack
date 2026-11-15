@@ -34,6 +34,9 @@ deployment:
   name: orkstack
   build_id: ""  # empty means versioning is off
 
+process:
+  allow_debug: false
+
 pool:
   name: main
   # queue: ""  # derived from the pool
@@ -141,6 +144,7 @@ orker:
     cli: docker  # orker
     pull_timeout: 5m  # orker
     bind_probe_timeout: 2m  # orker
+  metadata_probe: off  # orker
   engine:
     url: ""  # orker; no engine: no identities
     ca_file: ""  # orker; the system's roots

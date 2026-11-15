@@ -12,6 +12,7 @@ import (
 
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/telemetry"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -236,5 +237,38 @@ func TestStart_VersionReadsNoConfiguration(t *testing.T) {
 		if !strings.Contains(stdout.String(), want) {
 			t.Errorf("stdout %q does not say %s", stdout.String(), want)
 		}
+	}
+}
+
+// TestStart_ProcessAllowDebug: a value of process.allow_debug the Orker
+// cannot read stops it before anything is served, naming the setting; true
+// starts it with a warning that says the process can be dumped.
+func TestStart_ProcessAllowDebug(t *testing.T) {
+	tests := []struct {
+		value     string
+		wantExit  int
+		wantServe int
+		wantLog   string
+	}{
+		{value: "maybe", wantExit: 1, wantServe: 0, wantLog: procguard.AllowDebugVar},
+		{value: "true", wantExit: 0, wantServe: 1, wantLog: "process.allow_debug is set"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			t.Setenv(procguard.AllowDebugVar, tt.value)
+			served := 0
+			serve := func(*slog.Logger, telemetry.Config, *telemetry.Sinks, config) error {
+				served++
+				return nil
+			}
+			var stderr bytes.Buffer
+			exit := start(nil, os.LookupEnv, setenvT(t), io.Discard, &stderr, serve)
+			if exit != tt.wantExit || served != tt.wantServe {
+				t.Fatalf("start = %d having served %d times; want %d and %d: %s", exit, served, tt.wantExit, tt.wantServe, stderr.String())
+			}
+			if !strings.Contains(stderr.String(), tt.wantLog) {
+				t.Fatalf("stderr %q does not say %q", stderr.String(), tt.wantLog)
+			}
+		})
 	}
 }

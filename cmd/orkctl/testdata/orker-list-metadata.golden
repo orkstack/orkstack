@@ -1,0 +1,7 @@
+ORKER          POOL   BUILD  STATE  TASKS  PINS  CAPACITY  RESERVED  LAST SEEN
+orker-clean    build  -      ready  0      -     -         -         2026-09-22T09:14:02Z
+orker-exposed  build  -      ready  0      -     -         -         2026-09-22T09:14:02Z
+orker-off      build  -      ready  0      -     -         -         2026-09-22T09:14:02Z
+
+1 orker found at boot that a task could reach the host's instance metadata service, or could not tell:
+  orker-exposed: 169.254.169.254 answered (HTTP 200 to PUT /latest/api/token); metadata.google.internal probe failed (a request of the probe's container never reported)

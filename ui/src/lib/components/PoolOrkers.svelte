@@ -15,6 +15,10 @@
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
 	import { withNamespace } from '#lib/namespace.ts';
 	import {
+		METADATA_REACHABLE_LABEL,
+		METADATA_UNKNOWN_LABEL,
+		metadataConcerns,
+		metadataReachable,
 		operatorCordoned,
 		orkerCommand,
 		orkerLoad,
@@ -198,6 +202,15 @@
 								{/if}
 								{#if operatorCordoned(orker)}
 									<small class="ork-sub ork-note" data-testid="orker-reason-{orker.orkerId}">Cordoned since {fmtTimestamp(orker.cordonedAt)}: “{orker.cordonReason}”</small>
+								{/if}
+								{#if rowState !== 'unreachable'}
+									{@const concerns = metadataConcerns(orker)}
+									{#if concerns.length > 0}
+										{@const reachable = metadataReachable(orker)}
+										<span class="sr">, </span>
+										<span class="stamp {reachable ? 'bg-fail-tint text-fail mark-tri' : 'pill-wait mark-ring'} capitalize" data-testid="orker-metadata-stamp-{orker.orkerId}">{reachable ? METADATA_REACHABLE_LABEL : METADATA_UNKNOWN_LABEL}</span>
+										<small class="ork-sub ork-note" data-testid="orker-metadata-{orker.orkerId}">At boot, from a container on the default network: {concerns.join('; ')}.{#if reachable} A task here could ask for the host's role; close the endpoint on the host.{:else} Not read as safe.{/if}</small>
+									{/if}
 								{/if}
 								{#if orker.storeOutage}
 									<small class="ork-sub ork-note" data-testid="orker-outage-{orker.orkerId}">Cordoned itself since {fmtTimestamp(orker.storeOutage.since)}: {orker.storeOutage.reason}. Tasks wait for it without using an attempt. It resumes by itself once object storage answers{#if operatorCordoned(orker)}, and stays cordoned until an operator's cordon is cleared too{/if}.</small>

@@ -188,5 +188,6 @@ func orkerRow(presence engine.OrkerPresence, described *orkstackv1.DescribeOrker
 	row.Capacity = described.GetCapacity()
 	row.Reserved = described.GetReserved()
 	row.MaxRequest = described.GetMaxRequest()
+	row.MetadataProbes = described.GetMetadataProbes()
 	return row
 }

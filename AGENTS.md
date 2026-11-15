@@ -1377,10 +1377,14 @@ mechanics and the by-hand `go test -tags=integration` recipe.
 
 Stop only what you started, by its PID. Never stop a process by its name or a
 pattern: `/bin/ork$` and `/bin/orker$` match every worktree's dev stack and
-every running proof on the host. `make down` stops this worktree's dev stack
-(the process groups `make up` recorded, and any process whose executable is
-this worktree's `bin/ork` or `bin/orker`, identified by `/proc/<pid>/exe`,
-never by its name). `scripts/proof-stop.sh proof/<name>` stops a proof you
+every running proof on the host. `make down` stops this worktree's dev stack:
+the process groups `make up` recorded, each identified by its pid and the
+start time `/proc/<pid>/stat` holds, so a pid the kernel has given another
+process is never signalled, and any other process whose executable is this
+worktree's `bin/ork` or `bin/orker`, identified by `/proc/<pid>/exe`, never
+by its name. `ork` and `orker` make themselves undumpable, which hides
+`/proc/<pid>/exe` from their own user, so a process the scripts never
+recorded is not found. `scripts/proof-stop.sh proof/<name>` stops a proof you
 started, and `scripts/proof-clean.sh` lists and removes what a failed proof
 kept; docs/PROOFS.md §10 says how.
 

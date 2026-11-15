@@ -305,7 +305,11 @@ func (s *stackRepo) stopStandIns() {
 			s.t.Error(err)
 			continue
 		}
-		pid, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+		fields := strings.Fields(string(raw))
+		if len(fields) == 0 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
 		if err != nil {
 			s.t.Errorf("%s: %v", pidfile, err)
 			continue

@@ -174,6 +174,11 @@ case "$1" in
     esac ;;
   run)
     case "$*" in
+      *ork.task=metaprobe*)
+        if [ -e "$S/metarunfail" ]; then echo "docker: Error response from daemon: network default not found" >&2; exit 125; fi
+        if [ -e "$S/metarunsaid" ]; then printf '@@reach 0\n>secret-token-from-an-endpoint\033[31m\n'; exit 3; fi
+        if [ -e "$S/metaout" ]; then cat "$S/metaout"; else echo '@@done'; fi
+        exit 0 ;;
       *ork.task=sigprobe*)
         if [ -e "$S/sigrunslow" ]; then exec sleep 30; fi
         if [ -e "$S/sigruntimeout" ]; then

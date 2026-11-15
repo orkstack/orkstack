@@ -30,6 +30,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/temporalconn"
@@ -104,6 +105,11 @@ type config struct {
 	// maxPinsErr is a malformed or negative pin cap, refused at boot by the
 	// same rule as the three errors above.
 	maxPinsErr error
+	// metadataProbe is orker.metadata_probe (orker.MetadataProbeVar);
+	// metadataProbeErr is a value other than off, warn or refuse, refused at
+	// boot naming the setting.
+	metadataProbe    orker.MetadataProbeMode
+	metadataProbeErr error
 	// maxConcurrent is MaxConcurrentVar: how many tasks this Orker runs at
 	// once. It sizes the task worker's activity slot supplier and is what
 	// DescribeOrker reports, through orker.Options.MaxConcurrent.
@@ -163,6 +169,7 @@ func loadConfig() config {
 	taskLogExport, taskLogExportErr := envBool(TaskLogExportVar, false)
 	heartbeatInterval, heartbeatErr := envHeartbeatInterval()
 	maxPins, maxPinsErr := envMaxPins()
+	metadataProbe, metadataProbeErr := orker.ParseMetadataProbeMode(os.Getenv(orker.MetadataProbeVar))
 	maxConcurrent, maxConcurrentErr := envMaxConcurrent()
 	storeWatch, storeWatchErr := envStoreWatch()
 	stopGrace, stopGraceErr := orker.ParseStopGrace(env(orker.StopGraceVar, ""))
@@ -181,6 +188,8 @@ func loadConfig() config {
 		heartbeatErr:      heartbeatErr,
 		maxPins:           maxPins,
 		maxPinsErr:        maxPinsErr,
+		metadataProbe:     metadataProbe,
+		metadataProbeErr:  metadataProbeErr,
 		maxConcurrent:     maxConcurrent,
 		maxConcurrentErr:  maxConcurrentErr,
 		storeWatch:        storeWatch,
@@ -390,7 +399,14 @@ func applyConfigFile(
 	return doc, path, false, set, nil
 }
 
+// hardenErr is what main's procguard.Harden returned, for start to log once
+// a logger exists.
+var hardenErr error
+
 func main() {
+	// Undumpable first, before the configuration file, which may name secret
+	// files, is read (internal/procguard).
+	hardenErr = procguard.Harden()
 	os.Exit(start(os.Args[1:], os.LookupEnv, os.Setenv, os.Stdout, os.Stderr, run))
 }
 
@@ -431,6 +447,11 @@ func start(
 	// log is unchanged from before this package existed.
 	if cfgPath != "" {
 		logger.Info("configuration file applied", "path", cfgPath, "applied", len(cfgSet))
+	}
+	getenv := func(k string) string { v, _ := lookup(k); return v }
+	if err := procguard.Settle(getenv, logger, hardenErr); err != nil {
+		logger.Error("orker stopped", "error", err)
+		return 1
 	}
 	if err := serve(logger, tcfg, sinks, cfg); err != nil {
 		logger.Error("orker stopped", "error", err)
@@ -664,6 +685,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// symptom and not the typo.
 	if cfg.maxPinsErr != nil {
 		return cfg.maxPinsErr
+	}
+	if cfg.metadataProbeErr != nil {
+		return cfg.metadataProbeErr
 	}
 	// And for the task ceiling.
 	if cfg.maxConcurrentErr != nil {
@@ -1217,6 +1241,9 @@ func orkerOptions(
 		// is the SAME number workerOptions turns EnableSessionWorker on with, so
 		// an Orker cannot advertise a capacity its worker does not poll for.
 		MaxPins: cfg.maxPins,
+		// Whether Boot asks the host's instance metadata endpoints
+		// (docs/DEPLOY.md, "Keeping tasks away from the host's identity").
+		MetadataProbe: cfg.metadataProbe,
 		// The task ceiling: one number sizes the task worker's activity slot
 		// supplier (Activities.WorkerTuner) and is what DescribeOrker reports.
 		MaxConcurrent: cfg.maxConcurrent,

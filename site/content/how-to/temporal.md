@@ -19,7 +19,7 @@ temporal:
 | `temporal.address` | `localhost:7233` | The Temporal frontend. |
 | `temporal.namespace` | `ork-main` | The partition for this deployment. OrkStack registers it at boot. Nothing crosses it. |
 
-Set the same values on every `ork` and every `orker`. OrkStack has no TLS or credential setting for the connection, so a hosted Temporal Cloud is not supported yet.
+Set the same values on every `ork` and every `orker`. To reach the cluster over TLS, mutual TLS or with an API key, set `temporal.tls.*` and `temporal.api_key_file`.
 
 Run one OrkStack deployment per Temporal namespace. Two deployments in one namespace would share internal routing and fight over it.
 
@@ -48,7 +48,7 @@ OrkStack holds no state in its processes. Temporal holds live runs, and the buck
 
 ## Limits
 
-A hosted Temporal Cloud is not supported yet, because the connection has no TLS or credential setting. Run the cluster yourself, with its own backups and upgrades.
+A hosted Temporal Cloud is not supported yet: OrkStack registers its namespace and sets its retention itself, which a hosted cluster does on its own. Run the cluster yourself, with its own backups and upgrades.
 
 ## See also
 

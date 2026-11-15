@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -126,6 +127,9 @@ var Schema = []Var{
 
 	{Path: "deployment.name", Env: "ORK_DEPLOYMENT_NAME", Binaries: usesBoth, Kind: KindString, Default: task.DefaultDeploymentName},
 	{Path: "deployment.build_id", Env: "ORK_BUILD_ID", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty means versioning is off"},
+	// Both binaries make themselves undumpable at start unless this is set
+	// (internal/procguard).
+	{Path: procguard.SettingAllowDebug, Env: procguard.AllowDebugVar, Binaries: usesBoth, Kind: KindBool, Default: formatBool(procguard.DefaultAllowDebug)},
 
 	{Path: "pool.name", Env: "ORK_ORKER_POOL", Binaries: usesBoth, Kind: KindString, Default: task.DefaultPool},
 	{Path: "pool.queue", Env: "ORK_ORKER_QUEUE", Binaries: usesBoth, Kind: KindString, Default: DerivedDefault, DerivedNote: "derived from the pool"},
@@ -275,6 +279,9 @@ var Schema = []Var{
 	{Path: "orker.docker.cli", Env: "ORK_DOCKER_CLI", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultDockerCLI},
 	{Path: "orker.docker.pull_timeout", Env: "ORK_DOCKER_PULL_TIMEOUT", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultPullTimeout)},
 	{Path: "orker.docker.bind_probe_timeout", Env: "ORK_DOCKER_BIND_PROBE_TIMEOUT", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultBindProbeTimeout)},
+	// The boot probe of the host's instance metadata endpoints: off, warn or
+	// refuse (internal/orker/metadata_probe.go).
+	{Path: "orker.metadata_probe", Env: orker.MetadataProbeVar, Binaries: usesOrker, Kind: KindString, Default: string(orker.DefaultMetadataProbe)},
 
 	{Path: "telemetry.log_format", Env: "ORK_LOG_FORMAT", Binaries: usesBoth, Kind: KindString, Default: telemetry.LogFormatText},
 	{Path: "telemetry.log_level", Env: "ORK_LOG_LEVEL", Binaries: usesBoth, Kind: KindString, Default: telemetry.DefaultLogLevel},

@@ -32,6 +32,7 @@ var allReasonCodes = []string{
 	ReasonImageNotPermitted, ReasonImageNotSigned, ReasonImageSignatureInvalid,
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
+	ReasonMetadataEndpointReachable, ReasonMetadataProbeFailed,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake
@@ -102,6 +103,10 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"a slow daemon says nothing about the work root; the next boot may find it fast"},
 		{ReasonWorkdirNotBindable, CategoryInfrastructureError, false,
 			"the daemon refused the bind, in its own words: a host fact a restart does not change"},
+		{ReasonMetadataEndpointReachable, CategoryInfrastructureError, true,
+			"a boot refusal: no attempt carries it, and the next boot meets the host's firewall as it then is"},
+		{ReasonMetadataProbeFailed, CategoryInfrastructureError, true,
+			"a boot refusal: the probe could not tell, and the next boot may"},
 		{ReasonRunAsOrkerUnavailable, CategoryInfrastructureError, false,
 			"the boot probe found the host maps the Orker's uid elsewhere; the next attempt on this Orker meets the same host"},
 		{ReasonHeartbeatLost, CategoryInfrastructureError, true,

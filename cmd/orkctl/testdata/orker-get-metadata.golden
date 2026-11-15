@@ -1,0 +1,12 @@
+orker                              orker-exposed
+pool                               build
+build                              -
+state                              ready
+reason                             -
+since                              -
+tasks                              0
+pins                               -
+last seen                          2026-09-22T09:14:02Z
+metadata 169.254.169.254           answered (HTTP 200 to PUT /latest/api/token)
+metadata 168.63.129.16             no answer
+metadata metadata.google.internal  probe failed (a request of the probe's container never reported)

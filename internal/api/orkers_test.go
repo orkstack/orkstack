@@ -323,3 +323,30 @@ func TestCordonOrker_ReturnsThePostStateRow(t *testing.T) {
 		t.Fatalf("uncordon = %v, %v", resp, err)
 	}
 }
+
+// TestListOrkers_CarriesTheMetadataProbe: a row carries what its Orker's
+// boot metadata probe found, each address with its outcome, so orkctl and the
+// Orkers page can show it; an Orker that ran none has none.
+func TestListOrkers_CarriesTheMetadataProbe(t *testing.T) {
+	fleet := threeOrkerFleet()
+	probes := []*orkstackv1.MetadataProbe{
+		{Address: "169.254.169.254", Outcome: orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_ANSWERED, Detail: "HTTP 200 to GET /"},
+		{Address: "168.63.129.16", Outcome: orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_NO_ANSWER},
+	}
+	fleet.described["orker-g1"].MetadataProbes = probes
+	svc := api.NewService(api.Config{Fleet: fleet})
+	for _, row := range listOrkers(t, svc, &orkstackv1.ListOrkersRequest{}) {
+		got := row.GetMetadataProbes()
+		if row.GetOrkerId() != "orker-g1" {
+			if len(got) != 0 {
+				t.Errorf("%s carries probes %v; want none", row.GetOrkerId(), got)
+			}
+			continue
+		}
+		if len(got) != 2 || got[0].GetAddress() != "169.254.169.254" ||
+			got[0].GetOutcome() != orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_ANSWERED ||
+			got[1].GetOutcome() != orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_NO_ANSWER {
+			t.Fatalf("orker-g1 carries %v; want both probes as described", got)
+		}
+	}
+}

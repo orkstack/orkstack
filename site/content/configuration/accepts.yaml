@@ -12,6 +12,7 @@ pool.queue: "the raw name of an execution channel; set with `ORK_ORKER_POOL`, th
 activities: "a YAML `activities:` map from catalog name to registry reference"
 orker.id: "1–200 bytes of UTF-8, no whitespace or control characters"
 orker.docker.cli: "`docker` or `podman`"
+orker.metadata_probe: "`off`, `warn` or `refuse`"
 orker.resources.max_cpu: "cpu and memory quantities, such as `8` and `16Gi`"
 orker.resources.default_cpu: "cpu and memory quantities, such as `1` and `1Gi`"
 orker.capacity.cpu: "Kubernetes quantities, such as `\"16\"` and `\"64Gi\"`"

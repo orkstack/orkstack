@@ -112,7 +112,7 @@ An Orkflow says what runs. It does not hold control flow beyond its DAG, and it 
 
 | Limit | Value or rule | Setting that moves it | Source |
 |---|---|---|---|
-| Temporal Cloud | Not supported yet. The engine connects with the frontend address and the namespace only, and no TLS or credential setting exists for the connection. The authentication and TLS a hosted cluster needs are not built | `temporal.address`, `temporal.namespace` | [DEPLOY.md](./DEPLOY.md), "1. Configuration"; `internal/config/config.go` (the `temporal.*` entries); `internal/telemetry/boot.go` (`ClientOptions`) |
+| Temporal Cloud | Not supported yet. Both binaries can reach Temporal over TLS, mutual TLS or with an API key, but they register their namespace at boot and the engine sets the namespace's retention, which a hosted cluster administers through its own control plane and may refuse. A mode that leaves the namespace to the cluster is not built | `temporal.address`, `temporal.namespace`, `temporal.tls.*`, `temporal.api_key_file` | [DEPLOY.md](./DEPLOY.md), "Temporal over TLS"; `internal/task/namespace.go` (`EnsureNamespace`); `internal/archive/retention.go` |
 | Engine TLS | The API listener serves plain HTTP/1.1 and unencrypted HTTP/2, and the engine has no TLS setting. Terminate TLS in front of it | none | [ARCHITECTURE.md](../ARCHITECTURE.md), "API (`internal/api`, served by `cmd/ork`)"; `internal/api/server.go` (`NewServer`) |
 | Web UI | Served by `ork` at the root of its API port, on the API's origin, never by a process of its own. It cannot be served under a sub-path, because its pages name their assets by absolute paths (`/_app/…`). While replicas of two releases share one address, a page can miss an asset on the other release's replica and have to load again | `engine.ui.enabled` (`ORK_UI_ENABLED`), `engine.ui.dir` (`ORK_UI_DIR`) | [DEPLOY.md](./DEPLOY.md), "The web UI"; `internal/webui/webui.go` |
 | Caller authentication | Off by default (`asserted`): the deployment's gateway authenticates callers, and only the trigger invoke and the await callback check a bearer token. In `observe` and `enforce` mode OrkStack authenticates tokens from trusted issuers and break-glass assertions; sign-in for people in a browser, service-account assertions and client certificates are not accepted yet | `auth.mode` (`ORK_AUTH_MODE`) | [AUTHENTICATION.md](./AUTHENTICATION.md), "What the API accepts" |
@@ -149,7 +149,7 @@ The contract names these as non-goals, and says not to build them ([AGENTS.md](.
 
 These are deferred. Nothing on this list is promised by a date.
 
-- Temporal Cloud, with the authentication and TLS a hosted cluster needs.
+- Temporal Cloud: a mode that leaves the namespace and its retention to a cluster OrkStack does not administer.
 - Named, Orker-defined network profiles. Only `default` and `none` exist ([AGENTS.md](../AGENTS.md) §6).
 - Container runtimes other than Docker and Podman, such as containerd, Kubernetes Jobs, ECS Tasks or Nomad ([AGENTS.md](../AGENTS.md) §5; [ARCHITECTURE.md](../ARCHITECTURE.md), "Orker (`internal/orker`, `cmd/orker`)"). An Orker does run on Kubernetes, as a pod with a Docker engine of its own that runs its tasks' containers ([DEPLOY.md](./DEPLOY.md), "Orkers on Kubernetes").
 - A structured progress channel from a container. Plain stdout and stderr are the required interface, and the container implements no heartbeat ([AGENTS.md](../AGENTS.md) §3.3).

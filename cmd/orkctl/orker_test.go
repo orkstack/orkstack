@@ -553,3 +553,51 @@ func TestOrkerState_StoppingIsItsOwnState(t *testing.T) {
 		}
 	}
 }
+
+// metadataFleet is one Orker whose boot metadata probe found an endpoint that
+// answered and one it could not tell about, one that found nothing, and one
+// that ran no probe.
+func metadataFleet() *scriptedFleet {
+	probe := func(addr string, o orkstackv1.MetadataProbeOutcome, detail string) *orkstackv1.MetadataProbe {
+		return &orkstackv1.MetadataProbe{Address: addr, Outcome: o, Detail: detail}
+	}
+	return &scriptedFleet{
+		presence: []engine.OrkerPresence{
+			{Identity: "orker-exposed", LastSeen: fleetSeen},
+			{Identity: "orker-clean", LastSeen: fleetSeen},
+			{Identity: "orker-off", LastSeen: fleetSeen},
+		},
+		described: map[string]*orkstackv1.DescribeOrkerResult{
+			"orker-exposed": {OrkerId: "orker-exposed", Pool: "build", MetadataProbes: []*orkstackv1.MetadataProbe{
+				probe("169.254.169.254", orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_ANSWERED, "HTTP 200 to PUT /latest/api/token"),
+				probe("168.63.129.16", orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_NO_ANSWER, ""),
+				probe("metadata.google.internal", orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_PROBE_FAILED,
+					"a request of the probe's container never reported"),
+			}},
+			"orker-clean": {OrkerId: "orker-clean", Pool: "build", MetadataProbes: []*orkstackv1.MetadataProbe{
+				probe("169.254.169.254", orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_NO_ANSWER, ""),
+			}},
+			"orker-off": {OrkerId: "orker-off", Pool: "build"},
+		},
+		failures: map[string]error{},
+		script:   map[string][]*orkstackv1.DescribeOrkerResult{},
+	}
+}
+
+// TestOrkerList_NamesWhereATaskCouldReachTheHostsIdentity: the list names
+// every Orker whose probe found an endpoint that answered or could not tell,
+// with those addresses only; one that found nothing, or ran none, is not named.
+func TestOrkerList_NamesWhereATaskCouldReachTheHostsIdentity(t *testing.T) {
+	f := newOrkerFixture(t, metadataFleet())
+	requireGolden(t, "orker-list-metadata.golden", f.run("orker", "list").requireExit(t, exitOK).stdout)
+}
+
+// TestOrkerGet_ShowsEachMetadataAddress: get shows every address's outcome,
+// a clean one included.
+func TestOrkerGet_ShowsEachMetadataAddress(t *testing.T) {
+	f := newOrkerFixture(t, metadataFleet())
+	requireGolden(t, "orker-get-metadata.golden", f.run("orker", "get", "orker-exposed").requireExit(t, exitOK).stdout)
+	if off := f.run("orker", "get", "orker-off").requireExit(t, exitOK).stdout; strings.Contains(off, "metadata") {
+		t.Errorf("an Orker that ran no probe speaks of one:\n%s", off)
+	}
+}

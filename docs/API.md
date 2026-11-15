@@ -1229,10 +1229,10 @@ is alive by answering DescribeOrker (§6.5).
 | `identity_supported` | `bool` | identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `providers` | repeated [`ProviderInfo`](#providerinfo) | providers is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
 | `masks_secrets` | `bool` | masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
-| `metadata_reachable` | repeated `string` | metadata_reachable is set from identity (E60); unset until it lands (v0.4.0 proto batch). |
+| `metadata_reachable` | repeated `string` | metadata_reachable is every address in metadata_probes that answered. Empty when none did, or when no probe ran (orker.metadata_probe off). |
 | `run_context_supported` | `bool` | run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch). |
 | `each_lines_supported` | `bool` | each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch). |
-| `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is set from identity (E60); unset until it lands (v0.4.0 proto batch). |
+| `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is what the boot's metadata probe found, one entry per address it asked (docs/DEPLOY.md, "Keeping tasks away from the host's identity"). Empty when orker.metadata_probe is off, and from an Orker built before the probe existed. |
 | `store_scope` | [`StoreScope`](#storescope) | store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `store_scope_detail` | `string` | store_scope_detail is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `store_scope_confirmed_at` | `google.protobuf.Timestamp` | store_scope_confirmed_at is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
@@ -2437,10 +2437,15 @@ No fields.
 
 ### MetadataProbe
 
-MetadataProbe is identity (E60)'s; it is empty until identity (E60) lands (v0.4.0 proto
-batch).
+MetadataProbe is what an Orker's boot found for one instance metadata
+address, asked from a container on the default network as a task would ask
+it.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `address` | `string` | address is the endpoint asked, such as 169.254.169.254 or metadata.google.internal. |
+| `outcome` | [`MetadataProbeOutcome`](#metadataprobeoutcome) |  |
+| `detail` | `string` | detail is the request answered and its HTTP status ("HTTP 200 to PUT /latest/api/token"), or why the probe could not tell. It never holds what the endpoint sent beyond its status. |
 
 ### NamedArtifact
 
@@ -2570,6 +2575,7 @@ Orker is one execution process, observed live.
 | `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `service_host` | [`ServiceHost`](#servicehost) | service_host is set from E90; unset until it lands (v0.4.0 proto batch). |
+| `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is DescribeOrkerResult's: what this Orker's metadata probe found at boot, empty when none ran. |
 
 ### OrkerProfile
 
@@ -4529,6 +4535,18 @@ handed a state it cannot name — they map to UNSPECIFIED.
 | `LIVE_ATTEMPT_STATE_SCHEDULED` | 1 | SCHEDULED: Temporal holds the activity and no Orker has it — the pool has no free Orker, or a retry is waiting out its backoff (next_attempt_at is then set). |
 | `LIVE_ATTEMPT_STATE_STARTED` | 2 | STARTED: an Orker picked the attempt up. Only STARTED and CANCEL_REQUESTED can carry a heartbeat. |
 | `LIVE_ATTEMPT_STATE_CANCEL_REQUESTED` | 3 | CANCEL_REQUESTED: the run was cancelled and the Orker has been (or is about to be) told through a heartbeat response; the §3.3 SIGTERM → grace → SIGKILL sequence runs on the Orker while this state holds. |
+
+### MetadataProbeOutcome
+
+MetadataProbeOutcome is one address's outcome: three, never two. A probe
+that failed is never read as safe.
+
+| Value | Number | Description |
+|---|---|---|
+| `METADATA_PROBE_OUTCOME_UNSPECIFIED` | 0 |  |
+| `METADATA_PROBE_OUTCOME_ANSWERED` | 1 | An HTTP status line came back, whatever the status. |
+| `METADATA_PROBE_OUTCOME_NO_ANSWER` | 2 | Every request ran and none was answered. |
+| `METADATA_PROBE_OUTCOME_PROBE_FAILED` | 3 | The probe could not tell: its container did not run, the runtime refused it, or it ended before it reported every request. |
 
 ### NetworkMode
 

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -93,6 +94,10 @@ type Options struct {
 	// at submit rather than left waiting for a slot that does not exist
 	// (docs/DEPLOY.md "Pin hosting is a pool-wide setting").
 	MaxPins int32
+	// MetadataProbe is orker.metadata_probe: whether Boot asks the host's
+	// instance metadata endpoints from a container on the default network,
+	// and what an answer does (metadata_probe.go). Empty is off.
+	MetadataProbe MetadataProbeMode
 	// CapacityCPU and CapacityMemory are orker.capacity.cpu and
 	// orker.capacity.memory, in the Kubernetes spelling: what this Orker
 	// admits tasks within (capacity.go). Both empty — the default — declare
@@ -140,6 +145,10 @@ type Activities struct {
 	pool       string
 	maxConc    int32
 	maxPins    int32
+	// metadataProbe is orker.metadata_probe; metadata is what Boot's probe
+	// found, nil until it ran, which DescribeOrker reports.
+	metadataProbe MetadataProbeMode
+	metadata      atomic.Pointer[[]MetadataFinding]
 	// identityLock is held for the process's lifetime once Boot claims this
 	// Orker's identity, so no second live Orker can reap by the same label.
 	identityLock *os.File
@@ -235,15 +244,16 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			TraceContext:      opts.TraceContext,
 			Logger:            opts.Logger,
 		},
-		pool:        opts.Pool,
-		maxConc:     maxConc,
-		maxPins:     opts.MaxPins,
-		cordon:      NewCordon(),
-		pins:        newOpenPins(),
-		stops:       newStopRegistry(),
-		capacity:    capacity,
-		capacityErr: capacityErr,
-		taskQueue:   opts.TaskQueue,
+		pool:          opts.Pool,
+		maxConc:       maxConc,
+		maxPins:       opts.MaxPins,
+		metadataProbe: opts.MetadataProbe,
+		cordon:        NewCordon(),
+		pins:          newOpenPins(),
+		stops:         newStopRegistry(),
+		capacity:      capacity,
+		capacityErr:   capacityErr,
+		taskQueue:     opts.TaskQueue,
 	}
 }
 
@@ -478,6 +488,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 			GraceEndsAt: timestamppb.New(stop.GraceEndsAt),
 		}
 	}
+	a.describeMetadata(result)
 	result.Pins = a.describePins()
 	result.OpenPins = int32(len(result.Pins))
 	if a.dispatcher.Runtime != nil {
@@ -951,6 +962,24 @@ func (a *Activities) Boot(ctx context.Context) error {
 		}
 		a.dispatcher.logger().Warn("boot probe: running a task as the Orker's user does not work on this host; "+
 			"a task that sets runAsOrkerUser fails "+ReasonRunAsOrkerUnavailable, "error", err)
+	}
+	// The metadata probe, when asked: a container on the default network
+	// asks the host's instance metadata endpoints as a task would
+	// (metadata_probe.go). Its containers carry this Orker's identity, as the
+	// boot probe's do, so the reap below meets one it could not remove.
+	mode, err := ParseMetadataProbeMode(string(a.metadataProbe))
+	if err != nil {
+		return err
+	}
+	if mode != MetadataProbeOff {
+		findings := a.dispatcher.ProbeMetadata(ctx, root)
+		if ctx.Err() != nil {
+			return fmt.Errorf("boot interrupted during the metadata probe: %w", ctx.Err())
+		}
+		a.metadata.Store(&findings)
+		if err := a.dispatcher.metadataVerdict(mode, findings); err != nil {
+			return err
+		}
 	}
 	// Claim the identity before reaping by it.
 	//

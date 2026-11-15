@@ -610,7 +610,7 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 	}
 	table := newTable(out)
 	fmt.Fprintln(table, "ORKER\tPOOL\tBUILD\tSTATE\tTASKS\tPINS\tCAPACITY\tRESERVED\tLAST SEEN")
-	var cordoned, outages, stopping, unreachable []*orkstackv1.Orker
+	var cordoned, outages, stopping, unreachable, exposed []*orkstackv1.Orker
 	for _, row := range rows {
 		if row.GetUnavailableReason() != "" {
 			unreachable = append(unreachable, row)
@@ -623,6 +623,9 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 			}
 			if row.GetStopping() != nil {
 				stopping = append(stopping, row)
+			}
+			if len(metadataConcerns(row)) > 0 {
+				exposed = append(exposed, row)
 			}
 		}
 		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
@@ -655,6 +658,13 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 			itThey(len(stopping)), exitExits(len(stopping)))
 		for _, row := range stopping {
 			fmt.Fprintf(out, "  %s: %s%s\n", row.GetOrkerId(), orkerTasks(row), stoppingTimes(row.GetStopping()))
+		}
+	}
+	if len(exposed) > 0 {
+		fmt.Fprintf(out, "\n%s found at boot that a task could reach the host's instance metadata service, or could not tell:\n",
+			orkerCount(len(exposed)))
+		for _, row := range exposed {
+			fmt.Fprintf(out, "  %s: %s\n", row.GetOrkerId(), strings.Join(metadataConcerns(row), "; "))
 		}
 	}
 	if len(unreachable) > 0 {
@@ -729,6 +739,9 @@ func renderOrker(out io.Writer, row *orkstackv1.Orker) error {
 	fmt.Fprintf(table, "tasks\t%s\n", orkerTasks(row))
 	fmt.Fprintf(table, "pins\t%s\n", orkerPins(row))
 	fmt.Fprintf(table, "last seen\t%s\n", formatTime(row.GetLastSeen()))
+	for _, probe := range row.GetMetadataProbes() {
+		fmt.Fprintf(table, "metadata %s\t%s\n", probe.GetAddress(), metadataProbeText(probe))
+	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}
@@ -767,4 +780,38 @@ func pick(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// metadataProbeText is one address's outcome, with its detail: "answered
+// (HTTP 200 to GET /)", "no answer", "probe failed (why)".
+func metadataProbeText(p *orkstackv1.MetadataProbe) string {
+	var outcome string
+	switch p.GetOutcome() {
+	case orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_ANSWERED:
+		outcome = "answered"
+	case orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_NO_ANSWER:
+		outcome = "no answer"
+	case orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_PROBE_FAILED:
+		outcome = "probe failed"
+	default:
+		outcome = "unknown"
+	}
+	if p.GetDetail() == "" {
+		return outcome
+	}
+	return outcome + " (" + p.GetDetail() + ")"
+}
+
+// metadataConcerns are the addresses of an Orker's boot metadata probe that
+// answered or could not be told about, each with its outcome: what a reader
+// of the list must see. An address with no answer is none.
+func metadataConcerns(row *orkstackv1.Orker) []string {
+	var concerns []string
+	for _, p := range row.GetMetadataProbes() {
+		if p.GetOutcome() == orkstackv1.MetadataProbeOutcome_METADATA_PROBE_OUTCOME_NO_ANSWER {
+			continue
+		}
+		concerns = append(concerns, p.GetAddress()+" "+metadataProbeText(p))
+	}
+	return concerns
 }

@@ -77,7 +77,7 @@ The bounds OrkStack enforces on payloads, runs, tasks and containers. Each row n
 
 | Missing | What it means for you |
 |---|---|
-| Temporal Cloud | The engine takes an address and a namespace. It has no TLS or credential setting for the connection. |
+| Temporal Cloud | OrkStack registers its namespace and sets its retention itself, which a hosted cluster administers on its own. TLS and API keys are supported. |
 | Engine TLS | The API serves plain HTTP. Terminate TLS in front of it. |
 | Caller authentication | None in OrkStack. A gateway authenticates callers. |
 | Container runtimes other than Docker and Podman | containerd and the others are not supported. |

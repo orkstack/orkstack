@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
-import { OrkerSchema } from '../src/lib/gen/orkstack/v1/activity_pb';
-import { cordonCommand, operatorCordoned, orkerCommand, orkerLoad, orkerPins, orkerState, orkerStateLabel, orkerTasks, stoppingNote } from '../src/lib/orkers';
+import { MetadataProbeOutcome, OrkerSchema } from '../src/lib/gen/orkstack/v1/activity_pb';
+import { cordonCommand, metadataConcerns, metadataProbeText, metadataReachable, operatorCordoned, orkerCommand, orkerLoad, orkerPins, orkerState, orkerStateLabel, orkerTasks, stoppingNote } from '../src/lib/orkers';
 import { timestampFromDate } from '@bufbuild/protobuf/wkt';
 
 test('an Orker that could not be asked is unreachable and has no numbers, never zero', () => {
@@ -87,4 +87,31 @@ test('a stopping Orker says when it began and when its grace ends', () => {
 	expect(stoppingNote(bare, iso)).toBe(
 		'Stopping: it takes no new work and finishes what it runs, then exits. A task it hands back runs again on another Orker of its release.'
 	);
+});
+
+test('the metadata probe names what answered or could not tell, as orkctl orker list does', () => {
+	const o = create(OrkerSchema, {
+		orkerId: 'o',
+		metadataProbes: [
+			{ address: '169.254.169.254', outcome: MetadataProbeOutcome.ANSWERED, detail: 'HTTP 200 to PUT /latest/api/token' },
+			{ address: '168.63.129.16', outcome: MetadataProbeOutcome.NO_ANSWER },
+			{ address: 'metadata.google.internal', outcome: MetadataProbeOutcome.PROBE_FAILED, detail: 'a request of the probe\'s container never reported' }
+		]
+	});
+	expect(metadataConcerns(o)).toEqual([
+		'169.254.169.254 answered (HTTP 200 to PUT /latest/api/token)',
+		"metadata.google.internal probe failed (a request of the probe's container never reported)"
+	]);
+	expect(metadataReachable(o)).toBe(true);
+	expect(metadataProbeText(o.metadataProbes[1])).toBe('no answer');
+	const unchecked = create(OrkerSchema, { orkerId: 'u', metadataProbes: [{ address: 'a', outcome: MetadataProbeOutcome.PROBE_FAILED }] });
+	expect(metadataReachable(unchecked)).toBe(false);
+	expect(metadataConcerns(unchecked)).toEqual(['a probe failed']);
+	const clean = create(OrkerSchema, { orkerId: 'c', metadataProbes: [{ address: 'a', outcome: MetadataProbeOutcome.NO_ANSWER }] });
+	expect(metadataConcerns(clean)).toEqual([]);
+	expect(metadataConcerns(create(OrkerSchema, { orkerId: 'off' }))).toEqual([]);
+	// An outcome this build does not know is a concern, never clean.
+	const unknown = create(OrkerSchema, { orkerId: 'n', metadataProbes: [{ address: 'a', outcome: MetadataProbeOutcome.UNSPECIFIED }] });
+	expect(metadataConcerns(unknown)).toEqual(['a unknown']);
+	expect(metadataReachable(unknown)).toBe(false);
 });

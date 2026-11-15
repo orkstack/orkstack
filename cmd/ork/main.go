@@ -39,6 +39,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/healthcheck"
+	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/temporalconn"
@@ -634,6 +635,10 @@ func applyConfigFile(
 }
 
 func main() {
+	// Undumpable first, before the configuration file, which may name secret
+	// files, is read (internal/procguard). process.allow_debug undoes it once
+	// the configuration is applied.
+	hardenErr := procguard.Harden()
 	// --defaults needs no config file, no environment, and nothing else
 	// this func does below: print config.RenderDefaults() and stop, before
 	// applyConfigFile's own cfgfile.ParseArgs call (which also sees this
@@ -714,6 +719,10 @@ func main() {
 	// log is unchanged from before this package existed.
 	if cfgPath != "" {
 		logger.Info("configuration file applied", "path", cfgPath, "applied", len(cfgSet))
+	}
+	if err := procguard.Settle(os.Getenv, logger, hardenErr); err != nil {
+		logger.Error("ork stopped", "error", err)
+		os.Exit(1)
 	}
 	if modeArgs.requested {
 		if err := runSetModeRecord(modeArgs, logger); err != nil {

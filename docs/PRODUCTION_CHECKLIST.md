@@ -6,7 +6,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 
 ## Temporal
 
-- [ ] Operate the Temporal cluster yourself. OrkStack connects with `temporal.address` and `temporal.namespace` and has no TLS or credential setting for that connection, so a hosted Temporal cluster is not supported yet ([LIMITATIONS.md](./LIMITATIONS.md), "Engine, cluster and gateway").
+- [ ] Operate the Temporal cluster yourself. OrkStack can reach it over TLS, mutual TLS or with an API key ([DEPLOY.md](./DEPLOY.md), "Temporal over TLS"), but it registers its namespace and sets its retention itself, which a hosted cluster administers on its own, so a hosted Temporal cluster is not supported yet ([LIMITATIONS.md](./LIMITATIONS.md), "Engine, cluster and gateway").
 - [ ] Give each environment its own Temporal namespace. `ORK_TEMPORAL_NAMESPACE` is the hard partition, and nothing crosses it ([DEPLOY.md](./DEPLOY.md), "5. Ops notes").
 - [ ] Run one OrkStack deployment per Temporal namespace. The engine's own channels are fixed, so two deployments in one namespace would compete for them ([DEPLOY.md](./DEPLOY.md), "5. Ops notes").
 - [ ] Grant the engine's identity the permissions the release commands need, if the cluster sits behind an authorizer. Without them those commands answer `permission_denied` ([DEPLOY.md](./DEPLOY.md), "Underneath: the cluster commands").
@@ -19,12 +19,17 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Use one S3-compatible bucket for every `ork` and every `orker`. Set `ORK_ARTIFACT_BACKEND=s3` and the same `ORK_S3_*` values on both binaries, because the `local` default is one directory per process ([DEPLOY.md](./DEPLOY.md), "The bucket stops being optional at the second replica").
 - [ ] Use a store that implements conditional `PutObject` and conditional `DeleteObject`. Each Orker probes both at boot and refuses to start with `COMMIT_STORE_NOT_CONDITIONAL` on a store that cannot, and each engine refuses to start on one that answers a conditional delete wrongly ([DEPLOY.md](./DEPLOY.md), "The bucket stops being optional at the second replica").
 - [ ] Choose the object store's credentials: both `ORK_S3_ACCESS_KEY` and `ORK_S3_SECRET_KEY`, or neither to use the default credential chain, such as an instance or pod role, kept out of reach of tasks. No key has a default, and a boot with nothing to sign with stops. Any `storage.s3.*` secret can be read from a file by a mapping with a single `file:` key naming its path ([DEPLOY.md](./DEPLOY.md), "The object store's credentials").
+- [ ] Close the host's instance metadata service to containers, and set `orker.metadata_probe: refuse` on every Orker of a cloud host, so an Orker whose tasks could reach the host's role does not start ([DEPLOY.md](./DEPLOY.md), "Keeping tasks away from the host's identity").
 - [ ] Set `ORK_S3_PATH_STYLE` for your store. It defaults to `true`, which the development store needs, and AWS S3 does not ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 - [ ] Confirm that the store supports `DeleteObjects`. Run cleanup empties each run's prefixes with it ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").
 - [ ] Never expire anything under `metadata/snapshots/`, `metadata/commits/`, `metadata/runs/`, `metadata/index/`, or the definition, registry, settings, trigger and webhook prefixes. Live reads and the archive depend on them ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").
 - [ ] Add expiry rules only to the prefixes the lifecycle table lists as safe to expire: task logs, attempt records, artifact bytes, memos (no shorter than `ORK_CACHE_MAX_TTL`) and webhook deliveries. Each expiry must be longer than any run lasts, because expired artifact bytes fail the input staging of a running run's dependants ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").
 - [ ] Add one bucket-wide rule that aborts incomplete multipart uploads. A killed Orker leaves its parts in the bucket, invisible and still billed. SeaweedFS removes them itself ([DEPLOY.md](./DEPLOY.md), "Retention cleanup and bucket lifecycle rules").
 - [ ] Decide how long the audit trail stays. Nothing reclaims `metadata/audit/`, and OrkStack has no setting for it, so a lifecycle rule on that prefix is your retention decision ([DEPLOY.md](./DEPLOY.md), "Attributing control-plane writes").
+
+## Hosts
+
+- [ ] Leave `process.allow_debug` unset on every `ork` and `orker`: both make themselves undumpable on Linux, so their own user cannot read their keys through a core dump or a debugger. Set `kernel.yama.ptrace_scope` to `1` or more and keep swap off or encrypted where root on the host is not trusted with them ([DEPLOY.md](./DEPLOY.md), "The processes themselves").
 
 ## Replicas and pools
 

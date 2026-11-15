@@ -802,7 +802,8 @@ message DescribeOrkerResult {
   // masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch).
   bool masks_secrets = 35;
 
-  // metadata_reachable is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+  // metadata_reachable is every address in metadata_probes that answered.
+  // Empty when none did, or when no probe ran (orker.metadata_probe off).
   repeated string metadata_reachable = 36;
 
   // run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch).
@@ -811,7 +812,10 @@ message DescribeOrkerResult {
   // each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch).
   bool each_lines_supported = 32;
 
-  // metadata_probes is set from identity (E60); unset until it lands (v0.4.0 proto batch).
+  // metadata_probes is what the boot's metadata probe found, one entry per
+  // address it asked (docs/DEPLOY.md, "Keeping tasks away from the host's
+  // identity"). Empty when orker.metadata_probe is off, and from an Orker
+  // built before the probe existed.
   repeated MetadataProbe metadata_probes = 37;
 
   // store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
@@ -938,6 +942,10 @@ message Orker {
 
   // service_host is set from E90; unset until it lands (v0.4.0 proto batch).
   ServiceHost service_host = 20;
+
+  // metadata_probes is DescribeOrkerResult's: what this Orker's metadata
+  // probe found at boot, empty when none ran.
+  repeated MetadataProbe metadata_probes = 21;
 }
 
 // EachArtifactSource is E89's; it is empty until E89 lands (v0.4.0 proto
@@ -952,9 +960,32 @@ message EachLines {}
 // batch).
 message IdentityContext {}
 
-// MetadataProbe is identity (E60)'s; it is empty until identity (E60) lands (v0.4.0 proto
-// batch).
-message MetadataProbe {}
+// MetadataProbe is what an Orker's boot found for one instance metadata
+// address, asked from a container on the default network as a task would ask
+// it.
+message MetadataProbe {
+  // address is the endpoint asked, such as 169.254.169.254 or
+  // metadata.google.internal.
+  string address = 1;
+  MetadataProbeOutcome outcome = 2;
+  // detail is the request answered and its HTTP status ("HTTP 200 to PUT
+  // /latest/api/token"), or why the probe could not tell. It never holds
+  // what the endpoint sent beyond its status.
+  string detail = 3;
+}
+
+// MetadataProbeOutcome is one address's outcome: three, never two. A probe
+// that failed is never read as safe.
+enum MetadataProbeOutcome {
+  METADATA_PROBE_OUTCOME_UNSPECIFIED = 0;
+  // An HTTP status line came back, whatever the status.
+  METADATA_PROBE_OUTCOME_ANSWERED = 1;
+  // Every request ran and none was answered.
+  METADATA_PROBE_OUTCOME_NO_ANSWER = 2;
+  // The probe could not tell: its container did not run, the runtime
+  // refused it, or it ended before it reported every request.
+  METADATA_PROBE_OUTCOME_PROBE_FAILED = 3;
+}
 
 // OrkerProfile is E91's; it is empty until E91 lands (v0.4.0 proto
 // batch).

@@ -91,7 +91,10 @@ rm -rf -- "${state[@]}"
 
 say "== verifying =="
 # bin/ is gone by now, so a survivor's /proc/<pid>/exe reads
-# "<path> (deleted)"; it is compared to the path all the same.
+# "<path> (deleted)"; it is compared to the path all the same. An undumpable
+# ork or orker hides its exe from its own user: stack.sh down above stopped
+# every one make up recorded, by pid and start time, and one it never recorded
+# is not found here either.
 stray=""
 for p in /proc/[0-9]*; do
 	exe="$(readlink "$p/exe" 2>/dev/null)" || continue

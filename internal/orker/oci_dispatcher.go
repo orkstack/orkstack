@@ -151,6 +151,9 @@ type OCIDispatcher struct {
 	// zero is DefaultCancellationGrace, the grace a task that sets none gets.
 	// Tests shorten it.
 	signalProbeGrace time.Duration
+	// metadataTargets are the addresses the metadata probe asks; nil is
+	// defaultMetadataTargets. Tests point it at a stand-in.
+	metadataTargets []metadataTarget
 	// heartbeaters builds an attempt's heartbeat loop. Nil means NewHeartbeater;
 	// a test plays the cluster through it.
 	heartbeaters func(context.Context) *Heartbeater

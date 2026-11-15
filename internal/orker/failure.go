@@ -231,6 +231,8 @@ var reasonCategory = map[string]string{
 	ReasonBindProbeImageUnavailable: CategoryInfrastructureError,
 	ReasonBindProbeTimedOut:         CategoryInfrastructureError,
 	ReasonRuntimePostureRefused:     CategoryInfrastructureError,
+	ReasonMetadataEndpointReachable: CategoryInfrastructureError,
+	ReasonMetadataProbeFailed:       CategoryInfrastructureError,
 }
 
 // retryableReason overrides the category's own default for the five codes
