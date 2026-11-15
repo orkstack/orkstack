@@ -786,6 +786,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		check := func(ctx context.Context) error { return artifacts.CheckCommitStore(ctx, commitStore) }
 		go activities.NewStoreWatch(check, cfg.storeWatch, storeOutageObserver(tcfg, sinks, activities, logger)).Run(ctx)
 	}
+	// The load gauges (ork.orker.running_tasks, open_pins, max_concurrent,
+	// cordoned): a process-level signal, so the default sink's, and only when
+	// metrics are exported at all.
+	if tcfg.MetricsEnabled() {
+		telemetry.WatchOrkerLoad(sinks.Default(), activities.Dispatcher().OrkerID, cfg.pool, activities.Load, logger)
+	}
 	taskOptions, err := taskWorkerOptions(cfg, activities)
 	if err != nil {
 		return err

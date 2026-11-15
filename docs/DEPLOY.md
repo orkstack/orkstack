@@ -3425,6 +3425,26 @@ own release on every pool that release has served, whether or not any of its
 Orkers polls now (§3, "Rolling a release forward", step 5). Nothing is lost
 while it waits.
 
+#### The Orker's load, as metrics
+
+With metrics on, every Orker exports what `orkctl orker list` shows of its
+load, read when the meter collects. Each series carries `ork.orker_id` and
+`ork.pool`; sum them by pool (`sum by (ork_pool)`) for a pool's figure:
+
+| Metric | Labels | What it reads |
+|---|---|---|
+| `ork.orker.running_tasks` | `ork.orker_id`, `ork.pool` | the tasks it runs now, `TASKS` in `orkctl orker list` |
+| `ork.orker.open_pins` | `ork.orker_id`, `ork.pool` | the pins it holds open, `PINS` in `orkctl orker list` |
+| `ork.orker.max_concurrent` | `ork.orker_id`, `ork.pool` | how many tasks it runs at once (`orker.max_concurrent`) |
+| `ork.orker.cordoned` | `ork.orker_id`, `ork.pool`, `ork.cordon.cause` | 1 while that cause of a cordon holds, else 0: one series each for `operator`, `store_outage` and `stopping` |
+
+In Prometheus they are `ork_orker_running_tasks`, `ork_orker_open_pins`,
+`ork_orker_max_concurrent` and `ork_orker_cordoned{ork_cordon_cause=...}`. A
+stopping Orker reads `stopping` 1 until it exits. Scraped from `/metrics`, its
+series then go stale and disappear, so alert on a missing series with
+`absent()`, never by reading it as 0. Pushed over OTLP, the backend may keep
+the last value, `stopping` 1 included, until it expires the series.
+
 #### Stop timeouts
 
 A process manager kills an Orker some time after its first signal. Killed
@@ -5069,7 +5089,9 @@ workflow task latency, poll counts, failures — arrive via
 along on the same `/metrics`. An Orker that declares a capacity adds
 `ork.orker.capacity.*` and `ork.orker.admission.*` ("Declaring an Orker's
 capacity", above). Every Orker adds `ork.orker.store_outage.*` ("When object
-storage goes away", above). Both binaries add `ork.tls.reload`,
+storage goes away", above) and its load gauges, `ork.orker.running_tasks`,
+`open_pins`, `max_concurrent` and `cordoned` ("The Orker's load, as
+metrics", above). Both binaries add `ork.tls.reload`,
 `ork.tls.cert.not_after` and `ork.temporal.auth_failures` when Temporal is
 dialed over TLS ("Temporal over TLS", §5).
 

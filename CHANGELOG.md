@@ -30,6 +30,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - With authentication on, who started or canceled a run is marked verified, not asserted, on the run page, in the runs list and by `orkctl run get` and `run list` ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
 - `orkctl admin audit` marks each principal `(verified)` or `(asserted)`, so a caller OrkStack verified is no longer shown as asserted ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
 - The archive sweep now says when it is blind: alert on `ork.archive.sweep.list_failed` and a stale `ork.archive.sweep.last_success`; an undated expiry reads 0 ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
+- Every Orker now exports its load: `ork.orker.running_tasks`, `open_pins`, `max_concurrent`, and `ork.orker.cordoned` by cause, each labelled with its pool ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-orkers-load-as-metrics)).
 
 ### Changed
 

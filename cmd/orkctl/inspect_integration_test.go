@@ -468,6 +468,25 @@ tasks:
 	if got := metricValue(gauges, "ork_orker_capacity_memory_bytes", orkerID); got != "" {
 		t.Fatalf("memory capacity = %q, want no sample: the capacity leaves memory unbounded", got)
 	}
+	// The load gauges (docs/DEPLOY.md "Metrics"), by these Prometheus names
+	// with ork_pool, on the same scrape: the hold task running, no pin, the
+	// slot count, and each cordon cause at 0 while none holds.
+	for name, want := range map[string]string{
+		"ork_orker_running_tasks":  "1",
+		"ork_orker_open_pins":      "0",
+		"ork_orker_max_concurrent": "", // any value: it is the Orker's default
+	} {
+		got := metricValue(gauges, name, orkerID, `ork_pool="`)
+		if got == "" || (want != "" && got != want) {
+			t.Fatalf("%s = %q, want %q with ork_pool", name, got, want)
+		}
+		t.Logf("C2 %s = %s", name, got)
+	}
+	for _, cause := range []string{"operator", "store_outage", "stopping"} {
+		if got := metricValue(gauges, "ork_orker_cordoned", orkerID, `ork_cordon_cause="`+cause+`"`); got != "0" {
+			t.Fatalf("ork_orker_cordoned{ork_cordon_cause=%q} = %q, want 0", cause, got)
+		}
+	}
 
 	s.mustCLI(0, "run", "cancel", holdRun)
 	if final := awaitTerminalOnB(ctx, t, s.replicas[0], waitRun); final.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
