@@ -32,6 +32,10 @@ type blobs interface {
 	// missing object is errBlobNotFound. version is the token replace names:
 	// the S3 ETag, or the SHA-256 of the local file's bytes.
 	get(ctx context.Context, key string, max int64) (body []byte, version string, err error)
+	// getStored reads the object at key as get does and answers when the
+	// store wrote it: S3's Last-Modified, or the local file's modification
+	// time. It is the instant an identity record is held to.
+	getStored(ctx context.Context, key string, max int64) (body []byte, storedAt time.Time, err error)
 	// getRange reads length bytes at offset and reports the object's total
 	// size. A missing object is errBlobNotFound; a range past its end is
 	// errBlobRange.

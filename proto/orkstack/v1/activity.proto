@@ -653,6 +653,82 @@ message ActivityCommit {
   CacheResult cache = 19;
 }
 
+// ---------------------------------------------------------------- the identity records
+
+// CommitRecording is who recorded a result and when: the build of the engine
+// or Orker that wrote it and the time it was written. A record the engine
+// writes names no pool and no Orker.
+message CommitRecording {
+  string pool = 1;
+  string orker_id = 2;
+  string admission_sha256 = 3;
+  string engine_build = 4;
+  google.protobuf.Timestamp time = 5;
+}
+
+// RecordedValuesKind is which result a RecordedValues records.
+enum RecordedValuesKind {
+  RECORDED_VALUES_KIND_UNSPECIFIED = 0;
+  // RESOLUTION: an awaited task's resolution, completed or rejected.
+  RECORDED_VALUES_KIND_RESOLUTION = 1;
+  // COMPOSED: a composed task's values, from its child run's outputs.
+  RECORDED_VALUES_KIND_COMPOSED = 2;
+  // OUTPUTS: a run's own outputs, and the records they were taken from.
+  RECORDED_VALUES_KIND_OUTPUTS = 3;
+}
+
+// RecordedSource names one task's record a record follows or was taken from.
+message RecordedSource {
+  string task_id = 1;
+  // record_sha256 is the SHA-256 of that record's stored bytes.
+  string record_sha256 = 2;
+  // absent says the task had nothing on record (sources only).
+  bool absent = 3;
+  // result_sha256 is the digest of that task's result, the one digest two
+  // records of one result are compared by.
+  string result_sha256 = 4;
+}
+
+// RecordedValues is what the engine records as a task's or a run's result
+// when no Orker commits it: an awaited task's resolution, a composed task's
+// values, a run's outputs (docs/TASK_IDENTITY.md). It is stored once,
+// create-only, as protojson, at most 64 KiB, under the run's attested
+// prefix. It holds no value inline: values is a reference.
+message RecordedValues {
+  // schema_version is 1. A reader that does not know the value answers
+  // unsupported rather than guessing; 0 is no format.
+  int32 schema_version = 1;
+  RecordedValuesKind kind = 2;
+  string namespace = 3;
+  string run_id = 4;
+  // task_id is unset for OUTPUTS, a run's own.
+  string task_id = 5;
+  // resume_scope is the root's resume scope the record was written in.
+  uint64 resume_scope = 6;
+  string admission_sha256 = 7;
+  string definition_digest = 8;
+  // values is unset for a rejection.
+  ArtifactRef values = 9;
+  // rejected and detail_sha256: RESOLUTION only. detail_sha256 names the
+  // resolution's detail, a ResolutionDetail stored by its own digest.
+  bool rejected = 10;
+  string detail_sha256 = 11;
+  // child_run_id, child_admission_sha256, child_outputs_sha256: COMPOSED
+  // only, the child run whose outputs the values are.
+  string child_run_id = 12;
+  string child_admission_sha256 = 13;
+  string child_outputs_sha256 = 14;
+  // sources: OUTPUTS only, the records the run's outputs were taken from.
+  repeated RecordedSource sources = 15;
+  CommitRecording recorded = 16;
+  // follows: RESOLUTION and COMPOSED, the records of the tasks the task
+  // needed, as they were when it was recorded.
+  repeated RecordedSource follows = 17;
+  // input_binding binds the record to its run's start input
+  // (identity.InputBinding); a record without one settles nothing.
+  bytes input_binding = 18;
+}
+
 // ---------------------------------------------------------------- failure transport
 
 // ActivityFailureDetail is what a FAILED activity returns. A failure produces

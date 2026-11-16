@@ -1633,6 +1633,7 @@ internal/automation/   Automation documents: parse, plan, export
 internal/authn/        Who a request is from: trusted issuers, service accounts, client certificates, sign-in
 internal/jwt/          The rules OrkStack holds a JWT to, on top of go-jose: algorithms, headers, claims, request binding; signing for the issuer
 internal/authz/        The one decision whether an Orkflow may compose another namespace's (shared_with)
+internal/identity/     Task identity: the issuer and its signing keys, what engines sign for each other, and the rules of the identity records
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
 internal/testsupport/  Test-only helpers shared by suites

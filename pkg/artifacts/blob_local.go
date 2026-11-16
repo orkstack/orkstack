@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 // localBlobs is a local directory laid out exactly as the bucket's keys, as
@@ -114,6 +115,33 @@ func (b *localBlobs) get(ctx context.Context, key string, max int64) ([]byte, st
 		return nil, "", err
 	}
 	return body, localVersion(body), nil
+}
+
+func (b *localBlobs) getStored(ctx context.Context, key string, max int64) ([]byte, time.Time, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, time.Time{}, err
+	}
+	file, err := b.root.Open(key)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, time.Time{}, errBlobNotFound
+		}
+		return nil, time.Time{}, err
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	var reader io.Reader = file
+	if max > 0 {
+		reader = io.LimitReader(file, max)
+	}
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	return body, info.ModTime().UTC(), nil
 }
 
 // localVersion is the version replace compares: the bytes' SHA-256, which

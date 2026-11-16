@@ -1533,6 +1533,19 @@ What it cannot tell:
 - Each engine reports on its own, so a deployment with three engines logs each
   unscoped Orker three times a minute.
 
+### Reading identity records
+
+The engine reads the records it keeps of awaited tasks, composed tasks and
+a run's outputs through one semaphore per replica: a capacity of the
+process, never a setting, held in memory and lost with it. It has 256 slots
+in three classes: a run's own reads and writes first, a resolution's door
+second, and a listing of recorded results last, capped at 16 of the 256. A
+run's requests never take the last 16, so a door is answered however many
+run reads wait. A
+request that finds no slot within its attempt's time, less half a second,
+is answered "busy" and retried like any read the store did not answer. It
+decides nothing by itself.
+
 ### Live task logs: where they are, what bounds them, how long they stay
 
 A task's output is bytes, so it travels as stored objects and never through a

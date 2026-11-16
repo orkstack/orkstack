@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -78,6 +79,34 @@ func (b *s3Blobs) get(ctx context.Context, key string, max int64) ([]byte, strin
 		return nil, "", fmt.Errorf("close body: %w", closeErr)
 	}
 	return body, aws.ToString(object.ETag), nil
+}
+
+func (b *s3Blobs) getStored(ctx context.Context, key string, max int64) ([]byte, time.Time, error) {
+	object, err := b.client.GetObject(ctx, &s3.GetObjectInput{Bucket: aws.String(b.bucket), Key: aws.String(key)})
+	if err != nil {
+		if isNotFound(err) {
+			return nil, time.Time{}, errBlobNotFound
+		}
+		return nil, time.Time{}, err
+	}
+	var reader io.Reader = object.Body
+	if max > 0 {
+		reader = io.LimitReader(object.Body, max)
+	}
+	body, readErr := io.ReadAll(reader)
+	closeErr := object.Body.Close()
+	if readErr != nil {
+		return nil, time.Time{}, fmt.Errorf("read body: %w", readErr)
+	}
+	if closeErr != nil {
+		return nil, time.Time{}, fmt.Errorf("close body: %w", closeErr)
+	}
+	if object.LastModified == nil || object.LastModified.IsZero() {
+		// An instant the store did not give is not one a record can be
+		// held to.
+		return nil, time.Time{}, fmt.Errorf("the store answered %s with no Last-Modified", key)
+	}
+	return body, object.LastModified.UTC(), nil
 }
 
 func (b *s3Blobs) getRange(ctx context.Context, key string, offset, length int64) ([]byte, int64, error) {

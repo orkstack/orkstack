@@ -374,6 +374,25 @@ enum AwaitResolvedVia {
   AWAIT_RESOLVED_VIA_CALLBACK = 2;
 }
 
+// ResolutionDetail is who resolved an await, how and why, stored apart from
+// its RecordedValues and named there by the SHA-256 of its bytes. Only
+// engines read it. A callback names no principal.
+message ResolutionDetail {
+  string namespace = 1;
+  string run_id = 2;
+  string task_id = 3;
+  uint64 resume_scope = 4;
+  AwaitResolvedVia via = 5;
+  string principal = 6;
+  bool principal_verified = 7;
+  string auth_method = 8;
+  string principal_issuer = 9;
+  // reason is at most 1024 bytes.
+  string reason = 10;
+  // schema_version is 1; one this build does not know is unsupported.
+  uint32 schema_version = 11;
+}
+
 // TaskAwait is an awaited task's own state on the run snapshot. It is SET for
 // every task whose definition declares `await:` — from the run's first
 // snapshot, while the task is still PENDING — and UNSET for every other
