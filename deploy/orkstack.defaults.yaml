@@ -148,6 +148,7 @@ orker:
     pull_timeout: 5m  # orker
     bind_probe_timeout: 2m  # orker
   metadata_probe: off  # orker
+  # profiles: {}  # orker; no profiles
   values:
     refuse_secrets: true  # orker
   refuse_readable_engine_keys: false  # orker
@@ -155,7 +156,8 @@ orker:
     url: ""  # orker; no engine: no identities
     ca_file: ""  # orker; the system's roots
     auth:
-      method: ""  # orker; token_file or mtls
+      method: ""  # orker; token_file, service_account or mtls
+      service_account: ""  # orker
       token_file: ""  # orker
       cert_file: ""  # orker
       key_file: ""  # orker
@@ -202,6 +204,11 @@ auth:
   admins: []  # ork
   # orkers: {}  # ork; no Orker bound by configuration
   break_glass_key_file: ""  # ork; break-glass off
+  signin:
+    key_files: []  # ork; no sign-in
+    max_age: 12h  # ork
+    idle_timeout: 1h  # ork
+    revalidate_interval: 10m  # ork
   clock_skew: 1m  # ork
   policy_refresh: 10s  # ork
   policy_stale_limit: 5m  # ork

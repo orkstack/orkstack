@@ -437,7 +437,9 @@ in object storage, changed by compare-and-swap; each replica decides from a
 copy at most `auth.policy_refresh` old, serves it stale for at most
 `auth.policy_stale_limit` when the store cannot be read, and then fails
 closed. An engine does not start in a lower mode than the deployment runs; the
-mode is lowered by a command, never by one replica's configuration.
+mode is lowered by a command, never by one replica's configuration. A
+service account stores public keys only, and an assertion it signs
+authenticates one request and no other.
 
 A decision the API made that an engine hands another engine through the
 cluster, and the record of a run the engine ended, are signed with the

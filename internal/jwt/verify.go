@@ -86,6 +86,39 @@ func VerifyIDToken(ctx context.Context, token string, p Policy, keys KeySource, 
 	if clientID == "" || nonce == "" {
 		return nil, errors.New("an ID token is verified against a client id and a nonce")
 	}
+	c, err := verifyIDToken(ctx, token, p, keys, now, clientID)
+	if err != nil {
+		return nil, err
+	}
+	got, ok := c.String("nonce")
+	if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(nonce)) != 1 {
+		return nil, refuse(ReasonClaims, "nonce does not match the sign-in")
+	}
+	return c, nil
+}
+
+// VerifyRefreshedIDToken checks an ID token a refresh returned (OpenID
+// Connect Core 1.0 §12.2): as VerifyIDToken, except that the issuer need
+// not repeat the nonce, which must then match only where present, and sub
+// must be the sign-in's own.
+func VerifyRefreshedIDToken(ctx context.Context, token string, p Policy, keys KeySource, now time.Time, clientID, nonce, subject string) (*Claims, error) {
+	if clientID == "" || subject == "" {
+		return nil, errors.New("a refreshed ID token is verified against a client id and a subject")
+	}
+	c, err := verifyIDToken(ctx, token, p, keys, now, clientID)
+	if err != nil {
+		return nil, err
+	}
+	if got, ok := c.String("nonce"); ok && subtle.ConstantTimeCompare([]byte(got), []byte(nonce)) != 1 {
+		return nil, refuse(ReasonClaims, "nonce does not match the sign-in")
+	}
+	if c.Subject != subject {
+		return nil, refuse(ReasonClaims, "sub is not the sign-in's")
+	}
+	return c, nil
+}
+
+func verifyIDToken(ctx context.Context, token string, p Policy, keys KeySource, now time.Time, clientID string) (*Claims, error) {
 	opts := options{types: typeIDToken, audience: func(c *Claims) *Error {
 		if len(c.Audience) == 1 && c.Audience[0] == clientID {
 			return nil
@@ -105,10 +138,6 @@ func VerifyIDToken(ctx context.Context, token string, p Policy, keys KeySource, 
 	c, err := verify(ctx, token, p, keys, now, opts)
 	if err != nil {
 		return nil, err
-	}
-	got, ok := c.String("nonce")
-	if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(nonce)) != 1 {
-		return nil, refuse(ReasonClaims, "nonce does not match the sign-in")
 	}
 	return c, nil
 }

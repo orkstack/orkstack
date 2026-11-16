@@ -55,6 +55,8 @@ WORK_DIR="${ORK_ORKER_WORKDIR:-$REPO/.data/work}"
 IDENTITY="${IDENTITY:-}"
 IDENTITY_DIR="$REPO/.data/identity"
 DEV_ORKER_ID="dev-orker"
+# OIDC_ADDR is where oidctest, the development identity provider, listens.
+OIDC_ADDR="${OIDC_ADDR:-127.0.0.1:5556}"
 
 # The image the mount probe uses. A small image most machines already hold, so
 # the probe usually pulls nothing.
@@ -419,6 +421,7 @@ write_run_config() {
 			echo "  mode: enforce"
 			echo "  admins:"
 			echo "    - claims:dev:sub=dev-admin"
+			echo "    - group:people:dev-admins"
 			echo "  orkers:"
 			echo "    - subject: claims:dev:sub=$DEV_ORKER_ID"
 			echo "      pool: main"
@@ -434,6 +437,35 @@ write_run_config() {
 			echo "      max_lifetime: 720h"
 			echo "      orker_id_claim: orker_id"
 			echo "      jwks_file: $IDENTITY_DIR/dev-issuer.jwks.json"
+			# People sign in to the UI and orkctl at oidctest (the
+			# development identity provider, test/tools/oidctest).
+			echo "    people:"
+			echo "      issuer: https://$OIDC_ADDR"
+			echo "      kind: user"
+			echo "      audiences:"
+			echo "        - orkstack-web"
+			echo "        - orkctl"
+			echo "      algorithms:"
+			echo "        - ES256"
+			echo "      username_claim: email"
+			echo "      require_verified_email: true"
+			echo "      groups_claim: groups"
+			echo "      max_lifetime: 2h"
+			echo "      ca_file: $IDENTITY_DIR/oidc/ca.pem"
+			echo "      login:"
+			echo "        client_id: orkstack-web"
+			echo "        client_secret:"
+			echo "          source: file:$IDENTITY_DIR/oidc/web-client.secret"
+			echo "        cli_client_id: orkctl"
+			echo "        device_flow: true"
+			echo "        scopes:"
+			echo "          - openid"
+			echo "          - email"
+			echo "          - groups"
+			echo "  public_url: $UI_URL"
+			echo "  signin:"
+			echo "    key_files:"
+			echo "      - $IDENTITY_DIR/signin.key"
 			# enforce needs an engine signing key: it signs what one engine
 			# hands another, and with no identity.issuer no token.
 			echo "identity:"
@@ -560,6 +592,8 @@ cmd_up() {
 		say "  The engine enforces. Present the development admin's token to orkctl:"
 		say "    export ORK_TOKEN_FILE=$IDENTITY_DIR/admin.token"
 		say "  Both tokens live thirty days; make up signs them afresh."
+		say "  Or sign in as ${DEV_USER_EMAIL:-dev@example.test} (an admin) at $UI_URL, and in a terminal with"
+		say "    orkctl --server $ENGINE_URL login --issuer people --issuer-ca-file $IDENTITY_DIR/oidc/ca.pem"
 	fi
 	say "  stop           make down"
 }
@@ -572,6 +606,16 @@ setup_identity() {
 	say "== identity (IDENTITY=1) =="
 	(cd "$REPO" && go build -o "$REPO/bin/devtoken" ./test/tools/devtoken)
 	"$REPO/bin/devtoken" init -dir "$IDENTITY_DIR"
+	# The sign-in key: 32 random bytes, made once.
+	mkdir -p "$IDENTITY_DIR"
+	if [ ! -s "$IDENTITY_DIR/signin.key" ]; then
+		(umask 077 && head -c 32 /dev/urandom >"$IDENTITY_DIR/signin.key")
+	fi
+	(cd "$REPO" && go build -o "$REPO/bin/oidctest" ./test/tools/oidctest)
+	start oidc "$REPO/bin/oidctest" -dir "$IDENTITY_DIR/oidc" -addr "$OIDC_ADDR" \
+		-redirect "$UI_URL/v1/auth/callback/people" -email "${DEV_USER_EMAIL:-dev@example.test}" -groups dev-admins
+	wait_for "identity provider (oidctest)" 30 curl -fs -o /dev/null --cacert "$IDENTITY_DIR/oidc/ca.pem" \
+		"https://$OIDC_ADDR/.well-known/openid-configuration"
 	"$REPO/bin/devtoken" sign -dir "$IDENTITY_DIR" -iss orkstack-dev -aud orkstack -sub dev-admin \
 		-ttl 720h -out "$IDENTITY_DIR/admin.token"
 	"$REPO/bin/devtoken" sign -dir "$IDENTITY_DIR" -iss orkstack-dev -aud orkstack -sub "$DEV_ORKER_ID" \
@@ -586,6 +630,7 @@ cmd_down() {
 	stop ui || survived="$survived ui"
 	stop ork || survived="$survived ork"
 	stop orker || survived="$survived orker"
+	stop oidc || survived="$survived oidc"
 	# A worker started by hand from this worktree's bin/ outlives any pidfile
 	# and steals activities from every later run. It is found by the identity
 	# of its executable, never by name or pattern (AGENTS.md §11.1), and only
@@ -614,7 +659,7 @@ cmd_down() {
 
 cmd_status() {
 	local any=0
-	for name in orker ork ui; do
+	for name in orker ork ui oidc; do
 		if alive "$name"; then
 			say "  $name    running (pid $(recorded "$name"))"
 			any=1

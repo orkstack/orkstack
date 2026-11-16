@@ -216,9 +216,16 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		"a PEM client certificate to present to an https server (with --client-key)")
 	root.PersistentFlags().StringVar(&g.creds.clientKey, "client-key", "",
 		"the PEM private key of --client-cert")
+	root.PersistentFlags().StringVar(&g.creds.serviceAccount, "service-account", "",
+		"sign each request as this service account (with --service-account-key; env "+serviceAccountEnvVar+")")
+	root.PersistentFlags().StringVar(&g.creds.serviceAccountKey, "service-account-key", "",
+		"the PEM private key --service-account signs with (env "+serviceAccountKeyEnvVar+")")
+	root.PersistentFlags().StringVar(&g.creds.reason, "break-glass-reason", "",
+		"why a break-glass key is used, sent with each request (required with --service-account break-glass; env "+breakGlassReasonEnvVar+")")
 
 	root.AddCommand(
 		newAdminCommand(g),
+		newAuthCommand(g),
 		newAutomationCommand(g),
 		newCacheCommand(g),
 		newNamespaceCommand(g),
@@ -235,6 +242,8 @@ func newRootCommand() (*cobra.Command, *globalFlags) {
 		newWebhookCommand(g),
 		newVersionCommand(g),
 		newWhoamiCommand(g),
+		newLoginCommand(g),
+		newLogoutCommand(g),
 	)
 	for _, child := range root.Commands() {
 		refuseUnknownSubcommands(child)
@@ -371,7 +380,12 @@ func (g *globalFlags) httpClient() *http.Client {
 	} else {
 		transport.Protocols.SetUnencryptedHTTP2(true)
 	}
-	g.client = &http.Client{Transport: connectionEndTransport{Transport: transport}}
+	var rt http.RoundTripper = connectionEndTransport{Transport: transport}
+	if c := g.creds; c.signer != nil && c.clientCert == "" && c.tokenFile == "" {
+		rt = &authn.AssertionTransport{Base: rt, Signer: c.signer, Account: c.serviceAccount,
+			Audience: strings.TrimSuffix(g.server, "/"), Reason: c.reason}
+	}
+	g.client = &http.Client{Transport: rt}
 	return g.client
 }
 
@@ -498,8 +512,18 @@ const principalHeader = "Ork-Principal"
 // Ork-Principal: $ORK_PRINCIPAL; unset, nothing is added.
 func (g *globalFlags) clientOptions() []connect.ClientOption {
 	var interceptors []connect.Interceptor
-	if g.creds.tokenFile != "" && g.creds.clientCert == "" {
-		interceptors = append(interceptors, authn.BearerFromFile{Path: g.creds.tokenFile, Label: "token file"})
+	switch c := g.creds; {
+	case c.clientCert != "", c.signer != nil && c.tokenFile == "":
+		// A certificate, or an assertion the transport signs.
+	case c.tokenFile != "":
+		interceptors = append(interceptors, authn.BearerFromFile{Path: c.tokenFile, Label: "token file"})
+	case strings.HasPrefix(g.server, "https://") || loopbackServer(g.server):
+		// The stored login, if there is one: last in precedence (authn-authz.md §9).
+		var warn io.Writer = os.Stderr
+		if g.stderr != nil {
+			warn = g.stderr
+		}
+		interceptors = append(interceptors, loginBearer{server: g.server, warn: warn})
 	}
 	if principal := os.Getenv(principalEnvVar); principal != "" {
 		interceptors = append(interceptors, principalInterceptor{principal: principal, g: g})

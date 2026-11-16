@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/orker"
 
@@ -149,6 +150,24 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 	if !strings.Contains(out, "export ORK_TOKEN_FILE=") {
 		t.Fatalf("up printed no ORK_TOKEN_FILE line:\n%s", out)
 	}
+	// People sign in at oidctest: the issuer people offers sign-in, the
+	// sign-in key exists, and the provider was started for the UI's callback.
+	issuers, err := authn.ParseIssuers([]byte(ork["ORK_AUTH_ISSUERS"]))
+	must.OK(t, err)
+	if people, ok := issuers.ByName("people"); !ok || people.Login == nil || people.Login.CLIClientID != "orkctl" {
+		t.Fatalf("the people issuer = %+v", people)
+	}
+	if !strings.HasSuffix(ork["ORK_AUTH_SIGNIN_KEY_FILES"], filepath.Join(".data", "identity", "signin.key")) || ork["ORK_AUTH_PUBLIC_URL"] == "" {
+		t.Fatalf("the sign-in settings = %v", ork)
+	}
+	if info, err := os.Stat(filepath.Join(s.root, ".data", "identity", "signin.key")); err != nil || info.Size() != 32 || info.Mode().Perm() != 0o600 {
+		t.Fatalf("the sign-in key: %v %v", info, err)
+	}
+	started, err := os.ReadFile(filepath.Join(s.logs, "oidctest"))
+	must.OK(t, err)
+	if !strings.Contains(string(started), "/v1/auth/callback/people") {
+		t.Fatalf("oidctest was started with %q", started)
+	}
 }
 
 // stackRepo is a throwaway repository holding the committed scripts/stack.sh,
@@ -198,9 +217,14 @@ func newStackRepo(t *testing.T) *stackRepo {
 esac
 `,
 		filepath.Join(standIns, "sleep"): "",
-		// `go build -o OUT` writes a devtoken stand-in that records its calls.
+		// `go build -o OUT` writes a stand-in that records its calls: devtoken's
+		// returns, oidctest's (a server) stays up.
 		filepath.Join(standIns, "go"): `out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; shift; }; shift; done
-printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "devtoken")) + `\n' > "$out"; chmod +x "$out"
+case "$out" in
+*/oidctest) printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "oidctest")) + `\nexec ` + shellQuote(realSleep) + ` 120\n' > "$out" ;;
+*) printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "devtoken")) + `\n' > "$out" ;;
+esac
+chmod +x "$out"
 `,
 		filepath.Join(standIns, "bun"):        record("ui", "$ORK_SERVER") + stay,
 		filepath.Join(s.root, "bin", "ork"):   record("ork", "$*") + stay,

@@ -39,6 +39,20 @@ type authConfig struct {
 	clockSkew         time.Duration
 	policyRefresh     time.Duration
 	policyStaleLimit  time.Duration
+	// signinKeyFiles and signin are auth.signin.*: the key set that seals
+	// the login cookie and the sign-in records, and a sign-in's limits.
+	signinKeyFiles []string
+	signin         authn.SigninSettings
+}
+
+// signinOffered reports an issuer with a login: the web UI's sign-in is on.
+func (c authConfig) signinOffered() bool {
+	for _, name := range c.issuers.Names() {
+		if i, _ := c.issuers.ByName(name); i.Login != nil {
+			return true
+		}
+	}
+	return false
 }
 
 // The auth.* defaults.
@@ -116,6 +130,20 @@ func authFromEnv(lookup func(string) (string, bool)) (authConfig, error) {
 		return c, err
 	}
 	if c.policyStaleLimit, err = authDuration(get, "ORK_AUTH_POLICY_STALE_LIMIT", "auth.policy_stale_limit", api.DefaultPolicyStaleLimit, true); err != nil {
+		return c, err
+	}
+	for _, s := range strings.Split(get("ORK_AUTH_SIGNIN_KEY_FILES"), ",") {
+		if s = strings.TrimSpace(s); s != "" {
+			c.signinKeyFiles = append(c.signinKeyFiles, s)
+		}
+	}
+	if c.signin.MaxAge, err = authDuration(get, "ORK_AUTH_SIGNIN_MAX_AGE", "auth.signin.max_age", authn.DefaultSigninMaxAge, false); err != nil {
+		return c, err
+	}
+	if c.signin.IdleTimeout, err = authDuration(get, "ORK_AUTH_SIGNIN_IDLE_TIMEOUT", "auth.signin.idle_timeout", authn.DefaultSigninIdleTimeout, false); err != nil {
+		return c, err
+	}
+	if c.signin.RevalidateInterval, err = authDuration(get, "ORK_AUTH_SIGNIN_REVALIDATE_INTERVAL", "auth.signin.revalidate_interval", authn.DefaultSigninRevalidateInterval, false); err != nil {
 		return c, err
 	}
 	if doc := get("ORK_AUTH_ISSUERS"); doc != "" {
@@ -203,10 +231,69 @@ func (c authConfig) checkBoot(adminAddr string, pprofEnabled bool) error {
 	if c.breakGlassKeyFile != "" && c.publicURL == "" {
 		return errors.New("auth.break_glass_key_file needs auth.public_url: a break-glass assertion is bound to the deployment's public URL")
 	}
+	if c.signinOffered() {
+		if err := c.checkSignin(); err != nil {
+			return err
+		}
+	}
 	if pprofEnabled && adminAddr != "" && !loopbackAddr(adminAddr) {
 		return fmt.Errorf("telemetry.pprof_enabled with auth.mode %s needs a loopback telemetry.admin_addr (%q is not): a heap profile of a process that holds keys is those keys", c.mode, adminAddr)
 	}
 	return nil
+}
+
+// checkSignin refuses a sign-in that could not be safe: no public URL to
+// redirect to, one that is not https off loopback (the cookies are Secure),
+// no key to seal with, or limits that contradict each other.
+func (c authConfig) checkSignin() error {
+	if c.publicURL == "" {
+		return errors.New("an issuer offers sign-in (login) and auth.public_url is not set: it is the redirect URI's origin")
+	}
+	u, err := url.Parse(c.publicURL)
+	if err != nil {
+		return fmt.Errorf("auth.public_url %q: %w", c.publicURL, err)
+	}
+	if u.Scheme != "https" && !authn.LoopbackHost(u.Hostname()) {
+		return fmt.Errorf("an issuer offers sign-in and auth.public_url %q is not https: the sign-in cookie is Secure", c.publicURL)
+	}
+	if len(c.signinKeyFiles) == 0 {
+		return errors.New("an issuer offers sign-in (login) and auth.signin.key_files (ORK_AUTH_SIGNIN_KEY_FILES) names no key")
+	}
+	if c.signin.IdleTimeout > c.signin.MaxAge || c.signin.RevalidateInterval > c.signin.MaxAge {
+		return errors.New("auth.signin.idle_timeout and revalidate_interval are at most auth.signin.max_age")
+	}
+	return nil
+}
+
+// signinSecret reads a login's client secret from its source: env:NAME, or
+// file:/path read at each use, at most 64 KiB, trimmed.
+func signinSecret(source string) (string, error) {
+	scheme, locator, _ := strings.Cut(source, ":")
+	var v string
+	switch scheme {
+	case "env":
+		v = os.Getenv(locator)
+	case "file":
+		f, err := os.Open(locator)
+		if err != nil {
+			return "", err
+		}
+		defer f.Close()
+		raw, err := io.ReadAll(io.LimitReader(f, 64<<10+1))
+		if err != nil {
+			return "", err
+		}
+		if len(raw) > 64<<10 {
+			return "", fmt.Errorf("%s is larger than a secret", locator)
+		}
+		v = string(raw)
+	default:
+		return "", fmt.Errorf("%q is not env:NAME or file:/path", source)
+	}
+	if v = strings.TrimSpace(v); v == "" {
+		return "", fmt.Errorf("%s is empty", source)
+	}
+	return v, nil
 }
 
 func loopbackAddr(addr string) bool {
@@ -335,17 +422,106 @@ func setupAccess(ctx context.Context, c authConfig, logger *slog.Logger, storeCf
 	access := &api.AccessControl{
 		Mode: c.mode, Policies: policies, Configured: configured, ModeRecord: guard, Logger: logger, Counter: metrics,
 		Authenticator: &authn.Authenticator{Issuers: c.issuers, Keys: keys, Leeway: c.clockSkew, BreakGlass: glass,
-			HostAllowed: hostAllowed},
+			HostAllowed: hostAllowed, ServiceAccounts: serviceAccountsFrom(c, policies)},
 	}
 	if c.mode == authn.ModeEnforce {
 		access.Fleet = &api.FleetReport{Presence: presence, Checker: checker, Self: self, Logger: logger,
 			Unenforced: metrics.SetFleetUnenforced}
 		go access.Fleet.Run(ctx)
 	}
+	if c.signinOffered() {
+		signins, err := signinsFrom(ctx, c, keys, policies, storeCfg, audit, logger)
+		if err != nil {
+			return accessSetup{}, err
+		}
+		access.Signins = signins
+	}
 	logger.Info("authentication",
-		"mode", c.mode, "issuers", c.issuers.Names(), "admins", len(c.admins), "break_glass", glass != nil,
+		"mode", c.mode, "issuers", c.issuers.Names(), "admins", len(c.admins), "break_glass", glass != nil, "service_accounts", c.publicURL != "",
 		"policy_store", documents.Location(), "policy_refresh", c.policyRefresh, "policy_stale_limit", c.policyStaleLimit)
 	return accessSetup{access: access, breakGlass: breakGlassRecorder(audit, logger, metrics)}, nil
+}
+
+// serviceAccountsFrom accepts the access document's service accounts'
+// assertions, whose audience is the deployment's public URL: an engine with
+// no auth.public_url accepts none (authn-authz.md §3.2).
+func serviceAccountsFrom(c authConfig, policies *api.PolicyCache) *authn.ServiceAccounts {
+	if c.publicURL == "" {
+		return nil
+	}
+	public, _ := url.Parse(c.publicURL)
+	return &authn.ServiceAccounts{
+		Lookup: func(ctx context.Context, name string) (authz.ServiceAccount, bool, error) {
+			p, err := policies.Policy(ctx)
+			if err != nil {
+				return authz.ServiceAccount{}, false, err
+			}
+			sa, ok := p.ServiceAccount(name)
+			return sa, ok, nil
+		},
+		Audience: strings.TrimSuffix(c.publicURL, "/"), PublicURL: public, Replay: jwt.NewReplayCache(),
+	}
+}
+
+// signinsFrom builds the web UI's sign-in: the key set, the record store,
+// and its audit records (auth.signin.*).
+func signinsFrom(ctx context.Context, c authConfig, keys map[string]jwt.KeySource, policies *api.PolicyCache,
+	storeCfg artifacts.Config, audit *api.AuditRecorder, logger *slog.Logger,
+) (*authn.Signins, error) {
+	sealer, err := authn.LoadSigninKeys(c.signinKeyFiles)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range c.signinKeyFiles {
+		if info, err := os.Stat(f); err == nil && info.Mode().Perm()&0o077 != 0 {
+			logger.Warn("auth.signin.key_files: a sign-in key is readable by other users; chmod 600 it",
+				"file", f, "mode", info.Mode().Perm())
+		}
+	}
+	records, err := artifacts.NewS3SigninStore(ctx, storeCfg)
+	if err != nil {
+		return nil, fmt.Errorf("open the sign-in records: %w", err)
+	}
+	public, _ := url.Parse(strings.TrimSuffix(c.publicURL, "/"))
+	s := &authn.Signins{Issuers: c.issuers, Keys: keys, Sealer: sealer, Records: records, PublicURL: public,
+		Settings: c.signin, Leeway: c.clockSkew, Secret: signinSecret, Logger: logger,
+		Disabled: func(ctx context.Context, id string) (bool, error) {
+			p, err := policies.Policy(ctx)
+			if err != nil {
+				return false, err // a sign-in is then refused for now, and nothing ends
+			}
+			return p.Disabled(id), nil
+		},
+		OnEvent: func(ctx context.Context, e authn.SigninEvent) {
+			at := time.Now().UTC()
+			rec := &orkstackv1.AuditRecord{SchemaVersion: artifacts.AuditSchemaVersionVerified, Id: artifacts.NewAuditID(at),
+				At: timestamppb.New(at), Action: e.Action, Target: e.PublicID, Detail: e.Reason, PrincipalIssuer: e.Issuer,
+				Succeeded: e.Action != "auth.signin.refused", Signin: e.PublicID, AuthMethod: authn.MethodOIDC,
+				Procedure: "sign-in"}
+			if e.Principal != nil {
+				rec.Principal, rec.PrincipalVerified = e.Principal.ID, true
+			}
+			if rec.Target == "" {
+				rec.Target = "-"
+			}
+			if err := audit.RecordErr(ctx, rec); err != nil {
+				logger.Error("a sign-in's audit record could not be written; this log line is its trail", "error", err,
+					"action", e.Action, "principal", rec.GetPrincipal(), "signin", e.PublicID, "reason", e.Reason)
+			}
+		}}
+	logger.Info("sign-in", "issuers", loginIssuers(c.issuers), "keys", sealer.KeyIDs(), "records", records.Location(),
+		"max_age", c.signin.MaxAge, "idle_timeout", c.signin.IdleTimeout, "revalidate_interval", c.signin.RevalidateInterval)
+	return s, nil
+}
+
+func loginIssuers(issuers authn.Issuers) []string {
+	var out []string
+	for _, name := range issuers.Names() {
+		if i, _ := issuers.ByName(name); i.Login != nil {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // staleLimitOption turns auth.policy_stale_limit into the cache's option:

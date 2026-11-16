@@ -146,6 +146,10 @@ type config struct {
 	// stopGraceErr is a malformed or out-of-range grace, refused at boot by
 	// the same rule as the errors above.
 	stopGraceErr error
+	// profiles is orker.profiles (orker.ProfilesVar); profilesErr is a
+	// document that does not parse, refused at boot naming the setting.
+	profiles    orker.Profiles
+	profilesErr error
 	// configFiles is the configuration file this process was started with
 	// and every {file:} it read (config.Document.Files): the Orker's own,
 	// which its secret floor admits as no task's source (orkerPolicy).
@@ -196,6 +200,10 @@ func loadConfig() config {
 	storeWatch, storeWatchErr := envStoreWatch()
 	storeScope, storeScopeErr := envStoreScope()
 	stopGrace, stopGraceErr := orker.ParseStopGrace(env(orker.StopGraceVar, ""))
+	profiles, profilesErr := orker.ParseProfiles([]byte(os.Getenv(orker.ProfilesVar)))
+	if profilesErr != nil {
+		profilesErr = fmt.Errorf("%s: orker.profiles (%s): %w", orker.ReasonProfileInvalid, orker.ProfilesVar, profilesErr)
+	}
 	return config{
 		imageLayoutRoot:    env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
 		registryAuthFile:   env(orker.RegistryAuthFileVar, ""),
@@ -227,6 +235,8 @@ func loadConfig() config {
 		storeScopeErr:            storeScopeErr,
 		stopGrace:                stopGrace,
 		stopGraceErr:             stopGraceErr,
+		profiles:                 profiles,
+		profilesErr:              profilesErr,
 		capacityCPU:              env(orker.CapacityCPUVar, ""),
 		capacityMemory:           env(orker.CapacityMemoryVar, ""),
 		deployment:               task.DeploymentFromEnv(),
@@ -740,6 +750,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// And for the task ceiling.
 	if cfg.maxConcurrentErr != nil {
 		return cfg.maxConcurrentErr
+	}
+	if cfg.profilesErr != nil {
+		return cfg.profilesErr
 	}
 	if cfg.stopGraceErr != nil {
 		return cfg.stopGraceErr
@@ -1319,6 +1332,9 @@ func orkerOptions(
 		// Whether Boot asks the host's instance metadata endpoints
 		// (docs/DEPLOY.md, "Keeping tasks away from the host's identity").
 		MetadataProbe: cfg.metadataProbe,
+		// What this Orker offers tasks by name; Boot refuses a kind this
+		// build does not implement.
+		Profiles: cfg.profiles,
 		// Secret masking and the values.json check (docs/DEPLOY.md, "Every
 		// Orker of a pool has the same settings").
 		LogUnmasked:       !cfg.maskSecrets,

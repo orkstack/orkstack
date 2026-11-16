@@ -155,7 +155,7 @@ func (s *relStack) start(name, path string, env ...string) {
 		env = append(env, localActivityCatalogEnv(s.t))
 	}
 	p.cmd = exec.CommandContext(s.ctx, path)
-	p.cmd.Env = append(os.Environ(), env...)
+	p.cmd.Env = testbin.OrkerEnv(append(os.Environ(), env...))
 	p.cmd.Stdout, p.cmd.Stderr = p, p
 	must.OKf(s.t, p.cmd.Start(), "start %s", name)
 	go func() { _ = p.cmd.Wait(); close(p.done) }()

@@ -450,6 +450,69 @@ func (s *S3Store) Get(ctx context.Context, uri string) (io.ReadCloser, error) {
 	return out.Body, nil
 }
 
+// GetRange reads length bytes of the object at uri from offset with one
+// ranged GetObject; a zero length heads the object instead. The object's size
+// in the answer's Content-Range bounds the range, so a store that returns
+// fewer bytes than asked (a range running past the end) is ErrRange, never a
+// short read.
+func (s *S3Store) GetRange(ctx context.Context, uri string, offset, length int64) (io.ReadCloser, error) {
+	key, _, err := s.parseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRange(offset, length, -1); err != nil {
+		return nil, fmt.Errorf("artifacts: s3 get range %q: %w", uri, err)
+	}
+	if length == 0 {
+		head, err := s.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(key)})
+		if err != nil {
+			if isNotFound(err) {
+				return nil, fmt.Errorf("artifacts: s3 get range %q: %w", uri, ErrNotFound)
+			}
+			return nil, fmt.Errorf("artifacts: s3 get range %q: %w", uri, err)
+		}
+		if err := checkRange(offset, 0, aws.ToInt64(head.ContentLength)); err != nil {
+			return nil, fmt.Errorf("artifacts: s3 get range %q: %w", uri, err)
+		}
+		return io.NopCloser(strings.NewReader("")), nil
+	}
+	out, err := s.client.GetObject(ctx, &s3.GetObjectInput{
+		Bucket: aws.String(s.bucket),
+		Key:    aws.String(key),
+		Range:  aws.String(fmt.Sprintf("bytes=%d-%d", offset, offset+length-1)),
+	})
+	if err != nil {
+		switch {
+		case isNotFound(err):
+			return nil, fmt.Errorf("artifacts: s3 get range %q: %w", uri, ErrNotFound)
+		case isInvalidRange(err):
+			return nil, fmt.Errorf("artifacts: s3 get range %q: [%d, %d): %w", uri, offset, offset+length, ErrRange)
+		}
+		return nil, fmt.Errorf("artifacts: s3 get range %q: %w", uri, err)
+	}
+	// The answer must be exactly the window asked for. A store that ignored the
+	// Range header (a 200 with the whole object) sends no Content-Range; one
+	// that clamped the window to the object's end, or sent another window,
+	// names a different first or last byte. None of them is this range.
+	first, last, total, ok := parseContentRange(aws.ToString(out.ContentRange))
+	if !ok {
+		_ = out.Body.Close()
+		return nil, fmt.Errorf("artifacts: s3 get range %q: [%d, %d): the answer's Content-Range %q is no range",
+			uri, offset, offset+length, aws.ToString(out.ContentRange))
+	}
+	if err := checkRange(offset, length, total); err != nil {
+		_ = out.Body.Close()
+		return nil, fmt.Errorf("artifacts: s3 get range %q: %w", uri, err)
+	}
+	if first != offset || last != offset+length-1 ||
+		(out.ContentLength != nil && aws.ToInt64(out.ContentLength) != length) {
+		_ = out.Body.Close()
+		return nil, fmt.Errorf("artifacts: s3 get range %q: asked for bytes %d-%d, answered %q (%d bytes)",
+			uri, offset, offset+length-1, aws.ToString(out.ContentRange), aws.ToInt64(out.ContentLength))
+	}
+	return newExactReader(out.Body, length), nil
+}
+
 // Stat heads the object and restores its exact logical name — from the key
 // itself, or from the binary companion manifest when the key could not hold it.
 func (s *S3Store) Stat(ctx context.Context, uri string) (ArtifactRef, error) {

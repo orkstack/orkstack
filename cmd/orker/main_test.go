@@ -696,3 +696,30 @@ func TestEnvStoreScope(t *testing.T) {
 		}
 	}
 }
+
+// TestLoadConfig_RefusesAProfilesDocumentItCannotRead: a malformed
+// orker.profiles refuses the boot, naming the setting and its reason, rather
+// than starting an Orker that offers nothing it was told to.
+func TestLoadConfig_RefusesAProfilesDocumentItCannotRead(t *testing.T) {
+	for name, raw := range map[string]string{
+		"not yaml":       "profiles: [",
+		"unknown key":    "profiles:\n  x:\n    kind: gpu\n    privileged: true\n",
+		"no probe image": "profiles:\n  x:\n    kind: gpu\n    cdi:\n      kind: amd.com/gpu\n      units:\n        - \"0\"\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Setenv(orker.ProfilesVar, raw)
+			cfg := loadConfig()
+			if cfg.profilesErr == nil {
+				t.Fatalf("%s=%q booted", orker.ProfilesVar, raw)
+			}
+			for _, want := range []string{orker.ProfilesVar, orker.ReasonProfileInvalid} {
+				if !strings.Contains(cfg.profilesErr.Error(), want) {
+					t.Errorf("refusal %q does not name %s", cfg.profilesErr, want)
+				}
+			}
+			if err := run(nil, telemetry.Config{}, nil, cfg); err == nil {
+				t.Fatal("run() started with a profiles document it cannot read")
+			}
+		})
+	}
+}

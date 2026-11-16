@@ -58,6 +58,8 @@ type AccessControl struct {
 	Configured []authz.Binding
 	// Authenticator verifies credentials (the HTTP middleware).
 	Authenticator *authn.Authenticator
+	// Signins is sign-in for the web UI; nil where no issuer offers it.
+	Signins *authn.Signins
 	// ModeRecord is this engine's side of the mode record.
 	ModeRecord *ModeGuard
 	// Fleet reports the engines seen and those that do not enforce.
@@ -71,6 +73,8 @@ type AccessControl struct {
 	// rechecked, when set, is told after every re-check of an open stream:
 	// a test's positive control that the watcher ran.
 	rechecked func(err error)
+	// signinCheck replaces authn.SigninCheckInterval in a test.
+	signinCheck time.Duration
 }
 
 func (a *AccessControl) init() {
@@ -171,6 +175,9 @@ func (a *AccessControl) decide(ctx context.Context, s *Service, procedure string
 		return &admission{}, connect.NewError(connect.CodePermissionDenied, fmt.Errorf("%s has no permission row; it is refused", procedure))
 	}
 	adm := &admission{row: row}
+	if row.public {
+		return adm, nil
+	}
 	if row.noPermission {
 		if subject == nil {
 			return adm, connect.NewError(connect.CodeUnauthenticated, errors.New("an authenticated caller is required"))
@@ -383,7 +390,7 @@ func (a *AccessControl) refusal(err error, row accessRow, msg proto.Message) err
 // recheck decides an open stream again against the same resources, with
 // nothing read but the policy.
 func (a *AccessControl) recheck(ctx context.Context, adm *admission) error {
-	if adm.row.noPermission {
+	if adm.row.noPermission || adm.row.public {
 		return nil
 	}
 	subject := subjectOf(authn.FromContext(ctx))
@@ -647,9 +654,25 @@ func (s *Service) watchAccess(ctx context.Context, adm *admission) (context.Cont
 		timer = time.NewTimer(time.Until(p.Expires))
 		expired = timer.C
 	}
+	// A stream opened under a sign-in closes once the sign-in ends (signed
+	// out, revoked), read from the store every SigninCheckInterval, not only
+	// at its revalidation.
+	var signinTick <-chan time.Time
+	stopTicker := func() {}
+	signin := authn.SigninFrom(ctx)
+	if signin != nil && s.access.Signins != nil {
+		interval := authn.SigninCheckInterval
+		if s.access.signinCheck > 0 {
+			interval = s.access.signinCheck
+		}
+		ticker := time.NewTicker(interval)
+		signinTick = ticker.C
+		stopTicker = ticker.Stop
+	}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		defer stopTicker()
 		if timer != nil {
 			defer timer.Stop()
 		}
@@ -657,6 +680,19 @@ func (s *Service) watchAccess(ctx context.Context, adm *admission) (context.Cont
 			select {
 			case <-ctx.Done():
 				return
+			case <-signinTick:
+				err := s.access.Signins.Alive(ctx, signin)
+				if err != nil && !errors.Is(err, authn.ErrSigninEnded) && ctx.Err() == nil {
+					s.logger.Warn("an open stream's sign-in could not be read; the stream stays open until its revalidation",
+						"signin", signin.PublicID, "error", err)
+				}
+				if errors.Is(err, authn.ErrSigninEnded) {
+					if s.access.Counter != nil {
+						s.access.Counter.CountStreamClosed(ctx, "signed_out")
+					}
+					cancel(connect.NewError(connect.CodeUnauthenticated, withdrawn{err: authn.ErrSigninEnded}))
+					return
+				}
 			case <-expired:
 				if s.access.Counter != nil {
 					s.access.Counter.CountStreamClosed(ctx, "expired")

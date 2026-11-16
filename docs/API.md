@@ -1245,9 +1245,9 @@ is alive by answering DescribeOrker (§6.5).
 | `attempt_ordinals_supported` | `bool` | attempt_ordinals_supported is true on an Orker that numbers attempts with claimed ordinals (docs/STORAGE.md, "Attempt ordinals"). An Orker built before it numbers them as Temporal does and would write records over a newer Orker's, so submit refuses a pool that has one. |
 | `secret_masking_supported` | `bool` | secret_masking_supported is true on an Orker that reads a secret's `unmasked` (SecretRef.unmasked), whatever orker.log.mask_secrets says. An Orker built before it refuses a task that sets it, so submit refuses a task carrying a `mask: false` secret on a pool that has one. |
 | `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set while this Orker is stopping (OrkerStopping). cordoned is true beside it. |
-| `profile_kinds_supported` | repeated [`ProfileKind`](#profilekind) | profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch). |
-| `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
-| `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `profile_kinds_supported` | repeated [`ProfileKind`](#profilekind) | profile_kinds_supported are the profile kinds this Orker's build implements. Submit sends a profiled task only to a pool whose answering Orkers all list its kinds. |
+| `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles are the profiles this Orker offers. |
+| `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons are the profile causes that hold this Orker's cordon; cordoned is true while any is set. |
 | `identity_supported` | `bool` | identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `providers` | repeated [`ProviderInfo`](#providerinfo) | providers is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
 | `masks_secrets` | `bool` | masks_secrets is whether this Orker masks a task's secrets in its logs (orker.log.mask_secrets). It reads secrets[].unmasked either way. |
@@ -1350,10 +1350,15 @@ Task.pin).
 
 ### EffectiveProfile
 
-EffectiveProfile is E91's; it is empty until E91 lands (v0.4.0 proto
-batch).
+EffectiveProfile is one profile an attempt ran under, as the Orker applied
+it.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `kind` | [`ProfileKind`](#profilekind) |  |
+| `unit_indices` | repeated `int32` | unit_indices are the positions of the `gpu` units the attempt held, numbered from 0 within the profile's list. |
+| `identity_pinned` | `bool` | identity_pinned is whether the run pinned the profile's identity at submit; false for an egress profile no Orker answered for. |
 
 ### EngineSeen
 
@@ -2631,17 +2636,28 @@ Orker is one execution process, observed live.
 | `max_request` | [`ResourceQuantity`](#resourcequantity) | max_request is DescribeOrkerResult's: the per-task cap, the largest request this Orker runs, which submit holds a task's declared request to. |
 | `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage. It clears by itself once the store answers again; CordonOrker neither sets nor clears it. Unset from an Orker of a release without these checks. |
 | `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set while this Orker is stopping: it takes no new task and opens no new pin, and keeps its pool live until it exits. Unset from an Orker of a release without a stop grace. |
-| `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
-| `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles are the profiles the Orker offers: name, kind, unit counts and whether its latest check passed. |
+| `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons are the profile causes that hold the Orker's cordon: cause, profile, reason and since. |
 | `service_host` | [`ServiceHost`](#servicehost) | service_host is set from E90; unset until it lands (v0.4.0 proto batch). |
 | `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is DescribeOrkerResult's: what this Orker's metadata probe found at boot, empty when none ran. |
 
 ### OrkerProfile
 
-OrkerProfile is E91's; it is empty until E91 lands (v0.4.0 proto
-batch).
+OrkerProfile is one profile an Orker offers (docs/DEPLOY.md, "Profiles").
+The inventory (ListOrkers) carries name, kind, the unit counts and probe_ok;
+revision and identity_digest travel only on the Orker's own answer to the
+engine and are never listed or exported.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the operator's name for the profile, the one a task selects. |
+| `kind` | [`ProfileKind`](#profilekind) |  |
+| `units` | `int32` | units is how many units a `gpu` profile declares; 0 for other kinds. |
+| `usable_units` | `int32` | usable_units is how many of them are healthy and may be bound. |
+| `bound_units` | `int32` | bound_units is how many are held by a task now. |
+| `probe_ok` | `bool` | probe_ok is whether the profile's latest check passed. |
+| `revision` | `string` | revision is the operator's revision label; it changes memo keys only. |
+| `identity_digest` | `string` | identity_digest is the SHA-256 (hex) of the profile's structural identity, which a run pins at submit and every Orker of a pool must share. |
 
 ### OrkerStopping
 
@@ -2982,10 +2998,19 @@ one that started nothing and holds no state of its own.
 
 ### ProfileCordon
 
-ProfileCordon is E91's; it is empty until E91 lands (v0.4.0 proto
-batch).
+ProfileCordon is one profile cause that holds an Orker's cordon. A drift
+latches until the Orker restarts and takes its pool out of service on that
+Orker; an unavailable profile clears itself after consecutive good checks
+and keeps the pool live. The inventory carries cause, profile, reason and
+since; detail travels only on the Orker's own answer.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `cause` | [`ProfileCordon.Cause`](#profilecordoncause) |  |
+| `profile` | `string` | profile is the name of the profile the cause is about. |
+| `reason` | [`ProfileCordonReason`](#profilecordonreason) |  |
+| `since` | `google.protobuf.Timestamp` | since is when the Orker first observed the cause. |
+| `detail` | `string` | detail says what was observed, for the operator. |
 
 ### PromoteReleaseRequest
 
@@ -3877,7 +3902,7 @@ change what the attempt itself reported.
 | `item` | optional `int32` | item is set when this attempt ran one item of a fan-out task: that item's 0-based index. The record then lives under the item's own key (metadata/attempts/{run}/{task}/{item}/{attempt}.json). schema_version stays 1: the field is additive and UnmarshalAttempt discards unknown fields. |
 | `cache` | [`CacheResult`](#cacheresult) | cache is this attempt's memo decision, key_components included. Set only for an attempt of a cached task that reached the memo step; a HIT records outcome SUCCEEDED, phase "memo", exit_code 0, no system_artifacts (it uploaded none) and image equal to the input's pinned ImageRef with no platform (it pulled nothing). |
 | `timing` | [`AttemptTiming`](#attempttiming) | timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker never writes it. |
-| `profiles` | repeated [`EffectiveProfile`](#effectiveprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `profiles` | repeated [`EffectiveProfile`](#effectiveprofile) | profiles are the profiles the attempt ran under. |
 | `measured` | [`MeasuredUsage`](#measuredusage) | measured is set from E94; unset until it lands (v0.4.0 proto batch). |
 | `identities` | repeated [`AttemptIdentity`](#attemptidentity) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `credentials` | repeated [`AttemptCredential`](#attemptcredential) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
@@ -4662,13 +4687,15 @@ that failed is never read as safe.
 ### NetworkMode
 
 NetworkMode is the complete set of network configurations an Orkflow may
-select. Named Orker-defined profiles are deliberately absent (AGENTS.md §6).
+select. An Orkflow never defines a network: EGRESS selects an egress
+profile an Orker's operator defined, by its name (AGENTS.md §6).
 
 | Value | Number | Description |
 |---|---|---|
 | `NETWORK_MODE_UNSPECIFIED` | 0 | treated as NETWORK_MODE_DEFAULT |
 | `NETWORK_MODE_DEFAULT` | 1 |  |
 | `NETWORK_MODE_NONE` | 2 |  |
+| `NETWORK_MODE_EGRESS` | 3 | The egress profile Task.network_profile names: an internal network whose only way out is the operator's proxy. |
 
 ### OrkflowCallerKind
 
@@ -4738,14 +4765,51 @@ request's assumption, never a prediction that the task fails.
 | `PLAN_OUTCOME_ASSUMED_FAILED` | 6 | ASSUMED_FAILED: the request's assume_failed names this task and it would run; it is planned as having run and FAILED. It takes a wave as RUNS does, contributes no output, and is where the planned run starts failing unless an earlier task already did. |
 | `PLAN_OUTCOME_SLEEPS` | 7 | SLEEPS: the task is a sleeping task the interpreter would start: it takes a wave as RUNS does, starts no activity, and succeeds with no values once its time has passed. |
 
+### ProfileCordon.Cause
+
+| Value | Number | Description |
+|---|---|---|
+| `CAUSE_UNSPECIFIED` | 0 |  |
+| `CAUSE_DRIFT` | 1 | The profile no longer matches what the Orker audited at boot. |
+| `CAUSE_UNAVAILABLE` | 2 | The profile's units, gateway or reachable destinations are absent. |
+
+### ProfileCordonReason
+
+ProfileCordonReason is the machine-readable reason of a ProfileCordon.
+
+| Value | Number | Description |
+|---|---|---|
+| `PROFILE_CORDON_REASON_UNSPECIFIED` | 0 |  |
+| `PROFILE_CORDON_REASON_SPEC_CHANGED` | 1 |  |
+| `PROFILE_CORDON_REASON_DEVICE_CHANGED` | 2 |  |
+| `PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED` | 3 |  |
+| `PROFILE_CORDON_REASON_NETWORK_CHANGED` | 4 |  |
+| `PROFILE_CORDON_REASON_GATEWAY_CHANGED` | 5 |  |
+| `PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED` | 6 |  |
+| `PROFILE_CORDON_REASON_GATEWAY_ABSENT` | 7 |  |
+| `PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED` | 8 |  |
+| `PROFILE_CORDON_REASON_SPEC_ABSENT` | 9 |  |
+| `PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD` | 10 |  |
+| `PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH` | 11 |  |
+| `PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE` | 12 |  |
+| `PROFILE_CORDON_REASON_HOST_VIEW_CHANGED` | 13 |  |
+| `PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY` | 14 |  |
+| `PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH` | 15 |  |
+| `PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN` | 16 |  |
+| `PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED` | 17 |  |
+| `PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD` | 18 |  |
+
 ### ProfileKind
 
-ProfileKind is E91's; it holds only its zero value until E91 lands
-(v0.4.0 proto batch).
+ProfileKind is the closed set of profile kinds compiled into the Orker
+(AGENTS.md §6). A profile is operator data, never code.
 
 | Value | Number | Description |
 |---|---|---|
 | `PROFILE_KIND_UNSPECIFIED` | 0 |  |
+| `PROFILE_KIND_DEVICES` | 1 | Uncounted, shared character devices of an allow-listed class. |
+| `PROFILE_KIND_GPU` | 2 | Counted, exclusive GPU units, each one CDI device. |
+| `PROFILE_KIND_EGRESS` | 3 | An internal network whose only way out is the operator's proxy. |
 
 ### ReferenceState
 

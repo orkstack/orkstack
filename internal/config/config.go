@@ -96,9 +96,11 @@ type Var struct {
 	// belongs to, so no task's secret names one (FileSettings,
 	// Document.ForeignFiles; docs/SECURITY_MODEL.md, "The Orker's own
 	// sources"). FileField names, for a KindDocument, the field that holds
-	// a file in any entry of the document.
-	File      bool
-	FileField string
+	// a file in any entry of the document; FileSourceField the field that
+	// holds a secret source in any entry, a file when it is file:/PATH.
+	File            bool
+	FileField       string
+	FileSourceField string
 	// DerivedNote is the human sentence explaining a placeholder Default —
 	// "derived from the pool", "hostname-<hash of the work dir>", "SDK
 	// default" — and is only meaningful when Default is "(empty)" or
@@ -297,6 +299,9 @@ var Schema = []Var{
 	// The boot probe of the host's instance metadata endpoints: off, warn or
 	// refuse (internal/orker/metadata_probe.go).
 	{Path: "orker.metadata_probe", Env: orker.MetadataProbeVar, Binaries: usesOrker, Kind: KindString, Default: string(orker.DefaultMetadataProbe)},
+	// The profiles this Orker offers tasks by name (internal/orker profiles.go),
+	// one document: probe_image, the two intervals and each named profile.
+	{Path: "orker.profiles", Env: orker.ProfilesVar, Binaries: usesOrker, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no profiles"},
 	// Secret masking in a task's logs, and the refusal of a values.json that
 	// holds a secret (internal/orker/mask.go).
 	{Path: "orker.log.mask_secrets", Env: orker.MaskSecretsVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultMaskSecrets)},
@@ -351,7 +356,8 @@ var Schema = []Var{
 	// none.
 	{Path: "orker.engine.url", Env: orker.EngineURLVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "no engine: no identities"},
 	{Path: "orker.engine.ca_file", Env: orker.EngineCAFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "the system's roots"},
-	{Path: "orker.engine.auth.method", Env: orker.EngineAuthMethodVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "token_file or mtls"},
+	{Path: "orker.engine.auth.method", Env: orker.EngineAuthMethodVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "token_file, service_account or mtls"},
+	{Path: "orker.engine.auth.service_account", Env: orker.EngineAuthServiceAccountVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
 	{Path: "orker.engine.auth.token_file", Env: orker.EngineAuthTokenFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.engine.auth.cert_file", Env: orker.EngineAuthCertFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.engine.auth.key_file", Env: orker.EngineAuthKeyFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
@@ -361,10 +367,16 @@ var Schema = []Var{
 	// standalone authn.ParseIssuers document, under one `issuers:` key.
 	{Path: "auth.mode", Env: "ORK_AUTH_MODE", Binaries: usesOrk, Kind: KindString, Default: authn.ModeAsserted},
 	{Path: "auth.public_url", Env: "ORK_AUTH_PUBLIC_URL", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no break-glass audience"},
-	{Path: "auth.issuers", Env: "ORK_AUTH_ISSUERS", Binaries: usesOrk, Kind: KindDocument, File: true, FileField: "jwks_file", Default: EmptyDefault, DerivedNote: "no trusted issuer"},
+	{Path: "auth.issuers", Env: "ORK_AUTH_ISSUERS", Binaries: usesOrk, Kind: KindDocument, File: true, FileField: "jwks_file", FileSourceField: "source", Default: EmptyDefault, DerivedNote: "no trusted issuer"},
 	{Path: "auth.admins", Env: "ORK_AUTH_ADMINS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
 	{Path: "auth.orkers", Env: "ORK_AUTH_ORKERS", Binaries: usesOrk, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no Orker bound by configuration"},
 	{Path: "auth.break_glass_key_file", Env: "ORK_AUTH_BREAK_GLASS_KEY_FILE", Binaries: usesOrk, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "break-glass off"},
+	// auth.signin.* is web sign-in (docs/AUTHENTICATION.md, "Sign-in for the
+	// web UI"): the key set that seals its cookie and records, and its limits.
+	{Path: "auth.signin.key_files", Env: "ORK_AUTH_SIGNIN_KEY_FILES", Binaries: usesOrk, Kind: KindList, File: true, Default: EmptyDefault, DerivedNote: "no sign-in"},
+	{Path: "auth.signin.max_age", Env: "ORK_AUTH_SIGNIN_MAX_AGE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(authn.DefaultSigninMaxAge)},
+	{Path: "auth.signin.idle_timeout", Env: "ORK_AUTH_SIGNIN_IDLE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(authn.DefaultSigninIdleTimeout)},
+	{Path: "auth.signin.revalidate_interval", Env: "ORK_AUTH_SIGNIN_REVALIDATE_INTERVAL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(authn.DefaultSigninRevalidateInterval)},
 	{Path: "auth.clock_skew", Env: "ORK_AUTH_CLOCK_SKEW", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(authn.DefaultClockSkew)},
 	{Path: "auth.policy_refresh", Env: "ORK_AUTH_POLICY_REFRESH", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultPolicyRefresh)},
 	{Path: "auth.policy_stale_limit", Env: "ORK_AUTH_POLICY_STALE_LIMIT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultPolicyStaleLimit)},

@@ -124,16 +124,29 @@ func (c *poolCensus) serving(ctx context.Context, pool string) ([]FleetOrker, er
 
 // pausedForStoreOutage says a store outage alone holds this Orker's cordon, so
 // it takes new tasks again once object storage answers: an operator's cordon
-// always carries a reason, and a stopping Orker never takes one again.
+// always carries a reason, a stopping Orker never takes one again, and a
+// profile cause has its own end.
 func pausedForStoreOutage(o *orkstackv1.DescribeOrkerResult) bool {
-	return o.GetStoreOutage() != nil && o.GetCordonReason() == "" && o.GetStopping() == nil
+	return o.GetStoreOutage() != nil && o.GetCordonReason() == "" && o.GetStopping() == nil &&
+		len(o.GetProfileCordons()) == 0
 }
 
 // keepsPoolLive says every cause that holds this Orker's cordon keeps its pool
-// live: a store outage and the Orker's own stop do, an operator's cordon does
-// not (AGENTS.md §7, Cordon).
+// live: a store outage, the Orker's own stop and an unavailable profile do; an
+// operator's cordon, a profile drift and a profile cause this engine cannot
+// read do not (AGENTS.md §7, Cordon).
 func keepsPoolLive(o *orkstackv1.DescribeOrkerResult) bool {
-	return o.GetCordonReason() == "" && (o.GetStoreOutage() != nil || o.GetStopping() != nil)
+	if o.GetCordonReason() != "" {
+		return false
+	}
+	live := o.GetStoreOutage() != nil || o.GetStopping() != nil
+	for _, cause := range o.GetProfileCordons() {
+		if cause.GetCause() != orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE {
+			return false
+		}
+		live = true
+	}
+	return live
 }
 
 // wasRead says the census was taken, successfully, by an earlier question;

@@ -412,6 +412,7 @@ type Policy struct {
 	bindings   []Binding
 	configured []Binding
 	disabled   map[string]bool
+	accounts   map[string]ServiceAccount
 	// configOnly is a policy past its document's stale limit: only the
 	// principals configuration names are served, catalog.read included.
 	configOnly bool
@@ -595,15 +596,16 @@ func Compile(doc *orkstackv1.AccessDocument, configured []Binding, readAt time.T
 	if n := len(doc.GetServiceAccounts()); n > MaxServiceAccounts {
 		return nil, fmt.Errorf("%w: %d service accounts, more than %d", ErrInvalidDocument, n, MaxServiceAccounts)
 	}
-	accounts := map[string]bool{}
+	p.accounts = make(map[string]ServiceAccount, len(doc.GetServiceAccounts()))
 	for _, sa := range doc.GetServiceAccounts() {
-		if err := validServiceAccount(sa); err != nil {
+		account, err := compileServiceAccount(sa)
+		if err != nil {
 			return nil, fmt.Errorf("%w: %w", ErrInvalidDocument, err)
 		}
-		if accounts[sa.GetName()] {
+		if _, dup := p.accounts[sa.GetName()]; dup {
 			return nil, fmt.Errorf("%w: service account %q is declared twice", ErrInvalidDocument, sa.GetName())
 		}
-		accounts[sa.GetName()] = true
+		p.accounts[sa.GetName()] = account
 	}
 	for _, id := range doc.GetDisabled() {
 		if id == "" || len(id) > MaxPrincipalIDBytes || !printable(id) {
@@ -661,38 +663,60 @@ func compileBinding(b *orkstackv1.Binding, p *Policy) (Binding, error) {
 	return cb, nil
 }
 
-func validServiceAccount(sa *orkstackv1.ServiceAccount) error {
+// ServiceAccount is one service account of the document, compiled: the keys
+// its assertions verify under, by RFC 7638 thumbprint, and the Orker it
+// names, if any.
+type ServiceAccount struct {
+	Name    string
+	Keys    jwt.Static
+	OrkerID string
+}
+
+// ServiceAccount returns the document's service account name. A policy past
+// its document's stale limit serves configuration's principals only, so it
+// knows no service account.
+func (p *Policy) ServiceAccount(name string) (ServiceAccount, bool) {
+	if p == nil || p.configOnly {
+		return ServiceAccount{}, false
+	}
+	sa, ok := p.accounts[name]
+	return sa, ok
+}
+
+func compileServiceAccount(sa *orkstackv1.ServiceAccount) (ServiceAccount, error) {
+	out := ServiceAccount{Name: sa.GetName(), OrkerID: sa.GetOrkerId(), Keys: jwt.Static{}}
 	if err := dsl.ValidSlug("service account name", sa.GetName()); err != nil {
-		return err
+		return out, err
 	}
 	if sa.GetName() == BreakGlassAccount {
-		return fmt.Errorf("service account name %q is reserved for break-glass", BreakGlassAccount)
+		return out, fmt.Errorf("service account name %q is reserved for break-glass", BreakGlassAccount)
 	}
 	if n := len(sa.GetKeys()); n > MaxServiceAccountKeys {
-		return fmt.Errorf("service account %q has %d keys, more than %d", sa.GetName(), n, MaxServiceAccountKeys)
+		return out, fmt.Errorf("service account %q has %d keys, more than %d", sa.GetName(), n, MaxServiceAccountKeys)
 	}
 	if id := sa.GetOrkerId(); id != "" && (len(id) > MaxPrincipalIDBytes || !printable(id)) {
-		return fmt.Errorf("service account %q: orker_id is not 1 to %d printable bytes", sa.GetName(), MaxPrincipalIDBytes)
+		return out, fmt.Errorf("service account %q: orker_id is not 1 to %d printable bytes", sa.GetName(), MaxPrincipalIDBytes)
 	}
 	kids := map[string]bool{}
 	for i, k := range sa.GetKeys() {
 		key, err := jwt.ParsePublicKeyPEM([]byte(k.GetPublicKeyPem()))
 		if err != nil {
-			return fmt.Errorf("service account %q key %d: %w", sa.GetName(), i, err)
+			return out, fmt.Errorf("service account %q key %d: %w", sa.GetName(), i, err)
 		}
 		thumb, err := key.Thumbprint()
 		if err != nil {
-			return fmt.Errorf("service account %q key %d: %w", sa.GetName(), i, err)
+			return out, fmt.Errorf("service account %q key %d: %w", sa.GetName(), i, err)
 		}
 		if kid := k.GetKid(); kid != "" && kid != thumb {
-			return fmt.Errorf("service account %q key %d: kid is not the key's RFC 7638 thumbprint", sa.GetName(), i)
+			return out, fmt.Errorf("service account %q key %d: kid is not the key's RFC 7638 thumbprint", sa.GetName(), i)
 		}
 		if kids[thumb] {
-			return fmt.Errorf("service account %q lists one key twice", sa.GetName())
+			return out, fmt.Errorf("service account %q lists one key twice", sa.GetName())
 		}
 		kids[thumb] = true
+		out.Keys[thumb] = key
 	}
-	return nil
+	return out, nil
 }
 
 // IssuerFacts is what validation needs to know of one trusted issuer.

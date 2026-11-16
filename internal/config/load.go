@@ -530,6 +530,8 @@ func documentWrapKey(v Var) string {
 		return "issuers"
 	case "ORK_AUTH_ORKERS":
 		return "orkers"
+	case "ORK_ORKER_PROFILES":
+		return "profiles"
 	}
 	return "sinks"
 }

@@ -22,6 +22,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // The live-attempt-introspection integration scenarios (docs/UI_CLI_PARITY.md
@@ -55,7 +56,7 @@ func startOrkerWith(ctx context.Context, t *testing.T,
 		env = append(env, localActivityCatalogEnv(t))
 	}
 	cmd := exec.CommandContext(ctx, orkerPath)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = testbin.OrkerEnv(append(os.Environ(), env...))
 	var log strings.Builder
 	cmd.Stdout = &log
 	cmd.Stderr = &log

@@ -169,6 +169,33 @@ func (s *LocalStore) Get(ctx context.Context, uri string) (io.ReadCloser, error)
 	return f, nil
 }
 
+// GetRange opens length bytes of the artifact at uri from offset.
+func (s *LocalStore) GetRange(ctx context.Context, uri string, offset, length int64) (io.ReadCloser, error) {
+	key, _, _, err := s.parseURI(uri)
+	if err != nil {
+		return nil, err
+	}
+	if err := checkRange(offset, length, -1); err != nil {
+		return nil, fmt.Errorf("artifacts: local get range %q: %w", uri, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f, err := s.root.Open(key)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("artifacts: local get range %q: %w", uri, ErrNotFound)
+		}
+		return nil, fmt.Errorf("artifacts: local get range %q: %w", uri, err)
+	}
+	r, err := RangeOfFile(f, offset, length)
+	if err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("artifacts: local get range %q: %w", uri, err)
+	}
+	return r, nil
+}
+
 // Stat returns the stored reference for uri without reading the bytes.
 func (s *LocalStore) Stat(ctx context.Context, uri string) (ArtifactRef, error) {
 	key, name, sum, err := s.parseURI(uri)

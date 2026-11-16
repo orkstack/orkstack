@@ -145,6 +145,17 @@ type RunPlan struct {
 	// exactly as before and the golden history fixture keeps matching.
 	Cache *CachePlan `json:"cache,omitzero"`
 
+	// ProfileIdentities is, per pool and per profile a task of this run
+	// names, the structural identity every answering Orker of that pool
+	// reported at SUBMIT (docs/DEPLOY.md, "Profiles"): which Orkers serve a
+	// pool and what they offer are cluster facts workflow code may not read
+	// (AGENTS.md §2.1). Workflow code only copies it into each task's input
+	// (ProfileRefsFor), where the Orker refuses an attempt whose profile no
+	// longer matches. A profile with no entry is unpinned: no Orker answered
+	// for it at submit, which only an egress profile may be. omitempty, so a
+	// plan with none encodes exactly as before.
+	ProfileIdentities map[string]map[string]string `json:"profile_identities,omitempty"`
+
 	// History is the per-execution history ceiling this run must stop below,
 	// decided at submit (workflow code may not read config, AGENTS.md §2.1).
 	// Its Reserve — every count and byte charge the guard uses — is carried

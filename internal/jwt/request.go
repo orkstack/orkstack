@@ -34,6 +34,9 @@ type Request struct {
 	// BodySHA256 is the SHA-256 of the bytes the engine read, hashed before
 	// any handler ran; of the empty string for a request with no body.
 	BodySHA256 [sha256.Size]byte
+	// RawQuery is the request's query as the engine received it, without
+	// its "?"; empty for none. ork_query_sha256 binds it.
+	RawQuery string
 	// HostAllowed reports whether the listener's host policy accepts the
 	// host htu names (internal/hostpolicy). Required.
 	HostAllowed func(host string) bool
@@ -54,13 +57,40 @@ type AssertionPolicy struct {
 
 // VerifyRequest checks a service account's self-signed assertion and that
 // it was signed for this request: typ ork-request+jwt, iss and sub the
-// account, exp at most 60 s ahead, and htm, htu, ork_body_sha256 and jti
+// account, exp at most 60 s ahead, and htm, htu, ork_query_sha256,
+// ork_body_sha256 and jti
 // (authn-authz.md §3.2). keys holds the account's keys under their
 // thumbprints. replay records the jti only once everything else passed; a
 // jti it has seen is refused. An assertion that is not bound is refused
 // with ReasonBinding, saying why.
 func VerifyRequest(ctx context.Context, token string, p AssertionPolicy, keys KeySource, req Request, replay *ReplayCache, now time.Time) (*Claims, error) {
-	if p.Account == "" || p.Audience == "" || req.HostAllowed == nil || replay == nil {
+	if replay == nil {
+		return nil, refuse(ReasonUnavailable, "the assertion verifier is misconfigured")
+	}
+	c, rErr := verifyRequest(ctx, token, p, keys, req, now, true)
+	if rErr != nil {
+		return nil, rErr
+	}
+	iss := ServiceAccountIssuerPrefix + p.Account
+	if rErr := replay.use(iss, c.ID, c.Expiry.Add(p.Leeway), now); rErr != nil {
+		return nil, rErr
+	}
+	return c, nil
+}
+
+// VerifyRequestSigned is VerifyRequest without the body: every rule but
+// ork_body_sha256 and the jti's use. It is what is checked before a body is
+// read, so an assertion no account signed never makes the engine hold one;
+// VerifyRequest is still asked once the body is in hand.
+func VerifyRequestSigned(ctx context.Context, token string, p AssertionPolicy, keys KeySource, req Request, now time.Time) error {
+	if _, rErr := verifyRequest(ctx, token, p, keys, req, now, false); rErr != nil {
+		return rErr
+	}
+	return nil
+}
+
+func verifyRequest(ctx context.Context, token string, p AssertionPolicy, keys KeySource, req Request, now time.Time, body bool) (*Claims, *Error) {
+	if p.Account == "" || p.Audience == "" || req.HostAllowed == nil {
 		return nil, refuse(ReasonUnavailable, "the assertion verifier is misconfigured")
 	}
 	iss := ServiceAccountIssuerPrefix + p.Account
@@ -81,19 +111,16 @@ func VerifyRequest(ctx context.Context, token string, p AssertionPolicy, keys Ke
 	if c.Expiry.Sub(now) > MaxAssertionLifetime+p.Leeway {
 		return nil, refuse(ReasonLifetime, "exp is more than %s ahead", MaxAssertionLifetime)
 	}
-	if rErr := checkBinding(c, req); rErr != nil {
+	if rErr := checkBinding(c, req, body); rErr != nil {
 		return nil, rErr
 	}
 	if c.ID == "" || len(c.ID) > maxJTIBytes {
 		return nil, refuse(ReasonBinding, "jti is required, at most %d bytes", maxJTIBytes)
 	}
-	if rErr := replay.use(iss, c.ID, c.Expiry.Add(p.Leeway), now); rErr != nil {
-		return nil, rErr
-	}
 	return c, nil
 }
 
-func checkBinding(c *Claims, req Request) *Error {
+func checkBinding(c *Claims, req Request, body bool) *Error {
 	htm, ok := c.String("htm")
 	if !ok || htm == "" {
 		return refuse(ReasonBinding, "htm is missing: the assertion is not bound to a request")
@@ -123,6 +150,16 @@ func checkBinding(c *Claims, req Request) *Error {
 	}
 	if req.PublicURL != nil && (!strings.EqualFold(u.Scheme, req.PublicURL.Scheme) || !strings.EqualFold(u.Host, req.PublicURL.Host)) {
 		return refuse(ReasonBinding, "htu's scheme and host are not the deployment's public URL")
+	}
+	query, ok := c.String("ork_query_sha256")
+	if !ok || query == "" {
+		return refuse(ReasonBinding, "ork_query_sha256 is missing: the assertion is not bound to a request")
+	}
+	if query != QuerySHA256(req.RawQuery) {
+		return refuse(ReasonBinding, "ork_query_sha256 is not the hash of this request's query")
+	}
+	if !body {
+		return nil
 	}
 	sum, ok := c.String("ork_body_sha256")
 	if !ok || sum == "" {
@@ -223,5 +260,13 @@ func (h *expiryHeap) Pop() any {
 
 // BodySHA256 hashes a request body as ork_body_sha256 carries it.
 func BodySHA256(body []byte) [sha256.Size]byte { return sha256.Sum256(body) }
+
+// QuerySHA256 is ork_query_sha256: the hex SHA-256 of a request's raw query
+// without its "?", of the empty string for none. Binding it means a
+// captured assertion cannot be played again with another query.
+func QuerySHA256(rawQuery string) string {
+	sum := sha256.Sum256([]byte(rawQuery))
+	return hex.EncodeToString(sum[:])
+}
 
 var errNoAccount = errors.New("a service account name is required")

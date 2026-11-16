@@ -38,9 +38,12 @@ func TestFileSettings_FromTheEnvironment(t *testing.T) {
 	env := map[string]string{
 		"ORK_AUTH_BREAK_GLASS_KEY_FILE":  "/k/glass.pem",
 		"ORK_IDENTITY_SIGNING_KEY_FILES": "/k/a.pem, /k/b.pem",
-		"ORK_AUTH_ISSUERS":               "issuers:\n  dev:\n    issuer: dev\n    jwks_file: /k/dev.json\n  corp:\n    issuer: https://c\n",
-		"ORK_TEMPORAL_TLS_KEY_FILE":      " /k/temporal.key ",
-		"ORK_S3_BUCKET":                  "not-a-file",
+		"ORK_AUTH_ISSUERS": "issuers:\n  dev:\n    issuer: dev\n    jwks_file: /k/dev.json\n  corp:\n    issuer: https://c\n" +
+			"    login:\n      client_id: web\n      client_secret:\n        source: file:/k/web.secret\n" +
+			"  env:\n    issuer: https://e\n    login:\n      client_secret:\n        source: env:WEB_SECRET\n",
+		"ORK_AUTH_SIGNIN_KEY_FILES": "/k/signin-1, /k/signin-2",
+		"ORK_TEMPORAL_TLS_KEY_FILE": " /k/temporal.key ",
+		"ORK_S3_BUCKET":             "not-a-file",
 	}
 	got := FileSettings(func(k string) string { return env[k] })
 	var paths []string
@@ -48,7 +51,8 @@ func TestFileSettings_FromTheEnvironment(t *testing.T) {
 		paths = append(paths, f.Setting+"="+f.Path)
 	}
 	slices.Sort(paths)
-	want := []string{"auth.break_glass_key_file=/k/glass.pem", "auth.issuers=/k/dev.json",
+	want := []string{"auth.break_glass_key_file=/k/glass.pem", "auth.issuers=/k/dev.json", "auth.issuers=/k/web.secret",
+		"auth.signin.key_files=/k/signin-1", "auth.signin.key_files=/k/signin-2",
 		"identity.signing.key_files=/k/a.pem", "identity.signing.key_files=/k/b.pem", "temporal.tls.key_file=/k/temporal.key"}
 	if !slices.Equal(paths, want) {
 		t.Fatalf("FileSettings = %v, want %v", paths, want)

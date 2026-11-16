@@ -10,6 +10,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/authn"
 )
 
 // The routes outside Connect are decided by the same rows as the RPCs they
@@ -30,6 +31,22 @@ var exemptPatterns = map[string]string{
 	IssuerDiscoveryPath: "the task identity issuer's discovery document is public: relying parties read it with no credential",
 	IssuerKeysPath:      "the task identity issuer's public keys: relying parties read them with no credential",
 	IssuerBundlePath:    "the task identity issuer's SPIFFE bundle is its public keys: relying parties read it with no credential",
+	orkstackv1connect.AuthServiceGetAuthConfigProcedure: "public: the issuers a person can sign in with",
+	SigninLoginPattern:    "starts a sign-in: the caller has no credential yet",
+	SigninCallbackPattern: "ends a sign-in: its login cookie, state and PKCE verifier are the proof",
+}
+
+// The browser's sign-in redirects, as mounted (authn-authz.md §8).
+const (
+	SigninLoginPattern    = authn.LoginPath
+	SigninCallbackPattern = authn.CallbackPath
+)
+
+// staleSigninServed are the calls a sign-in past its revalidation may
+// make: its refresh and its sign-out.
+var staleSigninServed = map[string]bool{
+	orkstackv1connect.AuthServiceRefreshSigninProcedure: true,
+	orkstackv1connect.AuthServiceSignOutProcedure:       true,
 }
 
 // routeRows maps every authenticated mux pattern that is not a Connect

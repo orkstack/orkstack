@@ -3,6 +3,7 @@ package testbin
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -43,5 +44,31 @@ func TestPathBuildsOncePerProcessWithoutTheProofsBinaries(t *testing.T) {
 	Cleanup()
 	if _, err := os.Stat(first); !os.IsNotExist(err) {
 		t.Errorf("Cleanup left %s", first)
+	}
+}
+
+// TestOrkerEnv_GivesAnOrkerNoStopGraceUnlessTheTestNamesOne: an Orker
+// defaults to a day's stop grace, so a test that stops one while it runs a
+// task would wait it out; OrkerEnv adds a zero grace, and a grace the test
+// (or the proof) already named wins.
+func TestOrkerEnv_GivesAnOrkerNoStopGraceUnlessTheTestNamesOne(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		env  []string
+		want []string
+	}{
+		{"none named", []string{"A=1"}, []string{"A=1", "ORK_ORKER_STOP_GRACE=0s"}},
+		{"empty", nil, []string{"ORK_ORKER_STOP_GRACE=0s"}},
+		{"the test names one", []string{"ORK_ORKER_STOP_GRACE=10m", "A=1"}, []string{"ORK_ORKER_STOP_GRACE=10m", "A=1"}},
+		{"an empty one is still named", []string{"ORK_ORKER_STOP_GRACE="}, []string{"ORK_ORKER_STOP_GRACE="}},
+	} {
+		in := append([]string(nil), tc.env...)
+		got := OrkerEnv(in)
+		if strings.Join(got, "|") != strings.Join(tc.want, "|") {
+			t.Errorf("%s: OrkerEnv(%q) = %q, want %q", tc.name, tc.env, got, tc.want)
+		}
+		if strings.Join(in, "|") != strings.Join(tc.env, "|") {
+			t.Errorf("%s: OrkerEnv changed its argument to %q", tc.name, in)
+		}
 	}
 }

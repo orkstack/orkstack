@@ -240,6 +240,17 @@ var auditedProcedures = map[string]auditExtractor{
 		}
 		return auditEntry{Action: action, Target: in.GetPrincipalId()}
 	},
+	orkstackv1connect.AccessServiceRevokeSigninsProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.RevokeSigninsRequest)
+		detail := "all"
+		if len(in.GetPublicIds()) > 0 {
+			detail = "public_ids=" + strings.Join(in.GetPublicIds(), ",")
+		}
+		if out, ok := resp.(*orkstackv1.RevokeSigninsResponse); ok && out != nil {
+			detail += " revoked=" + strconv.Itoa(int(out.GetRevoked()))
+		}
+		return auditEntry{Action: "access.signins.revoke", Target: in.GetPrincipalId(), Detail: detail}
+	},
 	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.AcknowledgeAccessRevisionRequest)
 		return auditEntry{Action: "access.revision.acknowledge", Target: strconv.FormatInt(in.GetRevision(), 10), Detail: "sha256=" + in.GetSha256()}
@@ -685,15 +696,15 @@ func orDashAudit(s string) string {
 // unauditedWrites are write RPCs deliberately NOT recorded, each with the
 // reason a reader will look for. Adding a name here is a contract decision.
 var unauditedWrites = map[string]string{
-	orkstackv1connect.RunServiceSubmitRunProcedure:        "a run's own record is the durable fact; provenance is run-origin's",
-	orkstackv1connect.AuthServiceRefreshSigninProcedure:   notYetServed,
-	orkstackv1connect.AuthServiceSignOutProcedure:         notYetServed,
-	orkstackv1connect.AccessServiceRevokeSigninsProcedure: notYetServed,
+	orkstackv1connect.RunServiceSubmitRunProcedure:      "a run's own record is the durable fact; provenance is run-origin's",
+	orkstackv1connect.AuthServiceRefreshSigninProcedure: signinRecorded,
+	orkstackv1connect.AuthServiceSignOutProcedure:       signinRecorded,
 }
 
-// notYetServed is the reason a declared write is not yet recorded: no engine
-// mounts its service yet.
-const notYetServed = "declared ahead of its handler (identity P6); no engine serves it until the access change (P7, P8), which records it and moves it out of this list"
+// signinRecorded is why a sign-in's own calls are not recorded by the
+// interceptor: the sign-in writes its own record (auth.signin.*) as it
+// changes, with the issuer's answer the interceptor never sees.
+const signinRecorded = "the sign-in records itself (auth.signin.created, .refreshed, .ended)"
 
 // auditNameSuffix is the " name=NAME" a create or register detail gains when
 // the object was given a name, and nothing otherwise.

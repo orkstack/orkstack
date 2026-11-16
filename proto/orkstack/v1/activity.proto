@@ -92,11 +92,15 @@ message EachSource {
 }
 
 // NetworkMode is the complete set of network configurations an Orkflow may
-// select. Named Orker-defined profiles are deliberately absent (AGENTS.md §6).
+// select. An Orkflow never defines a network: EGRESS selects an egress
+// profile an Orker's operator defined, by its name (AGENTS.md §6).
 enum NetworkMode {
   NETWORK_MODE_UNSPECIFIED = 0;  // treated as NETWORK_MODE_DEFAULT
   NETWORK_MODE_DEFAULT = 1;
   NETWORK_MODE_NONE = 2;
+  // The egress profile Task.network_profile names: an internal network whose
+  // only way out is the operator's proxy.
+  NETWORK_MODE_EGRESS = 3;
 }
 
 // SecretRef names a secret and where the Orker gets it. The value never
@@ -515,10 +519,13 @@ message ExecuteTaskInput {
   // matching without re-recording).
   JoinContext join = 28;
 
-  // devices is set from E91; unset until it lands (v0.4.0 proto batch).
+  // devices are the device and `gpu` profiles the task holds, with the
+  // identities its run pinned. An Orker that offers none of them refuses the
+  // attempt (PROFILE_NOT_OFFERED).
   repeated ProfileRef devices = 30;
 
-  // egress is set from E91; unset until it lands (v0.4.0 proto batch).
+  // egress is the egress profile of a task whose network is
+  // NETWORK_MODE_EGRESS, with the identity its run pinned, if any.
   ProfileRef egress = 31;
 
   // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
@@ -885,13 +892,16 @@ message DescribeOrkerResult {
   // true beside it.
   OrkerStopping stopping = 24;
 
-  // profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch).
+  // profile_kinds_supported are the profile kinds this Orker's build
+  // implements. Submit sends a profiled task only to a pool whose answering
+  // Orkers all list its kinds.
   repeated ProfileKind profile_kinds_supported = 26;
 
-  // profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+  // profiles are the profiles this Orker offers.
   repeated OrkerProfile profiles = 27;
 
-  // profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch).
+  // profile_cordons are the profile causes that hold this Orker's cordon;
+  // cordoned is true while any is set.
   repeated ProfileCordon profile_cordons = 28;
 
   // identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch).
@@ -1043,10 +1053,12 @@ message Orker {
   // Orker of a release without a stop grace.
   OrkerStopping stopping = 17;
 
-  // profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+  // profiles are the profiles the Orker offers: name, kind, unit counts and
+  // whether its latest check passed.
   repeated OrkerProfile profiles = 18;
 
-  // profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch).
+  // profile_cordons are the profile causes that hold the Orker's cordon:
+  // cause, profile, reason and since.
   repeated ProfileCordon profile_cordons = 19;
 
   // service_host is set from E90; unset until it lands (v0.4.0 proto batch).
@@ -1096,9 +1108,28 @@ enum MetadataProbeOutcome {
   METADATA_PROBE_OUTCOME_PROBE_FAILED = 3;
 }
 
-// OrkerProfile is E91's; it is empty until E91 lands (v0.4.0 proto
-// batch).
-message OrkerProfile {}
+// OrkerProfile is one profile an Orker offers (docs/DEPLOY.md, "Profiles").
+// The inventory (ListOrkers) carries name, kind, the unit counts and probe_ok;
+// revision and identity_digest travel only on the Orker's own answer to the
+// engine and are never listed or exported.
+message OrkerProfile {
+  // name is the operator's name for the profile, the one a task selects.
+  string name = 1;
+  ProfileKind kind = 2;
+  // units is how many units a `gpu` profile declares; 0 for other kinds.
+  int32 units = 3;
+  // usable_units is how many of them are healthy and may be bound.
+  int32 usable_units = 4;
+  // bound_units is how many are held by a task now.
+  int32 bound_units = 5;
+  // probe_ok is whether the profile's latest check passed.
+  bool probe_ok = 6;
+  // revision is the operator's revision label; it changes memo keys only.
+  string revision = 7;
+  // identity_digest is the SHA-256 (hex) of the profile's structural
+  // identity, which a run pins at submit and every Orker of a pool must share.
+  string identity_digest = 8;
+}
 
 // OrkerStopping is set while an Orker is stopping: from its first stop signal
 // it takes no new task and opens no new pin, and what it runs carries on until
@@ -1112,19 +1143,71 @@ message OrkerStopping {
   google.protobuf.Timestamp grace_ends_at = 2;
 }
 
-// ProfileCordon is E91's; it is empty until E91 lands (v0.4.0 proto
-// batch).
-message ProfileCordon {}
-
-// ProfileKind is E91's; it holds only its zero value until E91 lands
-// (v0.4.0 proto batch).
-enum ProfileKind {
-  PROFILE_KIND_UNSPECIFIED = 0;
+// ProfileCordon is one profile cause that holds an Orker's cordon. A drift
+// latches until the Orker restarts and takes its pool out of service on that
+// Orker; an unavailable profile clears itself after consecutive good checks
+// and keeps the pool live. The inventory carries cause, profile, reason and
+// since; detail travels only on the Orker's own answer.
+message ProfileCordon {
+  enum Cause {
+    CAUSE_UNSPECIFIED = 0;
+    // The profile no longer matches what the Orker audited at boot.
+    CAUSE_DRIFT = 1;
+    // The profile's units, gateway or reachable destinations are absent.
+    CAUSE_UNAVAILABLE = 2;
+  }
+  Cause cause = 1;
+  // profile is the name of the profile the cause is about.
+  string profile = 2;
+  ProfileCordonReason reason = 3;
+  // since is when the Orker first observed the cause.
+  google.protobuf.Timestamp since = 4;
+  // detail says what was observed, for the operator.
+  string detail = 5;
 }
 
-// ProfileRef is E91's; it is empty until E91 lands (v0.4.0 proto
-// batch).
-message ProfileRef {}
+// ProfileCordonReason is the machine-readable reason of a ProfileCordon.
+enum ProfileCordonReason {
+  PROFILE_CORDON_REASON_UNSPECIFIED = 0;
+  PROFILE_CORDON_REASON_SPEC_CHANGED = 1;
+  PROFILE_CORDON_REASON_DEVICE_CHANGED = 2;
+  PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED = 3;
+  PROFILE_CORDON_REASON_NETWORK_CHANGED = 4;
+  PROFILE_CORDON_REASON_GATEWAY_CHANGED = 5;
+  PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED = 6;
+  PROFILE_CORDON_REASON_GATEWAY_ABSENT = 7;
+  PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED = 8;
+  PROFILE_CORDON_REASON_SPEC_ABSENT = 9;
+  PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD = 10;
+  PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH = 11;
+  PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE = 12;
+  PROFILE_CORDON_REASON_HOST_VIEW_CHANGED = 13;
+  PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY = 14;
+  PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH = 15;
+  PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN = 16;
+  PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED = 17;
+  PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD = 18;
+}
+
+// ProfileKind is the closed set of profile kinds compiled into the Orker
+// (AGENTS.md §6). A profile is operator data, never code.
+enum ProfileKind {
+  PROFILE_KIND_UNSPECIFIED = 0;
+  // Uncounted, shared character devices of an allow-listed class.
+  PROFILE_KIND_DEVICES = 1;
+  // Counted, exclusive GPU units, each one CDI device.
+  PROFILE_KIND_GPU = 2;
+  // An internal network whose only way out is the operator's proxy.
+  PROFILE_KIND_EGRESS = 3;
+}
+
+// ProfileRef names one profile a task holds, with the structural identity the
+// run pinned at submit. An empty identity_digest is unpinned: no Orker
+// answered at submit (egress only).
+message ProfileRef {
+  string name = 1;
+  string identity_digest = 2;
+}
 
 // ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
 // batch).

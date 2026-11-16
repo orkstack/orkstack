@@ -78,11 +78,16 @@ func NewMux(svc *Service, opts MuxOptions) *http.ServeMux {
 	// the pattern serveMux says serves it, never by its path.
 	outer := http.NewServeMux()
 	outer.Handle("/", authn.Middleware(serveMux, authn.MiddlewareOptions{
-		Mode:          opts.Access.Mode,
-		Mux:           serveMux,
-		Exempt:        func(pattern string) bool { _, ok := exemptPatterns[pattern]; return ok },
-		Authenticator: opts.Access.Authenticator,
-		OnBreakGlass:  opts.BreakGlassUsed,
+		Mode:              opts.Access.Mode,
+		Mux:               serveMux,
+		Exempt:            func(pattern string) bool { _, ok := exemptPatterns[pattern]; return ok },
+		Authenticator:     opts.Access.Authenticator,
+		OnBreakGlass:      opts.BreakGlassUsed,
+		Signins:           opts.Access.Signins,
+		Logger:            opts.Access.Logger,
+		StaleSigninServed: func(pattern string) bool { return staleSigninServed[pattern] },
+		// GetSignin hands the CSRF token out, so it cannot require it.
+		CSRFExempt: func(pattern string) bool { return pattern == orkstackv1connect.AuthServiceGetSigninProcedure },
 		Observe: func(r *http.Request, method, outcome string) {
 			if opts.Access.Counter != nil {
 				opts.Access.Counter.CountRequest(r.Context(), method, outcome)
@@ -240,6 +245,10 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 		// procedure: only what this release serves (access_service.go).
 		mountAccessService(svc, mux, handlerOptions)
 		mountAuthService(svc, mux, handlerOptions)
+		if s := opts.Access.Signins; s != nil {
+			mux.Handle(SigninLoginPattern, http.HandlerFunc(s.Login))
+			mux.Handle(SigninCallbackPattern, http.HandlerFunc(s.Callback))
+		}
 	}
 
 	if opts.UI != nil {

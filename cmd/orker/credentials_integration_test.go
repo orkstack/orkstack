@@ -49,14 +49,14 @@ func TestIntegration_BootRefusesCredentialsItCouldNotSignWith(t *testing.T) {
 			defer cancel()
 			cmd := exec.CommandContext(ctx, testbin.Path(t, "./cmd/orker"))
 			cmd.Dir = home
-			cmd.Env = append([]string{
+			cmd.Env = testbin.OrkerEnv(append([]string{
 				"HOME=" + home,
 				"ORK_ARTIFACT_BACKEND=s3",
 				"ORK_ORKER_WORKDIR=" + filepath.Join(home, "work"),
 				"AWS_SHARED_CREDENTIALS_FILE=" + filepath.Join(home, "no-credentials"),
 				"AWS_CONFIG_FILE=" + filepath.Join(home, "no-config"),
 				"AWS_EC2_METADATA_DISABLED=true",
-			}, tc.env...)
+			}, tc.env...))
 			var output bytes.Buffer
 			cmd.Stdout, cmd.Stderr = &output, &output
 			err := cmd.Run()

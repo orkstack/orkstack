@@ -105,7 +105,7 @@ func TestVerifyRequest_Refuses(t *testing.T) {
 		base := map[string]string{
 			"iss": `"serviceaccount:ci"`, "sub": `"serviceaccount:ci"`, "aud": `"` + testPublic + `"`,
 			"iat": iat, "exp": exp, "jti": `"j1"`, "htm": `"GET"`, "htu": `"https://ork.example/v1/x"`,
-			"ork_body_sha256": emptySum,
+			"ork_body_sha256": emptySum, "ork_query_sha256": emptySum,
 		}
 		for k, v := range over {
 			base[k] = v
@@ -123,6 +123,8 @@ func TestVerifyRequest_Refuses(t *testing.T) {
 		{"no htm", header, bound(map[string]string{"htm": ""}), ReasonBinding},
 		{"no htu", header, bound(map[string]string{"htu": ""}), ReasonBinding},
 		{"no body hash", header, bound(map[string]string{"ork_body_sha256": ""}), ReasonBinding},
+		{"no query hash", header, bound(map[string]string{"ork_query_sha256": ""}), ReasonBinding},
+		{"another query's hash", header, bound(map[string]string{"ork_query_sha256": `"` + QuerySHA256("namespace=other") + `"`}), ReasonBinding},
 		{"no jti", header, bound(map[string]string{"jti": ""}), ReasonBinding},
 		{"htu with a query", header, bound(map[string]string{"htu": `"https://ork.example/v1/x?a=1"`}), ReasonBinding},
 		{"htu with an empty query", header, bound(map[string]string{"htu": `"https://ork.example/v1/x?"`}), ReasonBinding},
@@ -244,5 +246,44 @@ func TestReplayCache_OneAccountCannotCrowdOutAnother(t *testing.T) {
 	later := until.Add(time.Second)
 	if err := r.use("serviceaccount:noisy", "d", later.Add(time.Minute), later); err != nil {
 		t.Fatalf("after expiry: %v", err)
+	}
+}
+
+// TestVerifyRequest_BoundToItsQuery: an assertion signed for one query is
+// refused for the same request with any other, or with none; a replay that
+// varies only the query is never accepted.
+func TestVerifyRequest_BoundToItsQuery(t *testing.T) {
+	f := newAssertionFixture(t)
+	token := f.sign(t, "GET", testPublic+"/ws/runs/r1?namespace=a&from_sequence=3", nil)
+	withQuery := func(q string) Request {
+		r := request("GET", "/ws/runs/r1", nil)
+		r.RawQuery = q
+		return r
+	}
+	for _, q := range []string{"", "namespace=b&from_sequence=3", "namespace=a&from_sequence=3&x=1", "from_sequence=3&namespace=a"} {
+		if _, err := VerifyRequest(context.Background(), token, f.policy, f.keys, withQuery(q), NewReplayCache(), testNow); ReasonOf(err) != ReasonBinding {
+			t.Errorf("query %q: got %v; want a binding refusal", q, err)
+		}
+	}
+	if _, err := VerifyRequest(context.Background(), token, f.policy, f.keys, withQuery("namespace=a&from_sequence=3"), NewReplayCache(), testNow); err != nil {
+		t.Fatalf("its own query: %v", err)
+	}
+}
+
+// TestVerifyRequestSigned: the check before a body is read passes an
+// assertion signed for this request whatever its body, refuses one signed
+// for another, and spends no jti.
+func TestVerifyRequestSigned(t *testing.T) {
+	f := newAssertionFixture(t)
+	token := f.sign(t, "POST", testPublic+testPath, []byte(`{"a":1}`))
+	if err := VerifyRequestSigned(context.Background(), token, f.policy, f.keys, request("POST", testPath, []byte("other")), testNow); err != nil {
+		t.Fatalf("signed for this request: %v", err)
+	}
+	if err := VerifyRequestSigned(context.Background(), token, f.policy, f.keys, request("PUT", testPath, nil), testNow); ReasonOf(err) != ReasonBinding {
+		t.Fatalf("signed for another method: %v", err)
+	}
+	replay := NewReplayCache()
+	if _, err := VerifyRequest(context.Background(), token, f.policy, f.keys, request("POST", testPath, []byte(`{"a":1}`)), replay, testNow); err != nil {
+		t.Fatalf("the full check after the signed one: %v", err)
 	}
 }

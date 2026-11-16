@@ -125,3 +125,22 @@ func repoRoot() (string, error) {
 		}
 	}
 }
+
+// StopGraceVar is the Orker's stop grace setting (internal/orker.StopGraceVar).
+const StopGraceVar = "ORK_ORKER_STOP_GRACE"
+
+// OrkerEnv is env for an Orker a test starts: env with a zero stop grace
+// added unless it already names one (the test's own, or the proof's). An
+// Orker defaults to a day's grace, so a test that stops one while it runs a
+// task would otherwise wait it out; a proof sets the same zero grace for
+// every Orker (test/tools/proofrun), and OrkerEnv makes a by-hand `go test`
+// behave as a proof does. TestDocs_OrkerSpawnsSetAStopGrace holds every
+// test that starts ./cmd/orker to it. env is not changed.
+func OrkerEnv(env []string) []string {
+	for _, kv := range env {
+		if strings.HasPrefix(kv, StopGraceVar+"=") {
+			return env
+		}
+	}
+	return append(append(make([]string, 0, len(env)+1), env...), StopGraceVar+"=0s")
+}

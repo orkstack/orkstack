@@ -83,9 +83,17 @@ signs afresh at every `make up`, each living thirty days. `dev-admin` is in
 (`orker.engine.auth.method: token_file`), bound to the `orker` role at `main`
 by `auth.orkers`, so the engine starts before the Orker. Present the admin's
 token to `orkctl` with the line `make up` prints,
-`export ORK_TOKEN_FILE=.data/identity/admin.token`. Until sign-in lands, the
-UI cannot sign in under the flag; the CLI is the way. Without the flag the
-stack is in `asserted` mode, as before.
+`export ORK_TOKEN_FILE=.data/identity/admin.token`. People sign in at a
+second issuer, `people`: `test/tools/oidctest`, a development identity
+provider `make up` starts on `127.0.0.1:5556` (`OIDC_ADDR`), with its CA,
+certificate and web client secret under `.data/identity/oidc/`, which signs
+in `dev@example.test` (`DEV_USER_EMAIL`) in the group `dev-admins`, an admin
+by `auth.admins`, with no page of its own. Sign in to the UI at its dev
+server, which is `auth.public_url`, or in a terminal with
+`./bin/orkctl --server http://127.0.0.1:8080 login --issuer people
+--issuer-ca-file .data/identity/oidc/ca.pem`. The sign-in key is
+`.data/identity/signin.key`, made once. Without the flag the stack is in
+`asserted` mode, as before.
 
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl orkflow create examples/each-fan-out.ork.yaml` and the

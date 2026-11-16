@@ -23,6 +23,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/jwt"
 )
 
 // recordingEngine answers GetSystemInfo and remembers what each request
@@ -164,5 +165,64 @@ func TestCredentials_ACAFileAndAClientCertificate(t *testing.T) {
 		if code := Execute(full, &out, &errOut); code == exitOK {
 			t.Errorf("%s was accepted", name)
 		}
+	}
+}
+
+// TestCredentials_AServiceAccountSignsEachRequest: --service-account with
+// --service-account-key sends a fresh assertion a request, issued by the
+// account; the flags go together, a break-glass key needs its reason, and a
+// token file takes precedence.
+func TestCredentials_AServiceAccountSignsEachRequest(t *testing.T) {
+	engine := &recordingEngine{}
+	mux := http.NewServeMux()
+	mux.Handle(orkstackv1connect.NewSystemServiceHandler(engine))
+	url := startFakeEngine(t, mux)
+	k, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	der, _ := x509.MarshalPKCS8PrivateKey(k)
+	key := writeFile(t, "sa.pem", string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der})))
+	var out, errOut strings.Builder
+	for range 2 {
+		if code := Execute([]string{"admin", "info", "--server", url, "--service-account", "bot", "--service-account-key", key}, &out, &errOut); code != exitOK {
+			t.Fatalf("admin info --service-account = %d: %s", code, errOut.String())
+		}
+	}
+	engine.mu.Lock()
+	sent := append([]string(nil), engine.bearer...)
+	engine.mu.Unlock()
+	if len(sent) != 2 || sent[0] == sent[1] {
+		t.Fatalf("bearers = %q; want two different assertions", sent)
+	}
+	for _, b := range sent {
+		iss, err := jwt.PeekIssuer(strings.TrimPrefix(b, "Bearer "))
+		if err != nil || iss != "serviceaccount:bot" {
+			t.Errorf("assertion issuer = %q, %v", iss, err)
+		}
+	}
+	refused := map[string][]string{
+		"an account with no key":       {"--service-account", "bot"},
+		"a key with no account":        {"--service-account-key", key},
+		"break-glass with no reason":   {"--service-account", "break-glass", "--service-account-key", key},
+		"a reason for another account": {"--service-account", "bot", "--service-account-key", key, "--break-glass-reason", "x"},
+		"a key that is not a key":      {"--service-account", "bot", "--service-account-key", writeFile(t, "bad", "nope")},
+		"a remote plain-http server":   {"--service-account", "bot", "--service-account-key", key, "--server", "http://engine.example.com:8080"},
+	}
+	for name, args := range refused {
+		errOut.Reset()
+		full := append([]string{"admin", "info", "--server", url}, args...)
+		if code := Execute(full, &out, &errOut); code == exitOK {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	token := writeFile(t, "token", "eyJ.test.token\n")
+	if code := Execute([]string{"admin", "info", "--server", url, "--service-account", "bot", "--service-account-key", key, "--token-file", token}, &out, &errOut); code != exitOK {
+		t.Fatal(errOut.String())
+	}
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if last := engine.bearer[len(engine.bearer)-1]; last != "Bearer eyJ.test.token" {
+		t.Errorf("with a token file the bearer is %q; want the file's token", last)
 	}
 }

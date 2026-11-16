@@ -17,6 +17,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authz"
+	"github.com/orkstack/orkstack/internal/jwt"
 )
 
 var update = flag.Bool("update", false, "rewrite testdata golden files")
@@ -553,5 +554,35 @@ func TestAuthorize_ConfigurationOnlyGrantsNoCatalogue(t *testing.T) {
 	p := mustCompile(t, nil, authz.Configuration{}).ConfigurationOnly()
 	if _, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermCatalogRead), Subject: user("corp", "a"), Policy: p}); err == nil {
 		t.Fatal("past the stale limit, catalog.read was granted to a principal configuration does not name")
+	}
+}
+
+// TestPolicy_ServiceAccount: a compiled policy hands out each service
+// account's keys by thumbprint and its Orker; one past its stale limit,
+// which serves configuration's principals only, knows none.
+func TestPolicy_ServiceAccount(t *testing.T) {
+	key := publicKeyPEM(t)
+	p, err := authz.Compile(&orkstackv1.AccessDocument{SchemaVersion: 1, ServiceAccounts: []*orkstackv1.ServiceAccount{
+		{Name: "gpu-1", OrkerId: "gpu-1", Keys: []*orkstackv1.ServiceAccountKey{{PublicKeyPem: key}}}}}, nil, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sa, ok := p.ServiceAccount("gpu-1")
+	if !ok || sa.Name != "gpu-1" || sa.OrkerID != "gpu-1" || len(sa.Keys) != 1 {
+		t.Fatalf("ServiceAccount(gpu-1) = %+v, %v", sa, ok)
+	}
+	pub, err := jwt.ParsePublicKeyPEM([]byte(key))
+	if err != nil {
+		t.Fatal(err)
+	}
+	thumb, _ := pub.Thumbprint()
+	if _, ok := sa.Keys[thumb]; !ok {
+		t.Errorf("the key is not held under its thumbprint %s", thumb)
+	}
+	if _, ok := p.ServiceAccount("nobody"); ok {
+		t.Error("an undeclared account was found")
+	}
+	if _, ok := p.ConfigurationOnly().ServiceAccount("gpu-1"); ok {
+		t.Error("a configuration-only policy found a document's account")
 	}
 }

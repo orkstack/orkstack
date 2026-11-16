@@ -49,8 +49,8 @@ func TestAuthz_EveryProcedureIsClassified(t *testing.T) {
 		if _, ok := procedures[procedure]; !ok {
 			t.Errorf("row %s names no declared procedure", procedure)
 		}
-		if !row.noPermission && len(row.checks) == 0 {
-			t.Errorf("%s asks no permission and is not marked noPermission", procedure)
+		if !row.noPermission && !row.public && len(row.checks) == 0 {
+			t.Errorf("%s asks no permission and is not marked noPermission or public", procedure)
 		}
 		for _, c := range row.checks {
 			if !authz.Known(c.perm) {
@@ -247,7 +247,7 @@ func TestAuthz_PermissionMatrix(t *testing.T) {
 	cases := 0
 	for _, procedure := range procedures {
 		row := accessRows[procedure]
-		if row.noPermission {
+		if row.noPermission || row.public {
 			continue
 		}
 		variants := matrixVariants[procedure]
@@ -573,6 +573,7 @@ func TestAuthn_EveryMuxPatternIsClassified(t *testing.T) {
 	s := newAccessService(t)
 	s.issuer, s.serveDiscovery = testIssuer(t, "ork.acme.dev"), true
 	a, _ := accessFor(t, authn.ModeEnforce, nil)
+	a.Signins = &authn.Signins{} // mounts sign-in's routes, so they are held to a class too
 	_, patterns := newMux(s, MuxOptions{Access: a, UI: http.NotFoundHandler()})
 	procedures := orkstackProcedures(t)
 	for _, pattern := range patterns {

@@ -54,6 +54,27 @@ func (s *replayStore) Get(ctx context.Context, uri string) (io.ReadCloser, error
 	return s.local.Get(ctx, uri)
 }
 
+// GetRange serves a range of a fetched URI's verified file first, then the
+// local store's.
+func (s *replayStore) GetRange(ctx context.Context, uri string, offset, length int64) (io.ReadCloser, error) {
+	if path, ok := s.fetched[uri]; ok {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return nil, fmt.Errorf("open fetched %s: %w", uri, err)
+		}
+		r, err := artifacts.RangeOfFile(file, offset, length)
+		if err != nil {
+			_ = file.Close()
+			return nil, fmt.Errorf("fetched %s: %w", uri, err)
+		}
+		return r, nil
+	}
+	return s.local.GetRange(ctx, uri, offset, length)
+}
+
 // Put writes into the session's local store: everything the dispatcher
 // uploads — outputs, values.json, the captured streams — stays on this
 // machine.

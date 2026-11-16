@@ -951,3 +951,22 @@ func contains(list []string, want string) bool {
 	}
 	return false
 }
+
+// TestIntegration_S3GetRange holds the S3 store to the GetRange contract: a
+// ranged GetObject, ErrRange past the end, ErrNotFound for a missing object.
+func TestIntegration_S3GetRange(t *testing.T) {
+	st, _ := newS3Store(t)
+	checkGetRange(t, st, uniquePrefix(t))
+}
+
+// TestIntegration_S3CreateIfAbsent holds the S3 line-index store to its
+// contract: If-None-Match: * makes exactly one of concurrent writers create
+// the index, and the rest are handed the existing one.
+func TestIntegration_S3CreateIfAbsent(t *testing.T) {
+	_, cfg := newS3Store(t)
+	st, err := artifacts.NewS3EachIndexStore(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("NewS3EachIndexStore: %v", err)
+	}
+	checkEachIndexStore(t, st, "ork-it-"+uniqueToken(t))
+}

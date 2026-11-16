@@ -160,7 +160,7 @@ type healthcheckResult struct {
 func runHealthcheck(ctx context.Context, t *testing.T, binary string, environ []string) healthcheckResult {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, binary, "--healthcheck")
-	cmd.Env = environ
+	cmd.Env = testbin.OrkerEnv(environ)
 	var stdout, stderr strings.Builder
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -264,7 +264,7 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	}
 
 	cmd := exec.CommandContext(ctx, binary)
-	cmd.Env = daemonEnv
+	cmd.Env = testbin.OrkerEnv(daemonEnv)
 	log := &syncBuffer{}
 	cmd.Stdout, cmd.Stderr = log, log
 	must.OKf(t, cmd.Start(), "start orker")

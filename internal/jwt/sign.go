@@ -102,7 +102,8 @@ type AssertionRequest struct {
 // SignRequest writes a service account's assertion bound to one request
 // (authn-authz.md §3.2): typ ork-request+jwt, iss and sub
 // serviceaccount:<Account>, a fresh 128-bit jti, exp 60 s ahead, and htm,
-// htu and ork_body_sha256. extra claims are added beside them; none may
+// htu (without query or fragment), ork_query_sha256 (its query) and
+// ork_body_sha256. extra claims are added beside them; none may
 // replace one of these.
 func (s *Signer) SignRequest(r AssertionRequest, now time.Time, extra map[string]any) (string, error) {
 	if r.Account == "" {
@@ -115,6 +116,7 @@ func (s *Signer) SignRequest(r AssertionRequest, now time.Time, extra map[string
 	if err != nil || !u.IsAbs() || u.Host == "" {
 		return "", fmt.Errorf("assertion URL %q is not absolute", r.URL)
 	}
+	rawQuery := u.RawQuery
 	u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment, u.User = "", false, "", "", nil
 	var jti [16]byte
 	if _, err := rand.Read(jti[:]); err != nil {
@@ -123,15 +125,16 @@ func (s *Signer) SignRequest(r AssertionRequest, now time.Time, extra map[string
 	body := BodySHA256(r.Body)
 	iss := ServiceAccountIssuerPrefix + r.Account
 	claims := map[string]any{
-		"iss":             iss,
-		"sub":             iss,
-		"aud":             r.Audience,
-		"iat":             now.Unix(),
-		"exp":             now.Add(MaxAssertionLifetime).Unix(),
-		"jti":             base64.RawURLEncoding.EncodeToString(jti[:]),
-		"htm":             r.Method,
-		"htu":             u.String(),
-		"ork_body_sha256": hex.EncodeToString(body[:]),
+		"iss":              iss,
+		"sub":              iss,
+		"aud":              r.Audience,
+		"iat":              now.Unix(),
+		"exp":              now.Add(MaxAssertionLifetime).Unix(),
+		"jti":              base64.RawURLEncoding.EncodeToString(jti[:]),
+		"htm":              r.Method,
+		"htu":              u.String(),
+		"ork_body_sha256":  hex.EncodeToString(body[:]),
+		"ork_query_sha256": QuerySHA256(rawQuery),
 	}
 	for name := range extra {
 		if _, taken := claims[name]; taken {

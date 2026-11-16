@@ -27,6 +27,34 @@ identity:
 
 Every caller then sends `Authorization: Bearer <token>`, a token your identity provider issued for the `orkstack` audience. The group in `admins` holds `admin` across the deployment. In `observe` and `enforce` each engine also needs a signing key in `identity.signing.key_files`, or it does not start.
 
+## Let people sign in
+
+Give the issuer a `login:` block, and the engine its public URL and a sign-in key:
+
+```yaml
+auth:
+  public_url: https://orkstack.example.com
+  signin:
+    key_files:
+      - /etc/orkstack/signin.key
+  issuers:
+    corp:
+      # as above, and:
+      login:
+        client_id: orkstack-web
+        client_secret:
+          source: file:/etc/orkstack/web-client.secret
+        cli_client_id: orkctl
+        scopes:
+          - openid
+          - email
+          - groups
+```
+
+Make the key once with `head -c 32 /dev/urandom > /etc/orkstack/signin.key`, and register `https://orkstack.example.com/v1/auth/callback/corp` as the web client's redirect URI. People then sign in to the web UI with the identity provider.
+
+In a terminal, run `orkctl login`. It opens a browser, or, with `--device`, prints a code to enter on any device. `orkctl logout` signs you out again.
+
 ## Check who you are
 
 Run `orkctl whoami`. It shows the principal the engine verified you as, the bindings that matched you, and what you may do at each scope.
@@ -74,6 +102,8 @@ Set `auth.break_glass_key_file` to one public key and keep its private half offl
 
 - [AUTHENTICATION.md, "Modes"](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#modes): what each mode verifies and records
 - [AUTHENTICATION.md, "The mode record"](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#the-mode-record): why an engine refuses to start below the deployment's mode, and the way back
+- [AUTHENTICATION.md, "Sign-in for the web UI"](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#sign-in-for-the-web-ui): the flow, the record, its limits and the sign-in key
+- [AUTHENTICATION.md, "From orkctl"](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#from-orkctl): `orkctl login`, service accounts and the order credentials are tried in
 - [AUTHENTICATION.md, "The first admin, and break-glass"](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#the-first-admin-and-break-glass): `auth.admins` and break-glass
 - [ACCESS.md, "Built-in roles"](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#built-in-roles): every role's exact permissions
 - [ACCESS.md, "The access document"](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#the-access-document): subjects, scopes and bounds

@@ -566,7 +566,7 @@ func TestIntegration_AMalformedFloorStopsTheOrkerAtBoot(t *testing.T) {
 	} {
 		bootCtx, bootCancel := context.WithTimeout(ctx, 90*time.Second)
 		cmd := exec.CommandContext(bootCtx, orkerPath)
-		cmd.Env = append(os.Environ(),
+		cmd.Env = testbin.OrkerEnv(append(os.Environ(),
 			"ORK_TEMPORAL_ADDRESS="+address,
 			"ORK_TEMPORAL_NAMESPACE="+partition,
 			"ORK_ORKER_QUEUE="+idempotencyTaskQueue()+"-boot",
@@ -574,7 +574,7 @@ func TestIntegration_AMalformedFloorStopsTheOrkerAtBoot(t *testing.T) {
 			"ORK_ARTIFACT_BACKEND=local",
 			"ORK_ARTIFACT_DIR="+sharedLocalArtifactDir(t),
 			"ORK_ORKER_SECRET_ALLOW="+tc.floor,
-		)
+		))
 		output, err := cmd.CombinedOutput()
 		deadlineHit := bootCtx.Err() != nil
 		bootCancel()

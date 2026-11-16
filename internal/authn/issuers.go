@@ -327,6 +327,8 @@ func validateIssuer(name string, d issuerDocument) (*Issuer, error) {
 		switch {
 		case i.Kind != KindUser:
 			fail("login is for a user issuer")
+		case urlErr != nil || issURL.Scheme != "https":
+			fail("login needs an https issuer: sign-in reads its discovery document")
 		case err != nil:
 			fail("login: %v", err)
 		default:

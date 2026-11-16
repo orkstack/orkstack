@@ -602,7 +602,7 @@ message TaskAttempt {
   // never writes it.
   AttemptTiming timing = 21;
 
-  // profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+  // profiles are the profiles the attempt ran under.
   repeated EffectiveProfile profiles = 22;
 
   // measured is set from E94; unset until it lands (v0.4.0 proto batch).
@@ -971,9 +971,18 @@ message AttemptIdentity {}
 // batch).
 message ConcurrencyQueued {}
 
-// EffectiveProfile is E91's; it is empty until E91 lands (v0.4.0 proto
-// batch).
-message EffectiveProfile {}
+// EffectiveProfile is one profile an attempt ran under, as the Orker applied
+// it.
+message EffectiveProfile {
+  string name = 1;
+  ProfileKind kind = 2;
+  // unit_indices are the positions of the `gpu` units the attempt held,
+  // numbered from 0 within the profile's list.
+  repeated int32 unit_indices = 3;
+  // identity_pinned is whether the run pinned the profile's identity at
+  // submit; false for an egress profile no Orker answered for.
+  bool identity_pinned = 4;
+}
 
 // InheritedPause is E103's; it is empty until E103 lands (v0.4.0 proto
 // batch).

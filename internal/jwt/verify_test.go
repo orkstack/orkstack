@@ -315,6 +315,36 @@ func TestVerifyIDToken(t *testing.T) {
 	}
 }
 
+func TestVerifyRefreshedIDToken(t *testing.T) {
+	_, e := testKeys(t)
+	const client = "orkstack-web"
+	header := `{"alg":"ES256","kid":"ec-1"}`
+	const sub = "user-1"
+	for _, tc := range []struct {
+		name string
+		over map[string]string
+		sub  string
+		want Reason
+	}{
+		{"the nonce repeated", map[string]string{"aud": `"orkstack-web"`, "nonce": `"n1"`}, sub, ""},
+		{"no nonce", map[string]string{"aud": `"orkstack-web"`}, sub, ""},
+		{"another nonce", map[string]string{"aud": `"orkstack-web"`, "nonce": `"n2"`}, sub, ReasonClaims},
+		{"another subject", map[string]string{"aud": `"orkstack-web"`}, "someone-else", ReasonClaims},
+		{"another client", map[string]string{"aud": `"api"`}, sub, ReasonClaims},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			token := craft(t, e, header, claimsWith(tc.over))
+			_, err := VerifyRefreshedIDToken(context.Background(), token, testPolicy(), newSpy(t), testNow, client, "n1", tc.sub)
+			if ReasonOf(err) != tc.want || (tc.want == "" && err != nil) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if _, err := VerifyRefreshedIDToken(context.Background(), "x", testPolicy(), newSpy(t), testNow, client, "n1", ""); err == nil {
+		t.Fatal("verified with no subject to hold it to")
+	}
+}
+
 func TestPolicy_Validate(t *testing.T) {
 	if err := testPolicy().Validate(); err != nil {
 		t.Fatal(err)

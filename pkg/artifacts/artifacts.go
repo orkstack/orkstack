@@ -68,6 +68,11 @@ type Store interface {
 	// Get opens the artifact at uri. The caller closes the reader.
 	// A missing artifact returns an error matching ErrNotFound.
 	Get(ctx context.Context, uri string) (io.ReadCloser, error)
+	// GetRange opens length bytes of the artifact at uri, from offset. The
+	// reader yields exactly those bytes or fails: a range that ends past the
+	// artifact is ErrRange, a missing artifact ErrNotFound. A zero length at
+	// or before the end reads nothing.
+	GetRange(ctx context.Context, uri string, offset, length int64) (io.ReadCloser, error)
 	// Stat returns the reference for uri without transferring the bytes.
 	// A missing artifact returns an error matching ErrNotFound.
 	Stat(ctx context.Context, uri string) (ArtifactRef, error)
@@ -90,6 +95,9 @@ var (
 	ErrInvalidURI = errors.New("invalid artifact URI")
 	// ErrUnsupported reports an operation the backend cannot perform.
 	ErrUnsupported = errors.New("operation unsupported by artifact backend")
+	// ErrRange reports a GetRange that ends past the artifact, or a negative
+	// offset or length.
+	ErrRange = errors.New("range is outside the artifact")
 	// ErrUnknownBackend reports an ORK_ARTIFACT_BACKEND value that is neither
 	// BackendLocal nor BackendS3.
 	ErrUnknownBackend = errors.New("unknown artifact backend")

@@ -360,7 +360,7 @@ func TestIntegration_BootRefusesABadTemporalTLSSetting(t *testing.T) {
 					"ORK_ARTIFACT_BACKEND=local",
 					"ORK_ARTIFACT_DIR="+filepath.Join(home, "artifacts"),
 				)
-				cmd.Env = append(cmd.Env, tc.env...)
+				cmd.Env = testbin.OrkerEnv(append(cmd.Env, tc.env...))
 				var output bytes.Buffer
 				cmd.Stdout, cmd.Stderr = &output, &output
 				err := cmd.Run()

@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -189,5 +191,46 @@ func orkerRow(presence engine.OrkerPresence, described *orkstackv1.DescribeOrker
 	row.Reserved = described.GetReserved()
 	row.MaxRequest = described.GetMaxRequest()
 	row.MetadataProbes = described.GetMetadataProbes()
+	for _, profile := range described.GetProfiles() {
+		row.Profiles = append(row.Profiles, project(profile, orkerProfilePublic))
+	}
+	for _, cause := range described.GetProfileCordons() {
+		row.ProfileCordons = append(row.ProfileCordons, project(cause, profileCordonPublic))
+	}
 	return row
+}
+
+// The inventory's allow-lists for an Orker's profiles. ListOrkers carries the
+// public fields; revisions, digests, details, paths, CDI names, network names
+// and proxy addresses stay on the Orker's own answer to the engine, and none
+// is exported to telemetry. Every field is in exactly one list
+// (TestOrkerProfileProjection_EveryFieldIsClassified), so a new field is
+// never listed by default.
+var (
+	orkerProfilePublic = map[string]bool{
+		"name": true, "kind": true, "units": true, "usable_units": true, "bound_units": true, "probe_ok": true,
+	}
+	orkerProfileControlOnly  = map[string]bool{"revision": true, "identity_digest": true}
+	profileCordonPublic      = map[string]bool{"cause": true, "profile": true, "reason": true, "since": true}
+	profileCordonControlOnly = map[string]bool{"detail": true}
+)
+
+// project is a copy of m holding only the fields public names.
+func project[M proto.Message](m M, public map[string]bool) M {
+	out := proto.CloneOf(m)
+	reflected := out.ProtoReflect()
+	// A field this engine does not know is unclassified too: a newer Orker's
+	// addition is never listed by default.
+	reflected.SetUnknown(nil)
+	var private []protoreflect.FieldDescriptor
+	reflected.Range(func(field protoreflect.FieldDescriptor, _ protoreflect.Value) bool {
+		if !public[string(field.Name())] {
+			private = append(private, field)
+		}
+		return true
+	})
+	for _, field := range private {
+		reflected.Clear(field)
+	}
+	return out
 }

@@ -2121,7 +2121,7 @@ type TaskAttempt struct {
 	// timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker
 	// never writes it.
 	Timing *AttemptTiming `protobuf:"bytes,21,opt,name=timing,proto3" json:"timing,omitempty"`
-	// profiles is set from E91; unset until it lands (v0.4.0 proto batch).
+	// profiles are the profiles the attempt ran under.
 	Profiles []*EffectiveProfile `protobuf:"bytes,22,rep,name=profiles,proto3" json:"profiles,omitempty"`
 	// measured is set from E94; unset until it lands (v0.4.0 proto batch).
 	Measured *MeasuredUsage `protobuf:"bytes,23,opt,name=measured,proto3" json:"measured,omitempty"`
@@ -3263,12 +3263,20 @@ func (*ConcurrencyQueued) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{20}
 }
 
-// EffectiveProfile is E91's; it is empty until E91 lands (v0.4.0 proto
-// batch).
+// EffectiveProfile is one profile an attempt ran under, as the Orker applied
+// it.
 type EffectiveProfile struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Name  string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	Kind  ProfileKind            `protobuf:"varint,2,opt,name=kind,proto3,enum=orkstack.v1.ProfileKind" json:"kind,omitempty"`
+	// unit_indices are the positions of the `gpu` units the attempt held,
+	// numbered from 0 within the profile's list.
+	UnitIndices []int32 `protobuf:"varint,3,rep,packed,name=unit_indices,json=unitIndices,proto3" json:"unit_indices,omitempty"`
+	// identity_pinned is whether the run pinned the profile's identity at
+	// submit; false for an egress profile no Orker answered for.
+	IdentityPinned bool `protobuf:"varint,4,opt,name=identity_pinned,json=identityPinned,proto3" json:"identity_pinned,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *EffectiveProfile) Reset() {
@@ -3299,6 +3307,34 @@ func (x *EffectiveProfile) ProtoReflect() protoreflect.Message {
 // Deprecated: Use EffectiveProfile.ProtoReflect.Descriptor instead.
 func (*EffectiveProfile) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *EffectiveProfile) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *EffectiveProfile) GetKind() ProfileKind {
+	if x != nil {
+		return x.Kind
+	}
+	return ProfileKind_PROFILE_KIND_UNSPECIFIED
+}
+
+func (x *EffectiveProfile) GetUnitIndices() []int32 {
+	if x != nil {
+		return x.UnitIndices
+	}
+	return nil
+}
+
+func (x *EffectiveProfile) GetIdentityPinned() bool {
+	if x != nil {
+		return x.IdentityPinned
+	}
+	return false
 }
 
 // InheritedPause is E103's; it is empty until E103 lands (v0.4.0 proto
@@ -4155,8 +4191,12 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x05_item\"\x13\n" +
 	"\x11AttemptCredential\"\x11\n" +
 	"\x0fAttemptIdentity\"\x13\n" +
-	"\x11ConcurrencyQueued\"\x12\n" +
-	"\x10EffectiveProfile\"\x10\n" +
+	"\x11ConcurrencyQueued\"\xa0\x01\n" +
+	"\x10EffectiveProfile\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12,\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x18.orkstack.v1.ProfileKindR\x04kind\x12!\n" +
+	"\funit_indices\x18\x03 \x03(\x05R\vunitIndices\x12'\n" +
+	"\x0fidentity_pinned\x18\x04 \x01(\bR\x0eidentityPinned\"\x10\n" +
 	"\x0eInheritedPause\"\x0f\n" +
 	"\rMeasuredUsage\"\x89\x01\n" +
 	"\rNamedArtifact\x12\x12\n" +
@@ -4314,6 +4354,7 @@ var file_orkstack_v1_run_proto_goTypes = []any{
 	(*ImageRef)(nil),              // 54: orkstack.v1.ImageRef
 	(*TelemetrySelection)(nil),    // 55: orkstack.v1.TelemetrySelection
 	(*OrkflowRef)(nil),            // 56: orkstack.v1.OrkflowRef
+	(ProfileKind)(0),              // 57: orkstack.v1.ProfileKind
 }
 var file_orkstack_v1_run_proto_depIdxs = []int32{
 	44, // 0: orkstack.v1.TaskEach.lines:type_name -> orkstack.v1.EachLines
@@ -4408,14 +4449,15 @@ var file_orkstack_v1_run_proto_depIdxs = []int32{
 	39, // 89: orkstack.v1.Event.resumed:type_name -> orkstack.v1.RunResumed
 	42, // 90: orkstack.v1.Event.interruption:type_name -> orkstack.v1.TaskInterruption
 	6,  // 91: orkstack.v1.Event.pause_transition:type_name -> orkstack.v1.PauseTransition
-	47, // 92: orkstack.v1.NamedArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
-	49, // 93: orkstack.v1.RunTimeout.deadline:type_name -> google.protobuf.Timestamp
-	49, // 94: orkstack.v1.RunTimeout.hard_end:type_name -> google.protobuf.Timestamp
-	95, // [95:95] is the sub-list for method output_type
-	95, // [95:95] is the sub-list for method input_type
-	95, // [95:95] is the sub-list for extension type_name
-	95, // [95:95] is the sub-list for extension extendee
-	0,  // [0:95] is the sub-list for field type_name
+	57, // 92: orkstack.v1.EffectiveProfile.kind:type_name -> orkstack.v1.ProfileKind
+	47, // 93: orkstack.v1.NamedArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
+	49, // 94: orkstack.v1.RunTimeout.deadline:type_name -> google.protobuf.Timestamp
+	49, // 95: orkstack.v1.RunTimeout.hard_end:type_name -> google.protobuf.Timestamp
+	96, // [96:96] is the sub-list for method output_type
+	96, // [96:96] is the sub-list for method input_type
+	96, // [96:96] is the sub-list for extension type_name
+	96, // [96:96] is the sub-list for extension extendee
+	0,  // [0:96] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }

@@ -10,6 +10,15 @@ import (
 	"strings"
 
 	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/jwt"
+)
+
+// serviceAccountEnvVar and serviceAccountKeyEnvVar name the service account
+// orkctl signs each request as, and the file holding its private key.
+const (
+	serviceAccountEnvVar    = "ORK_SERVICE_ACCOUNT"
+	serviceAccountKeyEnvVar = "ORK_SERVICE_ACCOUNT_KEY"
+	breakGlassReasonEnvVar  = "ORK_BREAK_GLASS_REASON"
 )
 
 // tokenFileEnvVar names a file holding the bearer token orkctl presents: a
@@ -23,6 +32,12 @@ type cliCredentials struct {
 	caFile     string
 	clientCert string
 	clientKey  string
+	// serviceAccount and serviceAccountKey sign one assertion a request
+	// (authn-authz.md §3.2); reason is Ork-Reason, which break-glass needs.
+	serviceAccount    string
+	serviceAccountKey string
+	reason            string
+	signer            *jwt.Signer
 	// tls is the client TLS configuration an https server gets; nil means
 	// the system's roots and no client certificate.
 	tls *tls.Config
@@ -42,6 +57,9 @@ func (g *globalFlags) resolveCredentials() error {
 	}
 	if (c.clientCert == "") != (c.clientKey == "") {
 		return errors.New("--client-cert and --client-key are given together")
+	}
+	if err := g.resolveServiceAccount(); err != nil {
+		return err
 	}
 	if c.caFile == "" && c.clientCert == "" {
 		return nil
@@ -69,6 +87,53 @@ func (g *globalFlags) resolveCredentials() error {
 		cfg.Certificates = []tls.Certificate{pair}
 	}
 	c.tls = cfg
+	return nil
+}
+
+// resolveServiceAccount reads --service-account and --service-account-key
+// (or their environment variables), which are given together. A client
+// certificate or a token file takes precedence: with either, no assertion
+// is signed (authn-authz.md §9).
+func (g *globalFlags) resolveServiceAccount() error {
+	c := &g.creds
+	if c.serviceAccount == "" {
+		c.serviceAccount = os.Getenv(serviceAccountEnvVar)
+	}
+	if c.serviceAccountKey == "" {
+		c.serviceAccountKey = os.Getenv(serviceAccountKeyEnvVar)
+	}
+	if c.reason == "" {
+		c.reason = os.Getenv(breakGlassReasonEnvVar)
+	}
+	if (c.serviceAccount == "") != (c.serviceAccountKey == "") {
+		return errors.New("--service-account and --service-account-key are given together")
+	}
+	if c.serviceAccount == "" {
+		if c.reason != "" {
+			return errors.New("--break-glass-reason is for a break-glass key (--service-account " + authn.BreakGlassAccount + ")")
+		}
+		return nil
+	}
+	if c.clientCert != "" || c.tokenFile != "" {
+		if g.stderr != nil {
+			_, _ = fmt.Fprintln(g.stderr, "warning: a client certificate or token file is given, and is sent instead of the service account")
+		}
+		return nil
+	}
+	if c.serviceAccount == authn.BreakGlassAccount && c.reason == "" {
+		return errors.New("a break-glass request needs --break-glass-reason: why the key is used")
+	}
+	if c.serviceAccount != authn.BreakGlassAccount && c.reason != "" {
+		return errors.New("--break-glass-reason is for a break-glass key (--service-account " + authn.BreakGlassAccount + ")")
+	}
+	if !strings.HasPrefix(g.server, "https://") && !loopbackServer(g.server) {
+		return fmt.Errorf("a service account signs only for an https:// server or a loopback http one: %s", g.server)
+	}
+	signer, err := authn.ReadSignerFile(c.serviceAccountKey, "--service-account-key")
+	if err != nil {
+		return err
+	}
+	c.signer = signer
 	return nil
 }
 

@@ -35,7 +35,7 @@ func TestReadTokenFile(t *testing.T) {
 
 func TestLoopbackHost(t *testing.T) {
 	for host, want := range map[string]bool{
-		"localhost": true, "ork.localhost": true, "127.0.0.1": true, "127.9.9.9": true, "::1": true,
+		"localhost": true, "ork.localhost": false, "LOCALHOST": true, "127.0.0.1": true, "127.9.9.9": true, "::1": true,
 		"ork.example.com": false, "10.0.0.1": false, "": false, "localhost.example.com": false,
 	} {
 		if got := LoopbackHost(host); got != want {

@@ -136,6 +136,16 @@ func (s *recordingArtifactStore) List(context.Context, string) ([]artifacts.Arti
 	return nil, nil
 }
 
+func (s *recordingArtifactStore) GetRange(_ context.Context, uri string, offset, length int64) (io.ReadCloser, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	body, ok := s.objects[uri]
+	if !ok {
+		return nil, artifacts.ErrNotFound
+	}
+	return artifacts.RangeOfBytes(body, offset, length)
+}
+
 func (s *recordingArtifactStore) Presign(context.Context, string, time.Duration) (string, error) {
 	return "", artifacts.ErrUnsupported
 }

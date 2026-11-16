@@ -66,6 +66,9 @@ type accessRow struct {
 	list     *listRule
 	// noPermission is a row any authenticated principal may call on itself.
 	noPermission bool
+	// public is a row anyone may call, authenticated or not; its pattern is
+	// exempt from the middleware's authentication too (exemptPatterns).
+	public bool
 	// artifactKinds leaves out of an admitted answer the artifacts whose
 	// kind the caller may not read: logs and artifact bytes have their own
 	// permissions wherever they are listed.
@@ -756,7 +759,7 @@ var accessRows = map[string]accessRow{
 
 	// AuthService: the caller itself. GetAuthConfig is public and is never
 	// mounted behind the middleware's authentication (routes).
-	orkstackv1connect.AuthServiceGetAuthConfigProcedure: {noPermission: true},
+	orkstackv1connect.AuthServiceGetAuthConfigProcedure: {public: true},
 	orkstackv1connect.AuthServiceGetSigninProcedure:     {noPermission: true},
 	orkstackv1connect.AuthServiceRefreshSigninProcedure: {noPermission: true},
 	orkstackv1connect.AuthServiceSignOutProcedure:       {noPermission: true},

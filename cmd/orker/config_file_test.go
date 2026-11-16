@@ -7,8 +7,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	cfgfile "github.com/orkstack/orkstack/internal/config"
 	"github.com/orkstack/orkstack/internal/orker"
@@ -299,5 +301,24 @@ func TestLoadConfig_MaskingSwitches(t *testing.T) {
 				t.Fatalf("maskErr = %v; want one naming %q", cfg.maskErr, tt.wantErr)
 			}
 		})
+	}
+}
+
+// TestApplyConfigFile_ProfilesReachTheParser: orker.profiles in a config file
+// renders to ORK_ORKER_PROFILES as its own document, which the Orker's parser
+// reads as written.
+func TestApplyConfigFile_ProfilesReachTheParser(t *testing.T) {
+	unsetenvT(t, orker.ProfilesVar)
+	path := writeTempConfig(t, "cfg.yaml", "orker:\n  profiles:\n    probe_image: ghcr.io/orkstack/orker@sha256:"+
+		strings.Repeat("a", 64)+"\n    audit_interval: 30s\n    amd:\n      kind: gpu\n      cdi:\n        kind: amd.com/gpu\n        units:\n          - \"0\"\n")
+	_, _, _, set, err := applyConfigFile([]string{"--config", path}, cfgfile.BinaryOrker, os.LookupEnv, setenvT(t))
+	must.OKf(t, err, "applyConfigFile")
+	if !slices.Contains(set, orker.ProfilesVar) {
+		t.Fatalf("applyConfigFile set = %v, want %s", set, orker.ProfilesVar)
+	}
+	cfg := loadConfig()
+	must.OKf(t, cfg.profilesErr, "parse the rendered profiles")
+	if len(cfg.profiles.List) != 1 || cfg.profiles.List[0].Name != "amd" || cfg.profiles.AuditInterval != 30*time.Second {
+		t.Fatalf("profiles = %+v", cfg.profiles)
 	}
 }

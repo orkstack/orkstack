@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -188,4 +189,75 @@ type failingAudit struct{ *artifacts.MemoryAuditStore }
 
 func (failingAudit) PutAuditRecord(context.Context, *orkstackv1.AuditRecord) error {
 	return errors.New("store down")
+}
+
+const testLoginIssuers = testIssuers + `    login:
+      client_id: orkstack-web
+      scopes:
+        - openid
+`
+
+// TestAuthConfig_CheckBootSignin: an issuer that offers sign-in needs a
+// public URL, https off loopback, a sign-in key, and limits that fit
+// inside max_age.
+func TestAuthConfig_CheckBootSignin(t *testing.T) {
+	base := map[string]string{"ORK_AUTH_MODE": "enforce", "ORK_AUTH_ISSUERS": testLoginIssuers,
+		"ORK_AUTH_PUBLIC_URL": "https://ork.example.test", "ORK_AUTH_SIGNIN_KEY_FILES": "/k1, /k2"}
+	with := func(over map[string]string) map[string]string {
+		m := map[string]string{}
+		for k, v := range base {
+			m[k] = v
+		}
+		for k, v := range over {
+			m[k] = v
+		}
+		return m
+	}
+	c, err := authFromEnv(lookupFrom(base))
+	if err != nil || !c.signinOffered() || len(c.signinKeyFiles) != 2 || c.signin.MaxAge != 12*time.Hour {
+		t.Fatalf("authFromEnv = %+v, %v", c, err)
+	}
+	if err := c.checkBoot("", false); err != nil {
+		t.Fatalf("a complete sign-in: %v", err)
+	}
+	local, _ := authFromEnv(lookupFrom(with(map[string]string{"ORK_AUTH_PUBLIC_URL": "http://localhost:8080"})))
+	if err := local.checkBoot("", false); err != nil {
+		t.Errorf("plain http on loopback: %v", err)
+	}
+	for name, over := range map[string]map[string]string{
+		"no public URL":             {"ORK_AUTH_PUBLIC_URL": ""},
+		"plain http off loopback":   {"ORK_AUTH_PUBLIC_URL": "http://ork.example.test"},
+		"no sign-in key":            {"ORK_AUTH_SIGNIN_KEY_FILES": ""},
+		"an idle timeout past life": {"ORK_AUTH_SIGNIN_IDLE_TIMEOUT": "13h"},
+	} {
+		c, err := authFromEnv(lookupFrom(with(over)))
+		if err == nil {
+			err = c.checkBoot("", false)
+		}
+		if err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+	if _, err := authFromEnv(lookupFrom(with(map[string]string{"ORK_AUTH_SIGNIN_MAX_AGE": "forever"}))); err == nil {
+		t.Error("a bad max_age was accepted")
+	}
+}
+
+func TestSigninSecret(t *testing.T) {
+	t.Setenv("ORK_TEST_LOGIN_SECRET", " s3cret\n")
+	if v, err := signinSecret("env:ORK_TEST_LOGIN_SECRET"); err != nil || v != "s3cret" {
+		t.Fatalf("env = %q %v", v, err)
+	}
+	path := t.TempDir() + "/secret"
+	if err := os.WriteFile(path, []byte("from-file\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if v, err := signinSecret("file:" + path); err != nil || v != "from-file" {
+		t.Fatalf("file = %q %v", v, err)
+	}
+	for _, src := range []string{"env:ORK_TEST_UNSET_SECRET", "file:/nonexistent", "vault:x"} {
+		if _, err := signinSecret(src); err == nil {
+			t.Errorf("%s: read", src)
+		}
+	}
 }

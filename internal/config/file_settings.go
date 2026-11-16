@@ -75,7 +75,7 @@ func FileSettings(getenv func(string) string) []FileSetting {
 				out = append(out, fileSetting(v, "", fmt.Sprintf("%s does not parse: %v", v.Env, err)))
 				continue
 			}
-			paths, odd := fieldValues(&node, v.FileField)
+			paths, odd := documentFiles(&node, v)
 			out = append(out, pathSettings(v, paths)...)
 			if odd != "" {
 				out = append(out, fileSetting(v, "", odd))
@@ -114,7 +114,7 @@ func foreignFiles(node *yaml.Node, snode *schemaNode, dir string) []FileSetting 
 		return nil
 	}
 	if v.Kind == KindDocument {
-		paths, odd := fieldValues(node, v.FileField)
+		paths, odd := documentFiles(node, v)
 		out := pathSettings(v, paths)
 		if odd != "" {
 			out = append(out, fileSetting(v, "", odd))
@@ -190,6 +190,25 @@ func resolveAlias(n *yaml.Node, depth int) *yaml.Node {
 
 // fieldValues are the values of every mapping key named field anywhere in
 // node, aliases and merge keys followed; odd says why one was not a path.
+// documentFiles answers the files a document names: its FileField's
+// values, and its FileSourceField's that are file:/PATH sources.
+func documentFiles(node *yaml.Node, v Var) (paths []string, odd string) {
+	paths, odd = fieldValues(node, v.FileField)
+	if v.FileSourceField == "" {
+		return paths, odd
+	}
+	sources, sourceOdd := fieldValues(node, v.FileSourceField)
+	for _, s := range sources {
+		if p, ok := strings.CutPrefix(s, "file:"); ok {
+			paths = append(paths, p)
+		}
+	}
+	if odd == "" {
+		odd = sourceOdd
+	}
+	return paths, odd
+}
+
 func fieldValues(node *yaml.Node, field string) (paths []string, odd string) {
 	seen := map[*yaml.Node]bool{}
 	var walk func(*yaml.Node, int)

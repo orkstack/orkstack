@@ -45,11 +45,12 @@ func ReadTokenFile(path, label string) (string, error) {
 	return token, nil
 }
 
-// LoopbackHost reports a host on this machine: localhost, a name under it,
-// or a loopback address. It is the one place a bearer may travel without
-// TLS, for orkctl and for an Orker alike.
+// LoopbackHost reports a host on this machine: the name localhost, or a
+// loopback address. It is the one place a bearer may travel without TLS,
+// for orkctl and for an Orker alike. A name under localhost is not one: not
+// every resolver keeps it on this machine.
 func LoopbackHost(host string) bool {
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	if strings.EqualFold(host, "localhost") {
 		return true
 	}
 	ip := net.ParseIP(host)

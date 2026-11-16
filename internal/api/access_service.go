@@ -36,6 +36,8 @@ var accessServiceServed = []string{
 	orkstackv1connect.AccessServiceListAccessRevisionsProcedure,
 	orkstackv1connect.AccessServiceGetAccessRevisionProcedure,
 	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure,
+	orkstackv1connect.AccessServiceListSigninsProcedure,
+	orkstackv1connect.AccessServiceRevokeSigninsProcedure,
 }
 
 // accessHandler serves them; the rest of AccessService is unimplemented.
@@ -174,4 +176,40 @@ func (h accessHandler) LowerAuthMode(ctx context.Context, req *connect.Request[o
 		return nil, connect.NewError(connect.CodeUnavailable, err)
 	}
 	return connect.NewResponse(&orkstackv1.LowerAuthModeResponse{PreviousMode: previous, Mode: req.Msg.GetMode()}), nil
+}
+
+// ListSignins answers a principal's sign-ins (every principal's when none
+// is named): never a cookie, a refresh token or a CSRF token.
+func (h accessHandler) ListSignins(ctx context.Context, req *connect.Request[orkstackv1.ListSigninsRequest]) (*connect.Response[orkstackv1.ListSigninsResponse], error) {
+	out := &orkstackv1.ListSigninsResponse{}
+	s := h.svc.access.Signins
+	if s == nil {
+		return connect.NewResponse(out), nil
+	}
+	listed, err := s.List(ctx, req.Msg.GetPrincipalId())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable, err)
+	}
+	for _, l := range listed {
+		out.Signins = append(out.Signins, &orkstackv1.Signin{PublicId: l.PublicID, PrincipalId: l.PrincipalID,
+			CreatedAt: timestamppb.New(l.CreatedAt), ExpiresAt: timestamppb.New(l.ExpiresAt),
+			ValidatedUntil: timestamppb.New(l.ValidatedUntil), IdleExpiresAt: timestamppb.New(l.IdleExpiresAt)})
+	}
+	return connect.NewResponse(out), nil
+}
+
+// RevokeSignins ends a principal's sign-ins: those named, or every one.
+func (h accessHandler) RevokeSignins(ctx context.Context, req *connect.Request[orkstackv1.RevokeSigninsRequest]) (*connect.Response[orkstackv1.RevokeSigninsResponse], error) {
+	if req.Msg.GetPrincipalId() == "" {
+		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("principal_id is required"))
+	}
+	s := h.svc.access.Signins
+	if s == nil {
+		return connect.NewResponse(&orkstackv1.RevokeSigninsResponse{}), nil
+	}
+	n, err := s.Revoke(ctx, req.Msg.GetPrincipalId(), req.Msg.GetPublicIds())
+	if err != nil {
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%d sign-in(s) ended before: %w", n, err))
+	}
+	return connect.NewResponse(&orkstackv1.RevokeSigninsResponse{Revoked: int32(n)}), nil
 }

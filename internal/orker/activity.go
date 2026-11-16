@@ -98,6 +98,10 @@ type Options struct {
 	// instance metadata endpoints from a container on the default network,
 	// and what an answer does (metadata_probe.go). Empty is off.
 	MetadataProbe MetadataProbeMode
+	// Profiles is orker.profiles (profiles.go): what this Orker offers tasks
+	// by name. Boot refuses a profile of a kind this build does not
+	// implement.
+	Profiles Profiles
 	// LogUnmasked is orker.log.mask_secrets: false; AllowSecretValues is
 	// orker.values.refuse_secrets: false (mask.go). The zero values mask
 	// and refuse.
@@ -181,6 +185,9 @@ type Activities struct {
 	stopReap context.CancelFunc
 	// removalRetryEvery overrides removalRetryInterval, for a test.
 	removalRetryEvery time.Duration
+	// profiles is what this Orker offers and the profile causes that hold
+	// its cordon (profile_state.go).
+	profiles *profileState
 	// scope is the storage scope watch (scope_watch.go), nil until
 	// WatchStoreScope starts one: DescribeOrker then leaves its fields unset.
 	scope atomic.Pointer[ScopeWatch]
@@ -258,6 +265,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		maxConc:       maxConc,
 		maxPins:       opts.MaxPins,
 		metadataProbe: opts.MetadataProbe,
+		profiles:      newProfileState(opts.Profiles),
 		cordon:        NewCordon(),
 		pins:          newOpenPins(),
 		stops:         newStopRegistry(),
@@ -519,6 +527,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		result.ResultsScope = scope.Results
 	}
 	a.describeMetadata(result)
+	a.profiles.report(result)
 	result.Pins = a.describePins()
 	result.OpenPins = int32(len(result.Pins))
 	if a.dispatcher.Runtime != nil {
@@ -928,6 +937,14 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// refuses here, naming the setting.
 	if a.capacityErr != nil {
 		return fmt.Errorf("%s: %w", ReasonCapacityInvalid, a.capacityErr)
+	}
+	// A declared profile is never silently ignored: one of a kind this build
+	// does not implement refuses the boot, naming it.
+	if a.profiles == nil {
+		return fmt.Errorf("%s: this Orker was built without its profile state", ReasonProfileInvalid)
+	}
+	if err := a.profiles.declared.CheckSupported(SupportedProfileKinds()); err != nil {
+		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
 	}
 	// An id is what names this Orker's control channel (task.QueueForOrker),
 	// so an id that cannot name one refuses boot here, naming the variable,

@@ -68,6 +68,13 @@ owns or a running proof recorded, and the dev stack stays up. A by-hand
 `go test -tags=integration` does not clean: run `make proof-clean REMOVE=1`
 before it (AGENTS.md §11.1). A CI part runs on a fresh runner and does not.
 
+A proof gives every Orker it starts no stop grace (`ORK_ORKER_STOP_GRACE=0s`),
+so stopping a busy one never waits out the default day. A Go test that starts
+`./cmd/orker` passes its environment through `testbin.OrkerEnv`, which does
+the same unless the test names a grace, and a Playwright spec uses `orkerEnv`
+(`TestDocs_OrkerSpawnsSetAStopGrace` holds both); start an Orker any other
+way with `ORK_ORKER_STOP_GRACE=0s` exported.
+
 ### 2.1 The gates
 
 A local proof runs its gates in this order: the **fast gates**, alone and one

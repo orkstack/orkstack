@@ -29,12 +29,16 @@ const (
 	EngineAuthTokenFileVar = "ORK_ORKER_ENGINE_AUTH_TOKEN_FILE"
 	EngineAuthCertFileVar  = "ORK_ORKER_ENGINE_AUTH_CERT_FILE"
 	EngineAuthKeyFileVar   = "ORK_ORKER_ENGINE_AUTH_KEY_FILE"
+	// EngineAuthServiceAccountVar names the service account the Orker signs
+	// each request as, with orker.engine.auth.key_file.
+	EngineAuthServiceAccountVar = "ORK_ORKER_ENGINE_AUTH_SERVICE_ACCOUNT"
 )
 
 // The methods an Orker authenticates with.
 const (
-	EngineAuthTokenFile = "token_file"
-	EngineAuthMTLS      = "mtls"
+	EngineAuthTokenFile      = "token_file"
+	EngineAuthServiceAccount = "service_account"
+	EngineAuthMTLS           = "mtls"
 )
 
 // EngineSettings are orker.engine.*.
@@ -45,13 +49,16 @@ type EngineSettings struct {
 	TokenFile string
 	CertFile  string
 	KeyFile   string
+	// ServiceAccount is the account the service_account method signs as.
+	ServiceAccount string
 }
 
 // EngineSettingsFromEnv reads orker.engine.* through get.
 func EngineSettingsFromEnv(get func(string) string) EngineSettings {
 	trim := func(k string) string { return strings.TrimSpace(get(k)) }
 	return EngineSettings{URL: trim(EngineURLVar), CAFile: trim(EngineCAFileVar), Method: trim(EngineAuthMethodVar),
-		TokenFile: trim(EngineAuthTokenFileVar), CertFile: trim(EngineAuthCertFileVar), KeyFile: trim(EngineAuthKeyFileVar)}
+		TokenFile: trim(EngineAuthTokenFileVar), CertFile: trim(EngineAuthCertFileVar), KeyFile: trim(EngineAuthKeyFileVar),
+		ServiceAccount: trim(EngineAuthServiceAccountVar)}
 }
 
 // Configured reports whether the Orker reaches an engine at all.
@@ -62,7 +69,7 @@ func (s EngineSettings) Configured() bool { return s.URL != "" }
 // its files. Each refusal names its setting.
 func (s EngineSettings) Validate() error {
 	if s.URL == "" {
-		if s.Method != "" || s.TokenFile != "" || s.CertFile != "" || s.KeyFile != "" || s.CAFile != "" {
+		if s.Method != "" || s.TokenFile != "" || s.CertFile != "" || s.KeyFile != "" || s.CAFile != "" || s.ServiceAccount != "" {
 			return fmt.Errorf("orker.engine.auth.* is set without orker.engine.url (%s)", EngineURLVar)
 		}
 		return nil
@@ -88,14 +95,22 @@ func (s EngineSettings) Validate() error {
 		if s.TokenFile == "" {
 			return fmt.Errorf("orker.engine.auth.method token_file needs orker.engine.auth.token_file (%s)", EngineAuthTokenFileVar)
 		}
+	case EngineAuthServiceAccount:
+		if s.ServiceAccount == "" || s.KeyFile == "" {
+			return fmt.Errorf("orker.engine.auth.method service_account needs orker.engine.auth.service_account and key_file (%s, %s)",
+				EngineAuthServiceAccountVar, EngineAuthKeyFileVar)
+		}
+		if s.ServiceAccount == authn.BreakGlassAccount {
+			return fmt.Errorf("orker.engine.auth.service_account (%s) is never the break-glass account", EngineAuthServiceAccountVar)
+		}
 	case EngineAuthMTLS:
 		if s.CertFile == "" || s.KeyFile == "" {
 			return fmt.Errorf("orker.engine.auth.method mtls needs orker.engine.auth.cert_file and key_file (%s, %s)", EngineAuthCertFileVar, EngineAuthKeyFileVar)
 		}
 	case "":
-		return fmt.Errorf("orker.engine.url is set and orker.engine.auth.method (%s) is not: token_file or mtls", EngineAuthMethodVar)
+		return fmt.Errorf("orker.engine.url is set and orker.engine.auth.method (%s) is not: token_file, service_account or mtls", EngineAuthMethodVar)
 	default:
-		return fmt.Errorf("orker.engine.auth.method (%s) %q is neither token_file nor mtls", EngineAuthMethodVar, s.Method)
+		return fmt.Errorf("orker.engine.auth.method (%s) %q is not token_file, service_account or mtls", EngineAuthMethodVar, s.Method)
 	}
 	return nil
 }
@@ -152,7 +167,19 @@ func NewEngineClient(s EngineSettings) (*EngineClient, error) {
 		opts = append(opts, connect.WithInterceptors(authn.BearerFromFile{Path: s.TokenFile, Label: "orker.engine.auth.token_file"}))
 	}
 	base := strings.TrimSuffix(s.URL, "/")
-	return &EngineClient{auth: orkstackv1connect.NewAuthServiceClient(&http.Client{Transport: transport}, base, opts...), transport: transport}, nil
+	var rt http.RoundTripper = transport
+	if s.Method == EngineAuthServiceAccount {
+		// The key is read once, at boot: a service account's key is the
+		// Orker's own, never rotated under a running process.
+		signer, err := authn.ReadSignerFile(s.KeyFile, "orker.engine.auth.key_file")
+		if err != nil {
+			return nil, err
+		}
+		// The audience is the engine's URL, which is then the deployment's
+		// public URL (auth.public_url): the engine checks both.
+		rt = &authn.AssertionTransport{Base: transport, Signer: signer, Account: s.ServiceAccount, Audience: base}
+	}
+	return &EngineClient{auth: orkstackv1connect.NewAuthServiceClient(&http.Client{Transport: rt}, base, opts...), transport: transport}, nil
 }
 
 // Whoami asks the engine which principal this Orker's credential is, and
