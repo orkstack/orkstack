@@ -1446,9 +1446,14 @@ could never cancel it. Required, all four together:
    `ORK_ORKER_HEARTBEAT_INTERVAL` (default 5 s, bounded to 1 s–10 s: above a
    third of the heartbeat timeout two missed ticks would declare live activities
    dead). The detail is `task.HeartbeatProgress` — the phase, the container id,
-   bytes logged, the Orker's own `ORK_ORKER_ID` and, once the attempt has
-   claimed it, its ordinal — and the engine reads it back for live
-   introspection (§6.6). The container sees none of it. The first answer is
+   bytes logged, the Orker's own `ORK_ORKER_ID`, once the attempt has
+   claimed it, its ordinal, and, once its container is observed started,
+   `started` — and the engine reads it back for live introspection (§6.6).
+   The container sees none of it. The beat that first says `started` goes at
+   once, outside the loop's throttle, so the cluster knows the attempt did
+   work even if the Orker dies the next instant. Before an attempt's failure
+   is reported the loop is stopped, and one last beat, phase `reported`, goes
+   at once; no beat of the loop lands after it. The first answer is
    awaited: an attempt with no commit to adopt and no memo hit claims its
    ordinal, joins a pin, fetches an input or pulls an image only once the
    cluster has acknowledged one of its heartbeats (§7.1). A server decision
@@ -2050,6 +2055,19 @@ one non-retryable attempt. It is derived and data-only: it issues no command
 and changes no decision. Each individual attempt's reason — including the
 ones Temporal discarded — is in that attempt's record (§7.1 step 16), in the
 same `Error` shape.
+
+**Typed interruptions.** An engine may list, in an attempt's retry policy,
+error types the Orker then emits for an interruption instead of the category:
+`OrkInterruption:<REASON>` for `ORKER_STOPPED`, for `ATTEMPT_STORE_UNAVAILABLE`
+when the attempt started no container, and for `CONTAINER_STOPPED_BY_RUNTIME`
+while the Orker is stopping. Such an error is non-retryable, so it ends the
+execution and the engine decides whether to run the task again; its detail
+still carries the reason. A listed type the Orker may not emit is declined:
+logged, and the failure stays category-typed. With `TemporalTimeout:Heartbeat`
+listed, an attempt that lost its heartbeat (`ORKER_HEARTBEAT_LOST`) reports
+nothing and the engine reads the loss from the cluster's heartbeat timeout.
+With nothing listed, which is what this engine does today, every failure is
+category-typed as above.
 
 ---
 

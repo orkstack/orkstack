@@ -329,6 +329,15 @@ type Failure struct {
 	// own logs. It is never what the engine reports: the reason and message
 	// are.
 	Cause error
+	// NeverStarted: the attempt started no container, so it did no work (E92
+	// §4.2): an attempt handed back before it began, or one whose claim the
+	// store refused. It decides whether a never-started reason may be
+	// emitted as a typed interruption (emission.go).
+	NeverStarted bool
+	// DuringStop: this Orker's stop had begun when the failure was observed,
+	// read then and not when it is reported, so a container its runtime
+	// stopped just before the stop is not taken for the stop's doing.
+	DuringStop bool
 }
 
 // Error implements error.

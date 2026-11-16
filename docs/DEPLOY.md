@@ -5333,7 +5333,9 @@ along on the same `/metrics`. An Orker that declares a capacity adds
 capacity", above). Every Orker adds `ork.orker.store_outage.*` ("When object
 storage goes away", above) and its load gauges, `ork.orker.running_tasks`,
 `open_pins`, `max_concurrent` and `cordoned` ("The Orker's load, as
-metrics", above). Both binaries add `ork.tls.reload`,
+metrics", above), and `ork.orker.interruption_emission{outcome=emitted|declined}`,
+each typed interruption it emitted because an attempt's retry policy listed it
+and each listed one it declined (docs/OCI_ACTIVITY_CONTRACT.md §8.3). Both binaries add `ork.tls.reload`,
 `ork.tls.cert.not_after` and `ork.temporal.auth_failures` when Temporal is
 dialed over TLS ("Temporal over TLS", §5).
 

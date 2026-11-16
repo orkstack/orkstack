@@ -843,6 +843,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		} else {
 			activities.Dispatcher().AttemptRecords = metrics
 		}
+		// Each typed interruption emitted or declined
+		// (ork.orker.interruption_emission).
+		if metrics, err := telemetry.NewInterruptionMetrics(sinks.Default(), activities.Dispatcher().OrkerID); err != nil {
+			logger.Warn("telemetry: the Orker's interruption metric could not be built; it is not exported", "error", err)
+		} else {
+			activities.Dispatcher().Interruptions = metrics
+		}
 	}
 	if cfg.storeWatch.Enabled {
 		check := func(ctx context.Context) error { return artifacts.CheckCommitStore(ctx, commitStore) }

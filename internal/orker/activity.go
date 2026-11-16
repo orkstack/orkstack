@@ -228,7 +228,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		opts.CapacityObserver.Watch(orkerID, capacity.reading)
 	}
 
-	return &Activities{
+	a := &Activities{
 		dispatcher: &OCIDispatcher{
 			Runtime:           runtime,
 			Store:             store,
@@ -265,6 +265,13 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		capacityErr:   capacityErr,
 		taskQueue:     opts.TaskQueue,
 	}
+	// A typed interruption that depends on the stop (CONTAINER_STOPPED_BY_RUNTIME)
+	// asks the cordon whether this Orker is stopping (emission.go).
+	a.dispatcher.Stopping = func() bool {
+		_, stopping := a.cordon.Stopping()
+		return stopping
+	}
+	return a
 }
 
 // newCapacityFor builds the admission ledger an Orker declaring a capacity

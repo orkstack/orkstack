@@ -2770,7 +2770,25 @@ type ActivityFailureDetail struct {
 	// engine can project TaskRun.started_at identically for both outcomes.
 	// Stamped by the Orker on every ApplicationError it returns, whether or
 	// not a container ran.
-	StartedAt     *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	StartedAt *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=started_at,json=startedAt,proto3" json:"started_at,omitempty"`
+	// never_started says the attempt is a never-started interruption: it
+	// started no container and its reason is one an attempt reports before
+	// doing work (a hand-back before it began, a claim the store refused). It
+	// is never set together with started. Unset, with started also unset, says
+	// neither: a failure before any container that is no interruption, or an
+	// Orker that predates both fields.
+	NeverStarted bool `protobuf:"varint,11,opt,name=never_started,json=neverStarted,proto3" json:"never_started,omitempty"`
+	// started says the attempt's container was observed started, so it did
+	// work. Unset means not known to have started, never started: an engine or
+	// Orker that predates the field reads it so.
+	Started bool `protobuf:"varint,12,opt,name=started,proto3" json:"started,omitempty"`
+	// ordinal is the attempt ordinal the attempt claimed (docs/STORAGE.md,
+	// "Attempt ordinals"); absent when it failed before its claim.
+	Ordinal *int32 `protobuf:"varint,13,opt,name=ordinal,proto3,oneof" json:"ordinal,omitempty"`
+	// store_error is the object store's own error, for an attempt whose claim
+	// the store refused (ATTEMPT_STORE_UNAVAILABLE, never started); empty
+	// otherwise. Masked like every message the Orker reports.
+	StoreError    string `protobuf:"bytes,14,opt,name=store_error,json=storeError,proto3" json:"store_error,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2873,6 +2891,34 @@ func (x *ActivityFailureDetail) GetStartedAt() *timestamppb.Timestamp {
 		return x.StartedAt
 	}
 	return nil
+}
+
+func (x *ActivityFailureDetail) GetNeverStarted() bool {
+	if x != nil {
+		return x.NeverStarted
+	}
+	return false
+}
+
+func (x *ActivityFailureDetail) GetStarted() bool {
+	if x != nil {
+		return x.Started
+	}
+	return false
+}
+
+func (x *ActivityFailureDetail) GetOrdinal() int32 {
+	if x != nil && x.Ordinal != nil {
+		return *x.Ordinal
+	}
+	return 0
+}
+
+func (x *ActivityFailureDetail) GetStoreError() string {
+	if x != nil {
+		return x.StoreError
+	}
+	return ""
 }
 
 // DescribeOrkerResult is the pool-liveness probe's payload: a pool proves it
@@ -4507,7 +4553,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\aattempt\x18\x10 \x01(\x05R\aattempt\x12\x19\n" +
 	"\borker_id\x18\x11 \x01(\tR\aorkerId\x12\x19\n" +
 	"\bbuild_id\x18\x12 \x01(\tR\abuildId\x12.\n" +
-	"\x05cache\x18\x13 \x01(\v2\x18.orkstack.v1.CacheResultR\x05cache\"\xc8\x03\n" +
+	"\x05cache\x18\x13 \x01(\v2\x18.orkstack.v1.CacheResultR\x05cache\"\xd3\x04\n" +
 	"\x15ActivityFailureDetail\x12\x1f\n" +
 	"\vreason_code\x18\x01 \x01(\tR\n" +
 	"reasonCode\x128\n" +
@@ -4522,7 +4568,14 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\borker_id\x18\t \x01(\tR\aorkerId\x129\n" +
 	"\n" +
 	"started_at\x18\n" +
-	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\"\xca\x0f\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\tstartedAt\x12#\n" +
+	"\rnever_started\x18\v \x01(\bR\fneverStarted\x12\x18\n" +
+	"\astarted\x18\f \x01(\bR\astarted\x12\x1d\n" +
+	"\aordinal\x18\r \x01(\x05H\x00R\aordinal\x88\x01\x01\x12\x1f\n" +
+	"\vstore_error\x18\x0e \x01(\tR\n" +
+	"storeErrorB\n" +
+	"\n" +
+	"\b_ordinal\"\xca\x0f\n" +
 	"\x13DescribeOrkerResult\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12\x12\n" +
@@ -4854,6 +4907,7 @@ func file_orkstack_v1_activity_proto_init() {
 	file_orkstack_v1_image_policy_proto_init()
 	file_orkstack_v1_telemetry_proto_init()
 	file_orkstack_v1_activity_proto_msgTypes[10].OneofWrappers = []any{}
+	file_orkstack_v1_activity_proto_msgTypes[20].OneofWrappers = []any{}
 	file_orkstack_v1_activity_proto_msgTypes[22].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{

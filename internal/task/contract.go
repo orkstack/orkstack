@@ -220,6 +220,10 @@ type HeartbeatProgress struct {
 	// every beat of an attempt that was running when its Orker began to stop,
 	// so a loss after it can be told from one with no stop behind it.
 	StoppingSince string `json:"stopping_since,omitempty"`
+	// Started is set once the attempt's container is observed started, and on
+	// every beat after it: the attempt did work (E92 §4.2). An older Orker
+	// never sends it, which reads as not known to have started.
+	Started bool `json:"started,omitzero"`
 }
 
 // CheckInputSize enforces the deployment's replay-pinned input bound without

@@ -112,8 +112,8 @@ func (o *attemptOrdinal) Claim(ctx context.Context) *Failure {
 		last = err
 		if ctx.Err() != nil {
 			// The attempt is being stopped; how is Execute's to say.
-			return FailCause(ReasonAttemptStoreUnavailable, err,
-				"the attempt was stopped while it claimed its ordinal: %v", err)
+			return neverStarted(FailCause(ReasonAttemptStoreUnavailable, err,
+				"the attempt was stopped while it claimed its ordinal: %v", err))
 		}
 		if try >= len(claimBackoff) {
 			break
@@ -123,11 +123,11 @@ func (o *attemptOrdinal) Claim(ctx context.Context) *Failure {
 		case <-time.After(claimBackoff[try]):
 		}
 	}
-	return FailCause(ReasonAttemptStoreUnavailable, last,
+	return neverStarted(FailCause(ReasonAttemptStoreUnavailable, last,
 		"orker %s could not claim an attempt ordinal for task %q in %d tries over about 10 s: %v. "+
 			"The attempt did nothing: no container was created and no record was written. It runs "+
 			"again if the task's retry policy allows",
-		o.d.OrkerID, o.in.GetTaskId(), len(claimBackoff)+1, last)
+		o.d.OrkerID, o.in.GetTaskId(), len(claimBackoff)+1, last))
 }
 
 // ClaimBestEffort gives an attempt that reached an outcome of its own without

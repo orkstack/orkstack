@@ -1,0 +1,298 @@
+package orker
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
+
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
+)
+
+// TestEmission_TypesAListedInterruption is the Orker half of E92 §4.7: an
+// interruption reason becomes the error type OrkInterruption:<REASON> only
+// when the engine listed that type in the attempt's NonRetryableErrorTypes
+// and the Orker may emit it (its compiled set, and each reason's own
+// condition). A listed reason it may not emit is declined, and the failure
+// is today's category-typed error; with nothing listed, nothing changes.
+func TestEmission_TypesAListedInterruption(t *testing.T) {
+	stopped := func() *Failure { return Fail(ReasonOrkerStopped, "handed back") }
+	neverStartedStore := func() *Failure {
+		f := Fail(ReasonAttemptStoreUnavailable, "claim refused")
+		f.NeverStarted = true
+		return f
+	}
+	startedStore := func() *Failure { return Fail(ReasonAttemptStoreUnavailable, "store gone") }
+	byRuntime := func() *Failure { return Fail(ReasonContainerStoppedByRuntime, "daemon stopped") }
+	listed := func(reasons ...string) []string {
+		out := []string{task.CategoryContractViolation}
+		for _, r := range reasons {
+			out = append(out, InterruptionType(r))
+		}
+		return out
+	}
+	cases := []struct {
+		name     string
+		failure  *Failure
+		listed   []string
+		stopping bool
+		wantType string
+		emitted  int // +1 emitted, -1 declined, 0 neither
+	}{
+		{"nothing listed: today's error", stopped(), nil, false, CategoryInfrastructureError, 0},
+		{"another reason listed: today's error", stopped(), listed(ReasonAttemptStoreUnavailable), false, CategoryInfrastructureError, 0},
+		{"ORKER_STOPPED listed: typed", stopped(), listed(ReasonOrkerStopped), false, InterruptionType(ReasonOrkerStopped), 1},
+		{"a never-started store fault listed: typed", neverStartedStore(), listed(ReasonAttemptStoreUnavailable), false, InterruptionType(ReasonAttemptStoreUnavailable), 1},
+		{"a store fault after its start is declined", startedStore(), listed(ReasonAttemptStoreUnavailable), false, CategoryInfrastructureError, -1},
+		{"stopped by its runtime while stopping: typed", byRuntime(), listed(ReasonContainerStoppedByRuntime), true, InterruptionType(ReasonContainerStoppedByRuntime), 1},
+		{"stopped by its runtime, not stopping, is declined", byRuntime(), listed(ReasonContainerStoppedByRuntime), false, CategoryInfrastructureError, -1},
+		{"a reason outside the compiled set is declined", Fail(ReasonContainerExitNonzero, "exit 1"), listed(ReasonContainerExitNonzero), false, CategoryActivityFailed, -1},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := 0
+			err := tc.failure.EmittedError(tc.listed, tc.stopping, func(emitted bool) {
+				if emitted {
+					got = 1
+				} else {
+					got = -1
+				}
+			})
+			var app *temporal.ApplicationError
+			if !errors.As(err, &app) {
+				t.Fatalf("EmittedError = %v, want an ApplicationError", err)
+			}
+			if app.Type() != tc.wantType {
+				t.Fatalf("type = %q, want %q", app.Type(), tc.wantType)
+			}
+			if got != tc.emitted {
+				t.Fatalf("observed %d, want %d (+1 emitted, -1 declined, 0 neither)", got, tc.emitted)
+			}
+			// The detail still carries the reason the engine reads.
+			var detail *orkstackv1.ActivityFailureDetail
+			if err := app.Details(&detail); err != nil || detail.GetReasonCode() != tc.failure.Reason {
+				t.Fatalf("detail = %v, %v; want reason %s", detail, err, tc.failure.Reason)
+			}
+			// A typed interruption ends the execution early: never retried by
+			// Temporal, whatever the reason's own retryability.
+			if tc.emitted == 1 && !app.NonRetryable() {
+				t.Fatalf("a typed interruption is retryable; want it to end the execution")
+			}
+		})
+	}
+}
+
+// TestEmission_HeartbeatLossIsUnreportedOnlyWhenListed: ORKER_HEARTBEAT_LOST
+// goes unreported, left to the cluster's heartbeat timeout, only when the
+// engine listed TemporalTimeout:Heartbeat (E92 §4.7).
+func TestEmission_HeartbeatLossIsUnreportedOnlyWhenListed(t *testing.T) {
+	for _, tc := range []struct {
+		listed  []string
+		timeout time.Duration
+		want    bool
+	}{
+		{nil, 30 * time.Second, false},
+		{[]string{InterruptionType(ReasonOrkerStopped)}, 30 * time.Second, false},
+		{[]string{HeartbeatTimeoutType}, 30 * time.Second, true},
+		// No heartbeat timeout: nothing would ever time it out, so it reports.
+		{[]string{HeartbeatTimeoutType}, 0, false},
+	} {
+		if got := leaveHeartbeatLossUnreported(tc.listed, tc.timeout); got != tc.want {
+			t.Errorf("leaveHeartbeatLossUnreported(%v, %v) = %v, want %v", tc.listed, tc.timeout, got, tc.want)
+		}
+	}
+}
+
+// TestExecute_AClaimFaultIsTypedWhenItsPolicyListsIt is the wiring of E92
+// PR 6's typed emission: an attempt reads the types its own retry policy lists
+// (activity.Info.RetryPolicy), so a claim the store refuses, which started no
+// container, ends its execution as OrkInterruption:ATTEMPT_STORE_UNAVAILABLE
+// when listed, on one attempt, and as today's error when not.
+func TestExecute_AClaimFaultIsTypedWhenItsPolicyListsIt(t *testing.T) {
+	saved := claimBackoff
+	claimBackoff = []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	t.Cleanup(func() { claimBackoff = saved })
+
+	for _, tc := range []struct {
+		name     string
+		listed   []string
+		wantType string
+	}{
+		{"listed", []string{InterruptionType(ReasonAttemptStoreUnavailable)}, InterruptionType(ReasonAttemptStoreUnavailable)},
+		{"not listed", nil, CategoryInfrastructureError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &failingClaims{MemoryAttemptStore: artifacts.NewMemoryAttemptStore()}
+			runtime := &creatingRuntime{ContainerRuntime: &phaseCapturingRuntime{exitCode: 0}}
+			d := newAttemptDispatcher(t, runtime, store.MemoryAttemptStore)
+			d.Claims = store
+			d.heartbeaters = sdkRouteHeartbeater
+			// The SDK's test environment leaves the retry policy out of the
+			// activity's info (P0-2 measured the real round trip), so the
+			// attempt is told what its policy lists.
+			listed := tc.listed
+			d.listed = func(context.Context) []string { return listed }
+			heard := &interruptionRecorder{}
+			d.Interruptions = heard
+			probe := func(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput) error {
+				ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+					StartToCloseTimeout: time.Minute,
+					RetryPolicy: &temporal.RetryPolicy{
+						MaximumAttempts:        1,
+						InitialInterval:        time.Millisecond,
+						NonRetryableErrorTypes: listed,
+					},
+				})
+				return workflow.ExecuteActivity(ctx, "ExecuteTask", in).Get(ctx, nil)
+			}
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestWorkflowEnvironment()
+			env.SetTestTimeout(60 * time.Second)
+			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
+			env.RegisterWorkflowWithOptions(probe, workflow.RegisterOptions{Name: "probe"})
+			env.RegisterActivityWithOptions(d.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
+			env.ExecuteWorkflow("probe", baseExportInput("claim"))
+
+			if !env.IsWorkflowCompleted() {
+				t.Fatal("workflow did not complete")
+			}
+			var app *temporal.ApplicationError
+			if err := env.GetWorkflowError(); !errors.As(err, &app) {
+				t.Fatalf("workflow error = %v, want the attempt's ApplicationError", err)
+			}
+			if app.Type() != tc.wantType {
+				t.Fatalf("the attempt ended as %q, want %q", app.Type(), tc.wantType)
+			}
+			// Its detail says it never started, never that it started, and
+			// quotes the store's error.
+			var detail *orkstackv1.ActivityFailureDetail
+			if err := app.Details(&detail); err != nil {
+				t.Fatalf("detail: %v", err)
+			}
+			// Only an engine that listed an interruption gets the new fields
+			// (TestMixedFleet_…): listed, the detail says never started and
+			// quotes the store; not listed, it carries none of them.
+			asked := len(tc.listed) > 0
+			if asked && (!detail.GetNeverStarted() || detail.GetStarted() || detail.GetStoreError() == "") {
+				t.Fatalf("detail never_started=%v started=%v store_error=%q; want true, false and the store's error",
+					detail.GetNeverStarted(), detail.GetStarted(), detail.GetStoreError())
+			}
+			if !asked && (detail.GetNeverStarted() || detail.GetStarted() || detail.GetStoreError() != "" || detail.Ordinal != nil) {
+				t.Fatalf("an engine that listed nothing got the new fields: %v", detail)
+			}
+			if want := len(tc.listed); heard.emitted != want || heard.declined != 0 {
+				t.Fatalf("counted %d emitted and %d declined; want %d and 0", heard.emitted, heard.declined, want)
+			}
+			runtime.mu.Lock()
+			created := len(runtime.labels)
+			runtime.mu.Unlock()
+			if created != 0 {
+				t.Fatalf("a claim fault created %d containers; want none", created)
+			}
+		})
+	}
+}
+
+// TestStampAttempt_NeverBothStartedAndNeverStarted: started (the container
+// was observed started) and never_started (the attempt is a never-started
+// interruption) mean different things, and the detail carries only three
+// combinations: started; never started; neither (a failure before any
+// container that is no interruption, or an older Orker). Both is never sent,
+// even for a failure wrongly marked never-started after its container ran.
+func TestStampAttempt_NeverBothStartedAndNeverStarted(t *testing.T) {
+	type combo struct{ started, neverStarted bool }
+	allowed := map[combo]bool{{true, false}: true, {false, true}: true, {false, false}: true}
+	for _, started := range []bool{false, true} {
+		for _, marked := range []bool{false, true} {
+			f := Fail(ReasonOrkerStopped, "x")
+			f.NeverStarted = marked
+			d := f.StampAttempt(started, 3).Detail
+			got := combo{d.GetStarted(), d.GetNeverStarted()}
+			if !allowed[got] {
+				t.Fatalf("started=%v marked=%v sent %+v", started, marked, got)
+			}
+			if got.started != started {
+				t.Fatalf("started=%v sent started %v", started, got.started)
+			}
+			if started && f.NeverStarted {
+				t.Fatal("a container that ran left the failure marked never started, so it could still be emitted as one")
+			}
+			if d.GetOrdinal() != 3 {
+				t.Fatalf("ordinal = %d, want 3", d.GetOrdinal())
+			}
+		}
+	}
+	// A refused claim names the store's error; nothing else does.
+	claim := neverStarted(FailCause(ReasonAttemptStoreUnavailable, errors.New("SlowDown"), "claim refused"))
+	if got := claim.StampAttempt(false, 0).Detail.GetStoreError(); got != "SlowDown" {
+		t.Fatalf("a refused claim's store_error = %q, want SlowDown", got)
+	}
+	if got := Fail(ReasonOrkerStopped, "x").StampAttempt(false, 0).Detail.GetStoreError(); got != "" {
+		t.Fatalf("a hand-back carries store_error %q", got)
+	}
+	if Fail(ReasonOrkerStopped, "x").StampAttempt(false, 0).Detail.Ordinal != nil {
+		t.Fatal("an attempt with no ordinal sends one")
+	}
+}
+
+// interruptionRecorder counts what an attempt's emission decided.
+type interruptionRecorder struct{ emitted, declined int }
+
+func (r *interruptionRecorder) InterruptionEmission(emitted bool) {
+	if emitted {
+		r.emitted++
+	} else {
+		r.declined++
+	}
+}
+
+// TestMixedFleet_ANewDetailFieldReachesOnlyAnEngineThatAskedForIt: an engine
+// that predates PR 6 decodes ActivityFailureDetail with the SDK's default
+// protojson converter, which refuses unknown fields, so a detail carrying
+// never_started, started, ordinal or store_error would lose its whole
+// detail there (its reason code, artifacts, Orker). The Orker sends those
+// fields only to an attempt whose retry policy lists an interruption type,
+// which only an engine that knows them does. An Orker that predates PR 6
+// sends none, which a new engine reads as not started.
+func TestMixedFleet_ANewDetailFieldReachesOnlyAnEngineThatAskedForIt(t *testing.T) {
+	newKeys := []string{`"neverStarted"`, `"started"`, `"ordinal"`, `"storeError"`}
+	for _, tc := range []struct {
+		name   string
+		listed []string
+		asked  bool
+	}{
+		{"an engine that lists nothing (one before PR 6)", nil, false},
+		{"an engine that lists only categories", []string{task.CategoryContractViolation}, false},
+		{"an engine that lists an interruption", []string{InterruptionType(ReasonOrkerStopped)}, true},
+		{"an engine that lists the heartbeat timeout", []string{HeartbeatTimeoutType}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ran := Fail(ReasonContainerExitNonzero, "exit 1").stampFor(tc.listed, true, 4)
+			refused := neverStarted(FailCause(ReasonAttemptStoreUnavailable, errors.New("SlowDown"), "claim refused")).
+				stampFor(tc.listed, false, 0)
+			body := ""
+			for _, f := range []*Failure{ran, refused} {
+				payload, err := converter.GetDefaultDataConverter().ToPayload(f.Detail)
+				if err != nil {
+					t.Fatal(err)
+				}
+				body += string(payload.GetData())
+			}
+			for _, key := range newKeys {
+				if got := strings.Contains(body, key); got != tc.asked {
+					t.Fatalf("the details %s carry %s = %v; want %v", body, key, got, tc.asked)
+				}
+			}
+		})
+	}
+}

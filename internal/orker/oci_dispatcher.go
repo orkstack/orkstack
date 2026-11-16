@@ -89,6 +89,16 @@ type OCIDispatcher struct {
 	// ordinals"). Nil numbers attempts as Temporal does and writes neither:
 	// orkctl task run and orkctl activity test have no attempt store.
 	Claims artifacts.AttemptClaimer
+	// Interruptions hears each typed interruption this Orker emitted or
+	// declined (ork.orker.interruption_emission). Nil tells nobody.
+	Interruptions InterruptionObserver
+	// Stopping reports whether this Orker's stop has begun, for the typed
+	// interruptions that depend on it (emission.go). Nil is never stopping.
+	Stopping func() bool
+	// listed overrides how an attempt reads the types its retry policy
+	// lists; nil reads activity.Info.RetryPolicy (listedTypes). A test seam:
+	// the SDK's test environment leaves the policy out of the info.
+	listed func(context.Context) []string
 	// AttemptRecords hears of every attempt record of an earlier release this
 	// Orker meets (ork.orker.attempt_record_legacy). Nil tells nobody.
 	AttemptRecords AttemptRecordObserver
@@ -566,6 +576,20 @@ func (d *OCIDispatcher) executeAttempt(
 		})
 		defer stage.setStoppingBeat(nil)
 	}
+	// Before a failure goes to the SDK to report, the loop is stopped and one
+	// beat says the attempt is reporting, so no beat of the loop lands after
+	// it (E92 §4.2). Registered before settle, so it runs after settle decided:
+	// a report the Orker makes itself (ErrResultPending) heartbeats until it
+	// lands, and a cancel is no failure.
+	defer func() {
+		if retErr == nil || errors.Is(retErr, activity.ErrResultPending) || temporal.IsCanceledError(retErr) {
+			return
+		}
+		if err := beat.beatReported(); err != nil {
+			d.logger().Warn("the beat saying this attempt is reporting its failure was not acknowledged",
+				"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "error", err)
+		}
+	}()
 	// Registered after the loop's Stop, so it runs first: the outcome is
 	// settled while the attempt still beats.
 	if settle != nil {
@@ -690,12 +714,23 @@ func (d *OCIDispatcher) executeAttempt(
 		// engine projects TaskRun.started_at for a failed task exactly as for
 		// a succeeded one (ExecuteTaskResult.started_at).
 		failure.StampStart(startedAt)
+		// Whether its container ran, from the stage or, with no stop
+		// registry, the beat that said so; and the ordinal it claimed. After
+		// the masking, so a store's error it quotes is masked.
+		failure.stampFor(d.listedTypes(ctx), stage.startedContainer() || beat.started.Load(), sink.Ordinal())
 		outcome := AttemptOutcome{Reason: failure.Reason, Err: failure.TemporalError()}
 		if failure.Detail != nil {
 			outcome.ExitCode = failure.Detail.GetExitCode()
 		}
 		end(outcome)
-		return nil, failure.TemporalError()
+		// The engine that listed the cluster's heartbeat timeout classifies a
+		// lost attempt from it: this one reports nothing (E92 §4.7).
+		if failure.Reason == ReasonHeartbeatLost && leaveHeartbeatLossUnreported(d.listedTypes(ctx), heartbeatTimeoutOf(ctx)) {
+			d.logger().Warn("this attempt lost its heartbeat and reports nothing: the engine reads the loss from the cluster's heartbeat timeout",
+				"run", in.GetRunId(), "task", in.GetTaskId(), "error", failure.Error())
+			return nil, activity.ErrResultPending
+		}
+		return nil, d.emit(ctx, in, failure)
 	}
 	end(AttemptOutcome{
 		CommitAdopted: result.GetCommitAdopted(),
@@ -1305,6 +1340,9 @@ func (d *OCIDispatcher) execute(
 			"task %q: the container exited %d after its runtime was stopping it: its daemon shut down or "+
 				"restarted, or someone stopped or signalled the container through it. So the exit says "+
 				"nothing about the workload", in.GetTaskId(), capture.status.Code)
+		// Whether this Orker was stopping when the exit was observed: only
+		// then may the runtime's stop be typed as the stop's (emission.go).
+		failure.DuringStop = d.Stopping != nil && d.Stopping()
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 	if capture.status.Code != 0 {
@@ -2137,16 +2175,29 @@ func (d *OCIDispatcher) runContainer(
 		}
 	}()
 
+	// Started from the moment the start is asked for: a start that failed,
+	// timed out or was cut off may still have started the container, and a
+	// false "started" only spends one of the task's own attempts, where a
+	// false "never started" would re-dispatch work that ran (E92 §4.2).
+	stageFrom(ctx).markStarted()
 	// The start runs on a context the stop's sweep never cancels: a start in
 	// flight returns, and the CAS below decides. A container the sweep took
 	// back as it started is stopped by the cancellation sequence, below.
 	if err := d.Runtime.Start(startContext(ctx), id, stdout, stderr); err != nil {
 		return capture, d.runtimeFailure(err, "start the container")
 	}
-	// Its answer is not needed here: a start the sweep took back has its work
-	// context cancelled, and the select below then runs the cancellation
-	// sequence.
+	// The start returned, so the container ran, whatever the CAS below says:
+	// the attempt did work. Its answer is not needed here: a start the sweep
+	// took back has its work context cancelled, and the select below then
+	// runs the cancellation sequence.
 	stageFrom(ctx).toRevocable()
+	// One beat at once that says so, outside the loop's throttle, so the
+	// cluster's record shows it even if the Orker dies the next instant
+	// (E92 §4.2 R7E92-M1).
+	if err := beat.beatStarted(); err != nil {
+		d.logger().Warn("the beat saying this attempt's container started was not acknowledged; later beats carry it",
+			"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "error", err)
+	}
 
 	// Wait runs on a context of its OWN, not the activity's, so cancellation
 	// does not abort the wait before the kill sequence has finished. The

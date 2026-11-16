@@ -168,6 +168,9 @@ type Heartbeater struct {
 	// stoppingSince is the instant this Orker's stop began, RFC 3339, once it
 	// has; every beat after it carries it.
 	stoppingSince atomic.Pointer[string]
+	// started is set once the attempt's container is observed started; every
+	// beat after it says so.
+	started atomic.Bool
 	// calls is the loop's RPC context, which only the loop's end cancels: the
 	// t0 beat is sent on it.
 	calls context.Context
@@ -447,7 +450,33 @@ func (h *Heartbeater) progress() HeartbeatProgress {
 	if since := h.stoppingSince.Load(); since != nil {
 		progress.StoppingSince = *since
 	}
+	progress.Started = h.started.Load()
 	return progress
+}
+
+// PhaseReported is the phase of an attempt's last beat before it reports a
+// failure: the cluster's last word from the attempt says it is reporting.
+const PhaseReported = "reported"
+
+// beatStarted records that the attempt's container is observed started, which
+// every later beat carries, and sends one beat at once by task token, outside
+// the loop's throttle (E92 §4.2 R7E92-M1).
+func (h *Heartbeater) beatStarted() error {
+	h.started.Store(true)
+	return h.beatNow(h.calls)
+}
+
+// beatReported stops and drains the periodic loop, so none of its beats can
+// land after this one, then sends one beat with phase "reported" by task
+// token. The loop's own context ends with it, so the beat goes on one of its
+// own, bounded like the others.
+func (h *Heartbeater) beatReported() error {
+	h.Stop()
+	// The beat's phase only: the attempt's phase log, which its record's
+	// timings are drawn from, ends where its work ended.
+	phase := PhaseReported
+	h.phase.Store(&phase)
+	return h.beatNow(context.Background())
 }
 
 // stoppingBeatTimeout bounds the t0 beat: the cluster acknowledges it within
@@ -461,10 +490,17 @@ const stoppingBeatTimeout = 2 * time.Second
 func (h *Heartbeater) beatStopping(since time.Time) error {
 	text := since.UTC().Format(time.RFC3339Nano)
 	h.stoppingSince.Store(&text)
+	return h.beatNow(h.calls)
+}
+
+// beatNow sends one beat at once by task token, outside the loop's throttle,
+// on base (the loop's RPC context when nil), and returns once the cluster has
+// taken it or the 2 s bound passed. A beat the loop's end overtook, or one the
+// cluster answered with a decision, is not an error.
+func (h *Heartbeater) beatNow(base context.Context) error {
 	if h.send == nil {
 		return nil
 	}
-	base := h.calls
 	if base == nil {
 		base = context.Background()
 	}

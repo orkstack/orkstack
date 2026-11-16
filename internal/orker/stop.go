@@ -62,6 +62,9 @@ type attemptStage struct {
 	reg    *stopRegistry
 	stage  atomic.Int32
 	pinned atomic.Bool
+	// started is set once the attempt's container is observed started, and
+	// is never cleared: a hand-back overwrites the stage, not this.
+	started atomic.Bool
 	// label names the attempt (run, task, attempt) in the stop's logs.
 	// Guarded by reg.mu.
 	label string
@@ -81,6 +84,17 @@ func (s *attemptStage) setPinned() {
 		s.pinned.Store(true)
 	}
 }
+
+// markStarted records that the attempt's container is observed started.
+func (s *attemptStage) markStarted() {
+	if s != nil {
+		s.started.Store(true)
+	}
+}
+
+// startedContainer: the attempt's container was observed started, so the
+// attempt did work, whatever its stage says now.
+func (s *attemptStage) startedContainer() bool { return s != nil && s.started.Load() }
 
 // toRevocable is the attempt's CAS once its container started. False means
 // the sweep took it back first.
@@ -472,8 +486,11 @@ func (d *OCIDispatcher) handBackUnstarted(
 	failure := Fail(ReasonOrkerStopped,
 		"orker %s was stopping when this attempt reached it, so it started nothing and handed the attempt "+
 			"back; it runs again on another Orker if its retry policy allows", d.OrkerID)
-	if sent, _ := d.report(ctx, in, nil, failure.TemporalError()); !sent {
-		return nil, failure.TemporalError()
+	failure.NeverStarted = true
+	failure.stampFor(d.listedTypes(ctx), false, 0)
+	reported := d.emit(ctx, in, failure)
+	if sent, _ := d.report(ctx, in, nil, reported); !sent {
+		return nil, reported
 	}
 	return nil, activity.ErrResultPending
 }
@@ -500,9 +517,14 @@ func (d *OCIDispatcher) handBackStarted(
 		"orker %s was stopped while this attempt ran, so it handed the attempt back: SIGTERM to a running "+
 			"container, SIGKILL after the task's %ds grace, heartbeating throughout. It runs again on another "+
 			"Orker if its retry policy allows", d.OrkerID, graceSecondsOf(in)).StampStart(startedAt)
+	// Taken back before its container started, it did no work.
+	started := stageFrom(ctx).startedContainer()
+	failure.NeverStarted = !started
+	failure.stampFor(d.listedTypes(ctx), started, 0)
+	reported := d.emit(ctx, in, failure)
 	// The report comes first and the record after it, so a slow store never
 	// delays what the run waits for.
-	sent, landed := d.report(ctx, in, nil, failure.TemporalError())
+	sent, landed := d.report(ctx, in, nil, reported)
 	recorded := failure
 	if sent && !landed {
 		recorded = Fail(ReasonReportUndelivered,
@@ -512,7 +534,7 @@ func (d *OCIDispatcher) handBackStarted(
 	}
 	end(AttemptOutcome{Reason: recorded.Reason, Err: recorded.TemporalError()})
 	if !sent {
-		return nil, failure.TemporalError()
+		return nil, reported
 	}
 	return nil, activity.ErrResultPending
 }

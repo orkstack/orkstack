@@ -691,6 +691,24 @@ message ActivityFailureDetail {
   // Stamped by the Orker on every ApplicationError it returns, whether or
   // not a container ran.
   google.protobuf.Timestamp started_at = 10;
+  // never_started says the attempt is a never-started interruption: it
+  // started no container and its reason is one an attempt reports before
+  // doing work (a hand-back before it began, a claim the store refused). It
+  // is never set together with started. Unset, with started also unset, says
+  // neither: a failure before any container that is no interruption, or an
+  // Orker that predates both fields.
+  bool never_started = 11;
+  // started says the attempt's container was observed started, so it did
+  // work. Unset means not known to have started, never started: an engine or
+  // Orker that predates the field reads it so.
+  bool started = 12;
+  // ordinal is the attempt ordinal the attempt claimed (docs/STORAGE.md,
+  // "Attempt ordinals"); absent when it failed before its claim.
+  optional int32 ordinal = 13;
+  // store_error is the object store's own error, for an attempt whose claim
+  // the store refused (ATTEMPT_STORE_UNAVAILABLE, never started); empty
+  // otherwise. Masked like every message the Orker reports.
+  string store_error = 14;
 }
 
 // ---------------------------------------------------------------- orker identity
