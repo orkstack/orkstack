@@ -1,5 +1,6 @@
 import { ConnectError, type Transport } from '@connectrpc/connect';
 import { createConnectTransport } from '@connectrpc/connect-web';
+import { signinFetch } from './signin';
 
 // All platform access goes through the clients generated from
 // proto/orkstack/v1 (see ui/src/lib/gen). The browser uses same-origin URLs:
@@ -23,7 +24,10 @@ import { createConnectTransport } from '@connectrpc/connect-web';
 const JSON_RECURSION_LIMIT = 10_000;
 
 export function transport(fetchFn: typeof globalThis.fetch): Transport {
-	return createConnectTransport({ baseUrl: '/', fetch: fetchFn, jsonOptions: { recursionLimit: JSON_RECURSION_LIMIT } });
+	// Every request keeps the sign-in's rules: Ork-CSRF, and a stale sign-in
+	// refreshed once and the request sent again (src/lib/signin.ts). In
+	// asserted mode there is no token and no refusal, and it changes nothing.
+	return createConnectTransport({ baseUrl: '/', fetch: signinFetch(fetchFn), jsonOptions: { recursionLimit: JSON_RECURSION_LIMIT } });
 }
 
 export function errorMessage(err: unknown): string {

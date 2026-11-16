@@ -49,7 +49,9 @@ export const OPERATE_PAGES: readonly NavPage[] = [
 	{ id: 'usage', href: '/admin/usage', label: 'Usage', title: 'Usage', mode: 'operate', icon: 'usage' },
 	{ id: 'cache', href: '/admin/cache', label: 'Cache', title: 'Cache', mode: 'operate', icon: 'cache' },
 	{ id: 'image-policy', href: '/admin/image-policy', label: 'Image policy', title: 'Image policy', mode: 'operate', icon: 'shield' },
-	{ id: 'audit', href: '/admin/audit', label: 'Audit', title: 'Audit', mode: 'operate', icon: 'audit' }
+	{ id: 'audit', href: '/admin/audit', label: 'Audit', title: 'Audit', mode: 'operate', icon: 'audit' },
+	// Who may do what: its own screens are tabs under it (/admin/access/…).
+	{ id: 'access', href: '/admin/access', label: 'Access', title: 'Access', mode: 'operate', icon: 'shield' }
 ];
 
 /** The mode a path belongs to: everything under /admin is Operate. */

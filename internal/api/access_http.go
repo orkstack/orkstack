@@ -43,8 +43,11 @@ const (
 )
 
 // staleSigninServed are the calls a sign-in past its revalidation may
-// make: its refresh and its sign-out.
+// make: its refresh and its sign-out, and GetSignin, which hands a page
+// loaded afresh the CSRF token its refresh must carry. GetSignin grants
+// nothing: every other call still waits for the refresh.
 var staleSigninServed = map[string]bool{
+	orkstackv1connect.AuthServiceGetSigninProcedure:     true,
 	orkstackv1connect.AuthServiceRefreshSigninProcedure: true,
 	orkstackv1connect.AuthServiceSignOutProcedure:       true,
 }

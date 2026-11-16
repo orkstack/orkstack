@@ -22,6 +22,12 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import { principalMark } from '#lib/principal.ts';
+
+	// The decision a request was made under (access control on): allowed,
+	// denied, or would-deny in observe mode, which served it anyway.
+	function decisionWord(d: string): string {
+		return d === 'would-deny' ? 'Would deny (observed)' : d === 'denied' ? 'Denied' : d === 'allowed' ? 'Allowed' : d;
+	}
 	import ListFilter from '#lib/components/ListFilter.svelte';
 	import Pagination from '#lib/components/Pagination.svelte';
 	import {
@@ -136,6 +142,7 @@
 					<th scope="col">Action</th>
 					<th scope="col">Namespace</th>
 					<th scope="col" class="w-[38%]">Target</th>
+					<th scope="col">Decision</th>
 					<th scope="col">Result</th>
 				</tr>
 			</thead>
@@ -144,7 +151,7 @@
 					<tr class="align-top {rec.succeeded ? '' : 'bg-red-tint'}" data-testid="audit-row" data-record-id={rec.id}>
 						<td class="figure text-xs whitespace-nowrap text-ink-secondary" data-testid="audit-when">{fmtTimestamp(rec.at)}</td>
 						<td>
-							{#if rec.principal}<span class="block text-2xs text-ink-muted" data-principal-mark={principalMark(rec.principalVerified).word}>{principalMark(rec.principalVerified).word} by</span>{/if}
+							{#if rec.principal}<span class="block text-2xs text-ink-muted" data-principal-mark={principalMark(rec.principalVerified, rec.authMethod).word}>{principalMark(rec.principalVerified, rec.authMethod).word}{rec.authMethod ? ` (${rec.authMethod})` : ''} by</span>{/if}
 							<span
 								class={rec.principal ? 'font-mono text-xs text-ink' : 'italic text-ink-muted'}
 								data-testid="audit-principal">{auditPrincipalLabel(rec.principal)}</span
@@ -157,6 +164,9 @@
 							{#if rec.detail}
 								<span class="mt-1 block font-sans text-xs text-ink-muted [overflow-wrap:anywhere] [word-break:normal]" data-testid="audit-detail">{rec.detail}</span>
 							{/if}
+						</td>
+						<td class="text-xs whitespace-nowrap" data-testid="audit-decision">
+							{#if rec.decision}<span>{decisionWord(rec.decision)}</span>{#if rec.rule}<span class="block font-mono text-2xs text-ink-muted">{rec.rule}</span>{/if}{:else}<span class="text-ink-muted">Not decided</span>{/if}
 						</td>
 						<td>
 							<span

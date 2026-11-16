@@ -248,3 +248,55 @@ func (c *countingRecords) Get(ctx context.Context, id string) ([]byte, string, e
 	c.gets.Add(1)
 	return c.SigninRecords.Get(ctx, id)
 }
+
+// TestSignin_APageLoadedPastRevalidationRefreshes: a page loaded afresh after
+// its sign-in passed revalidation holds no CSRF token yet. GetSignin answers
+// it, with the token, so the page's next call can be refused stale and its
+// refresh carry the token; a sign-in that only GetSignin refused would send
+// the person to sign in again at every reload.
+func TestSignin_APageLoadedPastRevalidationRefreshes(t *testing.T) {
+	engine := httptest.NewUnstartedServer(nil)
+	engineURL := "https://" + engine.Listener.Addr().String()
+	env := signintest.New(t, engineURL, oidctest.Options{})
+	public, _ := url.Parse(engineURL)
+	a, _ := accessFor(t, authn.ModeEnforce, nil, &orkstackv1.Binding{Name: "ana", Role: authz.RoleAdmin, Scope: "deployment",
+		Subjects: []string{"user:dev:ana@example.test"}})
+	a.Authenticator = &authn.Authenticator{Issuers: env.Issuers, Keys: env.Keys}
+	var skew atomic.Int64
+	a.Signins = env.Signins(public, func() time.Time { return time.Now().Add(time.Duration(skew.Load())) })
+	a.Signins.Settings.RevalidateInterval = time.Minute
+	engine.Config.Handler = NewMux(newAccessService(t), MuxOptions{Access: a})
+	engine.StartTLS()
+	t.Cleanup(engine.Close)
+	browser := env.Browser(engine.Certificate())
+	ctx := context.Background()
+	origin, token := engineURL, ""
+	opts := connect.WithInterceptors(csrfHeader{origin: &origin, token: &token})
+	auth := orkstackv1connect.NewAuthServiceClient(browser, engineURL, opts)
+	access := orkstackv1connect.NewAccessServiceClient(browser, engineURL, opts)
+	resp, err := browser.Get(engineURL + "/v1/auth/login/dev?return=/runs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+
+	skew.Store(int64(2 * time.Minute)) // past revalidation, within the ID token's life
+	who, err := auth.GetSignin(ctx, connect.NewRequest(&orkstackv1.GetSigninRequest{}))
+	if err != nil {
+		t.Fatalf("GetSignin past revalidation, with no CSRF token: %v", err)
+	}
+	if who.Msg.GetCsrfToken() == "" {
+		t.Fatal("GetSignin past revalidation handed out no CSRF token")
+	}
+	token = who.Msg.GetCsrfToken()
+	_, err = access.ListSignins(ctx, connect.NewRequest(&orkstackv1.ListSigninsRequest{}))
+	if connect.CodeOf(err) != connect.CodeUnauthenticated || !strings.Contains(err.Error(), authn.ReasonSigninStale) {
+		t.Fatalf("a call past revalidation = %v; want %s", err, authn.ReasonSigninStale)
+	}
+	if _, err := auth.RefreshSignin(ctx, connect.NewRequest(&orkstackv1.RefreshSigninRequest{})); err != nil {
+		t.Fatalf("RefreshSignin with the token GetSignin handed out: %v", err)
+	}
+	if _, err := access.ListSignins(ctx, connect.NewRequest(&orkstackv1.ListSigninsRequest{})); err != nil {
+		t.Fatalf("a call after the refresh: %v", err)
+	}
+}

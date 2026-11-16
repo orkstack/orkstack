@@ -20,12 +20,14 @@
 		version: string;
 		picker: Snippet;
 		themeSwitch: Snippet;
+		/** The account menu, when the caller is signed in. */
+		account?: Snippet;
 		/** Set while it is the open drawer: the close button shows. */
 		drawer: boolean;
 		onclose: () => void;
 	}
 
-	let { pathname, link, running, counts = {}, version, picker, themeSwitch, drawer, onclose }: Props = $props();
+	let { pathname, link, running, counts = {}, version, picker, themeSwitch, account, drawer, onclose }: Props = $props();
 
 	const [, runs, orkflows] = BUILD_PAGES;
 	const build = $derived(buildPageOf(pathname)?.id);
@@ -64,6 +66,7 @@
 		{/each}
 	</div>
 
+	{#if account}<div class="account">{@render account()}</div>{/if}
 	<div class="foot">
 		<span class="plate plate-sm" data-testid="orkstack-version"
 			><span class="plate-k">OrkStack</span><span class="plate-v">{version || '…'}</span></span
@@ -157,6 +160,15 @@
 		font-size: 13px;
 		font-weight: 600;
 		color: var(--side-ink-2);
+	}
+	.account {
+		margin-top: auto;
+		padding: calc(var(--spacing) * 3) calc(var(--spacing) * 1) 0;
+		border-top: var(--rule-hair) solid var(--side-line);
+	}
+	.account + .foot {
+		margin-top: 0;
+		border-top: 0;
 	}
 	.foot {
 		margin-top: auto;

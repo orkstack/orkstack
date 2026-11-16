@@ -13,8 +13,10 @@ test('every admin page has exactly one Operate entry and a palette command', () 
 		.filter((rel) => rel.endsWith('+page.svelte'))
 		// One namespace's page is reached from its row, on the page that lists it.
 		.filter((rel) => !rel.includes('['))
+		// Access's screens are tabs of its one entry.
+		.filter((rel) => !rel.startsWith('access/') || rel === 'access/+page.svelte')
 		.map((rel) => (rel === '+page.svelte' ? '/admin' : `/admin/${rel.replace(/\/\+page\.svelte$/, '')}`));
-	expect(pages.length).toBe(12);
+	expect(pages.length).toBe(13);
 	const commands = pageCommands('default');
 	for (const href of pages) {
 		const entries = OPERATE_PAGES.filter((p) => p.href === href);

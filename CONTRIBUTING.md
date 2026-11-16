@@ -374,10 +374,10 @@ procedures — is in [docs/PROOFS.md](./docs/PROOFS.md).
    cite the repository docs they summarise: update the page that describes a
    behaviour you change, and give a new doc under `docs/` a site page that
    cites it (the site's build refuses an uncited one). A change to the UI's look changes
-   `ui/src/tokens.css`, never the site, and regenerates the site's
-   screenshots (`make site-media`) when they would show it. It records a stack
-   started as a release, because the sidebar shows the engine's version on every
-   frame: `make down && VERSION=vX.Y.Z ORK_ORKER_ID=orker-example make up`.
+   `ui/src/tokens.css`, never the site. The site's screenshots and recordings
+   are not regenerated in the change: `make site-media` runs once on the final
+   tree before the release that ships it (docs/PROOFS.md §10, "Regenerate the
+   site's media").
 7. Commit with a Conventional Commit that names the tests and specs that
    prove the change; keep `main` buildable. A branch may hold several: what
    lands is one squash commit.

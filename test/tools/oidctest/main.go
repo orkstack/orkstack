@@ -20,6 +20,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
+	"encoding/json/v2"
 	"encoding/pem"
 	"errors"
 	"flag"
@@ -51,6 +52,7 @@ func run(args []string) error {
 	cliClient := fs.String("cli-client", "orkctl", "the terminal's client id (a public client, loopback redirects)")
 	email := fs.String("email", "dev@example.test", "the user it signs in")
 	groups := fs.String("groups", "", "the user's groups, comma-separated")
+	control := fs.Bool("control", false, "serve POST /_control/user ({email, groups}) to change the user it signs in: for tests only")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -91,7 +93,25 @@ func run(args []string) error {
 		return err
 	}
 	log.Printf("oidctest: issuer https://%s signs in %s", *addr, *email)
-	srv := &http.Server{Handler: p, ReadHeaderTimeout: 10 * time.Second,
+	var handler http.Handler = p
+	if *control {
+		mux := http.NewServeMux()
+		mux.Handle("/", p)
+		mux.HandleFunc("POST /_control/user", func(w http.ResponseWriter, r *http.Request) {
+			var u struct {
+				Email  string   `json:"email"`
+				Groups []string `json:"groups"`
+			}
+			if err := json.UnmarshalRead(r.Body, &u); err != nil || u.Email == "" {
+				http.Error(w, "want {\"email\": ..., \"groups\": [...]}", http.StatusBadRequest)
+				return
+			}
+			p.SetUser(oidctest.User{Subject: u.Email, Email: u.Email, Groups: u.Groups})
+			w.WriteHeader(http.StatusNoContent)
+		})
+		handler = mux
+	}
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second,
 		TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{cert}}}
 	return srv.ServeTLS(ln, "", "")
 }

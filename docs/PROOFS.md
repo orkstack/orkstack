@@ -1471,6 +1471,16 @@ gh run download <nid> -n proof-<nid>-a<attempt> -D proof/nightly-gh-<nid>
 make merge-check PROOF=proof/ci-<id> NIGHTLY=proof/nightly-gh-<nid>
 ```
 
+**Regenerate the site's media.** A UI change does not regenerate the site's
+screenshots and recordings; they are regenerated once, on the final tree,
+before a release is dispatched: a change to `main`, proved and merged like any
+other, runs `make site-media` and commits what it wrote, after a look at every
+asset. It records a stack started as the release, because the sidebar shows
+the engine's version on every frame:
+`make down && VERSION=vX.Y.Z ORK_ORKER_ID=orker-example make up` (it needs
+`make infra-up` and `make -C images push` first, and a deployment whose
+recorded authentication mode is `asserted`).
+
 **Write the release notes.** A release's notes on its GitHub release page
 are its CHANGELOG.md section, word for word. Each change that may affect the
 people who run or use OrkStack lands with its entry under `## [Unreleased]`

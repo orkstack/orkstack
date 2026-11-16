@@ -1733,8 +1733,9 @@ it declares no colour or font of its own (`site/scripts/check-tokens.mjs`,
 run by the `site` gate, refuses one). A change to the UI's look changes the
 tokens, never the site, and reaches the site with no step of its own. A change
 that leaves the site, landing page or docs, looking different from the UI is
-not done. A UI change that alters what the site's screenshots show
-regenerates them with `make site-media` in the same change. The site's docs
+not done. The site's screenshots and recordings are regenerated with
+`make site-media` on the final tree before the release that ships a UI
+change they would show, not in that change (decided 2026-11-16). The site's docs
 are written for people (`site/content/`, `site/docs.manifest.json`): short,
 task-first pages — tutorials, one-task how-to guides, reference tables, short
 concepts — that never copy this repository's normative docs. Each page cites

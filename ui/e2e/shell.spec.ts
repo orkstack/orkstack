@@ -32,7 +32,7 @@ import { editorReady } from './yaml';
 // Orker on real Temporal and MinIO:
 //
 //   modes      the sidebar's current link is the page you are on (Overview,
-//              Runs, Orkflows, Apply, and one of the Operate group's twelve on
+//              Runs, Orkflows, Apply, and one of the Operate group's thirteen on
 //              each admin page); Build's three daily surfaces stay reachable
 //              from Operate; links carry ns;
 //   palette    Ctrl+K (⌘K on Apple platforms, and only that there) opens it
@@ -146,7 +146,7 @@ async function openPalette(page: Page, key = 'Control+k'): Promise<void> {
 	await expect(page.getByTestId('command-palette-input')).toBeFocused();
 }
 
-test('modes: the sidebar marks the page you are on, Operate has its twelve links, and the daily surfaces stay reachable', async ({ page }) => {
+test('modes: the sidebar marks the page you are on, Operate has its thirteen links, and the daily surfaces stay reachable', async ({ page }) => {
 	for (const [path, current] of [
 		['/', 'nav-dashboard'],
 		['/runs', 'nav-runs'],
@@ -168,7 +168,7 @@ test('modes: the sidebar marks the page you are on, Operate has its twelve links
 	await expect(page.getByTestId('nav-dashboard')).not.toHaveAttribute('aria-current', /.+/);
 	await expect(page.getByTestId('nav-admin')).not.toHaveAttribute('aria-current', /.+/);
 	await expect(page.getByTestId('admin-nav')).toBeVisible();
-	await expect(page.getByTestId('admin-nav').getByRole('link')).toHaveCount(12);
+	await expect(page.getByTestId('admin-nav').getByRole('link')).toHaveCount(13);
 	await page.goto(`${UI_ORIGIN}/admin?ns=default`);
 	await expect(page.getByTestId('nav-admin')).toHaveAttribute('aria-current', 'page');
 

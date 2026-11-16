@@ -36,7 +36,9 @@ import { cliCommand } from './uiHelpers';
 // a row's from the page's.
 //
 // `the table names every route` fails when a route is added without an entry
-// here, so a new page cannot skip the rule. `the rule sees a second icon` is
+// here, so a new page cannot skip the rule. The sign-in pages are the one
+// exception, named in BARE: the root layout draws them without the shell
+// (+layout.ts), and the rule is the shell's. `the rule sees a second icon` is
 // the positive control: with an extra icon in the page's flow, or in a modal,
 // the counts see it.
 //
@@ -230,6 +232,12 @@ const VISITS: Visit[] = [
 	{ route: 'orkflows/[name]', name: 'orkflow triggers', url: () => `/orkflows/${NAME}?ns=${NS}&tab=triggers`, ready: 'trigger-list', icon: 'page-cli', labels: ['Its triggers'] },
 	{ route: 'orkflows/+new', name: 'create-orkflow', url: () => `/orkflows/+new?ns=${NS}`, ready: 'apply-namespace', icon: 'page-cli', labels: ['Create it'], authored: '[aria-labelledby="apply-examples-heading"]' },
 	{ route: 'admin', name: 'operate', url: () => `/admin?ns=${NS}`, ready: 'system-info', icon: 'page-cli', labels: ["This replica's configuration and build"] },
+	{ route: 'admin/access', name: 'access, authentication off', url: () => `/admin/access?ns=${NS}`, ready: 'access-off', icon: 'page-cli', labels: ['Whether this deployment authenticates'] },
+	{ route: 'admin/access/roles', name: 'access roles, authentication off', url: () => `/admin/access/roles?ns=${NS}`, ready: 'access-off', icon: 'page-cli', labels: ['Whether this deployment authenticates'] },
+	{ route: 'admin/access/service-accounts', name: 'access service accounts, authentication off', url: () => `/admin/access/service-accounts?ns=${NS}`, ready: 'access-off', icon: 'page-cli', labels: ['Whether this deployment authenticates'] },
+	{ route: 'admin/access/principals', name: 'access people, authentication off', url: () => `/admin/access/principals?ns=${NS}`, ready: 'access-off', icon: 'page-cli', labels: ['Whether this deployment authenticates'] },
+	{ route: 'admin/access/explain', name: 'access explain, authentication off', url: () => `/admin/access/explain?ns=${NS}`, ready: 'access-off', icon: 'page-cli', labels: ['Whether this deployment authenticates'] },
+	{ route: 'admin/access/history', name: 'access history, authentication off', url: () => `/admin/access/history?ns=${NS}`, ready: 'access-off', icon: 'page-cli', labels: ['Whether this deployment authenticates'] },
 	{ route: 'admin/activities', name: 'activities', url: () => `/admin/activities?ns=${NS}`, ready: 'activities-cli-trigger', icon: 'activities-cli' },
 	{ route: 'admin/audit', name: 'audit', url: () => `/admin/audit?ns=${NS}`, ready: 'audit-scope', icon: 'page-cli', labels: ['This listing'] },
 	{ route: 'admin/automation', name: 'automation', url: () => `/admin/automation?ns=${NS}`, ready: 'automation-scope', icon: 'page-cli', labels: ['Export this namespace', 'Plan the document'] },
@@ -244,6 +252,9 @@ const VISITS: Visit[] = [
 	{ route: 'admin/webhooks', name: 'webhooks', url: () => `/admin/webhooks?ns=${NS}`, ready: 'webhook-list', icon: 'page-cli', labels: ['The subscriptions', 'The deliveries'] }
 ];
 
+/** The routes drawn without the shell, where the rule does not apply. */
+const BARE = ['signin', 'signin/no-access'];
+
 /** Every directory under src/routes with a +page.svelte, relative to it. */
 function sourceRoutes(dir = path.join(uiDir, 'src', 'routes'), prefix = ''): string[] {
 	return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -253,7 +264,7 @@ function sourceRoutes(dir = path.join(uiDir, 'src', 'routes'), prefix = ''): str
 }
 
 test('the table names every route', () => {
-	expect([...new Set(VISITS.map((v) => v.route))].sort()).toEqual(sourceRoutes().sort());
+	expect([...new Set(VISITS.map((v) => v.route))].sort()).toEqual(sourceRoutes().filter((r) => !BARE.includes(r)).sort());
 });
 
 test('every route has exactly one page-level CLI icon, and prints no orkctl', async ({ page }) => {

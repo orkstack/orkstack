@@ -3,7 +3,12 @@
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
 	import { onMount, tick, untrack, type Component } from 'svelte';
+	import AccountMenu from '#lib/components/AccountMenu.svelte';
+	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
+	import { forgetCsrfToken, holdCsrfToken, onSigninEnded, returnPath, setCsrfToken } from '#lib/signin.ts';
+	import { authClient } from '#lib/clients/auth.ts';
+	import { forgetWho } from '#lib/authMode.ts';
 	import IconSprite from '#lib/components/IconSprite.svelte';
 	import Select from '#lib/components/Select.svelte';
 	import Sidebar from '#lib/components/Sidebar.svelte';
@@ -29,6 +34,48 @@
 	import type { LayoutProps } from './$types';
 
 	let { data, children }: LayoutProps = $props();
+
+	// A sign-in that ends while the page is open (its refresh refused, or
+	// signed out elsewhere) is said here, and the page stays as it is, so a
+	// form being written keeps what it holds: signing in again opens in a new
+	// tab, and this one carries on once it has (UX35, the account menu).
+	let signinEnded = $state(false);
+	onMount(() => {
+		// The sign-in pages report nothing: they are where a sign-in starts.
+		onSigninEnded(() => {
+			if (!page.url.pathname.startsWith('/signin')) signinEnded = true;
+		});
+		// Back from signing in again in another tab: this tab reads its new
+		// sign-in and CSRF token, and carries on where it was.
+		const back = async () => {
+			if (!signinEnded || document.visibilityState !== 'visible') return;
+			forgetCsrfToken();
+			forgetWho();
+			const release = holdCsrfToken();
+			try {
+				const me = await authClient(fetch).getSignin({});
+				setCsrfToken(me.csrfToken);
+				release();
+				signinEnded = false;
+				// Someone else signed in: nothing this page shows of the last
+				// person may stay. The same person: re-read who and what, kept page.
+				if (me.principalId !== data.me?.principalId) window.location.reload();
+				else await invalidateAll();
+			} catch {
+				// Still signed out: the dialog stays.
+			} finally {
+				release();
+			}
+		};
+		document.addEventListener('visibilitychange', back);
+		return () => {
+			onSigninEnded(null);
+			document.removeEventListener('visibilitychange', back);
+		};
+	});
+	function signInAgain() {
+		window.open(`/signin?return=${encodeURIComponent(returnPath(window.location))}`, '_blank', 'noopener');
+	}
 
 	// Navigation feedback for every route: a slow loader (a run with many
 	// tasks, a cold archive read) otherwise leaves the old page on screen with
@@ -307,6 +354,10 @@
 	<ThemeSwitch />
 {/snippet}
 
+{#snippet account()}
+	{#if data.me}<AccountMenu me={data.me} />{/if}
+{/snippet}
+
 <svelte:window onkeydown={onDrawerKey} />
 
 <a href="#content" class="skip" data-testid="skip-link">Skip to content</a>
@@ -323,6 +374,9 @@
 	</div>
 {/if}
 
+{#if data.bare}
+	<main id="content" tabindex="-1">{@render children()}</main>
+{:else}
 <div class="app">
 	<Sidebar
 		pathname={page.url.pathname}
@@ -332,6 +386,7 @@
 		{version}
 		picker={namespacePicker}
 		{themeSwitch}
+		account={data.me ? account : undefined}
 		drawer={drawerOpen}
 		onclose={() => void closeDrawer()}
 	/>
@@ -367,6 +422,19 @@
 		</main>
 	</div>
 </div>
+{/if}
+
+{#if signinEnded}
+	<Dialog title="Your sign-in has ended" testid="signin-ended" glyph="info" onclose={() => (signinEnded = false)}>
+		{#snippet body()}
+			<p>This page is kept as it is, with anything you were writing. Sign in again in a new tab, then come back here and carry on.</p>
+			<div class="mt-4 flex justify-end gap-2">
+				<button type="button" class="btn" onclick={() => (signinEnded = false)} data-testid="signin-ended-close">Stay on this page</button>
+				<button type="button" class="btn" onclick={signInAgain} data-testid="signin-ended-again">Sign in again</button>
+			</div>
+		{/snippet}
+	</Dialog>
+{/if}
 
 <Tooltip />
 

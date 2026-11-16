@@ -216,6 +216,21 @@ other principal.
 A service account's keys are named by their RFC 7638 thumbprint, and each
 records when it was added.
 
+### In the web UI
+
+Admin → Access shows the document and changes it through the same
+`AccessService` calls: **Bindings** (with the banners of the document's
+state and every binding's pin, configuration's shown read only), **Roles**
+(built-in read only; custom ones with the catalogue's permissions grouped by
+resource), **Service accounts** (a key made in the browser has its private
+half offered once, as a file, and kept nowhere), **People** (who is signed in
+now, disabled, or named by a binding; disable, enable, end sign-ins),
+**Explain** and **History** (any two revisions diffed; a revision written
+around the API acknowledged). A control the caller lacks the permission for
+is disabled, with the permission it needs beside it; the server still
+decides every request. In `asserted` mode the page says authentication is
+off.
+
 ### Pinned bindings
 
 A namespace or an Orkflow deleted and created again under its name is a new

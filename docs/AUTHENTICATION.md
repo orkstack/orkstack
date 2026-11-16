@@ -169,7 +169,8 @@ remove the rest.
 never extended, and after `auth.signin.idle_timeout` (1 h) without a
 refresh. Every `auth.signin.revalidate_interval` (10 min) it must be
 revalidated with its issuer: a request under it past that is refused
-`SIGNIN_STALE`, and the page calls `AuthService.RefreshSignin`, one call at
+`SIGNIN_STALE`, except `GetSignin` (which hands a page loaded afresh its
+CSRF token), `RefreshSignin` and `SignOut`, and the page calls `AuthService.RefreshSignin`, one call at
 a time across its tabs, which redeems the refresh token, verifies the new
 ID token when the issuer sends one (its `sub` the sign-in's) and takes its
 groups as they are now, and writes the record under its etag. An issuer that refuses ends the
