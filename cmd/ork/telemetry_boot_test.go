@@ -95,6 +95,11 @@ func requireEngineDial(t *testing.T, got client.Options, identity string, cfg co
 	if !got.DisableWorkerEnvironmentInfo {
 		t.Fatalf("client.Options.DisableWorkerEnvironmentInfo = false, want true: the worker's environment is never reported")
 	}
+	// The engine decodes an Orker's answer leniently, so an Orker that leads
+	// it in a rollout is not lost to a field it has never heard of.
+	if got.DataConverter != engine.DataConverter() {
+		t.Fatalf("client.Options.DataConverter = %v, want engine.DataConverter()", got.DataConverter)
+	}
 }
 
 // TestBootTelemetryZeroConfig holds the non-negotiable invariant: with no

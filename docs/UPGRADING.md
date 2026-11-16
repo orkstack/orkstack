@@ -125,7 +125,7 @@ Steps 0, 2, 3, 4 and 5 are `orkctl release` commands, and any `ork` replica answ
 
    `promote` is refused while the release cannot carry new runs, and the refusal names what to start.
 
-1. **Start the new release alongside the old.** Run every `ork` replica of the new build, and an `orker` in every pool the release dispatches to. Where the old release hosts pins, the new one needs a pin host too. Do not stop anything yet. While both releases' replicas serve the web UI behind one address, a page of one release can miss an asset on a replica of the other and have to load again; session affinity avoids it ([DEPLOY.md](./DEPLOY.md), "The web UI").
+1. **Start the new release alongside the old.** Run every `ork` replica of the new build, and an `orker` in every pool the release dispatches to. Start the engines first, and point `orkctl` and the web UI at a new replica: an engine of v0.3.1 or earlier cannot read a v0.4.0 Orker's answers, so upgrade every engine before any Orker ([DEPLOY.md](./DEPLOY.md), "3. Rolling a release forward"). Where the old release hosts pins, the new one needs a pin host too. Do not stop anything yet. While both releases' replicas serve the web UI behind one address, a page of one release can miss an asset on a replica of the other and have to load again; session affinity avoids it ([DEPLOY.md](./DEPLOY.md), "The web UI").
 
 2. **Check that the new release can carry the work.**
 

@@ -359,6 +359,7 @@ only the Orker's own sources stops the Orker at boot
 | `env:AWS_*`, `env:AZURE_*`, `env:GOOGLE_APPLICATION_CREDENTIALS`, `env:CLOUDSDK_*` | the cloud credentials a registry credential helper (ecr-login, gcr, acr) reads when the CLI pulls an image, from the environment it inherits: the Orker's. `AWS_*` is also what the Orker's object-store client reads when no key is set |
 | each telemetry sink header's `env:` source (`ORK_TELEMETRY_SINKS`) | a collector's credentials |
 | the files `orker.engine.auth.token_file`, `cert_file` and `key_file` name | the Orker's credential to the engine |
+| every file a setting names that the schema marks as one, in the Orker's environment or in the configuration file it was given, **whichever binary reads the setting**: the engine's `identity.signing.key_files`, `auth.break_glass_key_file` and each trusted issuer's `jwks_file` among them | on a host that runs both binaries, the engine's signing keys; an Orker that can open one logs an error at boot, and with `orker.refuse_readable_engine_keys` refuses to start ([DEPLOY.md](./DEPLOY.md), "An engine's key files and an Orker on one host") |
 | `file:/proc` | the Orker's process: its environment, memory and descriptors, and every other process it can see |
 | `file:/dev` | its devices, `/dev/fd` and `/dev/stdin` among them, which are its own descriptors |
 | `file:/run/secrets`, `file:/var/run/secrets` | the credentials of the Orker's own pod or container: a Kubernetes service-account or projected token, a Docker or Compose secret |
@@ -557,6 +558,40 @@ its pools, secret policy, image policy and retention. An empty
 `allowed_secrets` leaves a namespace's own Orkflows unrestricted but never a
 shared one: a shared Orkflow that names a secret is refused there
 (`FOREIGN_SECRETS_UNBOUNDED`) until the namespace lists what it may read.
+
+### What engines sign for each other
+
+An engine sometimes hands another engine a decision through the cluster,
+such as a force cancel, and leaves a record of a run it ended. Anyone who
+can write to the cluster could put a value of their own there. So such a
+decision or record is a signed message, signed with the engines' own
+signing keys (`identity.signing.key_files`) and checked against the
+published keys document wherever it is acted on, read or attributed. It is
+never a task token: it has its own type, and neither verifier takes the
+other's message.
+
+- **A deployment that verifies its callers holds a key.** With
+  `auth.mode: observe` or `enforce` an engine does not start without one,
+  whether or not `identity.issuer` is set. With no issuer the keys sign no
+  token and nothing is served.
+- **The algorithm comes from the key**, never from the message. A message
+  names its key by id; a key is never taken from it.
+- **Verifying answers valid, bad or unknown.** Only *bad* says forged: the
+  key is the deployment's and the signature, a rule or the kind is wrong.
+  *Unknown* (a key not yet read, an instant outside the key's life) permits
+  nothing and concludes nothing. With no usable copy of the published keys
+  an engine decides nothing.
+- **A signature counts only inside its key's life**, read on the cluster's
+  or the store's clock: from its publication, to its retirement plus
+  `identity.keys_copy_max_age`, or before the instant it was retired as
+  compromised. A key found in a backup after its rotation signs nothing
+  that verifies.
+- **Unsigned is a rule of the mode.** In `observe` and `enforce` an unsigned
+  decision is forged; in `asserted` it is accepted as asserted and names no
+  verified principal. Nothing attaches to an unsigned decision in any mode.
+- **Writing the published keys document is control of what verifies**, as
+  it is of the issuer ([TASK_IDENTITY.md](./TASK_IDENTITY.md)): only the
+  engines' storage credential may write `metadata/identity/`.
 
 ### Bearer credentials
 

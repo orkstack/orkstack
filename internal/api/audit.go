@@ -623,6 +623,21 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail: "max_run_retention=" + requested,
 		}
 	},
+	orkstackv1connect.IdentityServiceRetireSigningKeyProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.RetireSigningKeyRequest)
+		// Deployment-wide: the key id is a public thumbprint.
+		// The id as the handler reads it, bounded: a kid is a 43-byte
+		// thumbprint.
+		kid := strings.TrimSpace(in.GetKeyId())
+		if len(kid) > 128 {
+			kid = kid[:128]
+		}
+		detail := ""
+		if ts := in.GetCompromisedFrom(); ts != nil && ts.IsValid() {
+			detail = "compromised from " + ts.AsTime().UTC().Format(time.RFC3339)
+		}
+		return auditEntry{Action: "identity.key.retire", Target: "signing key " + kid, Detail: detail}
+	},
 	orkstackv1connect.SystemServiceUpdateImagePolicyProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.UpdateImagePolicyRequest)
 		// Deployment-wide, as retention.update is. Keys are rendered by

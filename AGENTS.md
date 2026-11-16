@@ -439,6 +439,12 @@ copy at most `auth.policy_refresh` old, serves it stale for at most
 closed. An engine does not start in a lower mode than the deployment runs; the
 mode is lowered by a command, never by one replica's configuration.
 
+A decision the API made that an engine hands another engine through the
+cluster, and the record of a run the engine ended, are signed with the
+engines' signing keys and checked wherever they are acted on, read or
+attributed; one that does not verify authorizes nothing and names nobody. A
+deployment that verifies its callers holds such a key.
+
 ## 7. Orkflow execution model
 
 Compile each Orkflow into an immutable internal representation and execute it
@@ -584,7 +590,9 @@ internal never appears on any of those surfaces.
   verbatim and not authenticated. With `observe` or `enforce` it is the
   identity OrkStack verified from a credential, recorded with how, and the
   header is read nowhere. Every record and every rendering says which: no
-  surface may present an asserted principal as a verified one.
+  surface may present an asserted principal as a verified one. A force
+  cancel's principal is shown from the signed record of that cancel, and as
+  verified only when that record says so and verifies.
 - **Automation document** means one authored YAML file
   (`kind: Automation`) declaring a namespace's settings, schedules, triggers
   and webhooks by name (`docs/AUTOMATION.md`). Its plan

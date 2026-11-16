@@ -476,6 +476,9 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// Whether this Orker masks a task's secrets in its logs
 		// (orker.log.mask_secrets); it reads secrets[].unmasked either way.
 		MasksSecrets: !a.dispatcher.LogUnmasked,
+		// This build reads a secret's `unmasked` whatever the setting, so
+		// submit may send a `mask: false` secret to its pool.
+		SecretMaskingSupported: true,
 	}
 	if ceiling, err := a.dispatcher.Policy.ceiling(); err == nil {
 		result.MaxRequest = ceiling.proto()

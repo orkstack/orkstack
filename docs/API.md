@@ -147,6 +147,21 @@ Defined in `proto/orkstack/v1/cache.proto`.
 | `GetCacheStats` | [`GetCacheStatsRequest`](#getcachestatsrequest) | [`GetCacheStatsResponse`](#getcachestatsresponse) | GetCacheStats reports one namespace's memo inventory, as the store lists it now, and how its cached tasks fared over one window of finished runs, derived on read from the run archive. Nothing is counted or stored. |
 | `PurgeCache` | [`PurgeCacheRequest`](#purgecacherequest) | [`PurgeCacheResponse`](#purgecacheresponse) | PurgeCache deletes memos. It never touches a commit, run, attempt, log or artifact. |
 
+### IdentityService
+
+IdentityService is the task identity issuer (docs/TASK_IDENTITY.md): the
+documents it publishes and the keys it signs with. Every call answers for
+the engine that receives it. With identity.issuer unset, GetIssuer
+answers enabled false and the others fail FAILED_PRECONDITION.
+
+Defined in `proto/orkstack/v1/identity_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `GetIssuer` | [`GetIssuerRequest`](#getissuerrequest) | [`GetIssuerResponse`](#getissuerresponse) | GetIssuer answers the issuer, its documents as this engine serves and exports them, and what this engine last read of the published keys and of the issuer URL. Needs identity.read at the deployment. |
+| `ListSigningKeys` | [`ListSigningKeysRequest`](#listsigningkeysrequest) | [`ListSigningKeysResponse`](#listsigningkeysresponse) | ListSigningKeys answers every published key and every key this engine holds. Needs identity.read at the deployment. |
+| `RetireSigningKey` | [`RetireSigningKeyRequest`](#retiresigningkeyrequest) | [`RetireSigningKeyResponse`](#retiresigningkeyresponse) | RetireSigningKey retires a key: no engine signs with it again, and it is no longer served. The key stays in the published keys. Retiring a retired key answers it as it is; marking it compromised from another instant than it was is FAILED_PRECONDITION. Needs identity.keys.retire at the deployment. |
+
 ### NamespaceService
 
 NamespaceService manages namespaces and reports the pools they may dispatch
@@ -1228,6 +1243,7 @@ is alive by answering DescribeOrker (§6.5).
 | `default_request` | [`ResourceQuantity`](#resourcequantity) | default_request is what a task that requests nothing is given (orker.resources.default_cpu and default_memory). |
 | `store_outage` | [`StoreOutage`](#storeoutage) | store_outage is set while this Orker has cordoned itself because it cannot reach object storage (Orker.store_outage). cordoned is true beside it. |
 | `attempt_ordinals_supported` | `bool` | attempt_ordinals_supported is true on an Orker that numbers attempts with claimed ordinals (docs/STORAGE.md, "Attempt ordinals"). An Orker built before it numbers them as Temporal does and would write records over a newer Orker's, so submit refuses a pool that has one. |
+| `secret_masking_supported` | `bool` | secret_masking_supported is true on an Orker that reads a secret's `unmasked` (SecretRef.unmasked), whatever orker.log.mask_secrets says. An Orker built before it refuses a task that sets it, so submit refuses a task carrying a `mask: false` secret on a pool that has one. |
 | `stopping` | [`OrkerStopping`](#orkerstopping) | stopping is set while this Orker is stopping (OrkerStopping). cordoned is true beside it. |
 | `profile_kinds_supported` | repeated [`ProfileKind`](#profilekind) | profile_kinds_supported is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles is set from E91; unset until it lands (v0.4.0 proto batch). |
@@ -1734,6 +1750,29 @@ No fields.
 |---|---|---|
 | `policy` | [`ImagePolicy`](#imagepolicy) | policy is the stored document, or the empty policy with updated_at unset when none was ever written. signing_keys carries PEM; clients render the fingerprint (task.SigningKeyFingerprint) and never the block. |
 
+### GetIssuerRequest
+
+No fields.
+
+### GetIssuerResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `enabled` | `bool` | enabled is false when identity.issuer is unset; every other field is then empty. |
+| `issuer` | `string` | issuer is identity.issuer, the iss of every token. |
+| `subject_format` | `string` | subject_format is identity.subject_format: `ork` or `spiffe`. |
+| `trust_domain` | `string` | trust_domain is identity.spiffe.trust_domain, empty when unset. |
+| `serve_discovery` | `bool` | serve_discovery says this engine serves the documents below. |
+| `discovery` | `string` | discovery, jwks and spiffe_bundle are the documents, as JSON, exactly as served and exported: .well-known/openid-configuration, jwks.json and, with a trust domain, spiffe-bundle.json. |
+| `jwks` | `string` |  |
+| `spiffe_bundle` | `string` |  |
+| `keys_sequence` | `int64` | keys_sequence is the published keys' sequence, the SPIFFE bundle's sequence. |
+| `keys_read_at` | `google.protobuf.Timestamp` | keys_read_at is when this engine last read the published keys; keys_read_error is why its last try failed, empty when it did not. |
+| `keys_read_error` | `string` |  |
+| `live_checked_at` | `google.protobuf.Timestamp` | live_checked_at is when this engine last read the issuer URL, before a key's first signature; live_key_ids are the key ids it served then, and live_error why the read failed. Unset when it has not needed to. |
+| `live_key_ids` | repeated `string` |  |
+| `live_error` | `string` |  |
+
 ### GetNamespaceRequest
 
 | Field | Type | Description |
@@ -1884,7 +1923,7 @@ No fields.
 | `temporal_address` | `string` | temporal_address is the cluster endpoint this replica dials. CONFIGURATION-DERIVED — that the address is configured is not a claim that it answers; pool health is the read that proves the cluster is reachable, and a connectivity flag here would be stale the moment it was sent. |
 | `server_time` | `google.protobuf.Timestamp` | server_time is the answering replica's own clock, and is the ONLY observed field in this message. A client comparing it with its own clock is comparing two clocks, which is what makes a skewed replica visible. |
 | `auth_mode` | `string` | auth_mode is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
-| `identity_issuer` | `string` | identity_issuer is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `identity_issuer` | `string` | identity_issuer is identity.issuer, the task identity issuer; unset when task identity is off (docs/TASK_IDENTITY.md). |
 
 ### GetUsageRequest
 
@@ -2309,6 +2348,16 @@ and is not one of them.
 | Field | Type | Description |
 |---|---|---|
 | `schedules` | repeated [`Schedule`](#schedule) |  |
+
+### ListSigningKeysRequest
+
+No fields.
+
+### ListSigningKeysResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `keys` | repeated [`SigningKey`](#signingkey) | keys are this engine's keys in its configured order, then every other published key. |
 
 ### ListSigninsRequest
 
@@ -3200,6 +3249,19 @@ metadata/settings/retention-policy.json so any replica answers for it.
 | `max_run_retention` | `google.protobuf.Duration` | max_run_retention bounds every Namespace.run_retention. Always set once the engine has booted: a deployment that never chose one is written the built-in 72h at first boot (archive.RetentionController.Ensure). |
 | `updated_at` | `google.protobuf.Timestamp` | updated_at is written by the engine on every change; unset only on the document the engine materialized itself at first boot. |
 
+### RetireSigningKeyRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `key_id` | `string` | key_id is the kid to retire. |
+| `compromised_from` | `google.protobuf.Timestamp` | compromised_from, set, also retires the key as compromised from that instant, which may lie in the past: the earliest moment the key may have leaked. What it signed for an instant before it still verifies, and nothing from it on does; a run force-cancelled under it from then on reads as terminated outside OrkStack and cannot be resumed. It may be added to a key retired before, and once set it only moves earlier. |
+
+### RetireSigningKeyResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `key` | [`SigningKey`](#signingkey) | key is the key as retired. |
+
 ### RetryPolicy
 
 RetryPolicy mirrors Temporal retry semantics for a task.
@@ -3608,6 +3670,37 @@ SigninIssuer is one issuer a person can sign in with.
 | `cli_client_id` | `string` | cli_client_id is the client id a terminal signs in with. |
 | `scopes` | repeated `string` |  |
 | `device_flow` | `bool` | device_flow says whether a terminal may sign in with the device grant. |
+
+### SigningKey
+
+SigningKey is one signing key as the engine that answers sees it.
+
+| Field | Type | Description |
+|---|---|---|
+| `key_id` | `string` | key_id is the key's RFC 7638 thumbprint, its kid. |
+| `algorithm` | `string` | algorithm is `RS256` or `ES256`. |
+| `published` | `bool` | published is false for a key this engine holds that the published keys do not list yet. |
+| `published_at` | `google.protobuf.Timestamp` |  |
+| `published_by` | `string` | published_by is the engine that first published it. |
+| `activated_at` | `google.protobuf.Timestamp` | activated_at is when it first began to sign, on any engine. |
+| `retired_at` | `google.protobuf.Timestamp` | retired_at and retired_by: a retired key never signs again. |
+| `retired_by` | `string` |  |
+| `held_here` | `bool` | held_here says this engine's identity.signing.key_files lists it. |
+| `active` | `bool` | active says this engine would sign with it now; inactive_reason says why not. |
+| `inactive_reason` | `string` |  |
+| `holders` | repeated [`SigningKeyHolder`](#signingkeyholder) | holders are the engines that confirmed holding it within the last week. |
+| `unheld` | `bool` | unheld says no engine confirmed holding it within the last week and it is not retired: a report, never a control. |
+| `compromised_from` | `google.protobuf.Timestamp` | compromised_from, set, is the instant from which the key, retired as compromised, verifies nothing it signed. |
+
+### SigningKeyHolder
+
+SigningKeyHolder is one engine that holds a key.
+
+| Field | Type | Description |
+|---|---|---|
+| `engine` | `string` | engine names the engine process. |
+| `confirmed_at` | `google.protobuf.Timestamp` |  |
+| `live` | `bool` | live says the engine is polling now. |
 
 ### SleepSpec
 

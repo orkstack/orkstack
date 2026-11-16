@@ -33,9 +33,12 @@ type scopeStack struct {
 	proxy    *s3scope.Proxy
 	temporal client.Client
 	queue    string
-	orkerID  string
-	engine   *engineReplica
-	log      strings.Builder
+	// namespace is the Temporal namespace the stack's engine runs in, for
+	// a second replica beside it.
+	namespace string
+	orkerID   string
+	engine    *engineReplica
+	log       strings.Builder
 }
 
 func newScopeStack(t *testing.T, policy s3scope.Policy) *scopeStack {
@@ -62,6 +65,7 @@ func startScopeStack(t *testing.T, engineEnv, orkerEnv []string) *scopeStack {
 	stamp := fmt.Sprintf("%d-%d", os.Getpid(), time.Now().UnixNano()%1_000_000_000)
 	s := &scopeStack{t: t, ctx: ctx, root: repoRoot(t), queue: "ork-scope-" + stamp, orkerID: "orker-scope-" + stamp}
 	namespace := isolatedNamespace()
+	s.namespace = namespace
 	s.temporal = dialIsolatedNamespace(ctx, t, address, namespace)
 	s.orkctl = testbin.Path(t, "./cmd/orkctl")
 	s.engine = startReplica(ctx, t, "ork", testbin.Path(t, "./cmd/ork"), address, namespace, s.queue, engineEnv...)

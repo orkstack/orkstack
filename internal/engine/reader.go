@@ -266,7 +266,7 @@ var _ RunEventSource = (*TemporalRunReader)(nil)
 // namespace the client is bound to, which is the hard partition every other
 // part of the engine already respects.
 func NewTemporalRunReader(c client.Client) *TemporalRunReader {
-	r := newRunReader(c, converter.GetDefaultDataConverter())
+	r := newRunReader(c, DataConverter())
 	r.temporal = c
 	r.admin = c.WorkflowService()
 	return r
@@ -485,7 +485,7 @@ func (r *TemporalRunReader) WithOriginIndex(indexed bool) *TemporalRunReader {
 
 func newRunReader(c runReadClient, dc converter.DataConverter) *TemporalRunReader {
 	if dc == nil {
-		dc = converter.GetDefaultDataConverter()
+		dc = DataConverter()
 	}
 	return &TemporalRunReader{client: c, converter: dc}
 }

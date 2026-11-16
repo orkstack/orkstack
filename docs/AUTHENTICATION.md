@@ -32,6 +32,12 @@ between: turn it on everywhere, read the audit trail's `would-deny`
 records (`orkctl admin audit -j`) until they are the refusals you mean,
 then set `enforce` everywhere.
 
+An engine in `observe` or `enforce` must hold a signing key
+(`identity.signing.key_files`), also with no `identity.issuer`, or it does
+not start: in those modes a record can say "verified", and the engines sign
+what they hand each other so that it can be checked later
+([TASK_IDENTITY.md](./TASK_IDENTITY.md#signing-keys-with-no-issuer)).
+
 ## What the API accepts
 
 One middleware wraps the API listener. It classifies each request by the

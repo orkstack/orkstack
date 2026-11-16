@@ -286,7 +286,8 @@ type GetSystemInfoResponse struct {
 	ServerTime *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=server_time,json=serverTime,proto3" json:"server_time,omitempty"`
 	// auth_mode is set from identity (E61); unset until it lands (v0.4.0 proto batch).
 	AuthMode string `protobuf:"bytes,10,opt,name=auth_mode,json=authMode,proto3" json:"auth_mode,omitempty"`
-	// identity_issuer is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// identity_issuer is identity.issuer, the task identity issuer; unset when
+	// task identity is off (docs/TASK_IDENTITY.md).
 	IdentityIssuer string `protobuf:"bytes,11,opt,name=identity_issuer,json=identityIssuer,proto3" json:"identity_issuer,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

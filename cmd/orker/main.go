@@ -10,10 +10,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -148,6 +150,13 @@ type config struct {
 	// and every {file:} it read (config.Document.Files): the Orker's own,
 	// which its secret floor admits as no task's source (orkerPolicy).
 	configFiles []string
+	// keyFiles are the files every setting marked as naming one names, in
+	// the configuration file (those of the engine's settings, which this
+	// Orker does not read) and in the environment: the Orker's own, and an
+	// engine's it must not be able to open (checkEngineKeyFiles).
+	keyFiles []cfgfile.FileSetting
+	// refuseReadableEngineKeys is orker.refuse_readable_engine_keys.
+	refuseReadableEngineKeys bool
 	// engine is orker.engine.*: how this Orker reaches the engine's API as
 	// itself. Empty, it reaches none.
 	engine orker.EngineSettings
@@ -181,6 +190,7 @@ func loadConfig() config {
 	maxPins, maxPinsErr := envMaxPins()
 	metadataProbe, metadataProbeErr := orker.ParseMetadataProbeMode(os.Getenv(orker.MetadataProbeVar))
 	maskSecrets, maskSecretsErr := envBool(orker.MaskSecretsVar, orker.DefaultMaskSecrets)
+	refuseReadable, refuseReadableErr := envBool(orker.RefuseReadableEngineKeysVar, orker.DefaultRefuseReadableEngineKeys)
 	refuseSecretValues, refuseErr := envBool(orker.RefuseSecretValuesVar, orker.DefaultRefuseSecretVals)
 	maxConcurrent, maxConcurrentErr := envMaxConcurrent()
 	storeWatch, storeWatchErr := envStoreWatch()
@@ -205,19 +215,22 @@ func loadConfig() config {
 		metadataProbeErr:   metadataProbeErr,
 		maskSecrets:        maskSecrets,
 		refuseSecretValues: refuseSecretValues,
-		maskErr:            errors.Join(maskSecretsErr, refuseErr),
-		maxConcurrent:      maxConcurrent,
-		maxConcurrentErr:   maxConcurrentErr,
-		storeWatch:         storeWatch,
-		storeWatchErr:      storeWatchErr,
-		storeScope:         storeScope,
-		storeScopeErr:      storeScopeErr,
-		stopGrace:          stopGrace,
-		stopGraceErr:       stopGraceErr,
-		capacityCPU:        env(orker.CapacityCPUVar, ""),
-		capacityMemory:     env(orker.CapacityMemoryVar, ""),
-		deployment:         task.DeploymentFromEnv(),
-		engine:             orker.EngineSettingsFromEnv(os.Getenv),
+		maskErr:            errors.Join(maskSecretsErr, refuseErr, refuseReadableErr),
+		keyFiles:           cfgfile.FileSettings(os.Getenv),
+
+		refuseReadableEngineKeys: refuseReadable,
+		maxConcurrent:            maxConcurrent,
+		maxConcurrentErr:         maxConcurrentErr,
+		storeWatch:               storeWatch,
+		storeWatchErr:            storeWatchErr,
+		storeScope:               storeScope,
+		storeScopeErr:            storeScopeErr,
+		stopGrace:                stopGrace,
+		stopGraceErr:             stopGraceErr,
+		capacityCPU:              env(orker.CapacityCPUVar, ""),
+		capacityMemory:           env(orker.CapacityMemoryVar, ""),
+		deployment:               task.DeploymentFromEnv(),
+		engine:                   orker.EngineSettingsFromEnv(os.Getenv),
 	}
 }
 
@@ -731,6 +744,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.stopGraceErr != nil {
 		return cfg.stopGraceErr
 	}
+	if err := checkEngineKeyFiles(cfg.keyFiles, cfg.refuseReadableEngineKeys, logger); err != nil {
+		return err
+	}
 
 	// And for the store check, and the storage scope check.
 	if cfg.storeWatchErr != nil {
@@ -1170,6 +1186,7 @@ func configFrom(doc *cfgfile.Document) config {
 	cfg := loadConfig()
 	if doc != nil {
 		cfg.configFiles = doc.Files()
+		cfg.keyFiles = append(cfg.keyFiles, doc.ForeignFiles()...)
 	}
 	return cfg
 }
@@ -1239,6 +1256,11 @@ func orkerPolicy(cfg config, tcfg telemetry.Config) orker.SecurityPolicy {
 	}
 	for _, path := range cfg.engine.CredentialFiles() {
 		paths = append(paths, orker.OwnPath{Path: path, Why: "its credential to the engine"})
+	}
+	for _, f := range cfg.keyFiles {
+		if f.Path != "" {
+			paths = append(paths, orker.OwnPath{Path: f.Path, Why: "a file " + f.Setting + " names"})
+		}
 	}
 	var vars []orker.OwnVar
 	for _, name := range tcfg.Sinks.SourceVars() {
@@ -1381,4 +1403,45 @@ func orkerOptions(
 	}
 
 	return opts
+}
+
+// checkEngineKeyFiles reports every file of an engine-only setting this
+// process can open: a task's secret can no longer name one, but the Orker
+// should not be able to read the engine's keys at all (docs/DEPLOY.md, "An
+// engine's key files and an Orker on one host"). It fails closed: a setting
+// whose files could not be told is reported the same way. Each is an error
+// in the log, and with orker.refuse_readable_engine_keys the boot is
+// refused.
+func checkEngineKeyFiles(files []cfgfile.FileSetting, refuse bool, logger *slog.Logger) error {
+	var problems []string
+	for _, f := range files {
+		if !f.EngineOnly {
+			continue
+		}
+		if f.Unresolved != "" {
+			logger.Error("this Orker cannot tell which file one of the engine's key settings names, so it cannot check that it cannot read it",
+				"setting", f.Setting, "path", f.Path, "reason", f.Unresolved)
+			problems = append(problems, f.Setting+" (cannot tell: "+f.Unresolved+")")
+			continue
+		}
+		info, err := os.Stat(f.Path)
+		if err == nil && info.IsDir() {
+			continue // not a key a task could read as one file
+		}
+		file, err := os.Open(f.Path)
+		if err != nil {
+			if !errors.Is(err, fs.ErrNotExist) && !errors.Is(err, fs.ErrPermission) {
+				logger.Warn("could not check whether this Orker can read an engine key file", "setting", f.Setting, "path", f.Path, "err", err)
+			}
+			continue
+		}
+		_ = file.Close() // opened only to learn that it could be
+		logger.Error("this Orker can read a file one of the engine's key settings names; run it as a user that cannot, or on another host",
+			"setting", f.Setting, "path", f.Path)
+		problems = append(problems, f.Setting+" ("+f.Path+")")
+	}
+	if refuse && len(problems) > 0 {
+		return fmt.Errorf("%s is true and this Orker can read, or cannot check, the engine's key files: %s", orker.RefuseReadableEngineKeysVar, strings.Join(problems, ", "))
+	}
+	return nil
 }

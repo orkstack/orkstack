@@ -129,7 +129,8 @@ export type GetSystemInfoResponse = Message<"orkstack.v1.GetSystemInfoResponse">
   authMode: string;
 
   /**
-   * identity_issuer is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+   * identity_issuer is identity.issuer, the task identity issuer; unset when
+   * task identity is off (docs/TASK_IDENTITY.md).
    *
    * @generated from field: string identity_issuer = 11;
    */

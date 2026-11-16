@@ -637,3 +637,23 @@ func TestExecute_AnEarlierReleasesRecordsAreCountedAndKept(t *testing.T) {
 		t.Errorf("records = %v, want the two earlier ones kept and a third", records)
 	}
 }
+
+// TestDescribeOrker_ReportsSecretMaskingSupported: this build reads a secret's
+// `unmasked` whatever orker.log.mask_secrets says, so it says so with
+// masking on and off; masks_secrets alone follows the setting.
+func TestDescribeOrker_ReportsSecretMaskingSupported(t *testing.T) {
+	for _, unmasked := range []bool{false, true} {
+		store, err := artifacts.NewLocalStore(t.TempDir())
+		must.OK(t, err)
+		t.Cleanup(func() { _ = store.Close() })
+		activities := NewActivitiesWithOptions(store, Options{Runtime: &reapRecorder{}, WorkRoot: t.TempDir(), LogUnmasked: unmasked})
+		result, err := activities.DescribeOrker(context.Background())
+		must.OKf(t, err, "DescribeOrker")
+		if !result.GetSecretMaskingSupported() {
+			t.Errorf("LogUnmasked=%v: secret_masking_supported = false, want true", unmasked)
+		}
+		if result.GetMasksSecrets() == unmasked {
+			t.Errorf("LogUnmasked=%v: masks_secrets = %v", unmasked, result.GetMasksSecrets())
+		}
+	}
+}

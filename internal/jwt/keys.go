@@ -220,6 +220,15 @@ func (s KeySet) Lookup(kid string) (PublicKey, bool) {
 // Len is the number of usable keys.
 func (s KeySet) Len() int { return len(s.keys) }
 
+// KeyIDs are the kids of the usable keys, in no order.
+func (s KeySet) KeyIDs() []string {
+	out := make([]string, 0, len(s.keys))
+	for kid := range s.keys {
+		out = append(out, kid)
+	}
+	return out
+}
+
 // KeySource finds the key a token names. An error that is a *Error with
 // ReasonUnavailable says the source could not answer; any other error, or
 // ok false, says there is no such key.

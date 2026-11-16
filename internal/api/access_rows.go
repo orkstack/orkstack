@@ -711,8 +711,14 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:    {res: deployment, checks: perms(authz.PermCatalogRead)},
 	orkstackv1connect.SystemServiceUpdateRetentionPolicyProcedure: {res: deployment, checks: perms(authz.PermRetentionUpdate)},
 	orkstackv1connect.SystemServiceUpdateImagePolicyProcedure:     {res: deployment, checks: perms(authz.PermImagePolicyUpdate)},
-	orkstackv1connect.SystemServiceRampReleaseProcedure:           {res: deployment, checks: perms(authz.PermReleaseOperate)},
-	orkstackv1connect.SystemServicePromoteReleaseProcedure:        {res: deployment, checks: perms(authz.PermReleaseOperate)},
+
+	// IdentityService: the task identity issuer, at the deployment
+	// (docs/TASK_IDENTITY.md, "Administering the issuer").
+	orkstackv1connect.IdentityServiceGetIssuerProcedure:        {res: deployment, checks: perms(authz.PermIdentityRead)},
+	orkstackv1connect.IdentityServiceListSigningKeysProcedure:  {res: deployment, checks: perms(authz.PermIdentityRead)},
+	orkstackv1connect.IdentityServiceRetireSigningKeyProcedure: {res: deployment, checks: perms(authz.PermIdentityKeysRetire)},
+	orkstackv1connect.SystemServiceRampReleaseProcedure:        {res: deployment, checks: perms(authz.PermReleaseOperate)},
+	orkstackv1connect.SystemServicePromoteReleaseProcedure:     {res: deployment, checks: perms(authz.PermReleaseOperate)},
 
 	// AuditService: the deployment's trail, or one namespace's with a
 	// namespace filter.

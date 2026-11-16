@@ -268,6 +268,7 @@ reference.
   [Production checklist](./docs/PRODUCTION_CHECKLIST.md) ·
   [Security model](./docs/SECURITY_MODEL.md) ·
   [Authentication](./docs/AUTHENTICATION.md) · [Access](./docs/ACCESS.md) ·
+  [Task identity](./docs/TASK_IDENTITY.md) ·
   [Upgrading](./docs/UPGRADING.md) · [Limitations](./docs/LIMITATIONS.md) ·
   [Troubleshooting](./docs/TROUBLESHOOTING.md) ·
   [Storage](./docs/STORAGE.md) · [Stats](./docs/STATS.md) ·

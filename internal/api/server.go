@@ -154,6 +154,11 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 	systemPath, systemHandler := orkstackv1connect.NewSystemServiceHandler(svc, handlerOptions...)
 	mux.Handle(systemPath, systemHandler)
 
+	// IdentityService is the task identity issuer's own (identity_service.go);
+	// with identity.issuer unset it answers that task identity is off.
+	identityPath, identityHandler := orkstackv1connect.NewIdentityServiceHandler(svc, handlerOptions...)
+	mux.Handle(identityPath, identityHandler)
+
 	// The stats surface is its own handler because it owns a cache. The TTL is
 	// resolved HERE — the zero value means "the documented default" and only
 	// this line knows that, so a handler built anywhere else takes what it is
@@ -214,6 +219,15 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 	awaitHandler := NewAwaitHandler(svc)
 	mux.Handle(AwaitCompletePath, awaitHandler)
 	mux.Handle(AwaitRejectPath, awaitHandler)
+
+	// The issuer's documents, for relying parties inside the network: no
+	// credential, since what they hold is public (identity_http.go).
+	if svc.issuer != nil && svc.issuer.URL() != "" && svc.serveDiscovery {
+		issuer := NewIssuerHandler(svc.issuer)
+		mux.Handle(IssuerDiscoveryPath, issuer)
+		mux.Handle(IssuerKeysPath, issuer)
+		mux.Handle(IssuerBundlePath, issuer)
+	}
 
 	mux.Handle("/ws/runs/{id}", NewWebSocketBridge(svc, opts.AllowedOrigins))
 	mux.Handle(TaskLogSocketPath, NewTaskLogSocket(svc, opts.AllowedOrigins))

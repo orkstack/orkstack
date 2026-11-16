@@ -166,6 +166,9 @@ type config struct {
 	// setting.
 	auth    authConfig
 	authErr error
+	// identity is identity.* (identityFromEnv): the task identity issuer.
+	identity    identityConfig
+	identityErr error
 }
 
 func loadConfig() config {
@@ -242,6 +245,7 @@ func loadConfig() config {
 		cfg.allowedOrigins = strings.Split(origins, ",")
 	}
 	cfg.auth, cfg.authErr = authFromEnv(os.LookupEnv)
+	cfg.identity, cfg.identityErr = identityFromEnv(os.LookupEnv)
 	cfg.ui, cfg.uiErr = uiFromEnv()
 	cfg.listener, cfg.listenerErr = listenerFromEnv(tasks.value)
 	return cfg
@@ -468,6 +472,9 @@ func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, lo
 		logger.Warn("the engines' presence channel cannot carry these settings, so this engine does not say them: keep them under 100 bytes with no space, comma, = or control character",
 			"settings", unsaid)
 	}
+	// The engine decodes an Orker's answer leniently (engine.DataConverter);
+	// the Orker dials with the SDK default and stays strict.
+	temporalOptions.DataConverter = engine.DataConverter()
 	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(),
 		append(cfg.auth.capabilities(), described.Tokens()...)...)
 	if dialing != nil {
@@ -1124,6 +1131,15 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err := cfg.auth.checkBoot(tcfg.AdminAddr, tcfg.PprofEnabled); err != nil {
 		return err
 	}
+	if cfg.identityErr != nil {
+		return cfg.identityErr
+	}
+	if err := cfg.identity.checkBoot(artifacts.ConfigFromEnv().Backend, cfg.auth.mode); err != nil {
+		return err
+	}
+	if err := cfg.identity.checkCopyFile(); err != nil {
+		return err
+	}
 	// Fail on a deployment identity the cluster would reject later, while the
 	// error can still name the variable that caused it.
 	if err := cfg.deployment.Validate(); err != nil {
@@ -1338,6 +1354,19 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	incarnations, err := artifacts.NewIncarnationStore(ctx, artifacts.ConfigFromEnv())
 	if err != nil {
 		return fmt.Errorf("open the id store: %w", err)
+	}
+	// The identity signing keys: published, the document read each minute
+	// (docs/TASK_IDENTITY.md). Nil when identity.signing.key_files is empty;
+	// with no identity.issuer they sign no token and serve nothing.
+	// ork.identity.keys_copy_stale: each refresh after which the keys'
+	// copy is too old to decide from.
+	identityMetrics, err := telemetry.NewIdentityMetrics(sinks.Default())
+	if err != nil {
+		return err
+	}
+	issuer, err := setupIssuer(ctx, cfg.identity, artifacts.ConfigFromEnv(), sdkIdentity(), cfg.auth.clockSkew, identityMetrics, logger)
+	if err != nil {
+		return err
 	}
 	// The control-plane audit trail: one immutable record per write RPC, in
 	// the same shared object store, so any replica lists a write another
@@ -1700,6 +1729,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Schedules:        scheduler,
 		ScheduleBindings: scheduleBindings,
 		Incarnations:     incarnations,
+		Issuer:           issuer,
+		ServeDiscovery:   cfg.identity.serveDiscovery,
+		EnginePresence:   releases,
 		AuditStore:       auditStore,
 		AuditCounter:     auditInstruments,
 		Notifier:         runNotifier,

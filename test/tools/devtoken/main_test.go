@@ -11,7 +11,8 @@ import (
 	"github.com/orkstack/orkstack/internal/jwt"
 )
 
-// TestDevtoken: init makes one key pair and keeps it; sign writes a token
+// TestDevtoken: init makes one key pair and the engine's signing key, and
+// keeps them; sign writes a token
 // the published key set verifies, with the claims asked for.
 func TestDevtoken(t *testing.T) {
 	dir := t.TempDir()
@@ -31,6 +32,16 @@ func TestDevtoken(t *testing.T) {
 	again, _ := os.ReadFile(filepath.Join(dir, keyFile))
 	if string(again) != string(key) {
 		t.Fatal("a second init replaced the key: every token signed before would stop verifying")
+	}
+	engineKey, err := os.ReadFile(filepath.Join(dir, engineKeyFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signer, err := jwt.ParsePrivateKeyPEM(engineKey); err != nil || signer.Algorithm() != jwt.ES256 {
+		t.Fatalf("the engine's signing key = %v, %v; want an ES256 key", signer, err)
+	}
+	if info, _ := os.Stat(filepath.Join(dir, engineKeyFile)); info.Mode().Perm() != 0o600 || string(engineKey) == string(key) {
+		t.Fatalf("the engine's signing key has mode %v, or is the issuer's", info.Mode().Perm())
 	}
 	out := filepath.Join(dir, "admin.token")
 	if err := signToken(dir, signOptions{issuer: "orkstack-dev", audience: "orkstack", subject: "dev-admin", ttl: 720 * time.Hour,

@@ -16,6 +16,16 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ## [Unreleased]
 
+### Features
+
+- Authentication and roles for API callers and Orkers.
+- Temporal over TLS, mutual TLS or an API key.
+- Drain-first Orker stops.
+- Secrets masked in task logs.
+- A whole-run `timeout:`.
+
+**Upgrading:** upgrade every engine before any Orker, and read the **BREAKING** entries first ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#3-rolling-a-release-forward)).
+
 ### Added
 
 - OrkStack can now authenticate API callers itself and decide each request with roles: set `auth.mode` to `observe`, then `enforce`; off by default ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
@@ -32,6 +42,11 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `orker.metadata_probe: warn` or `refuse` checks at boot whether a task could reach the host's instance metadata service, and refuses to start under `refuse` (`METADATA_ENDPOINT_REACHABLE`) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#keeping-tasks-away-from-the-hosts-identity)).
 - Each schedule and trigger now records who bound it and their consent; `orkctl schedule update` and `trigger update` take `--rebind`, and older ones have none until rebound ([ORKFLOW_SCHEDULES.md](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#who-a-schedule-runs-as)).
 - A binding at a namespace or an Orkflow is now pinned to the one it was saved for, and does not carry over to one deleted and made again under its name; `--repin` pins it again ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#pinned-bindings)).
+- OrkStack can be a task identity issuer: `identity.issuer` and its signing keys publish a discovery document, a key set and a SPIFFE bundle; `orkctl admin identity` exports them and retires keys ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md)).
+- An Orker treats the files the engine's key settings name as its own, so no task's secret reads one, and logs an error if it can open one; `orker.refuse_readable_engine_keys` refuses the boot instead ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#an-engines-key-files-and-an-orker-on-one-host)).
+- With `auth.mode` `observe` or `enforce`, `identity.signing.key_files` must list a key, also with no `identity.issuer`; the keys then sign only what engines hand each other ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#signing-keys-with-no-issuer)).
+- `identity.keys_copy_file` keeps the published signing keys on disk, so an engine restarted while object storage is away still signs and verifies for `identity.keys_copy_max_age` ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#the-copy-on-disk)).
+- `orkctl admin identity keys retire --compromised-from T` retires a leaked key so that nothing it signed from T on verifies ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#rotation-with-no-outage)).
 - Each Orker now checks that its storage credential cannot reach the control plane's objects and reports it on `DescribeOrker`; the engine logs every Orker that is not ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#an-orkers-own-storage-credential)).
 - An Orkflow can bound a whole run with a top-level `timeout:`; at the deadline the run fails `RUN_TIMED_OUT` and its failure handlers get `engine.run_timeout_handler_grace` to finish ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#run-timeout-timeout)).
 - The archive sweep now says when it is blind: alert on `ork.archive.sweep.list_failed` and a stale `ork.archive.sweep.last_success`; an undated expiry reads 0 ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
@@ -49,6 +64,8 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - The cluster now keeps a finished run at least `engine.idempotency_ttl` plus 5 minutes, plus the cleanup margin, when the maximum run retention is shorter; runs are retired when they were ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 - The Orker numbers each task's attempts itself and starts nothing until the cluster answers its first heartbeat; a store that refuses the number fails `ATTEMPT_STORE_UNAVAILABLE` ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#invariants-the-layout-carries)).
 - Upgrade every Orker of a pool together: an older Orker beside a newer one can overwrite its attempt records, and a submit that probes the pool refuses the mix ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#upgrading-a-pools-orkers)).
+- Upgrade every engine before any Orker: an engine of v0.3.1 or earlier cannot read a v0.4.0 Orker's answers and shows it unavailable ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#3-rolling-a-release-forward)).
+- A submit is refused when a task with a `mask: false` secret would run on a pool with an Orker older than v0.4.0, which would fail it; upgrade the pool's Orkers ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#fan-out-caching-and-failure-handlers-need-every-orker-of-a-pool-on-a-release-that-supports-them)).
 - On Linux, `ork` and `orker` can no longer be core-dumped or traced by their own user; set `process.allow_debug: true` to attach a debugger ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-processes-themselves)).
 - A stopped Orker now lets finished tasks report, reports the rest `ORKER_STOPPED` at once instead of timing out, and a signal to its process group no longer reaches containers ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#removing-an-orker-safely-cordon-and-drain)).
 

@@ -95,6 +95,7 @@ func TestNewMux_EveryRouteIsReservedFromTheUI(t *testing.T) {
 	for _, pattern := range []string{
 		api.TriggerInvokePath, api.WebhookCollectionPath, api.WebhookItemPath,
 		api.AwaitCompletePath, api.AwaitRejectPath, api.TaskLogSocketPath, "/ws/runs/{id}",
+		api.IssuerDiscoveryPath, api.IssuerKeysPath, api.IssuerBundlePath,
 	} {
 		if !webui.Reserved(pattern) {
 			t.Errorf("%s is not reserved from the UI", pattern)

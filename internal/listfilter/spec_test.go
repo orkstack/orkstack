@@ -65,6 +65,7 @@ var exempt = map[string]string{
 	"ListPermissions":     "the closed catalogue, compiled in",
 	"ListSignins":         "a child listing of one principal",
 	"ListAccessRevisions": "a child listing of one document",
+	"ListSigningKeys":     "the keys of one document, bounded at 1024",
 }
 
 func TestSpec_EveryListRequestDeclaresItsFilters(t *testing.T) {

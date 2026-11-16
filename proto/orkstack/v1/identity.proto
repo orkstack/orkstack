@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// The task identity issuer's domain messages (docs/TASK_IDENTITY.md),
+// shared by the services that report on it.
+
+// SigningKey is one signing key as the engine that answers sees it.
+message SigningKey {
+  // key_id is the key's RFC 7638 thumbprint, its kid.
+  string key_id = 1;
+  // algorithm is `RS256` or `ES256`.
+  string algorithm = 2;
+  // published is false for a key this engine holds that the published keys
+  // do not list yet.
+  bool published = 3;
+  google.protobuf.Timestamp published_at = 4;
+  // published_by is the engine that first published it.
+  string published_by = 5;
+  // activated_at is when it first began to sign, on any engine.
+  google.protobuf.Timestamp activated_at = 6;
+  // retired_at and retired_by: a retired key never signs again.
+  google.protobuf.Timestamp retired_at = 7;
+  string retired_by = 8;
+  // held_here says this engine's identity.signing.key_files lists it.
+  bool held_here = 9;
+  // active says this engine would sign with it now; inactive_reason says
+  // why not.
+  bool active = 10;
+  string inactive_reason = 11;
+  // holders are the engines that confirmed holding it within the last
+  // week.
+  repeated SigningKeyHolder holders = 12;
+  // unheld says no engine confirmed holding it within the last week and it
+  // is not retired: a report, never a control.
+  bool unheld = 13;
+  // compromised_from, set, is the instant from which the key, retired as
+  // compromised, verifies nothing it signed.
+  google.protobuf.Timestamp compromised_from = 14;
+}
+
+// SigningKeyHolder is one engine that holds a key.
+message SigningKeyHolder {
+  // engine names the engine process.
+  string engine = 1;
+  google.protobuf.Timestamp confirmed_at = 2;
+  // live says the engine is polling now.
+  bool live = 3;
+}

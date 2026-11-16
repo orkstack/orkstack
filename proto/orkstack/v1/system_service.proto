@@ -149,7 +149,8 @@ message GetSystemInfoResponse {
   // auth_mode is set from identity (E61); unset until it lands (v0.4.0 proto batch).
   string auth_mode = 10;
 
-  // identity_issuer is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // identity_issuer is identity.issuer, the task identity issuer; unset when
+  // task identity is off (docs/TASK_IDENTITY.md).
   string identity_issuer = 11;
 }
 

@@ -18,6 +18,7 @@ import (
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
@@ -166,6 +167,16 @@ type Config struct {
 	// (incarnation.go). `ork` wires the durable store; nil gives nothing an
 	// id, so every binding matches by name, a unit-test posture.
 	Incarnations IncarnationStore
+
+	// Issuer is the task identity issuer (docs/TASK_IDENTITY.md); nil when
+	// identity.issuer is unset, and IdentityService then answers that task
+	// identity is off.
+	Issuer *identity.Issuer
+	// ServeDiscovery is identity.serve_discovery, reported by GetIssuer.
+	ServeDiscovery bool
+	// EnginePresence lists the engines polling now; ListSigningKeys marks
+	// each key holder live from it. Nil marks none.
+	EnginePresence engine.EnginePresenceReader
 
 	// Deliveries is where settled webhook deliveries are recorded. `ork` wires
 	// the durable store on the same shared backend the webhook registry uses,
@@ -503,7 +514,12 @@ type Service struct {
 	scheduleBindings ScheduleBindingStore
 	// incarnations is cfg.Incarnations; ids caches what it read.
 	incarnations IncarnationStore
-	ids          *incarnationCache
+	// issuer is cfg.Issuer; serveDiscovery and enginePresence are their
+	// Config fields.
+	issuer         *identity.Issuer
+	serveDiscovery bool
+	enginePresence engine.EnginePresenceReader
+	ids            *incarnationCache
 	// deliveries is the webhook delivery record store, read by ListDeliveries
 	// and GetDelivery; deliveryRecorder writes RedeliverWebhook's record into
 	// it and redelivery sends that one POST. Nil deliveries refuses all three.
@@ -629,6 +645,9 @@ func NewService(cfg Config) *Service {
 		schedules:              cfg.Schedules,
 		scheduleBindings:       cfg.ScheduleBindings,
 		incarnations:           cfg.Incarnations,
+		issuer:                 cfg.Issuer,
+		serveDiscovery:         cfg.ServeDiscovery,
+		enginePresence:         cfg.EnginePresence,
 		ids:                    newIncarnationCache(),
 		deliveries:             cfg.Deliveries,
 		redelivery:             cfg.Redelivery,
@@ -687,6 +706,9 @@ func NewService(cfg Config) *Service {
 		// instant gets a live pool, instead of one that went stale between
 		// the fixture and time.Now(). Nil is time.Now, which is production.
 		Now: cfg.Now,
+		// Shared by the per-submit copies (resolverFor), so a pool still
+		// running Orkers that predate secret masking is warned about once.
+		MaskingWarned: &engine.PoolsWarned{},
 	}
 	// Only an unconfigured Service gets the in-memory store, and only so a
 	// unit test can exercise runs without a bucket. A configured store is
@@ -2033,6 +2055,12 @@ func poolPlanError(err error) error {
 	}
 	var noJoin *engine.PoolNoJoinSupportError
 	if errors.As(err, &noJoin) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
+	// A pool whose Orker predates secret masking: it could not decode a task
+	// carrying a `mask: false` secret, so the run is refused before any id.
+	var noMasking *engine.PoolNoSecretMaskingError
+	if errors.As(err, &noMasking) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
 	// A task larger than any Orker of its pool runs: the request is well

@@ -178,3 +178,25 @@ func TestSubmitRun_PoolWithoutJoinSupportIsFailedPreconditionAndMintsNothing(t *
 		t.Fatalf("a refused submission started %v / minted %d ids", starter.startedRuns(), minted)
 	}
 }
+
+func TestSubmitRun_UnmaskedSecretOnAnOlderOrkerIsFailedPreconditionAndMintsNothing(t *testing.T) {
+	starter := &fakeStarter{}
+	gpuQueue := poolQueue(t, "gpu")
+	minted := 0
+	svc := api.NewService(api.Config{
+		Starter: starter, Pools: livePools{gpuQueue: 1},
+		Fleet:    oldGPUOrker(func(o *orkstackv1.DescribeOrkerResult) { o.SecretMaskingSupported = false }),
+		NewRunID: func() string { minted++; return fmt.Sprintf("run-%d", minted) },
+	})
+	applyYAML(t, svc, "apiVersion: orkstack/v1\nkind: Orkflow\nname: unmasked\ntasks:\n  - id: debug\n    uses: busybox:latest\n    pool: gpu\n"+
+		"    secrets:\n      - name: trace-key\n        source: env:TRACE_KEY\n        mask: false\n")
+	_, err := svc.SubmitRun(context.Background(), connect.NewRequest(&orkstackv1.SubmitRunRequest{
+		OrkflowName: "unmasked", AllowEmptyPool: true}))
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), `Orker "gpu-3" (build "2026.09.01")`) || !strings.Contains(err.Error(), "predates secret masking") {
+		t.Fatalf("submit = %v", err)
+	}
+	if len(starter.startedRuns()) != 0 || minted != 0 {
+		t.Fatalf("a refused submission started %v / minted %d ids", starter.startedRuns(), minted)
+	}
+}

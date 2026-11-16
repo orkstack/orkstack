@@ -150,6 +150,7 @@ orker:
   metadata_probe: off  # orker
   values:
     refuse_secrets: true  # orker
+  refuse_readable_engine_keys: false  # orker
   engine:
     url: ""  # orker; no engine: no identities
     ca_file: ""  # orker; the system's roots
@@ -204,3 +205,17 @@ auth:
   clock_skew: 1m  # ork
   policy_refresh: 10s  # ork
   policy_stale_limit: 5m  # ork
+
+identity:
+  issuer: ""  # ork; task identity off
+  serve_discovery: true  # ork
+  signing:
+    key_files: []  # ork
+    algorithm: RS256  # ork
+    activation_delay: 24h  # ork
+    verify_published: true  # ork
+  keys_copy_file: ""  # ork; no copy on disk
+  keys_copy_max_age: 1h  # ork
+  subject_format: ork  # ork
+  spiffe:
+    trust_domain: ""  # ork; no SPIFFE ID on any token

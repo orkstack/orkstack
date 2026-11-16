@@ -18,12 +18,12 @@ test('every generated file declares at most one service', () => {
 		expect(`${file}: ${declared}`).toBe(`${file}: ${Math.min(declared, 1)}`);
 		services += declared;
 	}
-	expect(services).toBe(14);
+	expect(services).toBe(15);
 });
 
 test('each client module imports only its own service', () => {
 	const modules = readdirSync(root + 'clients').filter((f) => f.endsWith('.ts'));
-	expect(modules.length).toBe(14);
+	expect(modules.length).toBe(15);
 	for (const module of modules) {
 		const source = read(`clients/${module}`);
 		const generated = [...source.matchAll(/from '\.\.\/gen\/orkstack\/v1\/(\w+)'/g)].map((m) => m[1]);

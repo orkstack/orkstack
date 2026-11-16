@@ -52,6 +52,14 @@ const (
 	DefaultRefuseSecretVals = true
 )
 
+// orker.refuse_readable_engine_keys: an Orker that can open a file one of
+// the engine's key settings names refuses to start, where by default it
+// logs an error (docs/SECURITY_MODEL.md, "The Orker's own sources").
+const (
+	RefuseReadableEngineKeysVar     = "ORK_ORKER_REFUSE_READABLE_ENGINE_KEYS"
+	DefaultRefuseReadableEngineKeys = false
+)
+
 // streamWriter is one stream's masking writer and the stream it masks.
 type streamWriter struct {
 	stream string

@@ -17,6 +17,7 @@ import (
 	"github.com/orkstack/orkstack/internal/archive"
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/identity"
 	"github.com/orkstack/orkstack/internal/orker"
 	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/task"
@@ -90,6 +91,14 @@ type Var struct {
 	// as the value's origin when neither the file nor the environment set
 	// the variable.
 	Default string
+	// File marks a setting whose value names a file (a list, each item one):
+	// the Orker holds every such file as its own, whichever binary the key
+	// belongs to, so no task's secret names one (FileSettings,
+	// Document.ForeignFiles; docs/SECURITY_MODEL.md, "The Orker's own
+	// sources"). FileField names, for a KindDocument, the field that holds
+	// a file in any entry of the document.
+	File      bool
+	FileField string
 	// DerivedNote is the human sentence explaining a placeholder Default —
 	// "derived from the pool", "hostname-<hash of the work dir>", "SDK
 	// default" — and is only meaningful when Default is "(empty)" or
@@ -119,11 +128,11 @@ var Schema = []Var{
 	// since a boolean has no empty value: temporalconn.SettingsFromEnv refuses
 	// anything but true, false, 1 or 0, naming the setting.
 	{Path: "temporal.tls.enabled", Env: "ORK_TEMPORAL_TLS_ENABLED", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty is off unless a file or server_name below is set; false beside one is refused"},
-	{Path: "temporal.tls.ca_file", Env: "ORK_TEMPORAL_TLS_CA_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty verifies against the system roots"},
-	{Path: "temporal.tls.cert_file", Env: "ORK_TEMPORAL_TLS_CERT_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "set with key_file, for mutual TLS"},
-	{Path: "temporal.tls.key_file", Env: "ORK_TEMPORAL_TLS_KEY_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "set with cert_file"},
+	{Path: "temporal.tls.ca_file", Env: "ORK_TEMPORAL_TLS_CA_FILE", Binaries: usesBoth, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "empty verifies against the system roots"},
+	{Path: "temporal.tls.cert_file", Env: "ORK_TEMPORAL_TLS_CERT_FILE", Binaries: usesBoth, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "set with key_file, for mutual TLS"},
+	{Path: "temporal.tls.key_file", Env: "ORK_TEMPORAL_TLS_KEY_FILE", Binaries: usesBoth, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "set with cert_file"},
 	{Path: "temporal.tls.server_name", Env: "ORK_TEMPORAL_TLS_SERVER_NAME", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty is the address's host"},
-	{Path: "temporal.api_key_file", Env: "ORK_TEMPORAL_API_KEY_FILE", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "a file holding the key, never the key"},
+	{Path: "temporal.api_key_file", Env: "ORK_TEMPORAL_API_KEY_FILE", Binaries: usesBoth, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "a file holding the key, never the key"},
 
 	{Path: "deployment.name", Env: "ORK_DEPLOYMENT_NAME", Binaries: usesBoth, Kind: KindString, Default: task.DefaultDeploymentName},
 	{Path: "deployment.build_id", Env: "ORK_BUILD_ID", Binaries: usesBoth, Kind: KindString, Default: EmptyDefault, DerivedNote: "empty means versioning is off"},
@@ -161,7 +170,7 @@ var Schema = []Var{
 	// ORK_IDEMPOTENCY_TTL's fallback is engine.DefaultClaimTTL, the same
 	// constant idempotency.go binds a non-positive ttl to.
 	{Path: "engine.idempotency_ttl", Env: "ORK_IDEMPOTENCY_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultClaimTTL)},
-	{Path: "engine.registry_auth_file", Env: "ORK_REGISTRY_AUTH_FILE", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault},
+	{Path: "engine.registry_auth_file", Env: "ORK_REGISTRY_AUTH_FILE", Binaries: usesOrk, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "webhooks.allowed_networks", Env: "ORK_WEBHOOK_ALLOWED_NETWORKS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault,
 		DerivedNote: "empty admits public addresses only"},
 	{Path: "engine.stats_cache_ttl", Env: "ORK_STATS_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultStatsCacheTTL)},
@@ -243,7 +252,7 @@ var Schema = []Var{
 	{Path: "orker.env_allowlist", Env: "ORK_ORKER_ENV_ALLOWLIST", Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
 	{Path: "orker.secret_schemes", Env: "ORK_ORKER_SECRET_SCHEMES", Binaries: usesOrker, Kind: KindList, Default: formatList(orker.DefaultSecretSchemes)},
 	{Path: "orker.secret_allow", Env: "ORK_ORKER_SECRET_ALLOW", Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
-	{Path: "orker.registry_auth_file", Env: "ORK_ORKER_REGISTRY_AUTH_FILE", Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
+	{Path: "orker.registry_auth_file", Env: "ORK_ORKER_REGISTRY_AUTH_FILE", Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
 	{Path: "orker.stop.grace", Env: orker.StopGraceVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStopGrace)},
@@ -292,6 +301,7 @@ var Schema = []Var{
 	// holds a secret (internal/orker/mask.go).
 	{Path: "orker.log.mask_secrets", Env: orker.MaskSecretsVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultMaskSecrets)},
 	{Path: "orker.values.refuse_secrets", Env: orker.RefuseSecretValuesVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultRefuseSecretVals)},
+	{Path: "orker.refuse_readable_engine_keys", Env: orker.RefuseReadableEngineKeysVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultRefuseReadableEngineKeys)},
 
 	{Path: "telemetry.log_format", Env: "ORK_LOG_FORMAT", Binaries: usesBoth, Kind: KindString, Default: telemetry.LogFormatText},
 	{Path: "telemetry.log_level", Env: "ORK_LOG_LEVEL", Binaries: usesBoth, Kind: KindString, Default: telemetry.DefaultLogLevel},
@@ -315,7 +325,7 @@ var Schema = []Var{
 	{Path: "telemetry.otlp.protocol", Env: "OTEL_EXPORTER_OTLP_PROTOCOL", Binaries: usesBoth, Kind: KindString, Default: DerivedDefault, DerivedNote: "SDK defaults"},
 	{Path: "telemetry.otlp.headers", Env: "OTEL_EXPORTER_OTLP_HEADERS", Binaries: usesBoth, Kind: KindMap, Secret: true, Default: DerivedDefault, DerivedNote: "SDK defaults"},
 	{Path: "telemetry.otlp.timeout", Env: "OTEL_EXPORTER_OTLP_TIMEOUT", Binaries: usesBoth, Kind: KindInt, Default: DerivedDefault, DerivedNote: "SDK defaults"},
-	{Path: "telemetry.otlp.certificate", Env: "OTEL_EXPORTER_OTLP_CERTIFICATE", Binaries: usesBoth, Kind: KindString, Default: DerivedDefault, DerivedNote: "SDK defaults"},
+	{Path: "telemetry.otlp.certificate", Env: "OTEL_EXPORTER_OTLP_CERTIFICATE", Binaries: usesBoth, Kind: KindString, File: true, Default: DerivedDefault, DerivedNote: "SDK defaults"},
 
 	{Path: "telemetry.otlp.traces.endpoint", Env: "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", Binaries: usesBoth, Kind: KindString, Default: DerivedDefault, DerivedNote: "SDK defaults"},
 	{Path: "telemetry.otlp.traces.headers", Env: "OTEL_EXPORTER_OTLP_TRACES_HEADERS", Binaries: usesBoth, Kind: KindMap, Secret: true, Default: DerivedDefault, DerivedNote: "SDK defaults"},
@@ -340,24 +350,38 @@ var Schema = []Var{
 	// (docs/AUTHENTICATION.md, "An Orker's credential"); empty, it reaches
 	// none.
 	{Path: "orker.engine.url", Env: orker.EngineURLVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "no engine: no identities"},
-	{Path: "orker.engine.ca_file", Env: orker.EngineCAFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "the system's roots"},
+	{Path: "orker.engine.ca_file", Env: orker.EngineCAFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "the system's roots"},
 	{Path: "orker.engine.auth.method", Env: orker.EngineAuthMethodVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault, DerivedNote: "token_file or mtls"},
-	{Path: "orker.engine.auth.token_file", Env: orker.EngineAuthTokenFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
-	{Path: "orker.engine.auth.cert_file", Env: orker.EngineAuthCertFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
-	{Path: "orker.engine.auth.key_file", Env: orker.EngineAuthKeyFileVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
+	{Path: "orker.engine.auth.token_file", Env: orker.EngineAuthTokenFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
+	{Path: "orker.engine.auth.cert_file", Env: orker.EngineAuthCertFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
+	{Path: "orker.engine.auth.key_file", Env: orker.EngineAuthKeyFileVar, Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 
 	// auth.* is the engine's alone (docs/AUTHENTICATION.md). auth.issuers is
 	// a document: it re-serializes to ORK_AUTH_ISSUERS exactly like a
 	// standalone authn.ParseIssuers document, under one `issuers:` key.
 	{Path: "auth.mode", Env: "ORK_AUTH_MODE", Binaries: usesOrk, Kind: KindString, Default: authn.ModeAsserted},
 	{Path: "auth.public_url", Env: "ORK_AUTH_PUBLIC_URL", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no break-glass audience"},
-	{Path: "auth.issuers", Env: "ORK_AUTH_ISSUERS", Binaries: usesOrk, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no trusted issuer"},
+	{Path: "auth.issuers", Env: "ORK_AUTH_ISSUERS", Binaries: usesOrk, Kind: KindDocument, File: true, FileField: "jwks_file", Default: EmptyDefault, DerivedNote: "no trusted issuer"},
 	{Path: "auth.admins", Env: "ORK_AUTH_ADMINS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
 	{Path: "auth.orkers", Env: "ORK_AUTH_ORKERS", Binaries: usesOrk, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no Orker bound by configuration"},
-	{Path: "auth.break_glass_key_file", Env: "ORK_AUTH_BREAK_GLASS_KEY_FILE", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "break-glass off"},
+	{Path: "auth.break_glass_key_file", Env: "ORK_AUTH_BREAK_GLASS_KEY_FILE", Binaries: usesOrk, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "break-glass off"},
 	{Path: "auth.clock_skew", Env: "ORK_AUTH_CLOCK_SKEW", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(authn.DefaultClockSkew)},
 	{Path: "auth.policy_refresh", Env: "ORK_AUTH_POLICY_REFRESH", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultPolicyRefresh)},
 	{Path: "auth.policy_stale_limit", Env: "ORK_AUTH_POLICY_STALE_LIMIT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultPolicyStaleLimit)},
+
+	// identity.* is the task identity issuer, the engine's alone
+	// (docs/TASK_IDENTITY.md). With identity.issuer unset nothing of it
+	// runs.
+	{Path: "identity.issuer", Env: "ORK_IDENTITY_ISSUER", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "task identity off"},
+	{Path: "identity.serve_discovery", Env: "ORK_IDENTITY_SERVE_DISCOVERY", Binaries: usesOrk, Kind: KindBool, Default: formatBool(identity.DefaultServeDiscovery)},
+	{Path: "identity.signing.key_files", Env: "ORK_IDENTITY_SIGNING_KEY_FILES", Binaries: usesOrk, Kind: KindList, File: true, Default: EmptyDefault},
+	{Path: "identity.signing.algorithm", Env: "ORK_IDENTITY_SIGNING_ALGORITHM", Binaries: usesOrk, Kind: KindString, Default: string(identity.DefaultAlgorithm)},
+	{Path: "identity.signing.activation_delay", Env: "ORK_IDENTITY_SIGNING_ACTIVATION_DELAY", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultActivationDelay)},
+	{Path: "identity.signing.verify_published", Env: "ORK_IDENTITY_SIGNING_VERIFY_PUBLISHED", Binaries: usesOrk, Kind: KindBool, Default: formatBool(identity.DefaultVerifyPublished)},
+	{Path: "identity.keys_copy_file", Env: "ORK_IDENTITY_KEYS_COPY_FILE", Binaries: usesOrk, Kind: KindString, File: true, Default: EmptyDefault, DerivedNote: "no copy on disk"},
+	{Path: "identity.keys_copy_max_age", Env: "ORK_IDENTITY_KEYS_COPY_MAX_AGE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultKeysCopyMaxAge)},
+	{Path: "identity.subject_format", Env: "ORK_IDENTITY_SUBJECT_FORMAT", Binaries: usesOrk, Kind: KindString, Default: string(identity.DefaultSubjectFormat)},
+	{Path: "identity.spiffe.trust_domain", Env: "ORK_IDENTITY_SPIFFE_TRUST_DOMAIN", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no SPIFFE ID on any token"},
 }
 
 // byEnv indexes Schema by environment variable name, built once at init so

@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/identity.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// IdentityService is the task identity issuer (docs/TASK_IDENTITY.md): the
+// documents it publishes and the keys it signs with. Every call answers for
+// the engine that receives it. With identity.issuer unset, GetIssuer
+// answers enabled false and the others fail FAILED_PRECONDITION.
+service IdentityService {
+  // GetIssuer answers the issuer, its documents as this engine serves and
+  // exports them, and what this engine last read of the published keys and
+  // of the issuer URL. Needs identity.read at the deployment.
+  rpc GetIssuer(GetIssuerRequest) returns (GetIssuerResponse);
+  // ListSigningKeys answers every published key and every key this engine
+  // holds. Needs identity.read at the deployment.
+  rpc ListSigningKeys(ListSigningKeysRequest) returns (ListSigningKeysResponse);
+  // RetireSigningKey retires a key: no engine signs with it again, and it
+  // is no longer served. The key stays in the published keys. Retiring a
+  // retired key answers it as it is; marking it compromised from another
+  // instant than it was is FAILED_PRECONDITION. Needs identity.keys.retire
+  // at the deployment.
+  rpc RetireSigningKey(RetireSigningKeyRequest) returns (RetireSigningKeyResponse);
+}
+
+message GetIssuerRequest {}
+
+message GetIssuerResponse {
+  // enabled is false when identity.issuer is unset; every other field is
+  // then empty.
+  bool enabled = 1;
+  // issuer is identity.issuer, the iss of every token.
+  string issuer = 2;
+  // subject_format is identity.subject_format: `ork` or `spiffe`.
+  string subject_format = 3;
+  // trust_domain is identity.spiffe.trust_domain, empty when unset.
+  string trust_domain = 4;
+  // serve_discovery says this engine serves the documents below.
+  bool serve_discovery = 5;
+  // discovery, jwks and spiffe_bundle are the documents, as JSON, exactly
+  // as served and exported: .well-known/openid-configuration, jwks.json
+  // and, with a trust domain, spiffe-bundle.json.
+  string discovery = 6;
+  string jwks = 7;
+  string spiffe_bundle = 8;
+  // keys_sequence is the published keys' sequence, the SPIFFE bundle's
+  // sequence.
+  int64 keys_sequence = 9;
+  // keys_read_at is when this engine last read the published keys;
+  // keys_read_error is why its last try failed, empty when it did not.
+  google.protobuf.Timestamp keys_read_at = 10;
+  string keys_read_error = 11;
+  // live_checked_at is when this engine last read the issuer URL, before a
+  // key's first signature; live_key_ids are the key ids it served then, and
+  // live_error why the read failed. Unset when it has not needed to.
+  google.protobuf.Timestamp live_checked_at = 12;
+  repeated string live_key_ids = 13;
+  string live_error = 14;
+}
+
+message ListSigningKeysRequest {}
+
+message ListSigningKeysResponse {
+  // keys are this engine's keys in its configured order, then every other
+  // published key.
+  repeated SigningKey keys = 1;
+}
+
+message RetireSigningKeyRequest {
+  // key_id is the kid to retire.
+  string key_id = 1;
+  // compromised_from, set, also retires the key as compromised from that
+  // instant, which may lie in the past: the earliest moment the key may
+  // have leaked. What it signed for an instant before it still verifies,
+  // and nothing from it on does; a run force-cancelled under it from then
+  // on reads as terminated outside OrkStack and cannot be resumed. It may
+  // be added to a key retired before, and once set it only moves earlier.
+  google.protobuf.Timestamp compromised_from = 2;
+}
+
+message RetireSigningKeyResponse {
+  // key is the key as retired.
+  SigningKey key = 1;
+}

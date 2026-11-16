@@ -34,6 +34,9 @@ import (
 const (
 	keyFile  = "dev-issuer.key"
 	jwksFile = "dev-issuer.jwks.json"
+	// engineKeyFile is the engine's own signing key
+	// (identity.signing.key_files), which enforce requires.
+	engineKeyFile = "engine-signing.key"
 )
 
 func main() {
@@ -84,8 +87,9 @@ func fail(err error) {
 	}
 }
 
-// initKeys makes the key pair under dir unless it is there already: a key
-// replaced would invalidate every token signed before it.
+// initKeys makes the issuer's key pair and the engine's signing key under
+// dir, each unless it is there already: a key replaced would invalidate
+// every token, or decision, signed before it.
 func initKeys(dir string) error {
 	if dir == "" {
 		return errors.New("-dir is required")
@@ -93,9 +97,19 @@ func initKeys(dir string) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	keyPath := filepath.Join(dir, keyFile)
+	for _, name := range []string{keyFile, engineKeyFile} {
+		if err := makeKey(filepath.Join(dir, name)); err != nil {
+			return err
+		}
+	}
+	return writeJWKS(dir)
+}
+
+// makeKey writes a P-256 private key to keyPath, 0600, unless a file is
+// there already.
+func makeKey(keyPath string) error {
 	if _, err := os.Stat(keyPath); err == nil {
-		return writeJWKS(dir)
+		return nil
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
@@ -115,10 +129,7 @@ func initKeys(dir string) error {
 		_ = f.Close()
 		return err
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	return writeJWKS(dir)
+	return f.Close()
 }
 
 func loadSigner(dir string) (*jwt.Signer, error) {

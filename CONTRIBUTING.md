@@ -75,7 +75,9 @@ running keeps its address until `make down`.
 
 `make up IDENTITY=1` runs the stack the way a deployment that authenticates
 does: the engine in `enforce`, with a development issuer `dev` whose key pair
-`test/tools/devtoken` makes once under `.data/identity/`, and two tokens it
+`test/tools/devtoken` makes once under `.data/identity/`, beside the engine's
+own signing key (`identity.signing.key_files`, which `enforce` requires), and
+two tokens it
 signs afresh at every `make up`, each living thirty days. `dev-admin` is in
 `auth.admins`; `dev-orker` is the Orker's own credential
 (`orker.engine.auth.method: token_file`), bound to the `orker` role at `main`

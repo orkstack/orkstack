@@ -97,11 +97,13 @@ func (d rootDir) Open(name string) (fs.File, error) {
 // /v1/runs/…/awaits), the WebSocket bridge (/ws/), and the admin listener's
 // endpoints (/healthz, /readyz, /metrics, /debug/), which live on another
 // port and must not look answered on this one to a probe aimed at the wrong
-// port. internal/api's mux test holds every route it mounts to this.
+// port, and /.well-known/, where the task identity issuer's discovery
+// document is served (docs/TASK_IDENTITY.md). internal/api's mux test holds
+// every route it mounts to this.
 func Reserved(urlPath string) bool {
 	first, _, _ := strings.Cut(strings.TrimPrefix(urlPath, "/"), "/")
 	switch first {
-	case "v1", "ws", "healthz", "readyz", "metrics", "debug":
+	case "v1", "ws", "healthz", "readyz", "metrics", "debug", ".well-known":
 		return true
 	}
 	return strings.HasPrefix(first, "orkstack.")

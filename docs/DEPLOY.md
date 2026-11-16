@@ -635,6 +635,7 @@ then the variable it becomes.
 | `orker.metadata_probe` | `ORK_ORKER_METADATA_PROBE` | `off` | `orker` | whether boot asks the host's instance metadata endpoints from a container on the `default` network: `off` runs no extra container, `warn` logs an endpoint that answered, `refuse` refuses boot when one answered or the probe failed, `METADATA_ENDPOINT_REACHABLE`. Set `refuse` on a cloud host ([Keeping tasks away from the host's identity](#keeping-tasks-away-from-the-hosts-identity)) |
 | `orker.log.mask_secrets` | `ORK_ORKER_LOG_MASK_SECRETS` | `true` | `orker` | whether a task's secrets are replaced by `***` in its logs, live and stored, and in failure messages; `false` keeps them byte-exact. A secret's `mask: false` does the same for one secret. The same on every Orker of a pool ([SECURITY_MODEL.md](./SECURITY_MODEL.md#masking-and-its-limits)) |
 | `orker.values.refuse_secrets` | `ORK_ORKER_VALUES_REFUSE_SECRETS` | `true` | `orker` | whether a `values.json` holding one of the task's own secrets fails the attempt, `VALUES_CONTAIN_SECRET`, before anything is uploaded; independent of `orker.log.mask_secrets`. The same on every Orker of a pool ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#94-secrets)) |
+| `orker.refuse_readable_engine_keys` | `ORK_ORKER_REFUSE_READABLE_ENGINE_KEYS` | `false` | `orker` | refuse to start when this Orker can open a file one of the engine's key settings names (`identity.signing.key_files`, `identity.keys_copy_file`, `auth.break_glass_key_file`, an issuer's `jwks_file`); by default each is an error in its log — see "An engine's key files and an Orker on one host" |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
 | `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
@@ -740,6 +741,16 @@ then the variable it becomes.
 | `auth.clock_skew` | `ORK_AUTH_CLOCK_SKEW` | `1m` | `ork` | leeway a token's expiry, not-before and issued-at get against this engine's clock |
 | `auth.policy_refresh` | `ORK_AUTH_POLICY_REFRESH` | `10s` | `ork` | how old a replica's copy of the access document may be before it reads it again |
 | `auth.policy_stale_limit` | `ORK_AUTH_POLICY_STALE_LIMIT` | `5m` | `ork` | how long a replica decides from a stale copy while the store cannot be read; then it fails closed |
+| `identity.issuer` | `ORK_IDENTITY_ISSUER` | *(empty)* | `ork` | the task identity issuer: an `https` URL with no query or fragment, the `iss` of every token and where relying parties fetch its keys; task identity is off when unset — see [TASK_IDENTITY.md](./TASK_IDENTITY.md) |
+| `identity.serve_discovery` | `ORK_IDENTITY_SERVE_DISCOVERY` | `true` | `ork` | every engine also serves the issuer's discovery document, key set and SPIFFE bundle, unauthenticated, for relying parties inside the network |
+| `identity.signing.key_files` | `ORK_IDENTITY_SIGNING_KEY_FILES` | *(empty)* | `ork` | PEM private keys, in order: the first that qualifies signs; a new key goes first and the old one stays second until it is retired. Required when `auth.mode` is `observe` or `enforce`, also with `identity.issuer` unset: the boot refuses otherwise |
+| `identity.signing.algorithm` | `ORK_IDENTITY_SIGNING_ALGORITHM` | `RS256` | `ork` | `RS256` (RSA keys) or `ES256` (P-256 keys); a listed key of the other kind refuses the boot |
+| `identity.signing.activation_delay` | `ORK_IDENTITY_SIGNING_ACTIVATION_DELAY` | `24h` | `ork` | how long a key is published before it signs while another key is unretired: longer than any relying party keeps an old key set |
+| `identity.signing.verify_published` | `ORK_IDENTITY_SIGNING_VERIFY_PUBLISHED` | `true` | `ork` | before a key signs for the first time, check that the issuer URL serves it; off where an engine cannot reach its own issuer |
+| `identity.keys_copy_file` | `ORK_IDENTITY_KEYS_COPY_FILE` | *(empty)* | `ork` | an absolute path where the engine keeps, `0600`, its last good read of the published signing keys, and from which it starts while the store is away; unset, an engine restarted during a store outage signs and verifies nothing until it returns. Keep it where the key files are: whoever can write it can add a key. The boot refuses a path it cannot write beside, or a file there that is a link or that others can write |
+| `identity.keys_copy_max_age` | `ORK_IDENTITY_KEYS_COPY_MAX_AGE` | `1h` | `ork` | from `5m` to `24h`: how old an engine's copy of the published keys, in memory or on disk, may be and still sign and verify; also how long after its retirement a rotated key's signatures are still taken. Set it equal on every engine, and raise it before planned work on the object store |
+| `identity.subject_format` | `ORK_IDENTITY_SUBJECT_FORMAT` | `ork` | `ork` | `ork` (`ork:namespace:…:task:…`) or `spiffe` (a SPIFFE ID in the trust domain, so a token is a JWT-SVID); `spiffe` needs a trust domain |
+| `identity.spiffe.trust_domain` | `ORK_IDENTITY_SPIFFE_TRUST_DOMAIN` | *(empty)* | `ork` | the deployment's own SPIFFE trust domain (lowercase letters, digits, `.`, `-`, `_`); set, every token carries both subject forms and the issuer serves a SPIFFE bundle |
 
 The table above is the reference for what each key *means*; for the full,
 always-current set of every key at its exact built-in default, see the
@@ -1114,7 +1125,20 @@ refuses with `FailedPrecondition` naming the pool, the tasks, and the first
 Orker that does not and its build; `allow_empty_pool` does not override that. A
 `none_failed` join needs nothing from an Orker.
 
-All four probes ask each Orker on its own control channel, never on the
+A secret with `mask: false` (`docs/DSL.md` "Tasks") is the same: an Orker
+built before v0.4.0 cannot decode the task's input — it refuses the secret's
+`unmasked` as an unknown field — and would fail every attempt. So submit asks
+every uncordoned Orker of the pool of every task carrying one whether it
+reads it (`DescribeOrkerResult` `secret_masking_supported`, true on every
+v0.4.0 Orker whatever `orker.log.mask_secrets` says), and refuses with
+`FailedPrecondition` naming the pool, the tasks, and the first Orker that does
+not and its build; `allow_empty_pool` does not override that. A masked secret
+is never refused: an Orker built before v0.4.0 runs the task as it always
+did, without masking its logs, and a submit that already asks the pool a
+question logs it once per pool and Orker (`submit: an Orker of this pool predates
+secret masking and masks no secret in a task's logs`).
+
+All five probes ask each Orker on its own control channel, never on the
 pool's channel, so a pool whose every task slot is taken answers them like an
 idle one. They are best-effort: a pool none of whose uncordoned Orkers answers
 within the describe timeout is not refused — nothing was measured — and the
@@ -1328,6 +1352,31 @@ costs every boot a container and has nothing to find on a laptop; set
 
 The structural answer is that an Orker host needs no broad role at all: then
 the object store's role is the only thing a metadata endpoint could give away.
+
+### An engine's key files and an Orker on one host
+
+`ork` and `orker` share one configuration file and, in small installs, one
+host. The engine's key files (`identity.signing.key_files`,
+`identity.keys_copy_file`, `auth.break_glass_key_file`, a trusted issuer's
+`jwks_file`) are `ork`
+settings, so an Orker given the same configuration file, or the same
+environment, learns where they are. Two rules follow:
+
+1. Every file such a setting names, in the configuration file the Orker was
+   given or in its environment, is one of the Orker's own sources: no task's
+   secret can name it, whatever `orker.secret_allow` says
+   ([SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources").
+2. At boot, an Orker that can open one of those files logs an error naming
+   the setting. With `orker.refuse_readable_engine_keys: true` it refuses to
+   start instead. The check fails closed: a setting whose file the Orker
+   cannot tell (a value that does not parse, an unexpected shape, a relative
+   path, which is relative to the engine's working directory) is reported
+   and refused the same way. Give the engine's key settings absolute paths.
+
+Run `orker` as a user that cannot read the engine's key files, or on
+another host. A separate configuration file for each binary keeps the Orker
+from knowing the paths at all, and then the operating system's permissions
+are the only guard.
 
 ### An Orker's own storage credential
 
@@ -2096,6 +2145,23 @@ release runs nothing at all (§1).
    executes on is the cluster's routing, never the replica the client happened
    to reach: after the switch, a run submitted **to a v1 replica** executes
    wholly on v2.
+
+   **Start v2's engines before its Orkers, and point `orkctl` and the web UI
+   at a v2 replica from then on.** An engine reads an Orker's answers
+   (`DescribeOrker`, a failed attempt's detail) with its own build's types.
+   From v0.4.0 an engine drops a field it does not know, so it reads an Orker
+   of a later release correctly. An engine of v0.3.1 or earlier refuses the
+   whole answer instead, so upgrading from it, **upgrade every engine before
+   any Orker**: to a v0.3.1 replica every v0.4.0 Orker reads unavailable in
+   `orkctl orker list`, counts as not answering in a submit's pool checks and
+   in `orkctl release status` (`UNVERIFIED`, which blocks `ramp` and
+   `promote`), and a cordon it sends is applied but answered with an error.
+   A task's output is masked (`orker.log.mask_secrets`) only once its pool's
+   Orkers run v0.4.0: until then they run it unmasked, as they always did.
+   The other direction needs no order: an Orker stays strict on what it is
+   sent, and a newer engine asks a pool's Orkers before sending one a field
+   it may not know ("Fan-out, caching and failure handlers need every Orker of
+   a pool on a release that supports them").
 
 2. **Check v2 can carry the work:**
 
@@ -5350,6 +5416,13 @@ with a pending run that was not found, under a key claimed by an earlier
 release (§5 "Ops notes", idempotency keys). It should stay at zero once one
 `engine.idempotency_ttl` has passed after the last engine was upgraded; a
 rising count during a rollout names runs that may never start.
+
+`ork.identity.keys_copy_stale` (engine) counts each refresh, about once a
+minute, after which the engine's copy of the published signing keys was
+older than `identity.keys_copy_max_age`: it then signs nothing and verifies
+nothing, so a force cancel is refused until the store answers
+([TASK_IDENTITY.md](./TASK_IDENTITY.md#the-copy-on-disk)). Alert on any
+increase.
 
 ### Lifecycle metrics
 

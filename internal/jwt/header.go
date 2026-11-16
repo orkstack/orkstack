@@ -24,7 +24,7 @@ const typeAccessToken = "at+jwt"
 // reservedTypes are the types OrkStack mints for a purpose of its own. A
 // verifier of another purpose refuses them, so a token made for one use is
 // never taken for another.
-var reservedTypes = []string{TypeRequest}
+var reservedTypes = []string{TypeRequest, DecisionType}
 
 // forbiddenHeaders are refused wherever they appear (authn-authz.md §2,
 // rule 2): crit would ask for semantics this package does not implement,

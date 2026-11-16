@@ -3007,6 +3007,11 @@ type DescribeOrkerResult struct {
 	// built before it numbers them as Temporal does and would write records
 	// over a newer Orker's, so submit refuses a pool that has one.
 	AttemptOrdinalsSupported bool `protobuf:"varint,43,opt,name=attempt_ordinals_supported,json=attemptOrdinalsSupported,proto3" json:"attempt_ordinals_supported,omitempty"`
+	// secret_masking_supported is true on an Orker that reads a secret's
+	// `unmasked` (SecretRef.unmasked), whatever orker.log.mask_secrets says. An
+	// Orker built before it refuses a task that sets it, so submit refuses a
+	// task carrying a `mask: false` secret on a pool that has one.
+	SecretMaskingSupported bool `protobuf:"varint,44,opt,name=secret_masking_supported,json=secretMaskingSupported,proto3" json:"secret_masking_supported,omitempty"`
 	// stopping is set while this Orker is stopping (OrkerStopping). cordoned is
 	// true beside it.
 	Stopping *OrkerStopping `protobuf:"bytes,24,opt,name=stopping,proto3" json:"stopping,omitempty"`
@@ -3250,6 +3255,13 @@ func (x *DescribeOrkerResult) GetStoreOutage() *StoreOutage {
 func (x *DescribeOrkerResult) GetAttemptOrdinalsSupported() bool {
 	if x != nil {
 		return x.AttemptOrdinalsSupported
+	}
+	return false
+}
+
+func (x *DescribeOrkerResult) GetSecretMaskingSupported() bool {
+	if x != nil {
+		return x.SecretMaskingSupported
 	}
 	return false
 }
@@ -4575,7 +4587,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\vstore_error\x18\x0e \x01(\tR\n" +
 	"storeErrorB\n" +
 	"\n" +
-	"\b_ordinal\"\xca\x0f\n" +
+	"\b_ordinal\"\x84\x10\n" +
 	"\x13DescribeOrkerResult\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12\x12\n" +
@@ -4603,7 +4615,8 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"maxRequest\x12F\n" +
 	"\x0fdefault_request\x18\x16 \x01(\v2\x1d.orkstack.v1.ResourceQuantityR\x0edefaultRequest\x12;\n" +
 	"\fstore_outage\x18\x17 \x01(\v2\x18.orkstack.v1.StoreOutageR\vstoreOutage\x12<\n" +
-	"\x1aattempt_ordinals_supported\x18+ \x01(\bR\x18attemptOrdinalsSupported\x126\n" +
+	"\x1aattempt_ordinals_supported\x18+ \x01(\bR\x18attemptOrdinalsSupported\x128\n" +
+	"\x18secret_masking_supported\x18, \x01(\bR\x16secretMaskingSupported\x126\n" +
 	"\bstopping\x18\x18 \x01(\v2\x1a.orkstack.v1.OrkerStoppingR\bstopping\x12P\n" +
 	"\x17profile_kinds_supported\x18\x1a \x03(\x0e2\x18.orkstack.v1.ProfileKindR\x15profileKindsSupported\x125\n" +
 	"\bprofiles\x18\x1b \x03(\v2\x19.orkstack.v1.OrkerProfileR\bprofiles\x12C\n" +

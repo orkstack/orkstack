@@ -21,6 +21,8 @@ import (
 // auditReadRPCs is every unary RPC that only reads. Each entry begins with one
 // of the read verbs below, so a write cannot hide here under a write's name.
 var auditReadRPCs = map[string]bool{
+	orkstackv1connect.IdentityServiceGetIssuerProcedure:          true,
+	orkstackv1connect.IdentityServiceListSigningKeysProcedure:    true,
 	orkstackv1connect.OrkflowServiceValidateOrkflowProcedure:     true,
 	orkstackv1connect.OrkflowServiceGetOrkflowProcedure:          true,
 	orkstackv1connect.OrkflowServiceListOrkflowsProcedure:        true,

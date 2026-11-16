@@ -571,6 +571,7 @@ func TestNewMux_AssertedInstallsNothing(t *testing.T) {
 // have rows, or a route decided by a procedure's row.
 func TestAuthn_EveryMuxPatternIsClassified(t *testing.T) {
 	s := newAccessService(t)
+	s.issuer, s.serveDiscovery = testIssuer(t, "ork.acme.dev"), true
 	a, _ := accessFor(t, authn.ModeEnforce, nil)
 	_, patterns := newMux(s, MuxOptions{Access: a, UI: http.NotFoundHandler()})
 	procedures := orkstackProcedures(t)

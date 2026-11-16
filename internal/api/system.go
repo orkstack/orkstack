@@ -93,8 +93,13 @@ func (s *Service) GetSystemInfo(
 	if s.access.enabled() {
 		authMode = s.access.Mode
 	}
+	issuer := ""
+	if s.issuer != nil {
+		issuer = s.issuer.URL()
+	}
 	return connect.NewResponse(&orkstackv1.GetSystemInfoResponse{
 		AuthMode:         authMode,
+		IdentityIssuer:   issuer,
 		EngineVersion:    s.system.EngineVersion,
 		GoVersion:        s.system.GoVersion,
 		DeploymentName:   s.system.DeploymentName,

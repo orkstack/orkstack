@@ -100,6 +100,17 @@ type Document struct {
 	// files is every {file: PATH} the document read, absolute, in the order
 	// read.
 	files []string
+	// foreign is every file a setting of the other binary names
+	// (ForeignFiles).
+	foreign []FileSetting
+}
+
+// ForeignFiles are the files that settings this document holds for the
+// other binary name: an Orker given the engine's configuration file holds
+// the engine's key files as its own, though it never parses those settings
+// (docs/SECURITY_MODEL.md, "The Orker's own sources").
+func (d *Document) ForeignFiles() []FileSetting {
+	return append([]FileSetting(nil), d.foreign...)
 }
 
 // Files is the file this document was loaded from and every {file: PATH}
@@ -114,8 +125,9 @@ func (d *Document) Files() []string {
 // loadContext is what one Load carries through the walk: the directory a
 // relative {file: path} resolves against, and every file it read.
 type loadContext struct {
-	dir   string
-	files []string
+	dir     string
+	files   []string
+	foreign []FileSetting
 }
 
 // absolute is path as the file was opened, made absolute against this
@@ -179,7 +191,7 @@ func Load(path string, binary Binary) (*Document, error) {
 			return nil, fmt.Errorf("config: %s: %s: the value holds a NUL byte, which an environment variable cannot", path, v.Path)
 		}
 	}
-	return &Document{path: path, values: values, files: lc.files}, nil
+	return &Document{path: path, values: values, files: lc.files, foreign: lc.foreign}, nil
 }
 
 // dotted joins a path prefix and a final segment with ".", the form every
@@ -214,7 +226,9 @@ func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary
 		path := dotted(prefix, key)
 
 		if !child.appliesTo(binary) {
-			// Belongs entirely to the other binary: accepted, never parsed.
+			// Belongs entirely to the other binary: accepted, never parsed,
+			// but the files it names are noted.
+			lc.foreign = append(lc.foreign, foreignFiles(valNode, child, lc.dir)...)
 			continue
 		}
 
@@ -231,6 +245,7 @@ func walkNode(node *yaml.Node, snode *schemaNode, prefix []string, binary Binary
 
 		v := *child.v
 		if !v.usesBinary(binary) {
+			lc.foreign = append(lc.foreign, foreignFiles(valNode, child, lc.dir)...)
 			continue
 		}
 

@@ -23,10 +23,13 @@ import (
 // for a sign-in, and the two doors whose own bearer token is the
 // capability. Every other pattern is authenticated: deny by default.
 var exemptPatterns = map[string]string{
-	"/":               "the web UI's static files: the sign-in page must load, and they hold no data",
-	TriggerInvokePath: "a trigger's own bearer token is the capability",
-	AwaitCompletePath: "an await callback's own bearer token is the capability",
-	AwaitRejectPath:   "an await callback's own bearer token is the capability",
+	"/":                 "the web UI's static files: the sign-in page must load, and they hold no data",
+	TriggerInvokePath:   "a trigger's own bearer token is the capability",
+	AwaitCompletePath:   "an await callback's own bearer token is the capability",
+	AwaitRejectPath:     "an await callback's own bearer token is the capability",
+	IssuerDiscoveryPath: "the task identity issuer's discovery document is public: relying parties read it with no credential",
+	IssuerKeysPath:      "the task identity issuer's public keys: relying parties read them with no credential",
+	IssuerBundlePath:    "the task identity issuer's SPIFFE bundle is its public keys: relying parties read it with no credential",
 }
 
 // routeRows maps every authenticated mux pattern that is not a Connect

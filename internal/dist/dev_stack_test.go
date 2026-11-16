@@ -126,6 +126,11 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 		!strings.Contains(ork["ORK_AUTH_ORKERS"], "claims:dev:sub=dev-orker") || !strings.Contains(ork["ORK_AUTH_ISSUERS"], "jwks_file:") {
 		t.Fatalf("the engine's auth settings = %v", ork)
 	}
+	// enforce needs a signing key, which signs what engines hand each other.
+	if !strings.HasSuffix(ork["ORK_IDENTITY_SIGNING_KEY_FILES"], filepath.Join(".data", "identity", "engine-signing.key")) ||
+		ork["ORK_IDENTITY_SIGNING_ALGORITHM"] != "ES256" || ork["ORK_IDENTITY_ISSUER"] != "" {
+		t.Fatalf("the engine's identity settings = %v", ork)
+	}
 	orkerEnv := read(config.BinaryOrker)
 	settings := orker.EngineSettingsFromEnv(func(k string) string { return orkerEnv[k] })
 	if err := settings.Validate(); err != nil || settings.Method != orker.EngineAuthTokenFile || orkerEnv["ORK_ORKER_ID"] != "dev-orker" {

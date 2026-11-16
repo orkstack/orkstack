@@ -524,6 +524,154 @@ Inherited flags:
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
+## `orkctl admin identity`
+
+Read and administer the task identity issuer
+
+identity reads the task identity issuer: the documents it publishes and the
+keys it signs with. Every answer is the answering engine's own.
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin identity issuer`
+
+Read or export the issuer's documents
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin identity issuer export`
+
+Write the issuer's documents for an HTTPS host
+
+export writes the issuer's documents into DIR, laid out as the issuer URL
+serves them: .well-known/openid-configuration and jwks.json, and
+spiffe-bundle.json when a trust domain is set. Upload DIR to the issuer URL,
+and export again after every key change. Files already there are replaced.
+
+Flags:
+
+- `--out STRING` — the directory to write the documents into
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin identity issuer get`
+
+Show the issuer and what the engine last read
+
+get shows the issuer URL, the subject format and trust domain, when the engine
+last read the published signing keys, and what the issuer URL served when the
+engine last checked it before a key's first signature.
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin identity keys`
+
+List or retire the issuer's signing keys
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin identity keys list`
+
+List the signing keys
+
+list shows every published signing key and every key the engine holds: when it
+was published and began to sign, whether it is retired, whether this engine
+would sign with it and why not, and how many of the engines that hold it are
+polling now.
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin identity keys retire`
+
+Retire a signing key
+
+retire retires a signing key: each engine stops signing with it at its next
+read of the published keys, within a minute while the store answers, and it is
+no longer served. It cannot be undone. Export and upload the issuer's documents
+afterwards. It asks for confirmation first, and refuses when standard input is
+not a terminal unless --yes is given.
+
+--compromised-from T (RFC 3339) also retires the key as compromised from T,
+which may lie in the past: what it signed for an instant before T still
+verifies, and nothing from T on does. Choose the earliest moment the key may
+have leaked. A run force-cancelled under it from T on reads as terminated
+outside OrkStack and cannot be resumed; ask again the force cancels you still
+need. It may be added to a key retired before, and only ever moves earlier.
+
+A key id is base64url and may begin with "-": give it after "--", with
+every flag before the "--", as in
+`orkctl admin identity keys retire --yes --server URL -- -ZXD…`.
+
+Flags:
+
+- `--compromised-from STRING` — retire the key as compromised from this RFC 3339 instant, the earliest it may have leaked
+- `--yes` — do not ask for confirmation (required when standard input is not a terminal)
+
+Inherited flags:
+
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
 ## `orkctl admin image-policy`
 
 Read or change the deployment's image supply-chain policy

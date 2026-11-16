@@ -799,6 +799,11 @@ message DescribeOrkerResult {
   // built before it numbers them as Temporal does and would write records
   // over a newer Orker's, so submit refuses a pool that has one.
   bool attempt_ordinals_supported = 43;
+  // secret_masking_supported is true on an Orker that reads a secret's
+  // `unmasked` (SecretRef.unmasked), whatever orker.log.mask_secrets says. An
+  // Orker built before it refuses a task that sets it, so submit refuses a
+  // task carrying a `mask: false` secret on a pool that has one.
+  bool secret_masking_supported = 44;
 
   // stopping is set while this Orker is stopping (OrkerStopping). cordoned is
   // true beside it.

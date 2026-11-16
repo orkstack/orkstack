@@ -105,7 +105,7 @@ type ScheduleFireView struct {
 type TemporalScheduler struct {
 	client    client.Client
 	queue     string                  // task.DefaultQueue: the engine's run channel
-	converter converter.DataConverter // the client's; decodes action args and memos
+	converter converter.DataConverter // the engine's (DataConverter); decodes action args and memos
 	logger    *slog.Logger
 }
 
@@ -118,7 +118,7 @@ func NewTemporalScheduler(c client.Client, runQueue string) *TemporalScheduler {
 	return &TemporalScheduler{
 		client:    c,
 		queue:     runQueue,
-		converter: converter.GetDefaultDataConverter(),
+		converter: DataConverter(),
 		logger:    slog.Default(),
 	}
 }

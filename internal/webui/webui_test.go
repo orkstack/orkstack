@@ -193,6 +193,8 @@ func TestHandler_NeverShadowsTheAPI(t *testing.T) {
 		"/readyz",
 		"/metrics",
 		"/debug/pprof/",
+		"/.well-known/openid-configuration",
+		"/.well-known/",
 	} {
 		for _, method := range []string{"GET", "HEAD", "POST", "DELETE"} {
 			res := get(t, h, method, path, nil)

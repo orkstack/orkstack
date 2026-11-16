@@ -496,6 +496,16 @@
 					]
 				},
 				{
+					"route": "docs/operate/task-identity",
+					"title": "Publish the task identity issuer",
+					"description": "Make OrkStack an OpenID Connect issuer that clouds and secret stores can trust.",
+					"parts": [
+						{
+							"source": "site/content/how-to/task-identity.md"
+						}
+					]
+				},
+				{
 					"route": "docs/operate/audit",
 					"title": "Audit",
 					"description": "Read who changed what: the immutable records of control-plane writes.",

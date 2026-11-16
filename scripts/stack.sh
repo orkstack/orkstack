@@ -434,6 +434,13 @@ write_run_config() {
 			echo "      max_lifetime: 720h"
 			echo "      orker_id_claim: orker_id"
 			echo "      jwks_file: $IDENTITY_DIR/dev-issuer.jwks.json"
+			# enforce needs an engine signing key: it signs what one engine
+			# hands another, and with no identity.issuer no token.
+			echo "identity:"
+			echo "  signing:"
+			echo "    key_files:"
+			echo "      - $IDENTITY_DIR/engine-signing.key"
+			echo "    algorithm: ES256"
 		fi
 		if wants_admin_addr; then
 			# The observability profile's Prometheus scrapes these listeners
@@ -557,7 +564,8 @@ cmd_up() {
 	say "  stop           make down"
 }
 
-# setup_identity makes the development issuer's key pair once and signs the
+# setup_identity makes the development issuer's key pair and the engine's
+# signing key once, and signs the
 # admin's and the Orker's tokens afresh, and exports the admin's for the
 # orkctl calls this script makes.
 setup_identity() {

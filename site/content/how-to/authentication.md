@@ -19,9 +19,13 @@ auth:
       max_lifetime: 1h
   admins:
     - group:corp:platform-admins
+identity:
+  signing:
+    key_files:
+      - /etc/orkstack/engine-signing.pem
 ```
 
-Every caller then sends `Authorization: Bearer <token>`, a token your identity provider issued for the `orkstack` audience. The group in `admins` holds `admin` across the deployment.
+Every caller then sends `Authorization: Bearer <token>`, a token your identity provider issued for the `orkstack` audience. The group in `admins` holds `admin` across the deployment. In `observe` and `enforce` each engine also needs a signing key in `identity.signing.key_files`, or it does not start.
 
 ## Check who you are
 

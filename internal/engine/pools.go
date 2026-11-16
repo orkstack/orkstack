@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -339,6 +340,29 @@ func (e *PoolNoJoinSupportError) Error() string {
 		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
 }
 
+// PoolNoSecretMaskingError refuses a submit whose task carries a secret with
+// `mask: false` on a pool whose Orker predates secret masking. Such an Orker
+// cannot decode the task's input — the SDK's default payload converter
+// refuses SecretRef.unmasked as an unknown field — so it would fail every
+// attempt. allow_empty_pool does NOT downgrade it (the Orker is present and
+// wrong). A masked secret on such an Orker is not refused: it runs as that
+// release always ran it, unmasked, and submit warns once per pool.
+type PoolNoSecretMaskingError struct {
+	Namespace string
+	Pool      string
+	Tasks     []string
+	OrkerID   string
+	BuildID   string
+}
+
+func (e *PoolNoSecretMaskingError) Error() string {
+	return fmt.Sprintf(
+		"pool %q (namespace %q, tasks: %s) is served by Orker %q (build %q), which predates secret masking: "+
+			"it cannot read a secret's mask: false and would fail the task. Upgrade the pool's Orkers "+
+			"before submitting this Orkflow.",
+		e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
+}
+
 // ReasonResourcesUnsatisfiable refuses a submit whose task asks for more than
 // any Orker of its pool runs (PoolResourcesUnsatisfiableError).
 const ReasonResourcesUnsatisfiable = "RESOURCES_UNSATISFIABLE"
@@ -436,6 +460,26 @@ type PoolResolver struct {
 
 	// Now is injectable for tests.
 	Now func() time.Time
+
+	// MaskingWarned remembers each pool and Orker already warned that the
+	// Orker masks no secret (warnUnmaskedOutput), so it is said once per pool
+	// and Orker per process. A pointer, so every copy of the resolver (one per submit)
+	// shares it; nil warns on every submit that finds one.
+	MaskingWarned *PoolsWarned
+}
+
+// PoolsWarned is a set of keys (a pool and an Orker) a warning was already
+// logged for. Its zero value is empty and ready to use.
+type PoolsWarned struct{ pools sync.Map }
+
+// first reports whether key was not yet in the set, adding it. A nil set
+// remembers nothing, so every call is a first.
+func (w *PoolsWarned) first(key string) bool {
+	if w == nil {
+		return true
+	}
+	_, seen := w.pools.LoadOrStore(key, true)
+	return !seen
 }
 
 func (r *PoolResolver) logger() *slog.Logger {
@@ -663,6 +707,11 @@ func (r *PoolResolver) Plan(
 	// that declares none gets its Orker's default, which every Orker's boot
 	// holds within its cap, so it is never asked about.
 	sizedTasksByPool := map[string][]*orkstackv1.Task{}
+	// The secrets view: every task carrying a `mask: false` secret, per
+	// resolved pool — the pools whose Orker must read SecretRef.unmasked —
+	// and every other task carrying a secret, whose pool is only warned about.
+	unmaskedTasksByPool := map[string][]string{}
+	maskedTasksByPool := map[string][]string{}
 
 	for _, t := range planned.GetTasks() {
 		// An awaited task is never routed: no route, no allow-list check, no
@@ -702,6 +751,12 @@ func (r *PoolResolver) Plan(
 		}
 		if isFailureHandler(t) {
 			handlerTasksByPool[route.Pool] = append(handlerTasksByPool[route.Pool], t.GetId())
+		}
+		switch {
+		case slices.ContainsFunc(t.GetSecrets(), (*orkstackv1.SecretRef).GetUnmasked):
+			unmaskedTasksByPool[route.Pool] = append(unmaskedTasksByPool[route.Pool], t.GetId())
+		case len(t.GetSecrets()) > 0:
+			maskedTasksByPool[route.Pool] = append(maskedTasksByPool[route.Pool], t.GetId())
 		}
 		if res := t.GetResources(); strings.TrimSpace(res.GetCpu()) != "" || strings.TrimSpace(res.GetMemory()) != "" {
 			sizedTasksByPool[route.Pool] = append(sizedTasksByPool[route.Pool], t)
@@ -811,6 +866,12 @@ func (r *PoolResolver) Plan(
 				handlerTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
+			// And, for a pool that carries a `mask: false` secret: can its
+			// Orker read one at all.
+			if err := r.checkSecretMasking(ctx, census, namespaceName(ns), wf.GetName(), pool,
+				unmaskedTasksByPool[pool]); err != nil {
+				return nil, RunPlan{}, err
+			}
 			// And, for a pool that carries a task declaring a request: can
 			// any of its Orkers hold it.
 			if err := r.checkResourcesFit(ctx, census, namespaceName(ns), wf.GetName(), pool,
@@ -857,9 +918,62 @@ func (r *PoolResolver) Plan(
 				tasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
+			r.warnUnmaskedOutput(ctx, census, namespaceName(ns), wf.GetName(), pool, maskedTasksByPool[pool])
 		}
 	}
 	return planned, plan, nil
+}
+
+// checkSecretMasking refuses a live pool with an Orker that predates secret
+// masking when a task carrying a `mask: false` secret would run there: such
+// an Orker refuses SecretRef.unmasked as an unknown field and would fail
+// every attempt. Asked only of such a pool, so a submit without one reads no
+// census for it. No Orker answering is logged and not refused — nothing was
+// measured; allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkSecretMasking(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []string) error {
+	if len(tasks) == 0 || r.Fleet == nil {
+		return nil
+	}
+	old := lacking(r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: tasks,
+		carrying: "a mask: false secret", question: "it reads a secret's mask",
+	}), (*orkstackv1.DescribeOrkerResult).GetSecretMaskingSupported)
+	if old == nil {
+		return nil
+	}
+	return &PoolNoSecretMaskingError{
+		Namespace: namespace,
+		Pool:      pool,
+		Tasks:     tasks,
+		OrkerID:   old.GetOrkerId(),
+		BuildID:   old.GetBuildId(),
+	}
+}
+
+// warnUnmaskedOutput logs, once per pool and Orker, that an Orker of a pool carrying a
+// masked secret predates secret masking, so the task's output is not masked
+// there: that release never masked, so the task runs as it always ran and is
+// not refused (docs/DEPLOY.md, "3. Rolling a release forward"). Asked only of
+// a census some question already read, so it adds no read to any submit.
+func (r *PoolResolver) warnUnmaskedOutput(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []string) {
+	if len(tasks) == 0 || r.Fleet == nil {
+		return
+	}
+	old := lacking(r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: tasks,
+		carrying: "a secret", question: "it masks secrets",
+	}), (*orkstackv1.DescribeOrkerResult).GetSecretMaskingSupported)
+	if old == nil {
+		return
+	}
+	// Once per pool and Orker: another old Orker joining the pool is said too.
+	if !r.MaskingWarned.first(pool + "/" + old.GetOrkerId()) {
+		return
+	}
+	r.logger().Warn("submit: an Orker of this pool predates secret masking and masks no secret in a task's logs; "+
+		"output there is masked only once the pool's Orkers run v0.4.0 or later",
+		"namespace", namespace, "pool", pool, "orkflow", orkflow, "tasks", strings.Join(tasks, ","),
+		"orker", old.GetOrkerId(), "build", old.GetBuildId())
 }
 
 // checkAttemptOrdinals refuses a live pool with an Orker that numbers attempts
