@@ -175,7 +175,9 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	// DOM. The body is a lazily loaded component, drawn some tens of
 	// milliseconds after the press. The bound is the page's own, so a page that
 	// leaves the reader waiting after its cards are drawn fails here, however
-	// far inside the 5 s it still is.
+	// far inside the 5 s it still is. It holds only warm opens: the first
+	// open's code loading is excluded on purpose, and is held instead to the
+	// 5 s interactive budget (the cold open, cold_ms).
 	const INSPECT_DRAWN_BUDGET_MS = 1_000;
 
 	// The drift guard beside the gate: the UI revamp's stages are each held to the
@@ -333,6 +335,16 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 			GETRUN_POLL_MS
 		);
 
+		// The cold first open: the first in a fresh browser, so it downloads and
+		// compiles the page's code, the lazily loaded Inspect body's included.
+		// That cost is real, and a reader's first visit pays it, so it is held to
+		// the same CPU-scaled 5 s interactive budget as every gated open (below)
+		// and quoted as cold_ms. It is excluded, on purpose, from the Inspect
+		// bound alone, which times the draw after a press rather than code
+		// loading (INSPECT_DRAWN_BUDGET_MS); a CI runner's cold Inspect measured
+		// 1143 ms where every open on the proof host draws in tens of
+		// milliseconds. The gated live and finished opens that follow are warm.
+		const cold = await measureRunPage(page, run, GATED_TASKS, 'cold', false);
 		const live = await measureRunPage(page, run, GATED_TASKS, 'live');
 		await expect(page.getByTestId('run-status')).toHaveText('Running');
 		for (let i = 0; i < EXTRA_OPENS; i++) await measureRunPage(page, run, GATED_TASKS, 'live', false);
@@ -423,6 +435,7 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 					tasks: GATED_TASKS,
 					budget_ms: GATED_RENDER_BUDGET_MS,
 					reference_budget_ms: REFERENCE_RENDER_BUDGET_MS,
+					cold_ms: cold,
 					live_ms: live,
 					finished_ms: finished,
 					output_maximal_ms: outputMaximal,
@@ -433,9 +446,10 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 			) + '\n'
 		);
 		note(
-			`E7 run page at ${GATED_TASKS} tasks: live ${live} ms, finished ${finished} ms (${budgetNote(REFERENCE_RENDER_BUDGET_MS)}); ` +
+			`E7 run page at ${GATED_TASKS} tasks: cold ${cold} ms, live ${live} ms, finished ${finished} ms (${budgetNote(REFERENCE_RENDER_BUDGET_MS)}); ` +
 				`output-maximal ${outputMaximal} ms (quoted)`
 		);
+		expect(cold, 'cold first open of the live run page').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
 		expect(live, 'live run page').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
 		expect(finished, 'finished run page').toBeLessThanOrEqual(GATED_RENDER_BUDGET_MS);
 	});
