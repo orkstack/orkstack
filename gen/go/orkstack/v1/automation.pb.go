@@ -21,18 +21,19 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// AutomationObjectKind names the four kinds of object a document declares.
-// Clients spell them namespace, schedule, trigger, webhook: the value's name
+// AutomationObjectKind names the five kinds of object a document declares.
+// Clients spell them namespace, schedule, trigger, webhook, event_source: the value's name
 // after AUTOMATION_OBJECT_KIND_, lowercased — the same derivation run origin
 // kinds use, with the same descriptor-walk test in each client.
 type AutomationObjectKind int32
 
 const (
-	AutomationObjectKind_AUTOMATION_OBJECT_KIND_UNSPECIFIED AutomationObjectKind = 0
-	AutomationObjectKind_AUTOMATION_OBJECT_KIND_NAMESPACE   AutomationObjectKind = 1 // the `settings` section
-	AutomationObjectKind_AUTOMATION_OBJECT_KIND_SCHEDULE    AutomationObjectKind = 2
-	AutomationObjectKind_AUTOMATION_OBJECT_KIND_TRIGGER     AutomationObjectKind = 3
-	AutomationObjectKind_AUTOMATION_OBJECT_KIND_WEBHOOK     AutomationObjectKind = 4
+	AutomationObjectKind_AUTOMATION_OBJECT_KIND_UNSPECIFIED  AutomationObjectKind = 0
+	AutomationObjectKind_AUTOMATION_OBJECT_KIND_NAMESPACE    AutomationObjectKind = 1 // the `settings` section
+	AutomationObjectKind_AUTOMATION_OBJECT_KIND_SCHEDULE     AutomationObjectKind = 2
+	AutomationObjectKind_AUTOMATION_OBJECT_KIND_TRIGGER      AutomationObjectKind = 3
+	AutomationObjectKind_AUTOMATION_OBJECT_KIND_WEBHOOK      AutomationObjectKind = 4
+	AutomationObjectKind_AUTOMATION_OBJECT_KIND_EVENT_SOURCE AutomationObjectKind = 5 // the `event_sources` section
 )
 
 // Enum value maps for AutomationObjectKind.
@@ -43,13 +44,15 @@ var (
 		2: "AUTOMATION_OBJECT_KIND_SCHEDULE",
 		3: "AUTOMATION_OBJECT_KIND_TRIGGER",
 		4: "AUTOMATION_OBJECT_KIND_WEBHOOK",
+		5: "AUTOMATION_OBJECT_KIND_EVENT_SOURCE",
 	}
 	AutomationObjectKind_value = map[string]int32{
-		"AUTOMATION_OBJECT_KIND_UNSPECIFIED": 0,
-		"AUTOMATION_OBJECT_KIND_NAMESPACE":   1,
-		"AUTOMATION_OBJECT_KIND_SCHEDULE":    2,
-		"AUTOMATION_OBJECT_KIND_TRIGGER":     3,
-		"AUTOMATION_OBJECT_KIND_WEBHOOK":     4,
+		"AUTOMATION_OBJECT_KIND_UNSPECIFIED":  0,
+		"AUTOMATION_OBJECT_KIND_NAMESPACE":    1,
+		"AUTOMATION_OBJECT_KIND_SCHEDULE":     2,
+		"AUTOMATION_OBJECT_KIND_TRIGGER":      3,
+		"AUTOMATION_OBJECT_KIND_WEBHOOK":      4,
+		"AUTOMATION_OBJECT_KIND_EVENT_SOURCE": 5,
 	}
 )
 
@@ -638,17 +641,14 @@ type AutomationStep_DeleteWebhook struct {
 }
 
 type AutomationStep_CreateEventSource struct {
-	// create_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
 	CreateEventSource *CreateEventSourceRequest `protobuf:"bytes,31,opt,name=create_event_source,json=createEventSource,proto3,oneof"`
 }
 
 type AutomationStep_UpdateEventSource struct {
-	// update_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
 	UpdateEventSource *UpdateEventSourceRequest `protobuf:"bytes,32,opt,name=update_event_source,json=updateEventSource,proto3,oneof"`
 }
 
 type AutomationStep_DeleteEventSource struct {
-	// delete_event_source is set from E90; unset until it lands (v0.4.0 proto batch).
 	DeleteEventSource *DeleteEventSourceRequest `protobuf:"bytes,33,opt,name=delete_event_source,json=deleteEventSource,proto3,oneof"`
 }
 
@@ -1413,7 +1413,7 @@ var File_orkstack_v1_automation_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_automation_proto_rawDesc = "" +
 	"\n" +
-	"\x1corkstack/v1/automation.proto\x12\vorkstack.v1\x1a&orkstack/v1/event_source_service.proto\x1a#orkstack/v1/namespace_service.proto\x1a!orkstack/v1/orkflow_service.proto\x1a\x1aorkstack/v1/schedule.proto\x1a!orkstack/v1/trigger_service.proto\x1a!orkstack/v1/webhook_service.proto\"[\n" +
+	"\x1corkstack/v1/automation.proto\x12\vorkstack.v1\x1a%orkstack/v1/eventsource_service.proto\x1a#orkstack/v1/namespace_service.proto\x1a!orkstack/v1/orkflow_service.proto\x1a\x1aorkstack/v1/schedule.proto\x1a!orkstack/v1/trigger_service.proto\x1a!orkstack/v1/webhook_service.proto\"[\n" +
 	"\x15AutomationFieldChange\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x12\x16\n" +
 	"\x06before\x18\x02 \x01(\tR\x06before\x12\x14\n" +
@@ -1494,13 +1494,14 @@ const file_orkstack_v1_automation_proto_rawDesc = "" +
 	"\n" +
 	"invoke_url\x18\x06 \x01(\tR\tinvokeUrl\"J\n" +
 	"\x10DisclosedSecrets\x126\n" +
-	"\asecrets\x18\x01 \x03(\v2\x1c.orkstack.v1.DisclosedSecretR\asecrets*\xd1\x01\n" +
+	"\asecrets\x18\x01 \x03(\v2\x1c.orkstack.v1.DisclosedSecretR\asecrets*\xfa\x01\n" +
 	"\x14AutomationObjectKind\x12&\n" +
 	"\"AUTOMATION_OBJECT_KIND_UNSPECIFIED\x10\x00\x12$\n" +
 	" AUTOMATION_OBJECT_KIND_NAMESPACE\x10\x01\x12#\n" +
 	"\x1fAUTOMATION_OBJECT_KIND_SCHEDULE\x10\x02\x12\"\n" +
 	"\x1eAUTOMATION_OBJECT_KIND_TRIGGER\x10\x03\x12\"\n" +
-	"\x1eAUTOMATION_OBJECT_KIND_WEBHOOK\x10\x04*\xf3\x01\n" +
+	"\x1eAUTOMATION_OBJECT_KIND_WEBHOOK\x10\x04\x12'\n" +
+	"#AUTOMATION_OBJECT_KIND_EVENT_SOURCE\x10\x05*\xf3\x01\n" +
 	"\x10AutomationAction\x12!\n" +
 	"\x1dAUTOMATION_ACTION_UNSPECIFIED\x10\x00\x12\x1c\n" +
 	"\x18AUTOMATION_ACTION_CREATE\x10\x01\x12\x1c\n" +
@@ -1624,7 +1625,7 @@ func file_orkstack_v1_automation_proto_init() {
 	if File_orkstack_v1_automation_proto != nil {
 		return
 	}
-	file_orkstack_v1_event_source_service_proto_init()
+	file_orkstack_v1_eventsource_service_proto_init()
 	file_orkstack_v1_namespace_service_proto_init()
 	file_orkstack_v1_orkflow_service_proto_init()
 	file_orkstack_v1_schedule_proto_init()

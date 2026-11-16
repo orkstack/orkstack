@@ -23,6 +23,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // Binary names one of the two OrkStack daemons a schema entry applies to.
@@ -173,6 +174,18 @@ var Schema = []Var{
 	// constant idempotency.go binds a non-positive ttl to.
 	{Path: "engine.idempotency_ttl", Env: "ORK_IDEMPOTENCY_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultClaimTTL)},
 	{Path: "engine.registry_auth_file", Env: "ORK_REGISTRY_AUTH_FILE", Binaries: usesOrk, Kind: KindString, File: true, Default: EmptyDefault},
+	// Event sources (docs/EVENT_SOURCES.md): each fallback is the
+	// pkg/eventsources constant SettingsFromEnv binds an unset variable to.
+	{Path: "event_sources.enabled", Env: eventsources.EnvEnabled, Binaries: usesOrk, Kind: KindBool, Default: formatBool(eventsources.DefaultEnabled)},
+	{Path: "event_sources.allow_asserted", Env: eventsources.EnvAllowAsserted, Binaries: usesOrk, Kind: KindBool, Default: formatBool(eventsources.DefaultAllowAsserted)},
+	{Path: "event_sources.max_message_bytes", Env: eventsources.EnvMaxMessageBytes, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxMessageBytes)},
+	{Path: "event_sources.max_input_bytes", Env: eventsources.EnvMaxInputBytes, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxInputBytes)},
+	{Path: "event_sources.max_rate", Env: eventsources.EnvMaxRate, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxRate)},
+	{Path: "event_sources.namespace_rate", Env: eventsources.EnvNamespaceRate, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultNamespaceRate)},
+	{Path: "event_sources.max_sources", Env: eventsources.EnvMaxSources, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxSources)},
+	{Path: "event_sources.max_per_namespace", Env: eventsources.EnvMaxPerNamespace, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxPerNamespace)},
+	{Path: "event_sources.max_instances", Env: eventsources.EnvMaxInstances, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultMaxInstances)},
+	{Path: "event_sources.namespace_instances", Env: eventsources.EnvNamespaceInstances, Binaries: usesOrk, Kind: KindInt, Default: formatInt(eventsources.DefaultNamespaceInstances)},
 	{Path: "webhooks.allowed_networks", Env: "ORK_WEBHOOK_ALLOWED_NETWORKS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault,
 		DerivedNote: "empty admits public addresses only"},
 	{Path: "engine.stats_cache_ttl", Env: "ORK_STATS_CACHE_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(api.DefaultStatsCacheTTL)},

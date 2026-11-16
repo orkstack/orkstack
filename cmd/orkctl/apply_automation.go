@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"connectrpc.com/connect"
@@ -92,6 +93,8 @@ func classifyDocument(path string, source []byte, accept documentKind) (applyInp
 		return in, nil
 	case peek.Kind == dsl.KindActivityInterface:
 		return in, &activityInterfaceFile{path: path}
+	case peek.Kind == dsl.KindEventSource:
+		return in, &eventSourceFile{path: path}
 	case peek.Kind == "" && peek.APIVersion == "":
 		return in, fmt.Errorf("%s: no apiVersion or kind: an OrkStack document begins with %q and its kind — "+
 			"%q for an Orkflow, %q for an automation document; add the two lines at the top, after any leading comments",
@@ -138,6 +141,17 @@ func (e *activityInterfaceFile) Error() string {
 	return fmt.Sprintf("%s: kind: %s is an activity interface, not an Orkflow or an automation document: pack it into an image's "+
 		"%s, %s and %s labels with orkctl activity interface pack, or build the image with orkctl activity build --interface",
 		e.path, dsl.KindActivityInterface, dsl.InterfaceLabel, dsl.IconLabel, dsl.DocsLabel)
+}
+
+// eventSourceFile is a file whose kind is EventSource: one event source,
+// which orkctl event-source create --file reads. It is refused with this
+// sentence, in a directory too.
+type eventSourceFile struct{ path string }
+
+func (e *eventSourceFile) Error() string {
+	return fmt.Sprintf("%s: kind: %s is one event source, not an Orkflow or an automation document: create it with "+
+		"orkctl event-source create NAME --file %s, or declare it under an automation document's event_sources:",
+		e.path, dsl.KindEventSource, e.path)
 }
 
 // expandApplyArgs reads every argument: a file as is, a directory as its
@@ -636,11 +650,34 @@ type stepExecutor func(ctx context.Context, g *globalFlags, step *orkstackv1.Aut
 // walks the descriptor so a variant added to the proto without an executor
 // fails a test rather than an apply.
 var stepExecutors = map[protoreflect.Name]stepExecutor{
-	// The event-source variants are declared ahead of their service (the
-	// v0.4.0 proto batch); no engine plans one until event sources land.
-	"create_event_source": notYetExecutable,
-	"update_event_source": notYetExecutable,
-	"delete_event_source": notYetExecutable,
+	"create_event_source": func(ctx context.Context, g *globalFlags, step *orkstackv1.AutomationStep) (string, string, error) {
+		resp, err := g.eventSourceClient().CreateEventSource(ctx, connect.NewRequest(step.GetCreateEventSource()))
+		if err != nil {
+			return "", "", err
+		}
+		return resp.Msg.GetEventSource().GetId(), "", nil
+	},
+	"update_event_source": func(ctx context.Context, g *globalFlags, step *orkstackv1.AutomationStep) (string, string, error) {
+		_, err := g.eventSourceClient().UpdateEventSource(ctx, connect.NewRequest(step.GetUpdateEventSource()))
+		return "", "", err
+	},
+	// A delete of a source carries the id the plan named on every attempt
+	// and is never "already gone": deleteEventSourceByID is the rule.
+	"delete_event_source": func(ctx context.Context, g *globalFlags, step *orkstackv1.AutomationStep) (string, string, error) {
+		req := step.GetDeleteEventSource()
+		target := sourceDelete{Namespace: req.GetNamespace(), Name: req.GetName(), ID: req.GetId()}
+		for _, change := range step.GetChanges() {
+			switch change.GetField() {
+			case "pool":
+				target.Pool = strings.Trim(change.GetBefore(), `"`)
+			case "instances":
+				if n, err := strconv.ParseInt(change.GetBefore(), 10, 32); err == nil {
+					target.Instances = int32(n)
+				}
+			}
+		}
+		return "", "", deleteEventSourceByID(ctx, g.eventSourceClient(), target)
+	},
 	"create_namespace": func(ctx context.Context, g *globalFlags, step *orkstackv1.AutomationStep) (string, string, error) {
 		_, err := g.namespaceClient().CreateNamespace(ctx, connect.NewRequest(step.GetCreateNamespace()))
 		return "", "", err
@@ -718,13 +755,6 @@ func executeStep(ctx context.Context, g *globalFlags, step *orkstackv1.Automatio
 		return "", "", fmt.Errorf("this orkctl cannot execute a %s step; upgrade orkctl", field.Name())
 	}
 	return executor(ctx, g, step)
-}
-
-// notYetExecutable answers a step whose service this orkctl does not have
-// yet. No engine of this release plans such a step.
-func notYetExecutable(_ context.Context, _ *globalFlags, step *orkstackv1.AutomationStep) (string, string, error) {
-	field := step.ProtoReflect().WhichOneof(step.ProtoReflect().Descriptor().Oneofs().ByName("request"))
-	return "", "", fmt.Errorf("this orkctl cannot execute a %s step; upgrade orkctl", field.Name())
 }
 
 // secretsFileWrite writes the encoded secrets; a variable so a test can

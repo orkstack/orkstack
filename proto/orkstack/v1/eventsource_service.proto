@@ -1,0 +1,256 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "orkstack/v1/common.proto";
+import "orkstack/v1/event_source.proto";
+import "orkstack/v1/filter.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// EventSourceService stores and evaluates event sources: objects that bind
+// one Orkflow to one source image, so that each message the image receives
+// from its broker starts one run (docs/EVENT_SOURCES.md).
+//
+// Every RPC is refused EVENT_SOURCES_REQUIRE_AUTHENTICATION unless the
+// deployment enforces authentication or its operator set
+// event_sources.allow_asserted, and every write is refused
+// EVENT_SOURCES_DISABLED while event sources are off and
+// EVENT_SOURCES_REQUIRE_VERSIONING on a deployment that is not run as a
+// release. In this release no source consumes anything yet: a source can be
+// written, read and evaluated.
+//
+// A request carries a source as a message and has no namespace of its own:
+// a create, an update and the evaluation of a candidate act in the
+// namespace the source names, empty meaning `default`.
+service EventSourceService {
+  // CreateEventSource stores a new source, after checking it against its
+  // Orkflow's declared inputs, its image's declared interface, the
+  // namespace's pools and secrets, and the deployment's quotas.
+  rpc CreateEventSource(CreateEventSourceRequest) returns (CreateEventSourceResponse);
+  // GetEventSource returns one source and its status.
+  rpc GetEventSource(GetEventSourceRequest) returns (GetEventSourceResponse);
+  // ListEventSources returns a namespace's sources, by name.
+  rpc ListEventSources(ListEventSourcesRequest) returns (ListEventSourcesResponse);
+  // UpdateEventSource replaces every field of a source a user writes, under
+  // the etag it read, with the same checks as a create. Its name, its
+  // namespace and the Orkflow it binds cannot change.
+  rpc UpdateEventSource(UpdateEventSourceRequest) returns (UpdateEventSourceResponse);
+  // PauseEventSource pauses a source with the operator's reason.
+  rpc PauseEventSource(PauseEventSourceRequest) returns (PauseEventSourceResponse);
+  // ResumeEventSource clears a source's pause, after the checks a create
+  // makes other than its quotas. It neither rebinds nor consents.
+  rpc ResumeEventSource(ResumeEventSourceRequest) returns (ResumeEventSourceResponse);
+  // DeleteEventSource deletes a source, named by its name and, from every
+  // OrkStack client, its id.
+  rpc DeleteEventSource(DeleteEventSourceRequest) returns (DeleteEventSourceResponse);
+  // EvaluateEventSourceMessage runs a stored or candidate source's bounds,
+  // parse, filter and mapping over a message given in the request, and
+  // says what would happen. It starts nothing and writes nothing.
+  rpc EvaluateEventSourceMessage(EvaluateEventSourceMessageRequest) returns (EvaluateEventSourceMessageResponse);
+  // InspectSourceImage reads what one image declares, or lists the
+  // first-party source images this release ships.
+  rpc InspectSourceImage(InspectSourceImageRequest) returns (InspectSourceImageResponse);
+}
+
+message CreateEventSourceRequest {
+  // event_source is the source to create; its output-only fields are
+  // ignored.
+  EventSource event_source = 1;
+  // consent is the consent digest ("c1:" and 64 hexadecimal digits) of
+  // what the Orkflow's resolved version asks for, when it asks for any.
+  string consent = 2;
+}
+
+message CreateEventSourceResponse {
+  EventSource event_source = 1;
+  reserved 2, 3;
+  // save_warnings are the save's warnings, which refused nothing.
+  repeated string save_warnings = 4;
+}
+
+message GetEventSourceRequest {
+  // namespace is where the source lives; empty means `default`.
+  string namespace = 1;
+  string name = 2;
+}
+
+message GetEventSourceResponse {
+  EventSource event_source = 1;
+  EventSourceStatus status = 2;
+}
+
+message ListEventSourcesRequest {
+  option (orkstack.v1.filterable) = {
+    resource: "orkstack.v1.EventSource"
+    fields: [
+      {
+        path: "id"
+        label: "Id"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "name"
+        label: "Name"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "orkflow_name"
+        label: "Orkflow"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "uses"
+        label: "Image"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN, FILTER_OPERATOR_CONTAINS, FILTER_OPERATOR_PREFIX]
+      },
+      {
+        path: "pool"
+        label: "Pool"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+        value_rule: FILTER_VALUE_RULE_NAME
+      },
+      {
+        path: "delivery"
+        label: "Delivery"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "paused"
+        label: "Paused"
+        operators: [FILTER_OPERATOR_EQUALS]
+      },
+      {
+        path: "created_at"
+        label: "Created"
+        operators: [FILTER_OPERATOR_AT_OR_AFTER, FILTER_OPERATOR_BEFORE]
+      }
+    ]
+  };
+  // namespace is the namespace listed; empty means `default`.
+  string namespace = 1;
+  repeated FieldFilter filters = 2;
+}
+
+message ListEventSourcesResponse {
+  repeated EventSource event_sources = 1;
+}
+
+message UpdateEventSourceRequest {
+  // event_source is the source as it should be. Its namespace, name and
+  // orkflow_name name the stored source and must be its own; its etag is
+  // the one a read returned.
+  EventSource event_source = 1;
+  // consent is as CreateEventSourceRequest.consent.
+  string consent = 2;
+  // rebind makes the caller the source's binder without changing what it
+  // submits.
+  bool rebind = 3;
+}
+
+message UpdateEventSourceResponse {
+  EventSource event_source = 1;
+  reserved 2, 3, 4;
+  // save_warnings are the save's warnings, which refused nothing.
+  repeated string save_warnings = 5;
+}
+
+message PauseEventSourceRequest {
+  string namespace = 1;
+  string name = 2;
+  // reason is the operator's words, required, at most 256 bytes.
+  string reason = 3;
+}
+
+message PauseEventSourceResponse {
+  EventSource event_source = 1;
+  // warnings say what pausing this source loses, such as the messages an
+  // at-most-once source's broker delivers meanwhile.
+  repeated string warnings = 2;
+}
+
+message ResumeEventSourceRequest {
+  string namespace = 1;
+  string name = 2;
+}
+
+message ResumeEventSourceResponse {
+  EventSource event_source = 1;
+  // notice is set when the resume changed nothing, saying why.
+  string notice = 2;
+}
+
+message DeleteEventSourceRequest {
+  string namespace = 1;
+  string name = 2;
+  // id is the id of the source the caller means. A name that now holds a
+  // source of another id is refused EVENT_SOURCE_ID_MISMATCH and nothing is
+  // deleted. Every OrkStack client sends it; empty deletes whatever the name
+  // holds.
+  string id = 3;
+}
+
+message DeleteEventSourceResponse {}
+
+message EvaluateEventSourceMessageRequest {
+  // source is the source to evaluate: a stored one by name, or a candidate
+  // that need not be stored.
+  oneof source {
+    string name = 1;
+    EventSource candidate = 2;
+  }
+  // namespace is where a stored source is read; a candidate acts in its own
+  // namespace.
+  string namespace = 3;
+  // body is the message's payload.
+  bytes body = 4;
+  // metadata is what the broker says about the message.
+  MessageMetadata metadata = 5;
+}
+
+// EvaluationOutcome is what a message would come to.
+enum EvaluationOutcome {
+  EVALUATION_OUTCOME_UNSPECIFIED = 0;
+  // ACCEPTED: the message would start a run with `input`.
+  EVALUATION_OUTCOME_ACCEPTED = 1;
+  // FILTERED: a test of the filter did not hold; nothing would start.
+  EVALUATION_OUTCOME_FILTERED = 2;
+  // REJECTED: the message breaks a bound, does not parse, or its values do
+  // not fit the Orkflow's inputs; `reason` says which.
+  EVALUATION_OUTCOME_REJECTED = 3;
+}
+
+message EvaluateEventSourceMessageResponse {
+  EvaluationOutcome outcome = 1;
+  // reason is a MESSAGE_* reason for a rejection, MESSAGE_NOT_MATCHED for a
+  // message filtered out.
+  string reason = 2;
+  // detail is OrkStack's sentence: the test, the input or the byte offset
+  // it concerns. It never quotes the body.
+  string detail = 3;
+  // tests are the filter's tests, each with its answer, in order; empty
+  // when the message was rejected before any test.
+  repeated MatchResult tests = 4;
+  // input is the run's input the message would start it with, for an
+  // accepted message.
+  Payload input = 5;
+  // artifacts are the artifact inputs the message's parts would be bound
+  // to.
+  repeated string artifacts = 6;
+  // orkflow_version is the Orkflow version the message was judged against.
+  string orkflow_version = 7;
+}
+
+message InspectSourceImageRequest {
+  // namespace is the namespace asking; its image policy applies.
+  string namespace = 1;
+  // reference is a first-party name or a registry reference; empty lists
+  // the first-party source images.
+  string reference = 2;
+}
+
+message InspectSourceImageResponse {
+  repeated SourceImage images = 1;
+}

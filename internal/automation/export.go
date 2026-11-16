@@ -141,6 +141,21 @@ func Export(namespace string, live Live) (string, []*orkstackv1.AutomationStep, 
 		addPair(webhooksNode, plainNode(h.proto.GetName()), entry)
 	}
 
+	sources := append([]*orkstackv1.EventSource(nil), live.EventSources...)
+	sort.Slice(sources, func(i, j int) bool { return sources[i].GetName() < sources[j].GetName() })
+	sourcesNode := emptyMapping()
+	for _, src := range sources {
+		entry, err := EventSourceNode(src)
+		if err != nil {
+			return "", nil, fmt.Errorf("render event source %q: %w", src.GetName(), err)
+		}
+		key := dsl.AuthoredNode(src.GetName())
+		if src.GetPause() != nil {
+			key.LineComment = "# paused — operational state; not managed here"
+		}
+		addPair(sourcesNode, key, entry)
+	}
+
 	var out strings.Builder
 	for i, section := range []*yaml.Node{
 		header,
@@ -148,7 +163,11 @@ func Export(namespace string, live Live) (string, []*orkstackv1.AutomationStep, 
 		mapping(plainNode("schedules"), schedulesNode),
 		mapping(plainNode("triggers"), triggersNode),
 		mapping(plainNode("webhooks"), webhooksNode),
+		eventSourcesSection(live, sourcesNode),
 	} {
+		if section == nil {
+			continue
+		}
 		if i > 0 {
 			out.WriteString("\n")
 		}
@@ -280,4 +299,13 @@ func encodeNode(node *yaml.Node) (string, error) {
 		return "", err
 	}
 	return buf.String(), nil
+}
+
+// eventSourcesSection is the export's event_sources section, or nil where
+// the engine could not answer for it.
+func eventSourcesSection(live Live, sources *yaml.Node) *yaml.Node {
+	if live.EventSourcesOmitted {
+		return nil
+	}
+	return mapping(plainNode("event_sources"), sources)
 }

@@ -59,6 +59,8 @@ webhooks:
     events: [TASK_SUCCEEDED, RUN_FAILED]
     orkflow: nightly-etl
 
+event_sources: {}
+
 # Not managed by this document: these objects have no name, and an unnamed object is
 # outside every automation document — no apply touches it, --prune included. Name one
 # in place (its token or secret is kept), then export again to see it above:

@@ -11,6 +11,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/automation"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // AutomationService plans and exports a namespace's automation document
@@ -56,7 +57,7 @@ func (s *Service) PlanAutomation(
 		return connect.NewResponse(&orkstackv1.PlanAutomationResponse{Issues: issues}), nil
 	}
 
-	live, err := s.readAutomationLive(ctx, ns, doc.Schedules != nil, doc.Triggers != nil, doc.Webhooks != nil)
+	live, err := s.readAutomationLive(ctx, ns, doc.Schedules != nil, doc.Triggers != nil, doc.Webhooks != nil, doc.EventSources != nil)
 	if err != nil {
 		return nil, err
 	}
@@ -110,10 +111,16 @@ func (s *Service) ExportAutomation(
 		return nil, err
 	}
 	ns := stored.GetName()
-	live, err := s.readAutomationLive(ctx, ns, true, true, true)
+	// Event sources are read through their own service's guard: where it
+	// refuses, or no registry is wired, the export leaves the section out
+	// rather than declaring it empty, which an apply with --prune would
+	// read as "delete every source".
+	sources := s.eventSources != nil && s.sourceAuthGuard() == nil
+	live, err := s.readAutomationLive(ctx, ns, true, true, true, sources)
 	if err != nil {
 		return nil, err
 	}
+	live.EventSourcesOmitted = !sources
 	yaml, unmanaged, err := automation.Export(ns, live)
 	var refused *automation.ExportError
 	if errors.As(err, &refused) {
@@ -132,7 +139,7 @@ func (s *Service) ExportAutomation(
 // always read; an absent one is Live.Namespace == nil, and nothing can be
 // stored in a namespace that does not exist, so its schedules and triggers
 // are not read.
-func (s *Service) readAutomationLive(ctx context.Context, ns string, schedules, triggers, webhooks bool) (automation.Live, error) {
+func (s *Service) readAutomationLive(ctx context.Context, ns string, schedules, triggers, webhooks, sources bool) (automation.Live, error) {
 	var live automation.Live
 	stored, err := s.namespace(ctx, ns)
 	switch {
@@ -159,6 +166,22 @@ func (s *Service) readAutomationLive(ctx context.Context, ns string, schedules, 
 		for _, trigger := range list {
 			live.Triggers = append(live.Triggers, triggerProto(trigger))
 		}
+	}
+	if live.Namespace != nil && sources {
+		store, err := s.sourceReadGuard()
+		if err != nil {
+			return live, err
+		}
+		list, skipped, err := store.List(ctx, ns)
+		if err != nil {
+			return live, automationReadError(err, "list the event sources of namespace %q", ns)
+		}
+		if len(skipped) > 0 {
+			return live, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"%s: namespace %q holds %d event source(s) this engine cannot read; a plan without them would delete them with --prune",
+				eventsources.ReasonDocumentUnreadable, ns, len(skipped)))
+		}
+		live.EventSources = list
 	}
 	if webhooks {
 		hooks, err := s.webhooks.ListContext(ctx)

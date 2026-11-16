@@ -150,6 +150,15 @@ orkctl schedule update nightly --rebind
 
 A new description or new times bind nobody.
 
+## Event sources
+
+An event source starts a run for each message a broker delivers. In this release a source can be created, read and evaluated against a sample message, and none consumes anything yet:
+
+```bash
+orkctl event-source create orders --orkflow handle-order --uses ghcr.io/acme/source-orders:2 --with stream=ORDERS
+orkctl event-source evaluate orders --body-file order.json
+```
+
 ## See also
 
 - [docs/ORKFLOW_SCHEDULES.md, "Surfaces"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#surfaces): the full command list and validation rules
@@ -158,3 +167,4 @@ A new description or new times bind nobody.
 - [docs/ORKFLOW_TRIGGERS.md, "What triggers do not do"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_TRIGGERS.md#what-triggers-do-not-do): the limits in full
 - [docs/AUTOMATION.md, "schedules"](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#schedules) and [docs/AUTOMATION.md, "triggers"](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#triggers): declaring them in a document
 - [docs/ORKFLOW_SCHEDULES.md, "Who a schedule runs as"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#who-a-schedule-runs-as): the binder, the consent, and the record beside the schedule
+- [docs/EVENT_SOURCES.md, "Evaluate a message"](https://github.com/orkstack/orkstack/blob/main/docs/EVENT_SOURCES.md#evaluate-a-message): what an event source is, and what an evaluation says

@@ -459,6 +459,32 @@ var auditedProcedures = map[string]auditExtractor{
 		}
 		return entry
 	},
+	// Event sources: every write, its target the source by namespace and
+	// name; the handler notes the id and the SHA-256 of the stored document.
+	orkstackv1connect.EventSourceServiceCreateEventSourceProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.CreateEventSourceRequest)
+		return eventSourceAudit("eventsource.create", in.GetEventSource().GetNamespace(), in.GetEventSource().GetName())
+	},
+	orkstackv1connect.EventSourceServiceUpdateEventSourceProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UpdateEventSourceRequest)
+		entry := eventSourceAudit("eventsource.update", in.GetEventSource().GetNamespace(), in.GetEventSource().GetName())
+		if in.GetRebind() {
+			entry.Detail = "rebind=true"
+		}
+		return entry
+	},
+	orkstackv1connect.EventSourceServiceDeleteEventSourceProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.DeleteEventSourceRequest)
+		return eventSourceAudit("eventsource.delete", in.GetNamespace(), in.GetName())
+	},
+	orkstackv1connect.EventSourceServicePauseEventSourceProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.PauseEventSourceRequest)
+		return eventSourceAudit("eventsource.pause", in.GetNamespace(), in.GetName())
+	},
+	orkstackv1connect.EventSourceServiceResumeEventSourceProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.ResumeEventSourceRequest)
+		return eventSourceAudit("eventsource.resume", in.GetNamespace(), in.GetName())
+	},
 	orkstackv1connect.TriggerServiceCreateTriggerProcedure: func(req, resp proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.CreateTriggerRequest)
 		version := in.GetOrkflowVersion()
@@ -1083,4 +1109,13 @@ func auditVerdictWord(verdict orkstackv1.InterfaceVerdict) string {
 	default:
 		return "unspecified"
 	}
+}
+
+// eventSourceAudit is an event-source write's entry: the source by its
+// namespace, "default" when the request names none, and its name.
+func eventSourceAudit(action, namespace, name string) auditEntry {
+	if namespace == "" {
+		namespace = artifacts.DefaultNamespace
+	}
+	return auditEntry{Action: action, Namespace: namespace, Target: name}
 }

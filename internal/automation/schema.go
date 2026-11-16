@@ -8,6 +8,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -27,10 +28,11 @@ var automationDescriptions = map[string]string{
 	"kind":       "Exactly `Automation`; an Orkflow says `kind: Orkflow`, and `orkctl automation apply` refuses any other kind, as `orkctl orkflow create` refuses this one.",
 	"namespace": "The one namespace the document describes, a slug. Required and authoritative: never inferred from " +
 		"`-n`, `ORK_NAMESPACE` or a saved default, so a document that prunes can never land in the wrong namespace by accident of a shell.",
-	"settings":  "The namespace's settings, as an overlay.",
-	"schedules": "`name: entry` mappings.",
-	"triggers":  "`name: entry` mappings.",
-	"webhooks":  "`name: entry` mappings.",
+	"settings":      "The namespace's settings, as an overlay.",
+	"schedules":     "`name: entry` mappings.",
+	"triggers":      "`name: entry` mappings.",
+	"webhooks":      "`name: entry` mappings.",
+	"event_sources": "`name: entry` mappings.",
 
 	"settings.description":       "string",
 	"settings.labels":            "mapping of strings",
@@ -67,6 +69,29 @@ var automationDescriptions = map[string]string{
 	"webhooks.*.orkflow":    "slug — absent means every Orkflow",
 	"webhooks.*.task":       "slug; needs a `TASK_*` event — absent means every task",
 	"webhooks.*.secret_env": "environment-variable name — absent means a generated signing secret, disclosed once",
+
+	"event_sources.*.orkflow":        "slug of this namespace's Orkflow, **required**, fixed at creation",
+	"event_sources.*.version":        "string — absent means the current pointer, for each message",
+	"event_sources.*.description":    "string, at most 256 bytes",
+	"event_sources.*.uses":           "a source image's registry reference, **required**",
+	"event_sources.*.with":           "the image's settings, a YAML mapping converted by the strict mapping, checked against the image's declared interface — absent means `{}`",
+	"event_sources.*.secrets":        "list of `name`, `source`, as a task's — absent means none",
+	"event_sources.*.identities":     "refused until task identity is available",
+	"event_sources.*.credentials":    "refused until task identity is available",
+	"event_sources.*.env":            "mapping of strings; configuration, never a secret — absent means none",
+	"event_sources.*.pool":           "the pool whose source hosts run the instances — absent means the namespace's default",
+	"event_sources.*.instances":      "1 to `event_sources.max_instances` — absent means `1`",
+	"event_sources.*.resources":      "`cpu`, `memory`, per instance — absent means the pool's most",
+	"event_sources.*.delivery":       "`at-least-once`|`at-most-once`, the image's declared class — absent means `at-least-once`",
+	"event_sources.*.concurrency":    "messages an instance handles at once, 1 to 64 and at most the image's maximum — absent means `1`",
+	"event_sources.*.rate":           "messages a second an instance, 1 to `event_sources.max_rate` — absent means `10`",
+	"event_sources.*.format":         "`bytes`|`json` — absent means `bytes`",
+	"event_sources.*.max_bytes":      "the body bound, at most the deployment's — absent means the deployment's",
+	"event_sources.*.reject_breaker": "distinct new messages rejected in a row that pause the source; 0 disables — absent means the deployment's",
+	"event_sources.*.match":          "list of tests, all of which must hold — absent means every message",
+	"event_sources.*.input":          "constants for the Orkflow's inputs, a YAML mapping converted by the strict mapping — absent means none",
+	"event_sources.*.map":            "`input: {pointer|attribute|field: …}` — absent means none",
+	"event_sources.*.artifacts":      "`input: body|metadata` — absent means none",
 }
 
 // settingWords are the document words of an enum field, keyed by the field's
@@ -216,6 +241,29 @@ func entrySchemas() map[string]map[string]any {
 		"webhook.orkflow":           slug,
 		"webhook.task":              slug,
 		"webhook.secret_env":        {"type": "string", "pattern": secretEnvPattern.String(), "maxLength": secretEnvMaxBytes},
+
+		"event_source.orkflow":        slug,
+		"event_source.version":        str,
+		"event_source.description":    {"type": "string", "maxLength": eventsources.MaxDescriptionBytes},
+		"event_source.uses":           {"type": "string", "minLength": 1, "maxLength": eventsources.MaxUsesBytes},
+		"event_source.with":           {"type": "object"},
+		"event_source.secrets":        {"type": "array", "maxItems": eventsources.MaxSecrets, "items": map[string]any{"type": "object", "additionalProperties": false, "required": []any{"name", "source"}, "properties": map[string]any{"name": str, "source": str}}},
+		"event_source.identities":     {"type": "array", "maxItems": 0},
+		"event_source.credentials":    {"type": "array", "maxItems": 0},
+		"event_source.env":            {"type": "object", "additionalProperties": str},
+		"event_source.pool":           slug,
+		"event_source.instances":      {"type": "integer", "minimum": 1},
+		"event_source.resources":      {"type": "object", "additionalProperties": false, "properties": map[string]any{"cpu": str, "memory": str}},
+		"event_source.delivery":       {"enum": []any{"at-least-once", "at-most-once"}},
+		"event_source.concurrency":    {"type": "integer", "minimum": 1, "maximum": eventsources.MaxConcurrency},
+		"event_source.rate":           {"type": "integer", "minimum": 1},
+		"event_source.format":         {"enum": []any{"bytes", "json"}},
+		"event_source.max_bytes":      {"type": "integer", "minimum": 1},
+		"event_source.reject_breaker": {"type": "integer", "minimum": 0},
+		"event_source.match":          {"type": "array", "maxItems": eventsources.MaxMatchTests, "items": map[string]any{"type": "object"}},
+		"event_source.input":          {"type": "object"},
+		"event_source.map":            {"type": "object", "maxProperties": eventsources.MaxMapEntries, "additionalProperties": map[string]any{"type": "object"}},
+		"event_source.artifacts":      {"type": "object", "additionalProperties": map[string]any{"enum": []any{"body", "metadata"}}},
 	}
 }
 
@@ -224,9 +272,10 @@ var dslSlugPattern = dsl.SlugPattern()
 
 // entryRequired are each entry's required keys.
 var entryRequired = map[string][]string{
-	"schedule": {"orkflow"},
-	"trigger":  {"orkflow"},
-	"webhook":  {"url"},
+	"schedule":     {"orkflow"},
+	"trigger":      {"orkflow"},
+	"webhook":      {"url"},
+	"event_source": {"orkflow", "uses"},
 }
 
 // Schema is the JSON Schema of an automation document, as a JSON tree.
@@ -246,7 +295,7 @@ func Schema() (map[string]any, error) {
 	}
 	definitions["automation.settings"] = map[string]any{"type": "object", "additionalProperties": false, "properties": settings}
 	entries := entrySchemas()
-	for kind, keys := range map[string][]string{"schedule": scheduleKeys, "trigger": triggerKeys, "webhook": webhookKeys} {
+	for kind, keys := range map[string][]string{"schedule": scheduleKeys, "trigger": triggerKeys, "webhook": webhookKeys, "event_source": eventSourceKeys} {
 		properties := map[string]any{}
 		for _, key := range keys {
 			schema, ok := entries[kind+"."+key]
@@ -270,13 +319,14 @@ func Schema() (map[string]any, error) {
 		}
 	}
 	properties := map[string]any{
-		"apiVersion": describe("apiVersion", map[string]any{"const": dsl.APIVersion}),
-		"kind":       describe("kind", map[string]any{"const": dsl.KindAutomation}),
-		"namespace":  describe("namespace", map[string]any{"type": "string", "pattern": dslSlugPattern, "maxLength": dsl.MaxSlug}),
-		"settings":   describe("settings", map[string]any{"$ref": "#/definitions/automation.settings"}),
-		"schedules":  describe("schedules", section("schedule")),
-		"triggers":   describe("triggers", section("trigger")),
-		"webhooks":   describe("webhooks", section("webhook")),
+		"apiVersion":    describe("apiVersion", map[string]any{"const": dsl.APIVersion}),
+		"kind":          describe("kind", map[string]any{"const": dsl.KindAutomation}),
+		"namespace":     describe("namespace", map[string]any{"type": "string", "pattern": dslSlugPattern, "maxLength": dsl.MaxSlug}),
+		"settings":      describe("settings", map[string]any{"$ref": "#/definitions/automation.settings"}),
+		"schedules":     describe("schedules", section("schedule")),
+		"triggers":      describe("triggers", section("trigger")),
+		"webhooks":      describe("webhooks", section("webhook")),
+		"event_sources": describe("event_sources", section("event_source")),
 	}
 	for _, key := range topLevelKeys {
 		if _, ok := properties[key]; !ok {
@@ -287,10 +337,55 @@ func Schema() (map[string]any, error) {
 		"$schema":  dsl.SchemaDialect,
 		"$comment": dsl.SchemaComment,
 		"title":    "OrkStack automation document (" + dsl.APIVersion + ")",
-		"description": "One namespace's settings, schedules, triggers and webhooks, declared by name (docs/AUTOMATION.md). " +
+		"description": "One namespace's settings, schedules, triggers, webhooks and event sources, declared by name (docs/AUTOMATION.md). " +
 			"`orkctl automation apply --dry-run` plans it against what the namespace holds; a schema checks only its shape.",
 		"type": "object", "additionalProperties": false, "properties": properties,
 		"required":    []any{"apiVersion", "kind", "namespace"},
 		"definitions": definitions,
 	}, nil
+}
+
+// EventSourceSchema is the JSON Schema of a kind: EventSource document, the
+// file orkctl event-source create|update|evaluate --file reads: the header,
+// an optional namespace and name, and an event_sources entry's keys, each
+// with the entry's own schema.
+func EventSourceSchema() (map[string]any, error) {
+	entries := entrySchemas()
+	slugName := map[string]any{"type": "string", "pattern": dslSlugPattern, "maxLength": dsl.MaxSlug}
+	properties := map[string]any{
+		"apiVersion": map[string]any{"const": dsl.APIVersion, "description": "always `" + dsl.APIVersion + "`"},
+		"kind":       map[string]any{"const": dsl.KindEventSource, "description": "always `" + dsl.KindEventSource + "`"},
+		"namespace":  withDescription(slugName, "the source's namespace — absent means the command's -n"),
+		"name":       withDescription(slugName, "the source's name, which a command naming one must agree with — absent means the command's"),
+	}
+	for _, key := range eventSourceKeys {
+		schema, ok := entries["event_source."+key]
+		if !ok {
+			return nil, fmt.Errorf("event source schema: key %s has no schema", key)
+		}
+		properties[key] = describe("event_sources.*."+key, schema)
+	}
+	required := []any{"apiVersion", "kind"}
+	for _, key := range entryRequired["event_source"] {
+		required = append(required, key)
+	}
+	return map[string]any{
+		"$schema":  dsl.SchemaDialect,
+		"$comment": dsl.SchemaComment,
+		"title":    "OrkStack event source (" + dsl.APIVersion + ")",
+		"description": "One event source, for orkctl event-source create, update and evaluate --file (docs/EVENT_SOURCES.md). " +
+			"Its keys are an automation document's event_sources entry's; a schema checks only its shape.",
+		"type": "object", "additionalProperties": false, "properties": properties,
+		"required":    required,
+		"definitions": map[string]any{},
+	}, nil
+}
+
+func withDescription(schema map[string]any, text string) map[string]any {
+	out := make(map[string]any, len(schema)+1)
+	for k, v := range schema {
+		out[k] = v
+	}
+	out["description"] = text
+	return out
 }

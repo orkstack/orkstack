@@ -26,7 +26,7 @@ import (
 
 // The keys allowed at each level, in document order.
 var (
-	topLevelKeys = []string{"apiVersion", "kind", "namespace", "settings", "schedules", "triggers", "webhooks"}
+	topLevelKeys = []string{"apiVersion", "kind", "namespace", "settings", "schedules", "triggers", "webhooks", "event_sources"}
 	scheduleKeys = []string{
 		"orkflow", "version", "description", "cron", "interval", "timezone", "jitter",
 		"start_at", "end_at", "overlap", "catchup_window", "pause_on_failure", "input",
@@ -133,7 +133,7 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 		p.errorAt("", body, "an automation document is a mapping with apiVersion, kind and namespace, got %s", describeNode(body))
 		return nil, p.issues
 	}
-	// An Orkflow or an activity interface reaches this parser only through
+	// An Orkflow, an activity interface or an event source document reaches this parser only through
 	// PlanAutomation or Admin → Automation; it is named for what it is, not
 	// refused key by key.
 	for i := 0; i+1 < len(body.Content); i += 2 {
@@ -148,6 +148,10 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 		case dsl.KindActivityInterface:
 			p.errorAt("kind", value, "kind: %s is an activity interface, not an automation document: "+
 				"pack it into an image's label with orkctl activity interface pack", dsl.KindActivityInterface)
+			return nil, p.issues
+		case dsl.KindEventSource:
+			p.errorAt("kind", value, "kind: %s is one event source, not an automation document: "+
+				"create it with orkctl event-source create --file, or declare it under event_sources:", dsl.KindEventSource)
 			return nil, p.issues
 		}
 	}
@@ -196,6 +200,14 @@ func Parse(source []byte) (doc *Document, issues []*orkstackv1.ValidationIssue) 
 		p.section("webhooks", "webhook", keyNodes["webhooks"], node, func(name string, entry *yaml.Node) {
 			if parsed, ok := p.webhook(doc.Namespace, name, entry); ok {
 				doc.Webhooks[name] = parsed
+			}
+		})
+	}
+	if node, ok := values["event_sources"]; ok {
+		doc.EventSources = map[string]EventSourceEntry{}
+		p.section("event_sources", "event source", keyNodes["event_sources"], node, func(name string, entry *yaml.Node) {
+			if parsed, ok := p.eventSource(doc.Namespace, name, entry); ok {
+				doc.EventSources[name] = parsed
 			}
 		})
 	}

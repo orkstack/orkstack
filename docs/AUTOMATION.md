@@ -196,6 +196,57 @@ enters the document, the plan or the engine except as the one
 `RegisterWebhook` that stores it. It has no effect on an existing
 subscription — an update never changes a secret — and the plan says so.
 
+### `event_sources`
+
+An event source binds one Orkflow to one source image: each message the
+image receives from its broker starts one run
+([EVENT_SOURCES.md](EVENT_SOURCES.md)). In this release no source consumes
+anything; a source is stored, read and evaluated.
+
+| Key | Value | Absent means |
+| --- | --- | --- |
+| `orkflow` | slug of this namespace's Orkflow, **required**, fixed at creation | — |
+| `version` | string | the current pointer, for each message |
+| `description` | string, at most 256 bytes | `""` |
+| `uses` | a source image's registry reference, **required** | — |
+| `with` | the image's settings, a YAML mapping converted by the strict mapping, checked against the image's declared interface | `{}` |
+| `secrets` | list of `name`, `source`, as a task's | none |
+| `identities` | refused until task identity is available | none |
+| `credentials` | refused until task identity is available | none |
+| `env` | mapping of strings; configuration, never a secret | none |
+| `pool` | the pool whose source hosts run the instances | the namespace's default |
+| `instances` | 1 to `event_sources.max_instances` | `1` |
+| `resources` | `cpu`, `memory`, per instance | the pool's most |
+| `delivery` | `at-least-once`\|`at-most-once`, the image's declared class | `at-least-once` |
+| `concurrency` | messages an instance handles at once, 1 to 64 and at most the image's maximum | `1` |
+| `rate` | messages a second an instance, 1 to `event_sources.max_rate` | `10` |
+| `format` | `bytes`\|`json` | `bytes` |
+| `max_bytes` | the body bound, at most the deployment's | the deployment's |
+| `reject_breaker` | distinct new messages rejected in a row that pause the source; 0 disables | the deployment's |
+| `match` | list of tests, all of which must hold | every message |
+| `input` | constants for the Orkflow's inputs, a YAML mapping converted by the strict mapping | none |
+| `map` | `input: {pointer\|attribute\|field: …}` | none |
+| `artifacts` | `input: body\|metadata` | none |
+
+The entry's name is the source's name, fixed at creation: a renamed entry
+is another source, and the plan warns when one looks like a rename. An
+entry has no `namespace` key; one is refused by name. A source's Orkflow is
+fixed at creation, and an entry that binds an existing name to another
+Orkflow is an error naming the two ways out: apply never deletes and
+recreates. An unchanged document plans nothing, and a `uses:` that names a
+tag is not resolved again by an apply that changed nothing. A source's
+pause is operational state the document does not manage: the plan notes it.
+
+A delete step (`--prune`) names the source by the id the plan read, and
+carries the source's pool and instances in its `changes`, as values before
+and nothing after. Both are inside the plan's digest, so a source deleted
+and created again under the name, or one whose pool or instances changed,
+between a review and an apply is a plan that moved. Every attempt of the
+delete carries that id: a name that now holds another source is refused
+with both ids and nothing is deleted, by name or otherwise; a delete
+answered `NOT_FOUND` is reported as not finished, with the source, its pool
+and its instances, and the apply exits non-zero.
+
 ## Names and in-place updates
 
 A document addresses objects by name. Schedules always have one; triggers and
@@ -308,7 +359,9 @@ other, is refused before anything is sent. A `kind: Orkflow` document is
 refused, in a directory too: create Orkflows with `orkctl orkflow create` first,
 then apply the automation that names them. An activity interface
 (`kind: ActivityInterface`) is packed into an image, never applied: one named as
-a file is refused, and one in a directory is skipped and named on stderr. Two
+a file is refused, and one in a directory is skipped and named on stderr. An
+event source document (`kind: EventSource`) is read by `orkctl event-source
+create -f` and refused here, in a directory too. Two
 automation documents naming one namespace are refused. Only an `-n` typed on the
 command line is checked against a document's namespace; `ORK_NAMESPACE` and the
 saved default never apply to it.

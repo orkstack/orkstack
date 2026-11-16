@@ -79,7 +79,9 @@ from recorded bytes; it is never an artifact's bytes, and nothing else may use
 it.
 
 Object storage holds artifacts, logs, immutable Orkflow-definition snapshots,
-and immutable activity completion and per-attempt records. It also holds what
+and immutable activity completion and per-attempt records. It holds each
+event source's document, keyed by its namespace and name, and the immutable
+service specs written under the source's id. It also holds what
 decides access and identity, where only an engine's credential should reach:
 the access document (roles, bindings, service accounts) and each namespace's
 identity policy, with an immutable revision per change; the identity issuer's
@@ -145,7 +147,7 @@ was submitted, and it has none of YAML's silent coercions (`no`, `on`,
 octal-looking numbers). Documents a person authors — an Orkflow, an automation
 document, an activity interface — stay YAML, and each begins with
 `apiVersion: orkstack/v1` and its `kind:` (`Orkflow`, `Automation`,
-`ActivityInterface`). Inside one, runtime data is written as YAML
+`ActivityInterface`, `EventSource`). Inside one, runtime data is written as YAML
 too — a task's `with:` (an http `body:`, jq `vars:`), an Orkflow's `inputs:`
 defaults, an await's `schema:`, a schedule's `input:`, an activity
 interface's `required:` and `default:` — and becomes JSON only
@@ -447,6 +449,16 @@ engines' signing keys and checked wherever they are acted on, read or
 attributed; one that does not verify authorizes nothing and names nobody. A
 deployment that verifies its callers holds such a key.
 
+An event source starts runs from what a container reads, so the service
+Orkers call for it answers only an Orker's credential, and no instance
+runs, unless the API enforces authentication. An operator whose gateway is
+the authentication may accept unauthenticated callers of the service
+people call (`ORK_EVENT_SOURCES_ALLOW_ASSERTED`), which every boot logs:
+sources can then be written, read and evaluated, and consume nothing.
+Where callers are authenticated, whoever writes or resumes an event source
+must also be allowed to submit the Orkflow it binds, and an Orker offers
+messages only for a pool it holds that right at.
+
 ## 7. Orkflow execution model
 
 Compile each Orkflow into an immutable internal representation and execute it
@@ -579,6 +591,25 @@ internal never appears on any of those surfaces.
   schedule spec; a **fire** is one occasion it acted (on time, by backfill, or
   by hand). **Trigger** is the inbound plain-HTTP run starter, a different
   object; the manual form of a schedule is "fire", never "trigger".
+- **Event source** means an object bound to one Orkflow of its namespace and
+  one **source image** with its settings, which starts one run per
+  **message** it accepts. Its name is fixed when it is created. It is a
+  different object from a **trigger** (inbound HTTP) and a **schedule**. A
+  **message** is one unit a broker delivers to it and is never called an
+  event on its own: "event" stays a run's event, and where the word could be
+  read either way each is named in full. A **message delivery** is one
+  handing-over of a message by its broker, always written in full:
+  "delivery" alone stays a webhook's. It is **paused** by an operator, or by
+  OrkStack itself when a start is refused for a reason that is the source's
+  or the Orkflow's, when every new message it receives is rejected, when its
+  broker refuses its acknowledgements or, while answering everything else,
+  confirms none of them for long, or when what it runs fails or is no longer
+  permitted in a way trying again cannot change; a pause is stored with its
+  code and reason and lifted only by a person. A broker that does not
+  answer, and a container that keeps crashing, never pause one. A change to
+  what its container is replaces its instances one at a time and only where
+  the new one works; a change that does not work leaves the last one that
+  did running.
 - **Origin** means the immutable record of what started a run: a kind
   (`submit`, `trigger`, `schedule`, `parent-run`, `run-again`), the
   originating object's id, a caller-supplied reference and the principal.
@@ -1654,6 +1685,7 @@ images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
 pkg/logstream/         Live task-log line framing and secret masking
 pkg/triggers/          Inbound trigger registry and token hashing
+pkg/eventsources/      The event source's domain type, its rules, match and map
 pkg/webhooks/          Run-event webhook registry, signing, and delivery
 pkg/schedules/         Schedule id shape (the schedule itself lives in Temporal)
 ui/                    SvelteKit, Vite, Tailwind, and generated TS clients, built as a static SPA
@@ -1722,7 +1754,7 @@ Agent ownership is split as follows:
 - coordinated changes: `proto/`, `go.mod`, `deploy/`, `Makefile`, `.github/`,
   the gate lists (`scripts/proof-*`), `internal/telemetry`, `internal/config`, `internal/jwt`,
   `internal/listfilter` and `internal/enumname` (engine and CLI agents share
-  both), `internal/hostpolicy` (the API and admin listeners share it), `internal/webui` (UI and engine agents share it), and this file.
+  both), `pkg/eventsources` (the engine and the Orker both link it), `internal/hostpolicy` (the API and admin listeners share it), `internal/webui` (UI and engine agents share it), and this file.
 
 Use Conventional Commits such as `feat(engine): ...`, `fix(orker): ...`,
 `test(dsl): ...`, `docs: ...`, and `chore(proto): ...`. The types are `feat`,

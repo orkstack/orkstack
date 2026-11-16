@@ -617,6 +617,19 @@ token has no low-entropy space to search. Both are compared in constant time
   and origin are the durable fact ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Control-plane
   audit trail").
 
+## Event sources
+
+An event source is written, read and evaluated through its own API, which
+answers only where callers are authenticated, or where the operator set
+`event_sources.allow_asserted` to accept a gateway's word for them. Every
+request is decided in the namespace the source names, at the Orkflow it
+binds; creating, updating or resuming one also needs `run.submit` on that
+Orkflow, because a source submits it on its binder's behalf
+([ACCESS.md](ACCESS.md)). In this release no source runs: no container
+starts and no broker is read. A source's own identities, credentials and
+grant-backed secrets are refused until task identity is available, and
+`env:` holds configuration, never a secret ([EVENT_SOURCES.md](EVENT_SOURCES.md)).
+
 ## Webhook secrets and destinations
 
 A webhook's signing secret is not a bearer credential. It signs outbound deliveries,

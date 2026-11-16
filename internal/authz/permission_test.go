@@ -70,10 +70,10 @@ func TestCatalogue_Golden(t *testing.T) {
 
 func TestCatalogue_RolesFollowTheirRules(t *testing.T) {
 	admin := authz.BuiltInRolePermissions(authz.RoleAdmin)
-	if len(admin) != len(authz.Permissions())-3 {
-		t.Errorf("admin holds %d permissions; it holds every one but the Orker's three (%d)", len(admin), len(authz.Permissions())-3)
+	if len(admin) != len(authz.Permissions())-4 {
+		t.Errorf("admin holds %d permissions; it holds every one but the Orker's four (%d)", len(admin), len(authz.Permissions())-4)
 	}
-	for _, p := range []authz.Permission{authz.PermIdentityTokenMint, authz.PermTaskResultCommit, authz.PermPayloadKeyUse} {
+	for _, p := range []authz.Permission{authz.PermIdentityTokenMint, authz.PermTaskResultCommit, authz.PermPayloadKeyUse, authz.PermEventSourceHost} {
 		if got := authz.RolesHolding(p); len(got) != 1 || got[0] != authz.RoleOrker {
 			t.Errorf("%s is held by %v; only %s holds it", p, got, authz.RoleOrker)
 		}

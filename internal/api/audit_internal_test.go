@@ -21,14 +21,18 @@ import (
 // auditReadRPCs is every unary RPC that only reads. Each entry begins with one
 // of the read verbs below, so a write cannot hide here under a write's name.
 var auditReadRPCs = map[string]bool{
-	orkstackv1connect.IdentityServiceGetIssuerProcedure:          true,
-	orkstackv1connect.IdentityServiceListSigningKeysProcedure:    true,
-	orkstackv1connect.OrkflowServiceValidateOrkflowProcedure:     true,
-	orkstackv1connect.OrkflowServiceGetOrkflowProcedure:          true,
-	orkstackv1connect.OrkflowServiceListOrkflowsProcedure:        true,
-	orkstackv1connect.OrkflowServiceListOrkflowVersionsProcedure: true,
-	orkstackv1connect.OrkflowServiceDiffOrkflowVersionsProcedure: true,
-	orkstackv1connect.OrkflowServicePlanRunProcedure:             true,
+	orkstackv1connect.EventSourceServiceGetEventSourceProcedure:             true,
+	orkstackv1connect.EventSourceServiceListEventSourcesProcedure:           true,
+	orkstackv1connect.EventSourceServiceEvaluateEventSourceMessageProcedure: true,
+	orkstackv1connect.EventSourceServiceInspectSourceImageProcedure:         true,
+	orkstackv1connect.IdentityServiceGetIssuerProcedure:                     true,
+	orkstackv1connect.IdentityServiceListSigningKeysProcedure:               true,
+	orkstackv1connect.OrkflowServiceValidateOrkflowProcedure:                true,
+	orkstackv1connect.OrkflowServiceGetOrkflowProcedure:                     true,
+	orkstackv1connect.OrkflowServiceListOrkflowsProcedure:                   true,
+	orkstackv1connect.OrkflowServiceListOrkflowVersionsProcedure:            true,
+	orkstackv1connect.OrkflowServiceDiffOrkflowVersionsProcedure:            true,
+	orkstackv1connect.OrkflowServicePlanRunProcedure:                        true,
 	// CompareInterfaces and ListOrkflowCallers compute on read and write
 	// nothing (docs/UI_CLI_PARITY.md "Interface compatibility").
 	orkstackv1connect.OrkflowServiceCompareInterfacesProcedure:  true,
@@ -108,7 +112,7 @@ var auditStreamingReads = map[string]bool{
 // CompareInterfaces, which classifies two stored documents and writes nothing
 // (docs/UI_CLI_PARITY.md "Interface compatibility"). Explain is the verb of
 // ExplainAccess, which answers a decision and writes nothing.
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare", "Explain"}
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare", "Explain", "Evaluate"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.

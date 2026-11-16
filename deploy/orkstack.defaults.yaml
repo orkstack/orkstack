@@ -97,6 +97,18 @@ engine:
     retention_buffer: 24h  # ork
     batch_size: 100  # ork
 
+event_sources:
+  enabled: false  # ork
+  allow_asserted: false  # ork
+  max_message_bytes: 1048576  # ork
+  max_input_bytes: 16384  # ork
+  max_rate: 100  # ork
+  namespace_rate: 200  # ork
+  max_sources: 200  # ork
+  max_per_namespace: 20  # ork
+  max_instances: 4  # ork
+  namespace_instances: 20  # ork
+
 webhooks:
   allowed_networks: []  # ork; empty admits public addresses only
 

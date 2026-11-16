@@ -12,6 +12,7 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 
@@ -76,7 +77,7 @@ func schemaKeys(tree map[string]any) map[string]map[string]any {
 			}
 		}
 	}
-	for _, kind := range []string{"schedule", "trigger", "webhook"} {
+	for _, kind := range []string{"schedule", "trigger", "webhook", "event_source"} {
 		for key, schema := range propertiesOf(definition(tree, "automation."+kind)) {
 			out[kind+"s.*."+key] = schema.(map[string]any)
 		}
@@ -96,7 +97,7 @@ func TestAutomationSchema_HasEveryKey(t *testing.T) {
 	if got := schemaKeysOf(propertiesOf(definition(tree, "automation.settings"))); !reflect.DeepEqual(got, sortedCopy(rows)) {
 		t.Errorf("settings keys %v, want the rows %v", got, sortedCopy(rows))
 	}
-	for kind, keys := range map[string][]string{"schedule": scheduleKeys, "trigger": triggerKeys, "webhook": webhookKeys} {
+	for kind, keys := range map[string][]string{"schedule": scheduleKeys, "trigger": triggerKeys, "webhook": webhookKeys, "event_source": eventSourceKeys} {
 		if got := schemaKeysOf(propertiesOf(definition(tree, "automation."+kind))); !reflect.DeepEqual(got, sortedCopy(keys)) {
 			t.Errorf("%s keys %v, want %v", kind, got, sortedCopy(keys))
 		}
@@ -279,7 +280,7 @@ func TestAutomationSchema_TypesAgreeWithTheParser(t *testing.T) {
 		switch {
 		case path == "apiVersion" || path == "kind" || path == "namespace":
 			continue // the header; TestParse_HeaderIsRequiredAndExact
-		case path == "settings" || path == "schedules" || path == "triggers" || path == "webhooks":
+		case path == "settings" || path == "schedules" || path == "triggers" || path == "webhooks" || path == "event_sources":
 			doc = header + path + ": @V@\n"
 		case strings.HasPrefix(path, "settings."):
 			parts := strings.Split(strings.TrimPrefix(path, "settings."), ".")
@@ -292,9 +293,10 @@ func TestAutomationSchema_TypesAgreeWithTheParser(t *testing.T) {
 			kind := strings.Split(path, ".")[0]
 			key := strings.Split(path, ".")[2]
 			base := map[string]map[string]string{
-				"schedules": {"orkflow": "x", "cron": "'@daily'"},
-				"triggers":  {"orkflow": "x"},
-				"webhooks":  {"url": "https://hooks.example.test/x"},
+				"schedules":     {"orkflow": "x", "cron": "'@daily'"},
+				"triggers":      {"orkflow": "x"},
+				"webhooks":      {"url": "https://hooks.example.test/x"},
+				"event_sources": {"orkflow": "x", "uses": "r"},
 			}[kind]
 			lines := []string{kind + ":", "  e:"}
 			for _, k := range sortedCopy(mapKeysOf(base)) {
@@ -374,5 +376,32 @@ func TestAutomationSchema_DescriptionsAreAutomationText(t *testing.T) {
 				t.Errorf("%s: %q is not docs/AUTOMATION.md text", path, part)
 			}
 		}
+	}
+}
+
+// TestEventSourceSchema_HasEveryKey: the kind: EventSource schema names
+// exactly the keys ParseEventSourceFile reads, and each entry key carries
+// the automation entry's own schema.
+func TestEventSourceSchema_HasEveryKey(t *testing.T) {
+	tree, err := EventSourceSchema()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := sortedCopy(append([]string{"apiVersion", "kind", "namespace", "name"}, eventSourceKeys...))
+	if got := schemaKeysOf(propertiesOf(tree)); !reflect.DeepEqual(got, want) {
+		t.Errorf("keys %v, want %v", got, want)
+	}
+	entry := propertiesOf(definition(automationSchemaTree(t), "automation.event_source"))
+	for _, key := range eventSourceKeys {
+		got, err := stablejson.Marshal(propertiesOf(tree)[key])
+		must.OK(t, err)
+		want, err := stablejson.Marshal(entry[key])
+		must.OK(t, err)
+		if string(got) != string(want) {
+			t.Errorf("%s: the document's schema %s differs from the entry's %s", key, got, want)
+		}
+	}
+	if kind := propertiesOf(tree)["kind"].(map[string]any)["const"]; kind != dsl.KindEventSource {
+		t.Errorf("kind const %v, want %s", kind, dsl.KindEventSource)
 	}
 }

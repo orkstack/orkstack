@@ -1,0 +1,350 @@
+syntax = "proto3";
+
+package orkstack.v1;
+
+import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
+import "orkstack/v1/activity.proto";
+import "orkstack/v1/activity_service.proto";
+import "orkstack/v1/common.proto";
+import "orkstack/v1/orkflow.proto";
+
+option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
+
+// EventSource is a namespace's object that binds one Orkflow to one source
+// image and its settings: each message the image receives from its broker
+// starts one run of that Orkflow (docs/EVENT_SOURCES.md). Its name and the
+// Orkflow it binds are fixed when it is created.
+message EventSource {
+  // id is evs- and 16 hexadecimal digits; opaque. A source created again
+  // under a name it had before gets a new one.
+  string id = 1;
+  // namespace is where the source lives and acts; empty means `default`.
+  string namespace = 2;
+  // name is the source's slug, unique in its namespace and fixed at
+  // creation.
+  string name = 3;
+  // orkflow_name is the Orkflow of this namespace each message starts;
+  // fixed at creation.
+  string orkflow_name = 4;
+  // orkflow_version pins a version; empty means the current version, read
+  // for each message.
+  string orkflow_version = 5;
+  // description is an operator's label, at most 256 bytes.
+  string description = 6;
+  // Numbers an earlier draft used; never shipped.
+  reserved 7, 8, 9, 10, 11, 12;
+  // uses is the source image as written: a first-party name or a registry
+  // reference.
+  string uses = 13;
+  // image is output only: the image `uses` runs now, by digest. A registry
+  // reference is resolved when the source is written and again only when
+  // its text changes.
+  string image = 14;
+  // with is the image's settings, checked against its declared interface.
+  google.protobuf.Struct with = 15;
+  // pool is the pool whose source hosts run the instances; empty means the
+  // namespace's default pool.
+  string pool = 16;
+  // instances is how many containers of the source run, 1 to the
+  // deployment's event_sources.max_instances; 0 means 1.
+  int32 instances = 17;
+  // resources is what each instance asks for.
+  ResourceRequest resources = 18;
+  // delivery is the source's delivery class, which must equal its image's.
+  // Unset means at-least-once.
+  DeliveryClass delivery = 19;
+  // concurrency is how many messages one instance handles at once, 1 to 64
+  // and at most the image's declared maximum; 0 means 1.
+  int32 concurrency = 20;
+  // format is how the body is read: as opaque bytes, or as one strict JSON
+  // value. Unset means bytes.
+  MessageFormat format = 21;
+  // max_bytes is the largest body accepted, at most the deployment's
+  // event_sources.max_message_bytes; 0 means that bound.
+  int64 max_bytes = 22;
+  // match is the filter: every test must hold for a message to start a
+  // run.
+  repeated MatchRule match = 23;
+  // input is constant values for the Orkflow's inputs.
+  Payload input = 24;
+  // map fills an Orkflow input from each message, one selector per input.
+  map<string, MapRule> map = 25;
+  // artifacts binds a part of each message to an artifact input of the
+  // Orkflow.
+  map<string, MessagePart> artifacts = 26;
+  // rate is the most messages a second one instance starts runs for, 1 to
+  // the deployment's event_sources.max_rate; 0 means 10.
+  int32 rate = 27;
+  // reject_breaker is how many distinct new messages rejected in a row on
+  // one instance pause the source. Unset means the deployment's; 0 turns it
+  // off.
+  optional int32 reject_breaker = 28;
+  // paused is output only: whether `pause` is set.
+  bool paused = 29;
+  // pause is output only, set by PauseEventSource and cleared by
+  // ResumeEventSource: a write that carries it is ignored.
+  EventSourcePause pause = 30;
+  // created_at and updated_at are output only.
+  google.protobuf.Timestamp created_at = 31;
+  google.protobuf.Timestamp updated_at = 32;
+  // etag is the version of the source a read returned. An update sends it
+  // back, and is refused if the source changed since.
+  string etag = 33;
+  // created_by and updated_by are output only: the principal of the
+  // request, as recorded.
+  string created_by = 34;
+  string updated_by = 35;
+  // bound_by is output only: the binder, the principal who created the
+  // source, last changed what it submits (orkflow_version, input, map,
+  // artifacts), or rebound it.
+  string bound_by = 36;
+  // bound_by_verified is output only: whether the binder was a verified
+  // principal rather than an asserted one.
+  bool bound_by_verified = 37;
+  reserved 38;
+  // consent_stale is output only: what the Orkflow asks for now differs
+  // from what was consented to.
+  bool consent_stale = 39;
+  // asks_for is output only: what the Orkflow asks for now, as a consent
+  // digest.
+  AsksFor asks_for = 40;
+  // consented is output only: the consent recorded with the binder.
+  ConsentView consented = 41;
+  // secrets are files the instance's container receives, as a task's.
+  repeated SecretRef secrets = 42;
+  // identities and credentials are as a task's; refused until task
+  // identity is available.
+  repeated IdentityRef identities = 43;
+  repeated CredentialRef credentials = 44;
+  // env is environment for the container; configuration, never a secret.
+  map<string, string> env = 45;
+  // service_revision is output only: it rises when what the source's
+  // containers are or hold changes (uses, with, env, secrets, identities,
+  // credentials, resources, pool, concurrency, delivery), so its
+  // containers are replaced.
+  int64 service_revision = 46;
+  // judging_revision is output only: it rises when how a message is judged
+  // changes (version, format, max_bytes, match, input, map, artifacts,
+  // rate, reject_breaker), which restarts nothing.
+  int64 judging_revision = 47;
+}
+
+// DeliveryClass is what a source's image promises about a message that
+// starts no run.
+enum DeliveryClass {
+  DELIVERY_CLASS_UNSPECIFIED = 0;
+  // AT_LEAST_ONCE: a message that is not accepted is delivered again by its
+  // broker.
+  DELIVERY_CLASS_AT_LEAST_ONCE = 1;
+  // AT_MOST_ONCE: a message that is not accepted is lost.
+  DELIVERY_CLASS_AT_MOST_ONCE = 2;
+}
+
+// MessageFormat is how a source reads a message's body.
+enum MessageFormat {
+  MESSAGE_FORMAT_UNSPECIFIED = 0;
+  // BYTES: the body is never read; only `attribute` and `field` selectors
+  // apply.
+  MESSAGE_FORMAT_BYTES = 1;
+  // JSON: the body must be one strict JSON value; `pointer` selectors read
+  // it.
+  MESSAGE_FORMAT_JSON = 2;
+}
+
+// MessagePart is a part of a message an Orkflow can receive as an artifact.
+enum MessagePart {
+  MESSAGE_PART_UNSPECIFIED = 0;
+  // BODY: the message's exact payload.
+  MESSAGE_PART_BODY = 1;
+  // METADATA: one JSON document about the message.
+  MESSAGE_PART_METADATA = 2;
+}
+
+// MessageField is a fact about a message that its broker supplies.
+enum MessageField {
+  MESSAGE_FIELD_UNSPECIFIED = 0;
+  MESSAGE_FIELD_SUBJECT = 1;
+  MESSAGE_FIELD_ID = 2;
+  MESSAGE_FIELD_PUBLISHED_AT = 3;
+  MESSAGE_FIELD_GROUP = 4;
+}
+
+// MatchRule is one test of a source's filter: exactly one selector and
+// exactly one test.
+message MatchRule {
+  // attribute selects the first value of a header or message attribute.
+  string attribute = 1;
+  // pointer selects a value of the body by RFC 6901 JSON Pointer; only for
+  // a source of format JSON.
+  string pointer = 2;
+  // field selects a fact the broker supplies; SUBJECT is the one field a
+  // test may read.
+  MessageField field = 3;
+  // equals holds when the selected value is this scalar: the same JSON
+  // type, and for a number the same mathematical value.
+  google.protobuf.Value equals = 4;
+  // in holds when the selected value equals one of these scalars, at most
+  // 32.
+  repeated google.protobuf.Value in = 5;
+  // exists holds when the selector does (true) or does not (false) select
+  // a value.
+  optional bool exists = 6;
+}
+
+// MapRule is one selector filling one Orkflow input from a message:
+// exactly one of pointer, attribute and field.
+message MapRule {
+  // pointer selects any JSON value of the body by RFC 6901 JSON Pointer,
+  // copied as it is; only for a source of format JSON.
+  string pointer = 1;
+  // attribute selects the first value of a header or message attribute, as
+  // a string.
+  string attribute = 2;
+  // field selects a fact the broker supplies, as a string.
+  MessageField field = 3;
+}
+
+// PauseCause is who paused a source.
+enum PauseCause {
+  PAUSE_CAUSE_UNSPECIFIED = 0;
+  PAUSE_CAUSE_OPERATOR = 1;
+  PAUSE_CAUSE_ENGINE = 2;
+}
+
+// EventSourcePause is why a source is paused. While it is set no instance
+// of the source runs.
+message EventSourcePause {
+  PauseCause cause = 1;
+  // code is empty for an operator's pause, otherwise the reason OrkStack
+  // paused the source.
+  string code = 2;
+  // refusal_code is the refusal behind code, from a closed set.
+  string refusal_code = 3;
+  // reason is the operator's words, or the code's one fixed sentence; at
+  // most 1 KiB.
+  string reason = 4;
+  google.protobuf.Timestamp since = 5;
+  // principal is who paused it, as recorded; empty for OrkStack's own.
+  string principal = 6;
+}
+
+// EventSourceState is what a source is doing, derived on read and never
+// stored.
+enum EventSourceState {
+  EVENT_SOURCE_STATE_UNSPECIFIED = 0;
+  EVENT_SOURCE_STATE_ACTIVE = 1;
+  EVENT_SOURCE_STATE_STARTING = 2;
+  EVENT_SOURCE_STATE_WAITING = 3;
+  EVENT_SOURCE_STATE_PAUSED = 4;
+  EVENT_SOURCE_STATE_HELD = 5;
+  EVENT_SOURCE_STATE_INVALID = 6;
+  EVENT_SOURCE_STATE_UNREACHABLE = 7;
+  EVENT_SOURCE_STATE_DISABLED = 8;
+  EVENT_SOURCE_STATE_DELETING = 9;
+}
+
+// EventSourceStatus is a source's state, derived on read and never stored.
+message EventSourceStatus {
+  EventSourceState state = 1;
+  // reason is a reason code when the state is not ACTIVE.
+  string reason = 2;
+  // message is OrkStack's sentence for it.
+  string message = 3;
+  // warnings are reason codes that do not stop the source.
+  repeated string warnings = 4;
+  // Numbers 5 to 15, and those after 16, describe running instances and
+  // their broker's facts, which arrive once sources can run.
+  reserved 5 to 15;
+  // delivery is the source's delivery class.
+  DeliveryClass delivery = 16;
+}
+
+// MessageMetadata is what a broker says about a message, for an evaluation.
+message MessageMetadata {
+  // id is the message's identity: at most 256 bytes, no control character.
+  string id = 1;
+  // subject is the message's subject; at most 1 KiB.
+  string subject = 2;
+  google.protobuf.Timestamp published_at = 3;
+  // group is the message's ordering group, when its broker has one.
+  string group = 4;
+  // attributes are the message's headers or attributes, each with its
+  // values in order.
+  map<string, AttributeValues> attributes = 5;
+}
+
+// AttributeValues is one attribute's values, in order; a selector reads the
+// first.
+message AttributeValues {
+  repeated string values = 1;
+}
+
+// MatchResult is one test of a source's filter, as an evaluation answered
+// it.
+message MatchResult {
+  // index is the test's position in `match`.
+  int32 index = 1;
+  // selector names what the test read: attribute:NAME, pointer:/PATH or
+  // field:subject.
+  string selector = 2;
+  // held is whether the test held.
+  bool held = 3;
+  // selected is the value the selector selected, as JSON text; empty when
+  // it selected nothing.
+  string selected = 4;
+}
+
+// ServiceInterface is what a service image declares: the profile it
+// implements, the settings its `with:` reads, and what that profile lets
+// it declare. It is the packed value of the org.orkstack.service.interface
+// label, authored as `kind: ServiceInterface`.
+message ServiceInterface {
+  // schema_version is 1.
+  int32 schema_version = 1;
+  // profile is the profile the image implements: "event-source".
+  string profile = 2;
+  // with declares the keys of the image's `with:` block, in the activity
+  // interface's grammar.
+  map<string, FieldSchema> with = 3;
+  // event_source is what an image of the event-source profile declares.
+  EventSourceDeclaration event_source = 4;
+}
+
+// EventSourceDeclaration is what a source image declares about how it
+// delivers.
+message EventSourceDeclaration {
+  // delivery is the image's class; unset means at-least-once.
+  DeliveryClass delivery = 1;
+  // max_concurrency is the most messages one container handles at once; 0
+  // means 1.
+  int32 max_concurrency = 2;
+  // ordering says messages can carry a group.
+  bool ordering = 3;
+  // dead_letter says the broker stops delivering after a maximum. Unset
+  // means true for at-least-once.
+  optional bool dead_letter = 4;
+  // extends_leases says the image keeps a message leased until its
+  // verdict. Unset means true for at-least-once.
+  optional bool extends_leases = 5;
+}
+
+// SourceImage is one image a source may name, as InspectSourceImage reads
+// it.
+message SourceImage {
+  // name is the first-party name, when it is one.
+  string name = 1;
+  // reference is the reference that was resolved.
+  string reference = 2;
+  // image is the reference by digest.
+  string image = 3;
+  // contract_versions are the Orker Service Contract versions the image
+  // implements.
+  repeated int32 contract_versions = 4;
+  // profile_versions are the event-source profile versions it implements.
+  repeated int32 profile_versions = 5;
+  // interface is the image's declared interface, when it has one.
+  ServiceInterface interface = 6;
+  // interface_error says why a declared interface could not be read.
+  string interface_error = 7;
+}

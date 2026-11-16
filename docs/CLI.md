@@ -1507,6 +1507,290 @@ Inherited flags:
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
+## `orkctl event-source`
+
+Create, inspect and evaluate event sources
+
+An event source binds one Orkflow to one source image: each message the
+image receives from its broker starts one run (docs/EVENT_SOURCES.md).
+
+In this release no source consumes anything: a source is stored, read
+and evaluated. Event sources need event_sources.enabled, a deployment run
+as a release, and authenticated callers (or event_sources.allow_asserted).
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source create`
+
+Create an event source
+
+create stores a new event source after checking it against its Orkflow's
+declared inputs, its image's declared interface, the namespace's pools and
+secrets, and the deployment's quotas. Its name and its Orkflow are fixed.
+
+Give the source as flags, or as a kind: EventSource document (--file);
+flags given beside a document override it.
+
+Flags:
+
+- `--concurrency INT32` — messages one instance handles at once
+- `--consent STRING` — the consent digest (c1:…) of what the Orkflow asks for
+- `--delivery STRING` — the image's delivery class: at-least-once or at-most-once
+- `--description STRING` — an operator's label
+- `-f, --file STRING` — read the source from this kind: EventSource document
+- `--format STRING` — how a body is read: bytes or json
+- `--instances INT32` — how many containers of the source run
+- `--orkflow STRING` — the Orkflow each message starts, fixed at creation
+- `--pool STRING` — the pool whose source hosts run the instances
+- `--rate INT32` — messages a second one instance starts runs for
+- `--uses STRING` — the source image's registry reference
+- `--version STRING` — the Orkflow version to pin (default: the current one, for each message)
+- `--with STRINGARRAY` — an image setting, KEY=VALUE, as a string; repeatable
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source delete`
+
+Delete an event source
+
+delete reads the source the name holds and deletes that source, by its id:
+a source created under the name meanwhile is never touched.
+
+--id deletes the source of that id without reading it first: the way to
+remove a source this engine cannot read (EVENT_SOURCE_DOCUMENT_UNREADABLE).
+
+Flags:
+
+- `--id STRING` — delete the source of this id without reading it first
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source evaluate`
+
+Run a source's filter and mapping over a message, and say what would happen
+
+evaluate runs a stored source (by name) or a candidate (--file) over the
+message given, in the engine, with the code a source host judges by. It
+starts nothing and writes nothing.
+
+Flags:
+
+- `--attribute STRINGARRAY` — a message attribute, KEY=VALUE; repeatable
+- `--body-file STRING` — the message's body
+- `-f, --file STRING` — a candidate source to evaluate, as a kind: EventSource document
+- `--group STRING` — the message's group
+- `--id STRING` — the message's identity
+- `--subject STRING` — the message's subject
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source get`
+
+Show an event source and its state
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source images`
+
+Show what a source image declares
+
+images reads one source image's labels: the contract and profile versions it
+implements and its declared interface. With no reference it lists the
+first-party source images this release ships, which are none yet.
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source list`
+
+List the event sources of a namespace
+
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD          OPERATORS       VALUES
+  id             = != =a,b       text
+  name           = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_name   = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  uses           = != =a,b ~ ^   text
+  pool           = != =a,b       a name (a-z, 0-9, -; at most 200 bytes) or empty
+  delivery       = != =a,b       AT_LEAST_ONCE AT_MOST_ONCE
+  paused         =               true false
+  created_at     >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+Flags:
+
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source pause`
+
+Pause an event source
+
+Flags:
+
+- `--reason STRING` — why the source is paused (required)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source resume`
+
+Resume a paused event source
+
+resume clears a source's pause after the checks a create makes. It neither
+rebinds nor consents.
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl event-source update`
+
+Change an event source
+
+update reads the source, applies the flags given, and writes it back under
+the version it read. With --file it replaces every field you write with the
+file's. Its name and its Orkflow cannot change.
+
+A change of the Orkflow version, the constants, the mapping or the artifacts
+makes you the source's binder; --rebind does without changing anything else.
+
+Flags:
+
+- `--concurrency INT32` — messages one instance handles at once
+- `--consent STRING` — the consent digest (c1:…) of what the Orkflow asks for
+- `--delivery STRING` — the image's delivery class: at-least-once or at-most-once
+- `--description STRING` — an operator's label
+- `-f, --file STRING` — read the source from this kind: EventSource document
+- `--format STRING` — how a body is read: bytes or json
+- `--instances INT32` — how many containers of the source run
+- `--pool STRING` — the pool whose source hosts run the instances
+- `--rate INT32` — messages a second one instance starts runs for
+- `--rebind` — make yourself the source's binder
+- `--uses STRING` — the source image's registry reference
+- `--version STRING` — the Orkflow version to pin (default: the current one, for each message)
+- `--with STRINGARRAY` — an image setting, KEY=VALUE, as a string; repeatable
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
 ## `orkctl login`
 
 Sign in to the server as yourself, with its identity provider

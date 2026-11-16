@@ -11,7 +11,7 @@ import { API_VERSION, ORKFLOW_PLACEHOLDER, automationPlaceholder } from '../src/
 const repo = `${import.meta.dir}/../..`;
 const read = (path: string) => readFileSync(`${repo}/${path}`, 'utf8');
 const schema = (name: string) => JSON.parse(read(`docs/schemas/${name}`));
-const NAMES = ['orkflow.v1.json', 'automation.v1.json', 'activityinterface.v1.json', 'orkstack.v1.json'];
+const NAMES = ['orkflow.v1.json', 'automation.v1.json', 'activityinterface.v1.json', 'eventsource.v1.json', 'orkstack.v1.json'];
 
 function compile(name: string) {
 	const ajv = new Ajv({ allErrors: true, strict: true, strictRequired: false, allowUnionTypes: true });
@@ -48,6 +48,7 @@ test('API_VERSION is the generated schemas’ apiVersion', () => {
 	expect(schema('orkflow.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('automation.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('activityinterface.v1.json').properties.apiVersion.const).toBe(API_VERSION);
+	expect(schema('eventsource.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 	expect(schema('orkstack.v1.json').properties.apiVersion.const).toBe(API_VERSION);
 });
 
@@ -167,4 +168,13 @@ test('every shipped activity interface validates, and the schema refuses what pa
 	refusedAt('an op that is not lowercase', iface('ops:\n  Get: {}\n'), 'activityinterface.v1.json', '/ops');
 	refusedAt('a key past 128 bytes', iface(`values:\n  ${'k'.repeat(129)}:\n    type: string\n`), 'activityinterface.v1.json', '/values');
 	refusedAt('an unknown key, through the dispatcher', iface('field: {}\n'), 'orkstack.v1.json', '');
+});
+
+test('an event source document validates against its schema and the dispatcher', () => {
+	const doc = Bun.YAML.parse(
+		`apiVersion: ${API_VERSION}\nkind: EventSource\nnamespace: payments\nname: orders\norkflow: handle-order\n` +
+			'uses: ghcr.io/acme/source:1\nwith:\n  stream: ORDERS\nformat: json\nmatch:\n  - pointer: /kind\n    equals: created\n'
+	);
+	expectValid('an event source document', doc, 'eventsource.v1.json');
+	expect(validators['eventsource.v1.json']({ apiVersion: API_VERSION, kind: 'EventSource', orkflow: 'f', uses: 'r', queue: 'x' })).toBe(false);
 });

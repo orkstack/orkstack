@@ -28,6 +28,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- New `event_sources.*` settings, `orkctl event-source` commands and `kind: EventSource` documents store and evaluate event sources; none consumes anything yet ([EVENT_SOURCES.md](https://github.com/orkstack/orkstack/blob/main/docs/EVENT_SOURCES.md)).
 - OrkStack can now authenticate API callers itself and decide each request with roles: set `auth.mode` to `observe`, then `enforce`; off by default ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md)).
 - `orkctl admin auth status` and `orkctl admin auth lower` show and lower the deployment's authentication mode ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#the-mode-record)).
 - `orkctl --token-file` (`ORK_TOKEN_FILE`) presents a bearer token, and `--ca-file`, `--client-cert` and `--client-key` set TLS roots and a client certificate ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#from-orkctl)).

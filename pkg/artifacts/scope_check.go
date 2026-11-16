@@ -46,6 +46,8 @@ var ScopeCheckedPrefixes = []string{
 	NamespacePrefix,
 	SettingsPrefix,
 	TriggerPrefix,
+	EventSourcePrefix,
+	EventSourceSpecPrefix,
 	WebhookPrefix,
 	AuditPrefix,
 	DeliveryPrefix,

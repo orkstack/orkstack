@@ -45,6 +45,7 @@ import (
 	"github.com/orkstack/orkstack/internal/temporalconn"
 	"github.com/orkstack/orkstack/internal/webui"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
@@ -697,6 +698,12 @@ func main() {
 	}
 	if cfgCheck {
 		fmt.Print(cfgDoc.Effective(cfgfile.BinaryOrk, os.LookupEnv))
+		sources, err := eventSourceSettingsFor(cfgDoc.Apply, os.LookupEnv)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "ork: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Print(eventSourceCheckLines(sources))
 		os.Exit(0)
 	}
 
@@ -1341,6 +1348,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open trigger store: %w", err)
 	}
+	// Event sources: their documents in the same shared store, and the
+	// deployment's event_sources.* settings, refused at boot when one is
+	// out of its range.
+	eventSourceSettings, err := eventsources.SettingsFromEnv(os.LookupEnv)
+	if err != nil {
+		return err
+	}
+	warnEventSourceOptIn(logger, eventSourceSettings)
+	eventSourceStore, err := artifacts.NewEventSourceStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open event source store: %w", err)
+	}
 	// Schedule records: who bound each schedule and the consent they gave,
 	// beside what the cluster's schedule submits. Configuration the API
 	// keeps; the schedule itself is the cluster's.
@@ -1711,32 +1730,34 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Resolver:     resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
-		ImagePolicies:    imagePolicies,
-		Signatures:       &dsl.SignatureVerifier{Resolver: resolver},
-		Activities:       activities,
-		RawQueue:         cfg.defaultRouteOverride,
-		Archive:          archive,
-		Logs:             logStore,
-		ArtifactStore:    artifactStore,
-		Attempts:         attemptStore,
-		Commits:          commitStore,
-		Idempotency:      idempotency,
-		OnLegacyPending:  idempotencyInstruments.CountLegacyPending,
-		Webhooks:         webhookRegistry,
-		Redelivery:       webhookDispatcher,
-		Deliveries:       deliveryStore,
-		Triggers:         triggerStore,
-		Schedules:        scheduler,
-		ScheduleBindings: scheduleBindings,
-		Incarnations:     incarnations,
-		Issuer:           issuer,
-		ServeDiscovery:   cfg.identity.serveDiscovery,
-		EnginePresence:   releases,
-		AuditStore:       auditStore,
-		AuditCounter:     auditInstruments,
-		Notifier:         runNotifier,
-		Logger:           logger,
-		System:           system,
+		ImagePolicies:       imagePolicies,
+		Signatures:          &dsl.SignatureVerifier{Resolver: resolver},
+		Activities:          activities,
+		RawQueue:            cfg.defaultRouteOverride,
+		Archive:             archive,
+		Logs:                logStore,
+		ArtifactStore:       artifactStore,
+		Attempts:            attemptStore,
+		Commits:             commitStore,
+		Idempotency:         idempotency,
+		OnLegacyPending:     idempotencyInstruments.CountLegacyPending,
+		Webhooks:            webhookRegistry,
+		Redelivery:          webhookDispatcher,
+		Deliveries:          deliveryStore,
+		Triggers:            triggerStore,
+		EventSources:        eventSourceStore,
+		EventSourceSettings: eventSourceSettings,
+		Schedules:           scheduler,
+		ScheduleBindings:    scheduleBindings,
+		Incarnations:        incarnations,
+		Issuer:              issuer,
+		ServeDiscovery:      cfg.identity.serveDiscovery,
+		EnginePresence:      releases,
+		AuditStore:          auditStore,
+		AuditCounter:        auditInstruments,
+		Notifier:            runNotifier,
+		Logger:              logger,
+		System:              system,
 		// Retention backs SystemService's
 		// GetRetentionPolicy/UpdateRetentionPolicy, and also validates a
 		// namespace's own run_retention against the ceiling

@@ -20,3 +20,5 @@ schedules: {}
 triggers: {}
 
 webhooks: {}
+
+event_sources: {}

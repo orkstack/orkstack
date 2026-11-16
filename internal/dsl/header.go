@@ -20,6 +20,10 @@ const (
 	// packed into the image's interface label at build time and never
 	// applied (docs/ACTIVITY_IMAGES.md, "Declaring the interface").
 	KindActivityInterface = "ActivityInterface"
+	// KindEventSource is one event source, authored for orkctl event-source
+	// create|update|evaluate --file (docs/EVENT_SOURCES.md); an automation
+	// document's event_sources section declares sources too.
+	KindEventSource = "EventSource"
 )
 
 // OrkflowHeader is the canonical header, exactly as OrkStack writes it.
@@ -144,10 +148,14 @@ func checkHeader(source []byte) error {
 		return validationError("kind", fmt.Errorf("kind: %s is an activity interface, not an Orkflow: "+
 			"pack it into an image's label with orkctl activity interface pack (docs/ACTIVITY_IMAGES.md); "+
 			"an Orkflow says kind: %s", KindActivityInterface, KindOrkflow))
+	case kind.Value == KindEventSource:
+		return validationError("kind", fmt.Errorf("kind: %s is an event source, not an Orkflow: "+
+			"create it with orkctl event-source create --file (docs/EVENT_SOURCES.md); an Orkflow says kind: %s",
+			KindEventSource, KindOrkflow))
 	case kind.Value != KindOrkflow:
 		return validationError("kind", fmt.Errorf("kind %q is not a kind OrkStack reads: an Orkflow says kind: %s, "+
-			"an automation document kind: %s, an activity interface kind: %s",
-			kind.Value, KindOrkflow, KindAutomation, KindActivityInterface))
+			"an automation document kind: %s, an activity interface kind: %s, an event source kind: %s",
+			kind.Value, KindOrkflow, KindAutomation, KindActivityInterface, KindEventSource))
 	}
 	return nil
 }
@@ -162,6 +170,14 @@ func stringScalarNode(node *yaml.Node) bool { return IsStringScalar(node) }
 func IsStringScalar(node *yaml.Node) bool {
 	return node.Kind == yaml.ScalarNode && (node.Tag == "!!str" || node.Tag == "!")
 }
+
+// PlainTopLevelKey reports an untagged, unanchored string scalar that is not
+// a merge key: the only top-level key an authored document may write.
+func PlainTopLevelKey(key *yaml.Node) bool { return plainTopLevelKey(key) }
+
+// DescribeTopLevelKey names what a top-level key that is not a plain string
+// is, for a refusal.
+func DescribeTopLevelKey(key *yaml.Node) string { return describeTopLevelKey(key) }
 
 // plainTopLevelKey is an untagged, unanchored string scalar that is not a
 // merge key.

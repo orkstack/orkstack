@@ -268,6 +268,36 @@ A webhook delivery carries a reason code only when OrkStack refuses its destinat
 |---|---|---|---|
 | `WEBHOOK_DESTINATION_BLOCKED` | — | The webhook's destination is a loopback, link-local, private, shared, multicast or otherwise non-public address. Registration refuses a URL whose host is one (`invalid_argument`). A delivery attempt that would connect to one fails with this reason at the start of its error, whether the address came from a name or from a redirect, and is not retried ([WEBHOOKS.md](./WEBHOOKS.md#where-a-delivery-may-go), "Where a delivery may go"). | List the receiver's network in `webhooks.allowed_networks` (`ORK_WEBHOOK_ALLOWED_NETWORKS`), or point the webhook at a public address ([DEPLOY.md](./DEPLOY.md), § 1). |
 
+## Event sources
+
+An event source is refused when it is written, and a message when it is evaluated, with one of these. None is a task failure ([EVENT_SOURCES.md](./EVENT_SOURCES.md)).
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `EVENT_SOURCES_DISABLED` | — | The deployment has event sources off: every write but a delete is refused, and a source reads `DISABLED`. | Set `event_sources.enabled` ([DEPLOY.md](./DEPLOY.md), § 1). |
+| `EVENT_SOURCES_REQUIRE_AUTHENTICATION` | — | Callers are not authenticated and the operator has not accepted that for the event-source API; reads are refused too. A source written under `event_sources.allow_asserted` reads `DISABLED` with it, since no instance runs until authentication is enforced. | Enforce authentication; `event_sources.allow_asserted` lets sources be written, read and evaluated meanwhile. |
+| `EVENT_SOURCES_REQUIRE_VERSIONING` | — | The deployment runs with no build id, so it is not a release, which event sources need. | Set `ORK_BUILD_ID` on `ork` and `orker` and promote the release ([DEPLOY.md](./DEPLOY.md#3-rolling-a-release-forward), "Rolling a release forward"). |
+| `EVENT_SOURCE_INVALID` | — | The source breaks a bound or a rule of its own document, before anything else is read; names the field. | Fix the field. |
+| `EVENT_SOURCE_LIMIT` | — | A quota or a sum is full: sources per deployment or namespace, instances, or a namespace's rate; the refusal carries the arithmetic. | Delete a source, lower a number, or raise the setting. |
+| `EVENT_SOURCE_MAPPING_INVALID` | — | `input`, `map` or `artifacts` disagrees with the Orkflow's declared inputs; names the field. | Fix the mapping or the Orkflow. |
+| `EVENT_SOURCE_CONFIG_INVALID` | — | `with:` disagrees with the image's declared interface, or `concurrency` is over the image's maximum; names the key. | Fix `with:`. |
+| `EVENT_SOURCE_DELIVERY_MISMATCH` | — | The source's `delivery:` is not its image's declared class. | Say the image's class, or choose another image. |
+| `EVENT_SOURCE_IMAGE_UNSUPPORTED` | — | The image is not a source image this release hosts (`SERVICE_CONTRACT_UNSUPPORTED`, `SERVICE_PROFILE_UNSUPPORTED`), declares its interface wrongly, or `uses:` names a first-party image, none of which ships with this release. | Name an image of the event-source profile by its registry reference. |
+| `SERVICE_CONTRACT_UNSUPPORTED` | — | Carried by `EVENT_SOURCE_IMAGE_UNSUPPORTED`: the image implements no Orker Service Contract version this release hosts, or carries no `org.orkstack.service.contract` label. | Use an image built for contract version 1 ([EVENT_SOURCES.md](./EVENT_SOURCES.md#the-image), "The image"). |
+| `SERVICE_PROFILE_UNSUPPORTED` | — | Carried by `EVENT_SOURCE_IMAGE_UNSUPPORTED`: the image's `org.orkstack.service.profile` label is not `event-source` at a version this release hosts. | Use an image of the event-source profile, version 1. |
+| `EVENT_SOURCE_ORKFLOW_UNSUPPORTED` | — | The Orkflow declares something a run started by a message cannot be given: an await with `callback: true`, or tasks that ask for identities or credentials. | Bind another Orkflow. |
+| `EVENT_SOURCE_IDENTITY_UNSUPPORTED` | — | The source declares its own identities, credentials or a secret through a grant, which need task identity. | Use `env:` or `file:` secrets the namespace allows. |
+| `EVENT_SOURCE_NAMESPACE_MISMATCH` | — | An update's source names another Orkflow than the stored one, or `orkctl`'s `-n` names another namespace than its file; both are named and nothing was written. | Send it in the source's own namespace, or correct the file. |
+| `EVENT_SOURCE_ID_MISMATCH` | — | A delete named a source by an id the name no longer holds; the text names the id it holds now, and nothing was deleted. | Look at the source the name holds now (`orkctl event-source get`). |
+| `EVENT_SOURCE_DOCUMENT_UNREADABLE` | — | A stored source was written by a release this engine cannot read; nothing of it is answered. | Ask an engine of the release that wrote it. |
+| `EVENT_SOURCE_PAUSED` | — | The state of a source an operator paused. | `orkctl event-source resume`. |
+| `EVENT_SOURCE_NOT_CONVERGED` | — | The state of a stored source that runs nothing; in this release no source runs. | Nothing. |
+| `MESSAGE_TOO_LARGE`, `MESSAGE_ATTRIBUTES_TOO_LARGE`, `MESSAGE_IDENTITY_INVALID`, `MESSAGE_TEXT_INVALID` | — | A message over one of its bounds: the body, the attributes (64 KiB), the identity (256 bytes, no control character), a subject or an attribute name. | Fix the producer, or raise the source's `max_bytes`. |
+| `MESSAGE_NOT_JSON`, `MESSAGE_JSON_TOO_DEEP`, `MESSAGE_JSON_TOO_LARGE` | — | A `format: json` body is not one strict JSON value (with its byte offset, never its bytes), nests deeper than 64 levels, or holds more than 1 MiB of key names open at once. | Fix the producer, or read the body as `bytes`. |
+| `MESSAGE_FIELD_MISSING`, `MESSAGE_FIELD_TYPE`, `MESSAGE_INPUT_TOO_LARGE` | — | A selector for a required input selected nothing, a selected value is not of the input's declared type, or a mapped value (4 KiB) or the mapped input is over its bound. | Fix the producer or the mapping. |
+| `MESSAGE_NOT_MATCHED` | — | A test of `match:` did not hold; names the first. | Nothing, if the filter is meant. |
+| `MESSAGE_UNPROCESSABLE` | — | The source's selectors could not be read. | Fix the selector it names. |
+
 ## Cache memo misses
 
 A cached task whose memo cannot be used runs. Each reason below is a miss, not a failure, so the category is a dash. The task runs as though it had no memo ([DSL.md](./DSL.md#miss-reasons), "Miss reasons"; [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#541-memoized-completion-cache), "§5.4.1"). The memo step fails an attempt only when its own commit write fails, with `COMMIT_WRITE_FAILED`, listed above.

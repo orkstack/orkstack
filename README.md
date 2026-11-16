@@ -263,7 +263,8 @@ reference.
   [Activity images](./docs/ACTIVITY_IMAGES.md)
 - **Starting runs:** [Triggers](./docs/ORKFLOW_TRIGGERS.md) ·
   [Schedules](./docs/ORKFLOW_SCHEDULES.md) ·
-  [Automation documents](./docs/AUTOMATION.md) · [Webhooks](./docs/WEBHOOKS.md)
+  [Automation documents](./docs/AUTOMATION.md) · [Webhooks](./docs/WEBHOOKS.md) ·
+  [Event sources](./docs/EVENT_SOURCES.md)
 - **Operating:** [Deployment](./docs/DEPLOY.md) ·
   [Production checklist](./docs/PRODUCTION_CHECKLIST.md) ·
   [Security model](./docs/SECURITY_MODEL.md) ·

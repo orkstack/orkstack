@@ -781,6 +781,18 @@ func (s *Service) DeleteNamespace(
 			"namespace %q still holds %d orkflow(s) (%s); delete them first",
 			name, len(names), strings.Join(names, ", ")))
 	}
+	// An event source outlives the Orkflow it binds, so a namespace with no
+	// Orkflow can still hold one: it is refused until the source is deleted.
+	if s.eventSources != nil {
+		holds, err := s.eventSources.NamespaceHolds(ctx, name)
+		if err != nil {
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("does namespace %q hold an event source: %w", name, err))
+		}
+		if holds {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+				"namespace %q still holds an event source; delete it first (orkctl event-source list -n %s)", name, name))
+		}
+	}
 	if err := registry.Delete(ctx, name); err != nil {
 		return nil, namespaceStoreError(err, "delete namespace %q", name)
 	}

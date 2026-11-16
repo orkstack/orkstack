@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"connectrpc.com/connect"
@@ -15,6 +16,7 @@ import (
 	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 )
 
 // The permission of every RPC (docs/ACCESS.md, "Every RPC and route"). Each
@@ -363,6 +365,73 @@ var scheduleNamed = resolver{
 	},
 }
 
+// eventSourceNamed is the stored source a request names: its Orkflow.
+var eventSourceNamed = resolver{
+	shallow: inNamespace("namespace").shallow,
+	deep: func(ctx context.Context, s *Service, msg proto.Message) (authz.Resource, error) {
+		return s.storedSourceResource(ctx, strField(msg, "namespace"), strField(msg, "name"))
+	},
+}
+
+// storedSourceResource is a stored source's Orkflow; a source that is not
+// there is decided at its namespace, and its handler answers it.
+func (s *Service) storedSourceResource(ctx context.Context, namespace, name string) (authz.Resource, error) {
+	ns, err := namespaceOf(namespace)
+	if err != nil || s.eventSources == nil || !eventsources.ValidName(name) {
+		// A name that names no source is decided at its namespace; the
+		// handler refuses it as a bad request.
+		return authz.Resource{Namespace: ns}, err
+	}
+	src, err := s.eventSources.Get(ctx, ns, name)
+	if err != nil {
+		var unreadable *eventsources.UnreadableError
+		if errors.Is(err, eventsources.ErrNotFound) || errors.As(err, &unreadable) {
+			return authz.Resource{Namespace: ns}, nil
+		}
+		return authz.Resource{}, connect.NewError(connect.CodeUnavailable, err)
+	}
+	return authz.Resource{Namespace: ns, Orkflow: src.GetOrkflowName()}, nil
+}
+
+// eventSourceDocument is the Orkflow a create's or an update's source binds,
+// in the namespace the source names: the document decides, never a field
+// beside it.
+var eventSourceDocument = resolver{
+	shallow: func(msg proto.Message) (authz.Resource, error) {
+		src := msgField(msg, "event_source")
+		ns, err := namespaceOf(strField(src, "namespace"))
+		if err != nil {
+			return authz.Resource{}, err
+		}
+		return authz.Resource{Namespace: ns, Orkflow: strField(src, "orkflow_name")}, nil
+	},
+}
+
+// hasCandidate reports an evaluation of a candidate source.
+func hasCandidate(msg proto.Message) bool { return msgField(msg, "candidate") != nil }
+
+// eventSourceEvaluated is a stored source's Orkflow, in the request's
+// namespace, or a candidate's, in the candidate's own.
+var eventSourceEvaluated = resolver{
+	shallow: func(msg proto.Message) (authz.Resource, error) {
+		if candidate := msgField(msg, "candidate"); candidate != nil {
+			ns, err := namespaceOf(strField(candidate, "namespace"))
+			if err != nil {
+				return authz.Resource{}, err
+			}
+			return authz.Resource{Namespace: ns, Orkflow: strField(candidate, "orkflow_name")}, nil
+		}
+		return inNamespace("namespace").shallow(msg)
+	},
+	deep: func(ctx context.Context, s *Service, msg proto.Message) (authz.Resource, error) {
+		if candidate := msgField(msg, "candidate"); candidate != nil {
+			ns, err := namespaceOf(strField(candidate, "namespace"))
+			return authz.Resource{Namespace: ns, Orkflow: strField(candidate, "orkflow_name")}, err
+		}
+		return s.storedSourceResource(ctx, strField(msg, "namespace"), strField(msg, "name"))
+	},
+}
+
 // triggerByID is the trigger a request names: its Orkflow, when it is in
 // the request's namespace.
 var triggerByID = resolver{
@@ -652,6 +721,24 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.ScheduleServiceResumeScheduleProcedure:   {res: scheduleNamed, checks: perms(authz.PermScheduleOperate)},
 	orkstackv1connect.ScheduleServiceFireScheduleProcedure:     {res: scheduleNamed, checks: perms(authz.PermScheduleOperate, authz.PermRunSubmit)},
 	orkstackv1connect.ScheduleServiceBackfillScheduleProcedure: {res: scheduleNamed, checks: perms(authz.PermScheduleOperate, authz.PermRunSubmit)},
+
+	// EventSourceService: every request is decided in the namespace the
+	// source names (a create, an update, a candidate) or the request names
+	// (a stored source), at the Orkflow the source binds.
+	orkstackv1connect.EventSourceServiceListEventSourcesProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermEventSourceRead),
+		list: listOf("event_sources", rowOwnNamespace("namespace", "orkflow_name"))},
+	orkstackv1connect.EventSourceServiceGetEventSourceProcedure:    {res: eventSourceNamed, checks: perms(authz.PermEventSourceRead)},
+	orkstackv1connect.EventSourceServiceCreateEventSourceProcedure: {res: eventSourceDocument, checks: perms(authz.PermEventSourceWrite, authz.PermRunSubmit)},
+	orkstackv1connect.EventSourceServiceUpdateEventSourceProcedure: {res: eventSourceDocument, checks: perms(authz.PermEventSourceWrite, authz.PermRunSubmit)},
+	orkstackv1connect.EventSourceServiceDeleteEventSourceProcedure: {res: eventSourceNamed, checks: perms(authz.PermEventSourceWrite)},
+	orkstackv1connect.EventSourceServicePauseEventSourceProcedure:  {res: eventSourceNamed, checks: perms(authz.PermEventSourceOperate)},
+	orkstackv1connect.EventSourceServiceResumeEventSourceProcedure: {res: eventSourceNamed, checks: perms(authz.PermEventSourceOperate, authz.PermRunSubmit)},
+	// A candidate's evaluation reads its Orkflow's declared inputs, so it
+	// also needs orkflow.read there; an inspect makes the engine fetch from
+	// a registry with its own credentials, an authoring act.
+	orkstackv1connect.EventSourceServiceEvaluateEventSourceMessageProcedure: {res: eventSourceEvaluated, checks: []check{
+		{perm: authz.PermEventSourceRead}, {perm: authz.PermOrkflowRead, when: hasCandidate}}},
+	orkstackv1connect.EventSourceServiceInspectSourceImageProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermEventSourceWrite)},
 
 	// TriggerService
 	orkstackv1connect.TriggerServiceListTriggersProcedure: {res: inNamespace("namespace"), checks: perms(authz.PermTriggerRead),

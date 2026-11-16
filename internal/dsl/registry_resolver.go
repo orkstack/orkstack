@@ -147,7 +147,14 @@ type Resolution struct {
 	Docs *orkstackv1.ActivityDocs
 	// DocsError is ActivityInfo.docs_error, through SafeReason.
 	DocsError string
+	// ServiceLabels are the image's org.orkstack.service.* labels, as
+	// written, for a service image's readers (pkg/eventsources): nil when
+	// the image carries none or its config could not be read.
+	ServiceLabels map[string]string
 }
+
+// serviceLabelPrefix begins every label of the Orker Service Contract.
+const serviceLabelPrefix = "org.orkstack.service."
 
 // Resolutions is ResolveOrkflow's answer, keyed by the task's `uses:` —
 // the same key ResolveOrkflow already de-duplicates the manifest GET on.
@@ -331,6 +338,14 @@ func (r *Resolver) readInterface(ctx context.Context, ref Reference, body []byte
 			Detail: "config blob is not valid JSON", Err: err}
 	}
 	labelReaders{iface: ParseInterfaceLabel, icon: ParseIconLabel, docs: ParseDocsLabel}.read(labels, res)
+	for key, value := range labels {
+		if strings.HasPrefix(key, serviceLabelPrefix) {
+			if res.ServiceLabels == nil {
+				res.ServiceLabels = map[string]string{}
+			}
+			res.ServiceLabels[key] = value
+		}
+	}
 	return nil
 }
 

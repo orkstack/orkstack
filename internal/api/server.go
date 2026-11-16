@@ -192,6 +192,12 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 	triggerPath, triggerHandler := orkstackv1connect.NewTriggerServiceHandler(svc, handlerOptions...)
 	mux.Handle(triggerPath, triggerHandler)
 
+	// EventSourceService stores and evaluates event sources: the fourth run
+	// starter, bound to one Orkflow, whose messages come from a broker
+	// through a source image (docs/EVENT_SOURCES.md).
+	eventSourcePath, eventSourceHandler := orkstackv1connect.NewEventSourceServiceHandler(svc, handlerOptions...)
+	mux.Handle(eventSourcePath, eventSourceHandler)
+
 	// AutomationService plans and exports a namespace's automation document.
 	// It writes nothing: an apply is the client sending the plan's requests
 	// to the services above.

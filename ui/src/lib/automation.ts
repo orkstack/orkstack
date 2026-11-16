@@ -46,6 +46,8 @@ export function automationSectionKey(kind: AutomationObjectKind): string {
 			return 'triggers';
 		case AutomationObjectKind.WEBHOOK:
 			return 'webhooks';
+		case AutomationObjectKind.EVENT_SOURCE:
+			return 'event_sources';
 	}
 	return '';
 }

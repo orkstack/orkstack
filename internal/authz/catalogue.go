@@ -82,6 +82,12 @@ const (
 	PermTriggerRead     Permission = "trigger.read"
 	PermTriggerWrite    Permission = "trigger.write"
 
+	PermEventSourceRead     Permission = "eventsource.read"
+	PermEventSourceWrite    Permission = "eventsource.write"
+	PermEventSourceOperate  Permission = "eventsource.operate"
+	PermEventSourceLogsRead Permission = "eventsource.logs.read"
+	PermEventSourceHost     Permission = "eventsource.host"
+
 	PermWebhookRead      Permission = "webhook.read"
 	PermWebhookWrite     Permission = "webhook.write"
 	PermWebhookRedeliver Permission = "webhook.redeliver"
@@ -158,6 +164,12 @@ var catalogue = map[Permission]entry{
 	PermScheduleOperate: {kindO, "pause, resume, fire and backfill schedules"},
 	PermTriggerRead:     {kindO, "read triggers"},
 	PermTriggerWrite:    {kindO, "create, change and delete triggers, with run.submit"},
+
+	PermEventSourceRead:     {kindO, "read event sources and evaluate a message against one; a candidate source with orkflow.read"},
+	PermEventSourceWrite:    {kindO, "create, change and delete event sources, with run.submit, and read what a source image declares"},
+	PermEventSourceOperate:  {kindO, "pause, resume and restart event sources; a resume with run.submit"},
+	PermEventSourceLogsRead: {kindO, "read an event source's instance logs"},
+	PermEventSourceHost:     {kindP, "host an event source's instances at a pool, for an instance the caller's Orker holds"},
 
 	PermWebhookRead:      {kindN, "read webhook subscriptions and their deliveries"},
 	PermWebhookWrite:     {kindN, "register, change and delete webhook subscriptions, with run.read"},
@@ -244,7 +256,7 @@ const (
 
 // orkerPermissions are the ones an Orker holds and no person's built-in role
 // does: admin holds every permission but these.
-var orkerPermissions = []Permission{PermIdentityTokenMint, PermTaskResultCommit, PermPayloadKeyUse}
+var orkerPermissions = []Permission{PermIdentityTokenMint, PermTaskResultCommit, PermPayloadKeyUse, PermEventSourceHost}
 
 var builtInRoles = func() map[string]map[Permission]bool {
 	set := func(perms ...Permission) map[Permission]bool {
@@ -264,19 +276,20 @@ var builtInRoles = func() map[string]map[Permission]bool {
 		}
 		return m
 	}
-	viewer := set(PermOrkflowRead, PermRunRead, PermScheduleRead, PermTriggerRead, PermWebhookRead,
+	viewer := set(PermOrkflowRead, PermRunRead, PermScheduleRead, PermTriggerRead, PermEventSourceRead, PermWebhookRead,
 		PermStatsRead, PermNamespaceRead, PermOrkerRead, PermSystemRead)
 	operator := with(viewer, PermRunSubmit, PermRunCancel, PermRunAwaitResolve, PermRunLogsRead,
-		PermRunArtifactsRead, PermScheduleOperate, PermWebhookRedeliver, PermRunResume, PermRunPause)
+		PermRunArtifactsRead, PermScheduleOperate, PermWebhookRedeliver, PermRunResume, PermRunPause,
+		PermEventSourceOperate, PermEventSourceLogsRead)
 	developer := with(operator, PermOrkflowValidate, PermOrkflowWrite, PermOrkflowPromote,
-		PermScheduleWrite, PermTriggerWrite, PermCachePurge, PermAutomationPlan, PermRunEvidenceExport)
+		PermScheduleWrite, PermTriggerWrite, PermEventSourceWrite, PermCachePurge, PermAutomationPlan, PermRunEvidenceExport)
 	namespaceAdmin := with(developer, PermOrkflowDelete, PermWebhookWrite, PermNamespaceUpdate,
 		PermAuditRead, PermAccessBind, PermRunCancelForce, PermRunCancelBulk, PermConcurrencyReset,
 		PermPayloadKeysManage)
 	auditor := set(PermRunEvidenceExport)
 	admin := set()
 	for name := range catalogue {
-		if strings.HasSuffix(string(name), ".read") && name != PermRunLogsRead && name != PermRunArtifactsRead {
+		if strings.HasSuffix(string(name), ".read") && name != PermRunLogsRead && name != PermRunArtifactsRead && name != PermEventSourceLogsRead {
 			auditor[name] = true
 		}
 		if !slices.Contains(orkerPermissions, name) {

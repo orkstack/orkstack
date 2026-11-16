@@ -22,7 +22,7 @@ var reasonName = regexp.MustCompile(`^(Reason[A-Za-z0-9_]*|[A-Za-z0-9_]*Code|Adm
 // reasonPackages are the packages whose reason constants reach a client.
 var reasonPackages = []string{
 	"internal/task", "internal/orker", "internal/engine", "internal/dsl",
-	"internal/evidence", "pkg/webhooks", "internal/authz",
+	"internal/evidence", "pkg/webhooks", "internal/authz", "pkg/eventsources",
 }
 
 type reasonConst struct {

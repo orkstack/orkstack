@@ -24,6 +24,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/typeid"
 	"github.com/orkstack/orkstack/pkg/artifacts"
+	"github.com/orkstack/orkstack/pkg/eventsources"
 	"github.com/orkstack/orkstack/pkg/triggers"
 	"github.com/orkstack/orkstack/pkg/webhooks"
 	"go.temporal.io/api/serviceerror"
@@ -150,6 +151,13 @@ type Config struct {
 	// in-process store, which is correct for one process and therefore for
 	// unit tests only — exactly the terms Webhooks above is on.
 	Triggers triggers.Store
+
+	// EventSources is the event-source registry (docs/EVENT_SOURCES.md):
+	// `ork` wires the durable store on the shared backend. Nil refuses every
+	// EventSourceService RPC FailedPrecondition, naming what is missing.
+	EventSources eventsources.Store
+	// EventSourceSettings are the deployment's event_sources.* settings.
+	EventSourceSettings eventsources.Settings
 
 	// Schedules is the schedule seam (schedule.go): engine.TemporalScheduler
 	// in `ork`, so every schedule field is read from and written to the
@@ -508,6 +516,12 @@ type Service struct {
 	idempotency IdempotencyClaimer
 	webhooks    *webhooks.Registry
 	triggers    triggers.Store
+	// eventSources and eventSourceSettings are Config's; evaluations bounds
+	// the evaluations each namespace runs at once on this replica.
+	eventSources        eventsources.Store
+	eventSourceSettings eventsources.Settings
+	evaluations         *namespaceSlots
+	inspections         *namespaceRate
 	// schedules is the cluster's schedule seam; nil answers Unimplemented.
 	schedules ScheduleController
 	// scheduleBindings is cfg.ScheduleBindings.
@@ -642,6 +656,10 @@ func NewService(cfg Config) *Service {
 		onLegacyPending:        cfg.OnLegacyPending,
 		webhooks:               cfg.Webhooks,
 		triggers:               cfg.Triggers,
+		eventSources:           cfg.EventSources,
+		eventSourceSettings:    cfg.EventSourceSettings,
+		evaluations:            newNamespaceSlots(evaluationsPerNamespace),
+		inspections:            newNamespaceRate(inspectsPerMinute),
 		schedules:              cfg.Schedules,
 		scheduleBindings:       cfg.ScheduleBindings,
 		incarnations:           cfg.Incarnations,

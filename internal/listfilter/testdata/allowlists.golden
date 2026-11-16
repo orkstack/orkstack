@@ -32,6 +32,20 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
+== ListEventSources (orkstack.v1.EventSource)
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD          OPERATORS       VALUES
+  id             = != =a,b       text
+  name           = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  orkflow_name   = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  uses           = != =a,b ~ ^   text
+  pool           = != =a,b       a name (a-z, 0-9, -; at most 200 bytes) or empty
+  delivery       = != =a,b       AT_LEAST_ONCE AT_MOST_ONCE
+  paused         =               true false
+  created_at     >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
 == ListNamespaces (orkstack.v1.Namespace)
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD               OPERATORS       VALUES

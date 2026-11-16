@@ -147,6 +147,38 @@ Defined in `proto/orkstack/v1/cache.proto`.
 | `GetCacheStats` | [`GetCacheStatsRequest`](#getcachestatsrequest) | [`GetCacheStatsResponse`](#getcachestatsresponse) | GetCacheStats reports one namespace's memo inventory, as the store lists it now, and how its cached tasks fared over one window of finished runs, derived on read from the run archive. Nothing is counted or stored. |
 | `PurgeCache` | [`PurgeCacheRequest`](#purgecacherequest) | [`PurgeCacheResponse`](#purgecacheresponse) | PurgeCache deletes memos. It never touches a commit, run, attempt, log or artifact. |
 
+### EventSourceService
+
+EventSourceService stores and evaluates event sources: objects that bind
+one Orkflow to one source image, so that each message the image receives
+from its broker starts one run (docs/EVENT_SOURCES.md).
+
+Every RPC is refused EVENT_SOURCES_REQUIRE_AUTHENTICATION unless the
+deployment enforces authentication or its operator set
+event_sources.allow_asserted, and every write is refused
+EVENT_SOURCES_DISABLED while event sources are off and
+EVENT_SOURCES_REQUIRE_VERSIONING on a deployment that is not run as a
+release. In this release no source consumes anything yet: a source can be
+written, read and evaluated.
+
+A request carries a source as a message and has no namespace of its own:
+a create, an update and the evaluation of a candidate act in the
+namespace the source names, empty meaning `default`.
+
+Defined in `proto/orkstack/v1/eventsource_service.proto`.
+
+| Method | Request | Response | Description |
+|---|---|---|---|
+| `CreateEventSource` | [`CreateEventSourceRequest`](#createeventsourcerequest) | [`CreateEventSourceResponse`](#createeventsourceresponse) | CreateEventSource stores a new source, after checking it against its Orkflow's declared inputs, its image's declared interface, the namespace's pools and secrets, and the deployment's quotas. |
+| `GetEventSource` | [`GetEventSourceRequest`](#geteventsourcerequest) | [`GetEventSourceResponse`](#geteventsourceresponse) | GetEventSource returns one source and its status. |
+| `ListEventSources` | [`ListEventSourcesRequest`](#listeventsourcesrequest) | [`ListEventSourcesResponse`](#listeventsourcesresponse) | ListEventSources returns a namespace's sources, by name. |
+| `UpdateEventSource` | [`UpdateEventSourceRequest`](#updateeventsourcerequest) | [`UpdateEventSourceResponse`](#updateeventsourceresponse) | UpdateEventSource replaces every field of a source a user writes, under the etag it read, with the same checks as a create. Its name, its namespace and the Orkflow it binds cannot change. |
+| `PauseEventSource` | [`PauseEventSourceRequest`](#pauseeventsourcerequest) | [`PauseEventSourceResponse`](#pauseeventsourceresponse) | PauseEventSource pauses a source with the operator's reason. |
+| `ResumeEventSource` | [`ResumeEventSourceRequest`](#resumeeventsourcerequest) | [`ResumeEventSourceResponse`](#resumeeventsourceresponse) | ResumeEventSource clears a source's pause, after the checks a create makes other than its quotas. It neither rebinds nor consents. |
+| `DeleteEventSource` | [`DeleteEventSourceRequest`](#deleteeventsourcerequest) | [`DeleteEventSourceResponse`](#deleteeventsourceresponse) | DeleteEventSource deletes a source, named by its name and, from every OrkStack client, its id. |
+| `EvaluateEventSourceMessage` | [`EvaluateEventSourceMessageRequest`](#evaluateeventsourcemessagerequest) | [`EvaluateEventSourceMessageResponse`](#evaluateeventsourcemessageresponse) | EvaluateEventSourceMessage runs a stored or candidate source's bounds, parse, filter and mapping over a message given in the request, and says what would happen. It starts nothing and writes nothing. |
+| `InspectSourceImage` | [`InspectSourceImageRequest`](#inspectsourceimagerequest) | [`InspectSourceImageResponse`](#inspectsourceimageresponse) | InspectSourceImage reads what one image declares, or lists the first-party source images this release ships. |
+
 ### IdentityService
 
 IdentityService is the task identity issuer (docs/TASK_IDENTITY.md): the
@@ -615,6 +647,15 @@ ListTaskAttempts answers and never stored.
 | `in_progress` | `bool` | in_progress marks the newest attempt of a task that has not finished: it has no record yet because a record is written when an attempt ENDS, and calling it unreported would say its Orker crashed. phases_reason is then unset. |
 | `phases_reason` | [`TimingReason`](#timingreason) | phases_reason is set when this attempt's phases cannot be listed: NO_RECORD (UNREPORTED), RECLAIMED (UNREPORTED, and the task's records were reclaimed), NO_PHASES (a record with none). Each PhaseSpan otherwise carries its own duration. |
 
+### AttributeValues
+
+AttributeValues is one attribute's values, in order; a selector reads the
+first.
+
+| Field | Type | Description |
+|---|---|---|
+| `values` | repeated `string` |  |
+
 ### AuditRecord
 
 AuditRecord is one control-plane WRITE, recorded immutably at the moment
@@ -682,9 +723,9 @@ and what an apply would do to it.
 | `register_webhook` | [`RegisterWebhookRequest`](#registerwebhookrequest) | One of `request`. |
 | `update_webhook` | [`UpdateWebhookRequest`](#updatewebhookrequest) | One of `request`. |
 | `delete_webhook` | [`DeleteWebhookRequest`](#deletewebhookrequest) | One of `request`. |
-| `create_event_source` | [`CreateEventSourceRequest`](#createeventsourcerequest) | One of `request`. create_event_source is set from E90; unset until it lands (v0.4.0 proto batch). |
-| `update_event_source` | [`UpdateEventSourceRequest`](#updateeventsourcerequest) | One of `request`. update_event_source is set from E90; unset until it lands (v0.4.0 proto batch). |
-| `delete_event_source` | [`DeleteEventSourceRequest`](#deleteeventsourcerequest) | One of `request`. delete_event_source is set from E90; unset until it lands (v0.4.0 proto batch). |
+| `create_event_source` | [`CreateEventSourceRequest`](#createeventsourcerequest) | One of `request`. |
+| `update_event_source` | [`UpdateEventSourceRequest`](#updateeventsourcerequest) | One of `request`. |
+| `delete_event_source` | [`DeleteEventSourceRequest`](#deleteeventsourcerequest) | One of `request`. |
 
 ### AwaitCallback
 
@@ -965,10 +1006,17 @@ binder: the digest of what its Orkflow asked for when it was bound.
 
 ### CreateEventSourceRequest
 
-CreateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
-batch).
+| Field | Type | Description |
+|---|---|---|
+| `event_source` | [`EventSource`](#eventsource) | event_source is the source to create; its output-only fields are ignored. |
+| `consent` | `string` | consent is the consent digest ("c1:" and 64 hexadecimal digits) of what the Orkflow's resolved version asks for, when it asks for any. |
 
-No fields.
+### CreateEventSourceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `event_source` | [`EventSource`](#eventsource) |  |
+| `save_warnings` | repeated `string` | save_warnings are the save's warnings, which refused nothing. |
 
 ### CreateNamespaceRequest
 
@@ -1071,8 +1119,13 @@ No fields.
 
 ### DeleteEventSourceRequest
 
-DeleteEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
-batch).
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `name` | `string` |  |
+| `id` | `string` | id is the id of the source the caller means. A name that now holds a source of another id is refused EVENT_SOURCE_ID_MISMATCH and nothing is deleted. Every OrkStack client sends it; empty deletes whatever the name holds. |
+
+### DeleteEventSourceResponse
 
 No fields.
 
@@ -1386,6 +1439,28 @@ Error captures a structured failure for a run or task run.
 | `category` | [`FailureCategory`](#failurecategory) | category is the AGENTS.md §4 failure category this error belongs to. It is recorded in history, so it is part of the replay-visible contract and not merely display data. |
 | `task_code` | `string` | task_code is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
 
+### EvaluateEventSourceMessageRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | One of `source`. |
+| `candidate` | [`EventSource`](#eventsource) | One of `source`. |
+| `namespace` | `string` | namespace is where a stored source is read; a candidate acts in its own namespace. |
+| `body` | `bytes` | body is the message's payload. |
+| `metadata` | [`MessageMetadata`](#messagemetadata) | metadata is what the broker says about the message. |
+
+### EvaluateEventSourceMessageResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `outcome` | [`EvaluationOutcome`](#evaluationoutcome) |  |
+| `reason` | `string` | reason is a MESSAGE_* reason for a rejection, MESSAGE_NOT_MATCHED for a message filtered out. |
+| `detail` | `string` | detail is OrkStack's sentence: the test, the input or the byte offset it concerns. It never quotes the body. |
+| `tests` | repeated [`MatchResult`](#matchresult) | tests are the filter's tests, each with its answer, in order; empty when the message was rejected before any test. |
+| `input` | [`Payload`](#payload) | input is the run's input the message would start it with, for an accepted message. |
+| `artifacts` | repeated `string` | artifacts are the artifact inputs the message's parts would be bound to. |
+| `orkflow_version` | `string` | orkflow_version is the Orkflow version the message was judged against. |
+
 ### Event
 
 Event is a single realtime update for a run, delivered over the
@@ -1406,6 +1481,95 @@ server-streaming RPC and the WebSocket bridge.
 | `interruption` | [`TaskInterruption`](#taskinterruption) | interruption is set from E92; unset until it lands (v0.4.0 proto batch). |
 | `request_id` | `string` | request_id is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `pause_transition` | [`PauseTransition`](#pausetransition) | pause_transition is set from E103; unset until it lands (v0.4.0 proto batch). |
+
+### EventSource
+
+EventSource is a namespace's object that binds one Orkflow to one source
+image and its settings: each message the image receives from its broker
+starts one run of that Orkflow (docs/EVENT_SOURCES.md). Its name and the
+Orkflow it binds are fixed when it is created.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | id is evs- and 16 hexadecimal digits; opaque. A source created again under a name it had before gets a new one. |
+| `namespace` | `string` | namespace is where the source lives and acts; empty means `default`. |
+| `name` | `string` | name is the source's slug, unique in its namespace and fixed at creation. |
+| `orkflow_name` | `string` | orkflow_name is the Orkflow of this namespace each message starts; fixed at creation. |
+| `orkflow_version` | `string` | orkflow_version pins a version; empty means the current version, read for each message. |
+| `description` | `string` | description is an operator's label, at most 256 bytes. |
+| `uses` | `string` | uses is the source image as written: a first-party name or a registry reference. |
+| `image` | `string` | image is output only: the image `uses` runs now, by digest. A registry reference is resolved when the source is written and again only when its text changes. |
+| `with` | `google.protobuf.Struct` | with is the image's settings, checked against its declared interface. |
+| `pool` | `string` | pool is the pool whose source hosts run the instances; empty means the namespace's default pool. |
+| `instances` | `int32` | instances is how many containers of the source run, 1 to the deployment's event_sources.max_instances; 0 means 1. |
+| `resources` | [`ResourceRequest`](#resourcerequest) | resources is what each instance asks for. |
+| `delivery` | [`DeliveryClass`](#deliveryclass) | delivery is the source's delivery class, which must equal its image's. Unset means at-least-once. |
+| `concurrency` | `int32` | concurrency is how many messages one instance handles at once, 1 to 64 and at most the image's declared maximum; 0 means 1. |
+| `format` | [`MessageFormat`](#messageformat) | format is how the body is read: as opaque bytes, or as one strict JSON value. Unset means bytes. |
+| `max_bytes` | `int64` | max_bytes is the largest body accepted, at most the deployment's event_sources.max_message_bytes; 0 means that bound. |
+| `match` | repeated [`MatchRule`](#matchrule) | match is the filter: every test must hold for a message to start a run. |
+| `input` | [`Payload`](#payload) | input is constant values for the Orkflow's inputs. |
+| `map` | map&lt;`string`, [`MapRule`](#maprule)&gt; | map fills an Orkflow input from each message, one selector per input. |
+| `artifacts` | map&lt;`string`, [`MessagePart`](#messagepart)&gt; | artifacts binds a part of each message to an artifact input of the Orkflow. |
+| `rate` | `int32` | rate is the most messages a second one instance starts runs for, 1 to the deployment's event_sources.max_rate; 0 means 10. |
+| `reject_breaker` | optional `int32` | reject_breaker is how many distinct new messages rejected in a row on one instance pause the source. Unset means the deployment's; 0 turns it off. |
+| `paused` | `bool` | paused is output only: whether `pause` is set. |
+| `pause` | [`EventSourcePause`](#eventsourcepause) | pause is output only, set by PauseEventSource and cleared by ResumeEventSource: a write that carries it is ignored. |
+| `created_at` | `google.protobuf.Timestamp` | created_at and updated_at are output only. |
+| `updated_at` | `google.protobuf.Timestamp` |  |
+| `etag` | `string` | etag is the version of the source a read returned. An update sends it back, and is refused if the source changed since. |
+| `created_by` | `string` | created_by and updated_by are output only: the principal of the request, as recorded. |
+| `updated_by` | `string` |  |
+| `bound_by` | `string` | bound_by is output only: the binder, the principal who created the source, last changed what it submits (orkflow_version, input, map, artifacts), or rebound it. |
+| `bound_by_verified` | `bool` | bound_by_verified is output only: whether the binder was a verified principal rather than an asserted one. |
+| `consent_stale` | `bool` | consent_stale is output only: what the Orkflow asks for now differs from what was consented to. |
+| `asks_for` | [`AsksFor`](#asksfor) | asks_for is output only: what the Orkflow asks for now, as a consent digest. |
+| `consented` | [`ConsentView`](#consentview) | consented is output only: the consent recorded with the binder. |
+| `secrets` | repeated [`SecretRef`](#secretref) | secrets are files the instance's container receives, as a task's. |
+| `identities` | repeated [`IdentityRef`](#identityref) | identities and credentials are as a task's; refused until task identity is available. |
+| `credentials` | repeated [`CredentialRef`](#credentialref) |  |
+| `env` | map&lt;`string`, `string`&gt; | env is environment for the container; configuration, never a secret. |
+| `service_revision` | `int64` | service_revision is output only: it rises when what the source's containers are or hold changes (uses, with, env, secrets, identities, credentials, resources, pool, concurrency, delivery), so its containers are replaced. |
+| `judging_revision` | `int64` | judging_revision is output only: it rises when how a message is judged changes (version, format, max_bytes, match, input, map, artifacts, rate, reject_breaker), which restarts nothing. |
+
+### EventSourceDeclaration
+
+EventSourceDeclaration is what a source image declares about how it
+delivers.
+
+| Field | Type | Description |
+|---|---|---|
+| `delivery` | [`DeliveryClass`](#deliveryclass) | delivery is the image's class; unset means at-least-once. |
+| `max_concurrency` | `int32` | max_concurrency is the most messages one container handles at once; 0 means 1. |
+| `ordering` | `bool` | ordering says messages can carry a group. |
+| `dead_letter` | optional `bool` | dead_letter says the broker stops delivering after a maximum. Unset means true for at-least-once. |
+| `extends_leases` | optional `bool` | extends_leases says the image keeps a message leased until its verdict. Unset means true for at-least-once. |
+
+### EventSourcePause
+
+EventSourcePause is why a source is paused. While it is set no instance
+of the source runs.
+
+| Field | Type | Description |
+|---|---|---|
+| `cause` | [`PauseCause`](#pausecause) |  |
+| `code` | `string` | code is empty for an operator's pause, otherwise the reason OrkStack paused the source. |
+| `refusal_code` | `string` | refusal_code is the refusal behind code, from a closed set. |
+| `reason` | `string` | reason is the operator's words, or the code's one fixed sentence; at most 1 KiB. |
+| `since` | `google.protobuf.Timestamp` |  |
+| `principal` | `string` | principal is who paused it, as recorded; empty for OrkStack's own. |
+
+### EventSourceStatus
+
+EventSourceStatus is a source's state, derived on read and never stored.
+
+| Field | Type | Description |
+|---|---|---|
+| `state` | [`EventSourceState`](#eventsourcestate) |  |
+| `reason` | `string` | reason is a reason code when the state is not ACTIVE. |
+| `message` | `string` | message is OrkStack's sentence for it. |
+| `warnings` | repeated `string` | warnings are reason codes that do not stop the source. |
+| `delivery` | [`DeliveryClass`](#deliveryclass) | delivery is the source's delivery class. |
 
 ### EvidenceChunk
 
@@ -1684,6 +1848,20 @@ No fields.
 | Field | Type | Description |
 |---|---|---|
 | `delivery` | [`Delivery`](#delivery) |  |
+
+### GetEventSourceRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | namespace is where the source lives; empty means `default`. |
+| `name` | `string` |  |
+
+### GetEventSourceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `event_source` | [`EventSource`](#eventsource) |  |
+| `status` | [`EventSourceStatus`](#eventsourcestatus) |  |
 
 ### GetFailureBreakdownRequest
 
@@ -2063,6 +2241,19 @@ No fields.
 | `attempts` | repeated [`LiveAttempt`](#liveattempt) | attempts lists every pending ExecuteTask attempt of the run, in Run.task_runs order, one per task. Empty for a run with nothing pending: between two tasks, waiting on nothing, or finished. |
 | `computed_at` | `google.protobuf.Timestamp` | computed_at is the engine's clock at the time of the answer; every age a client prints is measured against it, never against the browser's clock. |
 
+### InspectSourceImageRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | namespace is the namespace asking; its image policy applies. |
+| `reference` | `string` | reference is a first-party name or a registry reference; empty lists the first-party source images. |
+
+### InspectSourceImageResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `images` | repeated [`SourceImage`](#sourceimage) |  |
+
 ### InterfaceFinding
 
 InterfaceFinding is one statement about one declared input, one declared
@@ -2160,6 +2351,19 @@ end). A window whose end is not after its start is INVALID_ARGUMENT.
 | `since` | `google.protobuf.Timestamp` | since and until are the window the answer covers, resolved, so a client prints what "the last week" or "since the run started" meant. |
 | `until` | `google.protobuf.Timestamp` |  |
 | `since_is_run_start` | `bool` | since_is_run_start is true when since is the created_at of the run one run_id equality filter names, because no created_at lower bound was given and the engine could read the run. The engine says so rather than leaving a client to infer it from the window's width. A page token carries it, so every page of a listing answers the same. |
+
+### ListEventSourcesRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | namespace is the namespace listed; empty means `default`. |
+| `filters` | repeated [`FieldFilter`](#fieldfilter) |  |
+
+### ListEventSourcesResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `event_sources` | repeated [`EventSource`](#eventsource) |  |
 
 ### ListNamespacesRequest
 
@@ -2489,12 +2693,61 @@ No fields.
 | `previous_mode` | `string` |  |
 | `mode` | `string` |  |
 
+### MapRule
+
+MapRule is one selector filling one Orkflow input from a message:
+exactly one of pointer, attribute and field.
+
+| Field | Type | Description |
+|---|---|---|
+| `pointer` | `string` | pointer selects any JSON value of the body by RFC 6901 JSON Pointer, copied as it is; only for a source of format JSON. |
+| `attribute` | `string` | attribute selects the first value of a header or message attribute, as a string. |
+| `field` | [`MessageField`](#messagefield) | field selects a fact the broker supplies, as a string. |
+
+### MatchResult
+
+MatchResult is one test of a source's filter, as an evaluation answered
+it.
+
+| Field | Type | Description |
+|---|---|---|
+| `index` | `int32` | index is the test's position in `match`. |
+| `selector` | `string` | selector names what the test read: attribute:NAME, pointer:/PATH or field:subject. |
+| `held` | `bool` | held is whether the test held. |
+| `selected` | `string` | selected is the value the selector selected, as JSON text; empty when it selected nothing. |
+
+### MatchRule
+
+MatchRule is one test of a source's filter: exactly one selector and
+exactly one test.
+
+| Field | Type | Description |
+|---|---|---|
+| `attribute` | `string` | attribute selects the first value of a header or message attribute. |
+| `pointer` | `string` | pointer selects a value of the body by RFC 6901 JSON Pointer; only for a source of format JSON. |
+| `field` | [`MessageField`](#messagefield) | field selects a fact the broker supplies; SUBJECT is the one field a test may read. |
+| `equals` | `google.protobuf.Value` | equals holds when the selected value is this scalar: the same JSON type, and for a number the same mathematical value. |
+| `in` | repeated `google.protobuf.Value` | in holds when the selected value equals one of these scalars, at most 32. |
+| `exists` | optional `bool` | exists holds when the selector does (true) or does not (false) select a value. |
+
 ### MeasuredUsage
 
 MeasuredUsage is E94's; it is empty until E94 lands (v0.4.0 proto
 batch).
 
 No fields.
+
+### MessageMetadata
+
+MessageMetadata is what a broker says about a message, for an evaluation.
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | id is the message's identity: at most 256 bytes, no control character. |
+| `subject` | `string` | subject is the message's subject; at most 1 KiB. |
+| `published_at` | `google.protobuf.Timestamp` |  |
+| `group` | `string` | group is the message's ordering group, when its broker has one. |
+| `attributes` | map&lt;`string`, [`AttributeValues`](#attributevalues)&gt; | attributes are the message's headers or attributes, each with its values in order. |
 
 ### MetadataProbe
 
@@ -2775,6 +3028,21 @@ OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
 batch).
 
 No fields.
+
+### PauseEventSourceRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `name` | `string` |  |
+| `reason` | `string` | reason is the operator's words, required, at most 256 bytes. |
+
+### PauseEventSourceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `event_source` | [`EventSource`](#eventsource) |  |
+| `warnings` | repeated `string` | warnings say what pausing this source loses, such as the messages an at-most-once source's broker delivers meanwhile. |
 
 ### PauseScheduleRequest
 
@@ -3242,6 +3510,20 @@ ResourceRequest is what a task asks the Orker for. Orker policy may cap it
 | `memory` | `string` | Kubernetes spelling: "4Gi", "512Mi" |
 | `gpu` | `int32` | gpu is set from E91; unset until it lands (v0.4.0 proto batch). |
 
+### ResumeEventSourceRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `name` | `string` |  |
+
+### ResumeEventSourceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `event_source` | [`EventSource`](#eventsource) |  |
+| `notice` | `string` | notice is set when the resume changed nothing, saying why. |
+
 ### ResumeHint
 
 ResumeHint is E85's; it is empty until E85 lands (v0.4.0 proto
@@ -3622,6 +3904,20 @@ batch).
 
 No fields.
 
+### ServiceInterface
+
+ServiceInterface is what a service image declares: the profile it
+implements, the settings its `with:` reads, and what that profile lets
+it declare. It is the packed value of the org.orkstack.service.interface
+label, authored as `kind: ServiceInterface`.
+
+| Field | Type | Description |
+|---|---|---|
+| `schema_version` | `int32` | schema_version is 1. |
+| `profile` | `string` | profile is the profile the image implements: "event-source". |
+| `with` | map&lt;`string`, [`FieldSchema`](#fieldschema)&gt; | with declares the keys of the image's `with:` block, in the activity interface's grammar. |
+| `event_source` | [`EventSourceDeclaration`](#eventsourcedeclaration) | event_source is what an image of the event-source profile declares. |
+
 ### SetCurrentOrkflowVersionRequest
 
 | Field | Type | Description |
@@ -3737,6 +4033,21 @@ ONLY when set (see Task.pin).
 | Field | Type | Description |
 |---|---|---|
 | `seconds` | `int32` | seconds is how long the task sleeps, from the moment it starts sleeping. Required: 1 to 2592000 (30 days), the bound AwaitSpec.timeout_seconds has, for the same reason. |
+
+### SourceImage
+
+SourceImage is one image a source may name, as InspectSourceImage reads
+it.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the first-party name, when it is one. |
+| `reference` | `string` | reference is the reference that was resolved. |
+| `image` | `string` | image is the reference by digest. |
+| `contract_versions` | repeated `int32` | contract_versions are the Orker Service Contract versions the image implements. |
+| `profile_versions` | repeated `int32` | profile_versions are the event-source profile versions it implements. |
+| `interface` | [`ServiceInterface`](#serviceinterface) | interface is the image's declared interface, when it has one. |
+| `interface_error` | `string` | interface_error says why a declared interface could not be read. |
 
 ### StaleConsent
 
@@ -4165,10 +4476,18 @@ No fields.
 
 ### UpdateEventSourceRequest
 
-UpdateEventSourceRequest is E90's; it is empty until E90 lands (v0.4.0 proto
-batch).
+| Field | Type | Description |
+|---|---|---|
+| `event_source` | [`EventSource`](#eventsource) | event_source is the source as it should be. Its namespace, name and orkflow_name name the stored source and must be its own; its etag is the one a read returned. |
+| `consent` | `string` | consent is as CreateEventSourceRequest.consent. |
+| `rebind` | `bool` | rebind makes the caller the source's binder without changing what it submits. |
 
-No fields.
+### UpdateEventSourceResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `event_source` | [`EventSource`](#eventsource) |  |
+| `save_warnings` | repeated `string` | save_warnings are the save's warnings, which refused nothing. |
 
 ### UpdateImagePolicyRequest
 
@@ -4445,8 +4764,8 @@ performs it. The rest are shown and never executed.
 
 ### AutomationObjectKind
 
-AutomationObjectKind names the four kinds of object a document declares.
-Clients spell them namespace, schedule, trigger, webhook: the value's name
+AutomationObjectKind names the five kinds of object a document declares.
+Clients spell them namespace, schedule, trigger, webhook, event_source: the value's name
 after AUTOMATION_OBJECT_KIND_, lowercased — the same derivation run origin
 kinds use, with the same descriptor-walk test in each client.
 
@@ -4457,6 +4776,7 @@ kinds use, with the same descriptor-walk test in each client.
 | `AUTOMATION_OBJECT_KIND_SCHEDULE` | 2 |  |
 | `AUTOMATION_OBJECT_KIND_TRIGGER` | 3 |  |
 | `AUTOMATION_OBJECT_KIND_WEBHOOK` | 4 |  |
+| `AUTOMATION_OBJECT_KIND_EVENT_SOURCE` | 5 | the `event_sources` section |
 
 ### AwaitResolvedVia
 
@@ -4514,6 +4834,17 @@ CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
 | `CACHE_SCOPE_ORKFLOW` | 1 | Runs of the same Orkflow, in the same namespace. |
 | `CACHE_SCOPE_NAMESPACE` | 2 | Runs of any Orkflow of the same namespace whose task of the same id computes the same key. The Orkflow's name is then not part of the key. |
 
+### DeliveryClass
+
+DeliveryClass is what a source's image promises about a message that
+starts no run.
+
+| Value | Number | Description |
+|---|---|---|
+| `DELIVERY_CLASS_UNSPECIFIED` | 0 |  |
+| `DELIVERY_CLASS_AT_LEAST_ONCE` | 1 | AT_LEAST_ONCE: a message that is not accepted is delivered again by its broker. |
+| `DELIVERY_CLASS_AT_MOST_ONCE` | 2 | AT_MOST_ONCE: a message that is not accepted is lost. |
+
 ### EachLineFormat
 
 EachLineFormat is E89's; it holds only its zero value until E89 lands
@@ -4522,6 +4853,35 @@ EachLineFormat is E89's; it holds only its zero value until E89 lands
 | Value | Number | Description |
 |---|---|---|
 | `EACH_LINE_FORMAT_UNSPECIFIED` | 0 |  |
+
+### EvaluationOutcome
+
+EvaluationOutcome is what a message would come to.
+
+| Value | Number | Description |
+|---|---|---|
+| `EVALUATION_OUTCOME_UNSPECIFIED` | 0 |  |
+| `EVALUATION_OUTCOME_ACCEPTED` | 1 | ACCEPTED: the message would start a run with `input`. |
+| `EVALUATION_OUTCOME_FILTERED` | 2 | FILTERED: a test of the filter did not hold; nothing would start. |
+| `EVALUATION_OUTCOME_REJECTED` | 3 | REJECTED: the message breaks a bound, does not parse, or its values do not fit the Orkflow's inputs; `reason` says which. |
+
+### EventSourceState
+
+EventSourceState is what a source is doing, derived on read and never
+stored.
+
+| Value | Number | Description |
+|---|---|---|
+| `EVENT_SOURCE_STATE_UNSPECIFIED` | 0 |  |
+| `EVENT_SOURCE_STATE_ACTIVE` | 1 |  |
+| `EVENT_SOURCE_STATE_STARTING` | 2 |  |
+| `EVENT_SOURCE_STATE_WAITING` | 3 |  |
+| `EVENT_SOURCE_STATE_PAUSED` | 4 |  |
+| `EVENT_SOURCE_STATE_HELD` | 5 |  |
+| `EVENT_SOURCE_STATE_INVALID` | 6 |  |
+| `EVENT_SOURCE_STATE_UNREACHABLE` | 7 |  |
+| `EVENT_SOURCE_STATE_DISABLED` | 8 |  |
+| `EVENT_SOURCE_STATE_DELETING` | 9 |  |
 
 ### EventType
 
@@ -4672,6 +5032,38 @@ handed a state it cannot name — they map to UNSPECIFIED.
 | `LIVE_ATTEMPT_STATE_STARTED` | 2 | STARTED: an Orker picked the attempt up. Only STARTED and CANCEL_REQUESTED can carry a heartbeat. |
 | `LIVE_ATTEMPT_STATE_CANCEL_REQUESTED` | 3 | CANCEL_REQUESTED: the run was cancelled and the Orker has been (or is about to be) told through a heartbeat response; the §3.3 SIGTERM → grace → SIGKILL sequence runs on the Orker while this state holds. |
 
+### MessageField
+
+MessageField is a fact about a message that its broker supplies.
+
+| Value | Number | Description |
+|---|---|---|
+| `MESSAGE_FIELD_UNSPECIFIED` | 0 |  |
+| `MESSAGE_FIELD_SUBJECT` | 1 |  |
+| `MESSAGE_FIELD_ID` | 2 |  |
+| `MESSAGE_FIELD_PUBLISHED_AT` | 3 |  |
+| `MESSAGE_FIELD_GROUP` | 4 |  |
+
+### MessageFormat
+
+MessageFormat is how a source reads a message's body.
+
+| Value | Number | Description |
+|---|---|---|
+| `MESSAGE_FORMAT_UNSPECIFIED` | 0 |  |
+| `MESSAGE_FORMAT_BYTES` | 1 | BYTES: the body is never read; only `attribute` and `field` selectors apply. |
+| `MESSAGE_FORMAT_JSON` | 2 | JSON: the body must be one strict JSON value; `pointer` selectors read it. |
+
+### MessagePart
+
+MessagePart is a part of a message an Orkflow can receive as an artifact.
+
+| Value | Number | Description |
+|---|---|---|
+| `MESSAGE_PART_UNSPECIFIED` | 0 |  |
+| `MESSAGE_PART_BODY` | 1 | BODY: the message's exact payload. |
+| `MESSAGE_PART_METADATA` | 2 | METADATA: one JSON document about the message. |
+
 ### MetadataProbeOutcome
 
 MetadataProbeOutcome is one address's outcome: three, never two. A probe
@@ -4735,6 +5127,16 @@ that switch; it never reaches the cluster.
 | `OVERLAP_POLICY_BUFFER_ALL` | 3 | BUFFER_ALL: every due fire waits and they start one after another. |
 | `OVERLAP_POLICY_CANCEL_OTHER` | 4 | CANCEL_OTHER: the earlier run is cancelled — SIGTERM, grace, SIGKILL, exactly as `run cancel` — and the due fire starts without waiting for it to finish; the two overlap for the cancelled run's grace period. |
 | `OVERLAP_POLICY_ALLOW_ALL` | 6 | ALLOW_ALL: fires never wait for one another. 6, not 5: see above. |
+
+### PauseCause
+
+PauseCause is who paused a source.
+
+| Value | Number | Description |
+|---|---|---|
+| `PAUSE_CAUSE_UNSPECIFIED` | 0 |  |
+| `PAUSE_CAUSE_OPERATOR` | 1 |  |
+| `PAUSE_CAUSE_ENGINE` | 2 |  |
 
 ### PauseTransition
 

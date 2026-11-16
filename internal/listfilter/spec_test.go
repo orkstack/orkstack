@@ -102,11 +102,12 @@ var nameValued = []string{
 	"Pool.name", "Orker.pool",
 	"Delivery.namespace", "AuditRecord.namespace",
 	"Run.orkflow_name",
+	"EventSource.name", "EventSource.orkflow_name", "EventSource.pool",
 }
 
 // opaqueIDs are matched whole, never by part.
 var opaqueIDs = []string{
-	"Webhook.id", "Trigger.id", "Schedule.id", "Orkflow.definition_digest", "ActivityInfo.index_digest",
+	"Webhook.id", "Trigger.id", "Schedule.id", "EventSource.id", "Orkflow.definition_digest", "ActivityInfo.index_digest",
 	"Delivery.run_id", "Delivery.webhook_id", "Run.origin.id", "Run.origin.root_run_id",
 }
 

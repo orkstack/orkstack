@@ -379,6 +379,9 @@ func checkInterfaceHeader(body *yaml.Node) error {
 	case kind.Value == KindAutomation:
 		return validationError("kind", fmt.Errorf("kind: %s is an automation document, not an activity interface: "+
 			"apply it with orkctl automation apply; an activity interface says kind: %s", KindAutomation, KindActivityInterface))
+	case kind.Value == KindEventSource:
+		return validationError("kind", fmt.Errorf("kind: %s is an event source, not an activity interface: "+
+			"create it with orkctl event-source create --file; an activity interface says kind: %s", KindEventSource, KindActivityInterface))
 	case kind.Value != KindActivityInterface:
 		return validationError("kind", fmt.Errorf("kind %q is not an activity interface: an activity interface says kind: %s",
 			kind.Value, KindActivityInterface))

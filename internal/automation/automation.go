@@ -25,6 +25,8 @@ type Document struct {
 	Schedules map[string]ScheduleEntry
 	Triggers  map[string]TriggerEntry
 	Webhooks  map[string]WebhookEntry
+	// EventSources is the `event_sources` section, by name.
+	EventSources map[string]EventSourceEntry
 }
 
 // Settings is the overlay: Present names the keys the document wrote, and
@@ -70,6 +72,12 @@ type Live struct {
 	Schedules []*orkstackv1.Schedule // ListSchedules rows, unavailable ones included
 	Triggers  []*orkstackv1.Trigger  // every trigger of the namespace, named or not
 	Webhooks  []*orkstackv1.Webhook  // every subscription whose namespace scope is this one
+	// EventSources is every event source of the namespace, with its etag.
+	EventSources []*orkstackv1.EventSource
+	// EventSourcesOmitted leaves the event_sources section out of an
+	// export: the engine could not answer for it, and an empty section
+	// would read as "no source" to an apply with --prune.
+	EventSourcesOmitted bool
 	// Orkflows answers, for every (name, version) the document references,
 	// whether it is stored or pending in this invocation. version "" is
 	// "any version", i.e. the current pointer resolves.
@@ -103,6 +111,10 @@ func (d *Document) References() []OrkflowRef {
 		entry := d.Triggers[name]
 		add(OrkflowRef{Name: entry.Orkflow, Version: entry.Version})
 	}
+	for _, name := range sortedKeys(d.EventSources) {
+		src := d.EventSources[name].Source
+		add(OrkflowRef{Name: src.GetOrkflowName(), Version: src.GetOrkflowVersion()})
+	}
 	return out
 }
 
@@ -122,6 +134,9 @@ func (d *Document) Managed() []orkstackv1.AutomationObjectKind {
 	if d.Webhooks != nil {
 		out = append(out, orkstackv1.AutomationObjectKind_AUTOMATION_OBJECT_KIND_WEBHOOK)
 	}
+	if d.EventSources != nil {
+		out = append(out, kindEventSource)
+	}
 	return out
 }
 
@@ -137,7 +152,7 @@ func KindSlug(kind orkstackv1.AutomationObjectKind) string {
 }
 
 // SectionKey is the document key of a kind's section: settings, schedules,
-// triggers, webhooks.
+// triggers, webhooks, event_sources.
 func SectionKey(kind orkstackv1.AutomationObjectKind) string {
 	switch kind {
 	case orkstackv1.AutomationObjectKind_AUTOMATION_OBJECT_KIND_NAMESPACE:
@@ -148,6 +163,8 @@ func SectionKey(kind orkstackv1.AutomationObjectKind) string {
 		return "triggers"
 	case orkstackv1.AutomationObjectKind_AUTOMATION_OBJECT_KIND_WEBHOOK:
 		return "webhooks"
+	case kindEventSource:
+		return "event_sources"
 	}
 	return ""
 }

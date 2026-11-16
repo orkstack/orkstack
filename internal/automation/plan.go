@@ -60,6 +60,9 @@ func Plan(doc *Document, live Live, opts Options) (steps []*orkstackv1.Automatio
 	if doc.Webhooks != nil {
 		p.webhooks()
 	}
+	if doc.EventSources != nil {
+		p.eventSources()
+	}
 	p.references()
 	sortSteps(p.steps)
 	return p.steps, p.issues
@@ -778,6 +781,10 @@ func (p *planner) references() {
 	for _, name := range sortedKeys(p.doc.Triggers) {
 		entry := p.doc.Triggers[name]
 		check("triggers", name, entry.Orkflow, entry.Version)
+	}
+	for _, name := range sortedKeys(p.doc.EventSources) {
+		src := p.doc.EventSources[name].Source
+		check("event_sources", name, src.GetOrkflowName(), src.GetOrkflowVersion())
 	}
 }
 
