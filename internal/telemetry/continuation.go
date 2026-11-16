@@ -12,8 +12,10 @@ import (
 // metrics"): measured by a run's own local activities around a switch and a
 // restore — never by workflow code, which imports no OpenTelemetry — and
 // handed here through cmd/ork's adapter, since this package does not import
-// internal/engine. Every record goes to the default sink: an observation
-// carries the namespace, never a run's own telemetry selection.
+// internal/engine. An observation carries the namespace, never a run's own
+// telemetry selection, so its records go to the namespace's sink through the
+// policy cache (EngineObserver.namespaceSink), and the continuation count's
+// twin to the default sink for every namespace.
 
 // RecordContinuationWrite records one switch write: its stored size by kind
 // (unless it failed), its duration, and — for the checkpoint, which decides
@@ -21,7 +23,11 @@ import (
 func (o *EngineObserver) RecordContinuationWrite(ctx context.Context, namespace, kind, outcome string,
 	stateBytes int64, seconds, holdSeconds float64,
 ) {
-	inst := o.defaultInstruments()
+	if o == nil {
+		return
+	}
+	o.recordContinuationTwin(ctx, outcome)
+	inst := o.namespaceInstruments(ctx, namespace)
 	if inst == nil {
 		return
 	}
@@ -48,7 +54,11 @@ func (o *EngineObserver) RecordContinuationWrite(ctx context.Context, namespace,
 func (o *EngineObserver) RecordContinuationRestore(ctx context.Context, namespace, outcome string,
 	attempt int64, final bool, seconds float64,
 ) {
-	inst := o.defaultInstruments()
+	if o == nil {
+		return
+	}
+	o.recordContinuationTwin(ctx, outcome)
+	inst := o.namespaceInstruments(ctx, namespace)
 	if inst == nil {
 		return
 	}
@@ -64,6 +74,25 @@ func (o *EngineObserver) RecordContinuationRestore(ctx context.Context, namespac
 		inst.ContinuationDuration.Record(ctx, seconds,
 			metric.WithAttributes(ns, attribute.String(AttrContinuationPhase, "restore")))
 	}
+}
+
+// recordContinuationTwin counts a continuation outcome on its twin; an
+// observation with no outcome (a size or a duration alone) counts nothing.
+func (o *EngineObserver) recordContinuationTwin(ctx context.Context, outcome string) {
+	if outcome != "" && o.twins != nil {
+		o.twins.Continuations.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrOutcome, outcome)))
+	}
+}
+
+// namespaceInstruments is the instruments of namespace's sink, or nil when
+// its records are dropped (counted by namespaceSink) or its instruments
+// could not be built.
+func (o *EngineObserver) namespaceInstruments(ctx context.Context, namespace string) *EngineInstruments {
+	p, ok := o.namespaceSink(ctx, namespace, SignalMetrics)
+	if !ok {
+		return nil
+	}
+	return o.instrumentsOf(ctx, p)
 }
 
 // defaultInstruments is the default sink's instruments, or nil when they

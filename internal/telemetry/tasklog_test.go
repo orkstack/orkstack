@@ -1,7 +1,9 @@
 package telemetry
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -270,26 +272,6 @@ func TestTaskLogExporterForSinks_RoutesToNamedSink(t *testing.T) {
 	}
 }
 
-// TestTaskLogExporterForSinks_UnknownSinkFallsBackToDefault confirms a
-// selection naming an undeclared sink still exports, to the default.
-func TestTaskLogExporterForSinks_UnknownSinkFallsBackToDefault(t *testing.T) {
-	defExporter := &recordingExporter{}
-	defReader := sdkmetric.NewManualReader()
-	def := newTestProviders(t, defExporter, defReader)
-	sinks := newSinksForTest(def, nil)
-
-	exp := NewTaskLogExporterForSinks(sinks, 0, true)
-	in := testInputForSinkWithLogs("does-not-exist", orkstackv1.TaskLogExport_TASK_LOG_EXPORT_UNSPECIFIED, nil)
-	w := exp.Open(context.Background(), in, 1)
-	if w == nil {
-		t.Fatal("Open = nil, want a writer routed to the default sink")
-	}
-	w.Write("hello")
-	if len(defExporter.records) != 1 {
-		t.Errorf("default sink got %d records, want 1", len(defExporter.records))
-	}
-}
-
 // TestTaskLogExporterForSinks_SinkWithLogsDisabledStaysNil confirms a
 // selection can pick a destination but cannot force logs on for a sink whose
 // own Providers has logs switched off.
@@ -369,5 +351,28 @@ func TestTaskLogWriterNeverBlocksUnderBackpressure(t *testing.T) {
 	defer cancel()
 	if err := provider.Shutdown(shutdownCtx); err != nil {
 		t.Logf("provider.Shutdown: %v (acceptable under a bounded deadline)", err)
+	}
+}
+
+// TestTaskLogExporter_OpenNeverPanics: a panic while opening an attempt's
+// export leaves it unexported, never a panic into the Orker's dispatch.
+func TestTaskLogExporter_OpenNeverPanics(t *testing.T) {
+	var buf bytes.Buffer
+	sinks := newSinksForTest(&Providers{cfg: Config{LogsExporter: ExporterOTLP}}, nil)
+	sinks.WithLogger(slog.New(slog.NewTextHandler(&buf, nil)))
+	e := NewTaskLogExporterForSinks(sinks, 0, true)
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("Open panicked: %v", r)
+		}
+		if !strings.Contains(buf.String(), "could not be opened") {
+			t.Fatalf("the panic was not logged; log = %q", buf.String())
+		}
+	}()
+	// A default sink whose logs are on but whose provider is missing makes
+	// building the route dereference nil.
+	if w := e.Open(context.Background(), observerTestInput(), 1); w != nil {
+		w.Write("a line")
+		w.Close()
 	}
 }

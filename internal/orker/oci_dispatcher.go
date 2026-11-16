@@ -392,6 +392,14 @@ func (d *OCIDispatcher) executeAttempt(
 	// once a secret is registered, both streams pass it.
 	mask := d.newAttemptMask(nil)
 	sink.mask = mask
+	// STEP 1.5. The phase observer, before the task-log export and the
+	// heartbeater: its returned ctx (which may carry the attempt's span) is
+	// what the rest of Execute uses, so the export's records, child work and
+	// the trace-context file all carry it.
+	var attemptObs AttemptObserver
+	if d.Phases != nil {
+		ctx, attemptObs = d.Phases.Begin(ctx, in, attempt)
+	}
 	var export TaskLogWriter
 	if d.TaskLogs != nil {
 		export = d.TaskLogs.Open(ctx, in, attempt)
@@ -436,14 +444,6 @@ func (d *OCIDispatcher) executeAttempt(
 		emit(fmt.Sprintf(format, args...))
 	}, logstream.StderrMarker)
 	mask.note = emit
-
-	// STEP 1.5. The phase observer, before the heartbeater — its returned ctx
-	// (which may carry a span) is what the rest of Execute uses, so child
-	// work and the trace-context file see it.
-	var attemptObs AttemptObserver
-	if d.Phases != nil {
-		ctx, attemptObs = d.Phases.Begin(ctx, in, attempt)
-	}
 
 	// beat, result and failure are DECLARED here and assigned below, so end can
 	// read all three. end is defined before them because the panic recovery
@@ -2790,7 +2790,11 @@ func (d *OCIDispatcher) recordAttempt(
 	record := d.attemptRecord(in, attempt, startedAt, beat, result, failure, outcome)
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), attemptRecordTimeout)
 	defer cancel()
-	if err := d.Attempts.PutAttempt(writeCtx, record); err != nil {
+	err := d.Attempts.PutAttempt(writeCtx, record)
+	if d.AttemptRecords != nil {
+		d.AttemptRecords.AttemptRecordWritten(in.GetPool(), err == nil)
+	}
+	if err != nil {
 		if errors.Is(err, artifacts.ErrAttemptExists) {
 			// Only an Orker that numbers attempts as Temporal does writes a
 			// record under an ordinal this one claimed: the pool runs two

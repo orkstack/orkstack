@@ -20,9 +20,14 @@ const AttrAttemptRecordFound = "ork.found"
 // Orker that numbers attempts as Temporal does, which is a pool running two
 // releases. Every series carries ork.orker_id. Recording can fail nothing.
 type AttemptRecordMetrics struct {
-	legacy metric.Int64Counter
-	orker  attribute.KeyValue
+	legacy  metric.Int64Counter
+	records metric.Int64Counter
+	orker   attribute.KeyValue
 }
+
+// AttemptRecordsMetric counts each attempt's record write by pool and
+// outcome, written or failed: a failed one is an attempt with no record.
+const AttemptRecordsMetric = "ork.orker.attempt_records"
 
 var _ orker.AttemptRecordObserver = (*AttemptRecordMetrics)(nil)
 
@@ -36,7 +41,13 @@ func NewAttemptRecordMetrics(p *Providers, orkerID string) (*AttemptRecordMetric
 	if err != nil {
 		return nil, err
 	}
-	return &AttemptRecordMetrics{legacy: legacy, orker: attribute.String(AttrOrkerID, orkerID)}, nil
+	records, err := meterFor(p).Int64Counter(AttemptRecordsMetric,
+		metric.WithDescription("Attempt record writes, by pool and outcome: written, or failed (the attempt has no record)."),
+		metric.WithUnit("{record}"))
+	if err != nil {
+		return nil, err
+	}
+	return &AttemptRecordMetrics{legacy: legacy, records: records, orker: attribute.String(AttrOrkerID, orkerID)}, nil
 }
 
 // LegacyRecordsAtClaim counts the scope's records with no claim.
@@ -44,6 +55,16 @@ func (m *AttemptRecordMetrics) LegacyRecordsAtClaim(n int) { m.add(int64(n), "cl
 
 // LegacyRecordKept counts a record already under this Orker's ordinal.
 func (m *AttemptRecordMetrics) LegacyRecordKept() { m.add(1, "record") }
+
+// AttemptRecordWritten counts one attempt's record write.
+func (m *AttemptRecordMetrics) AttemptRecordWritten(pool string, written bool) {
+	outcome := "failed"
+	if written {
+		outcome = "written"
+	}
+	m.records.Add(context.Background(), 1, metric.WithAttributes(m.orker,
+		attribute.String(AttrPool, pool), attribute.String(AttrOutcome, outcome)))
+}
 
 func (m *AttemptRecordMetrics) add(n int64, found string) {
 	m.legacy.Add(context.Background(), n,

@@ -736,6 +736,9 @@ func main() {
 	// ORK_TELEMETRY_SINKS never declared logs a Warn from the very first
 	// call, rather than only from whichever caller happens to attach one.
 	sinks.WithLogger(logger)
+	// ork.store.requests, .request.duration and .bytes: every call this
+	// process makes to the bucket, on the default sink when it exports metrics.
+	telemetry.ObserveStoreRequests(sinks.Default(), logger)
 	// Logged only when a file was actually given, so a zero-config boot's
 	// log is unchanged from before this package existed.
 	if cfgPath != "" {
@@ -1024,10 +1027,10 @@ func wireEventObserver(tcfg telemetry.Config) bool {
 // warnUndeclaredNamespaceSinks cross-checks every registered namespace's
 // telemetry policy against the sinks this deployment actually declared: a
 // namespace naming a sink ORK_TELEMETRY_SINKS does not carry is not a boot
-// failure — telemetry.Sinks.For already falls back to the default sink at
-// run time — but it is a misconfiguration an operator should learn about
-// before a run silently exports to the wrong destination, so one Warn is
-// logged per such namespace.
+// failure — its records are dropped and counted at run time
+// (ork.telemetry.records_dropped, reason sink_unknown) — but it is a
+// misconfiguration an operator should learn about before a run's telemetry
+// goes nowhere, so one Warn is logged per such namespace.
 //
 // A store error here is itself only a Warn: this check is a best-effort
 // cross-reference, and telemetry must never fail the deployment (§11).
@@ -1045,7 +1048,7 @@ func warnUndeclaredNamespaceSinks(
 		if sink == "" || sinks.Has(sink) {
 			continue
 		}
-		logger.Warn("namespace names a telemetry sink this deployment does not declare; its runs export to the default sink",
+		logger.Warn("namespace names a telemetry sink this deployment does not declare; its records are dropped",
 			"namespace", ns.GetName(), "sink", sink, "known_sinks", known)
 	}
 }
@@ -1583,6 +1586,24 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return err
 	}
+	// The policy cache: which sink each namespace's records go to, for the
+	// namespaced records no run selection names (a continuation). It loads
+	// before this engine serves, bounded; past the bound the engine starts
+	// and those records are dropped as unrouted until a refresh succeeds
+	// (docs/DEPLOY.md, "Where a namespace's records go").
+	policyCache := telemetry.NewPolicyCache(ctx, sinks, telemetry.PolicySource{
+		List:       namespaces.List,
+		Names:      namespaces.ListNames,
+		Get:        namespaces.Get,
+		IsNotFound: func(err error) bool { return errors.Is(err, artifacts.ErrNotFound) },
+	}, logger)
+	observer.WithPolicyCache(policyCache)
+	if wireEventObserver(tcfg) {
+		if err := policyCache.Load(ctx, telemetry.PolicyLoadBound); err != nil {
+			logger.Warn("telemetry: the namespace policy cache did not load; namespaced records are dropped as unrouted until it does",
+				"bound", telemetry.PolicyLoadBound, "error", err)
+		}
+	}
 	var eventObserver engine.EventObserver
 	var admissionObserver engine.AdmissionObserver
 	if wireEventObserver(tcfg) {
@@ -1614,6 +1635,33 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			"interval", cfg.cleanup.Interval,
 			"retention_buffer", cfg.cleanup.RetentionBuffer,
 			"batch_size", cfg.cleanup.BatchSize)
+	}
+	// ork.store.clock_skew: this engine's clock against the store's, probed
+	// once per cleanup interval whether or not cleanup is enabled
+	// (docs/DEPLOY.md, "The store clock"). Only when metrics export: the
+	// gauge is the probe's one reader.
+	if tcfg.MetricsEnabled() {
+		if clock, err := artifacts.NewStoreClock(ctx, artifacts.ConfigFromEnv()); err != nil {
+			logger.Warn("the store clock probe could not be opened; ork.store.clock_skew is not reported", "error", err)
+		} else {
+			go telemetry.RunStoreClockProbe(ctx, cfg.cleanup.Interval, clock.Skew, telemetry.NewStoreClockGauge(sinks.Default(), logger))
+		}
+	}
+	// The censuses: periodic reads that feed gauges (ork.runs.open), under one
+	// budget of requests per minute per replica (docs/DEPLOY.md, "Censuses").
+	// They start when any telemetry is on: the policy cache's refresh serves
+	// every signal it routes. ork.runs.open, a default-sink gauge, only when
+	// the default sink exports metrics.
+	if wireEventObserver(tcfg) || sinks.AnyMetrics() {
+		sources := telemetry.CensusSources{Policy: policyCache}
+		if tcfg.MetricsEnabled() {
+			// The census reads through a client that counts its requests, so
+			// the budget is charged what each pass really made.
+			censusClient, censusRequests := telemetry.CountingTemporalClient(temporalClient)
+			censusReader := engine.NewTemporalRunReader(censusClient).WithSnapshotStore(snapshots)
+			sources.OpenRuns, sources.OpenRunsRequests = censusReader.RunningRuns, censusRequests
+		}
+		telemetry.StartCensuses(ctx, sinks.Default(), tcfg.CensusRequestsPerMinute, sources, logger)
 	}
 	// The audit counter: ork.audit.records on the default providers, a no-op
 	// when telemetry is off.
@@ -1848,7 +1896,17 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"schedule_fire_workflow_behavior", "Pinned",
 		"event_worker", "unversioned")
 
+	// rpc.server.call.duration and ork.api.streams, on the default sink when
+	// it exports metrics; nil records nothing.
+	var rpcMetrics *telemetry.RPCMetrics
+	if tcfg.MetricsEnabled() && sinks.Default() != nil {
+		if rpcMetrics, err = telemetry.NewRPCMetrics(sinks.Default().Meter); err != nil {
+			logger.Warn("telemetry: API call metrics could not be built; they are not exported", "error", err)
+			rpcMetrics = nil
+		}
+	}
 	mux := api.NewMux(svc, api.MuxOptions{
+		RPCMetrics:      rpcMetrics,
 		AllowedOrigins:  cfg.allowedOrigins,
 		RequestMaxBytes: cfg.listener.requestMaxBytes,
 		UI:              ui,

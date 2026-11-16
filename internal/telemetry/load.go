@@ -92,3 +92,39 @@ func warnLoad(logger *slog.Logger, msg string, err error) {
 		logger.Warn(msg, "error", err)
 	}
 }
+
+// The Orker's presence gauges: ork.orker.present is 1 for as long as the
+// process exports, so a pool's Orkers are counted from metrics alone, and
+// ork.orker.task_log.export_enabled is this Orker's default for exporting
+// task logs (ORK_ORKER_TASK_LOG_EXPORT), which a namespace may override.
+const (
+	OrkerPresentMetric       = "ork.orker.present"
+	OrkerTaskLogExportMetric = "ork.orker.task_log.export_enabled"
+)
+
+// WatchOrkerPresence registers the presence gauges on p, each labelled with
+// the Orker id and pool and reported at every collection.
+func WatchOrkerPresence(p *Providers, orkerID, pool string, taskLogExport bool, logger *slog.Logger) {
+	meter := meterFor(p)
+	set := attribute.NewSet(attribute.String(AttrOrkerID, orkerID), attribute.String(AttrPool, pool))
+	export := int64(0)
+	if taskLogExport {
+		export = 1
+	}
+	for _, g := range []struct {
+		name, description string
+		value             int64
+	}{
+		{OrkerPresentMetric, "1 for each Orker exporting metrics, by pool.", 1},
+		{OrkerTaskLogExportMetric, "1 when this Orker exports task logs unless a namespace says otherwise, else 0.", export},
+	} {
+		value := g.value
+		if _, err := meter.Int64ObservableGauge(g.name, metric.WithDescription(g.description),
+			metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+				o.Observe(value, metric.WithAttributeSet(set))
+				return nil
+			})); err != nil {
+			warnLoad(logger, "telemetry: the Orker gauge "+g.name+" could not be built; it is not exported", err)
+		}
+	}
+}

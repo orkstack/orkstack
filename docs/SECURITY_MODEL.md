@@ -864,6 +864,11 @@ its own writes (`internal/api/audit.go`). A record is written once to
 - **Network policy.** OrkStack configures no firewall and no network policy. Which
   hosts reach the API port, the admin listener, Temporal, the object store and the
   registry is the deployment's decision.
+- **A run id restarted from the cluster before its start is recorded.** A
+  holder of the cluster's write access who restarts an ended run under its
+  id, before any engine has written that run's `chain.json`, would have the
+  new execution taken for the run ([TASK_IDENTITY.md](TASK_IDENTITY.md),
+  "Which run a token is for").
 - **The Temporal cluster.** Its security is outside OrkStack. Temporal's own
   external requirements are not OrkStack dependencies ([AGENTS.md](../AGENTS.md),
   §13).

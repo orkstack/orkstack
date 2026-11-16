@@ -1241,6 +1241,11 @@ func (a *Activities) retryRemovals(ctx context.Context) {
 // Orker keeps its configured root and therefore its identity. Two Orkers that
 // do share a root are caught by the boot lock rather than silently reaping each
 // other.
+// ProcessOrkerID is the id an Orker built from the environment takes
+// (ORK_ORKER_ID, or one derived from its host and work root), so a binary
+// can name itself before it builds its activities.
+func ProcessOrkerID() string { return defaultOrkerID(os.Getenv(WorkRootVar)) }
+
 func defaultOrkerID(workRoot string) string {
 	if explicit := strings.TrimSpace(os.Getenv(OrkerIDVar)); explicit != "" {
 		return explicit

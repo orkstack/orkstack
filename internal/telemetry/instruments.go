@@ -44,7 +44,19 @@ const (
 // the ORK_TELEMETRY_HIGH_CARDINALITY switch (Config.HighCardinality): off by
 // default because a run_id or task_id label is a new time series per run, a
 // cost only an operator who wants per-run metrics should pay.
-type Cardinality struct{ High bool }
+//
+// OrkflowLabel is ORK_TELEMETRY_ORKFLOW_LABEL: ork.orkflow.name on the run
+// metrics only (orkflowAttr), bounded by the Orkflows a deployment stores.
+type Cardinality struct{ High, OrkflowLabel bool }
+
+// orkflowAttr is ork.orkflow.name for a run metric when the Orkflow label is
+// on and High has not already added it.
+func (c Cardinality) orkflowAttr(name string) []attribute.KeyValue {
+	if !c.OrkflowLabel || c.High {
+		return nil
+	}
+	return []attribute.KeyValue{attribute.String(AttrOrkflowName, name)}
+}
 
 // TaskAttrs returns base plus the identity of in as attributes, at the
 // cardinality c allows. ork.pool and ork.namespace are always included — both
@@ -373,7 +385,7 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	)
 	if p != nil {
 		meter = p.Meter.Meter(ScopeName)
-		highCard = Cardinality{High: p.cfg.HighCardinality}
+		highCard = Cardinality{High: p.cfg.HighCardinality, OrkflowLabel: p.cfg.OrkflowLabel}
 	} else {
 		meter = metricnoop.NewMeterProvider().Meter(ScopeName)
 	}

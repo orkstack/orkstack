@@ -195,7 +195,7 @@ infra-logs: ## Tail infrastructure logs
 
 .PHONY: infra-up-observability
 infra-up-observability: ## Start Temporal + SeaweedFS + the observability profile: collector, Loki, Tempo, Prometheus, Grafana, and wait for them
-	$(COMPOSE) --profile observability up -d --wait
+	$(COMPOSE) -f deploy/observability/compose.backends.yaml --profile observability up -d --wait
 	@echo "Temporal UI: http://localhost:8233  |  SeaweedFS filer: http://localhost:8888  |  Grafana: http://localhost:3000"
 	@echo "Point ork/orker at it: see docs/DEPLOY.md, \"Telemetry\", for the OTEL_*/ORK_ADMIN_ADDR env recipe."
 

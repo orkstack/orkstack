@@ -49,6 +49,12 @@ type OrkerObserver struct {
 	logger *slog.Logger
 
 	cache providerCache[*orkerRoute]
+	// scheduledAt is when the cluster scheduled the attempt ctx runs
+	// (activityScheduledAt); a test replaces it.
+	scheduledAt func(context.Context) (time.Time, bool)
+	// twins are the operator twins on the default sink, built at first use.
+	twins     *orkerTwins
+	twinsOnce sync.Once
 }
 
 // orkerRoute is one sink's cached tracer, propagator, instruments and
@@ -59,6 +65,8 @@ type orkerRoute struct {
 	propagator propagation.TextMapPropagator
 	inst       *OrkerInstruments
 	card       Cardinality
+	// run is the wait and memo instruments; nil when they could not be built.
+	run *orkerRunInstruments
 }
 
 var _ orker.PhaseObserver = (*OrkerObserver)(nil)
@@ -83,17 +91,21 @@ func newOrkerRoute(p *Providers, inst *OrkerInstruments) *orkerRoute {
 	if inst == nil {
 		inst, _ = NewOrkerInstruments(p)
 	}
-	return &orkerRoute{tracer: p.Tracer.Tracer(ScopeName), propagator: propagator, inst: inst, card: p.Cardinality()}
+	run, err := newOrkerRunInstruments(meterFor(p), OrkerTaskWaitMetric, OrkerMemoLookupsMetric, OrkerMemoReusedMetric, OrkerMemoWritesMetric)
+	if err != nil {
+		slog.Default().Warn("telemetry: a sink's Orker wait and memo instruments could not be built; they are not exported", "error", err)
+	}
+	return &orkerRoute{tracer: p.Tracer.Tracer(ScopeName), propagator: propagator, inst: inst, card: p.Cardinality(), run: run}
 }
 
-// NewOrkerObserverForSinks builds an observer that picks s.For(attempt's
+// NewOrkerObserverForSinks builds an observer that picks s.ForNamespaced(attempt's
 // sink) fresh in every Begin, caching each sink's route the first time it is
 // needed. logger records what cannot be a span attribute; nil uses
 // slog.Default only where TaskLogExporter and EngineObserver do — this type
 // does not itself default logger, since attemptObservation only uses it for
 // occasional warnings and a nil *slog.Logger there is simply silent.
 func NewOrkerObserverForSinks(s *Sinks, logger *slog.Logger) *OrkerObserver {
-	return &OrkerObserver{sinks: s, logger: logger}
+	return &OrkerObserver{sinks: s, logger: logger, scheduledAt: activityScheduledAt}
 }
 
 // NewOrkerObserver is NewOrkerObserverForSinks with one sink: p is both the
@@ -101,7 +113,7 @@ func NewOrkerObserverForSinks(s *Sinks, logger *slog.Logger) *OrkerObserver {
 // verbatim rather than rebuilt — preserving the historical contract where
 // cmd/orker builds one OrkerInstruments itself and hands it in.
 func NewOrkerObserver(p *Providers, inst *OrkerInstruments, logger *slog.Logger) *OrkerObserver {
-	o := &OrkerObserver{sinks: sinksOf(p), logger: logger}
+	o := &OrkerObserver{sinks: sinksOf(p), logger: logger, scheduledAt: activityScheduledAt}
 	o.cache.set(p, newOrkerRoute(p, inst))
 	return o
 }
@@ -129,9 +141,43 @@ func (o *OrkerObserver) routeFor(p *Providers) *orkerRoute {
 // span reachable from task.json's optional `trace` key (§3.2).
 func (o *OrkerObserver) Begin(
 	ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32,
-) (context.Context, orker.AttemptObserver) {
+) (out context.Context, obs orker.AttemptObserver) {
+	// Telemetry can never fail a task: a panic beginning the attempt's
+	// observation leaves it unobserved, logged, never a failed attempt.
+	defer func() {
+		if r := recover(); r != nil {
+			if o.logger != nil {
+				o.logger.Warn("telemetry: an attempt's observation could not begin; it is not observed",
+					"run_id", in.GetRunId(), "panic", r)
+			}
+			out, obs = ctx, droppedAttempt{once: &sync.Once{}}
+		}
+	}()
 	sel := in.GetTelemetry()
-	route := o.routeFor(o.sinks.For(sel.GetSink()))
+	started := time.Now()
+	twin := o.twinsFor(in)
+	// The attempt's wait, scheduled to begun: its twin first, whatever its
+	// own sink.
+	wait, waited := 0.0, false
+	if o.scheduledAt != nil {
+		if at, ok := o.scheduledAt(ctx); ok && !at.After(started) {
+			wait, waited = started.Sub(at).Seconds(), true
+			twin.wait(ctx, wait)
+		}
+	}
+	p, ok := o.sinks.ForNamespaced(sel.GetSink())
+	if !ok {
+		// A sink this process does not declare: the attempt's span and its
+		// metrics are dropped, each counted once on the default sink, never
+		// sent there (OPEN-22). Its twins are still counted.
+		o.sinks.DropRecords(ctx, SignalTraces, DropReasonSinkUnknown, 1)
+		o.sinks.DropRecords(ctx, SignalMetrics, DropReasonSinkUnknown, 1)
+		return ctx, droppedAttempt{ctx: context.WithoutCancel(ctx), twin: twin, once: &sync.Once{}}
+	}
+	route := o.routeFor(p)
+	if waited && route.run != nil {
+		route.run.wait.Record(ctx, wait, metric.WithAttributes(route.card.TaskAttrs(in)...))
+	}
 
 	// The selection's attributes ride the attempt span unconditionally — a
 	// span attribute has no per-value time-series cost the way a metric
@@ -163,7 +209,9 @@ func (o *OrkerObserver) Begin(
 		selAttrs:    metricSelAttrs,
 		logger:      o.logger,
 		in:          in,
-		started:     time.Now(),
+		twin:        twin,
+		run:         route.run,
+		started:     started,
 		attemptCtx:  spanCtx,
 		attemptSpan: span,
 	}
@@ -207,6 +255,9 @@ type attemptObservation struct {
 	in         *orkstackv1.ExecuteTaskInput
 	started    time.Time
 	attemptCtx context.Context
+	// twin records the attempt's operator twins; run its memo counters.
+	twin twinRecorder
+	run  *orkerRunInstruments
 
 	mu          sync.Mutex
 	attemptSpan trace.Span
@@ -263,15 +314,8 @@ func (a *attemptObservation) End(outcome orker.AttemptOutcome) {
 	now := time.Now()
 	a.endPhaseLocked(now)
 
-	label := OutcomeSucceeded
-	switch {
-	case outcome.Canceled:
-		label = OutcomeCanceled
-	case outcome.CommitAdopted:
-		label = OutcomeAdopted
-	case outcome.Reason != "":
-		label = OutcomeFailed
-	}
+	label := attemptOutcomeLabel(outcome)
+	a.twin.end(a.attemptCtx, outcome)
 
 	if outcome.Reason != "" {
 		a.attemptSpan.SetStatus(codes.Error, outcome.Reason)
@@ -287,6 +331,7 @@ func (a *attemptObservation) End(outcome orker.AttemptOutcome) {
 	}
 	a.attemptSpan.End()
 
+	a.run.recordMemo(a.attemptCtx, outcome.Cache, a.card.TaskAttrs(a.in), true)
 	if a.inst == nil {
 		return
 	}
@@ -300,8 +345,10 @@ func (a *attemptObservation) End(outcome orker.AttemptOutcome) {
 	}
 	durationAttrs := append(a.card.TaskAttrs(a.in), a.selAttrs...)
 	if a.inst.TaskDuration != nil {
+		// The outcome rides the duration alone (F2): a failed attempt's time
+		// is never read as a successful one's.
 		a.inst.TaskDuration.Record(a.attemptCtx, now.Sub(a.started).Seconds(),
-			metric.WithAttributes(durationAttrs...))
+			metric.WithAttributes(append(slices.Clip(durationAttrs), attribute.String(AttrOutcome, label))...))
 	}
 	if outcome.CommitAdopted && a.inst.CommitAdopted != nil {
 		a.inst.CommitAdopted.Add(a.attemptCtx, 1, metric.WithAttributes(durationAttrs...))

@@ -487,7 +487,8 @@ func start(
 	// moment ORK_LOG_FORMAT or ORK_LOG_LEVEL turned out to say otherwise.
 	tcfg, sinks, err := telemetry.Boot(telemetry.ServiceOrker, append(
 		telemetry.ResourceAttrs(version, cfg.deployment.Name, cfg.deployment.BuildID, cfg.temporalNamespace),
-		attribute.String(telemetry.AttrPool, cfg.pool))...)
+		attribute.String(telemetry.AttrPool, cfg.pool),
+		attribute.String(telemetry.AttrOrkerID, orker.ProcessOrkerID()))...)
 	if err != nil {
 		fallback := slog.New(slog.NewTextHandler(stderr, nil))
 		fallback.Error("orker stopped", "error", err)
@@ -498,6 +499,9 @@ func start(
 	// ORK_TELEMETRY_SINKS never declared logs a Warn from the very first
 	// call, rather than only from whichever caller happens to attach one.
 	sinks.WithLogger(logger)
+	// ork.store.requests, .request.duration and .bytes: every call this
+	// process makes to the bucket, on the default sink when it exports metrics.
+	telemetry.ObserveStoreRequests(sinks.Default(), logger)
 	// Logged only when a file was actually given, so a zero-config boot's
 	// log is unchanged from before this package existed.
 	if cfgPath != "" {
@@ -897,6 +901,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// metrics are exported at all.
 	if tcfg.MetricsEnabled() {
 		telemetry.WatchOrkerLoad(sinks.Default(), activities.Dispatcher().OrkerID, cfg.pool, activities.Load, logger)
+		telemetry.WatchOrkerPresence(sinks.Default(), activities.Dispatcher().OrkerID, cfg.pool, cfg.taskLogExport, logger)
 	}
 	taskOptions, err := taskWorkerOptions(cfg, activities)
 	if err != nil {

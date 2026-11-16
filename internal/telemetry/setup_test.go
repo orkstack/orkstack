@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -72,7 +71,7 @@ func TestSetupPrometheus(t *testing.T) {
 	body := make([]byte, 1<<20)
 	n, _ := resp.Body.Read(body)
 	text := string(body[:n])
-	for _, want := range []string{"ork_build_info", "go_goroutines"} {
+	for _, want := range []string{"ork_build_info", "go_goroutine_count", "process_cpu_seconds_total"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("/metrics body missing %q", want)
 		}
@@ -114,8 +113,8 @@ func TestSetupSinksZeroConfig(t *testing.T) {
 	if sinks.Default().Enabled() {
 		t.Errorf("Default().Enabled() = true for zero Config")
 	}
-	if sinks.For("anything") != sinks.Default() {
-		t.Errorf("For(anything) != Default() on zero Config")
+	if p, ok := sinks.ForNamespaced("anything"); ok || p != nil {
+		t.Errorf("ForNamespaced(anything) = (%v, %v) on zero Config; want it refused", p, ok)
 	}
 	if err := sinks.Shutdown(context.Background()); err != nil {
 		t.Errorf("Shutdown: %v", err)
@@ -147,16 +146,16 @@ sinks:
 	if got, want := sinks.Names(), []string{"default", "other"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("Names() = %v, want %v", got, want)
 	}
-	if sinks.For("other") == sinks.Default() {
-		t.Error("For(other) == Default(), want a distinct Providers")
+	if p, ok := sinks.ForNamespaced("other"); !ok || p == sinks.Default() {
+		t.Error("ForNamespaced(other) is not a distinct Providers")
 	}
-	if sinks.For("missing") != sinks.Default() {
-		t.Error("For(missing) != Default(), want it to fall back")
+	if _, ok := sinks.ForNamespaced("missing"); ok {
+		t.Error("ForNamespaced(missing) was answered; want it refused")
 	}
+	sinks.DropRecords(context.Background(), SignalLogs, DropReasonSinkUnknown, 1)
 
-	// Prometheus lives only on the default sink, and For("missing") above
-	// must have counted an unknown-sink lookup on it: scrape /metrics and
-	// look for both.
+	// Prometheus lives only on the default sink, and the dropped record
+	// above is counted on it: scrape /metrics and look for it.
 	mux := NewAdminMux(sinks.Default(), cfg)
 	srv := httptest.NewServer(mux)
 	defer srv.Close()
@@ -166,11 +165,8 @@ sinks:
 	body := make([]byte, 1<<20)
 	n, _ := resp.Body.Read(body)
 	text := string(body[:n])
-	if !strings.Contains(text, "ork_telemetry_sink_unknown_total") {
-		t.Errorf("/metrics missing ork_telemetry_sink_unknown_total:\n%s", text)
-	}
-	if !strings.Contains(text, `sink="missing"`) {
-		t.Errorf("/metrics missing the sink=\"missing\" label:\n%s", text)
+	if !strings.Contains(text, "ork_telemetry_records_dropped_total") || !strings.Contains(text, `reason="sink_unknown"`) {
+		t.Errorf("/metrics missing ork_telemetry_records_dropped_total{reason=\"sink_unknown\"}:\n%s", text)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -208,7 +204,7 @@ sinks:
 	if got, want := sinks.Names(), []string{"datadog", "default"}; fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Errorf("Names() = %v, want %v", got, want)
 	}
-	datadog := sinks.For("datadog")
+	datadog, _ := sinks.ForNamespaced("datadog")
 	if datadog == sinks.Default() {
 		t.Fatal("For(datadog) == Default(), want a distinct Providers")
 	}
@@ -240,7 +236,7 @@ sinks:
 	sinks, err := SetupSinks(context.Background(), cfg)
 	must.OKf(t, err, "SetupSinks")
 
-	p := sinks.For("metrics-only")
+	p, _ := sinks.ForNamespaced("metrics-only")
 	if !p.Config().MetricsEnabled() {
 		t.Error("Config().MetricsEnabled() = false, want true")
 	}
@@ -282,36 +278,8 @@ sinks:
 	}
 }
 
-// TestSinksForWarnsOnceForUnknownSink is fix 4's contract: WithLogger attaches
-// a logger that For uses to warn about an undeclared sink name, at most once
-// no matter how many times the same name is asked for.
-func TestSinksForWarnsOnceForUnknownSink(t *testing.T) {
-	sinks, err := SetupSinks(context.Background(), Config{})
-	must.OKf(t, err, "SetupSinks")
-	var buf strings.Builder
-	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	sinks.WithLogger(logger)
-
-	for i := 0; i < 3; i++ {
-		sinks.For("bogus")
-	}
-	got := strings.Count(buf.String(), "telemetry sink not declared")
-	if got != 1 {
-		t.Errorf("got %d Warn lines for the same unknown sink, want 1:\n%s", got, buf.String())
-	}
-	if !strings.Contains(buf.String(), "sink=bogus") {
-		t.Errorf("Warn line = %q, want it to name the sink", buf.String())
-	}
-
-	// A different unknown name gets its own, separate warning.
-	sinks.For("other-bogus")
-	if got := strings.Count(buf.String(), "telemetry sink not declared"); got != 2 {
-		t.Errorf("got %d Warn lines after a second unknown name, want 2", got)
-	}
-}
-
 // TestSinksHas confirms Has distinguishes a declared sink (default or named)
-// from an undeclared one, independent of For's own fallback.
+// from an undeclared one.
 func TestSinksHas(t *testing.T) {
 	table, err := ParseSinks([]byte("sinks:\n  b:\n    endpoint: http://127.0.0.1:1\n"))
 	must.OKf(t, err, "ParseSinks")

@@ -58,7 +58,7 @@ and a live-event socket opened through it. When it prints "OrkStack is up":
 Every port the infrastructure publishes (`deploy/docker-compose.yml`, the
 observability profile's included) is bound to `127.0.0.1`: Temporal's
 frontend, the object store with its development key, the unauthenticated
-registry and Grafana's anonymous admin are reachable from this machine and
+registry and Grafana's anonymous viewer are reachable from this machine and
 from no other. Nothing in the stack, the suites or the proofs needs more: an
 activity container reaches only a test's own server on the host, by
 `host.docker.internal` ("Linux hosts" below), and the observability

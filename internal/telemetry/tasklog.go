@@ -117,9 +117,10 @@ func (e *TaskLogExporter) routeFor(p *Providers) *taskLogRoute {
 //     off, TASK_LOG_EXPORT_DISABLED forces it off even if the deployment
 //     default is on, and TASK_LOG_EXPORT_UNSPECIFIED leaves globalExport as
 //     the answer. Off means Open returns nil.
-//  2. If it is on, which sink? sel.GetSink() through Sinks.For — "" or an
-//     unrecognized name is the default sink. If that sink's own Providers has
-//     logs switched off (!p.Config().LogsEnabled(), e.g. a named sink that
+//  2. If it is on, which sink? sel.GetSink() through Sinks.ForNamespaced —
+//     "" is the default sink; a name this process does not declare gets a
+//     writer that drops and counts every line (records_dropped,
+//     sink_unknown). If that sink's own Providers has logs switched off (!p.Config().LogsEnabled(), e.g. a named sink that
 //     names no logs_endpoint), Open still returns nil: a selection can choose
 //     a destination, not force logs on for a sink that was never configured
 //     to carry them.
@@ -132,10 +133,22 @@ func (e *TaskLogExporter) routeFor(p *Providers) *taskLogRoute {
 // ctx is captured with cancellation stripped (context.WithoutCancel): a task
 // that is cancelled or times out still emits its teardown lines, and this
 // exporter must never be the reason those lines are lost.
-func (e *TaskLogExporter) Open(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) *TaskLogWriter {
+func (e *TaskLogExporter) Open(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) (w *TaskLogWriter) {
 	if e == nil {
 		return nil
 	}
+	// Telemetry can never fail a task: a panic building the export stream
+	// leaves the attempt with no export, never an attempt that ended without
+	// its observer's End (the dispatcher's recovery is installed after Open).
+	defer func() {
+		if r := recover(); r != nil {
+			if e.sinks != nil && e.sinks.logger != nil {
+				e.sinks.logger.Warn("telemetry: a task's log export could not be opened; its lines are not exported",
+					"run_id", in.GetRunId(), "panic", r)
+			}
+			w = nil
+		}
+	}()
 	sel := in.GetTelemetry()
 	enabled := e.globalExport
 	switch sel.GetTaskLogs() {
@@ -148,7 +161,20 @@ func (e *TaskLogExporter) Open(ctx context.Context, in *orkstackv1.ExecuteTaskIn
 		return nil
 	}
 
-	p := e.sinks.For(sel.GetSink())
+	p, ok := e.sinks.ForNamespaced(sel.GetSink())
+	if !ok {
+		// A sink this process does not declare: every line is dropped and
+		// counted on the default sink, never sent there (OPEN-22).
+		var drop func(context.Context)
+		if counter := e.sinks.droppedCounter(); counter != nil {
+			opt := metric.WithAttributeSet(attribute.NewSet(
+				attribute.String(AttrSignal, SignalLogs), attribute.String(AttrDropReason, DropReasonSinkUnknown)))
+			drop = func(ctx context.Context) { counter.Add(ctx, 1, opt) }
+		} else {
+			drop = func(context.Context) {}
+		}
+		return &TaskLogWriter{drop: drop, ctx: context.WithoutCancel(ctx)}
+	}
 	if p == nil || !p.Config().LogsEnabled() {
 		return nil
 	}
@@ -202,6 +228,10 @@ type TaskLogWriter struct {
 	// not once per Write.
 	emittedOpt   metric.MeasurementOption
 	truncatedOpt metric.MeasurementOption
+
+	// drop, when set, is a writer for a sink this process does not declare:
+	// each line is counted as dropped and goes nowhere.
+	drop func(context.Context)
 }
 
 // Write hands one line of the attempt's output to the log provider. It never
@@ -209,7 +239,14 @@ type TaskLogWriter struct {
 // queue rather than wait) and never panics — a malformed or oversized line is
 // truncated, not refused, because telemetry must never fail a task.
 func (w *TaskLogWriter) Write(line string) {
-	if w == nil || w.closed || w.logger == nil {
+	if w == nil || w.closed {
+		return
+	}
+	if w.drop != nil {
+		w.drop(w.ctx)
+		return
+	}
+	if w.logger == nil {
 		return
 	}
 	line = strings.TrimSuffix(line, "\n")

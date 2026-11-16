@@ -14,6 +14,7 @@ import (
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/webui"
 )
 
@@ -42,6 +43,11 @@ type MuxOptions struct {
 	// sent and once decompressed (ORK_REQUEST_MAX_BYTES). Zero or less takes
 	// DefaultRequestMaxBytes: there is no unbounded setting.
 	RequestMaxBytes int64
+
+	// RPCMetrics, when set, records every API call's duration and code
+	// (rpc.server.call.duration) and the open streams (ork.api.streams),
+	// refused calls included. Nil records nothing.
+	RPCMetrics *telemetry.RPCMetrics
 
 	// Access, when its mode is observe or enforce, authenticates every
 	// request and authorizes every RPC, stream, socket and route
@@ -103,6 +109,7 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 	if opts.Access.enabled() {
 		svc.access = opts.Access
 	}
+	svc.rpcMetrics = opts.RPCMetrics
 	serveMux := http.NewServeMux()
 	patterns := []string{}
 	mux := reservedMux{serveMux: serveMux, patterns: &patterns}
@@ -128,6 +135,10 @@ func newMux(svc *Service, opts MuxOptions) (*http.ServeMux, []string) {
 		// Authorization is first in the chain: a request it refuses reaches
 		// neither the audit interceptor nor a handler.
 		interceptors = append([]connect.Interceptor{svc.accessInterceptor()}, interceptors...)
+	}
+	if opts.RPCMetrics != nil {
+		// Outermost, so a call authorization refuses is counted with its code.
+		interceptors = append([]connect.Interceptor{rpcMetricsInterceptor{m: opts.RPCMetrics}}, interceptors...)
 	}
 	handlerOptions := append(HandlerOptions(),
 		connect.WithInterceptors(interceptors...),

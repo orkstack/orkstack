@@ -227,6 +227,45 @@ first, and have an AWS trust policy list both subjects for the time of the
 change. Then switch the format. A run keeps the format it was submitted
 with.
 
+## Which run a token is for
+
+No token is issued yet. When tokens are, each will be for one attempt of
+one task of one admitted run. Submit will write the run's admission record,
+`metadata/snapshots/{ns}/{run-id}/identity/admission-{sha256}.json`, before
+the run starts. It will hold what the run's tasks may hold and who may start the
+run. It is to be named by the SHA-256 of its own bytes, and a 128-bit random nonce
+in it keeps that name secret until the run starts. Before it signs, the
+engine will check:
+
+- that the attempt is the cluster's current one for that task, held by the
+  calling Orker;
+- that the run is the one its record was written for;
+- that the task is as it was admitted.
+
+A run an engine started itself will be tied to its record by
+`metadata/snapshots/{ns}/{run-id}/identity/chain.json`, which names the
+first execution of the run's chain and the record's digest. The engine that
+starts the run will write it from the start's answer. If that write is lost, any
+engine that later needs it will write it. That will happen when a run carries on
+into a new generation, when a sealed run writes its first snapshot, and at
+a mint. It will be written only for an execution with no parent whose first
+start's input names the record's digest. It will be create-only: once it is
+there, no other execution of that run id fits it.
+
+**What is left** (accepted in the task identity design). After the run
+starts, its record's digest is in the cluster's history, readable by
+anyone who can read the cluster. Whoever holds the cluster's write access
+could start a second execution under the run id, with the same input, once
+the real one has ended. That execution would be taken for the run if no
+engine had yet written `chain.json` for it: not the starting engine, not a
+generation change and not a mint. The window is from the run's start until
+the first of those writes. It is open only to a holder of the cluster's
+write access, who can already drive the real run. Keep `chain.json`'s
+writes healthy: an engine will count each run whose record a second generation
+change also left unwritten (`ork.identity.start_record_incomplete`). An
+approval a task follows will be guarded separately: no approval will be
+applied, and no task's identity granted, without the engine's own record of it.
+
 ## Administering the issuer
 
 | Command | Does |

@@ -121,6 +121,28 @@ func TestIntegration_S3_IdentityRecords(t *testing.T) {
 		t.Fatalf("the newest scope after a stale writer = %d, %+v, %v", newest, got, err)
 	}
 
+	// An admission, written as the submit path will, is read back by its
+	// digest; a root's chain record is created once and compared after.
+	adm := artifacts.Admission{RunID: run, Namespace: ns, Orkflow: "deploy", OrkflowVersion: "1",
+		DefinitionDigest: admission, Starter: artifacts.Starter{Kind: artifacts.StarterEngine},
+		Origin: artifacts.AdmittedOrigin{Kind: "submit"}, Nonce: strings.Repeat("0f", 16),
+		AdmittedAt: time.Now(), EngineBuild: "test", SubjectFormat: artifacts.SubjectFormatOrk, SpecVersion: 1,
+		Tasks: map[string]artifacts.AdmittedTask{"build": {Pool: "main", SpecSHA256: admission}}}
+	sha, err := w.Admission(ctx, adm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := store.ReadAdmission(ctx, ns, run, sha); err != nil || got.Answer != artifacts.RecordFound || got.Value.Tasks["build"].Pool != "main" {
+		t.Fatalf("the admission = %+v, %v", got, err)
+	}
+	chain := artifacts.Chain{FirstExecutionID: "exec-1", AdmissionSHA256: sha}
+	if err := store.CompleteChain(ctx, ns, run, chain); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteChain(ctx, ns, run, artifacts.Chain{FirstExecutionID: "exec-2", AdmissionSHA256: sha}); !errors.Is(err, artifacts.ErrChainDiffers) {
+		t.Fatalf("a second start's chain = %v", err)
+	}
+
 	key2, rec2 := resolution("approve-2", 2)
 	if _, err := w.Record(ctx, key2, rec2); err != nil {
 		t.Fatal(err)

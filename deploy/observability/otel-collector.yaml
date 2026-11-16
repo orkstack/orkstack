@@ -1,38 +1,95 @@
-# Minimal Collector config for the `observability` compose profile.
+# Collector config for the `observability` compose profile.
 #
 # Receives OTLP/http on :4318 — the same endpoint an operator would otherwise
 # hand to OTEL_EXPORTER_OTLP_ENDPOINT directly — and fans logs, traces and
 # metrics out to Loki, Tempo and Prometheus. Nothing here is OrkStack-specific:
 # ork and orker never speak to this file, only to the standard OTEL_* env
 # (docs/DEPLOY.md, "Telemetry").
+#
+# The receiver has no auth: it is published on loopback only. A production
+# Collector needs bearer or mTLS auth on its receiver and a network activity
+# containers cannot reach (README.md, "Before production").
 receivers:
   otlp:
     protocols:
       http:
         endpoint: 0.0.0.0:4318
 
+processors:
+  # Refuses data before the Collector runs out of memory; a refused export is
+  # counted by the sender (ork.telemetry.export_errors) and never blocks it.
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+  batch: {}
+
 exporters:
-  debug:
-    verbosity: basic
   otlphttp/loki:
     endpoint: http://loki:3100/otlp
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 300s
   otlp/tempo:
     endpoint: tempo:4317
     tls:
       insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 300s
   otlphttp/prometheus:
     endpoint: http://prometheus:9090/api/v1/otlp
     tls:
       insecure: true
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 300s
 
 service:
+  # The Collector's own metrics (accepted, refused, queued, failed) go
+  # straight to Prometheus's OTLP endpoint by their own reader, not through
+  # the pipelines below, so a stalled pipeline still reports itself.
+  telemetry:
+    metrics:
+      level: normal
+      readers:
+        - periodic:
+            interval: 15000
+            exporter:
+              otlp:
+                protocol: http/protobuf
+                endpoint: http://prometheus:9090/api/v1/otlp/v1/metrics
   pipelines:
     logs:
-      receivers: [otlp]
-      exporters: [debug, otlphttp/loki]
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - batch
+      exporters:
+        - otlphttp/loki
     traces:
-      receivers: [otlp]
-      exporters: [otlp/tempo]
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - batch
+      exporters:
+        - otlp/tempo
     metrics:
-      receivers: [otlp]
-      exporters: [otlphttp/prometheus]
+      receivers:
+        - otlp
+      processors:
+        - memory_limiter
+        - batch
+      exporters:
+        - otlphttp/prometheus

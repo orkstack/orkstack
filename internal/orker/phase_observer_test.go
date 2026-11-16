@@ -385,3 +385,38 @@ func TestPhaseObserver_BeginsCtxReachesTheRuntime(t *testing.T) {
 		t.Errorf("Start saw ctx value %v, want %q", start, "from-begin")
 	}
 }
+
+// ctxTaskLogExporter records the context each attempt's export opens on.
+type ctxTaskLogExporter struct {
+	recordingTaskLogExporter
+	openCtx context.Context
+}
+
+func (e *ctxTaskLogExporter) Open(ctx context.Context, in *orkstackv1.ExecuteTaskInput, attempt int32) TaskLogWriter {
+	e.mu.Lock()
+	e.openCtx = ctx
+	e.mu.Unlock()
+	return e.recordingTaskLogExporter.Open(ctx, in, attempt)
+}
+
+// TestTaskLogs_RecordsCarryTheAttemptSpan: an attempt's task-log export opens
+// on the context the phase observer's Begin returned, which carries the
+// attempt's span, so every exported line is correlated with it.
+func TestTaskLogs_RecordsCarryTheAttemptSpan(t *testing.T) {
+	obs := &fakePhaseObserver{}
+	exporter := &ctxTaskLogExporter{}
+	d := newAttemptDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, nil)
+	d.Phases = obs
+	d.TaskLogs = exporter
+	if _, err := d.Execute(context.Background(), baseExportInput("span-bound-logs")); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	exporter.mu.Lock()
+	defer exporter.mu.Unlock()
+	if exporter.openCtx == nil {
+		t.Fatal("the task-log export never opened")
+	}
+	if got := exporter.openCtx.Value(phaseObserverCtxKey{}); got != "from-begin" {
+		t.Fatalf("the export opened on a context without the attempt's (value %v); its lines carry no span", got)
+	}
+}

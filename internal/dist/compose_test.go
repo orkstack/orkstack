@@ -587,7 +587,7 @@ func TestStoreHealthcheck_PassesOnlyOnceTheBucketServes(t *testing.T) {
 	// `make run-ork` and `make run-orker` follow these by hand, with no
 	// depends_on either, so the targets return only once that check has passed.
 	makefile := string(readRepoFile(t, "Makefile"))
-	for _, recipe := range []string{"\t$(COMPOSE) up -d --wait\n", "\t$(COMPOSE) --profile observability up -d --wait\n"} {
+	for _, recipe := range []string{"\t$(COMPOSE) up -d --wait\n", "\t$(COMPOSE) -f deploy/observability/compose.backends.yaml --profile observability up -d --wait\n"} {
 		if !strings.Contains(makefile, recipe) {
 			t.Errorf("the Makefile has no recipe %q: `make infra-up` would return before the store's bucket exists", recipe)
 		}

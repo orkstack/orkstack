@@ -23,7 +23,7 @@ import (
 
 // TestDevCompose_PublishesOnlyOnLoopback: the development stack's services
 // are a contributor's own. Temporal's frontend, the object store with its
-// default key, an unauthenticated registry and Grafana with anonymous Admin
+// default key, an unauthenticated registry and Grafana with an anonymous Viewer
 // are reachable from this host and from nowhere else, so every port the
 // stack publishes, in every profile, is bound to 127.0.0.1. Nothing needs
 // more: the host's processes, its Docker daemon pulling from the registry and
@@ -581,5 +581,51 @@ func TestResetScript_RefusesWhenStateSurvives(t *testing.T) {
 
 	if code == 0 || !strings.Contains(out, "state survived: "+filepath.Join(r.root, ".data")) {
 		t.Fatalf("scripts/reset.sh --force exited %d with .data/ written again after its removal; want a refusal naming it:\n%s", code, out)
+	}
+}
+
+// TestDevCompose_ObservabilityPublishesTwoPorts: the observability profile
+// publishes the Collector's OTLP/http and Grafana alone, and Grafana's
+// anonymous visitor is a Viewer on localhost; the backends' ports are
+// published only by the override the proofs add, on loopback.
+func TestDevCompose_ObservabilityPublishesTwoPorts(t *testing.T) {
+	t.Parallel()
+	doc := parseCompose(t, devComposePath, readRepoFile(t, devComposePath))
+	published := map[string][]string{}
+	for _, name := range doc.serviceNames() {
+		svc := doc.Services[name]
+		if slices.Contains(svc.Profiles, "observability") && len(svc.Ports) > 0 {
+			published[name] = svc.Ports
+		}
+	}
+	want := map[string][]string{"otel-collector": {"127.0.0.1:4318:4318"}, "grafana": {"127.0.0.1:3000:3000"}}
+	if len(published) != len(want) {
+		t.Errorf("the observability profile publishes %v; want only %v", published, want)
+	}
+	for name, ports := range want {
+		if !slices.Equal(published[name], ports) {
+			t.Errorf("%s publishes %v; want %v", name, published[name], ports)
+		}
+	}
+	env := doc.Services["grafana"].Environment
+	for key, value := range map[string]string{
+		"GF_AUTH_ANONYMOUS_ORG_ROLE": "Viewer", "GF_SERVER_DOMAIN": "localhost", "GF_SERVER_ENFORCE_DOMAIN": "true",
+	} {
+		if env[key] != value {
+			t.Errorf("grafana %s = %q; want %q", key, env[key], value)
+		}
+	}
+
+	const backends = "deploy/observability/compose.backends.yaml"
+	override := parseCompose(t, backends, readRepoFile(t, backends))
+	for _, name := range override.serviceNames() {
+		if !slices.Contains([]string{"loki", "tempo", "prometheus"}, name) {
+			t.Errorf("%s names %s; it publishes the backends alone", backends, name)
+		}
+		for _, port := range override.Services[name].Ports {
+			if !strings.HasPrefix(port, "127.0.0.1:") {
+				t.Errorf("%s: %s publishes %q off loopback", backends, name, port)
+			}
+		}
 	}
 }

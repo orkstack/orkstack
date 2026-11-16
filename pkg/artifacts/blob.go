@@ -43,6 +43,10 @@ type blobs interface {
 	// head reports an object's size without reading it. A missing object is
 	// errBlobNotFound.
 	head(ctx context.Context, key string) (size int64, err error)
+	// modified reports the store's stamp of an object's last write: S3's
+	// LastModified (whole seconds), a local file's modification time. A
+	// missing object is errBlobNotFound.
+	modified(ctx context.Context, key string) (time.Time, error)
 
 	// put writes body at key, replacing whatever is there; a reader sees the
 	// old object or the new one, never a partial write.

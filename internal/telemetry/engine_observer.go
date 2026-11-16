@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"strings"
+	"sync"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/enumname"
@@ -32,9 +33,39 @@ type EngineObserver struct {
 	logger *slog.Logger
 
 	cache providerCache[*EngineInstruments]
+	// twins are the operator twins, on the default sink (twins.go).
+	twins *TwinInstruments
+	// instWarned dedupes instrumentsOf's Warn: one per sink.
+	instWarned sync.Map
+	// policy routes the namespaced records no run selection names (a
+	// continuation); nil routes them only when there is one sink.
+	policy *PolicyCache
 }
 
-// NewEngineObserverForSinks builds an EngineObserver that picks s.For(run's
+// WithPolicyCache makes c the destination of o's namespaced records that no
+// run selection names. It returns o.
+func (o *EngineObserver) WithPolicyCache(c *PolicyCache) *EngineObserver {
+	if o != nil {
+		o.policy = c
+	}
+	return o
+}
+
+// namespaceSink is the Providers a namespaced record no run selection names
+// goes to: the policy cache's answer, or with no cache the one sink there is.
+// It never falls back to the default sink; a drop is counted under signal.
+func (o *EngineObserver) namespaceSink(ctx context.Context, namespace, signal string) (*Providers, bool) {
+	if o.policy != nil {
+		return o.policy.For(ctx, namespace, signal)
+	}
+	if o.sinks.anyName {
+		return o.sinks.Default(), true
+	}
+	o.sinks.DropRecords(ctx, signal, DropReasonUnrouted, 1)
+	return nil, false
+}
+
+// NewEngineObserverForSinks builds an EngineObserver that picks s.ForNamespaced(run's
 // sink) fresh for every event, caching each sink's EngineInstruments the
 // first time it is needed (never once per event — a run's events arrive one
 // at a time over the run's whole lifetime, and building instruments is not
@@ -55,6 +86,11 @@ func NewEngineObserverForSinks(s *Sinks, logger *slog.Logger) (*EngineObserver, 
 	if _, err := o.instFor(s.Default()); err != nil {
 		return nil, err
 	}
+	twins, err := NewTwinInstruments(s.Default())
+	if err != nil {
+		return nil, err
+	}
+	o.twins = twins
 	return o, nil
 }
 
@@ -65,16 +101,33 @@ func NewEngineObserver(p *Providers, logger *slog.Logger) (*EngineObserver, erro
 	return NewEngineObserverForSinks(sinksOf(p), logger)
 }
 
+// instrumentsOf is p's instruments for one record, or nil when they cannot
+// be built: the record is then dropped and counted (instruments_failed), and
+// the first failure for p is logged at Warn. It never fails the caller.
+func (o *EngineObserver) instrumentsOf(ctx context.Context, p *Providers) *EngineInstruments {
+	inst, err := o.instFor(p)
+	if err == nil && inst != nil {
+		return inst
+	}
+	o.sinks.DropRecords(ctx, SignalMetrics, DropReasonInstrumentsFailed, 1)
+	if _, warned := o.instWarned.LoadOrStore(p, struct{}{}); !warned {
+		o.logger.Warn("telemetry: a sink's engine instruments could not be built; its records are dropped and counted",
+			"error", err)
+	}
+	return nil
+}
+
 // instFor returns p's cached EngineInstruments, building them once.
 func (o *EngineObserver) instFor(p *Providers) (*EngineInstruments, error) {
 	return o.cache.getOrBuild(p, func() (*EngineInstruments, error) { return NewEngineInstruments(p) })
 }
 
-// sinkFor is the Providers a run's own telemetry selection names — "" or an
-// unrecognized sink is the default, and a nil run is also the default
-// (Sinks.For and the proto getters are all nil-safe).
-func (o *EngineObserver) sinkFor(run *orkstackv1.Run) *Providers {
-	return o.sinks.For(run.GetTelemetry().GetSink())
+// sinkFor is the Providers a run's own telemetry selection names: "" is the
+// default, and so is a nil run (Sinks.ForNamespaced and the proto getters are
+// all nil-safe). A sink this process does not declare is refused (ok false):
+// the run's records are dropped and counted, never sent to the default sink.
+func (o *EngineObserver) sinkFor(run *orkstackv1.Run) (*Providers, bool) {
+	return o.sinks.ForNamespaced(run.GetTelemetry().GetSink())
 }
 
 // ObserveEvent records metrics for a terminal run or task transition and logs
@@ -90,13 +143,28 @@ func (o *EngineObserver) ObserveEvent(ctx context.Context, event *orkstackv1.Eve
 }
 
 func (o *EngineObserver) recordMetric(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run) {
-	inst, err := o.instFor(o.sinkFor(run))
-	if err != nil || inst == nil {
-		// A sink whose instruments failed to build once keeps failing the
-		// same way forever (the meter name collision that causes it is
-		// static), so there is nothing left to retry; this event's metrics
-		// are simply skipped, same as a nil run already was before sinks
-		// existed.
+	switch event.GetType() {
+	case orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED,
+		orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
+	default:
+		// RUN_CREATED, TASK_SCHEDULED, TASK_STARTED and TASK_LOG are not
+		// terminal states of anything: they are logged below, but they do
+		// not move a counter or close out a duration.
+		return
+	}
+	// The twin first: it is recorded for every namespace, whichever sink its
+	// own records go to or whether they can go anywhere.
+	o.recordTwin(ctx, event, run)
+	p, ok := o.sinkFor(run)
+	if !ok {
+		o.sinks.DropRecords(ctx, SignalMetrics, DropReasonSinkUnknown, 1)
+		return
+	}
+	inst := o.instrumentsOf(ctx, p)
+	if inst == nil {
 		return
 	}
 	switch event.GetType() {
@@ -107,10 +175,41 @@ func (o *EngineObserver) recordMetric(ctx context.Context, event *orkstackv1.Eve
 	case orkstackv1.EventType_EVENT_TYPE_TASK_SUCCEEDED,
 		orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 		o.recordTask(ctx, event, run, inst)
+	}
+}
+
+// recordTwin records a terminal run or task event's operator twin: its
+// status, and for a task its pool, failure category and cache outcome; never
+// its namespace or a name.
+func (o *EngineObserver) recordTwin(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run) {
+	if o.twins == nil || run == nil {
+		return
+	}
+	switch event.GetType() {
+	case orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED:
+		o.twins.Runs.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrStatus, statusLabel(run.GetStatus()))))
 	default:
-		// RUN_CREATED, TASK_SCHEDULED, TASK_STARTED and TASK_LOG are not
-		// terminal states of anything: they are logged below, but they do
-		// not move a counter or close out a duration.
+		task := findTaskRun(run, event.GetTaskId())
+		if task == nil {
+			return
+		}
+		category := ""
+		if taskErr := task.GetError(); taskErr != nil {
+			category = failureCategoryLabel(taskErr.GetCategory())
+		}
+		attrs := []attribute.KeyValue{
+			attribute.String(AttrStatus, statusLabel(task.GetStatus())),
+			attribute.String(AttrFailureCategory, category),
+		}
+		if pool := task.GetPool(); pool != "" {
+			attrs = append(attrs, attribute.String(AttrPool, pool))
+		}
+		if outcome := CacheOutcomeLabel(task.GetCache()); outcome != "" {
+			attrs = append(attrs, attribute.String(AttrCacheOutcome, outcome))
+		}
+		o.twins.Tasks.Add(ctx, 1, metric.WithAttributes(attrs...))
 	}
 }
 
@@ -134,6 +233,7 @@ func (o *EngineObserver) recordRun(ctx context.Context, run *orkstackv1.Run, ins
 	}
 	attrs := inst.Cardinality.RunAttrs(run, "",
 		attribute.String(AttrStatus, statusLabel(run.GetStatus())))
+	attrs = append(attrs, inst.Cardinality.orkflowAttr(run.GetOrkflowName())...)
 	attrs = append(attrs, selectionMetricAttrs(inst, run)...)
 	inst.Runs.Add(ctx, 1, metric.WithAttributes(attrs...))
 
@@ -172,6 +272,7 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 		attribute.String(AttrStatus, status),
 		attribute.String(AttrFailureCategory, category))
 	attrs = append(attrs, selAttrs...)
+	attrs = append(attrs, inst.Cardinality.orkflowAttr(run.GetOrkflowName())...)
 	durationAttrs := inst.Cardinality.TaskRunAttrs(run, task,
 		attribute.String(AttrStatus, status))
 	durationAttrs = append(durationAttrs, selAttrs...)
@@ -221,7 +322,7 @@ func (o *EngineObserver) recordTask(ctx context.Context, event *orkstackv1.Event
 }
 
 // ObserveRefusal records one admission refusal on the sink telemetry names
-// — o.sinks.For(telemetry.GetSink()), the lookup sinkFor performs on
+// — o.sinks.ForNamespaced(telemetry.GetSink()), the lookup sinkFor performs on
 // run.GetTelemetry() for a run, applied to the selection the refused run
 // would have carried (engine.RefusalTelemetry). It moves RunsRefused and
 // nothing else: no Runs increment, no duration, no log line (the API logs
@@ -244,10 +345,17 @@ func (o *EngineObserver) ObserveRefusal(
 	if o == nil {
 		return
 	}
-	inst, err := o.instFor(o.sinks.For(telemetry.GetSink()))
-	if err != nil || inst == nil {
-		// Same reasoning as recordMetric: a sink whose instruments failed to
-		// build once keeps failing, so there is nothing to retry.
+	if o.twins != nil {
+		o.twins.RunsRefused.Add(ctx, 1, metric.WithAttributes(
+			attribute.String(AttrRefusalReason, refusalReasonLabel(reason))))
+	}
+	p, ok := o.sinks.ForNamespaced(telemetry.GetSink())
+	if !ok {
+		o.sinks.DropRecords(ctx, SignalMetrics, DropReasonSinkUnknown, 1)
+		return
+	}
+	inst := o.instrumentsOf(ctx, p)
+	if inst == nil {
 		return
 	}
 	attrs := []attribute.KeyValue{
@@ -258,6 +366,7 @@ func (o *EngineObserver) ObserveRefusal(
 		attrs = append(attrs, attribute.String(AttrOrkflowName, orkflow))
 		attrs = append(attrs, selectionAttrs(telemetry.GetAttributes())...)
 	}
+	attrs = append(attrs, inst.Cardinality.orkflowAttr(orkflow)...)
 	inst.RunsRefused.Add(ctx, 1, metric.WithAttributes(attrs...))
 }
 
@@ -279,7 +388,7 @@ func refusalReasonLabel(reason string) string {
 func (o *EngineObserver) log(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run) {
 	level := slog.LevelDebug
 	if event.GetType() != orkstackv1.EventType_EVENT_TYPE_TASK_LOG {
-		if p := o.sinkFor(run); p != nil && p.Config().LogsEnabled() {
+		if p, ok := o.sinkFor(run); ok && p != nil && p.Config().LogsEnabled() {
 			level = slog.LevelInfo
 		}
 	}
@@ -296,20 +405,27 @@ func (o *EngineObserver) log(ctx context.Context, event *orkstackv1.Event, run *
 		slog.String("event_type", eventTypeLabel(event.GetType())),
 		slog.String("status", statusLabel(event.GetStatus())),
 	}
+	// The names the namespace's users chose — its task's id, its Orkflow's
+	// name and its selection's attributes — ride this line, which goes to the
+	// default sink with every process log, only when the run's own records
+	// do too: a namespace on another sink keeps them there (OPEN-25, decided
+	// 2026-11-16), and its line carries the namespace and opaque ids alone.
+	var authored []any
 	if taskID := event.GetTaskId(); taskID != "" {
-		args = append(args, slog.String("task_id", taskID))
+		authored = append(authored, slog.String("task_id", taskID))
 	}
 	if run != nil {
-		args = append(args,
-			slog.String("namespace", run.GetNamespace()),
-			slog.String("orkflow", run.GetOrkflowName()))
+		authored = append(authored, slog.String("orkflow", run.GetOrkflowName()))
 	}
-	// Unlike the metric attributes above, a selection's attributes ride the
-	// log line unconditionally: one more field on one log record has none of
-	// a metric label's per-value time-series cost, so there is no
-	// cardinality trade-off here to gate on (selectionMetricAttrs).
 	for _, kv := range selectionAttrs(run.GetTelemetry().GetAttributes()) {
-		args = append(args, slog.String(string(kv.Key), kv.Value.AsString()))
+		authored = append(authored, slog.String(string(kv.Key), kv.Value.AsString()))
+	}
+	sink := run.GetTelemetry().GetSink()
+	onDefault := o.sinks.anyName || sink == "" || sink == DefaultSink
+	if run != nil {
+		args = append(args, tenantAttrs(onDefault, run.GetNamespace(), authored...)...)
+	} else if onDefault {
+		args = append(args, authored...)
 	}
 	args = append(args, TraceAttrs(ctx)...)
 	o.logger.Log(ctx, level, "run event", args...)

@@ -15,6 +15,7 @@ import (
 type countingLogExporter struct {
 	sdklog.Exporter
 	exports metric.Int64Counter
+	sink    string
 }
 
 func (e *countingLogExporter) Export(ctx context.Context, records []sdklog.Record) error {
@@ -24,5 +25,5 @@ func (e *countingLogExporter) Export(ctx context.Context, records []sdklog.Recor
 		outcome = OutcomeError
 	}
 	e.exports.Add(ctx, 1, metric.WithAttributes(attribute.String(AttrOutcome, outcome)))
-	return err
+	return tagSignal(e.sink, SignalLogs, err)
 }

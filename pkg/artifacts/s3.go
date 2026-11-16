@@ -144,6 +144,7 @@ func newS3Client(ctx context.Context, cfg Config) (*s3.Client, string, error) {
 			o.BaseEndpoint = aws.String(cfg.S3Endpoint)
 		}
 		o.UsePathStyle = cfg.S3PathStyle
+		o.APIOptions = append(o.APIOptions, observeRequests)
 	})
 	return client, bucket, nil
 }
@@ -581,7 +582,7 @@ func (s *S3Store) Presign(ctx context.Context, uri string, ttl time.Duration) (s
 	if ttl <= 0 {
 		return "", fmt.Errorf("artifacts: s3 presign %q: ttl must be positive", uri)
 	}
-	req, err := s.presign.PresignGetObject(ctx, &s3.GetObjectInput{
+	req, err := s.presign.PresignGetObject(notARequest(ctx), &s3.GetObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	}, s3.WithPresignExpires(ttl))

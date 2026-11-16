@@ -21,6 +21,10 @@ type AttemptRecordObserver interface {
 	// LegacyRecordKept is a record already under the ordinal this Orker
 	// claimed, which it kept.
 	LegacyRecordKept()
+	// AttemptRecordWritten is one attempt's record write in pool: written,
+	// or not (the store refused it, or an earlier release's record held its
+	// ordinal), which leaves the attempt with no record of its own.
+	AttemptRecordWritten(pool string, written bool)
 }
 
 // claimBackoff is how long a failed claim waits before each of its three

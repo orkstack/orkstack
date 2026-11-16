@@ -1,0 +1,15 @@
+# Publishes the observability profile's backends on loopback, beside the two
+# ports the profile itself publishes (the Collector's OTLP/http and Grafana):
+# for the observability proof gate, which reads Loki, Tempo and Prometheus
+# directly, and for anyone who wants their APIs. `make infra-up-observability`
+# adds it; a plain `--profile observability` leaves it out.
+services:
+  loki:
+    ports:
+      - "127.0.0.1:3100:3100"   # native OTLP too: http://localhost:3100/otlp
+  tempo:
+    ports:
+      - "127.0.0.1:3200:3200"   # Tempo API
+  prometheus:
+    ports:
+      - "127.0.0.1:9090:9090"

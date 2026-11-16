@@ -1,5 +1,5 @@
 # Provisioned datasources for the `observability` compose profile's Grafana.
-# Anonymous admin access is for local use only — see the profile's README.
+# Anonymous Viewer access is for local use only — see the profile's README.
 apiVersion: 1
 
 datasources:

@@ -305,28 +305,6 @@ func TestNewOrkerObserverForSinks_TaskPinnedToNamedSinkLandsThere(t *testing.T) 
 	}
 }
 
-// TestNewOrkerObserverForSinks_UnknownSinkFallsBackToDefault confirms an
-// attempt naming an undeclared sink still traces, on the default.
-func TestNewOrkerObserverForSinks_UnknownSinkFallsBackToDefault(t *testing.T) {
-	defProviders, defExporter, _ := newObserverProviders(t)
-	sinks := newSinksForTest(defProviders, nil)
-	obs := NewOrkerObserverForSinks(sinks, nil)
-
-	in := inputForSink("does-not-exist", nil)
-	_, attemptObs := obs.Begin(context.Background(), in, 1)
-	attemptObs.End(orker.AttemptOutcome{})
-
-	found := false
-	for _, s := range defExporter.GetSpans() {
-		if s.Name == "ork.task.attempt" {
-			found = true
-		}
-	}
-	if !found {
-		t.Error("default sink got no ork.task.attempt span for an unknown sink name")
-	}
-}
-
 // TestNewOrkerObserverForSinks_SelectionAttrsOnMetricsOnlyHighCardinality
 // covers the metric half of the trade-off: the selection's attributes always
 // land on the span (already covered above), but only land on

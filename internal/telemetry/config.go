@@ -64,6 +64,14 @@ const (
 	// value is a new time series; an operator who wants per-run metrics and
 	// accepts that cost turns it on.
 	HighCardinalityVar = "ORK_TELEMETRY_HIGH_CARDINALITY"
+	// OrkflowLabelVar puts ork.orkflow.name on the run metrics (ork.runs,
+	// ork.tasks, ork.run.duration, ork.runs.refused); on by default.
+	OrkflowLabelVar = "ORK_TELEMETRY_ORKFLOW_LABEL"
+	// MetricCardinalityLimitVar bounds the series of each instrument; past
+	// it new series fold into one marked otel.metric.overflow=true.
+	MetricCardinalityLimitVar = "ORK_TELEMETRY_METRIC_CARDINALITY_LIMIT"
+	// CensusRequestsPerMinuteVar is each engine replica's census budget.
+	CensusRequestsPerMinuteVar = "ORK_TELEMETRY_CENSUS_REQUESTS_PER_MINUTE"
 
 	// Standard OpenTelemetry selectors, read here rather than by the SDK
 	// because the SDK has no "which exporter" autoconfiguration in Go.
@@ -102,11 +110,21 @@ var defaultLogLevel = func() slog.Level {
 	return level
 }()
 
+// The defaults of the label and census settings.
+const (
+	DefaultOrkflowLabel = true
+	// DefaultMetricCardinalityLimit is the OpenTelemetry SDK's own default.
+	DefaultMetricCardinalityLimit = 2000
+)
+
 // Config is everything this package decides from the environment. The zero
 // value is "off": no exporters, no listener, text logs at info.
 type Config struct {
 	// ServiceName is service.name on every signal.
 	ServiceName string
+	// Component is ork.component on every signal (identity.go): the binary
+	// ConfigFromEnv was asked for, whatever OTEL_SERVICE_NAME renames it to.
+	Component string
 	// TracesExporter is "none" or "otlp".
 	TracesExporter string
 	// MetricsExporters is the set of "prometheus" and "otlp" that were asked
@@ -122,6 +140,14 @@ type Config struct {
 	PprofEnabled bool
 	// HighCardinality adds per-run and per-task labels to metrics.
 	HighCardinality bool
+	// OrkflowLabel puts ork.orkflow.name on the run metrics. ConfigFromEnv
+	// sets it true unless ORK_TELEMETRY_ORKFLOW_LABEL says false.
+	OrkflowLabel bool
+	// MetricCardinalityLimit is the most series one instrument keeps;
+	// zero means the SDK's own default (DefaultMetricCardinalityLimit).
+	MetricCardinalityLimit int
+	// CensusRequestsPerMinute is the engine's census budget per replica.
+	CensusRequestsPerMinute int
 	// LogFormat is "text" or "json".
 	LogFormat string
 	// LogLevel is the minimum level the process logger emits.
@@ -166,11 +192,16 @@ func configFrom(service string, lookup func(string) (string, bool)) (Config, err
 	}
 	cfg := Config{
 		ServiceName:    service,
+		Component:      componentFor(service),
 		TracesExporter: ExporterNone,
 		LogsExporter:   ExporterNone,
 		LogFormat:      LogFormatText,
 		LogLevel:       defaultLogLevel,
 		AdminAddr:      get(AdminAddrVar),
+
+		OrkflowLabel:            DefaultOrkflowLabel,
+		MetricCardinalityLimit:  DefaultMetricCardinalityLimit,
+		CensusRequestsPerMinute: DefaultCensusRequestsPerMinute,
 	}
 	if name := get(ServiceNameVar); name != "" {
 		cfg.ServiceName = name
@@ -196,7 +227,7 @@ func configFrom(service string, lookup func(string) (string, bool)) (Config, err
 	for _, flag := range []struct {
 		key string
 		dst *bool
-	}{{PprofEnabledVar, &cfg.PprofEnabled}, {HighCardinalityVar, &cfg.HighCardinality}} {
+	}{{PprofEnabledVar, &cfg.PprofEnabled}, {HighCardinalityVar, &cfg.HighCardinality}, {OrkflowLabelVar, &cfg.OrkflowLabel}} {
 		raw := get(flag.key)
 		if raw == "" {
 			continue
@@ -207,6 +238,22 @@ func configFrom(service string, lookup func(string) (string, bool)) (Config, err
 			continue
 		}
 		*flag.dst = parsed
+	}
+
+	for _, setting := range []struct {
+		key string
+		dst *int
+	}{{MetricCardinalityLimitVar, &cfg.MetricCardinalityLimit}, {CensusRequestsPerMinuteVar, &cfg.CensusRequestsPerMinute}} {
+		raw := get(setting.key)
+		if raw == "" {
+			continue
+		}
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 {
+			errs = append(errs, fmt.Errorf("%s=%q must be a whole number of at least 1", setting.key, raw))
+			continue
+		}
+		*setting.dst = parsed
 	}
 
 	if raw := get(TracesExporterVar); raw != "" {

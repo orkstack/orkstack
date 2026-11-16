@@ -89,3 +89,9 @@ func isRecordKey(key string) bool {
 	return strings.HasPrefix(key, AttestedPrefix+"/") ||
 		(strings.HasPrefix(key, SnapshotPrefix+"/") && strings.Contains(key, "/identity/"))
 }
+
+// Admission writes a run's admission record, as the submit path will, and
+// answers its digest.
+func (w *RecordTestWriter) Admission(ctx context.Context, a Admission) (string, error) {
+	return newRecordStore(w.b).writeAdmission(ctx, a)
+}

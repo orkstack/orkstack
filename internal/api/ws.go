@@ -14,6 +14,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/telemetry"
 )
 
 // NewWebSocketBridge returns the /ws/runs/{id} handler. It forwards the same
@@ -111,6 +112,7 @@ func NewWebSocketBridge(svc *Service, allowedOrigins []string) http.Handler {
 				"error", err)
 			return
 		}
+		defer svc.rpcMetrics.StreamOpened(r.Context(), telemetry.StreamWebSocketEvents)()
 		defer conn.CloseNow()
 
 		ctx, stopWatch := svc.watchAccess(conn.CloseRead(r.Context()), admitted)
@@ -346,6 +348,7 @@ func NewTaskLogSocket(svc *Service, allowedOrigins []string) http.Handler {
 				"error", err)
 			return
 		}
+		defer svc.rpcMetrics.StreamOpened(r.Context(), telemetry.StreamWebSocketLogs)()
 		defer conn.CloseNow()
 
 		ctx, stopWatch := svc.watchAccess(conn.CloseRead(r.Context()), admitted)

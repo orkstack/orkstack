@@ -570,3 +570,25 @@ func TestStatsWindow_MeasuresChainsFromCreatedAt(t *testing.T) {
 		t.Fatalf("%d describes, want none: the final record was indexed", index.count("describe"))
 	}
 }
+
+// TestRunningRuns_ACarriedOnRunCountsOnce: ork.runs.open's census counts a
+// run, never a generation (AGENTS §7: a run's executions are one run in every
+// count). A run whose earlier generations closed continuing as new within the
+// hour, and whose current generation is open, is one open run; a plain run
+// beside it makes two.
+func TestRunningRuns_ACarriedOnRunCountsOnce(t *testing.T) {
+	created := visibilityNow.Add(-2 * time.Hour)
+	var generations []record
+	for i, closedAgo := range []int{40, 20, 5} {
+		g := switched("ork-chain", created, closedAgo)
+		g.start = created.Add(time.Duration(i) * 30 * time.Minute) // its own execution
+		generations = append(generations, g)
+	}
+	index := indexOf(t, append(generations,
+		successor("ork-chain", created, running),
+		record{id: "ork-plain", status: running, start: visibilityNow.Add(-time.Minute)})...)
+	got, err := readerOverIndex(index).RunningRuns(context.Background())
+	if err != nil || got != 2 {
+		t.Fatalf("RunningRuns = %d, %v; want 2: the carried-on run once, never once per generation", got, err)
+	}
+}

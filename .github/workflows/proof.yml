@@ -772,7 +772,7 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
-          docker compose -f deploy/docker-compose.yml --profile observability up -d --wait
+          docker compose -f deploy/docker-compose.yml -f deploy/observability/compose.backends.yaml --profile observability up -d --wait
           # --wait returns once the containers run, but Loki answers /ready
           # with 503 for its first seconds (about 22 s on a 16-CPU host), and
           # proof.sh refuses the part (exit 77) unless every endpoint below is
@@ -788,8 +788,8 @@ jobs:
           until ready; do
             if [ "$SECONDS" -ge "$deadline" ]; then
               echo "the observability stack was not ready after 180 s" >&2
-              docker compose -f deploy/docker-compose.yml --profile observability ps >&2
-              docker compose -f deploy/docker-compose.yml --profile observability logs --tail 40 otel-collector loki tempo prometheus >&2
+              docker compose -f deploy/docker-compose.yml -f deploy/observability/compose.backends.yaml --profile observability ps >&2
+              docker compose -f deploy/docker-compose.yml -f deploy/observability/compose.backends.yaml --profile observability logs --tail 40 otel-collector loki tempo prometheus >&2
               exit 1
             fi
             sleep 2

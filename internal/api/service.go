@@ -22,6 +22,7 @@ import (
 	"github.com/orkstack/orkstack/internal/listfilter"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/typeid"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/eventsources"
@@ -546,7 +547,10 @@ type Service struct {
 	audit *AuditRecorder
 	// access is authentication's and authorization's state; nil in asserted
 	// mode, where nothing is installed.
-	access     *AccessControl
+	access *AccessControl
+	// rpcMetrics records API calls and open streams (MuxOptions.RPCMetrics);
+	// nil records nothing.
+	rpcMetrics *telemetry.RPCMetrics
 	auditStore artifacts.AuditStore
 	notifier   engine.RunNotifier
 	observer   engine.EventObserver

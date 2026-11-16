@@ -725,9 +725,12 @@ then the variable it becomes.
 | `telemetry.admin_allowed_hosts` | `ORK_ADMIN_ALLOWED_HOSTS` | *(empty)* | both | comma-separated names the admin listener answers to in a request's `Host` header, besides the ones every OrkStack listener admits: an IP address, `localhost` and every name under it, a name without a dot, and the host `ORK_ADMIN_ADDR` names. The grammar is `engine.allowed_hosts`'s, and an entry it refuses stops the boot of either binary. Any other `Host` is refused `403`, so a page that rebinds a public name to the listener cannot read `/metrics` or a profile. List the name a scraper dials when it has a dot: a Prometheus static target such as `host.docker.internal`, or a Service name (§ "The API listener's bounds") |
 | `telemetry.pprof_enabled` | `ORK_PPROF_ENABLED` | `false` | both | mounts `net/http/pprof` on the admin listener. Off by default: an Orker's heap holds resolved secret bytes |
 | `telemetry.high_cardinality` | `ORK_TELEMETRY_HIGH_CARDINALITY` | `false` | both | adds `ork.run_id`/`ork.task_id`/`ork.orkflow.name`/`ork.orkflow.version` labels to `ork_*` metrics — see §7, "High-cardinality labels" |
+| `telemetry.orkflow_label` | `ORK_TELEMETRY_ORKFLOW_LABEL` | `true` | ork | puts `ork.orkflow.name` on `ork.runs`, `ork.tasks`, `ork.run.duration` and `ork.runs.refused`; never on a task duration or an Orker's metric (§7, "The Orkflow label") |
+| `telemetry.metric_cardinality_limit` | `ORK_TELEMETRY_METRIC_CARDINALITY_LIMIT` | `2000` | both | the most series one instrument keeps; past it new series fold into one marked `otel.metric.overflow="true"` (§7, "The Orkflow label") |
+| `telemetry.census_requests_per_minute` | `ORK_TELEMETRY_CENSUS_REQUESTS_PER_MINUTE` | `60` | ork | each engine replica's budget of census requests (§7, "Censuses") |
 | `orker.task_log_export` | `ORK_ORKER_TASK_LOG_EXPORT` | `false` | `orker` | exports every task stdout/stderr line as an OTel log record. Requires `OTEL_LOGS_EXPORTER=otlp` — see §7, "Task logs" |
 | `telemetry.service_name` | `OTEL_SERVICE_NAME` | `ork` / `orker` | both | `service.name` on every signal — the standard OpenTelemetry variable, not `ORK_`-prefixed, honored verbatim (§7) |
-| `telemetry.resource_attributes` | `OTEL_RESOURCE_ATTRIBUTES` | *(empty)* | both | standard resource attributes; overrides OrkStack's own `ork.*` attributes value-for-value (§7) |
+| `telemetry.resource_attributes` | `OTEL_RESOURCE_ATTRIBUTES` | *(empty)* | both | standard resource attributes; overrides OrkStack's own attributes value-for-value, except the process identity (`service.instance.id`, `ork.component`, `ork.deployment`, `ork.orker_id`), which it never overrides (§7, "Process identity") |
 | `telemetry.exporters.metrics` | `OTEL_METRICS_EXPORTER` | `none` | both | comma list of `prometheus`, `otlp`, `none`. `prometheus` requires `ORK_ADMIN_ADDR` |
 | `telemetry.exporters.traces` | `OTEL_TRACES_EXPORTER` | `none` | both | `otlp` or `none`. `otlp` wires the Orkflow's spans end to end — see §7, "Traces" |
 | `telemetry.sampler.name` | `OTEL_TRACES_SAMPLER` | *(SDK default: `parentbased_always_on`)* | both | standard OpenTelemetry sampler selector, honored verbatim by the SDK — see §7, "Traces" |
@@ -1187,6 +1190,10 @@ Three things make a mixed pool visible rather than silent:
   count `ork.orker.attempt_record_legacy`, by where the record was met
   (`ork.found`: `claim` or `record`), so any count means the pool runs two
   releases;
+- every attempt's record write is counted as `ork.orker.attempt_records`, by
+  `ork.pool` and `outcome`: `written`, or `failed` when the store refused it
+  or an earlier release's record held its number. A `failed` count is an
+  attempt with no record of its own, which `orkctl run attempts` cannot show;
 - a submit that already asks a pool's Orkers a question (a fan-out, a cached
   task, a failure handler, a sized task, a pin) also asks every live pool of
   the run whether its Orkers claim ordinals (`DescribeOrkerResult`
@@ -3771,6 +3778,8 @@ load, read when the meter collects. Each series carries `ork.orker_id` and
 | `ork.orker.open_pins` | `ork.orker_id`, `ork.pool` | the pins it holds open, `PINS` in `orkctl orker list` |
 | `ork.orker.max_concurrent` | `ork.orker_id`, `ork.pool` | how many tasks it runs at once (`orker.max_concurrent`) |
 | `ork.orker.cordoned` | `ork.orker_id`, `ork.pool`, `ork.cordon.cause` | 1 while that cause of a cordon holds, else 0: one series each for `operator`, `store_outage` and `stopping` |
+| `ork.orker.present` | `ork.orker_id`, `ork.pool` | 1 while it exports: `sum by (ork_pool)` counts a pool's Orkers |
+| `ork.orker.task_log.export_enabled` | `ork.orker_id`, `ork.pool` | 1 when it exports task logs unless a namespace says otherwise (`ORK_ORKER_TASK_LOG_EXPORT`), else 0 |
 
 In Prometheus they are `ork_orker_running_tasks`, `ork_orker_open_pins`,
 `ork_orker_max_concurrent` and `ork_orker_cordoned{ork_cordon_cause=...}`. A
@@ -5417,14 +5426,18 @@ natively.
 ### Metrics
 
 `ork_build_info{service.version,ork.deployment,ork.build_id,...}` is a
-constant `1`, so its labels are the identity of whatever answered the scrape —
-the same idea as `orkctl admin info` (§5), read as a time series instead of a
-CLI call. `ork_orker_task_log_records_total{outcome=emitted|truncated}` and
+constant `1`, reported at every collection, so its labels are the identity of
+whatever answered the scrape — the same idea as `orkctl admin info` (§5), read
+as a time series instead of a CLI call. `ork_orker_task_log_records_total{outcome=emitted|truncated}` and
 `ork_orker_task_log_exports_total{outcome=ok|error}` account for the task-log
 export path below. The Temporal SDK's own `temporal_*` metrics — activity and
 workflow task latency, poll counts, failures — arrive via
-`client.Options.MetricsHandler`, and Go's runtime and process collectors ride
-along on the same `/metrics`. An Orker that declares a capacity adds
+`client.Options.MetricsHandler`. The Go runtime's metrics
+(`go.memory.used`, `go.goroutine.count`, `go.memory.gc.goal` and the rest of
+OpenTelemetry's runtime conventions) are reported by every exporter of the
+default sink, OTLP and `/metrics` alike, and never by a named sink; `/metrics`
+alone also carries the Prometheus process collector (`process_cpu_seconds_total`,
+`process_resident_memory_bytes`, …). An Orker that declares a capacity adds
 `ork.orker.capacity.*` and `ork.orker.admission.*` ("Declaring an Orker's
 capacity", above). Every Orker adds `ork.orker.store_outage.*` ("When object
 storage goes away", above) and its load gauges, `ork.orker.running_tasks`,
@@ -5454,6 +5467,142 @@ nothing, so a force cancel is refused until the store answers
 ([TASK_IDENTITY.md](./TASK_IDENTITY.md#the-copy-on-disk)). Alert on any
 increase.
 
+#### Go runtime metrics
+
+The Go runtime's metrics follow OpenTelemetry's semantic conventions, so a
+dashboard or alert written against the Prometheus Go collector's names reads
+these instead (their `/metrics` spelling):
+
+| Before | Now |
+|---|---|
+| `go_goroutines` | `go_goroutine_count` |
+| `go_memstats_sys_bytes` minus `go_memstats_heap_released_bytes` | `go_memory_used_bytes` |
+| `go_memstats_alloc_bytes_total` | `go_memory_allocated_bytes_total` |
+| `go_memstats_mallocs_total` | `go_memory_allocations_total` |
+| `go_memstats_next_gc_bytes` | `go_memory_gc_goal_bytes` |
+| `go_gc_gogc_percent` | `go_config_gogc_percent` |
+| `go_gomaxprocs_threads` | `go_processor_limit` |
+| `go_gc_gomemlimit_bytes` | `go_memory_limit_bytes`, only while a memory limit is set |
+| `go_gc_duration_seconds`, `go_threads`, `go_info` and the other `go_memstats_*` | no counterpart; gone |
+
+The `process_*` metrics are unchanged, and on `/metrics` only.
+
+#### Process identity
+
+Every process's resource carries `service.instance.id`, a UUIDv7 it mints at
+boot, so two engine replicas are two series and a restarted process is a new
+one; `ork.component` (`engine` or `orker`); and `ork.deployment`
+(`ORK_DEPLOYMENT_NAME`); an Orker's also carries `ork.orker_id`, its
+`orker.id`. These are merged after
+`OTEL_RESOURCE_ATTRIBUTES`: an environment value for any of them is ignored,
+even one the process does not set itself (an engine has no `ork.orker_id`),
+and logged once at Warn at boot, while every other resource attribute the environment sets still wins
+over the binary's. A query that sums a counter across a deployment aggregates
+`service_instance_id` away. Each restart starts new series, so a deployment's
+series count grows with the processes started per retention block, not only
+with the processes running.
+
+#### Export errors
+
+`ork.telemetry.export_errors{ork.telemetry.signal}` counts every error the
+OpenTelemetry SDK reports, whichever sink's exporter failed: `traces`,
+`metrics` or `logs` for an export that failed, `other` for anything else the
+SDK reported. It is counted on the default sink, so only when that sink
+exports metrics; the log line below is written either way. The first failed
+export of each sink and signal is logged at Warn at once (`telemetry export
+failed`, naming the sink), then at most one line a minute for that sink and
+signal, naming how many were suppressed, with any URL's user, password, query
+and fragment removed; an error the SDK reports for no export is logged as
+`telemetry error`. Nothing waits on an export: a collector that is down costs the
+records the SDK's queues drop, never a task or a run.
+
+#### Object store requests
+
+With the S3 backend, every call a process makes to the bucket is counted on
+the default sink when it exports metrics:
+`ork.store.requests{ork.store.operation, ork.store.family, outcome}`,
+`ork.store.request.duration{ork.store.operation, ork.store.family}` (seconds,
+a call's retries included, until the store's answer arrives: a get's body,
+read afterwards, is not in it) and `ork.store.bytes` (a put's or upload
+part's declared length, failed ones included, or the length a get's answer
+declares, not what a reader went on to read). Minting a presigned download
+URL sends nothing to the store and is not counted. `ork.store.operation` is `get`,
+`put`, `head`, `list`, `delete`, `delete_batch`, `multipart` or `other`;
+`outcome` is `ok`, `not_found`, `conflict` (a conditional write that lost,
+which a store expects), `canceled` or `error`. `ork.store.family` is the kind
+of record (`runs`, `attempts`, `audit`, `objects`, `orkflows`, …), from a
+fixed list, `metadata` for another key under `metadata/`, or `other`; a key,
+run id or bucket name is never a label. The local backend is not observed.
+
+#### API calls and streams
+
+When metrics are exported, every API call is recorded on the default sink as
+`rpc.server.call.duration{rpc.service, rpc.method, rpc.code}`. That includes a
+call that authorization refuses. `rpc.code` is `ok` or the Connect code
+(`not_found`, `permission_denied`, …), and a server stream's duration is its
+whole life. `ork.api.streams{ork.stream.kind}` is the number of streams open
+now: `connect` for a Connect server stream, and `websocket_events` and
+`websocket_task_logs` for the WebSocket bridge's two sockets.
+
+#### The Orkflow label
+
+`ork.runs`, `ork.tasks`, `ork.run.duration` and `ork.runs.refused` carry
+`ork.orkflow.name` by default (`telemetry.orkflow_label`), so a dashboard can
+break a namespace's runs down by Orkflow. A task's duration and every Orker
+instrument never carry it. Each series is one Orkflow of one namespace, so the
+series grow with the Orkflows a deployment stores; set the label off to
+return to one series per namespace. Every instrument keeps at most
+`telemetry.metric_cardinality_limit` series (2000 by default); past it, new
+series fold into one marked `otel.metric.overflow="true"`, so an overflow is
+visible rather than silently dropped.
+
+#### Censuses
+
+When any sink exports metrics, each engine replica runs periodic reads,
+called censuses, that feed gauges. Each census runs once a minute, starting at a
+random point in its first minute so that replicas do not ask together, and
+all of a replica's censuses share one budget of
+`telemetry.census_requests_per_minute` requests (60 by default). A pass
+the budget cannot pay for is skipped and counted, never retried in line, and
+no census touches a submit. `ork.census.requests{ork.census}` counts the
+requests each spent, `ork.census.skipped{ork.census}` the skipped passes, and
+`ork.census.last_success{ork.census}` (unix seconds) when each last read its
+source, 0 until it first does; a stale value there means its gauge is stale
+too. `ork.census.failed{ork.census}` counts passes that ran and could not
+read their source, and the first of a run of failures is logged at Warn. A
+pass is admitted for its usual cost and charged afterwards for what it really
+made; one that made more puts the budget in debt, and later passes are
+skipped until it is repaid, so over any minute a replica's censuses spend at
+most the budget plus one pass. A pass that costs more than the whole budget still
+runs whenever the budget is full, and the debt it leaves delays the next
+passes. A census skipped five times in a row is logged at Warn: raise
+`telemetry.census_requests_per_minute`.
+
+| Census | Gauge | Reads |
+|---|---|---|
+| `runs_open` | `ork.runs.open`: runs open in the deployment, each run counted once however many times it has carried on, and never as zero while it carries on | two counts of the cluster's run index a pass, plus a listing of the runs that carried on within the hour when there are any, each charged |
+| `telemetry_policy` | `ork.telemetry.namespaces{routing}`: the namespaces the engine's policy cache holds, by where their records go (`default`, `named`, `named_without_metrics`, `sink_unknown`); it refreshes the cache ("Where a namespace's records go") | one listing of the namespace names and at most half the budget of namespace documents a pass (30 by default): a namespace never read first, then the others in turn, so every namespace is read again within ⌈N / 30⌉ minutes and the refresh never takes the other censuses' share |
+
+A gauge reports its last good reading, and nothing after a pass that failed.
+Every replica reports the deployment's whole count, so aggregate
+`ork.runs.open` across replicas with `max`, never `sum`. `ork.runs.open` is
+counted only when the default sink exports metrics.
+
+#### The store clock
+
+With metrics exported, every engine compares its clock with the object
+store's once per `cleanup.interval`, whether or not cleanup is enabled: it
+writes one object, `metadata/cleanup/gc-clock`, reads back the store's stamp
+of that write, and reports its own clock minus the store's as
+`ork.store.clock_skew` (seconds; positive means the engine runs ahead). S3
+stamps whole seconds, so a reading is good to about half a second. While the
+probe fails, the gauge reports nothing rather than an old reading, and the
+engine logs one warning until it succeeds again. Between probes the gauge
+repeats the last reading, so with the default one-hour interval a drift is
+seen up to an hour late; shorten `cleanup.interval` to see it sooner. The object is overwritten by
+every engine, read only by the one that just wrote it, and decides nothing
+else. An Orker's storage credential never needs to reach it.
+
 ### Lifecycle metrics
 
 These are the run and task metrics a dashboard alerts on, distinct from the
@@ -5474,6 +5623,10 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
+| `ork.orker.task.wait.duration` | `ork.pool` | Orker, once per task's first attempt: seconds from the cluster scheduling it to an Orker beginning it, the time it waited for an Orker; a retry's is not measured, since it would include the retry's backoff |
+| `ork.orker.memo.lookups` | `ork.pool`, `ork.cache.outcome`, `ork.cache.miss_reason` | Orker, once per attempt of a cached task: its memo decision (`hit`, `miss`, `bypassed`) and a miss's reason |
+| `ork.orker.memo.reused` | `ork.pool` | Orker, once per memo hit: a result reused with no container |
+| `ork.orker.memo.writes` | `ork.pool`, `outcome` | Orker, once per memo write after a miss: `written` or `failed` (the task still succeeds; its next run misses again) |
 | `ork.orker.workspace_cleanup_failures` | — | Orker, once per attempt whose own directory or secrets could not be removed when it ended and are left on disk (typically a directory a workload made as a uid other than the Orker's, which the Orker can neither write nor chmod); the Orker logs the path, the error and the directory that refused the removal with its mode and owner (`refused_by`) |
 | `ork.log.masked` | `ork.stream` | Orker, once per attempt that masked anything: the runs of bytes its masker replaced with `***` in each stream; never which secret or where |
 | `ork.log.mask.forms` | — | Orker, once per attempt whose secrets are masked: how many masking forms it registered (at most 1024) |
@@ -5609,12 +5762,83 @@ A few more behaviors worth stating precisely:
   every other header from `OTEL_EXPORTER_OTLP_HEADERS` still applies.
 - A namespace whose stored `telemetry.sink` names a sink no longer declared
   in `ORK_TELEMETRY_SINKS` (the table shrank since the namespace was
-  configured) falls back to the default sink rather than failing the run.
-  The engine logs a warning at boot naming every such namespace, so the gap
-  is visible before it is silently swallowed one run at a time. The Orker
-  warns once per unknown sink name it encounters (not once per run) and
-  counts it on `ork.telemetry.sink_unknown`, so the drift is visible in
-  metrics even between the engine's own boot-time checks.
+  configured), or that one process declares and another does not, has its
+  run's records dropped on any process that does not declare it: its run
+  metrics, task logs and attempt spans are never sent to the default sink,
+  and the run itself is unaffected. Each dropped record is counted on the
+  default sink as
+  `ork.telemetry.records_dropped{ork.telemetry.signal, reason="sink_unknown"}`,
+  and each process logs one warning per unknown sink name (not one per run).
+  A record here is a task log line, an attempt's span or its metrics, or a
+  run event's metrics. The count is exported only when the default sink
+  exports metrics; otherwise the warning is the only sign.
+  The engine also logs a warning at boot naming every such namespace. Since
+  every process of a deployment should declare the same sinks, a non-zero
+  count is drift to fix in `ORK_TELEMETRY_SINKS`.
+
+#### Where a namespace's records go
+
+A record that carries a namespace leaves only on that namespace's own sink,
+never on the default sink by fallback:
+
+- A run's records (its run and task metrics, its task logs, its attempts'
+  spans and metrics) go to the sink the run pinned at submit. The Orker's
+  records are all of this kind: it reads no registry.
+- The engine's other namespaced records, which no run's selection names (a
+  run's continuation metrics today), go to the namespace's sink through the
+  engine's policy cache: each namespace's sink and task-log setting, held in
+  memory and replaced once a minute by the `telemetry_policy` census
+  ("Censuses"). A refresh that cannot read the registry keeps the last good
+  copy.
+- The first load reads every namespace's document. It runs before the engine
+  serves, bounded at 30 seconds. Past that
+  bound the engine starts anyway, logs a warning, and drops those records as
+  `unrouted` until a refresh succeeds.
+- A namespace the cache does not hold yet (one just created) starts one
+  lookup of that namespace, off the record's path, and its records are dropped
+  as `pending` until the lookup answers. A namespace the registry does not
+  hold is dropped as `unrouted` until the next refresh. A lookup that cannot
+read the registry is logged at Warn, and its namespace's records are dropped
+as `lookup_failed` until a later lookup or refresh reads it.
+
+Every drop is counted on the default sink as
+`ork.telemetry.records_dropped{ork.telemetry.signal, reason}`, with reason
+`pending`, `unrouted`, `lookup_failed`, `sink_unknown` or
+`instruments_failed` (a sink whose instruments could not be built, logged
+once per sink). `pending` is a namespace being created and needs no action;
+the others, when they persist, are faults to fix. When the default sink
+exports no metrics, the first drop of each signal and reason is logged at
+Warn instead.
+
+A process log line that names a namespace's own objects goes through
+`telemetry.TenantAttrs`: for a namespace on another sink, or one the cache
+cannot route, it carries the namespace, opaque ids and closed values only,
+never a name the namespace's users chose (an Orkflow's, a schedule's). The
+engine's `run event` line decides from the sink its run pinned: a run on
+another sink logs its run id, sequence, event type, status and namespace, and
+no task id, Orkflow name or selection attribute; a run on the default sink
+logs them all.
+
+#### Operator twins
+
+Each instrument an operator alert reads has a twin named
+`ork.deployment.<name>`, recorded for every namespace on the default sink
+only. A twin carries no namespace, no Orkflow or other authored name and no
+selection attribute: only closed values and the pool. A namespace on another
+sink is visible on the default sink through its twins alone.
+
+| Twin | Labels |
+|---|---|
+| `ork.deployment.runs` | `status` |
+| `ork.deployment.tasks` | `status`, `failure_category`, `ork.pool`, `ork.cache.outcome` |
+| `ork.deployment.runs.refused` | `ork.refusal.reason` |
+| `ork.deployment.run.continuations` | `outcome` |
+| `ork.deployment.orker.tasks` | `ork.pool`, `outcome`, `ork.failure.reason` |
+| `ork.deployment.orker.task.wait.duration` | `ork.pool` |
+| `ork.deployment.orker.memo.lookups` | `ork.pool`, `ork.cache.outcome` |
+| `ork.deployment.orker.memo.writes` | `ork.pool`, `outcome` |
+
+Twins are exported only when the default sink exports metrics.
 
 ### Per-namespace policy
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
+	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
@@ -108,6 +110,11 @@ func (r *Readiness) Ready() bool {
 	return r != nil && r.ready.Load()
 }
 
+// Setup builds the providers cfg asks for, for one destination. The binaries
+// boot through SetupSinks (Boot), which also installs the export-error
+// handler and warns about identity overrides; Setup does neither, so a
+// caller of it relies on the SDK's own handler.
+//
 // Setup builds the providers cfg asks for. extra are resource attributes the
 // binary knows and the environment does not: its version, deployment identity
 // and pool. They are placed UNDER the standard environment, so an operator's
@@ -131,7 +138,7 @@ func Setup(ctx context.Context, cfg Config, extra ...attribute.KeyValue) (*Provi
 		return noopProviders(cfg), nil
 	}
 
-	res, err := newResource(ctx, cfg, extra)
+	res, _, err := newResource(ctx, cfg, extra)
 	if err != nil {
 		return nil, err
 	}
@@ -140,11 +147,14 @@ func Setup(ctx context.Context, cfg Config, extra ...attribute.KeyValue) (*Provi
 	if s, ok := cfg.Sinks.sinks[DefaultSink]; ok {
 		spec = &s
 	}
-	p, err := buildProviders(ctx, cfg, spec, res)
+	p, err := buildProviders(ctx, cfg, DefaultSink, spec, res)
 	if err != nil {
 		return nil, err
 	}
-	recordBuildInfo(p.Meter, extra)
+	if err := processInstruments(p.cfg, p, extra); err != nil {
+		shutdownAfterFailedBoot(p.Shutdown)
+		return nil, err
+	}
 	return p, nil
 }
 
@@ -193,7 +203,7 @@ const (
 // the caller (Setup or SetupSinks) is left to name the sink. A spec missing
 // only SOME signals' endpoints is not an error: that signal is simply off for
 // this sink (signalOptions).
-func buildProviders(ctx context.Context, cfg Config, spec *SinkSpec, res *resource.Resource) (*Providers, error) {
+func buildProviders(ctx context.Context, cfg Config, name string, spec *SinkSpec, res *resource.Resource) (*Providers, error) {
 	if spec != nil {
 		if !spec.hasAnyEndpoint() {
 			return nil, errors.New("no endpoint set (endpoint, logs_endpoint, traces_endpoint or metrics_endpoint)")
@@ -206,10 +216,11 @@ func buildProviders(ctx context.Context, cfg Config, spec *SinkSpec, res *resour
 		var readers []sdkmetric.Option
 		if cfg.PrometheusEnabled() {
 			registry := prometheus.NewRegistry()
-			registry.MustRegister(
-				collectors.NewGoCollector(),
-				collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-			)
+			// The Go runtime's own metrics come from the OpenTelemetry
+			// runtime instrumentation on every exporter (processInstruments);
+			// the process collector stays, for /metrics only: it has no
+			// OpenTelemetry counterpart.
+			registry.MustRegister(collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}))
 			exporter, err := otelprom.New(otelprom.WithRegisterer(registry))
 			if err != nil {
 				return nil, fmt.Errorf("prometheus exporter: %w", err)
@@ -225,10 +236,10 @@ func buildProviders(ctx context.Context, cfg Config, spec *SinkSpec, res *resour
 				if err != nil {
 					return nil, fmt.Errorf("otlp metrics exporter: %w", err)
 				}
-				readers = append(readers, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(exporter)))
+				readers = append(readers, sdkmetric.WithReader(sdkmetric.NewPeriodicReader(signalMetricExporter{Exporter: exporter, sink: name})))
 			}
 		}
-		provider := sdkmetric.NewMeterProvider(append(readers, sdkmetric.WithResource(res))...)
+		provider := sdkmetric.NewMeterProvider(append(append(readers, sdkmetric.WithResource(res)), meterLimitOptions(cfg)...)...)
 		p.Meter = provider
 		p.shutdowns = append(p.shutdowns, provider.Shutdown)
 	}
@@ -241,7 +252,7 @@ func buildProviders(ctx context.Context, cfg Config, spec *SinkSpec, res *resour
 			return nil, fmt.Errorf("otlp trace exporter: %w", err)
 		}
 		provider := sdktrace.NewTracerProvider(
-			sdktrace.WithBatcher(exporter),
+			sdktrace.WithBatcher(signalSpanExporter{SpanExporter: exporter, sink: name}),
 			sdktrace.WithResource(res),
 		)
 		p.Tracer = provider
@@ -265,7 +276,7 @@ func buildProviders(ctx context.Context, cfg Config, spec *SinkSpec, res *resour
 		if err != nil {
 			return nil, fmt.Errorf("telemetry instruments: %w", err)
 		}
-		counted := &countingLogExporter{Exporter: exporter, exports: exportCounter}
+		counted := &countingLogExporter{Exporter: exporter, exports: exportCounter, sink: name}
 		provider := sdklog.NewLoggerProvider(
 			sdklog.WithProcessor(sdklog.NewBatchProcessor(counted)),
 			sdklog.WithResource(res),
@@ -318,33 +329,63 @@ func signalOptions[Option any](
 	return opts, true
 }
 
-// newResource describes the process. OrkStack's own attributes go first so
+// newResource describes the process. OrkStack's own attributes go first, so
 // that WithFromEnv, merged after them, lets OTEL_RESOURCE_ATTRIBUTES and
-// OTEL_SERVICE_NAME override — the operator's word over the binary's.
-func newResource(ctx context.Context, cfg Config, extra []attribute.KeyValue) (*resource.Resource, error) {
-	attrs := append([]attribute.KeyValue{attribute.String("service.name", cfg.ServiceName)}, extra...)
-	res, err := resource.New(ctx,
+// OTEL_SERVICE_NAME override them — the operator's word over the binary's —
+// except the process identity (identity.go), merged last, which no
+// environment value overrides. conflicts names each identity key the
+// environment tried to set to another value, for the caller to warn about.
+func newResource(ctx context.Context, cfg Config, extra []attribute.KeyValue) (res *resource.Resource, conflicts []string, err error) {
+	identity, rest := identityAttrs(cfg, extra)
+	attrs := append([]attribute.KeyValue{attribute.String("service.name", cfg.ServiceName)}, rest...)
+	base, err := resource.New(ctx,
 		resource.WithAttributes(attrs...),
 		resource.WithTelemetrySDK(),
 		resource.WithHost(),
 		resource.WithFromEnv(),
 	)
 	if err != nil && !errors.Is(err, resource.ErrPartialResource) {
-		return nil, fmt.Errorf("telemetry resource: %w", err)
+		return nil, nil, fmt.Errorf("telemetry resource: %w", err)
 	}
-	return res, nil
+	// The environment's value for an identity key is dropped whether or not
+	// the binary sets that key: an engine has no Orker id, and none from the
+	// environment may make it read as an Orker.
+	ours := attribute.NewSet(identity...)
+	kept := make([]attribute.KeyValue, 0, base.Len())
+	for _, kv := range base.Attributes() {
+		if !isIdentityKey(kv.Key) {
+			kept = append(kept, kv)
+			continue
+		}
+		if v, ok := ours.Value(kv.Key); !ok || v.String() != kv.Value.String() {
+			conflicts = append(conflicts, string(kv.Key))
+		}
+	}
+	slices.SortFunc(conflicts, func(a, b string) int {
+		return slices.Index(identityKeys, attribute.Key(a)) - slices.Index(identityKeys, attribute.Key(b))
+	})
+	base = resource.NewWithAttributes(base.SchemaURL(), kept...)
+	res, err = resource.Merge(base, resource.NewSchemaless(identity...))
+	if err != nil {
+		return nil, nil, fmt.Errorf("telemetry resource: %w", err)
+	}
+	return res, conflicts, nil
 }
 
-// recordBuildInfo publishes ork_build_info = 1 carrying the binary's identity,
-// the metric a dashboard joins on to label everything else with a version.
-func recordBuildInfo(provider metric.MeterProvider, attrs []attribute.KeyValue) {
-	meter := provider.Meter(ScopeName)
-	gauge, err := meter.Int64Gauge("ork.build.info",
-		metric.WithDescription("Constant 1, labelled with the build identity of this process."))
-	if err != nil {
-		return
+// processInstruments registers what belongs to the process rather than to a
+// sink, on the default destination only: ork.build.info and the Go runtime's
+// metrics. A named sink never carries them.
+func processInstruments(cfg Config, def *Providers, buildAttrs []attribute.KeyValue) error {
+	if err := registerBuildInfo(def.Meter, buildAttrs); err != nil {
+		return err
 	}
-	gauge.Record(context.Background(), 1, metric.WithAttributes(attrs...))
+	if !cfg.MetricsEnabled() {
+		return nil
+	}
+	if err := otelruntime.Start(otelruntime.WithMeterProvider(def.Meter)); err != nil {
+		return fmt.Errorf("telemetry runtime metrics: %w", err)
+	}
+	return nil
 }
 
 // Config reports what this Providers was built from.
@@ -360,7 +401,7 @@ func (p *Providers) Cardinality() Cardinality {
 	if p == nil {
 		return Cardinality{}
 	}
-	return Cardinality{High: p.cfg.HighCardinality}
+	return Cardinality{High: p.cfg.HighCardinality, OrkflowLabel: p.cfg.OrkflowLabel}
 }
 
 // Enabled reports whether any signal leaves the process.
@@ -391,10 +432,6 @@ func (p *Providers) Shutdown(ctx context.Context) error {
 // of its own.
 const ShutdownTimeout = 10 * time.Second
 
-// SinkUnknownMetric names the counter For increments when a caller names a
-// sink ORK_TELEMETRY_SINKS does not declare.
-const SinkUnknownMetric = "ork.telemetry.sink_unknown"
-
 // Sinks is every named sink from ORK_TELEMETRY_SINKS, built once at boot,
 // plus the default — the destination a caller gets by asking for "" or an
 // unrecognized name. The default is either the OTEL_* environment or, when
@@ -410,14 +447,113 @@ const SinkUnknownMetric = "ork.telemetry.sink_unknown"
 // (buildProviders' cfg.boundTo): the only boot error left is a sink with no
 // endpoint at all (buildProviders' hasAnyEndpoint check).
 type Sinks struct {
-	byName  map[string]*Providers
-	def     *Providers
-	unknown metric.Int64Counter
-	logger  *slog.Logger
-	// warned dedupes the "sink not declared" Warn For logs: at most one per
+	byName map[string]*Providers
+	def    *Providers
+	logger *slog.Logger
+	// warned dedupes the "sink not declared" Warn ForNamespaced logs: at most one per
 	// unknown name, however many times a caller asks for it over the
 	// process's life.
 	warned sync.Map
+	// identityConflicts are the identity keys the environment tried to
+	// override (newResource); WithLogger warns about them once.
+	identityConflicts []string
+	identityWarned    sync.Once
+	// exportErrors is the process's otel.ErrorHandler when a signal is on.
+	exportErrors *exportErrorHandler
+	// anyName is a Sinks with no table (sinksOf): every name is its one
+	// destination, because there is no other to choose.
+	anyName bool
+	// dropWarned dedupes DropRecords' Warn: one per signal and reason.
+	dropWarned sync.Map
+	// dropped counts records_dropped on the default sink, built at first use.
+	dropped     metric.Int64Counter
+	droppedOnce sync.Once
+}
+
+// RecordsDroppedMetric counts records that named a destination this process
+// cannot send them to, by signal and reason, on the default sink. A record
+// carrying a namespace leaves only on that namespace's own sink, never on
+// another by fallback (OPEN-22), so the default sink carries only this count.
+const RecordsDroppedMetric = "ork.telemetry.records_dropped"
+
+// AttrDropReason is why a record was dropped.
+const AttrDropReason = "reason"
+
+// DropReasonSinkUnknown is a record whose run selected a sink this process
+// does not declare (ORK_TELEMETRY_SINKS differs between processes, or the
+// namespace names one no process declares).
+const DropReasonSinkUnknown = "sink_unknown"
+
+// DropReasonInstrumentsFailed is a record whose sink's instruments could
+// not be built, which the process logs once per sink.
+const DropReasonInstrumentsFailed = "instruments_failed"
+
+// DropRecords counts n records of signal dropped for reason, on the default
+// sink: a task log line, one attempt's span, one attempt's metrics, or one run
+// event's or refusal's metrics is one record. It never blocks and never fails:
+// telemetry is best-effort. The count reaches an operator only when the
+// default sink exports metrics; ForNamespaced's Warn is the signal otherwise.
+func (s *Sinks) DropRecords(ctx context.Context, signal, reason string, n int64) {
+	if s == nil || n <= 0 {
+		return
+	}
+	if counter := s.droppedCounter(); counter != nil {
+		counter.Add(ctx, n, metric.WithAttributes(
+			attribute.String(AttrSignal, signal), attribute.String(AttrDropReason, reason)))
+	}
+	// With the default sink exporting no metrics the count reaches no one, so
+	// the first drop of each signal and reason is logged instead.
+	if s.logger != nil && (s.def == nil || !s.def.cfg.MetricsEnabled()) {
+		if _, warned := s.dropWarned.LoadOrStore(signal+"/"+reason, struct{}{}); !warned {
+			s.logger.Warn("telemetry records dropped; the default sink exports no metrics to count them",
+				"signal", signal, "reason", reason)
+		}
+	}
+}
+
+// droppedCounter builds RecordsDroppedMetric once, on the default sink. A
+// counter that cannot be built is logged once and drops are then uncounted.
+func (s *Sinks) droppedCounter() metric.Int64Counter {
+	if s.def == nil || s.def.Meter == nil {
+		return nil
+	}
+	s.droppedOnce.Do(func() {
+		counter, err := s.def.Meter.Meter(ScopeName).Int64Counter(RecordsDroppedMetric,
+			metric.WithDescription("Records dropped because the destination they named is not one this process can send to, by signal and reason: a task log line, an attempt's span or metrics, a run event's metrics."),
+			metric.WithUnit("{record}"))
+		if err != nil {
+			if s.logger != nil {
+				s.logger.Warn("telemetry: cannot count dropped records", "error", err)
+			}
+			return
+		}
+		s.dropped = counter
+	})
+	return s.dropped
+}
+
+// ForNamespaced is the destination a namespaced record goes to: "" and
+// DefaultSink are the default, a declared sink is itself, and a name this
+// process does not declare is refused (nil, false) — the caller drops the
+// record and counts it with DropRecords, and never sends it to the default
+// sink. The first refusal of each name logs one Warn once WithLogger has
+// attached a logger.
+func (s *Sinks) ForNamespaced(name string) (*Providers, bool) {
+	if s == nil {
+		return nil, false
+	}
+	if name == "" || name == DefaultSink || s.anyName {
+		return s.def, true
+	}
+	if p, ok := s.byName[name]; ok {
+		return p, true
+	}
+	if s.logger != nil {
+		if _, alreadyWarned := s.warned.LoadOrStore(name, struct{}{}); !alreadyWarned {
+			s.logger.Warn("telemetry sink not declared; records that name it are dropped", "sink", name)
+		}
+	}
+	return nil, false
 }
 
 // SetupSinks builds the default Providers exactly as Setup would, then one
@@ -433,7 +569,8 @@ type Sinks struct {
 // entry (Setup's rule, applied here too).
 //
 // With nothing enabled and cfg.Sinks empty, this is Setup wearing the Sinks
-// shape: Default() is the no-op Providers and For(anything) returns it.
+// shape: Default() is the no-op Providers and ForNamespaced refuses every
+// name but the default.
 func SetupSinks(ctx context.Context, cfg Config, extra ...attribute.KeyValue) (*Sinks, error) {
 	enabled := cfg.TracesEnabled() || cfg.MetricsEnabled() || cfg.LogsEnabled()
 	hasSinks := cfg.Sinks.Len() > 0
@@ -442,7 +579,7 @@ func SetupSinks(ctx context.Context, cfg Config, extra ...attribute.KeyValue) (*
 		return newDisabledSinks(cfg)
 	}
 
-	res, err := newResource(ctx, cfg, extra)
+	res, conflicts, err := newResource(ctx, cfg, extra)
 	if err != nil {
 		return nil, err
 	}
@@ -453,19 +590,29 @@ func SetupSinks(ctx context.Context, cfg Config, extra ...attribute.KeyValue) (*
 		if spec, ok := cfg.Sinks.sinks[DefaultSink]; ok {
 			defaultSpec = &spec
 		}
-		def, err = buildProviders(ctx, cfg, defaultSpec, res)
+		def, err = buildProviders(ctx, cfg, DefaultSink, defaultSpec, res)
 		if err != nil {
 			return nil, fmt.Errorf("sink %q: %w", DefaultSink, err)
 		}
-		recordBuildInfo(def.Meter, extra)
+		if err := processInstruments(def.cfg, def, extra); err != nil {
+			shutdownAfterFailedBoot(def.Shutdown)
+			return nil, err
+		}
 	} else {
 		def = noopProviders(cfg)
 	}
 
-	s, err := newSinks(def)
+	s := newSinks(def)
+	s.identityConflicts = conflicts
+	// Export errors are counted on the default destination, whichever sink's
+	// exporter failed: the operator reads them there. The handler becomes
+	// the process's only once every sink has been built.
+	handler, err := newExportErrorHandler(def.Meter)
 	if err != nil {
+		shutdownAfterFailedBoot(s.Shutdown)
 		return nil, err
 	}
+	s.exportErrors = handler
 
 	for _, name := range cfg.Sinks.Names() {
 		if name == DefaultSink {
@@ -478,34 +625,50 @@ func SetupSinks(ctx context.Context, cfg Config, extra ...attribute.KeyValue) (*
 		namedCfg := cfg
 		namedCfg.MetricsExporters = withoutExporter(cfg.MetricsExporters, ExporterPrometheus)
 		namedCfg.AdminAddr = ""
-		p, err := buildProviders(ctx, namedCfg, &spec, res)
+		p, err := buildProviders(ctx, namedCfg, name, &spec, res)
 		if err != nil {
+			shutdownAfterFailedBoot(s.Shutdown)
 			return nil, fmt.Errorf("sink %q: %w", name, err)
 		}
 		s.byName[name] = p
 	}
+	installErrorHandler(handler)
 	return s, nil
 }
+
+// meterLimitOptions is cfg's cardinality limit as meter-provider options:
+// none when it is unset, leaving the SDK's own default.
+func meterLimitOptions(cfg Config) []sdkmetric.Option {
+	if cfg.MetricCardinalityLimit <= 0 {
+		return nil
+	}
+	return []sdkmetric.Option{sdkmetric.WithCardinalityLimit(cfg.MetricCardinalityLimit)}
+}
+
+// shutdownAfterFailedBoot stops what a boot that is about to fail had already
+// started (batchers, readers), within a bound, so a caller that does not exit
+// keeps no exporter running. Its error is the dead boot's, not the caller's.
+func shutdownAfterFailedBoot(shutdown func(context.Context) error) {
+	ctx, cancel := context.WithTimeout(context.Background(), failedBootShutdownBound)
+	defer cancel()
+	_ = shutdown(ctx) // the boot error is what the caller reports
+}
+
+// failedBootShutdownBound bounds shutdownAfterFailedBoot.
+const failedBootShutdownBound = 5 * time.Second
 
 // newDisabledSinks is SetupSinks' zero-config answer: nothing is globally
 // enabled and ORK_TELEMETRY_SINKS names no sink at all, so every destination
 // — default and every name a caller could ask for — is the same no-op
 // Providers, and nothing here touches a global or starts a goroutine.
 func newDisabledSinks(cfg Config) (*Sinks, error) {
-	return newSinks(noopProviders(cfg))
+	return newSinks(noopProviders(cfg)), nil
 }
 
 // newSinks builds the empty Sinks shell around def: no named sinks yet (the
-// caller fills s.byName itself when it has any to build), just the
-// SinkUnknownMetric counter every For() on an unrecognized name increments.
-func newSinks(def *Providers) (*Sinks, error) {
-	unknownCounter, err := def.Meter.Meter(ScopeName).Int64Counter(SinkUnknownMetric,
-		metric.WithDescription("A caller named a sink ORK_TELEMETRY_SINKS does not declare; the default sink was used instead."),
-		metric.WithUnit("{lookup}"))
-	if err != nil {
-		return nil, fmt.Errorf("telemetry instruments: %w", err)
-	}
-	return &Sinks{byName: map[string]*Providers{}, def: def, unknown: unknownCounter}, nil
+// caller fills s.byName itself when it has any to build).
+func newSinks(def *Providers) *Sinks {
+	return &Sinks{byName: map[string]*Providers{}, def: def}
 }
 
 // withoutExporter returns names with every occurrence of candidate removed,
@@ -529,7 +692,7 @@ func withoutExporter(names []string, candidate string) []string {
 // Providers and hands it to them keeps compiling and behaving exactly as
 // before: every sink name, known or not, resolves to p.
 func sinksOf(p *Providers) *Sinks {
-	return &Sinks{byName: map[string]*Providers{}, def: p}
+	return &Sinks{byName: map[string]*Providers{}, def: p, anyName: true}
 }
 
 // newSinksForTest builds a Sinks by hand from Providers a test already
@@ -553,63 +716,43 @@ func (s *Sinks) Default() *Providers {
 	return s.def
 }
 
-// WithLogger attaches logger to s: For then logs one Warn, at most once per
-// unknown name, when a caller asks for a sink ORK_TELEMETRY_SINKS never
-// declared. Returns s so a caller can chain it onto SetupSinks' result.
-// Without a logger (the zero value, or a Sinks never given one), For's only
-// signal for that misconfiguration is SinkUnknownMetric.
+// WithLogger attaches logger to s: ForNamespaced then logs one Warn, at most
+// once per unknown name, when a caller asks for a sink ORK_TELEMETRY_SINKS
+// never declared; the export-error handler logs through it; and an identity
+// override is warned about, once. Returns s so a caller can chain it onto
+// SetupSinks' result. Without a logger, a record dropped for an unknown sink
+// is still counted (RecordsDroppedMetric).
 func (s *Sinks) WithLogger(logger *slog.Logger) *Sinks {
 	if s == nil {
 		return s
 	}
 	s.logger = logger
+	if s.exportErrors != nil {
+		s.exportErrors.setLogger(logger)
+	}
+	if len(s.identityConflicts) > 0 && logger != nil {
+		s.identityWarned.Do(func() {
+			logger.Warn("OTEL_RESOURCE_ATTRIBUTES cannot override the process identity; the process's own values are kept",
+				"keys", s.identityConflicts)
+		})
+	}
 	return s
 }
 
 // Has reports whether name is a sink this Sinks actually declares — "" and
 // DefaultSink always report true (Default() answers them), an undeclared
-// name reports false even though For(name) still falls back to Default()
-// rather than failing. A caller that wants to cross-check a stored policy
-// against what booted (a namespace's chosen sink, say) uses this instead of
-// comparing For's result by identity.
+// name reports false. A caller that wants to cross-check a stored policy
+// against what booted (a namespace's chosen sink, say) uses this, and logs
+// nothing for it, where ForNamespaced would warn.
 func (s *Sinks) Has(name string) bool {
 	if s == nil {
 		return false
 	}
-	if name == "" || name == DefaultSink {
+	if name == "" || name == DefaultSink || s.anyName {
 		return true
 	}
 	_, ok := s.byName[name]
 	return ok
-}
-
-// For is the destination name asked for: "" or DefaultSink is Default();
-// an unrecognized name is also Default(), after incrementing
-// SinkUnknownMetric on the default sink's meter with the requested name as
-// the "sink" attribute, and — when WithLogger attached one — logging one Warn
-// the first time this particular unknown name is seen. A namespace
-// misconfiguration should be visible, not a silent fallback, but a namespace
-// that keeps naming the same stale sink should not flood the log once per
-// task.
-func (s *Sinks) For(name string) *Providers {
-	if s == nil {
-		return nil
-	}
-	if name == "" || name == DefaultSink {
-		return s.def
-	}
-	if p, ok := s.byName[name]; ok {
-		return p
-	}
-	if s.unknown != nil {
-		s.unknown.Add(context.Background(), 1, metric.WithAttributes(attribute.String("sink", name)))
-	}
-	if s.logger != nil {
-		if _, alreadyWarned := s.warned.LoadOrStore(name, struct{}{}); !alreadyWarned {
-			s.logger.Warn("telemetry sink not declared; using default", "sink", name)
-		}
-	}
-	return s.def
 }
 
 // Names lists every sink this Sinks can serve, sorted, DefaultSink included.
@@ -686,4 +829,21 @@ func (s *Sinks) Shutdown(ctx context.Context) error {
 	}
 	wg.Wait()
 	return errors.Join(errs...)
+}
+
+// AnyMetrics reports whether any sink of s, the default or a named one,
+// exports metrics.
+func (s *Sinks) AnyMetrics() bool {
+	if s == nil {
+		return false
+	}
+	if s.def != nil && s.def.cfg.MetricsEnabled() {
+		return true
+	}
+	for _, p := range s.byName {
+		if p != nil && p.cfg.MetricsEnabled() {
+			return true
+		}
+	}
+	return false
 }

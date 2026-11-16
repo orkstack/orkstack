@@ -562,3 +562,60 @@ func executeCancelledRunning(d *OCIDispatcher, in *orkstackv1.ExecuteTaskInput, 
 	}()
 	return d.Execute(ctx, in)
 }
+
+// recordCounter counts AttemptRecordWritten by outcome and pool.
+type recordCounter struct {
+	mu      sync.Mutex
+	written map[string]int
+	failed  map[string]int
+}
+
+func (c *recordCounter) LegacyRecordsAtClaim(int) {}
+func (c *recordCounter) LegacyRecordKept()        {}
+func (c *recordCounter) AttemptRecordWritten(pool string, written bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.written == nil {
+		c.written, c.failed = map[string]int{}, map[string]int{}
+	}
+	if written {
+		c.written[pool]++
+	} else {
+		c.failed[pool]++
+	}
+}
+
+// TestAttemptRecords_EachWriteIsCounted: every attempt's record write is
+// counted once, written or failed, by its pool, so an attempt with no record
+// is visible (ork.orker.attempt_records) rather than a Warn line alone.
+func TestAttemptRecords_EachWriteIsCounted(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		store   artifacts.AttemptStore
+		written bool
+	}{
+		{"written", artifacts.NewMemoryAttemptStore(), true},
+		{"failed", &failingAttemptStore{}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := newAttemptDispatcher(t, &phaseCapturingRuntime{exitCode: 0}, tc.store)
+			counter := &recordCounter{}
+			d.AttemptRecords = counter
+			in := baseExportInput("counted-" + tc.name)
+			in.Pool = "gpu"
+			if _, err := d.Execute(context.Background(), in); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			counter.mu.Lock()
+			defer counter.mu.Unlock()
+			want := map[string]int{"gpu": 1}
+			got := counter.failed
+			if tc.written {
+				got = counter.written
+			}
+			if len(got) != 1 || got["gpu"] != want["gpu"] || len(counter.written)+len(counter.failed) != 1 {
+				t.Fatalf("written %v, failed %v; want one %s write for pool gpu", counter.written, counter.failed, tc.name)
+			}
+		})
+	}
+}

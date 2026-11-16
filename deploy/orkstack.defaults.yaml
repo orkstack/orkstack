@@ -181,6 +181,9 @@ telemetry:
   admin_allowed_hosts: []  # an IP address, localhost and *.localhost, a name without a dot, and the host ORK_ADMIN_ADDR names are always admitted
   pprof_enabled: false
   high_cardinality: false
+  orkflow_label: true  # ork
+  metric_cardinality_limit: 2000
+  census_requests_per_minute: 60  # ork
   service_name:
     ork: ork
     orker: orker

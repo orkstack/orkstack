@@ -606,8 +606,9 @@ type legacyCounter struct {
 	atClaim, kept int
 }
 
-func (c *legacyCounter) LegacyRecordsAtClaim(n int) { c.mu.Lock(); c.atClaim += n; c.mu.Unlock() }
-func (c *legacyCounter) LegacyRecordKept()          { c.mu.Lock(); c.kept++; c.mu.Unlock() }
+func (c *legacyCounter) LegacyRecordsAtClaim(n int)        { c.mu.Lock(); c.atClaim += n; c.mu.Unlock() }
+func (c *legacyCounter) LegacyRecordKept()                 { c.mu.Lock(); c.kept++; c.mu.Unlock() }
+func (c *legacyCounter) AttemptRecordWritten(string, bool) {}
 
 // TestExecute_AnEarlierReleasesRecordsAreCountedAndKept: a record written
 // under Temporal's count by an Orker of an earlier release is passed over at

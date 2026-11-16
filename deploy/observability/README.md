@@ -66,16 +66,33 @@ allowed` with `listener="admin listener"`.
 
 ## Where things are
 
-Every port is published on `127.0.0.1` only, so Grafana's anonymous admin and
-the rest are reachable from this machine and from no other.
+The profile publishes two ports, both on `127.0.0.1` only: the Collector's
+OTLP/http and Grafana, whose anonymous visitor is a Viewer that can read every
+signal and change nothing. Loki, Tempo and Prometheus are reached through
+Grafana. `make infra-up-observability` also publishes them on loopback
+(`compose.backends.yaml`), because the observability proof gate reads them
+directly; add `-f deploy/observability/compose.backends.yaml` to a compose
+command for the same.
 
 | what | where |
 |---|---|
-| Grafana | http://localhost:3000 (anonymous admin — local use only) |
-| Prometheus | http://localhost:9090 |
-| Loki | http://localhost:3100 |
-| Tempo | http://localhost:3200 |
+| Grafana | http://localhost:3000 (anonymous Viewer, local use only) |
 | Collector OTLP/http | http://localhost:4318 |
+| Prometheus | http://localhost:9090 (`make infra-up-observability` only) |
+| Loki | http://localhost:3100 (`make infra-up-observability` only) |
+| Tempo | http://localhost:3200 (`make infra-up-observability` only) |
+
+The Collector refuses data before it runs out of memory (`memory_limiter`),
+queues and retries what a backend does not take at once, and pushes its own
+metrics (`otelcol_*`: accepted, refused, queued, failed) straight to
+Prometheus. Its receiver has no auth, which only a loopback-only port makes
+acceptable.
+
+### Before production
+
+This profile is for one machine. A production Collector needs bearer or mTLS
+auth on its receiver and a network that activity containers cannot reach, and
+Grafana needs real sign-in.
 
 ## Example queries
 
