@@ -2759,8 +2759,8 @@ Start runs of an orkflow on a schedule
 
 A schedule starts a run of one orkflow at the times its cron
 expressions or interval name, in its time zone. The cluster keeps the
-schedule: overlap, catch-up, pause and backfill are its own, and
-OrkStack stores nothing else about a schedule.
+schedule: overlap, catch-up, pause and backfill are its own. OrkStack
+keeps only the record of who bound it and their consent.
 
 Every run a schedule starts carries origin schedule:<id>, so
 'orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=<id>'
@@ -2990,6 +2990,10 @@ expression. --follow-current clears a version pin; --clear-input clears
 the input. The orkflow a schedule starts cannot change: delete and
 create instead.
 
+An update that changes the version pin or the input makes you the
+schedule's binder: the principal its runs are recorded against. --rebind
+makes you the binder without changing anything else.
+
 Last writer wins: two concurrent updates are not detected.
 
 Flags:
@@ -3006,6 +3010,7 @@ Flags:
 - `--jitter STRING` — delay each fire by a random amount up to DURATION
 - `--overlap STRING` — when a fire is due while the previous run still executes: skip|buffer-one|buffer-all|cancel-other|allow-all (default skip)
 - `--pause-on-failure` — pause the schedule when a fire fails or is refused (--pause-on-failure=false turns it off)
+- `--rebind` — make yourself the schedule's binder, changing nothing else
 - `--start-at STRING` — no fire before this RFC3339 time
 - `--timezone STRING` — IANA time zone the cron expressions are evaluated in (default UTC)
 - `--version STRING` — pin this orkflow version
@@ -3385,11 +3390,16 @@ label. A trigger's orkflow cannot change: that is delete then create.
 Naming an unnamed trigger is how a hand-made one is brought under an
 automation document (orkctl automation export) without re-issuing its token.
 
+A new version pin makes you the trigger's binder: the principal its
+runs are recorded against. --rebind makes you the binder without
+changing anything else.
+
 Flags:
 
 - `--description STRING` — new operator label ("" clears it)
 - `--follow-current` — clear the pin: follow the orkflow's current pointer at each invoke
 - `--name STRING` — new handle ("" makes the trigger unnamed)
+- `--rebind` — make yourself the trigger's binder, changing nothing else
 - `--version STRING` — orkflow version to pin
 
 Inherited flags:

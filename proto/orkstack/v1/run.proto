@@ -595,7 +595,9 @@ message TaskAttempt {
   // credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
   repeated AttemptCredential credentials = 25;
 
-  // masked_occurrences is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+  // masked_occurrences is how many runs of bytes the attempt's masker
+  // replaced with `***` in its two streams: a count, never which secret or
+  // where. 0 when nothing was masked.
   int64 masked_occurrences = 26;
 }
 
@@ -745,7 +747,8 @@ message Run {
   // pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch).
   bool pause_slot_kept = 34;
 
-  // timeout is set from E107; unset until it lands (v0.4.0 proto batch).
+  // timeout is the run's own time limit; unset when its Orkflow declares no
+  // `timeout:`.
   RunTimeout timeout = 35;
 }
 
@@ -1015,9 +1018,24 @@ message RunResumed {}
 // batch).
 message RunScheduleFire {}
 
-// RunTimeout is E107's; it is empty until E107 lands (v0.4.0 proto
-// batch).
-message RunTimeout {}
+// RunTimeout is the run's own time limit, from the Orkflow's top-level
+// `timeout:` (docs/DSL.md "Run timeout"). It is unset on a run whose Orkflow
+// declares none.
+message RunTimeout {
+  // seconds is the declared limit.
+  int64 seconds = 1;
+  // deadline is when the run times out; unset until the run starts.
+  google.protobuf.Timestamp deadline = 2;
+  // hard_end is set once the run starts failing: the latest instant a failure
+  // handler may still run (the deadline, or the moment it started failing,
+  // plus the deployment's handler grace).
+  google.protobuf.Timestamp hard_end = 3;
+  // timed_out reports that the deadline ended the run.
+  bool timed_out = 4;
+  // hard_end_reached reports that failure handlers were stopped, or never
+  // started, at hard_end.
+  bool hard_end_reached = 5;
+}
 
 // TaskInterruption is E92's; it is empty until E92 lands (v0.4.0 proto
 // batch).

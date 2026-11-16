@@ -334,9 +334,11 @@ func (s *Service) mayListVersions(ctx context.Context, namespace, name string) b
 		}
 	}
 	policy, _ := s.access.policy(ctx)
-	_, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermOrkflowRead),
+	// It decides only what a refusal's message names: one whose ids cannot
+	// be read names nothing, which is the refusal it would otherwise make.
+	may, err := s.mayWithIDs(ctx, authz.Request{Action: authz.Action(authz.PermOrkflowRead),
 		Subject: subjectOf(authn.FromContext(ctx)), Resource: authz.Resource{Namespace: namespace, Orkflow: name}, Policy: policy})
-	return err == nil
+	return err == nil && may
 }
 
 func composeIssue(field, message string, severity orkstackv1.ValidationSeverity) *orkstackv1.ValidationIssue {
@@ -716,6 +718,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		}
 		// 6b. The child's caching plan, under the parent's no_cache.
 		childPlan.Cache = s.cachePlanFor(childPlanned, r.noCache)
+		childPlan.RunTimeout = s.runTimeoutPlanFor(childPlanned)
 		// 7. Its own children.
 		childPath := append(append([]string(nil), path...), key)
 		if err := s.planChildren(ctx, r, childPlanned, &childPlan, depth+1, childPath); err != nil {

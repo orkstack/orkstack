@@ -211,9 +211,55 @@ be repaired in the bucket. An Orker `auth.orkers` binds is disabled like any
 other principal.
 
 A service account's keys are named by their RFC 7638 thumbprint, and each
-records when it was added. Namespaces and Orkflows carry no immutable id in
-this release, so every binding matches its scope by name, and
-`UpdateBinding` with `repin` is refused.
+records when it was added.
+
+### Pinned bindings
+
+A namespace or an Orkflow deleted and created again under its name is a new
+thing with an old name. Each has an immutable id (`ns_…`, `of_…`; `default`
+is `ns_default`), and a binding is pinned to the one its scope named when it
+was saved, so it does not carry over to a namespace or an Orkflow that only
+shares the name.
+
+| A binding whose scope | Is stored | Matches |
+| --- | --- | --- |
+| names a namespace or an Orkflow that exists when it is saved | with that thing's id (`scope_id`) | that incarnation only. After a delete and a create under the name it matches nothing, and is listed as stale |
+| names one that does not exist yet (a pipeline granted `orkflow.write` before its first create) | with no id | by name, listed as "by name". Its next save, once the thing exists, pins it |
+| is the deployment or a pool | with no id | as before: neither is made again under a name |
+
+- Pinning again is a named act: `orkctl admin binding update NAME --repin`
+  (`UpdateBinding` with `repin`), by someone who may update the binding. It
+  is refused when nothing exists at the scope, and for a binding at the
+  deployment or a pool. A save that changes nothing else never moves a pin;
+  a save that changes the scope pins to what the new scope names.
+- `orkctl admin binding list` shows each binding's pin: `pinned ns_…`, `by
+  name`, or `stale` with the command that pins it again. `ExplainAccess`
+  names a binding that would have matched by name and did not because it is
+  pinned to an earlier incarnation.
+- "A namespace with bindings cannot be deleted" still stands. The pin is
+  what covers a delete that went round it: an engine of an earlier release,
+  or a writer of the bucket.
+- An id is opaque, and no API takes one where it takes a name.
+- A binding that matches by name grants its subjects whatever is made under
+  that name: a binding saved before a namespace or an Orkflow exists, and a
+  binding saved before this release, until its next save. Whoever may create
+  that namespace or Orkflow chooses what the binding then covers. Save such a
+  binding again once its scope exists, or bind only what exists.
+- A request about a run is judged against the id of the namespace and the
+  Orkflow as they are now, not as they were when the run started. A run of
+  an Orkflow that was deleted and made again is read under the bindings of
+  the new one.
+
+A decision that a pinned binding could take part in (one in a namespace
+where any binding is pinned) reads the ids of what the request names. One
+replica reuses an id it read for 10 seconds, the policy cache's own window,
+so a namespace made again through another replica may be decided against
+its old id for that long ([AUTHENTICATION.md](AUTHENTICATION.md), "How old a
+decision's facts may be"). While the ids cannot be read the request is
+`unavailable`, and so is a list filtered by row: a pinned binding is never
+decided as if no id existed, and a list never answers with rows left out
+that it could not decide. What the caller is told names what failed, never
+the store; the engine's log holds the detail.
 
 Every write is audited (`access.role.create`, `.update`, `.delete`;
 `access.binding.*`; `access.service-account.*`; `access.principal.disable`,

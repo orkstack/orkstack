@@ -568,10 +568,13 @@ recorded the same object under two tasks yields two references.
 
 ### AsksFor
 
-AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-batch).
+AsksFor is what a schedule's or a trigger's Orkflow asks for, as a
+consent's digest (docs/ORKFLOW_SCHEDULES.md, "Who a schedule runs as").
+In this release no Orkflow asks for an identity, so it is the empty table's.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `digest` | `string` | digest is the consent digest of what the Orkflow asks for: "c1:" and 64 hexadecimal digits. |
 
 ### AttemptCredential
 
@@ -909,10 +912,13 @@ No fields.
 
 ### ConsentView
 
-ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-batch).
+ConsentView is the consent a schedule or a trigger records with its
+binder: the digest of what its Orkflow asked for when it was bound.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `digest` | `string` | digest is the consent digest recorded: "c1:" and 64 hexadecimal digits. |
+| `at` | `google.protobuf.Timestamp` | at is when it was recorded. |
 
 ### CordonOrkerRequest
 
@@ -1228,15 +1234,15 @@ is alive by answering DescribeOrker (§6.5).
 | `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `identity_supported` | `bool` | identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `providers` | repeated [`ProviderInfo`](#providerinfo) | providers is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
-| `masks_secrets` | `bool` | masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+| `masks_secrets` | `bool` | masks_secrets is whether this Orker masks a task's secrets in its logs (orker.log.mask_secrets). It reads secrets[].unmasked either way. |
 | `metadata_reachable` | repeated `string` | metadata_reachable is every address in metadata_probes that answered. Empty when none did, or when no probe ran (orker.metadata_probe off). |
 | `run_context_supported` | `bool` | run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch). |
 | `each_lines_supported` | `bool` | each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch). |
 | `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is what the boot's metadata probe found, one entry per address it asked (docs/DEPLOY.md, "Keeping tasks away from the host's identity"). Empty when orker.metadata_probe is off, and from an Orker built before the probe existed. |
-| `store_scope` | [`StoreScope`](#storescope) | store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
-| `store_scope_detail` | `string` | store_scope_detail is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
-| `store_scope_confirmed_at` | `google.protobuf.Timestamp` | store_scope_confirmed_at is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
-| `results_scope` | [`ResultsScope`](#resultsscope) | results_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `store_scope` | [`StoreScope`](#storescope) | store_scope is this Orker's verdict on its own storage credential, from its scope check (docs/DEPLOY.md, "An Orker's own storage credential"). Unspecified for an Orker that never ran the check (an older build). |
+| `store_scope_detail` | `string` | store_scope_detail is the last round's result: the first prefix the credential reached, or the store's code for an unclear answer. It never holds a credential. |
+| `store_scope_confirmed_at` | `google.protobuf.Timestamp` | store_scope_confirmed_at is when a round of the scope check last ended scoped; unset when none has. |
+| `results_scope` | [`ResultsScope`](#resultsscope) | results_scope is what the check's results request found: whether this credential may write every namespace's results or only named ones. It decides nothing. |
 | `service_host` | [`ServiceHost`](#servicehost) | service_host is set from E90; unset until it lands (v0.4.0 proto batch). |
 
 ### DiffOrkflowVersionsRequest
@@ -1753,6 +1759,7 @@ No fields.
 | Field | Type | Description |
 |---|---|---|
 | `orkflow` | [`Orkflow`](#orkflow) |  |
+| `orkflow_id` | `string` | orkflow_id is the Orkflow's immutable id: one deleted and created again under its name has another one, and a binding pinned to this one does not match it (docs/ACCESS.md, "Pinned bindings"). Empty when none was made yet. Opaque: nothing parses it. Output only. |
 
 ### GetRetentionPolicyRequest
 
@@ -2512,10 +2519,13 @@ presence check (hold != nil) and a hold can never be half-set.
 
 ### NamespaceIdentity
 
-NamespaceIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-batch).
+NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
+registered for the policy itself (audiences, grants and their bounds),
+which a later change adds.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `namespace_id` | `string` | namespace_id is the namespace's immutable id: a namespace deleted and created again under its name has another one, and a binding pinned to this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default` is always `ns_default`. Empty when none was made yet: one is made on first need, never by a read. Opaque: nothing parses it, and no request takes it where it takes a name. Output only. |
 
 ### OpDocs
 
@@ -2618,6 +2628,7 @@ Orkflow is the compiled, validated form of a DSL document.
 | `definition_namespace` | `string` | definition_namespace is set ONLY on a run's planned copy of an Orkflow that another namespace's Orkflow composed: the namespace that owns the stored definition, while namespace names the namespace the child run executes in and whose rules it follows. Never stored, never applied and not part of canonicalOrkflow: definition_digest is the owner's. |
 | `output_artifacts` | map&lt;`string`, [`OutputArtifact`](#outputartifact)&gt; | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `timeout_seconds` | `int64` | timeout_seconds is the run's own time limit from its start, from the DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of canonicalOrkflow, in its short form, only when non-zero, so an Orkflow that declares none keeps its digest. |
 
 ### OrkflowCaller
 
@@ -3268,7 +3279,7 @@ Run is one execution of an Orkflow.
 | `paused_by_parent` | [`InheritedPause`](#inheritedpause) | paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `pause_warnings` | repeated [`PauseWarning`](#pausewarning) | pause_warnings is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `pause_slot_kept` | `bool` | pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch). |
-| `timeout` | [`RunTimeout`](#runtimeout) | timeout is set from E107; unset until it lands (v0.4.0 proto batch). |
+| `timeout` | [`RunTimeout`](#runtimeout) | timeout is the run's own time limit; unset when its Orkflow declares no `timeout:`. |
 
 ### RunArtifact
 
@@ -3360,10 +3371,17 @@ No fields.
 
 ### RunTimeout
 
-RunTimeout is E107's; it is empty until E107 lands (v0.4.0 proto
-batch).
+RunTimeout is the run's own time limit, from the Orkflow's top-level
+`timeout:` (docs/DSL.md "Run timeout"). It is unset on a run whose Orkflow
+declares none.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `seconds` | `int64` | seconds is the declared limit. |
+| `deadline` | `google.protobuf.Timestamp` | deadline is when the run times out; unset until the run starts. |
+| `hard_end` | `google.protobuf.Timestamp` | hard_end is set once the run starts failing: the latest instant a failure handler may still run (the deadline, or the moment it started failing, plus the deployment's handler grace). |
+| `timed_out` | `bool` | timed_out reports that the deadline ended the run. |
+| `hard_end_reached` | `bool` | hard_end_reached reports that failure handlers were stopped, or never started, at hard_end. |
 
 ### RunTiming
 
@@ -3407,8 +3425,8 @@ the cluster's live state, merged for this one read and never stored.
 | `created_by_verified` | `bool` | created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 | `overlap_skipped` | `int64` | overlap_skipped is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `consent_stale` | `bool` | consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
-| `consented` | [`ConsentView`](#consentview) | consented is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
-| `asks_for` | [`AsksFor`](#asksfor) | asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `consented` | [`ConsentView`](#consentview) | consented is the consent recorded with the binder at its last bind; output only. |
+| `asks_for` | [`AsksFor`](#asksfor) | asks_for is what the Orkflow asks for now, as a consent digest; output only. |
 
 ### ScheduleFire
 
@@ -3469,7 +3487,7 @@ appears in a proto message, in Temporal history, or in the archive.
 | `source` | `string` | source is an Orker-resolvable locator, e.g. "env:DB_PASSWORD" or "file:/etc/orkstack/secrets/db". Orker policy decides which schemes exist. |
 | `grant` | `string` | grant is set from identity (E83); unset until it lands (v0.4.0 proto batch). |
 | `ciphertext` | `string` | ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
-| `unmasked` | `bool` | unmasked is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+| `unmasked` | `bool` | unmasked is the DSL's `mask: false`: the value is neither masked in the task's logs nor looked for in its values.json. Absent means masked. A value is unmasked only when every secret holding it says so. |
 
 ### SeenPrincipal
 
@@ -3770,7 +3788,7 @@ change what the attempt itself reported.
 | `measured` | [`MeasuredUsage`](#measuredusage) | measured is set from E94; unset until it lands (v0.4.0 proto batch). |
 | `identities` | repeated [`AttemptIdentity`](#attemptidentity) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `credentials` | repeated [`AttemptCredential`](#attemptcredential) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
-| `masked_occurrences` | `int64` | masked_occurrences is set from identity (E84); unset until it lands (v0.4.0 proto batch). |
+| `masked_occurrences` | `int64` | masked_occurrences is how many runs of bytes the attempt's masker replaced with `***` in its two streams: a count, never which secret or where. 0 when nothing was masked. |
 
 ### TaskAttemptsTiming
 
@@ -4002,8 +4020,8 @@ A zero duration is only ever a value somebody measured.
 | `created_by` | `string` | created_by is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 | `created_by_verified` | `bool` | created_by_verified is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
 | `consent_stale` | `bool` | consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
-| `consented` | [`ConsentView`](#consentview) | consented is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
-| `asks_for` | [`AsksFor`](#asksfor) | asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `consented` | [`ConsentView`](#consentview) | consented is the consent recorded with the binder at its last bind; output only. |
+| `asks_for` | [`AsksFor`](#asksfor) | asks_for is what the Orkflow asks for now, as a consent digest; output only. |
 
 ### UnmeasuredReasonCount
 
@@ -4687,12 +4705,14 @@ already executing: those finish on the release that started them.
 
 ### ResultsScope
 
-ResultsScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
-(v0.4.0 proto batch).
+ResultsScope is how far an Orker's storage credential reaches among
+results: every namespace's, or only named namespaces'.
 
 | Value | Number | Description |
 |---|---|---|
 | `RESULTS_SCOPE_UNSPECIFIED` | 0 |  |
+| `RESULTS_SCOPE_EVERY_NAMESPACE` | 1 |  |
+| `RESULTS_SCOPE_BY_NAMESPACE` | 2 |  |
 
 ### ResumeDisposition
 
@@ -4792,12 +4812,17 @@ Status is the lifecycle state shared by runs and task runs.
 
 ### StoreScope
 
-StoreScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
-(v0.4.0 proto batch).
+StoreScope is an Orker's verdict on its own storage credential: scoped
+when a round of its scope check found every control-plane prefix refused,
+unscoped when one reached, unknown while no round has ended either way or
+a scoped verdict has lapsed. It never cordons an Orker.
 
 | Value | Number | Description |
 |---|---|---|
 | `STORE_SCOPE_UNSPECIFIED` | 0 |  |
+| `STORE_SCOPE_SCOPED` | 1 |  |
+| `STORE_SCOPE_UNSCOPED` | 2 |  |
+| `STORE_SCOPE_UNKNOWN` | 3 |  |
 
 ### TaskLogExport
 

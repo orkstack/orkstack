@@ -125,6 +125,11 @@ type document struct {
 	// are one value: no declared outputs.
 	Outputs map[string]string `yaml:"outputs"`
 
+	// Timeout is the run's own time limit, a Go duration (docs/DSL.md "Run
+	// timeout"). A yaml.Node so the strict mapping sees what was written: an
+	// integer, a null and a tag are each refused by name.
+	Timeout yaml.Node `yaml:"timeout"`
+
 	// Pins declares every pin a task may name, by name, each with a
 	// (possibly empty) options object — `pins: {build: {}}` is legal.
 	//
@@ -243,6 +248,9 @@ type taskDocument struct {
 type secretDocument struct {
 	Name   string `yaml:"name"`
 	Source string `yaml:"source"`
+	// Mask false leaves the value unmasked in the task's logs; absent or true
+	// masks it.
+	Mask *bool `yaml:"mask"`
 }
 
 // resourceDocument is the Kubernetes spelling of a resource request.
@@ -349,6 +357,11 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		return nil, err
 	}
 	wf.Inputs = inputs
+	timeoutSeconds, err := compileRunTimeout(&doc.Timeout)
+	if err != nil {
+		return nil, err
+	}
+	wf.TimeoutSeconds = timeoutSeconds
 	if len(doc.Outputs) > 0 {
 		wf.Outputs = doc.Outputs
 	}
@@ -471,6 +484,9 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			task.Secrets = append(task.Secrets, &orkstackv1.SecretRef{
 				Name:   sd.Name,
 				Source: sd.Source,
+				// The one place `mask: false` becomes the input's unmasked:
+				// an input without it, from any engine, means masked.
+				Unmasked: sd.Mask != nil && !*sd.Mask,
 			})
 		}
 		with, err := freeForm("with", fmt.Sprintf("tasks[%d].with", taskIndex), &td.With)

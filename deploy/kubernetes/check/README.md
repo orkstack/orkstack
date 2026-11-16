@@ -11,4 +11,4 @@ authority are its options.
 | `common/` | a kustomize component every checked base gets: one replica in the check's own pool `k8s-check`, the per-task cap the limits run measures, a pod sized for a small node with a capacity to match, and no RuntimeClass of its own (the check requires it, never creates it) |
 | `mismatch/` | the engine's work root at another path, which the Orker's boot check must refuse |
 | `no-runtimeclass/` | the user-namespaced base without its RuntimeClass, whose engine must not start |
-| `orkflows/` | the runs, every task on the pool `k8s-check`: artifacts and both network modes, a cancel, the limits, and a task above the per-task cap that the submit refuses |
+| `orkflows/` | the runs, every task on the pool `k8s-check`: artifacts and both network modes, a cancel, the limits, a task above the per-task cap that the submit refuses, and a task its stopping Orker lets finish within the stop grace |

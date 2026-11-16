@@ -115,7 +115,9 @@ message SecretRef {
   // ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch).
   string ciphertext = 4;
 
-  // unmasked is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+  // unmasked is the DSL's `mask: false`: the value is neither masked in the
+  // task's logs nor looked for in its values.json. Absent means masked. A
+  // value is unmasked only when every secret holding it says so.
   bool unmasked = 5;
 }
 // WorkspaceLimits are the deployment-wide CONTRACT limits the Orker enforces
@@ -799,7 +801,8 @@ message DescribeOrkerResult {
   // providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
   repeated ProviderInfo providers = 34;
 
-  // masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+  // masks_secrets is whether this Orker masks a task's secrets in its logs
+  // (orker.log.mask_secrets). It reads secrets[].unmasked either way.
   bool masks_secrets = 35;
 
   // metadata_reachable is every address in metadata_probes that answered.
@@ -818,16 +821,23 @@ message DescribeOrkerResult {
   // built before the probe existed.
   repeated MetadataProbe metadata_probes = 37;
 
-  // store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // store_scope is this Orker's verdict on its own storage credential, from
+  // its scope check (docs/DEPLOY.md, "An Orker's own storage credential").
+  // Unspecified for an Orker that never ran the check (an older build).
   StoreScope store_scope = 38;
 
-  // store_scope_detail is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // store_scope_detail is the last round's result: the first prefix the
+  // credential reached, or the store's code for an unclear answer. It never
+  // holds a credential.
   string store_scope_detail = 39;
 
-  // store_scope_confirmed_at is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // store_scope_confirmed_at is when a round of the scope check last ended
+  // scoped; unset when none has.
   google.protobuf.Timestamp store_scope_confirmed_at = 40;
 
-  // results_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // results_scope is what the check's results request found: whether this
+  // credential may write every namespace's results or only named ones. It
+  // decides nothing.
   ResultsScope results_scope = 41;
 
   // service_host is set from E90; unset until it lands (v0.4.0 proto batch).
@@ -1021,10 +1031,12 @@ message ProfileRef {}
 // batch).
 message ProviderInfo {}
 
-// ResultsScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
-// (v0.4.0 proto batch).
+// ResultsScope is how far an Orker's storage credential reaches among
+// results: every namespace's, or only named namespaces'.
 enum ResultsScope {
   RESULTS_SCOPE_UNSPECIFIED = 0;
+  RESULTS_SCOPE_EVERY_NAMESPACE = 1;
+  RESULTS_SCOPE_BY_NAMESPACE = 2;
 }
 
 // RunContext is E86's; it is empty until E86 lands (v0.4.0 proto
@@ -1035,8 +1047,13 @@ message RunContext {}
 // batch).
 message ServiceHost {}
 
-// StoreScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
-// (v0.4.0 proto batch).
+// StoreScope is an Orker's verdict on its own storage credential: scoped
+// when a round of its scope check found every control-plane prefix refused,
+// unscoped when one reached, unknown while no round has ended either way or
+// a scoped verdict has lapsed. It never cordons an Orker.
 enum StoreScope {
   STORE_SCOPE_UNSPECIFIED = 0;
+  STORE_SCOPE_SCOPED = 1;
+  STORE_SCOPE_UNSCOPED = 2;
+  STORE_SCOPE_UNKNOWN = 3;
 }

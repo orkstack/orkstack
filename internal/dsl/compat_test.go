@@ -458,3 +458,42 @@ func TestCountNoun(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// TestDiff_TimeoutNotBreaking: a run's time limit is part of the definition
+// and its digest, never of its declared interface, so adding, changing or
+// removing timeout: is never a breaking promotion and is no finding at all.
+func TestDiff_TimeoutNotBreaking(t *testing.T) {
+	base := compile(t, releaseBlock210)
+	self, selfVerdict := dsl.CompareInterfaces(base, base)
+	for _, timeout := range []int64{10, 21600, 31536000} {
+		limited := proto.Clone(base).(*orkstackv1.Orkflow)
+		limited.TimeoutSeconds = timeout
+		for _, pair := range [][2]*orkstackv1.Orkflow{{base, limited}, {limited, base}} {
+			got, verdict := dsl.CompareInterfaces(pair[0], pair[1])
+			if !equalFindings(findingsOf(got), findingsOf(self)) || verdict != selfVerdict {
+				t.Fatalf("timeout %d s produced findings %+v (verdict %v)", timeout, findingsOf(got), verdict)
+			}
+		}
+	}
+}
+
+// TestCompile_TimeoutEntersTheDigest: compiled from YAML, a definition with
+// timeout: has another digest than the same one without it, and 6h and 360m
+// are one definition.
+func TestCompile_TimeoutEntersTheDigest(t *testing.T) {
+	digest := func(extra string) string {
+		wf := compile(t, releaseBlock210+extra)
+		d, err := dsl.DefinitionDigest(wf)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d
+	}
+	plain, sixHours, sameAgain := digest(""), digest("timeout: 6h\n"), digest("timeout: 360m\n")
+	if plain == sixHours {
+		t.Fatal("timeout: 6h left the digest unchanged")
+	}
+	if sixHours != sameAgain {
+		t.Fatalf("6h and 360m digest differently: %s, %s", sixHours, sameAgain)
+	}
+}

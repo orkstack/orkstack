@@ -633,6 +633,8 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container, which the Orker then removes. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 230 seconds for removing what it gave up on and the first container, and for that cancellation (17 minutes 50 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.metadata_probe` | `ORK_ORKER_METADATA_PROBE` | `off` | `orker` | whether boot asks the host's instance metadata endpoints from a container on the `default` network: `off` runs no extra container, `warn` logs an endpoint that answered, `refuse` refuses boot when one answered or the probe failed, `METADATA_ENDPOINT_REACHABLE`. Set `refuse` on a cloud host ([Keeping tasks away from the host's identity](#keeping-tasks-away-from-the-hosts-identity)) |
+| `orker.log.mask_secrets` | `ORK_ORKER_LOG_MASK_SECRETS` | `true` | `orker` | whether a task's secrets are replaced by `***` in its logs, live and stored, and in failure messages; `false` keeps them byte-exact. A secret's `mask: false` does the same for one secret. The same on every Orker of a pool ([SECURITY_MODEL.md](./SECURITY_MODEL.md#masking-and-its-limits)) |
+| `orker.values.refuse_secrets` | `ORK_ORKER_VALUES_REFUSE_SECRETS` | `true` | `orker` | whether a `values.json` holding one of the task's own secrets fails the attempt, `VALUES_CONTAIN_SECRET`, before anything is uploaded; independent of `orker.log.mask_secrets`. The same on every Orker of a pool ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#94-secrets)) |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
 | `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
@@ -655,6 +657,7 @@ then the variable it becomes.
 | `orker.store_check.timeout` | `ORK_ORKER_STORE_CHECK_TIMEOUT` | `5s` | `orker` | how long one check may take before it counts as failed. Above zero and at most the interval; anything else is refused at boot |
 | `orker.store_check.failures` | `ORK_ORKER_STORE_CHECK_FAILURES` | `3` | `orker` | how many failed checks in a row cordon this Orker. 1 or more; anything else is refused at boot. A shorter blip cordons nothing |
 | `orker.store_check.recoveries` | `ORK_ORKER_STORE_CHECK_RECOVERIES` | `2` | `orker` | how many good checks in a row end the cordon. 1 or more; anything else is refused at boot |
+| `orker.store_scope_recheck` | `ORK_ORKER_STORE_SCOPE_RECHECK` | `1h` | `orker` | how often this Orker runs the storage scope check, which tests that its own storage credential reaches none of the control plane's objects; it runs at boot too, and a minute after a round that could not tell. `1s` to `168h`; anything else is refused at boot. The check never cordons the Orker — see §5, "An Orker's own storage credential" |
 | `orker.pins.max_concurrent` | `ORK_ORKER_MAX_PINS` | `0` | `orker` | how many task pins (`docs/DSL.md`, "Pins") this Orker hosts at once. `0` hosts none and starts no extra pollers; above zero makes this Orker a pin host. Pool-wide — see below |
 | `deployment.name` | `ORK_DEPLOYMENT_NAME` | `orkstack` | **both** | the Worker Deployment both binaries join |
 | `deployment.build_id` | `ORK_BUILD_ID` | *(empty)* | **both** | this release's identity. **Empty means versioning is off** |
@@ -679,6 +682,7 @@ then the variable it becomes.
 | `engine.snapshot_overlays` | `ORK_SNAPSHOT_OVERLAYS` | `true` | `ork` | a run that declares more than 256 rows — its tasks plus every fan-out's `max_items` — writes, for each event before its last, only the rows that changed since its last full snapshot (a snapshot overlay, `docs/STORAGE.md`), and a full snapshot at least every 64 events and whenever more than 256 rows changed; its last event's snapshot is always full. Decided per run, so a small child of a large parent keeps full snapshots. Read at submit, so a change applies to new runs. While any `ork` process polling `ork-engine-events` runs an older release (a draining build's included), or a process of a build that new runs start on does, new runs write full snapshots instead, and the engine logs why at most once a minute (§5, "Snapshot overlays"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below the release that has it (§4) |
 | `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `500` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs. Raising it is allowed, but it lowers the flat-stage bound X (`engine.orkflow_max_tasks`, §5): above about 700, X is below the 4,000-task default and the boot warns |
 | `engine.pin_creation_timeout` | `ORK_PIN_CREATION_TIMEOUT` | `5m` | `ork` | how long a pin waits for some pin host of its pool to have a free slot (`ORK_ORKER_MAX_PINS`) before the task whose readiness asked for it fails `PIN_UNAVAILABLE`. A duration of whole seconds, `1s` to `24h`; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only: a run already accepted keeps the wait it started with, and so does a child run of it. A pool whose pin hosts are all cordoned fails a pin after about five minutes whatever this says (§5, "Removing an Orker safely: cordon and drain") |
+| `engine.run_timeout_handler_grace` | `ORK_RUN_TIMEOUT_HANDLER_GRACE` | `10m` | `ork` | how long after a run's deadline (an Orkflow's `timeout:`, `docs/DSL.md` "Run timeout") its failure handlers may still run; at that hard end a handler still running is stopped and one not yet started never starts. A duration of whole seconds, `0s` to `24h`; `0s` starts no failure handler once the run timed out; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only, and a child run carries the value its parent's submit read |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
@@ -953,7 +957,11 @@ the pool offers. Give each Orker of a pool the same:
   below);
 - stop grace, `orker.stop.grace` ("Removing an Orker safely"). Orkers of one
   pool that differ in it break nothing; the same grace makes a scale-in
-  predictable.
+  predictable;
+- log masking, `orker.log.mask_secrets`, and whether a secret may be a task's
+  result, `orker.values.refuse_secrets`: Orkers that differ mask the same
+  task's logs, or fail the same task `VALUES_CONTAIN_SECRET`, by which of
+  them took it.
 
 Network modes need no setting: every Orker offers `default` and `none`.
 
@@ -1250,7 +1258,8 @@ store refuses any other.
 
 1. Leave both keys and the session token unset on every `ork` and `orker`, in
    the environment and in the configuration file.
-2. Give the role read, write, list and delete on the bucket.
+2. Give the role read, write, list and delete on the bucket. An Orker's own
+   role needs less: "An Orker's own storage credential", below.
 3. On AWS S3, set `ORK_S3_ENDPOINT=https://s3.<region>.amazonaws.com`,
    `ORK_S3_REGION` and `ORK_S3_PATH_STYLE=false`. The default endpoint is
    `http://localhost:9000`.
@@ -1319,6 +1328,161 @@ costs every boot a container and has nothing to find on a laptop; set
 
 The structural answer is that an Orker host needs no broad role at all: then
 the object store's role is the only thing a metadata endpoint could give away.
+
+### An Orker's own storage credential
+
+The control plane's objects — the access document, Orkflow definitions,
+namespaces, webhook signing secrets, the audit trail — are trusted for where
+they lie. An Orker whose storage credential can write them can write itself a
+role, so with `auth.mode: enforce` roles hold against every caller of the API
+but not against whoever holds such a credential. Give each Orker a credential
+of its own, limited to the prefixes it needs, and keep the engine's broader
+one for `ork` alone.
+
+An Orker needs exactly this, and nothing else. Each prefix ends in its slash.
+
+| Prefix | An Orker needs |
+| --- | --- |
+| `orkflows/`, `manifests/` (artifacts and their manifests) | put, get, list; an artifact's upload may be multipart, which a failed upload aborts |
+| `metadata/commits/` | put, get, list |
+| `metadata/attested/` | get, list |
+| `metadata/memo/` | put, get, list |
+| `metadata/logs/` | put |
+| `metadata/attempts/` | put, list |
+| `metadata/probes/` | put, get, list, delete |
+| `metadata/receipts/`, `metadata/staging/event-sources/` | put |
+
+Where the store separates listing from reading, as AWS S3 does, grant listing
+by prefix for every prefix above where the Orker reads a key that may not
+exist: without it the store answers `403` for a missing key, and the Orker
+cannot tell "no commit yet" from "forbidden". On AWS S3:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["s3:PutObject", "s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::BUCKET/orkflows/*",
+        "arn:aws:s3:::BUCKET/manifests/*",
+        "arn:aws:s3:::BUCKET/metadata/commits/*",
+        "arn:aws:s3:::BUCKET/metadata/memo/*",
+        "arn:aws:s3:::BUCKET/metadata/probes/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:GetObject",
+      "Resource": "arn:aws:s3:::BUCKET/metadata/attested/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:PutObject",
+      "Resource": [
+        "arn:aws:s3:::BUCKET/metadata/logs/*",
+        "arn:aws:s3:::BUCKET/metadata/attempts/*",
+        "arn:aws:s3:::BUCKET/metadata/receipts/*",
+        "arn:aws:s3:::BUCKET/metadata/staging/event-sources/*"
+      ]
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:DeleteObject",
+      "Resource": "arn:aws:s3:::BUCKET/metadata/probes/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:AbortMultipartUpload",
+      "Resource": "arn:aws:s3:::BUCKET/orkflows/*"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "s3:ListBucket",
+      "Resource": "arn:aws:s3:::BUCKET",
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "orkflows/*",
+            "manifests/*",
+            "metadata/commits/*",
+            "metadata/attested/*",
+            "metadata/memo/*",
+            "metadata/attempts/*",
+            "metadata/probes/*"
+          ]
+        }
+      }
+    }
+  ]
+}
+```
+
+Grant no other action: not a copy from another prefix, not `s3:PutBucketPolicy`,
+lifecycle or versioning, not a delete of an object version. Then, once every
+Orker runs with its own credential, **rotate the credential they shared**: a
+copy of it on a retired host is reported by nobody.
+
+**The scope check.** Every Orker tests its own credential at boot, every
+`orker.store_scope_recheck` (§1, `1h`), and a minute after a round that could
+not tell. A round makes a conditional write the store must refuse on a key
+under `metadata/probes/` first, as its control; then, for every control-plane
+prefix, a conditional write, a conditional delete and a one-key listing; then
+a read of `metadata/identity/sentinel`, which every engine writes at boot.
+Only the store's own error code counts, never the HTTP status alone:
+
+| The store answers a request outside the allow-list | Means |
+| --- | --- |
+| `AccessDenied` | refused |
+| `PreconditionFailed`, `NoSuchKey`, or any 2xx | reached: the credential reaches that prefix |
+| anything else: `NoSuchBucket`, `SignatureDoesNotMatch`, a 5xx, `SlowDown`, a timeout | unclear |
+
+A round is **scoped** when its control passed and every request was refused,
+**unscoped** when any request reached, and unclear otherwise. A write the store
+answered 2xx stored an object its condition should have stopped; the Orker
+deletes it and logs that the store ignored the condition. The check creates
+nothing else.
+
+The Orker keeps one verdict. Only a round that ends scoped or unscoped sets
+it, so an unclear round never moves it either way; a scoped verdict whose last
+confirmation is older than two re-check intervals lapses to no verdict. The
+verdict, when it was last confirmed and the last round's finding (the first
+prefix reached, or the store's code) are on the Orker's `DescribeOrker`
+answer, as `store_scope`, `store_scope_confirmed_at` and `store_scope_detail`,
+and `results_scope` says whether the credential may write every namespace's
+results or only named ones. The Orker logs at error at every round while its
+verdict is not scoped, and every engine logs at error, once a minute, each
+live Orker whose verdict is not scoped or that reports none (an older
+release).
+
+The check decides nothing: it never cordons an Orker, never stops one and
+never ends a task. Only the store's existing health check pauses an Orker
+(§5, "When object storage goes away"). An Orker on the `local` backend has
+no credential to scope and reports itself unscoped.
+
+What it cannot tell:
+
+- A store that evaluates a request's precondition before its policy answers a
+  forbidden writer `PreconditionFailed`, which reads as unscoped.
+- It makes four kinds of request. A policy that refuses them and allows
+  another way to write (a copy, a multipart upload, deleting a version), or
+  lets the credential change the bucket's own policy, passes it. It catches a
+  shared or broad credential; it is not an audit of a policy.
+- A credential no running Orker holds is checked by nobody, which is why the
+  shared one is rotated.
+- It is the Orker's own word. A scoped verdict says the credential this Orker
+  holds was refused; it is no evidence against a compromised host, which can
+  answer anything. And the allow-list itself lets any Orker write any
+  namespace's commits and memos, so a stolen credential can still forge a
+  result or poison a cached task's memo, scoped or not.
+- Reading is tested on one object only, the sentinel, because a missing key
+  cannot tell a reader from a non-reader. A credential that may read but not
+  list another control-plane prefix (webhook secrets, the audit trail) passes;
+  one that may list it does not. A round that finds the sentinel missing
+  where it may read cannot tell, so it is unclear, never scoped.
+- Each engine reports on its own, so a deployment with three engines logs each
+  unscoped Orker three times a minute.
 
 ### Live task logs: where they are, what bounds them, how long they stay
 
@@ -3194,15 +3358,20 @@ checks:
   log or record;
 - a cancel; a task above the per-task cap, refused at submit by the cap the
   Orker reported, with no run left behind; a task at the cap, with the cap as
-  its limit; an out-of-memory task; and a pod deletion.
+  its limit; an out-of-memory task; and a pod deletion;
+- drain-first: with a 3-minute stop grace, a pod deleted while a task runs
+  lets the task finish and the run succeed on its one attempt, and the pod is
+  gone once its Orker is idle; a pod deleted at once (`--grace-period=0`)
+  loses its task, which ends explicitly: `CONTAINER_STOPPED_BY_RUNTIME` when
+  the engine container's daemon stops it first, else `ORKER_HEARTBEAT_TIMEOUT`.
 
 Then it checks that the Orker refuses a mismatched work root, and that the
 user-namespaced engine does not start without its RuntimeClass. It deletes its
 namespace at the end (`KEEP=1` leaves it), the `orkstack-task-secrets` Secret
 it makes there with it, and creates nothing cluster-wide: the RuntimeClass
-must exist already. In OrkStack it leaves five Orkflows (`k8s-orker-proof`,
+must exist already. In OrkStack it leaves six Orkflows (`k8s-orker-proof`,
 `k8s-orker-secrets`, `k8s-orker-cancel`, `k8s-orker-limits`,
-`k8s-orker-too-big`) in
+`k8s-orker-too-big`, `k8s-orker-drain`) in
 `--ork-namespace` (`default` unless named) and their runs, kept by that
 namespace's retention. Its Orkers serve only the pool `k8s-check`, which that
 namespace must allow, so they take no other run's tasks. Exit `0` means every
@@ -4543,7 +4712,7 @@ processes could decide it, and refuses while any of them is too old.
 
 - **What each process advertises.** Every `ork` process polls Temporal with
   its SDK identity followed by ` ork-caps=<list>`, for example
-  `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay`, as
+  `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay,webhook-by-id,run-timeout`, as
   `temporal task-queue describe --task-queue ork-tasks` shows it. The run
   worker and the projection worker share the process's client, so both carry
   it. The releases page still counts one process per identity. After the
@@ -4566,7 +4735,9 @@ processes could decide it, and refuses while any of them is too old.
   `snapshot-overlay`: a run tree in which some run declares more than 256
   rows, with `engine.snapshot_overlays` on (§1); it also checks every process
   polling `ork-engine-events`, and never refuses — a tree it cannot be sure of
-  writes full snapshots (§5, "Snapshot overlays"). Only such a submit — a
+  writes full snapshots (§5, "Snapshot overlays"). `run-timeout`: a run tree
+  in which some run's Orkflow declares a run timeout (`timeout:`,
+  `docs/DSL.md` "Run timeout"). Only such a submit — a
   direct submit, a trigger or a schedule fire — reads the poller list, once,
   never cached. `webhook-by-id`: an engine that reads a webhook delivery's URL
   from the registry; it checks the same pollers as `snapshot-overlay` and
@@ -4586,7 +4757,9 @@ processes could decide it, and refuses while any of them is too old.
   a count, never an identity, because identities carry host names; for a
   definition too large to start, today's 256 KiB refusal followed by "2
   engine processes run a release that cannot yet read a definition this
-  large". The identities are in the engine's own `missing_capability`
+  large"; for a run timeout, "orkflow … declares a run timeout; 1 engine
+  process runs a release that cannot enforce a run timeout; finish the
+  rollout first". The identities are in the engine's own `missing_capability`
   warning (`identities`).
 - **The reader side.** An older process can still serve API requests while
   a rollout drains, and cannot read a definition passed by reference. Roll
@@ -5197,6 +5370,10 @@ policy names one — they can land on a different sink than the process default
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.commit_adopted` | — | Orker, once per adopted commit |
 | `ork.orker.workspace_cleanup_failures` | — | Orker, once per attempt whose own directory or secrets could not be removed when it ended and are left on disk (typically a directory a workload made as a uid other than the Orker's, which the Orker can neither write nor chmod); the Orker logs the path, the error and the directory that refused the removal with its mode and owner (`refused_by`) |
+| `ork.log.masked` | `ork.stream` | Orker, once per attempt that masked anything: the runs of bytes its masker replaced with `***` in each stream; never which secret or where |
+| `ork.log.mask.forms` | — | Orker, once per attempt whose secrets are masked: how many masking forms it registered (at most 1024) |
+| `ork.log.mask.bytes` | — | Orker, same event: the bytes of those forms (at most 512 KiB) |
+| `ork.log.mask.capacity_exceeded` | — | Orker, once per attempt refused `MASK_CAPACITY_EXCEEDED` before its container started |
 | `ork.runs.refused` | `ork.namespace`, `ork.refusal.reason` | engine, once per submission the namespace's hold, `max_running` or enforced budget refused (`namespace_held`, `max_running_reached`, `budget_exceeded`, `budget_unmeasurable`); not a run, not counted on `ork.runs` |
 | `ork.run.continuations` | `ork.namespace`, `outcome` | engine, once per run carried on into a fresh history: `written` (its saved state written), `write_failed` (object storage refused it; the run tries again after more growth), `over_cap` (its saved state is over `engine.continuation.bytes`; it never carries on), `restored` (the next history read it back), or a `RUN_STATE_*` code (the next history could not) |
 | `ork.run.continuation.state.bytes` | `ork.namespace`, `kind` | engine, the stored size of what a switch wrote: `checkpoint` (the saved state), `events` (the earlier history's events), `snapshot` (the full state at the switch) |

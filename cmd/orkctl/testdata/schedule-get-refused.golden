@@ -2,6 +2,7 @@ Schedule:     nightly-reconcile (sch-4a1c0e2b7d3f8156)
 Namespace:    payments
 Runs:         reconcile@current
 Description:  Nightly reconcile
+Consent:      -
 When:         0 2 * * *  (Europe/Lisbon)
 Overlap:      skip
 Catch-up:     1h

@@ -593,9 +593,11 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 	}
 	t.Logf("EVIDENCE minio_origin_row=%s", originKeys[0])
 
-	// No schedule record anywhere under metadata/: every key that names this
-	// schedule is the run's origin-index row.
-	var scheduleKeys []string
+	// One record of who bound the schedule (docs/ORKFLOW_SCHEDULES.md, "Who a
+	// schedule runs as") and nothing else under metadata/: every other key
+	// that names this schedule is the run's origin-index row.
+	bindingKey := artifacts.ScheduleBindingPrefix + "/" + s.namespace + "/" + id + ".json"
+	var bindingKeys, scheduleKeys []string
 	var token *string
 	scanned := 0
 	for {
@@ -606,9 +608,11 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 		for _, object := range page.Contents {
 			key := aws.ToString(object.Key)
 			scanned++
-			if strings.HasPrefix(key, "metadata/schedules/") ||
-				((strings.Contains(key, id) || strings.Contains(key, "/nightly")) && !strings.HasPrefix(key, prefix) &&
-					strings.Contains(key, s.namespace)) {
+			switch {
+			case strings.HasPrefix(key, artifacts.ScheduleBindingPrefix+"/"):
+				bindingKeys = append(bindingKeys, key)
+			case (strings.Contains(key, id) || strings.Contains(key, "/nightly")) && !strings.HasPrefix(key, prefix) &&
+				strings.Contains(key, s.namespace):
 				scheduleKeys = append(scheduleKeys, key)
 			}
 		}
@@ -619,6 +623,9 @@ func TestIntegration_ScheduleFireStartsRunWithScheduleOrigin(t *testing.T) {
 	}
 	if len(scheduleKeys) != 0 {
 		t.Fatalf("schedule records under metadata/: %v", scheduleKeys)
+	}
+	if len(bindingKeys) != 1 || bindingKeys[0] != bindingKey {
+		t.Fatalf("schedule binding records = %v, want exactly %s", bindingKeys, bindingKey)
 	}
 	t.Logf("EVIDENCE minio_metadata_scan keys=%d schedule_keys=0 (only %s)", scanned, originKeys[0])
 	fmt.Fprintf(&s.transcript, "$ aws s3 ls --recursive s3://%s/metadata/ | grep -e %s -e metadata/schedules/\n%s\n(%d keys scanned; the one naming the schedule is its run's origin-index row)\n\n",

@@ -4,14 +4,15 @@
 
 import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import { enumDesc, fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
-import { file_google_protobuf_struct } from "@bufbuild/protobuf/wkt";
+import type { Timestamp } from "@bufbuild/protobuf/wkt";
+import { file_google_protobuf_struct, file_google_protobuf_timestamp } from "@bufbuild/protobuf/wkt";
 import type { JsonObject, Message } from "@bufbuild/protobuf";
 
 /**
  * Describes the file orkstack/v1/common.proto.
  */
 export const file_orkstack_v1_common: GenFile = /*@__PURE__*/
-  fileDesc("ChhvcmtzdGFjay92MS9jb21tb24ucHJvdG8SC29ya3N0YWNrLnYxIs0BCgtBcnRpZmFjdFJlZhIMCgRuYW1lGAEgASgJEgsKA3VyaRgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoAxIOCgZzaGEyNTYYBSABKAkSOAoIbWV0YWRhdGEYBiADKAsyJi5vcmtzdGFjay52MS5BcnRpZmFjdFJlZi5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIwCgdQYXlsb2FkEiUKBGRhdGEYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Io0BCgVFcnJvchIMCgRjb2RlGAEgASgJEg8KB21lc3NhZ2UYAiABKAkSDwoHZGV0YWlscxgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSLgoIY2F0ZWdvcnkYBSABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJdGFza19jb2RlGAYgASgJIgkKB0Fza3NGb3IiDQoLQ29uc2VudFZpZXcqxAEKBlN0YXR1cxIWChJTVEFUVVNfVU5TUEVDSUZJRUQQABISCg5TVEFUVVNfUEVORElORxABEhIKDlNUQVRVU19SVU5OSU5HEAISFAoQU1RBVFVTX1NVQ0NFRURFRBADEhEKDVNUQVRVU19GQUlMRUQQBBITCg9TVEFUVVNfQ0FOQ0VMRUQQBRISCg5TVEFUVVNfU0tJUFBFRBAGEhMKD1NUQVRVU19BV0FJVElORxAHEhMKD1NUQVRVU19TTEVFUElORxAIKu0BCg9GYWlsdXJlQ2F0ZWdvcnkSIAocRkFJTFVSRV9DQVRFR09SWV9VTlNQRUNJRklFRBAAEiQKIEZBSUxVUkVfQ0FURUdPUllfQUNUSVZJVFlfRkFJTEVEEAESKQolRkFJTFVSRV9DQVRFR09SWV9JTkZSQVNUUlVDVFVSRV9FUlJPUhACEicKI0ZBSUxVUkVfQ0FURUdPUllfQ09OVFJBQ1RfVklPTEFUSU9OEAMSHgoaRkFJTFVSRV9DQVRFR09SWV9USU1FRF9PVVQQBBIeChpGQUlMVVJFX0NBVEVHT1JZX0NBTkNFTExFRBAFQqcBCg9jb20ub3Jrc3RhY2sudjFCC0NvbW1vblByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct]);
+  fileDesc("ChhvcmtzdGFjay92MS9jb21tb24ucHJvdG8SC29ya3N0YWNrLnYxIs0BCgtBcnRpZmFjdFJlZhIMCgRuYW1lGAEgASgJEgsKA3VyaRgCIAEoCRIUCgxjb250ZW50X3R5cGUYAyABKAkSEgoKc2l6ZV9ieXRlcxgEIAEoAxIOCgZzaGEyNTYYBSABKAkSOAoIbWV0YWRhdGEYBiADKAsyJi5vcmtzdGFjay52MS5BcnRpZmFjdFJlZi5NZXRhZGF0YUVudHJ5Gi8KDU1ldGFkYXRhRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASIwCgdQYXlsb2FkEiUKBGRhdGEYASABKAsyFy5nb29nbGUucHJvdG9idWYuU3RydWN0Io0BCgVFcnJvchIMCgRjb2RlGAEgASgJEg8KB21lc3NhZ2UYAiABKAkSDwoHZGV0YWlscxgDIAEoCRIRCglyZXRyeWFibGUYBCABKAgSLgoIY2F0ZWdvcnkYBSABKA4yHC5vcmtzdGFjay52MS5GYWlsdXJlQ2F0ZWdvcnkSEQoJdGFza19jb2RlGAYgASgJIhkKB0Fza3NGb3ISDgoGZGlnZXN0GAEgASgJIkUKC0NvbnNlbnRWaWV3Eg4KBmRpZ2VzdBgBIAEoCRImCgJhdBgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAqxAEKBlN0YXR1cxIWChJTVEFUVVNfVU5TUEVDSUZJRUQQABISCg5TVEFUVVNfUEVORElORxABEhIKDlNUQVRVU19SVU5OSU5HEAISFAoQU1RBVFVTX1NVQ0NFRURFRBADEhEKDVNUQVRVU19GQUlMRUQQBBITCg9TVEFUVVNfQ0FOQ0VMRUQQBRISCg5TVEFUVVNfU0tJUFBFRBAGEhMKD1NUQVRVU19BV0FJVElORxAHEhMKD1NUQVRVU19TTEVFUElORxAIKu0BCg9GYWlsdXJlQ2F0ZWdvcnkSIAocRkFJTFVSRV9DQVRFR09SWV9VTlNQRUNJRklFRBAAEiQKIEZBSUxVUkVfQ0FURUdPUllfQUNUSVZJVFlfRkFJTEVEEAESKQolRkFJTFVSRV9DQVRFR09SWV9JTkZSQVNUUlVDVFVSRV9FUlJPUhACEicKI0ZBSUxVUkVfQ0FURUdPUllfQ09OVFJBQ1RfVklPTEFUSU9OEAMSHgoaRkFJTFVSRV9DQVRFR09SWV9USU1FRF9PVVQQBBIeChpGQUlMVVJFX0NBVEVHT1JZX0NBTkNFTExFRBAFQqcBCg9jb20ub3Jrc3RhY2sudjFCC0NvbW1vblByb3RvUAFaOmdpdGh1Yi5jb20vb3Jrc3RhY2svb3Jrc3RhY2svZ2VuL2dvL29ya3N0YWNrL3YxO29ya3N0YWNrdjGiAgNPWFiqAgtPcmtzdGFjay5WMcoCC09ya3N0YWNrXFYx4gIXT3Jrc3RhY2tcVjFcR1BCTWV0YWRhdGHqAgxPcmtzdGFjazo6VjFiBnByb3RvMw", [file_google_protobuf_struct, file_google_protobuf_timestamp]);
 
 /**
  * ArtifactRef is a pointer to a stored artifact in the object store.
@@ -143,12 +144,20 @@ export const ErrorSchema: GenMessage<Error> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_common, 2);
 
 /**
- * AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
- * batch).
+ * AsksFor is what a schedule's or a trigger's Orkflow asks for, as a
+ * consent's digest (docs/ORKFLOW_SCHEDULES.md, "Who a schedule runs as").
+ * In this release no Orkflow asks for an identity, so it is the empty table's.
  *
  * @generated from message orkstack.v1.AsksFor
  */
 export type AsksFor = Message<"orkstack.v1.AsksFor"> & {
+  /**
+   * digest is the consent digest of what the Orkflow asks for: "c1:" and 64
+   * hexadecimal digits.
+   *
+   * @generated from field: string digest = 1;
+   */
+  digest: string;
 };
 
 /**
@@ -159,12 +168,25 @@ export const AsksForSchema: GenMessage<AsksFor> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_common, 3);
 
 /**
- * ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
- * batch).
+ * ConsentView is the consent a schedule or a trigger records with its
+ * binder: the digest of what its Orkflow asked for when it was bound.
  *
  * @generated from message orkstack.v1.ConsentView
  */
 export type ConsentView = Message<"orkstack.v1.ConsentView"> & {
+  /**
+   * digest is the consent digest recorded: "c1:" and 64 hexadecimal digits.
+   *
+   * @generated from field: string digest = 1;
+   */
+  digest: string;
+
+  /**
+   * at is when it was recorded.
+   *
+   * @generated from field: google.protobuf.Timestamp at = 2;
+   */
+  at?: Timestamp | undefined;
 };
 
 /**

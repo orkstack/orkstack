@@ -98,6 +98,11 @@ type Options struct {
 	// instance metadata endpoints from a container on the default network,
 	// and what an answer does (metadata_probe.go). Empty is off.
 	MetadataProbe MetadataProbeMode
+	// LogUnmasked is orker.log.mask_secrets: false; AllowSecretValues is
+	// orker.values.refuse_secrets: false (mask.go). The zero values mask
+	// and refuse.
+	LogUnmasked       bool
+	AllowSecretValues bool
 	// CapacityCPU and CapacityMemory are orker.capacity.cpu and
 	// orker.capacity.memory, in the Kubernetes spelling: what this Orker
 	// admits tasks within (capacity.go). Both empty — the default — declare
@@ -176,6 +181,9 @@ type Activities struct {
 	stopReap context.CancelFunc
 	// removalRetryEvery overrides removalRetryInterval, for a test.
 	removalRetryEvery time.Duration
+	// scope is the storage scope watch (scope_watch.go), nil until
+	// WatchStoreScope starts one: DescribeOrker then leaves its fields unset.
+	scope atomic.Pointer[ScopeWatch]
 }
 
 // NewActivitiesWithOptions builds the activity set with explicit options.
@@ -243,6 +251,8 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Phases:            opts.Phases,
 			TraceContext:      opts.TraceContext,
 			Logger:            opts.Logger,
+			LogUnmasked:       opts.LogUnmasked,
+			AllowSecretValues: opts.AllowSecretValues,
 		},
 		pool:          opts.Pool,
 		maxConc:       maxConc,
@@ -456,6 +466,9 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// claims each attempt's number, so submit may send any task to its
 		// pool beside other Orkers that do.
 		AttemptOrdinalsSupported: true,
+		// Whether this Orker masks a task's secrets in its logs
+		// (orker.log.mask_secrets); it reads secrets[].unmasked either way.
+		MasksSecrets: !a.dispatcher.LogUnmasked,
 	}
 	if ceiling, err := a.dispatcher.Policy.ceiling(); err == nil {
 		result.MaxRequest = ceiling.proto()
@@ -487,6 +500,13 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 			Since:       timestamppb.New(stop.Since),
 			GraceEndsAt: timestamppb.New(stop.GraceEndsAt),
 		}
+	}
+	if w := a.scope.Load(); w != nil {
+		scope := w.Report()
+		result.StoreScope = scope.Scope
+		result.StoreScopeDetail = scope.Detail
+		result.StoreScopeConfirmedAt = scope.ConfirmedAt
+		result.ResultsScope = scope.Results
 	}
 	a.describeMetadata(result)
 	result.Pins = a.describePins()

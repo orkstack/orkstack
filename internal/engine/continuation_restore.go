@@ -296,13 +296,12 @@ func (s *runState) readChunkBefore(
 	// The chunk's marker is part of this workflow task's commands, success
 	// or failure: counted so the guard and the hold line see it.
 	s.noteCommand(ctx, 1, int64(len(data))+limit.Reserve.CommandBytes)
-	var applicationErr *temporal.ApplicationError
 	switch {
 	case ctx.Err() != nil:
 		return nil, restoreCanceled // the cancel cancelled the read, whatever err says
 	case err == nil:
 		return data, ""
-	case errors.As(err, &applicationErr) && applicationErr.Type() == RunStateCorruptCode:
+	case categoryOf(err).appType() == RunStateCorruptCode:
 		s.restoreErr = err
 		return nil, RunStateCorruptCode
 	default:
@@ -318,9 +317,8 @@ func errorText(err error) string {
 	if err == nil {
 		return "no error was recorded"
 	}
-	var applicationErr *temporal.ApplicationError
-	if errors.As(err, &applicationErr) {
-		return applicationErr.Message()
+	if failure := categoryOf(err); failure.isApplication() {
+		return failure.appMessage()
 	}
 	return err.Error()
 }
@@ -372,6 +370,9 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 	// 6. Validate.
 	if run.GetId() != s.runID {
 		return "it belongs to another run"
+	}
+	if what := s.adoptRunTimeout(run); what != "" {
+		return what
 	}
 	rows := run.GetTaskRuns()
 	if len(rows) != len(s.order) {

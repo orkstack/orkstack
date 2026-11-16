@@ -110,6 +110,7 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 		version       string
 		followCurrent bool
 		description   string
+		rebind        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update <id>",
@@ -121,7 +122,10 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 			"unnamed, --follow-current clears the pin, --description \"\" clears the\n" +
 			"label. A trigger's orkflow cannot change: that is delete then create.\n\n" +
 			"Naming an unnamed trigger is how a hand-made one is brought under an\n" +
-			"automation document (orkctl automation export) without re-issuing its token.",
+			"automation document (orkctl automation export) without re-issuing its token.\n\n" +
+			"A new version pin makes you the trigger's binder: the principal its\n" +
+			"runs are recorded against. --rebind makes you the binder without\n" +
+			"changing anything else.",
 		Example: "  orkctl trigger update trg-4a1c0e2b7d3f8156 -n payments --name github-deploy\n" +
 			"  orkctl trigger update trg-4a1c0e2b7d3f8156 --version 1.4.0",
 		Args: cobra.ExactArgs(1),
@@ -173,6 +177,7 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 			if cmd.Flags().Changed("description") {
 				req.Description = description
 			}
+			req.Rebind = rebind
 			response, err := g.triggerClient().UpdateTrigger(ctx, connect.NewRequest(req))
 			if err != nil {
 				return rpcError("update trigger", err)
@@ -187,6 +192,7 @@ func newTriggerUpdateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&version, "version", "", "orkflow version to pin")
 	cmd.Flags().BoolVar(&followCurrent, "follow-current", false, "clear the pin: follow the orkflow's current pointer at each invoke")
 	cmd.Flags().StringVar(&description, "description", "", "new operator label (\"\" clears it)")
+	cmd.Flags().BoolVar(&rebind, "rebind", false, "make yourself the trigger's binder, changing nothing else")
 	return cmd
 }
 
@@ -200,6 +206,7 @@ func renderTriggerUpdated(out io.Writer, trigger *orkstackv1.Trigger) error {
 	fmt.Fprintf(table, "ORKFLOW\t%s\n", orDash(trigger.GetOrkflowName()))
 	fmt.Fprintf(table, "VERSION\t%s\n", triggerVersionLabel(trigger.GetOrkflowVersion()))
 	fmt.Fprintf(table, "DESCRIPTION\t%s\n", orDash(trigger.GetDescription()))
+	fmt.Fprintf(table, "CONSENT\t%s\n", consentLabel(trigger.GetConsented(), trigger.GetAsksFor()))
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)
 	}

@@ -234,7 +234,11 @@ func (s *Service) ListOrkflowCallers(
 		}
 		// A caller learns of the namespace's other Orkflows only those it
 		// may read: one bound at this Orkflow alone is told of none.
-		if !s.mayAnswer(ctx, authz.PermOrkflowRead, authz.Resource{Namespace: namespace, Orkflow: o.GetName()}) {
+		may, err := s.mayAnswer(ctx, authz.PermOrkflowRead, authz.Resource{Namespace: namespace, Orkflow: o.GetName()})
+		if err != nil {
+			return nil, err
+		}
+		if !may {
 			continue
 		}
 		type scanned struct {
@@ -271,7 +275,11 @@ func (s *Service) ListOrkflowCallers(
 	if err != nil {
 		return nil, triggerConnectError(err)
 	}
-	if !s.mayAnswer(ctx, authz.PermTriggerRead, here) {
+	mayTriggers, err := s.mayAnswer(ctx, authz.PermTriggerRead, here)
+	if err != nil {
+		return nil, err
+	}
+	if !mayTriggers {
 		trigs = nil
 	}
 	for _, t := range trigs {
@@ -286,7 +294,11 @@ func (s *Service) ListOrkflowCallers(
 
 	// Schedules, by name. A partial answer would read as "no schedule
 	// follows current", so a failed list is Unavailable, never empty.
-	if s.schedules != nil && s.mayAnswer(ctx, authz.PermScheduleRead, here) {
+	maySchedules, err := s.mayAnswer(ctx, authz.PermScheduleRead, here)
+	if err != nil {
+		return nil, err
+	}
+	if s.schedules != nil && maySchedules {
 		views, err := s.schedules.List(ctx, namespace, nil)
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf(

@@ -205,6 +205,7 @@ func TestRunState_EveryFieldIsClassified(t *testing.T) {
 	seen := map[string]bool{}
 	for _, typ := range []reflect.Type{
 		reflect.TypeFor[runState](), reflect.TypeFor[eachState](), reflect.TypeFor[awaitState](), reflect.TypeFor[sleepState](), reflect.TypeFor[pinState](),
+		reflect.TypeFor[runTimeout](),
 	} {
 		for i := 0; i < typ.NumField(); i++ {
 			key := typ.Name() + "." + typ.Field(i).Name

@@ -428,3 +428,25 @@ func TestScheduleDelete_Prints(t *testing.T) {
 		t.Fatalf("repeat delete = %+v", out)
 	}
 }
+
+// TestConsentLabel says what was consented to, and what to do about an
+// object bound before consents were recorded.
+func TestConsentLabel(t *testing.T) {
+	at := timestamppb.New(time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC))
+	empty := "c1:" + strings.Repeat("0", 64)
+	other := "c1:" + strings.Repeat("1", 64)
+	for _, tc := range []struct {
+		given *orkstackv1.ConsentView
+		asks  *orkstackv1.AsksFor
+		want  string
+	}{
+		{nil, nil, "-"},
+		{nil, &orkstackv1.AsksFor{Digest: empty}, "none recorded (made before this release: update it with --rebind)"},
+		{&orkstackv1.ConsentView{Digest: empty, At: at}, &orkstackv1.AsksFor{Digest: empty}, empty + " (" + formatTime(at) + ")"},
+		{&orkstackv1.ConsentView{Digest: empty, At: at}, &orkstackv1.AsksFor{Digest: other}, empty + " (" + formatTime(at) + "); asks for " + other},
+	} {
+		if got := consentLabel(tc.given, tc.asks); got != tc.want {
+			t.Errorf("consentLabel(%v, %v) = %q, want %q", tc.given, tc.asks, got, tc.want)
+		}
+	}
+}

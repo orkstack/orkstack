@@ -3,6 +3,7 @@ package telemetry
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -307,5 +308,31 @@ func (a *attemptObservation) End(outcome orker.AttemptOutcome) {
 	}
 	if outcome.CleanupErr != nil && a.inst.WorkspaceCleanupFailures != nil {
 		a.inst.WorkspaceCleanupFailures.Add(a.attemptCtx, 1, metric.WithAttributes(durationAttrs...))
+	}
+	a.recordMask(outcome, durationAttrs)
+}
+
+// recordMask records the attempt's masking: counts and sizes, never which
+// secret or where.
+func (a *attemptObservation) recordMask(outcome orker.AttemptOutcome, attrs []attribute.KeyValue) {
+	mask := outcome.Mask
+	if a.inst.LogMasked != nil {
+		for _, stream := range []string{orker.StreamStdout, orker.StreamStderr} {
+			if n := mask.ByStream[stream]; n > 0 {
+				a.inst.LogMasked.Add(a.attemptCtx, n,
+					metric.WithAttributes(append(slices.Clip(attrs), attribute.String(AttrStream, stream))...))
+			}
+		}
+	}
+	if mask.Forms > 0 {
+		if a.inst.LogMaskForms != nil {
+			a.inst.LogMaskForms.Record(a.attemptCtx, int64(mask.Forms), metric.WithAttributes(attrs...))
+		}
+		if a.inst.LogMaskBytes != nil {
+			a.inst.LogMaskBytes.Record(a.attemptCtx, int64(mask.Bytes), metric.WithAttributes(attrs...))
+		}
+	}
+	if outcome.Reason == orker.ReasonMaskCapacityExceeded && a.inst.LogMaskCapacityExceeded != nil {
+		a.inst.LogMaskCapacityExceeded.Add(a.attemptCtx, 1, metric.WithAttributes(attrs...))
 	}
 }

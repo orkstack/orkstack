@@ -106,6 +106,24 @@ type Trigger struct {
 	SecretSalt []byte
 	// SecretHash is sha256(SecretSalt || secret).
 	SecretHash []byte
+
+	// Binding is who last bound the trigger and the consent they gave
+	// (docs/ORKFLOW_TRIGGERS.md, "Who a trigger runs as"). A record. Nothing
+	// reads it to decide an invoke.
+	Binding Binding
+}
+
+// Binding is a trigger's binder: the principal who created it, changed the
+// version it starts or rebound it, how that principal was known, and the
+// consent digest recorded with it. A trigger made before this release has
+// none.
+type Binding struct {
+	Binder    string
+	Verified  bool
+	Method    string
+	BoundAt   time.Time
+	Consent   string
+	ConsentAt time.Time
 }
 
 // Public returns a copy safe to hand to a caller: the record without the
@@ -136,6 +154,8 @@ type Registration struct {
 	Description    string
 	// Name is optional; see Trigger.Name and ValidateName.
 	Name string
+	// Binding is the creator's binding (Trigger.Binding).
+	Binding Binding
 }
 
 // slugPattern is the name rule AGENTS.md §7 states for a namespace and an
@@ -276,6 +296,7 @@ func Prepare(reg Registration) (Trigger, string, error) {
 		OrkflowVersion: reg.OrkflowVersion,
 		Description:    reg.Description,
 		Name:           reg.Name,
+		Binding:        reg.Binding,
 		CreatedAt:      time.Now().UTC(),
 		SecretSalt:     salt,
 		SecretHash:     HashSecret(salt, secret),

@@ -751,6 +751,9 @@ func renderNamespaceList(out io.Writer, namespaces []*orkstackv1.Namespace) erro
 func renderNamespace(out io.Writer, ns *orkstackv1.Namespace) error {
 	table := newTable(out)
 	fmt.Fprintf(table, "Name:\t%s\n", ns.GetName())
+	if id := ns.GetIdentity().GetNamespaceId(); id != "" {
+		fmt.Fprintf(table, "Id:\t%s\n", id)
+	}
 	fmt.Fprintf(table, "Description:\t%s\n", orDash(ns.GetDescription()))
 	fmt.Fprintf(table, "Default pool:\t%s\n", defaultPoolLabel(ns))
 	fmt.Fprintf(table, "Allowed pools:\t%s\n", allowedPoolsLabel(ns))

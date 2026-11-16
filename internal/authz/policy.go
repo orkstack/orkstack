@@ -760,3 +760,19 @@ func Validate(doc *orkstackv1.AccessDocument, opts ValidateOptions) (warnings []
 	}
 	return warnings, nil
 }
+
+// PinsWithin reports whether any binding is pinned to an incarnation inside
+// namespace: the namespace itself or one of its Orkflows. Only then can a
+// decision there depend on which incarnation a request reads, so only then
+// need its ids be read (authn-authz.md §6.2).
+func (p *Policy) PinsWithin(namespace string) bool {
+	if p == nil {
+		return false
+	}
+	for b := range p.allBindings {
+		if b.ScopeID != "" && b.Scope.Namespace == namespace {
+			return true
+		}
+	}
+	return false
+}

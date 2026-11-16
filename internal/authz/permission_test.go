@@ -245,6 +245,26 @@ func TestAuthorize_PinnedBindingMatchesItsIncarnation(t *testing.T) {
 	}
 }
 
+// TestPolicy_PinsWithin: only a pinned binding inside a namespace (at it or
+// at one of its Orkflows) makes its ids worth reading.
+func TestPolicy_PinsWithin(t *testing.T) {
+	ns := bind("ns", authz.RoleViewer, "namespace:payments", "user:corp:a")
+	ns.ScopeId = "ns_1"
+	of := bind("of", authz.RoleViewer, "orkflow:orders/report", "user:corp:a")
+	of.ScopeId = "of_1"
+	byName := bind("by-name", authz.RoleViewer, "namespace:billing", "user:corp:a")
+	policy := mustCompile(t, doc(nil, ns, of, byName), authz.Configuration{})
+	for namespace, want := range map[string]bool{"payments": true, "orders": true, "billing": false, "other": false} {
+		if got := policy.PinsWithin(namespace); got != want {
+			t.Errorf("PinsWithin(%q) = %v, want %v", namespace, got, want)
+		}
+	}
+	var none *authz.Policy
+	if none.PinsWithin("payments") {
+		t.Error("a nil policy pins something")
+	}
+}
+
 func TestAuthorize_BreakGlassHoldsAdmin(t *testing.T) {
 	glass := &authz.Subject{ID: "serviceaccount:" + authz.BreakGlassAccount, Kind: "service", Issuer: "config"}
 	off := mustCompile(t, nil, authz.Configuration{})

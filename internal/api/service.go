@@ -157,6 +157,16 @@ type Config struct {
 	// unit-test posture, never `ork`'s.
 	Schedules ScheduleController
 
+	// ScheduleBindings keeps the object the API records for each schedule:
+	// who bound it and the consent they gave (schedule_binding.go). `ork`
+	// wires the durable store; nil records nothing, a unit-test posture.
+	ScheduleBindings ScheduleBindingStore
+
+	// Incarnations keeps the immutable ids of namespaces and Orkflows
+	// (incarnation.go). `ork` wires the durable store; nil gives nothing an
+	// id, so every binding matches by name, a unit-test posture.
+	Incarnations IncarnationStore
+
 	// Deliveries is where settled webhook deliveries are recorded. `ork` wires
 	// the durable store on the same shared backend the webhook registry uses,
 	// so a delivery made through one replica is readable on every other one.
@@ -320,6 +330,14 @@ type Config struct {
 	// second. Pinned, in whole seconds, into every top-level plan.
 	PinCreationTimeout time.Duration
 
+	// RunTimeoutHandlerGrace is engine.run_timeout_handler_grace: how long
+	// after a run's deadline its failure handlers may still run. Zero is a
+	// grace of zero (cmd/ork passes engine.DefaultRunTimeoutHandlerGrace for
+	// an unset key, and refuses a value outside 0s to 24h); a negative one is
+	// zero. Pinned, in whole seconds, into the plan of every run of a tree
+	// whose definition declares `timeout:`.
+	RunTimeoutHandlerGrace time.Duration
+
 	// DefinitionByReference is engine.definition_by_reference's effective
 	// value: a top-level run whose planned definition is over a start
 	// payload's 256 KiB travels by reference (definition_ref.go). It needs
@@ -481,6 +499,11 @@ type Service struct {
 	triggers    triggers.Store
 	// schedules is the cluster's schedule seam; nil answers Unimplemented.
 	schedules ScheduleController
+	// scheduleBindings is cfg.ScheduleBindings.
+	scheduleBindings ScheduleBindingStore
+	// incarnations is cfg.Incarnations; ids caches what it read.
+	incarnations IncarnationStore
+	ids          *incarnationCache
 	// deliveries is the webhook delivery record store, read by ListDeliveries
 	// and GetDelivery; deliveryRecorder writes RedeliverWebhook's record into
 	// it and redelivery sends that one POST. Nil deliveries refuses all three.
@@ -535,6 +558,9 @@ type Service struct {
 	// pinCreationSeconds is Config.PinCreationTimeout in whole
 	// seconds, defaulted: what pinRunTreeLimits pins.
 	pinCreationSeconds int32
+	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
+	// seconds, never negative: what runTimeoutPlanFor pins.
+	runTimeoutGraceSeconds int64
 	// definitionByReference is Config.DefinitionByReference, only with
 	// continuation on; definitionObjects is Config.DefinitionObjects.
 	definitionByReference bool
@@ -574,62 +600,66 @@ type Service struct {
 // NewService builds a Service, filling in defaults for anything omitted.
 func NewService(cfg Config) *Service {
 	svc := &Service{
-		orkflows:              cfg.Orkflows,
-		namespaces:            cfg.Namespaces,
-		rawQueue:              cfg.RawQueue,
-		runs:                  cfg.Runs,
-		bus:                   cfg.Bus,
-		activities:            cfg.Activities,
-		orkers:                cfg.Orkers,
-		fleet:                 cfg.Fleet,
-		releases:              cfg.Releases,
-		capabilities:          cfg.Capabilities,
-		catalog:               cfg.Catalog,
-		resolver:              cfg.Resolver,
-		pinnedActivities:      newPinnedActivityCache(),
-		system:                cfg.System,
-		telemetrySinks:        cfg.TelemetrySinks,
-		router:                cfg.Router,
-		archive:               cfg.Archive,
-		logs:                  cfg.Logs,
-		artifactStore:         cfg.ArtifactStore,
-		attempts:              cfg.Attempts,
-		commits:               cfg.Commits,
-		logPoll:               cfg.LogPoll,
-		idempotency:           cfg.Idempotency,
-		onLegacyPending:       cfg.OnLegacyPending,
-		webhooks:              cfg.Webhooks,
-		triggers:              cfg.Triggers,
-		schedules:             cfg.Schedules,
-		deliveries:            cfg.Deliveries,
-		redelivery:            cfg.Redelivery,
-		notifier:              cfg.Notifier,
-		observer:              cfg.Observer,
-		admissions:            cfg.Admissions,
-		artifacts:             cfg.Artifacts,
-		limits:                cfg.Limits,
-		eachMaxItems:          eachMaxItemsOf(cfg.EachMaxItems),
-		orkflowMaxTasks:       orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
-		historyMaxEvents:      positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
-		continuation:          continuationBudgetFor(cfg),
-		definitionByReference: cfg.DefinitionByReference && cfg.ContinuationEnabled,
-		snapshotOverlays:      cfg.SnapshotOverlays,
-		definitionObjects:     cfg.DefinitionObjects,
-		runMaxInFlight:        int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
-		pinCreationSeconds:    pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
-		historyMaxBytes:       positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
-		composeMaxDepth:       composeMaxDepthOf(cfg.ComposeMaxDepth),
-		cacheMaxTTL:           cacheMaxTTLOf(cfg.CacheMaxTTL),
-		memos:                 cfg.Memos,
-		retention:             cfg.Retention,
-		retentionEnforced:     cfg.RetentionEnforced,
-		imagePolicies:         cfg.ImagePolicies,
-		signatures:            cfg.Signatures,
-		transferBudget:        cfg.TransferBudgetSeconds,
-		floorThroughput:       cfg.FloorThroughputBytesPerSecond,
-		logger:                cfg.Logger,
-		now:                   cfg.Now,
-		newRunID:              cfg.NewRunID,
+		orkflows:               cfg.Orkflows,
+		namespaces:             cfg.Namespaces,
+		rawQueue:               cfg.RawQueue,
+		runs:                   cfg.Runs,
+		bus:                    cfg.Bus,
+		activities:             cfg.Activities,
+		orkers:                 cfg.Orkers,
+		fleet:                  cfg.Fleet,
+		releases:               cfg.Releases,
+		capabilities:           cfg.Capabilities,
+		catalog:                cfg.Catalog,
+		resolver:               cfg.Resolver,
+		pinnedActivities:       newPinnedActivityCache(),
+		system:                 cfg.System,
+		telemetrySinks:         cfg.TelemetrySinks,
+		router:                 cfg.Router,
+		archive:                cfg.Archive,
+		logs:                   cfg.Logs,
+		artifactStore:          cfg.ArtifactStore,
+		attempts:               cfg.Attempts,
+		commits:                cfg.Commits,
+		logPoll:                cfg.LogPoll,
+		idempotency:            cfg.Idempotency,
+		onLegacyPending:        cfg.OnLegacyPending,
+		webhooks:               cfg.Webhooks,
+		triggers:               cfg.Triggers,
+		schedules:              cfg.Schedules,
+		scheduleBindings:       cfg.ScheduleBindings,
+		incarnations:           cfg.Incarnations,
+		ids:                    newIncarnationCache(),
+		deliveries:             cfg.Deliveries,
+		redelivery:             cfg.Redelivery,
+		notifier:               cfg.Notifier,
+		observer:               cfg.Observer,
+		admissions:             cfg.Admissions,
+		artifacts:              cfg.Artifacts,
+		limits:                 cfg.Limits,
+		eachMaxItems:           eachMaxItemsOf(cfg.EachMaxItems),
+		orkflowMaxTasks:        orkflowMaxTasksOf(cfg.OrkflowMaxTasks),
+		historyMaxEvents:       positiveOr(cfg.HistoryMaxEvents, engine.DefaultHistoryMaxEvents),
+		continuation:           continuationBudgetFor(cfg),
+		definitionByReference:  cfg.DefinitionByReference && cfg.ContinuationEnabled,
+		snapshotOverlays:       cfg.SnapshotOverlays,
+		definitionObjects:      cfg.DefinitionObjects,
+		runMaxInFlight:         int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
+		pinCreationSeconds:     pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
+		runTimeoutGraceSeconds: max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
+		historyMaxBytes:        positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
+		composeMaxDepth:        composeMaxDepthOf(cfg.ComposeMaxDepth),
+		cacheMaxTTL:            cacheMaxTTLOf(cfg.CacheMaxTTL),
+		memos:                  cfg.Memos,
+		retention:              cfg.Retention,
+		retentionEnforced:      cfg.RetentionEnforced,
+		imagePolicies:          cfg.ImagePolicies,
+		signatures:             cfg.Signatures,
+		transferBudget:         cfg.TransferBudgetSeconds,
+		floorThroughput:        cfg.FloorThroughputBytesPerSecond,
+		logger:                 cfg.Logger,
+		now:                    cfg.Now,
+		newRunID:               cfg.NewRunID,
 	}
 	if svc.router == nil {
 		// One binding: this cluster, every namespace. Reader, Starter and
@@ -836,6 +866,9 @@ func (s *Service) ApplyOrkflow(
 		}
 		return nil, orkflowStoreError(err, "store orkflow %s@%s in namespace %q",
 			wf.GetName(), wf.GetVersion(), ns.GetName())
+	}
+	if created {
+		s.mintOrkflowID(ctx, ns.GetName(), stored.GetName())
 	}
 	resp := &orkstackv1.ApplyOrkflowResponse{
 		Orkflow: stored,
@@ -1333,7 +1366,14 @@ func (s *Service) GetOrkflow(
 		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
 			req.Msg.GetName(), req.Msg.GetVersion(), ns.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: wf}), nil
+	// The Orkflow's immutable id, read and never made here; shown, never
+	// needed, as GetNamespace's.
+	id, err := s.orkflowID(ctx, ns.GetName(), wf.GetName(), false)
+	if err != nil {
+		s.logger.Warn("the Orkflow is answered without its id: it could not be read",
+			"namespace", ns.GetName(), "orkflow", wf.GetName(), "error", err)
+	}
+	return connect.NewResponse(&orkstackv1.GetOrkflowResponse{Orkflow: wf, OrkflowId: id}), nil
 }
 
 // ListOrkflows returns the latest version of every orkflow in one namespace,
@@ -1667,6 +1707,9 @@ func (s *Service) prepare(
 	// The caching plan: nil for an Orkflow with no cached task, so no_cache
 	// on such a run changes nothing — not even the plan's bytes.
 	plan.Cache = s.cachePlanFor(planned, msg.GetNoCache())
+	// The run timeout's plan, for a definition declaring `timeout:` only;
+	// each child run gets its own (planChildren).
+	plan.RunTimeout = s.runTimeoutPlanFor(planned)
 	// Every child run this submission can start, planned recursively under
 	// the parent's namespace, resolver, allow_empty_pool, image-policy
 	// selection and boot answers. It refuses
@@ -1876,6 +1919,19 @@ func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	plan.PinCreationTimeoutSeconds = s.pinCreationSeconds
 	plan.RetryMaxIntervalSeconds = int32(engine.DefaultRetryMaxInterval / time.Second)
 	plan.RecordRootRun = true
+}
+
+// runTimeoutPlanFor is what a run of wf carries for its run timeout: nil when
+// wf declares none, so such a run's plan bytes are unchanged, and otherwise
+// the deployment's grace and the resolution bound, pinned (AGENTS.md §7.2).
+func (s *Service) runTimeoutPlanFor(wf *orkstackv1.Orkflow) *engine.RunTimeoutPlan {
+	if wf.GetTimeoutSeconds() <= 0 {
+		return nil
+	}
+	return &engine.RunTimeoutPlan{
+		HandlerGraceSeconds: s.runTimeoutGraceSeconds,
+		ResolutionsPerPass:  engine.DefaultResolutionsPerPass,
+	}
 }
 
 // pinCreationTimeoutSecondsOf is the pin creation timeout a plan carries, in

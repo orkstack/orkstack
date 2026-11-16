@@ -110,6 +110,12 @@ type config struct {
 	// boot naming the setting.
 	metadataProbe    orker.MetadataProbeMode
 	metadataProbeErr error
+	// maskSecrets and refuseSecretValues are orker.log.mask_secrets and
+	// orker.values.refuse_secrets; maskErr is either one set to a value that
+	// is not a boolean, refused at boot naming it.
+	maskSecrets        bool
+	refuseSecretValues bool
+	maskErr            error
 	// maxConcurrent is MaxConcurrentVar: how many tasks this Orker runs at
 	// once. It sizes the task worker's activity slot supplier and is what
 	// DescribeOrker reports, through orker.Options.MaxConcurrent.
@@ -123,6 +129,10 @@ type config struct {
 	// storeWatchErr is a malformed or out-of-range setting of it, refused at
 	// boot by the same rule as the errors above.
 	storeWatchErr error
+	// storeScope is orker.store_scope_recheck: how often the storage scope
+	// check runs; storeScopeErr is a value refused at boot.
+	storeScope    orker.ScopeWatchConfig
+	storeScopeErr error
 	// capacityCPU and capacityMemory are orker.capacity: what this Orker
 	// admits tasks within, read and refused by orker.Activities.Boot. Both
 	// empty declare none.
@@ -170,36 +180,44 @@ func loadConfig() config {
 	heartbeatInterval, heartbeatErr := envHeartbeatInterval()
 	maxPins, maxPinsErr := envMaxPins()
 	metadataProbe, metadataProbeErr := orker.ParseMetadataProbeMode(os.Getenv(orker.MetadataProbeVar))
+	maskSecrets, maskSecretsErr := envBool(orker.MaskSecretsVar, orker.DefaultMaskSecrets)
+	refuseSecretValues, refuseErr := envBool(orker.RefuseSecretValuesVar, orker.DefaultRefuseSecretVals)
 	maxConcurrent, maxConcurrentErr := envMaxConcurrent()
 	storeWatch, storeWatchErr := envStoreWatch()
+	storeScope, storeScopeErr := envStoreScope()
 	stopGrace, stopGraceErr := orker.ParseStopGrace(env(orker.StopGraceVar, ""))
 	return config{
-		imageLayoutRoot:   env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
-		registryAuthFile:  env(orker.RegistryAuthFileVar, ""),
-		temporalAddress:   env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
-		temporalNamespace: env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
-		pool:              binding.Pool,
-		queue:             binding.Queue,
-		rawOverride:       binding.RawOverride,
-		poolErr:           err,
-		taskLogExport:     taskLogExport,
-		telemetryErr:      taskLogExportErr,
-		heartbeatInterval: heartbeatInterval,
-		heartbeatErr:      heartbeatErr,
-		maxPins:           maxPins,
-		maxPinsErr:        maxPinsErr,
-		metadataProbe:     metadataProbe,
-		metadataProbeErr:  metadataProbeErr,
-		maxConcurrent:     maxConcurrent,
-		maxConcurrentErr:  maxConcurrentErr,
-		storeWatch:        storeWatch,
-		storeWatchErr:     storeWatchErr,
-		stopGrace:         stopGrace,
-		stopGraceErr:      stopGraceErr,
-		capacityCPU:       env(orker.CapacityCPUVar, ""),
-		capacityMemory:    env(orker.CapacityMemoryVar, ""),
-		deployment:        task.DeploymentFromEnv(),
-		engine:            orker.EngineSettingsFromEnv(os.Getenv),
+		imageLayoutRoot:    env("ORK_ORKER_IMAGE_LAYOUT", orker.DefaultImageLayoutRoot),
+		registryAuthFile:   env(orker.RegistryAuthFileVar, ""),
+		temporalAddress:    env("ORK_TEMPORAL_ADDRESS", client.DefaultHostPort),
+		temporalNamespace:  env("ORK_TEMPORAL_NAMESPACE", task.DefaultNamespace),
+		pool:               binding.Pool,
+		queue:              binding.Queue,
+		rawOverride:        binding.RawOverride,
+		poolErr:            err,
+		taskLogExport:      taskLogExport,
+		telemetryErr:       taskLogExportErr,
+		heartbeatInterval:  heartbeatInterval,
+		heartbeatErr:       heartbeatErr,
+		maxPins:            maxPins,
+		maxPinsErr:         maxPinsErr,
+		metadataProbe:      metadataProbe,
+		metadataProbeErr:   metadataProbeErr,
+		maskSecrets:        maskSecrets,
+		refuseSecretValues: refuseSecretValues,
+		maskErr:            errors.Join(maskSecretsErr, refuseErr),
+		maxConcurrent:      maxConcurrent,
+		maxConcurrentErr:   maxConcurrentErr,
+		storeWatch:         storeWatch,
+		storeWatchErr:      storeWatchErr,
+		storeScope:         storeScope,
+		storeScopeErr:      storeScopeErr,
+		stopGrace:          stopGrace,
+		stopGraceErr:       stopGraceErr,
+		capacityCPU:        env(orker.CapacityCPUVar, ""),
+		capacityMemory:     env(orker.CapacityMemoryVar, ""),
+		deployment:         task.DeploymentFromEnv(),
+		engine:             orker.EngineSettingsFromEnv(os.Getenv),
 	}
 }
 
@@ -247,6 +265,20 @@ func envMaxConcurrent() (int32, error) {
 			MaxConcurrentVar, raw, orker.DefaultMaxConcurrent)
 	}
 	return int32(parsed), nil
+}
+
+// envStoreScope reads orker.store_scope_recheck; unset is its default, and a
+// value that is no duration or out of range is refused at boot.
+func envStoreScope() (orker.ScopeWatchConfig, error) {
+	cfg := orker.DefaultScopeWatchConfig()
+	if raw := env(orker.StoreScopeRecheckVar, ""); raw != "" {
+		parsed, err := time.ParseDuration(raw)
+		if err != nil {
+			return cfg, fmt.Errorf("%s=%q is not a duration (want e.g. 1h, 30m)", orker.StoreScopeRecheckVar, raw)
+		}
+		cfg.Recheck = parsed
+	}
+	return cfg, cfg.Validate()
 }
 
 // envStoreWatch reads orker.store_check. Unset is the default for each. A value
@@ -689,6 +721,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.metadataProbeErr != nil {
 		return cfg.metadataProbeErr
 	}
+	if cfg.maskErr != nil {
+		return cfg.maskErr
+	}
 	// And for the task ceiling.
 	if cfg.maxConcurrentErr != nil {
 		return cfg.maxConcurrentErr
@@ -697,9 +732,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return cfg.stopGraceErr
 	}
 
-	// And for the store check.
+	// And for the store check, and the storage scope check.
 	if cfg.storeWatchErr != nil {
 		return cfg.storeWatchErr
+	}
+	if cfg.storeScopeErr != nil {
+		return cfg.storeScopeErr
 	}
 
 	credentialOrker, err := checkEngineCredential(ctx, cfg.engine, logger)
@@ -810,6 +848,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		check := func(ctx context.Context) error { return artifacts.CheckCommitStore(ctx, commitStore) }
 		go activities.NewStoreWatch(check, cfg.storeWatch, storeOutageObserver(tcfg, sinks, activities, logger)).Run(ctx)
 	}
+	// The storage scope check: its first round runs now, beside the first
+	// polls, and its verdict decides nothing this Orker does (docs/DEPLOY.md,
+	// "An Orker's own storage credential").
+	orkerID := activities.Dispatcher().OrkerID
+	scopeCheck := func(ctx context.Context) artifacts.ScopeRound {
+		return artifacts.CheckStoreScopeOf(ctx, commitStore, orkerID)
+	}
+	go activities.WatchStoreScope(scopeCheck, cfg.storeScope).Run(ctx)
 	// The load gauges (ork.orker.running_tasks, open_pins, max_concurrent,
 	// cordoned): a process-level signal, so the default sink's, and only when
 	// metrics are exported at all.
@@ -1244,6 +1290,10 @@ func orkerOptions(
 		// Whether Boot asks the host's instance metadata endpoints
 		// (docs/DEPLOY.md, "Keeping tasks away from the host's identity").
 		MetadataProbe: cfg.metadataProbe,
+		// Secret masking and the values.json check (docs/DEPLOY.md, "Every
+		// Orker of a pool has the same settings").
+		LogUnmasked:       !cfg.maskSecrets,
+		AllowSecretValues: !cfg.refuseSecretValues,
 		// The task ceiling: one number sizes the task worker's activity slot
 		// supplier (Activities.WorkerTuner) and is what DescribeOrker reports.
 		MaxConcurrent: cfg.maxConcurrent,

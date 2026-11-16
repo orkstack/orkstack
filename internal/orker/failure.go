@@ -53,17 +53,25 @@ const (
 	ReasonValuesMissing             = "VALUES_MISSING"
 	ReasonValuesMalformed           = "VALUES_MALFORMED"
 	ReasonValuesTooLarge            = "VALUES_TOO_LARGE"
-	ReasonArtifactNotAFile          = "ARTIFACT_NOT_A_FILE"
-	ReasonArtifactLimit             = "ARTIFACT_LIMIT_EXCEEDED"
-	ReasonArtifactNameNotUTF8       = "ARTIFACT_NAME_NOT_UTF8"
-	ReasonArtifactUploadFailed      = "ARTIFACT_UPLOAD_FAILED"
-	ReasonInputUnavailable          = "INPUT_ARTIFACT_UNAVAILABLE"
-	ReasonInputCorrupt              = "INPUT_ARTIFACT_CORRUPT"
-	ReasonInputTooLarge             = "INPUT_TOO_LARGE"
-	ReasonRenderFailed              = "RENDER_FAILED"
-	ReasonWorkdirFailed             = "WORKDIR_FAILED"
-	ReasonSecretUnresolved          = "SECRET_UNRESOLVED"
-	ReasonSecretSchemeForbid        = "SECRET_SCHEME_FORBIDDEN"
+	// ReasonValuesContainSecret is a values.json that holds one of the
+	// attempt's own secrets, in any spelling the masker knows. Not masked in
+	// place: a result is data a dependent reads, and its bytes are hashed.
+	ReasonValuesContainSecret = "VALUES_CONTAIN_SECRET"
+	// ReasonMaskCapacityExceeded is an attempt whose secrets have more
+	// masking forms than one masker holds: refused before its container
+	// runs, since it could not be masked for its whole life.
+	ReasonMaskCapacityExceeded = "MASK_CAPACITY_EXCEEDED"
+	ReasonArtifactNotAFile     = "ARTIFACT_NOT_A_FILE"
+	ReasonArtifactLimit        = "ARTIFACT_LIMIT_EXCEEDED"
+	ReasonArtifactNameNotUTF8  = "ARTIFACT_NAME_NOT_UTF8"
+	ReasonArtifactUploadFailed = "ARTIFACT_UPLOAD_FAILED"
+	ReasonInputUnavailable     = "INPUT_ARTIFACT_UNAVAILABLE"
+	ReasonInputCorrupt         = "INPUT_ARTIFACT_CORRUPT"
+	ReasonInputTooLarge        = "INPUT_TOO_LARGE"
+	ReasonRenderFailed         = "RENDER_FAILED"
+	ReasonWorkdirFailed        = "WORKDIR_FAILED"
+	ReasonSecretUnresolved     = "SECRET_UNRESOLVED"
+	ReasonSecretSchemeForbid   = "SECRET_SCHEME_FORBIDDEN"
 	// ReasonSecretNotPermitted is a source outside this Orker's
 	// ORK_ORKER_SECRET_ALLOW floor, or one of the Orker's own sources, which
 	// no floor admits (SecurityPolicy.AllowsSecretSource). A policy refusal
@@ -190,6 +198,8 @@ var reasonCategory = map[string]string{
 	ReasonValuesMissing:             CategoryContractViolation,
 	ReasonValuesMalformed:           CategoryContractViolation,
 	ReasonValuesTooLarge:            CategoryContractViolation,
+	ReasonValuesContainSecret:       CategoryContractViolation,
+	ReasonMaskCapacityExceeded:      CategoryContractViolation,
 	ReasonArtifactNotAFile:          CategoryContractViolation,
 	ReasonArtifactLimit:             CategoryContractViolation,
 	ReasonArtifactNameNotUTF8:       CategoryContractViolation,

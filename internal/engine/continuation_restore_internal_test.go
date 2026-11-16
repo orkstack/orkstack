@@ -526,9 +526,15 @@ func awaitedRestoreRows(open int) *orkstackv1.Run {
 // workflow's goroutine, so it reports with t.Errorf, never t.Fatalf.
 func restoreProbe(t *testing.T, run *orkstackv1.Run, inspect func(s *runState, code string, reads int)) {
 	t.Helper()
+	restoreProbeOf(t, awaitedRestoreOrkflow(t), refusalPlan(), run, inspect)
+}
+
+// restoreProbeOf is restoreProbe for any definition and plan.
+func restoreProbeOf(t *testing.T, wf *orkstackv1.Orkflow, plan RunPlan, run *orkstackv1.Run,
+	inspect func(s *runState, code string, reads int)) {
+	t.Helper()
 	store := newMemSnapshotStore()
 	carry := carryOver(t, store, run, "team-a", refusalWorkflowID)
-	wf, plan := awaitedRestoreOrkflow(t), refusalPlan()
 	runGuardWorkflow(t, func(env *testsuite.TestWorkflowEnvironment) {
 		env.SetCurrentHistoryLength(restoreProbeLength)
 		env.RegisterActivityWithOptions(NewSnapshotActivities(store).ReadContinuationChunk,
@@ -619,5 +625,96 @@ func TestErrorText_SaysWhatWasRecorded(t *testing.T) {
 	want := "its saved state failed verification (no error was recorded) and was not used; the run has stopped"
 	if got := corruptStateMessage(errorText(nil)); got != want {
 		t.Fatalf("RUN_STATE_CORRUPT message = %q, want %q", got, want)
+	}
+}
+
+// timedRestoreOrkflow is awaitedRestoreOrkflow declaring a run timeout.
+func timedRestoreOrkflow(t *testing.T) *orkstackv1.Orkflow {
+	t.Helper()
+	wf := awaitedRestoreOrkflow(t)
+	wf.TimeoutSeconds = 21600
+	return wf
+}
+
+func timedRestorePlan() RunPlan {
+	plan := refusalPlan()
+	plan.RunTimeout = &RunTimeoutPlan{HandlerGraceSeconds: 600, ResolutionsPerPass: DefaultResolutionsPerPass}
+	return plan
+}
+
+// TestContinuation_RestoreAdoptsTheRunDeadline: the run's deadline crosses a
+// continuation in its saved state, so the next generation times out at the
+// same instant, never on a fresh clock.
+func TestContinuation_RestoreAdoptsTheRunDeadline(t *testing.T) {
+	deadline := time.Date(2100, 1, 1, 6, 0, 0, 0, time.UTC)
+	run := awaitedRestoreRows(1)
+	run.Timeout = &orkstackv1.RunTimeout{Seconds: 21600, Deadline: timestamppb.New(deadline)}
+	restoreProbeOf(t, timedRestoreOrkflow(t), timedRestorePlan(), run, func(s *runState, code string, _ int) {
+		if code != "" {
+			t.Errorf("restore refused a saved state with a deadline: %s", code)
+			return
+		}
+		if got := s.runTimeout.deadline; !got.Equal(deadline) {
+			t.Errorf("restored deadline %s, want %s", got, deadline)
+		}
+		if s.runTimeout.taken {
+			t.Errorf("a restored deadline is marked taken")
+		}
+	})
+}
+
+// TestContinuation_RestoreRefusesAMissingRunDeadline: a saved state of a
+// definition declaring `timeout:` that holds no deadline is corrupt, never a
+// fresh clock.
+func TestContinuation_RestoreRefusesAMissingRunDeadline(t *testing.T) {
+	started := awaitedRestoreRows(1).GetStartedAt().AsTime()
+	for name, timeout := range map[string]*orkstackv1.RunTimeout{
+		"no timeout":  nil,
+		"no deadline": {Seconds: 21600},
+		"invalid deadline": {Seconds: 21600,
+			Deadline: &timestamppb.Timestamp{Seconds: started.Unix(), Nanos: 2_000_000_000}},
+		"another limit": {Seconds: 60, Deadline: timestamppb.New(started.Add(time.Minute))},
+		"deadline before the start": {Seconds: 21600,
+			Deadline: timestamppb.New(started.Add(-time.Second))},
+	} {
+		t.Run(name, func(t *testing.T) {
+			run := awaitedRestoreRows(1)
+			run.Timeout = timeout
+			restoreProbeOf(t, timedRestoreOrkflow(t), timedRestorePlan(), run, func(s *runState, code string, _ int) {
+				if code != RunStateCorruptCode {
+					t.Errorf("restore code %q, want %s", code, RunStateCorruptCode)
+				}
+			})
+		})
+	}
+}
+
+// TestRestore_RunTimeoutPastDueOnlyAwaitsOpen: a generation restored past its
+// run's deadline times out on its first pass, whatever else is open: three
+// carried awaits whose own deadlines are decades away do not keep it open,
+// and each is recorded stopped by the run timeout.
+func TestRestore_RunTimeoutPastDueOnlyAwaitsOpen(t *testing.T) {
+	store := newMemSnapshotStore()
+	run := awaitedRestoreRows(3)
+	deadline := run.GetStartedAt().AsTime().Add(6 * time.Hour)
+	run.Timeout = &orkstackv1.RunTimeout{Seconds: 21600, Deadline: timestamppb.New(deadline)}
+	carry := carryOver(t, store, run, "team-a", refusalWorkflowID)
+	h := newRefusalHarnessOver(t, store)
+	h.env.ExecuteWorkflow(RunWorkflowType, "", timedRestoreOrkflow(t), (*orkstackv1.Payload)(nil), timedRestorePlan(), carry)
+	if !h.env.IsWorkflowCompleted() {
+		t.Fatal("the generation did not end")
+	}
+	requireCode(t, h.env.GetWorkflowError(), RunTimedOutCode)
+	final := h.lastSnapshot(t)
+	if got := final.GetTimeout().GetDeadline().AsTime(); !got.Equal(deadline) {
+		t.Fatalf("terminal deadline %s, want the carried %s", got, deadline)
+	}
+	if !final.GetTimeout().GetTimedOut() {
+		t.Fatal("terminal Run.timeout does not say the run timed out")
+	}
+	for _, id := range []string{"gate0", "gate1", "gate2"} {
+		if code := rowOf(final, id).GetError().GetCode(); code != TaskStoppedByRunTimeoutCode {
+			t.Fatalf("%s ended %s, want %s", id, code, TaskStoppedByRunTimeoutCode)
+		}
 	}
 }

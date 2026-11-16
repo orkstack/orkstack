@@ -53,6 +53,15 @@ func isCanceledAtItsFirstIdlePointHistory(path string) bool {
 	return strings.Contains(path, "emit-past-cancel")
 }
 
+// isEndedAtItsFirstTaskHistory reports whether a committed fixture is a run
+// that ends at its first workflow task, after RUN_CREATED and before any
+// idle point: a definition declaring a run timeout its plan does not carry
+// (RUN_DEFINITION_UNSUPPORTED). Like the refused-route histories, nothing in
+// it can switch, and its own path has its own replay test.
+func isEndedAtItsFirstTaskHistory(path string) bool {
+	return strings.Contains(path, "run-timeout-definition-unsupported")
+}
+
 // committedFixtures is every committed history fixture's path.
 func committedFixtures(t *testing.T) []string {
 	t.Helper()
@@ -74,7 +83,8 @@ func committedFixtures(t *testing.T) []string {
 func TestContinuation_RestoreEqualsLiveStateAtEveryIdlePoint(t *testing.T) {
 	defer engine.ContinueAtEveryIdleForTest()()
 	for _, path := range committedFixtures(t) {
-		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) || isCanceledAtItsFirstIdlePointHistory(path) {
+		if recordedWithTheWriter(path) || isRefusedRouteHistory(path) || isCanceledAtItsFirstIdlePointHistory(path) ||
+			isEndedAtItsFirstTaskHistory(path) {
 			continue // this stage's own fixtures already continue
 		}
 		t.Run(filepath.Base(path), func(t *testing.T) {

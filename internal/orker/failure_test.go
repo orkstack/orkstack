@@ -33,6 +33,7 @@ var allReasonCodes = []string{
 	ReasonImageSignatureUnavailable, ReasonBindProbeImageUnavailable,
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
 	ReasonMetadataEndpointReachable, ReasonMetadataProbeFailed,
+	ReasonValuesContainSecret, ReasonMaskCapacityExceeded,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake
@@ -107,6 +108,10 @@ func TestReasonCodes_RetryabilityFollowsTheTable(t *testing.T) {
 			"a boot refusal: no attempt carries it, and the next boot meets the host's firewall as it then is"},
 		{ReasonMetadataProbeFailed, CategoryInfrastructureError, true,
 			"a boot refusal: the probe could not tell, and the next boot may"},
+		{ReasonValuesContainSecret, CategoryContractViolation, false,
+			"the task would write the same values.json next attempt"},
+		{ReasonMaskCapacityExceeded, CategoryContractViolation, false,
+			"the same secrets have the same forms next attempt"},
 		{ReasonRunAsOrkerUnavailable, CategoryInfrastructureError, false,
 			"the boot probe found the host maps the Orker's uid elsewhere; the next attempt on this Orker meets the same host"},
 		{ReasonHeartbeatLost, CategoryInfrastructureError, true,

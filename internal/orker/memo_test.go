@@ -414,6 +414,7 @@ func TestMemoKey_PinnedDocumentAndKey(t *testing.T) {
 		"command":           sha256Hex([]byte(`["sh","-c","true"]`)),
 		"env":               sha256Hex([]byte(`{"A":"1","B":"2"}`)),
 		"secrets":           sha256Hex([]byte(`[{"name":"db","source":"env:DB"}]`)),
+		"secret_check":      "1",
 		"network":           "none",
 		"run_as_orker_user": "false",
 		"config":            sha256Hex([]byte("{\n  \"rows\": 3\n}\n")),
@@ -438,8 +439,10 @@ func TestMemoKey_PinnedDocumentAndKey(t *testing.T) {
 		t.Fatalf("key = %s, want %s (document %s)", key.Key, want, document)
 	}
 	// The key itself, as a literal: a change here is a change to the key's
-	// definition and needs MemoKeyVersion bumped.
-	const pinnedKey = "87d54b516b81a6f77147f915724f769862d0a8e8805fdeb1b0a6e0d9c139370c"
+	// definition and needs MemoKeyVersion bumped, unless it is a component
+	// only some tasks carry. secret_check is one (v0.4.0): a task with
+	// secrets misses once after the upgrade, every other keeps its key.
+	const pinnedKey = "b358e47b687acd275d35ff89187850994c4bf2442927faddb508a8253d15f00b"
 	if key.Key != pinnedKey {
 		t.Fatalf("key = %s, pinned %s — bump MemoKeyVersion if the key's definition changed", key.Key, pinnedKey)
 	}
@@ -472,6 +475,9 @@ func TestMemoKey_EveryComponentChangesTheKey(t *testing.T) {
 		},
 		"secret source": func(in *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
 			in.Secrets[0].Source = "env:OTHER"
+		},
+		"secret unmasked": func(in *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
+			in.Secrets[0].Unmasked = true
 		},
 		"network": func(in *orkstackv1.ExecuteTaskInput, _ *stagedInputs, _, _ *[]byte, _ *resolvedEachItem) {
 			in.Network = orkstackv1.NetworkMode_NETWORK_MODE_DEFAULT
@@ -607,7 +613,7 @@ func TestMemoKey_RunCoordinatesDoNotChangeTheKey(t *testing.T) {
 			in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "fetch", Artifacts: []*orkstackv1.ArtifactRef{ref}}}
 			ws, err := NewWorkspace(t.TempDir())
 			must.OK(t, err)
-			staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true)
+			staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil))
 			if failure != nil {
 				t.Fatal(failure)
 			}
@@ -1277,7 +1283,7 @@ func TestStageInputs_DeferBytesFetchesValuesOnly(t *testing.T) {
 	root := t.TempDir()
 	ws, err := NewWorkspace(root)
 	must.OK(t, err)
-	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true)
+	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil))
 	if failure != nil {
 		t.Fatal(failure)
 	}
@@ -1307,7 +1313,7 @@ func TestCompleteStaging_FetchesDeferredArtifactsThenSecrets(t *testing.T) {
 	in.Secrets = []*orkstackv1.SecretRef{{Name: "db", Source: "env:SANDBOX_DEFER_SECRET"}}
 	ws, err := NewWorkspace(t.TempDir())
 	must.OK(t, err)
-	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true)
+	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, true, h.dispatcher.newAttemptMask(nil))
 	if failure != nil {
 		t.Fatal(failure)
 	}

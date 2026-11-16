@@ -340,6 +340,12 @@ message Orkflow {
 
   // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
   ConcurrencySpec concurrency = 16;
+
+  // timeout_seconds is the run's own time limit from its start, from the
+  // DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of
+  // canonicalOrkflow, in its short form, only when non-zero, so an Orkflow
+  // that declares none keeps its digest.
+  int64 timeout_seconds = 17;
 }
 
 // ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto

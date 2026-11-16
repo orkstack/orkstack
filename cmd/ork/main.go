@@ -118,6 +118,11 @@ type config struct {
 	// PIN_UNAVAILABLE. Whole seconds, 1s to 24h, refused at boot otherwise
 	// (docs/DEPLOY.md §1).
 	pinCreationTimeout time.Duration
+	// runTimeoutHandlerGrace is ORK_RUN_TIMEOUT_HANDLER_GRACE
+	// (runTimeoutHandlerGraceFromEnv): how long after a run's deadline its
+	// failure handlers may still run. Whole seconds, 0s to 24h, refused at
+	// boot otherwise (docs/DEPLOY.md §1).
+	runTimeoutHandlerGrace time.Duration
 	// definitionByReference is engine.definition_by_reference's effective
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
@@ -179,6 +184,7 @@ func loadConfig() config {
 		engine.DefaultDefinitionByReference)
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	pinCreationTimeout, pinCreationErr := pinCreationTimeoutFromEnv()
+	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
@@ -205,6 +211,7 @@ func loadConfig() config {
 		continuation:                  continuation,
 		runMaxInFlight:                runMaxInFlight,
 		pinCreationTimeout:            pinCreationTimeout,
+		runTimeoutHandlerGrace:        runTimeoutGrace,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
 		snapshotOverlays:              snapshotOverlays,
@@ -212,7 +219,7 @@ func loadConfig() config {
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
-			continuationErr, inFlightErr, pinCreationErr, byReferenceErr, overlaysErr),
+			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, byReferenceErr, overlaysErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -924,6 +931,15 @@ func openOrkflowStore(ctx context.Context, logger *slog.Logger) (*artifacts.S3Or
 		return nil, fmt.Errorf("the object store at %s (endpoint %s) cannot keep orkflows: %w",
 			store.Location(), cfg.S3Endpoint, err)
 	}
+	// The one object an Orker's storage scope check tries to read
+	// (docs/DEPLOY.md, "An Orker's own storage credential"): a credential that
+	// can read it reaches the control plane.
+	// It decides nothing, so a store that will not take it is a warning: the
+	// Orkers' checks then skip the read, and say nothing of a reader.
+	if err := store.EnsureScopeSentinel(ctx); err != nil {
+		logger.Warn("the storage scope check's sentinel could not be written; Orkers' checks skip the read it serves",
+			"store", store.Location(), "error", err)
+	}
 	// The boot log names the default namespace's catalog. It is a reachability
 	// check and a human breadcrumb, not an inventory: listing every namespace
 	// at boot would scan the whole prefix to log something nobody reads.
@@ -1309,6 +1325,20 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if err != nil {
 		return fmt.Errorf("open trigger store: %w", err)
 	}
+	// Schedule records: who bound each schedule and the consent they gave,
+	// beside what the cluster's schedule submits. Configuration the API
+	// keeps; the schedule itself is the cluster's.
+	scheduleBindings, err := artifacts.NewScheduleBindingStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open schedule record store: %w", err)
+	}
+	// The immutable ids of namespaces and Orkflows, each bound to one
+	// incarnation, that a binding is pinned to (docs/ACCESS.md, "Pinned
+	// bindings").
+	incarnations, err := artifacts.NewIncarnationStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return fmt.Errorf("open the id store: %w", err)
+	}
 	// The control-plane audit trail: one immutable record per write RPC, in
 	// the same shared object store, so any replica lists a write another
 	// replica recorded. A deployment that cannot open it does not boot — the
@@ -1576,6 +1606,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// What the client was dialed with: a cancellation that records who
 		// asked names them on the cluster itself (TemporalStarter.CancelRun).
 		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity)
+	// Every minute, each live Orker whose storage credential is not
+	// confirmed scoped is logged at error (docs/DEPLOY.md, "An Orker's own
+	// storage credential"). It decides nothing.
+	go engine.RunStoreScopeReport(ctx, starter, logger)
 
 	// Pool routing: the cluster answers whether a pool has Orkers, so a submit
 	// onto a pool nothing serves fails at submit rather than leaving a run in
@@ -1648,27 +1682,29 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Resolver:     resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
-		ImagePolicies:   imagePolicies,
-		Signatures:      &dsl.SignatureVerifier{Resolver: resolver},
-		Activities:      activities,
-		RawQueue:        cfg.defaultRouteOverride,
-		Archive:         archive,
-		Logs:            logStore,
-		ArtifactStore:   artifactStore,
-		Attempts:        attemptStore,
-		Commits:         commitStore,
-		Idempotency:     idempotency,
-		OnLegacyPending: idempotencyInstruments.CountLegacyPending,
-		Webhooks:        webhookRegistry,
-		Redelivery:      webhookDispatcher,
-		Deliveries:      deliveryStore,
-		Triggers:        triggerStore,
-		Schedules:       scheduler,
-		AuditStore:      auditStore,
-		AuditCounter:    auditInstruments,
-		Notifier:        runNotifier,
-		Logger:          logger,
-		System:          system,
+		ImagePolicies:    imagePolicies,
+		Signatures:       &dsl.SignatureVerifier{Resolver: resolver},
+		Activities:       activities,
+		RawQueue:         cfg.defaultRouteOverride,
+		Archive:          archive,
+		Logs:             logStore,
+		ArtifactStore:    artifactStore,
+		Attempts:         attemptStore,
+		Commits:          commitStore,
+		Idempotency:      idempotency,
+		OnLegacyPending:  idempotencyInstruments.CountLegacyPending,
+		Webhooks:         webhookRegistry,
+		Redelivery:       webhookDispatcher,
+		Deliveries:       deliveryStore,
+		Triggers:         triggerStore,
+		Schedules:        scheduler,
+		ScheduleBindings: scheduleBindings,
+		Incarnations:     incarnations,
+		AuditStore:       auditStore,
+		AuditCounter:     auditInstruments,
+		Notifier:         runNotifier,
+		Logger:           logger,
+		System:           system,
 		// Retention backs SystemService's
 		// GetRetentionPolicy/UpdateRetentionPolicy, and also validates a
 		// namespace's own run_retention against the ceiling
@@ -1689,6 +1725,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		ContinuationRestoreTimeout:    cfg.continuation.restoreTimeout,
 		RunMaxInFlight:                cfg.runMaxInFlight,
 		PinCreationTimeout:            cfg.pinCreationTimeout,
+		RunTimeoutHandlerGrace:        cfg.runTimeoutHandlerGrace,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
 		SnapshotOverlays:              cfg.snapshotOverlays,

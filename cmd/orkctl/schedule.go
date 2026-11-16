@@ -78,8 +78,8 @@ func newScheduleCommand(g *globalFlags) *cobra.Command {
 		Short: "Start runs of an orkflow on a schedule",
 		Long: "A schedule starts a run of one orkflow at the times its cron\n" +
 			"expressions or interval name, in its time zone. The cluster keeps the\n" +
-			"schedule: overlap, catch-up, pause and backfill are its own, and\n" +
-			"OrkStack stores nothing else about a schedule.\n\n" +
+			"schedule: overlap, catch-up, pause and backfill are its own. OrkStack\n" +
+			"keeps only the record of who bound it and their consent.\n\n" +
 			"Every run a schedule starts carries origin schedule:<id>, so\n" +
 			"'orkctl run list --filter origin.kind=SCHEDULE --filter origin.id=<id>'\n" +
 			"is its audit trail.",
@@ -355,6 +355,7 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 		inputJSON     string
 		clearInput    bool
 		description   string
+		rebind        bool
 	)
 	cmd := &cobra.Command{
 		Use:   "update NAME [flags]",
@@ -364,6 +365,9 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 			"expression. --follow-current clears a version pin; --clear-input clears\n" +
 			"the input. The orkflow a schedule starts cannot change: delete and\n" +
 			"create instead.\n\n" +
+			"An update that changes the version pin or the input makes you the\n" +
+			"schedule's binder: the principal its runs are recorded against. --rebind\n" +
+			"makes you the binder without changing anything else.\n\n" +
 			"Last writer wins: two concurrent updates are not detected.",
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -386,6 +390,7 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			request.Rebind = rebind
 			response, err := g.scheduleClient().UpdateSchedule(ctx, connect.NewRequest(request))
 			if err != nil {
 				return rpcError("update schedule", err)
@@ -404,6 +409,7 @@ func newScheduleUpdateCommand(g *globalFlags) *cobra.Command {
 	cmd.Flags().StringVar(&inputJSON, "input-json", "", "replace the input with one JSON object")
 	cmd.Flags().BoolVar(&clearInput, "clear-input", false, "clear the input")
 	cmd.Flags().StringVar(&description, "description", "", "replace the description")
+	cmd.Flags().BoolVar(&rebind, "rebind", false, "make yourself the schedule's binder, changing nothing else")
 	return cmd
 }
 
@@ -771,6 +777,7 @@ func renderSchedule(out io.Writer, s *orkstackv1.Schedule) error {
 	spec := s.GetSpec()
 	line("Runs", s.GetOrkflowName()+"@"+triggerVersionLabel(s.GetOrkflowVersion()))
 	line("Description", orDash(s.GetDescription()))
+	line("Consent", consentLabel(s.GetConsented(), s.GetAsksFor()))
 	line("When", whenLabel(spec, "  "))
 	line("Overlap", overlapLabel(spec.GetOverlap()))
 	if cw := spec.GetCatchupWindow(); cw != nil {
@@ -828,4 +835,21 @@ func renderSchedule(out io.Writer, s *orkstackv1.Schedule) error {
 		return fmt.Errorf("write output: %w", err)
 	}
 	return nil
+}
+
+// consentLabel says what a schedule's or a trigger's binder consented to:
+// the digest and when, or that it was bound before consents were recorded
+// and must be rebound.
+func consentLabel(given *orkstackv1.ConsentView, asks *orkstackv1.AsksFor) string {
+	if given.GetDigest() == "" {
+		if asks.GetDigest() == "" {
+			return "-"
+		}
+		return "none recorded (made before this release: update it with --rebind)"
+	}
+	label := given.GetDigest() + " (" + formatTime(given.GetAt()) + ")"
+	if asks.GetDigest() != "" && asks.GetDigest() != given.GetDigest() {
+		label += "; asks for " + asks.GetDigest()
+	}
+	return label
 }

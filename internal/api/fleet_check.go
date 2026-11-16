@@ -43,6 +43,23 @@ func largestItemsDeclaration(planned *orkstackv1.Orkflow, plan *engine.RunPlan) 
 	return largest, err
 }
 
+// timeoutDeclaration is the first run of a run tree whose definition
+// declares a run timeout: the top-level definition, or a child it composes,
+// depth first; nil when none does.
+func timeoutDeclaration(planned *orkstackv1.Orkflow, plan *engine.RunPlan) (*orkstackv1.Orkflow, error) {
+	if planned.GetTimeoutSeconds() > 0 {
+		return planned, nil
+	}
+	var found *orkstackv1.Orkflow
+	err := engine.ForEachChild(planned, plan, func(_ string, _ *engine.ChildRunPlan, def *orkstackv1.Orkflow) error {
+		if found == nil && def.GetTimeoutSeconds() > 0 {
+			found = def
+		}
+		return nil
+	})
+	return found, err
+}
+
 // fleetCheck refuses a run tree whose runs need a capability some engine
 // process that could decide them lacks. It runs after planChildren, so every
 // child definition is known, and before anything is minted, so a refusal
@@ -52,36 +69,73 @@ func (s *Service) fleetCheck(ctx context.Context, planned *orkstackv1.Orkflow, p
 	if err != nil {
 		return connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
 	}
-	if largest.total <= engine.LegacyEachMaxItems {
+	if largest.total > engine.LegacyEachMaxItems {
+		if err := s.requireCapability(ctx, capabilityNeed{
+			capability: engine.CapabilityEachItems10k,
+			wf:         largest.wf,
+			what: fmt.Sprintf("orkflow %s@%s declares %d fan-out items",
+				largest.wf.GetName(), largest.wf.GetVersion(), largest.total),
+			ability: fmt.Sprintf("run more than %d", engine.LegacyEachMaxItems),
+			attrs:   []any{"items", largest.total},
+		}); err != nil {
+			return err
+		}
+	}
+	timed, err := timeoutDeclaration(planned, plan)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
+	}
+	if timed == nil {
 		return nil
 	}
-	what := fmt.Sprintf("orkflow %s@%s declares %d fan-out items",
-		largest.wf.GetName(), largest.wf.GetVersion(), largest.total)
+	return s.requireCapability(ctx, capabilityNeed{
+		capability: engine.CapabilityRunTimeout,
+		wf:         timed,
+		what:       fmt.Sprintf("orkflow %s@%s declares a run timeout", timed.GetName(), timed.GetVersion()),
+		ability:    "enforce a run timeout",
+	})
+}
+
+// capabilityNeed is one capability a run tree needs: which run of it needs
+// it (wf), what it declares that needs it (what), and what a process lacking
+// it cannot do (ability), each said in the refusal.
+type capabilityNeed struct {
+	capability string
+	wf         *orkstackv1.Orkflow
+	what       string
+	ability    string
+	attrs      []any // extra attributes of the refusal's log line
+}
+
+// requireCapability refuses unless every engine process that could decide a
+// run started now advertises need.capability. It fails closed: an engine not
+// wired to a cluster, and a list that cannot be read, refuse Unavailable.
+func (s *Service) requireCapability(ctx context.Context, need capabilityNeed) error {
 	if s.capabilities == nil {
 		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
-			"%s; this engine is not wired to a cluster, so it cannot check that every engine process can run "+
-				"more than %d", what, engine.LegacyEachMaxItems))
+			"%s; this engine is not wired to a cluster, so it cannot check that every engine process can %s",
+			need.what, need.ability))
 	}
-	lacking, err := s.capabilities.MissingCapability(ctx, engine.CapabilityEachItems10k, engine.ScopeWorkflow)
+	lacking, err := s.capabilities.MissingCapability(ctx, need.capability, engine.ScopeWorkflow)
 	if err != nil {
 		s.logger.Warn("fleet check could not read the engine processes",
-			"missing_capability", engine.CapabilityEachItems10k, "orkflow", largest.wf.GetName(),
-			"version", largest.wf.GetVersion(), "error", err)
+			"missing_capability", need.capability, "orkflow", need.wf.GetName(),
+			"version", need.wf.GetVersion(), "error", err)
 		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
 			"%s; the cluster's list of engine processes could not be read, so whether every engine "+
-				"process can run more than %d is unknown; try again", what, engine.LegacyEachMaxItems))
+				"process can %s is unknown; try again", need.what, need.ability))
 	}
 	if len(lacking) == 0 {
 		return nil
 	}
 	// The identities carry host names (pid@host), an operator surface only:
 	// the log names them, the refusal counts them.
-	s.logger.Warn("submit refused: engine processes run a release without a capability the run needs",
-		"missing_capability", engine.CapabilityEachItems10k, "identities", lacking,
-		"orkflow", largest.wf.GetName(), "version", largest.wf.GetVersion(), "items", largest.total)
+	attrs := append([]any{"missing_capability", need.capability, "identities", lacking,
+		"orkflow", need.wf.GetName(), "version", need.wf.GetVersion()}, need.attrs...)
+	s.logger.Warn("submit refused: engine processes run a release without a capability the run needs", attrs...)
 	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
-		"%s; %s a release that cannot run more than %d; finish the rollout first",
-		what, processCount(len(lacking)), engine.LegacyEachMaxItems))
+		"%s; %s a release that cannot %s; finish the rollout first",
+		need.what, processCount(len(lacking)), need.ability))
 }
 
 // processCount is "1 engine process runs" or "N engine processes run".

@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json/v2"
-	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -381,10 +380,9 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 		if err := workflow.ExecuteLocalActivity(localCtx, ActivityCountEachItems,
 			ref, source.GetPath(), spec.GetOver(), s.plan.Limits.Proto().GetValuesMaxBytes(),
 		).Get(localCtx, &count); err != nil {
-			var applicationErr *temporal.ApplicationError
-			var detail *orkstackv1.ActivityFailureDetail
-			if errors.As(err, &applicationErr) && applicationErr.Details(&detail) == nil && detail.GetReasonCode() != "" {
-				return s.failExpansion(ctx, id, detail.GetReasonCode(), applicationErr.Message())
+			failure := categoryOf(err)
+			if reason := failure.reasonCode(); reason != "" {
+				return s.failExpansion(ctx, id, reason, failure.appMessage())
 			}
 			return s.failExpansion(ctx, id, EachExpansionFailedCode, fmt.Sprintf(
 				"each.over %s: the array could not be counted: %v", spec.GetOver(), err))
@@ -403,9 +401,8 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	if count > 0 {
 		if _, err := s.queueForTask(t); err != nil {
 			code, message := ReasonInvalidPool, err.Error()
-			var applicationErr *temporal.ApplicationError
-			if errors.As(err, &applicationErr) {
-				code, message = applicationErr.Type(), applicationErr.Message()
+			if failure := categoryOf(err); failure.isApplication() {
+				code, message = failure.appType(), failure.appMessage()
 			}
 			return s.failExpansion(ctx, id, code, message)
 		}
@@ -557,9 +554,8 @@ func (s *runState) itemRefused(ctx workflow.Context, id string, index int32, cau
 	item.Status = orkstackv1.Status_STATUS_FAILED
 	item.FinishedAt = timestamppb.New(workflow.Now(ctx))
 	code := InvalidEachCode
-	var applicationErr *temporal.ApplicationError
-	if errors.As(cause, &applicationErr) {
-		code = applicationErr.Type()
+	if failure := categoryOf(cause); failure.isApplication() {
+		code = failure.appType()
 		if code == task.CategoryContractViolation {
 			code = task.ReasonInputTooLarge
 		}
@@ -852,8 +848,12 @@ func (s *runState) finishFanOutOnRunEnd(ctx workflow.Context, id string) {
 		}
 		return
 	}
-	var running, never int32
+	var running, never, interrupted int32
 	for _, item := range node.GetItems() {
+		if stoppedByRunTimeout(item) {
+			interrupted++
+			continue
+		}
 		if item.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
 			continue
 		}
@@ -863,9 +863,17 @@ func (s *runState) finishFanOutOnRunEnd(ctx workflow.Context, id string) {
 			never++
 		}
 	}
+	// Items the run's deadline interrupted count as running, and the node is
+	// itself work the deadline stopped.
+	running += interrupted
+	if interrupted > 0 && node.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		s.recordInterrupted(ctx, node, fmt.Sprintf("task %q", id))
+	}
 	status := orkstackv1.Status_STATUS_CANCELED
 	verb := "canceled"
-	if node.GetStatus() == orkstackv1.Status_STATUS_FAILED {
+	if interrupted > 0 && stoppedByRunTimeout(node) {
+		status, verb = orkstackv1.Status_STATUS_FAILED, "stopped when the run timed out"
+	} else if node.GetStatus() == orkstackv1.Status_STATUS_FAILED {
 		status = orkstackv1.Status_STATUS_FAILED
 		verb = "failed"
 	} else {

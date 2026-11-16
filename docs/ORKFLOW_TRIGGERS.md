@@ -46,6 +46,21 @@ A per-trigger bearer token was chosen over request signing as the boring API
 `CreateTriggerResponse.secret` is a 32-byte `crypto/rand` token, hex-encoded,
 disclosed exactly once. No other message carries it.
 
+### Who a trigger runs as
+
+A trigger's **binder** is the principal who last bound it: who created it,
+changed the version it starts, or rebound it with
+`orkctl trigger update ID --rebind`. A new name or description binds nobody.
+The binder is kept in the trigger's own record with how it was known
+(verified, or asserted by your gateway in `asserted` mode, never recorded
+as verified) and a consent: the
+digest of what the trigger's Orkflow asks for when it is bound (`c1:` and 64
+hexadecimal digits). No Orkflow can ask for an identity in this release, so
+every consent is the empty table's. `Trigger.consented` and `Trigger.asks_for`
+carry it, and `orkctl trigger update` prints it (`CONSENT`). A trigger made
+before this release has none until it is rebound. Nothing reads the binder or
+the consent to decide an invoke in this release.
+
 ### Management RPCs
 
 - **`CreateTrigger`** resolves the namespace, then confirms the Orkflow — and

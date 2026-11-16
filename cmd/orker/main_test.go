@@ -666,3 +666,33 @@ func TestEnvStoreWatch(t *testing.T) {
 		})
 	}
 }
+
+// TestEnvStoreScope: orker.store_scope_recheck unset is its default; a value
+// is read, and one that is no duration or out of range is refused, naming
+// the variable.
+func TestEnvStoreScope(t *testing.T) {
+	cases := []struct {
+		raw     string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", orker.DefaultStoreScopeRecheck, false},
+		{"30m", 30 * time.Minute, false},
+		{"soon", 0, true},
+		{"0s", 0, true},
+		{"200h", 0, true},
+	}
+	for _, tc := range cases {
+		t.Setenv(orker.StoreScopeRecheckVar, tc.raw)
+		got, err := envStoreScope()
+		if tc.wantErr {
+			if err == nil || !strings.Contains(err.Error(), orker.StoreScopeRecheckVar) {
+				t.Errorf("%q: err = %v, want one naming %s", tc.raw, err, orker.StoreScopeRecheckVar)
+			}
+			continue
+		}
+		if err != nil || got.Recheck != tc.want {
+			t.Errorf("%q: got %s, %v; want %s", tc.raw, got.Recheck, err, tc.want)
+		}
+	}
+}

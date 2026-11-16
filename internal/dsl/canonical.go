@@ -9,6 +9,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"time"
 
 	"google.golang.org/protobuf/types/known/structpb"
 
@@ -98,6 +99,12 @@ func CanonicalInputLine(s *structpb.Struct) (string, error) {
 
 // CanonicalOrkflow renders wf in the canonical form of §4.4.
 func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
+	return canonicalOrkflow(wf)
+}
+
+// canonicalOrkflow is CanonicalOrkflow over an explicit run timeout in
+// seconds (run_timeout.go, orkflowTimeoutSeconds).
+func canonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	tasks := make([]any, 0, len(wf.GetTasks()))
 	for _, t := range wf.GetTasks() {
 		task, err := canonicalTask(t)
@@ -143,6 +150,12 @@ func CanonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 			entries = append(entries, map[string]any{"namespace": share.GetNamespace(), "orkflow": share.GetOrkflow()})
 		}
 		out["sharedWith"] = entries
+	}
+	// timeout is emitted ONLY when set — the canonicalPins exception again: a
+	// definition without one keeps its digest. It is Go's short form, so 6h
+	// and 360m are one definition.
+	if seconds := wf.GetTimeoutSeconds(); seconds > 0 {
+		out["timeout"] = shortDuration(time.Duration(seconds) * time.Second)
 	}
 	// definition_namespace is NOT here: it is set only on a run's planned
 	// copy, never on a stored definition, and the digest is the owner's.
@@ -198,10 +211,16 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	}
 	secrets := make([]any, 0, len(t.GetSecrets()))
 	for _, s := range t.GetSecrets() {
-		secrets = append(secrets, map[string]any{
+		secret := map[string]any{
 			"name":   s.GetName(),
 			"source": s.GetSource(),
-		})
+		}
+		// Emitted only when set, so a document that says nothing about
+		// masking keeps the digest it had before the key existed.
+		if s.GetUnmasked() {
+			secret["unmasked"] = true
+		}
+		secrets = append(secrets, secret)
 	}
 	var retry any
 	if r := t.GetRetry(); r != nil {

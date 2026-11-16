@@ -47,6 +47,12 @@ Run `orkctl whoami`. It shows the principal the engine verified you as, the bind
 
 A role is bound to subjects (`user:`, `group:`, `claims:`) at a scope: the deployment, a namespace, one Orkflow, or a pool.
 
+A binding at a namespace or an Orkflow belongs to the one that existed when you saved it. If that namespace or Orkflow is deleted and created again under the same name, the binding no longer matches, and `orkctl admin binding list` shows it as stale. To bind the new one, run:
+
+```bash
+orkctl admin binding update NAME --repin
+```
+
 ## Lower it again
 
 ```bash
@@ -67,4 +73,5 @@ Set `auth.break_glass_key_file` to one public key and keep its private half offl
 - [AUTHENTICATION.md, "The first admin, and break-glass"](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#the-first-admin-and-break-glass): `auth.admins` and break-glass
 - [ACCESS.md, "Built-in roles"](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#built-in-roles): every role's exact permissions
 - [ACCESS.md, "The access document"](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#the-access-document): subjects, scopes and bounds
+- [ACCESS.md, "Pinned bindings"](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#pinned-bindings): what a binding is pinned to, and pinning it again
 - [ACCESS.md, "How a request is decided"](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#how-a-request-is-decided): what every RPC asks for

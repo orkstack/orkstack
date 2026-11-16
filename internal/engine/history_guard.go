@@ -1,7 +1,6 @@
 package engine
 
 import (
-	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -268,7 +267,7 @@ func (s *runState) countHandlers() {
 // one completion result per in-flight entry and the start of every pending
 // handler. O(T): counted at most once per pass (reserveNow).
 func (s *runState) failReserve(inFlight map[string]workflow.Future, r HistoryReserve) (events, bytes int64) {
-	events = r.Fixed + r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes))
+	events = s.fixedReserve(r) + r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes))
 	bytes = r.PerInFlightBytes * int64(len(inFlight))
 	for _, id := range s.order {
 		status := s.taskRuns[id].GetStatus()
@@ -327,7 +326,7 @@ func (s *runState) reserveNow(inFlight map[string]workflow.Future) (events, byte
 // handler, pin and fan-out as if each were still to be paid for. Loose for a
 // large run; it only spares small and young runs the per-pass count.
 func (s *runState) quickReserve(inFlight map[string]workflow.Future, r HistoryReserve) (events, bytes int64) {
-	events = r.Fixed +
+	events = s.fixedReserve(r) +
 		r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes)) +
 		r.PerPending*int64(len(s.order)) +
 		r.PerAwait*int64(len(s.awaits)+len(s.sleeps)) +
@@ -489,7 +488,7 @@ func (s *runState) handlerWouldExhaustHistory(ctx workflow.Context, inFlight map
 	}
 	r := limit.Reserve
 	events, bytes := s.historyNow(ctx)
-	reserve := r.Fixed + r.PerInFlight*int64(len(inFlight)) + r.PerPending*s.pendingHandlers
+	reserve := s.fixedReserve(r) + r.PerInFlight*int64(len(inFlight)) + r.PerPending*s.pendingHandlers
 	reserveBytes := reserve*r.BytesPerEvent + r.PerInFlightBytes*int64(len(inFlight)) +
 		handlerStartBytesOf(s.tasks[id], r)
 	if events+reserve < limit.MaxEvents && bytes+reserveBytes < limit.MaxBytes {
@@ -617,26 +616,19 @@ func mebibytes(n int64) string {
 // isHistoryLimit reports whether cause is the guard's own error — never a
 // task's, a child run's or an item's that merely carries the type.
 func isHistoryLimit(cause error) bool {
-	var applicationErr *temporal.ApplicationError
-	if !errors.As(cause, &applicationErr) || applicationErr.Type() != RunHistoryLimitCode {
-		return false
-	}
-	var activityErr *temporal.ActivityError
-	var childErr *temporal.ChildWorkflowExecutionError
-	return !errors.As(cause, &activityErr) && !errors.As(cause, &childErr)
+	failure := categoryOf(cause)
+	return failure.isApplication() && failure.appType() == RunHistoryLimitCode &&
+		!failure.viaActivity && !failure.viaChild
 }
 
 // historyLimitFailure is the run's error for the guard's cause.
 func historyLimitFailure(cause error) *orkstackv1.Error {
-	var applicationErr *temporal.ApplicationError
-	_ = errors.As(cause, &applicationErr)
+	failure := categoryOf(cause)
 	var blockers string
-	if applicationErr.HasDetails() {
-		_ = applicationErr.Details(&blockers)
-	}
+	_ = failure.appDetails(&blockers) // none decoded leaves it empty
 	return &orkstackv1.Error{
 		Code:      RunHistoryLimitCode,
-		Message:   applicationErr.Message(),
+		Message:   failure.appMessage(),
 		Details:   blockers,
 		Category:  orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
 		Retryable: false,

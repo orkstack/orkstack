@@ -297,6 +297,15 @@ message Pool {
   string unavailable_reason = 6;
 }
 
-// NamespaceIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message NamespaceIdentity {}
+// NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
+// registered for the policy itself (audiences, grants and their bounds),
+// which a later change adds.
+message NamespaceIdentity {
+  // namespace_id is the namespace's immutable id: a namespace deleted and
+  // created again under its name has another one, and a binding pinned to
+  // this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default`
+  // is always `ns_default`. Empty when none was made yet: one is made on
+  // first need, never by a read. Opaque: nothing parses it, and no request
+  // takes it where it takes a name. Output only.
+  string namespace_id = 6;
+}

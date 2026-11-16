@@ -78,7 +78,15 @@ type triggerRecord struct {
 	// sha256(SecretSalt || secret); the secret itself is not here and is not
 	// anywhere else either.
 	SecretSalt string `json:"secretSalt"`
-	SecretHash string `json:"secretHash"`
+	// The binding (triggers.Binding). A record written before it existed has
+	// none and decodes unbound.
+	Binder         string    `json:"binder,omitempty"`
+	BinderVerified bool      `json:"binderVerified,omitempty"`
+	BinderMethod   string    `json:"binderMethod,omitempty"`
+	BoundAt        time.Time `json:"boundAt,omitzero"`
+	Consent        string    `json:"consent,omitempty"`
+	ConsentAt      time.Time `json:"consentAt,omitzero"`
+	SecretHash     string    `json:"secretHash"`
 }
 
 func marshalTriggerRecord(trigger triggers.Trigger) ([]byte, error) {
@@ -92,6 +100,12 @@ func marshalTriggerRecord(trigger triggers.Trigger) ([]byte, error) {
 		CreatedAt:      trigger.CreatedAt.UTC(),
 		SecretSalt:     hex.EncodeToString(trigger.SecretSalt),
 		SecretHash:     hex.EncodeToString(trigger.SecretHash),
+		Binder:         trigger.Binding.Binder,
+		BinderVerified: trigger.Binding.Verified,
+		BinderMethod:   trigger.Binding.Method,
+		BoundAt:        trigger.Binding.BoundAt.UTC(),
+		Consent:        trigger.Binding.Consent,
+		ConsentAt:      trigger.Binding.ConsentAt.UTC(),
 	}
 	raw, err := stablejson.MarshalIndent(record, "  ")
 	if err != nil {
@@ -141,6 +155,8 @@ func unmarshalTriggerRecord(raw []byte) (triggers.Trigger, error) {
 		CreatedAt:      record.CreatedAt.UTC(),
 		SecretSalt:     salt,
 		SecretHash:     digest,
+		Binding: triggers.Binding{Binder: record.Binder, Verified: record.BinderVerified, Method: record.BinderMethod,
+			BoundAt: record.BoundAt, Consent: record.Consent, ConsentAt: record.ConsentAt},
 	}, nil
 }
 

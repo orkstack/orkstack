@@ -57,6 +57,22 @@ Each attempt gets a fresh workspace. The idempotency key stays the same across a
 
 A cancelled container gets SIGTERM first. It has the grace period to clean up. Then it gets SIGKILL.
 
+## Bound the whole run
+
+A top-level `timeout:` bounds the whole run, from when it starts:
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: nightly-etl
+timeout: 6h
+tasks:
+  - id: extract
+    uses: ghcr.io/acme/extract:2
+```
+
+At the deadline the run fails `RUN_TIMED_OUT`. Tasks still running are stopped and fail `TASK_STOPPED_BY_RUN_TIMEOUT`, and tasks that had not started are cancelled. Failure handlers still run for the deployment's grace, ten minutes by default.
+
 ## Which failures retry
 
 | Failure | Retried under `retry:` |
@@ -88,4 +104,5 @@ A failing run still runs its failure handlers. See [Handle a failed run](/docs/b
 - [OCI Activity Contract, §8, failure categories](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#8-failure-categories-and-error-handling): every reason code and whether it retries
 - [OCI Activity Contract, §5, durable commit](https://github.com/orkstack/orkstack/blob/main/docs/OCI_ACTIVITY_CONTRACT.md#5-durable-commit-protocol): the commit order and the retry that adopts it
 - [DSL reference, “Tasks”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#tasks): the task keys and their defaults
+- [DSL reference, “Run timeout”](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#run-timeout-timeout): the run's own time limit
 - [Durability](/docs/concepts/durability/): why a result is stored before it is reported

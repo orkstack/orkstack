@@ -460,6 +460,10 @@ func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workfl
 	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil {
 		return false
 	}
+	// No switch once the run's deadline is due: the pass top takes it.
+	if due, canceled := s.runTimeoutDue(ctx, inFlight); due || canceled {
+		return false
+	}
 	e, b := s.historyNow(ctx)
 	return reached(e, b, s.switchRetryAt) && s.openingPins() == 0 && s.closingPins() == 0 &&
 		s.openedUnclosedPins() == 0 && s.hasUnfinishedTasks()
@@ -523,7 +527,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	}
 	// 2. Every resolution already delivered: applied, so the switch carries
 	// the state it made.
-	if applied, id, err := s.applyQueuedResolutions(ctx); err != nil {
+	if applied, id, err := s.switchResolutions(ctx, inFlight); err != nil {
 		return nil, id, err
 	} else if applied {
 		return nil, "", nil
@@ -583,7 +587,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	// 6. Re-check: a resolution delivered while the writes blocked, or a
 	// cancel, turns the switch back; the written objects are orphans,
 	// reclaimed with the run's prefix.
-	if applied, id, err := s.applyQueuedResolutions(ctx); err != nil {
+	if applied, id, err := s.switchResolutions(ctx, inFlight); err != nil {
 		return nil, id, err
 	} else if applied || ctx.Err() != nil {
 		return nil, "", nil
@@ -871,6 +875,16 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.passReserve":    fieldEphemeral, "runState.passCharge": fieldEphemeral, "runState.pendingHandlers": fieldEphemeral,
 	"runState.hist": fieldEphemeral, "runState.guardOff": fieldEphemeral, "runState.snapBase": fieldEphemeral,
 	"eachState.inFlight": fieldEphemeral,
+	// The run timeout (runtimeout.go): its limit and grace are derived; D
+	// crosses in the checkpoint's Run.timeout and its timer is rebuilt at the
+	// next generation's arm site (the await-timer precedent); taken is never
+	// true at a switch (no switch after D), and the hard end and the drain
+	// live only in the failing phase, which never switches.
+	"runState.runTimeout": fieldRestored,
+	"runTimeout.seconds":  fieldDerived, "runTimeout.graceSeconds": fieldDerived,
+	"runTimeout.deadline": fieldRestored, "runTimeout.timer": fieldRestored,
+	"runTimeout.taken": fieldEphemeral, "runTimeout.hardEnd": fieldEphemeral, "runTimeout.hardTimer": fieldEphemeral,
+	"runTimeout.hardTaken": fieldEphemeral, "runTimeout.hardEnded": fieldEphemeral, "runTimeout.timeoutDrain": fieldEphemeral,
 	// A pin's runtime: no pin is opening, open or closing at a switch, and
 	// every pin starts unopened in the next generation.
 	"pinState.opened": fieldEphemeral, "pinState.triggeredBy": fieldEphemeral, "pinState.openedAt": fieldEphemeral,

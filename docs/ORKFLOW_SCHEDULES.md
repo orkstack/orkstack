@@ -47,15 +47,16 @@ the cluster shows") is the operator's view of the cluster side.
 
 ## Temporal owns every piece of schedule state
 
-**OrkStack stores nothing for a schedule.** The Temporal Schedule carries the
+**Temporal holds the schedule.** The Temporal Schedule carries the
 authored record (as its action's argument) and its identity (in its memo).
 Paused state, note, next fire times, recent fires and counters are read from
-the cluster on every call. There is no key family under `metadata/`, no second
-copy of the cron expression and no "last fired at" column
-([STORAGE.md](STORAGE.md)). A record in object storage beside the schedule was
-rejected: two stores mean two writes per change, a crash window between them,
-an orphan state to render, and a copy a `temporal schedule update` could
-silently diverge from. One store cannot disagree with itself.
+the cluster on every call. There is no second copy of the cron expression, no
+"last fired at" column, and nothing in object storage decides whether, when or
+what a schedule fires. The one thing OrkStack keeps beside it is the record of
+who bound it ("Who a schedule runs as", below), which is configuration the API
+maintains and never schedule state: a `temporal schedule update` made around
+the API changes what fires, and the record then names nothing the cluster
+holds.
 
 - A schedule's cluster id is derived from `(namespace, name)`, so a name is
   unique within a namespace atomically: the cluster refuses a second create.
@@ -76,6 +77,42 @@ silently diverge from. One store cannot disagree with itself.
   overlap means **no override** — the schedule's own policy applies.
 - The input is a JSON object stored as given and submitted as given at every
   fire. Nothing is templated into it: the fire time is on the run's origin.
+
+## Who a schedule runs as
+
+A run nobody submitted still needs someone to answer for it. A schedule's
+**binder** is the principal who last bound it: who created it, changed what it
+submits (its version pin or its input), or rebound it with
+`orkctl schedule update NAME --rebind`. A new description, new times, a pause,
+a resume and a re-apply of the same automation document bind nobody. The
+binder is recorded with how it was known: verified, under `auth.mode`
+`observe` or `enforce`, or asserted by your gateway in `asserted` mode, and an
+asserted binder is never recorded as a verified one. A `--rebind` of what the
+schedule already submits records you only once the cluster has accepted the
+save, so a refused one leaves the binder as it was; one that names nobody (no
+`Ork-Principal` in `asserted` mode) is refused `failed_precondition`.
+
+With the binder the API records a **consent**: the digest of what the
+schedule's Orkflow asks for when it is bound (`c1:` and 64 hexadecimal
+digits). No Orkflow can ask for an identity in this release, so every consent
+is the empty table's, recorded by every save with nothing for you to confirm.
+`orkctl schedule get` shows it (`Consent:`), and `Schedule.consented` and
+`Schedule.asks_for` carry it on the API. A schedule made before this release
+has none: `--rebind` records one. Nothing reads the binder or the consent to
+decide a fire in this release; a later release that runs with task identity
+admits a fired run only while its binder may still submit the Orkflow.
+
+The record is one object per schedule,
+`metadata/schedules/{namespace}/{schedule-id}.json`, holding each submission
+the API accepted with its binder and consent, at most four. A save writes it
+around the cluster's own write: it adds the save's entry first, so a store
+that cannot take it refuses the save (`unavailable`) before the cluster is
+asked; then it creates or updates the Temporal Schedule; then it trims the
+object to the save's entry and the one equal to what the cluster now holds. A
+save that loses the race to another writer five times is refused `aborted`
+("this schedule is being changed by someone else"). A delete empties the
+object, deletes the Temporal Schedule and then removes the object; an emptied
+object left by a failure between the steps binds nothing.
 
 ## A fire is an ordinary run
 

@@ -180,11 +180,11 @@ func TestFalsyValues_AreExactlyTheDocumentedSet(t *testing.T) {
 }
 
 func TestJoinSentences(t *testing.T) {
-	if got := failingMessage("deploy", []string{"rollback", "notify"}); got !=
+	if got := failingMessage("deploy", "", []string{"rollback", "notify"}); got !=
 		`run failing after task "deploy" failed; waiting for its failure handlers: rollback, notify` {
 		t.Errorf("failingMessage = %q", got)
 	}
-	if got := cancelReasonNotAHandler("deploy"); got !=
+	if got := cancelReasonNotAHandler("deploy", ""); got !=
 		`the run is failing (task "deploy" failed) and this task is not a failure handler` {
 		t.Errorf("cancelReasonNotAHandler = %q", got)
 	}

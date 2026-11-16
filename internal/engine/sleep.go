@@ -139,5 +139,11 @@ func (s *runState) closeSleep(id string) {
 // status is SLEEPING, which no history recorded before sleeps existed holds.
 func (s *runState) cancelSleeping(ctx workflow.Context, id string) error {
 	s.closeSleep(id)
+	if done, err := s.interruptOpen(ctx, id); done {
+		return err
+	}
+	if s.hardEnded() && s.isFailureHandlerID(id) {
+		return s.markCanceled(ctx, id, s.hardEndStoppedReason())
+	}
 	return s.markCanceled(ctx, id, "run ended while this task was sleeping")
 }

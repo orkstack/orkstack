@@ -767,8 +767,13 @@ func (x *GetOrkflowRequest) GetNamespace() string {
 }
 
 type GetOrkflowResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Orkflow       *Orkflow               `protobuf:"bytes,1,opt,name=orkflow,proto3" json:"orkflow,omitempty"`
+	state   protoimpl.MessageState `protogen:"open.v1"`
+	Orkflow *Orkflow               `protobuf:"bytes,1,opt,name=orkflow,proto3" json:"orkflow,omitempty"`
+	// orkflow_id is the Orkflow's immutable id: one deleted and created again
+	// under its name has another one, and a binding pinned to this one does not
+	// match it (docs/ACCESS.md, "Pinned bindings"). Empty when none was made
+	// yet. Opaque: nothing parses it. Output only.
+	OrkflowId     string `protobuf:"bytes,2,opt,name=orkflow_id,json=orkflowId,proto3" json:"orkflow_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -808,6 +813,13 @@ func (x *GetOrkflowResponse) GetOrkflow() *Orkflow {
 		return x.Orkflow
 	}
 	return nil
+}
+
+func (x *GetOrkflowResponse) GetOrkflowId() string {
+	if x != nil {
+		return x.OrkflowId
+	}
+	return ""
 }
 
 type ListOrkflowsRequest struct {
@@ -2774,9 +2786,11 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x11GetOrkflowRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1c\n" +
-	"\tnamespace\x18\x03 \x01(\tR\tnamespace\"D\n" +
+	"\tnamespace\x18\x03 \x01(\tR\tnamespace\"c\n" +
 	"\x12GetOrkflowResponse\x12.\n" +
-	"\aorkflow\x18\x01 \x01(\v2\x14.orkstack.v1.OrkflowR\aorkflow\"\xfd\x02\n" +
+	"\aorkflow\x18\x01 \x01(\v2\x14.orkstack.v1.OrkflowR\aorkflow\x12\x1d\n" +
+	"\n" +
+	"orkflow_id\x18\x02 \x01(\tR\torkflowId\"\xfd\x02\n" +
 	"\x13ListOrkflowsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x01 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +

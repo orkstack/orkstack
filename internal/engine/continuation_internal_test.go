@@ -123,6 +123,24 @@ func (h *refusalHarness) terminal(t *testing.T) (*orkstackv1.Event, *orkstackv1.
 	return h.events[0], run
 }
 
+// lastSnapshot is the snapshot the last published event names.
+func (h *refusalHarness) lastSnapshot(t *testing.T) *orkstackv1.Run {
+	t.Helper()
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.uris) == 0 {
+		t.Fatal("no event was published")
+	}
+	uri := h.uris[len(h.uris)-1]
+	data, ok := h.store.get(uri)
+	if !ok {
+		t.Fatalf("the last event names snapshot %q, which was never written", uri)
+	}
+	run := &orkstackv1.Run{}
+	must.OK(t, proto.Unmarshal(data, run))
+	return run
+}
+
 func requireRunStateError(t *testing.T, err error, code string) {
 	t.Helper()
 	var applicationErr *temporal.ApplicationError

@@ -45,6 +45,8 @@ const maxPendingLogLines = 1024
 // An attempt that never claims (cancelled, its heartbeat lost, its Orker
 // stopping, or the store refusing the claim) logs nothing and records nothing.
 type attemptOrdinal struct {
+	// mask masks the Orker's own [ork] lines, whoever writes them.
+	mask     *attemptMask
 	d        *OCIDispatcher
 	in       *orkstackv1.ExecuteTaskInput
 	ctx      context.Context
@@ -206,6 +208,7 @@ func (o *attemptOrdinal) setBeat(beat *Heartbeater) {
 
 // Write logs one line under the ordinal, or holds it until there is one.
 func (o *attemptOrdinal) Write(line string) {
+	line = o.mask.line(line)
 	o.mu.Lock()
 	if o.n == 0 {
 		if !o.closed {

@@ -1433,3 +1433,45 @@ func indent(text, prefix string) string {
 	}
 	return prefix + text
 }
+
+// TestCompile_MaskFalseIsTheInputsUnmasked: `mask: false` is the one way to
+// an unmasked secret; absent and `true` both mask, and a document that says
+// nothing about masking keeps the digest it had before the key existed.
+func TestCompile_MaskFalseIsTheInputsUnmasked(t *testing.T) {
+	doc := func(mask string) string {
+		return "apiVersion: orkstack/v1\nkind: Orkflow\nname: m\nversion: \"1\"\ntasks:\n" +
+			"  - id: a\n    uses: alpine:3\n    secrets:\n      - name: s\n        source: env:S\n" + mask
+	}
+	tests := []struct {
+		name     string
+		mask     string
+		unmasked bool
+	}{
+		{"absent", "", false},
+		{"true", "        mask: true\n", false},
+		{"false", "        mask: false\n", true},
+	}
+	digests := map[string]string{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			wf, err := dsl.Compile([]byte(doc(tt.mask)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := wf.GetTasks()[0].GetSecrets()[0].GetUnmasked(); got != tt.unmasked {
+				t.Fatalf("unmasked = %v; want %v", got, tt.unmasked)
+			}
+			digest, err := dsl.DefinitionDigest(wf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			digests[tt.name] = digest
+		})
+	}
+	if digests["absent"] != digests["true"] {
+		t.Errorf("mask: true changed the digest: %s, %s", digests["absent"], digests["true"])
+	}
+	if digests["absent"] == digests["false"] {
+		t.Error("mask: false left the digest unchanged")
+	}
+}

@@ -49,14 +49,16 @@
 # ORK_ORKER_MAX_MEMORY, one that asks for more is refused at submit, and one
 # that uses more than it asked for is killed in its own cgroup; and that
 # deleting the pod stops the Orker first while the engine delivers the
-# signals. Then that the Orker
+# signals; and that with a stop grace a pod deleted mid-task lets the task
+# finish on its one attempt, while one deleted at once loses it explicitly.
+# Then that the Orker
 # refuses to boot when the engine sees the work root at another path, and
 # that the user-namespaced engine does not start without its RuntimeClass.
 #
 # What it creates, and what it leaves: in the cluster, the namespace and
 # everything in it, the orkstack-task-secrets Secret with its one key among
 # it, deleted at the end (KEEP=1 leaves it); nothing cluster-wide. In
-# OrkStack: the five check Orkflows in --ork-namespace,
+# OrkStack: the six check Orkflows in --ork-namespace,
 # created once and left (an identical create changes nothing), their runs,
 # kept as that namespace's retention says, and Orkers of the pool k8s-check
 # while the check runs, which that namespace must allow. Exit 0: every check
@@ -580,7 +582,105 @@ check_shape() { # check_shape SHAPE
 	expect "$dir/pod-delete-tasks.txt" '^stubborn (FAILED ORKER_STOPPED|CANCELED TASK_CANCELED)$' "$shape: a task that ignores SIGTERM ends explicitly too"
 	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the replacement pod never became ready"
 	log "ok: $shape: the Deployment replaced the pod"
+	check_stop_grace "$shape" "$dir"
 	remove_orkers
+}
+
+# The pod's own Orker, by the stop timeout it was given: Running and not being
+# deleted, so neither the pod it replaced nor one still terminating.
+graced_pod() { # graced_pod SECONDS
+	k -n "$ns" get pod -l app.kubernetes.io/name=orker -o json |
+		jq -r --argjson t "$1" '.items[] | select(.metadata.deletionTimestamp == null and .status.phase == "Running" and .spec.terminationGracePeriodSeconds == $t) | .metadata.name' |
+		head -n 1
+}
+
+# Drain-first on Kubernetes (docs/DEPLOY.md "Removing an Orker safely"): with a
+# stop grace and a stop timeout that covers it, a pod deleted while a task runs
+# lets the task finish and the run succeed on its one attempt, and the Orker
+# exits as soon as it is idle, before the grace ends. A pod deleted at once
+# (--grace-period=0) gives no grace: its task is lost, and ends explicitly, as
+# stopped by its runtime or once its heartbeats stop. The stop timeout is the grace (3 min) plus the tail: 30 s
+# of task cancellation, 10 min of hand-back reports, 75 s of open poll and 10 s.
+# Until the pool's only Orker is the pod's own, so the next task can run on no
+# other: a pod still stopping from an earlier deletion has left the inventory.
+only_orker() { # only_orker POD
+	local deadline=$((SECONDS + 300)) orkers
+	while :; do
+		orkers=$(orkctl orker list -F "pool=$POOL" -j | jq -r '[.orkers // [] | .[].orkerId] | sort | join(" ")')
+		[ "$orkers" = "$1.$ns" ] && return 0
+		[ $SECONDS -lt $deadline ] || fail "pool $POOL still has the Orkers '$orkers' after 5 minutes, want only $1.$ns"
+		sleep 2
+	done
+}
+
+check_stop_grace() { # check_stop_grace SHAPE DIR
+	local shape=$1 dir=$2 grace=3m timeout=900 pod run started took
+	log "$shape: deleting the pod within its stop grace ($grace)"
+	# One pod at a time: the node has room for one, so a rolling update's
+	# surge pod would wait Pending behind the pod it replaces.
+	k -n "$ns" scale deploy/orker --replicas=0 >/dev/null
+	k -n "$ns" wait --for=delete pod -l app.kubernetes.io/name=orker --timeout=300s >/dev/null 2>&1 || :
+	k -n "$ns" patch deploy/orker --type=strategic -p "$(jq -nc --arg g "$grace" --argjson t "$timeout" \
+		'{spec: {template: {spec: {terminationGracePeriodSeconds: $t, containers: [{name: "orker", env: [{name: "ORK_ORKER_STOP_GRACE", value: $g}]}]}}}}')" >/dev/null
+	k -n "$ns" scale deploy/orker --replicas=1 >/dev/null
+	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the Orker with a stop grace never became ready"
+	pod=$(graced_pod "$timeout")
+	[ -n "$pod" ] || fail "$shape: no running Orker pod has the ${timeout} s stop timeout"
+	only_orker "$pod"
+	run=$(orkctl run submit k8s-orker-drain -j | jq -r .run.id)
+	wait_started "$run" 1
+	# The stream replays the log from its start; wait for its first line so the
+	# stopping line, written at the signal, cannot be missed.
+	k -n "$ns" logs -f "$pod" -c orker >"$dir/grace-orker.log" 2>"$dir/grace-orker.err" &
+	local logs=$! deadline=$((SECONDS + 60))
+	until [ -s "$dir/grace-orker.log" ]; do
+		[ $SECONDS -lt $deadline ] || fail "$shape: the Orker's log stream never connected"
+		sleep 1
+	done
+	started=$SECONDS
+	k -n "$ns" delete pod "$pod" --wait=true >/dev/null 2>"$dir/grace-delete.err" ||
+		fail "$shape: deleting the pod failed: $(tail -n 1 "$dir/grace-delete.err")"
+	took=$((SECONDS - started))
+	kill "$logs" 2>/dev/null || :
+	wait "$logs" 2>/dev/null || :
+	wait_terminal "$run"
+	orkctl run get "$run" -j | jq -r '.run.status, (.run.taskRuns[] | "\(.taskId) \(.status) attempt=\(.attempt) orker=\(.orkerId // "-")")' | tee "$dir/grace-tasks.txt"
+	expect "$dir/grace-orker.log" 'msg="stopping: taking no new task or pin' "$shape: the deleted pod's Orker stopped drain-first"
+	expect "$dir/grace-tasks.txt" '^SUCCEEDED$' "$shape: a run whose Orker's pod was deleted within the grace succeeded"
+	expect "$dir/grace-tasks.txt" "^drain SUCCEEDED attempt=1 orker=($pod\\.$ns|-)\$" "$shape: its task finished on that Orker, on its one attempt"
+	# The pod lived on while the task ran (at least 15 s of its remaining
+	# ~35 s), and was gone well before the 3-minute grace: an idle stopping
+	# Orker exits at once.
+	echo "pod deletion took ${took} s" | tee -a "$dir/grace-tasks.txt"
+	[ "$took" -ge 15 ] || fail "$shape: the pod was gone ${took} s after its deletion, before its running task could finish"
+	[ "$took" -lt 150 ] || fail "$shape: the pod took ${took} s to go, so its Orker did not exit once its task ended"
+	log "ok: $shape: the task finished within the grace and the Orker then exited (${took} s)"
+
+	log "$shape: deleting the pod at once (--grace-period=0)"
+	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the replacement pod never became ready"
+	pod=$(graced_pod "$timeout")
+	[ -n "$pod" ] || fail "$shape: no running Orker pod has the ${timeout} s stop timeout"
+	only_orker "$pod"
+	run=$(orkctl run submit k8s-orker-drain -j | jq -r .run.id)
+	wait_started "$run" 1
+	started=$SECONDS
+	k -n "$ns" delete pod "$pod" --grace-period=0 --force --wait=true >/dev/null 2>"$dir/force-delete.err" ||
+		fail "$shape: force-deleting the pod failed: $(tail -n 1 "$dir/force-delete.err")"
+	wait_terminal "$run"
+	took=$((SECONDS - started))
+	orkctl run get "$run" -j | jq -r '.run.status, (.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-") \(.error.message // "-")")' | tee "$dir/force-tasks.txt"
+	echo "the run ended ${took} s after the forced deletion" | tee -a "$dir/force-tasks.txt"
+	expect "$dir/force-tasks.txt" '^FAILED$' "$shape: a run whose Orker was killed at once fails"
+	# The kubelet still signals both containers: the engine's daemon may stop
+	# the task before the Orker dies, which the Orker reports as
+	# CONTAINER_STOPPED_BY_RUNTIME (AGENTS.md §3.2); otherwise the task ends on
+	# its 30 s heartbeat timeout. Either is explicit; nothing else is.
+	expect "$dir/force-tasks.txt" '^drain FAILED (CONTAINER_STOPPED_BY_RUNTIME|ORKER_HEARTBEAT_TIMEOUT) ' "$shape: its task, with no retry:, ends explicitly"
+	if grep -q '^drain FAILED ORKER_HEARTBEAT_TIMEOUT ' "$dir/force-tasks.txt"; then
+		[ "$took" -ge 20 ] || fail "$shape: the run ended ${took} s after the forced deletion, sooner than its heartbeat timeout"
+	fi
+	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the Deployment did not replace the force-deleted pod"
+	log "ok: $shape: a pod deleted at once loses its task explicitly"
 }
 
 for shape in userns privileged; do

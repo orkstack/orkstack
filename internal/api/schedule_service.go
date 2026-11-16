@@ -2,13 +2,18 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"slices"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/schedules"
 )
 
@@ -96,11 +101,27 @@ func (s *Service) CreateSchedule(
 		Description:    msg.GetDescription(),
 		Spec:           normalizeScheduleSpec(msg.GetSpec()),
 	}
+	submits, err := scheduleSubmission(rec)
+	if err != nil {
+		return nil, connect.NewError(connect.CodeInvalidArgument, err)
+	}
+	// A create binds its caller. The entry is recorded before the cluster is
+	// asked (schedule_binding.go).
+	entry := s.boundBy(submits, authn.Recorded(ctx, req.Header()))
+	if err := s.addScheduleBinding(ctx, ns, id, entry); err != nil {
+		return nil, err
+	}
 	view, err := s.schedules.Create(ctx, rec, msg.GetPaused())
 	if err != nil {
+		// The cluster holds no such schedule: the object is removed, best
+		// effort. One left behind names an id no schedule has.
+		if s.scheduleBindings != nil && scheduleRefused(err) {
+			_ = s.scheduleBindings.Delete(context.WithoutCancel(ctx), ns, id)
+		}
 		return nil, scheduleConnectError(ctx, err, ns, msg.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.CreateScheduleResponse{Schedule: scheduleProto(view)}), nil
+	s.trimScheduleBindings(ctx, ns, view, entry)
+	return connect.NewResponse(&orkstackv1.CreateScheduleResponse{Schedule: s.scheduleProtoWith(ctx, view)}), nil
 }
 
 // cloneScheduleInput copies a request's input so the stored record never
@@ -144,6 +165,7 @@ func (s *Service) ListSchedules(
 	out := make([]*orkstackv1.Schedule, 0, len(views))
 	for _, view := range views {
 		if row := scheduleProto(view); set.Match(row) {
+			s.scheduleConsent(ctx, view, row)
 			out = append(out, row)
 		}
 	}
@@ -164,7 +186,7 @@ func (s *Service) GetSchedule(
 	if err != nil {
 		return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.GetScheduleResponse{Schedule: scheduleProto(view)}), nil
+	return connect.NewResponse(&orkstackv1.GetScheduleResponse{Schedule: s.scheduleProtoWith(ctx, view)}), nil
 }
 
 // UpdateSchedule replaces a schedule's mutable fields. Last writer wins.
@@ -186,8 +208,23 @@ func (s *Service) UpdateSchedule(
 	spec := normalizeScheduleSpec(msg.GetSpec())
 	input := cloneScheduleInput(msg.GetInput())
 	version := msg.GetOrkflowVersion()
-	var pinErr error
+	who := authn.Recorded(ctx, req.Header())
+	if msg.GetRebind() && who.ID == "" {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"--rebind records you as the schedule's binder, and this request names nobody: send Ork-Principal, or a credential the engine verifies"))
+	}
+	var pinErr, bindErr error
+	var entry artifacts.ScheduleBinding
+	var added bool
+	var savedID string
+	var wasSub artifacts.ScheduleBinding
 	view, err := s.schedules.Update(ctx, ns, msg.GetName(), func(rec *orkstackv1.ScheduleRecord) error {
+		// The SDK may run this more than once: what an earlier run decided
+		// is undone and forgotten, so only this run's outcome stands.
+		if added && !entry.Submits(wasSub) {
+			s.dropScheduleBinding(ctx, ns, savedID, entry)
+		}
+		pinErr, bindErr, added = nil, nil, false
 		// A pinned version must exist at update as at create. It is checked
 		// here, where the record names the orkflow the schedule is bound to.
 		if version != "" {
@@ -197,19 +234,68 @@ func (s *Service) UpdateSchedule(
 				return pinErr
 			}
 		}
+		was, err := scheduleSubmission(rec)
+		if err != nil {
+			bindErr = connect.NewError(connect.CodeInternal, err)
+			return bindErr
+		}
 		rec.OrkflowVersion = version
 		rec.Input = input
 		rec.Description = msg.GetDescription()
 		rec.Spec = spec
+		// The save's entry, recorded before the cluster is written: the
+		// caller binds when the save changes what is submitted or asks to
+		// rebind; otherwise the binder and consent stay.
+		next, err := scheduleSubmission(rec)
+		if err != nil {
+			bindErr = connect.NewError(connect.CodeInvalidArgument, err)
+			return bindErr
+		}
+		// A changed submission is recorded with its new binder before the
+		// cluster holds it. A --rebind of what the cluster already holds is
+		// not: the binder stays until the cluster accepts the save, and only
+		// then is the caller recorded (step 3), so a refused or lost save
+		// never names a binder who did not bind.
+		changed := !next.Submits(was)
+		entry, err = s.addScheduleBindingFrom(ctx, ns, rec.GetScheduleId(), func(doc artifacts.ScheduleBindings) artifacts.ScheduleBinding {
+			if changed {
+				return s.boundBy(next, who)
+			}
+			return s.keptBinder(next, was, doc)
+		})
+		if err != nil {
+			bindErr = err
+			return bindErr
+		}
+		added, savedID, wasSub = true, rec.GetScheduleId(), was
 		return nil
 	})
 	if pinErr != nil {
 		return nil, pinErr
 	}
+	if bindErr != nil {
+		return nil, bindErr
+	}
 	if err != nil {
+		// The cluster definitely refused the save: its entry goes. A lost
+		// answer may have landed, so its entry stays for the next trim.
+		// A save that submits what the cluster already holds replaced that
+		// submission's entry with one of the same binder; dropping it would
+		// leave the held submission unrecorded, so it stays.
+		if added && scheduleRefused(err) && !entry.Submits(wasSub) {
+			s.dropScheduleBinding(ctx, ns, savedID, entry)
+		}
 		return nil, scheduleConnectError(ctx, err, ns, msg.GetName())
 	}
-	return connect.NewResponse(&orkstackv1.UpdateScheduleResponse{Schedule: scheduleProto(view)}), nil
+	if msg.GetRebind() && entry.Submits(wasSub) {
+		// The cluster has the save: the caller now binds what it holds.
+		if err := s.rebindScheduleRecord(ctx, ns, view, s.boundBy(entry, who)); err != nil {
+			return nil, err
+		}
+	} else {
+		s.trimScheduleBindings(ctx, ns, view, entry)
+	}
+	return connect.NewResponse(&orkstackv1.UpdateScheduleResponse{Schedule: s.scheduleProtoWith(ctx, view)}), nil
 }
 
 // describeAfter answers a write with the schedule as the cluster now
@@ -219,7 +305,7 @@ func (s *Service) describeAfter(ctx context.Context, ns, name string) (*orkstack
 	if err != nil {
 		return nil, scheduleConnectError(ctx, err, ns, name)
 	}
-	return scheduleProto(view), nil
+	return s.scheduleProtoWith(ctx, view), nil
 }
 
 // PauseSchedule stops fires without deleting anything.
@@ -333,8 +419,52 @@ func (s *Service) DeleteSchedule(
 	if err != nil {
 		return nil, err
 	}
+	// The object goes in three steps: emptied, so it admits nothing; then the
+	// cluster's schedule; then the object itself. A schedule that cannot be
+	// read refuses the delete; a cluster delete that fails puts the entries
+	// back, so a schedule that still fires keeps its record.
+	var id string
+	var kept []artifacts.ScheduleBinding
+	if s.scheduleBindings != nil {
+		view, err := s.schedules.Describe(ctx, ns, req.Msg.GetName())
+		switch {
+		case errors.Is(err, engine.ErrScheduleNotFound):
+		case err != nil:
+			return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
+		case view.ID != "":
+			id = view.ID
+			if _, err := s.scheduleBindings.Update(ctx, ns, id, func(doc *artifacts.ScheduleBindings) error {
+				kept = slices.Clone(doc.Entries)
+				doc.Keep()
+				return nil
+			}); err != nil {
+				return nil, scheduleBindingError(ctx, err)
+			}
+		}
+	}
 	if err := s.schedules.Delete(ctx, ns, req.Msg.GetName()); err != nil {
+		if id != "" && len(kept) > 0 && !errors.Is(err, engine.ErrScheduleNotFound) {
+			restore, cancel := context.WithTimeout(context.WithoutCancel(ctx), scheduleRecordDetachedTimeout)
+			defer cancel()
+			if _, rerr := s.scheduleBindings.Update(restore, ns, id, func(doc *artifacts.ScheduleBindings) error {
+				for _, e := range kept {
+					doc.Add(e)
+				}
+				return nil
+			}); rerr != nil {
+				s.logger.Error("a schedule whose delete failed could not have its record restored; it fires with no binder recorded until it is rebound",
+					"namespace", ns, "schedule", req.Msg.GetName(), "error", rerr)
+			}
+		}
 		return nil, scheduleConnectError(ctx, err, ns, req.Msg.GetName())
+	}
+	if id != "" {
+		remove, cancel := context.WithTimeout(context.WithoutCancel(ctx), scheduleRecordDetachedTimeout)
+		defer cancel()
+		if err := s.scheduleBindings.Delete(remove, ns, id); err != nil {
+			s.logger.Warn("the schedule was deleted, but its emptied binding record was not; it admits nothing",
+				"namespace", ns, "schedule", req.Msg.GetName(), "error", err)
+		}
 	}
 	return connect.NewResponse(&orkstackv1.DeleteScheduleResponse{}), nil
 }

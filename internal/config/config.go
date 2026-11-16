@@ -204,6 +204,11 @@ var Schema = []Var{
 	// how long a pin waits for a pin host's free slot before its first task
 	// fails PIN_UNAVAILABLE. Pinned, in seconds, into each top-level plan.
 	{Path: "engine.pin_creation_timeout", Env: "ORK_PIN_CREATION_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultPinCreationTimeout)},
+	// ORK_RUN_TIMEOUT_HANDLER_GRACE's fallback is
+	// engine.DefaultRunTimeoutHandlerGrace: how long after a run's deadline
+	// its failure handlers may still run. Pinned, in seconds, into the plan
+	// of every run whose definition declares `timeout:`.
+	{Path: "engine.run_timeout_handler_grace", Env: "ORK_RUN_TIMEOUT_HANDLER_GRACE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultRunTimeoutHandlerGrace)},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},
@@ -248,6 +253,7 @@ var Schema = []Var{
 	{Path: "orker.store_check.timeout", Env: orker.StoreCheckTimeoutVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStoreCheckTimeout)},
 	{Path: "orker.store_check.failures", Env: orker.StoreCheckFailuresVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultStoreCheckFailures))},
 	{Path: "orker.store_check.recoveries", Env: orker.StoreCheckRecoveriesVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultStoreCheckRecoveries))},
+	{Path: "orker.store_scope_recheck", Env: orker.StoreScopeRecheckVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStoreScopeRecheck)},
 	// orker.capacity is empty by default: no declared capacity admits by
 	// max_concurrent alone, as every Orker did before capacity existed.
 	{Path: "orker.capacity.cpu", Env: orker.CapacityCPUVar, Binaries: usesOrker, Kind: KindString, Default: EmptyDefault},
@@ -282,6 +288,10 @@ var Schema = []Var{
 	// The boot probe of the host's instance metadata endpoints: off, warn or
 	// refuse (internal/orker/metadata_probe.go).
 	{Path: "orker.metadata_probe", Env: orker.MetadataProbeVar, Binaries: usesOrker, Kind: KindString, Default: string(orker.DefaultMetadataProbe)},
+	// Secret masking in a task's logs, and the refusal of a values.json that
+	// holds a secret (internal/orker/mask.go).
+	{Path: "orker.log.mask_secrets", Env: orker.MaskSecretsVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultMaskSecrets)},
+	{Path: "orker.values.refuse_secrets", Env: orker.RefuseSecretValuesVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultRefuseSecretVals)},
 
 	{Path: "telemetry.log_format", Env: "ORK_LOG_FORMAT", Binaries: usesBoth, Kind: KindString, Default: telemetry.LogFormatText},
 	{Path: "telemetry.log_level", Env: "ORK_LOG_LEVEL", Binaries: usesBoth, Kind: KindString, Default: telemetry.DefaultLogLevel},

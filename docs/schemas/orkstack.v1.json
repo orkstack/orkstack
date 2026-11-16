@@ -617,6 +617,10 @@
           "minItems": 1,
           "type": "array"
         },
+        "timeout": {
+          "description": "optional: a Go duration, 10s to 8760h, bounding the whole run (see \"Run timeout\").",
+          "type": "string"
+        },
         "version": {
           "description": "Author-pinned version; absent, the first create assigns one.",
           "type": "string"
@@ -807,6 +811,10 @@
     "orkflow.secret": {
       "additionalProperties": false,
       "properties": {
+        "mask": {
+          "description": "optional: `false` leaves the value unmasked in the task's logs",
+          "type": "boolean"
+        },
         "name": {
           "not": {
             "enum": [

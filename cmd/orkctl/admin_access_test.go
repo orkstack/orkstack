@@ -151,3 +151,48 @@ func TestAdminBinding_ADelegateWithoutAccessRead(t *testing.T) {
 		t.Fatal("a delegate bound admin")
 	}
 }
+
+// TestBindingPinLabel: a binding list says what each binding matches by, and
+// for a stale pin the command that pins it again.
+func TestBindingPinLabel(t *testing.T) {
+	for _, tc := range []struct {
+		pin  orkstackv1.BindingPin
+		want string
+	}{
+		{orkstackv1.BindingPin_BINDING_PIN_PINNED, "pinned ns_1"},
+		{orkstackv1.BindingPin_BINDING_PIN_STALE, "stale: pinned to ns_1, which is gone; run `orkctl admin binding update viewers --repin`"},
+		{orkstackv1.BindingPin_BINDING_PIN_BY_NAME, "by name"},
+		{orkstackv1.BindingPin_BINDING_PIN_NONE, ""},
+	} {
+		b := &orkstackv1.Binding{Name: "viewers", ScopeId: "ns_1", Pin: tc.pin}
+		if got := bindingPinLabel(b); got != tc.want {
+			t.Errorf("%v: %q, want %q", tc.pin, got, tc.want)
+		}
+	}
+}
+
+// TestGetPrintsTheID: `namespace get` and `orkflow get` print the id when
+// the engine answers one, and nothing when it does not.
+func TestGetPrintsTheID(t *testing.T) {
+	var out bytes.Buffer
+	if err := renderNamespace(&out, &orkstackv1.Namespace{Name: "payments", Identity: &orkstackv1.NamespaceIdentity{NamespaceId: "ns_1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "Id:") || !strings.Contains(out.String(), "ns_1") {
+		t.Fatalf("namespace get printed:\n%s", out.String())
+	}
+	out.Reset()
+	if err := renderOrkflow(&out, &orkstackv1.Orkflow{Name: "report", Version: "1"}, "of_1"); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "of_1") {
+		t.Fatalf("orkflow get printed:\n%s", out.String())
+	}
+	out.Reset()
+	if err := renderOrkflow(&out, &orkstackv1.Orkflow{Name: "report", Version: "1"}, ""); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), "Id:") {
+		t.Fatalf("orkflow get with no id printed:\n%s", out.String())
+	}
+}

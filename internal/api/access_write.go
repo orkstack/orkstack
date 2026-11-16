@@ -242,9 +242,97 @@ func (h accessHandler) DeleteRole(ctx context.Context, req *connect.Request[orks
 
 // --- bindings ------------------------------------------------------------
 
-// errNoIncarnationIDs answers a repin: namespaces and Orkflows carry no
-// immutable id in this release, so every binding matches by name.
-var errNoIncarnationIDs = errors.New("namespaces and Orkflows carry no id in this release, so a binding matches by name and has nothing to pin to")
+// errNothingToPin answers a repin of a binding whose scope names nothing
+// that exists now: it matches by name until something does.
+func errNothingToPin(scope string) error {
+	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+		"nothing exists at %s to pin the binding to; it matches by name until something does, and its next save pins it", scope))
+}
+
+// pinsByIncarnation reports whether a binding at scope is pinned to an
+// incarnation: only a namespace's or an Orkflow's can be made again.
+func pinsByIncarnation(scope string) bool {
+	sc, err := authz.ParseScope(scope)
+	return err == nil && (sc.Kind == authz.ScopeNamespace || sc.Kind == authz.ScopeOrkflow)
+}
+
+// scopeID is the id of what a namespace or Orkflow scope names now: minted
+// on first need when ensure is set (a save pins), only read otherwise; ""
+// for another kind of scope, for one that names nothing that exists, and
+// with no id store wired.
+func (s *Service) scopeID(ctx context.Context, scope string, ensure bool) (string, error) {
+	sc, err := authz.ParseScope(scope)
+	if err != nil {
+		return "", nil
+	}
+	switch sc.Kind {
+	case authz.ScopeNamespace:
+		return s.namespaceID(ctx, sc.Namespace, ensure)
+	case authz.ScopeOrkflow:
+		return s.orkflowID(ctx, sc.Namespace, sc.Orkflow, ensure)
+	}
+	return "", nil
+}
+
+// cachedScopeID is scopeID's read, through the ids an access decision
+// caches (incarnationCacheTTL).
+func (s *Service) cachedScopeID(ctx context.Context, scope string) (string, error) {
+	sc, err := authz.ParseScope(scope)
+	if err != nil || (sc.Kind != authz.ScopeNamespace && sc.Kind != authz.ScopeOrkflow) {
+		return "", nil
+	}
+	key := incarnationKey(sc.Namespace, "")
+	if sc.Kind == authz.ScopeOrkflow {
+		key = incarnationKey(sc.Namespace, sc.Orkflow)
+	}
+	return s.cachedID(key, func() (string, error) { return s.scopeID(ctx, scope, false) })
+}
+
+// answerSaved is a saved binding as a response shows it. The write is
+// committed, so a pin whose ids cannot be read now is answered as pinned
+// and logged, never as a failed save.
+func (s *Service) answerSaved(ctx context.Context, b *orkstackv1.Binding) *orkstackv1.Binding {
+	out, err := s.answerAccessBinding(ctx, b)
+	if err != nil {
+		s.logger.Warn("the binding was saved; whether its pin is stale could not be read", "binding", b.GetName(), "error", err)
+		return answeredBinding(b)
+	}
+	return out
+}
+
+// answerAccessBinding is a stored binding as a response shows it, with a pin
+// that no longer names what its scope names now shown as stale.
+func (s *Service) answerAccessBinding(ctx context.Context, b *orkstackv1.Binding) (*orkstackv1.Binding, error) {
+	out := answeredBinding(b)
+	if out.GetPin() != orkstackv1.BindingPin_BINDING_PIN_PINNED {
+		return out, nil
+	}
+	now, err := s.cachedScopeID(ctx, b.GetScope())
+	if err != nil {
+		return nil, err
+	}
+	if s.incarnations != nil && now != b.GetScopeId() {
+		out.Pin = orkstackv1.BindingPin_BINDING_PIN_STALE
+	}
+	return out, nil
+}
+
+// pinOnce answers what a save pins a binding at scope to, reading (and on
+// first need minting) the id once however often a contended write retries.
+func (s *Service) pinOnce(ctx context.Context, scope string) func() (string, error) {
+	var (
+		done bool
+		id   string
+		err  error
+	)
+	return func() (string, error) {
+		if !done {
+			id, err = s.scopeID(ctx, scope, true)
+			done = err == nil
+		}
+		return id, err
+	}
+}
 
 // storedBinding is the binding as a write stores it: output-only fields
 // cleared, the pin held as it was.
@@ -276,6 +364,7 @@ func (h accessHandler) CreateBinding(ctx context.Context, req *connect.Request[o
 	}
 	b := storedBinding(in)
 	b.ScopeId = ""
+	pin := h.svc.pinOnce(ctx, b.GetScope())
 	head, err := h.writeAccess(ctx, req.Header(), req.Msg.GetEtag(), func(doc *orkstackv1.AccessDocument, cur *authz.Policy) (string, error) {
 		if err := mayBind(ctx, cur, b.GetRole(), b.GetScope()); err != nil {
 			return "", err
@@ -288,13 +377,21 @@ func (h accessHandler) CreateBinding(ctx context.Context, req *connect.Request[o
 			}
 			return "", exists("binding", b.GetName())
 		}
+		// A binding is pinned to what its scope names when it is saved; one
+		// that names nothing yet matches by name until its next save.
+		id, err := pin()
+		if err != nil {
+			return "", err
+		}
+		b.ScopeId = id
 		doc.Bindings = append(doc.Bindings, b)
 		return fmt.Sprintf("create binding %s (%s at %s)", b.GetName(), b.GetRole(), b.GetScope()), nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&orkstackv1.CreateBindingResponse{Binding: answeredBinding(b), Etag: etagOfHead(head)}), nil
+	out := h.svc.answerSaved(ctx, b)
+	return connect.NewResponse(&orkstackv1.CreateBindingResponse{Binding: out, Etag: etagOfHead(head)}), nil
 }
 
 func (h accessHandler) UpdateBinding(ctx context.Context, req *connect.Request[orkstackv1.UpdateBindingRequest]) (*connect.Response[orkstackv1.UpdateBindingResponse], error) {
@@ -302,10 +399,13 @@ func (h accessHandler) UpdateBinding(ctx context.Context, req *connect.Request[o
 	if in == nil {
 		return nil, connect.NewError(connect.CodeInvalidArgument, errors.New("binding is required"))
 	}
-	if req.Msg.GetRepin() {
-		return nil, connect.NewError(connect.CodeFailedPrecondition, errNoIncarnationIDs)
+	repin := req.Msg.GetRepin()
+	if repin && !pinsByIncarnation(in.GetScope()) {
+		return nil, connect.NewError(connect.CodeInvalidArgument, fmt.Errorf(
+			"a binding at %s is not pinned: only one at a namespace or an Orkflow is", in.GetScope()))
 	}
 	b := storedBinding(in)
+	pin := h.svc.pinOnce(ctx, b.GetScope())
 	head, err := h.writeAccess(ctx, req.Header(), req.Msg.GetEtag(), func(doc *orkstackv1.AccessDocument, cur *authz.Policy) (string, error) {
 		if err := mayWrite(ctx, cur); err != nil {
 			return "", err
@@ -314,21 +414,37 @@ func (h accessHandler) UpdateBinding(ctx context.Context, req *connect.Request[o
 		if i < 0 {
 			return "", notFound("binding", b.GetName())
 		}
-		// A save that changes nothing else never moves a pin.
-		b.ScopeId = doc.Bindings[i].GetScopeId()
-		if b.GetScope() != doc.Bindings[i].GetScope() {
-			b.ScopeId = ""
+		// A save that changes nothing else never moves a pin: only a repin
+		// does, or a new scope, which is pinned to what it names now. A
+		// binding that matched by name is pinned once its scope names
+		// something.
+		stored := doc.Bindings[i]
+		b.ScopeId = stored.GetScopeId()
+		if repin || b.GetScope() != stored.GetScope() || b.GetScopeId() == "" {
+			id, err := pin()
+			if err != nil {
+				return "", err
+			}
+			if repin && id == "" {
+				return "", errNothingToPin(b.GetScope())
+			}
+			b.ScopeId = id
 		}
-		if proto.Equal(doc.Bindings[i], b) {
+		if proto.Equal(stored, b) {
 			return "", nil
 		}
 		doc.Bindings[i] = b
-		return fmt.Sprintf("update binding %s (%s at %s)", b.GetName(), b.GetRole(), b.GetScope()), nil
+		change := fmt.Sprintf("update binding %s (%s at %s)", b.GetName(), b.GetRole(), b.GetScope())
+		if b.GetScopeId() != stored.GetScopeId() && b.GetScope() == stored.GetScope() {
+			change = fmt.Sprintf("pin binding %s to %s (%s)", b.GetName(), b.GetScope(), b.GetScopeId())
+		}
+		return change, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return connect.NewResponse(&orkstackv1.UpdateBindingResponse{Binding: answeredBinding(b), Etag: etagOfHead(head)}), nil
+	out := h.svc.answerSaved(ctx, b)
+	return connect.NewResponse(&orkstackv1.UpdateBindingResponse{Binding: out, Etag: etagOfHead(head)}), nil
 }
 
 func (h accessHandler) DeleteBinding(ctx context.Context, req *connect.Request[orkstackv1.DeleteBindingRequest]) (*connect.Response[orkstackv1.DeleteBindingResponse], error) {

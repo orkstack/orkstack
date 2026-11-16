@@ -3,6 +3,7 @@ syntax = "proto3";
 package orkstack.v1;
 
 import "google/protobuf/struct.proto";
+import "google/protobuf/timestamp.proto";
 
 option go_package = "github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1";
 
@@ -68,10 +69,20 @@ message Error {
   string task_code = 6;
 }
 
-// AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
-message AsksFor {}
+// AsksFor is what a schedule's or a trigger's Orkflow asks for, as a
+// consent's digest (docs/ORKFLOW_SCHEDULES.md, "Who a schedule runs as").
+// In this release no Orkflow asks for an identity, so it is the empty table's.
+message AsksFor {
+  // digest is the consent digest of what the Orkflow asks for: "c1:" and 64
+  // hexadecimal digits.
+  string digest = 1;
+}
 
-// ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
-message ConsentView {}
+// ConsentView is the consent a schedule or a trigger records with its
+// binder: the digest of what its Orkflow asked for when it was bound.
+message ConsentView {
+  // digest is the consent digest recorded: "c1:" and 64 hexadecimal digits.
+  string digest = 1;
+  // at is when it was recorded.
+  google.protobuf.Timestamp at = 2;
+}

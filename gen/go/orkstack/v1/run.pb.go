@@ -2000,7 +2000,9 @@ type TaskAttempt struct {
 	Identities []*AttemptIdentity `protobuf:"bytes,24,rep,name=identities,proto3" json:"identities,omitempty"`
 	// credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
 	Credentials []*AttemptCredential `protobuf:"bytes,25,rep,name=credentials,proto3" json:"credentials,omitempty"`
-	// masked_occurrences is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+	// masked_occurrences is how many runs of bytes the attempt's masker
+	// replaced with `***` in its two streams: a count, never which secret or
+	// where. 0 when nothing was masked.
 	MaskedOccurrences int64 `protobuf:"varint,26,opt,name=masked_occurrences,json=maskedOccurrences,proto3" json:"masked_occurrences,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
@@ -2324,7 +2326,8 @@ type Run struct {
 	PauseWarnings []*PauseWarning `protobuf:"bytes,33,rep,name=pause_warnings,json=pauseWarnings,proto3" json:"pause_warnings,omitempty"`
 	// pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch).
 	PauseSlotKept bool `protobuf:"varint,34,opt,name=pause_slot_kept,json=pauseSlotKept,proto3" json:"pause_slot_kept,omitempty"`
-	// timeout is set from E107; unset until it lands (v0.4.0 proto batch).
+	// timeout is the run's own time limit; unset when its Orkflow declares no
+	// `timeout:`.
 	Timeout       *RunTimeout `protobuf:"bytes,35,opt,name=timeout,proto3" json:"timeout,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -3620,12 +3623,26 @@ func (*RunScheduleFire) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{31}
 }
 
-// RunTimeout is E107's; it is empty until E107 lands (v0.4.0 proto
-// batch).
+// RunTimeout is the run's own time limit, from the Orkflow's top-level
+// `timeout:` (docs/DSL.md "Run timeout"). It is unset on a run whose Orkflow
+// declares none.
 type RunTimeout struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// seconds is the declared limit.
+	Seconds int64 `protobuf:"varint,1,opt,name=seconds,proto3" json:"seconds,omitempty"`
+	// deadline is when the run times out; unset until the run starts.
+	Deadline *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=deadline,proto3" json:"deadline,omitempty"`
+	// hard_end is set once the run starts failing: the latest instant a failure
+	// handler may still run (the deadline, or the moment it started failing,
+	// plus the deployment's handler grace).
+	HardEnd *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=hard_end,json=hardEnd,proto3" json:"hard_end,omitempty"`
+	// timed_out reports that the deadline ended the run.
+	TimedOut bool `protobuf:"varint,4,opt,name=timed_out,json=timedOut,proto3" json:"timed_out,omitempty"`
+	// hard_end_reached reports that failure handlers were stopped, or never
+	// started, at hard_end.
+	HardEndReached bool `protobuf:"varint,5,opt,name=hard_end_reached,json=hardEndReached,proto3" json:"hard_end_reached,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *RunTimeout) Reset() {
@@ -3656,6 +3673,41 @@ func (x *RunTimeout) ProtoReflect() protoreflect.Message {
 // Deprecated: Use RunTimeout.ProtoReflect.Descriptor instead.
 func (*RunTimeout) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{32}
+}
+
+func (x *RunTimeout) GetSeconds() int64 {
+	if x != nil {
+		return x.Seconds
+	}
+	return 0
+}
+
+func (x *RunTimeout) GetDeadline() *timestamppb.Timestamp {
+	if x != nil {
+		return x.Deadline
+	}
+	return nil
+}
+
+func (x *RunTimeout) GetHardEnd() *timestamppb.Timestamp {
+	if x != nil {
+		return x.HardEnd
+	}
+	return nil
+}
+
+func (x *RunTimeout) GetTimedOut() bool {
+	if x != nil {
+		return x.TimedOut
+	}
+	return false
+}
+
+func (x *RunTimeout) GetHardEndReached() bool {
+	if x != nil {
+		return x.HardEndReached
+	}
+	return false
 }
 
 // TaskInterruption is E92's; it is empty until E92 lands (v0.4.0 proto
@@ -3979,9 +4031,14 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\tRunResume\"\f\n" +
 	"\n" +
 	"RunResumed\"\x11\n" +
-	"\x0fRunScheduleFire\"\f\n" +
+	"\x0fRunScheduleFire\"\xdc\x01\n" +
 	"\n" +
-	"RunTimeout\"\x12\n" +
+	"RunTimeout\x12\x18\n" +
+	"\aseconds\x18\x01 \x01(\x03R\aseconds\x126\n" +
+	"\bdeadline\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\bdeadline\x125\n" +
+	"\bhard_end\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\ahardEnd\x12\x1b\n" +
+	"\ttimed_out\x18\x04 \x01(\bR\btimedOut\x12(\n" +
+	"\x10hard_end_reached\x18\x05 \x01(\bR\x0ehardEndReached\"\x12\n" +
 	"\x10TaskInterruption\"\x13\n" +
 	"\x11TaskInterruptions*\x88\x02\n" +
 	"\fTimingReason\x12\x1d\n" +
@@ -4207,11 +4264,13 @@ var file_orkstack_v1_run_proto_depIdxs = []int32{
 	41, // 89: orkstack.v1.Event.interruption:type_name -> orkstack.v1.TaskInterruption
 	6,  // 90: orkstack.v1.Event.pause_transition:type_name -> orkstack.v1.PauseTransition
 	46, // 91: orkstack.v1.NamedArtifact.artifact:type_name -> orkstack.v1.ArtifactRef
-	92, // [92:92] is the sub-list for method output_type
-	92, // [92:92] is the sub-list for method input_type
-	92, // [92:92] is the sub-list for extension type_name
-	92, // [92:92] is the sub-list for extension extendee
-	0,  // [0:92] is the sub-list for field type_name
+	48, // 92: orkstack.v1.RunTimeout.deadline:type_name -> google.protobuf.Timestamp
+	48, // 93: orkstack.v1.RunTimeout.hard_end:type_name -> google.protobuf.Timestamp
+	94, // [94:94] is the sub-list for method output_type
+	94, // [94:94] is the sub-list for method input_type
+	94, // [94:94] is the sub-list for extension type_name
+	94, // [94:94] is the sub-list for extension extendee
+	0,  // [0:94] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_run_proto_init() }

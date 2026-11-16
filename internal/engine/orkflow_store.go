@@ -94,6 +94,9 @@ type MemoryOrkflowStore struct {
 	// derived is namespace -> name -> content hash -> version, the durable
 	// store's @derived-{hash}.json objects.
 	derived map[string]map[string]map[string]string
+	// since is namespace -> name -> when that orkflow's incarnation began,
+	// the durable head's since.
+	since map[string]map[string]time.Time
 }
 
 // compile-time contract check.
@@ -107,7 +110,30 @@ func NewMemoryOrkflowStore() *MemoryOrkflowStore {
 		current:     map[string]map[string]string{},
 		nameList:    map[string][]string{},
 		derived:     map[string]map[string]map[string]string{},
+		since:       map[string]map[string]time.Time{},
 	}
+}
+
+// OrkflowIncarnations is a store that says which incarnation of an orkflow
+// it holds, so an id minted for one is never answered for another
+// (artifacts.IncarnationStore). Both stores implement it.
+type OrkflowIncarnations interface {
+	// Incarnation is when this incarnation of the orkflow began: its head's
+	// since. ok is false while there is no settled incarnation to name.
+	Incarnation(ctx context.Context, namespace, name string) (since time.Time, ok bool, err error)
+}
+
+var (
+	_ OrkflowIncarnations = (*MemoryOrkflowStore)(nil)
+	_ OrkflowIncarnations = (*artifacts.S3OrkflowStore)(nil)
+)
+
+// Incarnation answers as the durable store does.
+func (s *MemoryOrkflowStore) Incarnation(_ context.Context, namespace, name string) (time.Time, bool, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	since, ok := s.since[artifacts.ResolveNamespace(namespace)][name]
+	return since, ok, nil
 }
 
 // FindDerivedVersion answers as the durable store does: a claim first, then a
@@ -220,6 +246,10 @@ func (s *MemoryOrkflowStore) Put(
 		versions = map[string]*orkstackv1.Orkflow{}
 		byName[wf.GetName()] = versions
 		s.nameList[namespace] = append(s.nameList[namespace], wf.GetName())
+		if s.since[namespace] == nil {
+			s.since[namespace] = map[string]time.Time{}
+		}
+		s.since[namespace][wf.GetName()] = stored.GetCreatedAt().AsTime()
 	}
 	if existing, ok := versions[wf.GetVersion()]; ok {
 		// The durable store's own rule (artifacts.SameStoredOrkflow), so
@@ -370,6 +400,7 @@ func (s *MemoryOrkflowStore) Delete(
 	// Delete the version pointers
 	delete(s.latest[namespace], name)
 	delete(s.current[namespace], name)
+	delete(s.since[namespace], name)
 	// Remove from name list
 	if names, ok := s.nameList[namespace]; ok {
 		for i, n := range names {

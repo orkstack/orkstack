@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/proto"
@@ -67,10 +68,17 @@ func (h accessHandler) ExplainAccess(ctx context.Context, req *connect.Request[o
 	if unavailable || policy == nil {
 		return nil, connect.NewError(connect.CodeUnavailable, ErrPolicyUnavailable)
 	}
+	if res, err = h.svc.withIDs(ctx, policy, res); err != nil {
+		return nil, err
+	}
 	ex := authz.Explain(policy, sub, perm, res)
 	out := &orkstackv1.ExplainAccessResponse{AccessRevision: policy.Revision}
+	var stale []string
 	for _, c := range ex.Considered {
 		out.Considered = append(out.Considered, explainedProto(c))
+		if c.Match == authz.MatchPinnedElsewhere {
+			stale = append(stale, c.Binding)
+		}
 	}
 	var denied *authz.DeniedError
 	switch {
@@ -90,6 +98,11 @@ func (h accessHandler) ExplainAccess(ctx context.Context, req *connect.Request[o
 		out.Decision, out.Reason = orkstackv1.AccessDecision_ACCESS_DECISION_DENIED, explainNoBinding
 		out.Explanation = fmt.Sprintf("no binding grants %s %s at %s; groups and claims are not known from a principal id, "+
 			"so a binding that selects by them is shown as not matching", sub.ID, perm, res.String())
+		if len(stale) > 0 {
+			out.Explanation += fmt.Sprintf("; %s would have matched by name but %s pinned to an earlier incarnation of %s "+
+				"(orkctl admin binding update NAME --repin pins it again)",
+				strings.Join(quoted(stale), ", "), isOrAre(len(stale)), res.String())
+		}
 	default:
 		return nil, connect.NewError(connect.CodeInternal, ex.Err)
 	}
@@ -266,4 +279,19 @@ func revisionDocument(head *artifacts.AccessHead) *orkstackv1.AccessDocument {
 	doc := proto.Clone(head.Document).(*orkstackv1.AccessDocument)
 	doc.Etag = ""
 	return doc
+}
+
+func quoted(names []string) []string {
+	out := make([]string, len(names))
+	for i, n := range names {
+		out[i] = strconv.Quote(n)
+	}
+	return out
+}
+
+func isOrAre(n int) string {
+	if n == 1 {
+		return "it is"
+	}
+	return "they are"
 }

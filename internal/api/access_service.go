@@ -96,6 +96,21 @@ func (h accessHandler) GetAccess(ctx context.Context, _ *connect.Request[orkstac
 			doc = head.Document
 		}
 	}
+	unread := 0
+	for i, b := range doc.GetBindings() {
+		// What each binding is pinned to: an incarnation, by name, or stale.
+		// A pin whose ids cannot be read now is shown as pinned, never as
+		// stale: the document is what an admin reads to repair access.
+		answered, err := h.svc.answerAccessBinding(ctx, b)
+		if err != nil {
+			answered, unread = answeredBinding(b), unread+1
+		}
+		doc.Bindings[i] = answered
+	}
+	if unread > 0 {
+		h.svc.logger.Warn("the access document was answered without telling which pins are stale: the ids could not be read",
+			"bindings", unread)
+	}
 	for _, name := range authz.BuiltInRoles() {
 		role := &orkstackv1.Role{Name: name, BuiltIn: true}
 		for _, p := range authz.BuiltInRolePermissions(name) {

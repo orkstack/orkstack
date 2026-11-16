@@ -115,9 +115,13 @@ func skipReasonNoNeedFailed(needs []string) string {
 
 // cancelReasonNotAHandler is what fail-fast records on a never-started task
 // that is not a failure handler, in a run with failure handlers. An empty
-// cause is the run's own failure — the history guard's — which no task owns.
-func cancelReasonNotAHandler(cause string) string {
+// cause is the run's own failure, which no task owns: runCause says which
+// (runCauseText); empty is the history guard's, whose text is unchanged.
+func cancelReasonNotAHandler(cause, runCause string) string {
 	if cause == "" {
+		if runCause != "" {
+			return fmt.Sprintf("the run is failing (%s) and this task is not a failure handler", runCause)
+		}
 		return "the run is failing (it reached its history limit) and this task is not a failure handler"
 	}
 	return fmt.Sprintf("the run is failing (task %q failed) and this task is not a failure handler", cause)
@@ -139,8 +143,12 @@ const (
 
 // failingMessage is the failing note: the one TASK_LOG, with no task id, a
 // run with failure handlers emits when it starts failing.
-func failingMessage(cause string, handlers []string) string {
+func failingMessage(cause, runCause string, handlers []string) string {
 	if cause == "" {
+		if runCause != "" {
+			return fmt.Sprintf("run failing: %s; waiting for its failure handlers: %s",
+				runCause, strings.Join(handlers, ", "))
+		}
 		return "run failing: it reached its history limit; waiting for its failure handlers: " +
 			strings.Join(handlers, ", ")
 	}
@@ -362,7 +370,7 @@ func (s *runState) settleHandlerDispatch(ctx workflow.Context, id string, err er
 		return
 	}
 	ectx := s.eventContext(ctx)
-	if ctx.Err() != nil || temporal.IsCanceledError(err) {
+	if ctx.Err() != nil || categoryOf(err).canceled {
 		if taskRun.GetStartedAt() == nil {
 			taskRun.ScheduledAt = nil
 		}
@@ -389,7 +397,7 @@ func (s *runState) failWithHandlers(
 
 	// F2: canceled — today's predicate. No failure handler starts, and every
 	// task still running, failure handlers included, is stopped.
-	if ctx.Err() != nil || (temporal.IsCanceledError(cause) && s.pinLossOf(taskID) == nil) {
+	if ctx.Err() != nil || (categoryOf(cause).canceled && s.pinLossOf(taskID) == nil) {
 		return s.cancelWithHandlers(ctx, cancelRun, inFlight, taskID, cause, failure)
 	}
 
@@ -414,8 +422,20 @@ func (s *runState) failWithHandlers(
 	// F6: fail-fast, minus the handlers. Every in-flight task, item and open
 	// await that is not a failure handler is drained and recorded; every
 	// never-started one becomes CANCELED with the not-a-handler sentence.
+	timedOut := s.runTimeout != nil && runTimeoutCauseCode(cause) == RunTimedOutCode
+	if timedOut {
+		s.runTimeout.timeoutDrain = true
+	}
 	s.cancelInFlight(s.eventContext(ctx), inFlight, s.isFailureHandlerID,
-		func(string) string { return cancelReasonNotAHandler(taskID) })
+		func(string) string {
+			if timedOut {
+				return notStartedReason
+			}
+			return cancelReasonNotAHandler(taskID, s.runCauseText())
+		})
+	if timedOut {
+		s.runTimeout.timeoutDrain = false
+	}
 
 	// F7: the failing note, once, when any handler is still to finish. No
 	// task id: no client may attribute it to the cause's card.
@@ -425,9 +445,12 @@ func (s *runState) failWithHandlers(
 			outstanding = append(outstanding, id)
 		}
 	}
-	if len(outstanding) > 0 {
+	// The run timeout's hard end, decided before the note: a hard end already
+	// passed starts no handler, so the note would be false.
+	s.startHardEnd(ctx)
+	if len(outstanding) > 0 && !s.hardEnded() {
 		if err := s.emit(s.eventContext(ctx), orkstackv1.EventType_EVENT_TYPE_TASK_LOG, "",
-			orkstackv1.Status_STATUS_RUNNING, failingMessage(taskID, outstanding)); err != nil {
+			orkstackv1.Status_STATUS_RUNNING, failingMessage(taskID, s.runCauseText(), outstanding)); err != nil {
 			// The run is already failing for a recorded reason, and the
 			// handlers must still run.
 			workflow.GetLogger(ctx).Error("emit failing note failed",
@@ -448,6 +471,8 @@ func (s *runState) failWithHandlers(
 		}
 		reason := cancelReasonStartUnrecorded
 		switch {
+		case s.hardEnded() && status == orkstackv1.Status_STATUS_PENDING:
+			reason = s.hardEndNotStartedReason()
 		case ctx.Err() != nil:
 			reason = cancelReasonHandlerStopped
 		case status == orkstackv1.Status_STATUS_PENDING:
@@ -472,6 +497,24 @@ func (s *runState) failWithHandlers(
 	// F11.
 	s.awaitPinsClosed(ectx)
 	s.drainResolutions(ectx)
+	// The run timeout's message is built from the final rows, and the
+	// workflow's error carries it, so the closing event and the terminal
+	// snapshot agree.
+	if timedOut {
+		s.runError.Message = s.finalRunTimeoutMessage()
+	}
+	if s.hardEnded() {
+		s.runError.Message = boundEscaped(s.runError.GetMessage()+s.hardEndNote(), needErrorMessageBytes)
+	}
+	if timedOut {
+		cause = runLevelError(RunTimedOutCode, s.runError.GetMessage())
+	} else if s.hardEnded() {
+		// The closing event says what the terminal snapshot says, with the
+		// cause's own type kept.
+		if failure := categoryOf(cause); failure.isApplication() {
+			cause = temporal.NewNonRetryableApplicationError(s.runError.GetMessage(), failure.appType(), nil)
+		}
+	}
 	// F12.
 	if err := s.emit(ectx, orkstackv1.EventType_EVENT_TYPE_RUN_FAILED, taskID, s.status,
 		s.runError.GetMessage()); err != nil {
@@ -547,7 +590,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		s.beginPass()
 		s.settleDetachedPublishes(ctx)
 		ectx := s.eventContext(ctx)
-		stopping := ctx.Err() != nil
+		stopping := ctx.Err() != nil || s.hardEnded()
 		// Only failure handlers can be PENDING here (F6). Declaration order.
 		for _, id := range s.readyTasks() {
 			if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_PENDING {
@@ -556,7 +599,11 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 			}
 			if stopping {
 				s.pendingHandlers--
-				if err := s.markCanceled(ectx, id, cancelReasonHandlerStopped); err != nil {
+				reason := cancelReasonHandlerStopped
+				if ctx.Err() == nil && s.hardEnded() {
+					reason = s.hardEndNotStartedReason()
+				}
+				if err := s.markCanceled(ectx, id, reason); err != nil {
 					workflow.GetLogger(ctx).Error("mark canceled failed",
 						"run_id", s.runID, "task_id", id, "error", err)
 				}
@@ -652,14 +699,32 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
 		}
+		// The run timeout's hard end, after every case above; each case sets
+		// its own marker.
+		hardCanceled, hardFired := false, false
+		if t := s.runTimeout; t != nil && t.hardTimer != nil && !t.hardTaken {
+			selector.AddFuture(t.hardTimer, func(f workflow.Future) {
+				t.hardTaken = true
+				if err := f.Get(ctx, nil); err != nil || ctx.Err() != nil {
+					hardCanceled = true
+				} else {
+					hardFired = true
+				}
+			})
+		}
 		selector.Select(ctx)
 		ectx = s.eventContext(ctx)
 		switch {
+		case hardCanceled:
+			continue // stopping follows from ctx.Err()
+		case hardFired:
+			s.takeHardEnd()
+			continue
 		case woke != "":
 			// A sleeping handler woke and succeeded, or its timer was
 			// cancelled by the operator's cancel and it is recorded CANCELED.
 			if err := s.wake(ectx, woke); err != nil {
-				if !temporal.IsCanceledError(err) {
+				if !categoryOf(err).canceled {
 					workflow.GetLogger(ctx).Error("emit sleep wake failed",
 						"run_id", s.runID, "task_id", woke, "error", err)
 				} else if cancelErr := s.cancelSleeping(ectx, woke); cancelErr != nil {
@@ -672,7 +737,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		case expired != "":
 			// expire always returns an error: the deadline's own failure, or the
 			// cancellation that settled its timer.
-			if err := s.expire(ectx, expired); temporal.IsCanceledError(err) &&
+			if err := s.expire(ectx, expired); categoryOf(err).canceled &&
 				s.taskRuns[expired].GetStatus() == orkstackv1.Status_STATUS_AWAITING {
 				if cancelErr := s.cancelAwaiting(ectx, expired); cancelErr != nil {
 					workflow.GetLogger(ctx).Error("mark canceled failed",
@@ -680,6 +745,9 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				}
 			}
 		default:
+			if selectedID == "" {
+				continue // never collect a nil future
+			}
 			future := inFlight[selectedID]
 			delete(inFlight, selectedID)
 			_ = s.collect(ectx, selectedID, future) // FAILED or SUCCEEDED, recorded; never fail-fast

@@ -62,6 +62,15 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 	extra ...func(w worker.Worker),
 ) *canStack {
 	t.Helper()
+	return startCANStackReading(t, ctx, label, versioned, behavior, nil, extra...)
+}
+
+// startCANStackReading is startCANStack whose run worker calls beforeRead
+// before every chunk of saved state it reads back (nil: none).
+func startCANStackReading(t *testing.T, ctx context.Context, label string, versioned bool, behavior canBehavior,
+	beforeRead func(ctx context.Context, offset int64) error, extra ...func(w worker.Worker),
+) *canStack {
+	t.Helper()
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	var c client.Client
@@ -103,7 +112,11 @@ func startCANStack(t *testing.T, ctx context.Context, label string, versioned bo
 		Interceptors:                engine.RunWorkerInterceptors(),
 	}))
 	engine.RegisterWorkflows(runWorker)
-	registerRunActivities(runWorker, engine.NewSnapshotActivities(snapshots), s.values)
+	activities := engine.NewSnapshotActivities(snapshots)
+	if beforeRead != nil {
+		activities = activities.WithContinuationHooksForTest(nil, beforeRead)
+	}
+	registerRunActivities(runWorker, activities, s.values)
 	for _, register := range extra {
 		register(runWorker)
 	}

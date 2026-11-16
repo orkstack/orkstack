@@ -253,11 +253,60 @@ host. Every other registry is reached over HTTPS (`internal/dsl/reference.go`,
   readable by the Orker's user and root, until the next boot under its identity
   removes them, or an operator does when none comes
   ([DEPLOY.md](DEPLOY.md#what-removes-a-tasks-container)).
-- A secret value never appears in a proto message, in Temporal history, in the
-  archive, in a log chunk or in `task.json`, which carries names and paths only
-  ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §9.4).
+- What the platform itself writes never holds a secret value: no proto
+  message, Temporal history, archive or `task.json`, which carries names and
+  paths only ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §9.4).
+  What a task prints, and what it returns in `values.json`, is held to that
+  only within the limits of masking and of the check below.
 - A cached task resolves no secret on a cache hit. A task that mounts a secret
   should therefore not be cached ([ACTIVITY_IMAGES.md](ACTIVITY_IMAGES.md)).
+  A hit checks nothing: its memo key holds a secret's name and source, never
+  its value, so a result stored before the secret was rotated, or under
+  another `orker.values.refuse_secrets`, is served as it was.
+- What a task prints is masked in its logs, and a result that holds one of its
+  secrets fails the attempt (below).
+
+### Masking and its limits
+
+Every value the Orker resolved for an attempt is masked in both streams,
+replaced by `***` before anything is streamed, stored or exported, unless its
+secret says `mask: false` or the Orker runs with `orker.log.mask_secrets:
+false` ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §3.6). A
+`values.json` that holds one fails `VALUES_CONTAIN_SECRET` (§9.4 there).
+Both are guards against accidents, not a boundary. They do not catch:
+
+1. **A task that means to disclose a value.** It can send it over the
+   network, put it in an artifact, which is never scanned, or transform it
+   first.
+2. **Transformations the masker does not know:** a value reversed,
+   truncated, upper-cased, split across lines or wrapped at a column by the
+   task, interleaved with terminal escape codes, compressed, hashed or
+   encrypted; lowercase percent-encoding (`%2f`), `\uXXXX` escapes of
+   non-ASCII, PHP's `\/` and partial quoting in a log. A value shorter than
+   12 bytes base64-encoded as part of a longer string is not caught, and for
+   a longer one the first and last two characters of the encoding can remain.
+3. **Long values in fewer spellings.** A value of 256 bytes or more is masked
+   raw and as unpadded base64 only, so it is not caught in hex,
+   percent-encoded, JSON-escaped, or inside a larger base64 blob such as a
+   Docker auth config. A value over 64 KiB is masked line by line only.
+4. **Short and common values.** Under 8 bytes nothing is masked or looked
+   for in `values.json`, and the task's log says so. A secret that is a common word is masked everywhere
+   that word appears, which hides log text but discloses nothing.
+5. **Only what the Orker resolved.** A value the image obtained another way,
+   or derived, is unknown to it.
+6. **Logs already written.** Masking applies from the release that has it and
+   rewrites nothing in the store.
+7. **Structure.** A value replaced inside a JSON log line keeps it valid JSON
+   only when the value was a whole string's content.
+8. **How a multi-line value is masked.** Line by line, each line also
+   trimmed, and a PEM block's body also joined into one line. Its armour
+   lines (`-----BEGIN PRIVATE KEY-----`) are no secret and are never masked.
+   A line shorter than 8 bytes is not masked.
+9. **A value printed over and over without a line end.** Past 64 KiB the run
+   is passed on as several `***`, not one.
+10. **The tail of a message the Orker composes.** A failure message that ends
+   in the beginning of a value is masked there only when that beginning is
+   at least 8 bytes; a stream that ends that way is always masked.
 
 ### Which sources may be named
 
@@ -453,7 +502,12 @@ plain-HTTP routes that face outside callers, trigger invoke and the await
 callback, are their own ([DEPLOY.md](DEPLOY.md), "Ops notes").
 
 `enforce` does not bound a stolen Orker: its Temporal and storage credentials
-reach the cluster and the bucket without the API.
+reach the cluster and the bucket without the API. A storage credential limited
+to the Orker's own prefixes at least keeps it from the access document and the
+definitions; each Orker checks its own credential and reports whether it is
+held there, and the engine logs every Orker that is not
+([DEPLOY.md](DEPLOY.md), "An Orker's own storage credential"). The check is a
+report: the store enforces the policy, an operator configures it.
 
 ### The principal is verified or asserted, and says which
 

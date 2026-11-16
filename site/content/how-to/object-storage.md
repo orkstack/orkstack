@@ -70,10 +70,17 @@ To use a role:
 4. On Kubernetes, create the `orkstack-s3` Secret with no keys, and bind the role to the pod's service account.
 5. Keep tasks away from the role. A task's container can reach the host's instance metadata service unless the host stops it. On EC2, require IMDSv2 with a hop limit of 1.
 
+## Give each Orker its own credential
+
+An Orker needs only its own prefixes: artifacts, commits, memos, logs, attempt records and its probes. Give each Orker a credential limited to those, keep the broader one for `ork`, then rotate the credential they shared. A credential that can write the control plane's objects can write itself a role.
+
+Each Orker checks its own credential at boot and every hour, and says whether it is scoped. Every engine logs, once a minute, each Orker that is not. The check never stops an Orker. The policy for AWS S3 is in DEPLOY.md.
+
 ## See also
 
 - [DEPLOY.md, "The bucket stops being optional at the second replica"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-bucket-stops-being-optional-at-the-second-replica): the shared bucket, and the settings on both binaries
 - [DEPLOY.md, "The object store's credentials"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-object-stores-credentials): static keys, the default credential chain, and using a role
+- [DEPLOY.md, "An Orker's own storage credential"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#an-orkers-own-storage-credential): the prefixes an Orker needs, the policy for AWS S3, and the scope check
 - [DEPLOY.md, "Retention cleanup and bucket lifecycle rules"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules): lifecycle rules, and the prefixes not to expire
 - [STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md): what OrkStack persists, and the key layout
 - [STORAGE.md, "Backends"](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#backends): the two backends

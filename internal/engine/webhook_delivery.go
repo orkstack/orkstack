@@ -132,17 +132,15 @@ func WebhookDeliveryWorkflow(ctx workflow.Context, in WebhookDeliveryInput) erro
 func unsentWebhookResult(in WebhookDeliveryInput, cause error, now time.Time) webhooks.Result {
 	result := webhooks.NewResult(webhooks.Webhook{ID: in.WebhookID}, in.Delivery, nil)
 	result.BodySHA256, result.BodyBytes, result.Signature = in.BodySHA256, in.BodyBytes, ""
-	var timeout *temporal.TimeoutError
-	if errors.As(cause, &timeout) && timeout.HasLastHeartbeatDetails() {
-		var attempts []webhooks.Attempt
-		if timeout.LastHeartbeatDetails(&attempts) == nil {
-			result.Attempts = attempts
-		}
+	failure := categoryOf(cause)
+	var attempts []webhooks.Attempt
+	if failure.heartbeatDetails(&attempts) {
+		result.Attempts = attempts
 	}
 	// The record is user-facing: it names what happened in OrkStack's words,
 	// never the cluster's error (AGENTS.md §7).
 	reason := "the last attempt ended without reporting its outcome"
-	if timeout != nil {
+	if failure.timedOut() {
 		reason = fmt.Sprintf("the last attempt did not finish within %s", in.Policy.AttemptTimeout)
 	}
 	result.Attempts = append(result.Attempts, webhooks.Attempt{

@@ -10,6 +10,7 @@ import (
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	structpb "google.golang.org/protobuf/types/known/structpb"
+	timestamppb "google.golang.org/protobuf/types/known/timestamppb"
 	reflect "reflect"
 	sync "sync"
 	unsafe "unsafe"
@@ -377,10 +378,14 @@ func (x *Error) GetTaskCode() string {
 	return ""
 }
 
-// AsksFor is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
+// AsksFor is what a schedule's or a trigger's Orkflow asks for, as a
+// consent's digest (docs/ORKFLOW_SCHEDULES.md, "Who a schedule runs as").
+// In this release no Orkflow asks for an identity, so it is the empty table's.
 type AsksFor struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// digest is the consent digest of what the Orkflow asks for: "c1:" and 64
+	// hexadecimal digits.
+	Digest        string `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -415,10 +420,21 @@ func (*AsksFor) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_common_proto_rawDescGZIP(), []int{3}
 }
 
-// ConsentView is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
+func (x *AsksFor) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+// ConsentView is the consent a schedule or a trigger records with its
+// binder: the digest of what its Orkflow asked for when it was bound.
 type ConsentView struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// digest is the consent digest recorded: "c1:" and 64 hexadecimal digits.
+	Digest string `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	// at is when it was recorded.
+	At            *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -453,11 +469,25 @@ func (*ConsentView) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_common_proto_rawDescGZIP(), []int{4}
 }
 
+func (x *ConsentView) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *ConsentView) GetAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.At
+	}
+	return nil
+}
+
 var File_orkstack_v1_common_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\n" +
-	"\x18orkstack/v1/common.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\"\x8e\x02\n" +
+	"\x18orkstack/v1/common.proto\x12\vorkstack.v1\x1a\x1cgoogle/protobuf/struct.proto\x1a\x1fgoogle/protobuf/timestamp.proto\"\x8e\x02\n" +
 	"\vArtifactRef\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x10\n" +
 	"\x03uri\x18\x02 \x01(\tR\x03uri\x12!\n" +
@@ -477,9 +507,12 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\adetails\x18\x03 \x01(\tR\adetails\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\x128\n" +
 	"\bcategory\x18\x05 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory\x12\x1b\n" +
-	"\ttask_code\x18\x06 \x01(\tR\btaskCode\"\t\n" +
-	"\aAsksFor\"\r\n" +
-	"\vConsentView*\xc4\x01\n" +
+	"\ttask_code\x18\x06 \x01(\tR\btaskCode\"!\n" +
+	"\aAsksFor\x12\x16\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\"Q\n" +
+	"\vConsentView\x12\x16\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\x12*\n" +
+	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at*\xc4\x01\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x12\n" +
@@ -514,25 +547,27 @@ func file_orkstack_v1_common_proto_rawDescGZIP() []byte {
 var file_orkstack_v1_common_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
 var file_orkstack_v1_common_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_orkstack_v1_common_proto_goTypes = []any{
-	(Status)(0),             // 0: orkstack.v1.Status
-	(FailureCategory)(0),    // 1: orkstack.v1.FailureCategory
-	(*ArtifactRef)(nil),     // 2: orkstack.v1.ArtifactRef
-	(*Payload)(nil),         // 3: orkstack.v1.Payload
-	(*Error)(nil),           // 4: orkstack.v1.Error
-	(*AsksFor)(nil),         // 5: orkstack.v1.AsksFor
-	(*ConsentView)(nil),     // 6: orkstack.v1.ConsentView
-	nil,                     // 7: orkstack.v1.ArtifactRef.MetadataEntry
-	(*structpb.Struct)(nil), // 8: google.protobuf.Struct
+	(Status)(0),                   // 0: orkstack.v1.Status
+	(FailureCategory)(0),          // 1: orkstack.v1.FailureCategory
+	(*ArtifactRef)(nil),           // 2: orkstack.v1.ArtifactRef
+	(*Payload)(nil),               // 3: orkstack.v1.Payload
+	(*Error)(nil),                 // 4: orkstack.v1.Error
+	(*AsksFor)(nil),               // 5: orkstack.v1.AsksFor
+	(*ConsentView)(nil),           // 6: orkstack.v1.ConsentView
+	nil,                           // 7: orkstack.v1.ArtifactRef.MetadataEntry
+	(*structpb.Struct)(nil),       // 8: google.protobuf.Struct
+	(*timestamppb.Timestamp)(nil), // 9: google.protobuf.Timestamp
 }
 var file_orkstack_v1_common_proto_depIdxs = []int32{
 	7, // 0: orkstack.v1.ArtifactRef.metadata:type_name -> orkstack.v1.ArtifactRef.MetadataEntry
 	8, // 1: orkstack.v1.Payload.data:type_name -> google.protobuf.Struct
 	1, // 2: orkstack.v1.Error.category:type_name -> orkstack.v1.FailureCategory
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	9, // 3: orkstack.v1.ConsentView.at:type_name -> google.protobuf.Timestamp
+	4, // [4:4] is the sub-list for method output_type
+	4, // [4:4] is the sub-list for method input_type
+	4, // [4:4] is the sub-list for extension type_name
+	4, // [4:4] is the sub-list for extension extendee
+	0, // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_common_proto_init() }

@@ -421,3 +421,47 @@ func TestOrkerObserver_CountsAnAttemptWhoseDirectoryWasLeftOnDisk(t *testing.T) 
 		t.Fatalf("ork.orker.workspace_cleanup_failures = %d; want 1", dp.Value)
 	}
 }
+
+// TestOrkerObserver_RecordsAnAttemptsMasking: occurrences by stream, the
+// set's size, and a capacity refusal; an attempt with nothing masked records
+// no occurrence.
+func TestOrkerObserver_RecordsAnAttemptsMasking(t *testing.T) {
+	providers, _, reader := newObserverProviders(t)
+	obs := NewOrkerObserverForSinks(newSinksForTest(providers, nil), nil)
+
+	_, masked := obs.Begin(context.Background(), inputForSink("", nil), 1)
+	masked.End(orker.AttemptOutcome{Mask: orker.MaskStats{
+		Occurrences: 5, ByStream: map[string]int64{orker.StreamStdout: 3, orker.StreamStderr: 2}, Forms: 12, Bytes: 400,
+	}})
+	_, refused := obs.Begin(context.Background(), inputForSink("", nil), 1)
+	refused.End(orker.AttemptOutcome{Reason: orker.ReasonMaskCapacityExceeded})
+
+	var rm metricdata.ResourceMetrics
+	must.OKf(t, reader.Collect(context.Background(), &rm), "Collect")
+	byStream := map[string]int64{}
+	sawForms := false
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			switch m.Name {
+			case "ork.log.masked":
+				for _, dp := range m.Data.(metricdata.Sum[int64]).DataPoints {
+					stream, _ := dp.Attributes.Value(AttrStream)
+					byStream[stream.AsString()] += dp.Value
+				}
+			case "ork.log.mask.forms":
+				for _, dp := range m.Data.(metricdata.Histogram[int64]).DataPoints {
+					sawForms = dp.Count == 1 && dp.Sum == 12
+				}
+			}
+		}
+	}
+	if byStream[orker.StreamStdout] != 3 || byStream[orker.StreamStderr] != 2 {
+		t.Fatalf("ork.log.masked by stream = %v; want stdout 3, stderr 2", byStream)
+	}
+	if !sawForms {
+		t.Fatal("ork.log.mask.forms did not record the one attempt's 12 forms")
+	}
+	if dp := onlySumPoint(t, rm, "ork.log.mask.capacity_exceeded"); dp.Value != 1 {
+		t.Fatalf("ork.log.mask.capacity_exceeded = %d; want 1", dp.Value)
+	}
+}

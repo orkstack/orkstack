@@ -23,6 +23,7 @@ check among them, reads the same keys ([ACCESS.md](ACCESS.md#how-a-request-is-de
 | `outputs`     | no       | Declared return contract: name to template (see below). |
 | `pins`        | no       | Declared task pins (see below).                        |
 | `shared_with` | no       | Other namespaces' Orkflows that may compose this one (see "Sharing across namespaces"). |
+| `timeout`     | no       | optional: a Go duration, 10s to 8760h, bounding the whole run (see "Run timeout"). |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
 `orkctl orkflow create` and `orkctl automation apply` each read a file's `kind:`
@@ -463,6 +464,7 @@ tasks:
     secrets:              # resolved to read-only files, never embedded values
       - name: api-token
         source: env:API_TOKEN
+        mask: true        # optional: `false` leaves the value unmasked in the task's logs
     resources:            # request; Orker policy supplies defaults and caps
       cpu: "2"
       memory: 4Gi
@@ -519,7 +521,11 @@ templated value is never typed. An image without the label is not checked.
 only variables supplied to the workload; OrkStack's required context travels
 as files. Each `secrets` item names the file exposed under
 `/orkstack/input/secrets` and the Orker-specific source used to resolve it.
-Secret values never enter this YAML or Temporal history. A namespace may bound
+Secret values never enter this YAML or Temporal history. A value the task
+prints is masked as `***` in its logs, and a `values.json` that holds one
+fails the attempt `VALUES_CONTAIN_SECRET`; `mask: false` on a secret does
+neither, for a value that is configuration delivered as a secret
+([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §3.6 and §9.4). A namespace may bound
 which `source:` values its tasks may name (`allowed_secrets`, shown by
 `orkctl namespace get`), and a source outside that bound is refused at
 validate, create and submit. The Orker that runs the task refuses at dispatch,
@@ -1765,6 +1771,59 @@ Computing — formatting, arithmetic, a decision — is a task's job, never a
 template's: see `docs/ORKFLOW_PATTERNS.md`, "The rule: the platform moves data,
 tasks compute".
 
+## Run timeout (`timeout:`)
+
+`timeout:` is a top-level key that bounds a whole run's time:
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: nightly-etl
+timeout: 6h
+tasks:
+  - id: extract
+    uses: ghcr.io/acme/extract:2
+```
+
+- The value is a Go duration written as a string: `90s`, `45m`, `6h`,
+  `1h30m`, `720h`. There is no `d` unit.
+- It is whole seconds, from `10s` to `8760h` (365 days).
+- An integer is refused (`timeout: 3600`): the run's timeout is a duration such
+  as `3600s` or `1h`, where a task's `timeout_seconds:` is an integer of
+  seconds. `null`, `""`, `0s` and a negative value are refused too; a run with
+  no time limit omits the key.
+- It is part of the definition digest, written in its short form, so `6h` and
+  `360m` are one definition; an Orkflow that omits it keeps its digest. It is
+  not part of the declared interface (`inputs:` and `outputs:`), so changing it
+  is never a breaking promotion.
+
+What the run does with it:
+
+- **The clock** starts when the run starts. Its deadline is the start plus
+  the timeout, shown on the run (`Run.timeout.deadline`) from its
+  `RUN_STARTED` event on, and kept when a long run carries on, so a run never
+  gets more time by carrying on. A child run of a composed task has only its
+  own Orkflow's `timeout:`, never its parent's.
+- **At the deadline** a run that is not already failing fails
+  `RUN_TIMED_OUT` (category `TimedOut`), with a terminal event and an
+  archive like any other failure: every task still running, waiting or
+  sleeping is stopped and recorded `FAILED` `TASK_STOPPED_BY_RUN_TIMEOUT`,
+  and every task that had not started is `CANCELED`. A result committed
+  before the deadline is kept.
+- **Failure handlers** (`join: any_failed` or `all_done`) still run after
+  the deadline, until the run's hard end: the deadline plus the deployment's
+  handler grace (`engine.run_timeout_handler_grace`, ten minutes by default,
+  `docs/DEPLOY.md` §1). At the hard end a handler still running is stopped
+  `CANCELED` and one not yet started never starts. A run that was already
+  failing when the deadline passed keeps its own cause, and its handlers
+  stop at the same hard end.
+- **An operator's cancel** wins: a run cancelled as its deadline falls due
+  ends `CANCELED`.
+- A run timeout needs every engine process of the deployment to run a
+  release that enforces one: a submit is refused `FAILED_PRECONDITION` while
+  one does not (`docs/DEPLOY.md` §5, "Engine capabilities and the fleet
+  check").
+
 ## Planning a run (`orkctl run plan`)
 
 `orkctl run plan NAME` (or `--file DOC` for an unapplied document), and the
@@ -2033,6 +2092,12 @@ How each node reads:
     `each.over` reads a sleeping task, which produces no values and no
     artifacts: `.tasks.<sleep>…`, `index .tasks "<sleep>"` and
     `artifact "<sleep>/…"` are refused.
+52. `timeout`, when present, is a string Go duration of whole seconds between
+    `10s` and `8760h` (field `timeout`): `timeout: "<value>" is not a duration
+    such as 30m or 6h`, `timeout: <value> must be a whole number of seconds`
+    and `timeout: <value> is outside 10s … 8760h; omit timeout: for a run with
+    no time limit`. An integer, `null`, an empty string, a tag or an anchor is
+    refused.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

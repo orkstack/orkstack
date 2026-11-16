@@ -191,7 +191,14 @@ message GetOrkflowRequest {
   string namespace = 3;                  // empty = the default namespace
 }
 
-message GetOrkflowResponse { Orkflow orkflow = 1; }
+message GetOrkflowResponse {
+  Orkflow orkflow = 1;
+  // orkflow_id is the Orkflow's immutable id: one deleted and created again
+  // under its name has another one, and a binding pinned to this one does not
+  // match it (docs/ACCESS.md, "Pinned bindings"). Empty when none was made
+  // yet. Opaque: nothing parses it. Output only.
+  string orkflow_id = 2;
+}
 
 message ListOrkflowsRequest {
   option (orkstack.v1.filterable) = {

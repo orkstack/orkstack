@@ -114,6 +114,12 @@ const (
 // changes this default moves only new runs.
 const DefaultPinCreationTimeout = 5 * time.Minute
 
+// DefaultRunTimeoutHandlerGrace is engine.run_timeout_handler_grace's
+// default: how long after a run's deadline its failure handlers may still
+// run. Pinned, in whole seconds, into the plan of every run whose definition
+// declares a run timeout (RunPlan.RunTimeout).
+const DefaultRunTimeoutHandlerGrace = 10 * time.Minute
+
 // DefaultRetryMaxInterval is the longest wait between two attempts of a task
 // whose retry: sets no maximum_interval_seconds: one minute, AGENTS.md §4's
 // suggested maximum interval. Every build before it hardcoded 100 seconds; a

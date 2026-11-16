@@ -36,7 +36,27 @@ orkctl run submit config-from-git -i repo=https://git.example.com/acme/app.git -
 - `name` matches `^[A-Za-z0-9._-]{1,128}$`. It cannot be `.` or `..`.
 - `source` is `env:NAME` to read a variable on the Orker, or `file:/path` to read a file on the Orker's host. A `file:` path is absolute, has no `..`, `.` or empty segment, and is at most 4096 bytes.
 - The task reads the secret at `/orkstack/input/secrets/<name>`. The file is read-only, and it holds the exact bytes.
-- The Orker resolves each secret when it starts the attempt. The value never appears in the Orkflow, the run's history, logs or `task.json`.
+- The Orker resolves each secret when it starts the attempt. The value never appears in the Orkflow, the run's history or `task.json`.
+
+## Masking in logs
+
+If the task prints a secret, its logs show `***` instead. That covers the live log, `stdout.log` and `stderr.log`, exported logs and failure messages, and the value's base64, hex and URL-encoded forms too.
+
+- A value shorter than 8 bytes is not masked. The task's log says so.
+- `mask: false` on a secret leaves it unmasked. Use it only for configuration that is delivered as a secret.
+- An operator can turn masking off on every Orker of a pool with `orker.log.mask_secrets: false`.
+- Masking catches accidents. A task that reverses, splits or encrypts a value gets it past the mask.
+
+```yaml
+    secrets:
+      - name: region-config
+        source: file:/etc/orkstack/tasks/region
+        mask: false
+```
+
+## Do not return a secret
+
+A task whose `values.json` holds one of its own secrets fails `VALUES_CONTAIN_SECRET`, and nothing is stored. A result is kept in the run's history, where anyone who reads the run sees it. Return the secret's name, or put the value in an artifact for a reader who may see it. `orker.values.refuse_secrets: false` turns the check off.
 
 ## Allow a source
 
@@ -73,6 +93,8 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 | `SECRET_NOT_PERMITTED` | ContractViolation | The source is outside the Orker's floor, or is one of the Orker's own. | no |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | The Orker does not read that kind of source. | no |
 | `SECRET_UNRESOLVED` | InfrastructureError | The variable is unset, or the file cannot be read. | yes |
+| `VALUES_CONTAIN_SECRET` | ContractViolation | `values.json` holds one of the task's secrets. | no |
+| `MASK_CAPACITY_EXCEEDED` | ContractViolation | The task's secrets are too many or too large to mask. The container did not start. | no |
 
 ## Limits
 
@@ -82,6 +104,7 @@ In [`examples/poll-until-ready.ork.yaml`](https://github.com/orkstack/orkstack/b
 ## See also
 
 - [Security model, “Secrets”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#secrets): how values are resolved and kept out of records
+- [Security model, “Masking and its limits”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#masking-and-its-limits): what masking catches and what it does not
 - [Security model, “Which sources may be named”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#which-sources-may-be-named): the two lists in full
 - [Security model, “The Orker's own sources”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#the-orkers-own-sources): what no floor admits, and why
 - [Security model, “Environment values are configuration”](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#environment-values-are-configuration): what `env:` may and may not hold

@@ -356,21 +356,27 @@ func (ProfileKind) EnumDescriptor() ([]byte, []int) {
 	return file_orkstack_v1_activity_proto_rawDescGZIP(), []int{5}
 }
 
-// ResultsScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
-// (v0.4.0 proto batch).
+// ResultsScope is how far an Orker's storage credential reaches among
+// results: every namespace's, or only named namespaces'.
 type ResultsScope int32
 
 const (
-	ResultsScope_RESULTS_SCOPE_UNSPECIFIED ResultsScope = 0
+	ResultsScope_RESULTS_SCOPE_UNSPECIFIED     ResultsScope = 0
+	ResultsScope_RESULTS_SCOPE_EVERY_NAMESPACE ResultsScope = 1
+	ResultsScope_RESULTS_SCOPE_BY_NAMESPACE    ResultsScope = 2
 )
 
 // Enum value maps for ResultsScope.
 var (
 	ResultsScope_name = map[int32]string{
 		0: "RESULTS_SCOPE_UNSPECIFIED",
+		1: "RESULTS_SCOPE_EVERY_NAMESPACE",
+		2: "RESULTS_SCOPE_BY_NAMESPACE",
 	}
 	ResultsScope_value = map[string]int32{
-		"RESULTS_SCOPE_UNSPECIFIED": 0,
+		"RESULTS_SCOPE_UNSPECIFIED":     0,
+		"RESULTS_SCOPE_EVERY_NAMESPACE": 1,
+		"RESULTS_SCOPE_BY_NAMESPACE":    2,
 	}
 )
 
@@ -401,21 +407,32 @@ func (ResultsScope) EnumDescriptor() ([]byte, []int) {
 	return file_orkstack_v1_activity_proto_rawDescGZIP(), []int{6}
 }
 
-// StoreScope is identity (E62)'s; it holds only its zero value until identity (E62) lands
-// (v0.4.0 proto batch).
+// StoreScope is an Orker's verdict on its own storage credential: scoped
+// when a round of its scope check found every control-plane prefix refused,
+// unscoped when one reached, unknown while no round has ended either way or
+// a scoped verdict has lapsed. It never cordons an Orker.
 type StoreScope int32
 
 const (
 	StoreScope_STORE_SCOPE_UNSPECIFIED StoreScope = 0
+	StoreScope_STORE_SCOPE_SCOPED      StoreScope = 1
+	StoreScope_STORE_SCOPE_UNSCOPED    StoreScope = 2
+	StoreScope_STORE_SCOPE_UNKNOWN     StoreScope = 3
 )
 
 // Enum value maps for StoreScope.
 var (
 	StoreScope_name = map[int32]string{
 		0: "STORE_SCOPE_UNSPECIFIED",
+		1: "STORE_SCOPE_SCOPED",
+		2: "STORE_SCOPE_UNSCOPED",
+		3: "STORE_SCOPE_UNKNOWN",
 	}
 	StoreScope_value = map[string]int32{
 		"STORE_SCOPE_UNSPECIFIED": 0,
+		"STORE_SCOPE_SCOPED":      1,
+		"STORE_SCOPE_UNSCOPED":    2,
+		"STORE_SCOPE_UNKNOWN":     3,
 	}
 )
 
@@ -742,7 +759,9 @@ type SecretRef struct {
 	Grant string `protobuf:"bytes,3,opt,name=grant,proto3" json:"grant,omitempty"`
 	// ciphertext is set from identity (E84); unset until it lands (v0.4.0 proto batch).
 	Ciphertext string `protobuf:"bytes,4,opt,name=ciphertext,proto3" json:"ciphertext,omitempty"`
-	// unmasked is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+	// unmasked is the DSL's `mask: false`: the value is neither masked in the
+	// task's logs nor looked for in its values.json. Absent means masked. A
+	// value is unmasked only when every secret holding it says so.
 	Unmasked      bool `protobuf:"varint,5,opt,name=unmasked,proto3" json:"unmasked,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -2955,7 +2974,8 @@ type DescribeOrkerResult struct {
 	IdentitySupported bool `protobuf:"varint,33,opt,name=identity_supported,json=identitySupported,proto3" json:"identity_supported,omitempty"`
 	// providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
 	Providers []*ProviderInfo `protobuf:"bytes,34,rep,name=providers,proto3" json:"providers,omitempty"`
-	// masks_secrets is set from identity (E84); unset until it lands (v0.4.0 proto batch).
+	// masks_secrets is whether this Orker masks a task's secrets in its logs
+	// (orker.log.mask_secrets). It reads secrets[].unmasked either way.
 	MasksSecrets bool `protobuf:"varint,35,opt,name=masks_secrets,json=masksSecrets,proto3" json:"masks_secrets,omitempty"`
 	// metadata_reachable is every address in metadata_probes that answered.
 	// Empty when none did, or when no probe ran (orker.metadata_probe off).
@@ -2969,13 +2989,20 @@ type DescribeOrkerResult struct {
 	// identity"). Empty when orker.metadata_probe is off, and from an Orker
 	// built before the probe existed.
 	MetadataProbes []*MetadataProbe `protobuf:"bytes,37,rep,name=metadata_probes,json=metadataProbes,proto3" json:"metadata_probes,omitempty"`
-	// store_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// store_scope is this Orker's verdict on its own storage credential, from
+	// its scope check (docs/DEPLOY.md, "An Orker's own storage credential").
+	// Unspecified for an Orker that never ran the check (an older build).
 	StoreScope StoreScope `protobuf:"varint,38,opt,name=store_scope,json=storeScope,proto3,enum=orkstack.v1.StoreScope" json:"store_scope,omitempty"`
-	// store_scope_detail is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// store_scope_detail is the last round's result: the first prefix the
+	// credential reached, or the store's code for an unclear answer. It never
+	// holds a credential.
 	StoreScopeDetail string `protobuf:"bytes,39,opt,name=store_scope_detail,json=storeScopeDetail,proto3" json:"store_scope_detail,omitempty"`
-	// store_scope_confirmed_at is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// store_scope_confirmed_at is when a round of the scope check last ended
+	// scoped; unset when none has.
 	StoreScopeConfirmedAt *timestamppb.Timestamp `protobuf:"bytes,40,opt,name=store_scope_confirmed_at,json=storeScopeConfirmedAt,proto3" json:"store_scope_confirmed_at,omitempty"`
-	// results_scope is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// results_scope is what the check's results request found: whether this
+	// credential may write every namespace's results or only named ones. It
+	// decides nothing.
 	ResultsScope ResultsScope `protobuf:"varint,41,opt,name=results_scope,json=resultsScope,proto3,enum=orkstack.v1.ResultsScope" json:"results_scope,omitempty"`
 	// service_host is set from E90; unset until it lands (v0.4.0 proto batch).
 	ServiceHost   *ServiceHost `protobuf:"bytes,42,opt,name=service_host,json=serviceHost,proto3" json:"service_host,omitempty"`
@@ -4627,12 +4654,17 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	" METADATA_PROBE_OUTCOME_NO_ANSWER\x10\x02\x12'\n" +
 	"#METADATA_PROBE_OUTCOME_PROBE_FAILED\x10\x03*+\n" +
 	"\vProfileKind\x12\x1c\n" +
-	"\x18PROFILE_KIND_UNSPECIFIED\x10\x00*-\n" +
+	"\x18PROFILE_KIND_UNSPECIFIED\x10\x00*p\n" +
 	"\fResultsScope\x12\x1d\n" +
-	"\x19RESULTS_SCOPE_UNSPECIFIED\x10\x00*)\n" +
+	"\x19RESULTS_SCOPE_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dRESULTS_SCOPE_EVERY_NAMESPACE\x10\x01\x12\x1e\n" +
+	"\x1aRESULTS_SCOPE_BY_NAMESPACE\x10\x02*t\n" +
 	"\n" +
 	"StoreScope\x12\x1b\n" +
-	"\x17STORE_SCOPE_UNSPECIFIED\x10\x00B\xa9\x01\n" +
+	"\x17STORE_SCOPE_UNSPECIFIED\x10\x00\x12\x16\n" +
+	"\x12STORE_SCOPE_SCOPED\x10\x01\x12\x18\n" +
+	"\x14STORE_SCOPE_UNSCOPED\x10\x02\x12\x17\n" +
+	"\x13STORE_SCOPE_UNKNOWN\x10\x03B\xa9\x01\n" +
 	"\x0fcom.orkstack.v1B\rActivityProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (

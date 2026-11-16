@@ -141,12 +141,11 @@ func refuseFire(ctx workflow.Context, msg string, cause error) error {
 // innermost application error's own message (the submit refusal, verbatim),
 // or the error's text when there is none.
 func refusalMessage(err error) string {
-	var app *temporal.ApplicationError
-	if errors.As(err, &app) && app.Message() != "" {
-		return app.Message()
+	failure := categoryOf(err)
+	if message := failure.appMessage(); message != "" {
+		return message
 	}
-	var timeout *temporal.TimeoutError
-	if errors.As(err, &timeout) {
+	if failure.timedOut() {
 		return fmt.Sprintf("prepare did not finish within %s: %v", prepareScheduledRunScheduleToClose, err)
 	}
 	return err.Error()

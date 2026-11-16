@@ -261,6 +261,15 @@ func (w *MaskWriter) Err() error {
 	return w.err
 }
 
+// Masked is how many runs of bytes the writer has replaced so far: each
+// MaskReplacement it passed on. A run cut at the held bound counts once for
+// each part. It says how often, never what or where.
+func (w *MaskWriter) Masked() int64 {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.st.masked
+}
+
 // Close masks what the stream still holds, passes it on, and detaches the
 // writer from its masker. It returns the writer's first error, so a stream
 // that lost output says so at its end. It does not close the underlying
@@ -331,6 +340,8 @@ type maskStream struct {
 	// keep them masked.
 	cut    int64
 	hasCut bool
+	// masked counts the replacements passed on.
+	masked int64
 }
 
 // maskRun is the bytes [start, end] that lie inside an occurrence.
@@ -432,6 +443,7 @@ func (s *maskStream) appendEmit(out []byte, all bool) []byte {
 		r := s.runs[i]
 		out = append(out, s.buf[at-s.base:r.start-s.base]...)
 		out = append(out, MaskReplacement...)
+		s.masked++
 		if r.end >= until {
 			// A run cut at the bound: its rest stays held, masked, a swap
 			// included.

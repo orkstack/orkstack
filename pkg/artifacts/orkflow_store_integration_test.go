@@ -565,3 +565,41 @@ func TestS3OrkflowStore_DeleteRemovesEveryVersionAndPointerWithoutCrossingNamesp
 		t.Errorf("second Delete(default/%s) = %v, want ErrNotFound", name, err)
 	}
 }
+
+// TestS3OrkflowStore_IncarnationIsTheHeadsSince: an orkflow's incarnation is
+// its head's since, held across versions; a delete ends it, and the next
+// first version begins another.
+func TestS3OrkflowStore_IncarnationIsTheHeadsSince(t *testing.T) {
+	store, _ := newS3OrkflowStore(t)
+	ctx := context.Background()
+	name := testOrkflowName(t)
+	if _, ok, err := store.Incarnation(ctx, artifacts.DefaultNamespace, name); err != nil || ok {
+		t.Fatalf("before any version ok=%v err=%v", ok, err)
+	}
+	applied := time.Now().UTC().Truncate(time.Millisecond)
+	if _, _, err := store.Put(ctx, testOrkflow(t, name, "1.0.0", applied), artifacts.NoHeadExpectation()); err != nil {
+		t.Fatal(err)
+	}
+	since, ok, err := store.Incarnation(ctx, artifacts.DefaultNamespace, name)
+	if err != nil || !ok || since.IsZero() {
+		t.Fatalf("after the first version = %v, %v, %v", since, ok, err)
+	}
+	if _, _, err := store.Put(ctx, testOrkflow(t, name, "1.1.0", applied.Add(time.Second)), artifacts.NoHeadExpectation()); err != nil {
+		t.Fatal(err)
+	}
+	if again, _, _ := store.Incarnation(ctx, artifacts.DefaultNamespace, name); !again.Equal(since) {
+		t.Fatalf("a later version moved the incarnation from %v to %v", since, again)
+	}
+	if err := store.Delete(ctx, artifacts.DefaultNamespace, name); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, _ := store.Incarnation(ctx, artifacts.DefaultNamespace, name); ok {
+		t.Fatal("a deleted orkflow still has an incarnation")
+	}
+	if _, _, err := store.Put(ctx, testOrkflow(t, name, "1.0.0", applied.Add(2*time.Second)), artifacts.NoHeadExpectation()); err != nil {
+		t.Fatal(err)
+	}
+	if next, ok, _ := store.Incarnation(ctx, artifacts.DefaultNamespace, name); !ok || next.Equal(since) {
+		t.Fatalf("the re-created orkflow's incarnation = %v, %v (old %v)", next, ok, since)
+	}
+}

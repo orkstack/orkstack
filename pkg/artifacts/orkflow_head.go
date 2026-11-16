@@ -365,3 +365,16 @@ func (s *S3OrkflowStore) swapHead(
 	}
 	return nil
 }
+
+// Incarnation says which incarnation an orkflow is: the instant its head
+// pointer says it began (zero for a head an earlier release wrote before
+// heads recorded one). ok is false when no head pointer is stored: no such
+// orkflow, or one whose first apply has not committed its head yet, which
+// has no settled incarnation to name.
+func (s *S3OrkflowStore) Incarnation(ctx context.Context, namespace, name string) (since time.Time, ok bool, err error) {
+	pointer, etag, err := s.readHead(ctx, namespace, name)
+	if err != nil || etag == "" {
+		return time.Time{}, false, err
+	}
+	return pointer.Since, true, nil
+}

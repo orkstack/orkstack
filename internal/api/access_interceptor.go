@@ -179,14 +179,23 @@ func (a *AccessControl) decide(ctx context.Context, s *Service, procedure string
 	}
 	policy, unavailable := a.policy(ctx)
 	deep := map[*resolver]authz.Resource{}
+	// resolve answers a resource with the ids of the incarnation it names
+	// when a pinned binding could tell incarnations apart (withIDs).
 	resolve := func(r *resolver, shallow bool) (authz.Resource, error) {
 		if shallow || r.deep == nil {
-			return r.shallow(msg)
+			res, err := r.shallow(msg)
+			if err != nil {
+				return res, err
+			}
+			return s.withIDs(ctx, policy, res)
 		}
 		if res, ok := deep[r]; ok {
 			return res, nil
 		}
 		res, err := r.deep(ctx, s, msg)
+		if err == nil {
+			res, err = s.withIDs(ctx, policy, res)
+		}
 		if err == nil {
 			deep[r] = res
 		}
@@ -246,7 +255,7 @@ func (a *AccessControl) decide(ctx context.Context, s *Service, procedure string
 		}
 		if err != nil && i == 0 && row.list != nil && subject != nil {
 			// A list a caller holds part of: its own rows, or its filter.
-			ok, lerr := a.listAdmits(row.list, msg, subject, policy, c.perm)
+			ok, lerr := a.listAdmits(ctx, s, row.list, msg, subject, policy, c.perm)
 			if ok {
 				adm.filterRows = row.list.rows != ""
 				adm.checks = append(adm.checks, resolvedCheck{perm: c.perm, resource: res})
@@ -293,7 +302,7 @@ func (a *AccessControl) decide(ctx context.Context, s *Service, procedure string
 // caller's rows; a list paged by a key walk or a cursor that names its last
 // row must carry a filter whose every value the caller may read, so no page
 // and no cursor ever names a row the caller may not see.
-func (a *AccessControl) listAdmits(l *listRule, msg proto.Message, subject *authz.Subject, policy *authz.Policy, perm authz.Permission) (bool, error) {
+func (a *AccessControl) listAdmits(ctx context.Context, s *Service, l *listRule, msg proto.Message, subject *authz.Subject, policy *authz.Policy, perm authz.Permission) (bool, error) {
 	if l.filterField == "" {
 		// The caller's rows only, and only where it holds something: a
 		// caller who holds nothing in the namespace learns nothing of it,
@@ -311,7 +320,11 @@ func (a *AccessControl) listAdmits(l *listRule, msg proto.Message, subject *auth
 				authz.ReasonPermissionDenied, perm, l.filterField))
 	}
 	for _, v := range values {
-		if _, err := authz.Authorize(authz.Request{Action: authz.Action(perm), Subject: subject, Resource: l.filterResource(msg, v), Policy: policy}); err != nil {
+		res, err := s.withIDs(ctx, policy, l.filterResource(msg, v))
+		if err != nil {
+			return false, err
+		}
+		if _, err := authz.Authorize(authz.Request{Action: authz.Action(perm), Subject: subject, Resource: res, Policy: policy}); err != nil {
 			return false, err
 		}
 	}
@@ -491,22 +504,26 @@ func stampDecision(ctx context.Context, rec *orkstackv1.AuditRecord, d *accessDe
 // filterRowsOf removes from a list's response the rows the caller may not
 // read (docs/ACCESS.md, "Lists"). Each row names its own scope, so this is
 // exact and reads nothing but, for deliveries, their subscriptions.
-func (s *Service) filterRowsOf(ctx context.Context, adm *admission, req, resp proto.Message) {
+func (s *Service) filterRowsOf(ctx context.Context, adm *admission, req, resp proto.Message) error {
 	l := adm.row.list
 	if adm.row.artifactKinds {
 		l = &listRule{rows: "artifacts"}
 	}
 	if l == nil || l.rows == "" || resp == nil || len(adm.checks) == 0 {
-		return
+		return nil
 	}
 	fd, m, ok := field(resp, l.rows)
 	if !ok || !fd.IsList() {
-		return
+		return nil
 	}
 	subject := subjectOf(authn.FromContext(ctx))
 	policy, _ := s.access.policy(ctx)
 	base := adm.checks[0]
 	hooks := map[string]authz.Resource{}
+	// A row whose incarnation cannot be read fails the list: a pinned
+	// binding is never decided against an unknown id, and a list that
+	// silently left rows out would mislead whoever reads it.
+	var idErr error
 	allowed := func(row proto.Message) bool {
 		perm, res := base.perm, base.resource
 		switch {
@@ -528,7 +545,14 @@ func (s *Service) filterRowsOf(ctx context.Context, adm *admission, req, resp pr
 			}
 			res = r
 		}
-		_, err := authz.Authorize(authz.Request{Action: authz.Action(perm), Subject: subject, Resource: res, Policy: policy})
+		res, err := s.withIDs(ctx, policy, res)
+		if err != nil {
+			if idErr == nil {
+				idErr = err
+			}
+			return false
+		}
+		_, err = authz.Authorize(authz.Request{Action: authz.Action(perm), Subject: subject, Resource: res, Policy: policy})
 		return err == nil
 	}
 	list := m.Mutable(fd).List()
@@ -540,7 +564,11 @@ func (s *Service) filterRowsOf(ctx context.Context, adm *admission, req, resp pr
 			kept++
 		}
 	}
+	if idErr != nil {
+		return idErr
+	}
 	list.Truncate(kept)
+	return nil
 }
 
 // accessInterceptor authorizes every RPC, unary and streaming, first in
@@ -559,7 +587,9 @@ func (i accessInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 		resp, err := next(ctx, req)
 		if err == nil && resp != nil && adm.filterRows {
 			if out, ok := resp.Any().(proto.Message); ok {
-				i.s.filterRowsOf(ctx, adm, msg, out)
+				if ferr := i.s.filterRowsOf(ctx, adm, msg, out); ferr != nil {
+					return nil, ferr
+				}
 			}
 		}
 		return resp, err

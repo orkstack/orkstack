@@ -330,6 +330,11 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		return err
 	}
 
+	// Rule 52: the run's timeout is inside its bounds.
+	if err := ValidateRunTimeout(wf.GetTimeoutSeconds()); err != nil {
+		return err
+	}
+
 	// Rule 29: outputs: is a flat map of names to engine-rendered templates
 	// that may read any task but a fan-out — they are rendered after every
 	// task is terminal, so no needs closure applies.

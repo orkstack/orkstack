@@ -165,7 +165,7 @@ func newOrkflowGetCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			return renderOrkflow(cmd.OutOrStdout(), resp.Msg.GetOrkflow())
+			return renderOrkflow(cmd.OutOrStdout(), resp.Msg.GetOrkflow(), resp.Msg.GetOrkflowId())
 		},
 	}
 	cmd.Flags().StringVar(&version, "version", "", "orkflow version (default: the current one)")
@@ -190,9 +190,13 @@ func renderOrkflowList(out io.Writer, orkflows []*orkstackv1.Orkflow) error {
 	return nil
 }
 
-func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow) error {
+// renderOrkflow prints one Orkflow; id is its immutable id, shown when known.
+func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow, id string) error {
 	header := newTable(out)
 	fmt.Fprintf(header, "Name:\t%s\n", wf.GetName())
+	if id != "" {
+		fmt.Fprintf(header, "Id:\t%s\n", id)
+	}
 	fmt.Fprintf(header, "Version:\t%s\n", wf.GetVersion())
 	fmt.Fprintf(header, "Description:\t%s\n", orDash(wf.GetDescription()))
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(wf.GetCreatedAt()))

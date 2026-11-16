@@ -740,8 +740,8 @@ func TestHistoryGuard_MessageUsesRunVocabulary(t *testing.T) {
 		historyLimitMessage("ork-1", 48_912, 51_200, 1, 50<<20, 2_400, "still running: a; pins open: p; awaiting: w", ""),
 		historyLimitMessage("ork-1", 10, 51_200, 49<<20, 50<<20, 10, "", ""),
 		handlerCanceledAtHistoryLimit,
-		cancelReasonNotAHandler(""),
-		failingMessage("", []string{"rollback"}),
+		cancelReasonNotAHandler("", ""),
+		failingMessage("", "", []string{"rollback"}),
 	}
 	for _, text := range texts {
 		lower := strings.ToLower(text)
@@ -752,10 +752,10 @@ func TestHistoryGuard_MessageUsesRunVocabulary(t *testing.T) {
 		}
 	}
 	// The task-level sentences are unchanged.
-	if got := cancelReasonNotAHandler("deploy"); got != `the run is failing (task "deploy" failed) and this task is not a failure handler` {
+	if got := cancelReasonNotAHandler("deploy", ""); got != `the run is failing (task "deploy" failed) and this task is not a failure handler` {
 		t.Errorf("task-level cancel reason changed: %q", got)
 	}
-	if got := failingMessage("deploy", []string{"rollback", "notify"}); got != `run failing after task "deploy" failed; waiting for its failure handlers: rollback, notify` {
+	if got := failingMessage("deploy", "", []string{"rollback", "notify"}); got != `run failing after task "deploy" failed; waiting for its failure handlers: rollback, notify` {
 		t.Errorf("task-level failing note changed: %q", got)
 	}
 }

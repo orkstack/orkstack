@@ -109,6 +109,11 @@ type RunPlan struct {
 	// gate; omitempty, so a plan with no key encodes exactly as before.
 	IdempotencyFingerprint string `json:"idempotency_fingerprint,omitempty"`
 
+	// RunTimeout is set at submit for a run whose definition declares a
+	// run-level `timeout:` (runtimeout.go), and nil for every other run, so
+	// their plans encode exactly as before.
+	RunTimeout *RunTimeoutPlan `json:"run_timeout,omitempty"`
+
 	// Awaits holds, per task id, the callback credential of every `await:`
 	// of this run that declares `callback: true`: a salt and the salted
 	// SHA-256 of a token minted at SUBMIT (internal/api). NEVER the token.

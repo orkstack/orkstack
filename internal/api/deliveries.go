@@ -305,7 +305,15 @@ func (s *Service) ListDeliveries(
 			// otherwise the ordinary lookback — a run whose history is gone
 			// can still have records.
 			run, err := s.LookupRun(ctx, runID)
-			if err == nil && !s.mayReadRun(ctx, run) {
+			hidden := false
+			if err == nil {
+				may, merr := s.mayReadRun(ctx, run)
+				if merr != nil {
+					return nil, merr
+				}
+				hidden = !may
+			}
+			if hidden {
 				// A run the caller may not read is one it cannot see: the
 				// window must not say it exists.
 				run, err = nil, connect.NewError(connect.CodeNotFound, fmt.Errorf("run %q not found", runID))
@@ -329,7 +337,8 @@ func (s *Service) ListDeliveries(
 	}
 
 	keep := deliveryKeep(set)
-	if visible := s.deliveryVisible(ctx); visible != nil {
+	visible, visibilityFailed := s.deliveryVisible(ctx)
+	if visible != nil {
 		// The caller's own rows are chosen by the scan, not after it, so a
 		// page fills with them and its cursor ends on one of them.
 		filtered := keep
@@ -344,6 +353,9 @@ func (s *Service) ListDeliveries(
 		BeforeKey: beforeKey,
 		Limit:     pageSize,
 	})
+	if ferr := visibilityFailed(); ferr != nil {
+		return nil, ferr
+	}
 	if err != nil {
 		if errors.Is(err, artifacts.ErrDeliveryScanBudget) {
 			return nil, connect.NewError(connect.CodeResourceExhausted, fmt.Errorf(
@@ -382,10 +394,14 @@ func (s *Service) ListDeliveries(
 // a webhook (webhook.read at the webhook's own scope), asked once a webhook
 // for the listing; nil when nothing is hidden. A webhook that cannot be
 // looked up hides its deliveries.
-func (s *Service) deliveryVisible(ctx context.Context) func(webhookID string) bool {
+//
+// failed is the first id read that failed: the listing is then unavailable,
+// never a page with rows left out.
+func (s *Service) deliveryVisible(ctx context.Context) (visible func(webhookID string) bool, failed func() error) {
 	if !s.access.enabled() || !s.access.enforcing() {
-		return nil
+		return nil, func() error { return nil }
 	}
+	var firstErr error
 	subject := subjectOf(authn.FromContext(ctx))
 	policy, _ := s.access.policy(ctx)
 	seen := map[string]bool{}
@@ -396,12 +412,14 @@ func (s *Service) deliveryVisible(ctx context.Context) func(webhookID string) bo
 		res, err := s.webhookResource(ctx, id)
 		ok := err == nil
 		if ok {
-			_, err = authz.Authorize(authz.Request{Action: authz.Action(authz.PermWebhookRead), Subject: subject, Resource: res, Policy: policy})
-			ok = err == nil
+			ok, err = s.mayWithIDs(ctx, authz.Request{Action: authz.Action(authz.PermWebhookRead), Subject: subject, Resource: res, Policy: policy})
+			if err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 		seen[id] = ok
 		return ok
-	}
+	}, func() error { return firstErr }
 }
 
 // GetDelivery returns one record by id, from the shared store.
@@ -512,9 +530,9 @@ func (s *Service) RedeliverWebhook(
 
 // mayReadRun reports whether the caller may read run: always in asserted
 // mode; otherwise only with run.read at the run's Orkflow.
-func (s *Service) mayReadRun(ctx context.Context, run *orkstackv1.Run) bool {
+func (s *Service) mayReadRun(ctx context.Context, run *orkstackv1.Run) (bool, error) {
 	if !s.access.enabled() {
-		return true
+		return true, nil
 	}
 	ns, _ := namespaceOf(run.GetNamespace())
 	orkflow := run.GetOrkflowName()
@@ -522,7 +540,6 @@ func (s *Service) mayReadRun(ctx context.Context, run *orkstackv1.Run) bool {
 		orkflow = owner + "/" + orkflow
 	}
 	policy, _ := s.access.policy(ctx)
-	_, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermRunRead),
+	return s.mayWithIDs(ctx, authz.Request{Action: authz.Action(authz.PermRunRead),
 		Subject: subjectOf(authn.FromContext(ctx)), Resource: authz.Resource{Namespace: ns, Orkflow: orkflow}, Policy: policy})
-	return err == nil
 }

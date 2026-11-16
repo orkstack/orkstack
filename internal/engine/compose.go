@@ -317,18 +317,17 @@ func (s *runState) renderRequest(label, prefix string, templates any, readable m
 // activity's ActivityFailureDetail when it carries one, else <prefix>_UNAVAILABLE
 // (the store unreachable past the budget, a timeout).
 func renderFailure(prefix string, err error) (code string, category orkstackv1.FailureCategory, message string) {
-	var applicationErr *temporal.ApplicationError
-	var detail *orkstackv1.ActivityFailureDetail
-	if errors.As(err, &applicationErr) && applicationErr.Details(&detail) == nil && detail.GetReasonCode() != "" {
+	failure := categoryOf(err)
+	if detail, _ := failure.activityDetail(); detail.GetReasonCode() != "" {
 		category = detail.GetCategory()
 		if category == orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED {
-			category = categoryEnumFor(applicationErr.Type())
+			category = categoryEnumFor(failure.appType())
 		}
-		return detail.GetReasonCode(), category, applicationErr.Message()
+		return detail.GetReasonCode(), category, failure.appMessage()
 	}
 	message = err.Error()
-	if errors.As(err, &applicationErr) {
-		message = applicationErr.Message()
+	if failure.isApplication() {
+		message = failure.appMessage()
 	}
 	return prefix + "_UNAVAILABLE", orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR, message
 }
@@ -487,7 +486,7 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 		RunWorkflowType, c.plan.RunID, c.wf, childInput, childPlan)
 	if err := future.GetChildWorkflowExecution().Get(ctx, nil); err != nil {
 		// 6. Refused. child.run_id stays empty: a refused id names no run.
-		if temporal.IsCanceledError(err) {
+		if categoryOf(err).canceled {
 			message := fmt.Sprintf("run ended before child run %s started", c.plan.RunID)
 			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 			taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
@@ -497,8 +496,12 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 				Details:  fmt.Sprintf("task %q", id),
 				Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED,
 			}
+			if s.interrupting() {
+				s.recordInterrupted(ctx, taskRun, fmt.Sprintf("task %q", id))
+				message = taskRun.GetError().GetMessage()
+			}
 			if emitErr := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id,
-				orkstackv1.Status_STATUS_CANCELED, message); emitErr != nil {
+				taskRun.GetStatus(), message); emitErr != nil {
 				workflow.GetLogger(ctx).Error("emit task failure failed",
 					"run_id", s.runID, "task_id", id, "error", emitErr)
 			}
@@ -593,10 +596,9 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 		if err == nil {
 			err = errors.New("the store returned no reference")
 		}
-		var applicationErr *temporal.ApplicationError
 		cause := err.Error()
-		if errors.As(err, &applicationErr) {
-			cause = applicationErr.Message()
+		if failure := categoryOf(err); failure.isApplication() {
+			cause = failure.appMessage()
 		}
 		return s.failComposed(ctx, id, ChildValuesUnstoredCode,
 			orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR,
@@ -628,20 +630,18 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 // childFailure maps a child run's failure to the composed task's status, code
 // and category (docs/DSL.md "Composition").
 func childFailure(err error) (status orkstackv1.Status, code string, category orkstackv1.FailureCategory) {
-	var terminated *temporal.TerminatedError
-	var applicationErr *temporal.ApplicationError
-	var timeoutErr *temporal.TimeoutError
+	failure := categoryOf(err)
 	switch {
-	case temporal.IsCanceledError(err):
+	case failure.canceled:
 		return orkstackv1.Status_STATUS_CANCELED, ChildRunCanceledCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
-	case errors.As(err, &terminated):
+	case failure.terminated:
 		return orkstackv1.Status_STATUS_FAILED, ChildRunTerminatedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 	}
-	if errors.As(err, &applicationErr) {
-		if category := categoryEnumFor(applicationErr.Type()); category != orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED {
+	if failure.isApplication() {
+		if category := categoryEnumFor(failure.appType()); category != orkstackv1.FailureCategory_FAILURE_CATEGORY_UNSPECIFIED {
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, category
 		}
-		switch applicationErr.Type() {
+		switch failure.appType() {
 		case RunHistoryLimitCode:
 			// The child stopped before its history limit: a fact about the
 			// platform, not the workload.
@@ -654,14 +654,17 @@ func childFailure(err error) (status orkstackv1.Status, code string, category or
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 		case RunStateCorruptCode, RunStateUnsupportedCode, RunDefinitionCorruptCode:
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
-		case AwaitTimedOutCode:
+		case AwaitTimedOutCode, RunTimedOutCode:
+			// A child's own run timeout is the child's timing out.
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
+		case RunDefinitionUnsupportedCode, RunTimeoutStateInvalidCode:
+			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
 		case AwaitRejectedCode:
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_ACTIVITY_FAILED
 		}
 	}
-	if errors.As(err, &timeoutErr) {
-		if timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_HEARTBEAT {
+	if failure.timedOut() {
+		if failure.timeoutType() == enumspb.TIMEOUT_TYPE_HEARTBEAT {
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 		}
 		return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
@@ -674,16 +677,12 @@ func childFailure(err error) (status orkstackv1.Status, code string, category or
 // SDK's child-workflow wrapper — never that wrapper, which names Temporal
 // concepts on a user-facing field.
 func childInnerMessage(err error) string {
-	var applicationErr *temporal.ApplicationError
-	if errors.As(err, &applicationErr) && applicationErr.Message() != "" {
-		return applicationErr.Message()
+	failure := categoryOf(err)
+	if message := failure.appMessage(); message != "" {
+		return message
 	}
-	var childErr *temporal.ChildWorkflowExecutionError
-	if errors.As(err, &childErr) {
-		if inner := errors.Unwrap(childErr); inner != nil {
-			return inner.Error()
-		}
-		return "the child run failed"
+	if failure.viaChild {
+		return failure.childInner
 	}
 	return err.Error()
 }
@@ -691,15 +690,7 @@ func childInnerMessage(err error) string {
 // childReasonCode is the reason code an ActivityFailureDetail in the chain
 // carries, or "".
 func childReasonCode(err error) string {
-	var applicationErr *temporal.ApplicationError
-	if !errors.As(err, &applicationErr) {
-		return ""
-	}
-	var detail *orkstackv1.ActivityFailureDetail
-	if applicationErr.Details(&detail) == nil {
-		return detail.GetReasonCode()
-	}
-	return ""
+	return categoryOf(err).reasonCode()
 }
 
 // recordChildFailure maps a child's terminal error onto its composed task by
@@ -730,6 +721,12 @@ func (s *runState) recordChildFailure(ctx workflow.Context, id string, cause err
 		Details:   details,
 		Category:  category,
 		Retryable: false,
+	}
+	// A child the parent's run timeout cancelled: the composed row is work
+	// the deadline interrupted.
+	if status == orkstackv1.Status_STATUS_CANCELED && s.interrupting() {
+		s.recordInterrupted(ctx, taskRun, details)
+		status, message = taskRun.GetStatus(), taskRun.GetError().GetMessage()
 	}
 	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_FAILED, id, status, message); err != nil {
 		workflow.GetLogger(ctx).Error("emit task failure failed",

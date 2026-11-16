@@ -1,0 +1,21 @@
+# A task that ends by itself after 40 s. Deleting its Orker's pod within the
+# stop grace lets it finish there and the run succeed on its one attempt;
+# deleting the pod at once (--grace-period=0) loses it, explicitly
+# (scripts/k8s-orker-check.sh, docs/DEPLOY.md "Removing an Orker safely").
+apiVersion: orkstack/v1
+kind: Orkflow
+name: k8s-orker-drain
+version: "1"
+description: One task a stopping Orker on Kubernetes lets finish within its grace.
+tasks:
+  - id: drain
+    uses: shell
+    pool: k8s-check
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        echo "drain: started at $(date -u +%T)"
+        sleep 40
+        echo "drain: finished at $(date -u +%T)"

@@ -167,8 +167,13 @@ the number.
 
 stdout and stderr are independent logs. Capture them independently, stream them
 when possible, retain them in object storage, and associate them with the
-activity attempt. Plain text must work without a logging SDK. Structured JSON
-may be enhanced later, but is not part of the required ABI.
+activity attempt. Where the Orker resolved a secret for the attempt, each
+occurrence of its value in either stream is replaced by `***` before anything
+is streamed, retained or exported, unless the secret or the pool's setting
+says otherwise. It is a guard against accidental disclosure and not a
+boundary: `docs/SECURITY_MODEL.md` states what it cannot catch. Plain text
+must work without a logging SDK. Structured JSON may be enhanced later, but
+is not part of the required ABI.
 
 ### 3.3 Cancellation and heartbeats
 
@@ -357,7 +362,8 @@ polling Orker receives a task, and OrkStack never chooses a host.
 
 Every Orker of a pool has the same settings — caps, default request,
 capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
-registry credentials, runtime, pin hosting, stop grace — so a run never fails because of
+registry credentials, runtime, pin hosting, stop grace, log masking, whether a
+secret may be a task's result — so a run never fails because of
 which Orker took a task. Where they differ, a task fails explicitly with its
 own reason. A committed result is never refused for any of them. A memo hit
 is never refused for the caps, secret schemes, floor or runtime, but a cached
@@ -1635,7 +1641,7 @@ internal/buildinfo/    Which commit a binary was built from, as all three comman
 internal/hostpolicy/   The Host allowlist every listener applies (API and admin)
 images/                First-party OCI activity images; public ABI, no SDK
 pkg/artifacts/         Local and S3-compatible artifact storage
-pkg/logstream/         Live task-log line framing
+pkg/logstream/         Live task-log line framing and secret masking
 pkg/triggers/          Inbound trigger registry and token hashing
 pkg/webhooks/          Run-event webhook registry, signing, and delivery
 pkg/schedules/         Schedule id shape (the schedule itself lives in Temporal)

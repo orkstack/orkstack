@@ -444,13 +444,12 @@ var purgeResource = resolver{shallow: func(msg proto.Message) (authz.Resource, e
 // mayAnswer is, in enforce, whether the caller holds perm at res: what a
 // handler asks before a row of an answer names something the request did
 // not. Observe changes no answer, and asserted mode decides nothing.
-func (s *Service) mayAnswer(ctx context.Context, perm authz.Permission, res authz.Resource) bool {
+func (s *Service) mayAnswer(ctx context.Context, perm authz.Permission, res authz.Resource) (bool, error) {
 	if !s.access.enabled() || !s.access.enforcing() {
-		return true
+		return true, nil
 	}
 	policy, _ := s.access.policy(ctx)
-	_, err := authz.Authorize(authz.Request{Action: authz.Action(perm), Subject: subjectOf(authn.FromContext(ctx)), Resource: res, Policy: policy})
-	return err == nil
+	return s.mayWithIDs(ctx, authz.Request{Action: authz.Action(perm), Subject: subjectOf(authn.FromContext(ctx)), Resource: res, Policy: policy})
 }
 
 // --- request-dependent permissions ----------------------------------------
@@ -511,6 +510,9 @@ func (s *Service) policyChange(ctx context.Context, msg proto.Message) bool {
 // stored. The interceptor asks it of the namespace it reads; the handler,
 // which decides, asks it of the exact document its write replaces.
 func namespacePolicyDiffers(next, stored *orkstackv1.Namespace) bool {
+	// The namespace's id is output only: a document read and sent back
+	// carries it, and that is no change of policy.
+	next, stored = withoutNamespaceID(next), withoutNamespaceID(stored)
 	a, b := next.ProtoReflect(), stored.ProtoReflect()
 	for _, name := range namespacePolicyFields {
 		fd := a.Descriptor().Fields().ByName(protoreflect.Name(name))
@@ -541,8 +543,11 @@ func (s *Service) mayChangeNamespacePolicy(ctx context.Context, next, stored *or
 		return nil
 	}
 	policy, unavailable := s.access.policy(ctx)
-	_, err := authz.Authorize(authz.Request{Action: authz.Action(authz.PermNamespacePolicyUpdate),
+	_, err := s.authorizeWithIDs(ctx, authz.Request{Action: authz.Action(authz.PermNamespacePolicyUpdate),
 		Subject: subjectOf(authn.FromContext(ctx)), Resource: authz.Resource{Namespace: stored.GetName()}, Policy: policy})
+	if connect.CodeOf(err) == connect.CodeUnavailable {
+		return err
+	}
 	if err != nil && unavailable {
 		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; only configuration's principals are served", ErrPolicyUnavailable))
 	}

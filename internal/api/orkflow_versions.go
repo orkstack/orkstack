@@ -322,11 +322,13 @@ func (s *Service) DeleteOrkflow(
 			name, ns.GetName(), active+recent+shared, active, recent, OrkflowDeletionRunWindow, sharedBlockingPhrase(elsewhere)))
 	}
 
+	since, known := s.orkflowIncarnation(ctx, ns.GetName(), name)
 	err = s.orkflows.Delete(ctx, ns.GetName(), name)
 	s.poolScope.invalidate(ns.GetName())
 	if err != nil {
 		return nil, orkflowStoreError(err, "delete orkflow %q in namespace %q", name, ns.GetName())
 	}
+	s.forgetOrkflowID(ctx, ns.GetName(), name, since, known)
 	return connect.NewResponse(&orkstackv1.DeleteOrkflowResponse{
 		Name:      name,
 		Namespace: ns.GetName(),

@@ -57,6 +57,16 @@ const undecodableRereadDelay = 250 * time.Millisecond
 type OCIDispatcher struct {
 	// Runtime is the only Docker-aware seam in the repository.
 	Runtime ContainerRuntime
+	// LogUnmasked is orker.log.mask_secrets turned off: a task's secrets are
+	// not masked in its logs. The zero value masks.
+	LogUnmasked bool
+	// AllowSecretValues is orker.values.refuse_secrets turned off: a
+	// values.json holding one of the task's secrets is not refused. The zero
+	// value refuses.
+	AllowSecretValues bool
+	// valuesFinder, when set, builds the values check's automaton in place of
+	// logstream.NewSecretFinder: a test's way to fail it.
+	valuesFinder func([]logstream.NamedValue) (*logstream.SecretFinder, error)
 	// Store holds artifacts, values.json and the captured streams.
 	Store artifacts.Store
 	// Commits holds the durable completion records. Its Create is
@@ -220,6 +230,8 @@ type AttemptOutcome struct {
 	// about the outcome: the attempt's result is already decided, and what
 	// is left behind is a disk to reclaim, not a task to fail.
 	CleanupErr error
+	// Mask is how much the attempt's masker replaced, and the size of its set.
+	Mask MaskStats
 }
 
 // attemptCleanup collects what removing one attempt's own directories left
@@ -366,6 +378,10 @@ func (d *OCIDispatcher) executeAttempt(
 	// is the durability barrier, deferred before anything can return.
 	sink := d.newAttemptOrdinal(ctx, in, attempt)
 	defer sink.Close()
+	// The attempt's masker (mask.go): every [ork] line, every failure and,
+	// once a secret is registered, both streams pass it.
+	mask := d.newAttemptMask(nil)
+	sink.mask = mask
 	var export TaskLogWriter
 	if d.TaskLogs != nil {
 		export = d.TaskLogs.Open(ctx, in, attempt)
@@ -394,6 +410,7 @@ func (d *OCIDispatcher) executeAttempt(
 	// one and an observer that went silent in that case would be a seam only
 	// production could use.
 	emit := func(line string) {
+		line = mask.line(line)
 		sink.Write(line)
 		if export != nil {
 			export.Write(line)
@@ -408,6 +425,7 @@ func (d *OCIDispatcher) executeAttempt(
 	stderrLine := logstream.NewLineWriter(func(format string, args ...any) {
 		emit(fmt.Sprintf(format, args...))
 	}, logstream.StderrMarker)
+	mask.note = emit
 
 	// STEP 1.5. The phase observer, before the heartbeater — its returned ctx
 	// (which may carry a span) is what the rest of Execute uses, so child
@@ -455,6 +473,7 @@ func (d *OCIDispatcher) executeAttempt(
 		ended = true
 		outcome.Cache = trace.result
 		outcome.CleanupErr = cleanup.err
+		outcome.Mask = mask.stats()
 		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
@@ -479,7 +498,19 @@ func (d *OCIDispatcher) executeAttempt(
 	// only ensures the observer hears about it first.
 	defer func() {
 		if r := recover(); r != nil {
-			end(AttemptOutcome{Reason: ReasonPanic, Err: fmt.Errorf("panic: %v", r)})
+			// A panic's value can quote what it was handling: it reaches the
+			// record and the cluster masked, like every failure.
+			text := fmt.Sprint(r)
+			if raw, ok := r.([]byte); ok {
+				text = string(raw)
+			}
+			masked := mask.text(text)
+			end(AttemptOutcome{Reason: ReasonPanic, Err: fmt.Errorf("panic: %s", masked)})
+			// Once a secret is registered, only the masked text goes on: a
+			// value that prints as fields or numbers could hold one unseen.
+			if mask.active() {
+				panic(masked)
+			}
 			panic(r)
 		}
 	}()
@@ -549,6 +580,9 @@ func (d *OCIDispatcher) executeAttempt(
 	work, endWork := handBackWork(ctx, stage)
 	defer endWork()
 	result, failure = d.execute(work, in, attempt, startedAt, beat, stdoutLine, stderrLine, sink, trace, cleanup)
+	// Every failure leaves masked: a runtime's own words can quote a task's
+	// stderr, and so can a scan note.
+	failure = mask.failure(failure)
 
 	// The line writers are flushed before the sink closes, so a workload's
 	// last unterminated line is not lost.
@@ -597,6 +631,7 @@ func (d *OCIDispatcher) executeAttempt(
 					"and reported nothing to the run, which sees the attempt as lost "+
 					"(ORKER_HEARTBEAT_TIMEOUT) and retries it on another Orker if its retry policy allows",
 				d.OrkerID, graceSecondsOf(in)).StampStart(startedAt)
+			failure = mask.failure(failure)
 			end(AttemptOutcome{Reason: failure.Reason, Err: failure.TemporalError()})
 			return nil, activity.ErrResultPending
 		}
@@ -648,6 +683,9 @@ func (d *OCIDispatcher) executeAttempt(
 		return d.handBackStarted(ctx, in, startedAt, end)
 	}
 	if failure != nil {
+		// Masked again: the cancellation branches above can build a failure
+		// of their own after the first pass.
+		failure = mask.failure(failure)
 		// Every failure carries the attempt's start, detail or not, so the
 		// engine projects TaskRun.started_at for a failed task exactly as for
 		// a succeeded one (ExecuteTaskResult.started_at).
@@ -979,7 +1017,7 @@ func (d *OCIDispatcher) execute(
 	// fan-in item commits — and RECORDS the artifact fetches and secrets
 	// (deferBytes): a hit needs neither.
 	beat.Phase("stage-inputs")
-	staged, failure := d.stageInputs(ctx, in, ws, cached)
+	staged, failure := d.stageInputs(ctx, in, ws, cached, sink.mask)
 	if failure != nil {
 		return nil, failure
 	}
@@ -1229,7 +1267,7 @@ func (d *OCIDispatcher) execute(
 	// STEP 9-10. Run, stream, and wait for exit, cancellation or the task
 	// timeout.
 	beat.Phase("run")
-	capture, failure := d.runContainer(ctx, in, ws, id, beat, stdoutLine, stderrLine)
+	capture, failure := d.runContainer(ctx, in, ws, id, beat, stdoutLine, stderrLine, sink.mask)
 	// A container that ended without this Orker taking it back (by itself, or
 	// at the task's own timeout) is committing: its attempt reports how it
 	// ended. One the stop's sweep took first is handed back, and nothing it
@@ -1302,6 +1340,11 @@ func (d *OCIDispatcher) execute(
 	defer func() { _ = output.Close() }()
 	values, failure := output.ReadValues(in.GetLimits())
 	if failure != nil {
+		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
+	}
+	// Before any byte is uploaded: a result holding one of the task's
+	// secrets fails the attempt, so no object and no history event holds it.
+	if failure := sink.mask.checkValues(values); failure != nil {
 		return nil, d.attachFailureDetail(ctx, in, ws, capture, image, sink.Ordinal(), failure)
 	}
 	scanned, failure := output.ScanArtifacts(in.GetLimits())
@@ -1479,6 +1522,9 @@ func commitIdentityMismatch(commit *orkstackv1.ActivityCommit, in *orkstackv1.Ex
 
 // stagedInputs is what input staging produced, in the shape task.json needs.
 type stagedInputs struct {
+	// mask is the attempt's masker, which every resolved secret is
+	// registered with before the container can print it.
+	mask      *attemptMask
 	artifacts []taskJSONInputArtifact
 	upstream  []taskJSONUpstream
 	secrets   []taskJSONSecret
@@ -1604,8 +1650,10 @@ func (d *OCIDispatcher) stageInputs(
 	in *orkstackv1.ExecuteTaskInput,
 	ws *Workspace,
 	deferBytes bool,
+	mask *attemptMask,
 ) (result *stagedInputs, failure *Failure) {
 	staged := &stagedInputs{
+		mask:              mask,
 		artifacts:         []taskJSONInputArtifact{},
 		upstream:          []taskJSONUpstream{},
 		secrets:           []taskJSONSecret{},
@@ -1716,11 +1764,13 @@ func (d *OCIDispatcher) stageInputs(
 // a proto message, in Temporal history, in the archive, in a log chunk, or in
 // task.json — task.json carries only names and paths (§9.4).
 func (d *OCIDispatcher) stageSecrets(in *orkstackv1.ExecuteTaskInput, ws *Workspace, staged *stagedInputs) *Failure {
+	resolved := make([]secretValue, 0, len(in.GetSecrets()))
 	for _, secret := range in.GetSecrets() {
 		value, failure := d.resolveSecret(secret)
 		if failure != nil {
 			return failure
 		}
+		resolved = append(resolved, secretValue{name: secret.GetName(), value: value, unmasked: secret.GetUnmasked()})
 		hostPath := filepath.Join(ws.Secrets, secret.GetName())
 		if err := os.WriteFile(hostPath, value, 0o600); err != nil {
 			return FailCause(ReasonSecretUnresolved, err,
@@ -1731,7 +1781,9 @@ func (d *OCIDispatcher) stageSecrets(in *orkstackv1.ExecuteTaskInput, ws *Worksp
 			Path: ContainerSecrets + "/" + secret.GetName(),
 		})
 	}
-	return nil
+	// Registered once every value is read and before the container exists,
+	// so nothing can print one the masker has not heard of.
+	return staged.mask.register(resolved)
 }
 
 // fetchInto puts one referenced artifact's verified bytes at dest.
@@ -2043,6 +2095,7 @@ func (d *OCIDispatcher) runContainer(
 	id ContainerID,
 	beat *Heartbeater,
 	stdoutLine, stderrLine io.Writer,
+	mask *attemptMask,
 ) (*runCapture, *Failure) {
 	logDir := filepath.Join(ws.Root, "logs")
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
@@ -2068,8 +2121,21 @@ func (d *OCIDispatcher) runContainer(
 	defer func() { _ = stderrFile.Close() }()
 
 	logMax := in.GetLimits().GetLogMaxBytes()
-	stdout := io.MultiWriter(stdoutLine, newCappedWriter(stdoutFile, logMax, beat))
-	stderr := io.MultiWriter(stderrLine, newCappedWriter(stderrFile, logMax, beat))
+	// One masker in front of both places each stream goes, each stream with
+	// its own match state, so the live chunks, the export, the observer and
+	// the stored file all see the same masked bytes. Closed on the way out,
+	// before the files: what a stream still holds is masked, not released.
+	stdout := mask.writer(StreamStdout, io.MultiWriter(stdoutLine, newCappedWriter(stdoutFile, logMax, beat)))
+	stderr := mask.writer(StreamStderr, io.MultiWriter(stderrLine, newCappedWriter(stderrFile, logMax, beat)))
+	defer func() {
+		if err := mask.closeStreams(); err != nil {
+			// Said in the task's own log too: its last line may be missing.
+			// What was held is lost, never released unmasked.
+			d.logger().Warn("the end of a task's masked output could not be written",
+				"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "error", err)
+			mask.note(mask.text(fmt.Sprintf("[ork] the end of this task's output could not be written, so its last line may be missing: %v", err)))
+		}
+	}()
 
 	// The start runs on a context the stop's sweep never cancels: a start in
 	// flight returns, and the CAS below decides. A container the sweep took
@@ -2721,6 +2787,9 @@ func (d *OCIDispatcher) attemptRecord(
 		// the workload was told it ran in.
 		Pool:          resolvedPool(in.GetPool()),
 		CommitAdopted: outcome.CommitAdopted,
+		// How many runs of bytes the masker replaced: a count, never which
+		// secret or where.
+		MaskedOccurrences: outcome.Mask.Occurrences,
 	}
 	// An item's record carries its index and is keyed by it
 	// (metadata/attempts/{run}/{task}/{item}/{attempt}.json).

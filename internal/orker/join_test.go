@@ -115,7 +115,7 @@ func TestStageInputs_AFailedNeedsArtifactsStageWithoutValues(t *testing.T) {
 	in.Upstream = []*orkstackv1.UpstreamRef{{TaskId: "deploy", Artifacts: []*orkstackv1.ArtifactRef{log}}}
 	ws, err := NewWorkspace(t.TempDir())
 	must.OK(t, err)
-	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, false)
+	staged, failure := h.dispatcher.stageInputs(context.Background(), in, ws, false, nil)
 	if failure != nil {
 		t.Fatal(failure)
 	}

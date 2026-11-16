@@ -272,3 +272,32 @@ func TestStart_ProcessAllowDebug(t *testing.T) {
 		})
 	}
 }
+
+// TestLoadConfig_MaskingSwitches: both are on unset, each turns off alone,
+// and a value that is not a boolean is an error naming it, never a silent
+// default.
+func TestLoadConfig_MaskingSwitches(t *testing.T) {
+	tests := []struct {
+		name, mask, refuse   string
+		wantMask, wantRefuse bool
+		wantErr              string
+	}{
+		{name: "unset", wantMask: true, wantRefuse: true},
+		{name: "masking off", mask: "false", wantMask: false, wantRefuse: true},
+		{name: "refusal off", refuse: "false", wantMask: true, wantRefuse: false},
+		{name: "not a boolean", mask: "sometimes", wantMask: true, wantRefuse: true, wantErr: orker.MaskSecretsVar},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(orker.MaskSecretsVar, tt.mask)
+			t.Setenv(orker.RefuseSecretValuesVar, tt.refuse)
+			cfg := loadConfig()
+			if cfg.maskSecrets != tt.wantMask || cfg.refuseSecretValues != tt.wantRefuse {
+				t.Fatalf("mask %v refuse %v; want %v %v", cfg.maskSecrets, cfg.refuseSecretValues, tt.wantMask, tt.wantRefuse)
+			}
+			if tt.wantErr == "" && cfg.maskErr != nil || tt.wantErr != "" && (cfg.maskErr == nil || !strings.Contains(cfg.maskErr.Error(), tt.wantErr)) {
+				t.Fatalf("maskErr = %v; want one naming %q", cfg.maskErr, tt.wantErr)
+			}
+		})
+	}
+}

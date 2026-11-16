@@ -626,10 +626,18 @@ func (x *Pool) GetUnavailableReason() string {
 	return ""
 }
 
-// NamespaceIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
+// NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
+// registered for the policy itself (audiences, grants and their bounds),
+// which a later change adds.
 type NamespaceIdentity struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// namespace_id is the namespace's immutable id: a namespace deleted and
+	// created again under its name has another one, and a binding pinned to
+	// this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default`
+	// is always `ns_default`. Empty when none was made yet: one is made on
+	// first need, never by a read. Opaque: nothing parses it, and no request
+	// takes it where it takes a name. Output only.
+	NamespaceId   string `protobuf:"bytes,6,opt,name=namespace_id,json=namespaceId,proto3" json:"namespace_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -662,6 +670,13 @@ func (x *NamespaceIdentity) ProtoReflect() protoreflect.Message {
 // Deprecated: Use NamespaceIdentity.ProtoReflect.Descriptor instead.
 func (*NamespaceIdentity) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_namespace_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *NamespaceIdentity) GetNamespaceId() string {
+	if x != nil {
+		return x.NamespaceId
+	}
+	return ""
 }
 
 var File_orkstack_v1_namespace_proto protoreflect.FileDescriptor
@@ -710,8 +725,9 @@ const file_orkstack_v1_namespace_proto_rawDesc = "" +
 	"\n" +
 	"is_default\x18\x04 \x01(\bR\tisDefault\x127\n" +
 	"\tlast_seen\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\blastSeen\x12-\n" +
-	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonJ\x04\b\x03\x10\x04R\aplugins\"\x13\n" +
-	"\x11NamespaceIdentityB\xaa\x01\n" +
+	"\x12unavailable_reason\x18\x06 \x01(\tR\x11unavailableReasonJ\x04\b\x03\x10\x04R\aplugins\"6\n" +
+	"\x11NamespaceIdentity\x12!\n" +
+	"\fnamespace_id\x18\x06 \x01(\tR\vnamespaceIdB\xaa\x01\n" +
 	"\x0fcom.orkstack.v1B\x0eNamespaceProtoP\x01Z:github.com/orkstack/orkstack/gen/go/orkstack/v1;orkstackv1\xa2\x02\x03OXX\xaa\x02\vOrkstack.V1\xca\x02\vOrkstack\\V1\xe2\x02\x17Orkstack\\V1\\GPBMetadata\xea\x02\fOrkstack::V1b\x06proto3"
 
 var (

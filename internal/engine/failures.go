@@ -95,7 +95,9 @@ type FailureTotals struct {
 func PrimaryFailedTask(run *orkstackv1.Run) *orkstackv1.TaskRun {
 	var primary *orkstackv1.TaskRun
 	for _, task := range run.GetTaskRuns() {
-		if task.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		// Work the run's own timeout stopped did not fail on its own: a
+		// timed-out run fingerprints as run-level.
+		if task.GetStatus() != orkstackv1.Status_STATUS_FAILED || stoppedByRunTimeout(task) {
 			continue
 		}
 		// A FAILED fan-out is decided by the item that failed it: the
@@ -117,7 +119,7 @@ func PrimaryFailedTask(run *orkstackv1.Run) *orkstackv1.TaskRun {
 func earliestFailedItem(task *orkstackv1.TaskRun) *orkstackv1.TaskRun {
 	var found *orkstackv1.TaskRun
 	for _, item := range task.GetItems() {
-		if item.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		if item.GetStatus() != orkstackv1.Status_STATUS_FAILED || stoppedByRunTimeout(item) {
 			continue
 		}
 		if found == nil || finishedBefore(item, found) {
@@ -400,4 +402,9 @@ func examples(records []FailureRecord, members []int) []string {
 		out[i] = records[index].RunID
 	}
 	return out
+}
+
+// stoppedByRunTimeout reports a row the run's own timeout interrupted.
+func stoppedByRunTimeout(row *orkstackv1.TaskRun) bool {
+	return row.GetError().GetCode() == TaskStoppedByRunTimeoutCode
 }

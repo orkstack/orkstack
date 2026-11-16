@@ -392,3 +392,35 @@ func TestMemoryOrkflowStore_AnySourceChangeIsRefused(t *testing.T) {
 		}
 	}
 }
+
+// TestMemoryOrkflowStore_IncarnationBeginsAtTheFirstVersion: an orkflow's
+// incarnation begins with its first version, holds across later ones, and a
+// delete ends it, so the next first version begins another.
+func TestMemoryOrkflowStore_IncarnationBeginsAtTheFirstVersion(t *testing.T) {
+	store := engine.NewMemoryOrkflowStore()
+	ctx := context.Background()
+	if _, ok, err := store.Incarnation(ctx, "", "hello-ork"); err != nil || ok {
+		t.Fatalf("before any version ok=%v err=%v", ok, err)
+	}
+	first := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
+	stored, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", first), artifacts.NoHeadExpectation())
+	must.OKf(t, err, "Put")
+	since, ok, err := store.Incarnation(ctx, "default", "hello-ork")
+	if err != nil || !ok || !since.Equal(stored.GetCreatedAt().AsTime()) {
+		t.Fatalf("after the first version = %v, %v, %v; want %v", since, ok, err, stored.GetCreatedAt().AsTime())
+	}
+	_, _, err = store.Put(ctx, orkflowFixture("hello-ork", "0.2.0", first.Add(time.Hour)), artifacts.NoHeadExpectation())
+	must.OKf(t, err, "Put")
+	if again, _, _ := store.Incarnation(ctx, "", "hello-ork"); !again.Equal(since) {
+		t.Fatalf("a later version moved the incarnation to %v", again)
+	}
+	must.OK(t, store.Delete(ctx, "", "hello-ork"))
+	if _, ok, _ := store.Incarnation(ctx, "", "hello-ork"); ok {
+		t.Fatal("a deleted orkflow still has an incarnation")
+	}
+	remade, _, err := store.Put(ctx, orkflowFixture("hello-ork", "0.1.0", first.Add(2*time.Hour)), artifacts.NoHeadExpectation())
+	must.OKf(t, err, "Put")
+	if next, ok, _ := store.Incarnation(ctx, "", "hello-ork"); !ok || next.Equal(since) || !next.Equal(remade.GetCreatedAt().AsTime()) {
+		t.Fatalf("the re-created orkflow's incarnation = %v, %v (old %v)", next, ok, since)
+	}
+}

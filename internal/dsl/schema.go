@@ -77,6 +77,7 @@ func orkflowAnnotations() map[string]annotation {
 		"name":                          requiredSlug,
 		"namespace":                     slug,
 		"version":                       {typ: map[string]any{"type": "string"}},
+		"timeout":                       {typ: map[string]any{"type": "string"}},
 		"tasks":                         {required: true, minItems: 1},
 		"pins":                          {keyPattern: slugPattern, keyMax: MaxSlug},
 		"outputs":                       {keyPattern: outputNamePattern, keyMax: maxOutputNameBytes},
@@ -124,6 +125,7 @@ var orkflowDescriptions = map[string]string{
 	"outputs":     "Declared return contract: name to template (see below).",
 	"pins":        "Declared task pins (see below).",
 	"shared_with": "Other namespaces' Orkflows that may compose this one (see \"Sharing across namespaces\").",
+	"timeout":     "optional: a Go duration, 10s to 8760h, bounding the whole run (see \"Run timeout\").",
 	"tasks":       "List of task nodes forming a DAG.",
 
 	"tasks[].id":              "unique within the Orkflow",
@@ -138,6 +140,7 @@ var orkflowDescriptions = map[string]string{
 	"tasks[].command":         "optional image ENTRYPOINT/CMD override; argv",
 	"tasks[].env":             "workload environment only; no platform state",
 	"tasks[].secrets":         "resolved to read-only files, never embedded values",
+	"tasks[].secrets[].mask":  "optional: `false` leaves the value unmasked in the task's logs",
 	"tasks[].resources":       "request; Orker policy supplies defaults and caps",
 	"tasks[].network":         "optional: `default` or `none`",
 	"tasks[].cancellation_grace_period_seconds": "SIGTERM-to-SIGKILL window",

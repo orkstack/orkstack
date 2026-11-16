@@ -209,12 +209,16 @@ func newAdminBindingCommand(g *globalFlags) *cobra.Command {
 	return cmd
 }
 
-// bindingPinLabel says what a stored binding matches its scope by.
+// bindingPinLabel says what a binding matches its scope by: the
+// incarnation it is pinned to, its name, or a pin to an incarnation that is
+// gone, which matches nothing until `--repin`.
 func bindingPinLabel(b *orkstackv1.Binding) string {
-	switch {
-	case b.GetScopeId() != "":
-		return "pinned"
-	case strings.HasPrefix(b.GetScope(), "namespace:"), strings.HasPrefix(b.GetScope(), "orkflow:"):
+	switch b.GetPin() {
+	case orkstackv1.BindingPin_BINDING_PIN_PINNED:
+		return "pinned " + b.GetScopeId()
+	case orkstackv1.BindingPin_BINDING_PIN_STALE:
+		return "stale: pinned to " + b.GetScopeId() + ", which is gone; run `orkctl admin binding update " + b.GetName() + " --repin`"
+	case orkstackv1.BindingPin_BINDING_PIN_BY_NAME:
 		return "by name"
 	}
 	return ""

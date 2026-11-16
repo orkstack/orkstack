@@ -1048,9 +1048,14 @@ type Orkflow struct {
 	// output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
 	OutputArtifacts map[string]*OutputArtifact `protobuf:"bytes,15,rep,name=output_artifacts,json=outputArtifacts,proto3" json:"output_artifacts,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
-	Concurrency   *ConcurrencySpec `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Concurrency *ConcurrencySpec `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
+	// timeout_seconds is the run's own time limit from its start, from the
+	// DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of
+	// canonicalOrkflow, in its short form, only when non-zero, so an Orkflow
+	// that declares none keeps its digest.
+	TimeoutSeconds int64 `protobuf:"varint,17,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *Orkflow) Reset() {
@@ -1193,6 +1198,13 @@ func (x *Orkflow) GetConcurrency() *ConcurrencySpec {
 		return x.Concurrency
 	}
 	return nil
+}
+
+func (x *Orkflow) GetTimeoutSeconds() int64 {
+	if x != nil {
+		return x.TimeoutSeconds
+	}
+	return 0
 }
 
 // ChildArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
@@ -1464,7 +1476,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\bcallback\x18\x02 \x01(\bR\bcallback\x12/\n" +
 	"\x06schema\x18\x03 \x01(\v2\x17.google.protobuf.StructR\x06schema\"%\n" +
 	"\tSleepSpec\x12\x18\n" +
-	"\aseconds\x18\x01 \x01(\x05R\aseconds\"\xd4\a\n" +
+	"\aseconds\x18\x01 \x01(\x05R\aseconds\"\xfd\a\n" +
 	"\aOrkflow\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12 \n" +
@@ -1485,7 +1497,8 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"sharedWith\x121\n" +
 	"\x14definition_namespace\x18\x0e \x01(\tR\x13definitionNamespace\x12T\n" +
 	"\x10output_artifacts\x18\x0f \x03(\v2).orkstack.v1.Orkflow.OutputArtifactsEntryR\x0foutputArtifacts\x12>\n" +
-	"\vconcurrency\x18\x10 \x01(\v2\x1c.orkstack.v1.ConcurrencySpecR\vconcurrency\x1a9\n" +
+	"\vconcurrency\x18\x10 \x01(\v2\x1c.orkstack.v1.ConcurrencySpecR\vconcurrency\x12'\n" +
+	"\x0ftimeout_seconds\x18\x11 \x01(\x03R\x0etimeoutSeconds\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1a:\n" +

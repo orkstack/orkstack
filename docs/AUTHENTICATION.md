@@ -214,6 +214,19 @@ confirmed. A poller that advertises a longer claim life than an engine's own
 holds the lowering to `asserted` off for that long; the engine logs it at
 warn level, naming it.
 
+## How old a decision's facts may be
+
+Each replica decides from a copy of the access document at most
+`auth.policy_refresh` old (`10s`), so a binding removed through one replica may
+still be honoured by another for that long. The ids of namespaces and
+Orkflows that pinned bindings match against ([ACCESS.md](ACCESS.md),
+"Pinned bindings") are kept for the same 10 seconds. A namespace or an
+Orkflow deleted and created again through another replica may therefore be
+judged against its old id for up to 10 seconds: a binding pinned to the old
+one may still match it there, and a binding pinned to the new one may not
+match yet. A replica that made the delete or the create itself uses the new
+id at once.
+
 ## The admin listener
 
 `/metrics` and `/debug/pprof/` answer without authentication on

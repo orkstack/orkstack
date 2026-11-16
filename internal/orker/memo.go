@@ -264,10 +264,13 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 	type secret struct {
 		Name   string `json:"name"`
 		Source string `json:"source"`
+		// Unmasked only when set: a secret that says mask: false is not
+		// looked for in values.json, so its results are a key of their own.
+		Unmasked bool `json:"unmasked,omitzero"`
 	}
 	secrets := make([]secret, 0, len(in.GetSecrets()))
 	for _, s := range in.GetSecrets() {
-		secrets = append(secrets, secret{Name: s.GetName(), Source: s.GetSource()})
+		secrets = append(secrets, secret{Name: s.GetName(), Source: s.GetSource(), Unmasked: s.GetUnmasked()})
 	}
 	network := "default"
 	if in.GetNetwork() == orkstackv1.NetworkMode_NETWORK_MODE_NONE {
@@ -306,6 +309,13 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 		components["item_as"] = item.As
 		components["item_index"] = strconv.FormatInt(int64(item.Index), 10)
 		components["item_count"] = strconv.FormatInt(int64(item.Count), 10)
+	}
+	if len(secrets) > 0 {
+		// A hit checks nothing, so no result from before values.json was
+		// checked for a secret may be hit: a task with secrets misses once
+		// after the upgrade, and every result it hits after was written
+		// under the check (docs/OCI_ACTIVITY_CONTRACT.md §5.4.1).
+		components["secret_check"] = "1"
 	}
 	scope := in.GetCache().GetScope()
 	orkflow := ""

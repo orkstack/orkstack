@@ -51,7 +51,7 @@ func TestRenderOrkflow_ShowsWhoItIsSharedWith(t *testing.T) {
 	wf := &orkstackv1.Orkflow{Name: "deploy", Version: "1", Tasks: []*orkstackv1.Task{{Id: "ship", Uses: "shell"}},
 		SharedWith: []*orkstackv1.OrkflowShare{{Namespace: "*"}, {Orkflow: "search/release"}}}
 	var out bytes.Buffer
-	if err := renderOrkflow(&out, wf); err != nil {
+	if err := renderOrkflow(&out, wf, ""); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(collapseSpaces(out.String()), "Shared with: namespace:*, orkflow:search/release") {
@@ -59,7 +59,7 @@ func TestRenderOrkflow_ShowsWhoItIsSharedWith(t *testing.T) {
 	}
 	out.Reset()
 	wf.SharedWith = nil
-	if err := renderOrkflow(&out, wf); err != nil {
+	if err := renderOrkflow(&out, wf, ""); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(out.String(), "Shared with") {

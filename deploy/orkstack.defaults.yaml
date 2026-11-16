@@ -79,6 +79,7 @@ engine:
   snapshot_overlays: true  # ork
   run_max_in_flight: 500  # ork
   pin_creation_timeout: 5m  # ork
+  run_timeout_handler_grace: 10m  # ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork
   usage_cache_ttl: 5m  # ork
@@ -122,6 +123,7 @@ orker:
     timeout: 5s  # orker
     failures: 3  # orker
     recoveries: 2  # orker
+  store_scope_recheck: 1h  # orker
   capacity:
     cpu: ""  # orker
     memory: ""  # orker
@@ -131,6 +133,7 @@ orker:
     flush_bytes: 65536  # 64 KiB; orker
     flush_interval: 500ms  # orker
     max_bytes: 16777216  # 16 MiB; orker
+    mask_secrets: true  # orker
   resources:
     default_cpu: 1  # orker
     default_memory: 1Gi  # orker
@@ -145,6 +148,8 @@ orker:
     pull_timeout: 5m  # orker
     bind_probe_timeout: 2m  # orker
   metadata_probe: off  # orker
+  values:
+    refuse_secrets: true  # orker
   engine:
     url: ""  # orker; no engine: no identities
     ca_file: ""  # orker; the system's roots

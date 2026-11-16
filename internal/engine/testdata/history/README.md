@@ -784,3 +784,61 @@ it, so it enters no command path and needs no gate; this fixture holds that.
   `TestFirstStart_ReadsTheKeyedFixture` reads its fingerprint the way a
   retry does
 - recorder: `TestIntegration_RecordKeyedRunHistory`
+
+### `run-timeout-*-v1.json` — the run timeout
+
+Six runs of definitions declaring a run timeout (`timeout_seconds`, E107), one
+command path each, recorded together from `runTimeoutFixtures`
+(`replay_run_timeout_test.go`): `fires-mid-task` (the deadline stops a
+running task and its dependent never starts), `hard-end` (a failure handler
+outlives the grace and is stopped at the hard end), `already-failing` (a run
+failing before the deadline keeps its cause; its handler stops at the hard
+end), `finished-before-deadline` (the deadline's timer is abandoned),
+`operator-cancel` (the cancel settles the timer and wins), and
+`definition-unsupported` (a plan without `RunTimeout` ends the run
+`RUN_DEFINITION_UNSUPPORTED` before any timer). The path is definition-gated:
+no older fixture declares `timeout_seconds`, so none enters it.
+
+- command: `TestRunWorkflow_ReplaysCommittedRunTimeoutHistories`, which also
+  checks each start's timeout and plan and how each execution closed
+- negative: `TestRunTimeoutHistories_CatchAMovedTimer` (a copy with the
+  deadline timer's id rewritten is refused by the replayer)
+- payload: none. The timed-out runs end on the cluster's clock and on
+  cancellations a re-execution cannot feed back; the command half and the
+  workflow tests in `runtimeout_internal_test.go` hold their rows
+- recorder: `TestIntegration_RecordRunTimeoutHistories`
+  (`run_timeout_integration_test.go`). It never skips: without
+  `ORK_RECORD_GOLDEN_HISTORY` it records into the proof directory and
+  requires each recording to replay, leaving the fixtures untouched. The
+  fixtures are committed, so the replay tests fail, never skip, when one is
+  missing
+
+### `run-timeout-continued-*-v1.json` — the run timeout across a carry and a hold
+
+Three runs of definitions declaring a run timeout, recorded under the
+continuation stack's plan (a budget, a history limit, the in-flight limit),
+each from a real run by `TestIntegration_RecordRunTimeoutContinuedHistories`
+(`run_timeout_continued_integration_test.go`):
+
+- `carried-g0`, `carried-g1`: a chain that crosses its 100-event budget and
+  switches between two tasks. Generation 0 arms the deadline's timer;
+  generation 1 adopts the deadline from its saved state, arms a timer for
+  what remains of it, and times out in `slow`.
+- `past-deadline-g0`, `past-deadline-g1`: the same chain, with every chunk
+  read of generation 1's saved state slowed to 4 s, one chunk per workflow
+  task, so the deadline passes during the restore. Generation 1's arm site
+  issues no timer and its first pass takes the timeout: no task is dispatched.
+- `hold`: `slow` beside a 20-task chain under a 700-event history limit. The
+  run crosses its budget with `slow` running, so it never reaches an idle
+  point, holds new dispatch at its hold line, and times out while held.
+
+- command: `TestRunWorkflow_ReplaysCommittedContinuedRunTimeoutHistories`,
+  each generation replayed as its run's own workflow id
+- negative: `TestContinuedRunTimeoutHistories_CatchTheTimeoutRemoved` (each
+  generation, its start's definition rewritten to declare no run timeout, is
+  refused by the replayer)
+- payload: none, as for the six fixtures above
+- recorder: `TestIntegration_RecordRunTimeoutContinuedHistories`. Like the
+  one above it never skips, records into the proof directory by default, and
+  fails unless every shape lands and replays; the fixtures are committed, so
+  the replay tests fail, never skip, when one is missing

@@ -43,9 +43,11 @@ type Trigger struct {
 	CreatedByVerified bool `protobuf:"varint,9,opt,name=created_by_verified,json=createdByVerified,proto3" json:"created_by_verified,omitempty"`
 	// consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch).
 	ConsentStale bool `protobuf:"varint,10,opt,name=consent_stale,json=consentStale,proto3" json:"consent_stale,omitempty"`
-	// consented is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	// consented is the consent recorded with the binder at its last bind;
+	// output only.
 	Consented *ConsentView `protobuf:"bytes,11,opt,name=consented,proto3" json:"consented,omitempty"`
-	// asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	// asks_for is what the Orkflow asks for now, as a consent digest; output
+	// only.
 	AsksFor       *AsksFor `protobuf:"bytes,12,opt,name=asks_for,json=asksFor,proto3" json:"asks_for,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

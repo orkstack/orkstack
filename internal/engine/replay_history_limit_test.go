@@ -284,8 +284,10 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"fairness.pin_requests": {"run-fairness-pin-creation-v1.json", "run-fairness-pin-creation-legacy-v1.json"},
 		"retry_max_interval_seconds": {"run-retry-max-interval-v1.json", "run-retry-max-interval-legacy-v1.json",
 			"run-retry-long-initial-v1.json", "run-retry-long-initial-legacy-v1.json"},
-		"in_flight.publish_window": {"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
-		"in_flight.publish_events": {"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
+		"in_flight.publish_window": append([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
+			continuedRunTimeoutFixtureNames...),
+		"in_flight.publish_events": append([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
+			continuedRunTimeoutFixtureNames...),
 	}
 	paths, err := filepath.Glob("testdata/history/*.json")
 	if err != nil || len(paths) == 0 {
@@ -335,12 +337,29 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 	}
 }
 
+// carriedGenerations is every committed fixture that is a carried
+// generation, started by a continue-as-new with five arguments.
+var carriedGenerations = map[string]bool{
+	"run-continued-g1-v1.json":                       true,
+	"run-timeout-continued-carried-g1-v1.json":       true,
+	"run-timeout-continued-past-deadline-g1-v1.json": true,
+}
+
+// continuedRunTimeoutFixtureNames are the run-timeout fixtures recorded under
+// the continuation stack's plan, whose in-flight limit carries the publish
+// window (TestIntegration_RecordRunTimeoutContinuedHistories).
+var continuedRunTimeoutFixtureNames = []string{
+	"run-timeout-continued-carried-g0-v1.json", "run-timeout-continued-carried-g1-v1.json",
+	"run-timeout-continued-past-deadline-g0-v1.json", "run-timeout-continued-past-deadline-g1-v1.json",
+	"run-timeout-continued-hold-v1.json",
+}
+
 // TestCommittedFixtures_StartWithFourArgumentsAndNoCarry: every committed
 // fixture's run start — and every child start it recorded — passed exactly
 // four arguments, so RunWorkflow's fifth parameter (the carry of a run that
 // continued as new) decodes as nil for each of them and none can enter the
-// carried path — except the one carried generation the recorded history has
-// (run-continued-g1-v1.json), which a continue-as-new started with five; the
+// carried path — except the carried generations (carriedGenerations), which a
+// continue-as-new started with five; the
 // command-half replay tests then prove every one replays against the
 // five-parameter RunWorkflow.
 func TestCommittedFixtures_StartWithFourArgumentsAndNoCarry(t *testing.T) {
@@ -361,9 +380,9 @@ func TestCommittedFixtures_StartWithFourArgumentsAndNoCarry(t *testing.T) {
 			}
 			starts++
 			want := 4
-			if filepath.Base(path) == "run-continued-g1-v1.json" && event.GetEventId() == 1 {
-				// The one carried generation: its continue-as-new handed
-				// it a fifth argument, and its run-id argument is empty.
+			if carriedGenerations[filepath.Base(path)] && event.GetEventId() == 1 {
+				// A carried generation: its continue-as-new handed it a
+				// fifth argument, and its run-id argument is empty.
 				want = 5
 			}
 			if n := len(input.GetPayloads()); n != want {

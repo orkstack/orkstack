@@ -241,6 +241,13 @@ func RunWorkflow(
 			fmt.Sprintf("run created for orkflow %s@%s", wf.GetName(), wf.GetVersion())); err != nil {
 			return nil, err
 		}
+		// A definition with a run timeout whose plan does not carry it was
+		// submitted by a release that cannot decide it: it ends explicitly,
+		// before it starts anything.
+		if state.runTimeout != nil && !planCarriesRunTimeout(plan) {
+			return state.fail(ctx, cancelRun, inFlight, "", runLevelError(RunDefinitionUnsupportedCode,
+				"this run's definition declares a run timeout its plan does not carry; submit it again"))
+		}
 		state.start(ctx)
 		if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, "",
 			orkstackv1.Status_STATUS_RUNNING, "run started"); err != nil {
@@ -272,6 +279,11 @@ func RunWorkflow(
 		state.observeDecisionState("restore")
 	}
 	state.markGenerationBase(ctx)
+	// The run timeout's one arm site, once per generation, immediately before
+	// the loop's first pass.
+	if err := state.armRunTimer(ctx); err != nil {
+		return state.fail(ctx, cancelRun, inFlight, "", err)
+	}
 
 	for {
 		if readyLoopProbeForTest != nil {
@@ -293,6 +305,20 @@ func RunWorkflow(
 		// (history_guard.go). A no-op for a plan without a limit.
 		if err := state.historyExhausted(ctx, inFlight); err != nil {
 			return state.fail(ctx, cancelRun, inFlight, "", err)
+		}
+		// A run with a timeout applies the resolutions queued when the pass
+		// starts, bounded and never past D, before the ending check.
+		if state.runTimeout != nil && !state.runTimeout.taken {
+			if _, id, err := state.drainQueuedResolutions(ctx); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, id, err)
+			}
+		}
+		// The ending check: the run timeout's deadline, after the guard and
+		// before the switch, so no switch and no dispatch follows a passed D.
+		if due, canceled := state.runTimeoutDue(ctx, inFlight); canceled {
+			return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+		} else if due {
+			return state.fail(ctx, cancelRun, inFlight, "", state.takeRunTimeout())
 		}
 		// (B) The ONE switch site (continuation.go). A natural idle point is
 		// here, right after a completion emptied the in-flight set and before
@@ -328,6 +354,12 @@ func RunWorkflow(
 			// context could burn a sequence number (cancel.go).
 			if state.canceledBeforeDispatch(ctx) {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			}
+			// The run timeout's deadline, before every dispatch decision.
+			if due, canceled := state.runTimeoutDue(ctx, inFlight); canceled {
+				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			} else if due {
+				return state.fail(ctx, cancelRun, inFlight, "", state.takeRunTimeout())
 			}
 			// Check point 2: before every dispatch decision of the pass, with
 			// the dispatch's own command counted (history_guard_lookahead.go).
@@ -538,6 +570,12 @@ func RunWorkflow(
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
 		}
+		// The run timeout's timer, last of all, while not yet ready: it only
+		// wakes a blocked run, and the next pass's ending check decides.
+		timerReady := false
+		if t := state.runTimeout; t != nil && !t.taken && t.timer != nil && !t.timer.IsReady() {
+			selector.AddFuture(t.timer, func(workflow.Future) { timerReady = true })
+		}
 		if readyLoopProbeForTest != nil && readyLoopProbeForTest.selector != nil {
 			readyLoopProbeForTest.selector()
 		}
@@ -576,6 +614,9 @@ func RunWorkflow(
 				return state.fail(ctx, cancelRun, inFlight, woke, err)
 			}
 			continue
+		}
+		if timerReady {
+			continue // the pass top's ending check takes the deadline
 		}
 		if selectedItem >= 0 {
 			key := itemFlightKey(selectedID, selectedItem)
@@ -766,6 +807,10 @@ type runState struct {
 	bootstrapDeadline     time.Time
 	bootstrapBatch        int64
 
+	// runTimeout is the run's own time limit (runtimeout.go); nil when the
+	// definition declares no `timeout:`.
+	runTimeout *runTimeout
+
 	// declaredRows is this run's declared rows — its tasks plus every
 	// fan-out's max_items (DeclaredRows) — which decides whether it writes
 	// snapshot overlays (snapshot_overlay.go). Derived from the definition.
@@ -902,6 +947,7 @@ func buildRunState(
 		genFirstSeq: 1,
 	}
 	state.declaredRows = DeclaredRows(wf)
+	state.runTimeout = newRunTimeout(wf, plan)
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
 		state.tasks[t.GetId()] = t
@@ -1009,6 +1055,11 @@ func buildRunState(
 func (s *runState) start(ctx workflow.Context) {
 	s.status = orkstackv1.Status_STATUS_RUNNING
 	s.startedAt = timestamppb.New(workflow.Now(ctx))
+	// The run timeout's clock starts when the run does: start() is the only
+	// setter of D on a fresh run.
+	if t := s.runTimeout; t != nil {
+		t.deadline = workflow.Now(ctx).Add(t.limit())
+	}
 }
 
 // closureOf returns the sorted transitive `needs` closure of id, computed on
@@ -1408,15 +1459,14 @@ func (s *runState) pinUnavailableMessage(p *pinState, pool string, err error) st
 				"pin slot, so this task never reached one: %v",
 			p.name, pool, p.creationTimeout, err)
 	}
-	var refusal *temporal.ApplicationError
-	if errors.As(err, &refusal) && refusal.Type() == task.ReasonOrkerCordoned {
+	failure := categoryOf(err)
+	if failure.appType() == task.ReasonOrkerCordoned {
 		return fmt.Sprintf(
 			"pin %q could not be opened on pool %q: every pin host of the pool refused it because it "+
 				"is cordoned, so this task never reached one: %v",
 			p.name, pool, err)
 	}
-	var timeout *temporal.TimeoutError
-	if errors.As(err, &timeout) && timeout.TimeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START {
+	if failure.timeoutType() == enumspb.TIMEOUT_TYPE_SCHEDULE_TO_START {
 		return fmt.Sprintf(
 			"pin %q could not be opened on pool %q within %s: no Orker of the pool had a free "+
 				"pin slot, so this task never reached one: %v",
@@ -2218,6 +2268,9 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 			message = loss.GetMessage()
 		} else {
 			s.recordFailure(ctx, id, err)
+			if taskRun.GetError().GetCode() == TaskStoppedByRunTimeoutCode {
+				message = taskRun.GetError().GetMessage()
+			}
 		}
 		// taskRun.Status, not a hardcoded FAILED: recordFailure just decided
 		// between FAILED and CANCELED, and the event must say the same thing
@@ -2432,19 +2485,17 @@ func (s *runState) recordFailureOn(ctx workflow.Context, taskRun *orkstackv1.Tas
 	// exactly the same path and merely fills one more field of a message that
 	// was never in history to begin with. Gating it would put a version marker
 	// in history for a field that cannot affect it.
-	taskRun.RetryState = retryStateOf(cause)
+	read := categoryOf(cause)
+	taskRun.RetryState = read.retryState
 
-	var applicationErr *temporal.ApplicationError
-	if errors.As(cause, &applicationErr) {
-		category := applicationErr.Type()
-		failure.Category = categoryEnumFor(category)
-		failure.Retryable = !applicationErr.NonRetryable()
+	if read.isApplication() {
+		failure.Category = categoryEnumFor(read.appType())
+		failure.Retryable = !read.nonRetryable()
 
-		// The target is a **ActivityFailureDetail: Details assigns the value
-		// it holds, which is a *ActivityFailureDetail both in-process and
-		// after the proto converter decodes it from the wire.
-		var detail *orkstackv1.ActivityFailureDetail
-		if err := applicationErr.Details(&detail); err == nil {
+		// The detail is a *ActivityFailureDetail both in-process and after
+		// the proto converter decodes it from the wire (categoryOf).
+		detail, decoded := read.activityDetail()
+		if decoded {
 			// WHICH Orker produced this outcome, for every task, pinned or not —
 			// read as soon as a detail decodes, before the reason-code
 			// gate below, because a failed attempt is exactly when an operator
@@ -2481,17 +2532,16 @@ func (s *runState) recordFailureOn(ctx workflow.Context, taskRun *orkstackv1.Tas
 	// HEARTBEAT timeout is the one timeout that stays RETRYABLE regardless:
 	// it means the Orker died, which is an infrastructure fact about the
 	// host and not a statement about the workload (§8.1).
-	var timeoutErr *temporal.TimeoutError
-	if errors.As(cause, &timeoutErr) {
+	if read.timedOut() {
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
 		failure.Code = "ACTIVITY_TIMEOUT"
-		if timeoutErr.TimeoutType() == enumspb.TIMEOUT_TYPE_HEARTBEAT {
+		if read.timeoutType() == enumspb.TIMEOUT_TYPE_HEARTBEAT {
 			failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 			failure.Code = "ORKER_HEARTBEAT_TIMEOUT"
 			failure.Retryable = true
 		}
 	}
-	if temporal.IsCanceledError(cause) {
+	if read.canceled {
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
 		failure.Code = "TASK_CANCELED"
 		failure.Retryable = false
@@ -2501,6 +2551,14 @@ func (s *runState) recordFailureOn(ctx workflow.Context, taskRun *orkstackv1.Tas
 		taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	}
 	taskRun.Error = failure
+	// Work running when the run's deadline passed is not a cancellation the
+	// operator asked for: it is recorded FAILED, so any_failed handlers run.
+	if read.canceled && s.interrupting() {
+		s.recordInterrupted(ctx, taskRun, label)
+	} else if read.canceled && s.hardEnded() && ctx.Err() == nil {
+		// A failure handler the run timeout's hard end stopped.
+		taskRun.Error.Message = s.hardEndStoppedReason()
+	}
 }
 
 // retryStateOf reads why Temporal stopped retrying, off the *ActivityError that
@@ -2510,13 +2568,7 @@ func (s *runState) recordFailureOn(ctx workflow.Context, taskRun *orkstackv1.Tas
 // ActivityError, and a caller may have wrapped the whole thing again on the way
 // here. An error that is not an activity failure at all — a workflow-side
 // contract check, say — has no retry state to report and yields UNSPECIFIED.
-func retryStateOf(cause error) orkstackv1.RetryState {
-	var activityErr *temporal.ActivityError
-	if !errors.As(cause, &activityErr) {
-		return orkstackv1.RetryState_RETRY_STATE_UNSPECIFIED
-	}
-	return retryStateEnumFor(activityErr.RetryState())
-}
+func retryStateOf(cause error) orkstackv1.RetryState { return categoryOf(cause).retryState }
 
 // retryStateEnumFor maps Temporal's RetryState onto OrkStack's own.
 //
@@ -2589,13 +2641,22 @@ func (s *runState) fail(
 	// The history guard's failure belongs to the run, never to the task or
 	// fan-out where it tripped: every caller reaches here with the id it was
 	// working on.
-	if isHistoryLimit(cause) {
+	if isRunLevelCause(cause) {
 		taskID = ""
+	}
+	// An operator's cancel comes first in the ending order: a run-level
+	// timeout that meets a canceled run ends it canceled, with the cancel's
+	// own text rather than a timeout's.
+	if ctx.Err() != nil && runTimeoutCauseCode(cause) != "" {
+		cause = temporal.NewCanceledError()
 	}
 	// A definition with a failure handler takes its own failure path
 	// (join.go, F1–F13); every other run takes this body, unchanged.
 	if s.hasHandlers {
 		return s.failWithHandlers(ctx, cancelRun, inFlight, taskID, cause)
+	}
+	if s.runTimeout != nil && runTimeoutCauseCode(cause) == RunTimedOutCode && ctx.Err() == nil {
+		return s.failTimedOut(ctx, cancelRun, inFlight, cause)
 	}
 	s.finished = timestamppb.New(workflow.Now(ctx))
 	s.runError = s.runFailureFor(taskID, cause)
@@ -2607,7 +2668,7 @@ func (s *runState) fail(
 	// pin was not the thing that was lost. For an unpinned run the condition is
 	// identical to what it has always been — pinLossOf is nil for every task of
 	// a run with no pins — so no existing execution's behaviour moves.
-	if ctx.Err() != nil || (temporal.IsCanceledError(cause) && s.pinLossOf(taskID) == nil) {
+	if ctx.Err() != nil || (categoryOf(cause).canceled && s.pinLossOf(taskID) == nil) {
 		// The workflow context is done; final projection must run on a
 		// disconnected context or it would be canceled too.
 		disconnected, cancelDisconnected := workflow.NewDisconnectedContext(ctx)
@@ -2679,6 +2740,9 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 	if isHistoryLimit(cause) {
 		return historyLimitFailure(cause)
 	}
+	if runTimeoutCauseCode(cause) != "" {
+		return s.runTimeoutFailure(cause)
+	}
 	failure := &orkstackv1.Error{
 		Code:    "RUN_FAILED",
 		Message: cause.Error(),
@@ -2691,12 +2755,13 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 	// item failed; Run.error.message is that sentence, without the error
 	// type's decoration. Nothing else changes: the
 	// branch is reached only for a fan-out, which no earlier history holds.
-	var nodeErr *temporal.ApplicationError
 	// A composed task's failure carries the sentence naming its child the
 	// same way; reached only for a composed task, which no earlier history
 	// holds.
-	if (s.eaches[taskID] != nil || s.children[taskID] != nil) && errors.As(cause, &nodeErr) {
-		failure.Message = nodeErr.Message()
+	if s.eaches[taskID] != nil || s.children[taskID] != nil {
+		if node := categoryOf(cause); node.isApplication() {
+			failure.Message = node.appMessage()
+		}
 	}
 
 	// A pin that lost its host is the one failure that ARRIVES as a
@@ -2797,6 +2862,8 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		// replay-pinned), so the run record — and every webhook payload built
 		// from it — says what started it. Nil-safe, same as Telemetry above.
 		Origin: s.plan.Origin.Proto(),
+		// The run's own time limit; nil when its definition declares none.
+		Timeout: s.runTimeoutProto(),
 	}
 	for _, id := range s.order {
 		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])
@@ -3025,9 +3092,8 @@ func (s *runState) refuseRoute(ctx workflow.Context, id string, err error) error
 		return err
 	}
 	code, message := ReasonInvalidPool, err.Error()
-	var applicationErr *temporal.ApplicationError
-	if errors.As(err, &applicationErr) {
-		code, message = applicationErr.Type(), applicationErr.Message()
+	if failure := categoryOf(err); failure.isApplication() {
+		code, message = failure.appType(), failure.appMessage()
 	}
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_FAILED

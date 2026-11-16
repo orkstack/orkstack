@@ -44,7 +44,10 @@ type fakeSchedules struct {
 	backfill []orkstackv1.OverlapPolicy
 	calls    int
 	err      error // every call fails with it when set
-	listErr  error
+	// deleteErr fails Delete alone; updateErr fails Update after its apply
+	// ran, as a cluster that refuses what the callback built.
+	deleteErr, updateErr error
+	listErr              error
 	// described counts the schedules List described, as the cluster
 	// scheduler describes each listed entry that keep accepts.
 	described int
@@ -135,6 +138,9 @@ func (f *fakeSchedules) Update(_ context.Context, ns, name string, apply func(*o
 	if err := apply(next); err != nil {
 		return engine.ScheduleView{}, err
 	}
+	if f.updateErr != nil {
+		return engine.ScheduleView{}, f.updateErr
+	}
 	if next.GetScheduleId() != rec.GetScheduleId() || next.GetName() != rec.GetName() ||
 		next.GetNamespace() != rec.GetNamespace() || next.GetOrkflowName() != rec.GetOrkflowName() {
 		return engine.ScheduleView{}, errors.New("identity changed")
@@ -191,6 +197,9 @@ func (f *fakeSchedules) Backfill(_ context.Context, ns, name string, _, _ time.T
 func (f *fakeSchedules) Delete(_ context.Context, ns, name string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.deleteErr != nil {
+		return f.deleteErr
+	}
 	if _, ok := f.records[scheduleKey(ns, name)]; !ok {
 		return engine.ErrScheduleNotFound
 	}

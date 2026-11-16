@@ -96,6 +96,15 @@ type OrkerInstruments struct {
 	// secrets, could not be removed when they ended and is left on disk —
 	// typically files a workload wrote as a uid the Orker cannot remove.
 	WorkspaceCleanupFailures metric.Int64Counter
+	// LogMasked counts the runs of bytes an attempt's masker replaced with
+	// `***`, labelled ork.stream. Never which secret, or where.
+	LogMasked metric.Int64Counter
+	// LogMaskForms and LogMaskBytes record the size of an attempt's set of
+	// masking forms, once per attempt that masked anything.
+	LogMaskForms metric.Int64Histogram
+	LogMaskBytes metric.Int64Histogram
+	// LogMaskCapacityExceeded counts attempts refused MASK_CAPACITY_EXCEEDED.
+	LogMaskCapacityExceeded metric.Int64Counter
 }
 
 // meterFor returns p's meter, or the no-op meter when p is nil — the one
@@ -149,7 +158,35 @@ func NewOrkerInstruments(p *Providers) (*OrkerInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	logMasked, err := meter.Int64Counter("ork.log.masked",
+		metric.WithDescription("Runs of bytes a task's masker replaced in its logs, by stream."),
+		metric.WithUnit("{occurrence}"))
+	if err != nil {
+		return nil, err
+	}
+	maskForms, err := meter.Int64Histogram("ork.log.mask.forms",
+		metric.WithDescription("Masking forms registered for one task attempt."),
+		metric.WithUnit("{form}"))
+	if err != nil {
+		return nil, err
+	}
+	maskBytes, err := meter.Int64Histogram("ork.log.mask.bytes",
+		metric.WithDescription("Bytes of masking forms registered for one task attempt."),
+		metric.WithUnit("By"))
+	if err != nil {
+		return nil, err
+	}
+	maskCapacity, err := meter.Int64Counter("ork.log.mask.capacity_exceeded",
+		metric.WithDescription("Task attempts refused because their secrets had more masking forms than one masker holds."),
+		metric.WithUnit("{attempt}"))
+	if err != nil {
+		return nil, err
+	}
 	return &OrkerInstruments{
+		LogMasked:                logMasked,
+		LogMaskForms:             maskForms,
+		LogMaskBytes:             maskBytes,
+		LogMaskCapacityExceeded:  maskCapacity,
 		TaskLogRecords:           records,
 		TaskPhaseDuration:        phaseDuration,
 		Tasks:                    tasks,

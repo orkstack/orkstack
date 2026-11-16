@@ -140,6 +140,16 @@ A failed request starts no run.
 - A trigger starts only the Orkflow it was created for. A request cannot change the Orkflow or the version.
 - `Idempotency-Key` is scoped to the namespace, not the trigger. Two triggers in one namespace that send the same key start one run.
 
+## Who a schedule or trigger runs as
+
+Each schedule and trigger records its binder: who created it, changed what it starts, or last rebound it. `orkctl schedule get` and `orkctl trigger update` show the consent recorded with it. A schedule or trigger made before this release has none; record one with `--rebind`:
+
+```bash
+orkctl schedule update nightly --rebind
+```
+
+A new description or new times bind nobody.
+
 ## See also
 
 - [docs/ORKFLOW_SCHEDULES.md, "Surfaces"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#surfaces): the full command list and validation rules
@@ -147,3 +157,4 @@ A failed request starts no run.
 - [docs/ORKFLOW_TRIGGERS.md, "Invoking a trigger"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_TRIGGERS.md#invoking-a-trigger): the full request and response rules
 - [docs/ORKFLOW_TRIGGERS.md, "What triggers do not do"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_TRIGGERS.md#what-triggers-do-not-do): the limits in full
 - [docs/AUTOMATION.md, "schedules"](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#schedules) and [docs/AUTOMATION.md, "triggers"](https://github.com/orkstack/orkstack/blob/main/docs/AUTOMATION.md#triggers): declaring them in a document
+- [docs/ORKFLOW_SCHEDULES.md, "Who a schedule runs as"](https://github.com/orkstack/orkstack/blob/main/docs/ORKFLOW_SCHEDULES.md#who-a-schedule-runs-as): the binder, the consent, and the record beside the schedule

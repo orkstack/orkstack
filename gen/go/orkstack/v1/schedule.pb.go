@@ -321,9 +321,11 @@ type Schedule struct {
 	OverlapSkipped int64 `protobuf:"varint,21,opt,name=overlap_skipped,json=overlapSkipped,proto3" json:"overlap_skipped,omitempty"`
 	// consent_stale is set from identity (E61); unset until it lands (v0.4.0 proto batch).
 	ConsentStale bool `protobuf:"varint,22,opt,name=consent_stale,json=consentStale,proto3" json:"consent_stale,omitempty"`
-	// consented is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	// consented is the consent recorded with the binder at its last bind;
+	// output only.
 	Consented *ConsentView `protobuf:"bytes,23,opt,name=consented,proto3" json:"consented,omitempty"`
-	// asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+	// asks_for is what the Orkflow asks for now, as a consent digest; output
+	// only.
 	AsksFor       *AsksFor `protobuf:"bytes,24,opt,name=asks_for,json=asksFor,proto3" json:"asks_for,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

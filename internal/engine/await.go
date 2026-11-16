@@ -300,6 +300,12 @@ func (s *runState) cancelAwaiting(ctx workflow.Context, id string) error {
 			a.cancelDeadline()
 		}
 	}
+	if done, err := s.interruptOpen(ctx, id); done {
+		return err
+	}
+	if s.hardEnded() && s.isFailureHandlerID(id) {
+		return s.markCanceled(ctx, id, s.hardEndStoppedReason())
+	}
 	return s.markCanceled(ctx, id, "run ended while this task was awaiting external completion")
 }
 

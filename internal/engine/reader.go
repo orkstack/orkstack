@@ -1823,7 +1823,8 @@ func closedExecution(
 // isRunLevelFailureType reports whether a workflow failure's ApplicationError
 // type is a code the run itself owns, rather than the cause's category.
 func isRunLevelFailureType(failureType string) bool {
-	return failureType == RunHistoryLimitCode || isRunStateCode(failureType) || isRunDefinitionCode(failureType)
+	return failureType == RunHistoryLimitCode || isRunStateCode(failureType) || isRunDefinitionCode(failureType) ||
+		isRunTimeoutCode(failureType)
 }
 
 // runLevelFailureCategory is the category of a run-level failure code.
@@ -1833,6 +1834,12 @@ func runLevelFailureCategory(failureType string) orkstackv1.FailureCategory {
 	}
 	if isRunDefinitionCode(failureType) {
 		return runDefinitionCategory(failureType)
+	}
+	switch failureType {
+	case RunTimedOutCode:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
+	case RunDefinitionUnsupportedCode, RunTimeoutStateInvalidCode:
+		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
 	}
 	return orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 }

@@ -4,5 +4,6 @@ NAMESPACE    payments
 ORKFLOW      deploy
 VERSION      1.4.0
 DESCRIPTION  kept
+CONSENT      c1:<secret> (<time>)
 
 The token is unchanged.

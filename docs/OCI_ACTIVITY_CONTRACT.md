@@ -737,7 +737,8 @@ separately: only a `values.json` of ≤ 4 KiB is copied inline into the result.
 
 stdout and stderr are captured **independently**, byte-exact, and never merged
 on disk. Plain text works with no logging SDK; structured JSON is not part of
-the ABI. Three things happen to them:
+the ABI. The one exception to byte-exact is masking, below. Three things
+happen to them:
 
 1. **Live**, they go to the log sink with its framing (`[stderr] ` prefix,
    `[stdout] ` escape), written as numbered chunks under
@@ -759,6 +760,27 @@ the ABI. Three things happen to them:
 neither a result nor a commit, and Temporal permits only `CanceledError`
 details on that path. Its output is still retained and readable through the
 live chunks of item 1, which depend on no result.
+
+**Masking.** Where the Orker resolved a secret for the attempt, each
+occurrence of its value in either stream is replaced by `***` before anything
+is streamed, retained or exported: in the live chunks, `stdout.log` and
+`stderr.log`, the exported records, and the in-process observer of
+`orkctl task run` and `orkctl activity test`. The masker also knows the
+value's standard and URL-safe base64, its hex in both cases, its
+percent-encoding, its JSON-string escaping, each line of a multi-line value
+and a PEM body joined into one line. Each stream keeps its own match state,
+so nothing is held across a line end, and a stream that ends in the middle of
+a value ends in `***`. A value shorter than 8 bytes is not masked, and the
+task's log says so: `[ork] secret "pin" is shorter than 8 bytes and is not
+masked in logs`. The Orker's own `[ork]` lines and every failure message are
+masked too. A secret with `mask: false` (`SecretRef.unmasked`), and an Orker
+with `orker.log.mask_secrets: false`, leave the streams byte-exact; so does a
+task with no secret. An attempt whose secrets have more forms than one masker
+holds (1024 forms, 512 KiB) fails `MASK_CAPACITY_EXCEEDED` before its
+container starts. The attempt's record counts the runs it replaced
+(`TaskAttempt.masked_occurrences`), never which secret. Masking guards against
+accidents and is not a boundary: `docs/SECURITY_MODEL.md`, "Masking and its
+limits", lists what it cannot catch.
 
 ### 3.7 Environment
 
@@ -1701,7 +1723,7 @@ heard of.
 | 8 | `create` | **Create** from the security profile (§9.2), only if the attempt is still live: a run terminated or cancelled during the pull creates nothing |
 | 9–10 | `run` | **Run and wait**: stream stdout/stderr to the sink and to disk; wait for exit, cancellation (`cancel`) or the task timeout (`timeout`) |
 | 11 | `exit` | **Exit capture**; non-zero → classify and go to 14 |
-| 12 | `validate` | **Validate** `values.json` and `output/artifacts/`, including readability, then bound the projected commit (§5.4 steps 1–4) |
+| 12 | `validate` | **Validate** `values.json` and `output/artifacts/`, including readability, check `values.json` for the task's secrets (§9.4), then bound the projected commit (§5.4 steps 1–4) |
 | 13 | `commit` | **Upload and commit**: artifacts → `values.json` → streams → `commit.json` (§5.4) |
 | 14 | — | **Failure path**: scan `output/artifacts/` under the same §3.5 and readability rules; upload streams and the artifacts that passed; attach refs and any scan note to the error; write NO commit; return the workload's error |
 | 15 | — | **Cleanup**: remove the container (detached context; one that cannot be removed is tried again every 30 s while the Orker runs), remove the workdir and secrets, stop the heartbeat, close the log sink |
@@ -1868,6 +1890,8 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `VALUES_MISSING` | ContractViolation | no | exit 0 with no `/orkstack/output/values.json` |
 | `VALUES_MALFORMED` | ContractViolation | no | not valid UTF-8 JSON, or an object that writes a key twice, or not a top-level object, or not a regular file (a symlink, directory, device, socket or FIFO) |
 | `VALUES_TOO_LARGE` | ContractViolation | no | over `limits.valuesMaxBytes` |
+| `VALUES_CONTAIN_SECRET` | ContractViolation | no | `values.json` holds the value of one of the task's own secrets, in a spelling the masker knows, in its bytes or in a decoded string or key; the message names the secret and where by position (`$.#2[0]`), never a key's text or the value (§9.4) |
+| `MASK_CAPACITY_EXCEEDED` | ContractViolation | no | the task's secrets have more masking forms than one masker holds (1024 forms, 512 KiB); the message names the largest by name and size, before the container starts (§3.6) |
 | `ARTIFACT_NOT_A_FILE` | ContractViolation | no | a directory, symlink, device, socket or FIFO in `output/artifacts/`, or `output/artifacts` itself replaced by one that is not a directory |
 | `ARTIFACT_LIMIT_EXCEEDED` | ContractViolation | no | too many artifacts, or one too large |
 | `ARTIFACT_NAME_NOT_UTF8` | ContractViolation | no | an `output/artifacts/` file name is not valid UTF-8 (§3.5) |
@@ -2148,6 +2172,25 @@ pool"), as is one of the Orker's own sources — its settings, its process
 files, its configuration and credential files — whatever the floor says
 (`docs/SECURITY_MODEL.md`, "The Orker's own sources"). Secret bytes never appear in a proto message, Temporal history, the
 run archive, a log chunk, or `task.json` — which carries names and paths only.
+What the platform writes is held to that; what a task prints is masked in its
+logs (§3.6). A task's `values.json` that holds one of its own secrets fails
+the attempt `VALUES_CONTAIN_SECRET` at step 12, before anything is uploaded,
+and is not retried: a result is copied into Temporal history and the store,
+where whoever reads the run reads it, and its bytes are hashed, so it is
+refused rather than masked. The check looks for every secret of 8 bytes or more that does not say
+`mask: false` (a shorter one is not looked for, and the task's log says so),
+in the masker's spellings, in the file's bytes and in every
+decoded string and object key. It runs whether or not logs are masked, is
+turned off by `orker.values.refuse_secrets: false`, and fails closed: a check
+that cannot be built fails the attempt. It catches an accident, not a task
+that splits or transforms a value; a task that must hand a secret on puts it
+in an artifact, which is never scanned. A memo hit checks nothing, so a cached
+task that declares a secret carries one more memo-key component
+(`secret_check`): its first run after the upgrade misses. An adopted commit
+(§5.4) checks nothing either: a durably committed result is never made
+pending again, so a commit written before the upgrade, by a release without
+the check, is adopted as it is. Nor does a memo hit look again: a result
+cached before its secret was rotated is served as it was stored.
 The per-attempt secrets directory is removed on every exit path, including
 panic and cancellation. A process that is killed takes no exit path: its
 attempt's directory stays on the host, secrets included, until the next boot

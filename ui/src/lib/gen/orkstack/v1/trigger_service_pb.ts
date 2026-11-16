@@ -90,14 +90,16 @@ export type Trigger = Message<"orkstack.v1.Trigger"> & {
   consentStale: boolean;
 
   /**
-   * consented is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   * consented is the consent recorded with the binder at its last bind;
+   * output only.
    *
    * @generated from field: orkstack.v1.ConsentView consented = 11;
    */
   consented?: ConsentView | undefined;
 
   /**
-   * asks_for is set from identity (E61); unset until it lands (v0.4.0 proto batch).
+   * asks_for is what the Orkflow asks for now, as a consent digest; output
+   * only.
    *
    * @generated from field: orkstack.v1.AsksFor asks_for = 12;
    */

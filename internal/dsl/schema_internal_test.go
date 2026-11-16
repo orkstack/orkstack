@@ -192,6 +192,7 @@ func slots() map[string]slot {
 		"apiVersion": "orkstack/v1", "kind": "Orkflow", "name": "x", "namespace": "ns", "version": `"1"`,
 		"description": "d", "labels": "{l: v}", "inputs": "{i: {type: string}}", "outputs": "{r: x}",
 		"pins": "{p: {}}", "tasks": "[{id: a, uses: 'busybox:1'}]", "shared_with": "[{namespace: b}]",
+		"timeout": "6h",
 	} {
 		s := rootDoc(key, "")
 		s.baseline = baseline
@@ -245,6 +246,8 @@ func slots() map[string]slot {
 		out["tasks[].secrets[]."+key] = slot{doc: taskDoc("    secrets: [{" + other + ", " + key + ": @V@}]\n"), field: "tasks[0].secrets[0]." + key,
 			baseline: baseline, absent: taskDoc("    secrets: [{" + other + "}]\n")}
 	}
+	out["tasks[].secrets[].mask"] = slot{doc: taskDoc("    secrets: [{name: s, source: 'env:S', mask: @V@}]\n"), field: "tasks[0].secrets[0].mask",
+		baseline: "false", absent: taskDoc("    secrets: [{name: s, source: 'env:S'}]\n")}
 	for key, baseline := range map[string]string{"maximum_attempts": "2", "initial_interval_seconds": "1", "backoff_coefficient": "2.0", "maximum_interval_seconds": "10"} {
 		out["tasks[].retry."+key] = slot{doc: taskDoc("    retry: {" + key + ": @V@}\n"), field: "tasks[0].retry." + key, baseline: baseline, absent: taskDoc("    retry: {}\n")}
 	}

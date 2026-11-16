@@ -199,7 +199,7 @@ func (s *Service) CreateNamespace(
 	if err != nil {
 		return nil, err
 	}
-	spec := req.Msg.GetNamespace()
+	spec := withoutNamespaceID(req.Msg.GetNamespace())
 	if err := validNamespaceName(spec.GetName()); err != nil {
 		return nil, err
 	}
@@ -223,6 +223,7 @@ func (s *Service) CreateNamespace(
 		artifacts.PutConditions{IfAbsent: true})
 	switch {
 	case err == nil:
+		s.mintNamespaceID(ctx, stored)
 		return connect.NewResponse(&orkstackv1.CreateNamespaceResponse{
 			Namespace: stored,
 			Created:   true,
@@ -434,6 +435,20 @@ func (s *Service) GetNamespace(
 	ns, err := s.namespace(ctx, req.Msg.GetName())
 	if err != nil {
 		return nil, err
+	}
+	// The namespace's immutable id, read and never made here. It is shown,
+	// never needed: a namespace whose id cannot be read now is answered
+	// without one, and the log says why.
+	id, err := s.namespaceID(ctx, ns.GetName(), false)
+	if err != nil {
+		s.logger.Warn("the namespace is answered without its id: it could not be read", "namespace", ns.GetName(), "error", err)
+	}
+	if id != "" {
+		ns = proto.Clone(ns).(*orkstackv1.Namespace)
+		if ns.Identity == nil {
+			ns.Identity = &orkstackv1.NamespaceIdentity{}
+		}
+		ns.Identity.NamespaceId = id
 	}
 	return connect.NewResponse(&orkstackv1.GetNamespaceResponse{Namespace: ns}), nil
 }
@@ -650,7 +665,7 @@ func (s *Service) UpdateNamespace(
 	if err != nil {
 		return nil, err
 	}
-	spec := req.Msg.GetNamespace()
+	spec := withoutNamespaceID(req.Msg.GetNamespace())
 	if err := validNamespaceName(spec.GetName()); err != nil {
 		return nil, err
 	}
@@ -748,7 +763,8 @@ func (s *Service) DeleteNamespace(
 			name))
 	}
 	// A name nobody registered is NotFound, and says which names exist.
-	if _, err := s.namespace(ctx, name); err != nil {
+	doomed, err := s.namespace(ctx, name)
+	if err != nil {
 		return nil, err
 	}
 	held, err := s.orkflows.List(ctx, name)
@@ -767,6 +783,15 @@ func (s *Service) DeleteNamespace(
 	}
 	if err := registry.Delete(ctx, name); err != nil {
 		return nil, namespaceStoreError(err, "delete namespace %q", name)
+	}
+	s.forgetNamespaceID(ctx, name, doomed.GetCreatedAt().AsTime())
+	// A namespace that holds no Orkflow holds no schedule; what is left under
+	// its schedule records is emptied objects, which admit nothing. They go
+	// with it, best effort.
+	if s.scheduleBindings != nil {
+		if err := s.scheduleBindings.DeleteNamespace(ctx, name); err != nil {
+			s.logger.Warn("the namespace was deleted, but its emptied schedule records were not", "namespace", name, "error", err)
+		}
 	}
 	return connect.NewResponse(&orkstackv1.DeleteNamespaceResponse{}), nil
 }

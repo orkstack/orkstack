@@ -57,10 +57,18 @@ const CapabilitySnapshotOverlay = "snapshot-overlay"
 // (WebhookLauncher).
 const CapabilityWebhookByID = "webhook-by-id"
 
+// CapabilityRunTimeout is what a run whose definition declares a run timeout
+// (`timeout:`) needs of every process that could decide it: an older build
+// ignores the definition's timeout_seconds and the plan's RunTimeout, so it
+// would run the run with no deadline and the two builds would replay it
+// differently.
+const CapabilityRunTimeout = "run-timeout"
+
 // EngineCapabilities is what this build can run, in the order it advertises
 // them. A later stage appends its own token; a token is never removed while a
 // release that relies on it may still poll.
-var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay, CapabilityWebhookByID}
+var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay,
+	CapabilityWebhookByID, CapabilityRunTimeout}
 
 // capabilitySuffix separates a process's SDK identity from what it advertises.
 const capabilitySuffix = " ork-caps="

@@ -9,6 +9,8 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/authn"
+	"github.com/orkstack/orkstack/internal/consent"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
@@ -61,6 +63,9 @@ func (s *Service) CreateTrigger(
 		OrkflowVersion: version,
 		Description:    req.Msg.GetDescription(),
 		Name:           req.Msg.GetName(),
+		// A create binds its caller (docs/ORKFLOW_TRIGGERS.md, "Who a
+		// trigger runs as").
+		Binding: s.triggerBoundBy(authn.Recorded(ctx, req.Header())),
 	})
 	if errors.Is(err, triggers.ErrNameTaken) {
 		return nil, connect.NewError(connect.CodeAlreadyExists, fmt.Errorf(
@@ -172,7 +177,18 @@ func (s *Service) UpdateTrigger(
 				current.OrkflowName, version, ns.GetName())
 		}
 	}
+	who := authn.Recorded(ctx, req.Header())
+	if req.Msg.GetRebind() && who.ID == "" {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"--rebind records you as the trigger's binder, and this request names nobody: send Ork-Principal, or a credential the engine verifies"))
+	}
 	updated, found, err := s.triggers.Update(ctx, id, ns.GetName(), func(t *triggers.Trigger) error {
+		// The caller binds when the save changes the version the trigger
+		// starts or asks to rebind; a new name or description rebinds
+		// nothing.
+		if req.Msg.GetRebind() || t.OrkflowVersion != req.Msg.GetOrkflowVersion() {
+			t.Binding = s.triggerBoundBy(who)
+		}
 		t.Name = req.Msg.GetName()
 		t.OrkflowVersion = req.Msg.GetOrkflowVersion()
 		t.Description = req.Msg.GetDescription()
@@ -204,7 +220,30 @@ func triggerProto(trigger triggers.Trigger) *orkstackv1.Trigger {
 		Description:    trigger.Description,
 		CreatedAt:      timestamppb.New(trigger.CreatedAt),
 		Name:           trigger.Name,
+		// Every Orkflow asks for the empty table in this release.
+		AsksFor:   &orkstackv1.AsksFor{Digest: consent.Empty()},
+		Consented: triggerConsent(trigger.Binding),
 	}
+}
+
+// triggerConsent is the consent a trigger's binding recorded; nil for a
+// trigger bound before this release.
+func triggerConsent(b triggers.Binding) *orkstackv1.ConsentView {
+	if !consent.Valid(b.Consent) {
+		return nil
+	}
+	return &orkstackv1.ConsentView{Digest: b.Consent, At: timestamppb.New(b.ConsentAt)}
+}
+
+// triggerBoundBy is who as a trigger's binder, with the empty table's
+// consent; an asserted caller stays asserted.
+func (s *Service) triggerBoundBy(who authn.RecordedPrincipal) triggers.Binding {
+	now := s.now().UTC()
+	b := triggers.Binding{Binder: recordedBinder(who.ID), Verified: who.Verified && who.ID != "", BoundAt: now, Consent: consent.Empty(), ConsentAt: now}
+	if b.Verified {
+		b.Method = recordedBinder(who.Method)
+	}
+	return b
 }
 
 // triggerConnectError maps a store failure onto a Connect code, the way
