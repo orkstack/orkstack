@@ -79,6 +79,10 @@ type eachState struct {
 	settled  int32 // items in a terminal status
 	limit    int32 // max_parallel, or count when 0; never above count
 	stride   int32 // max(1, ceil(count / eachSnapshotsPerFanOut))
+	// again is the items an interruption put back that are due to run
+	// again, in the order they became due; dispatchItems takes them before
+	// the next new index. Rebuilt from the rows at a restore.
+	again []int32
 }
 
 // itemFlightKey is an item's key in the loop's in-flight map. A task id is a
@@ -509,7 +513,7 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 		batch = 1
 	}
 	var sent int64
-	for e.inFlight < e.limit && e.next < e.count {
+	for e.inFlight < e.limit && (len(e.again) > 0 || e.next < e.count) {
 		if sent == batch {
 			if err := workflow.Sleep(runCtx, eachDispatchYield); err != nil {
 				return err
@@ -530,11 +534,19 @@ func (s *runState) dispatchItems(ctx, runCtx workflow.Context, id string, inFlig
 			s.heldFanOuts = true
 			break
 		}
-		index := e.next
-		if eachDispatchDescending {
-			index = e.count - 1 - e.next
+		var index int32
+		if len(e.again) > 0 {
+			// An item an interruption put back runs again before the next
+			// new one, in the order it became due.
+			index = e.again[0]
+			e.again = e.again[1:]
+		} else {
+			index = e.next
+			if eachDispatchDescending {
+				index = e.count - 1 - e.next
+			}
+			e.next++
 		}
-		e.next++
 		future, err := s.scheduleItem(runCtx, id, index)
 		if err != nil {
 			e.settled++
@@ -614,7 +626,7 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		s.noteCommand(runCtx, 1, s.itemInputLimit+limit.Reserve.CommandBytes)
 		s.chargeItemDispatch()
 	}
-	activityCtx := s.taskActivityContext(runCtx, t, queue)
+	activityCtx := s.taskActivityContext(runCtx, t, queue, item, itemFlightKey(id, index))
 	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
 }
 
@@ -680,8 +692,24 @@ func (s *runState) collectItem(
 	result := &orkstackv1.ExecuteTaskResult{}
 	cause := future.Get(ctx, result)
 	if cause != nil {
+		// An interruption its execution listed runs the item again in its
+		// fan-out's window, or — its budgets spent — fails it with its
+		// account added.
+		account := ""
+		if d, ok := s.interruptionOf(ctx, id, index, item, cause); ok {
+			if d.redispatch {
+				e.settled--
+				s.requeueUnit(ctx, id, index, item, d)
+				return s.dispatchItems(ctx, runCtx, id, inFlight)
+			}
+			account = d.message
+		}
 		s.recordFailureOn(ctx, item, fmt.Sprintf("task %q item %d", id, index), cause)
+		if account != "" && item.GetError() != nil {
+			item.Error.Message += "; " + account
+		}
 	} else {
+		delete(s.listed, itemFlightKey(id, index))
 		item.Status = orkstackv1.Status_STATUS_SUCCEEDED
 		item.FinishedAt = timestamppb.New(workflow.Now(ctx))
 		item.Artifacts = result.GetArtifacts()
@@ -832,7 +860,18 @@ func (s *runState) finishFanOutOnRunEnd(ctx workflow.Context, id string) {
 		return
 	}
 	now := timestamppb.New(workflow.Now(ctx))
-	for _, item := range node.GetItems() {
+	e.again = nil
+	for i, item := range node.GetItems() {
+		// An item an interruption put back fails with its reason when the
+		// run fails; a canceled or timed-out run cancels it.
+		if waitingToRunAgain(item) {
+			if s.failingRun {
+				s.notRunAgain(ctx, id, int32(i), item)
+				e.settled++
+				continue
+			}
+			s.dropWait(id, int32(i))
+		}
 		if item.GetStatus() == orkstackv1.Status_STATUS_PENDING {
 			item.Status = orkstackv1.Status_STATUS_CANCELED
 			item.FinishedAt = now
@@ -915,6 +954,8 @@ func (s *runState) emitItem(ctx workflow.Context, id string, index int32,
 		Message:   message,
 		Timestamp: timestamppb.New(workflow.Now(ctx)),
 		Item:      proto.Int32(index),
+		// Set only on an interruption's notice (emitInterruption).
+		Interruption: s.takeEventInterruption(),
 	}
 	dedupeKey := fmt.Sprintf("%s#%d", s.runID, s.eventSeq)
 	if !fresh && s.leanEvents(ctx) {

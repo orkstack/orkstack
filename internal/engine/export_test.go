@@ -276,3 +276,11 @@ func DisableCrossNamespaceGateForTest() (restore func()) {
 
 // SetWebhookLauncherClockForTest makes l read the time from clock.
 func SetWebhookLauncherClockForTest(l *WebhookLauncher, clock func() time.Time) { l.clock = clock }
+
+// DisableInterruptionRetryGateForTest sets the test-only switch that makes a
+// run take the interruption-retry DefaultVersion branch without asking it.
+// Restore with the returned function.
+func DisableInterruptionRetryGateForTest() (restore func()) {
+	interruptionRetryGateDisabledForTest.Store(true)
+	return func() { interruptionRetryGateDisabledForTest.Store(false) }
+}

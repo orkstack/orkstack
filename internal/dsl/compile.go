@@ -278,6 +278,10 @@ type retryDocument struct {
 	InitialIntervalSeconds int32   `yaml:"initial_interval_seconds"`
 	BackoffCoefficient     float64 `yaml:"backoff_coefficient"`
 	MaximumIntervalSeconds int32   `yaml:"maximum_interval_seconds"`
+	// MaxInterruptions is E92's cap on the interruptions that re-run the
+	// task without spending its attempts; 0 opts the task out. Absent is the
+	// deployment's budgets, so it is a pointer: 0 and absent differ.
+	MaxInterruptions *int32 `yaml:"max_interruptions"`
 }
 
 // CompileFile reads path and compiles it into an orkstack.v1.Orkflow.
@@ -469,6 +473,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 				InitialIntervalSeconds: td.Retry.InitialIntervalSeconds,
 				BackoffCoefficient:     td.Retry.BackoffCoefficient,
 				MaximumIntervalSeconds: td.Retry.MaximumIntervalSeconds,
+				MaxInterruptions:       td.Retry.MaxInterruptions,
 			}
 		}
 		if td.CancellationGracePeriodSeconds != nil {

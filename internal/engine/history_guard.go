@@ -268,6 +268,10 @@ func (s *runState) countHandlers() {
 // handler. O(T): counted at most once per pass (reserveNow).
 func (s *runState) failReserve(inFlight map[string]workflow.Future, r HistoryReserve) (events, bytes int64) {
 	events = s.fixedReserve(r) + r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes))
+	// A unit waiting to run again (interruption_retry.go) owes its Timer's
+	// cancel or fire, as an open sleep does; none exists before the
+	// interruption-retry gate, so no recorded history meets this term.
+	events += r.PerAwait * int64(len(s.waits))
 	bytes = r.PerInFlightBytes * int64(len(inFlight))
 	for _, id := range s.order {
 		status := s.taskRuns[id].GetStatus()
@@ -329,7 +333,7 @@ func (s *runState) quickReserve(inFlight map[string]workflow.Future, r HistoryRe
 	events = s.fixedReserve(r) +
 		r.PerInFlight*int64(len(inFlight)) + s.publishReserve(r)*int64(len(s.pendingItemPublishes)) +
 		r.PerPending*int64(len(s.order)) +
-		r.PerAwait*int64(len(s.awaits)+len(s.sleeps)) +
+		r.PerAwait*int64(len(s.awaits)+len(s.sleeps)+len(s.waits)) +
 		r.PerHandler*s.handlerCount +
 		r.PerOpenPin*int64(len(s.pins)) +
 		r.PerFanOut*int64(len(s.eaches))
@@ -505,6 +509,8 @@ func (s *runState) cancelHandlersAtHistoryLimit(ctx workflow.Context) {
 		if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_PENDING {
 			continue
 		}
+		// A handler waiting to run again gives its wait up with it.
+		s.dropWait(id, -1)
 		if err := s.markCanceled(ctx, id, handlerCanceledAtHistoryLimit); err != nil {
 			workflow.GetLogger(ctx).Error("mark canceled failed",
 				"run_id", s.runID, "task_id", id, "error", err)

@@ -696,6 +696,12 @@ then the variable it becomes.
 | `engine.snapshot_overlays` | `ORK_SNAPSHOT_OVERLAYS` | `true` | `ork` | a run that declares more than 256 rows — its tasks plus every fan-out's `max_items` — writes, for each event before its last, only the rows that changed since its last full snapshot (a snapshot overlay, `docs/STORAGE.md`), and a full snapshot at least every 64 events and whenever more than 256 rows changed; its last event's snapshot is always full. Decided per run, so a small child of a large parent keeps full snapshots. Read at submit, so a change applies to new runs. While any `ork` process polling `ork-engine-events` runs an older release (a draining build's included), or a process of a build that new runs start on does, new runs write full snapshots instead, and the engine logs why at most once a minute (§5, "Snapshot overlays"). On by default from the release after the one that first had it; turn it off and wait for its runs before rolling back below the release that has it (§4) |
 | `engine.run_max_in_flight` | `ORK_RUN_MAX_IN_FLIGHT` | `500` | `ork` | the most activities, child runs and pins one run keeps pending at once; more wait `PENDING`, exactly as on a saturated pool, and dispatch resumes as running work finishes. An open pin's needs are exempt, below an absolute stop at 1,900. 16 to 1,800; anything else is refused at boot. Without it, a run above the cluster's 2,000 pending activities would stall. Read at submit, so a change applies to new runs. Raising it is allowed, but it lowers the flat-stage bound X (`engine.orkflow_max_tasks`, §5): above about 700, X is below the 4,000-task default and the boot warns |
 | `engine.pin_creation_timeout` | `ORK_PIN_CREATION_TIMEOUT` | `5m` | `ork` | how long a pin waits for some pin host of its pool to have a free slot (`ORK_ORKER_MAX_PINS`) before the task whose readiness asked for it fails `PIN_UNAVAILABLE`. A duration of whole seconds, `1s` to `24h`; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only: a run already accepted keeps the wait it started with, and so does a child run of it. A pool whose pin hosts are all cordoned fails a pin after about five minutes whatever this says (§5, "Removing an Orker safely: cordon and drain") |
+| `engine.interruptions.lost` | `ORK_INTERRUPTIONS_LOST` | `3` | `ork` | how many times a task (or fan-out item) runs again, without spending its own attempts, after its Orker stopped answering; past it, a loss spends an own attempt. From 0 to 10; anything else is refused at boot. Pinned in each run's plan when it is submitted, so a change moves only new runs. A task's `retry.max_interruptions` lowers it, and `0` opts the task out |
+| `engine.interruptions.lost_run_cap` | `ORK_INTERRUPTIONS_LOST_RUN_CAP` | `20` | `ork` | how many lost-Orker events one run survives across all its tasks before a loss spends an own attempt. From 1 to 200; pinned per run |
+| `engine.interruptions.handed_back` | `ORK_INTERRUPTIONS_HANDED_BACK` | `10` | `ork` | how many times a task runs again after a stopping Orker handed it back. From 1 to 50; pinned per run |
+| `engine.interruptions.never_started` | `ORK_INTERRUPTIONS_NEVER_STARTED` | `20` | `ork` | how many times a task runs again with no wait after a stopping Orker returned it before it started; past it, with a doubling back-off (`engine.interruptions.never_started_backoff`). It never fails the task. From 1 to 100; pinned per run |
+| `engine.interruptions.never_started_faults` | `ORK_INTERRUPTIONS_NEVER_STARTED_FAULTS` | `5` | `ork` | how many consecutive attempts that never started because of a fault (object storage refusing the attempt's record, a drifted Orker profile) a task survives before they spend its own attempts; past the first, each waits at least 45 s ("Interruption budgets", §5). From 1 to 20; pinned per run |
+| `engine.interruptions.never_started_backoff` | `ORK_INTERRUPTIONS_NEVER_STARTED_BACKOFF` | `2s` | `ork` | the first wait of the never-started back-off, doubling each time up to 60 s. From `1s` to `30s`; pinned per run |
 | `engine.run_timeout_handler_grace` | `ORK_RUN_TIMEOUT_HANDLER_GRACE` | `10m` | `ork` | how long after a run's deadline (an Orkflow's `timeout:`, `docs/DSL.md` "Run timeout") its failure handlers may still run; at that hard end a handler still running is stopped and one not yet started never starts. A duration of whole seconds, `0s` to `24h`; `0s` starts no failure handler once the run timed out; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only, and a child run carries the value its parent's submit read |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
@@ -3788,9 +3794,11 @@ remains, before it exits:
   cancellation sequence — `SIGTERM`, then `SIGKILL` once the task's
   `cancellation_grace_period_seconds` (30 by default) has passed — while the
   attempt keeps heartbeating, and nothing it left is committed. The Orker then
-  reports the attempt `ORKER_STOPPED` itself, so the task runs again under its
-  `retry:` policy at once, not after a heartbeat timeout; a task with no
-  `retry:` fails `ORKER_STOPPED`. Its record says `FAILED` with
+  reports the attempt `ORKER_STOPPED` itself, so the task runs again at once,
+  not after a heartbeat timeout, and without spending its own attempts while
+  its run's hand-back budget lasts (`engine.interruptions.handed_back`, below);
+  past it, under its `retry:` policy, and a task with no `retry:` then fails
+  `ORKER_STOPPED`. Its record says `FAILED` with
   `ORKER_STOPPED` (`orkctl run attempts`), and its log keeps every line the
   workload printed, the ones after `SIGTERM` included (`orkctl run logs`). A
   report the cluster never takes within 10 minutes is recorded
@@ -3802,7 +3810,7 @@ remains, before it exits:
 The Orker stops polling right after it hands back what remains, not after the
 hand-backs have reported: a poll left open would deliver the retry of a task
 it just handed back to this same Orker, only to be handed back again before it
-starts, spending another attempt. Each handed-back attempt reports itself
+starts. Each handed-back attempt reports itself
 after that. With a grace longer than about a minute, no poll is open by then
 anyway. With a shorter one, a task the cluster hands a poll at the very instant
 the worker stops is never delivered: it ends on its heartbeat timeout and runs
@@ -3821,6 +3829,32 @@ on an Orker of its run's own release that serves its pool, and waits, still
 own release on every pool that release has served, whether or not any of its
 Orkers polls now (§3, "Rolling a release forward", step 5). Nothing is lost
 while it waits.
+
+#### Interruption budgets
+
+An interrupted attempt — handed back by a stopping Orker, returned before it
+started, or lost with its Orker — runs again without spending the task's own
+attempts, within budgets each run pins when it is submitted
+(`engine.interruptions.*`, §1). A lost attempt runs again only after its
+cancellation grace plus the heartbeat timeout, so its container cannot still
+be running beside the next one. A task still waiting to run again when its
+run fails is not run again, and fails with its interruption's reason.
+
+- Losses are counted per run as lost-Orker events: losses of one Orker within
+  that wait are one event. Events never decay within a run, so a long run on
+  a spot-heavy pool can spend its `engine.interruptions.lost_run_cap` and then
+  spend own attempts on each further loss.
+- A loss whose attempt never reported its Orker (lost before its first
+  heartbeat) counts as an event of its own, so a burst of them spends the cap
+  faster than one Orker's losses do.
+- A never-started fault (object storage refusing the attempt's record, a
+  drifted profile, a runtime that could not say whether the container
+  started) runs again at once the first time and then waits, at least 45 s
+  (the store-outage cordon's detection time at the Orker's defaults) and
+  doubling up to 60 s, so a one-attempt task outlives a store blip until the
+  cordon trips. `RUNTIME_STATE_UNKNOWN` means the Orker could not tell
+  whether the container started, so the task's side effects may already have
+  run once.
 
 #### The Orker's load, as metrics
 

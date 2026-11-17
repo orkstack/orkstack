@@ -349,6 +349,9 @@ type Config struct {
 	// value that is not whole seconds, and a smaller one here is raised to one
 	// second. Pinned, in whole seconds, into every top-level plan.
 	PinCreationTimeout time.Duration
+	// Interruptions are engine.interruptions.*, the budgets every accepted run
+	// pins (E92); nil pins DefaultInterruptionBudgets.
+	Interruptions *engine.InterruptionBudgets
 
 	// RunTimeoutHandlerGrace is engine.run_timeout_handler_grace: how long
 	// after a run's deadline its failure handlers may still run. Zero is a
@@ -599,6 +602,9 @@ type Service struct {
 	// pinCreationSeconds is Config.PinCreationTimeout in whole
 	// seconds, defaulted: what pinRunTreeLimits pins.
 	pinCreationSeconds int32
+	// interruptions is Config.Interruptions: the budgets every run this
+	// engine accepts pins (E92); nil is the defaults.
+	interruptions *engine.InterruptionBudgets
 	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
 	// seconds, never negative: what runTimeoutPlanFor pins.
 	runTimeoutGraceSeconds int64
@@ -696,6 +702,7 @@ func NewService(cfg Config) *Service {
 		definitionObjects:      cfg.DefinitionObjects,
 		runMaxInFlight:         int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
 		pinCreationSeconds:     pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
+		interruptions:          cfg.Interruptions,
 		runTimeoutGraceSeconds: max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
 		historyMaxBytes:        positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:        composeMaxDepthOf(cfg.ComposeMaxDepth),
@@ -1973,7 +1980,18 @@ func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	plan.InFlight = &limit
 	plan.PinCreationTimeoutSeconds = s.pinCreationSeconds
 	plan.RetryMaxIntervalSeconds = int32(engine.DefaultRetryMaxInterval / time.Second)
+	budgets := s.interruptionBudgets()
+	plan.Interruptions = &budgets
 	plan.RecordRootRun = true
+}
+
+// interruptionBudgets are what a run this engine accepts pins: the
+// configured budgets, or the defaults.
+func (s *Service) interruptionBudgets() engine.InterruptionBudgets {
+	if s.interruptions != nil {
+		return *s.interruptions
+	}
+	return engine.DefaultInterruptionBudgets
 }
 
 // runTimeoutPlanFor is what a run of wf carries for its run timeout: nil when

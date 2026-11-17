@@ -457,6 +457,7 @@ tasks:
       initial_interval_seconds: 1
       backoff_coefficient: 2.0
       maximum_interval_seconds: 60
+      max_interruptions: 3 # optional; 0 opts out of interruption re-runs
     pool: ""              # optional Orker pool; absent means the default pool
     pin: ""               # optional declared pin; absent means unpinned
     command:              # optional image ENTRYPOINT/CMD override; argv
@@ -495,8 +496,29 @@ interval when that is longer (Temporal refuses a maximum below the initial).
 A negative interval, a `maximum_interval_seconds` set below
 `initial_interval_seconds`, and a `backoff_coefficient` below 1 or not finite,
 are refused (rule 47).
+
 The 60 s is decided when the run is submitted and kept for the whole run: a
 run submitted by a release before v0.2.0 keeps the 100 s it started with.
+
+An interrupted attempt runs again without spending the task's own
+attempts: one whose Orker was lost (it stopped heartbeating) or handed it
+back while stopping, and one that never started. Each kind has a budget per
+task (lost 3, handed back 10, never started 20, with 5 in a row for a fault
+such as object storage refusing the attempt's record); past it, the next
+interruption spends an own attempt like any failure, and a fault that keeps
+repeating fails the task with its own reason once those are spent. A task
+handed back before it started because its Orker was stopping never spends
+one: past 20 it waits, doubling up to a minute, before it runs again. An
+Orker whose profile has drifted refuses a task before it starts
+(`PROFILE_DRIFTED`), so a drifted task spends no attempt: it runs again on
+another Orker, counted as a fault.
+`max_interruptions` caps the lost and handed-back budgets for the task and
+never raises them: `0` opts it out, so each interruption spends an own
+attempt as any failure does, and absent keeps the deployment's budgets. It
+is from 0 to 100 (rule 47). A pinned task's interruption spends an own
+attempt, and a task still waiting to run again when its run fails is not
+run again: it fails with its interruption's reason. A re-run repeats the
+task's external side effects, under the same idempotency key.
 
 `uses:` is the only image selector. A catalog name is resolved when the Orkflow is created;
 a registry tag or digest may be written directly. In every case the created
@@ -2062,7 +2084,9 @@ How each node reads:
     that is set is at least `initial_interval_seconds`, and a
     `backoff_coefficient` that is set is a finite number of at least 1 (field
     `tasks[i].retry.backoff_coefficient`); `0` and absent are one value, the
-    default. An interval is an integer field, so a non-finite one does not
+    default. `max_interruptions`, when written, is from 0 to 100 (field
+    `tasks[i].retry.max_interruptions`); unlike the others, `0` and absent
+    differ: `0` opts the task out of interruption re-runs. An interval is an integer field, so a non-finite one does not
     decode at all. The refusal names the field and its value. It
     holds whatever `maximum_attempts` says, so raising the attempts later can
     never surface a latent error. The cluster refuses a maximum below the
