@@ -2660,7 +2660,7 @@ answer is the TaskAttempt record the Orker writes.
 | `item` | optional `int32` | item is set when the pending activity is one item of a fan-out (read off the scheduled ExecuteTaskInput.each.index). |
 | `capacity_wait` | [`CapacityWait`](#capacitywait) | capacity_wait is set when this attempt is waiting for capacity: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, and every Orker of its pool that takes new tasks declares a capacity, runs a task, and has no room for another task within it. Derived on read from the Orker inventory ListOrkers reports, in a reading at most five seconds old that one engine replica shares among every caller. Unset otherwise — including when the inventory could not be read in time, when any live Orker did not answer (it could serve this pool, with room), when one of the pool's Orkers declares no capacity, runs nothing (what it reserves is then its own polls, which take the next task), or has room but every task slot (max_concurrent) taken. The attempt is then waiting for an Orker, as it always was. |
 | `store_outage_wait` | [`StoreOutageWait`](#storeoutagewait) | store_outage_wait is set when this attempt is waiting out an object storage outage: it has been SCHEDULED, with no next_attempt_at, for at least two seconds, its task is not pinned, at least one Orker of its pool is cordoned only because the store does not answer it, and no Orker of the pool takes new tasks. Derived on read like capacity_wait, and unset for the same reasons. The attempt has used nothing while it waits, and starts once the store answers. |
-| `usage` | [`LiveUsage`](#liveusage) | usage is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `usage` | [`LiveUsage`](#liveusage) | usage is the attempt's latest CPU and memory, from its Orker's last heartbeat, or why there is none. |
 | `reserved` | [`ReservedResources`](#reservedresources) | reserved is set from E94; unset until it lands (v0.4.0 proto batch). |
 | `identity` | repeated [`LiveIdentity`](#liveidentity) | identity is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 
@@ -2673,10 +2673,21 @@ No fields.
 
 ### LiveUsage
 
-LiveUsage is E94's; it is empty until E94 lands (v0.4.0 proto
-batch).
+LiveUsage is a running attempt's latest CPU and memory, from the Orker's
+last heartbeat.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `available` | `bool` |  |
+| `unavailable_reason` | [`LiveUsageUnavailableReason`](#liveusageunavailablereason) | unavailable_reason is set when available is false. |
+| `cpu_cores` | optional `double` | cpu_cores is the CPU rate between the last two readings, in cores. Unset until there are two: not yet known, which is not 0 cores. |
+| `cpu_seconds` | `double` | cpu_seconds is the container's CPU time at the last reading. |
+| `memory_bytes` | `int64` |  |
+| `memory_peak_bytes` | `int64` |  |
+| `memory_peak_exact` | `bool` |  |
+| `memory_limit_bytes` | `int64` | memory_limit_bytes is the container's memory limit; 0 is none. |
+| `sampled_at` | `google.protobuf.Timestamp` | sampled_at is when the reading was taken: the heartbeat's time on the cluster's clock, less the reading's age as the Orker reported it. |
+| `stale` | `bool` | stale: the reading is older than twice the Orker's sampling interval plus one heartbeat tick. |
 
 ### LowerAuthModeRequest
 
@@ -2732,10 +2743,24 @@ exactly one test.
 
 ### MeasuredUsage
 
-MeasuredUsage is E94's; it is empty until E94 lands (v0.4.0 proto
-batch).
+MeasuredUsage is what an attempt's container used, as its cgroup reported
+it: best-effort, read on a schedule, and unset on a record an older Orker
+wrote. It never decides an attempt's outcome.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `method` | [`MeasurementMethod`](#measurementmethod) |  |
+| `cpu_seconds` | `double` | cpu_seconds is the container's CPU time at the last reading: a lower bound on what it used. |
+| `memory_peak_bytes` | `int64` | memory_peak_bytes is the container's peak memory: the kernel's own peak when memory_peak_exact, otherwise the most a reading saw (or, when it was stopped at its limit with no peak of its own, the limit). |
+| `memory_peak_exact` | `bool` |  |
+| `memory_limit_bytes` | `int64` | memory_limit_bytes is the container's memory limit; 0 is none. |
+| `samples` | `int32` | samples is how many readings were taken. |
+| `first_sampled_at` | `google.protobuf.Timestamp` |  |
+| `last_sampled_at` | `google.protobuf.Timestamp` |  |
+| `container_started_at` | `google.protobuf.Timestamp` |  |
+| `container_exited_at` | `google.protobuf.Timestamp` |  |
+| `unmeasured_reason` | [`UnmeasuredReason`](#unmeasuredreason) | unmeasured_reason is set when method is UNMEASURED. |
+| `oom_killed` | `bool` | oom_killed: the container was stopped at its memory limit. |
 
 ### MessageMetadata
 
@@ -4212,7 +4237,7 @@ change what the attempt itself reported.
 | `cache` | [`CacheResult`](#cacheresult) | cache is this attempt's memo decision, key_components included. Set only for an attempt of a cached task that reached the memo step; a HIT records outcome SUCCEEDED, phase "memo", exit_code 0, no system_artifacts (it uploaded none) and image equal to the input's pinned ImageRef with no platform (it pulled nothing). |
 | `timing` | [`AttemptTiming`](#attempttiming) | timing is derived on read by ListTaskAttempts (AttemptTiming); an Orker never writes it. |
 | `profiles` | repeated [`EffectiveProfile`](#effectiveprofile) | profiles are the profiles the attempt ran under. |
-| `measured` | [`MeasuredUsage`](#measuredusage) | measured is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `measured` | [`MeasuredUsage`](#measuredusage) | measured is what the attempt's container used, as its cgroup reported it. Unset on a record an Orker older than v0.4.0 wrote. |
 | `identities` | repeated [`AttemptIdentity`](#attemptidentity) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `credentials` | repeated [`AttemptCredential`](#attemptcredential) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
 | `masked_occurrences` | `int64` | masked_occurrences is how many runs of bytes the attempt's masker replaced with `***` in its two streams: a count, never which secret or where. 0 when nothing was masked. |
@@ -4452,10 +4477,13 @@ A zero duration is only ever a value somebody measured.
 
 ### UnmeasuredReasonCount
 
-UnmeasuredReasonCount is E94's; it is empty until E94 lands (v0.4.0 proto
-batch).
+UnmeasuredReasonCount is how many attempts of a row went unmeasured for one
+reason.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `reason` | [`UnmeasuredReason`](#unmeasuredreason) |  |
+| `attempts` | `int64` |  |
 
 ### UpdateBindingRequest
 
@@ -4652,15 +4680,16 @@ grouped by". The total row has every key empty.
 | `attempts_unmeasured` | `int64` | attempts_unmeasured counts recorded attempts missing started_at or finished_at, or finishing before they started. They contribute to no sum. No Orker of this tree writes one; the count exists so a record from another writer is visible instead of silently zero. |
 | `unreported_attempts` | `int64` | unreported_attempts counts attempts numbered below a task's highest that have no record — the Orker running them died or lost its heartbeat before filing one. Their consumption is unknown and not counted. |
 | `orkflow_namespace` | `string` | orkflow_namespace is set when the row's runs ran another namespace's shared Orkflow, composed as a child (docs/DSL.md "Sharing across namespaces"): the namespace that owns it. Such runs are grouped apart from this namespace's own Orkflow of the same name. Empty for the namespace's own. |
-| `measured_cpu_seconds` | `double` | measured_cpu_seconds is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `attempts_measured` | `int64` | attempts_measured is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `reserved_cpu_seconds_measured` | `double` | reserved_cpu_seconds_measured is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `cpu_efficiency` | `double` | cpu_efficiency is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `memory_peak_bytes_max` | `int64` | memory_peak_bytes_max is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `memory_utilization_p50` | `double` | memory_utilization_p50 is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `memory_utilization_p95` | `double` | memory_utilization_p95 is set from E94; unset until it lands (v0.4.0 proto batch). |
-| `attempts_unmeasured_by_reason` | repeated [`UnmeasuredReasonCount`](#unmeasuredreasoncount) | attempts_unmeasured_by_reason is set from E94; unset until it lands (v0.4.0 proto batch). |
+| `measured_cpu_seconds` | `double` | MEASURED USAGE — what the attempts' containers' cgroups reported (TaskAttempt.measured), beside the reservation and never folded into it (docs/STATS.md §8).<br><br>measured_cpu_seconds is the measured records' CPU time: a lower bound, read at each one's last sample. |
+| `attempts_measured` | `int64` | attempts_measured is how many records were measured. |
+| `reserved_cpu_seconds_measured` | `double` | reserved_cpu_seconds_measured is the reserved cpu-seconds of the measured records that carry a reservation. |
+| `cpu_efficiency` | optional `double` | cpu_efficiency is those same records' measured cpu-seconds over reserved_cpu_seconds_measured. Unset when no measured record carries a reservation: there is nothing to compare, which is not 0 %. |
+| `memory_peak_bytes_max` | `int64` | memory_peak_bytes_max is the largest peak any measured record saw. |
+| `memory_utilization_p50` | optional `double` | memory_utilization_p50 and memory_utilization_p95 are peak ÷ limit over the memory_utilization_attempts records, as the upper edge of the quantile's 0.5 % step; at or above the limit reads 1. Unset when no record qualifies, which is not 0 %. |
+| `memory_utilization_p95` | optional `double` |  |
+| `attempts_unmeasured_by_reason` | repeated [`UnmeasuredReasonCount`](#unmeasuredreasoncount) | attempts_unmeasured_by_reason counts the records that measured nothing, by reason; an older Orker's records, and a reason this engine does not know, count under UNMEASURED_REASON_UNSPECIFIED. |
 | `gpu_seconds` | `double` | gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `memory_utilization_attempts` | `int64` | memory_utilization_attempts is how many records the memory percentiles cover: measured records whose container had a limit and whose peak is the kernel's own, or that were stopped at the limit. |
 
 ### ValidateOrkflowRequest
 
@@ -5029,6 +5058,37 @@ handed a state it cannot name — they map to UNSPECIFIED.
 | `LIVE_ATTEMPT_STATE_SCHEDULED` | 1 | SCHEDULED: Temporal holds the activity and no Orker has it — the pool has no free Orker, or a retry is waiting out its backoff (next_attempt_at is then set). |
 | `LIVE_ATTEMPT_STATE_STARTED` | 2 | STARTED: an Orker picked the attempt up. Only STARTED and CANCEL_REQUESTED can carry a heartbeat. |
 | `LIVE_ATTEMPT_STATE_CANCEL_REQUESTED` | 3 | CANCEL_REQUESTED: the run was cancelled and the Orker has been (or is about to be) told through a heartbeat response; the §3.3 SIGTERM → grace → SIGKILL sequence runs on the Orker while this state holds. |
+
+### LiveUsageUnavailableReason
+
+LiveUsageUnavailableReason is why a running attempt shows no live CPU and
+memory.
+
+| Value | Number | Description |
+|---|---|---|
+| `LIVE_USAGE_UNAVAILABLE_REASON_UNSPECIFIED` | 0 |  |
+| `LIVE_USAGE_UNAVAILABLE_REASON_NOT_STARTED` | 1 | NOT_STARTED: the attempt has not been picked up. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_PREPARING` | 2 | PREPARING: the attempt's container has not started yet. An Orker older than v0.4.0 never says its container started, so its running attempts read PREPARING too. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_CGROUP_NOT_VISIBLE` | 3 | CGROUP_NOT_VISIBLE, NO_CGROUP and DISABLED are UnmeasuredReason's. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_NO_CGROUP` | 4 |  |
+| `LIVE_USAGE_UNAVAILABLE_REASON_DISABLED` | 5 |  |
+| `LIVE_USAGE_UNAVAILABLE_REASON_NO_SAMPLE_YET` | 6 | NO_SAMPLE_YET: the container started and has not been read yet, or it ended before its first periodic read; its final read may still measure it, on the attempt's record. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_ORKER_TOO_OLD` | 7 | ORKER_TOO_OLD: the Orker running the attempt does not report usage. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_UNDECODABLE` | 8 | UNDECODABLE: the Orker's report could not be read, carried no reading, or named a reason this engine does not know. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_READ_FAILED` | 9 | READ_FAILED: the container's cgroup could not be read. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_START_FAILED` | 10 | START_FAILED: the container's start failed or was cut off. |
+| `LIVE_USAGE_UNAVAILABLE_REASON_CGROUP_UNVERIFIED` | 11 | CGROUP_UNVERIFIED is UnmeasuredReason's. |
+
+### MeasurementMethod
+
+MeasurementMethod is how an attempt's CPU and memory were measured.
+
+| Value | Number | Description |
+|---|---|---|
+| `MEASUREMENT_METHOD_UNSPECIFIED` | 0 |  |
+| `MEASUREMENT_METHOD_CGROUP_V2` | 1 | CGROUP_V2: read from the container's cgroup on the unified hierarchy. |
+| `MEASUREMENT_METHOD_CGROUP_V1` | 2 | CGROUP_V1: read from the container's cpuacct and memory cgroups. |
+| `MEASUREMENT_METHOD_UNMEASURED` | 3 | UNMEASURED: nothing was measured; unmeasured_reason says why. |
 
 ### MessageField
 
@@ -5400,6 +5460,22 @@ an operator can act on, never a generic "unknown" (docs/UI_CLI_PARITY.md
 | `TIMING_REASON_NO_RECORD` | 5 | "no attempt record": this attempt has no record (UNREPORTED, or a phase with an end missing). |
 | `TIMING_REASON_NO_PHASES` | 6 | "record predates phase spans": the record was written before TaskAttempt.phases existed. |
 | `TIMING_REASON_NO_ATTEMPT_STORE` | 7 | "no task attempt store": the engine has no attempt store at all. No response carries it — ListTaskAttempts answers FailedPrecondition then — and a client prints it for the quantities only records could give. |
+
+### UnmeasuredReason
+
+UnmeasuredReason is why an attempt's CPU and memory were not measured.
+
+| Value | Number | Description |
+|---|---|---|
+| `UNMEASURED_REASON_UNSPECIFIED` | 0 |  |
+| `UNMEASURED_REASON_CGROUP_NOT_VISIBLE` | 1 | CGROUP_NOT_VISIBLE: the Orker could not see the container's cgroup (a remote or virtual-machine engine, or an Orker in a container without the host's /proc). |
+| `UNMEASURED_REASON_NO_CGROUP` | 2 | NO_CGROUP: the engine gives the container no cgroup the Orker can read (a rootless engine on cgroup v1). |
+| `UNMEASURED_REASON_ENDED_BEFORE_FIRST_SAMPLE` | 3 | ENDED_BEFORE_FIRST_SAMPLE: the container ended before its first reading. |
+| `UNMEASURED_REASON_READ_FAILED` | 4 | READ_FAILED: the cgroup could not be read before any reading succeeded. |
+| `UNMEASURED_REASON_NOT_RUN` | 5 | NOT_RUN: no container ran (an adopted commit, a cache hit, a failure before the start). |
+| `UNMEASURED_REASON_DISABLED` | 6 | DISABLED: the Orker's orker.usage_sample_interval is 0. |
+| `UNMEASURED_REASON_START_FAILED` | 7 | START_FAILED: the container's start failed or was cut off; it may have run, unmeasured. |
+| `UNMEASURED_REASON_CGROUP_UNVERIFIED` | 8 | CGROUP_UNVERIFIED: the container's cgroup could not be verified as one: it is not on a cgroup filesystem, so its identity is not trusted. |
 
 ### ValidationSeverity
 

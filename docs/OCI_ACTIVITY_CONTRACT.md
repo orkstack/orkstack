@@ -1448,7 +1448,11 @@ could never cancel it. Required, all four together:
    dead). The detail is `task.HeartbeatProgress` — the phase, the container id,
    bytes logged, the Orker's own `ORK_ORKER_ID`, once the attempt has
    claimed it, its ordinal, and, once its container is observed started,
-   `started` — and the engine reads it back for live introspection (§6.6).
+   `started` and `usage`, the container's latest CPU and memory as its cgroup
+   reported them (or why there is none; at most 200 bytes, decoded apart from
+   the rest so an unreadable usage never hides the beat) — and the engine
+   reads it back for live introspection (§6.6). An engine older than `usage`
+   ignores the key.
    The container sees none of it. The beat that first says `started` goes at
    once, outside the loop's throttle, so the cluster knows the attempt did
    work even if the Orker dies the next instant. Before an attempt's failure

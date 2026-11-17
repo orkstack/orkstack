@@ -22,6 +22,7 @@
 	import { formatBytes, heartbeatAge, liveLine, unavailableReason } from '#lib/live.ts';
 	import { attemptPhases, phaseGroups, formatQuantity, type TaskTiming } from '#lib/timing.ts';
 	import { fmtQuantity, fmtRequest } from '#lib/resources.ts';
+	import { liveUsageFacts, measuredFacts, UNSET } from '#lib/usageLive.ts';
 	import Plate from './Plate.svelte';
 	import RetryMark from './RetryMark.svelte';
 	import StatusPill from './StatusPill.svelte';
@@ -113,6 +114,9 @@
 		return new Date((Number(live.attemptStartedAt.seconds) + live.timeoutSeconds) * 1000).toLocaleTimeString('en-GB', { hour12: false });
 	});
 	const reserved = $derived(last?.resources ? fmtQuantity(last.resources) : '');
+	const usage = $derived(live ? liveUsageFacts(live.usage) : undefined);
+	// What the ended attempt's container used, beside what was reserved for it.
+	const used = $derived(terminal && last ? measuredFacts(last.measured) : undefined);
 	const phases = $derived.by(() => {
 		if (!last || !terminal) return null;
 		const read = attemptPhases(last);
@@ -180,6 +184,19 @@
 				<dt>Reserved</dt>
 				<dd data-testid="{prefix}-reserved">{reserved}</dd>
 			</div>
+			{#if used}
+				<div>
+					<dt>Used</dt>
+					<dd data-testid="{prefix}-used" data-tip={used.tip}>{used.used}{#if used.oom}<span class="insp-oom"> · stopped at its memory limit</span>{/if}<span class="sr">{`. ${used.tip}`}</span></dd>
+				</div>
+				{#if used.used === UNSET}
+					<!-- Why nothing was measured, said in words, never only in a tip. -->
+					<div>
+						<dt>Usage</dt>
+						<dd data-testid="{prefix}-used-note">{used.tip}</dd>
+					</div>
+				{/if}
+			{/if}
 		{:else if requested && fmtRequest(requested)}
 			<div>
 				<dt>Requested</dt>
@@ -275,6 +292,25 @@
 						<div>
 							<dt>Container</dt>
 							<dd class="font-mono text-xs">{live.containerId.slice(0, 12)}</dd>
+						</div>
+					{/if}
+					<div>
+						<dt>CPU</dt>
+						<dd data-testid="{prefix}-cpu" data-stale={usage?.stale} data-tip={usage?.note || undefined} class:insp-stale={usage?.stale}>{usage?.cpu}</dd>
+					</div>
+					<div>
+						<dt>Memory</dt>
+						<dd data-testid="{prefix}-memory" data-stale={usage?.stale} data-tip={usage?.note || undefined} class:insp-stale={usage?.stale}>{usage?.memory}</dd>
+					</div>
+					{#if usage?.note}
+						<div>
+							<dt>Usage</dt>
+							<dd data-testid="{prefix}-usage-note">{usage.note}</dd>
+						</div>
+					{:else if usage?.stale}
+						<div>
+							<dt>Usage</dt>
+							<dd data-testid="{prefix}-usage-note">last read some time ago</dd>
 						</div>
 					{/if}
 					<div>
@@ -384,6 +420,13 @@
 		.insp-strip > :global(div) {
 			padding: 0;
 		}
+	}
+	/* A reading older than its bound stays readable, set back in ink-3. */
+	.insp-stale {
+		color: var(--ink-3);
+	}
+	.insp-oom {
+		color: var(--fail);
 	}
 	.insp-ref {
 		font-size: 13px;

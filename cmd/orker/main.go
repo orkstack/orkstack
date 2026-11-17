@@ -140,6 +140,15 @@ type config struct {
 	// empty declare none.
 	capacityCPU    string
 	capacityMemory string
+	// usageSampleInterval is orker.usage_sample_interval: how often an
+	// attempt's container's cgroup is read; 0 measures nothing.
+	usageSampleInterval time.Duration
+	// usageSampleErr is a malformed or out-of-range interval, refused at boot.
+	usageSampleErr error
+	// usageLogInterval is orker.usage_log_interval: how often a running
+	// attempt's usage is logged; 0 logs only each attempt's summary.
+	usageLogInterval time.Duration
+	usageLogErr      error
 	// stopGrace is orker.stop.grace: how long a stopping Orker lets running
 	// tasks and open pins finish before it hands back what remains.
 	stopGrace time.Duration
@@ -200,6 +209,8 @@ func loadConfig() config {
 	storeWatch, storeWatchErr := envStoreWatch()
 	storeScope, storeScopeErr := envStoreScope()
 	stopGrace, stopGraceErr := orker.ParseStopGrace(env(orker.StopGraceVar, ""))
+	usageSampleInterval, usageSampleErr := orker.ParseUsageSampleInterval(env(orker.UsageSampleIntervalVar, ""))
+	usageLogInterval, usageLogErr := orker.ParseUsageLogInterval(env(orker.UsageLogIntervalVar, ""))
 	profiles, profilesErr := orker.ParseProfiles([]byte(os.Getenv(orker.ProfilesVar)))
 	if profilesErr != nil {
 		profilesErr = fmt.Errorf("%s: orker.profiles (%s): %w", orker.ReasonProfileInvalid, orker.ProfilesVar, profilesErr)
@@ -234,6 +245,10 @@ func loadConfig() config {
 		storeScope:               storeScope,
 		storeScopeErr:            storeScopeErr,
 		stopGrace:                stopGrace,
+		usageSampleInterval:      usageSampleInterval,
+		usageSampleErr:           usageSampleErr,
+		usageLogInterval:         usageLogInterval,
+		usageLogErr:              usageLogErr,
 		stopGraceErr:             stopGraceErr,
 		profiles:                 profiles,
 		profilesErr:              profilesErr,
@@ -761,6 +776,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if cfg.stopGraceErr != nil {
 		return cfg.stopGraceErr
 	}
+	if cfg.usageSampleErr != nil {
+		return cfg.usageSampleErr
+	}
+	if cfg.usageLogErr != nil {
+		return cfg.usageLogErr
+	}
 	if err := checkEngineKeyFiles(cfg.keyFiles, cfg.refuseReadableEngineKeys, logger); err != nil {
 		return err
 	}
@@ -994,6 +1015,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		"store_check_recoveries", cfg.storeWatch.RecoveryThreshold,
 		// How long a stopping Orker lets its running tasks finish.
 		"stop_grace", cfg.stopGrace,
+		"usage_sample_interval", cfg.usageSampleInterval,
+		"usage_log_interval", cfg.usageLogInterval,
 		// The cancellation latency an operator is running with, said out loud:
 		// this is how long a running container can keep running after the
 		// engine asks for it to stop, and the longest Temporal outage one
@@ -1368,7 +1391,9 @@ func orkerOptions(
 			AuthFileVar: orker.RegistryAuthFileVar,
 		},
 		HeartbeatInterval: cfg.tick(),
-		Logger:            logger,
+		// Measured usage (E94); 0 measures nothing.
+		UsageSampleInterval: cfg.usageSampleInterval,
+		Logger:              logger,
 	}
 	policy := orkerPolicy(cfg, tcfg)
 	opts.Policy = &policy
@@ -1407,6 +1432,26 @@ func orkerOptions(
 		opts.Phases = obs
 		if tcfg.TracesEnabled() {
 			opts.TraceContext = obs.TraceContext
+		}
+	}
+	// Measured usage (E94): each attempt's container's cgroup figures and its
+	// reservation as metrics on its run's sink, its ork.record=usage records
+	// on that sink whenever it exports logs, task logs or not, and the
+	// process's running totals and recovered sampler panics on the default
+	// sink.
+	if tcfg.MetricsEnabled() || tcfg.LogsEnabled() || tcfg.Sinks.Len() > 0 {
+		opts.Phases = telemetry.NewUsageObserver(opts.Phases, sinks, logger).WithLogInterval(cfg.usageLogInterval)
+	}
+	if tcfg.MetricsEnabled() {
+		if usage, err := telemetry.NewUsageInstruments(sinks.Default()); err != nil {
+			logger.Warn("telemetry: the usage sampler failure counter could not be built", "error", err)
+		} else {
+			opts.UsageSamplerFailed = usage.SamplerFailed
+		}
+		if gauges, err := telemetry.NewUsageGauges(sinks.Default(), logger); err != nil {
+			logger.Warn("telemetry: the usage gauges could not be built", "error", err)
+		} else {
+			opts.UsageGauges = gauges
 		}
 	}
 

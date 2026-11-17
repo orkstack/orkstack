@@ -5,7 +5,12 @@
     "attempts": "3",
     "taskSeconds": 210,
     "cpuSeconds": 750,
-    "gibSeconds": 1470
+    "gibSeconds": 1470,
+    "attemptsUnmeasuredByReason": [
+      {
+        "attempts": "3"
+      }
+    ]
   },
   "runsInWindow": "1",
   "runsScanned": "1",

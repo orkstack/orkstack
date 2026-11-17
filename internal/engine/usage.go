@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"math"
+	"math/bits"
 	"sort"
 	"strings"
 	"time"
@@ -61,7 +63,37 @@ type UsageTask struct {
 	TaskSeconds      float64
 	CPUSeconds       float64
 	GiBSeconds       float64
+
+	// Measured usage (E94), from the records whose container's cgroup was
+	// read: what it used, and what was reserved for those same attempts so
+	// the two compare like for like.
+	Measured           int64
+	MeasuredCPUSeconds float64
+	// MeasuredCPUPriced and ReservedCPUMeasured are the measured and the
+	// reserved cpu-seconds of the measured attempts that carry a
+	// reservation: the efficiency's two sides, one population.
+	MeasuredCPUPriced   float64
+	ReservedCPUMeasured float64
+	MemoryPeakMax       int64
+	// MemoryBuckets is each measured attempt's memory utilization as its
+	// 0.5 % bucket (utilizationBucket): those whose peak is the kernel's own
+	// against a limit, and those stopped at their limit, which count as at
+	// it. A sampled peak would understate it and is left out. One byte an
+	// attempt, since the per-run memo holds it.
+	MemoryBuckets []uint8
+	// UnmeasuredBy counts the records that measured nothing, by why, indexed
+	// by UnmeasuredReason; a record an Orker older than E94 wrote counts
+	// under UNSPECIFIED, and a reason this engine does not know under
+	// UnmeasuredOther. Fixed-size: the per-run memo holds it.
+	UnmeasuredBy [unmeasuredReasons]int64
 }
+
+// unmeasuredReasons is the UnmeasuredReason values this engine knows, and
+// one more slot for any it does not.
+const (
+	unmeasuredReasons = int(orkstackv1.UnmeasuredReason_UNMEASURED_REASON_CGROUP_UNVERIFIED) + 2
+	unmeasuredOther   = unmeasuredReasons - 1
+)
 
 // UsageOfTask folds one TaskSample's records with AttemptUsage. Every record
 // counts whatever its outcome — succeeded, failed, canceled or an adopted
@@ -88,7 +120,61 @@ func UsageOfTask(s TaskSample) UsageTask {
 		usage.CPUSeconds += cpu
 		usage.GiBSeconds += gib
 	}
+	for _, record := range s.Records {
+		usage.addMeasured(record)
+	}
 	return usage
+}
+
+// addMeasured folds one record's measured usage.
+func (u *UsageTask) addMeasured(r *orkstackv1.TaskAttempt) {
+	m := r.GetMeasured()
+	switch m.GetMethod() {
+	case orkstackv1.MeasurementMethod_MEASUREMENT_METHOD_CGROUP_V2, orkstackv1.MeasurementMethod_MEASUREMENT_METHOD_CGROUP_V1:
+	default:
+		reason := int(m.GetUnmeasuredReason())
+		if reason < 0 || reason >= unmeasuredOther {
+			reason = unmeasuredOther
+		}
+		u.UnmeasuredBy[reason]++
+		return
+	}
+	cpu, peak, limit := m.GetCpuSeconds(), m.GetMemoryPeakBytes(), m.GetMemoryLimitBytes()
+	// A record is read back from storage: a figure no sampler writes counts
+	// the attempt as measured and adds nothing.
+	finite := !math.IsNaN(cpu) && !math.IsInf(cpu, 0) && cpu >= 0
+	u.Measured++
+	if finite {
+		u.MeasuredCPUSeconds += cpu
+	}
+	if _, reserved, _, _, priced := AttemptUsage(r); priced && finite {
+		u.MeasuredCPUPriced += cpu
+		u.ReservedCPUMeasured += reserved
+	}
+	if peak > 0 {
+		u.MemoryPeakMax = max(u.MemoryPeakMax, peak)
+	}
+	switch {
+	case limit <= 0 || peak < 0:
+	case m.GetOomKilled():
+		// Stopped at its limit: at it, whether or not its peak was read.
+		u.MemoryBuckets = append(u.MemoryBuckets, utilizationBuckets-1)
+	case m.GetMemoryPeakExact():
+		u.MemoryBuckets = append(u.MemoryBuckets, utilizationBucket(peak, limit))
+	}
+}
+
+// utilizationBucket is peak ÷ limit as its 0.5 % bucket, in integers so a
+// value on a bucket's edge lands in that bucket on every replica: bucket b
+// holds [b × 0.5 %, (b+1) × 0.5 %), and the last holds everything at or
+// above 100 %. peak ≥ 0 and limit > 0.
+func utilizationBucket(peak, limit int64) uint8 {
+	if peak >= limit {
+		return utilizationBuckets - 1
+	}
+	hi, lo := bits.Mul64(uint64(peak), utilizationBuckets-1)
+	b, _ := bits.Div64(hi, lo, uint64(limit))
+	return uint8(b)
 }
 
 // UsageRun is one finished run's contribution: its index coordinates and
@@ -109,8 +195,11 @@ type UsageEvidence struct {
 // usageAccumulator is one row being folded, with the distinct runs it has
 // seen.
 type usageAccumulator struct {
-	row  *orkstackv1.UsageRow
-	runs map[string]bool
+	row            *orkstackv1.UsageRow
+	runs           map[string]bool
+	memory         utilizationSketch
+	measuredPriced float64
+	unmeasuredBy   [unmeasuredReasons]int64
 }
 
 func (a *usageAccumulator) add(runID string, task UsageTask) {
@@ -126,6 +215,87 @@ func (a *usageAccumulator) add(runID string, task UsageTask) {
 	a.row.AttemptsWithoutResources += task.WithoutResources
 	a.row.AttemptsUnmeasured += task.Unmeasured
 	a.row.UnreportedAttempts += task.Unreported
+
+	a.row.AttemptsMeasured += task.Measured
+	a.row.MeasuredCpuSeconds += task.MeasuredCPUSeconds
+	a.measuredPriced += task.MeasuredCPUPriced
+	a.row.ReservedCpuSecondsMeasured += task.ReservedCPUMeasured
+	a.row.MemoryPeakBytesMax = max(a.row.MemoryPeakBytesMax, task.MemoryPeakMax)
+	for _, b := range task.MemoryBuckets {
+		a.memory.add(b)
+	}
+	for reason, n := range task.UnmeasuredBy {
+		a.unmeasuredBy[reason] += n
+	}
+}
+
+// finish fills the row's derived measured fields: efficiency, the memory
+// percentiles and the unmeasured counts in reason order.
+func (a *usageAccumulator) finish() *orkstackv1.UsageRow {
+	// An unset figure is "nothing to compare", never 0 %.
+	if a.row.ReservedCpuSecondsMeasured > 0 {
+		efficiency := a.measuredPriced / a.row.ReservedCpuSecondsMeasured
+		a.row.CpuEfficiency = &efficiency
+	}
+	a.row.MemoryUtilizationAttempts = a.memory.n
+	if a.memory.n > 0 {
+		p50, p95 := a.memory.quantile(1, 2), a.memory.quantile(19, 20)
+		a.row.MemoryUtilizationP50, a.row.MemoryUtilizationP95 = &p50, &p95
+	}
+	for reason, n := range a.unmeasuredBy {
+		if n == 0 || reason == unmeasuredOther {
+			continue
+		}
+		a.row.AttemptsUnmeasuredByReason = append(a.row.AttemptsUnmeasuredByReason,
+			&orkstackv1.UnmeasuredReasonCount{Reason: orkstackv1.UnmeasuredReason(reason), Attempts: n})
+	}
+	// A reason this engine does not know is still counted: as UNSPECIFIED,
+	// beside an older Orker's records.
+	if other := a.unmeasuredBy[unmeasuredOther]; other > 0 {
+		rows := a.row.AttemptsUnmeasuredByReason
+		if len(rows) > 0 && rows[0].GetReason() == orkstackv1.UnmeasuredReason_UNMEASURED_REASON_UNSPECIFIED {
+			rows[0].Attempts += other
+		} else {
+			a.row.AttemptsUnmeasuredByReason = append([]*orkstackv1.UnmeasuredReasonCount{{Attempts: other}}, rows...)
+		}
+	}
+	return a.row
+}
+
+// utilizationSketch is a fixed-size histogram of memory utilization in
+// 0.5 % buckets (utilizationBucket), the last holding everything at or
+// above 100 %: a row's percentiles in constant space and the same on every
+// replica, whatever order the attempts were folded in.
+type utilizationSketch struct {
+	n       int64
+	buckets [utilizationBuckets]int64
+}
+
+// utilizationBuckets is [0, 0.5 %), …, [99.5 %, 100 %) and [100 %, ∞).
+const utilizationBuckets = 201
+
+func (s *utilizationSketch) add(b uint8) {
+	s.buckets[min(int(b), utilizationBuckets-1)]++
+	s.n++
+}
+
+// quantile is the num/den-quantile (the attempt at rank ⌈n × num/den⌉, in
+// integers) as its bucket's upper edge, so it never understates a bucket;
+// the last bucket, at or above the limit, reads 1. It is 0 with nothing
+// added.
+func (s *utilizationSketch) quantile(num, den int64) float64 {
+	if s.n == 0 {
+		return 0
+	}
+	rank := max((s.n*num+den-1)/den, 1)
+	var seen int64
+	for b, n := range s.buckets {
+		seen += n
+		if seen >= rank {
+			return min(float64(b+1)/float64(utilizationBuckets-1), 1)
+		}
+	}
+	return 1
 }
 
 // FoldUsage groups runs by the resolved dimensions (ORKFLOW, TASK, POOL; an
@@ -194,10 +364,10 @@ func FoldUsage(runs []UsageRun, groupBy []orkstackv1.FailureGroupBy) (total *ork
 	}
 	rows = make([]*orkstackv1.UsageRow, 0, len(groups))
 	for _, acc := range groups {
-		rows = append(rows, acc.row)
+		rows = append(rows, acc.finish())
 	}
 	sort.Slice(rows, func(i, j int) bool { return usageRowLess(rows[i], rows[j]) })
-	return all.row, rows, evidence
+	return all.finish(), rows, evidence
 }
 
 // usageRowLess is the one row order: cpu_seconds, gib_seconds and

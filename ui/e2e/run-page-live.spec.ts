@@ -46,7 +46,12 @@ const BUCKET = ownBucket('run-page-live');
 //   P4  after Cancel the line reads `Cancelling` before the run turns
 //       CANCELED, and once it has no live line is left;
 //   P5  the live poll pauses while the page is hidden and resumes when it is
-//       shown again.
+//       shown again;
+//   P7  the running card shows what its container uses — CPU in cores and
+//       memory against its limit, read from its cgroup — an unset figure as
+//       "—" and an unavailable reading with its reason (one InspectRun answer
+//       rewritten to pin those two states), and once the task has ended,
+//       what its container used beside what was reserved.
 //
 // Topology: one engine, the production UI build, and the Orker started AFTER
 // the first submission, so the wait is real. Ports and a Temporal namespace of
@@ -224,6 +229,43 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	note(`P2 task-talk Orker line: "${await orkerLine.innerText()}"`);
 	await shot(page, 'live-started.png');
 
+	// P7 — what the container uses, from its cgroup through the heartbeat.
+	const cpu = page.getByTestId('task-talk-cpu');
+	const memory = page.getByTestId('task-talk-memory');
+	await expect(cpu).toHaveText(/^\d+\.\d\d cores$/, { timeout: 30_000 });
+	// Against its limit when the Orker gave it one (the default policy does).
+	await expect(memory).toHaveText(/^[0-9.]+ (B|KiB|MiB|GiB)( of [0-9.]+ (B|KiB|MiB|GiB))?$/);
+	await expect(cpu).toHaveAttribute('data-stale', 'false');
+	note(`P7 live usage: CPU "${await cpu.innerText()}", Memory "${await memory.innerText()}"`);
+	// The two states a real Orker shows only for a moment, pinned by rewriting
+	// one answer: a reading with no rate yet, then a reading measuring is off for.
+	let rewrite: Record<string, unknown> = {};
+	await page.route('**/orkstack.v1.RunService/InspectRun', async (route) => {
+		const response = await route.fetch();
+		// A failed poll passes through untouched rather than wedging the page.
+		if (!response.ok() || !(response.headers()['content-type'] ?? '').includes('json')) {
+			await route.fulfill({ response });
+			return;
+		}
+		const body = (await response.json()) as { attempts?: { usage?: Record<string, unknown> }[] };
+		for (const attempt of body.attempts ?? []) attempt.usage = rewrite;
+		// Fresh headers: the real ones may name an encoding and length this body does not have.
+		await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+	});
+	rewrite = { available: true, memoryBytes: '1048576', memoryLimitBytes: '268435456' };
+	await expect(cpu).toHaveText('—', { timeout: 15_000 });
+	await expect(memory).toHaveText('1.0 MiB of 256.0 MiB');
+	rewrite = { unavailableReason: 'LIVE_USAGE_UNAVAILABLE_REASON_DISABLED' };
+	await expect(cpu).toHaveText('—', { timeout: 15_000 });
+	await expect(memory).toHaveText('—');
+	await expect(page.getByTestId('task-talk-usage-note')).toHaveText('measuring is off on its Orker');
+	await shot(page, 'live-usage-unavailable.png');
+	await page.unroute('**/orkstack.v1.RunService/InspectRun');
+	await expect(cpu).toHaveText(/ cores$/, { timeout: 15_000 });
+	await expect(page.getByTestId('task-talk-usage-note')).toHaveCount(0);
+	await shot(page, 'live-usage.png');
+	note('P7 no rate yet read "—"; measuring off read "—" twice with its reason; the real reading came back');
+
 	// P3 — the card's CLI equivalent, and what the CLI prints for the same run.
 	// (The row's commands are one popover now; the inspect command is the one with `run inspect` in it.)
 	await page.getByTestId('run-inspect-cli-trigger').click();
@@ -247,6 +289,14 @@ test('a running task shows what it is doing now: waiting, phase and bytes, cance
 	await expect(page.getByTestId('run-status')).toHaveText('Canceled', { timeout: 90_000 });
 	await expect(page.getByTestId('task-talk-live')).toHaveCount(0);
 	note('P4 run CANCELED; no task-talk-live element remains');
+
+	// P7 — ended: what its container used, beside what was reserved for it.
+	const used = page.getByTestId('task-talk-used');
+	// The figures, then the sentence a screen reader hears (visually hidden).
+	await expect(used).toHaveText(/^\d+\.\d cpu-s · [0-9.]+ (B|KiB|MiB|GiB) peak\. CPU time at its last reading, and /, { timeout: 30_000 });
+	await expect(page.getByTestId('task-talk-reserved')).toBeVisible();
+	note(`P7 ended: Used "${await used.innerText()}" (${await used.getAttribute('data-tip')}), Reserved "${await page.getByTestId('task-talk-reserved').innerText()}"`);
+	await shot(page, 'ended-usage.png');
 });
 
 test('the live poll pauses while the page is hidden and resumes when shown', async ({ page }) => {

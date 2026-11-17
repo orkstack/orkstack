@@ -244,6 +244,7 @@ func (r *TemporalRunReader) liveAttempt(
 		state == orkstackv1.LiveAttemptState_LIVE_ATTEMPT_STATE_CANCEL_REQUESTED
 	if !started {
 		out.HeartbeatUnavailableReason = orkstackv1.HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_NOT_STARTED
+		out.Usage = &orkstackv1.LiveUsage{UnavailableReason: orkstackv1.LiveUsageUnavailableReason_LIVE_USAGE_UNAVAILABLE_REASON_NOT_STARTED}
 		return out
 	}
 	out.AttemptStartedAt = pa.GetLastStartedTime()
@@ -254,11 +255,13 @@ func (r *TemporalRunReader) liveAttempt(
 		lastBeat.AsTime().Before(lastStarted.AsTime()) ||
 		len(details.GetPayloads()) == 0 {
 		out.HeartbeatUnavailableReason = orkstackv1.HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_NO_HEARTBEAT_YET
+		out.Usage = &orkstackv1.LiveUsage{UnavailableReason: orkstackv1.LiveUsageUnavailableReason_LIVE_USAGE_UNAVAILABLE_REASON_PREPARING}
 		return out
 	}
 	var progress task.HeartbeatProgress
 	if err := r.converter.FromPayloads(details, &progress); err != nil || progress.Phase == "" {
 		out.HeartbeatUnavailableReason = orkstackv1.HeartbeatUnavailableReason_HEARTBEAT_UNAVAILABLE_REASON_UNDECODABLE
+		out.Usage = &orkstackv1.LiveUsage{UnavailableReason: orkstackv1.LiveUsageUnavailableReason_LIVE_USAGE_UNAVAILABLE_REASON_UNDECODABLE}
 		return out
 	}
 
@@ -279,5 +282,6 @@ func (r *TemporalRunReader) liveAttempt(
 	if progress.Ordinal > 0 {
 		out.Attempt = progress.Ordinal
 	}
+	out.Usage = liveUsage(progress, beat, now)
 	return out
 }

@@ -605,7 +605,8 @@ message TaskAttempt {
   // profiles are the profiles the attempt ran under.
   repeated EffectiveProfile profiles = 22;
 
-  // measured is set from E94; unset until it lands (v0.4.0 proto batch).
+  // measured is what the attempt's container used, as its cgroup reported
+  // it. Unset on a record an Orker older than v0.4.0 wrote.
   MeasuredUsage measured = 23;
 
   // identities is set from identity (E62); unset until it lands (v0.4.0 proto batch).
@@ -988,9 +989,70 @@ message EffectiveProfile {
 // batch).
 message InheritedPause {}
 
-// MeasuredUsage is E94's; it is empty until E94 lands (v0.4.0 proto
-// batch).
-message MeasuredUsage {}
+// MeasurementMethod is how an attempt's CPU and memory were measured.
+enum MeasurementMethod {
+  MEASUREMENT_METHOD_UNSPECIFIED = 0;
+  // CGROUP_V2: read from the container's cgroup on the unified hierarchy.
+  MEASUREMENT_METHOD_CGROUP_V2 = 1;
+  // CGROUP_V1: read from the container's cpuacct and memory cgroups.
+  MEASUREMENT_METHOD_CGROUP_V1 = 2;
+  // UNMEASURED: nothing was measured; unmeasured_reason says why.
+  MEASUREMENT_METHOD_UNMEASURED = 3;
+}
+
+// UnmeasuredReason is why an attempt's CPU and memory were not measured.
+enum UnmeasuredReason {
+  UNMEASURED_REASON_UNSPECIFIED = 0;
+  // CGROUP_NOT_VISIBLE: the Orker could not see the container's cgroup (a
+  // remote or virtual-machine engine, or an Orker in a container without the
+  // host's /proc).
+  UNMEASURED_REASON_CGROUP_NOT_VISIBLE = 1;
+  // NO_CGROUP: the engine gives the container no cgroup the Orker can read
+  // (a rootless engine on cgroup v1).
+  UNMEASURED_REASON_NO_CGROUP = 2;
+  // ENDED_BEFORE_FIRST_SAMPLE: the container ended before its first reading.
+  UNMEASURED_REASON_ENDED_BEFORE_FIRST_SAMPLE = 3;
+  // READ_FAILED: the cgroup could not be read before any reading succeeded.
+  UNMEASURED_REASON_READ_FAILED = 4;
+  // NOT_RUN: no container ran (an adopted commit, a cache hit, a failure
+  // before the start).
+  UNMEASURED_REASON_NOT_RUN = 5;
+  // DISABLED: the Orker's orker.usage_sample_interval is 0.
+  UNMEASURED_REASON_DISABLED = 6;
+  // START_FAILED: the container's start failed or was cut off; it may have
+  // run, unmeasured.
+  UNMEASURED_REASON_START_FAILED = 7;
+  // CGROUP_UNVERIFIED: the container's cgroup could not be verified as one:
+  // it is not on a cgroup filesystem, so its identity is not trusted.
+  UNMEASURED_REASON_CGROUP_UNVERIFIED = 8;
+}
+
+// MeasuredUsage is what an attempt's container used, as its cgroup reported
+// it: best-effort, read on a schedule, and unset on a record an older Orker
+// wrote. It never decides an attempt's outcome.
+message MeasuredUsage {
+  MeasurementMethod method = 1;
+  // cpu_seconds is the container's CPU time at the last reading: a lower
+  // bound on what it used.
+  double cpu_seconds = 2;
+  // memory_peak_bytes is the container's peak memory: the kernel's own peak
+  // when memory_peak_exact, otherwise the most a reading saw (or, when it was
+  // stopped at its limit with no peak of its own, the limit).
+  int64 memory_peak_bytes = 3;
+  bool memory_peak_exact = 4;
+  // memory_limit_bytes is the container's memory limit; 0 is none.
+  int64 memory_limit_bytes = 5;
+  // samples is how many readings were taken.
+  int32 samples = 6;
+  google.protobuf.Timestamp first_sampled_at = 7;
+  google.protobuf.Timestamp last_sampled_at = 8;
+  google.protobuf.Timestamp container_started_at = 9;
+  google.protobuf.Timestamp container_exited_at = 10;
+  // unmeasured_reason is set when method is UNMEASURED.
+  UnmeasuredReason unmeasured_reason = 11;
+  // oom_killed: the container was stopped at its memory limit.
+  bool oom_killed = 12;
+}
 
 // NamedArtifact is one artifact a run takes in or hands out, by the name
 // the Orkflow gives it (E87, composed-artifacts/01-design.md §5). Declared

@@ -270,6 +270,8 @@ var Schema = []Var{
 	{Path: "orker.registry_auth_file", Env: "ORK_ORKER_REGISTRY_AUTH_FILE", Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
+	{Path: "orker.usage_sample_interval", Env: orker.UsageSampleIntervalVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultUsageSampleInterval)},
+	{Path: "orker.usage_log_interval", Env: orker.UsageLogIntervalVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultUsageLogInterval)},
 	{Path: "orker.stop.grace", Env: orker.StopGraceVar, Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultStopGrace)},
 	{Path: "orker.max_concurrent", Env: orker.MaxConcurrentVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(int64(orker.DefaultMaxConcurrent))},
 	{Path: "orker.store_check.enabled", Env: orker.StoreCheckEnabledVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultStoreCheckEnabled)},

@@ -128,6 +128,13 @@ type OCIDispatcher struct {
 	// HeartbeatInterval is how often an attempt's heartbeat loop ticks. Zero
 	// means DefaultHeartbeatInterval.
 	HeartbeatInterval time.Duration
+	// UsageSampleInterval is how often an attempt's usage sampler reads its
+	// container's cgroup after the ramp (orker.usage_sample_interval). Zero
+	// disables measuring: every attempt's usage is then DISABLED.
+	UsageSampleInterval time.Duration
+	// UsageSamplerFailed hears every usage sampler panic recovered
+	// (ork.orker.usage.sampler_failures). Nil counts nothing.
+	UsageSamplerFailed func()
 	// LogSinkObserver is an optional in-process observer of streamed lines.
 	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)
 	// TaskLogs exports every framed line of every attempt, beside the durable
@@ -242,6 +249,10 @@ type AttemptOutcome struct {
 	CleanupErr error
 	// Mask is how much the attempt's masker replaced, and the size of its set.
 	Mask MaskStats
+	// Usage is what the attempt's container used, as its record carries it
+	// (E94), and Reserved what this Orker reserved for the attempt.
+	Usage    *orkstackv1.MeasuredUsage
+	Reserved *orkstackv1.ReservedResources
 }
 
 // attemptCleanup collects what removing one attempt's own directories left
@@ -484,6 +495,8 @@ func (d *OCIDispatcher) executeAttempt(
 		outcome.Cache = trace.result
 		outcome.CleanupErr = cleanup.err
 		outcome.Mask = mask.stats()
+		outcome.Usage = measuredProto(beat)
+		outcome.Reserved = d.Policy.ReservedResources(in.GetResources())
 		if attemptObs != nil {
 			attemptObs.End(outcome)
 		}
@@ -2184,6 +2197,9 @@ func (d *OCIDispatcher) runContainer(
 	// flight returns, and the CAS below decides. A container the sweep took
 	// back as it started is stopped by the cancellation sequence, below.
 	if err := d.Runtime.Start(startContext(ctx), id, stdout, stderr); err != nil {
+		// A start that failed may still have started the container (above),
+		// so its usage is START_FAILED, never NOT_RUN.
+		beat.setUsage(unmeasuredSampler(reasonStartFailed))
 		return capture, d.runtimeFailure(err, "start the container")
 	}
 	// The start returned, so the container ran, whatever the CAS below says:
@@ -2191,6 +2207,15 @@ func (d *OCIDispatcher) runContainer(
 	// took back has its work context cancelled, and the select below then
 	// runs the cancellation sequence.
 	stageFrom(ctx).toRevocable()
+	// Its usage is measured from here, apart from the task: nothing the
+	// sampler does decides the attempt. Every later beat carries its latest
+	// reading; its final read, bounded, follows the container's end, and the
+	// attempt record reads the result off the heartbeater (E94).
+	usage := d.startUsage(ctx, in, id)
+	beat.setUsage(usage)
+	// Deferred as a closure: OOMKilled is the Wait's answer, known only at
+	// the end.
+	defer func() { usage.finish(capture.status.OOMKilled) }()
 	// One beat at once that says so, outside the loop's throttle, so the
 	// cluster's record shows it even if the Orker dies the next instant
 	// (E92 §4.2 R7E92-M1).
@@ -2865,6 +2890,9 @@ func (d *OCIDispatcher) attemptRecord(
 		// finished_at: the same sequence, so the last span's name IS Phase.
 		record.Phases = beat.PhaseSpans(record.FinishedAt.AsTime())
 	}
+	// What the container's cgroup reported, or why nothing was measured
+	// (E94; usage_record.go).
+	recordMeasured(record, measuredOf(beat))
 
 	// The branch order is Execute's own, and it is load-bearing there for the
 	// reason §6.3 gives: a cancelled attempt is CANCELED whatever failure was

@@ -537,7 +537,7 @@ The dashboard's **Usage** section and **Admin → Usage** render the same answer
 Admin → Namespaces does and asks one `GetUsage` per namespace on the page it
 shows (50 by default), never one per namespace in the deployment.
 
-**Three units, all reserved, none measured.**
+**Three units, all reserved.**
 
 | Unit | Definition |
 |---|---|
@@ -550,8 +550,27 @@ defaults filled a missing request and its caps admitted it
 (`ORK_ORKER_DEFAULT_*`, `ORK_ORKER_MAX_*`), recorded on every attempt record
 (`TaskAttempt.resources`). It is a limit, not a measurement: every surface
 prints "cpu-seconds and GiB-seconds are RESERVED cpu and memory × attempt
-time, not measured utilization." OrkStack knows what it reserved, never what
-it cost or what the kernel measured.
+time, not measured utilization." These three units say what OrkStack
+reserved, never what it cost; what the kernel measured is in the fields
+below, beside them and never folded into them.
+
+**Measured beside reserved.** Each attempt record also carries what its
+container's cgroup reported (`TaskAttempt.measured`, written by v0.4.0
+Orkers; `orker.usage_sample_interval`), and each row folds it apart from the
+reservation:
+
+| Field | Definition |
+|---|---|
+| `attempts_measured` | records whose cgroup was read |
+| `measured_cpu_seconds` | Σ the container's CPU time over those records: a lower bound, read at the last sample |
+| `reserved_cpu_seconds_measured` | Σ reserved cpu × held time over the measured records that carry a reservation |
+| `cpu_efficiency` | those same records' measured cpu-seconds ÷ `reserved_cpu_seconds_measured`: one population on both sides, so a measured attempt with no reservation is in neither |
+| `memory_peak_bytes_max` | the largest peak any measured record saw |
+| `memory_utilization_p50`, `_p95` | peak ÷ limit over records whose container had a limit and either whose peak is the kernel's own or that were stopped at the limit (which count as at it); a sampled peak would understate it and is left out. From a fixed histogram in 0.5 % steps: the upper edge of the quantile's step, computed in integers, so the same on every replica; at or above the limit reads 1 |
+| `attempts_unmeasured_by_reason` | records that measured nothing, by `UnmeasuredReason`; a record an Orker older than v0.4.0 wrote, or one naming a reason this engine does not know, counts under `UNMEASURED_REASON_UNSPECIFIED`. With `attempts_measured` it accounts for every record; attempts that left none are `unreported_attempts` |
+
+Measured usage is best-effort and never decides admission: a budget is held
+against the reservation alone.
 
 **The population** is the flake index's (§7): every finished run of the
 namespace the window created, read from the archive index keys, so

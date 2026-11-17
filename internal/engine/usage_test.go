@@ -238,3 +238,207 @@ func TestFoldUsage_OrderingIsTotalAndClockFree(t *testing.T) {
 		}
 	}
 }
+
+// measuredRecord is a record held 10 s reserving 2 cores whose container's
+// cgroup reported cpu seconds and a peak against limit.
+func measuredRecord(attempt int32, cpu float64, peak, limit int64, exact bool) *orkstackv1.TaskAttempt {
+	r := heldRecord(attempt, 10*time.Second, reserve(2, 1))
+	r.Measured = &orkstackv1.MeasuredUsage{
+		Method: orkstackv1.MeasurementMethod_MEASUREMENT_METHOD_CGROUP_V2, CpuSeconds: cpu,
+		MemoryPeakBytes: peak, MemoryPeakExact: exact, MemoryLimitBytes: limit,
+	}
+	return r
+}
+
+// TestFoldUsage_MeasuredUsageBesideTheReservation: measured cpu-seconds are
+// compared with the reservation of the SAME measured attempts (an unmeasured
+// attempt's reservation is not in the denominator); the memory percentiles
+// use exact peaks against a limit only; and every record that measured
+// nothing is counted by why, one an older Orker wrote under UNSPECIFIED.
+func TestFoldUsage_MeasuredUsageBesideTheReservation(t *testing.T) {
+	notRun := heldRecord(5, 10*time.Second, reserve(2, 1))
+	notRun.Measured = &orkstackv1.MeasuredUsage{
+		Method:           orkstackv1.MeasurementMethod_MEASUREMENT_METHOD_UNMEASURED,
+		UnmeasuredReason: orkstackv1.UnmeasuredReason_UNMEASURED_REASON_NOT_RUN,
+	}
+	older := heldRecord(6, 10*time.Second, reserve(2, 1)) // no measured: a v0.3 Orker's
+	sample := engine.TaskSample{RunID: "r1", Orkflow: "o", TaskID: "t", Pool: "main", Observed: true, Attempts: 6,
+		Records: []*orkstackv1.TaskAttempt{
+			measuredRecord(1, 5, 50, 100, true),  // 50 %
+			measuredRecord(2, 10, 90, 100, true), // 90 %
+			measuredRecord(3, 5, 99, 100, false), // a sampled peak: not in the percentiles
+			measuredRecord(4, 0, 30, 0, true),    // no limit: not in the percentiles
+			notRun, older,
+		}}
+	total, _, _ := engine.FoldUsage([]engine.UsageRun{{RunID: "r1", Orkflow: "o", Tasks: []engine.UsageTask{engine.UsageOfTask(sample)}}}, nil)
+
+	if total.GetAttemptsMeasured() != 4 || total.GetMeasuredCpuSeconds() != 20 {
+		t.Fatalf("measured %d attempts, %v cpu-s; want 4 and 20", total.GetAttemptsMeasured(), total.GetMeasuredCpuSeconds())
+	}
+	// 4 measured attempts × 2 cores × 10 s; the two unmeasured are not in it.
+	if total.GetReservedCpuSecondsMeasured() != 80 || total.GetCpuEfficiency() != 0.25 {
+		t.Fatalf("reserved %v, efficiency %v; want 80 and 0.25", total.GetReservedCpuSecondsMeasured(), total.GetCpuEfficiency())
+	}
+	if total.GetMemoryPeakBytesMax() != 99 {
+		t.Fatalf("peak max = %d, want 99 (every measured peak counts for the max)", total.GetMemoryPeakBytesMax())
+	}
+	// Two exact utilizations, 50 % and 90 %: p50 is 50 % and p95 is 90 %, each
+	// the upper edge of its 0.5 % bucket.
+	if p50, p95 := total.GetMemoryUtilizationP50(), total.GetMemoryUtilizationP95(); math.Abs(p50-0.505) > 1e-9 || math.Abs(p95-0.905) > 1e-9 {
+		t.Fatalf("p50 %v, p95 %v; want 0.505 and 0.905", p50, p95)
+	}
+	want := []*orkstackv1.UnmeasuredReasonCount{
+		{Reason: orkstackv1.UnmeasuredReason_UNMEASURED_REASON_UNSPECIFIED, Attempts: 1},
+		{Reason: orkstackv1.UnmeasuredReason_UNMEASURED_REASON_NOT_RUN, Attempts: 1},
+	}
+	got := total.GetAttemptsUnmeasuredByReason()
+	if len(got) != len(want) {
+		t.Fatalf("unmeasured by reason = %v, want %v", got, want)
+	}
+	for i := range want {
+		if !proto.Equal(got[i], want[i]) {
+			t.Fatalf("unmeasured by reason = %v, want %v", got, want)
+		}
+	}
+}
+
+// TestFoldUsage_MemoryPercentilesAreOrderFree: the same attempts folded in
+// any order give the same percentiles, and a row with no exact peak has none.
+func TestFoldUsage_MemoryPercentilesAreOrderFree(t *testing.T) {
+	var records []*orkstackv1.TaskAttempt
+	for i := range 200 {
+		records = append(records, measuredRecord(int32(i+1), 1, int64(i%100+1), 100, true))
+	}
+	fold := func(rs []*orkstackv1.TaskAttempt) *orkstackv1.UsageRow {
+		s := engine.TaskSample{RunID: "r", Orkflow: "o", TaskID: "t", Pool: "main", Observed: true, Attempts: int32(len(rs)), Records: rs}
+		total, _, _ := engine.FoldUsage([]engine.UsageRun{{RunID: "r", Orkflow: "o", Tasks: []engine.UsageTask{engine.UsageOfTask(s)}}}, nil)
+		return total
+	}
+	first := fold(records)
+	shuffled := append([]*orkstackv1.TaskAttempt(nil), records...)
+	rand.New(rand.NewSource(7)).Shuffle(len(shuffled), func(i, j int) { shuffled[i], shuffled[j] = shuffled[j], shuffled[i] })
+	again := fold(shuffled)
+	if first.GetMemoryUtilizationP50() != again.GetMemoryUtilizationP50() || first.GetMemoryUtilizationP95() != again.GetMemoryUtilizationP95() {
+		t.Fatalf("order changed the percentiles: %v/%v vs %v/%v", first.GetMemoryUtilizationP50(), first.GetMemoryUtilizationP95(),
+			again.GetMemoryUtilizationP50(), again.GetMemoryUtilizationP95())
+	}
+	if p95 := first.GetMemoryUtilizationP95(); p95 < 0.95 || p95 > 0.96 {
+		t.Fatalf("p95 of 1 %%..100 %% = %v, want within its bucket of 95 %%", p95)
+	}
+	sampled := fold([]*orkstackv1.TaskAttempt{measuredRecord(1, 1, 50, 100, false)})
+	if sampled.GetMemoryUtilizationP50() != 0 || sampled.GetMemoryUtilizationP95() != 0 {
+		t.Fatalf("a row with only sampled peaks has percentiles %v/%v", sampled.GetMemoryUtilizationP50(), sampled.GetMemoryUtilizationP95())
+	}
+}
+
+// TestFoldUsage_MeasuredUsageNeverMisstates is the reviews' cases: a record
+// read back with figures no sampler writes neither panics nor counts; an
+// attempt stopped at its limit counts at it; efficiency compares only the
+// measured attempts that carry a reservation; a bucket's edge lands in that
+// bucket; a reason this engine does not know is counted under UNSPECIFIED;
+// and each group's percentiles are its own.
+func TestFoldUsage_MeasuredUsageNeverMisstates(t *testing.T) {
+	fold := func(records ...*orkstackv1.TaskAttempt) *orkstackv1.UsageRow {
+		s := engine.TaskSample{RunID: "r", Orkflow: "o", TaskID: "t", Pool: "main", Observed: true, Attempts: int32(len(records)), Records: records}
+		total, _, _ := engine.FoldUsage([]engine.UsageRun{{RunID: "r", Orkflow: "o", Tasks: []engine.UsageTask{engine.UsageOfTask(s)}}}, nil)
+		return total
+	}
+
+	t.Run("an enormous peak against a tiny limit is at the limit, no panic", func(t *testing.T) {
+		row := fold(measuredRecord(1, 1, 1<<62, 1, true))
+		if row.GetMemoryUtilizationP95() != 1 {
+			t.Fatalf("p95 = %v, want 1", row.GetMemoryUtilizationP95())
+		}
+	})
+	t.Run("figures no sampler writes count the attempt and add nothing", func(t *testing.T) {
+		bad := measuredRecord(1, math.NaN(), -5, 100, true)
+		row := fold(bad, measuredRecord(2, 2, 10, 100, true))
+		if row.GetAttemptsMeasured() != 2 || row.GetMeasuredCpuSeconds() != 2 || row.GetMemoryPeakBytesMax() != 10 {
+			t.Fatalf("row = %v", row)
+		}
+	})
+	t.Run("an attempt stopped at its limit counts at it", func(t *testing.T) {
+		oom := measuredRecord(1, 1, 60, 100, false) // its peak not the kernel's
+		oom.Measured.OomKilled = true
+		row := fold(oom, measuredRecord(2, 1, 30, 100, true))
+		if row.GetMemoryUtilizationP95() != 1 || math.Abs(row.GetMemoryUtilizationP50()-0.305) > 1e-9 {
+			t.Fatalf("p50 %v, p95 %v; want 0.305 and 1 (the OOM at its limit)", row.GetMemoryUtilizationP50(), row.GetMemoryUtilizationP95())
+		}
+	})
+	t.Run("efficiency is one population", func(t *testing.T) {
+		unpriced := measuredRecord(1, 50, 1, 100, true)
+		unpriced.Resources = nil
+		row := fold(unpriced, measuredRecord(2, 5, 1, 100, true)) // 5 cpu-s of 20 reserved
+		if row.GetMeasuredCpuSeconds() != 55 || row.GetReservedCpuSecondsMeasured() != 20 || row.GetCpuEfficiency() != 0.25 {
+			t.Fatalf("measured %v, reserved %v, efficiency %v; want 55, 20, 0.25",
+				row.GetMeasuredCpuSeconds(), row.GetReservedCpuSecondsMeasured(), row.GetCpuEfficiency())
+		}
+	})
+	t.Run("edges", func(t *testing.T) {
+		for _, tc := range []struct {
+			peak, limit int64
+			want        float64
+		}{
+			{0, 100, 0.005},     // [0, 0.5 %)
+			{95, 100, 0.955},    // 95 % exactly is the start of its bucket
+			{90, 100, 0.905},    // so is 90 %
+			{199, 200, 1},       // 99.5 %: the bucket below the limit
+			{100, 100, 1},       // at the limit
+			{130, 100, 1},       // over it: at or above the limit reads 1
+			{1, 1 << 40, 0.005}, // a tiny share of a large limit
+		} {
+			if got := fold(measuredRecord(1, 1, tc.peak, tc.limit, true)).GetMemoryUtilizationP50(); math.Abs(got-tc.want) > 1e-12 {
+				t.Errorf("%d of %d: p50 = %v, want %v", tc.peak, tc.limit, got, tc.want)
+			}
+		}
+	})
+	t.Run("an unknown reason counts under UNSPECIFIED", func(t *testing.T) {
+		newer := heldRecord(1, time.Second, nil)
+		newer.Measured = &orkstackv1.MeasuredUsage{Method: orkstackv1.MeasurementMethod_MEASUREMENT_METHOD_UNMEASURED, UnmeasuredReason: 99}
+		older := heldRecord(2, time.Second, nil)
+		got := fold(newer, older).GetAttemptsUnmeasuredByReason()
+		if len(got) != 1 || got[0].GetReason() != orkstackv1.UnmeasuredReason_UNMEASURED_REASON_UNSPECIFIED || got[0].GetAttempts() != 2 {
+			t.Fatalf("unmeasured by reason = %v, want UNSPECIFIED: 2", got)
+		}
+	})
+	t.Run("each group's percentiles are its own", func(t *testing.T) {
+		low := engine.TaskSample{RunID: "r", Orkflow: "o", TaskID: "low", Pool: "main", Observed: true, Attempts: 1,
+			Records: []*orkstackv1.TaskAttempt{measuredRecord(1, 1, 10, 100, true)}}
+		high := engine.TaskSample{RunID: "r", Orkflow: "o", TaskID: "high", Pool: "main", Observed: true, Attempts: 1,
+			Records: []*orkstackv1.TaskAttempt{measuredRecord(1, 1, 90, 100, true)}}
+		total, rows, _ := engine.FoldUsage([]engine.UsageRun{{RunID: "r", Orkflow: "o", Tasks: []engine.UsageTask{engine.UsageOfTask(low), engine.UsageOfTask(high)}}},
+			[]orkstackv1.FailureGroupBy{orkstackv1.FailureGroupBy_FAILURE_GROUP_BY_TASK})
+		byTask := map[string]float64{}
+		for _, row := range rows {
+			byTask[row.GetTaskId()] = row.GetMemoryUtilizationP95()
+		}
+		if math.Abs(byTask["low"]-0.105) > 1e-12 || math.Abs(byTask["high"]-0.905) > 1e-12 || math.Abs(total.GetMemoryUtilizationP95()-0.905) > 1e-12 {
+			t.Fatalf("p95 by task %v, total %v", byTask, total.GetMemoryUtilizationP95())
+		}
+	})
+}
+
+// TestFoldUsage_NothingToCompareIsUnsetNeverZero: a row with no measured
+// record carrying a reservation has no efficiency, and one with no record
+// the percentiles cover has no percentiles and says it covered none; unset
+// is "nothing to compare", which a client renders as "—", never 0 %.
+func TestFoldUsage_NothingToCompareIsUnsetNeverZero(t *testing.T) {
+	older := heldRecord(1, 10*time.Second, reserve(2, 1)) // a v0.3 Orker's: nothing measured
+	sampled := measuredRecord(2, 1, 50, 100, false)       // measured, but its peak sampled
+	sampled.Resources = nil
+	s := engine.TaskSample{RunID: "r", Orkflow: "o", TaskID: "t", Pool: "main", Observed: true, Attempts: 2,
+		Records: []*orkstackv1.TaskAttempt{older, sampled}}
+	total, _, _ := engine.FoldUsage([]engine.UsageRun{{RunID: "r", Orkflow: "o", Tasks: []engine.UsageTask{engine.UsageOfTask(s)}}}, nil)
+	if total.CpuEfficiency != nil || total.MemoryUtilizationP50 != nil || total.MemoryUtilizationP95 != nil {
+		t.Fatalf("efficiency %v, p50 %v, p95 %v; want all unset", total.CpuEfficiency, total.MemoryUtilizationP50, total.MemoryUtilizationP95)
+	}
+	if total.GetMemoryUtilizationAttempts() != 0 || total.GetAttemptsMeasured() != 1 {
+		t.Fatalf("utilization attempts %d, measured %d; want 0 and 1", total.GetMemoryUtilizationAttempts(), total.GetAttemptsMeasured())
+	}
+	covered := engine.TaskSample{RunID: "r", Orkflow: "o", TaskID: "t", Pool: "main", Observed: true, Attempts: 1,
+		Records: []*orkstackv1.TaskAttempt{measuredRecord(1, 0, 0, 100, true)}}
+	total, _, _ = engine.FoldUsage([]engine.UsageRun{{RunID: "r", Orkflow: "o", Tasks: []engine.UsageTask{engine.UsageOfTask(covered)}}}, nil)
+	if total.CpuEfficiency == nil || total.GetCpuEfficiency() != 0 || total.MemoryUtilizationP50 == nil || total.GetMemoryUtilizationAttempts() != 1 {
+		t.Fatalf("a measured idle attempt: %v; want efficiency set to 0 and one covered attempt", total)
+	}
+}

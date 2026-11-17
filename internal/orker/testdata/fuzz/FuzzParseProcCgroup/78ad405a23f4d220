@@ -1,0 +1,2 @@
+go test fuzz v1
+string("0::/0../docker-4f0c2b1e9d8a7c6b5a4f3e2d1c0b9a8f7e6d5c4b3a2f1e0d9c8b7a6f5e4d3c2b.scope\n")

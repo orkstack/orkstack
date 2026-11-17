@@ -179,13 +179,15 @@ func renderUsage(out io.Writer, resp *orkstackv1.GetUsageResponse) error {
 			columns = append(columns, strings.ToUpper(groupBySpelling(dim)))
 		}
 		columns = append(columns, usageNumberColumns...)
+		columns = append(columns, usageMeasuredColumns...)
 		fmt.Fprintln(table, strings.Join(columns, "\t"))
 		for _, row := range resp.GetRows() {
 			cells := make([]string, 0, len(columns))
 			for _, dim := range resp.GetGroupBy() {
 				cells = append(cells, usageCell(row, dim))
 			}
-			fmt.Fprintln(table, strings.Join(append(cells, usageNumbers(row)...), "\t"))
+			cells = append(cells, usageNumbers(row)...)
+			fmt.Fprintln(table, strings.Join(append(cells, usageMeasuredNumbers(row)...), "\t"))
 		}
 		total := make([]string, 0, len(columns))
 		for i := range resp.GetGroupBy() {
@@ -195,7 +197,8 @@ func renderUsage(out io.Writer, resp *orkstackv1.GetUsageResponse) error {
 				total = append(total, "")
 			}
 		}
-		fmt.Fprintln(table, strings.Join(append(total, usageNumbers(resp.GetTotal())...), "\t"))
+		total = append(total, usageNumbers(resp.GetTotal())...)
+		fmt.Fprintln(table, strings.Join(append(total, usageMeasuredNumbers(resp.GetTotal())...), "\t"))
 		if err := table.Flush(); err != nil {
 			return fmt.Errorf("write output: %w", err)
 		}
@@ -313,6 +316,9 @@ func usageFooter(resp *orkstackv1.GetUsageResponse) []string {
 	if n := total.GetAttemptsUnmeasured(); n > 0 {
 		lines = append(lines, fmt.Sprintf(
 			"%d attempt records have no usable start and finish time and are counted in nothing", n))
+	}
+	if resp.GetRunsDispatched() > 0 {
+		lines = append(lines, usageMeasuredFooter(total)...)
 	}
 	return append(lines, "runs still in flight are counted when they finish")
 }

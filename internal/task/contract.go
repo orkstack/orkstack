@@ -29,6 +29,7 @@ package task
 
 import (
 	"bytes"
+	"encoding/json/jsontext"
 	"fmt"
 	"strconv"
 	"time"
@@ -224,7 +225,42 @@ type HeartbeatProgress struct {
 	// every beat after it: the attempt did work (E92 §4.2). An older Orker
 	// never sends it, which reads as not known to have started.
 	Started bool `json:"started,omitzero"`
+	// Usage is the attempt's latest measured CPU and memory (E94), encoded
+	// HeartbeatUsage. It is raw so the engine decodes it apart from the rest
+	// of the beat and leniently: a usage it cannot read leaves the beat's
+	// other fields readable. An older Orker never sends it.
+	Usage jsontext.Value `json:"usage,omitempty"`
 }
+
+// HeartbeatUsage is the live usage a beat carries: the sampler's last
+// reading and its age, the sampler's interval and the beat's tick, so the
+// engine can say when a reading is stale without knowing this Orker's
+// settings. Unavailable, when set, is why there is no reading (an
+// UnmeasuredReason name without its prefix, or NO_SAMPLE_YET); the numbers
+// are then zero. Its encoding stays within HeartbeatUsageMaxBytes.
+type HeartbeatUsage struct {
+	// CPUCores is absent until there is a rate (two readings): absent is
+	// "not known yet", never 0 cores.
+	CPUCores    *float64 `json:"cpu_cores,omitempty"`
+	CPUSeconds  float64  `json:"cpu_s,omitzero"`
+	Memory      int64    `json:"mem,omitzero"`
+	MemoryPeak  int64    `json:"peak,omitzero"`
+	PeakExact   bool     `json:"peak_exact,omitzero"`
+	Limit       int64    `json:"limit,omitzero"`
+	AgeMillis   int64    `json:"age_ms,omitzero"`
+	Interval    int64    `json:"interval_ms,omitzero"`
+	Tick        int64    `json:"tick_ms,omitzero"`
+	Unavailable string   `json:"unavailable,omitempty"`
+}
+
+// HeartbeatUsageUnencodable is a beat's Unavailable when its reading could not
+// be encoded within HeartbeatUsageMaxBytes.
+const HeartbeatUsageUnencodable = "UNENCODABLE"
+
+// HeartbeatUsageMaxBytes bounds a beat's encoded usage: every beat's detail
+// travels into history (AGENTS.md §2.2), so the usage it adds is small and
+// fixed (prod-kit design §3.6).
+const HeartbeatUsageMaxBytes = 200
 
 // CheckInputSize enforces the deployment's replay-pinned input bound without
 // ever exceeding Temporal's hard 256 KiB ceiling. A zero or omitted plan limit

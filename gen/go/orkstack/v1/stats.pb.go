@@ -1842,26 +1842,42 @@ type UsageRow struct {
 	// this namespace's own Orkflow of the same name. Empty for the namespace's
 	// own.
 	OrkflowNamespace string `protobuf:"bytes,13,opt,name=orkflow_namespace,json=orkflowNamespace,proto3" json:"orkflow_namespace,omitempty"`
-	// measured_cpu_seconds is set from E94; unset until it lands (v0.4.0 proto batch).
+	// MEASURED USAGE — what the attempts' containers' cgroups reported
+	// (TaskAttempt.measured), beside the reservation and never folded into it
+	// (docs/STATS.md §8).
+	//
+	// measured_cpu_seconds is the measured records' CPU time: a lower bound,
+	// read at each one's last sample.
 	MeasuredCpuSeconds float64 `protobuf:"fixed64,14,opt,name=measured_cpu_seconds,json=measuredCpuSeconds,proto3" json:"measured_cpu_seconds,omitempty"`
-	// attempts_measured is set from E94; unset until it lands (v0.4.0 proto batch).
+	// attempts_measured is how many records were measured.
 	AttemptsMeasured int64 `protobuf:"varint,15,opt,name=attempts_measured,json=attemptsMeasured,proto3" json:"attempts_measured,omitempty"`
-	// reserved_cpu_seconds_measured is set from E94; unset until it lands (v0.4.0 proto batch).
+	// reserved_cpu_seconds_measured is the reserved cpu-seconds of the
+	// measured records that carry a reservation.
 	ReservedCpuSecondsMeasured float64 `protobuf:"fixed64,16,opt,name=reserved_cpu_seconds_measured,json=reservedCpuSecondsMeasured,proto3" json:"reserved_cpu_seconds_measured,omitempty"`
-	// cpu_efficiency is set from E94; unset until it lands (v0.4.0 proto batch).
-	CpuEfficiency float64 `protobuf:"fixed64,17,opt,name=cpu_efficiency,json=cpuEfficiency,proto3" json:"cpu_efficiency,omitempty"`
-	// memory_peak_bytes_max is set from E94; unset until it lands (v0.4.0 proto batch).
+	// cpu_efficiency is those same records' measured cpu-seconds over
+	// reserved_cpu_seconds_measured. Unset when no measured record carries a
+	// reservation: there is nothing to compare, which is not 0 %.
+	CpuEfficiency *float64 `protobuf:"fixed64,17,opt,name=cpu_efficiency,json=cpuEfficiency,proto3,oneof" json:"cpu_efficiency,omitempty"`
+	// memory_peak_bytes_max is the largest peak any measured record saw.
 	MemoryPeakBytesMax int64 `protobuf:"varint,18,opt,name=memory_peak_bytes_max,json=memoryPeakBytesMax,proto3" json:"memory_peak_bytes_max,omitempty"`
-	// memory_utilization_p50 is set from E94; unset until it lands (v0.4.0 proto batch).
-	MemoryUtilizationP50 float64 `protobuf:"fixed64,19,opt,name=memory_utilization_p50,json=memoryUtilizationP50,proto3" json:"memory_utilization_p50,omitempty"`
-	// memory_utilization_p95 is set from E94; unset until it lands (v0.4.0 proto batch).
-	MemoryUtilizationP95 float64 `protobuf:"fixed64,20,opt,name=memory_utilization_p95,json=memoryUtilizationP95,proto3" json:"memory_utilization_p95,omitempty"`
-	// attempts_unmeasured_by_reason is set from E94; unset until it lands (v0.4.0 proto batch).
+	// memory_utilization_p50 and memory_utilization_p95 are peak ÷ limit
+	// over the memory_utilization_attempts records, as the upper edge of the
+	// quantile's 0.5 % step; at or above the limit reads 1. Unset when no
+	// record qualifies, which is not 0 %.
+	MemoryUtilizationP50 *float64 `protobuf:"fixed64,19,opt,name=memory_utilization_p50,json=memoryUtilizationP50,proto3,oneof" json:"memory_utilization_p50,omitempty"`
+	MemoryUtilizationP95 *float64 `protobuf:"fixed64,20,opt,name=memory_utilization_p95,json=memoryUtilizationP95,proto3,oneof" json:"memory_utilization_p95,omitempty"`
+	// attempts_unmeasured_by_reason counts the records that measured nothing,
+	// by reason; an older Orker's records, and a reason this engine does not
+	// know, count under UNMEASURED_REASON_UNSPECIFIED.
 	AttemptsUnmeasuredByReason []*UnmeasuredReasonCount `protobuf:"bytes,21,rep,name=attempts_unmeasured_by_reason,json=attemptsUnmeasuredByReason,proto3" json:"attempts_unmeasured_by_reason,omitempty"`
 	// gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch).
-	GpuSeconds    float64 `protobuf:"fixed64,22,opt,name=gpu_seconds,json=gpuSeconds,proto3" json:"gpu_seconds,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	GpuSeconds float64 `protobuf:"fixed64,22,opt,name=gpu_seconds,json=gpuSeconds,proto3" json:"gpu_seconds,omitempty"`
+	// memory_utilization_attempts is how many records the memory percentiles
+	// cover: measured records whose container had a limit and whose peak is
+	// the kernel's own, or that were stopped at the limit.
+	MemoryUtilizationAttempts int64 `protobuf:"varint,23,opt,name=memory_utilization_attempts,json=memoryUtilizationAttempts,proto3" json:"memory_utilization_attempts,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
 }
 
 func (x *UsageRow) Reset() {
@@ -2007,8 +2023,8 @@ func (x *UsageRow) GetReservedCpuSecondsMeasured() float64 {
 }
 
 func (x *UsageRow) GetCpuEfficiency() float64 {
-	if x != nil {
-		return x.CpuEfficiency
+	if x != nil && x.CpuEfficiency != nil {
+		return *x.CpuEfficiency
 	}
 	return 0
 }
@@ -2021,15 +2037,15 @@ func (x *UsageRow) GetMemoryPeakBytesMax() int64 {
 }
 
 func (x *UsageRow) GetMemoryUtilizationP50() float64 {
-	if x != nil {
-		return x.MemoryUtilizationP50
+	if x != nil && x.MemoryUtilizationP50 != nil {
+		return *x.MemoryUtilizationP50
 	}
 	return 0
 }
 
 func (x *UsageRow) GetMemoryUtilizationP95() float64 {
-	if x != nil {
-		return x.MemoryUtilizationP95
+	if x != nil && x.MemoryUtilizationP95 != nil {
+		return *x.MemoryUtilizationP95
 	}
 	return 0
 }
@@ -2044,6 +2060,13 @@ func (x *UsageRow) GetAttemptsUnmeasuredByReason() []*UnmeasuredReasonCount {
 func (x *UsageRow) GetGpuSeconds() float64 {
 	if x != nil {
 		return x.GpuSeconds
+	}
+	return 0
+}
+
+func (x *UsageRow) GetMemoryUtilizationAttempts() int64 {
+	if x != nil {
+		return x.MemoryUtilizationAttempts
 	}
 	return 0
 }
@@ -2262,10 +2285,12 @@ func (x *GetUsageResponse) GetComputedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// UnmeasuredReasonCount is E94's; it is empty until E94 lands (v0.4.0 proto
-// batch).
+// UnmeasuredReasonCount is how many attempts of a row went unmeasured for one
+// reason.
 type UnmeasuredReasonCount struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        UnmeasuredReason       `protobuf:"varint,1,opt,name=reason,proto3,enum=orkstack.v1.UnmeasuredReason" json:"reason,omitempty"`
+	Attempts      int64                  `protobuf:"varint,2,opt,name=attempts,proto3" json:"attempts,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2298,6 +2323,20 @@ func (x *UnmeasuredReasonCount) ProtoReflect() protoreflect.Message {
 // Deprecated: Use UnmeasuredReasonCount.ProtoReflect.Descriptor instead.
 func (*UnmeasuredReasonCount) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_stats_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *UnmeasuredReasonCount) GetReason() UnmeasuredReason {
+	if x != nil {
+		return x.Reason
+	}
+	return UnmeasuredReason_UNMEASURED_REASON_UNSPECIFIED
+}
+
+func (x *UnmeasuredReasonCount) GetAttempts() int64 {
+	if x != nil {
+		return x.Attempts
+	}
+	return 0
 }
 
 var File_orkstack_v1_stats_proto protoreflect.FileDescriptor
@@ -2449,7 +2488,7 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x120\n" +
 	"\x05until\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\x05until\x125\n" +
 	"\blookback\x18\x04 \x01(\v2\x19.google.protobuf.DurationR\blookback\x126\n" +
-	"\bgroup_by\x18\x05 \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\"\xc2\a\n" +
+	"\bgroup_by\x18\x05 \x03(\x0e2\x1b.orkstack.v1.FailureGroupByR\agroupBy\"\xda\b\n" +
 	"\bUsageRow\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12\x17\n" +
 	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12\x12\n" +
@@ -2469,14 +2508,18 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\x11orkflow_namespace\x18\r \x01(\tR\x10orkflowNamespace\x120\n" +
 	"\x14measured_cpu_seconds\x18\x0e \x01(\x01R\x12measuredCpuSeconds\x12+\n" +
 	"\x11attempts_measured\x18\x0f \x01(\x03R\x10attemptsMeasured\x12A\n" +
-	"\x1dreserved_cpu_seconds_measured\x18\x10 \x01(\x01R\x1areservedCpuSecondsMeasured\x12%\n" +
-	"\x0ecpu_efficiency\x18\x11 \x01(\x01R\rcpuEfficiency\x121\n" +
-	"\x15memory_peak_bytes_max\x18\x12 \x01(\x03R\x12memoryPeakBytesMax\x124\n" +
-	"\x16memory_utilization_p50\x18\x13 \x01(\x01R\x14memoryUtilizationP50\x124\n" +
-	"\x16memory_utilization_p95\x18\x14 \x01(\x01R\x14memoryUtilizationP95\x12e\n" +
+	"\x1dreserved_cpu_seconds_measured\x18\x10 \x01(\x01R\x1areservedCpuSecondsMeasured\x12*\n" +
+	"\x0ecpu_efficiency\x18\x11 \x01(\x01H\x00R\rcpuEfficiency\x88\x01\x01\x121\n" +
+	"\x15memory_peak_bytes_max\x18\x12 \x01(\x03R\x12memoryPeakBytesMax\x129\n" +
+	"\x16memory_utilization_p50\x18\x13 \x01(\x01H\x01R\x14memoryUtilizationP50\x88\x01\x01\x129\n" +
+	"\x16memory_utilization_p95\x18\x14 \x01(\x01H\x02R\x14memoryUtilizationP95\x88\x01\x01\x12e\n" +
 	"\x1dattempts_unmeasured_by_reason\x18\x15 \x03(\v2\".orkstack.v1.UnmeasuredReasonCountR\x1aattemptsUnmeasuredByReason\x12\x1f\n" +
 	"\vgpu_seconds\x18\x16 \x01(\x01R\n" +
-	"gpuSeconds\"\x93\x06\n" +
+	"gpuSeconds\x12>\n" +
+	"\x1bmemory_utilization_attempts\x18\x17 \x01(\x03R\x19memoryUtilizationAttemptsB\x11\n" +
+	"\x0f_cpu_efficiencyB\x19\n" +
+	"\x17_memory_utilization_p50B\x19\n" +
+	"\x17_memory_utilization_p95\"\x93\x06\n" +
 	"\x10GetUsageResponse\x12+\n" +
 	"\x05total\x18\x01 \x01(\v2\x15.orkstack.v1.UsageRowR\x05total\x12)\n" +
 	"\x04rows\x18\x02 \x03(\v2\x15.orkstack.v1.UsageRowR\x04rows\x126\n" +
@@ -2495,8 +2538,10 @@ const file_orkstack_v1_stats_proto_rawDesc = "" +
 	"\fwindow_since\x18\x0e \x01(\v2\x1a.google.protobuf.TimestampR\vwindowSince\x12=\n" +
 	"\fwindow_until\x18\x0f \x01(\v2\x1a.google.protobuf.TimestampR\vwindowUntil\x12;\n" +
 	"\vcomputed_at\x18\x10 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
-	"computedAt\"\x17\n" +
-	"\x15UnmeasuredReasonCount*o\n" +
+	"computedAt\"j\n" +
+	"\x15UnmeasuredReasonCount\x125\n" +
+	"\x06reason\x18\x01 \x01(\x0e2\x1d.orkstack.v1.UnmeasuredReasonR\x06reason\x12\x1a\n" +
+	"\battempts\x18\x02 \x01(\x03R\battempts*o\n" +
 	"\x10StatsBucketWidth\x12\"\n" +
 	"\x1eSTATS_BUCKET_WIDTH_UNSPECIFIED\x10\x00\x12\x1b\n" +
 	"\x17STATS_BUCKET_WIDTH_HOUR\x10\x01\x12\x1a\n" +
@@ -2558,6 +2603,7 @@ var file_orkstack_v1_stats_proto_goTypes = []any{
 	(*Pool)(nil),                        // 21: orkstack.v1.Pool
 	(FailureCategory)(0),                // 22: orkstack.v1.FailureCategory
 	(*Budget)(nil),                      // 23: orkstack.v1.Budget
+	(UnmeasuredReason)(0),               // 24: orkstack.v1.UnmeasuredReason
 }
 var file_orkstack_v1_stats_proto_depIdxs = []int32{
 	18, // 0: orkstack.v1.GetStatsRequest.since:type_name -> google.protobuf.Timestamp
@@ -2616,19 +2662,20 @@ var file_orkstack_v1_stats_proto_depIdxs = []int32{
 	18, // 53: orkstack.v1.GetUsageResponse.window_since:type_name -> google.protobuf.Timestamp
 	18, // 54: orkstack.v1.GetUsageResponse.window_until:type_name -> google.protobuf.Timestamp
 	18, // 55: orkstack.v1.GetUsageResponse.computed_at:type_name -> google.protobuf.Timestamp
-	2,  // 56: orkstack.v1.StatsService.GetStats:input_type -> orkstack.v1.GetStatsRequest
-	6,  // 57: orkstack.v1.StatsService.GetFailureBreakdown:input_type -> orkstack.v1.GetFailureBreakdownRequest
-	9,  // 58: orkstack.v1.StatsService.GetFlakeIndex:input_type -> orkstack.v1.GetFlakeIndexRequest
-	12, // 59: orkstack.v1.StatsService.GetUsage:input_type -> orkstack.v1.GetUsageRequest
-	5,  // 60: orkstack.v1.StatsService.GetStats:output_type -> orkstack.v1.GetStatsResponse
-	8,  // 61: orkstack.v1.StatsService.GetFailureBreakdown:output_type -> orkstack.v1.GetFailureBreakdownResponse
-	11, // 62: orkstack.v1.StatsService.GetFlakeIndex:output_type -> orkstack.v1.GetFlakeIndexResponse
-	14, // 63: orkstack.v1.StatsService.GetUsage:output_type -> orkstack.v1.GetUsageResponse
-	60, // [60:64] is the sub-list for method output_type
-	56, // [56:60] is the sub-list for method input_type
-	56, // [56:56] is the sub-list for extension type_name
-	56, // [56:56] is the sub-list for extension extendee
-	0,  // [0:56] is the sub-list for field type_name
+	24, // 56: orkstack.v1.UnmeasuredReasonCount.reason:type_name -> orkstack.v1.UnmeasuredReason
+	2,  // 57: orkstack.v1.StatsService.GetStats:input_type -> orkstack.v1.GetStatsRequest
+	6,  // 58: orkstack.v1.StatsService.GetFailureBreakdown:input_type -> orkstack.v1.GetFailureBreakdownRequest
+	9,  // 59: orkstack.v1.StatsService.GetFlakeIndex:input_type -> orkstack.v1.GetFlakeIndexRequest
+	12, // 60: orkstack.v1.StatsService.GetUsage:input_type -> orkstack.v1.GetUsageRequest
+	5,  // 61: orkstack.v1.StatsService.GetStats:output_type -> orkstack.v1.GetStatsResponse
+	8,  // 62: orkstack.v1.StatsService.GetFailureBreakdown:output_type -> orkstack.v1.GetFailureBreakdownResponse
+	11, // 63: orkstack.v1.StatsService.GetFlakeIndex:output_type -> orkstack.v1.GetFlakeIndexResponse
+	14, // 64: orkstack.v1.StatsService.GetUsage:output_type -> orkstack.v1.GetUsageResponse
+	61, // [61:65] is the sub-list for method output_type
+	57, // [57:61] is the sub-list for method input_type
+	57, // [57:57] is the sub-list for extension type_name
+	57, // [57:57] is the sub-list for extension extendee
+	0,  // [0:57] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_stats_proto_init() }
@@ -2639,6 +2686,7 @@ func file_orkstack_v1_stats_proto_init() {
 	file_orkstack_v1_common_proto_init()
 	file_orkstack_v1_namespace_proto_init()
 	file_orkstack_v1_run_proto_init()
+	file_orkstack_v1_stats_proto_msgTypes[11].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

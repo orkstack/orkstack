@@ -60,8 +60,11 @@ const (
 
 	// usageMemoMaxRuns bounds the memo, least recently used first. A run's
 	// entry is its orkflow, a trimmed TaskRun per dispatched task and one
-	// UsageTask per task — about a kilobyte for a fifteen-task run, so the
-	// bound is tens of megabytes at most.
+	// UsageTask per task: a fixed-size part (about 250 bytes, measured usage's
+	// counts included) and one byte per measured attempt's memory bucket.
+	// That is about four kilobytes for a fifteen-task run, so the bound is
+	// under a hundred megabytes for runs of that size; a fan-out's items are
+	// tasks here, and a run of thousands of items costs proportionally more.
 	usageMemoMaxRuns = 20000
 
 	// usageComputeTimeout bounds one measurement, which runs on a context

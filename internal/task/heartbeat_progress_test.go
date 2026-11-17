@@ -22,7 +22,7 @@ func TestHeartbeatProgress_JSONShapeIsTheOrkersShape(t *testing.T) {
 	must.OKf(t, err, "ToPayloads")
 	var back HeartbeatProgress
 	must.OKf(t, dc.FromPayloads(payloads, &back), "FromPayloads")
-	if back != full {
+	if !reflect.DeepEqual(back, full) {
 		t.Fatalf("round trip = %+v, want %+v", back, full)
 	}
 	var keys map[string]any
@@ -43,7 +43,7 @@ func TestHeartbeatProgress_JSONShapeIsTheOrkersShape(t *testing.T) {
 	if err := json.Unmarshal([]byte(`{"phase":"run"}`), &old); err != nil {
 		t.Fatalf("an old Orker's beat does not decode: %v", err)
 	}
-	if old != (HeartbeatProgress{Phase: "run"}) {
+	if !reflect.DeepEqual(old, HeartbeatProgress{Phase: "run"}) {
 		t.Fatalf("old beat = %+v, want phase run and every other field empty", old)
 	}
 	t.Logf("wire keys %v; {\"phase\":\"run\"} decodes as %+v", got, old)
@@ -59,4 +59,43 @@ func TestHeartbeatStaleAfter_LeavesRoomBeforeTheDeadWorkerWindow(t *testing.T) {
 	}
 	t.Logf("MaxHeartbeatInterval %v < HeartbeatStaleAfter %v < HeartbeatTimeout %v",
 		MaxHeartbeatInterval, HeartbeatStaleAfter, HeartbeatTimeout)
+}
+
+// TestHeartbeatProgress_UsageIsMixedFleetSafe: a beat carrying usage
+// round-trips through Temporal's converter with its usage byte for byte; an
+// engine older than the usage key (a detail struct without it) decodes the
+// beat's other fields and ignores the key; and the usage decodes on its own.
+func TestHeartbeatProgress_UsageIsMixedFleetSafe(t *testing.T) {
+	usage, err := json.Marshal(HeartbeatUsage{CPUCores: new(0.5), CPUSeconds: 12.25, Memory: 1 << 20, Limit: 1 << 30, AgeMillis: 900, Interval: 5000, Tick: 5000})
+	must.OKf(t, err, "encode usage")
+	beat := HeartbeatProgress{Phase: "run", OrkerID: "orker-7", Started: true, Usage: usage}
+	dc := converter.GetDefaultDataConverter()
+	payloads, err := dc.ToPayloads(beat)
+	must.OKf(t, err, "ToPayloads")
+	var back HeartbeatProgress
+	must.OKf(t, dc.FromPayloads(payloads, &back), "FromPayloads")
+	if !reflect.DeepEqual(back, beat) {
+		t.Fatalf("round trip = %+v, want %+v", back, beat)
+	}
+
+	// The detail as a v0.3.x engine declares it: no usage key.
+	type olderProgress struct {
+		Phase       string `json:"phase"`
+		ContainerID string `json:"container_id,omitempty"`
+		BytesLogged int64  `json:"bytes_logged,omitzero"`
+		OrkerID     string `json:"orker_id,omitempty"`
+		Ordinal     int32  `json:"ordinal,omitzero"`
+	}
+	var older olderProgress
+	must.OKf(t, dc.FromPayloads(payloads, &older), "an older engine decodes a beat with usage")
+	if older != (olderProgress{Phase: "run", OrkerID: "orker-7"}) {
+		t.Fatalf("older engine read %+v", older)
+	}
+
+	var u HeartbeatUsage
+	must.OKf(t, json.Unmarshal(back.Usage, &u), "decode usage")
+	if u.CPUSeconds != 12.25 || u.Memory != 1<<20 || u.Tick != 5000 {
+		t.Fatalf("usage = %+v", u)
+	}
+	t.Logf("beat %s", payloads.GetPayloads()[0].GetData())
 }

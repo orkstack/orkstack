@@ -2,6 +2,8 @@ package orker
 
 import (
 	"context"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -171,6 +173,9 @@ type Heartbeater struct {
 	// started is set once the attempt's container is observed started; every
 	// beat after it says so.
 	started atomic.Bool
+	// usage is the attempt's usage sampler once its container started; every
+	// beat after it carries the sampler's latest reading (E94).
+	usage atomic.Pointer[usageSampler]
 	// calls is the loop's RPC context, which only the loop's end cancels: the
 	// t0 beat is sent on it.
 	calls context.Context
@@ -451,7 +456,35 @@ func (h *Heartbeater) progress() HeartbeatProgress {
 		progress.StoppingSince = *since
 	}
 	progress.Started = h.started.Load()
+	if s := h.usage.Load(); s != nil {
+		progress.Usage = h.encodeUsage(s)
+	}
 	return progress
+}
+
+// usageUnencodable is the usage a beat carries when its reading would not
+// encode within its bound.
+var usageUnencodable = jsontext.Value(`{"unavailable":"` + task.HeartbeatUsageUnencodable + `"}`)
+
+// setUsage makes every later beat carry s's latest reading.
+func (h *Heartbeater) setUsage(s *usageSampler) { h.usage.Store(s) }
+
+// encodeUsage is s's latest reading as a beat carries it, with this loop's
+// tick. A usage that cannot be encoded within HeartbeatUsageMaxBytes is sent
+// as unencodable instead, never left off: a beat without usage reads as an
+// Orker too old to measure.
+func (h *Heartbeater) encodeUsage(s *usageSampler) jsontext.Value {
+	tick := h.interval
+	if tick <= 0 {
+		tick = DefaultHeartbeatInterval
+	}
+	u := s.snapshot().beatUsage(s.deps.now(), s.deps.interval)
+	u.Tick = tick.Milliseconds()
+	encoded, err := json.Marshal(u)
+	if err != nil || len(encoded) > task.HeartbeatUsageMaxBytes {
+		return usageUnencodable
+	}
+	return encoded
 }
 
 // PhaseReported is the phase of an attempt's last beat before it reports a

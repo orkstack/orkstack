@@ -113,6 +113,10 @@ type Options struct {
 	// no capacity, and the Orker admits by MaxConcurrent alone.
 	CapacityCPU    string
 	CapacityMemory string
+	// UsageGauges, when set, is handed a read of what every running
+	// attempt's container uses now (the containers.memory and .cpu gauges),
+	// called whenever it is collected.
+	UsageGauges func(read func() UsageTotals)
 	// CapacityObserver, when set, is told what the ledger does, for the
 	// capacity metrics. Nil — metrics off, the default — observes nothing.
 	CapacityObserver CapacityObserver
@@ -131,6 +135,12 @@ type Options struct {
 	// therefore how long a running container waits to observe a cancellation.
 	// Zero means DefaultHeartbeatInterval.
 	HeartbeatInterval time.Duration
+	// UsageSampleInterval is how often an attempt's usage sampler reads its
+	// container's cgroup after the ramp; zero disables measuring
+	// (OCIDispatcher.UsageSampleInterval).
+	UsageSampleInterval time.Duration
+	// UsageSamplerFailed hears every usage sampler panic recovered.
+	UsageSamplerFailed func()
 	// TaskLogs exports every framed log line of every attempt, beside the
 	// durable chunk store. Nil exports nothing.
 	TaskLogs TaskLogExporter
@@ -151,9 +161,11 @@ type Options struct {
 // exactly one implementation that runs one (§6.1).
 type Activities struct {
 	dispatcher *OCIDispatcher
-	pool       string
-	maxConc    int32
-	maxPins    int32
+	// usage is this process's running samplers, for the usage gauges.
+	usage   *UsageRegistry
+	pool    string
+	maxConc int32
+	maxPins int32
 	// metadataProbe is orker.metadata_probe; metadata is what Boot's probe
 	// found, nil until it ran, which DescribeOrker reports.
 	metadataProbe MetadataProbeMode
@@ -235,31 +247,38 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		opts.CapacityObserver.Watch(orkerID, capacity.reading)
 	}
 
+	usage := NewUsageRegistry()
+	if opts.UsageGauges != nil {
+		opts.UsageGauges(usage.Totals)
+	}
 	a := &Activities{
+		usage: usage,
 		dispatcher: &OCIDispatcher{
-			Runtime:           runtime,
-			Store:             store,
-			Commits:           opts.Commits,
-			Refs:              opts.Refs,
-			Logs:              opts.Logs,
-			LogOpts:           opts.Log,
-			Attempts:          opts.Attempts,
-			Claims:            claimerOf(opts.Attempts),
-			Memos:             opts.Memos,
-			Policy:            policy,
-			WorkRoot:          workRoot,
-			OrkerID:           orkerID,
-			BuildID:           buildID,
-			EnvAllowlist:      allowlist,
-			LayoutRoot:        opts.LayoutRoot,
-			Signatures:        opts.Signatures,
-			HeartbeatInterval: opts.HeartbeatInterval,
-			TaskLogs:          opts.TaskLogs,
-			Phases:            opts.Phases,
-			TraceContext:      opts.TraceContext,
-			Logger:            opts.Logger,
-			LogUnmasked:       opts.LogUnmasked,
-			AllowSecretValues: opts.AllowSecretValues,
+			Runtime:             runtime,
+			Store:               store,
+			Commits:             opts.Commits,
+			Refs:                opts.Refs,
+			Logs:                opts.Logs,
+			LogOpts:             opts.Log,
+			Attempts:            opts.Attempts,
+			Claims:              claimerOf(opts.Attempts),
+			Memos:               opts.Memos,
+			Policy:              policy,
+			WorkRoot:            workRoot,
+			OrkerID:             orkerID,
+			BuildID:             buildID,
+			EnvAllowlist:        allowlist,
+			LayoutRoot:          opts.LayoutRoot,
+			Signatures:          opts.Signatures,
+			HeartbeatInterval:   opts.HeartbeatInterval,
+			UsageSampleInterval: opts.UsageSampleInterval,
+			UsageSamplerFailed:  opts.UsageSamplerFailed,
+			TaskLogs:            opts.TaskLogs,
+			Phases:              opts.Phases,
+			TraceContext:        opts.TraceContext,
+			Logger:              opts.Logger,
+			LogUnmasked:         opts.LogUnmasked,
+			AllowSecretValues:   opts.AllowSecretValues,
 		},
 		pool:          opts.Pool,
 		maxConc:       maxConc,
@@ -449,7 +468,7 @@ func (a *Activities) ExecuteTask(
 	ctx context.Context,
 	in *orkstackv1.ExecuteTaskInput,
 ) (*orkstackv1.ExecuteTaskResult, error) {
-	return a.dispatcher.Execute(ctx, in)
+	return a.dispatcher.Execute(withUsageRegistry(ctx, a.usage), in)
 }
 
 // DescribeOrker reports this Orker's identity.
@@ -931,6 +950,16 @@ func (a *Activities) Boot(ctx context.Context) error {
 		a.dispatcher.logger().Warn("secret floor is empty: a task may name any env or file source on this orker "+
 			"except the orker's own; set "+SecretAllowVar+" on every orker of a shared pool",
 			"setting", SecretAllowVar)
+	}
+	// Measured usage needs a host that can verify a container's cgroup;
+	// one that cannot measures nothing, every attempt CGROUP_UNVERIFIED.
+	// Said once here, so an operator learns it from the boot and not from
+	// each attempt. It refuses nothing: usage never decides an attempt.
+	if a.dispatcher.UsageSampleInterval > 0 {
+		if err := probeCgroupIdentity(hostCgroups()); err != nil {
+			a.dispatcher.logger().Warn("this host cannot verify a container's cgroup: every attempt's usage will be CGROUP_UNVERIFIED "+
+				"(set "+UsageSampleIntervalVar+"=0s to turn measuring off)", "error", err)
+		}
 	}
 	// A capacity that cannot be read, or that the per-task cap does not fit
 	// in, would be an Orker that admits nothing or admits blindly; either

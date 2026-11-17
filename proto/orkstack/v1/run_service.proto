@@ -654,7 +654,8 @@ message LiveAttempt {
   // the store answers.
   StoreOutageWait store_outage_wait = 21;
 
-  // usage is set from E94; unset until it lands (v0.4.0 proto batch).
+  // usage is the attempt's latest CPU and memory, from its Orker's last
+  // heartbeat, or why there is none.
   LiveUsage usage = 22;
 
   // reserved is set from E94; unset until it lands (v0.4.0 proto batch).
@@ -932,6 +933,57 @@ message TaskLogChunk {
 // batch).
 message LiveIdentity {}
 
-// LiveUsage is E94's; it is empty until E94 lands (v0.4.0 proto
-// batch).
-message LiveUsage {}
+// LiveUsageUnavailableReason is why a running attempt shows no live CPU and
+// memory.
+enum LiveUsageUnavailableReason {
+  LIVE_USAGE_UNAVAILABLE_REASON_UNSPECIFIED = 0;
+  // NOT_STARTED: the attempt has not been picked up.
+  LIVE_USAGE_UNAVAILABLE_REASON_NOT_STARTED = 1;
+  // PREPARING: the attempt's container has not started yet. An Orker older
+  // than v0.4.0 never says its container started, so its running attempts
+  // read PREPARING too.
+  LIVE_USAGE_UNAVAILABLE_REASON_PREPARING = 2;
+  // CGROUP_NOT_VISIBLE, NO_CGROUP and DISABLED are UnmeasuredReason's.
+  LIVE_USAGE_UNAVAILABLE_REASON_CGROUP_NOT_VISIBLE = 3;
+  LIVE_USAGE_UNAVAILABLE_REASON_NO_CGROUP = 4;
+  LIVE_USAGE_UNAVAILABLE_REASON_DISABLED = 5;
+  // NO_SAMPLE_YET: the container started and has not been read yet, or it
+  // ended before its first periodic read; its final read may still measure
+  // it, on the attempt's record.
+  LIVE_USAGE_UNAVAILABLE_REASON_NO_SAMPLE_YET = 6;
+  // ORKER_TOO_OLD: the Orker running the attempt does not report usage.
+  LIVE_USAGE_UNAVAILABLE_REASON_ORKER_TOO_OLD = 7;
+  // UNDECODABLE: the Orker's report could not be read, carried no reading,
+  // or named a reason this engine does not know.
+  LIVE_USAGE_UNAVAILABLE_REASON_UNDECODABLE = 8;
+  // READ_FAILED: the container's cgroup could not be read.
+  LIVE_USAGE_UNAVAILABLE_REASON_READ_FAILED = 9;
+  // START_FAILED: the container's start failed or was cut off.
+  LIVE_USAGE_UNAVAILABLE_REASON_START_FAILED = 10;
+  // CGROUP_UNVERIFIED is UnmeasuredReason's.
+  LIVE_USAGE_UNAVAILABLE_REASON_CGROUP_UNVERIFIED = 11;
+}
+
+// LiveUsage is a running attempt's latest CPU and memory, from the Orker's
+// last heartbeat.
+message LiveUsage {
+  bool available = 1;
+  // unavailable_reason is set when available is false.
+  LiveUsageUnavailableReason unavailable_reason = 2;
+  // cpu_cores is the CPU rate between the last two readings, in cores.
+  // Unset until there are two: not yet known, which is not 0 cores.
+  optional double cpu_cores = 3;
+  // cpu_seconds is the container's CPU time at the last reading.
+  double cpu_seconds = 4;
+  int64 memory_bytes = 5;
+  int64 memory_peak_bytes = 6;
+  bool memory_peak_exact = 7;
+  // memory_limit_bytes is the container's memory limit; 0 is none.
+  int64 memory_limit_bytes = 8;
+  // sampled_at is when the reading was taken: the heartbeat's time on the
+  // cluster's clock, less the reading's age as the Orker reported it.
+  google.protobuf.Timestamp sampled_at = 9;
+  // stale: the reading is older than twice the Orker's sampling interval
+  // plus one heartbeat tick.
+  bool stale = 10;
+}

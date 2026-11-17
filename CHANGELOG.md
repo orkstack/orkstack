@@ -66,6 +66,8 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `rpc.server.call.duration` records every API call by service, method and code, and `ork.api.streams` the streams and WebSockets open now ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#api-calls-and-streams)).
 - `ork.runs.open` reports the deployment's open runs, read by a census under a per-replica budget, with `ork.census.requests`, `skipped` and `last_success` ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#censuses)).
 - `ORK_TELEMETRY_METRIC_CARDINALITY_LIMIT` bounds each instrument's series and `ORK_TELEMETRY_CENSUS_REQUESTS_PER_MINUTE` an engine's census budget ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration)).
+- Each task attempt's record now holds the CPU time and peak memory its container used, or why they were not measured; `orker.usage_sample_interval` sets how often (`0s` turns it off) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration)).
+- Orkers log each task attempt's CPU and memory as `ork.record=usage` records on its run's telemetry sink, every `orker.usage_log_interval`, and report running totals as gauges ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration)).
 
 ### Changed
 

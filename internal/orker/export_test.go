@@ -105,3 +105,31 @@ func MetadataFindings(a *Activities) []MetadataFinding {
 	}
 	return nil
 }
+
+// UsageReading is one read of a container's cgroup, as the usage sampler
+// takes it, exported for the integration tests in package orker_test.
+type UsageReading struct {
+	CPUSeconds float64
+	Memory     int64
+	MemoryPeak int64
+	PeakRead   bool
+	Limit      int64
+}
+
+// ErrNoCgroup is errNoCgroup: this setup gives a container no readable cgroup.
+var ErrNoCgroup = errNoCgroup
+
+// LocateUsage finds container id's cgroup on this host exactly as the usage
+// sampler does (usageLocator over hostCgroups) and returns its reader and the
+// method's name ("cgroup-v2" or "cgroup-v1").
+func LocateUsage(ctx context.Context, d *DockerRuntime, id ContainerID) (func() (UsageReading, error), string, error) {
+	read, method, err := d.usageLocator(id, hostCgroups())(ctx)
+	if err != nil {
+		return nil, "", err
+	}
+	name := map[usageMethod]string{usageCgroupV2: "cgroup-v2", usageCgroupV1: "cgroup-v1"}[method]
+	return func() (UsageReading, error) {
+		r, err := read(false)
+		return UsageReading{CPUSeconds: r.cpuSeconds, Memory: r.memory, MemoryPeak: r.memoryPeak, PeakRead: r.peakRead, Limit: r.limit}, err
+	}, name, nil
+}

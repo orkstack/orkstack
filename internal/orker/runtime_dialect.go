@@ -380,3 +380,22 @@ var (
 		"stopping": true, "stopped": true,
 	}
 )
+
+// cgroupLeaf reports whether seg, under parent, is the cgroup a container
+// with this id runs in, as the engine names it: docker-<id>.scope (systemd
+// driver) or /docker/<id> (cgroupfs) for Docker, libpod-<id>.scope (systemd)
+// or libpod-<id> (cgroupfs) for Podman, or the "container" child of either.
+// Only the exact leaf: a parent, any other child or a longer id is not it
+// (internal/orker/usage_cgroup.go).
+func (x dialect) cgroupLeaf(id, parent, seg string) bool {
+	if id == "" {
+		return false
+	}
+	if x.engine == CLIPodman {
+		// The systemd driver may hold the processes in the scope's
+		// "container" child, which is where cgroup.procs lists them.
+		return seg == "libpod-"+id+".scope" || seg == "libpod-"+id ||
+			(seg == "container" && (parent == "libpod-"+id+".scope" || parent == "libpod-"+id))
+	}
+	return seg == "docker-"+id+".scope" || (parent == "docker" && seg == id)
+}

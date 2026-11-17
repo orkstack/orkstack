@@ -1239,6 +1239,39 @@ func (d *DockerRuntime) stoppedByUser(ctx context.Context, id ContainerID, query
 	}
 }
 
+// usageLocateTimeout bounds finding a container's cgroup for the usage
+// sampler: the engine's answer for its pid and the cgroup lookup.
+const usageLocateTimeout = 2 * time.Second
+
+// usageLocator is the usage sampler's locate for container id: its pid from
+// the engine (`inspect {{.State.Pid}}`, bounded by usageLocateTimeout), then
+// its cgroup on host by the engine's own leaf (usage_host.go). A container
+// that is not running reads pid 0, which is gone; an engine that does not
+// answer, or answers nonsense, is errCgroupRead, which the sampler asks
+// again, never a cgroup this host cannot see.
+func (d *DockerRuntime) usageLocator(id ContainerID, host cgroupHost) func(context.Context) (cgroupReader, usageMethod, error) {
+	return func(ctx context.Context) (cgroupReader, usageMethod, error) {
+		ctx, cancel := context.WithTimeout(ctx, usageLocateTimeout)
+		defer cancel()
+		spoken, err := d.dialect(ctx)
+		if err != nil {
+			return nil, usageUnmeasured, fmt.Errorf("%w: the engine's dialect: %v", errCgroupRead, err)
+		}
+		answer, err := d.control(ctx, "inspect", "--format", "{{.State.Pid}}", string(id))
+		if err != nil {
+			return nil, usageUnmeasured, fmt.Errorf("%w: the engine gave no pid for %s: %v", errCgroupRead, id, err)
+		}
+		if answer.code != 0 {
+			return nil, usageUnmeasured, fmt.Errorf("%w: the engine gave no pid for %s (exit %d)", errCgroupRead, id, answer.code)
+		}
+		pid, err := strconv.Atoi(strings.TrimSpace(answer.stdout))
+		if err != nil || pid < 0 {
+			return nil, usageUnmeasured, fmt.Errorf("%w: the engine gave pid %q", errCgroupRead, strings.TrimSpace(answer.stdout))
+		}
+		return host.locate(pid, spoken, string(id))
+	}
+}
+
 func (d *DockerRuntime) oomKilled(ctx context.Context, id ContainerID) bool {
 	answer, err := d.control(ctx, "inspect", "--format", "{{.State.OOMKilled}}", string(id))
 	if err != nil || answer.code != 0 {

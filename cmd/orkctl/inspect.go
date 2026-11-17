@@ -302,9 +302,9 @@ func renderInspect(
 	}
 
 	table := newTable(out)
-	fmt.Fprintln(table, "TASK\tSTATUS\tATTEMPT\tSTATE\tPHASE\tORKER\tCONTAINER\tLOGGED\tRUNNING\tHEARTBEAT")
+	fmt.Fprintln(table, "TASK\tSTATUS\tATTEMPT\tSTATE\tPHASE\tORKER\tCONTAINER\tLOGGED\tRUNNING\tHEARTBEAT\tCPU\tMEMORY")
 	for _, r := range rows {
-		cells := []string{itemLabel(r.task.GetTaskId(), r.task.Item), r.status, dash, dash, dash, dash, dash, dash, dash, dash}
+		cells := []string{itemLabel(r.task.GetTaskId(), r.task.Item), r.status, dash, dash, dash, dash, dash, dash, dash, dash, dash, dash}
 		if live := r.live; live != nil {
 			cells[2] = fmt.Sprint(live.GetAttempt())
 			cells[3] = liveStateLabel(live.GetState())
@@ -320,6 +320,7 @@ func renderInspect(
 			if started := live.GetAttemptStartedAt(); started != nil {
 				cells[8] = roundedSince(started, now).String()
 			}
+			cells[10], cells[11] = liveUsageCells(live)
 		}
 		fmt.Fprintln(table, strings.Join(cells, "\t"))
 	}
