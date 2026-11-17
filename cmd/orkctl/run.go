@@ -13,6 +13,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
+	"github.com/orkstack/orkstack/internal/runstatus"
 )
 
 func newRunCommand(g *globalFlags) *cobra.Command {
@@ -512,10 +513,11 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	return renderRunJoinTable(out, run)
 }
 
-// runStatusLabel is the Status line: RUNNING (failing) for a run whose
-// outcome is decided FAILED while its failure handlers still run.
+// runStatusLabel is the Status line: RUNNING (failing), or PAUSED
+// (failing), for a live run whose outcome is decided FAILED while its
+// failure handlers still run or wait.
 func runStatusLabel(run *orkstackv1.Run) string {
-	if run.GetStatus() == orkstackv1.Status_STATUS_RUNNING && run.GetError() != nil {
+	if runstatus.IsLive(run.GetStatus()) && run.GetError() != nil {
 		return statusLabel(run.GetStatus()) + " (failing)"
 	}
 	return statusLabel(run.GetStatus())

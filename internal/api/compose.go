@@ -719,6 +719,7 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		// 6b. The child's caching plan, under the parent's no_cache.
 		childPlan.Cache = s.cachePlanFor(childPlanned, r.noCache)
 		childPlan.RunTimeout = s.runTimeoutPlanFor(childPlanned)
+		childPlan.Pause = s.pausePlanFor()
 		// 7. Its own children.
 		childPath := append(append([]string(nil), path...), key)
 		if err := s.planChildren(ctx, r, childPlanned, &childPlan, depth+1, childPath); err != nil {

@@ -23,6 +23,14 @@ enum Status {
   // waiting out its fixed time on the run's own timer, and nothing outside
   // the run can end it early. A run with a sleeping task is RUNNING.
   STATUS_SLEEPING = 8;
+  // PAUSED is a RUN status only, never a task's. The run starts nothing new
+  // (no task, item, child run, pin, await, sleep or failure handler) except
+  // what an already-open pin needs to finish. Work it had already started may
+  // still be running: its task rows say which. It is paused by a person
+  // (Run.pause), by its parent run's pause (Run.paused_by_parent), or both.
+  // Not terminal: a run leaves it on RUN_UNPAUSED (to RUNNING) or when it
+  // ends. A failing run can be PAUSED; Run.error then says why it is failing.
+  STATUS_PAUSED = 9;
 }
 
 // ArtifactRef is a pointer to a stored artifact in the object store.

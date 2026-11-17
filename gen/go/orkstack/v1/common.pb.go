@@ -41,6 +41,14 @@ const (
 	// waiting out its fixed time on the run's own timer, and nothing outside
 	// the run can end it early. A run with a sleeping task is RUNNING.
 	Status_STATUS_SLEEPING Status = 8
+	// PAUSED is a RUN status only, never a task's. The run starts nothing new
+	// (no task, item, child run, pin, await, sleep or failure handler) except
+	// what an already-open pin needs to finish. Work it had already started may
+	// still be running: its task rows say which. It is paused by a person
+	// (Run.pause), by its parent run's pause (Run.paused_by_parent), or both.
+	// Not terminal: a run leaves it on RUN_UNPAUSED (to RUNNING) or when it
+	// ends. A failing run can be PAUSED; Run.error then says why it is failing.
+	Status_STATUS_PAUSED Status = 9
 )
 
 // Enum value maps for Status.
@@ -55,6 +63,7 @@ var (
 		6: "STATUS_SKIPPED",
 		7: "STATUS_AWAITING",
 		8: "STATUS_SLEEPING",
+		9: "STATUS_PAUSED",
 	}
 	Status_value = map[string]int32{
 		"STATUS_UNSPECIFIED": 0,
@@ -66,6 +75,7 @@ var (
 		"STATUS_SKIPPED":     6,
 		"STATUS_AWAITING":    7,
 		"STATUS_SLEEPING":    8,
+		"STATUS_PAUSED":      9,
 	}
 )
 
@@ -512,7 +522,7 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\x06digest\x18\x01 \x01(\tR\x06digest\"Q\n" +
 	"\vConsentView\x12\x16\n" +
 	"\x06digest\x18\x01 \x01(\tR\x06digest\x12*\n" +
-	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at*\xc4\x01\n" +
+	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at*\xd7\x01\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x12\n" +
@@ -522,7 +532,8 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\x0fSTATUS_CANCELED\x10\x05\x12\x12\n" +
 	"\x0eSTATUS_SKIPPED\x10\x06\x12\x13\n" +
 	"\x0fSTATUS_AWAITING\x10\a\x12\x13\n" +
-	"\x0fSTATUS_SLEEPING\x10\b*\xed\x01\n" +
+	"\x0fSTATUS_SLEEPING\x10\b\x12\x11\n" +
+	"\rSTATUS_PAUSED\x10\t*\xed\x01\n" +
 	"\x0fFailureCategory\x12 \n" +
 	"\x1cFAILURE_CATEGORY_UNSPECIFIED\x10\x00\x12$\n" +
 	" FAILURE_CATEGORY_ACTIVITY_FAILED\x10\x01\x12)\n" +

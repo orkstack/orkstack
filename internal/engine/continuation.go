@@ -452,10 +452,10 @@ func (s *runState) hasUnfinishedTasks() bool {
 	return false
 }
 
-// canSwitchNow is the switch condition: the switch is due and allowed, and
-// nothing of the run is in flight — no activity, item or child run, and no
-// pin opening, open or closing — while work remains and the run is not being
-// canceled. Open awaits may cross: their deadlines are absolute instants.
+// canSwitchNow is the switch condition: the switch is due and allowed, the
+// run is not paused, and nothing of the run is in flight — no activity, item
+// or child run, and no pin opening, open or closing — while work remains and
+// the run is not being canceled. Open awaits may cross: their deadlines are absolute instants.
 func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workflow.Future) bool {
 	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil {
 		return false
@@ -465,8 +465,13 @@ func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workfl
 		return false
 	}
 	e, b := s.historyNow(ctx)
-	return reached(e, b, s.switchRetryAt) && s.openingPins() == 0 && s.closingPins() == 0 &&
-		s.openedUnclosedPins() == 0 && s.hasUnfinishedTasks()
+	if !reached(e, b, s.switchRetryAt) || s.openingPins() != 0 || s.closingPins() != 0 ||
+		s.openedUnclosedPins() != 0 || !s.hasUnfinishedTasks() {
+		return false
+	}
+	// A run with pause state carries it in its saved state, once the gate
+	// allows; otherwise a paused run carries on only once unpaused.
+	return s.pauseCarries(ctx) || !s.paused()
 }
 
 // applyQueuedResolutions applies every resolution already delivered to the
@@ -532,6 +537,14 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	} else if applied {
 		return nil, "", nil
 	}
+	// 2b. Every pause request already delivered, applied, so none is left
+	// unread in a generation that ends: reading any abandons this attempt,
+	// and the next pass decides again (a paused run does not switch).
+	if received, err := s.drainPauseRequests(ctx, inFlight, pauseInMainLoop); err != nil {
+		return nil, "", err
+	} else if received {
+		return nil, "", nil
+	}
 
 	namespace := s.wf.GetNamespace()
 	obs := ContinuationObservationInput{Namespace: namespace, Generation: s.generation}
@@ -584,12 +597,17 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		return nil, "", nil
 	}
 
-	// 6. Re-check: a resolution delivered while the writes blocked, or a
-	// cancel, turns the switch back; the written objects are orphans,
-	// reclaimed with the run's prefix.
+	// 6. Re-check: a resolution or a pause request delivered while the
+	// writes blocked, or a cancel, turns the switch back; the written objects
+	// are orphans, reclaimed with the run's prefix.
 	if applied, id, err := s.switchResolutions(ctx, inFlight); err != nil {
 		return nil, id, err
 	} else if applied || ctx.Err() != nil {
+		return nil, "", nil
+	}
+	if received, err := s.drainPauseRequests(ctx, inFlight, pauseInMainLoop); err != nil {
+		return nil, "", err
+	} else if received {
 		return nil, "", nil
 	}
 
@@ -616,6 +634,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		VersionDecisions: decisions,
 		Snapshot:         switchSnapshot,
 	}
+	s.fillPauseCarry(ctx, carry)
 	if size, err := task.PayloadSize(carry); err != nil || size > task.MaxActivityInputBytes {
 		s.setNoSwitch(ctx, inFlight, "its carried bookkeeping is larger than 256 KiB")
 		return nil, "", nil
@@ -880,6 +899,16 @@ var runStateFieldClass = map[string]fieldClass{
 	// next generation's arm site (the await-timer precedent); taken is never
 	// true at a switch (no switch after D), and the hard end and the drain
 	// live only in the failing phase, which never switches.
+	// The pause (pause.go): the channel is rebuilt from the plan; both
+	// causes, the last pause and the cascade counter cross in the carry
+	// (RunContinuation 12–15).
+	"runState.pauses": fieldDerived, "runState.pause": fieldRestored, "runState.pausedByParent": fieldRestored,
+	"runState.lastPause": fieldRestored, "runState.pauseStop": fieldEphemeral, "runState.lastCascadeSeq": fieldRestored,
+	// What this generation wrote to its paused index: rewritten at its first
+	// pass when it starts paused (syncPauseIndex).
+	"runState.pauseIndex": fieldEphemeral,
+	// Set and read within one emit, or as the run ends.
+	"runState.pauseEvent": fieldEphemeral, "runState.pauseExpired": fieldEphemeral,
 	"runState.runTimeout": fieldRestored,
 	"runTimeout.seconds":  fieldDerived, "runTimeout.graceSeconds": fieldDerived,
 	"runTimeout.deadline": fieldRestored, "runTimeout.timer": fieldRestored,

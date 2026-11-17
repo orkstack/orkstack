@@ -114,6 +114,11 @@ type RunPlan struct {
 	// their plans encode exactly as before.
 	RunTimeout *RunTimeoutPlan `json:"run_timeout,omitempty"`
 
+	// Pause, when non-nil, says this run accepts pause requests (pause.go).
+	// Set at submit on every run and composed child; nil for a run that
+	// predates it, so its plan encodes exactly as before.
+	Pause *PausePlan `json:"pause,omitempty"`
+
 	// Awaits holds, per task id, the callback credential of every `await:`
 	// of this run that declares `callback: true`: a salt and the salted
 	// SHA-256 of a token minted at SUBMIT (internal/api). NEVER the token.

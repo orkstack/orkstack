@@ -233,6 +233,11 @@ var Schema = []Var{
 	// its failure handlers may still run. Pinned, in seconds, into the plan
 	// of every run whose definition declares `timeout:`.
 	{Path: "engine.run_timeout_handler_grace", Env: "ORK_RUN_TIMEOUT_HANDLER_GRACE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultRunTimeoutHandlerGrace)},
+	// ORK_RUN_PAUSE_TIMEOUT's and ORK_RUN_PAUSE_TIMEOUT_MAX's fallbacks are
+	// engine.DefaultRunPauseTimeout and engine.DefaultRunPauseTimeoutMax: a
+	// pause's default length and its longest, pinned into every run's plan.
+	{Path: "engine.run_pause_timeout", Env: "ORK_RUN_PAUSE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultRunPauseTimeout)},
+	{Path: "engine.run_pause_timeout_max", Env: "ORK_RUN_PAUSE_TIMEOUT_MAX", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultRunPauseTimeoutMax)},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},

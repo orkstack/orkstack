@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/runstatus"
 )
 
 // newRunLogsCommand builds `orkctl run logs`.
@@ -582,16 +583,7 @@ func runHasTask(run *orkstackv1.Run, taskID string) bool {
 }
 
 // isRunTerminal reports that no task of this run will produce more output.
-func isRunTerminal(run *orkstackv1.Run) bool {
-	switch run.GetStatus() {
-	case orkstackv1.Status_STATUS_SUCCEEDED,
-		orkstackv1.Status_STATUS_FAILED,
-		orkstackv1.Status_STATUS_CANCELED:
-		return true
-	default:
-		return false
-	}
-}
+func isRunTerminal(run *orkstackv1.Run) bool { return runstatus.IsTerminal(run.GetStatus()) }
 
 // awaitTaskRuns re-reads a run until it has task runs, reaches a terminal
 // state, or ctx ends, and returns the last run it read.

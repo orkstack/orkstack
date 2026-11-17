@@ -40,7 +40,13 @@ func timed(document, d string) string {
 
 func newTimeoutHarness(t *testing.T) *timeoutHarness {
 	t.Helper()
-	h := &timeoutHarness{store: newMemSnapshotStore()}
+	return newTimeoutHarnessOver(t, newMemSnapshotStore())
+}
+
+// newTimeoutHarnessOver is newTimeoutHarness writing to store.
+func newTimeoutHarnessOver(t *testing.T, store *memSnapshotStore) *timeoutHarness {
+	t.Helper()
+	h := &timeoutHarness{store: store}
 	var suite testsuite.WorkflowTestSuite
 	h.env = generousDeadlock(suite.NewTestWorkflowEnvironment())
 	h.env.SetTestTimeout(60 * time.Second)

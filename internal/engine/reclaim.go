@@ -47,13 +47,9 @@ func (a *RunArchiver) ReclaimBody(ctx context.Context, runID string) (archive.Ru
 	return body, nil
 }
 
-func terminalRunStatus(status orkstackv1.Status) bool {
-	switch status {
-	case orkstackv1.Status_STATUS_SUCCEEDED, orkstackv1.Status_STATUS_FAILED, orkstackv1.Status_STATUS_CANCELED:
-		return true
-	}
-	return false
-}
+// terminalRunStatus is runstatus.IsTerminal: a PAUSED run is live, so its
+// objects are never reclaimed.
+func terminalRunStatus(status orkstackv1.Status) bool { return isTerminal(status) }
 
 // reclaimObjects is runObjectIDs with each object's class: the same walk
 // over task rows and fan-out items, so the GC's candidates are exactly the

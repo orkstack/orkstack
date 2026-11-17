@@ -199,7 +199,9 @@ const SEVERITY: Record<Status, number> = {
 	[Status.UNSPECIFIED]: 3,
 	[Status.CANCELED]: 2,
 	[Status.SKIPPED]: 1,
-	[Status.SUCCEEDED]: 0
+	[Status.SUCCEEDED]: 0,
+	// A run status only; never a task's or an item's.
+	[Status.PAUSED]: 6
 };
 
 /** The worst status among a fan-out's items, or undefined for none. */
@@ -268,7 +270,8 @@ const STATUS_WORD: Record<Status, string> = {
 	[Status.CANCELED]: 'canceled',
 	[Status.SKIPPED]: 'skipped',
 	[Status.AWAITING]: 'awaiting',
-	[Status.SLEEPING]: 'sleeping'
+	[Status.SLEEPING]: 'sleeping',
+	[Status.PAUSED]: 'paused'
 };
 
 const fmt = new Intl.NumberFormat('en-US');

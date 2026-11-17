@@ -95,3 +95,35 @@ func (s *runState) nextItemBytes() int64 {
 	}
 	return s.itemInputLimit + limit.Reserve.CommandBytes
 }
+
+// pauseApplyCrossing measures, before one pause request applies (pause.go,
+// design §4.4 step 3), the run's history plus its failure path's reserve
+// plus what applying the request records: the plan's ApplyReserve, and its
+// CascadeBytesPerChild and CascadeEventsPerChild for each composed child in
+// flight. crossed says the request does not fit under the run's limit. A
+// plan without a limit or a pause plan, and a run whose guard is off, never
+// cross.
+func (s *runState) pauseApplyCrossing(ctx workflow.Context, inFlight map[string]workflow.Future) (c historyCrossing, crossed bool) {
+	limit, p := s.historyLimit(), s.plan.Pause
+	if limit == nil || p == nil || s.guardOff || historyGuardDisabledForTest {
+		return historyCrossing{}, false
+	}
+	var children int64
+	for id := range inFlight {
+		if s.children[id] != nil {
+			children++
+		}
+	}
+	applyEvents := p.ApplyReserveEvents + p.CascadeEventsPerChild*children
+	applyBytes := p.ApplyReserveBytes + p.CascadeBytesPerChild*children
+	c.events, c.bytes = s.historyNow(ctx)
+	c.maxEvents, c.maxBytes = limit.MaxEvents, limit.MaxBytes
+	c.reserveEvents, c.reserveBytes = s.quickReserve(inFlight, limit.Reserve)
+	c.reserveEvents, c.reserveBytes = c.reserveEvents+applyEvents, c.reserveBytes+applyBytes
+	if !c.crossed() {
+		return c, false
+	}
+	c.reserveEvents, c.reserveBytes = s.reserveNow(inFlight)
+	c.reserveEvents, c.reserveBytes = c.reserveEvents+applyEvents, c.reserveBytes+applyBytes
+	return c, c.crossed()
+}

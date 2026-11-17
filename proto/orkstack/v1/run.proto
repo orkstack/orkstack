@@ -452,6 +452,37 @@ message AwaitSignal {
   string principal = 7;
 }
 
+// RunPauseSignal is ENGINE-INTERNAL: one pause or unpause request delivered
+// to a running run, from the API (inherited false) or from the run's parent
+// run (inherited true). Only internal/api and RunWorkflow use it; no client
+// surface renders it.
+message RunPauseSignal {
+  // format is 1.
+  int32 format = 1;
+  // pause true pauses; false unpauses.
+  bool pause = 2;
+  // principal is the Ork-Principal the gateway asserted (API requests).
+  string principal = 3;
+  string reason = 4;
+  // timeout_seconds: an own pause's length; 0 is the plan's default.
+  int64 timeout_seconds = 5;
+  // request_id: an API request's id, its audit record's and its event's.
+  string request_id = 6;
+  // inherited: sent by the parent run's cascade.
+  bool inherited = 7;
+  // parent_run_id must equal the run's origin parent.
+  string parent_run_id = 8;
+  reserved 9;
+  reserved "parent_expires_at";
+  // cascade_seq is the parent's monotonic cascade counter.
+  int64 cascade_seq = 10;
+  // origin_expires_at is the expiry of the own pause that began the
+  // cascade, passed down unchanged; depth is 1 for a direct child, plus 1
+  // per level. An inherited pause's backstop is derived from both.
+  google.protobuf.Timestamp origin_expires_at = 11;
+  int64 depth = 12;
+}
+
 // AttemptOutcome is how one Temporal attempt of a task ended.
 enum AttemptOutcome {
   ATTEMPT_OUTCOME_UNSPECIFIED = 0;
@@ -749,16 +780,18 @@ message Run {
   // interruptions_off_reason is set from E92; unset until it lands (v0.4.0 proto batch).
   string interruptions_off_reason = 28;
 
-  // pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  // pause is the run's own pause, present while it lasts. Never on a
+  // finished run.
   RunPause pause = 29;
 
-  // last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  // last_pause is the most recent own pause that ended, and how (end).
   RunPause last_pause = 30;
 
-  // pausable is set from E103; unset until it lands (v0.4.0 proto batch).
+  // pausable: the run was started by a release that can pause it.
   bool pausable = 31;
 
-  // paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+  // paused_by_parent is present while the parent run's pause holds this
+  // run. Never on a finished run.
   InheritedPause paused_by_parent = 32;
 
   // pause_warnings is set from E103; unset until it lands (v0.4.0 proto batch).
@@ -924,6 +957,12 @@ enum EventType {
   // the message names the wake-up time. TASK_SUCCEEDED follows when it
   // wakes; a run that ends first records the task CANCELED.
   EVENT_TYPE_TASK_SLEEPING = 14;
+  // RUN_PAUSED: the run became paused, or is still paused with its causes
+  // changed (pause_transition says which). Status PAUSED.
+  EVENT_TYPE_RUN_PAUSED = 19;
+  // RUN_UNPAUSED: no pause cause remains, or the run was not paused
+  // (pause_transition NOT_PAUSED). Status RUNNING.
+  EVENT_TYPE_RUN_UNPAUSED = 20;
 }
 
 // Event is a single realtime update for a run, delivered over the
@@ -953,10 +992,12 @@ message Event {
   // interruption is set from E92; unset until it lands (v0.4.0 proto batch).
   TaskInterruption interruption = 11;
 
-  // request_id is set from E103; unset until it lands (v0.4.0 proto batch).
+  // request_id is the pause or unpause request's id on RUN_PAUSED and
+  // RUN_UNPAUSED from the API; unset on every other event.
   string request_id = 12;
 
-  // pause_transition is set from E103; unset until it lands (v0.4.0 proto batch).
+  // pause_transition says what a RUN_PAUSED or RUN_UNPAUSED, or a terminal
+  // event that ended a pause, did to it; unset on every other event.
   PauseTransition pause_transition = 13;
 }
 
@@ -985,9 +1026,14 @@ message EffectiveProfile {
   bool identity_pinned = 4;
 }
 
-// InheritedPause is E103's; it is empty until E103 lands (v0.4.0 proto
-// batch).
-message InheritedPause {}
+// InheritedPause is a run's pause caused by its parent run's pause. Only the
+// parent's unpause or end lifts it; backstop_at is when the run ends itself
+// should neither happen.
+message InheritedPause {
+  string parent_run_id = 1;
+  google.protobuf.Timestamp since = 2;
+  google.protobuf.Timestamp backstop_at = 3;
+}
 
 // MeasurementMethod is how an attempt's CPU and memory were measured.
 enum MeasurementMethod {
@@ -1064,10 +1110,33 @@ message NamedArtifact {
   string task_id = 4;
 }
 
-// PauseTransition is E103's; it holds only its zero value until E103 lands
-// (v0.4.0 proto batch).
+// PauseTransition is what one event did to a run's pause.
 enum PauseTransition {
   PAUSE_TRANSITION_UNSPECIFIED = 0;
+  // PAUSED: RUN_PAUSED; the run became paused.
+  PAUSE_TRANSITION_PAUSED = 1;
+  reserved 2;
+  reserved "PAUSE_TRANSITION_CHANGED";
+  // UNPAUSED: RUN_UNPAUSED; no pause cause remains.
+  PAUSE_TRANSITION_UNPAUSED = 3;
+  // NOT_PAUSED: RUN_UNPAUSED of a run that was not paused.
+  PAUSE_TRANSITION_NOT_PAUSED = 4;
+  // ENDED_TIMED_OUT: the terminal event of a run whose pause expired.
+  PAUSE_TRANSITION_ENDED_TIMED_OUT = 5;
+  // ENDED_RUN_ENDED: the terminal event of a run that ended while paused.
+  PAUSE_TRANSITION_ENDED_RUN_ENDED = 6;
+  // CAUSES_CHANGED: RUN_PAUSED; still paused, with its causes changed.
+  PAUSE_TRANSITION_CAUSES_CHANGED = 7;
+}
+
+// PauseEnd is how a run's own pause ended.
+enum PauseEnd {
+  // UNSPECIFIED: the pause has not ended.
+  PAUSE_END_UNSPECIFIED = 0;
+  PAUSE_END_UNPAUSED = 1;
+  PAUSE_END_TIMED_OUT = 2;
+  // RUN_ENDED: the run ended while paused.
+  PAUSE_END_RUN_ENDED = 3;
 }
 
 // PauseWarning is E103's; it is empty until E103 lands (v0.4.0 proto
@@ -1092,9 +1161,22 @@ message ResumeHint {}
 // batch).
 message RunContextState {}
 
-// RunPause is E103's; it is empty until E103 lands (v0.4.0 proto
-// batch).
-message RunPause {}
+// RunPause is one pause a person asked for. Every principal here is what the
+// gateway asserted (as RunOrigin.principal), never authenticated.
+message RunPause {
+  google.protobuf.Timestamp paused_at = 1;
+  google.protobuf.Timestamp expires_at = 2;
+  string paused_by = 3;
+  // A pause cannot be changed: unpause and pause again.
+  reserved 4;
+  reserved "changed_by";
+  string reason = 5;
+  string request_id = 6;
+  // end is UNSPECIFIED while the pause lasts.
+  PauseEnd end = 7;
+  google.protobuf.Timestamp ended_at = 8;
+  string ended_by = 9;
+}
 
 // RunResume is E85's; it is empty until E85 lands (v0.4.0 proto
 // batch).

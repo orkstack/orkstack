@@ -285,9 +285,9 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"retry_max_interval_seconds": {"run-retry-max-interval-v1.json", "run-retry-max-interval-legacy-v1.json",
 			"run-retry-long-initial-v1.json", "run-retry-long-initial-legacy-v1.json"},
 		"in_flight.publish_window": append([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
-			continuedRunTimeoutFixtureNames...),
+			continuedStackFixtureNames...),
 		"in_flight.publish_events": append([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
-			continuedRunTimeoutFixtureNames...),
+			continuedStackFixtureNames...),
 	}
 	paths, err := filepath.Glob("testdata/history/*.json")
 	if err != nil || len(paths) == 0 {
@@ -343,15 +343,23 @@ var carriedGenerations = map[string]bool{
 	"run-continued-g1-v1.json":                       true,
 	"run-timeout-continued-carried-g1-v1.json":       true,
 	"run-timeout-continued-past-deadline-g1-v1.json": true,
+	"pause-continued-carried-g1-v1.json":             true,
+	"pause-indexed-continued-g1-v1.json":             true,
+	"pause-continued-carried-g1-v2.json":             true,
 }
 
-// continuedRunTimeoutFixtureNames are the run-timeout fixtures recorded under
-// the continuation stack's plan, whose in-flight limit carries the publish
-// window (TestIntegration_RecordRunTimeoutContinuedHistories).
-var continuedRunTimeoutFixtureNames = []string{
+// continuedStackFixtureNames are the fixtures recorded under the
+// continuation stack's plan, whose in-flight limit carries the publish
+// window (TestIntegration_RecordRunTimeoutContinuedHistories,
+// TestIntegration_RecordPauseContinuedHistories,
+// TestIntegration_RecordPauseIndexedHistories).
+var continuedStackFixtureNames = []string{
 	"run-timeout-continued-carried-g0-v1.json", "run-timeout-continued-carried-g1-v1.json",
 	"run-timeout-continued-past-deadline-g0-v1.json", "run-timeout-continued-past-deadline-g1-v1.json",
 	"run-timeout-continued-hold-v1.json",
+	"pause-continued-carried-g0-v1.json", "pause-continued-carried-g1-v1.json",
+	"pause-indexed-continued-g0-v1.json", "pause-indexed-continued-g1-v1.json",
+	"pause-continued-carried-g0-v2.json", "pause-continued-carried-g1-v2.json",
 }
 
 // TestCommittedFixtures_StartWithFourArgumentsAndNoCarry: every committed

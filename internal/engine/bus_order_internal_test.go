@@ -148,3 +148,21 @@ func equalSequences(a, b []int64) bool {
 	}
 	return true
 }
+
+// The run events the bus treats as terminal are exactly those of the
+// terminal statuses runstatus names, and no event of a live status (a pause
+// event among them) is one.
+func TestTerminalRunEventTypes_MatchTheClassifier(t *testing.T) {
+	for eventType, status := range map[orkstackv1.EventType]orkstackv1.Status{
+		orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED: orkstackv1.Status_STATUS_SUCCEEDED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED:    orkstackv1.Status_STATUS_FAILED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED:  orkstackv1.Status_STATUS_CANCELED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_PAUSED:    orkstackv1.Status_STATUS_PAUSED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED:  orkstackv1.Status_STATUS_RUNNING,
+		orkstackv1.EventType_EVENT_TYPE_RUN_STARTED:   orkstackv1.Status_STATUS_RUNNING,
+	} {
+		if got, want := isTerminalRunEventType(eventType), isTerminal(status); got != want {
+			t.Errorf("%s: terminal event %v, but its status %s terminal %v", eventType, got, status, want)
+		}
+	}
+}

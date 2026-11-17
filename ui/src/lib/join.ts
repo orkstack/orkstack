@@ -7,6 +7,7 @@ import type { Error as OrkError } from './gen/orkstack/v1/common_pb';
 import { Status } from './gen/orkstack/v1/common_pb';
 import { EventType, type Event } from './gen/orkstack/v1/run_pb';
 import { hasError } from './activity';
+import { isLive } from './runStatus';
 
 /** The DSL's word for a policy: all_succeeded for UNSPECIFIED. */
 export function joinWord(policy: JoinPolicy | undefined): string {
@@ -81,12 +82,13 @@ export function isFailingNote(event: Pick<Event, 'type' | 'taskId' | 'item'>): b
 
 /**
  * runFailing is whether the run page shows the Failing banner: the LIVE run
- * status is still RUNNING and either the snapshot's Run.error is set or the
- * failing note arrived. A terminal status — FAILED, or the CANCELED a
- * terminated failing run reads — is never failing.
+ * status has not ended (RUNNING, or PAUSED, whose held handlers wait for the
+ * unpause) and either the snapshot's Run.error is set or the failing note
+ * arrived. A terminal status — FAILED, or the CANCELED a terminated failing
+ * run reads — is never failing.
  */
 export function runFailing(status: Status | undefined, error: OrkError | undefined, note: string): boolean {
-	return status === Status.RUNNING && (hasError(error) || note !== '');
+	return isLive(status) && (hasError(error) || note !== '');
 }
 
 /** One outstanding failure handler, for the banner. */

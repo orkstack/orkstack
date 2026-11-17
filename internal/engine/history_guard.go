@@ -415,9 +415,20 @@ var historyGuardProbeForTest func(runID string, events, reserve int64)
 // lookahead counted (history_guard_lookahead.go), zero for a crossing as the
 // history stands.
 func (s *runState) historyLimitError(ctx workflow.Context, inFlight map[string]workflow.Future, c historyCrossing, nextBytes int64) error {
+	return s.historyLimitErrorNoting(ctx, inFlight, c, nextBytes, "")
+}
+
+// historyLimitErrorNoting is historyLimitError with note, when not empty,
+// ending its message: what the run was about to record when it stopped.
+func (s *runState) historyLimitErrorNoting(ctx workflow.Context, inFlight map[string]workflow.Future,
+	c historyCrossing, nextBytes int64, note string,
+) error {
 	blockers := s.historyBlockers(inFlight)
 	message := historyLimitMessage(s.runID, c.events, c.maxEvents, c.bytes, c.maxBytes,
 		c.reserveEvents, blockers, s.carryReason())
+	if note != "" {
+		message += "; " + note
+	}
 	detail := HistoryCrossingDetail{
 		RawEvents: int64(s.hist.seenLength), RawBytes: c.bytes - s.hist.pendingBytes,
 		Events: c.events, Bytes: c.bytes,
