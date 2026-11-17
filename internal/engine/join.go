@@ -450,7 +450,7 @@ func (s *runState) failWithHandlers(
 	s.startHardEnd(ctx)
 	if len(outstanding) > 0 && !s.hardEnded() {
 		if err := s.emit(s.eventContext(ctx), orkstackv1.EventType_EVENT_TYPE_TASK_LOG, "",
-			orkstackv1.Status_STATUS_RUNNING, failingMessage(taskID, s.runCauseText(), outstanding)); err != nil {
+			s.status, failingMessage(taskID, s.runCauseText(), outstanding)); err != nil {
 			// The run is already failing for a recorded reason, and the
 			// handlers must still run.
 			workflow.GetLogger(ctx).Error("emit failing note failed",
@@ -471,6 +471,8 @@ func (s *runState) failWithHandlers(
 		}
 		reason := cancelReasonStartUnrecorded
 		switch {
+		case s.pauseStop != nil && ctx.Err() == nil && status == orkstackv1.Status_STATUS_PENDING:
+			reason = s.pauseStopNotStartedReason()
 		case s.hardEnded() && status == orkstackv1.Status_STATUS_PENDING:
 			reason = s.hardEndNotStartedReason()
 		case ctx.Err() != nil:
@@ -503,12 +505,14 @@ func (s *runState) failWithHandlers(
 	if timedOut {
 		s.runError.Message = s.finalRunTimeoutMessage()
 	}
-	if s.hardEnded() {
+	if s.pauseStop != nil && ctx.Err() == nil {
+		s.runError.Message = boundEscaped(s.runError.GetMessage()+s.pauseStopNote(), needErrorMessageBytes)
+	} else if s.hardEnded() {
 		s.runError.Message = boundEscaped(s.runError.GetMessage()+s.hardEndNote(), needErrorMessageBytes)
 	}
 	if timedOut {
 		cause = runLevelError(RunTimedOutCode, s.runError.GetMessage())
-	} else if s.hardEnded() {
+	} else if s.hardEnded() || (s.pauseStop != nil && ctx.Err() == nil) {
 		// The closing event says what the terminal snapshot says, with the
 		// cause's own type kept.
 		if failure := categoryOf(cause); failure.isApplication() {
@@ -589,8 +593,10 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 	for {
 		s.beginPass()
 		s.settleDetachedPublishes(ctx)
+		// The pause's requests, then a ready expiry, before anything starts.
+		s.pauseHandlerPass(ctx, inFlight)
 		ectx := s.eventContext(ctx)
-		stopping := ctx.Err() != nil || s.hardEnded()
+		stopping := ctx.Err() != nil || s.hardEnded() || s.pauseStop != nil
 		// Only failure handlers can be PENDING here (F6). Declaration order.
 		for _, id := range s.readyTasks() {
 			if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_PENDING {
@@ -600,13 +606,22 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 			if stopping {
 				s.pendingHandlers--
 				reason := cancelReasonHandlerStopped
-				if ctx.Err() == nil && s.hardEnded() {
+				switch {
+				case ctx.Err() != nil:
+				case s.pauseStop != nil:
+					reason = s.pauseStopNotStartedReason()
+				case s.hardEnded():
 					reason = s.hardEndNotStartedReason()
 				}
 				if err := s.markCanceled(ectx, id, reason); err != nil {
 					workflow.GetLogger(ctx).Error("mark canceled failed",
 						"run_id", s.runID, "task_id", id, "error", err)
 				}
+				continue
+			}
+			// A paused run holds every handler not yet started, but what an
+			// open pin needs: PENDING, nothing emitted, nothing classified.
+			if s.paused() && !s.pinClosureAllows(id) {
 				continue
 			}
 			run, err := s.classify(ectx, id) // a condition error records CONDITION_FAILED itself
@@ -662,7 +677,11 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 			if len(s.readyTasks()) == 0 {
 				return
 			}
-			continue
+			if !s.paused() {
+				continue
+			}
+			// Paused with handlers held: wait in the selector for a request,
+			// an expiry, the cancel or the hard end.
 		}
 
 		// Fixed registration order, as the main loop's: in-flight futures in
@@ -699,6 +718,24 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
 		}
+		// The pause's cases, before the run timeout's; each sets its own
+		// marker, and the pass top decides. A present cause's timer is
+		// registered even when ready, so one that fired during this pass's
+		// dispatch still wakes the loop; never once the run is canceled,
+		// whose settled timers the pass top does not take.
+		pauseWoke := false
+		if s.pauseActsOnHandlers() && ctx.Err() == nil {
+			selector.AddReceive(s.pauses, func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			if p := s.pause; p != nil {
+				selector.AddFuture(p.timer, func(workflow.Future) { pauseWoke = true })
+			}
+			if ip := s.pausedByParent; ip != nil {
+				selector.AddFuture(ip.backstop, func(workflow.Future) { pauseWoke = true })
+			}
+			if s.paused() {
+				selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			}
+		}
 		// The run timeout's hard end, after every case above; each case sets
 		// its own marker.
 		hardCanceled, hardFired := false, false
@@ -715,6 +752,8 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		selector.Select(ctx)
 		ectx = s.eventContext(ctx)
 		switch {
+		case pauseWoke:
+			continue // the pass top applies the request or takes the expiry; a cancel stops
 		case hardCanceled:
 			continue // stopping follows from ctx.Err()
 		case hardFired:

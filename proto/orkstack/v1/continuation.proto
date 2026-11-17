@@ -86,16 +86,19 @@ message RunContinuation {
   // resume is set from E85; unset until it lands (v0.4.0 proto batch).
   RunResumeCarry resume = 11;
 
-  // pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  // pause is the run's own pause at the switch; its expiry is an absolute
+  // instant, re-armed for what remains of it.
   RunPause pause = 12;
 
-  // last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+  // last_pause is the run's last own pause that ended.
   RunPause last_pause = 13;
 
-  // paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+  // paused_by_parent is the parent run's pause holding the run at the
+  // switch; its backstop is an absolute instant.
   InheritedPause paused_by_parent = 14;
 
-  // last_cascade_seq is set from E103; unset until it lands (v0.4.0 proto batch).
+  // last_cascade_seq is the last parent cascade counter applied, so a stale
+  // request is still refused after the switch.
   int64 last_cascade_seq = 15;
 
   // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).

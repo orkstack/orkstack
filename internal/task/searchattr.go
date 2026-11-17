@@ -174,6 +174,15 @@ var (
 	SearchKeyOrkflowOriginID   = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowOriginId)
 )
 
+// SearchAttrOrkflowRunPaused is "true" on a run that is paused, by its own
+// pause or its parent's, and absent otherwise. Only a run whose plan says
+// the cluster indexes it (engine.PausePlan.Indexed) writes it, from its own
+// workflow code, so a list can tell a paused run from a running one.
+const SearchAttrOrkflowRunPaused = "OrkflowRunPaused"
+
+// SearchKeyOrkflowRunPaused is the typed key of SearchAttrOrkflowRunPaused.
+var SearchKeyOrkflowRunPaused = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowRunPaused)
+
 // SearchAttrOrkflowOriginRootRunId indexes the root of a run's composed chain,
 // so "everything below this root" is a predicate the cluster applies, on the
 // terms SearchAttrOrkflowNamespace states.
@@ -248,6 +257,33 @@ func ensureRunRootSearchAttribute(
 ) (bool, error) {
 	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
 		SearchAttrOrkflowOriginRootRunId: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	})
+}
+
+// EnsureRunPausedSearchAttribute registers SearchAttrOrkflowRunPaused and
+// reports whether it is usable, as its own call on the terms
+// EnsureRunRootSearchAttribute states: a cluster at its limit of custom
+// attributes refuses it alone and keeps every other index. Usable is what
+// submit pins as engine.PausePlan.Indexed, so a run never writes an
+// attribute the cluster would refuse.
+func EnsureRunPausedSearchAttribute(
+	ctx context.Context,
+	temporalClient client.Client,
+	namespace string,
+) (bool, error) {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
+	return ensureRunPausedSearchAttribute(ctx, temporalClient.OperatorService(), namespace)
+}
+
+func ensureRunPausedSearchAttribute(
+	ctx context.Context,
+	svc searchAttributeRegistrar,
+	namespace string,
+) (bool, error) {
+	return ensureSearchAttributes(ctx, svc, namespace, map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowRunPaused: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
 	})
 }
 

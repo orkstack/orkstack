@@ -358,6 +358,18 @@ type Config struct {
 	// whose definition declares `timeout:`.
 	RunTimeoutHandlerGrace time.Duration
 
+	// RunPauseTimeout and RunPauseTimeoutMax are engine.run_pause_timeout and
+	// engine.run_pause_timeout_max: a pause's default length and its longest.
+	// Zero is the engine's default (cmd/ork always sets both, validated).
+	// Pinned, in whole seconds, into every run's plan and every composed
+	// child's.
+	RunPauseTimeout, RunPauseTimeoutMax time.Duration
+	// RunPauseIndexed is whether boot found OrkflowRunPaused usable
+	// (task.EnsureRunPausedSearchAttribute). It is pinned as
+	// engine.PausePlan.Indexed: only such a run writes the attribute, so the
+	// cluster never refuses a run's write of one it does not index.
+	RunPauseIndexed bool
+
 	// DefinitionByReference is engine.definition_by_reference's effective
 	// value: a top-level run whose planned definition is over a start
 	// payload's 256 KiB travels by reference (definition_ref.go). It needs
@@ -602,6 +614,8 @@ type Service struct {
 	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
 	// seconds, never negative: what runTimeoutPlanFor pins.
 	runTimeoutGraceSeconds int64
+	// pausePlan is what pausePlanFor pins on every run.
+	pausePlan engine.PausePlan
 	// definitionByReference is Config.DefinitionByReference, only with
 	// continuation on; definitionObjects is Config.DefinitionObjects.
 	definitionByReference bool
@@ -697,6 +711,7 @@ func NewService(cfg Config) *Service {
 		runMaxInFlight:         int32(positiveOr(int64(cfg.RunMaxInFlight), int64(engine.DefaultRunMaxInFlight))),
 		pinCreationSeconds:     pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
 		runTimeoutGraceSeconds: max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
+		pausePlan:              pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
 		historyMaxBytes:        positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:        composeMaxDepthOf(cfg.ComposeMaxDepth),
 		cacheMaxTTL:            cacheMaxTTLOf(cfg.CacheMaxTTL),
@@ -1765,6 +1780,7 @@ func (s *Service) prepare(
 	// The run timeout's plan, for a definition declaring `timeout:` only;
 	// each child run gets its own (planChildren).
 	plan.RunTimeout = s.runTimeoutPlanFor(planned)
+	plan.Pause = s.pausePlanFor()
 	// Every child run this submission can start, planned recursively under
 	// the parent's namespace, resolver, allow_empty_pool, image-policy
 	// selection and boot answers. It refuses
@@ -1974,6 +1990,24 @@ func (s *Service) pinRunTreeLimits(plan *engine.RunPlan) {
 	plan.PinCreationTimeoutSeconds = s.pinCreationSeconds
 	plan.RetryMaxIntervalSeconds = int32(engine.DefaultRetryMaxInterval / time.Second)
 	plan.RecordRootRun = true
+}
+
+// pausePlanOf is the pause plan of the deployment's two timeouts: zero is
+// the engine's default, and a default above the maximum is the maximum, so a
+// pinned plan always bounds a pause (cmd/ork refuses both at boot).
+func pausePlanOf(timeout, maximum time.Duration, indexed bool) engine.PausePlan {
+	maxSeconds := positiveOr(int64(maximum/time.Second), int64(engine.DefaultRunPauseTimeoutMax/time.Second))
+	defaultSeconds := positiveOr(int64(timeout/time.Second), int64(engine.DefaultRunPauseTimeout/time.Second))
+	plan := engine.DefaultPausePlan(min(defaultSeconds, maxSeconds), maxSeconds)
+	plan.Indexed = indexed
+	return plan
+}
+
+// pausePlanFor is what every run carries so it can be paused: the
+// deployment's pause timeouts and the reserves, pinned (AGENTS.md §7.2).
+func (s *Service) pausePlanFor() *engine.PausePlan {
+	plan := s.pausePlan
+	return &plan
 }
 
 // runTimeoutPlanFor is what a run of wf carries for its run timeout: nil when

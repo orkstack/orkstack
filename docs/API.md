@@ -1480,8 +1480,8 @@ server-streaming RPC and the WebSocket bridge.
 | `item` | optional `int32` | item is set on an event about ONE ITEM of a fan-out task: the item's 0-based index. Such an event is EVENT_TYPE_TASK_LOG carrying the item's terminal status — the precedent markSkipped and markCanceled set, since the Event contract has no item type — and TaskRun.items is the authoritative record. Unset on every other event. |
 | `resumed` | [`RunResumed`](#runresumed) | resumed is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `interruption` | [`TaskInterruption`](#taskinterruption) | interruption is set from E92; unset until it lands (v0.4.0 proto batch). |
-| `request_id` | `string` | request_id is set from E103; unset until it lands (v0.4.0 proto batch). |
-| `pause_transition` | [`PauseTransition`](#pausetransition) | pause_transition is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `request_id` | `string` | request_id is the pause or unpause request's id on RUN_PAUSED and RUN_UNPAUSED from the API; unset on every other event. |
+| `pause_transition` | [`PauseTransition`](#pausetransition) | pause_transition says what a RUN_PAUSED or RUN_UNPAUSED, or a terminal event that ended a pause, did to it; unset on every other event. |
 
 ### EventSource
 
@@ -2207,10 +2207,15 @@ what `pinned` names, whatever a tag does later.
 
 ### InheritedPause
 
-InheritedPause is E103's; it is empty until E103 lands (v0.4.0 proto
-batch).
+InheritedPause is a run's pause caused by its parent run's pause. Only the
+parent's unpause or end lifts it; backstop_at is when the run ends itself
+should neither happen.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `parent_run_id` | `string` |  |
+| `since` | `google.protobuf.Timestamp` |  |
+| `backstop_at` | `google.protobuf.Timestamp` |  |
 
 ### InspectActivityRequest
 
@@ -3738,10 +3743,10 @@ Run is one execution of an Orkflow.
 | `resumes` | repeated [`RunResume`](#runresume) | resumes is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_hint` | [`ResumeHint`](#resumehint) | resume_hint is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `interruptions_off_reason` | `string` | interruptions_off_reason is set from E92; unset until it lands (v0.4.0 proto batch). |
-| `pause` | [`RunPause`](#runpause) | pause is set from E103; unset until it lands (v0.4.0 proto batch). |
-| `last_pause` | [`RunPause`](#runpause) | last_pause is set from E103; unset until it lands (v0.4.0 proto batch). |
-| `pausable` | `bool` | pausable is set from E103; unset until it lands (v0.4.0 proto batch). |
-| `paused_by_parent` | [`InheritedPause`](#inheritedpause) | paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `pause` | [`RunPause`](#runpause) | pause is the run's own pause, present while it lasts. Never on a finished run. |
+| `last_pause` | [`RunPause`](#runpause) | last_pause is the most recent own pause that ended, and how (end). |
+| `pausable` | `bool` | pausable: the run was started by a release that can pause it. |
+| `paused_by_parent` | [`InheritedPause`](#inheritedpause) | paused_by_parent is present while the parent run's pause holds this run. Never on a finished run. |
 | `pause_warnings` | repeated [`PauseWarning`](#pausewarning) | pause_warnings is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `pause_slot_kept` | `bool` | pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `timeout` | [`RunTimeout`](#runtimeout) | timeout is the run's own time limit; unset when its Orkflow declares no `timeout:`. |
@@ -3808,10 +3813,19 @@ in OrkStack reads it to decide anything.
 
 ### RunPause
 
-RunPause is E103's; it is empty until E103 lands (v0.4.0 proto
-batch).
+RunPause is one pause a person asked for. Every principal here is what the
+gateway asserted (as RunOrigin.principal), never authenticated.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `paused_at` | `google.protobuf.Timestamp` |  |
+| `expires_at` | `google.protobuf.Timestamp` |  |
+| `paused_by` | `string` |  |
+| `reason` | `string` |  |
+| `request_id` | `string` |  |
+| `end` | [`PauseEnd`](#pauseend) | end is UNSPECIFIED while the pause lasts. |
+| `ended_at` | `google.protobuf.Timestamp` |  |
+| `ended_by` | `string` |  |
 
 ### RunResume
 
@@ -5003,6 +5017,8 @@ EventType classifies a run event on the realtime stream.
 | `EVENT_TYPE_TASK_RESOLVED` | 12 | TASK_RESOLVED: an awaited task was resolved from outside the run. Status is the outcome it decided — SUCCEEDED for a completion, FAILED for a rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same status, so a reader that only knows the older task events still sees the task end. |
 | `EVENT_TYPE_STREAM_GAP` | 13 | STREAM_GAP: numbers of the run's event sequence hold no event, because the run used them without publishing one (an event whose record object storage refused). Its sequence is the last of those numbers and its message names them all; no run or task changed state. Only a live read of the stream serves it, and the read goes on to the run's terminal event. It is part of the read, not of the run's events: the run's archive records the same numbers as a gap in its stream instead, and a read over that gap ends DataLoss. |
 | `EVENT_TYPE_TASK_SLEEPING` | 14 | TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING; the message names the wake-up time. TASK_SUCCEEDED follows when it wakes; a run that ends first records the task CANCELED. |
+| `EVENT_TYPE_RUN_PAUSED` | 19 | RUN_PAUSED: the run became paused, or is still paused with its causes changed (pause_transition says which). Status PAUSED. |
+| `EVENT_TYPE_RUN_UNPAUSED` | 20 | RUN_UNPAUSED: no pause cause remains, or the run was not paused (pause_transition NOT_PAUSED). Status RUNNING. |
 
 ### FailureCategory
 
@@ -5266,14 +5282,30 @@ PauseCause is who paused a source.
 | `PAUSE_CAUSE_OPERATOR` | 1 |  |
 | `PAUSE_CAUSE_ENGINE` | 2 |  |
 
+### PauseEnd
+
+PauseEnd is how a run's own pause ended.
+
+| Value | Number | Description |
+|---|---|---|
+| `PAUSE_END_UNSPECIFIED` | 0 | UNSPECIFIED: the pause has not ended. |
+| `PAUSE_END_UNPAUSED` | 1 |  |
+| `PAUSE_END_TIMED_OUT` | 2 |  |
+| `PAUSE_END_RUN_ENDED` | 3 | RUN_ENDED: the run ended while paused. |
+
 ### PauseTransition
 
-PauseTransition is E103's; it holds only its zero value until E103 lands
-(v0.4.0 proto batch).
+PauseTransition is what one event did to a run's pause.
 
 | Value | Number | Description |
 |---|---|---|
 | `PAUSE_TRANSITION_UNSPECIFIED` | 0 |  |
+| `PAUSE_TRANSITION_PAUSED` | 1 | PAUSED: RUN_PAUSED; the run became paused. |
+| `PAUSE_TRANSITION_UNPAUSED` | 3 | UNPAUSED: RUN_UNPAUSED; no pause cause remains. |
+| `PAUSE_TRANSITION_NOT_PAUSED` | 4 | NOT_PAUSED: RUN_UNPAUSED of a run that was not paused. |
+| `PAUSE_TRANSITION_ENDED_TIMED_OUT` | 5 | ENDED_TIMED_OUT: the terminal event of a run whose pause expired. |
+| `PAUSE_TRANSITION_ENDED_RUN_ENDED` | 6 | ENDED_RUN_ENDED: the terminal event of a run that ended while paused. |
+| `PAUSE_TRANSITION_CAUSES_CHANGED` | 7 | CAUSES_CHANGED: RUN_PAUSED; still paused, with its causes changed. |
 
 ### PlanOutcome
 
@@ -5490,6 +5522,7 @@ Status is the lifecycle state shared by runs and task runs.
 | `STATUS_SKIPPED` | 6 |  |
 | `STATUS_AWAITING` | 7 | AWAITING is a TASK status only, like SKIPPED: the task is waiting to be resolved from outside the run. A run with an awaiting task is RUNNING. |
 | `STATUS_SLEEPING` | 8 | SLEEPING is a TASK status only, like AWAITING: a sleeping task is waiting out its fixed time on the run's own timer, and nothing outside the run can end it early. A run with a sleeping task is RUNNING. |
+| `STATUS_PAUSED` | 9 | PAUSED is a RUN status only, never a task's. The run starts nothing new (no task, item, child run, pin, await, sleep or failure handler) except what an already-open pin needs to finish. Work it had already started may still be running: its task rows say which. It is paused by a person (Run.pause), by its parent run's pause (Run.paused_by_parent), or both. Not terminal: a run leaves it on RUN_UNPAUSED (to RUNNING) or when it ends. A failing run can be PAUSED; Run.error then says why it is failing. |
 
 ### StoreScope
 

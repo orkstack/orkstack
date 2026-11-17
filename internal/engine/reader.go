@@ -75,6 +75,10 @@ const (
 	// record alone; listings never do (their created_at is MemoCreatedAt or
 	// the record's start).
 	MemoStartStamp = "orkflow_start_stamp"
+	// MemoPauseExpiresAt is when a paused run's own pause ends unless it is
+	// unpaused, an RFC 3339 nano UTC string; absent on a run without one.
+	// Only an Indexed run writes it, beside SearchAttrOrkflowRunPaused.
+	MemoPauseExpiresAt = "ork_pause_expires_at"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 
@@ -1842,7 +1846,7 @@ func runLevelFailureCategory(failureType string) orkstackv1.FailureCategory {
 		return runDefinitionCategory(failureType)
 	}
 	switch failureType {
-	case RunTimedOutCode:
+	case RunTimedOutCode, RunPauseTimeoutCode:
 		return orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
 	case RunDefinitionUnsupportedCode, RunTimeoutStateInvalidCode:
 		return orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION

@@ -7,6 +7,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -50,14 +51,7 @@ func instantOf(ts *timestamppb.Timestamp) *time.Time {
 	return &at
 }
 
-func statusIsTerminal(status orkstackv1.Status) bool {
-	switch status {
-	case orkstackv1.Status_STATUS_SUCCEEDED, orkstackv1.Status_STATUS_FAILED,
-		orkstackv1.Status_STATUS_CANCELED, orkstackv1.Status_STATUS_SKIPPED:
-		return true
-	}
-	return false
-}
+func statusIsTerminal(status orkstackv1.Status) bool { return runstatus.IsTerminal(status) }
 
 // isContainerRow is a row whose time an Orker spends: not an awaited or
 // sleeping task, a fan-out's own row or a composed task. Only such a row has

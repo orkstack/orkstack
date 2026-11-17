@@ -124,6 +124,11 @@ type config struct {
 	// failure handlers may still run. Whole seconds, 0s to 24h, refused at
 	// boot otherwise (docs/DEPLOY.md §1).
 	runTimeoutHandlerGrace time.Duration
+	// runPauseTimeout and runPauseTimeoutMax are ORK_RUN_PAUSE_TIMEOUT and
+	// ORK_RUN_PAUSE_TIMEOUT_MAX (runPauseTimeoutsFromEnv): a pause's default
+	// length and its longest. Refused at boot outside their bounds
+	// (docs/DEPLOY.md §1).
+	runPauseTimeout, runPauseTimeoutMax time.Duration
 	// definitionByReference is engine.definition_by_reference's effective
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
@@ -189,6 +194,7 @@ func loadConfig() config {
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	pinCreationTimeout, pinCreationErr := pinCreationTimeoutFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
+	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
@@ -216,6 +222,8 @@ func loadConfig() config {
 		runMaxInFlight:                runMaxInFlight,
 		pinCreationTimeout:            pinCreationTimeout,
 		runTimeoutHandlerGrace:        runTimeoutGrace,
+		runPauseTimeout:               runPauseTimeout,
+		runPauseTimeoutMax:            runPauseTimeoutMax,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
 		snapshotOverlays:              snapshotOverlays,
@@ -223,7 +231,7 @@ func loadConfig() config {
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
-			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, byReferenceErr, overlaysErr),
+			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1287,11 +1295,27 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			"consequence", "filtering runs by root run walks the whole index",
 			"error", err)
 	}
+	// The paused attribute is a fourth answer, for the same reason, and the
+	// one a run itself writes: submit pins it Indexed only when this boot
+	// found it usable, so the cluster never refuses a run's write. Every
+	// boot registers it again, which is also how an operator restores it if
+	// it was removed while runs were open (docs/LIMITATIONS.md).
+	pausedIndexed, err := task.EnsureRunPausedSearchAttribute(indexCtx, temporalClient, cfg.temporalNamespace)
+	if errors.Is(err, task.ErrNamespaceNotVisible) {
+		return err
+	}
+	if err != nil {
+		logger.Warn("visibility does not index a paused run",
+			"search_attribute", task.SearchAttrOrkflowRunPaused,
+			"consequence", "a paused run is listed as running",
+			"error", err)
+	}
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace,
 		"run_namespace_index", namespaceIndexed,
 		"run_origin_index", originIndexed,
-		"run_root_index", rootIndexed)
+		"run_root_index", rootIndexed,
+		"run_paused_index", pausedIndexed)
 
 	// Every read is answered by Temporal and the archive (AGENTS.md §7), so
 	// the bus and the store are write-side helpers here: each forgets a run
@@ -1890,6 +1914,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		RunMaxInFlight:                cfg.runMaxInFlight,
 		PinCreationTimeout:            cfg.pinCreationTimeout,
 		RunTimeoutHandlerGrace:        cfg.runTimeoutHandlerGrace,
+		RunPauseTimeout:               cfg.runPauseTimeout,
+		RunPauseTimeoutMax:            cfg.runPauseTimeoutMax,
+		RunPauseIndexed:               pausedIndexed,
 		DefinitionByReference:         cfg.definitionByReference,
 		DefinitionObjects:             snapshots,
 		SnapshotOverlays:              cfg.snapshotOverlays,

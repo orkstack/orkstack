@@ -192,6 +192,42 @@ func TestEnsureRunRootSearchAttribute_IsItsOwnAnswer(t *testing.T) {
 	}
 }
 
+// TestEnsureRunPausedSearchAttribute_IsItsOwnAnswer: the paused attribute is
+// registered on its own, so a cluster that refuses it, at its limit of custom
+// attributes, keeps every other index and reports this one unusable by name;
+// one already there needs no registration.
+func TestEnsureRunPausedSearchAttribute_IsItsOwnAnswer(t *testing.T) {
+	refused := &fakeOperator{custom: map[string]enumspb.IndexedValueType{},
+		addErr: errors.New("cannot have more than 10 search attribute of type Keyword")}
+	if indexed, err := ensureRunPausedSearchAttribute(context.Background(), refused, DefaultNamespace); indexed || err == nil ||
+		!strings.Contains(err.Error(), SearchAttrOrkflowRunPaused) {
+		t.Fatalf("paused index = %v, %v; want unusable with an error naming it", indexed, err)
+	}
+	present := &fakeOperator{custom: map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowRunPaused: enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	}, addErr: errors.New("nothing should be registered")}
+	if indexed, err := ensureRunPausedSearchAttribute(context.Background(), present, DefaultNamespace); err != nil || !indexed {
+		t.Fatalf("paused index already present = %v, %v", indexed, err)
+	}
+}
+
+// TestSearchKeyOrkflowRunPaused_IsWhatBootRegisters: the key a run writes
+// is the attribute boot registers, of the type it registers, with a value
+// far under the cluster's per-value limit (2 KiB by default): the cluster
+// refuses a run's write only for an attribute it does not index.
+func TestSearchKeyOrkflowRunPaused_IsWhatBootRegisters(t *testing.T) {
+	registered := &fakeOperator{custom: map[string]enumspb.IndexedValueType{}}
+	if _, err := ensureRunPausedSearchAttribute(context.Background(), registered, DefaultNamespace); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if got := registered.custom[SearchKeyOrkflowRunPaused.GetName()]; got != enumspb.INDEXED_VALUE_TYPE_KEYWORD {
+		t.Fatalf("boot registers %s as %s, want the KEYWORD a run writes", SearchKeyOrkflowRunPaused.GetName(), got)
+	}
+	if got := SearchKeyOrkflowRunPaused.GetValueType(); got != enumspb.INDEXED_VALUE_TYPE_KEYWORD {
+		t.Fatalf("the run writes %s, want KEYWORD", got)
+	}
+}
+
 // The origin attributes carry their own answer. A cluster that already has
 // OrkflowNamespace and now refuses the operator API keeps its namespace
 // predicate while the origin index reports unusable; one that has all three

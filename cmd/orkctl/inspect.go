@@ -15,6 +15,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/enumname"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
 )
 
@@ -218,17 +219,7 @@ func (i *runInspector) watch(interval time.Duration) error {
 }
 
 // isTerminal is the run statuses a watch ends on.
-func isTerminal(status orkstackv1.Status) bool {
-	switch status {
-	case orkstackv1.Status_STATUS_SUCCEEDED,
-		orkstackv1.Status_STATUS_FAILED,
-		orkstackv1.Status_STATUS_CANCELED,
-		orkstackv1.Status_STATUS_SKIPPED:
-		return true
-	default:
-		return false
-	}
-}
+func isTerminal(status orkstackv1.Status) bool { return runstatus.IsTerminal(status) }
 
 // inspectError renders a failed InspectRun as a CLI error. FailedPrecondition
 // is about the engine, not the request: no argument could change it, so it is

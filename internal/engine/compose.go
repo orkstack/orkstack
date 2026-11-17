@@ -659,7 +659,7 @@ func childFailure(err error) (status orkstackv1.Status, code string, category or
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 		case RunStateCorruptCode, RunStateUnsupportedCode, RunDefinitionCorruptCode:
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
-		case AwaitTimedOutCode, RunTimedOutCode:
+		case AwaitTimedOutCode, RunTimedOutCode, RunPauseTimeoutCode:
 			// A child's own run timeout is the child's timing out.
 			return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
 		case RunDefinitionUnsupportedCode, RunTimeoutStateInvalidCode:

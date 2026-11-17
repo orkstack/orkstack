@@ -10,6 +10,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
+	"github.com/orkstack/orkstack/internal/runstatus"
 )
 
 func newRunWatchCommand(g *globalFlags) *cobra.Command {
@@ -178,13 +179,7 @@ func finalRun(cmd *cobra.Command, g *globalFlags, client orkstackv1connect.RunSe
 // runStillGoing reports whether the run has yet to reach a terminal state, so
 // the stream that ended on it stopped short of its end.
 func runStillGoing(run *orkstackv1.Run) bool {
-	switch run.GetStatus() {
-	case orkstackv1.Status_STATUS_PENDING, orkstackv1.Status_STATUS_RUNNING, orkstackv1.Status_STATUS_AWAITING,
-		orkstackv1.Status_STATUS_SLEEPING:
-		return true
-	default:
-		return false
-	}
+	return runstatus.IsLive(run.GetStatus())
 }
 
 // runExitError maps a terminal run status onto the process exit code.

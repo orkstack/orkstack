@@ -148,7 +148,7 @@ func runLevelError(code, message string) error {
 // the deadline, and the two invariants that end a run explicitly.
 func isRunTimeoutCode(code string) bool {
 	switch code {
-	case RunTimedOutCode, RunDefinitionUnsupportedCode, RunTimeoutStateInvalidCode:
+	case RunTimedOutCode, RunDefinitionUnsupportedCode, RunTimeoutStateInvalidCode, RunPauseTimeoutCode:
 		return true
 	}
 	return false
@@ -182,6 +182,8 @@ func (s *runState) runTimeoutFailure(cause error) *orkstackv1.Error {
 		Message: read.appMessage(),
 	}
 	switch failure.Code {
+	case RunPauseTimeoutCode:
+		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
 	case RunTimedOutCode:
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
 		if t := s.runTimeout; t != nil {
@@ -403,6 +405,8 @@ func (s *runState) runCauseText() string {
 		return "its definition declares a run timeout its plan does not carry"
 	case RunTimeoutStateInvalidCode:
 		return "its run timeout's clock was never started"
+	case RunPauseTimeoutCode:
+		return "its pause was not lifted before the pause timed out"
 	}
 	return ""
 }
@@ -458,9 +462,29 @@ func (s *runState) hardEndNotStartedReason() string {
 	return "the run timeout's hard end (" + formatInstant(s.runTimeout.hardEnd) + ") passed before this handler started"
 }
 
+// handlersStoppedReason is a running handler's row when the run stopped its
+// failure handlers itself: when a failing run's pause expired, or at the run
+// timeout's hard end. The first to stop them names it: a pause expiry is
+// never taken after the hard end (pauseHandlerPass).
+func (s *runState) handlersStoppedReason() (string, bool) {
+	switch {
+	case s.pauseStop != nil:
+		return s.pauseStopStoppedReason(), true
+	case s.hardEnded():
+		return s.hardEndStoppedReason(), true
+	}
+	return "", false
+}
+
 // hardEndNote is what the run's message gains when H stopped its handlers:
 // each handler's final state.
 func (s *runState) hardEndNote() string {
+	return fmt.Sprintf("; its timeout's hard end passed at %s: %s",
+		formatInstant(s.runTimeout.hardEnd), s.handlerStates())
+}
+
+// handlerStates is each failure handler's final state, in declaration order.
+func (s *runState) handlerStates() string {
 	var parts []string
 	for _, id := range s.order {
 		if !s.isFailureHandlerID(id) {
@@ -478,8 +502,7 @@ func (s *runState) hardEndNote() string {
 			parts = append(parts, id+" "+statusWord(row.GetStatus()))
 		}
 	}
-	return fmt.Sprintf("; its timeout's hard end passed at %s: %s",
-		formatInstant(s.runTimeout.hardEnd), strings.Join(parts, ", "))
+	return strings.Join(parts, ", ")
 }
 
 // runTimeoutReserveEvents is what a run timeout can still add to a run's

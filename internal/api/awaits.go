@@ -17,6 +17,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/enumname"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
@@ -127,15 +128,7 @@ type awaitResolution struct {
 }
 
 // isTerminalRunStatus is a run status nothing moves on from.
-func isTerminalRunStatus(status orkstackv1.Status) bool {
-	switch status {
-	case orkstackv1.Status_STATUS_SUCCEEDED,
-		orkstackv1.Status_STATUS_FAILED,
-		orkstackv1.Status_STATUS_CANCELED:
-		return true
-	}
-	return false
-}
+func isTerminalRunStatus(status orkstackv1.Status) bool { return runstatus.IsTerminal(status) }
 
 // awaitStatusWord is a status as every client prints it: "AWAITING", not
 // "STATUS_AWAITING".

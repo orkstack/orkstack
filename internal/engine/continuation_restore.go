@@ -99,6 +99,10 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 	if what := s.adoptRows(ctx, runCtx, run); what != "" {
 		return RunStateCorruptCode, corruptStateMessage(what)
 	}
+	// The pause, its timers re-armed at the main loop's entry.
+	if what := s.adoptPauseCarry(carry, run); what != "" {
+		return RunStateCorruptCode, corruptStateMessage(what)
+	}
 	// 8. Held fan-outs.
 	s.heldFanOuts = s.anyFanOutHeld()
 	return "", ""

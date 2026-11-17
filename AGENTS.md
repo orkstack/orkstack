@@ -1295,15 +1295,22 @@ Every code change follows this order:
    validators with `cd ui && bun run gen:validators`;
    `TestSchemas_ValidatorsAreCurrent` and `ui/test/yamlValidators.test.ts`
    refuse stale ones.
-3. Dependencies are pinned: an exact module version, or an image digest,
-   never a floating tag at runtime; a toolchain version is an exact line in
-   `go.mod` or the workflow; a tool the build runs (staticcheck,
-   govulncheck) is a `tool` directive there, pinned like a module; a
-   third-party action is pinned by its full commit SHA, with its release as a
-   comment on the same line (`@<sha> # vX.Y.Z`). Update by
-   pull request that proves the change —
+3. Dependencies are pinned: an exact module version, or an image digest, never
+   a floating tag at runtime; a toolchain version is an exact line in `go.mod`
+   or the workflow; a tool the build runs (staticcheck, govulncheck) is a
+   `tool` directive there, pinned like a module; a third-party action is
+   pinned by its full commit SHA, with its release as a comment on the same
+   line (`@<sha> # vX.Y.Z`). Update by pull request that proves the change —
    `.github/dependabot.yml` opens them, and an update never merges on a green
    unit run alone. A new dependency follows the same rule as any other change.
+   Before building a server, stub, parser, protocol client, library or tool,
+   test and development infrastructure included, look for an established
+   project that already does it and use that, pinned as above. Build one only
+   when the established project lacks a property OrkStack needs, and say in
+   the code which project was weighed and why it was not used. A hand-written
+   fake in a test is only for a fault a real system cannot produce on demand,
+   and its doc says which one: the development identity provider is Dex, not a
+   stub of our own.
 4. Write a behavior test that fails for the right reason.
 5. Implement until it passes.
 6. Run `make lint test`; for concurrent code, `make test-race` too (the race
@@ -1721,6 +1728,7 @@ internal/testsupport/  Test-only helpers shared by suites
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
+internal/runstatus/    The one classifier of a run's status, live or terminal, every reader asks
 internal/stablejson/   The JSON bytes OrkStack hashes, stores or hands a container, written with encoding/json/v2
 internal/typeid/       The time-ordered ids a run id and a minted Orkflow version are made of
 internal/docscheck/    Documentation drift checks (test-only)

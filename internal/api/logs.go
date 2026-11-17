@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
@@ -478,17 +479,7 @@ func (s *Service) taskIsTerminal(ctx context.Context, q TaskLogQuery) (bool, err
 	return isTerminalStatus(taskRun.GetStatus()), nil
 }
 
-func isTerminalStatus(status orkstackv1.Status) bool {
-	switch status {
-	case orkstackv1.Status_STATUS_SUCCEEDED,
-		orkstackv1.Status_STATUS_FAILED,
-		orkstackv1.Status_STATUS_CANCELED,
-		orkstackv1.Status_STATUS_SKIPPED:
-		return true
-	default:
-		return false
-	}
-}
+func isTerminalStatus(status orkstackv1.Status) bool { return runstatus.IsTerminal(status) }
 
 // taskRunOf finds one task's execution record inside a run snapshot.
 func taskRunOf(run *orkstackv1.Run, taskID string) (*orkstackv1.TaskRun, bool) {

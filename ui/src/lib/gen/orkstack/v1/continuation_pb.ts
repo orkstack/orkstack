@@ -243,28 +243,31 @@ export type RunContinuation = Message<"orkstack.v1.RunContinuation"> & {
   resume?: RunResumeCarry | undefined;
 
   /**
-   * pause is set from E103; unset until it lands (v0.4.0 proto batch).
+   * pause is the run's own pause at the switch; its expiry is an absolute
+   * instant, re-armed for what remains of it.
    *
    * @generated from field: orkstack.v1.RunPause pause = 12;
    */
   pause?: RunPause | undefined;
 
   /**
-   * last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+   * last_pause is the run's last own pause that ended.
    *
    * @generated from field: orkstack.v1.RunPause last_pause = 13;
    */
   lastPause?: RunPause | undefined;
 
   /**
-   * paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+   * paused_by_parent is the parent run's pause holding the run at the
+   * switch; its backstop is an absolute instant.
    *
    * @generated from field: orkstack.v1.InheritedPause paused_by_parent = 14;
    */
   pausedByParent?: InheritedPause | undefined;
 
   /**
-   * last_cascade_seq is set from E103; unset until it lands (v0.4.0 proto batch).
+   * last_cascade_seq is the last parent cascade counter applied, so a stale
+   * request is still refused after the switch.
    *
    * @generated from field: int64 last_cascade_seq = 15;
    */

@@ -29,7 +29,9 @@ export const STATUS_MARKS: Record<Status, StatusMark> = {
 	[Status.CANCELED]: { shape: 'strike', fill: 'outline', className: 'mark-strike', inner: false },
 	[Status.SKIPPED]: { shape: 'dash', fill: 'hatched', className: 'mark-dash', inner: false },
 	[Status.AWAITING]: { shape: 'diamond', fill: 'live-outline', className: 'mark-diamond', inner: true },
-	[Status.SLEEPING]: { shape: 'half', fill: 'live-outline', className: 'mark-half', inner: false }
+	[Status.SLEEPING]: { shape: 'half', fill: 'live-outline', className: 'mark-half', inner: false },
+	// PAUSED is drawn as a live run until the pause's own mark lands (E103's UI pass).
+	[Status.PAUSED]: { shape: 'dot', fill: 'live', className: 'mark-dot', inner: true }
 };
 
 export function statusMark(status: Status | undefined): StatusMark {
@@ -108,7 +110,8 @@ const CLASS_WORD: Record<Status, string> = {
 	[Status.CANCELED]: 'canceled',
 	[Status.SKIPPED]: 'skipped',
 	[Status.AWAITING]: 'awaiting',
-	[Status.SLEEPING]: 'sleeping'
+	[Status.SLEEPING]: 'sleeping',
+	[Status.PAUSED]: 'running'
 };
 
 /** The status's word as the token families spell it (`--color-failed-solid`). */

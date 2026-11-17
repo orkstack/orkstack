@@ -222,3 +222,31 @@ const (
 func DefaultOverlayPolicy() OverlayPolicy {
 	return OverlayPolicy{MinRows: DefaultOverlayMinRows, MaxChain: DefaultOverlayMaxChain, MaxRows: DefaultOverlayMaxRows}
 }
+
+// DefaultRunPauseTimeout is engine.run_pause_timeout's default: how long a
+// pause lasts when its request names no timeout. Pinned, in seconds, into
+// every run's PausePlan.
+const DefaultRunPauseTimeout = 7 * 24 * time.Hour
+
+// DefaultRunPauseTimeoutMax is engine.run_pause_timeout_max's default, and
+// its ceiling: the longest a pause may last. A deployment may lower it.
+const DefaultRunPauseTimeoutMax = 31 * 24 * time.Hour
+
+// DefaultPausePlan is the PausePlan a run is pinned at submit, with the
+// deployment's two timeouts in seconds. Applying one request costs at most
+// 20 events, signalling one child 4, each at the reserve's bytes per event;
+// an inherited pause's backstop is 10 minutes per level after its origin's
+// expiry, for at most 8 levels.
+func DefaultPausePlan(defaultTimeoutSeconds, maxTimeoutSeconds int64) PausePlan {
+	const applyEvents, cascadeEvents = 20, 4
+	return PausePlan{
+		DefaultTimeoutSeconds:   defaultTimeoutSeconds,
+		MaxTimeoutSeconds:       maxTimeoutSeconds,
+		ApplyReserveEvents:      applyEvents,
+		ApplyReserveBytes:       applyEvents * DefaultHistoryReserve.BytesPerEvent,
+		CascadeEventsPerChild:   cascadeEvents,
+		CascadeBytesPerChild:    cascadeEvents * DefaultHistoryReserve.BytesPerEvent,
+		InheritedGraceSeconds:   600,
+		InheritedGraceMaxLevels: 8,
+	}
+}

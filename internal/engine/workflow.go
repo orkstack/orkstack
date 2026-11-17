@@ -15,6 +15,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -284,6 +285,7 @@ func RunWorkflow(
 	if err := state.armRunTimer(ctx); err != nil {
 		return state.fail(ctx, cancelRun, inFlight, "", err)
 	}
+	state.armPauseTimers(ctx)
 
 	for {
 		if readyLoopProbeForTest != nil {
@@ -305,6 +307,19 @@ func RunWorkflow(
 		// (history_guard.go). A no-op for a plan without a limit.
 		if err := state.historyExhausted(ctx, inFlight); err != nil {
 			return state.fail(ctx, cancelRun, inFlight, "", err)
+		}
+		// The pause's requests, then a ready expiry: after the operator's
+		// cancel and before the run timeout's deadline (the fixed order).
+		if state.pauses != nil {
+			if _, err := state.drainPauseRequests(ctx, inFlight, pauseInMainLoop); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, "", err)
+			}
+			state.syncPauseIndexWithin(ctx, inFlight) // retries a write the cluster refused
+			if due, canceled := state.pauseExpiryDue(ctx); canceled {
+				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			} else if due {
+				return state.fail(ctx, cancelRun, inFlight, "", state.pauseExpiredCause(ctx, inFlight))
+			}
 		}
 		// A run with a timeout applies the resolutions queued when the pass
 		// starts, bounded and never past D, before the ending check.
@@ -354,6 +369,11 @@ func RunWorkflow(
 			// context could burn a sequence number (cancel.go).
 			if state.canceledBeforeDispatch(ctx) {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			}
+			// A paused run starts nothing but what an open pin needs to
+			// finish: held PENDING, nothing emitted, nothing classified.
+			if state.paused() && !state.pinClosureAllows(id) {
+				continue
 			}
 			// The run timeout's deadline, before every dispatch decision.
 			if due, canceled := state.runTimeoutDue(ctx, inFlight); canceled {
@@ -477,9 +497,12 @@ func RunWorkflow(
 				if len(state.readyTasks()) == 0 && !state.heldFanOuts {
 					break
 				}
-				// The prior scan only propagated skips (or a hold just
-				// lifted); scan again without waiting for an activity.
-				continue
+				if !state.paused() {
+					// The prior scan only propagated skips (or a hold just
+					// lifted); scan again without waiting for an activity.
+					continue
+				}
+				// Paused: wait in the selector for a request or an expiry.
 			}
 		}
 
@@ -570,6 +593,24 @@ func RunWorkflow(
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
 		}
+		// The pause's cases, before the run timeout's; each sets its own
+		// marker, and the pass top decides. A present cause's timer is
+		// registered even when ready: one that fired during this pass's
+		// dispatch would otherwise leave a run with nothing in flight
+		// waiting for ever, and the pass top takes it.
+		pauseWoke := false
+		if state.pauses != nil {
+			selector.AddReceive(state.pauses, func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			if p := state.pause; p != nil {
+				selector.AddFuture(p.timer, func(workflow.Future) { pauseWoke = true })
+			}
+			if ip := state.pausedByParent; ip != nil {
+				selector.AddFuture(ip.backstop, func(workflow.Future) { pauseWoke = true })
+			}
+			if state.paused() {
+				selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			}
+		}
 		// The run timeout's timer, last of all, while not yet ready: it only
 		// wakes a blocked run, and the next pass's ending check decides.
 		timerReady := false
@@ -614,6 +655,12 @@ func RunWorkflow(
 				return state.fail(ctx, cancelRun, inFlight, woke, err)
 			}
 			continue
+		}
+		if pauseWoke {
+			if ctx.Err() != nil && state.paused() {
+				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			}
+			continue // the pass top applies the request or takes the expiry
 		}
 		if timerReady {
 			continue // the pass top's ending check takes the deadline
@@ -811,6 +858,25 @@ type runState struct {
 	// definition declares no `timeout:`.
 	runTimeout *runTimeout
 
+	// The pause (pause.go): pauses is the request channel, nil for a run
+	// whose plan lacks Pause; pause and pausedByParent are the two causes;
+	// lastPause how the last own pause ended; lastCascadeSeq the last
+	// inherited request applied.
+	pauses         workflow.ReceiveChannel
+	pause          *ownPause
+	pausedByParent *inheritedPause
+	lastPause      *lastPause
+	// pauseStop is set when a failing run's pause expired (pause.go).
+	pauseStop      *pauseStop
+	lastCascadeSeq int64
+	// pauseIndex is what this generation last wrote to the run's paused
+	// attribute and pause memo; nil before its first write (syncPauseIndex).
+	pauseIndex pauseIndexState
+	// pauseEvent is what the pause event being emitted says of its request
+	// (emitPause); pauseExpired, that a pause's expiry is ending the run.
+	pauseEvent   *pauseEventFields
+	pauseExpired bool
+
 	// declaredRows is this run's declared rows — its tasks plus every
 	// fan-out's max_items (DeclaredRows) — which decides whether it writes
 	// snapshot overlays (snapshot_overlay.go). Derived from the definition.
@@ -914,6 +980,9 @@ func newRunState(
 	state.createdAt = timestamppb.New(workflow.GetInfo(ctx).WorkflowStartTime)
 	if len(state.awaits) > 0 {
 		state.resolutions = workflow.GetSignalChannel(ctx, ResolveAwaitSignal)
+	}
+	if plan.Pause != nil {
+		state.pauses = workflow.GetSignalChannel(ctx, PauseSignal)
 	}
 	return state
 }
@@ -1143,17 +1212,8 @@ func (s *runState) readyTasks() []string {
 	return ready
 }
 
-func isTerminal(status orkstackv1.Status) bool {
-	switch status {
-	case orkstackv1.Status_STATUS_SUCCEEDED,
-		orkstackv1.Status_STATUS_FAILED,
-		orkstackv1.Status_STATUS_SKIPPED,
-		orkstackv1.Status_STATUS_CANCELED:
-		return true
-	default:
-		return false
-	}
-}
+// isTerminal is runstatus.IsTerminal, the one classifier every reader asks.
+func isTerminal(status orkstackv1.Status) bool { return runstatus.IsTerminal(status) }
 
 // pinFor is the declared pin a task belongs to, or nil when it belongs to
 // none.
@@ -2558,9 +2618,10 @@ func (s *runState) recordFailureOn(ctx workflow.Context, taskRun *orkstackv1.Tas
 	// operator asked for: it is recorded FAILED, so any_failed handlers run.
 	if read.canceled && s.interrupting() {
 		s.recordInterrupted(ctx, taskRun, label)
-	} else if read.canceled && s.hardEnded() && ctx.Err() == nil {
-		// A failure handler the run timeout's hard end stopped.
-		taskRun.Error.Message = s.hardEndStoppedReason()
+	} else if reason, stopped := s.handlersStoppedReason(); read.canceled && stopped && ctx.Err() == nil {
+		// A failure handler the run timeout's hard end, or a failing run's
+		// pause expiry, stopped.
+		taskRun.Error.Message = reason
 	}
 }
 
@@ -2867,6 +2928,11 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		Origin: s.plan.Origin.Proto(),
 		// The run's own time limit; nil when its definition declares none.
 		Timeout: s.runTimeoutProto(),
+		// The pause: present only while the run is live (pause.go).
+		Pausable:       s.pauses != nil,
+		Pause:          s.livePauseProto(),
+		LastPause:      s.lastPauseProto(),
+		PausedByParent: s.liveInheritedPauseProto(),
 	}
 	for _, id := range s.order {
 		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])
@@ -2961,6 +3027,7 @@ func (s *runState) emitTaskEvent(
 		Message:   message,
 		Timestamp: timestamppb.New(workflow.Now(ctx)),
 	}
+	s.setPauseFields(ctx, event)
 	dedupeKey := fmt.Sprintf("%s#%d", s.runID, s.eventSeq)
 
 	snapshotURI := reuseURI

@@ -298,13 +298,16 @@ type RunContinuation struct {
 	Snapshot *ContinuationObject `protobuf:"bytes,9,opt,name=snapshot,proto3" json:"snapshot,omitempty"`
 	// resume is set from E85; unset until it lands (v0.4.0 proto batch).
 	Resume *RunResumeCarry `protobuf:"bytes,11,opt,name=resume,proto3" json:"resume,omitempty"`
-	// pause is set from E103; unset until it lands (v0.4.0 proto batch).
+	// pause is the run's own pause at the switch; its expiry is an absolute
+	// instant, re-armed for what remains of it.
 	Pause *RunPause `protobuf:"bytes,12,opt,name=pause,proto3" json:"pause,omitempty"`
-	// last_pause is set from E103; unset until it lands (v0.4.0 proto batch).
+	// last_pause is the run's last own pause that ended.
 	LastPause *RunPause `protobuf:"bytes,13,opt,name=last_pause,json=lastPause,proto3" json:"last_pause,omitempty"`
-	// paused_by_parent is set from E103; unset until it lands (v0.4.0 proto batch).
+	// paused_by_parent is the parent run's pause holding the run at the
+	// switch; its backstop is an absolute instant.
 	PausedByParent *InheritedPause `protobuf:"bytes,14,opt,name=paused_by_parent,json=pausedByParent,proto3" json:"paused_by_parent,omitempty"`
-	// last_cascade_seq is set from E103; unset until it lands (v0.4.0 proto batch).
+	// last_cascade_seq is the last parent cascade counter applied, so a stale
+	// request is still refused after the switch.
 	LastCascadeSeq int64 `protobuf:"varint,15,opt,name=last_cascade_seq,json=lastCascadeSeq,proto3" json:"last_cascade_seq,omitempty"`
 	// concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
 	Concurrency   *RunConcurrencyCarry `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`

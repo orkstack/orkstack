@@ -80,6 +80,8 @@ engine:
   run_max_in_flight: 500  # ork
   pin_creation_timeout: 5m  # ork
   run_timeout_handler_grace: 10m  # ork
+  run_pause_timeout: 168h  # ork
+  run_pause_timeout_max: 744h  # ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork
   usage_cache_ttl: 5m  # ork

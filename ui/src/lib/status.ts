@@ -11,7 +11,8 @@ export const STATUS_LABEL: Record<Status, string> = {
 	[Status.CANCELED]: 'Canceled',
 	[Status.SKIPPED]: 'Skipped',
 	[Status.AWAITING]: 'Awaiting',
-	[Status.SLEEPING]: 'Sleeping'
+	[Status.SLEEPING]: 'Sleeping',
+	[Status.PAUSED]: 'Paused'
 };
 
 export const STATUS_CLASSES: Record<Status, string> = {
@@ -23,7 +24,9 @@ export const STATUS_CLASSES: Record<Status, string> = {
 	[Status.CANCELED]: 'bg-canceled-bg text-canceled-fg',
 	[Status.SKIPPED]: 'pill-outline bg-skipped-bg text-skipped-fg',
 	[Status.AWAITING]: 'bg-awaiting-bg text-awaiting-fg',
-	[Status.SLEEPING]: 'bg-sleeping-bg text-sleeping-fg'
+	[Status.SLEEPING]: 'bg-sleeping-bg text-sleeping-fg',
+	// PAUSED reads as a live run until the pause's own look lands (E103's UI pass).
+	[Status.PAUSED]: 'bg-running-bg text-running-fg'
 };
 
 export function statusLabel(status: Status | undefined): string {
@@ -34,18 +37,11 @@ export function statusClasses(status: Status | undefined): string {
 	return STATUS_CLASSES[status ?? Status.UNSPECIFIED];
 }
 
-export function isTerminal(status: Status | undefined): boolean {
-	return (
-		status === Status.SUCCEEDED ||
-		status === Status.FAILED ||
-		status === Status.CANCELED ||
-		// SKIPPED is terminal too: the DAG decided this task will not run, and
-		// nothing after that decision moves it. Leaving it out made a skipped
-		// task read as still-pending for ever — the run page kept promising
-		// "values are not available yet" for a task that will never have any.
-		status === Status.SKIPPED
-	);
-}
+/**
+ * isTerminal is runStatus.ts's, the one classifier. SKIPPED is terminal:
+ * leaving it out once made a skipped task read as still-pending for ever.
+ */
+export { isTerminal } from './runStatus';
 
 /**
  * taskDispatched reports whether a task ever actually reached an Orker — which
@@ -101,7 +97,9 @@ export const EVENT_TYPE_LABEL: Record<EventType, string> = {
 	[EventType.TASK_AWAITING]: 'TASK_AWAITING',
 	[EventType.TASK_RESOLVED]: 'TASK_RESOLVED',
 	[EventType.STREAM_GAP]: 'STREAM_GAP',
-	[EventType.TASK_SLEEPING]: 'TASK_SLEEPING'
+	[EventType.TASK_SLEEPING]: 'TASK_SLEEPING',
+	[EventType.RUN_PAUSED]: 'RUN_PAUSED',
+	[EventType.RUN_UNPAUSED]: 'RUN_UNPAUSED'
 };
 
 export function eventTypeLabel(t: EventType | undefined): string {

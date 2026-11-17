@@ -842,3 +842,56 @@ each from a real run by `TestIntegration_RecordRunTimeoutContinuedHistories`
   one above it never skips, records into the proof directory by default, and
   fails unless every shape lands and replays; the fixtures are committed, so
   the replay tests fail, never skip, when one is missing
+
+### `pause-continued-carried-*-v1.json`, `-v2.json` — a pause across a carry
+
+One run paused while it carries on, recorded under the continuation stack's
+plan with a pause plan, by `TestIntegration_RecordPauseContinuedHistories`
+(`pause_continued_integration_test.go`):
+
+- `g0`: thirty quick tasks beside `slow` (six seconds) cross the 60-event
+  budget while `slow` runs; the run is paused before `slow` ends, so the
+  switch, held for it, asks the `pause-carry` gate and carries the pause
+  (`RunContinuation` 12–15) with its one-hour timer started.
+- `g1`: the next generation restores the pause, PAUSED, and arms its timer
+  for what remains of it; it starts nothing until the unpause, then runs
+  `final` and succeeds.
+
+- command: `TestRunWorkflow_ReplaysCommittedPauseCarryHistories`, each
+  generation replayed as its run's own workflow id
+- negative: `TestPauseCarryHistories_CatchThePauseRemoved` (generation 0's
+  pause plan, and generation 1's carried pause, removed: each is refused) and
+  `TestPauseCarryHistories_CatchAMovedTimer` (the pause's timer renamed in
+  each generation: refused)
+- payload: none
+- recorder: `TestIntegration_RecordPauseContinuedHistories`. It never skips,
+  records into the proof directory by default, and fails unless the switch
+  carries the pause and generation 1 dispatches `final` only after its
+  unpause
+
+`v1` was recorded unpaced, with the pause sent after a fixed sleep, so a new
+recording's shape varied with the host. The recorder now runs on the paced
+stack, its pause sent by `q30` before it completes and its unpause once the
+restored generation is idle, and writes `pause-continued-carried-*-v2.json`
+(`g0` 850 events, `g1` 52; three repeats and the recording identical). `v1`
+stays and still replays; the command and negative tests run over both.
+
+### `pause-indexed-continued-*-v1.json` — the paused index across a carry
+
+The pause carry's run with an Indexed pause plan, recorded paced by
+`TestIntegration_RecordPauseIndexedHistories`
+(`pause_continued_integration_test.go`), after the proof cluster registered
+`OrkflowRunPaused` (`task.EnsureRunPausedSearchAttribute`):
+
+- `g0`: the pause writes the paused attribute and the pause memo once.
+- `g1`: the generation, restored paused, writes them again at its first pass,
+  then removes them at the unpause (two attribute writes).
+
+- command and negative: `TestRunWorkflow_ReplaysCommittedPauseIndexedHistories`
+  (each generation replays; with `Indexed` removed from its plan, each is
+  refused)
+- payload: none
+- recorder: `TestIntegration_RecordPauseIndexedHistories` (`g0` 852 events,
+  `g1` 56; three repeats and the recording identical). It never skips, and
+  fails unless the switch carries the pause and the attribute writes are one
+  in `g0` and two in `g1`
