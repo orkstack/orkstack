@@ -34,6 +34,7 @@ var allReasonCodes = []string{
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
 	ReasonMetadataEndpointReachable, ReasonMetadataProbeFailed,
 	ReasonValuesContainSecret, ReasonMaskCapacityExceeded,
+	ReasonProfileNotOffered, ReasonProfileChanged, ReasonProfileDrifted,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake

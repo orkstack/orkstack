@@ -310,10 +310,12 @@ func (d *DockerRuntime) runWithin(
 	cmdCtx, cancel := context.WithTimeout(ctx, within)
 	defer cancel()
 
-	var stdout, stderr bytes.Buffer
+	// Bounded, because a probe container's stdout arrives here: an image
+	// that prints without end fills what is kept, never the Orker's memory.
+	stdout, stderr := &boundedBuffer{limit: maxCLIAnswerBytes}, &boundedBuffer{limit: maxCLIAnswerBytes}
 	cmd := exec.CommandContext(cmdCtx, bin, args...)
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 	cmd.WaitDelay = pipeDrainDelay
 	runErr := d.children.run(cmd)
 	overran = runErr != nil && errors.Is(cmdCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil
@@ -635,6 +637,12 @@ func dockerContainerFlags(spec ContainerSpec, name string, spoken dialect) ([]st
 			mount += ",readonly"
 		}
 		args = append(args, "--mount", mount)
+	}
+	for _, d := range spec.Devices {
+		if err := checkDeviceMapping(d); err != nil {
+			return nil, err
+		}
+		args = append(args, "--device", d.HostPath+":"+d.ContainerPath+":"+d.Permissions)
 	}
 
 	args = append(args, spec.Image)
@@ -1084,6 +1092,11 @@ func (d *DockerRuntime) leftCreated(ctx context.Context, id ContainerID) (bool, 
 	return startedStates[status] && !preStartStates[status], nil
 }
 
+// maxCLIAnswerBytes bounds what runWithin keeps of each of a CLI command's
+// streams. Every answer the Orker reads is far smaller; the boot probes'
+// reports are under a megabyte.
+const maxCLIAnswerBytes = 16 << 20
+
 // boundedBuffer keeps at most limit bytes, so a workload's stderr cannot make
 // a diagnostic copy unbounded.
 type boundedBuffer struct {
@@ -1428,6 +1441,46 @@ func parseOtherContainers(answer, orkerID string) []OtherOrkerContainer {
 		others = append(others, OtherOrkerContainer{ID: fields[0], State: fields[1], Orker: fields[2]})
 	}
 	return others
+}
+
+// ImageLabel reads one label of a local image (`image inspect`), for the
+// host-view probe's build check. An image the daemon does not have is an
+// error; an image without the label is ok false.
+func (d *DockerRuntime) ImageLabel(ctx context.Context, ref, key string) (string, bool, error) {
+	answer, err := d.control(ctx, "image", "inspect", "--format", "{{json .Config.Labels}}", ref)
+	if err != nil {
+		return "", false, err
+	}
+	if answer.code != 0 {
+		return "", false, fmt.Errorf("image inspect %s: exited %d: %s", ref, answer.code, answer.said())
+	}
+	var labels map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(answer.stdout)), &labels); err != nil {
+		return "", false, fmt.Errorf("image inspect %s: decode its labels: %w", ref, err)
+	}
+	value, ok := labels[key]
+	return value, ok, nil
+}
+
+// LocalDaemon is nil when nothing in this Orker's environment points its CLI
+// at a daemon other than this host's own: DOCKER_HOST and CONTAINER_HOST, if
+// set, name a unix socket, and no context or connection is chosen. It names
+// a variable and never its value, which can carry a remote's user or
+// credentials. A CLI whose configuration file chooses a remote context is
+// not seen here; the probe container that follows sees what it is given.
+func (d *DockerRuntime) LocalDaemon() error {
+	for _, name := range []string{"DOCKER_HOST", "CONTAINER_HOST"} {
+		if v := os.Getenv(name); v != "" && !strings.HasPrefix(v, "unix://") {
+			return fmt.Errorf("%s names a daemon that is not a unix socket on this host", name)
+		}
+	}
+	if v := os.Getenv("DOCKER_CONTEXT"); v != "" && v != "default" {
+		return errors.New("DOCKER_CONTEXT chooses a context other than the default one")
+	}
+	if os.Getenv("CONTAINER_CONNECTION") != "" {
+		return errors.New("CONTAINER_CONNECTION chooses a remote connection")
+	}
+	return nil
 }
 
 // endpointVars point a CLI at a daemon or at a container store: the docker

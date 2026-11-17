@@ -269,6 +269,7 @@
               "cache": false,
               "cancellation_grace_period_seconds": false,
               "command": false,
+              "devices": false,
               "each": false,
               "env": false,
               "network": false,
@@ -436,6 +437,7 @@
             "cache": false,
             "cancellation_grace_period_seconds": false,
             "command": false,
+            "devices": false,
             "each": false,
             "env": false,
             "network": false,
@@ -498,6 +500,21 @@
             "number",
             "boolean"
           ]
+        },
+        "devices": {
+          "description": "optional device and gpu profiles the pool's Orkers define (see \"Device profiles\")",
+          "items": {
+            "maxLength": 200,
+            "pattern": "^[a-z][a-z0-9-]*$",
+            "type": [
+              "string",
+              "number",
+              "boolean"
+            ]
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
         },
         "each": {
           "allOf": [
@@ -637,6 +654,7 @@
           "cache": false,
           "cancellation_grace_period_seconds": false,
           "command": false,
+          "devices": false,
           "each": false,
           "env": false,
           "network": false,

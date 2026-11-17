@@ -406,12 +406,13 @@ dist: ui ## The web UI (make ui), then release binaries, archives and SHA256SUMS
 release-images: ## Release images (ork, orker, orkctl, activities) as OCI layouts: VERSION=vX.Y.Z OUT=<dir> [PLATFORMS=linux/amd64,linux/arm64]
 	$(if $(strip $(OUT)),,$(error make release-images needs OUT=<directory> for the layouts))
 	$(need-commit-time)
+	$(need-commit)
 	@mkdir -p '$(abspath $(OUT))'
 	@for t in $(RELEASE_IMAGES); do \
 	  echo "building $$t -> $(abspath $(OUT))/$$t"; \
 	  rm -rf "$(abspath $(OUT))/$$t"; \
 	  SOURCE_DATE_EPOCH=$(SOURCE_DATE_EPOCH) docker buildx build --provenance=false --sbom=false \
-	    $(if $(strip $(PLATFORMS)),--platform $(PLATFORMS)) --build-arg VERSION=$(VERSION) \
+	    $(if $(strip $(PLATFORMS)),--platform $(PLATFORMS)) --build-arg VERSION=$(VERSION) --build-arg BUILD=$(SOURCE_COMMIT) \
 	    -f deploy/Dockerfile --target $$t \
 	    --output "type=oci,dest=$(abspath $(OUT))/$$t,tar=false,rewrite-timestamp=true" . || exit 1; \
 	done

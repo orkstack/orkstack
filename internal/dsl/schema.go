@@ -50,6 +50,7 @@ type annotation struct {
 	notEnum    []string       // values the pattern admits and the compiler refuses
 	typ        map[string]any // a schema replacing the reflected one
 	minItems   int            // a list's lower bound
+	maxItems   int            // a list's upper bound
 	keyPattern *regexp.Regexp // a map's key shape (propertyNames)
 	keyMax     int            // a map's key bound
 }
@@ -87,6 +88,8 @@ func orkflowAnnotations() map[string]annotation {
 		"tasks[].needs[]":               slug,
 		"tasks[].pool":                  slug,
 		"tasks[].pin":                   slug,
+		"tasks[].devices":               {minItems: 1, maxItems: MaxTaskDevices},
+		"tasks[].devices[]":             slug,
 		"tasks[].join":                  {enum: joinWordsSorted()},
 		"tasks[].network":               {enum: networkWords},
 		"tasks[].secrets[].name":        {required: true, pattern: secretNamePattern, notEnum: []string{".", ".."}},
@@ -143,6 +146,7 @@ var orkflowDescriptions = map[string]string{
 	"tasks[].secrets[].mask":  "optional: `false` leaves the value unmasked in the task's logs",
 	"tasks[].resources":       "request; Orker policy supplies defaults and caps",
 	"tasks[].network":         "optional: `default` or `none`",
+	"tasks[].devices":         "optional device and gpu profiles the pool's Orkers define (see \"Device profiles\")",
 	"tasks[].cancellation_grace_period_seconds": "SIGTERM-to-SIGKILL window",
 	"tasks[].run_as_orker_user":                 "opt in to overriding the image's USER",
 	"tasks[].cache":                             "optional: reuse an identical earlier result (see \"Caching\")",
@@ -288,6 +292,9 @@ func (b *orkflowSchemaBuilder) typeSchema(t reflect.Type, path string) map[strin
 		out = map[string]any{"type": "array", "items": b.typeSchema(t.Elem(), path+"[]")}
 		if ann.minItems > 0 {
 			out["minItems"] = ann.minItems
+		}
+		if ann.maxItems > 0 {
+			out["maxItems"] = ann.maxItems
 		}
 	case reflect.Map:
 		b.paths[path+".*"] = true

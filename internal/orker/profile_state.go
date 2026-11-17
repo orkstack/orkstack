@@ -3,6 +3,7 @@ package orker
 import (
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -22,17 +23,66 @@ const ReasonProfileInvalid = "ORKER_PROFILE_INVALID"
 // process, so only a restart clears a drift.
 type profileState struct {
 	declared Profiles
+	// build is the commit this Orker was built from, which its probe image
+	// must carry (host_view_probe.go).
+	build string
+	// cordon is the Orker's cordon, which holds while any profile cause
+	// does (attach). Nil in a state no Orker runs, which then only reports.
+	cordon *Cordon
 
 	mu        sync.Mutex
 	described []*orkstackv1.OrkerProfile
+	// audits is each profile as its boot audit found it (profile_gate.go):
+	// what every later check compares with, fixed for the process's life.
+	audits map[string]profileAudit
 	// cordons holds at most one cause per profile. A drift latches: no later
 	// observation replaces it and nothing clears it. An unavailable cause is
 	// replaced by a drift and cleared by consecutive good checks.
 	cordons map[string]*orkstackv1.ProfileCordon
 }
 
-func newProfileState(declared Profiles) *profileState {
-	return &profileState{declared: declared, cordons: map[string]*orkstackv1.ProfileCordon{}}
+func newProfileState(declared Profiles, build string) *profileState {
+	return &profileState{declared: declared, build: build, cordons: map[string]*orkstackv1.ProfileCordon{}}
+}
+
+// attach makes the profile causes hold c, the Orker's cordon.
+func (s *profileState) attach(c *Cordon) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cordon = c
+	s.syncLocked()
+}
+
+// syncLocked holds the Orker's cordon while any profile cause does, naming
+// them in profile order, and ends it once none does. The caller holds the
+// lock.
+func (s *profileState) syncLocked() {
+	if s.cordon == nil {
+		return
+	}
+	if len(s.cordons) == 0 {
+		s.cordon.ClearProfiles()
+		return
+	}
+	names := make([]string, 0, len(s.cordons))
+	var since time.Time
+	for name, held := range s.cordons {
+		names = append(names, name)
+		if at := held.GetSince().AsTime(); since.IsZero() || at.Before(since) {
+			since = at
+		}
+	}
+	sort.Strings(names)
+	parts := make([]string, len(names))
+	for i, name := range names {
+		held := s.cordons[name]
+		word := "is unavailable"
+		if held.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT {
+			word = "drifted"
+		}
+		parts[i] = "profile " + name + " " + word
+	}
+	s.cordon.SetProfiles(strings.Join(parts, "; "), since)
 }
 
 // setDescribed records the profiles as this Orker describes them, once its
@@ -58,6 +108,7 @@ func (s *profileState) setDrift(profile string, reason orkstackv1.ProfileCordonR
 		Since:   timestamppb.New(now),
 		Detail:  detail,
 	}
+	s.syncLocked()
 }
 
 // setUnavailable marks one profile unavailable, keeping the instant it was
@@ -80,6 +131,7 @@ func (s *profileState) setUnavailable(profile string, reason orkstackv1.ProfileC
 			Detail:  detail,
 		}
 	}
+	s.syncLocked()
 }
 
 // clearUnavailable ends an unavailable cause. It never clears a drift.
@@ -88,7 +140,54 @@ func (s *profileState) clearUnavailable(profile string) {
 	defer s.mu.Unlock()
 	if held, ok := s.cordons[profile]; ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE {
 		delete(s.cordons, profile)
+		s.syncLocked()
 	}
+}
+
+// unavailable reports whether a profile is held unavailable.
+func (s *profileState) unavailable(profile string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held, ok := s.cordons[profile]
+	return ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE
+}
+
+// hostViewAudits is every audited profile with devices that has not
+// drifted: what the host-view probe passes and judges.
+func (s *profileState) hostViewAudits() map[string]profileAudit {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]profileAudit{}
+	for name, audit := range s.audits {
+		if held, ok := s.cordons[name]; ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT {
+			continue
+		}
+		if len(audit.devices) > 0 {
+			out[name] = audit
+		}
+	}
+	return out
+}
+
+// nextAuditDelay is how long until the next periodic check: recovery_interval
+// while a profile is held unavailable, audit_interval otherwise.
+func (s *profileState) nextAuditDelay() time.Duration {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, held := range s.cordons {
+		if held.GetCause() == orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE {
+			return s.declared.RecoveryInterval
+		}
+	}
+	return s.declared.AuditInterval
+}
+
+// cordonDetail is what the Orker observed of a profile's cause, for its own
+// log and the control channel only.
+func (s *profileState) cordonDetail(profile string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.cordons[profile].GetDetail()
 }
 
 // drifted reports whether a profile has drifted.

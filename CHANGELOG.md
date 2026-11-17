@@ -70,6 +70,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - Orkers log each task attempt's CPU and memory as `ork.record=usage` records on its run's telemetry sink, every `orker.usage_log_interval`, and report running totals as gauges ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration)).
 - Retention cleanup can now delete retired runs' artifact bytes on S3 (`ORK_CLEANUP_ARTIFACT_GC`); it starts in `dry_run`, and `orkctl admin gc preview` shows what `delete` would do ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#the-artifact-gc)).
 - Reading an artifact the GC deleted answers `ARTIFACT_RECLAIMED`, and an evidence bundle records it as `artifact_reclaimed` ([REASONS.md](https://github.com/orkstack/orkstack/blob/main/docs/REASONS.md#reads-of-reclaimed-artifacts)).
+- Device profiles: an Orker on the device's own host can pass named character devices, such as USB serial ports, to the tasks that select them with `devices:` ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-device-orker)).
 
 ### Changed
 

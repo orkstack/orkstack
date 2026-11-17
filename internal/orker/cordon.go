@@ -66,6 +66,10 @@ type Cordon struct {
 	operator *CordonCause
 	outage   *CordonCause
 	stopping *StoppingCause
+	// profiles holds while any profile cause does (profile_state.go): a
+	// drift until the process exits, an unavailable profile until its
+	// checks pass again.
+	profiles *CordonCause
 	// changed is closed and replaced whenever the last cause clears, so a
 	// blocked slot reservation wakes without polling.
 	changed chan struct{}
@@ -127,6 +131,31 @@ func (c *Cordon) SetStopping(since, graceEndsAt time.Time) {
 	}
 }
 
+// SetProfiles holds the cordon for this Orker's profile causes; only its
+// profile state calls it, with the earliest cause's instant. Setting it again
+// replaces the reason and keeps the first since.
+func (c *Cordon) SetProfiles(reason string, since time.Time) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.profiles != nil {
+		c.profiles.Reason = reason
+		return
+	}
+	c.profiles = &CordonCause{Reason: reason, Since: since}
+}
+
+// ClearProfiles ends the profile cause once no profile holds one and, when no
+// other cause holds, wakes every blocked reservation.
+func (c *Cordon) ClearProfiles() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.profiles == nil {
+		return
+	}
+	c.profiles = nil
+	c.wakeIfClear()
+}
+
 // Stopping is the stopping cause, and whether it holds.
 func (c *Cordon) Stopping() (StoppingCause, bool) {
 	c.mu.Lock()
@@ -139,7 +168,7 @@ func (c *Cordon) Stopping() (StoppingCause, bool) {
 
 // held reports whether any cause holds. The caller holds the lock.
 func (c *Cordon) held() bool {
-	return c.operator != nil || c.outage != nil || c.stopping != nil
+	return c.operator != nil || c.outage != nil || c.stopping != nil || c.profiles != nil
 }
 
 // wakeIfClear wakes the blocked reservations once no cause holds. The caller
@@ -162,6 +191,8 @@ func (c *Cordon) State() (bool, string, time.Time) {
 		return true, c.operator.Reason, c.operator.Since
 	case c.outage != nil:
 		return true, c.outage.Reason, c.outage.Since
+	case c.profiles != nil:
+		return true, c.profiles.Reason, c.profiles.Since
 	case c.stopping != nil:
 		return true, stoppingReason, c.stopping.Since
 	}

@@ -289,6 +289,42 @@ docker run --rm alpine:3.24 getent hosts host.docker.internal
 `172.17.0.1` is the gateway of Docker's default bridge; a host with a
 customized `docker0` uses its own gateway address.
 
+### The usb-serial test device
+
+The device-profile integration test passes a host character device into an
+activity container, so it needs one of the usb-serial class
+(docs/DEPLOY.md, "Running a device Orker"): the node `/dev/ttyUSB199`, at the
+major `188` the `usbserial` driver registers as `ttyUSB`. It is a bare node
+with no adapter behind it, and nothing opens it. The drift test needs a
+second node, `/dev/ttyUSB198` (188:198), owned by you rather than root: it
+moves the node to another group you belong to (`docker`) and back, which an
+Orker reads as the device changing, and it does that under a host-wide lock so
+two runs never move it at once. Only that test uses it. Without them,
+`make test-integration`, `scripts/integration.sh` and `make proof` fail that
+tests by name; a by-hand `go test -tags=integration` without
+`ORK_REQUIRE_INFRA=1` skips them. Set it up once, and the host remakes it at
+every boot:
+
+```bash
+# load the driver that registers major 188 as ttyUSB
+echo usbserial | sudo tee /etc/modules-load.d/orkstack.conf
+# the nodes, remade at every boot, in your own group; the drift test's is yours
+printf '%s\n' "c /dev/ttyUSB199 0660 root $(id -gn) - 188:199" \
+  "c /dev/ttyUSB198 0660 $(id -un) $(id -gn) - 188:198" | sudo tee /etc/tmpfiles.d/orkstack.conf
+
+# apply now, without a reboot, and verify
+sudo modprobe usbserial
+sudo systemd-tmpfiles --create /etc/tmpfiles.d/orkstack.conf
+grep '^188 ttyUSB$' /proc/devices && ls -l /dev/ttyUSB199 /dev/ttyUSB198
+```
+
+On a kernel that builds the USB serial drivers as extra modules (Ubuntu's
+cloud kernels among them), install `linux-modules-extra-$(uname -r)` first.
+CI's proof-host step does the same for each runner. Device profiles are
+Linux-host-only: an Orker reads `/proc/devices` and the host's own device
+numbers, and Docker Desktop on macOS passes only its Linux VM's devices, never
+the Mac's, so this test does not run there.
+
 The same applies to the observability stack (`make infra-up-observability`).
 Its Prometheus container scrapes `ork` and `orker` at
 `host.docker.internal:9464` and `:9465`, but it sits on the compose network,

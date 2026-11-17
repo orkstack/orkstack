@@ -46,6 +46,9 @@ var slugPattern = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 // the bound and a name one byte over.
 const MaxSlug = 200
 
+// MaxTaskDevices is how many device and gpu profiles one task may hold.
+const MaxTaskDevices = 8
+
 // checkSlug reports why value cannot be used as an identifier, naming the kind
 // of identifier so the message says which field is wrong.
 func checkSlug(kind, value string) error {
@@ -175,6 +178,11 @@ type taskDocument struct {
 	// Temporal Worker Session that implements it is internal, precisely as a
 	// queue is internal to a pool (AGENTS.md §7.1).
 	Pin string `yaml:"pin"`
+
+	// Devices names the device and gpu profiles the task holds, which the
+	// pool's Orkers define (docs/DSL.md, "Device profiles"). A pointer, so a
+	// written empty list is told apart from none.
+	Devices *[]string `yaml:"devices"`
 
 	// With is a data position, a yaml.Node value like document.Inputs.
 	With yaml.Node `yaml:"with"`
@@ -459,6 +467,13 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			TimeoutSeconds: DefaultTimeoutSeconds,
 			Pool:           td.Pool,
 			Pin:            td.Pin,
+		}
+		if td.Devices != nil {
+			if len(*td.Devices) == 0 {
+				return nil, validationError(fmt.Sprintf("tasks[%d].devices", taskIndex),
+					fmt.Errorf("task %q: `devices:` names at least one profile; leave it out to hold none", td.ID))
+			}
+			task.Devices = *td.Devices
 		}
 		if td.TimeoutSeconds != nil {
 			task.TimeoutSeconds = *td.TimeoutSeconds

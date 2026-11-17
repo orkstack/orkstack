@@ -903,6 +903,21 @@ digest, is bounded with `timeout`.
 Its fetches run inside the caller's `proof host` step, which has a limit of
 10 minutes of its own.
 
+The integration part also asks it for the usb-serial test device
+(`usb-serial: "true"`), CONTRIBUTING.md's "The usb-serial test device" for
+the runner's one boot: it loads the `usbserial` driver, checks that
+`/proc/devices` lists character major 188 (`ttyUSB`), makes the node
+`/dev/ttyUSB199` (188:199, no adapter behind it) and gives it to the runner's
+group, mode 0660, for the device-profile integration tests to pass to a
+container, and makes `/dev/ttyUSB198` (188:198) owned by the runner's user,
+which the drift test alone moves to the `docker` group and back. Where the runner's kernel lacks the module, it installs
+`linux-modules-extra` for that kernel from the runner's own Ubuntu archive,
+each `apt-get` bounded to 5 minutes: the one fetch of the action that is not
+`proof-fetch`'s, because a kernel module comes from the archive that signs the
+kernel. A runner that still lists no major 188 fails the step, and so the part
+is setup-failed. The user approved this step on 2026-11-16, and the drift
+node with it the same day.
+
 The composite action `.github/actions/proof-fetch` is how every part job
 fetches a run's own artifacts (the plan, the build, the proof job's parts),
 how a `ui-e2e` job pulls the browser image, and how the proof host pulls its

@@ -489,7 +489,9 @@ func checkOnePerKind(list []Profile) error {
 // SupportedProfileKinds are the kinds this build implements, which it
 // advertises on DescribeOrker. A kind joins this list only in the change that
 // implements it end to end.
-func SupportedProfileKinds() []orkstackv1.ProfileKind { return nil }
+func SupportedProfileKinds() []orkstackv1.ProfileKind {
+	return []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}
+}
 
 // CheckSupported refuses a profile whose kind this build does not implement:
 // a declared profile is never silently ignored.
