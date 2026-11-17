@@ -712,6 +712,9 @@ func (r *PoolResolver) Plan(
 	// and every other task carrying a secret, whose pool is only warned about.
 	unmaskedTasksByPool := map[string][]string{}
 	maskedTasksByPool := map[string][]string{}
+	// The profiles view: every task naming profiles in devices:, per resolved
+	// pool — the pools whose Orkers must all offer them with one identity.
+	profiledTasksByPool := map[string][]*orkstackv1.Task{}
 
 	for _, t := range planned.GetTasks() {
 		// An awaited task is never routed: no route, no allow-list check, no
@@ -751,6 +754,9 @@ func (r *PoolResolver) Plan(
 		}
 		if isFailureHandler(t) {
 			handlerTasksByPool[route.Pool] = append(handlerTasksByPool[route.Pool], t.GetId())
+		}
+		if len(t.GetDevices()) > 0 {
+			profiledTasksByPool[route.Pool] = append(profiledTasksByPool[route.Pool], t)
 		}
 		switch {
 		case slices.ContainsFunc(t.GetSecrets(), (*orkstackv1.SecretRef).GetUnmasked):
@@ -866,6 +872,19 @@ func (r *PoolResolver) Plan(
 				handlerTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
+			// And, for a pool that carries a task naming profiles: does every
+			// Orker offer each with one identity, which the run then pins.
+			identities, err := r.checkProfiles(ctx, census, namespaceName(ns), wf.GetName(), pool,
+				profiledTasksByPool[pool])
+			if err != nil {
+				return nil, RunPlan{}, err
+			}
+			if identities != nil {
+				if plan.ProfileIdentities == nil {
+					plan.ProfileIdentities = map[string]map[string]string{}
+				}
+				plan.ProfileIdentities[pool] = identities
+			}
 			// And, for a pool that carries a `mask: false` secret: can its
 			// Orker read one at all.
 			if err := r.checkSecretMasking(ctx, census, namespaceName(ns), wf.GetName(), pool,
@@ -895,6 +914,13 @@ func (r *PoolResolver) Plan(
 				"pool", empty.Pool,
 				"orkflow", wf.GetName(),
 				"unanswered", unanswered)
+		}
+		// A device cannot be assumed present: a pool no Orker serves offers
+		// no profile, and allow_empty_pool does not change that.
+		if tasks := profiledTasksByPool[pool]; len(tasks) > 0 {
+			if _, err := judgeTaskProfiles(empty.Namespace, pool, tasks, nil); err != nil {
+				return nil, RunPlan{}, err
+			}
 		}
 		if !allowEmpty {
 			return nil, RunPlan{}, empty
@@ -1272,6 +1298,29 @@ func (r *PoolResolver) checkJoinSupport(ctx context.Context, census *poolCensus,
 		OrkerID:   old.GetOrkerId(),
 		BuildID:   old.GetBuildId(),
 	}
+}
+
+// checkProfiles is judgeTaskProfiles for one live pool: asked only of a pool
+// that carries a task naming profiles, so any other submit reads no census
+// for it. Unlike the capability checks, no Orker answering is refused
+// (PROFILE_UNAVAILABLE), never logged and passed: a device cannot be assumed
+// present, and allow_empty_pool never downgrades it.
+func (r *PoolResolver) checkProfiles(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []*orkstackv1.Task) (map[string]string, error) {
+	if len(tasks) == 0 {
+		return nil, nil
+	}
+	var orkers []*orkstackv1.DescribeOrkerResult
+	if r.Fleet != nil {
+		ids := make([]string, len(tasks))
+		for i, t := range tasks {
+			ids[i] = t.GetId()
+		}
+		orkers = r.probeOrkers(ctx, census, capabilityProbe{
+			namespace: namespace, orkflow: orkflow, pool: pool, tasks: ids,
+			carrying: "a profiled task", question: "it offers the profiles",
+		})
+	}
+	return judgeTaskProfiles(namespace, pool, tasks, orkers)
 }
 
 // checkResourcesFit refuses a live pool none of whose Orkers could hold a

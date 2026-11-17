@@ -503,6 +503,7 @@ jobs:
           cosign: "true"
           dex: "true"
           cleanup-disk: "true"
+          usb-serial: "true"
       - name: fetch plan
         uses: ./.github/actions/proof-fetch
         timeout-minutes: 10

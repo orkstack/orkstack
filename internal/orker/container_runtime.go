@@ -116,6 +116,9 @@ type ContainerSpec struct {
 	TmpfsBytes int64
 	// Network is "none" or "default", always explicit, never implicit.
 	Network string
+	// Devices are the host devices a task's device profiles pass
+	// (device_mapping.go); empty for every other task.
+	Devices []DeviceMapping
 	// RunAsOrker is the §3.1 readability escape hatch: run the workload as
 	// the Orker's own user, so the Orker can read every file it writes
 	// whatever its umask. It is an intent, not a uid: the runtime renders it

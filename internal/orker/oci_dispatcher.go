@@ -57,6 +57,9 @@ const undecodableRereadDelay = 250 * time.Millisecond
 type OCIDispatcher struct {
 	// Runtime is the only Docker-aware seam in the repository.
 	Runtime ContainerRuntime
+	// profiles is what this Orker offers and audited (profile_gate.go);
+	// nil offers no profile.
+	profiles *profileState
 	// LogUnmasked is orker.log.mask_secrets turned off: a task's secrets are
 	// not masked in its logs. The zero value masks.
 	LogUnmasked bool
@@ -997,6 +1000,14 @@ func (d *OCIDispatcher) execute(
 		return nil, failure
 	}
 
+	// STEP 3c. The profiles the task names (profile_gate.go): offered here,
+	// as its run pinned them, every device as audited. Before the workspace
+	// and the pull: a refused task leaves nothing on disk.
+	devices, failure := d.profileGate(in, beat)
+	if failure != nil {
+		return nil, failure
+	}
+
 	// STEP 4. The workspace.
 	beat.Phase("workspace")
 	root, err := d.makeAttemptDir(in, attempt)
@@ -1105,7 +1116,7 @@ func (d *OCIDispatcher) execute(
 		if err != nil {
 			return nil, FailCause(ReasonWorkdirFailed, err, "encode run.json: %v", err)
 		}
-		key, ok := computeMemoKey(in, config, runJSON, staged, item)
+		key, ok := computeMemoKey(in, config, runJSON, staged, item, d.profileMemoEntries(in))
 		// note is the miss's log line, written only once STEP 5b′ lets the
 		// container run, so a task this Orker refuses never logs that it is
 		// running one.
@@ -1269,11 +1280,16 @@ func (d *OCIDispatcher) execute(
 	if failure != nil {
 		return nil, failure
 	}
+	spec.Devices = devices
 	// Nothing is created for an attempt that is being stopped: a run
 	// terminated during the pull leaves no container (resume/design.md
 	// §26.2). Execute says how it was stopped.
 	if err := ctx.Err(); err != nil {
 		return nil, beforeClaimStopped(context.Cause(ctx))
+	}
+	// The devices again, just before create (profile_gate.go).
+	if failure := d.profileRecheck(in); failure != nil {
+		return nil, failure
 	}
 	// The ordinal is held from before the create: a create that failed may
 	// still have made a container the daemon did not name, so an attempt

@@ -440,6 +440,16 @@
 					]
 				},
 				{
+					"route": "docs/operate/device-profiles",
+					"title": "Give a task a USB serial device",
+					"description": "Define a device profile on an Orker and select it in a task with devices:.",
+					"parts": [
+						{
+							"source": "site/content/how-to/device-profiles.md"
+						}
+					]
+				},
+				{
 					"route": "docs/operate/roll-out-a-release",
 					"title": "Roll out a release",
 					"description": "Move a deployment to a new OrkStack release without disturbing running runs.",

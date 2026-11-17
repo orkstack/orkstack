@@ -346,6 +346,8 @@ check the run's image policy
 check a cached task's memo
 check the task against this Orker's own policy, once no commit or memo answers it
   (the exact order, cached and not: docs/OCI_ACTIVITY_CONTRACT.md §7.1)
+check the task's profiles against this Orker's and the run's, after the
+  commit check and before the memo step
 resolve the OCI image and digest
 create an isolated workspace
 materialize input artifacts
@@ -375,14 +377,14 @@ polling Orker receives a task, and OrkStack never chooses a host.
 
 Every Orker of a pool has the same settings — caps, default request,
 capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
-registry credentials, runtime, pin hosting, stop grace, log masking, whether a
+registry credentials, runtime, pin hosting, profiles, stop grace, log masking, whether a
 secret may be a task's result — so a run never fails because of
 which Orker took a task. Where they differ, a task fails explicitly with its
 own reason. A committed result is never refused for any of them. A memo hit
 is never refused for the caps, secret schemes, floor or runtime, but a cached
-task is rendered and its image policy checked before its memo lookup, so a
-differing `env` allow-list or registry credentials can refuse it even where the
-memo would hit (`docs/DEPLOY.md`, "Every Orker of a pool has the same
+task is rendered, its image policy checked and its profiles checked before its
+memo lookup, so a differing `env` allow-list, registry credentials or profile
+can refuse it even where the memo would hit (`docs/DEPLOY.md`, "Every Orker of a pool has the same
 settings").
 
 Docker- and Podman-specific details live in the runtime files
@@ -405,7 +407,16 @@ host network
 arbitrary host path mounts
 Docker-socket mounts
 Orker-credential mounts
+capability additions, device cgroup rules, or a device an Orkflow names by path
 ```
+
+Profile kinds are a closed set compiled into the Orker (`devices`), as
+`cosign:` is (§5): a profile is data an operator writes, never code. A task
+reaches a host device only through a **device profile** the Orker's operator
+defined; an Orkflow names the profile, never a path, flag or CDI name. Only an
+Orker that runs on its container daemon's own host offers a device profile,
+and it proves that at boot and periodically. A device is a character device
+of a class the Orker's compiled allow-list names.
 
 Prefer `no-new-privileges`, default seccomp, resource limits, isolated working
 directories, and rootless execution when supported. Initially support only
@@ -558,6 +569,8 @@ internal never appears on any of those surfaces.
   User-facing text says a run "carries on" or is "carried forward", and calls
   its checkpoint its "saved state" (`RUN_STATE_*`); `RUN_HISTORY_LIMIT`
   speaks of the run's history as a whole.
+- **Profile** means a named, operator-defined Orker setting a task selects by
+  name: a device profile (`devices:`, kind `devices`).
 - **Pin host** means an Orker configured to accept pins
   (`ORK_ORKER_MAX_PINS` above zero). Every Orker still runs ordinary tasks;
   only a pin host runs pinned ones.
@@ -713,6 +726,8 @@ internal never appears on any of those surfaces.
   | operator | an operator, over the Orker's control channel | the operator | no |
   | store outage | the Orker, after consecutive failed object-storage checks | the Orker, after consecutive good ones | yes |
   | stopping | the Orker, on its first stop signal; from then it accepts no new task, pin or pin creation, and what its open polls still deliver runs in flight | the process's exit | yes, until the process exits |
+  | profile drift | the Orker, when a profile no longer matches what it audited | a restart | no |
+  | profile unavailable | the Orker, when a profile's devices or units are absent | the Orker, after consecutive good checks | yes |
 - **Drain** means setting an operator's cordon on an Orker and waiting until it
   reports no running task and no open pin. It is a client-side wait over the inventory read
   (`orkctl orker drain`); nothing server-side holds drain state. An Orker's
@@ -1044,6 +1059,10 @@ includes:
 - exit `1`, exit `0` without `values.json`, malformed JSON, output-size excess,
   timeout, cancellation, ignored SIGTERM, unavailable input artifact, failed
   image pull, and a tag changing between executions;
+- a device of a profile changed after boot, even to one that would pass the
+  audit: the Orker cordons itself for drift, at the periodic audit or at the
+  latest before its container starts, with no container started, and only a
+  restart audits again;
 - every task of a pin landing on ONE Orker while three real pin hosts poll the
   same pool, and no failover when that host is killed mid-container: the run
   fails `PIN_HOST_LOST`, and the survivors' own execution records and work
@@ -1800,6 +1819,9 @@ Do not build:
 - a visual workflow designer;
 - an AI agent builder;
 - a plugin marketplace;
+- a code plugin or extension point; profile kinds (`devices`, `gpu`) are a compiled-in closed set
+  (§6) and a profile is operator data, so a new kind is a change to this file
+  and a release;
 - a business-process forms platform;
 - hundreds of SaaS connectors;
 - a custom scripting language;

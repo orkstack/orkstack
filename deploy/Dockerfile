@@ -45,14 +45,21 @@ ENTRYPOINT ["/usr/local/bin/orkctl"]
 # whose version this pins.
 FROM docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb AS docker-cli
 
+#
+# org.orkstack.build is the commit its binary was built from, which `make dist`
+# stamps into it: an Orker that offers device profiles runs this image as its
+# probe image and refuses one whose label is not its own commit
+# (docs/DEPLOY.md, "Running a device Orker").
 FROM gcr.io/distroless/static-debian13:latest@sha256:15f8637509792e05b97d83451b0b6ccfa4abd548f997e406ac1e72c87fe1fa78 AS orker
 ARG TARGETARCH
 ARG VERSION=dev
+ARG BUILD=unknown
 LABEL org.opencontainers.image.title="orker" \
       org.opencontainers.image.description="The OrkStack worker: runs each task's OCI image" \
       org.opencontainers.image.source="https://github.com/orkstack/orkstack" \
       org.opencontainers.image.licenses="MIT" \
-      org.opencontainers.image.version="${VERSION}"
+      org.opencontainers.image.version="${VERSION}" \
+      org.orkstack.build="${BUILD}"
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --chmod=0755 dist/bin/linux-${TARGETARCH}/orker /usr/local/bin/orker

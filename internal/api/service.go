@@ -2090,6 +2090,16 @@ func poolPlanError(err error) error {
 	if errors.As(err, &noJoin) {
 		return connect.NewError(connect.CodeFailedPrecondition, err)
 	}
+	// A task naming a profile its pool's Orkers do not all offer, offer
+	// differently, or cannot implement: the request is well formed and the
+	// pool cannot run it (PROFILE_UNAVAILABLE, PROFILE_MISMATCH). A name that
+	// is not a device or gpu profile falls through to InvalidArgument.
+	var profileUnavailable *engine.ProfileUnavailableError
+	var profileMismatch *engine.ProfileMismatchError
+	var profileKind *engine.ProfileKindUnsupportedError
+	if errors.As(err, &profileUnavailable) || errors.As(err, &profileMismatch) || errors.As(err, &profileKind) {
+		return connect.NewError(connect.CodeFailedPrecondition, err)
+	}
 	// A pool whose Orker predates secret masking: it could not decode a task
 	// carrying a `mask: false` secret, so the run is refused before any id.
 	var noMasking *engine.PoolNoSecretMaskingError

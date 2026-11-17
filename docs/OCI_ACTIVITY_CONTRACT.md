@@ -1720,6 +1720,7 @@ heard of.
 | 3′ | — | **First heartbeat awaited**, a task with no memo step: wait for the cluster to acknowledge one heartbeat (§6.3); a server decision or the heartbeat timeout ends the attempt here with nothing made |
 | 3a | — | **This Orker's policy**, a task with no memo step (uncached or pinned): the request against this Orker's caps, its secret schemes and `ORK_ORKER_SECRET_ALLOW` floor, and whether a task that runs as the Orker's user can (§3.1); a refusal ends the attempt here, recorded in phase `commit-check` |
 | 3b | `image-policy` | **Image policy**, only when the input carries one (§4.7) |
+| 3c | `profiles` | **Profiles**, a task naming `devices:` only: each profile this Orker offers, with the identity the run pinned at submit, and its devices as the Orker audited them; a profile it does not offer, or holds unavailable, is `PROFILE_NOT_OFFERED`, another identity `PROFILE_CHANGED`, and a device changed since the audit `PROFILE_DRIFTED`, each an `InfrastructureError` retried under the task's policy, with nothing made ([DEPLOY.md](./DEPLOY.md#running-a-device-orker), "Running a device Orker") |
 | 4 | `workspace` | **Workspace**: per-attempt dir `0700`; `input/` `0555`, `output/` `1777`, `tmp/` `1777`; a pinned task's shared directory |
 | 4c | — | **Claim**, a task with no memo step: the attempt's ordinal, `{n}.claim` create-if-absent (`docs/STORAGE.md`, "Attempt ordinals"), four tries over about 10 s, else `ATTEMPT_STORE_UNAVAILABLE` with nothing made; the log opens under the ordinal |
 | 5 | `stage-inputs` | **Input stage**: upstream artifacts → `input/artifacts/`, upstream `values.json` → `input/upstream/`, secrets → `input/secrets/` (a cached task: `values.json` only) |
@@ -2089,7 +2090,7 @@ guarantee than validation.
 --network=host      (and any mode other than default | none)
 --userns=host
 --cap-add           (of any capability)
---device            (any device passthrough)
+--device            (any device a device profile does not pass)
 --security-opt seccomp=unconfined
 --security-opt apparmor=unconfined
 --security-opt label=disable

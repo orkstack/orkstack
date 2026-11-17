@@ -643,7 +643,7 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container, which the Orker then removes. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 230 seconds for removing what it gave up on and the first container, and for that cancellation (17 minutes 50 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.metadata_probe` | `ORK_ORKER_METADATA_PROBE` | `off` | `orker` | whether boot asks the host's instance metadata endpoints from a container on the `default` network: `off` runs no extra container, `warn` logs an endpoint that answered, `refuse` refuses boot when one answered or the probe failed, `METADATA_ENDPOINT_REACHABLE`. Set `refuse` on a cloud host ([Keeping tasks away from the host's identity](#keeping-tasks-away-from-the-hosts-identity)) |
-| `orker.profiles:` | `ORK_ORKER_PROFILES` | *(empty)* | `orker` | the profiles this Orker offers tasks by name: `probe_image` (the orker image pinned by digest, required with any profile), `audit_interval` (`60s`), `recovery_interval` (`5s`), and each named profile of `kind` `gpu` or `devices`. This release implements no kind yet: a declared profile refuses boot, `ORKER_PROFILE_INVALID` |
+| `orker.profiles:` | `ORK_ORKER_PROFILES` | *(empty)* | `orker` | the profiles this Orker offers tasks by name: `probe_image` (the orker image pinned by digest, required with any profile), `audit_interval` (`60s`), `recovery_interval` (`5s`), and each named profile of `kind` `gpu` or `devices`. This release implements `devices` ("Running a device Orker"); a `gpu` profile refuses boot, `ORKER_PROFILE_INVALID` |
 | `orker.log.mask_secrets` | `ORK_ORKER_LOG_MASK_SECRETS` | `true` | `orker` | whether a task's secrets are replaced by `***` in its logs, live and stored, and in failure messages; `false` keeps them byte-exact. A secret's `mask: false` does the same for one secret. The same on every Orker of a pool ([SECURITY_MODEL.md](./SECURITY_MODEL.md#masking-and-its-limits)) |
 | `orker.values.refuse_secrets` | `ORK_ORKER_VALUES_REFUSE_SECRETS` | `true` | `orker` | whether a `values.json` holding one of the task's own secrets fails the attempt, `VALUES_CONTAIN_SECRET`, before anything is uploaded; independent of `orker.log.mask_secrets`. The same on every Orker of a pool ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#94-secrets)) |
 | `orker.refuse_readable_engine_keys` | `ORK_ORKER_REFUSE_READABLE_ENGINE_KEYS` | `false` | `orker` | refuse to start when this Orker can open a file one of the engine's key settings names (`identity.signing.key_files`, `identity.keys_copy_file`, `auth.break_glass_key_file`, an issuer's `jwks_file`); by default each is an error in its log — see "An engine's key files and an Orker on one host" |
@@ -1380,6 +1380,114 @@ costs every boot a container and has nothing to find on a laptop; set
 
 The structural answer is that an Orker host needs no broad role at all: then
 the object store's role is the only thing a metadata endpoint could give away.
+
+### Running a device Orker
+
+A device profile passes named host character devices, such as a USB serial
+adapter, to the tasks that select it with `devices:`
+([DSL.md](./DSL.md#device-profiles), "Device profiles"). An Orkflow names the
+profile, never a path: what the profile passes is the Orker operator's
+configuration.
+
+```yaml
+orker:
+  profiles:
+    probe_image: ghcr.io/orkstack/orker@sha256:<digest of this release's orker image>
+    sensor:
+      kind: devices
+      devices:
+        - path: /dev/serial/by-id/usb-FTDI_FT232R-if00-port0
+          container_path: /dev/sensor
+          permissions: rw
+```
+
+- A profile passes 1 to 16 devices. `permissions` is `r`, `w` or `rw`, and is
+  always given.
+- `path` resolves on the host and must stay under `/dev`. The node it leads to
+  must be a character device of a class this Orker passes, by its driver in
+  `/proc/devices` and its node name. This release has one class, `usb-serial`:
+  drivers `ttyUSB` and `ttyACM`, nodes `ttyUSB<n>` and `ttyACM<n>`. Any other
+  device refuses the boot (`ORKER_PROFILE_INVALID`, `DEVICE_CLASS_REFUSED`).
+- `container_path` is a path under `/dev` that is not one of the nodes every
+  container has (`/dev/null`, `/dev/tty` and the rest) and not under
+  `/dev/shm`, `/dev/pts` or `/dev/mqueue`.
+- `probe_image` is the orker image of this Orker's own build, pinned by
+  digest. The Orker runs it as a probe container (`orker probe view`) to check
+  what a container sees, and reads its `org.orkstack.build` label: it must be
+  the commit the Orker was built from (`orker --version`). An image of another
+  build (`PROBE_IMAGE_MISMATCH`), or one that cannot be pulled or run
+  (`PROBE_IMAGE_UNAVAILABLE`), does not refuse the boot: it holds every device
+  profile unavailable, cordoning the Orker, and the probe runs again every
+  `recovery_interval` until three good checks in a row clear it. An Orker
+  built without a commit (from a source archive) can never pass this check.
+
+**The Orker runs on the container daemon's own host.** Device profiles are
+Linux-only: the Orker reads `/proc/devices` and the host's own device numbers.
+At boot and every `audit_interval` it starts a probe container with the
+profile's devices and compares what the probe sees at each path with its own
+view: the same character device and the same group. A difference at boot
+refuses it (`ORKER_PROFILE_INVALID`, `HOST_VIEW_MISMATCH`); a difference
+later takes the profile out of service until the Orker restarts
+(`HOST_VIEW_CHANGED`). `DOCKER_HOST` and `CONTAINER_HOST`, if set, must be a
+local unix socket, and neither `DOCKER_CONTEXT` (other than `default`) nor
+`CONTAINER_CONNECTION` may choose another daemon. The check proves that the
+two views are equal, not that the Orker runs natively: an Orker in a
+privileged container that bind-mounts the same paths still passes it, and
+that shape is not supported. Docker Desktop passes its Linux VM's devices,
+never the Mac's or Windows host's, so it cannot run a device Orker.
+
+Run the Orker as a service of the host, with no mount namespacing of its own,
+so that the devices, `/proc/devices` and the daemon's socket it sees are the
+host's:
+
+```ini
+[Unit]
+Description=OrkStack Orker (device host)
+After=docker.service
+Requires=docker.service
+
+[Service]
+User=orker
+Group=orker
+SupplementaryGroups=docker
+EnvironmentFile=/etc/orkstack/orker.env
+ExecStart=/usr/local/bin/orker --config /etc/orkstack/orker.yaml
+Restart=on-failure
+NoNewPrivileges=yes
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The unit sets none of `ProtectSystem`, `PrivateDevices`, `PrivateTmp`,
+`PrivateMounts`, `ReadOnlyPaths`, `InaccessiblePaths`, `BindPaths`,
+`BindReadOnlyPaths`, `TemporaryFileSystem`, `RootDirectory` or `RootImage`:
+each gives the Orker a view of the filesystem the daemon does not share.
+
+**A device keeps its group.** The node in the container has the host node's
+owner, group and the permissions the profile names, so a task that runs as a
+user other than root reads it only if that user is in the node's group. On
+most distributions a serial adapter's group is `dialout`.
+
+**Every Orker of the pool defines the profile the same way.** Submit refuses a
+task whose pool has an Orker that does not offer a profile it names
+(`PROFILE_UNAVAILABLE`), or two Orkers that define it differently
+(`PROFILE_MISMATCH`), and `allow_empty_pool` changes neither. The run pins the
+profile as submit saw it, and every attempt is held to that.
+
+**A profile is fixed for the Orker's lifetime.** The Orker checks the
+profile's devices again at dispatch and just before it creates the container.
+A device replaced, or changed in its numbers or group, is drift: the profile
+leaves service on that Orker until it restarts, and the attempt that met it
+fails `PROFILE_DRIFTED`, an `InfrastructureError` retried under the task's
+`retry:` policy. A device that is not there, such as an adapter unplugged, is
+not drift: the profile is unavailable (`DEVICE_ABSENT`), cordoning the Orker,
+an attempt that meets it fails `PROFILE_NOT_OFFERED`, and once the device is
+back as the same node, three good checks `recovery_interval` apart return the
+profile to service. Plugged back as another node, it has drifted. A task without `retry:` makes one attempt, so give a
+profiled task one. To change a profile, drain the Orker, stop it, edit its
+configuration and start it (§ "Removing an Orker safely: cordon and drain").
+A `revision` change alters only cache keys.
 
 ### An engine's key files and an Orker on one host
 

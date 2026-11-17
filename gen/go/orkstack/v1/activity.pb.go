@@ -384,6 +384,9 @@ const (
 	ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH    ProfileCordonReason = 10
 	ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN      ProfileCordonReason = 11
 	ProfileCordonReason_PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD      ProfileCordonReason = 12
+	// DEVICE_ABSENT: a device of the profile is not there after the boot
+	// audit. The profile is unavailable until it is back unchanged.
+	ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_ABSENT ProfileCordonReason = 13
 )
 
 // Enum value maps for ProfileCordonReason.
@@ -402,6 +405,7 @@ var (
 		10: "PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH",
 		11: "PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN",
 		12: "PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD",
+		13: "PROFILE_CORDON_REASON_DEVICE_ABSENT",
 	}
 	ProfileCordonReason_value = map[string]int32{
 		"PROFILE_CORDON_REASON_UNSPECIFIED":             0,
@@ -417,6 +421,7 @@ var (
 		"PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH":    10,
 		"PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN":      11,
 		"PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD":      12,
+		"PROFILE_CORDON_REASON_DEVICE_ABSENT":           13,
 	}
 )
 
@@ -5444,7 +5449,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\"METADATA_PROBE_OUTCOME_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fMETADATA_PROBE_OUTCOME_ANSWERED\x10\x01\x12$\n" +
 	" METADATA_PROBE_OUTCOME_NO_ANSWER\x10\x02\x12'\n" +
-	"#METADATA_PROBE_OUTCOME_PROBE_FAILED\x10\x03*\xdb\x04\n" +
+	"#METADATA_PROBE_OUTCOME_PROBE_FAILED\x10\x03*\x84\x05\n" +
 	"\x13ProfileCordonReason\x12%\n" +
 	"!PROFILE_CORDON_REASON_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"PROFILE_CORDON_REASON_SPEC_CHANGED\x10\x01\x12(\n" +
@@ -5459,7 +5464,8 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"*PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH\x10\n" +
 	"\x12,\n" +
 	"(PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN\x10\v\x12,\n" +
-	"(PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD\x10\f*[\n" +
+	"(PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD\x10\f\x12'\n" +
+	"#PROFILE_CORDON_REASON_DEVICE_ABSENT\x10\r*[\n" +
 	"\vProfileKind\x12\x1c\n" +
 	"\x18PROFILE_KIND_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14PROFILE_KIND_DEVICES\x10\x01\x12\x14\n" +

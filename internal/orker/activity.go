@@ -102,6 +102,9 @@ type Options struct {
 	// by name. Boot refuses a profile of a kind this build does not
 	// implement.
 	Profiles Profiles
+	// Build is the commit this binary was built from (buildinfo.Commit),
+	// which a device profile's probe image must carry.
+	Build string
 	// LogUnmasked is orker.log.mask_secrets: false; AllowSecretValues is
 	// orker.values.refuse_secrets: false (mask.go). The zero values mask
 	// and refuse.
@@ -284,7 +287,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		maxConc:       maxConc,
 		maxPins:       opts.MaxPins,
 		metadataProbe: opts.MetadataProbe,
-		profiles:      newProfileState(opts.Profiles),
+		profiles:      newProfileState(opts.Profiles, opts.Build),
 		cordon:        NewCordon(),
 		pins:          newOpenPins(),
 		stops:         newStopRegistry(),
@@ -298,6 +301,9 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		_, stopping := a.cordon.Stopping()
 		return stopping
 	}
+	// A profile cause holds this Orker's cordon (profile_state.go).
+	a.profiles.attach(a.cordon)
+	a.dispatcher.profiles = a.profiles
 	return a
 }
 
@@ -975,6 +981,11 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := a.profiles.declared.CheckSupported(SupportedProfileKinds()); err != nil {
 		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
 	}
+	// The boot audit (profile_audit.go): every device classified on this
+	// host and recorded, which every later check compares with.
+	if err := a.profiles.bootAuditProfiles(); err != nil {
+		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
+	}
 	// An id is what names this Orker's control channel (task.QueueForOrker),
 	// so an id that cannot name one refuses boot here, naming the variable,
 	// rather than leaving an Orker nobody can cordon.
@@ -1012,6 +1023,11 @@ func (a *Activities) Boot(ctx context.Context) error {
 		default:
 			return fmt.Errorf("%s: %w", ReasonWorkdirNotBindable, err)
 		}
+	}
+	// The host-native rule (host_view_probe.go): a container must see the
+	// devices the boot audit found, on a daemon of this host.
+	if err := a.bootHostView(ctx, root); err != nil {
+		return err
 	}
 	// Which engine the probe ran on, said out loud: the CLI is configured, the
 	// engine behind it is asked, and the probe above is what verified the

@@ -5322,6 +5322,7 @@ ProfileCordonReason is the machine-readable reason of a ProfileCordon.
 | `PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH` | 10 |  |
 | `PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN` | 11 |  |
 | `PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD` | 12 |  |
+| `PROFILE_CORDON_REASON_DEVICE_ABSENT` | 13 | DEVICE_ABSENT: a device of the profile is not there after the boot audit. The profile is unavailable until it is back unchanged. |
 
 ### ProfileKind
 

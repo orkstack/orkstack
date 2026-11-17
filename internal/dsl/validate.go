@@ -193,6 +193,10 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 			return validationError(fmt.Sprintf("tasks[%d].network", taskIndex),
 				fmt.Errorf("task %q: `network:` must be \"default\" or \"none\"", task.GetId()))
 		}
+		// Rule 6e: the device and gpu profiles a task holds, by name.
+		if err := validateDevices(taskIndex, task); err != nil {
+			return err
+		}
 		// Rule 6c: a secret names a file and a source, and the name is
 		// validated rather than sanitized so it can never escape the secrets
 		// directory.
@@ -582,6 +586,30 @@ func validateRetry(taskIndex int, task *orkstackv1.Task) error {
 			"task %q: retry.backoff_coefficient %g is below 1 — it multiplies each wait to give the next, "+
 				"so it must be at least 1; write 1 for a constant wait, or omit it (2: each wait doubles)",
 			task.GetId(), coefficient))
+	}
+	return nil
+}
+
+// validateDevices is rule 6e: `devices:` names at most MaxTaskDevices
+// profiles, each a slug, none twice. Which profiles exist, and of which kind,
+// is the submit's to check against the pool's Orkers.
+func validateDevices(taskIndex int, task *orkstackv1.Task) error {
+	devices := task.GetDevices()
+	if len(devices) > MaxTaskDevices {
+		return validationError(fmt.Sprintf("tasks[%d].devices", taskIndex),
+			fmt.Errorf("task %q: `devices:` names at most %d profiles, not %d", task.GetId(), MaxTaskDevices, len(devices)))
+	}
+	seen := map[string]bool{}
+	for i, name := range devices {
+		if len(name) > MaxSlug || !slugPattern.MatchString(name) {
+			return validationError(fmt.Sprintf("tasks[%d].devices[%d]", taskIndex, i),
+				fmt.Errorf("task %q: `devices:` entry %q is not a profile name (%s)", task.GetId(), name, slugPattern))
+		}
+		if seen[name] {
+			return validationError(fmt.Sprintf("tasks[%d].devices[%d]", taskIndex, i),
+				fmt.Errorf("task %q: `devices:` names %q twice", task.GetId(), name))
+		}
+		seen[name] = true
 	}
 	return nil
 }

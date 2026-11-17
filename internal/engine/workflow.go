@@ -2023,6 +2023,9 @@ func (s *runState) taskDispatchInput(
 		return nil, err
 	}
 	input := s.executeTaskInput(t, id, pool, pinContext)
+	if input.Devices, err = s.deviceRefs(pool, t); err != nil {
+		return nil, err
+	}
 	input.IdempotencyKey = task.IdempotencyKeyFor(s.wf.GetNamespace(), s.runID, id)
 	input.CommitUri = commitURI
 	// A failure handler is told how its needs ended. Set before the size

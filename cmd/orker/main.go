@@ -492,6 +492,12 @@ func start(
 	stdout, stderr io.Writer,
 	serve func(*slog.Logger, telemetry.Config, *telemetry.Sinks, config) error,
 ) int {
+	// `orker probe` runs inside a probe container (design §2.1), which holds
+	// none of the Orker's configuration, credentials or environment: it reads
+	// none of them and serves nothing.
+	if len(args) > 0 && args[0] == "probe" {
+		return orker.Probe(args[1:], stdout, stderr)
+	}
 	cfg, cfgPath, cfgSet, exit, stop := configure(args, lookup, setenv, stdout, stderr)
 	if stop {
 		return exit
@@ -917,6 +923,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return artifacts.CheckStoreScopeOf(ctx, commitStore, orkerID)
 	}
 	go activities.WatchStoreScope(scopeCheck, cfg.storeScope).Run(ctx)
+	// The periodic profile audit: every audit_interval, each device of an
+	// audited profile again; a difference is drift (docs/DEPLOY.md,
+	// "Running a device Orker"). With no profile it returns at once.
+	go activities.RunProfileAudit(ctx)
 	// The load gauges (ork.orker.running_tasks, open_pins, max_concurrent,
 	// cordoned): a process-level signal, so the default sink's, and only when
 	// metrics are exported at all.
@@ -1363,6 +1373,9 @@ func orkerOptions(
 		// What this Orker offers tasks by name; Boot refuses a kind this
 		// build does not implement.
 		Profiles: cfg.profiles,
+		// The commit this binary was built from, which a device profile's
+		// probe image must carry (internal/orker/host_view_probe.go).
+		Build: buildinfo.Commit(commit),
 		// Secret masking and the values.json check (docs/DEPLOY.md, "Every
 		// Orker of a pool has the same settings").
 		LogUnmasked:       !cfg.maskSecrets,

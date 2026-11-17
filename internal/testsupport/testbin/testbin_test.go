@@ -1,6 +1,7 @@
 package testbin
 
 import (
+	"debug/elf"
 	"os"
 	"path/filepath"
 	"strings"
@@ -44,6 +45,31 @@ func TestPathBuildsOncePerProcessWithoutTheProofsBinaries(t *testing.T) {
 	Cleanup()
 	if _, err := os.Stat(first); !os.IsNotExist(err) {
 		t.Errorf("Cleanup left %s", first)
+	}
+}
+
+// TestStaticPath_BuildsWithNoInterpreter: StaticPath's binary asks for no
+// dynamic loader, so it runs in an image with no C library, and it is this
+// process's own build even where a proof exported its binaries.
+func TestStaticPath_BuildsWithNoInterpreter(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	shared := t.TempDir()
+	must.OK(t, os.WriteFile(filepath.Join(shared, "deaf-poller"), []byte("#!/bin/sh\n"), 0o755))
+	t.Setenv(EnvDir, shared)
+	t.Cleanup(Cleanup)
+	got := StaticPath(t, "./test/tools/deaf-poller")
+	if filepath.Dir(got) == shared {
+		t.Fatalf("StaticPath took the proof's binary %s", got)
+	}
+	f, err := elf.Open(got)
+	must.OK(t, err)
+	defer f.Close()
+	for _, p := range f.Progs {
+		if p.Type == elf.PT_INTERP {
+			t.Fatalf("%s asks for a dynamic loader", got)
+		}
 	}
 }
 

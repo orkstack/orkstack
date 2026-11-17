@@ -150,7 +150,9 @@ task field expresses any of them ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRA
 `dockerCreateArgs` (`internal/orker/runtime_docker.go`) has no argument for them:
 
 - `--privileged`, any host namespace (PID, IPC, UTS, network, user), any added
-  capability, any device, and any relaxed seccomp, AppArmor or SELinux setting;
+  capability, any device cgroup rule, any device other than one a device
+  profile passes ("Device profiles" below), and any relaxed seccomp, AppArmor
+  or SELinux setting;
 - any host bind mount: every mount source is an absolute path the Orker created;
 - the Docker socket, as a source or as a target (`forbiddenMountTargets`);
 - a network mode other than `default` or `none`.
@@ -175,6 +177,46 @@ to omit them ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §9.2):
 | `--pids-limit` | 512 by default |
 | `--cpus`, `--memory` | always set, never unlimited |
 | `--network` | always explicit: `default` or `none` |
+
+### Device profiles
+
+A task reaches a host device only through a device profile the Orker's
+operator defined ([DEPLOY.md](DEPLOY.md#running-a-device-orker), "Running a
+device Orker"). An Orkflow names the profile in `devices:`, never a path, a
+flag or a device number, so whoever writes an Orkflow chooses among the
+devices an operator offers and reaches no other. The profile kinds are a
+closed set compiled into the Orker, as `cosign:` is for image signatures: a
+profile is data an operator writes, never code.
+
+- **Only character devices of a compiled class.** A device passes only when it
+  is a character device whose driver (by its major number, in `/proc/devices`)
+  and node name are of a class the Orker's build lists. This release lists
+  one, `usb-serial`. Block devices, `/dev/mem` and the like, sockets, FIFOs and
+  regular files are refused at boot, whatever the operator wrote. A `path` is
+  resolved on the host and must stay under `/dev`; the Orker stats the node it
+  leads to and never opens it, since opening a serial device can toggle its
+  control lines.
+- **Nothing else changes.** A device adds `--device host:container:perms`, with
+  the profile's permissions spelled out, and nothing more: no capability, no
+  device cgroup rule, no `--privileged`, and the mandatory profile is
+  unchanged. A device is shared: every task that holds its profile opens the
+  same node, and the node keeps its host group, so a task that runs as another
+  user needs that group.
+- **The Orker's view is the container's.** The Orker proves at boot and every
+  `audit_interval` that a probe container sees the same device, by number and
+  group, at each path. This proves equal views, not that the Orker runs on the
+  host: an Orker in a privileged container that bind-mounts the same paths
+  passes, and that shape is unsupported.
+- **A profile is fixed for the Orker's lifetime.** It is audited at boot and
+  checked again at dispatch and just before each container is created. A
+  device replaced, removed or renumbered is drift, which takes the profile out
+  of service until the Orker restarts and is never adopted. The window between
+  the last check and the runtime's own open is open only to someone who can
+  replace a node under `/dev`, which is root.
+- **A run pins what submit saw.** Submit refuses a task unless every Orker of
+  its pool offers the profile with one structural identity, and every attempt
+  is held to that identity, so a run never meets a device its submit did not
+  see. The refusals name Orkers, never the identity.
 
 ### Network modes
 

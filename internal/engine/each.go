@@ -598,6 +598,11 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		commitURI = strings.TrimSuffix(s.plan.CommitRoot, "/") + "/" + key
 	}
 	input := s.executeTaskInput(t, id, pool, nil)
+	devices, err := s.deviceRefs(pool, t)
+	if err != nil {
+		return nil, err
+	}
+	input.Devices = devices
 	input.IdempotencyKey = task.ItemIdempotencyKeyFor(s.wf.GetNamespace(), s.runID, id, index)
 	input.CommitUri = commitURI
 	input.Limits.ArtifactMaxCount = s.itemArtifactMax

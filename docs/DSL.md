@@ -472,6 +472,8 @@ tasks:
       cpu: "2"
       memory: 4Gi
     network: none         # optional: `default` or `none`
+    devices:              # optional device and gpu profiles the pool's Orkers define (see "Device profiles")
+      - sensor
     cancellation_grace_period_seconds: 30 # SIGTERM-to-SIGKILL window
     run_as_orker_user: false # opt in to overriding the image's USER
     cache:                # optional: reuse an identical earlier result (see "Caching")
@@ -918,6 +920,39 @@ should not fail the run is the workload's to report as data, which a
 `condition:` reads. See `examples/order-saga.ork.yaml` for failure handlers,
 and `examples/http-post.ork.yaml` for a status a `condition:` reads.
 
+## Device profiles
+
+A **device profile** is a set of host devices an operator defines on the
+Orkers of a pool (`orker.profiles`, docs/DEPLOY.md, "Running a device
+Orker"): character devices of a class the Orker allows, such as a USB serial
+adapter. A task holds one by name and never names a host path:
+
+```yaml
+tasks:
+  - id: read-sensor
+    uses: ghcr.io/acme/sensor-reader@sha256:...
+    pool: lab
+    devices:
+      - sensor
+```
+
+- A submit asks every Orker of the pool that serves it which profiles it
+  offers. A profile one of them lacks is refused (`PROFILE_UNAVAILABLE`), and
+  so is a profile whose definition differs between them (`PROFILE_MISMATCH`).
+  With no Orker answering, a device profile is refused too: it cannot run on
+  an Orker that does not offer it. The run pins the profile's identity, so
+  every attempt runs under the profile it was submitted against.
+- An Orker that does not offer the profile fails the attempt
+  `PROFILE_NOT_OFFERED`; one whose profile has changed since the submit,
+  `PROFILE_CHANGED`.
+- An Orker that finds a profile's devices no longer matching what it checked
+  at boot stops taking work (`PROFILE_DRIFTED`) until it restarts. The
+  attempt fails and the task is retried, under its `retry:` policy, on
+  another Orker of the pool, so give such a task a `retry:` with more than
+  one attempt.
+- `devices:` is refused on awaited, sleeping and composed tasks, which run no
+  container.
+
 ## Pins
 
 A **pin** is a named group of tasks that execute on one Orker process and share
@@ -1139,7 +1174,7 @@ tasks:
 
 An awaited task takes only `id`, `needs`, `condition`, `join` and `await`; every key
 that shapes a container (`uses`, `with`, `command`, `env`, `secrets`,
-`resources`, `network`, `pool`, `pin`, `retry`, `timeout_seconds`,
+`resources`, `network`, `devices`, `pool`, `pin`, `retry`, `timeout_seconds`,
 `cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
 `cache`) is refused by name. While a task awaits, its run is `RUNNING`;
 `AWAITING` is a task status only. An `artifact "<task>/<name>"` helper may not
@@ -1237,7 +1272,7 @@ tasks:
 A sleeping task takes only `id`, `needs`, `condition`, `join` and `sleep`.
 `uses` and `await` are refused as another kind of task (rule 6), and every key
 that shapes a container (`with`, `command`, `env`, `secrets`, `resources`,
-`network`, `pool`, `pin`, `retry`, `timeout_seconds`,
+`network`, `devices`, `pool`, `pin`, `retry`, `timeout_seconds`,
 `cancellation_grace_period_seconds`, `run_as_orker_user`, and also `each` and
 `cache`) is refused by name (rule 49). While a task sleeps, its run is
 `RUNNING`; `SLEEPING` is a task status only. Its `TASK_SLEEPING` event names
@@ -1444,7 +1479,7 @@ tasks:
   create from breaking another team's run: a new version of a shared Orkflow
   changes nothing for a parent that pinned an older one.
 - **What it may carry:** `id`, `needs`, `condition`, `join`, `uses` and `with`.
-  `command`, `env`, `secrets`, `resources`, `network`, `pool`, `pin`,
+  `command`, `env`, `secrets`, `resources`, `network`, `devices`, `pool`, `pin`,
   `retry`, `timeout_seconds`, `cancellation_grace_period_seconds`,
   `run_as_orker_user`, `each`, `await` and `cache` are refused by name: the
   child's own tasks declare where and how they run (and may be cached). There
@@ -1644,6 +1679,7 @@ and is given. It looks for a **memo** under that key: a small pointer to a
 | `run_input` | SHA-256 of the exact `run.json` bytes |
 | `inputs` | SHA-256 of every staged input file's container path, name and content digest, and every fan-out upstream's item count |
 | `item`, `item_as`, `item_index`, `item_count` | for one item of a fan-out: its value, the name it is bound to, its position and the array's length |
+| `profiles` | for a task naming `devices:`: SHA-256 of each profile's name, the identity its run pinned and the Orker's `revision` of it; absent for every other task, whose key is unchanged |
 
 The key document also names the namespace, the scope, the task id and — under
 `orkflow` scope — the Orkflow's name. A task of a shared Orkflow composed from
@@ -1879,7 +1915,8 @@ How each node reads:
    sleeping task runs no image. A `uses:` beginning with `orkflow:` is a composed task (rule 26) and
    skips the catalog check — it would otherwise be taken for a registry
    reference because it contains `:` and `@`. `network:`, when present, is
-   `default` or `none` (6b). Every secret has a `name` matching
+   `default` or `none` (6b). `devices:`, when present, names 1 to 8 profiles,
+   each a slug and none twice (6e). Every secret has a `name` matching
    `^[A-Za-z0-9._-]{1,128}$` — validated, never sanitized, so it cannot
    escape the secrets directory — and a non-empty `source:` (6c).
    `resources.cpu` and `resources.memory`, when present, are quantities in
@@ -1952,7 +1989,7 @@ How each node reads:
     the unqualified form.
 27. A composed task carries nothing but `id`, `needs`, `condition`, `join`,
     `uses`, `with` (and its compiled `orkflow`): every execution field — `command`,
-    `env`, `secrets`, `resources`, `network`, `pool`, `pin`, `retry`,
+    `env`, `secrets`, `resources`, `network`, `devices`, `pool`, `pin`, `retry`,
     `timeout_seconds`, `cancellation_grace_period_seconds`,
     `run_as_orker_user`, `each`, `await`, `cache` — is refused by name.
 28. Engine-rendered templates — a composed task's `with:` and every

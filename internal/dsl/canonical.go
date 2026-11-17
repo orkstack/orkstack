@@ -258,6 +258,11 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	if t.GetPin() != "" {
 		out["pin"] = t.GetPin()
 	}
+	// devices is emitted ONLY when set — the same exception, for the same
+	// reason, as `pin`: a task that holds no profile keeps its digest.
+	if len(t.GetDevices()) > 0 {
+		out["devices"] = canonicalStrings(t.GetDevices())
+	}
 	// join is emitted ONLY when it is not UNSPECIFIED (all_succeeded) — the
 	// same exception, for the same reason, as `pin`: a definition with no
 	// join keeps its digest.

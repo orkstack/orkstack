@@ -238,6 +238,8 @@ func slots() map[string]slot {
 	out["tasks[].sleep.seconds"] = slot{doc: sleepDoc("{seconds: @V@}"), field: "tasks[0].sleep.seconds", baseline: "60",
 		absent: sleepDoc("{}")}
 	out["tasks[].needs[]"] = slot{doc: taskDoc("    needs: [@V@]\n"), field: "tasks[0].needs[0]", baseline: "b"}
+	out["tasks[].devices"] = slot{doc: taskDoc("    devices: @V@\n"), field: "tasks[0].devices", baseline: "[sensor]", absent: taskDoc("")}
+	out["tasks[].devices[]"] = slot{doc: taskDoc("    devices: [@V@]\n"), field: "tasks[0].devices[0]", baseline: "sensor"}
 	out["tasks[].command[]"] = slot{doc: taskDoc("    command: [@V@]\n"), field: "tasks[0].command[0]", baseline: "x"}
 	out["tasks[].env.*"] = slot{doc: taskDoc("    env: {A: @V@}\n"), field: "tasks[0].env.A", baseline: "b"}
 	out["tasks[].secrets[]"] = slot{doc: taskDoc("    secrets: [@V@]\n"), field: "tasks[0].secrets[0]", baseline: "{name: s, source: 'env:S'}"}

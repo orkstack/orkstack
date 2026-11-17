@@ -18,6 +18,10 @@ inputs:
     description: Remove the runner's preinstalled SDKs to free disk
     required: false
     default: "false"
+  usb-serial:
+    description: Make the usb-serial test devices /dev/ttyUSB199 and /dev/ttyUSB198 (the device-profile integration tests; CONTRIBUTING.md, "The usb-serial test device")
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -53,6 +57,41 @@ runs:
         # TestBindProbeImage_IsTheFirstPartyImagesBase holds to theirs),
         # pulled from Docker Hub and so bounded like a fetch is.
         timeout -k 10 360 docker run --rm alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a getent hosts host.docker.internal
+
+    # CONTRIBUTING.md's "The usb-serial test device", for this runner's boot
+    # only: the usbserial driver, which registers character major 188
+    # (ttyUSB), and one node of it with no adapter behind it, which the
+    # device-profile tests pass to a container and stat. The module ships in
+    # linux-modules-extra on Ubuntu's cloud kernels.
+    - name: usb-serial test device
+      # A hosted runner only: on a self-hosted one the module, the nodes and
+      # their owner would outlive the job.
+      if: inputs.usb-serial == 'true' && runner.environment == 'github-hosted'
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! sudo modprobe usbserial; then
+          timeout -k 10 300 sudo apt-get update -q
+          timeout -k 10 300 sudo apt-get install -y -q "linux-modules-extra-$(uname -r)"
+          sudo modprobe usbserial
+        fi
+        if ! grep -Eq '^ *188 ttyUSB$' /proc/devices; then
+          echo "the usbserial driver is loaded but /proc/devices lists no character major 188 (ttyUSB)" >&2
+          exit 1
+        fi
+        if [ ! -e /dev/ttyUSB199 ]; then
+          sudo mknod /dev/ttyUSB199 c 188 199
+        fi
+        sudo chgrp "$(id -gn)" /dev/ttyUSB199
+        sudo chmod 0660 /dev/ttyUSB199
+        # The drift test's own node, owned by the runner's user, who moves it
+        # to the docker group and back as an unprivileged change of the device.
+        if [ ! -e /dev/ttyUSB198 ]; then
+          sudo mknod /dev/ttyUSB198 c 188 198
+        fi
+        sudo chown "$(id -un):$(id -gn)" /dev/ttyUSB198
+        sudo chmod 0660 /dev/ttyUSB198
+        ls -l /dev/ttyUSB199 /dev/ttyUSB198
 
     # About 20 jobs a run each need the stack's images; Docker Hub allows 100
     # anonymous pulls an hour per address. One job saves them, every job loads

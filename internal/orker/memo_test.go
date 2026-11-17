@@ -372,7 +372,7 @@ func lastAttempt(t *testing.T, store *artifacts.MemoryAttemptStore, runID, taskI
 
 func keyOf(t *testing.T, in *orkstackv1.ExecuteTaskInput, config, run []byte, staged *stagedInputs, item *resolvedEachItem) memoKey {
 	t.Helper()
-	key, ok := computeMemoKey(in, config, run, staged, item)
+	key, ok := computeMemoKey(in, config, run, staged, item, nil)
 	if !ok {
 		t.Fatal("computeMemoKey: not keyable")
 	}
@@ -632,7 +632,7 @@ func TestMemoKey_InputWithoutDigestIsUnkeyable(t *testing.T) {
 	in, _ := pinnedKeyInput()
 	staged := &stagedInputs{}
 	staged.noteInputFile("/orkstack/input/artifacts/x/y", "y", "")
-	if _, ok := computeMemoKey(in, []byte("{}\n"), []byte("{}\n"), staged, nil); ok {
+	if _, ok := computeMemoKey(in, []byte("{}\n"), []byte("{}\n"), staged, nil, nil); ok {
 		t.Fatal("an input with no digest was keyed")
 	}
 

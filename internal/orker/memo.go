@@ -247,9 +247,11 @@ func memoScopeName(scope orkstackv1.CacheScope) string {
 // computeMemoKey is the memo key (docs/DSL.md "What the key covers"), and nothing else reads an
 // input to build a key. config and runJSON are encodeInputFile's bytes; item
 // is what resolveEachItem resolved, nil for a task that is not a fan-out item.
-// ok is false when an input reference had no digest (INPUT_UNHASHED). Pure.
+// ok is false when an input reference had no digest (INPUT_UNHASHED).
+// profiles are the task's profiles with this Orker's revision of each
+// (profileMemoEntries); none leaves the key what it always was. Pure.
 func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
-	staged *stagedInputs, item *resolvedEachItem) (key memoKey, ok bool) {
+	staged *stagedInputs, item *resolvedEachItem, profiles []ProfileMemoEntry) (key memoKey, ok bool) {
 	if staged != nil && staged.inputUnhashed {
 		return memoKey{}, false
 	}
@@ -309,6 +311,15 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 		components["item_as"] = item.As
 		components["item_index"] = strconv.FormatInt(int64(item.Index), 10)
 		components["item_count"] = strconv.FormatInt(int64(item.Count), 10)
+	}
+	if len(profiles) > 0 {
+		// Each profile by name, structural identity and revision: a result
+		// is reused only with the devices it was made with.
+		component, err := ProfileMemoComponent(profiles, 0)
+		if err != nil {
+			return memoKey{}, false
+		}
+		components["profiles"] = sha256Hex(component)
 	}
 	if len(secrets) > 0 {
 		// A hit checks nothing, so no result from before values.json was

@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -148,14 +149,14 @@ func TestCheckProfileKindsSupported_RefusesWhatThisBuildLacks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// This build advertises no profile kind yet, so any declared profile
-	// refuses the boot, naming it, rather than being silently ignored.
-	if len(SupportedProfileKinds()) != 0 {
-		t.Fatalf("SupportedProfileKinds = %v; this build implements none", SupportedProfileKinds())
+	// This build implements devices and not gpu, so a gpu profile refuses
+	// the boot, naming it, rather than being silently ignored.
+	if !slices.Equal(SupportedProfileKinds(), []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}) {
+		t.Fatalf("SupportedProfileKinds = %v; this build implements devices", SupportedProfileKinds())
 	}
 	err = got.CheckSupported(SupportedProfileKinds())
-	if err == nil || !strings.Contains(err.Error(), "amd") || !strings.Contains(err.Error(), "gpu") {
-		t.Fatalf("CheckSupported = %v; want a refusal naming profile amd and kind gpu", err)
+	if err == nil || !strings.Contains(err.Error(), "amd") || !strings.Contains(err.Error(), "gpu") || strings.Contains(err.Error(), "sensor") {
+		t.Fatalf("CheckSupported = %v; want a refusal naming profile amd and kind gpu, and not sensor", err)
 	}
 	none, _ := ParseProfiles(nil)
 	if err := none.CheckSupported(nil); err != nil {

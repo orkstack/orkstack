@@ -52,9 +52,47 @@ func Path(t testing.TB, pkg string) string {
 	return p
 }
 
-func resolve(pkg string) (string, error) {
+// StaticPath returns the path of a statically linked build of pkg
+// (CGO_ENABLED=0), for a test that copies the binary into an image with no C
+// library, such as the orker image's distroless base. It is always built by
+// this process, never taken from a proof's ORK_TEST_BIN_DIR, whose binaries
+// are the host's own linkage. A test that runs the binary on the host and in
+// an image runs this one in both, so the two are one build.
+func StaticPath(t testing.TB, pkg string) string {
+	t.Helper()
+	if err := checkPackage(pkg); err != nil {
+		t.Fatal(err)
+	}
+	p, err := once("static:"+pkg, func() (string, error) { return compile(pkg, path.Base(pkg)+"-static", true) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func checkPackage(pkg string) error {
 	if !strings.HasPrefix(pkg, "./cmd/") && !strings.HasPrefix(pkg, "./test/tools/") {
-		return "", fmt.Errorf("testbin: %q is not a ./cmd/<name> or ./test/tools/<name> package", pkg)
+		return fmt.Errorf("testbin: %q is not a ./cmd/<name> or ./test/tools/<name> package", pkg)
+	}
+	return nil
+}
+
+// once builds key at most once per process.
+func once(key string, compileIt func() (string, error)) (string, error) {
+	mu.Lock()
+	b := built[key]
+	if b == nil {
+		b = &build{}
+		built[key] = b
+	}
+	mu.Unlock()
+	b.once.Do(func() { b.path, b.err = compileIt() })
+	return b.path, b.err
+}
+
+func resolve(pkg string) (string, error) {
+	if err := checkPackage(pkg); err != nil {
+		return "", err
 	}
 	name := path.Base(pkg)
 	if shared := os.Getenv(EnvDir); shared != "" {
@@ -63,18 +101,10 @@ func resolve(pkg string) (string, error) {
 			return candidate, nil
 		}
 	}
-	mu.Lock()
-	b := built[pkg]
-	if b == nil {
-		b = &build{}
-		built[pkg] = b
-	}
-	mu.Unlock()
-	b.once.Do(func() { b.path, b.err = compile(pkg, name) })
-	return b.path, b.err
+	return once(pkg, func() (string, error) { return compile(pkg, name, false) })
 }
 
-func compile(pkg, name string) (string, error) {
+func compile(pkg, name string, static bool) (string, error) {
 	root, err := repoRoot()
 	if err != nil {
 		return "", err
@@ -92,6 +122,9 @@ func compile(pkg, name string) (string, error) {
 	mu.Unlock()
 	cmd := exec.Command("go", "build", "-o", out, pkg)
 	cmd.Dir = root
+	if static {
+		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	}
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("testbin: go build %s: %v\n%s", pkg, err, b)
 	}
