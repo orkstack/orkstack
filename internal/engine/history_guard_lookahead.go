@@ -114,8 +114,21 @@ func (s *runState) pauseApplyCrossing(ctx workflow.Context, inFlight map[string]
 			children++
 		}
 	}
-	applyEvents := p.ApplyReserveEvents + p.CascadeEventsPerChild*children
-	applyBytes := p.ApplyReserveBytes + p.CascadeBytesPerChild*children
+	// A cascade round's sends, and each retry's timer and send (M5).
+	perChild, perChildBytes := p.CascadeEventsPerChild, p.CascadeBytesPerChild
+	if p.Cascades {
+		perChild += p.CascadeRetries * (2 + p.CascadeEventsPerChild)
+		perChildBytes += p.CascadeRetries * (2 + p.CascadeEventsPerChild) * (p.CascadeBytesPerChild / max(p.CascadeEventsPerChild, 1))
+	}
+	// A round's stop or re-arm of each pausable pin's timer.
+	var pins int64
+	for _, name := range s.pinOrder {
+		if pin := s.pins[name]; pin != nil && pin.deadline != nil && !pin.doneSent {
+			pins++
+		}
+	}
+	applyEvents := p.ApplyReserveEvents + perChild*children + p.PinTimerEvents*pins
+	applyBytes := p.ApplyReserveBytes + perChildBytes*children + p.PinTimerEvents*pins*(p.ApplyReserveBytes/max(p.ApplyReserveEvents, 1))
 	c.events, c.bytes = s.historyNow(ctx)
 	c.maxEvents, c.maxBytes = limit.MaxEvents, limit.MaxBytes
 	c.reserveEvents, c.reserveBytes = s.quickReserve(inFlight, limit.Reserve)

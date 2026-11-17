@@ -1139,9 +1139,20 @@ enum PauseEnd {
   PAUSE_END_RUN_ENDED = 3;
 }
 
-// PauseWarning is E103's; it is empty until E103 lands (v0.4.0 proto
-// batch).
-message PauseWarning {}
+// PauseWarning is one way the run's pause did not reach a child run: the
+// child keeps running. A run's warnings are those of its latest pause, shown
+// while it is paused.
+message PauseWarning {
+  // task_id is the composed task whose child run the pause did not reach.
+  string task_id = 1;
+  // child_run_id is that child run's id.
+  string child_run_id = 2;
+  // code is CHILD_NOT_PAUSABLE (the child was started without support for
+  // pausing) or CHILD_PAUSE_FAILED (the pause could not be delivered to it).
+  string code = 3;
+  // message says what happened, in words.
+  string message = 4;
+}
 
 // RecordRef is identity (O39)'s; it is empty until identity (O39) lands (v0.4.0 proto
 // batch).

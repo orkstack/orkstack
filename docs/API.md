@@ -3090,10 +3090,16 @@ No fields.
 
 ### PauseWarning
 
-PauseWarning is E103's; it is empty until E103 lands (v0.4.0 proto
-batch).
+PauseWarning is one way the run's pause did not reach a child run: the
+child keeps running. A run's warnings are those of its latest pause, shown
+while it is paused.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` | task_id is the composed task whose child run the pause did not reach. |
+| `child_run_id` | `string` | child_run_id is that child run's id. |
+| `code` | `string` | code is CHILD_NOT_PAUSABLE (the child was started without support for pausing) or CHILD_PAUSE_FAILED (the pause could not be delivered to it). |
+| `message` | `string` | message says what happened, in words. |
 
 ### Payload
 

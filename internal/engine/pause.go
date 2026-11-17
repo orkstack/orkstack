@@ -59,6 +59,23 @@ type PausePlan struct {
 	InheritedGraceMaxLevels int64 `json:"inherited_grace_max_levels"`
 	// Indexed says the cluster accepted OrkflowRunPaused at submit.
 	Indexed bool `json:"indexed"`
+	// MaxDeferredRequests is how many pause requests over the reserve one
+	// switch may carry into the next generation (pause_deferred.go); 0, a
+	// plan from before the carry, stops RUN_HISTORY_LIMIT instead.
+	MaxDeferredRequests int64 `json:"max_deferred_requests,omitzero"`
+	// Cascades says the run tells its in-flight child runs of its pause and
+	// unpause (pause_cascade.go); false, a plan from before the cascade,
+	// pauses the run alone. CascadeRetries and CascadeRetryIntervalSeconds
+	// bound a round's retries of one failed send.
+	Cascades                    bool  `json:"cascades,omitzero"`
+	CascadeRetries              int64 `json:"cascade_retries,omitzero"`
+	CascadeRetryIntervalSeconds int64 `json:"cascade_retry_interval_seconds,omitzero"`
+	// PinTimeoutPausable says a pin's working timeout stops while the run is
+	// paused (pause_pin.go); PinOuterMarginSeconds is the outer bound's
+	// margin, and PinTimerEvents what one stop and re-arm costs.
+	PinTimeoutPausable    bool  `json:"pin_timeout_pausable,omitzero"`
+	PinOuterMarginSeconds int64 `json:"pin_outer_margin_seconds,omitzero"`
+	PinTimerEvents        int64 `json:"pin_timer_events,omitzero"`
 }
 
 // pauseRequest is one decoded RunPauseSignal. Interim: decoded from the
@@ -186,6 +203,15 @@ func (p *PausePlan) fault() string {
 		return fmt.Sprintf("inherited_grace_seconds %d is negative", p.InheritedGraceSeconds)
 	case p.InheritedGraceMaxLevels <= 0:
 		return fmt.Sprintf("inherited_grace_max_levels %d is not positive", p.InheritedGraceMaxLevels)
+	case p.Cascades && (p.CascadeRetries < 0 || p.CascadeRetries > 10):
+		return fmt.Sprintf("cascade_retries %d is not in 0..10", p.CascadeRetries)
+	case p.Cascades && p.CascadeRetries > 0 && (p.CascadeRetryIntervalSeconds <= 0 || p.CascadeRetryIntervalSeconds > 3600):
+		return fmt.Sprintf("cascade_retry_interval_seconds %d is not in 1..3600", p.CascadeRetryIntervalSeconds)
+	case p.PinTimeoutPausable && (p.PinOuterMarginSeconds < 0 || p.PinTimerEvents < 0):
+		return fmt.Sprintf("pin_outer_margin_seconds %d and pin_timer_events %d must not be negative",
+			p.PinOuterMarginSeconds, p.PinTimerEvents)
+	case p.MaxDeferredRequests < 0 || p.MaxDeferredRequests > maxDeferredPauseRequestsBound:
+		return fmt.Sprintf("max_deferred_requests %d is not in 0..%d", p.MaxDeferredRequests, maxDeferredPauseRequestsBound)
 	}
 	return ""
 }
@@ -214,30 +240,47 @@ func (s *runState) pauseTimeout(req *pauseRequest) time.Duration {
 // never fails the run; it is logged and the next snapshot carries the state.
 func (s *runState) applyPauseRequest(ctx workflow.Context, inFlight map[string]workflow.Future,
 	raw converter.RawValue, loop pauseLoop,
-) error {
+) (applied bool, err error) {
 	req, ok := s.decodePauseRequest(ctx, raw)
 	if !ok {
-		return nil
+		return false, nil
 	}
+	return s.applyDecodedPause(ctx, inFlight, req, loop)
+}
+
+// applyDecodedPause applies one request that passed its checks, carries it
+// into the next generation (pause_deferred.go), or stops the run; applied
+// reports a request that changed the run's state.
+func (s *runState) applyDecodedPause(ctx workflow.Context, inFlight map[string]workflow.Future,
+	req *pauseRequest, loop pauseLoop,
+) (applied bool, err error) {
 	if ctx.Err() != nil {
 		workflow.GetLogger(ctx).Info("pause request after the run was canceled: no change",
 			"run_id", s.runID, "request_id", req.RequestID, "pause", req.Pause)
-		return nil
+		return false, nil
+	}
+	if loop == pauseInMainLoop && len(s.deferredPause) > 0 {
+		// After a carried request, every request is carried, so the next
+		// generation applies them in the order they arrived.
+		return false, s.deferPause(ctx, inFlight, req)
 	}
 	if c, crossed := s.pauseApplyCrossing(ctx, inFlight); crossed && s.guardAdopted(ctx) {
 		if loop == pauseInHandlerLoop {
 			workflow.GetLogger(ctx).Warn("pause request dropped: applying it would take the run's history past its limit",
 				"run_id", s.runID, "request_id", req.RequestID, "pause", req.Pause,
 				"events", c.events, "reserve_events", c.reserveEvents, "max_events", c.maxEvents)
-			return nil
+			return false, nil
 		}
-		return s.historyLimitErrorNoting(ctx, inFlight, c, 0,
+		if s.canDeferPause(ctx) {
+			return false, s.deferPause(ctx, inFlight, req)
+		}
+		return false, s.historyLimitErrorNoting(ctx, inFlight, c, 0,
 			fmt.Sprintf("pause request %s from %s (asserted) was not applied, because recording it would pass that limit",
 				req.RequestID, principalOr(req.Principal)))
 	}
-	s.applyPause(ctx, req)
+	s.applyPause(ctx, inFlight, req)
 	s.syncPauseIndex(ctx)
-	return nil
+	return true, nil
 }
 
 // pauseLoop is the loop a pause request is read in. Over the reserve, the
@@ -252,7 +295,7 @@ const (
 )
 
 // applyPause applies one decoded request that fits under the reserve.
-func (s *runState) applyPause(ctx workflow.Context, req *pauseRequest) {
+func (s *runState) applyPause(ctx workflow.Context, inFlight map[string]workflow.Future, req *pauseRequest) {
 	if req.Inherited {
 		s.lastCascadeSeq = req.CascadeSeq
 	}
@@ -279,7 +322,7 @@ func (s *runState) applyPause(ctx workflow.Context, req *pauseRequest) {
 		if wasPaused {
 			message = fmt.Sprintf("run also paused by %s (asserted)", principalOr(req.Principal))
 		}
-		s.becomePaused(ctx, req, message)
+		s.becomePaused(ctx, inFlight, req, message)
 	case !req.Pause && !req.Inherited:
 		if s.pause == nil {
 			if !wasPaused {
@@ -289,11 +332,11 @@ func (s *runState) applyPause(ctx workflow.Context, req *pauseRequest) {
 		}
 		s.endOwnPause(now, pauseEndUnpaused)
 		if s.paused() {
-			s.becomePaused(ctx, req, fmt.Sprintf("own pause lifted by %s (asserted); still paused because parent run %s is paused",
+			s.becomePaused(ctx, inFlight, req, fmt.Sprintf("own pause lifted by %s (asserted); still paused because parent run %s is paused",
 				principalOr(req.Principal), s.pausedByParent.parentRunID))
 			return
 		}
-		s.becomeUnpaused(ctx, req, fmt.Sprintf("run unpaused by %s (asserted)", principalOr(req.Principal)))
+		s.becomeUnpaused(ctx, inFlight, req, fmt.Sprintf("run unpaused by %s (asserted)", principalOr(req.Principal)))
 	case req.Pause && req.Inherited:
 		if s.pausedByParent != nil {
 			return
@@ -301,7 +344,7 @@ func (s *runState) applyPause(ctx workflow.Context, req *pauseRequest) {
 		ip := &inheritedPause{parentRunID: req.ParentRunID, at: now, backstopAt: s.backstopAt(req, now)}
 		ip.backstop, ip.cancel = s.pauseTimer(ctx, ip.backstopAt.Sub(now))
 		s.pausedByParent = ip
-		s.becomePaused(ctx, req, "run paused because parent run "+req.ParentRunID+" is paused")
+		s.becomePaused(ctx, inFlight, req, "run paused because parent run "+req.ParentRunID+" is paused")
 	default: // inherited unpause
 		if s.pausedByParent == nil {
 			return
@@ -310,10 +353,10 @@ func (s *runState) applyPause(ctx workflow.Context, req *pauseRequest) {
 		s.pausedByParent.cancel()
 		s.pausedByParent = nil
 		if s.paused() {
-			s.becomePaused(ctx, req, "parent run "+parent+" was unpaused; still paused by its own pause")
+			s.becomePaused(ctx, inFlight, req, "parent run "+parent+" was unpaused; still paused by its own pause")
 			return
 		}
-		s.becomeUnpaused(ctx, req, "run unpaused: parent run "+parent+" was unpaused")
+		s.becomeUnpaused(ctx, inFlight, req, "run unpaused: parent run "+parent+" was unpaused")
 	}
 }
 
@@ -356,18 +399,25 @@ func (s *runState) endOwnPause(at time.Time, end pauseEnd) {
 }
 
 // becomePaused sets PAUSED and emits RUN_PAUSED.
-func (s *runState) becomePaused(ctx workflow.Context, req *pauseRequest, message string) {
+func (s *runState) becomePaused(ctx workflow.Context, inFlight map[string]workflow.Future, req *pauseRequest, message string) {
 	transition := orkstackv1.PauseTransition_PAUSE_TRANSITION_PAUSED
 	if s.status == statusPaused {
 		transition = orkstackv1.PauseTransition_PAUSE_TRANSITION_CAUSES_CHANGED
+	} else {
+		// Commands first, then the event, whose snapshot carries the round's
+		// warnings; a change between causes sends nothing (§4.11).
+		s.cascadeRound(ctx, inFlight, true, req)
+		s.stopPinClocks(ctx)
 	}
 	s.status = statusPaused
 	s.emitPause(ctx, eventRunPaused, statusPaused, req, transition, message)
 }
 
 // becomeUnpaused returns the run to RUNNING and emits RUN_UNPAUSED.
-func (s *runState) becomeUnpaused(ctx workflow.Context, req *pauseRequest, message string) {
+func (s *runState) becomeUnpaused(ctx workflow.Context, inFlight map[string]workflow.Future, req *pauseRequest, message string) {
+	s.cascadeRound(ctx, inFlight, false, req)
 	s.status = orkstackv1.Status_STATUS_RUNNING
+	s.runPinClocks(ctx)
 	s.emitPause(ctx, eventRunUnpaused, s.status, req, orkstackv1.PauseTransition_PAUSE_TRANSITION_UNPAUSED, message)
 }
 
@@ -441,24 +491,42 @@ func principalOr(principal string) string {
 }
 
 // drainPauseRequests applies every request already delivered, never
-// blocking; received says any was read. A run whose plan lacks Pause has no
-// channel.
+// blocking, after those the previous generation carried; changed says one
+// was applied. A request dropped, or carried into the next generation,
+// changes nothing this generation records. A run whose plan lacks Pause has
+// no channel.
 //
 // It stops at the first error, leaving later requests unread: an error is
 // the main loop's RUN_HISTORY_LIMIT, and the run ends on it.
 func (s *runState) drainPauseRequests(ctx workflow.Context, inFlight map[string]workflow.Future,
 	loop pauseLoop,
-) (received bool, err error) {
+) (changed bool, err error) {
 	if s.pauses == nil {
 		return false, nil
+	}
+	// The requests the previous generation carried come first, in order.
+	for len(s.restoredPause) > 0 {
+		req := pauseRequestOf(s.restoredPause[0])
+		s.restoredPause = s.restoredPause[1:]
+		if fault := s.pauseRequestFault(req); fault != "" {
+			workflow.GetLogger(ctx).Warn("carried pause request dropped", "run_id", s.runID, "why", fault,
+				"request_id", req.RequestID, "pause", req.Pause, "inherited", req.Inherited)
+			continue
+		}
+		applied, err := s.applyDecodedPause(ctx, inFlight, req, loop)
+		changed = changed || applied
+		if err != nil {
+			return true, err
+		}
 	}
 	for {
 		var raw converter.RawValue
 		if !s.pauses.ReceiveAsync(&raw) {
-			return received, nil
+			return changed, nil
 		}
-		received = true
-		if err := s.applyPauseRequest(ctx, inFlight, raw, loop); err != nil {
+		applied, err := s.applyPauseRequest(ctx, inFlight, raw, loop)
+		changed = changed || applied
+		if err != nil {
 			return true, err
 		}
 	}
@@ -583,9 +651,11 @@ func (s *runState) pauseActsOnHandlers() bool {
 // pauseHandlerPass applies a failing run's pause requests and a ready
 // expiry, at the top of each failure-handler pass.
 func (s *runState) pauseHandlerPass(ctx workflow.Context, inFlight map[string]workflow.Future) {
+	s.dropDeferredPause(ctx, "the run is failing")
 	if !s.pauseActsOnHandlers() {
 		return
 	}
+	s.takeCascadeResults(ctx)
 	// The handler loop never stops over a request: an over-reserve one is
 	// dropped (pauseInHandlerLoop), so there is no error to take.
 	if _, err := s.drainPauseRequests(ctx, inFlight, pauseInHandlerLoop); err != nil {
@@ -600,9 +670,9 @@ func (s *runState) pauseHandlerPass(ctx workflow.Context, inFlight map[string]wo
 }
 
 // hasPauseState reports state the carry must hold: a cause, the last pause,
-// or a cascade counter.
+// a cascade counter, or requests carried into the next generation.
 func (s *runState) hasPauseState() bool {
-	return s.paused() || s.lastPause != nil || s.lastCascadeSeq > 0
+	return s.paused() || s.lastPause != nil || s.lastCascadeSeq > 0 || len(s.deferredPause) > 0
 }
 
 // pauseCarries asks the carry gate, lazily, once a switch could carry pause
@@ -630,6 +700,9 @@ func (s *runState) fillPauseCarry(ctx workflow.Context, carry *orkstackv1.RunCon
 	carry.LastPause = s.lastPause.proto()
 	carry.PausedByParent = s.pausedByParent.proto()
 	carry.LastCascadeSeq = s.lastCascadeSeq
+	if v, ok := s.versions[pauseDeferredVersion]; ok && v >= 1 {
+		carry.DeferredPauseRequests = s.deferredPause
+	}
 }
 
 // adoptPauseCarry takes the pause state a carry holds; its timers are armed
@@ -645,7 +718,7 @@ func (s *runState) adoptPauseCarry(carry *orkstackv1.RunContinuation, run *orkst
 		}
 	}
 	has := carry.GetPause() != nil || carry.GetLastPause() != nil || carry.GetPausedByParent() != nil ||
-		carry.GetLastCascadeSeq() != 0
+		carry.GetLastCascadeSeq() != 0 || len(carry.GetDeferredPauseRequests()) > 0
 	if !has {
 		return ""
 	}
@@ -668,6 +741,10 @@ func (s *runState) adoptPauseCarry(carry *orkstackv1.RunContinuation, run *orkst
 		return "its parent's pause " + err
 	}
 	s.pause, s.lastPause, s.pausedByParent, s.lastCascadeSeq = pause, last, inherited, carry.GetLastCascadeSeq()
+	if err := s.restoredPauseFault(carry.GetDeferredPauseRequests()); err != "" {
+		return err
+	}
+	s.restoredPause = carry.GetDeferredPauseRequests()
 	if s.paused() {
 		s.status = statusPaused
 	}

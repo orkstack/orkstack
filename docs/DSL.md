@@ -1122,7 +1122,7 @@ fails the run:
 |---|---|---|
 | `PIN_UNAVAILABLE` | `InfrastructureError` | every pin host of the pool stayed full (or cordoned) for the whole pin creation timeout, **5 minutes** by default (`engine.pin_creation_timeout`, [DEPLOY.md](./DEPLOY.md) §1). Only the task whose readiness asked for the pin fails; it never reached an Orker, so its `scheduled_at` and `started_at` stay unset. |
 | `PIN_HOST_LOST` | `InfrastructureError` | the run lost contact with the host: it stopped heartbeating the pin, or the cluster stopped hearing from it (noticed within the 30-second heartbeat timeout) before the pin's lifetime ran out. Every member running at that moment is `FAILED` with this code — never `CANCELED`, because the platform lost it — and members not yet started are `CANCELED`. A member that already committed stays `SUCCEEDED`. |
-| `PIN_TIMEOUT` | `TimedOut` | the pin was open for at least its lifetime (`timeout_seconds`, or the derived sum). Members still running are stopped with it, as above. |
+| `PIN_TIMEOUT` | `TimedOut` | the pin was open for at least its lifetime (`timeout_seconds`, or the derived sum). Members still running are stopped with it, as above. The lifetime is counted only while the run that owns the pin is not paused; a pin whose clock was stopped for longer than `engine.run_pause_timeout_max` allows also ends this way, at its host's limit. |
 
 A pool with **no** pin host at all is refused at submit instead (above), so
 `PIN_UNAVAILABLE` only ever means saturation. The pin creation timeout is

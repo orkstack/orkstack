@@ -360,6 +360,7 @@ func (s *runState) updateContinuation(ctx workflow.Context, inFlight map[string]
 		return
 	}
 	e, b := s.historyNow(ctx)
+	s.rearmDeferHold(e, b)
 	grown := e-s.baseEvents >= budget.Events || b-s.baseBytes >= budget.Bytes
 	if continuationAtEveryIdleForTest {
 		// Every idle point after the generation's first command is due.
@@ -437,6 +438,7 @@ func (s *runState) failedAttempt(ctx workflow.Context, inFlight map[string]workf
 	budget := s.continuationBudget()
 	e, b := s.historyNow(ctx)
 	s.quiescing = false
+	s.deferHold = false // held again once the run has grown by its retry spacing (rearmDeferHold)
 	s.switchRetryAt = [2]int64{e + budget.RetryEvents, b + budget.RetryBytes}
 	workflow.GetLogger(ctx).Warn("run could not save its state to carry on; retrying after more growth",
 		s.logFields(ctx, inFlight, "error", err)...)
@@ -466,7 +468,7 @@ func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workfl
 	}
 	e, b := s.historyNow(ctx)
 	if !reached(e, b, s.switchRetryAt) || s.openingPins() != 0 || s.closingPins() != 0 ||
-		s.openedUnclosedPins() != 0 || !s.hasUnfinishedTasks() {
+		s.openedUnclosedPins() != 0 || !s.hasUnfinishedTasks() || !s.cascadeIdle() {
 		return false
 	}
 	// A run with pause state carries it in its saved state, once the gate
@@ -537,9 +539,10 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	} else if applied {
 		return nil, "", nil
 	}
-	// 2b. Every pause request already delivered, applied, so none is left
-	// unread in a generation that ends: reading any abandons this attempt,
-	// and the next pass decides again (a paused run does not switch).
+	// 2b. Every pause request already delivered, applied or carried, so
+	// none is left unread in a generation that ends: one applied abandons
+	// this attempt, and the next pass decides again; one carried goes in
+	// this carry.
 	if received, err := s.drainPauseRequests(ctx, inFlight, pauseInMainLoop); err != nil {
 		return nil, "", err
 	} else if received {
@@ -917,6 +920,8 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.pauseIndex": fieldEphemeral,
 	// Set and read within one emit, or as the run ends.
 	"runState.pauseEvent": fieldEphemeral, "runState.pauseExpired": fieldEphemeral,
+	"runState.deferredPause": fieldRestored, "runState.restoredPause": fieldRestored, "runState.deferHold": fieldEphemeral,
+	"runState.cascade":    fieldEphemeral,
 	"runState.runTimeout": fieldRestored,
 	"runTimeout.seconds":  fieldDerived, "runTimeout.graceSeconds": fieldDerived,
 	"runTimeout.deadline": fieldRestored, "runTimeout.timer": fieldRestored,
@@ -924,6 +929,8 @@ var runStateFieldClass = map[string]fieldClass{
 	"runTimeout.hardTaken": fieldEphemeral, "runTimeout.hardEnded": fieldEphemeral, "runTimeout.timeoutDrain": fieldEphemeral,
 	// A pin's runtime: no pin is opening, open or closing at a switch, and
 	// every pin starts unopened in the next generation.
+	"pinState.pausable": fieldEphemeral, "pinState.deadline": fieldEphemeral, "pinState.memberCtx": fieldEphemeral,
+	"pinState.cancelMembers": fieldEphemeral, "pinState.deadlineReached": fieldEphemeral,
 	"pinState.opened": fieldEphemeral, "pinState.triggeredBy": fieldEphemeral, "pinState.openedAt": fieldEphemeral,
 	"pinState.timeout": fieldEphemeral, "pinState.creationTimeout": fieldEphemeral, "pinState.creationPriority": fieldEphemeral, "pinState.ready": fieldEphemeral, "pinState.readySettable": fieldEphemeral,
 	"pinState.readyConsumed": fieldEphemeral, "pinState.ctx": fieldEphemeral, "pinState.openErr": fieldEphemeral,
