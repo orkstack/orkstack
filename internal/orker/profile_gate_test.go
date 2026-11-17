@@ -85,6 +85,11 @@ func TestProfileGate_Step3c(t *testing.T) {
 			if failure == nil || failure.Reason != tc.reason {
 				t.Fatalf("gate = %v, %v; want %s", got, failure, tc.reason)
 			}
+			// Step 3c comes before any container: a drift there did no work,
+			// so it may be emitted as a never-started interruption (E92).
+			if tc.drifts && !failure.NeverStarted {
+				t.Errorf("a drift at step 3c is not marked never-started")
+			}
 			if failure.Category() != CategoryInfrastructureError || !RetryableReason(failure.Reason) {
 				t.Errorf("%s is %s, retryable %v", failure.Reason, failure.Category(), RetryableReason(failure.Reason))
 			}
@@ -118,8 +123,13 @@ func TestProfileGate_RecheckBeforeCreate(t *testing.T) {
 		t.Fatalf("recheck: %v", failure)
 	}
 	gone := func(string) (hostDevice, error) { return hostDevice{}, errors.New("gone") }
-	if failure := s.recheck(sensorRef(gateIdentity), gone, now); failure == nil || failure.Reason != ReasonProfileDrifted {
+	failure := s.recheck(sensorRef(gateIdentity), gone, now)
+	if failure == nil || failure.Reason != ReasonProfileDrifted {
 		t.Fatalf("recheck = %v", failure)
+	}
+	// Still before create: no container ran, so the drift never started.
+	if !failure.NeverStarted {
+		t.Error("a drift at the recheck is not marked never-started")
 	}
 	if cordoned, _, _ := c.State(); !cordoned {
 		t.Fatal("a drift at the recheck left the Orker uncordoned")

@@ -394,6 +394,9 @@ func (s *runState) childStartPlan(planned *ChildRunPlan) RunPlan {
 	childPlan.SnapshotOverlay = s.plan.SnapshotOverlay
 	childPlan.PinCreationTimeoutSeconds = s.plan.PinCreationTimeoutSeconds
 	childPlan.RetryMaxIntervalSeconds = s.plan.RetryMaxIntervalSeconds
+	// A child's tasks are interrupted by the same Orkers as its parent's,
+	// so it spends the parent's budgets, copied as the other bounds are.
+	childPlan.Interruptions = s.plan.Interruptions
 	// A child runs in its parent's namespace, so its fairness is the
 	// parent's, copied here rather than carried by every nested plan.
 	childPlan.Fairness = s.plan.Fairness

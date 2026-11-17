@@ -423,7 +423,9 @@ func TestIntegration_TemporalStall_AnOperatorCancelDuringAStallReachesTheContain
 // the timeout the cluster has given the attempt up and a retry may start, so the
 // Orker stops the container itself, with the frontend still silent. The cluster
 // reports the attempt's heartbeat timeout; the attempt's own record says what the
-// Orker did. A task with a retry runs again and succeeds.
+// Orker did. The timeout is an interruption (AGENTS.md §4): a task with no
+// retry: runs again, after the loss's fence, without spending an attempt, and
+// succeeds; so does a task with one.
 func TestIntegration_TemporalStall_NoAckForTheHeartbeatTimeoutStopsTheContainer(t *testing.T) {
 	for _, tt := range []struct {
 		name  string
@@ -452,19 +454,14 @@ func TestIntegration_TemporalStall_NoAckForTheHeartbeatTimeoutStopsTheContainer(
 			s.proxy.Restore()
 
 			work := s.awaitEnd(runID)
-			if tt.retry == nil {
-				got := work.GetError()
-				if work.GetStatus() != orkstackv1.Status_STATUS_FAILED || got.GetCode() != "ORKER_HEARTBEAT_TIMEOUT" ||
-					got.GetCategory() != orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR || !got.GetRetryable() {
-					t.Errorf("task ended %v, %v; want FAILED, a retryable ORKER_HEARTBEAT_TIMEOUT", work.GetStatus(), got)
-				}
-			} else {
-				if work.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || work.GetAttempt() != 2 {
-					t.Errorf("task ended %v on attempt %d, %v; want SUCCEEDED on attempt 2", work.GetStatus(), work.GetAttempt(), work.GetError())
-				}
-				if s.count("ready") != 2 || s.count("finished") != 1 {
-					t.Errorf("want two containers and one finished: %q", s.lines())
-				}
+			if work.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED || work.GetAttempt() != 2 {
+				t.Errorf("task ended %v on attempt %d, %v; want SUCCEEDED on attempt 2", work.GetStatus(), work.GetAttempt(), work.GetError())
+			}
+			if st := work.GetInterruptions(); st.GetLost() != 1 || st.GetOwnAttemptsUsed() != 0 {
+				t.Errorf("interruptions = %v; want the stall read as one loss, spending no own attempt", st)
+			}
+			if s.count("ready") != 2 || s.count("finished") != 1 {
+				t.Errorf("want two containers and one finished: %q", s.lines())
 			}
 			// The cluster gave the attempt up before the Orker had finished stopping
 			// it, so the run can end before the attempt's record is written.

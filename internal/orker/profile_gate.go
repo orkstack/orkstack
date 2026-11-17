@@ -104,8 +104,17 @@ func (s *profileState) recheck(refs []*orkstackv1.ProfileRef, inspect func(strin
 }
 
 // checkDevices is step 3c's and the recheck's device check: a drifted or
-// unavailable profile fails, and otherwise its devices are stat'ed.
+// unavailable profile fails, and otherwise its devices are stat'ed. Both run
+// before the container is created, so every failure here (a drift or an
+// unavailable profile) is marked never-started; only PROFILE_DRIFTED is an
+// interruption the Orker may emit on that mark (emission.go), and the mark on
+// PROFILE_NOT_OFFERED decides nothing today.
 func (s *profileState) checkDevices(name string, audit profileAudit, inspect func(string) (hostDevice, error), now time.Time) *Failure {
+	return neverStarted(s.compareDevices(name, audit, inspect, now))
+}
+
+// compareDevices is checkDevices without the never-started mark.
+func (s *profileState) compareDevices(name string, audit profileAudit, inspect func(string) (hostDevice, error), now time.Time) *Failure {
 	if s.drifted(name) {
 		return Fail(ReasonProfileDrifted,
 			"profile %q drifted on this Orker since its boot audit; it stays out of service until the Orker restarts", name)

@@ -167,6 +167,9 @@
         "initial_interval_seconds": {
           "type": "integer"
         },
+        "max_interruptions": {
+          "type": "integer"
+        },
         "maximum_attempts": {
           "type": "integer"
         },

@@ -270,10 +270,11 @@ func lockDriftDevice(t *testing.T) {
 // changes after its boot audit (its node moves to another group), so the
 // attempt that meets it fails PROFILE_DRIFTED before any container, the Orker
 // cordons itself, and the task runs on another Orker of the pool that offers
-// the profile. Until the never-started interruption lands, every attempt A
-// meets is spent from the task's retry: policy. A cordoned Orker's open polls
-// may still deliver up to two (docs/DEPLOY.md), each failing the same way, so
-// the task allows four: one met at dispatch, two from open polls, and B's.
+// the profile. A PROFILE_DRIFTED attempt never started, so it is an
+// interruption (AGENTS.md §4): the task makes one attempt of its own, and
+// every attempt A meets (one at dispatch, up to two more from a cordoned
+// Orker's open polls, docs/DEPLOY.md) runs it again within the run's
+// never-started budget without spending it.
 func TestIntegration_ProfileDriftedReDispatched(t *testing.T) {
 	requireUSBSerialNode(t, usbSerialTestDevice, 199, false)
 	requireRegistry(t, testRegistry())
@@ -310,7 +311,7 @@ func TestIntegration_ProfileDriftedReDispatched(t *testing.T) {
 	fmt.Fprintf(&s.transcript, "moved %s from group %d to %d after %s booted\n\n", usbSerialDriftDevice, gid, otherGID, driftID)
 
 	name := fmt.Sprintf("device-drift-%d", time.Now().UnixNano()%1_000_000_000)
-	s.apply(sensorOrkflow(name, 4))
+	s.apply(sensorOrkflow(name, 1))
 	runID := s.submit(name)
 	awaitInventory(t, s, "the Orker that met the drift", driftID, "DEVICE_CHANGED")
 
@@ -323,6 +324,12 @@ func TestIntegration_ProfileDriftedReDispatched(t *testing.T) {
 	requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
 	if got := taskRunOf(t, run, "read").GetOrkerId(); got != sensorID {
 		t.Fatalf("the task succeeded on %q, want %q", got, sensorID)
+	}
+	// A drift is a never-started fault (counted with store faults), not a
+	// stopping Orker's never-started hand-back.
+	if in := taskRunOf(t, run, "read").GetInterruptions(); in.GetLast().GetReason() != "PROFILE_DRIFTED" ||
+		!in.GetLast().GetNeverStarted() || in.GetOwnAttemptsUsed() != 0 {
+		t.Fatalf("interruptions = %v, want the last a never-started PROFILE_DRIFTED and no own attempt spent", in)
 	}
 
 	stdout := s.mustCLI(0, "--json", "run", "attempts", runID)

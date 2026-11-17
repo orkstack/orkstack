@@ -538,6 +538,11 @@ func validSecretName(name string) bool {
 // secretNamePattern is rule 6c's grammar; "." and ".." are refused besides.
 var secretNamePattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,128}$`)
 
+// MaxInterruptionsCeiling bounds retry.max_interruptions: well above every
+// interruption budget (E92: lost 3, handed back 10, never started 20), so it
+// only ever lowers one.
+const MaxInterruptionsCeiling = 100
+
 // validateRetry is rule 47, on the compiled message so a hand-built request
 // meets it too. 0 is how an absent field arrives, and it means the default,
 // so only a value that is set is compared. An interval, an integer field, is
@@ -554,6 +559,15 @@ func validateRetry(taskIndex int, task *orkstackv1.Task) error {
 		return nil
 	}
 	at := func(field string) string { return fmt.Sprintf("tasks[%d].retry.%s", taskIndex, field) }
+	if retry.MaxInterruptions != nil {
+		if mi := retry.GetMaxInterruptions(); mi < 0 || mi > MaxInterruptionsCeiling {
+			return validationError(at("max_interruptions"), fmt.Errorf(
+				"task %q: retry.max_interruptions %d is outside 0 to %d — it caps how many times an interrupted "+
+					"attempt (its Orker lost or stopping, or the attempt never started) runs again without spending "+
+					"the task's own attempts; 0 opts the task out, and omitting it keeps the deployment's budgets",
+				task.GetId(), mi, MaxInterruptionsCeiling))
+		}
+	}
 	initial, maximum := retry.GetInitialIntervalSeconds(), retry.GetMaximumIntervalSeconds()
 	if initial < 0 {
 		return validationError(at("initial_interval_seconds"), fmt.Errorf(

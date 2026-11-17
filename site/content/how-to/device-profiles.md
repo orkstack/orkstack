@@ -45,7 +45,7 @@ tasks:
       script: head -c 64 /dev/sensor | od -c
 ```
 
-Give the task a `retry:`: if the device is replaced while the Orker runs, the attempt that meets it fails `PROFILE_DRIFTED`, and if it is unplugged, `PROFILE_NOT_OFFERED`; either way the next attempt runs on another Orker of the pool. An adapter plugged back as the same node returns the profile to service within about 15 seconds.
+If the device is replaced while the Orker runs, the attempt that meets it fails `PROFILE_DRIFTED` and the task runs again on another Orker of the pool without spending an attempt. If it is unplugged, the attempt fails `PROFILE_NOT_OFFERED` and spends one, so give the task a `retry:`. An adapter plugged back as the same node returns the profile to service within about 15 seconds.
 
 ## What submit checks
 

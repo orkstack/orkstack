@@ -34,6 +34,12 @@ func TestEmission_TypesAListedInterruption(t *testing.T) {
 	}
 	startedStore := func() *Failure { return Fail(ReasonAttemptStoreUnavailable, "store gone") }
 	byRuntime := func() *Failure { return Fail(ReasonContainerStoppedByRuntime, "daemon stopped") }
+	neverStartedDrift := func() *Failure {
+		f := Fail(ReasonProfileDrifted, "profile drifted")
+		f.NeverStarted = true
+		return f
+	}
+	startedDrift := func() *Failure { return Fail(ReasonProfileDrifted, "profile drifted") }
 	listed := func(reasons ...string) []string {
 		out := []string{task.CategoryContractViolation}
 		for _, r := range reasons {
@@ -56,6 +62,9 @@ func TestEmission_TypesAListedInterruption(t *testing.T) {
 		{"a store fault after its start is declined", startedStore(), listed(ReasonAttemptStoreUnavailable), false, CategoryInfrastructureError, -1},
 		{"stopped by its runtime while stopping: typed", byRuntime(), listed(ReasonContainerStoppedByRuntime), true, InterruptionType(ReasonContainerStoppedByRuntime), 1},
 		{"stopped by its runtime, not stopping, is declined", byRuntime(), listed(ReasonContainerStoppedByRuntime), false, CategoryInfrastructureError, -1},
+		{"a never-started profile drift listed: typed", neverStartedDrift(), listed(ReasonProfileDrifted), false, InterruptionType(ReasonProfileDrifted), 1},
+		{"a profile drift not marked never-started is declined", startedDrift(), listed(ReasonProfileDrifted), false, CategoryInfrastructureError, -1},
+		{"a never-started drift whose container started is declined", neverStartedDrift().stampFor(listed(ReasonProfileDrifted), true, 0), listed(ReasonProfileDrifted), false, CategoryInfrastructureError, -1},
 		{"a reason outside the compiled set is declined", Fail(ReasonContainerExitNonzero, "exit 1"), listed(ReasonContainerExitNonzero), false, CategoryActivityFailed, -1},
 	}
 	for _, tc := range cases {
@@ -292,6 +301,82 @@ func TestMixedFleet_ANewDetailFieldReachesOnlyAnEngineThatAskedForIt(t *testing.
 				if got := strings.Contains(body, key); got != tc.asked {
 					t.Fatalf("the details %s carry %s = %v; want %v", body, key, got, tc.asked)
 				}
+			}
+		})
+	}
+}
+
+// TestExecute_AProfileDriftIsTypedWhenItsPolicyListsIt: an attempt that meets
+// a drifted profile at step 3c started no container, so it ends its execution
+// as OrkInterruption:PROFILE_DRIFTED when its policy lists it, a never-started
+// interruption the engine runs again elsewhere (E92 §4.7, E91 P3), and as
+// today's error when not.
+func TestExecute_AProfileDriftIsTypedWhenItsPolicyListsIt(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		listed   []string
+		wantType string
+	}{
+		{"listed", []string{InterruptionType(ReasonProfileDrifted)}, InterruptionType(ReasonProfileDrifted)},
+		{"not listed", nil, CategoryInfrastructureError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := &creatingRuntime{ContainerRuntime: &phaseCapturingRuntime{exitCode: 0}}
+			d := newAttemptDispatcher(t, runtime, artifacts.NewMemoryAttemptStore())
+			d.heartbeaters = sdkRouteHeartbeater
+			profiles, _ := gateState(t)
+			// Latched: every attempt after a drift meets it, whatever the node
+			// says now.
+			profiles.setDrift("sensor", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED, "188:199 is now 188:0", time.Now())
+			d.profiles = profiles
+			listed := tc.listed
+			d.listed = func(context.Context) []string { return listed }
+			probe := func(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput) error {
+				ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+					StartToCloseTimeout: time.Minute,
+					RetryPolicy: &temporal.RetryPolicy{
+						MaximumAttempts:        1,
+						InitialInterval:        time.Millisecond,
+						NonRetryableErrorTypes: listed,
+					},
+				})
+				return workflow.ExecuteActivity(ctx, "ExecuteTask", in).Get(ctx, nil)
+			}
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestWorkflowEnvironment()
+			env.SetTestTimeout(60 * time.Second)
+			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
+			env.RegisterWorkflowWithOptions(probe, workflow.RegisterOptions{Name: "probe"})
+			env.RegisterActivityWithOptions(d.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
+			in := baseExportInput("drift")
+			in.Devices = sensorRef(gateIdentity)
+			env.ExecuteWorkflow("probe", in)
+
+			if !env.IsWorkflowCompleted() {
+				t.Fatal("workflow did not complete")
+			}
+			var app *temporal.ApplicationError
+			if err := env.GetWorkflowError(); !errors.As(err, &app) {
+				t.Fatalf("workflow error = %v, want the attempt's ApplicationError", err)
+			}
+			if app.Type() != tc.wantType {
+				t.Fatalf("the attempt ended as %q, want %q", app.Type(), tc.wantType)
+			}
+			var detail *orkstackv1.ActivityFailureDetail
+			if err := app.Details(&detail); err != nil || detail.GetReasonCode() != ReasonProfileDrifted {
+				t.Fatalf("detail = %v, %v; want reason %s", detail, err, ReasonProfileDrifted)
+			}
+			if asked := len(tc.listed) > 0; asked && (!detail.GetNeverStarted() || detail.GetStarted()) {
+				t.Fatalf("detail never_started=%v started=%v; want true and false", detail.GetNeverStarted(), detail.GetStarted())
+			} else if !asked && (detail.GetNeverStarted() || detail.GetStarted() || detail.Ordinal != nil) {
+				// An engine that listed nothing decodes the detail strictly.
+				t.Fatalf("an engine that listed nothing got the new fields: %v", detail)
+			}
+			runtime.mu.Lock()
+			created := len(runtime.labels)
+			runtime.mu.Unlock()
+			if created != 0 {
+				t.Fatalf("a drifted profile created %d containers; want none", created)
 			}
 		})
 	}

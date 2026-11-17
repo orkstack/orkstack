@@ -258,12 +258,12 @@ func (c *continuationHooks) WriteSwitchSnapshot(ctx context.Context, run *orksta
 	return c.a.WriteSwitchSnapshot(ctx, run, namespace, generation, obs)
 }
 
-func (c *continuationHooks) WriteCheckpoint(ctx context.Context, run *orkstackv1.Run, generation, capBytes int64, obs engine.ContinuationObservationInput) (*orkstackv1.ContinuationObject, error) {
+func (c *continuationHooks) WriteCheckpoint(ctx context.Context, run *orkstackv1.Run, generation, capBytes int64, obs engine.ContinuationObservationInput, loss *orkstackv1.RunLossEvents) (*orkstackv1.ContinuationObject, error) {
 	if err := c.hook("checkpoint", 0); err != nil {
 		return nil, err
 	}
 	c.runHook("checkpoint", run)
-	return c.a.WriteCheckpoint(ctx, run, generation, capBytes, obs)
+	return c.a.WriteCheckpoint(ctx, run, generation, capBytes, obs, loss)
 }
 
 func (c *continuationHooks) ReadContinuationChunk(ctx context.Context, loc engine.ContinuationLocator, size, offset, length int64, obs engine.ContinuationObservationInput) ([]byte, error) {
