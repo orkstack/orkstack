@@ -29,7 +29,7 @@ func recordedWithTheWriter(path string) bool {
 	return strings.Contains(path, "-continued-") || strings.Contains(path, "in-flight-cap") ||
 		strings.Contains(path, "cancel-before-dispatch") || strings.Contains(path, "definition-ref") ||
 		strings.Contains(path, "snapshot-overlay") || strings.Contains(path, "run-created-first") ||
-		strings.Contains(path, "task-publish-window")
+		strings.Contains(path, "task-publish-window") || strings.Contains(path, "interruption-retry")
 }
 
 // isRefusedRouteHistory reports whether a committed fixture is one of the

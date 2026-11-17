@@ -444,6 +444,12 @@ func FuzzCompile_Orkflow(f *testing.F) {
 		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: -60}",
 		"{maximum_attempts: 3, backoff_coefficient: 0.999}",
 		"{maximum_attempts: 3, backoff_coefficient: .inf}",
+		"{max_interruptions: 0}",
+		"{maximum_attempts: 3, max_interruptions: 100}",
+		"{max_interruptions: 101}",
+		"{max_interruptions: -1}",
+		"{max_interruptions: null}",
+		"{max_interruptions: '3'}",
 	} {
 		f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    retry: " + retry + "\n"))
 	}

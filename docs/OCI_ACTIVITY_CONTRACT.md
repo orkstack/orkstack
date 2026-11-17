@@ -569,7 +569,7 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `run.orkflow.version` | string | required | — | pinned version string; for a document never created, run locally by `orkctl task run -f`, its content hash (§4.4) |
 | `run.orkflow.definitionDigest` | string | required | — | `sha256:<64 hex>` (§4.4) |
 | `task.id` | string | required | — | slug |
-| `task.attempt` | integer | required | — | 1-based Temporal attempt; it may differ from the ordinal the attempt's record and log carry (`docs/STORAGE.md`, "Attempt ordinals") |
+| `task.attempt` | integer | required | — | 1-based Temporal attempt; it may differ from the ordinal the attempt's record and log carry (`docs/STORAGE.md`, "Attempt ordinals"), and it can repeat: a task run again after an interruption (AGENTS.md §4) starts again at 1. It identifies no attempt; key work that must not repeat on `idempotencyKey` |
 | `task.pool` | string | required | `"main"` | resolved pool name |
 | `task.runAsOrkerUser` | boolean | optional | absent = false | present and true when the Orker overrode the image's `USER` (§3.1) |
 | `task.pin` | object | optional | absent | present only for a pinned task |

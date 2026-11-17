@@ -587,7 +587,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 	definition := s.plan.definitionBytes()
 	var checkpoint *orkstackv1.ContinuationObject
 	if err := workflow.ExecuteLocalActivity(writeCtx, ActivityWriteCheckpoint, run, s.generation,
-		budget.CheckpointMaxBytes-definition, obs).Get(writeCtx, &checkpoint); err != nil {
+		budget.CheckpointMaxBytes-definition, obs, s.lossEvents).Get(writeCtx, &checkpoint); err != nil {
 		s.failedAttempt(ctx, inFlight, err)
 		return nil, "", nil
 	}
@@ -877,8 +877,16 @@ var runStateFieldClass = map[string]fieldClass{
 	"awaitState.deadline": fieldRestored, "awaitState.cancelDeadline": fieldRestored,
 	"sleepState.open": fieldRestored, "sleepState.duration": fieldRestored, "sleepState.wakeAt": fieldRestored,
 	"sleepState.wake": fieldRestored, "sleepState.cancelWake": fieldRestored,
+	// Interruptions: the loss events from the checkpoint's part 0, and the
+	// waits and queued items rebuilt from the rows (restoreInterruptionWaits).
+	"runState.lossEvents": fieldRestored, "runState.waits": fieldRestored, "runState.waiting": fieldRestored,
+	"eachState.again": fieldRestored,
 
 	// Ephemeral: zero or fresh at a switch.
+	// listed holds only in-flight units, and nothing is in flight at a
+	// switch; the rest are set only while a run ends or an event is built.
+	"runState.listed": fieldEphemeral, "runState.ending": fieldEphemeral, "runState.failingRun": fieldEphemeral,
+	"runState.failingPhase": fieldEphemeral, "runState.eventInterruption": fieldEphemeral,
 	"runState.runError": fieldEphemeral, "runState.finished": fieldEphemeral, "runState.output": fieldEphemeral,
 	"runState.pendingItemPublishes": fieldEphemeral, "runState.publishCtx": fieldEphemeral,
 	"runState.dispatchTaskLength": fieldEphemeral, "runState.dispatchTaskBytes": fieldEphemeral,

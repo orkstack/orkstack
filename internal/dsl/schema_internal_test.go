@@ -250,7 +250,7 @@ func slots() map[string]slot {
 	}
 	out["tasks[].secrets[].mask"] = slot{doc: taskDoc("    secrets: [{name: s, source: 'env:S', mask: @V@}]\n"), field: "tasks[0].secrets[0].mask",
 		baseline: "false", absent: taskDoc("    secrets: [{name: s, source: 'env:S'}]\n")}
-	for key, baseline := range map[string]string{"maximum_attempts": "2", "initial_interval_seconds": "1", "backoff_coefficient": "2.0", "maximum_interval_seconds": "10"} {
+	for key, baseline := range map[string]string{"maximum_attempts": "2", "initial_interval_seconds": "1", "backoff_coefficient": "2.0", "maximum_interval_seconds": "10", "max_interruptions": "2"} {
 		out["tasks[].retry."+key] = slot{doc: taskDoc("    retry: {" + key + ": @V@}\n"), field: "tasks[0].retry." + key, baseline: baseline, absent: taskDoc("    retry: {}\n")}
 	}
 	for key, baseline := range map[string]string{"cpu": "'1'", "memory": "1Gi"} {

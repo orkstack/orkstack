@@ -1209,10 +1209,75 @@ message RunTimeout {
   bool hard_end_reached = 5;
 }
 
-// TaskInterruption is E92's; it is empty until E92 lands (v0.4.0 proto
-// batch).
-message TaskInterruption {}
+// InterruptionPhase is how far an interrupted attempt had got when it was
+// interrupted.
+enum InterruptionPhase {
+  // UNSPECIFIED: not known, or reported by an Orker this release does not
+  // name.
+  INTERRUPTION_PHASE_UNSPECIFIED = 0;
+  // BEFORE_START: preparing, before its container started (staging inputs,
+  // pulling the image, creating the container).
+  INTERRUPTION_PHASE_BEFORE_START = 1;
+  // RUNNING: its container was running.
+  INTERRUPTION_PHASE_RUNNING = 2;
+  // AFTER_EXIT: its container had ended and the Orker was checking and
+  // saving its outputs.
+  INTERRUPTION_PHASE_AFTER_EXIT = 3;
+  // REPORTED: the Orker had reported how the attempt ended.
+  INTERRUPTION_PHASE_REPORTED = 4;
+}
 
-// TaskInterruptions is E92's; it is empty until E92 lands (v0.4.0 proto
-// batch).
-message TaskInterruptions {}
+// TaskInterruption is one interruption of a task's attempt: its Orker lost,
+// or stopping and handing the attempt back, or the attempt never started.
+message TaskInterruption {
+  // reason is the interruption's reason code (ORKER_STOPPED,
+  // ORKER_HEARTBEAT_LOST, ATTEMPT_STORE_UNAVAILABLE, PROFILE_DRIFTED, ...).
+  string reason = 1;
+  // orker_id is the Orker that had the attempt, when it said.
+  string orker_id = 2;
+  // ordinal is the attempt's number as its Orker claimed it, when it did.
+  optional int32 ordinal = 3;
+  InterruptionPhase phase = 4;
+  google.protobuf.Timestamp at = 5;
+  // closed_by, when set, is why the task's interruptions no longer re-run it
+  // without spending its own attempts: "lost", "lost_run_cap",
+  // "handed_back", "never_started" (a budget spent) or "opt_out"
+  // (retry.max_interruptions: 0).
+  string closed_by = 6;
+  // never_started: the attempt was interrupted before its container started.
+  bool never_started = 7;
+  // store_error is what object storage answered, for an attempt object
+  // storage refused (ATTEMPT_STORE_UNAVAILABLE).
+  string store_error = 8;
+  // orker_stopping_since is when the Orker began to stop, for an attempt
+  // lost while its Orker was stopping.
+  google.protobuf.Timestamp orker_stopping_since = 9;
+}
+
+// TaskInterruptions is a task's (or a fan-out item's) interruptions so far,
+// and the budgets they spent: an interrupted attempt runs again without
+// spending the task's own attempts while its kind has budget left.
+message TaskInterruptions {
+  // lost counts attempts whose Orker stopped answering.
+  int32 lost = 1;
+  // handed_back counts attempts a stopping Orker handed back.
+  int32 handed_back = 2;
+  // own_attempts_used counts the task's own attempts interruptions spent
+  // once their budgets were.
+  int32 own_attempts_used = 3;
+  // last is the most recent interruption.
+  TaskInterruption last = 4;
+  // not_before, when set, is the earliest the task runs again.
+  google.protobuf.Timestamp not_before = 5;
+  // never_started counts attempts a stopping Orker returned before they
+  // started.
+  int32 never_started = 6;
+  // store_faults counts consecutive attempts that never started because of
+  // a fault (object storage refusing the attempt's record, a drifted
+  // profile); it returns to 0 when a later interruption ends an attempt
+  // whose container started, and keeps its count when the task ends, so a
+  // task that succeeded after a fault still shows it.
+  int32 store_faults = 7;
+  // lost_while_stopping counts lost attempts whose Orker was stopping.
+  int32 lost_while_stopping = 8;
+}

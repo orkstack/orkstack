@@ -209,7 +209,12 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	// the press, so the rows the page is still drawing cost the observer nothing.
 	async function timeInspectPress(page: Page, id: string): Promise<void> {
 		await page.evaluate((taskId) => {
-			const timing: { pressed?: number; drawn?: number } = {};
+			const timing: {
+				pressed?: number;
+				drawn?: number;
+				long: { start: number; ms: number }[];
+				takeLong?: () => void;
+			} = { long: [] };
 			(window as unknown as { __inspectTiming: typeof timing }).__inspectTiming = timing;
 			const toggle = `[data-testid="task-inspect-toggle-${taskId}"]`;
 			const body = `[data-testid="task-${taskId}-inspect"]`;
@@ -218,6 +223,27 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 				(event) => {
 					if (timing.pressed !== undefined || !(event.target as Element | null)?.closest?.(toggle)) return;
 					timing.pressed = performance.now();
+					// The main thread's long tasks while the body is awaited, so an
+					// open over its bound says what it waited behind. Entries arrive
+					// a task late; inspectDrawn takes what is still undelivered.
+					const record = (entries: PerformanceEntryList) => {
+						for (const entry of entries) {
+							timing.long.push({
+								start: Math.round(entry.startTime - timing.pressed!),
+								ms: Math.round(entry.duration)
+							});
+						}
+					};
+					try {
+						const long = new PerformanceObserver((list) => record(list.getEntries()));
+						long.observe({ type: 'longtask' });
+						timing.takeLong = () => {
+							record(long.takeRecords());
+							long.disconnect();
+						};
+					} catch {
+						// A browser without long-task timing reports none.
+					}
 					const observer = new MutationObserver(() => {
 						if (!document.querySelector(body)) return;
 						timing.drawn = performance.now();
@@ -231,14 +257,30 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 	}
 
 	// inspectDrawn is the milliseconds timeInspectPress measured from the press
-	// to the body drawn.
-	async function inspectDrawn(page: Page): Promise<number> {
-		const timing = await page.evaluate(
-			() => (window as unknown as { __inspectTiming?: { pressed?: number; drawn?: number } }).__inspectTiming
-		);
+	// to the body drawn, and the long tasks the page ran before the body was
+	// drawn, written "+start:duration" in milliseconds from the press. A
+	// negative start is a task that began before the press: the press's own,
+	// or one the press waited behind.
+	async function inspectDrawn(page: Page): Promise<{ ms: number; long: string }> {
+		const timing = await page.evaluate(() => {
+			const t = (
+				window as unknown as {
+					__inspectTiming?: {
+						pressed?: number;
+						drawn?: number;
+						long: { start: number; ms: number }[];
+						takeLong?: () => void;
+					};
+				}
+			).__inspectTiming;
+			t?.takeLong?.();
+			return t && { pressed: t.pressed, drawn: t.drawn, long: t.long };
+		});
 		expect(timing?.pressed, 'the Inspect press, seen in the page').toBeDefined();
 		expect(timing?.drawn, 'the Inspect body, seen in the page').toBeDefined();
-		return Math.round(timing!.drawn! - timing!.pressed!);
+		const ms = Math.round(timing!.drawn! - timing!.pressed!);
+		const long = timing!.long.filter((task) => task.start < ms).map((task) => `+${task.start}:${task.ms}`);
+		return { ms, long: long.length ? long.join(' ') : 'none' };
 	}
 
 	// measureRunPage opens a run's page and times it to interactive: its header,
@@ -277,11 +319,12 @@ export function defineRunPageCeilingSpec(c: RunPageCeiling): void {
 		await inspectBody.waitFor({ state: 'visible', timeout: 60_000 });
 		const elapsed = Date.now() - started;
 		await expect(inspectBody).toBeVisible();
-		const inspect = await inspectDrawn(page);
+		const { ms: inspect, long } = await inspectDrawn(page);
 		expect(await page.getByTestId('task-list').locator('[data-testid^="task-deep-link-"]').count()).toBe(tasks);
 		note(
 			`${phase}: run page of ${runId} (${tasks} tasks) interactive ${elapsed} ms after navigation ` +
-				`(header ${header} ms, every card ${cards} ms; Inspect drawn ${inspect} ms after its press)`
+				`(header ${header} ms, every card ${cards} ms; Inspect drawn ${inspect} ms after its press, ` +
+				`long tasks meanwhile ${long})`
 		);
 		(openings[phase] ??= []).push({ header, cards, interactive: elapsed, inspect });
 		if (!gated) return elapsed;

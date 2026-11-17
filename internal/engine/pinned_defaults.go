@@ -250,3 +250,13 @@ func DefaultPausePlan(defaultTimeoutSeconds, maxTimeoutSeconds int64) PausePlan 
 		InheritedGraceMaxLevels: 8,
 	}
 }
+
+// DefaultInterruptionBudgets are engine.interruptions.*'s defaults (DEPLOY.md
+// §1), the values a submitting engine pins when its configuration sets none.
+var DefaultInterruptionBudgets = InterruptionBudgets{
+	Lost: 3, LostRunCap: 20, HandedBack: 10, NeverStarted: 20,
+	NeverStartedFaults: 5, NeverStartedBackoffMillis: 2000,
+	// orker.store_check.interval (15 s) × orker.store_check.failures (3),
+	// held to the Orker's defaults by TestDefaultInterruptionBudgets_FaultFloorIsTheStoreCordonsDetection.
+	NeverStartedFaultFloorMillis: 45000,
+}
