@@ -53,7 +53,7 @@ services:
   # Values are JSON, so a duration string keeps its quotes
   # (docs/DEPLOY.md §4, "Underneath"; TestDevCompose_Temporal...).
   temporal:
-    image: temporalio/temporal:1.9.1@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    image: temporalio/temporal:1.10.1@sha256:b228dadf9cdb6c7c02a1394b89dd76f827aac9760e458fce42f0899a10141225
     command:
       - server
       - start-dev
@@ -94,7 +94,7 @@ services:
   # signs with. With them set, auto-create would let an admin's first upload make a
   # missing bucket, so it is off. Both apply to a store's existing volume.
   seaweedfs:
-    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    image: chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
     command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts", "-s3.autoCreateBucket=false"]
     environment:
       AWS_ACCESS_KEY_ID: orkstack
@@ -133,7 +133,7 @@ services:
   # images only by digest, and a floating tag is what AGENTS.md §11.1 forbids.
   # An update is a PR that runs the proof (Dependabot opens it).
   registry:
-    image: registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    image: registry:3@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
     ports:
       - "127.0.0.1:5001:5000"
     volumes:
@@ -156,7 +156,7 @@ services:
   # above: each image by its release tag and its multi-arch index digest.
 
   otel-collector:
-    image: otel/opentelemetry-collector-contrib:0.164.0@sha256:340c9ca6a36617084c6661bdc4f0fe92b7cda5a805d61673ec8db375fddc522b
+    image: otel/opentelemetry-collector-contrib:0.165.0@sha256:e40d61f10c9a617cca1ffd1be4d7e2b3a4b0f0001798ff07e58cabe82e618cea
     profiles: ["observability"]
     command: ["--config=/etc/otel-collector.yaml"]
     volumes:
@@ -169,7 +169,7 @@ services:
       - prometheus
 
   loki:
-    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
     profiles: ["observability"]
     command: ["-config.file=/etc/loki/loki.yaml"]
     volumes:
@@ -185,7 +185,7 @@ services:
       - tempo-data:/var/tempo
 
   prometheus:
-    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     profiles: ["observability"]
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -200,7 +200,7 @@ services:
       - "host.docker.internal:host-gateway"
 
   grafana:
-    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
     profiles: ["observability"]
     environment:
       # Anonymous Viewer, for a local stack only: anyone who reaches it can
