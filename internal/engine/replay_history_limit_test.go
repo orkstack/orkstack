@@ -284,10 +284,11 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"fairness.pin_requests": {"run-fairness-pin-creation-v1.json", "run-fairness-pin-creation-legacy-v1.json"},
 		"retry_max_interval_seconds": {"run-retry-max-interval-v1.json", "run-retry-max-interval-legacy-v1.json",
 			"run-retry-long-initial-v1.json", "run-retry-long-initial-legacy-v1.json"},
-		"in_flight.publish_window": append([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
-			continuedRunTimeoutFixtureNames...),
-		"in_flight.publish_events": append([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
-			continuedRunTimeoutFixtureNames...),
+		"in_flight.publish_window": slices.Concat([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
+			continuedRunTimeoutFixtureNames, interruptionFixtureNames),
+		"in_flight.publish_events": slices.Concat([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
+			continuedRunTimeoutFixtureNames, interruptionFixtureNames),
+		"interruptions": interruptionFixtureNames,
 	}
 	paths, err := filepath.Glob("testdata/history/*.json")
 	if err != nil || len(paths) == 0 {
@@ -307,7 +308,8 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 				Fairness *struct {
 					PinRequests *bool `json:"pin_requests"`
 				} `json:"fairness"`
-				RetryMaxIntervalSeconds *int32 `json:"retry_max_interval_seconds"`
+				RetryMaxIntervalSeconds *int32         `json:"retry_max_interval_seconds"`
+				Interruptions           map[string]any `json:"interruptions"`
 				InFlight                *struct {
 					PublishWindow *int32 `json:"publish_window"`
 					PublishEvents *int64 `json:"publish_events"`
@@ -321,6 +323,9 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 			}
 			if plan.RetryMaxIntervalSeconds != nil {
 				carried["retry_max_interval_seconds"] = true
+			}
+			if plan.Interruptions != nil {
+				carried["interruptions"] = true
 			}
 			if plan.InFlight != nil && plan.InFlight.PublishWindow != nil {
 				carried["in_flight.publish_window"] = true
@@ -340,9 +345,10 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 // carriedGenerations is every committed fixture that is a carried
 // generation, started by a continue-as-new with five arguments.
 var carriedGenerations = map[string]bool{
-	"run-continued-g1-v1.json":                       true,
-	"run-timeout-continued-carried-g1-v1.json":       true,
-	"run-timeout-continued-past-deadline-g1-v1.json": true,
+	"run-continued-g1-v1.json":                            true,
+	"run-timeout-continued-carried-g1-v1.json":            true,
+	"run-timeout-continued-past-deadline-g1-v1.json":      true,
+	"run-interruption-retry-item-continuation-g1-v1.json": true,
 }
 
 // continuedRunTimeoutFixtureNames are the run-timeout fixtures recorded under

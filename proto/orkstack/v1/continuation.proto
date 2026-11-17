@@ -162,9 +162,20 @@ message RunSnapshotOverlay {
 // batch).
 message RunConcurrencyCarry {}
 
-// RunLossEvents is E92's; it is empty until E92 lands (v0.4.0 proto
-// batch).
-message RunLossEvents {}
+// RunLossEvents is a run's lost-Orker events so far, carried forward with
+// its saved state: the run's cap on how many lost Orkers re-run its tasks.
+message RunLossEvents {
+  // count is the loss events the run has had.
+  int32 count = 1;
+  // open are the events still inside their window, by Orker.
+  repeated OpenLossEvent open = 2;
+}
+
+// OpenLossEvent is one Orker's loss event, still open.
+message OpenLossEvent {
+  string orker_id = 1;
+  google.protobuf.Timestamp first_at = 2;
+}
 
 // RunResumeCarry is E85's; it is empty until E85 lands (v0.4.0 proto
 // batch).

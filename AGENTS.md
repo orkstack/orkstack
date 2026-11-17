@@ -59,7 +59,20 @@ Orker. Determinism is required of OrkStack's workflow code only, never of a
 task: a container may read the clock, the network and its environment. Do not
 create an OrkStack-owned execution-state database, Orkflow-state database,
 scheduler, task-queue implementation, distributed lock service, retry
-subsystem, timer subsystem, or state-transition engine. Cron scheduling
+subsystem, timer subsystem, or state-transition engine. The one named
+exception to the retry subsystem is one kind of re-dispatch: when the
+cluster's heartbeat timeout ends a task's activity, or its Orker reports a
+reason of the closed interruption class the run pinned at submit (§4), the
+interpreter starts that activity again, within budgets pinned in the run's
+plan. The interpreter treats such a heartbeat timeout as infrastructure,
+without proof that the workload did not cause it, which is why the losses it
+re-dispatches are a small budget. The one spacing it owns is a Temporal
+Timer, the plan-pinned wait after a loss, and the same Timer's doubling,
+plan-pinned back-off before it re-dispatches a task handed back before it
+ever started once that task's never-started budget is spent; every retry of
+a task's own failures, its spacing and its back-off stay Temporal's, and the
+interpreter never re-runs a task for its own failure and never adds a reason
+to the class without a change to this file. Cron scheduling
 must use Temporal Schedules. Interaction with a running Temporal workflow must
 use Temporal Signals, including approval, external completion, resume, and abort.
 
@@ -176,7 +189,8 @@ Temporal workflow policy, not magic exit codes such as 42, 43, or 44. A containe
 its runtime stopped from outside (its daemon shutting down, an operator's `stop`)
 did not exit on its own, so its code says neither: it is an `InfrastructureError`
 (`CONTAINER_STOPPED_BY_RUNTIME`), told from what the runtime observed, never from
-the number.
+the number. Retry belongs to that policy, and an interruption's re-dispatch to
+the interpreter (§2.1); the exit code never decides either.
 
 stdout and stderr are independent logs. Capture them independently, stream them
 when possible, retain them in object storage, and associate them with the
@@ -239,7 +253,29 @@ maxInterval:        1m
 ```
 
 Activities may override the policy; in the DSL a task without `retry:` makes
-exactly one attempt. Keep these failure categories distinct:
+exactly one attempt of its own. An **interruption** is an attempt ended by an
+infrastructure fact of its run's pinned interruption class: its Orker handed
+it back (`ORKER_STOPPED`; `CONTAINER_STOPPED_BY_RUNTIME` while the Orker was
+stopping), handed it back before it started (`ORKER_STOPPED`, and the faults
+`ATTEMPT_STORE_UNAVAILABLE`, `RUNTIME_STATE_UNKNOWN` and `PROFILE_DRIFTED`),
+or was lost (the cluster's heartbeat timeout). It is not one of the task's
+own attempts: the interpreter runs the task again (§2.1) under budgets pinned
+at submit, one for hand-backs, a smaller one for losses with a cap per run
+counted in lost Orkers, and one for tasks handed back before they started;
+once the hand-back or loss budget is spent, or a fault before the start
+repeats past its own small budget, that class spends the task's own
+attempts, exactly as before, and fails with its real reason when they are
+spent; a task handed back before it started because its Orker was stopping
+never spends one. After a loss the interpreter first waits, until an instant
+it records, the task's cancellation grace plus the heartbeat timeout, which
+fences a live Orker that lost the cluster but not one killed while its
+container runtime survives; a hand-back is always fenced and waits for
+nothing. The never-started back-off doubles from its plan-pinned first wait
+to at most 60 s, a ceiling this file fixes. An interruption never applies to
+a pinned member (`PIN_HOST_LOST`, §5), to `TimedOut`, or to a reason outside
+the class; a task may opt out (`retry.max_interruptions: 0`); and its re-run
+repeats external side effects (at-least-once, under the same idempotency
+key). Keep these failure categories distinct:
 
 ```text
 ActivityFailed
@@ -596,6 +632,9 @@ internal never appears on any of those surfaces.
   or rejected with a reason) or its deadline passes. A **callback token** is
   the one-time bearer credential an `await:` with `callback: true` is issued
   at submit.
+- **Interruption** means an attempt ended by an infrastructure fact of its
+  run's pinned interruption class (§4); the task runs again without spending
+  its own attempts, within its run's budgets.
 - **Sleeping task** means a task declaring `sleep:`: it runs no container and
   waits a fixed time on the run's own Temporal timer, then succeeds with no
   values; nothing outside the run resolves it. It is `SLEEPING` while it
@@ -900,7 +939,7 @@ where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
 `snapshot-overlay`, `fairness-keys`, `pin-creation-timeout`,
 `fairness-pin-creation`, `retry-max-interval`, `task-publish-window`,
-`emit-past-cancel`), so a
+`emit-past-cancel`, `interruption-retry`), so a
 history recorded before the gate replays its `DefaultVersion` branch; each
 new command path
 gets its own
@@ -920,7 +959,15 @@ reject or ignore (cache, join, fan-out items) is advertised as a capability on
 would run on, each on its own control channel, and refuses with
 `FailedPrecondition`, naming the Orker and its build, when one lacks the
 capability; a pool none of whose Orkers answers the probe is logged, not
-refused, so every Orker of one pool must run one release.
+refused, so every Orker of one pool must run one release. The interruption
+class is the one exception to that rule, and it needs no capability: it
+reaches the Orker inside the activity's own retry policy, and an Orker that
+does not read it reports its failures as before, which only spends the task's
+own attempts. Submit's capability and per-task-cap probes ask every Orker
+whose causes keep its pool live, stopping ones included, because those are
+the Orkers admission counts. The heartbeat-detail decoder an interruption is
+classified from is a frozen copy, never the Orker's type, so a field the
+Orker adds later changes no decision a recorded history made.
 
 ### 7.3 Generations
 
@@ -1043,8 +1090,9 @@ includes:
 - Orker restart, temporary object-storage failure, and temporary Temporal
   failure: a stall inside the heartbeat timeout leaves a task and its container
   untouched, plain or pinned; a cancel during a stall still reaches the container;
-  past the timeout the Orker stops the container and the attempt is retried
-  under its policy, never reported cancelled;
+  past the timeout the Orker stops the container and the attempt is never
+  reported cancelled; it is an interruption when the cluster's heartbeat
+  timeout ended it (§4), and retried under its policy otherwise;
 - an Orker stopped while a container runs: the task finishes on it within the
   stop grace and runs once; past the grace it is reported `ORKER_STOPPED` and
   its container is never running beside its next attempt; a stop during upload
@@ -1056,6 +1104,18 @@ includes:
   Orker of its run's release, waiting for one rather than moving to another
   release; a second signal ends the grace, a third exits, and a signal to its
   process group never reaches a container;
+- an interruption: a task without `retry:` whose Orker is handed back or
+  killed runs again without spending its own attempt, after the loss wait
+  when it was lost, and a loss whose wait spans a continuation is not
+  re-dispatched before its recorded instant; a commit written before the loss
+  is adopted, even when the ordinal claim fails; a pinned member stays
+  `PIN_HOST_LOST`; a spent budget falls
+  back to own attempts; a task handed back before it started because its
+  Orker was stopping never spends one and is never failed for it, however
+  many stopping Orkers it meets, while a store or profile fault before the
+  start that repeats ends explicitly with its real reason; an interrupted
+  unit crosses a continuation pending; a storm of interruptions stays within
+  the run's history bound;
 - exit `1`, exit `0` without `values.json`, malformed JSON, output-size excess,
   timeout, cancellation, ignored SIGTERM, unavailable input artifact, failed
   image pull, and a tag changing between executions;

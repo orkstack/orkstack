@@ -4375,17 +4375,37 @@ before this message existed.
 
 ### TaskInterruption
 
-TaskInterruption is E92's; it is empty until E92 lands (v0.4.0 proto
-batch).
+TaskInterruption is one interruption of a task's attempt: its Orker lost,
+or stopping and handing the attempt back, or the attempt never started.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `reason` | `string` | reason is the interruption's reason code (ORKER_STOPPED, ORKER_HEARTBEAT_LOST, ATTEMPT_STORE_UNAVAILABLE, PROFILE_DRIFTED, ...). |
+| `orker_id` | `string` | orker_id is the Orker that had the attempt, when it said. |
+| `ordinal` | optional `int32` | ordinal is the attempt's number as its Orker claimed it, when it did. |
+| `phase` | [`InterruptionPhase`](#interruptionphase) |  |
+| `at` | `google.protobuf.Timestamp` |  |
+| `closed_by` | `string` | closed_by, when set, is why the task's interruptions no longer re-run it without spending its own attempts: "lost", "lost_run_cap", "handed_back", "never_started" (a budget spent) or "opt_out" (retry.max_interruptions: 0). |
+| `never_started` | `bool` | never_started: the attempt was interrupted before its container started. |
+| `store_error` | `string` | store_error is what object storage answered, for an attempt object storage refused (ATTEMPT_STORE_UNAVAILABLE). |
+| `orker_stopping_since` | `google.protobuf.Timestamp` | orker_stopping_since is when the Orker began to stop, for an attempt lost while its Orker was stopping. |
 
 ### TaskInterruptions
 
-TaskInterruptions is E92's; it is empty until E92 lands (v0.4.0 proto
-batch).
+TaskInterruptions is a task's (or a fan-out item's) interruptions so far,
+and the budgets they spent: an interrupted attempt runs again without
+spending the task's own attempts while its kind has budget left.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `lost` | `int32` | lost counts attempts whose Orker stopped answering. |
+| `handed_back` | `int32` | handed_back counts attempts a stopping Orker handed back. |
+| `own_attempts_used` | `int32` | own_attempts_used counts the task's own attempts interruptions spent once their budgets were. |
+| `last` | [`TaskInterruption`](#taskinterruption) | last is the most recent interruption. |
+| `not_before` | `google.protobuf.Timestamp` | not_before, when set, is the earliest the task runs again. |
+| `never_started` | `int32` | never_started counts attempts a stopping Orker returned before they started. |
+| `store_faults` | `int32` | store_faults counts consecutive attempts that never started because of a fault (object storage refusing the attempt's record, a drifted profile); it returns to 0 once an attempt's container starts. |
+| `lost_while_stopping` | `int32` | lost_while_stopping counts lost attempts whose Orker was stopping. |
 
 ### TaskLogChunk
 
@@ -5099,6 +5119,19 @@ and its outputs: — compares with another's.
 | `INTERFACE_VERDICT_COMPATIBLE` | 1 | COMPATIBLE: every finding is compatible. |
 | `INTERFACE_VERDICT_BREAKING` | 2 | BREAKING: at least one finding breaks. Promoting such a version is refused until acknowledged. |
 | `INTERFACE_VERDICT_UNKNOWN` | 3 | UNKNOWN: nothing breaks, but part of the interface is not declared — an orkflow with no outputs: declares no return contract, so whether its output changed cannot be stated. Never reported as COMPATIBLE, never refused. |
+
+### InterruptionPhase
+
+InterruptionPhase is how far an interrupted attempt had got when it was
+interrupted.
+
+| Value | Number | Description |
+|---|---|---|
+| `INTERRUPTION_PHASE_UNSPECIFIED` | 0 | UNSPECIFIED: not known, or reported by an Orker this release does not name. |
+| `INTERRUPTION_PHASE_BEFORE_START` | 1 | BEFORE_START: preparing, before its container started (staging inputs, pulling the image, creating the container). |
+| `INTERRUPTION_PHASE_RUNNING` | 2 | RUNNING: its container was running. |
+| `INTERRUPTION_PHASE_AFTER_EXIT` | 3 | AFTER_EXIT: its container had ended and the Orker was checking and saving its outputs. |
+| `INTERRUPTION_PHASE_REPORTED` | 4 | REPORTED: the Orker had reported how the attempt ended. |
 
 ### JoinPolicy
 

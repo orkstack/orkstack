@@ -79,6 +79,13 @@ engine:
   snapshot_overlays: true  # ork
   run_max_in_flight: 500  # ork
   pin_creation_timeout: 5m  # ork
+  interruptions:
+    lost: 3  # ork
+    lost_run_cap: 20  # ork
+    handed_back: 10  # ork
+    never_started: 20  # ork
+    never_started_faults: 5  # ork
+    never_started_backoff: 2s  # ork
   run_timeout_handler_grace: 10m  # ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork

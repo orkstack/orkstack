@@ -1,6 +1,7 @@
 # A task that ends by itself after 40 s. Deleting its Orker's pod within the
 # stop grace lets it finish there and the run succeed on its one attempt;
-# deleting the pod at once (--grace-period=0) loses it, explicitly
+# deleting the pod at once (--grace-period=0) interrupts it, and it runs again
+# on the replacement pod without spending an attempt
 # (scripts/k8s-orker-check.sh, docs/DEPLOY.md "Removing an Orker safely").
 apiVersion: orkstack/v1
 kind: Orkflow
