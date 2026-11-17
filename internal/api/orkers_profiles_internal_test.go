@@ -53,7 +53,7 @@ func TestOrkerRow_ProjectsProfilesWithoutControlChannelFields(t *testing.T) {
 		Cordoned: true,
 		Profiles: []*orkstackv1.OrkerProfile{{
 			Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU, Units: 2, UsableUnits: 1, BoundUnits: 1,
-			ProbeOk: true, Revision: "mesa-25.2", IdentityDigest: "abc",
+			Revision: "mesa-25.2", IdentityDigest: "abc",
 		}},
 		ProfileCordons: []*orkstackv1.ProfileCordon{{
 			Cause: orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE, Profile: "amd",
@@ -64,7 +64,7 @@ func TestOrkerRow_ProjectsProfilesWithoutControlChannelFields(t *testing.T) {
 	row := orkerRow(engine.OrkerPresence{Identity: "o1"}, described, nil)
 
 	wantProfile := &orkstackv1.OrkerProfile{
-		Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU, Units: 2, UsableUnits: 1, BoundUnits: 1, ProbeOk: true,
+		Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU, Units: 2, UsableUnits: 1, BoundUnits: 1,
 	}
 	if len(row.GetProfiles()) != 1 || !proto.Equal(row.GetProfiles()[0], wantProfile) {
 		t.Errorf("profiles = %v, want %v", row.GetProfiles(), wantProfile)

@@ -125,7 +125,7 @@ func TestDecisions_AKeysLife(t *testing.T) {
 		t.Errorf("at compromised_from: %v", v)
 	}
 	// A forgery under the key is bad whatever the instant.
-	if _, _, v := r.VerifyDecision(context.Background(), msg[:len(msg)-2]+"AA", jwt.KindForceCancelRecord, published, NoBinding); v != VerdictBad {
+	if _, _, v := r.VerifyDecision(context.Background(), flipSignatureBit(t, msg), jwt.KindForceCancelRecord, published, NoBinding); v != VerdictBad {
 		t.Errorf("a changed signature: %v", v)
 	}
 }
@@ -579,4 +579,21 @@ func TestKeysCopy_AWriteThatFailsIsReported(t *testing.T) {
 	if r.Status().CopyErr == nil {
 		t.Fatal("a copy that could not be written is not reported")
 	}
+}
+
+// flipSignatureBit returns msg with one bit of its decoded signature
+// flipped, so the signature always differs, whatever bytes it held.
+func flipSignatureBit(t *testing.T, msg string) string {
+	t.Helper()
+	i := strings.LastIndexByte(msg, '.')
+	sig, err := base64.RawURLEncoding.Strict().DecodeString(msg[i+1:])
+	if err != nil || len(sig) == 0 {
+		t.Fatalf("the signature of %q does not decode: %v", msg, err)
+	}
+	sig[len(sig)-1] ^= 1
+	out := msg[:i+1] + base64.RawURLEncoding.EncodeToString(sig)
+	if out == msg {
+		t.Fatal("the tampered message equals the original")
+	}
+	return out
 }

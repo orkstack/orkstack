@@ -1867,7 +1867,7 @@ export type EffectiveProfile = Message<"orkstack.v1.EffectiveProfile"> & {
 
   /**
    * identity_pinned is whether the run pinned the profile's identity at
-   * submit; false for an egress profile no Orker answered for.
+   * submit.
    *
    * @generated from field: bool identity_pinned = 4;
    */

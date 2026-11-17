@@ -71,6 +71,15 @@ func startCANStackReading(t *testing.T, ctx context.Context, label string, versi
 	beforeRead func(ctx context.Context, offset int64) error, extra ...func(w worker.Worker),
 ) *canStack {
 	t.Helper()
+	return startCANStackWith(t, ctx, label, versioned, behavior, beforeRead, nil, extra...)
+}
+
+// startCANStackWith is startCANStackReading whose Orker and event worker
+// answer through pace when it is set (startPacedCANStack).
+func startCANStackWith(t *testing.T, ctx context.Context, label string, versioned bool, behavior canBehavior,
+	beforeRead func(ctx context.Context, offset int64) error, pace *pacer, extra ...func(w worker.Worker),
+) *canStack {
+	t.Helper()
 	cfg := s3Config()
 	requireObjectStore(t, cfg)
 	var c client.Client
@@ -127,15 +136,18 @@ func startCANStackReading(t *testing.T, ctx context.Context, label string, versi
 		MaxConcurrentSessionExecutionSize:  4,
 		MaxConcurrentActivityExecutionSize: 100,
 	}))
-	orker.RegisterActivityWithOptions(func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	execute := func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return behavior(actx, s, in)
-	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
+	}
+	publish := engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(snapshots).PublishEvent
+	if pace != nil {
+		execute, publish = pace.execute(s, execute), pace.publish(s, publish)
+	}
+	orker.RegisterActivityWithOptions(execute, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	orker.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
 	events := worker.New(c, engine.EventQueue, worker.Options{DisableRegistrationAliasing: true, DisableWorkflowWorker: true})
-	events.RegisterActivityWithOptions(
-		engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(snapshots).PublishEvent,
-		activity.RegisterOptions{Name: engine.ActivityPublishEvent})
+	events.RegisterActivityWithOptions(publish, activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orker, "events": events} {
 		must.OKf(t, w.Start(), "start %s worker", name)
 		t.Cleanup(w.Stop)
@@ -394,6 +406,11 @@ func recordContinued(t *testing.T, s *canStack, maxEvents, events int64) (runID 
 	if len(chain) < 2 {
 		return runID, nil, nil, nil, errors.New("the run ended without switching")
 	}
+	// The await is resolved once the second generation has done all it can
+	// without it, so where the signal lands is the script's, not the host's.
+	if err := s.waitIdle(runID, 90*time.Second); err != nil {
+		return runID, nil, nil, nil, err
+	}
 	must.OKf(t, s.client.SignalWorkflow(s.ctx, runID, "", engine.ResolveAwaitSignal, completion("approve", `{"approved":true}`, "fixture")), "resolve approve")
 	if err := s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil); err != nil {
 		return runID, nil, nil, nil, fmt.Errorf("the run failed: %w", err)
@@ -484,12 +501,14 @@ func encodeHistory(t *testing.T, h *historypb.History) []byte {
 func TestIntegration_RecordContinuedRunHistories(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
-	s := startCANStack(t, ctx, "continued-rec", true, canFixtureBehavior)
+	// Paced, so the shape at a candidate is decided by the plan and the script
+	// alone (startPacedCANStack).
+	s := startPacedCANStack(t, ctx, "continued-rec", canFixtureBehavior, nil)
 	write := os.Getenv("ORK_RECORD_GOLDEN_HISTORY") != ""
 
 	// The values that land the shape depend on the cluster's own event
-	// accounting; each candidate is tried in turn, and the values committed
-	// are the ones that landed.
+	// accounting, which pacing makes the same on every host; each candidate
+	// is tried in turn, and the values committed are the ones that landed.
 	type candidate struct{ maxEvents, events int64 }
 	var (
 		runID           string

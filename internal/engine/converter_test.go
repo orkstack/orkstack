@@ -118,13 +118,13 @@ func TestDataConverter_AnEngineDecodesAnswersFromANewerOrker(t *testing.T) {
 			StoreScopeDetail:      "prefix",
 			StoreScopeConfirmedAt: stamp,
 			Stopping:              &orkstackv1.OrkerStopping{Since: stamp, GraceEndsAt: stamp},
-			ProfileKindsSupported: []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_EGRESS},
+			ProfileKindsSupported: []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_GPU},
 			Profiles: []*orkstackv1.OrkerProfile{{
-				Name: "github-only", Kind: orkstackv1.ProfileKind_PROFILE_KIND_EGRESS, ProbeOk: true, IdentityDigest: "abc",
+				Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU, Units: 1, IdentityDigest: "abc",
 			}},
 			ProfileCordons: []*orkstackv1.ProfileCordon{{
-				Cause: orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE, Profile: "github-only",
-				Reason: orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_GATEWAY_ABSENT, Since: stamp,
+				Cause: orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE, Profile: "amd",
+				Reason: orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT, Since: stamp,
 			}},
 		},
 		&orkstackv1.ActivityFailureDetail{

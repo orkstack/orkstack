@@ -980,7 +980,7 @@ message EffectiveProfile {
   // numbered from 0 within the profile's list.
   repeated int32 unit_indices = 3;
   // identity_pinned is whether the run pinned the profile's identity at
-  // submit; false for an egress profile no Orker answered for.
+  // submit.
   bool identity_pinned = 4;
 }
 

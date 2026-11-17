@@ -201,14 +201,13 @@ func orkerRow(presence engine.OrkerPresence, described *orkstackv1.DescribeOrker
 }
 
 // The inventory's allow-lists for an Orker's profiles. ListOrkers carries the
-// public fields; revisions, digests, details, paths, CDI names, network names
-// and proxy addresses stay on the Orker's own answer to the engine, and none
-// is exported to telemetry. Every field is in exactly one list
+// public fields; revisions, digests, details, paths and CDI names stay on the
+// Orker's own answer to the engine, and none is exported to telemetry. Every field is in exactly one list
 // (TestOrkerProfileProjection_EveryFieldIsClassified), so a new field is
 // never listed by default.
 var (
 	orkerProfilePublic = map[string]bool{
-		"name": true, "kind": true, "units": true, "usable_units": true, "bound_units": true, "probe_ok": true,
+		"name": true, "kind": true, "units": true, "usable_units": true, "bound_units": true,
 	}
 	orkerProfileControlOnly  = map[string]bool{"revision": true, "identity_digest": true}
 	profileCordonPublic      = map[string]bool{"cause": true, "profile": true, "reason": true, "since": true}

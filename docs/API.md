@@ -1411,7 +1411,7 @@ it.
 | `name` | `string` |  |
 | `kind` | [`ProfileKind`](#profilekind) |  |
 | `unit_indices` | repeated `int32` | unit_indices are the positions of the `gpu` units the attempt held, numbered from 0 within the profile's list. |
-| `identity_pinned` | `bool` | identity_pinned is whether the run pinned the profile's identity at submit; false for an egress profile no Orker answered for. |
+| `identity_pinned` | `bool` | identity_pinned is whether the run pinned the profile's identity at submit. |
 
 ### EngineSeen
 
@@ -2897,7 +2897,7 @@ Orker is one execution process, observed live.
 ### OrkerProfile
 
 OrkerProfile is one profile an Orker offers (docs/DEPLOY.md, "Profiles").
-The inventory (ListOrkers) carries name, kind, the unit counts and probe_ok;
+The inventory (ListOrkers) carries name, kind and the unit counts;
 revision and identity_digest travel only on the Orker's own answer to the
 engine and are never listed or exported.
 
@@ -2908,7 +2908,6 @@ engine and are never listed or exported.
 | `units` | `int32` | units is how many units a `gpu` profile declares; 0 for other kinds. |
 | `usable_units` | `int32` | usable_units is how many of them are healthy and may be bound. |
 | `bound_units` | `int32` | bound_units is how many are held by a task now. |
-| `probe_ok` | `bool` | probe_ok is whether the profile's latest check passed. |
 | `revision` | `string` | revision is the operator's revision label; it changes memo keys only. |
 | `identity_digest` | `string` | identity_digest is the SHA-256 (hex) of the profile's structural identity, which a run pins at submit and every Orker of a pool must share. |
 
@@ -4169,7 +4168,6 @@ execution on an Orker, and an activity is an OCI image.
 | `join` | [`JoinPolicy`](#joinpolicy) | join is when this task may start, decided from how its needs ended (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no join keeps its digest. A task whose join is ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry each or carry cache (docs/DSL.md rule 39). |
 | `sleep` | [`SleepSpec`](#sleepspec) | sleep makes this a sleeping task: it starts no container, reaches no Orker, and succeeds once its fixed time has passed. Mutually exclusive with uses, await and every field that shapes a container (docs/DSL.md rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no sleep keeps its digest. |
 | `devices` | repeated `string` | devices is set from E91; unset until it lands (v0.4.0 proto batch). |
-| `network_profile` | `string` | network_profile is set from E91; unset until it lands (v0.4.0 proto batch). |
 | `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `input_artifacts` | repeated `string` | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
@@ -5079,15 +5077,13 @@ that failed is never read as safe.
 ### NetworkMode
 
 NetworkMode is the complete set of network configurations an Orkflow may
-select. An Orkflow never defines a network: EGRESS selects an egress
-profile an Orker's operator defined, by its name (AGENTS.md §6).
+select (AGENTS.md §6).
 
 | Value | Number | Description |
 |---|---|---|
 | `NETWORK_MODE_UNSPECIFIED` | 0 | treated as NETWORK_MODE_DEFAULT |
 | `NETWORK_MODE_DEFAULT` | 1 |  |
 | `NETWORK_MODE_NONE` | 2 |  |
-| `NETWORK_MODE_EGRESS` | 3 | The egress profile Task.network_profile names: an internal network whose only way out is the operator's proxy. |
 
 ### OrkflowCallerKind
 
@@ -5173,7 +5169,7 @@ request's assumption, never a prediction that the task fails.
 |---|---|---|
 | `CAUSE_UNSPECIFIED` | 0 |  |
 | `CAUSE_DRIFT` | 1 | The profile no longer matches what the Orker audited at boot. |
-| `CAUSE_UNAVAILABLE` | 2 | The profile's units, gateway or reachable destinations are absent. |
+| `CAUSE_UNAVAILABLE` | 2 | The profile's units or specs are absent, or its probe failed. |
 
 ### ProfileCordonReason
 
@@ -5185,21 +5181,15 @@ ProfileCordonReason is the machine-readable reason of a ProfileCordon.
 | `PROFILE_CORDON_REASON_SPEC_CHANGED` | 1 |  |
 | `PROFILE_CORDON_REASON_DEVICE_CHANGED` | 2 |  |
 | `PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED` | 3 |  |
-| `PROFILE_CORDON_REASON_NETWORK_CHANGED` | 4 |  |
-| `PROFILE_CORDON_REASON_GATEWAY_CHANGED` | 5 |  |
-| `PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED` | 6 |  |
-| `PROFILE_CORDON_REASON_GATEWAY_ABSENT` | 7 |  |
-| `PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED` | 8 |  |
-| `PROFILE_CORDON_REASON_SPEC_ABSENT` | 9 |  |
-| `PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD` | 10 |  |
-| `PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH` | 11 |  |
-| `PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE` | 12 |  |
-| `PROFILE_CORDON_REASON_HOST_VIEW_CHANGED` | 13 |  |
-| `PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY` | 14 |  |
-| `PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH` | 15 |  |
-| `PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN` | 16 |  |
-| `PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED` | 17 |  |
-| `PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD` | 18 |  |
+| `PROFILE_CORDON_REASON_SPEC_ABSENT` | 4 |  |
+| `PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD` | 5 |  |
+| `PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH` | 6 |  |
+| `PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE` | 7 |  |
+| `PROFILE_CORDON_REASON_HOST_VIEW_CHANGED` | 8 |  |
+| `PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY` | 9 |  |
+| `PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH` | 10 |  |
+| `PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN` | 11 |  |
+| `PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD` | 12 |  |
 
 ### ProfileKind
 
@@ -5211,7 +5201,6 @@ ProfileKind is the closed set of profile kinds compiled into the Orker
 | `PROFILE_KIND_UNSPECIFIED` | 0 |  |
 | `PROFILE_KIND_DEVICES` | 1 | Uncounted, shared character devices of an allow-listed class. |
 | `PROFILE_KIND_GPU` | 2 | Counted, exclusive GPU units, each one CDI device. |
-| `PROFILE_KIND_EGRESS` | 3 | An internal network whose only way out is the operator's proxy. |
 
 ### ReferenceState
 

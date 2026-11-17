@@ -3273,7 +3273,7 @@ type EffectiveProfile struct {
 	// numbered from 0 within the profile's list.
 	UnitIndices []int32 `protobuf:"varint,3,rep,packed,name=unit_indices,json=unitIndices,proto3" json:"unit_indices,omitempty"`
 	// identity_pinned is whether the run pinned the profile's identity at
-	// submit; false for an egress profile no Orker answered for.
+	// submit.
 	IdentityPinned bool `protobuf:"varint,4,opt,name=identity_pinned,json=identityPinned,proto3" json:"identity_pinned,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache

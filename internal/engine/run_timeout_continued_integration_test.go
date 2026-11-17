@@ -142,8 +142,8 @@ func TestIntegration_RecordRunTimeoutContinuedHistories(t *testing.T) {
 
 	// carried.
 	{
-		s := startCANStack(t, ctx, "rt-carried", true, runTimeoutCANBehavior)
-		budget := engine.DefaultContinuationBudget(100, 1<<20, 3*time.Minute)
+		s := startPacedCANStack(t, ctx, "rt-carried", runTimeoutCANBehavior, nil, "slow")
+		budget := engine.DefaultContinuationBudget(150, 1<<20, 3*time.Minute)
 		runID, g0, g1, err := recordTwoGenerations(t, s, "carried", chainDocument("rt-carried", "20s", 8, false),
 			timeoutPlanOn(s, engine.DefaultHistoryMaxEvents, &budget))
 		must.OKf(t, err, "carried")
@@ -163,7 +163,7 @@ func TestIntegration_RecordRunTimeoutContinuedHistories(t *testing.T) {
 
 	// past-deadline: every chunk read waits 4s, one chunk per workflow task.
 	{
-		s := startCANStackReading(t, ctx, "rt-past", true, runTimeoutCANBehavior,
+		s := startPacedCANStack(t, ctx, "rt-past", runTimeoutCANBehavior,
 			func(ctx context.Context, _ int64) error {
 				select {
 				case <-ctx.Done():
@@ -171,8 +171,8 @@ func TestIntegration_RecordRunTimeoutContinuedHistories(t *testing.T) {
 				case <-time.After(4 * time.Second):
 					return nil
 				}
-			})
-		budget := engine.DefaultContinuationBudget(100, 1<<20, 5*time.Minute)
+			}, "slow")
+		budget := engine.DefaultContinuationBudget(150, 1<<20, 5*time.Minute)
 		budget.ChunkBytes = 128
 		budget.ChunksPerTask = 1
 		runID, g0, g1, err := recordTwoGenerations(t, s, "past", chainDocument("rt-past", "10s", 8, false),
@@ -193,9 +193,10 @@ func TestIntegration_RecordRunTimeoutContinuedHistories(t *testing.T) {
 	}
 
 	// hold: the limits that land a hold depend on the cluster's own event
-	// accounting; each candidate is tried in turn.
+	// accounting, which pacing makes the same on every host (startPacedCANStack);
+	// each candidate is tried in turn.
 	{
-		s := startCANStack(t, ctx, "rt-hold", true, runTimeoutCANBehavior)
+		s := startPacedCANStack(t, ctx, "rt-hold", runTimeoutCANBehavior, nil, "slow")
 		var tried []string
 		for _, maxEvents := range []int64{700, 800, 600, 1000} {
 			budget := engine.DefaultContinuationBudget(20, 1<<20, 3*time.Minute)

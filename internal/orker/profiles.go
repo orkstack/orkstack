@@ -5,13 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/netip"
 	"path"
 	"regexp"
 	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -28,9 +25,8 @@ import (
 // operator writes, never code.
 //
 // ParseProfiles checks only what the document itself says. What the host says
-// — that a device is of an allowed class, that a CDI spec is trusted, that an
-// egress network is internal — is the boot audit's, which each kind brings
-// with it.
+// — that a device is of an allowed class, that a CDI spec is trusted — is the
+// boot audit's, which each kind brings with it.
 
 // ProfilesVar is the variable orker.profiles renders to.
 const ProfilesVar = "ORK_ORKER_PROFILES"
@@ -45,7 +41,6 @@ const (
 const (
 	maxProfileDevices    = 16
 	maxProfileGPUUnits   = 64
-	maxProfileExpect     = 16
 	maxProfileInterval   = 24 * time.Hour
 	minProfileInterval   = time.Second
 	maxProfileNameBytes  = 200
@@ -63,7 +58,7 @@ type Profiles struct {
 	List []Profile
 }
 
-// Profile is one declared profile. Exactly one of GPU, Devices or Egress is
+// Profile is one declared profile. Exactly one of GPU or Devices is
 // set, according to Kind.
 type Profile struct {
 	Name string
@@ -72,7 +67,6 @@ type Profile struct {
 	Revision string
 	GPU      *GPUProfile
 	Devices  []ProfileDevice
-	Egress   *EgressProfile
 }
 
 // GPUProfile is a `gpu` profile: counted, exclusive units, each one fully
@@ -93,36 +87,6 @@ type ProfileDevice struct {
 	Permissions string
 }
 
-// EgressProfile is an `egress` profile: an internal network whose only way
-// out is an operator-run, labelled proxy container.
-type EgressProfile struct {
-	Network string
-	Proxy   EgressProxy
-	Expect  EgressExpect
-}
-
-// EgressProxy is the gateway container of an egress profile.
-type EgressProxy struct {
-	Address   netip.AddrPort
-	Container string
-	// Image is pinned by digest.
-	Image string
-}
-
-// EgressExpect is what the egress probes check, at boot and periodically.
-type EgressExpect struct {
-	Reachable   []string
-	Unreachable []string
-	// DNSCanary is a name that must resolve from the host.
-	DNSCanary string
-}
-
-// reservedProfileNames are runtime network words a profile may not take.
-var reservedProfileNames = map[string]bool{
-	"default": true, "none": true, "host": true, "bridge": true,
-	"private": true, "pasta": true, "slirp4netns": true,
-}
-
 // The settings that share orker.profiles with the profiles themselves. None
 // is a slug, so none can collide with a profile's name.
 const (
@@ -135,9 +99,7 @@ var (
 	cdiKindPattern       = regexp.MustCompile(`^[a-z0-9]([a-z0-9.-]*[a-z0-9])?/[a-z0-9_.-]+$`)
 	cdiUnitPattern       = regexp.MustCompile(`^[A-Za-z0-9_.:-]+$`)
 	revisionPattern      = regexp.MustCompile(`^[A-Za-z0-9_.:+-]{1,64}$`)
-	runtimeNamePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`)
 	containerPathPattern = regexp.MustCompile(`^/dev/[A-Za-z0-9._-]+(/[A-Za-z0-9._-]+)?$`)
-	hostnamePattern      = regexp.MustCompile(`^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.?$`)
 )
 
 // reservedContainerPaths are device paths every container already has, or
@@ -159,9 +121,6 @@ type profileFields struct {
 	Revision string          `yaml:"revision"`
 	CDI      *cdiFields      `yaml:"cdi"`
 	Devices  *[]deviceFields `yaml:"devices"`
-	Network  string          `yaml:"network"`
-	Proxy    *proxyFields    `yaml:"proxy"`
-	Expect   *expectFields   `yaml:"expect"`
 }
 
 type cdiFields struct {
@@ -173,18 +132,6 @@ type deviceFields struct {
 	Path          string `yaml:"path"`
 	ContainerPath string `yaml:"container_path"`
 	Permissions   string `yaml:"permissions"`
-}
-
-type proxyFields struct {
-	Address   string `yaml:"address"`
-	Container string `yaml:"container"`
-	Image     string `yaml:"image"`
-}
-
-type expectFields struct {
-	Reachable   []string `yaml:"reachable"`
-	Unreachable []string `yaml:"unreachable"`
-	DNSCanary   string   `yaml:"dns_canary"`
 }
 
 // ParseProfiles decodes an orker.profiles document strictly: one document,
@@ -348,9 +295,6 @@ func parseProfile(name string, value *yaml.Node) (Profile, error) {
 	if err := dsl.ValidSlug("profile", name); err != nil {
 		return Profile{}, fmt.Errorf("%s: %w", at, err)
 	}
-	if reservedProfileNames[name] {
-		return Profile{}, fmt.Errorf("%s: %q is reserved and cannot name a profile", at, name)
-	}
 	if value.Kind != yaml.MappingNode {
 		return Profile{}, fmt.Errorf("%s: must be a mapping", at)
 	}
@@ -380,26 +324,20 @@ func parseProfile(name string, value *yaml.Node) (Profile, error) {
 	switch f.Kind {
 	case "gpu":
 		p.Kind = orkstackv1.ProfileKind_PROFILE_KIND_GPU
-		if err := foreignKeys(at, "gpu", keys, "devices", "network", "proxy", "expect"); err != nil {
+		if err := foreignKeys(at, "gpu", keys, "devices"); err != nil {
 			return Profile{}, err
 		}
 		p.GPU, err = parseGPU(at, f.CDI)
 	case "devices":
 		p.Kind = orkstackv1.ProfileKind_PROFILE_KIND_DEVICES
-		if err := foreignKeys(at, "devices", keys, "cdi", "network", "proxy", "expect"); err != nil {
+		if err := foreignKeys(at, "devices", keys, "cdi"); err != nil {
 			return Profile{}, err
 		}
 		p.Devices, err = parseDevices(at, f.Devices)
-	case "egress":
-		p.Kind = orkstackv1.ProfileKind_PROFILE_KIND_EGRESS
-		if err := foreignKeys(at, "egress", keys, "cdi", "devices"); err != nil {
-			return Profile{}, err
-		}
-		p.Egress, err = parseEgress(at, f)
 	case "":
-		return Profile{}, fmt.Errorf("%s.kind is required: gpu, devices or egress", at)
+		return Profile{}, fmt.Errorf("%s.kind is required: gpu or devices", at)
 	default:
-		return Profile{}, fmt.Errorf("%s.kind: %q is not a profile kind (gpu, devices or egress)", at, f.Kind)
+		return Profile{}, fmt.Errorf("%s.kind: %q is not a profile kind (gpu or devices)", at, f.Kind)
 	}
 	if err != nil {
 		return Profile{}, err
@@ -533,146 +471,17 @@ func checkContainerPath(p string) error {
 	return nil
 }
 
-func parseEgress(at string, f profileFields) (*EgressProfile, error) {
-	if !runtimeNamePattern.MatchString(f.Network) {
-		return nil, fmt.Errorf("%s.network: %q is not a runtime network name", at, f.Network)
-	}
-	if reservedProfileNames[f.Network] {
-		return nil, fmt.Errorf("%s.network: %q is one of the runtime's own networks, never an egress network", at, f.Network)
-	}
-	if f.Proxy == nil {
-		return nil, fmt.Errorf("%s.proxy is required for an egress profile", at)
-	}
-	address, err := netip.ParseAddrPort(f.Proxy.Address)
-	if err != nil || !address.Addr().Is4() || address.Port() == 0 {
-		return nil, fmt.Errorf("%s.proxy.address: %q is not an IPv4 address and port such as 10.89.255.2:4750", at, f.Proxy.Address)
-	}
-	if ip := address.Addr(); ip.IsUnspecified() || ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsMulticast() ||
-		ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}) || sharedOrSpecial(ip) {
-		return nil, fmt.Errorf("%s.proxy.address: %s is not an address a proxy on the egress network can hold", at, ip)
-	}
-	if !runtimeNamePattern.MatchString(f.Proxy.Container) {
-		return nil, fmt.Errorf("%s.proxy.container: %q is not a container name", at, f.Proxy.Container)
-	}
-	if err := digestPinned(f.Proxy.Image); err != nil {
-		return nil, fmt.Errorf("%s.proxy.image: %w", at, err)
-	}
-	if f.Expect == nil {
-		return nil, fmt.Errorf("%s.expect is required for an egress profile", at)
-	}
-	reachable, err := expectList(at+".expect.reachable", f.Expect.Reachable)
-	if err != nil {
-		return nil, err
-	}
-	unreachable, err := expectList(at+".expect.unreachable", f.Expect.Unreachable)
-	if err != nil {
-		return nil, err
-	}
-	for i, dest := range reachable {
-		if host, _, _ := net.SplitHostPort(dest); hostIsLocal(host) {
-			return nil, fmt.Errorf("%s.expect.reachable[%d]: %q is a loopback, link-local or metadata destination; "+
-				"a profile that must reach one is not an egress profile", at, i, dest)
-		}
-	}
-	for _, dest := range reachable {
-		for _, other := range unreachable {
-			if canonicalDestination(dest) == canonicalDestination(other) {
-				return nil, fmt.Errorf("%s.expect: %q is both reachable and unreachable", at, dest)
-			}
-		}
-	}
-	if f.Expect.DNSCanary == "" {
-		return nil, fmt.Errorf("%s.expect.dns_canary is required: a name that resolves from the host", at)
-	}
-	if len(f.Expect.DNSCanary) > maxProfileValueBytes || !hostnamePattern.MatchString(f.Expect.DNSCanary) {
-		return nil, fmt.Errorf("%s.expect.dns_canary: %q is not a host name", at, f.Expect.DNSCanary)
-	}
-	return &EgressProfile{
-		Network: f.Network,
-		Proxy:   EgressProxy{Address: address, Container: f.Proxy.Container, Image: f.Proxy.Image},
-		Expect:  EgressExpect{Reachable: reachable, Unreachable: unreachable, DNSCanary: f.Expect.DNSCanary},
-	}, nil
-}
-
-// expectList checks a list of host:port destinations: 1 to maxProfileExpect,
-// each a host name or IP literal and a port.
-func expectList(at string, list []string) ([]string, error) {
-	if len(list) == 0 || len(list) > maxProfileExpect {
-		return nil, fmt.Errorf("%s: declare 1 to %d destinations", at, maxProfileExpect)
-	}
-	seen := map[string]bool{}
-	for i, dest := range list {
-		host, port, err := net.SplitHostPort(dest)
-		n, perr := strconv.ParseUint(port, 10, 16)
-		if err != nil || perr != nil || n == 0 || port != strconv.FormatUint(n, 10) || host == "" || len(host) > maxProfileValueBytes {
-			return nil, fmt.Errorf("%s[%d]: %q is not host:port", at, i, dest)
-		}
-		if _, ipErr := netip.ParseAddr(host); ipErr != nil && (!hostnamePattern.MatchString(host) || numericName(host)) {
-			return nil, fmt.Errorf("%s[%d]: %q is not host:port (a name, or an IP address written in full)", at, i, dest)
-		}
-		if seen[canonicalDestination(dest)] {
-			return nil, fmt.Errorf("%s[%d]: %q is a duplicate", at, i, dest)
-		}
-		seen[canonicalDestination(dest)] = true
-	}
-	return slices.Clone(list), nil
-}
-
-// sharedOrSpecial is an IPv4 address in the shared address space
-// (100.64.0.0/10, where some clouds serve metadata) or the IETF protocol
-// assignments block (192.0.0.0/24): never an operator's proxy.
-func sharedOrSpecial(ip netip.Addr) bool {
-	return netip.MustParsePrefix("100.64.0.0/10").Contains(ip) || netip.MustParsePrefix("192.0.0.0/24").Contains(ip)
-}
-
-// hostIsLocal is a destination that is the host, a link-local address or a
-// metadata endpoint, by name or literal.
-func hostIsLocal(host string) bool {
-	if ip, err := netip.ParseAddr(host); err == nil {
-		return ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || sharedOrSpecial(ip)
-	}
-	name := strings.TrimSuffix(strings.ToLower(host), ".")
-	return name == "localhost" || strings.HasSuffix(name, ".localhost") || name == "metadata.google.internal"
-}
-
-// numericName is a name made only of digits and dots, or a hex-looking
-// first label, which a resolver may read as an IP address ("127.1",
-// "0x7f.1"); netip refuses such forms, so they are refused here too.
-func numericName(host string) bool {
-	labels := strings.Split(strings.TrimSuffix(host, "."), ".")
-	if strings.HasPrefix(strings.ToLower(labels[0]), "0x") {
-		return true
-	}
-	return strings.Trim(host, "0123456789.") == ""
-}
-
-// canonicalDestination is host:port with the host lower-cased and without a
-// trailing dot, for comparing two destinations.
-func canonicalDestination(dest string) string {
-	host, port, err := net.SplitHostPort(dest)
-	if err != nil {
-		return dest
-	}
-	return net.JoinHostPort(strings.TrimSuffix(strings.ToLower(host), "."), port)
-}
-
-// checkOnePerKind holds the per-Orker limits: one gpu profile (its units come
-// from one CDI kind) and one egress profile (one network per Orker).
+// checkOnePerKind holds the per-Orker limit: one gpu profile (its units come
+// from one CDI kind).
 func checkOnePerKind(list []Profile) error {
-	var gpu, egress []string
+	var gpu []string
 	for _, p := range list {
-		switch p.Kind {
-		case orkstackv1.ProfileKind_PROFILE_KIND_GPU:
+		if p.Kind == orkstackv1.ProfileKind_PROFILE_KIND_GPU {
 			gpu = append(gpu, p.Name)
-		case orkstackv1.ProfileKind_PROFILE_KIND_EGRESS:
-			egress = append(egress, p.Name)
 		}
 	}
 	if len(gpu) > 1 {
 		return fmt.Errorf("profiles: an Orker offers at most one gpu profile; %s are declared", strings.Join(gpu, ", "))
-	}
-	if len(egress) > 1 {
-		return fmt.Errorf("profiles: an Orker offers at most one egress profile (one network per Orker); %s are declared", strings.Join(egress, ", "))
 	}
 	return nil
 }
@@ -704,8 +513,6 @@ func profileKindWord(k orkstackv1.ProfileKind) string {
 		return "gpu"
 	case orkstackv1.ProfileKind_PROFILE_KIND_DEVICES:
 		return "devices"
-	case orkstackv1.ProfileKind_PROFILE_KIND_EGRESS:
-		return "egress"
 	}
 	return fmt.Sprintf("unknown (%d)", int32(k))
 }
@@ -735,20 +542,11 @@ type devicesIdentity struct {
 	Name    string           `json:"name"`
 }
 
-type egressIdentity struct {
-	Kind             string   `json:"kind"`
-	Name             string   `json:"name"`
-	ProxyImageDigest string   `json:"proxy_image_digest"`
-	Reachable        []string `json:"reachable"`
-	Unreachable      []string `json:"unreachable"`
-}
-
 // StructuralIdentity is the SHA-256 (hex) of what a run pins and what every
 // Orker of a pool must share: for gpu its name, kind and CDI kind; for
 // devices its name, kind and each device's class, container path and
-// permissions; for egress its name, kind, sorted expect lists and the proxy
-// image's digest. Units, host paths, network names and addresses are local to
-// one Orker and are not in it; the revision changes memo keys only.
+// permissions. Units and host paths are local to one Orker and are not in
+// it; the revision changes memo keys only.
 func (p Profile) StructuralIdentity(classify DeviceClassifier) (string, error) {
 	var v any
 	switch {
@@ -777,15 +575,6 @@ func (p Profile) StructuralIdentity(classify DeviceClassifier) (string, error) {
 			return a.Permissions < b.Permissions
 		})
 		v = devicesIdentity{Devices: devices, Kind: "devices", Name: p.Name}
-	case p.Kind == orkstackv1.ProfileKind_PROFILE_KIND_EGRESS && p.Egress != nil:
-		ref, err := dsl.ParseReference(p.Egress.Proxy.Image)
-		if err != nil {
-			return "", fmt.Errorf("profile %s: %w", p.Name, err)
-		}
-		reachable, unreachable := slices.Clone(p.Egress.Expect.Reachable), slices.Clone(p.Egress.Expect.Unreachable)
-		sort.Strings(reachable)
-		sort.Strings(unreachable)
-		v = egressIdentity{Kind: "egress", Name: p.Name, ProxyImageDigest: ref.Digest, Reachable: reachable, Unreachable: unreachable}
 	default:
 		return "", fmt.Errorf("profile %s: kind %s has no identity", p.Name, profileKindWord(p.Kind))
 	}

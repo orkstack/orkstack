@@ -109,6 +109,6 @@ var dataConverter = converter.MakeTransferAware(converter.NewCompositeDataConver
 //
 // The Orker keeps the SDK default and stays strict on what it is sent: a
 // field of ExecuteTaskInput it cannot read may be a security setting
-// (egress, devices, identity, an unmasked secret), and submit's capability
+// (devices, identity, an unmasked secret), and submit's capability
 // checks keep such a field away from an Orker that predates it.
 func DataConverter() converter.DataConverter { return dataConverter }

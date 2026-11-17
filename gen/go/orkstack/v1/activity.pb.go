@@ -24,17 +24,13 @@ const (
 )
 
 // NetworkMode is the complete set of network configurations an Orkflow may
-// select. An Orkflow never defines a network: EGRESS selects an egress
-// profile an Orker's operator defined, by its name (AGENTS.md §6).
+// select (AGENTS.md §6).
 type NetworkMode int32
 
 const (
 	NetworkMode_NETWORK_MODE_UNSPECIFIED NetworkMode = 0 // treated as NETWORK_MODE_DEFAULT
 	NetworkMode_NETWORK_MODE_DEFAULT     NetworkMode = 1
 	NetworkMode_NETWORK_MODE_NONE        NetworkMode = 2
-	// The egress profile Task.network_profile names: an internal network whose
-	// only way out is the operator's proxy.
-	NetworkMode_NETWORK_MODE_EGRESS NetworkMode = 3
 )
 
 // Enum value maps for NetworkMode.
@@ -43,13 +39,11 @@ var (
 		0: "NETWORK_MODE_UNSPECIFIED",
 		1: "NETWORK_MODE_DEFAULT",
 		2: "NETWORK_MODE_NONE",
-		3: "NETWORK_MODE_EGRESS",
 	}
 	NetworkMode_value = map[string]int32{
 		"NETWORK_MODE_UNSPECIFIED": 0,
 		"NETWORK_MODE_DEFAULT":     1,
 		"NETWORK_MODE_NONE":        2,
-		"NETWORK_MODE_EGRESS":      3,
 	}
 )
 
@@ -381,21 +375,15 @@ const (
 	ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED            ProfileCordonReason = 1
 	ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED          ProfileCordonReason = 2
 	ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED     ProfileCordonReason = 3
-	ProfileCordonReason_PROFILE_CORDON_REASON_NETWORK_CHANGED         ProfileCordonReason = 4
-	ProfileCordonReason_PROFILE_CORDON_REASON_GATEWAY_CHANGED         ProfileCordonReason = 5
-	ProfileCordonReason_PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED ProfileCordonReason = 6
-	ProfileCordonReason_PROFILE_CORDON_REASON_GATEWAY_ABSENT          ProfileCordonReason = 7
-	ProfileCordonReason_PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED ProfileCordonReason = 8
-	ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT             ProfileCordonReason = 9
-	ProfileCordonReason_PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD      ProfileCordonReason = 10
-	ProfileCordonReason_PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH      ProfileCordonReason = 11
-	ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE ProfileCordonReason = 12
-	ProfileCordonReason_PROFILE_CORDON_REASON_HOST_VIEW_CHANGED       ProfileCordonReason = 13
-	ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY     ProfileCordonReason = 14
-	ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH    ProfileCordonReason = 15
-	ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN      ProfileCordonReason = 16
-	ProfileCordonReason_PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED   ProfileCordonReason = 17
-	ProfileCordonReason_PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD      ProfileCordonReason = 18
+	ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT             ProfileCordonReason = 4
+	ProfileCordonReason_PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD      ProfileCordonReason = 5
+	ProfileCordonReason_PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH      ProfileCordonReason = 6
+	ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE ProfileCordonReason = 7
+	ProfileCordonReason_PROFILE_CORDON_REASON_HOST_VIEW_CHANGED       ProfileCordonReason = 8
+	ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY     ProfileCordonReason = 9
+	ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH    ProfileCordonReason = 10
+	ProfileCordonReason_PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN      ProfileCordonReason = 11
+	ProfileCordonReason_PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD      ProfileCordonReason = 12
 )
 
 // Enum value maps for ProfileCordonReason.
@@ -405,42 +393,30 @@ var (
 		1:  "PROFILE_CORDON_REASON_SPEC_CHANGED",
 		2:  "PROFILE_CORDON_REASON_DEVICE_CHANGED",
 		3:  "PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED",
-		4:  "PROFILE_CORDON_REASON_NETWORK_CHANGED",
-		5:  "PROFILE_CORDON_REASON_GATEWAY_CHANGED",
-		6:  "PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED",
-		7:  "PROFILE_CORDON_REASON_GATEWAY_ABSENT",
-		8:  "PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED",
-		9:  "PROFILE_CORDON_REASON_SPEC_ABSENT",
-		10: "PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD",
-		11: "PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH",
-		12: "PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE",
-		13: "PROFILE_CORDON_REASON_HOST_VIEW_CHANGED",
-		14: "PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY",
-		15: "PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH",
-		16: "PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN",
-		17: "PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED",
-		18: "PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD",
+		4:  "PROFILE_CORDON_REASON_SPEC_ABSENT",
+		5:  "PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD",
+		6:  "PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH",
+		7:  "PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE",
+		8:  "PROFILE_CORDON_REASON_HOST_VIEW_CHANGED",
+		9:  "PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY",
+		10: "PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH",
+		11: "PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN",
+		12: "PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD",
 	}
 	ProfileCordonReason_value = map[string]int32{
 		"PROFILE_CORDON_REASON_UNSPECIFIED":             0,
 		"PROFILE_CORDON_REASON_SPEC_CHANGED":            1,
 		"PROFILE_CORDON_REASON_DEVICE_CHANGED":          2,
 		"PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED":     3,
-		"PROFILE_CORDON_REASON_NETWORK_CHANGED":         4,
-		"PROFILE_CORDON_REASON_GATEWAY_CHANGED":         5,
-		"PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED": 6,
-		"PROFILE_CORDON_REASON_GATEWAY_ABSENT":          7,
-		"PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED": 8,
-		"PROFILE_CORDON_REASON_SPEC_ABSENT":             9,
-		"PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD":      10,
-		"PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH":      11,
-		"PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE": 12,
-		"PROFILE_CORDON_REASON_HOST_VIEW_CHANGED":       13,
-		"PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY":     14,
-		"PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH":    15,
-		"PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN":      16,
-		"PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED":   17,
-		"PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD":      18,
+		"PROFILE_CORDON_REASON_SPEC_ABSENT":             4,
+		"PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD":      5,
+		"PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH":      6,
+		"PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE": 7,
+		"PROFILE_CORDON_REASON_HOST_VIEW_CHANGED":       8,
+		"PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY":     9,
+		"PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH":    10,
+		"PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN":      11,
+		"PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD":      12,
 	}
 )
 
@@ -481,8 +457,6 @@ const (
 	ProfileKind_PROFILE_KIND_DEVICES ProfileKind = 1
 	// Counted, exclusive GPU units, each one CDI device.
 	ProfileKind_PROFILE_KIND_GPU ProfileKind = 2
-	// An internal network whose only way out is the operator's proxy.
-	ProfileKind_PROFILE_KIND_EGRESS ProfileKind = 3
 )
 
 // Enum value maps for ProfileKind.
@@ -491,13 +465,11 @@ var (
 		0: "PROFILE_KIND_UNSPECIFIED",
 		1: "PROFILE_KIND_DEVICES",
 		2: "PROFILE_KIND_GPU",
-		3: "PROFILE_KIND_EGRESS",
 	}
 	ProfileKind_value = map[string]int32{
 		"PROFILE_KIND_UNSPECIFIED": 0,
 		"PROFILE_KIND_DEVICES":     1,
 		"PROFILE_KIND_GPU":         2,
-		"PROFILE_KIND_EGRESS":      3,
 	}
 )
 
@@ -641,7 +613,7 @@ const (
 	ProfileCordon_CAUSE_UNSPECIFIED ProfileCordon_Cause = 0
 	// The profile no longer matches what the Orker audited at boot.
 	ProfileCordon_CAUSE_DRIFT ProfileCordon_Cause = 1
-	// The profile's units, gateway or reachable destinations are absent.
+	// The profile's units or specs are absent, or its probe failed.
 	ProfileCordon_CAUSE_UNAVAILABLE ProfileCordon_Cause = 2
 )
 
@@ -2159,9 +2131,6 @@ type ExecuteTaskInput struct {
 	// identities its run pinned. An Orker that offers none of them refuses the
 	// attempt (PROFILE_NOT_OFFERED).
 	Devices []*ProfileRef `protobuf:"bytes,30,rep,name=devices,proto3" json:"devices,omitempty"`
-	// egress is the egress profile of a task whose network is
-	// NETWORK_MODE_EGRESS, with the identity its run pinned, if any.
-	Egress *ProfileRef `protobuf:"bytes,31,opt,name=egress,proto3" json:"egress,omitempty"`
 	// identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
 	Identity *IdentityContext `protobuf:"bytes,34,opt,name=identity,proto3" json:"identity,omitempty"`
 	// run_context is set from E86; unset until it lands (v0.4.0 proto batch).
@@ -2399,13 +2368,6 @@ func (x *ExecuteTaskInput) GetJoin() *JoinContext {
 func (x *ExecuteTaskInput) GetDevices() []*ProfileRef {
 	if x != nil {
 		return x.Devices
-	}
-	return nil
-}
-
-func (x *ExecuteTaskInput) GetEgress() *ProfileRef {
-	if x != nil {
-		return x.Egress
 	}
 	return nil
 }
@@ -4640,7 +4602,7 @@ func (x *MetadataProbe) GetDetail() string {
 }
 
 // OrkerProfile is one profile an Orker offers (docs/DEPLOY.md, "Profiles").
-// The inventory (ListOrkers) carries name, kind, the unit counts and probe_ok;
+// The inventory (ListOrkers) carries name, kind and the unit counts;
 // revision and identity_digest travel only on the Orker's own answer to the
 // engine and are never listed or exported.
 type OrkerProfile struct {
@@ -4654,13 +4616,11 @@ type OrkerProfile struct {
 	UsableUnits int32 `protobuf:"varint,4,opt,name=usable_units,json=usableUnits,proto3" json:"usable_units,omitempty"`
 	// bound_units is how many are held by a task now.
 	BoundUnits int32 `protobuf:"varint,5,opt,name=bound_units,json=boundUnits,proto3" json:"bound_units,omitempty"`
-	// probe_ok is whether the profile's latest check passed.
-	ProbeOk bool `protobuf:"varint,6,opt,name=probe_ok,json=probeOk,proto3" json:"probe_ok,omitempty"`
 	// revision is the operator's revision label; it changes memo keys only.
-	Revision string `protobuf:"bytes,7,opt,name=revision,proto3" json:"revision,omitempty"`
+	Revision string `protobuf:"bytes,6,opt,name=revision,proto3" json:"revision,omitempty"`
 	// identity_digest is the SHA-256 (hex) of the profile's structural
 	// identity, which a run pins at submit and every Orker of a pool must share.
-	IdentityDigest string `protobuf:"bytes,8,opt,name=identity_digest,json=identityDigest,proto3" json:"identity_digest,omitempty"`
+	IdentityDigest string `protobuf:"bytes,7,opt,name=identity_digest,json=identityDigest,proto3" json:"identity_digest,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
 }
@@ -4728,13 +4688,6 @@ func (x *OrkerProfile) GetBoundUnits() int32 {
 		return x.BoundUnits
 	}
 	return 0
-}
-
-func (x *OrkerProfile) GetProbeOk() bool {
-	if x != nil {
-		return x.ProbeOk
-	}
-	return false
 }
 
 func (x *OrkerProfile) GetRevision() string {
@@ -4895,8 +4848,7 @@ func (x *ProfileCordon) GetDetail() string {
 }
 
 // ProfileRef names one profile a task holds, with the structural identity the
-// run pinned at submit. An empty identity_digest is unpinned: no Orker
-// answered at submit (egress only).
+// run pinned at submit.
 type ProfileRef struct {
 	state          protoimpl.MessageState `protogen:"open.v1"`
 	Name           string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
@@ -5191,7 +5143,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\fEachUpstream\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x05R\x05count\x12\x1f\n" +
 	"\vcommit_root\x18\x02 \x01(\tR\n" +
-	"commitRoot\"\x9f\f\n" +
+	"commitRoot\"\xee\v\n" +
 	"\x10ExecuteTaskInput\x12\x15\n" +
 	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12!\n" +
 	"\forkflow_name\x18\x02 \x01(\tR\vorkflowName\x12'\n" +
@@ -5223,8 +5175,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\x04each\x18\x1a \x01(\v2\x18.orkstack.v1.EachContextR\x04each\x12/\n" +
 	"\x05cache\x18\x1b \x01(\v2\x19.orkstack.v1.CacheContextR\x05cache\x12,\n" +
 	"\x04join\x18\x1c \x01(\v2\x18.orkstack.v1.JoinContextR\x04join\x121\n" +
-	"\adevices\x18\x1e \x03(\v2\x17.orkstack.v1.ProfileRefR\adevices\x12/\n" +
-	"\x06egress\x18\x1f \x01(\v2\x17.orkstack.v1.ProfileRefR\x06egress\x128\n" +
+	"\adevices\x18\x1e \x03(\v2\x17.orkstack.v1.ProfileRefR\adevices\x128\n" +
 	"\bidentity\x18\" \x01(\v2\x1c.orkstack.v1.IdentityContextR\bidentity\x128\n" +
 	"\vrun_context\x18! \x01(\v2\x17.orkstack.v1.RunContextR\n" +
 	"runContext\x1a6\n" +
@@ -5433,17 +5384,16 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\rMetadataProbe\x12\x18\n" +
 	"\aaddress\x18\x01 \x01(\tR\aaddress\x12;\n" +
 	"\aoutcome\x18\x02 \x01(\x0e2!.orkstack.v1.MetadataProbeOutcomeR\aoutcome\x12\x16\n" +
-	"\x06detail\x18\x03 \x01(\tR\x06detail\"\x8a\x02\n" +
+	"\x06detail\x18\x03 \x01(\tR\x06detail\"\xef\x01\n" +
 	"\fOrkerProfile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12,\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x18.orkstack.v1.ProfileKindR\x04kind\x12\x14\n" +
 	"\x05units\x18\x03 \x01(\x05R\x05units\x12!\n" +
 	"\fusable_units\x18\x04 \x01(\x05R\vusableUnits\x12\x1f\n" +
 	"\vbound_units\x18\x05 \x01(\x05R\n" +
-	"boundUnits\x12\x19\n" +
-	"\bprobe_ok\x18\x06 \x01(\bR\aprobeOk\x12\x1a\n" +
-	"\brevision\x18\a \x01(\tR\brevision\x12'\n" +
-	"\x0fidentity_digest\x18\b \x01(\tR\x0eidentityDigest\"\x81\x01\n" +
+	"boundUnits\x12\x1a\n" +
+	"\brevision\x18\x06 \x01(\tR\brevision\x12'\n" +
+	"\x0fidentity_digest\x18\a \x01(\tR\x0eidentityDigest\"\x81\x01\n" +
 	"\rOrkerStopping\x120\n" +
 	"\x05since\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12>\n" +
 	"\rgrace_ends_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\vgraceEndsAt\"\xad\x02\n" +
@@ -5464,12 +5414,11 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\fProviderInfo\"\f\n" +
 	"\n" +
 	"RunContext\"\r\n" +
-	"\vServiceHost*u\n" +
+	"\vServiceHost*\\\n" +
 	"\vNetworkMode\x12\x1c\n" +
 	"\x18NETWORK_MODE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14NETWORK_MODE_DEFAULT\x10\x01\x12\x15\n" +
-	"\x11NETWORK_MODE_NONE\x10\x02\x12\x17\n" +
-	"\x13NETWORK_MODE_EGRESS\x10\x03*|\n" +
+	"\x11NETWORK_MODE_NONE\x10\x02*|\n" +
 	"\n" +
 	"JoinPolicy\x12\x1b\n" +
 	"\x17JOIN_POLICY_UNSPECIFIED\x10\x00\x12\x1b\n" +
@@ -5495,33 +5444,26 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\"METADATA_PROBE_OUTCOME_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fMETADATA_PROBE_OUTCOME_ANSWERED\x10\x01\x12$\n" +
 	" METADATA_PROBE_OUTCOME_NO_ANSWER\x10\x02\x12'\n" +
-	"#METADATA_PROBE_OUTCOME_PROBE_FAILED\x10\x03*\xf2\x06\n" +
+	"#METADATA_PROBE_OUTCOME_PROBE_FAILED\x10\x03*\xdb\x04\n" +
 	"\x13ProfileCordonReason\x12%\n" +
 	"!PROFILE_CORDON_REASON_UNSPECIFIED\x10\x00\x12&\n" +
 	"\"PROFILE_CORDON_REASON_SPEC_CHANGED\x10\x01\x12(\n" +
 	"$PROFILE_CORDON_REASON_DEVICE_CHANGED\x10\x02\x12-\n" +
-	")PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED\x10\x03\x12)\n" +
-	"%PROFILE_CORDON_REASON_NETWORK_CHANGED\x10\x04\x12)\n" +
-	"%PROFILE_CORDON_REASON_GATEWAY_CHANGED\x10\x05\x121\n" +
-	"-PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED\x10\x06\x12(\n" +
-	"$PROFILE_CORDON_REASON_GATEWAY_ABSENT\x10\a\x121\n" +
-	"-PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED\x10\b\x12%\n" +
-	"!PROFILE_CORDON_REASON_SPEC_ABSENT\x10\t\x12,\n" +
-	"(PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD\x10\n" +
+	")PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED\x10\x03\x12%\n" +
+	"!PROFILE_CORDON_REASON_SPEC_ABSENT\x10\x04\x12,\n" +
+	"(PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD\x10\x05\x12,\n" +
+	"(PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH\x10\x06\x121\n" +
+	"-PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE\x10\a\x12+\n" +
+	"'PROFILE_CORDON_REASON_HOST_VIEW_CHANGED\x10\b\x12-\n" +
+	")PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY\x10\t\x12.\n" +
+	"*PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH\x10\n" +
 	"\x12,\n" +
-	"(PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH\x10\v\x121\n" +
-	"-PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE\x10\f\x12+\n" +
-	"'PROFILE_CORDON_REASON_HOST_VIEW_CHANGED\x10\r\x12-\n" +
-	")PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY\x10\x0e\x12.\n" +
-	"*PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH\x10\x0f\x12,\n" +
-	"(PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN\x10\x10\x12/\n" +
-	"+PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED\x10\x11\x12,\n" +
-	"(PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD\x10\x12*t\n" +
+	"(PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN\x10\v\x12,\n" +
+	"(PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD\x10\f*[\n" +
 	"\vProfileKind\x12\x1c\n" +
 	"\x18PROFILE_KIND_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14PROFILE_KIND_DEVICES\x10\x01\x12\x14\n" +
-	"\x10PROFILE_KIND_GPU\x10\x02\x12\x17\n" +
-	"\x13PROFILE_KIND_EGRESS\x10\x03*p\n" +
+	"\x10PROFILE_KIND_GPU\x10\x02*p\n" +
 	"\fResultsScope\x12\x1d\n" +
 	"\x19RESULTS_SCOPE_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dRESULTS_SCOPE_EVERY_NAMESPACE\x10\x01\x12\x1e\n" +
@@ -5651,81 +5593,80 @@ var file_orkstack_v1_activity_proto_depIdxs = []int32{
 	20,  // 33: orkstack.v1.ExecuteTaskInput.cache:type_name -> orkstack.v1.CacheContext
 	19,  // 34: orkstack.v1.ExecuteTaskInput.join:type_name -> orkstack.v1.JoinContext
 	48,  // 35: orkstack.v1.ExecuteTaskInput.devices:type_name -> orkstack.v1.ProfileRef
-	48,  // 36: orkstack.v1.ExecuteTaskInput.egress:type_name -> orkstack.v1.ProfileRef
-	43,  // 37: orkstack.v1.ExecuteTaskInput.identity:type_name -> orkstack.v1.IdentityContext
-	50,  // 38: orkstack.v1.ExecuteTaskInput.run_context:type_name -> orkstack.v1.RunContext
-	17,  // 39: orkstack.v1.ReleasePinInput.pin:type_name -> orkstack.v1.PinContext
-	58,  // 40: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
-	28,  // 41: orkstack.v1.ExecuteTaskResult.commit:type_name -> orkstack.v1.CommitRef
-	55,  // 42: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
-	55,  // 43: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	55,  // 44: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
-	11,  // 45: orkstack.v1.ExecuteTaskResult.image:type_name -> orkstack.v1.ImageRef
-	58,  // 46: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
-	58,  // 47: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
-	22,  // 48: orkstack.v1.ExecuteTaskResult.cache:type_name -> orkstack.v1.CacheResult
-	11,  // 49: orkstack.v1.ActivityCommit.image:type_name -> orkstack.v1.ImageRef
-	55,  // 50: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
-	55,  // 51: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
-	55,  // 52: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	58,  // 53: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
-	58,  // 54: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
-	22,  // 55: orkstack.v1.ActivityCommit.cache:type_name -> orkstack.v1.CacheResult
-	58,  // 56: orkstack.v1.CommitRecording.time:type_name -> google.protobuf.Timestamp
-	4,   // 57: orkstack.v1.RecordedValues.kind:type_name -> orkstack.v1.RecordedValuesKind
-	55,  // 58: orkstack.v1.RecordedValues.values:type_name -> orkstack.v1.ArtifactRef
-	32,  // 59: orkstack.v1.RecordedValues.sources:type_name -> orkstack.v1.RecordedSource
-	31,  // 60: orkstack.v1.RecordedValues.recorded:type_name -> orkstack.v1.CommitRecording
-	32,  // 61: orkstack.v1.RecordedValues.follows:type_name -> orkstack.v1.RecordedSource
-	63,  // 62: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
-	55,  // 63: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
-	55,  // 64: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
-	11,  // 65: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
-	58,  // 66: orkstack.v1.ActivityFailureDetail.started_at:type_name -> google.protobuf.Timestamp
-	58,  // 67: orkstack.v1.DescribeOrkerResult.cordoned_at:type_name -> google.protobuf.Timestamp
-	37,  // 68: orkstack.v1.DescribeOrkerResult.pins:type_name -> orkstack.v1.OpenPin
-	36,  // 69: orkstack.v1.DescribeOrkerResult.capacity:type_name -> orkstack.v1.ResourceQuantity
-	36,  // 70: orkstack.v1.DescribeOrkerResult.reserved:type_name -> orkstack.v1.ResourceQuantity
-	36,  // 71: orkstack.v1.DescribeOrkerResult.max_request:type_name -> orkstack.v1.ResourceQuantity
-	36,  // 72: orkstack.v1.DescribeOrkerResult.default_request:type_name -> orkstack.v1.ResourceQuantity
-	38,  // 73: orkstack.v1.DescribeOrkerResult.store_outage:type_name -> orkstack.v1.StoreOutage
-	46,  // 74: orkstack.v1.DescribeOrkerResult.stopping:type_name -> orkstack.v1.OrkerStopping
-	7,   // 75: orkstack.v1.DescribeOrkerResult.profile_kinds_supported:type_name -> orkstack.v1.ProfileKind
-	45,  // 76: orkstack.v1.DescribeOrkerResult.profiles:type_name -> orkstack.v1.OrkerProfile
-	47,  // 77: orkstack.v1.DescribeOrkerResult.profile_cordons:type_name -> orkstack.v1.ProfileCordon
-	49,  // 78: orkstack.v1.DescribeOrkerResult.providers:type_name -> orkstack.v1.ProviderInfo
-	44,  // 79: orkstack.v1.DescribeOrkerResult.metadata_probes:type_name -> orkstack.v1.MetadataProbe
-	9,   // 80: orkstack.v1.DescribeOrkerResult.store_scope:type_name -> orkstack.v1.StoreScope
-	58,  // 81: orkstack.v1.DescribeOrkerResult.store_scope_confirmed_at:type_name -> google.protobuf.Timestamp
-	8,   // 82: orkstack.v1.DescribeOrkerResult.results_scope:type_name -> orkstack.v1.ResultsScope
-	51,  // 83: orkstack.v1.DescribeOrkerResult.service_host:type_name -> orkstack.v1.ServiceHost
-	58,  // 84: orkstack.v1.OpenPin.since:type_name -> google.protobuf.Timestamp
-	58,  // 85: orkstack.v1.OpenPin.expires_at:type_name -> google.protobuf.Timestamp
-	58,  // 86: orkstack.v1.StoreOutage.since:type_name -> google.protobuf.Timestamp
-	58,  // 87: orkstack.v1.Orker.cordoned_at:type_name -> google.protobuf.Timestamp
-	58,  // 88: orkstack.v1.Orker.last_seen:type_name -> google.protobuf.Timestamp
-	37,  // 89: orkstack.v1.Orker.pins:type_name -> orkstack.v1.OpenPin
-	36,  // 90: orkstack.v1.Orker.capacity:type_name -> orkstack.v1.ResourceQuantity
-	36,  // 91: orkstack.v1.Orker.reserved:type_name -> orkstack.v1.ResourceQuantity
-	36,  // 92: orkstack.v1.Orker.max_request:type_name -> orkstack.v1.ResourceQuantity
-	38,  // 93: orkstack.v1.Orker.store_outage:type_name -> orkstack.v1.StoreOutage
-	46,  // 94: orkstack.v1.Orker.stopping:type_name -> orkstack.v1.OrkerStopping
-	45,  // 95: orkstack.v1.Orker.profiles:type_name -> orkstack.v1.OrkerProfile
-	47,  // 96: orkstack.v1.Orker.profile_cordons:type_name -> orkstack.v1.ProfileCordon
-	51,  // 97: orkstack.v1.Orker.service_host:type_name -> orkstack.v1.ServiceHost
-	44,  // 98: orkstack.v1.Orker.metadata_probes:type_name -> orkstack.v1.MetadataProbe
-	5,   // 99: orkstack.v1.MetadataProbe.outcome:type_name -> orkstack.v1.MetadataProbeOutcome
-	7,   // 100: orkstack.v1.OrkerProfile.kind:type_name -> orkstack.v1.ProfileKind
-	58,  // 101: orkstack.v1.OrkerStopping.since:type_name -> google.protobuf.Timestamp
-	58,  // 102: orkstack.v1.OrkerStopping.grace_ends_at:type_name -> google.protobuf.Timestamp
-	10,  // 103: orkstack.v1.ProfileCordon.cause:type_name -> orkstack.v1.ProfileCordon.Cause
-	6,   // 104: orkstack.v1.ProfileCordon.reason:type_name -> orkstack.v1.ProfileCordonReason
-	58,  // 105: orkstack.v1.ProfileCordon.since:type_name -> google.protobuf.Timestamp
-	106, // [106:106] is the sub-list for method output_type
-	106, // [106:106] is the sub-list for method input_type
-	106, // [106:106] is the sub-list for extension type_name
-	106, // [106:106] is the sub-list for extension extendee
-	0,   // [0:106] is the sub-list for field type_name
+	43,  // 36: orkstack.v1.ExecuteTaskInput.identity:type_name -> orkstack.v1.IdentityContext
+	50,  // 37: orkstack.v1.ExecuteTaskInput.run_context:type_name -> orkstack.v1.RunContext
+	17,  // 38: orkstack.v1.ReleasePinInput.pin:type_name -> orkstack.v1.PinContext
+	58,  // 39: orkstack.v1.CommitRef.created_at:type_name -> google.protobuf.Timestamp
+	28,  // 40: orkstack.v1.ExecuteTaskResult.commit:type_name -> orkstack.v1.CommitRef
+	55,  // 41: orkstack.v1.ExecuteTaskResult.artifacts:type_name -> orkstack.v1.ArtifactRef
+	55,  // 42: orkstack.v1.ExecuteTaskResult.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	55,  // 43: orkstack.v1.ExecuteTaskResult.values_ref:type_name -> orkstack.v1.ArtifactRef
+	11,  // 44: orkstack.v1.ExecuteTaskResult.image:type_name -> orkstack.v1.ImageRef
+	58,  // 45: orkstack.v1.ExecuteTaskResult.started_at:type_name -> google.protobuf.Timestamp
+	58,  // 46: orkstack.v1.ExecuteTaskResult.finished_at:type_name -> google.protobuf.Timestamp
+	22,  // 47: orkstack.v1.ExecuteTaskResult.cache:type_name -> orkstack.v1.CacheResult
+	11,  // 48: orkstack.v1.ActivityCommit.image:type_name -> orkstack.v1.ImageRef
+	55,  // 49: orkstack.v1.ActivityCommit.values:type_name -> orkstack.v1.ArtifactRef
+	55,  // 50: orkstack.v1.ActivityCommit.artifacts:type_name -> orkstack.v1.ArtifactRef
+	55,  // 51: orkstack.v1.ActivityCommit.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	58,  // 52: orkstack.v1.ActivityCommit.started_at:type_name -> google.protobuf.Timestamp
+	58,  // 53: orkstack.v1.ActivityCommit.finished_at:type_name -> google.protobuf.Timestamp
+	22,  // 54: orkstack.v1.ActivityCommit.cache:type_name -> orkstack.v1.CacheResult
+	58,  // 55: orkstack.v1.CommitRecording.time:type_name -> google.protobuf.Timestamp
+	4,   // 56: orkstack.v1.RecordedValues.kind:type_name -> orkstack.v1.RecordedValuesKind
+	55,  // 57: orkstack.v1.RecordedValues.values:type_name -> orkstack.v1.ArtifactRef
+	32,  // 58: orkstack.v1.RecordedValues.sources:type_name -> orkstack.v1.RecordedSource
+	31,  // 59: orkstack.v1.RecordedValues.recorded:type_name -> orkstack.v1.CommitRecording
+	32,  // 60: orkstack.v1.RecordedValues.follows:type_name -> orkstack.v1.RecordedSource
+	63,  // 61: orkstack.v1.ActivityFailureDetail.category:type_name -> orkstack.v1.FailureCategory
+	55,  // 62: orkstack.v1.ActivityFailureDetail.artifacts:type_name -> orkstack.v1.ArtifactRef
+	55,  // 63: orkstack.v1.ActivityFailureDetail.system_artifacts:type_name -> orkstack.v1.ArtifactRef
+	11,  // 64: orkstack.v1.ActivityFailureDetail.image:type_name -> orkstack.v1.ImageRef
+	58,  // 65: orkstack.v1.ActivityFailureDetail.started_at:type_name -> google.protobuf.Timestamp
+	58,  // 66: orkstack.v1.DescribeOrkerResult.cordoned_at:type_name -> google.protobuf.Timestamp
+	37,  // 67: orkstack.v1.DescribeOrkerResult.pins:type_name -> orkstack.v1.OpenPin
+	36,  // 68: orkstack.v1.DescribeOrkerResult.capacity:type_name -> orkstack.v1.ResourceQuantity
+	36,  // 69: orkstack.v1.DescribeOrkerResult.reserved:type_name -> orkstack.v1.ResourceQuantity
+	36,  // 70: orkstack.v1.DescribeOrkerResult.max_request:type_name -> orkstack.v1.ResourceQuantity
+	36,  // 71: orkstack.v1.DescribeOrkerResult.default_request:type_name -> orkstack.v1.ResourceQuantity
+	38,  // 72: orkstack.v1.DescribeOrkerResult.store_outage:type_name -> orkstack.v1.StoreOutage
+	46,  // 73: orkstack.v1.DescribeOrkerResult.stopping:type_name -> orkstack.v1.OrkerStopping
+	7,   // 74: orkstack.v1.DescribeOrkerResult.profile_kinds_supported:type_name -> orkstack.v1.ProfileKind
+	45,  // 75: orkstack.v1.DescribeOrkerResult.profiles:type_name -> orkstack.v1.OrkerProfile
+	47,  // 76: orkstack.v1.DescribeOrkerResult.profile_cordons:type_name -> orkstack.v1.ProfileCordon
+	49,  // 77: orkstack.v1.DescribeOrkerResult.providers:type_name -> orkstack.v1.ProviderInfo
+	44,  // 78: orkstack.v1.DescribeOrkerResult.metadata_probes:type_name -> orkstack.v1.MetadataProbe
+	9,   // 79: orkstack.v1.DescribeOrkerResult.store_scope:type_name -> orkstack.v1.StoreScope
+	58,  // 80: orkstack.v1.DescribeOrkerResult.store_scope_confirmed_at:type_name -> google.protobuf.Timestamp
+	8,   // 81: orkstack.v1.DescribeOrkerResult.results_scope:type_name -> orkstack.v1.ResultsScope
+	51,  // 82: orkstack.v1.DescribeOrkerResult.service_host:type_name -> orkstack.v1.ServiceHost
+	58,  // 83: orkstack.v1.OpenPin.since:type_name -> google.protobuf.Timestamp
+	58,  // 84: orkstack.v1.OpenPin.expires_at:type_name -> google.protobuf.Timestamp
+	58,  // 85: orkstack.v1.StoreOutage.since:type_name -> google.protobuf.Timestamp
+	58,  // 86: orkstack.v1.Orker.cordoned_at:type_name -> google.protobuf.Timestamp
+	58,  // 87: orkstack.v1.Orker.last_seen:type_name -> google.protobuf.Timestamp
+	37,  // 88: orkstack.v1.Orker.pins:type_name -> orkstack.v1.OpenPin
+	36,  // 89: orkstack.v1.Orker.capacity:type_name -> orkstack.v1.ResourceQuantity
+	36,  // 90: orkstack.v1.Orker.reserved:type_name -> orkstack.v1.ResourceQuantity
+	36,  // 91: orkstack.v1.Orker.max_request:type_name -> orkstack.v1.ResourceQuantity
+	38,  // 92: orkstack.v1.Orker.store_outage:type_name -> orkstack.v1.StoreOutage
+	46,  // 93: orkstack.v1.Orker.stopping:type_name -> orkstack.v1.OrkerStopping
+	45,  // 94: orkstack.v1.Orker.profiles:type_name -> orkstack.v1.OrkerProfile
+	47,  // 95: orkstack.v1.Orker.profile_cordons:type_name -> orkstack.v1.ProfileCordon
+	51,  // 96: orkstack.v1.Orker.service_host:type_name -> orkstack.v1.ServiceHost
+	44,  // 97: orkstack.v1.Orker.metadata_probes:type_name -> orkstack.v1.MetadataProbe
+	5,   // 98: orkstack.v1.MetadataProbe.outcome:type_name -> orkstack.v1.MetadataProbeOutcome
+	7,   // 99: orkstack.v1.OrkerProfile.kind:type_name -> orkstack.v1.ProfileKind
+	58,  // 100: orkstack.v1.OrkerStopping.since:type_name -> google.protobuf.Timestamp
+	58,  // 101: orkstack.v1.OrkerStopping.grace_ends_at:type_name -> google.protobuf.Timestamp
+	10,  // 102: orkstack.v1.ProfileCordon.cause:type_name -> orkstack.v1.ProfileCordon.Cause
+	6,   // 103: orkstack.v1.ProfileCordon.reason:type_name -> orkstack.v1.ProfileCordonReason
+	58,  // 104: orkstack.v1.ProfileCordon.since:type_name -> google.protobuf.Timestamp
+	105, // [105:105] is the sub-list for method output_type
+	105, // [105:105] is the sub-list for method input_type
+	105, // [105:105] is the sub-list for extension type_name
+	105, // [105:105] is the sub-list for extension extendee
+	0,   // [0:105] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_proto_init() }

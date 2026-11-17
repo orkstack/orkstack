@@ -24,7 +24,7 @@ func TestProfileState_DriftLatchesAndUnavailableClears(t *testing.T) {
 		t.Fatalf("a fresh state holds no cordon: %v", r)
 	}
 
-	s.setUnavailable("github-only", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED, "api.github.com:443 refused", t0)
+	s.setUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE, "probe image not pulled", t0)
 	r := reported()
 	if !r.GetCordoned() || len(r.GetProfileCordons()) != 1 ||
 		r.GetProfileCordons()[0].GetCause() != orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE {
@@ -32,29 +32,29 @@ func TestProfileState_DriftLatchesAndUnavailableClears(t *testing.T) {
 	}
 
 	// A later observation of the same cause keeps the first instant.
-	s.setUnavailable("github-only", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_GATEWAY_ABSENT, "gone", t0.Add(time.Minute))
+	s.setUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY, "gone", t0.Add(time.Minute))
 	if got := reported().GetProfileCordons()[0]; !got.GetSince().AsTime().Equal(t0) ||
-		got.GetReason() != orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_GATEWAY_ABSENT {
+		got.GetReason() != orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY {
 		t.Errorf("since moved or reason not updated: %v", got)
 	}
 
-	s.clearUnavailable("github-only")
+	s.clearUnavailable("amd")
 	if r := reported(); r.GetCordoned() || len(r.GetProfileCordons()) != 0 {
 		t.Fatalf("unavailable did not clear: %v", r)
 	}
 
-	s.setDrift("github-only", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_NETWORK_CHANGED, "network replaced", t0)
+	s.setDrift("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED, "device replaced", t0)
 	// Nothing clears a drift, and an unavailable observation never replaces it.
-	s.clearUnavailable("github-only")
-	s.setUnavailable("github-only", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_GATEWAY_ABSENT, "gone", t0)
-	s.setDrift("github-only", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_GATEWAY_CHANGED, "later", t0.Add(time.Hour))
+	s.clearUnavailable("amd")
+	s.setUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY, "gone", t0)
+	s.setDrift("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED, "later", t0.Add(time.Hour))
 	got := reported().GetProfileCordons()
 	if len(got) != 1 || got[0].GetCause() != orkstackv1.ProfileCordon_CAUSE_DRIFT ||
-		got[0].GetReason() != orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_NETWORK_CHANGED ||
-		got[0].GetDetail() != "network replaced" {
+		got[0].GetReason() != orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED ||
+		got[0].GetDetail() != "device replaced" {
 		t.Fatalf("drift did not latch its first observation: %v", got)
 	}
-	if !s.drifted("github-only") || s.drifted("other") {
+	if !s.drifted("amd") || s.drifted("other") {
 		t.Error("drifted reports the wrong profiles")
 	}
 }
@@ -104,7 +104,7 @@ func TestBoot_RefusesUnimplementedProfileKind(t *testing.T) {
 	if err == nil {
 		t.Fatal("Boot accepted profiles of kinds this build does not implement")
 	}
-	for _, want := range []string{ReasonProfileInvalid, "amd", "github-only", "sensor"} {
+	for _, want := range []string{ReasonProfileInvalid, "amd", "sensor"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("Boot error %q does not name %q", err, want)
 		}

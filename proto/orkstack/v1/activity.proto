@@ -92,15 +92,11 @@ message EachSource {
 }
 
 // NetworkMode is the complete set of network configurations an Orkflow may
-// select. An Orkflow never defines a network: EGRESS selects an egress
-// profile an Orker's operator defined, by its name (AGENTS.md §6).
+// select (AGENTS.md §6).
 enum NetworkMode {
   NETWORK_MODE_UNSPECIFIED = 0;  // treated as NETWORK_MODE_DEFAULT
   NETWORK_MODE_DEFAULT = 1;
   NETWORK_MODE_NONE = 2;
-  // The egress profile Task.network_profile names: an internal network whose
-  // only way out is the operator's proxy.
-  NETWORK_MODE_EGRESS = 3;
 }
 
 // SecretRef names a secret and where the Orker gets it. The value never
@@ -523,10 +519,6 @@ message ExecuteTaskInput {
   // identities its run pinned. An Orker that offers none of them refuses the
   // attempt (PROFILE_NOT_OFFERED).
   repeated ProfileRef devices = 30;
-
-  // egress is the egress profile of a task whose network is
-  // NETWORK_MODE_EGRESS, with the identity its run pinned, if any.
-  ProfileRef egress = 31;
 
   // identity is set from identity (E62); unset until it lands (v0.4.0 proto batch).
   IdentityContext identity = 34;
@@ -1109,7 +1101,7 @@ enum MetadataProbeOutcome {
 }
 
 // OrkerProfile is one profile an Orker offers (docs/DEPLOY.md, "Profiles").
-// The inventory (ListOrkers) carries name, kind, the unit counts and probe_ok;
+// The inventory (ListOrkers) carries name, kind and the unit counts;
 // revision and identity_digest travel only on the Orker's own answer to the
 // engine and are never listed or exported.
 message OrkerProfile {
@@ -1122,13 +1114,11 @@ message OrkerProfile {
   int32 usable_units = 4;
   // bound_units is how many are held by a task now.
   int32 bound_units = 5;
-  // probe_ok is whether the profile's latest check passed.
-  bool probe_ok = 6;
   // revision is the operator's revision label; it changes memo keys only.
-  string revision = 7;
+  string revision = 6;
   // identity_digest is the SHA-256 (hex) of the profile's structural
   // identity, which a run pins at submit and every Orker of a pool must share.
-  string identity_digest = 8;
+  string identity_digest = 7;
 }
 
 // OrkerStopping is set while an Orker is stopping: from its first stop signal
@@ -1153,7 +1143,7 @@ message ProfileCordon {
     CAUSE_UNSPECIFIED = 0;
     // The profile no longer matches what the Orker audited at boot.
     CAUSE_DRIFT = 1;
-    // The profile's units, gateway or reachable destinations are absent.
+    // The profile's units or specs are absent, or its probe failed.
     CAUSE_UNAVAILABLE = 2;
   }
   Cause cause = 1;
@@ -1172,21 +1162,15 @@ enum ProfileCordonReason {
   PROFILE_CORDON_REASON_SPEC_CHANGED = 1;
   PROFILE_CORDON_REASON_DEVICE_CHANGED = 2;
   PROFILE_CORDON_REASON_HOOK_BINARY_CHANGED = 3;
-  PROFILE_CORDON_REASON_NETWORK_CHANGED = 4;
-  PROFILE_CORDON_REASON_GATEWAY_CHANGED = 5;
-  PROFILE_CORDON_REASON_NEGATIVE_CONTROL_FAILED = 6;
-  PROFILE_CORDON_REASON_GATEWAY_ABSENT = 7;
-  PROFILE_CORDON_REASON_POSITIVE_CONTROL_FAILED = 8;
-  PROFILE_CORDON_REASON_SPEC_ABSENT = 9;
-  PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD = 10;
-  PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH = 11;
-  PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE = 12;
-  PROFILE_CORDON_REASON_HOST_VIEW_CHANGED = 13;
-  PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY = 14;
-  PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH = 15;
-  PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN = 16;
-  PROFILE_CORDON_REASON_DNS_CANARY_UNRESOLVED = 17;
-  PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD = 18;
+  PROFILE_CORDON_REASON_SPEC_ABSENT = 4;
+  PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD = 5;
+  PROFILE_CORDON_REASON_HOST_LOCK_MISMATCH = 6;
+  PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE = 7;
+  PROFILE_CORDON_REASON_HOST_VIEW_CHANGED = 8;
+  PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY = 9;
+  PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH = 10;
+  PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN = 11;
+  PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD = 12;
 }
 
 // ProfileKind is the closed set of profile kinds compiled into the Orker
@@ -1197,13 +1181,10 @@ enum ProfileKind {
   PROFILE_KIND_DEVICES = 1;
   // Counted, exclusive GPU units, each one CDI device.
   PROFILE_KIND_GPU = 2;
-  // An internal network whose only way out is the operator's proxy.
-  PROFILE_KIND_EGRESS = 3;
 }
 
 // ProfileRef names one profile a task holds, with the structural identity the
-// run pinned at submit. An empty identity_digest is unpinned: no Orker
-// answered at submit (egress only).
+// run pinned at submit.
 message ProfileRef {
   string name = 1;
   string identity_digest = 2;

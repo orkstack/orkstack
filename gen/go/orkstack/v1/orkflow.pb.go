@@ -426,8 +426,6 @@ type Task struct {
 	Sleep *SleepSpec `protobuf:"bytes,25,opt,name=sleep,proto3" json:"sleep,omitempty"`
 	// devices is set from E91; unset until it lands (v0.4.0 proto batch).
 	Devices []string `protobuf:"bytes,26,rep,name=devices,proto3" json:"devices,omitempty"`
-	// network_profile is set from E91; unset until it lands (v0.4.0 proto batch).
-	NetworkProfile string `protobuf:"bytes,27,opt,name=network_profile,json=networkProfile,proto3" json:"network_profile,omitempty"`
 	// child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
 	ChildArtifacts []*ChildArtifact `protobuf:"bytes,30,rep,name=child_artifacts,json=childArtifacts,proto3" json:"child_artifacts,omitempty"`
 	// input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
@@ -638,13 +636,6 @@ func (x *Task) GetDevices() []string {
 		return x.Devices
 	}
 	return nil
-}
-
-func (x *Task) GetNetworkProfile() string {
-	if x != nil {
-		return x.NetworkProfile
-	}
-	return ""
 }
 
 func (x *Task) GetChildArtifacts() []*ChildArtifact {
@@ -1420,7 +1411,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\tnamespace\x18\x04 \x01(\tR\tnamespace\"F\n" +
 	"\fOrkflowShare\x12\x1c\n" +
 	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x18\n" +
-	"\aorkflow\x18\x02 \x01(\tR\aorkflow\"\xe8\n" +
+	"\aorkflow\x18\x02 \x01(\tR\aorkflow\"\xbf\n" +
 	"\n" +
 	"\x04Task\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12+\n" +
@@ -1447,8 +1438,7 @@ const file_orkstack_v1_orkflow_proto_rawDesc = "" +
 	"\x05cache\x18\x17 \x01(\v2\x16.orkstack.v1.CacheSpecR\x05cache\x12+\n" +
 	"\x04join\x18\x18 \x01(\x0e2\x17.orkstack.v1.JoinPolicyR\x04join\x12,\n" +
 	"\x05sleep\x18\x19 \x01(\v2\x16.orkstack.v1.SleepSpecR\x05sleep\x12\x18\n" +
-	"\adevices\x18\x1a \x03(\tR\adevices\x12'\n" +
-	"\x0fnetwork_profile\x18\x1b \x01(\tR\x0enetworkProfile\x12C\n" +
+	"\adevices\x18\x1a \x03(\tR\adevices\x12C\n" +
 	"\x0fchild_artifacts\x18\x1e \x03(\v2\x1a.orkstack.v1.ChildArtifactR\x0echildArtifacts\x12'\n" +
 	"\x0finput_artifacts\x18\x1f \x03(\tR\x0einputArtifacts\x128\n" +
 	"\n" +
