@@ -30,8 +30,11 @@ import (
 const stubbornGraceSeconds = 3
 
 // stoppableOrkflow is two tasks that trap SIGTERM: one exits on it, one
-// ignores it and must be killed. An attempt after the first exits 0 at once,
-// so a retry on another Orker finishes the run.
+// ignores it and must be killed. Each ends by itself, exit 0, after 45 s, so
+// the attempt the stopping Orker hands back long before then runs again on
+// another Orker and finishes the run. task.attempt cannot tell the two apart:
+// it is Temporal's attempt, and an interruption's re-run starts at 1 again
+// (docs/OCI_ACTIVITY_CONTRACT.md, task.json).
 func stoppableOrkflow(name, retry string) string {
 	task := func(id, onTerm string, grace int) string {
 		return fmt.Sprintf(`  - id: %[1]s
@@ -43,13 +46,11 @@ func stoppableOrkflow(name, retry string) string {
       op: script
       interpreter: sh
       script: |
-        if ! grep -q '"attempt": 1,' /orkstack/input/task.json; then
-          echo "%[1]s: retried, done"
-          exit 0
-        fi
         trap 'echo "%[1]s: SIGTERM, %[2]s"%[5]s' TERM
         echo "%[1]s: started"
-        while :; do sleep 1; done
+        i=0
+        while [ $i -lt 45 ]; do sleep 1; i=$((i + 1)); done
+        echo "%[1]s: done"
 `, id, onTerm, grace, retry, map[bool]string{true: "; exit 0", false: ""}[onTerm == "cleaning up"])
 	}
 	return fmt.Sprintf(`apiVersion: orkstack/v1
@@ -189,16 +190,8 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 					byTask[row.TaskID] = row
 				}
 			}
-			noRetry := variant.retry == "    retry:\n      maximum_attempts: 1\n"
 			for _, task := range []string{"graceful", "stubborn"} {
 				row := byTask[task]
-				// With no retry, graceful's report (sent the moment its trap
-				// exits) fails the run, and the run cancels stubborn unless
-				// stubborn's own report, after its grace, landed first.
-				if noRetry && task == "stubborn" && row.Outcome == "CANCELED" && row.OrkerID == firstID {
-					t.Logf("(%s) stubborn attempt 1: CANCELED by the run graceful's failure ended", variant.name)
-					continue
-				}
 				if row.Outcome != "FAILED" || row.Error.Code != "ORKER_STOPPED" ||
 					row.Error.Category != "INFRASTRUCTURE_ERROR" || !row.Error.Retryable || row.OrkerID != firstID {
 					t.Errorf("%s attempt 1 = %+v, want FAILED ORKER_STOPPED (INFRASTRUCTURE_ERROR, retryable) on %s",
@@ -217,39 +210,9 @@ func TestIntegration_SIGTERMedOrkerRecordsTheAttemptsItStops(t *testing.T) {
 			}
 			s.mustCLI(0, "run", "attempts", runID)
 
-			// The Orker reported both itself: the task ends ORKER_STOPPED, not
-			// as a dead Orker's would.
-			if noRetry {
-				awaitTerminalOnB(ctx, t, s.replicas[0], runID)
-				got := s.mustCLI(0, "--json", "run", "get", runID)
-				var doc struct {
-					Run struct {
-						Status   string `json:"status"`
-						TaskRuns []struct {
-							TaskID string `json:"taskId"`
-							Error  struct {
-								Code string `json:"code"`
-							} `json:"error"`
-						} `json:"taskRuns"`
-					} `json:"run"`
-				}
-				if err := json.Unmarshal([]byte(got), &doc); err != nil {
-					t.Fatalf("run get --json: %v\n%s", err, got)
-				}
-				if doc.Run.Status != "FAILED" || len(doc.Run.TaskRuns) != 2 {
-					t.Fatalf("run = %s, want FAILED with two tasks:\n%s", doc.Run.Status, got)
-				}
-				for _, taskRun := range doc.Run.TaskRuns {
-					code := taskRun.Error.Code
-					if code != "ORKER_STOPPED" && !(taskRun.TaskID == "stubborn" && code == "TASK_CANCELED") {
-						t.Fatalf("task %s ended %q, want ORKER_STOPPED (stubborn: or TASK_CANCELED by the run):\n%s",
-							taskRun.TaskID, code, got)
-					}
-				}
-				t.Logf("(%s) the run FAILED, its tasks reported by the stopping orker", variant.name)
-				return
-			}
-
+			// The Orker reported both itself, so each was handed back, an
+			// interruption (AGENTS.md §4): with or without a retry: it runs
+			// again on the next Orker without spending its own attempt.
 			secondID := uniqueName("orker-sigterm-2")
 			startOrkerWith(ctx, t, s.orkerPath, s.address, s.namespace, s.queue,
 				"ORK_ORKER_ID="+secondID, "ORK_ORKER_HEARTBEAT_INTERVAL=1s")

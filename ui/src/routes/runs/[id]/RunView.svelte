@@ -70,6 +70,7 @@
 	import { artifactMetadata, downloadFilename, emptyPayload, formatDuration, payloadJson, pinAccent, runCommand, shortDigestWords, shortRunId, taskCommands, timestampJson } from '#lib/runDetail.ts';
 	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '#lib/eventBuffer.ts';
 	import { eventBatcher, slicedApply } from '#lib/eventBatch.ts';
+	import { loadTaskInspect } from '#lib/taskInspectModule.ts';
 	import { Status, type ArtifactRef, type Payload } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import {
 		AttemptOutcome,
@@ -2817,7 +2818,7 @@
 									<div class="xfoot"><button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{task.id}" aria-expanded={inspectOpenByTask[task.id] ?? false} onclick={() => (inspectOpenByTask[task.id] = !inspectOpenByTask[task.id])}>{inspectOpenByTask[task.id] ? 'Hide inspect' : 'Inspect'}</button></div>
 								{/if}
 								{#if !composed && !isAwait && !isSleep && !fanOut && inspectOpenByTask[task.id]}
-									{#await import('#lib/components/TaskInspect.svelte') then { default: TaskInspect }}
+									{#await loadTaskInspect() then { default: TaskInspect }}
 										<TaskInspect
 											runId={run.id}
 											namespace={data.namespace}
@@ -3048,7 +3049,7 @@
 							<button type="button" class="btn btn-sm btn-quiet btn-disclosure" data-testid="task-inspect-toggle-{activeView.id}" aria-expanded={inspectOpenByTask[activeView.id] ?? false} onclick={() => (inspectOpenByTask[activeView!.id] = !inspectOpenByTask[activeView!.id])}>{inspectOpenByTask[activeView.id] ? 'Hide inspect' : 'Inspect'}</button>
 						</div>
 						{#if inspectOpenByTask[activeView.id] && timing}
-							{#await import('#lib/components/TaskInspect.svelte') then { default: TaskInspect }}
+							{#await loadTaskInspect() then { default: TaskInspect }}
 								<TaskInspect
 									runId={run.id}
 									namespace={data.namespace}

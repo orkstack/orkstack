@@ -99,6 +99,13 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 	if what := s.adoptRows(ctx, runCtx, run); what != "" {
 		return RunStateCorruptCode, corruptStateMessage(what)
 	}
+	// The run's loss events, which ride part 0 beside its header (E92), and
+	// every unit an interruption put back, whose not_before is re-armed
+	// toward its original instant.
+	if loss := parts[0].GetLossEvents(); loss != nil {
+		s.lossEvents = loss
+	}
+	s.restoreInterruptionWaits(ctx)
 	// 8. Held fan-outs.
 	s.heldFanOuts = s.anyFanOutHeld()
 	return "", ""
@@ -495,6 +502,9 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 				return fmt.Sprintf("fan-out %q holds %d of its %d items", id, len(row.GetItems()), row.GetEach().GetCount())
 			}
 			dispatched := true
+			// Items an interruption put back to PENDING (interruption_retry.go):
+			// dispatched, not settled, and queued or waiting to run again.
+			var again int32
 			for i, item := range row.GetItems() {
 				if item.GetItem() != int32(i) {
 					return fmt.Sprintf("fan-out %q item %d is out of order", id, i)
@@ -502,6 +512,11 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 				switch {
 				case item.GetStatus() == orkstackv1.Status_STATUS_RUNNING:
 					return fmt.Sprintf("fan-out %q item %d is RUNNING", id, i)
+				case item.GetScheduledAt() != nil && waitingToRunAgain(item):
+					if !dispatched {
+						return fmt.Sprintf("fan-out %q item %d is out of dispatch order", id, i)
+					}
+					again++
 				case item.GetScheduledAt() != nil:
 					if !dispatched || !isTerminal(item.GetStatus()) {
 						return fmt.Sprintf("fan-out %q item %d is out of dispatch order", id, i)
@@ -513,7 +528,7 @@ func (s *runState) validRestoredRow(id string, row *orkstackv1.TaskRun) string {
 					}
 				}
 			}
-			if next, settled := dispatchedAndSettled(row); settled != next {
+			if next, settled := dispatchedAndSettled(row); settled+again != next {
 				return fmt.Sprintf("fan-out %q has %d items dispatched and %d settled", id, next, settled)
 			}
 		}

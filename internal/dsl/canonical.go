@@ -224,12 +224,19 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	}
 	var retry any
 	if r := t.GetRetry(); r != nil {
-		retry = map[string]any{
+		policy := map[string]any{
 			"maximumAttempts":        int64(r.GetMaximumAttempts()),
 			"initialIntervalSeconds": int64(r.GetInitialIntervalSeconds()),
 			"backoffCoefficient":     canonicalNumber(r.GetBackoffCoefficient()),
 			"maximumIntervalSeconds": int64(r.GetMaximumIntervalSeconds()),
 		}
+		// Emitted only when written, 0 included, so a document that says
+		// nothing about interruptions keeps the digest it had before the
+		// key existed.
+		if r.MaxInterruptions != nil {
+			policy["maxInterruptions"] = int64(r.GetMaxInterruptions())
+		}
+		retry = policy
 	}
 	var resources any
 	if r := t.GetResources(); r != nil {

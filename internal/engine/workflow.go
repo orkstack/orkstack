@@ -462,7 +462,7 @@ func RunWorkflow(
 			// An open sleep is work that ends on its own, like a running
 			// activity: a quiescing run waits for it rather than giving up.
 			if state.quiescing && state.closingPins() == 0 && state.openedUnclosedPins() > 0 &&
-				state.openSleeps() == 0 {
+				state.openSleeps() == 0 && len(state.waits) == 0 {
 				if state.closureHasReadyWork() {
 					// The pass only propagated skips: re-scan before judging.
 					continue
@@ -472,7 +472,9 @@ func RunWorkflow(
 				state.abandonQuiesce(ctx, inFlight, state.pinBlockedReason())
 				continue
 			}
-			if state.openAwaits() == 0 && state.openSleeps() == 0 &&
+			// A unit waiting to run again is work that ends on its own, as
+			// an open sleep is.
+			if state.openAwaits() == 0 && state.openSleeps() == 0 && len(state.waits) == 0 &&
 				!(state.quiescing && state.closingPins() > 0) {
 				if len(state.readyTasks()) == 0 && !state.heldFanOuts {
 					break
@@ -570,6 +572,11 @@ func RunWorkflow(
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
 		}
+		// Then every unit waiting to run again, in the order its wait was
+		// armed: a fixed position, and no history recorded before the
+		// interruption-retry gate arms one.
+		var waitOver *interruptionWait
+		state.addInterruptionWaits(selector, &waitOver)
 		// The run timeout's timer, last of all, while not yet ready: it only
 		// wakes a blocked run, and the next pass's ending check decides.
 		timerReady := false
@@ -612,6 +619,12 @@ func RunWorkflow(
 			// settled its timer otherwise, which the run ends with.
 			if err := state.wake(ctx, woke); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, woke, err)
+			}
+			continue
+		}
+		if waitOver != nil {
+			if err := state.interruptionWaitOver(ctx, runCtx, waitOver, inFlight); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, waitOver.id, err)
 			}
 			continue
 		}
@@ -687,6 +700,24 @@ type runState struct {
 	// newRunState; iteration is over order, never the map. Nil for a run with
 	// no sleep.
 	sleeps map[string]*sleepState
+
+	// Interruptions (interruption_retry.go). lossEvents is the run's loss
+	// events, never nil, crossing a continuation in the checkpoint. listed is
+	// what each in-flight unit's execution listed; waits are the units
+	// waiting out a not_before, in the order they were armed, and waiting is
+	// their keys. ending is set while the run drains what it had in flight,
+	// so nothing met then runs again; failingRun says the run is failing
+	// (not canceled, not timed out), so a unit still waiting fails;
+	// failingPhase is the failure handlers' phase. eventInterruption is what
+	// the event being built carries. All empty for a run without budgets.
+	lossEvents        *orkstackv1.RunLossEvents
+	listed            map[string][]string
+	waits             []*interruptionWait
+	waiting           map[string]bool
+	ending            bool
+	failingRun        bool
+	failingPhase      bool
+	eventInterruption *orkstackv1.TaskInterruption
 
 	// eaches is one entry per fan-out task, keyed by task id, built once in
 	// newRunState; iteration is over order, never the map. eachShare is the
@@ -929,19 +960,20 @@ func buildRunState(
 ) *runState {
 	mergedInput := ApplyInputDefaults(wf, input)
 	state := &runState{
-		runID:    runID,
-		wf:       wf,
-		plan:     plan,
-		input:    mergedInput,
-		inputs:   payloadMap(mergedInput),
-		tasks:    map[string]*orkstackv1.Task{},
-		taskRuns: map[string]*orkstackv1.TaskRun{},
-		results:  map[string]*orkstackv1.ExecuteTaskResult{},
-		outputs:  map[string]map[string]any{},
-		endTasks: map[string]struct{}{},
-		status:   orkstackv1.Status_STATUS_PENDING,
-		pins:     map[string]*pinState{},
-		awaits:   map[string]*awaitState{},
+		lossEvents: &orkstackv1.RunLossEvents{},
+		runID:      runID,
+		wf:         wf,
+		plan:       plan,
+		input:      mergedInput,
+		inputs:     payloadMap(mergedInput),
+		tasks:      map[string]*orkstackv1.Task{},
+		taskRuns:   map[string]*orkstackv1.TaskRun{},
+		results:    map[string]*orkstackv1.ExecuteTaskResult{},
+		outputs:    map[string]map[string]any{},
+		endTasks:   map[string]struct{}{},
+		status:     orkstackv1.Status_STATUS_PENDING,
+		pins:       map[string]*pinState{},
+		awaits:     map[string]*awaitState{},
 		// Generation 0 publishes from the run's first event; a carried
 		// generation from the one after its carry's (restore).
 		genFirstSeq: 1,
@@ -1123,7 +1155,7 @@ func transitiveNeedsOf(tasks map[string]*orkstackv1.Task, id string) []string {
 func (s *runState) readyTasks() []string {
 	var ready []string
 	for _, id := range s.order {
-		if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_PENDING {
+		if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_PENDING || s.waiting[id] {
 			continue
 		}
 		if p := s.pins[s.tasks[id].GetPin()]; p != nil && p.opened && p.ctx == nil {
@@ -1995,7 +2027,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		return nil, err
 	}
 
-	activityCtx := s.taskActivityContext(activityBase, t, queue)
+	activityCtx := s.taskActivityContext(activityBase, t, queue, taskRun, id)
 
 	if !detached {
 		input, inputErr = s.taskDispatchInput(t, id, pool, pinContext)
@@ -2047,7 +2079,8 @@ func (s *runState) taskDispatchInput(
 // taskActivityContext is the ActivityOptions one task's ExecuteTask runs
 // with — every item of a fan-out uses its node's, so an item has the task's own
 // timeout, grace, heartbeat and retry budget.
-func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstackv1.Task, queue string) workflow.Context {
+func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstackv1.Task, queue string,
+	row *orkstackv1.TaskRun, key string) workflow.Context {
 	// The three timeouts must not be confused, and this is where the
 	// confusion would happen (§6.3):
 	//
@@ -2088,7 +2121,7 @@ func (s *runState) taskActivityContext(activityBase workflow.Context, t *orkstac
 		// Without this the workflow may mark the task terminal before the
 		// Orker has finished killing the container and cleaning up.
 		WaitForCancellation: true,
-		RetryPolicy:         s.retryPolicyFor(activityBase, t),
+		RetryPolicy:         s.retryPolicyFor(activityBase, t, row, key),
 		// The run's namespace as a fairness key (fairness.go): the cluster
 		// orders this channel's waiting tasks by it where fairness is on.
 		Priority: s.priorityFor(activityBase),
@@ -2248,6 +2281,16 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 
 	result := &orkstackv1.ExecuteTaskResult{}
 	if err := future.Get(ctx, result); err != nil {
+		// An interruption its execution listed runs the task again, or —
+		// its budgets spent — fails it below with its account added.
+		account := ""
+		if d, ok := s.interruptionOf(ctx, id, -1, taskRun, err); ok {
+			if d.redispatch {
+				s.requeueUnit(ctx, id, -1, taskRun, d)
+				return nil
+			}
+			account = d.message
+		}
 		message := err.Error()
 		// BEFORE recordFailure, because the two answers differ: a member of a
 		// pin whose session has failed did not fail on its own and did not get
@@ -2274,6 +2317,10 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 			if taskRun.GetError().GetCode() == TaskStoppedByRunTimeoutCode {
 				message = taskRun.GetError().GetMessage()
 			}
+			if account != "" && taskRun.GetError() != nil {
+				taskRun.Error.Message += "; " + account
+				message += "; " + account
+			}
 		}
 		// taskRun.Status, not a hardcoded FAILED: recordFailure just decided
 		// between FAILED and CANCELED, and the event must say the same thing
@@ -2289,6 +2336,7 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		return err
 	}
 
+	delete(s.listed, id)
 	taskRun.Status = orkstackv1.Status_STATUS_SUCCEEDED
 	taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 	taskRun.Artifacts = result.GetArtifacts()
@@ -2365,6 +2413,9 @@ func (s *runState) cancelInFlight(
 	reason func(id string) string,
 ) {
 	kept := func(id string) bool { return keep != nil && keep(id) }
+	// Nothing the drain collects runs again: the run is ending.
+	s.ending = true
+	defer func() { s.ending = false }()
 	// s.order, never the map's own range: workflow code must stay
 	// deterministic, and Go's map iteration order is randomized on purpose.
 	for _, id := range s.order {
@@ -2396,6 +2447,15 @@ func (s *runState) cancelInFlight(
 		}
 		switch s.taskRuns[id].GetStatus() {
 		case orkstackv1.Status_STATUS_PENDING:
+			// A task an interruption put back fails with its reason when
+			// the run fails; a canceled or timed-out run cancels it.
+			if waitingToRunAgain(s.taskRuns[id]) {
+				if s.failingRun {
+					s.notRunAgain(ctx, id, -1, s.taskRuns[id])
+					continue
+				}
+				s.dropWait(id, -1)
+			}
 			if err := s.markCanceled(ctx, id, reason(id)); err != nil {
 				workflow.GetLogger(ctx).Error("mark canceled failed",
 					"run_id", s.runID, "task_id", id, "error", err)
@@ -2683,9 +2743,10 @@ func (s *runState) fail(
 		// An AWAITING or SLEEPING cause is left for cancelInFlight, which
 		// records it properly — with finished_at and its sentence — instead
 		// of leaving it CANCELED with neither.
+		// So is a task waiting to run again (interruption_retry.go).
 		if taskRun, ok := s.taskRuns[taskID]; ok &&
 			taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING &&
-			taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING {
+			taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING && !waitingToRunAgain(taskRun) {
 			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 		}
 	}
@@ -2695,6 +2756,7 @@ func (s *runState) fail(
 	// replayed against brand-new RequestCancelActivity commands and awaits at
 	// a point where the old code simply returned — a determinism break for
 	// that in-flight run (see replay_test.go, testdata/history/README.md).
+	s.failingRun = s.status == orkstackv1.Status_STATUS_FAILED
 	if v := s.version(ctx, cancelSiblingsChange, 1); v >= 1 {
 		cancelRun()
 		// eventCtx, not ctx: when the operator canceled the whole run, ctx is
@@ -2960,6 +3022,8 @@ func (s *runState) emitTaskEvent(
 		Status:    status,
 		Message:   message,
 		Timestamp: timestamppb.New(workflow.Now(ctx)),
+		// Set only on an interruption's notice (emitInterruption).
+		Interruption: s.takeEventInterruption(),
 	}
 	dedupeKey := fmt.Sprintf("%s#%d", s.runID, s.eventSeq)
 

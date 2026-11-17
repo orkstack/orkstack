@@ -516,6 +516,8 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 		return nil, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
 	}
 	applyCanceledBy(projection.run, projection.canceledBy)
+	// Derived on read, never stored: why a waiting row is not running yet.
+	applyPendingReasons(projection.run, time.Now())
 	return projection.run, nil
 }
 

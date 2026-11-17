@@ -45,6 +45,19 @@ func startPacedCANStack(t *testing.T, ctx context.Context, label string, behavio
 	return startCANStackWith(t, ctx, label, true, behavior, beforeRead, p)
 }
 
+// startPacedCANStackKeeping is startPacedCANStack whose kept attempts are
+// chosen per call: keep says, before behavior runs, whether this one attempt
+// is behavior's own (one that heartbeats once and then says nothing until
+// the cluster times it out), so it holds no turn while it waits; every other
+// attempt of the same task is paced.
+func startPacedCANStackKeeping(t *testing.T, ctx context.Context, label string, behavior canBehavior,
+	keep func(in *orkstackv1.ExecuteTaskInput) bool,
+) *canStack {
+	t.Helper()
+	p := &pacer{registry: parkedActivities, keep: map[string]bool{}, keepCall: keep}
+	return startCANStackWith(t, ctx, label, true, behavior, nil, p)
+}
+
 type parked struct {
 	kept    bool
 	attempt int32
@@ -55,6 +68,8 @@ type parked struct {
 type pacer struct {
 	*registry
 	keep map[string]bool
+	// keepCall, when set, also keeps the attempts it says (startPacedCANStackKeeping).
+	keepCall func(in *orkstackv1.ExecuteTaskInput) bool
 }
 
 // registry is every paced stack's parked activities, by execution. It is
@@ -75,7 +90,7 @@ type publishFunc = func(context.Context, *orkstackv1.Event, string, string) erro
 
 func (p *pacer) execute(s *canStack, inner executeFunc) executeFunc {
 	return func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
-		release, err := p.turn(ctx, s, p.keep[in.GetTaskId()])
+		release, err := p.turn(ctx, s, p.keep[in.GetTaskId()] || (p.keepCall != nil && p.keepCall(in)))
 		if err != nil {
 			return nil, err
 		}
