@@ -719,7 +719,12 @@ func (d *OCIDispatcher) executeAttempt(
 	}
 	// A failure collected before the sweep took the attempt back (a
 	// refusal, say) is replaced too: the retry meets it again on its own.
-	if ctx.Err() == nil && stage.handedBack() {
+	// An unpinned attempt's RUNTIME_STATE_UNKNOWN is not: a hand-back would
+	// say whether the container ran, which is exactly what nobody knows, so
+	// it spends the never-started fault budget even while this Orker stops
+	// (E92 R8-1). A pinned member keeps its pin's path.
+	unknown := failure != nil && failure.Reason == ReasonRuntimeStateUnknown && in.GetPin() == nil
+	if ctx.Err() == nil && stage.handedBack() && !unknown {
 		return d.handBackStarted(ctx, in, startedAt, end)
 	}
 	if failure != nil {
@@ -2204,20 +2209,24 @@ func (d *OCIDispatcher) runContainer(
 		}
 	}()
 
-	// Started from the moment the start is asked for: a start that failed,
-	// timed out or was cut off may still have started the container, and a
-	// false "started" only spends one of the task's own attempts, where a
-	// false "never started" would re-dispatch work that ran (E92 §4.2).
-	stageFrom(ctx).markStarted()
 	// The start runs on a context the stop's sweep never cancels: a start in
 	// flight returns, and the CAS below decides. A container the sweep took
 	// back as it started is stopped by the cancellation sequence, below.
 	if err := d.Runtime.Start(startContext(ctx), id, stdout, stderr); err != nil {
-		// A start that failed may still have started the container (above),
-		// so its usage is START_FAILED, never NOT_RUN.
+		// A start that failed may still have started the container, so its
+		// usage is START_FAILED, never NOT_RUN.
 		beat.setUsage(unmeasuredSampler(reasonStartFailed))
+		if errors.Is(err, ErrRuntimeStateUnknown) {
+			return capture, d.startStateUnknown(ctx, in, id, err)
+		}
+		// Started as far as anyone can tell: a start that failed, timed out
+		// or was cut off may still have started the container, and a false
+		// "started" only spends one of the task's own attempts, where a false
+		// "never started" would re-dispatch work that ran (E92 §4.2).
+		stageFrom(ctx).markStarted()
 		return capture, d.runtimeFailure(err, "start the container")
 	}
+	stageFrom(ctx).markStarted()
 	// The start returned, so the container ran, whatever the CAS below says:
 	// the attempt did work. Its answer is not needed here: a start the sweep
 	// took back has its work context cancelled, and the select below then
@@ -2301,6 +2310,33 @@ func (d *OCIDispatcher) runContainer(
 		// on a result (§3.6).
 		return capture, nil
 	}
+}
+
+// startStateUnknown ends an attempt whose start failed and whose runtime then
+// could not say whether the container started (E92 R8-1). The container may
+// be running, so it gets the cancellation sequence (SIGTERM, the task's
+// grace, SIGKILL), and the caller's deferred removal, mandatory, follows; what
+// it holds is freed only once that removal succeeds. The attempt is a
+// never-started fault, never "started": a daemon that keeps failing so must
+// not reset the never-started count on every attempt, or it would re-dispatch
+// the task forever. If it did run, its re-run repeats its side effects, under
+// the same idempotency key.
+func (d *OCIDispatcher) startStateUnknown(
+	ctx context.Context, in *orkstackv1.ExecuteTaskInput, id ContainerID, err error,
+) *Failure {
+	// No exit is ever taken as proof here: a daemon that cannot say whether
+	// the container started cannot say that it ended either, and a wait on a
+	// container still created answers at once. So the task's whole grace
+	// passes before SIGKILL, whatever the signals answer.
+	TerminateContainer(ctx, d.Runtime, id, time.Duration(graceSecondsOf(in))*time.Second, nil)
+	d.logger().Warn("a container's start failed and its runtime could not say whether it started; "+
+		"it was signalled and its removal follows, which the daemon may also refuse",
+		"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "container", id, "error", err)
+	return neverStarted(FailCause(ReasonRuntimeStateUnknown, err,
+		"start the container: the start failed and the container runtime could not then say whether the "+
+			"container started (%v). The Orker signalled it (SIGTERM, then SIGKILL after the task's grace) and "+
+			"removes it, but it may have run, and while its daemon does not answer it may still be running, "+
+			"so running the task again can repeat an external side effect", err))
 }
 
 // removeFailedCreate settles what a create that failed may have made, under the

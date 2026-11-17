@@ -3,7 +3,10 @@ package orker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -40,6 +43,11 @@ func TestEmission_TypesAListedInterruption(t *testing.T) {
 		return f
 	}
 	startedDrift := func() *Failure { return Fail(ReasonProfileDrifted, "profile drifted") }
+	neverStartedUnknown := func() *Failure {
+		f := Fail(ReasonRuntimeStateUnknown, "start and inspect both failed")
+		f.NeverStarted = true
+		return f
+	}
 	listed := func(reasons ...string) []string {
 		out := []string{task.CategoryContractViolation}
 		for _, r := range reasons {
@@ -65,6 +73,8 @@ func TestEmission_TypesAListedInterruption(t *testing.T) {
 		{"a never-started profile drift listed: typed", neverStartedDrift(), listed(ReasonProfileDrifted), false, InterruptionType(ReasonProfileDrifted), 1},
 		{"a profile drift not marked never-started is declined", startedDrift(), listed(ReasonProfileDrifted), false, CategoryInfrastructureError, -1},
 		{"a never-started drift whose container started is declined", neverStartedDrift().stampFor(listed(ReasonProfileDrifted), true, 0), listed(ReasonProfileDrifted), false, CategoryInfrastructureError, -1},
+		{"a runtime state unknown listed: typed", neverStartedUnknown(), listed(ReasonRuntimeStateUnknown), false, InterruptionType(ReasonRuntimeStateUnknown), 1},
+		{"a runtime state unknown not marked never-started is declined", Fail(ReasonRuntimeStateUnknown, "unknown"), listed(ReasonRuntimeStateUnknown), false, CategoryInfrastructureError, -1},
 		{"a reason outside the compiled set is declined", Fail(ReasonContainerExitNonzero, "exit 1"), listed(ReasonContainerExitNonzero), false, CategoryActivityFailed, -1},
 	}
 	for _, tc := range cases {
@@ -377,6 +387,120 @@ func TestExecute_AProfileDriftIsTypedWhenItsPolicyListsIt(t *testing.T) {
 			runtime.mu.Unlock()
 			if created != 0 {
 				t.Fatalf("a drifted profile created %d containers; want none", created)
+			}
+		})
+	}
+}
+
+// stateUnknownRuntime is a daemon that fails between a container's start and
+// the inspect that would say whether it started: the start call fails, and so
+// does every observation after it. It is a hand-written fake because that is a
+// fault a real Docker or Podman daemon cannot be made to produce on demand
+// (AGENTS.md §11.1, step 3); the CLI half of the same fault, an inspect that
+// cannot answer, is proven against the runtime's own parsing in
+// TestDockerRuntime_StartWhoseStateCannotBeObservedIsUnknown.
+type stateUnknownRuntime struct {
+	phaseCapturingRuntime
+	mu      sync.Mutex
+	signals []Signal
+	removed int
+}
+
+func (r *stateUnknownRuntime) Start(context.Context, ContainerID, io.Writer, io.Writer) error {
+	return fmt.Errorf("start container fake-container: observe its state: %w", ErrRuntimeStateUnknown)
+}
+
+func (r *stateUnknownRuntime) Signal(_ context.Context, _ ContainerID, sig Signal) error {
+	r.mu.Lock()
+	r.signals = append(r.signals, sig)
+	r.mu.Unlock()
+	return errors.New("cannot connect to the container daemon")
+}
+
+// Wait answers at once, as `docker wait` does for a container still created:
+// an exit nobody may take as proof that the container ended.
+func (r *stateUnknownRuntime) Wait(context.Context, ContainerID) (ExitStatus, error) {
+	return ExitStatus{}, nil
+}
+
+func (r *stateUnknownRuntime) Remove(context.Context, ContainerID) error {
+	r.mu.Lock()
+	r.removed++
+	r.mu.Unlock()
+	return nil
+}
+
+// TestExecute_AStartWhoseStateIsUnknownIsANeverStartedFault is R8-1 (E92
+// §4.2): a start that failed and whose container no inspect can describe is
+// RUNTIME_STATE_UNKNOWN, a never-started fault that says the container did not
+// start (so the engine resets no never-started counter and a broken daemon
+// cannot loop forever), after the cancellation sequence and the container's
+// removal.
+func TestExecute_AStartWhoseStateIsUnknownIsANeverStartedFault(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		listed   []string
+		wantType string
+	}{
+		{"listed", []string{InterruptionType(ReasonRuntimeStateUnknown)}, InterruptionType(ReasonRuntimeStateUnknown)},
+		{"not listed", nil, CategoryInfrastructureError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			runtime := &stateUnknownRuntime{}
+			d := newAttemptDispatcher(t, runtime, artifacts.NewMemoryAttemptStore())
+			d.heartbeaters = sdkRouteHeartbeater
+			listed := tc.listed
+			d.listed = func(context.Context) []string { return listed }
+			probe := func(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput) error {
+				ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+					StartToCloseTimeout: time.Minute,
+					RetryPolicy: &temporal.RetryPolicy{
+						MaximumAttempts:        1,
+						InitialInterval:        time.Millisecond,
+						NonRetryableErrorTypes: listed,
+					},
+				})
+				return workflow.ExecuteActivity(ctx, "ExecuteTask", in).Get(ctx, nil)
+			}
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestWorkflowEnvironment()
+			env.SetTestTimeout(60 * time.Second)
+			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
+			env.RegisterWorkflowWithOptions(probe, workflow.RegisterOptions{Name: "probe"})
+			env.RegisterActivityWithOptions(d.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
+			in := baseExportInput("unknown")
+			in.CancellationGracePeriodSeconds = 1
+			env.ExecuteWorkflow("probe", in)
+
+			if !env.IsWorkflowCompleted() {
+				t.Fatal("workflow did not complete")
+			}
+			var app *temporal.ApplicationError
+			if err := env.GetWorkflowError(); !errors.As(err, &app) {
+				t.Fatalf("workflow error = %v, want the attempt's ApplicationError", err)
+			}
+			if app.Type() != tc.wantType {
+				t.Fatalf("the attempt ended as %q, want %q", app.Type(), tc.wantType)
+			}
+			var detail *orkstackv1.ActivityFailureDetail
+			if err := app.Details(&detail); err != nil || detail.GetReasonCode() != ReasonRuntimeStateUnknown {
+				t.Fatalf("detail = %v, %v; want reason %s", detail, err, ReasonRuntimeStateUnknown)
+			}
+			if asked := len(tc.listed) > 0; asked && (!detail.GetNeverStarted() || detail.GetStarted()) {
+				t.Fatalf("detail never_started=%v started=%v; want true and false: an unknown start resets nothing",
+					detail.GetNeverStarted(), detail.GetStarted())
+			} else if !asked && (detail.GetNeverStarted() || detail.GetStarted() || detail.Ordinal != nil) {
+				t.Fatalf("an engine that listed nothing got the new fields: %v", detail)
+			}
+			runtime.mu.Lock()
+			signals, removed := append([]Signal(nil), runtime.signals...), runtime.removed
+			runtime.mu.Unlock()
+			if fmt.Sprint(signals) != fmt.Sprint([]Signal{SIGTERM, SIGKILL}) {
+				t.Fatalf("signals = %v; want the whole cancellation sequence, SIGTERM then SIGKILL after the grace, "+
+					"for a container that may be running", signals)
+			}
+			if removed == 0 {
+				t.Fatal("the container was never removed; its removal is mandatory")
 			}
 		})
 	}

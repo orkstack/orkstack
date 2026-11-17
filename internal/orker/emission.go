@@ -30,15 +30,15 @@ const (
 func InterruptionType(reason string) string { return interruptionTypePrefix + reason }
 
 // mayEmit is the Orker's compiled set of interruptions, each with its own
-// condition: ORKER_STOPPED always; ATTEMPT_STORE_UNAVAILABLE and
-// PROFILE_DRIFTED only for an attempt that started no container;
+// condition: ORKER_STOPPED always; ATTEMPT_STORE_UNAVAILABLE, PROFILE_DRIFTED
+// and RUNTIME_STATE_UNKNOWN only for an attempt marked never started;
 // CONTAINER_STOPPED_BY_RUNTIME only while this Orker is stopping, when its
 // own runtime going away is the stop's doing.
 func (f *Failure) mayEmit(stopping bool) bool {
 	switch f.Reason {
 	case ReasonOrkerStopped:
 		return true
-	case ReasonAttemptStoreUnavailable, ReasonProfileDrifted:
+	case ReasonAttemptStoreUnavailable, ReasonProfileDrifted, ReasonRuntimeStateUnknown:
 		return f.NeverStarted
 	case ReasonContainerStoppedByRuntime:
 		return stopping

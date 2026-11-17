@@ -45,6 +45,13 @@ func storeFaultError() error {
 		&orkstackv1.ActivityFailureDetail{NeverStarted: true, StoreError: "503 Slow Down", OrkerId: "orker-a"})
 }
 
+// stateUnknownError is what an Orker reports for a start whose runtime could
+// not say whether the container started: never started, and never "started",
+// so it resets no count (E92 R8-1).
+func stateUnknownError() error {
+	return interruptionError("RUNTIME_STATE_UNKNOWN", &orkstackv1.ActivityFailureDetail{NeverStarted: true, OrkerId: "orker-a"})
+}
+
 // interruptionPlan is defaultPlan with the deployment's default budgets.
 func interruptionPlan(mutate func(*engine.InterruptionBudgets)) engine.RunPlan {
 	plan := defaultPlan()
@@ -245,6 +252,29 @@ func TestRunWorkflow_AStoreFaultWaitsItsFloorBeforeTheThirdRun(t *testing.T) {
 	row := interruptedRow(t, h, "work")
 	if gap := row.GetScheduledAt().AsTime().Sub(wait); gap < 45e9 {
 		t.Fatalf("the third run was scheduled %v after the second fault, want at least the 45 s floor", gap)
+	}
+}
+
+// TestRunWorkflow_ARuntimeStateUnknownEveryTimeEndsExplicitly is R8-1's
+// engine half: a daemon that can never say whether a container started spends
+// the never-started fault budget (5 by default), then the task's own one
+// attempt, and fails with its real reason; it never loops.
+func TestRunWorkflow_ARuntimeStateUnknownEveryTimeEndsExplicitly(t *testing.T) {
+	script := make([]error, 10)
+	for i := range script {
+		script[i] = stateUnknownError()
+	}
+	b := newScript(map[string][]error{"work": script})
+	h, _, err := runInterrupted(t, fmt.Sprintf(oneTaskDocument, ""), interruptionPlan(nil), b, nil)
+	if err == nil {
+		t.Fatal("the run succeeded; want it failed")
+	}
+	if got, want := b.count("work"), int(engine.DefaultInterruptionBudgets.NeverStartedFaults)+1; got != want {
+		t.Fatalf("work ran %d times, want %d: the fault budget, then its own attempt", got, want)
+	}
+	row := interruptedRow(t, h, "work")
+	if row.GetStatus() != orkstackv1.Status_STATUS_FAILED || row.GetError().GetCode() != "RUNTIME_STATE_UNKNOWN" {
+		t.Fatalf("work = %v %q, want FAILED RUNTIME_STATE_UNKNOWN", row.GetStatus(), row.GetError().GetCode())
 	}
 }
 

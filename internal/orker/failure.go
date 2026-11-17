@@ -133,6 +133,13 @@ const (
 	// container, wrote no record and streamed no log. Retried under the
 	// task's policy.
 	ReasonAttemptStoreUnavailable = "ATTEMPT_STORE_UNAVAILABLE"
+	// ReasonRuntimeStateUnknown is an attempt whose container start failed
+	// and whose runtime could not then say whether the container started: the
+	// inspect that decides it failed too (E92 R8-1). The container was stopped
+	// and removed, but it may have run, so a re-run can repeat an external side
+	// effect. A never-started fault: it resets no never-started count, so a
+	// broken daemon cannot re-dispatch a task forever.
+	ReasonRuntimeStateUnknown = "RUNTIME_STATE_UNKNOWN"
 
 	// Image supply-chain policy (docs/DEPLOY.md "Image supply-chain policy"), re-exported
 	// from internal/task so the engine and the Orker spell one refusal one
@@ -234,6 +241,7 @@ var reasonCategory = map[string]string{
 	ReasonReportUndelivered:         CategoryInfrastructureError,
 	ReasonHeartbeatLost:             CategoryInfrastructureError,
 	ReasonAttemptStoreUnavailable:   CategoryInfrastructureError,
+	ReasonRuntimeStateUnknown:       CategoryInfrastructureError,
 
 	ReasonRunAsOrkerUnavailable: CategoryInfrastructureError,
 

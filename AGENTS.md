@@ -257,9 +257,8 @@ exactly one attempt of its own. An **interruption** is an attempt ended by an
 infrastructure fact of its run's pinned interruption class: its Orker handed
 it back (`ORKER_STOPPED`; `CONTAINER_STOPPED_BY_RUNTIME` while the Orker was
 stopping), handed it back before it started (`ORKER_STOPPED`, and the faults
-`ATTEMPT_STORE_UNAVAILABLE`, `RUNTIME_STATE_UNKNOWN` and `PROFILE_DRIFTED`;
-no Orker of this release reports `RUNTIME_STATE_UNKNOWN`, which the engine
-accepts and classifies for a later Orker), or was lost (the cluster's heartbeat timeout). It is not one of the task's
+`ATTEMPT_STORE_UNAVAILABLE`, `RUNTIME_STATE_UNKNOWN` and `PROFILE_DRIFTED`),
+or was lost (the cluster's heartbeat timeout). It is not one of the task's
 own attempts: the interpreter runs the task again (§2.1) under budgets pinned
 at submit, one for hand-backs, a smaller one for losses with a cap per run
 counted in lost Orkers, and one for tasks handed back before they started;
