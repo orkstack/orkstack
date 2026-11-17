@@ -537,9 +537,12 @@ func TestIntegration_CleanupCancellationLeavesConsistentState(t *testing.T) {
 	iterationCtx, cancelIteration := context.WithCancel(ctx)
 	defer cancelIteration()
 	wrapped := &cancelAfterFirstDelete{RunArchive: runArchive, cancel: cancelIteration}
+	// The artifact GC off: this test proves the reference accounting of a
+	// retirement that releases its markers (the GC's own are in
+	// reclaim_integration_test.go).
 	config := archivecleanup.CleanupConfig{
 		Enabled: true, TemporalNamespace: namespace, Interval: time.Hour,
-		RetentionBuffer: 24 * time.Hour, BatchSize: len(runIDs),
+		RetentionBuffer: 24 * time.Hour, BatchSize: len(runIDs), ArtifactGC: archivecleanup.ReclaimOff,
 	}
 
 	stats, err := archivecleanup.NewCleaner(config, wrapped, reader, namespaces, retentionCtrl, logger).
@@ -778,8 +781,14 @@ func TestIntegration_ArtifactProvenanceReportsReleasedAfterCleanup(t *testing.T)
 		t.Fatalf("ObjectIDFromURI(%s)", before.GetArtifact().GetUri())
 	}
 
+	// The artifact GC off: retirement itself releases the run's markers,
+	// which this test proves. With the GC on, the GC releases them once it
+	// has decided every object (docs/STORAGE.md, "Reclaiming space"), and
+	// provenance still reads the retired run RELEASED
+	// (TestGetArtifactProvenance_ARetiredRunWhoseMarkerTheGCKeepsIsReleased).
 	cleaner := archivecleanup.NewCleaner(archivecleanup.CleanupConfig{
 		TemporalNamespace: namespace, Interval: time.Hour, RetentionBuffer: archivecleanup.DefaultRetentionBuffer, BatchSize: 100,
+		ArtifactGC: archivecleanup.ReclaimOff,
 	}, runArchive, reader, staticNamespaceLister{docs: []*orkstackv1.Namespace{nsDoc}}, retentionCtrl, logger).WithFinishReader(engine.NewRunArchiver(runArchive)).WithClock(func() time.Time {
 		return time.Now().UTC().Add(2 * shortRetention)
 	})

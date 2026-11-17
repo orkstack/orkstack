@@ -259,8 +259,19 @@ func TestComposedHistory_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 			t.Errorf("memo %s = %v, recorded %v", key, opts.Memo[key], want)
 		}
 	}
-	if len(opts.Memo) != len(started.GetMemo().GetFields()) {
-		t.Errorf("memo has %d keys, recorded %d", len(opts.Memo), len(started.GetMemo().GetFields()))
+	// A child started from a recorded history differs from what was recorded
+	// only in the start stamp this release adds; the memo is not part of
+	// what a replay compares, so the recorded history replays unchanged.
+	_, recordedStamp := started.GetMemo().GetFields()[engine.MemoStartStamp]
+	if _, ok := opts.Memo[engine.MemoStartStamp]; !ok && !recordedStamp {
+		t.Errorf("the child is started without its start stamp")
+	}
+	extra := len(opts.Memo) - len(started.GetMemo().GetFields())
+	if recordedStamp {
+		extra++
+	}
+	if extra != 1 {
+		t.Errorf("memo has %d keys, recorded %d: only the start stamp may be new", len(opts.Memo), len(started.GetMemo().GetFields()))
 	}
 	if got, want := opts.TypedSearchAttributes.Size(), len(started.GetSearchAttributes().GetIndexedFields()); got != want {
 		t.Errorf("search attributes = %d, recorded %d", got, want)

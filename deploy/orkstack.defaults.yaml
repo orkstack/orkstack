@@ -96,6 +96,9 @@ engine:
     interval: 1h  # ork
     retention_buffer: 24h  # ork
     batch_size: 100  # ork
+    artifact_gc: dry_run  # ork
+    artifact_gc_grace: 1h  # ork
+    artifact_gc_batch: 1000  # ork
 
 event_sources:
   enabled: false  # ork

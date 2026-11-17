@@ -357,6 +357,18 @@ fi
 if runs integration; then
 	need "the cosign CLI on PATH (image-policy interop test)" command -v cosign
 fi
+# Dex, the identity provider of the sign-in interop test (internal/api) and
+# of ui/e2e/signin.spec.ts: they never pull, so it is pulled here when the
+# host lacks the image deploy/dex-image.txt pins.
+dex_image() {
+	local image
+	image="$(grep -v '^#' "$REPO/deploy/dex-image.txt" | grep -v '^$' | head -n1)"
+	[ -n "$image" ] || return 1
+	docker image inspect "$image" >/dev/null 2>&1 || docker pull -q "$image"
+}
+if runs integration || runs ui-e2e; then
+	need "the Dex image deploy/dex-image.txt pins (docker pull it)" dex_image
+fi
 # The unit gate needs it too: proofrun's own tests run go test -race.
 if runs race || runs race-repeat || runs unit; then
 	need "cgo for the race detector: CGO_ENABLED=1 and a C compiler on PATH (go env CC)" race_toolchain

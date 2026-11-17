@@ -1,5 +1,5 @@
 // Command devtoken is the development stack's token issuer, for
-// `make up IDENTITY=1` (CONTRIBUTING.md, "The development stack"): a key pair
+// `make up` (CONTRIBUTING.md, "The development stack"): a key pair
 // made once under a directory, its public half published as a JWK set the
 // engine trusts as the issuer `dev` (auth.issuers with jwks_file), and tokens
 // signed with it.

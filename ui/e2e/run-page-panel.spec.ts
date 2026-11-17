@@ -529,9 +529,15 @@ test('Finished is said for the run and for each task, and a live task has it bef
 			probe.remove();
 			return color;
 		}, name);
-	expect(await stroke(page.getByTestId('run-progress'))).toBe(await token('--ok-mark'));
+	// The ring's stroke follows the scheme once the page has restyled: polled
+	// until it equals the token, never read once right after the switch.
+	const ringIsOk = async () => {
+		const [ring, ok] = [await stroke(page.getByTestId('run-progress')), await token('--ok-mark')];
+		return ring === ok ? 'the ok mark' : `${ring}, not --ok-mark ${ok}`;
+	};
+	await expect.poll(ringIsOk).toBe('the ok mark');
 	await page.emulateMedia({ colorScheme: 'dark' });
-	expect(await stroke(page.getByTestId('run-progress'))).toBe(await token('--ok-mark'));
+	await expect.poll(ringIsOk).toBe('the ok mark');
 	await page.emulateMedia({ colorScheme: 'light' });
 
 	// A finished run: the header says it, and so does a task's panel.

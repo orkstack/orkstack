@@ -77,6 +77,9 @@ func (s *Service) ReadArtifact(ctx context.Context, req *connect.Request[orkstac
 	if err != nil {
 		code := connect.CodeUnavailable
 		if errors.Is(err, artifacts.ErrNotFound) {
+			if s.reclaimedByGC(ctx, selected.GetArtifact().GetUri()) {
+				return artifactReclaimed(fmt.Sprintf("recorded artifact %q", selected.GetArtifact().GetName()))
+			}
 			code = connect.CodeNotFound
 		}
 		return connect.NewError(code, fmt.Errorf("read recorded artifact %q: %w", selected.GetArtifact().GetName(), err))

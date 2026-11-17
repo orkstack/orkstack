@@ -22,7 +22,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/system_service.proto.
  */
 export const file_orkstack_v1_system_service: GenFile = /*@__PURE__*/
-  fileDesc("CiBvcmtzdGFjay92MS9zeXN0ZW1fc2VydmljZS5wcm90bxILb3Jrc3RhY2sudjEiFgoUR2V0U3lzdGVtSW5mb1JlcXVlc3QitQIKFUdldFN5c3RlbUluZm9SZXNwb25zZRIWCg5lbmdpbmVfdmVyc2lvbhgBIAEoCRISCgpnb192ZXJzaW9uGAIgASgJEhcKD2RlcGxveW1lbnRfbmFtZRgDIAEoCRIQCghidWlsZF9pZBgEIAEoCRIZChF2ZXJzaW9uaW5nX2FjdGl2ZRgFIAEoCBIYChBhcnRpZmFjdF9iYWNrZW5kGAYgASgJEhkKEWFydGlmYWN0X2xvY2F0aW9uGAcgASgJEhgKEHRlbXBvcmFsX2FkZHJlc3MYCCABKAkSLwoLc2VydmVyX3RpbWUYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCWF1dGhfbW9kZRgKIAEoCRIXCg9pZGVudGl0eV9pc3N1ZXIYCyABKAkiGwoZR2V0UmV0ZW50aW9uUG9saWN5UmVxdWVzdCKTAQoaR2V0UmV0ZW50aW9uUG9saWN5UmVzcG9uc2USLAoGcG9saWN5GAEgASgLMhwub3Jrc3RhY2sudjEuUmV0ZW50aW9uUG9saWN5EiQKHG5hbWVzcGFjZV9yZXRlbnRpb25fZW5mb3JjZWQYAiABKAgSIQoZY2x1c3Rlcl9yZXRlbnRpb25fd2FybmluZxgDIAEoCSJUChxVcGRhdGVSZXRlbnRpb25Qb2xpY3lSZXF1ZXN0EjQKEW1heF9ydW5fcmV0ZW50aW9uGAEgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uInMKHVVwZGF0ZVJldGVudGlvblBvbGljeVJlc3BvbnNlEiwKBnBvbGljeRgBIAEoCzIcLm9ya3N0YWNrLnYxLlJldGVudGlvblBvbGljeRIkChxuYW1lc3BhY2VfcmV0ZW50aW9uX2VuZm9yY2VkGAIgASgIIhsKGUxpc3RUZWxlbWV0cnlTaW5rc1JlcXVlc3QiKwoaTGlzdFRlbGVtZXRyeVNpbmtzUmVzcG9uc2USDQoFbmFtZXMYASADKAkiFwoVR2V0SW1hZ2VQb2xpY3lSZXF1ZXN0IkIKFkdldEltYWdlUG9saWN5UmVzcG9uc2USKAoGcG9saWN5GAEgASgLMhgub3Jrc3RhY2sudjEuSW1hZ2VQb2xpY3kiRAoYVXBkYXRlSW1hZ2VQb2xpY3lSZXF1ZXN0EigKBnBvbGljeRgBIAEoCzIYLm9ya3N0YWNrLnYxLkltYWdlUG9saWN5IkUKGVVwZGF0ZUltYWdlUG9saWN5UmVzcG9uc2USKAoGcG9saWN5GAEgASgLMhgub3Jrc3RhY2sudjEuSW1hZ2VQb2xpY3kiXgoOUmVsZWFzZUJsb2NrZXISLQoEa2luZBgBIAEoDjIfLm9ya3N0YWNrLnYxLlJlbGVhc2VCbG9ja2VyS2luZBIMCgRwb29sGAIgASgJEg8KB21lc3NhZ2UYAyABKAkiwAUKB1JlbGVhc2USEAoIYnVpbGRfaWQYASABKAkSJgoEcm9sZRgCIAEoDjIYLm9ya3N0YWNrLnYxLlJlbGVhc2VSb2xlEhQKDHJhbXBfcGVyY2VudBgDIAEoAhIuCgpyb2xlX3NpbmNlGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIxCg1maXJzdF9zZWVuX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIXCg9lbmdpbmVfcmVwbGljYXMYBiABKAUSIgoGb3JrZXJzGAcgAygLMhIub3Jrc3RhY2sudjEuT3JrZXISFAoMcG9vbHNfc2VydmVkGAggAygJEhYKDnJ1bnNfaW5fZmxpZ2h0GAkgASgFEh8KF3J1bnNfdW5hdmFpbGFibGVfcmVhc29uGAogASgJEh4KBHJ1bnMYCyADKAsyEC5vcmtzdGFjay52MS5SdW4SMwoLZHJhaW5fc3RhdGUYDCABKA4yHi5vcmtzdGFjay52MS5SZWxlYXNlRHJhaW5TdGF0ZRI0ChBkcmFpbl9jaGVja2VkX2F0GA0gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdkcmFpbmVkGA4gASgIEi0KCGJsb2NrZXJzGA8gAygLMhsub3Jrc3RhY2sudjEuUmVsZWFzZUJsb2NrZXISGgoSb3Blbl9pZGVudGl0eV9ydW5zGBAgASgDEhMKC3F1ZXVlZF9ydW5zGBEgASgDEhYKDnJlc3VtYWJsZV9ydW5zGBIgASgDEhMKC3BhdXNlZF9ydW5zGBMgASgDEh4KFmV2ZW50X3NvdXJjZV9pbnN0YW5jZXMYFCABKAMSFQoNZXZlbnRfc291cmNlcxgVIAEoBRIWCg51bnNlcnZlZF9wb29scxgWIAMoCSKxAQoTTGlzdFJlbGVhc2VzUmVxdWVzdBIpCgdmaWx0ZXJzGAIgAygLMhgub3Jrc3RhY2sudjEuRmllbGRGaWx0ZXI6X6K7GFsKE29ya3N0YWNrLnYxLlJlbGVhc2USGgoIYnVpbGRfaWQSB1JlbGVhc2UaBQECAwQFEhEKBHJvbGUSBFJvbGUaAwECAxIVCgdkcmFpbmVkEgdEcmFpbmVkGgEBSgQIARACUghidWlsZF9pZCLOAgoUTGlzdFJlbGVhc2VzUmVzcG9uc2USFwoPZGVwbG95bWVudF9uYW1lGAEgASgJEhEKCXZlcnNpb25lZBgCIAEoCBImCghyZWxlYXNlcxgDIAMoCzIULm9ya3N0YWNrLnYxLlJlbGVhc2USIwobdW52ZXJzaW9uZWRfZW5naW5lX3JlcGxpY2FzGAQgASgFEi8KE3VuYXR0cmlidXRlZF9vcmtlcnMYBSADKAsyEi5vcmtzdGFjay52MS5PcmtlchIhChlvcmtlcnNfdW5hdmFpbGFibGVfcmVhc29uGAYgASgJEhAKCHJldmlzaW9uGAcgASgJEi8KC29ic2VydmVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBImCh51bnZlcnNpb25lZF9vcGVuX2lkZW50aXR5X3J1bnMYCSABKAMiUgoSUmFtcFJlbGVhc2VSZXF1ZXN0EhAKCGJ1aWxkX2lkGAEgASgJEg8KB3BlcmNlbnQYAiABKAUSGQoRZXhwZWN0ZWRfcmV2aXNpb24YAyABKAkiiAEKE1JhbXBSZWxlYXNlUmVzcG9uc2USDwoHY2hhbmdlZBgBIAEoCBIZChFwcmV2aW91c19idWlsZF9pZBgCIAEoCRIYChBwcmV2aW91c19wZXJjZW50GAMgASgCEhkKEXJvdXRpbmdfY29uZmlybWVkGAQgASgIEhAKCHJldmlzaW9uGAUgASgJIkQKFVByb21vdGVSZWxlYXNlUmVxdWVzdBIQCghidWlsZF9pZBgBIAEoCRIZChFleHBlY3RlZF9yZXZpc2lvbhgCIAEoCSJxChZQcm9tb3RlUmVsZWFzZVJlc3BvbnNlEg8KB2NoYW5nZWQYASABKAgSGQoRcHJldmlvdXNfYnVpbGRfaWQYAiABKAkSGQoRcm91dGluZ19jb25maXJtZWQYAyABKAgSEAoIcmV2aXNpb24YBCABKAkqlgEKC1JlbGVhc2VSb2xlEhwKGFJFTEVBU0VfUk9MRV9VTlNQRUNJRklFRBAAEhgKFFJFTEVBU0VfUk9MRV9DVVJSRU5UEAESGAoUUkVMRUFTRV9ST0xFX1JBTVBJTkcQAhIZChVSRUxFQVNFX1JPTEVfUFJFVklPVVMQAxIaChZSRUxFQVNFX1JPTEVfQ0FORElEQVRFEAQqewoRUmVsZWFzZURyYWluU3RhdGUSIwofUkVMRUFTRV9EUkFJTl9TVEFURV9VTlNQRUNJRklFRBAAEiAKHFJFTEVBU0VfRFJBSU5fU1RBVEVfRFJBSU5JTkcQARIfChtSRUxFQVNFX0RSQUlOX1NUQVRFX0RSQUlORUQQAiqCAgoSUmVsZWFzZUJsb2NrZXJLaW5kEiQKIFJFTEVBU0VfQkxPQ0tFUl9LSU5EX1VOU1BFQ0lGSUVEEAASIgoeUkVMRUFTRV9CTE9DS0VSX0tJTkRfTk9fRU5HSU5FEAESKAokUkVMRUFTRV9CTE9DS0VSX0tJTkRfUE9PTF9OT1RfU0VSVkVEEAISKAokUkVMRUFTRV9CTE9DS0VSX0tJTkRfUElOU19OT1RfSE9TVEVEEAMSKQolUkVMRUFTRV9CTE9DS0VSX0tJTkRfVU5WRVJTSU9ORURfUlVOUxAEEiMKH1JFTEVBU0VfQkxPQ0tFUl9LSU5EX1VOVkVSSUZJRUQQBTLmBgoNU3lzdGVtU2VydmljZRJWCg1HZXRTeXN0ZW1JbmZvEiEub3Jrc3RhY2sudjEuR2V0U3lzdGVtSW5mb1JlcXVlc3QaIi5vcmtzdGFjay52MS5HZXRTeXN0ZW1JbmZvUmVzcG9uc2USZQoSR2V0UmV0ZW50aW9uUG9saWN5EiYub3Jrc3RhY2sudjEuR2V0UmV0ZW50aW9uUG9saWN5UmVxdWVzdBonLm9ya3N0YWNrLnYxLkdldFJldGVudGlvblBvbGljeVJlc3BvbnNlEm4KFVVwZGF0ZVJldGVudGlvblBvbGljeRIpLm9ya3N0YWNrLnYxLlVwZGF0ZVJldGVudGlvblBvbGljeVJlcXVlc3QaKi5vcmtzdGFjay52MS5VcGRhdGVSZXRlbnRpb25Qb2xpY3lSZXNwb25zZRJlChJMaXN0VGVsZW1ldHJ5U2lua3MSJi5vcmtzdGFjay52MS5MaXN0VGVsZW1ldHJ5U2lua3NSZXF1ZXN0Gicub3Jrc3RhY2sudjEuTGlzdFRlbGVtZXRyeVNpbmtzUmVzcG9uc2USWQoOR2V0SW1hZ2VQb2xpY3kSIi5vcmtzdGFjay52MS5HZXRJbWFnZVBvbGljeVJlcXVlc3QaIy5vcmtzdGFjay52MS5HZXRJbWFnZVBvbGljeVJlc3BvbnNlEmIKEVVwZGF0ZUltYWdlUG9saWN5EiUub3Jrc3RhY2sudjEuVXBkYXRlSW1hZ2VQb2xpY3lSZXF1ZXN0GiYub3Jrc3RhY2sudjEuVXBkYXRlSW1hZ2VQb2xpY3lSZXNwb25zZRJTCgxMaXN0UmVsZWFzZXMSIC5vcmtzdGFjay52MS5MaXN0UmVsZWFzZXNSZXF1ZXN0GiEub3Jrc3RhY2sudjEuTGlzdFJlbGVhc2VzUmVzcG9uc2USUAoLUmFtcFJlbGVhc2USHy5vcmtzdGFjay52MS5SYW1wUmVsZWFzZVJlcXVlc3QaIC5vcmtzdGFjay52MS5SYW1wUmVsZWFzZVJlc3BvbnNlElkKDlByb21vdGVSZWxlYXNlEiIub3Jrc3RhY2sudjEuUHJvbW90ZVJlbGVhc2VSZXF1ZXN0GiMub3Jrc3RhY2sudjEuUHJvbW90ZVJlbGVhc2VSZXNwb25zZUKuAQoPY29tLm9ya3N0YWNrLnYxQhJTeXN0ZW1TZXJ2aWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_filter, file_orkstack_v1_image_policy, file_orkstack_v1_retention, file_orkstack_v1_run]);
+  fileDesc("CiBvcmtzdGFjay92MS9zeXN0ZW1fc2VydmljZS5wcm90bxILb3Jrc3RhY2sudjEiFgoUR2V0U3lzdGVtSW5mb1JlcXVlc3QitQIKFUdldFN5c3RlbUluZm9SZXNwb25zZRIWCg5lbmdpbmVfdmVyc2lvbhgBIAEoCRISCgpnb192ZXJzaW9uGAIgASgJEhcKD2RlcGxveW1lbnRfbmFtZRgDIAEoCRIQCghidWlsZF9pZBgEIAEoCRIZChF2ZXJzaW9uaW5nX2FjdGl2ZRgFIAEoCBIYChBhcnRpZmFjdF9iYWNrZW5kGAYgASgJEhkKEWFydGlmYWN0X2xvY2F0aW9uGAcgASgJEhgKEHRlbXBvcmFsX2FkZHJlc3MYCCABKAkSLwoLc2VydmVyX3RpbWUYCSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhEKCWF1dGhfbW9kZRgKIAEoCRIXCg9pZGVudGl0eV9pc3N1ZXIYCyABKAkiGwoZR2V0UmV0ZW50aW9uUG9saWN5UmVxdWVzdCKTAQoaR2V0UmV0ZW50aW9uUG9saWN5UmVzcG9uc2USLAoGcG9saWN5GAEgASgLMhwub3Jrc3RhY2sudjEuUmV0ZW50aW9uUG9saWN5EiQKHG5hbWVzcGFjZV9yZXRlbnRpb25fZW5mb3JjZWQYAiABKAgSIQoZY2x1c3Rlcl9yZXRlbnRpb25fd2FybmluZxgDIAEoCSJUChxVcGRhdGVSZXRlbnRpb25Qb2xpY3lSZXF1ZXN0EjQKEW1heF9ydW5fcmV0ZW50aW9uGAEgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uInMKHVVwZGF0ZVJldGVudGlvblBvbGljeVJlc3BvbnNlEiwKBnBvbGljeRgBIAEoCzIcLm9ya3N0YWNrLnYxLlJldGVudGlvblBvbGljeRIkChxuYW1lc3BhY2VfcmV0ZW50aW9uX2VuZm9yY2VkGAIgASgIIhsKGUxpc3RUZWxlbWV0cnlTaW5rc1JlcXVlc3QiKwoaTGlzdFRlbGVtZXRyeVNpbmtzUmVzcG9uc2USDQoFbmFtZXMYASADKAkiFwoVR2V0SW1hZ2VQb2xpY3lSZXF1ZXN0IkIKFkdldEltYWdlUG9saWN5UmVzcG9uc2USKAoGcG9saWN5GAEgASgLMhgub3Jrc3RhY2sudjEuSW1hZ2VQb2xpY3kiRAoYVXBkYXRlSW1hZ2VQb2xpY3lSZXF1ZXN0EigKBnBvbGljeRgBIAEoCzIYLm9ya3N0YWNrLnYxLkltYWdlUG9saWN5IkUKGVVwZGF0ZUltYWdlUG9saWN5UmVzcG9uc2USKAoGcG9saWN5GAEgASgLMhgub3Jrc3RhY2sudjEuSW1hZ2VQb2xpY3kiXgoOUmVsZWFzZUJsb2NrZXISLQoEa2luZBgBIAEoDjIfLm9ya3N0YWNrLnYxLlJlbGVhc2VCbG9ja2VyS2luZBIMCgRwb29sGAIgASgJEg8KB21lc3NhZ2UYAyABKAkiwAUKB1JlbGVhc2USEAoIYnVpbGRfaWQYASABKAkSJgoEcm9sZRgCIAEoDjIYLm9ya3N0YWNrLnYxLlJlbGVhc2VSb2xlEhQKDHJhbXBfcGVyY2VudBgDIAEoAhIuCgpyb2xlX3NpbmNlGAQgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIxCg1maXJzdF9zZWVuX2F0GAUgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIXCg9lbmdpbmVfcmVwbGljYXMYBiABKAUSIgoGb3JrZXJzGAcgAygLMhIub3Jrc3RhY2sudjEuT3JrZXISFAoMcG9vbHNfc2VydmVkGAggAygJEhYKDnJ1bnNfaW5fZmxpZ2h0GAkgASgFEh8KF3J1bnNfdW5hdmFpbGFibGVfcmVhc29uGAogASgJEh4KBHJ1bnMYCyADKAsyEC5vcmtzdGFjay52MS5SdW4SMwoLZHJhaW5fc3RhdGUYDCABKA4yHi5vcmtzdGFjay52MS5SZWxlYXNlRHJhaW5TdGF0ZRI0ChBkcmFpbl9jaGVja2VkX2F0GA0gASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBIPCgdkcmFpbmVkGA4gASgIEi0KCGJsb2NrZXJzGA8gAygLMhsub3Jrc3RhY2sudjEuUmVsZWFzZUJsb2NrZXISGgoSb3Blbl9pZGVudGl0eV9ydW5zGBAgASgDEhMKC3F1ZXVlZF9ydW5zGBEgASgDEhYKDnJlc3VtYWJsZV9ydW5zGBIgASgDEhMKC3BhdXNlZF9ydW5zGBMgASgDEh4KFmV2ZW50X3NvdXJjZV9pbnN0YW5jZXMYFCABKAMSFQoNZXZlbnRfc291cmNlcxgVIAEoBRIWCg51bnNlcnZlZF9wb29scxgWIAMoCSKxAQoTTGlzdFJlbGVhc2VzUmVxdWVzdBIpCgdmaWx0ZXJzGAIgAygLMhgub3Jrc3RhY2sudjEuRmllbGRGaWx0ZXI6X6K7GFsKE29ya3N0YWNrLnYxLlJlbGVhc2USGgoIYnVpbGRfaWQSB1JlbGVhc2UaBQECAwQFEhEKBHJvbGUSBFJvbGUaAwECAxIVCgdkcmFpbmVkEgdEcmFpbmVkGgEBSgQIARACUghidWlsZF9pZCLOAgoUTGlzdFJlbGVhc2VzUmVzcG9uc2USFwoPZGVwbG95bWVudF9uYW1lGAEgASgJEhEKCXZlcnNpb25lZBgCIAEoCBImCghyZWxlYXNlcxgDIAMoCzIULm9ya3N0YWNrLnYxLlJlbGVhc2USIwobdW52ZXJzaW9uZWRfZW5naW5lX3JlcGxpY2FzGAQgASgFEi8KE3VuYXR0cmlidXRlZF9vcmtlcnMYBSADKAsyEi5vcmtzdGFjay52MS5PcmtlchIhChlvcmtlcnNfdW5hdmFpbGFibGVfcmVhc29uGAYgASgJEhAKCHJldmlzaW9uGAcgASgJEi8KC29ic2VydmVkX2F0GAggASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBImCh51bnZlcnNpb25lZF9vcGVuX2lkZW50aXR5X3J1bnMYCSABKAMiUgoSUmFtcFJlbGVhc2VSZXF1ZXN0EhAKCGJ1aWxkX2lkGAEgASgJEg8KB3BlcmNlbnQYAiABKAUSGQoRZXhwZWN0ZWRfcmV2aXNpb24YAyABKAkiiAEKE1JhbXBSZWxlYXNlUmVzcG9uc2USDwoHY2hhbmdlZBgBIAEoCBIZChFwcmV2aW91c19idWlsZF9pZBgCIAEoCRIYChBwcmV2aW91c19wZXJjZW50GAMgASgCEhkKEXJvdXRpbmdfY29uZmlybWVkGAQgASgIEhAKCHJldmlzaW9uGAUgASgJIkQKFVByb21vdGVSZWxlYXNlUmVxdWVzdBIQCghidWlsZF9pZBgBIAEoCRIZChFleHBlY3RlZF9yZXZpc2lvbhgCIAEoCSJxChZQcm9tb3RlUmVsZWFzZVJlc3BvbnNlEg8KB2NoYW5nZWQYASABKAgSGQoRcHJldmlvdXNfYnVpbGRfaWQYAiABKAkSGQoRcm91dGluZ19jb25maXJtZWQYAyABKAgSEAoIcmV2aXNpb24YBCABKAkiYgodUHJldmlld0FydGlmYWN0UmVjbGFpbVJlcXVlc3QSEQoJbmFtZXNwYWNlGAEgASgJEg0KBWxpbWl0GAIgASgFEg8KB3NhbXBsZXMYAyABKAUSDgoGY3Vyc29yGAQgASgJIkQKElJlY2xhaW1SZWFzb25Db3VudBIOCgZyZWFzb24YASABKAkSDwoHb2JqZWN0cxgCIAEoAxINCgVieXRlcxgDIAEoAyKVAQoXUmVjbGFpbU5hbWVzcGFjZVN1bW1hcnkSEQoJbmFtZXNwYWNlGAEgASgJEhwKFHdvdWxkX2RlbGV0ZV9vYmplY3RzGAIgASgDEhoKEndvdWxkX2RlbGV0ZV9ieXRlcxgDIAEoAxItCgRrZXB0GAQgAygLMh8ub3Jrc3RhY2sudjEuUmVjbGFpbVJlYXNvbkNvdW50Ip4CCg1SZWNsYWltU2FtcGxlEg4KBnJ1bl9pZBgBIAEoCRIPCgd0YXNrX2lkGAIgASgJEhUKDWFydGlmYWN0X25hbWUYAyABKAkSDQoFYnl0ZXMYBCABKAMSDwoHb3V0Y29tZRgFIAEoCRIOCgZyZWFzb24YBiABKAkSNwoTcHJvZHVjZXJfcmV0aXJlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASFAoMc3RhbGVfY2xhaW1zGAggASgFEhMKC2xpdmVfY2xhaW1zGAkgASgFEkEKHXdhaXRzX2Zvcl9ydW5zX2NyZWF0ZWRfYmVmb3JlGAogASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCLDBAoeUHJldmlld0FydGlmYWN0UmVjbGFpbVJlc3BvbnNlEgwKBG1vZGUYASABKAkSDAoEaGVsZBgCIAEoCBITCgtoZWxkX3JlYXNvbhgDIAEoCRI4CgpuYW1lc3BhY2VzGAQgAygLMiQub3Jrc3RhY2sudjEuUmVjbGFpbU5hbWVzcGFjZVN1bW1hcnkSKwoHc2FtcGxlcxgFIAMoCzIaLm9ya3N0YWNrLnYxLlJlY2xhaW1TYW1wbGUSFQoNcnVuc19leGFtaW5lZBgGIAEoAxITCgtuZXh0X2N1cnNvchgHIAEoCRIvCgtjb21wdXRlZF9hdBgIIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASFwoPY2xlYW51cF9lbmFibGVkGAkgASgIEhcKD3N0b3JlX3ZlcnNpb25lZBgKIAEoCBIXCg9sb3dfd2F0ZXJfa25vd24YCyABKAgSHwoXbG93X3dhdGVyX3Vua25vd25fY2F1c2UYDCABKAkSOAoUbG93X3dhdGVyX2NyZWF0ZWRfYXQYDSABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhgKEGxvd193YXRlcl9ydW5faWQYDiABKAkSGwoTbG93X3dhdGVyX25hbWVzcGFjZRgPIAEoCRIUCgx3YWl0aW5nX3J1bnMYECABKAMSOQoVbG93X3dhdGVyX2NvbXB1dGVkX2F0GBEgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcCqWAQoLUmVsZWFzZVJvbGUSHAoYUkVMRUFTRV9ST0xFX1VOU1BFQ0lGSUVEEAASGAoUUkVMRUFTRV9ST0xFX0NVUlJFTlQQARIYChRSRUxFQVNFX1JPTEVfUkFNUElORxACEhkKFVJFTEVBU0VfUk9MRV9QUkVWSU9VUxADEhoKFlJFTEVBU0VfUk9MRV9DQU5ESURBVEUQBCp7ChFSZWxlYXNlRHJhaW5TdGF0ZRIjCh9SRUxFQVNFX0RSQUlOX1NUQVRFX1VOU1BFQ0lGSUVEEAASIAocUkVMRUFTRV9EUkFJTl9TVEFURV9EUkFJTklORxABEh8KG1JFTEVBU0VfRFJBSU5fU1RBVEVfRFJBSU5FRBACKoICChJSZWxlYXNlQmxvY2tlcktpbmQSJAogUkVMRUFTRV9CTE9DS0VSX0tJTkRfVU5TUEVDSUZJRUQQABIiCh5SRUxFQVNFX0JMT0NLRVJfS0lORF9OT19FTkdJTkUQARIoCiRSRUxFQVNFX0JMT0NLRVJfS0lORF9QT09MX05PVF9TRVJWRUQQAhIoCiRSRUxFQVNFX0JMT0NLRVJfS0lORF9QSU5TX05PVF9IT1NURUQQAxIpCiVSRUxFQVNFX0JMT0NLRVJfS0lORF9VTlZFUlNJT05FRF9SVU5TEAQSIwofUkVMRUFTRV9CTE9DS0VSX0tJTkRfVU5WRVJJRklFRBAFMtkHCg1TeXN0ZW1TZXJ2aWNlElYKDUdldFN5c3RlbUluZm8SIS5vcmtzdGFjay52MS5HZXRTeXN0ZW1JbmZvUmVxdWVzdBoiLm9ya3N0YWNrLnYxLkdldFN5c3RlbUluZm9SZXNwb25zZRJlChJHZXRSZXRlbnRpb25Qb2xpY3kSJi5vcmtzdGFjay52MS5HZXRSZXRlbnRpb25Qb2xpY3lSZXF1ZXN0Gicub3Jrc3RhY2sudjEuR2V0UmV0ZW50aW9uUG9saWN5UmVzcG9uc2USbgoVVXBkYXRlUmV0ZW50aW9uUG9saWN5Eikub3Jrc3RhY2sudjEuVXBkYXRlUmV0ZW50aW9uUG9saWN5UmVxdWVzdBoqLm9ya3N0YWNrLnYxLlVwZGF0ZVJldGVudGlvblBvbGljeVJlc3BvbnNlEnEKFlByZXZpZXdBcnRpZmFjdFJlY2xhaW0SKi5vcmtzdGFjay52MS5QcmV2aWV3QXJ0aWZhY3RSZWNsYWltUmVxdWVzdBorLm9ya3N0YWNrLnYxLlByZXZpZXdBcnRpZmFjdFJlY2xhaW1SZXNwb25zZRJlChJMaXN0VGVsZW1ldHJ5U2lua3MSJi5vcmtzdGFjay52MS5MaXN0VGVsZW1ldHJ5U2lua3NSZXF1ZXN0Gicub3Jrc3RhY2sudjEuTGlzdFRlbGVtZXRyeVNpbmtzUmVzcG9uc2USWQoOR2V0SW1hZ2VQb2xpY3kSIi5vcmtzdGFjay52MS5HZXRJbWFnZVBvbGljeVJlcXVlc3QaIy5vcmtzdGFjay52MS5HZXRJbWFnZVBvbGljeVJlc3BvbnNlEmIKEVVwZGF0ZUltYWdlUG9saWN5EiUub3Jrc3RhY2sudjEuVXBkYXRlSW1hZ2VQb2xpY3lSZXF1ZXN0GiYub3Jrc3RhY2sudjEuVXBkYXRlSW1hZ2VQb2xpY3lSZXNwb25zZRJTCgxMaXN0UmVsZWFzZXMSIC5vcmtzdGFjay52MS5MaXN0UmVsZWFzZXNSZXF1ZXN0GiEub3Jrc3RhY2sudjEuTGlzdFJlbGVhc2VzUmVzcG9uc2USUAoLUmFtcFJlbGVhc2USHy5vcmtzdGFjay52MS5SYW1wUmVsZWFzZVJlcXVlc3QaIC5vcmtzdGFjay52MS5SYW1wUmVsZWFzZVJlc3BvbnNlElkKDlByb21vdGVSZWxlYXNlEiIub3Jrc3RhY2sudjEuUHJvbW90ZVJlbGVhc2VSZXF1ZXN0GiMub3Jrc3RhY2sudjEuUHJvbW90ZVJlbGVhc2VSZXNwb25zZUKuAQoPY29tLm9ya3N0YWNrLnYxQhJTeXN0ZW1TZXJ2aWNlUHJvdG9QAVo6Z2l0aHViLmNvbS9vcmtzdGFjay9vcmtzdGFjay9nZW4vZ28vb3Jrc3RhY2svdjE7b3Jrc3RhY2t2MaICA09YWKoCC09ya3N0YWNrLlYxygILT3Jrc3RhY2tcVjHiAhdPcmtzdGFja1xWMVxHUEJNZXRhZGF0YeoCDE9ya3N0YWNrOjpWMWIGcHJvdG8z", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_activity, file_orkstack_v1_filter, file_orkstack_v1_image_policy, file_orkstack_v1_retention, file_orkstack_v1_run]);
 
 /**
  * @generated from message orkstack.v1.GetSystemInfoRequest
@@ -824,6 +824,287 @@ export const PromoteReleaseResponseSchema: GenMessage<PromoteReleaseResponse> = 
   messageDesc(file_orkstack_v1_system_service, 19);
 
 /**
+ * @generated from message orkstack.v1.PreviewArtifactReclaimRequest
+ */
+export type PreviewArtifactReclaimRequest = Message<"orkstack.v1.PreviewArtifactReclaimRequest"> & {
+  /**
+   * namespace limits the preview to retired runs of one namespace, and is
+   * required for samples. Empty covers every namespace.
+   *
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+
+  /**
+   * limit is how many runs of the index to cover: 1 to 1000; 0 is 1000.
+   *
+   * @generated from field: int32 limit = 2;
+   */
+  limit: number;
+
+  /**
+   * samples is how many objects to name, at most 100; only with namespace.
+   *
+   * @generated from field: int32 samples = 3;
+   */
+  samples: number;
+
+  /**
+   * cursor is a previous answer's next_cursor; empty starts at the index's
+   * beginning.
+   *
+   * @generated from field: string cursor = 4;
+   */
+  cursor: string;
+};
+
+/**
+ * Describes the message orkstack.v1.PreviewArtifactReclaimRequest.
+ * Use `create(PreviewArtifactReclaimRequestSchema)` to create a new message.
+ */
+export const PreviewArtifactReclaimRequestSchema: GenMessage<PreviewArtifactReclaimRequest> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_system_service, 20);
+
+/**
+ * ReclaimReasonCount is how many objects, and how many bytes, one reason
+ * kept.
+ *
+ * @generated from message orkstack.v1.ReclaimReasonCount
+ */
+export type ReclaimReasonCount = Message<"orkstack.v1.ReclaimReasonCount"> & {
+  /**
+   * @generated from field: string reason = 1;
+   */
+  reason: string;
+
+  /**
+   * @generated from field: int64 objects = 2;
+   */
+  objects: bigint;
+
+  /**
+   * @generated from field: int64 bytes = 3;
+   */
+  bytes: bigint;
+};
+
+/**
+ * Describes the message orkstack.v1.ReclaimReasonCount.
+ * Use `create(ReclaimReasonCountSchema)` to create a new message.
+ */
+export const ReclaimReasonCountSchema: GenMessage<ReclaimReasonCount> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_system_service, 21);
+
+/**
+ * ReclaimNamespaceSummary is one namespace's answer: the producing run's
+ * namespace.
+ *
+ * @generated from message orkstack.v1.ReclaimNamespaceSummary
+ */
+export type ReclaimNamespaceSummary = Message<"orkstack.v1.ReclaimNamespaceSummary"> & {
+  /**
+   * @generated from field: string namespace = 1;
+   */
+  namespace: string;
+
+  /**
+   * @generated from field: int64 would_delete_objects = 2;
+   */
+  wouldDeleteObjects: bigint;
+
+  /**
+   * @generated from field: int64 would_delete_bytes = 3;
+   */
+  wouldDeleteBytes: bigint;
+
+  /**
+   * @generated from field: repeated orkstack.v1.ReclaimReasonCount kept = 4;
+   */
+  kept: ReclaimReasonCount[];
+};
+
+/**
+ * Describes the message orkstack.v1.ReclaimNamespaceSummary.
+ * Use `create(ReclaimNamespaceSummarySchema)` to create a new message.
+ */
+export const ReclaimNamespaceSummarySchema: GenMessage<ReclaimNamespaceSummary> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_system_service, 22);
+
+/**
+ * ReclaimSample is one object a preview names.
+ *
+ * @generated from message orkstack.v1.ReclaimSample
+ */
+export type ReclaimSample = Message<"orkstack.v1.ReclaimSample"> & {
+  /**
+   * @generated from field: string run_id = 1;
+   */
+  runId: string;
+
+  /**
+   * @generated from field: string task_id = 2;
+   */
+  taskId: string;
+
+  /**
+   * @generated from field: string artifact_name = 3;
+   */
+  artifactName: string;
+
+  /**
+   * @generated from field: int64 bytes = 4;
+   */
+  bytes: bigint;
+
+  /**
+   * outcome is would_delete or kept.
+   *
+   * @generated from field: string outcome = 5;
+   */
+  outcome: string;
+
+  /**
+   * @generated from field: string reason = 6;
+   */
+  reason: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp producer_retired_at = 7;
+   */
+  producerRetiredAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: int32 stale_claims = 8;
+   */
+  staleClaims: number;
+
+  /**
+   * @generated from field: int32 live_claims = 9;
+   */
+  liveClaims: number;
+
+  /**
+   * waits_for_runs_created_before is set for a lowwater object: every run
+   * created before it must finish and be archived first.
+   *
+   * @generated from field: google.protobuf.Timestamp waits_for_runs_created_before = 10;
+   */
+  waitsForRunsCreatedBefore?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.ReclaimSample.
+ * Use `create(ReclaimSampleSchema)` to create a new message.
+ */
+export const ReclaimSampleSchema: GenMessage<ReclaimSample> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_system_service, 23);
+
+/**
+ * @generated from message orkstack.v1.PreviewArtifactReclaimResponse
+ */
+export type PreviewArtifactReclaimResponse = Message<"orkstack.v1.PreviewArtifactReclaimResponse"> & {
+  /**
+   * mode is off, dry_run or delete (cleanup.artifact_gc).
+   *
+   * @generated from field: string mode = 1;
+   */
+  mode: string;
+
+  /**
+   * held says a pass would delete nothing now; held_reason names why.
+   *
+   * @generated from field: bool held = 2;
+   */
+  held: boolean;
+
+  /**
+   * @generated from field: string held_reason = 3;
+   */
+  heldReason: string;
+
+  /**
+   * @generated from field: repeated orkstack.v1.ReclaimNamespaceSummary namespaces = 4;
+   */
+  namespaces: ReclaimNamespaceSummary[];
+
+  /**
+   * samples are returned only with a namespace.
+   *
+   * @generated from field: repeated orkstack.v1.ReclaimSample samples = 5;
+   */
+  samples: ReclaimSample[];
+
+  /**
+   * @generated from field: int64 runs_examined = 6;
+   */
+  runsExamined: bigint;
+
+  /**
+   * next_cursor continues the preview; empty at the end of the index.
+   *
+   * @generated from field: string next_cursor = 7;
+   */
+  nextCursor: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp computed_at = 8;
+   */
+  computedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: bool cleanup_enabled = 9;
+   */
+  cleanupEnabled: boolean;
+
+  /**
+   * @generated from field: bool store_versioned = 10;
+   */
+  storeVersioned: boolean;
+
+  /**
+   * @generated from field: bool low_water_known = 11;
+   */
+  lowWaterKnown: boolean;
+
+  /**
+   * @generated from field: string low_water_unknown_cause = 12;
+   */
+  lowWaterUnknownCause: string;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp low_water_created_at = 13;
+   */
+  lowWaterCreatedAt?: Timestamp | undefined;
+
+  /**
+   * @generated from field: string low_water_run_id = 14;
+   */
+  lowWaterRunId: string;
+
+  /**
+   * @generated from field: string low_water_namespace = 15;
+   */
+  lowWaterNamespace: string;
+
+  /**
+   * @generated from field: int64 waiting_runs = 16;
+   */
+  waitingRuns: bigint;
+
+  /**
+   * @generated from field: google.protobuf.Timestamp low_water_computed_at = 17;
+   */
+  lowWaterComputedAt?: Timestamp | undefined;
+};
+
+/**
+ * Describes the message orkstack.v1.PreviewArtifactReclaimResponse.
+ * Use `create(PreviewArtifactReclaimResponseSchema)` to create a new message.
+ */
+export const PreviewArtifactReclaimResponseSchema: GenMessage<PreviewArtifactReclaimResponse> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_system_service, 24);
+
+/**
  * ReleaseRole is what a release does with NEW runs. It never describes runs
  * already executing: those finish on the release that started them.
  *
@@ -1024,6 +1305,24 @@ export const SystemService: GenService<{
     methodKind: "unary";
     input: typeof UpdateRetentionPolicyRequestSchema;
     output: typeof UpdateRetentionPolicyResponseSchema;
+  },
+  /**
+   * PreviewArtifactReclaim answers what the artifact GC — reclaim, as this
+   * API calls it; `orkctl admin gc preview` — would do now with at most
+   * `limit` (and never more than 1000) retired runs of the run index after
+   * `cursor`, within 30 seconds, and writes nothing (docs/STORAGE.md,
+   * "Reclaiming space"). Any replica answers; one preview at a time per
+   * replica, else RESOURCE_EXHAUSTED. Its low-water mark is the answering
+   * replica's last reclaim pass's, or one computed for this answer alone.
+   * Samples are returned only with `namespace`. The run holding the low-water
+   * mark is named with its namespace whether or not `namespace` is set.
+   *
+   * @generated from rpc orkstack.v1.SystemService.PreviewArtifactReclaim
+   */
+  previewArtifactReclaim: {
+    methodKind: "unary";
+    input: typeof PreviewArtifactReclaimRequestSchema;
+    output: typeof PreviewArtifactReclaimResponseSchema;
   },
   /**
    * ListTelemetrySinks names the telemetry sinks this deployment declared

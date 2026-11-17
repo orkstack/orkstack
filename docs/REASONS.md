@@ -248,9 +248,15 @@ These are refusals of an Orkflow document. They come from validate and create, w
 | `IMAGE_RESOLVE_UNSUPPORTED` | — | The reference does not parse (it is outside the distribution grammar: [OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#42-the-activity-catalog-engine-config), "§4.2" rule 3), or the registry served a manifest or config that the resolver cannot read ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3"). | Use an image whose manifest and config the registry serves in a form that the resolver reads. |
 | `IMAGE_DIGEST_MISMATCH` | — (ContractViolation at the Orker) | The bytes that the registry served do not hash to the digest they were addressed by. This covers a pinned reference, a platform manifest, the config blob, and the content-digest header the registry sends. The Orker reports the same code, as a ContractViolation, when a pulled image does not match its pin ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3"). | Check the digest against the registry, and check that nothing between the engine and the registry rewrites responses. Apply does not fall back to a tag, so the reference stays unpinned until it resolves to a digest that verifies. |
 
+## Reads of reclaimed artifacts
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `ARTIFACT_RECLAIMED` | — | An artifact download, a provenance read or `orkctl task run --from-run` asked for an object that the artifact GC deleted after the run that produced it was retired, so only its recorded digest remains. It answers `FailedPrecondition`. An object missing for any other reason still answers `NotFound` ([STORAGE.md](./STORAGE.md#the-artifact-gc), "The artifact GC"). | Nothing can bring the bytes back. Run the producing task again, or supply the bytes yourself (`orkctl task run --artifact`). To keep runs' bytes longer, raise the namespace's run retention. |
+
 ## Evidence bundles
 
-A member of an evidence bundle that is reclaimed, unrecorded or rejected carries one of five lowercase tokens as its `reason`. `orkctl run evidence verify` reports each one as a finding, not a failure, and exits 0 for it ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#verify), "verify").
+A member of an evidence bundle that is reclaimed, unrecorded or rejected carries one of six lowercase tokens as its `reason`. `orkctl run evidence verify` reports each one as a finding, not a failure, and exits 0 for it ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#verify), "verify").
 
 | Reason | Category | Meaning | What to do |
 |---|---|---|---|
@@ -258,6 +264,7 @@ A member of an evidence bundle that is reclaimed, unrecorded or rejected carries
 | `definition_digest_mismatch` | — | A document exists at the run's pinned coordinates, but it does not hash to the digest the run pinned. The bundle carries no bytes for it, and records the document's own digest ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the definition as rejected. Compare the stored digest with the run's pinned digest, both of which the bundle records. |
 | `commit_missing` | — | The commit record was reclaimed by cleanup. Its recorded digest is preserved ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the commit as reclaimed. Nothing to repair in the bundle. |
 | `object_missing` | — | The object was removed from the store by a lifecycle rule or by cleanup. Its recorded digest is preserved ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the object as reclaimed. If the object should have been kept, check the bucket's lifecycle rules. |
+| `artifact_reclaimed` | — | The artifact GC deleted the object after its run was retired. Its recorded digest is preserved ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the object as reclaimed. Nothing to repair in the bundle. |
 | `attempt_record_missing` | — | No attempt record exists, because the Orker died before filing one or cleanup reclaimed it ([RUN_EVIDENCE.md](./RUN_EVIDENCE.md#reason-tokens), "Reason tokens"). | `verify` lists the attempt as unrecorded. The other attempts' records and logs are unaffected. |
 
 ## Webhooks

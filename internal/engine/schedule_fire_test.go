@@ -203,8 +203,12 @@ func TestScheduleFireWorkflow_StartsChildRunWithScheduleOrigin(t *testing.T) {
 		t.Fatalf("child options = %+v", opts)
 	}
 	prep := firePreparation(t, "ork-20260924-1")
-	if !reflect.DeepEqual(opts.Memo, engine.RunStartMemo(prep.GetOrkflow(), firePlan())) {
-		t.Fatalf("child memo = %v, want RunStartMemo's %v", opts.Memo, engine.RunStartMemo(prep.GetOrkflow(), firePlan()))
+	stamp, ok := opts.Memo[engine.MemoStartStamp].(string)
+	if !ok {
+		t.Fatalf("the fire's run carries no start stamp: %v", opts.Memo)
+	}
+	if want := engine.RunStartMemoAt(prep.GetOrkflow(), firePlan(), mustTime(t, stamp)); !reflect.DeepEqual(opts.Memo, want) {
+		t.Fatalf("child memo = %v, want RunStartMemoAt's %v", opts.Memo, want)
 	}
 	if opts.Memo[engine.MemoOriginKind] != "schedule" || opts.Memo[engine.MemoOriginID] != "sch-x" {
 		t.Fatalf("child memo carries origin %v/%v, want schedule/sch-x", opts.Memo[engine.MemoOriginKind], opts.Memo[engine.MemoOriginID])
@@ -420,4 +424,13 @@ func TestScheduleFireWorkflow_ChildStartFailureIsARefusal(t *testing.T) {
 	if got := h.capture.memoString(engine.MemoScheduleFireRefusal); !strings.Contains(got, "start run ork-dup") {
 		t.Fatalf("memo refusal = %q", got)
 	}
+}
+
+func mustTime(t *testing.T, raw string) time.Time {
+	t.Helper()
+	at, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return at
 }

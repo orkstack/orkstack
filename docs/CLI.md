@@ -590,6 +590,60 @@ Inherited flags:
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
+## `orkctl admin gc`
+
+Inspect artifact reclaim: what the artifact GC deletes
+
+gc inspects the artifact GC (reclaim, as the API calls it), which deletes the
+artifact bytes of retired runs during retention cleanup (docs/STORAGE.md,
+"Reclaiming space").
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin gc preview`
+
+Show what the artifact GC would delete now, and what it keeps and why
+
+Show what a pass of the artifact GC would do now, for at most --limit retired
+runs (1000 at most) after --cursor, within 30 seconds. It writes nothing. Any
+replica answers, one preview at a time.
+
+It names the run holding the low-water mark: nothing produced before that run
+was created is deleted while it is open or unarchived. --samples names objects,
+and needs --namespace. Run it before setting cleanup.artifact_gc to delete.
+
+Flags:
+
+- `--cursor STRING` — continue from a previous preview's next cursor
+- `--limit INT32` — runs to cover, 1 to 1000 (default 1000)
+- `-n, --namespace STRING` — limit the preview to one namespace's runs (needed for --samples)
+- `--samples INT32` — objects to name, at most 100
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
 ## `orkctl admin identity`
 
 Read and administer the task identity issuer

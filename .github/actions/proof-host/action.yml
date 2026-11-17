@@ -6,6 +6,10 @@ inputs:
     description: Install the cosign CLI (the integration gate's image-policy test)
     required: false
     default: "false"
+  dex:
+    description: Pull the Dex image deploy/dex-image.txt pins (the sign-in interop test and ui/e2e/signin.spec.ts)
+    required: false
+    default: "false"
   temporal-cli:
     description: Install the temporal CLI from the compose service's own image (ui/e2e/admin.spec.ts)
     required: false
@@ -159,6 +163,25 @@ runs:
       uses: ./.github/actions/proof-fetch
       with:
         image: ${{ steps.cosign-image.outputs.image }}
+
+    # The Dex image the sign-in interop test (internal/api) and
+    # ui/e2e/signin.spec.ts run (deploy/dex-image.txt): they run it with
+    # --pull never, so it is pulled here, through proof-fetch, when the
+    # daemon lacks it.
+    - name: dex image
+      id: dex-image
+      if: inputs.dex == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        image="$(grep -v '^#' deploy/dex-image.txt | grep -v '^$' | head -1)"
+        [ -n "$image" ] || { echo "deploy/dex-image.txt names no image" >&2; exit 1; }
+        docker image inspect "$image" >/dev/null 2>&1 || echo "image=$image" >>"$GITHUB_OUTPUT"
+    - name: fetch dex image
+      if: inputs.dex == 'true' && steps.dex-image.outputs.image != ''
+      uses: ./.github/actions/proof-fetch
+      with:
+        image: ${{ steps.dex-image.outputs.image }}
 
     - name: temporal CLI
       if: inputs.temporal-cli == 'true'

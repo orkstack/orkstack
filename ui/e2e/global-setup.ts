@@ -44,8 +44,8 @@ export const suiteBinaries: Record<string, string> = {
 	orker: './cmd/orker',
 	orkctl: './cmd/orkctl',
 	'cosign-sign': './test/tools/cosign-sign',
-	// The identity provider the sign-in specs sign people in at.
-	oidctest: './test/tools/oidctest',
+	// Starts Dex, the identity provider the sign-in spec signs people in at.
+	dexrun: './test/tools/dexrun',
 	'deaf-poller': './test/tools/deaf-poller',
 	// The helpers specs used to `go run`: a compile and link per call (about
 	// 24 calls a run) against a build once here.

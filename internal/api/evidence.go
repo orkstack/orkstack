@@ -463,6 +463,9 @@ func (e *evidenceExport) stat(ctx context.Context, memberPath string, kind evide
 		member.State = evidence.StatePresent
 	case errors.Is(err, artifacts.ErrNotFound):
 		member.State, member.Reason = evidence.StateReclaimed, evidence.ReasonObjectMissing
+		if e.s.reclaimedByGC(ctx, ref.GetUri()) {
+			member.Reason = evidence.ReasonArtifactReclaimed
+		}
 	default:
 		return member, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("stat recorded artifact %q of task %q: %w", ref.GetName(), taskID, err))

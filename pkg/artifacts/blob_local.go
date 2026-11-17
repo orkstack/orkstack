@@ -206,6 +206,20 @@ func (b *localBlobs) modified(ctx context.Context, key string) (time.Time, error
 	return info.ModTime(), nil
 }
 
+func (b *localBlobs) stat(ctx context.Context, key string) (blobObject, error) {
+	if err := ctx.Err(); err != nil {
+		return blobObject{}, err
+	}
+	info, err := b.root.Stat(key)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return blobObject{}, errBlobNotFound
+		}
+		return blobObject{}, err
+	}
+	return blobObject{Key: key, Size: info.Size(), Modified: info.ModTime()}, nil
+}
+
 // writeTemp writes body to a fresh exclusive file under the temp directory,
 // optionally synced, and returns its key. A crash leaves only an ignored temp
 // file; readers never see a partial object at its final key.

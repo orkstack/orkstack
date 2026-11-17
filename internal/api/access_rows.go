@@ -794,13 +794,14 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.ActivityServiceCordonOrkerProcedure:     {res: deployment, checks: perms(authz.PermOrkerCordon)},
 
 	// SystemService
-	orkstackv1connect.SystemServiceGetSystemInfoProcedure:         {res: deployment, checks: perms(authz.PermSystemRead)},
-	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure:    {res: deployment, checks: perms(authz.PermSystemRead)},
-	orkstackv1connect.SystemServiceGetImagePolicyProcedure:        {res: deployment, checks: perms(authz.PermSystemRead)},
-	orkstackv1connect.SystemServiceListReleasesProcedure:          {res: deployment, checks: perms(authz.PermSystemRead)},
-	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:    {res: deployment, checks: perms(authz.PermCatalogRead)},
-	orkstackv1connect.SystemServiceUpdateRetentionPolicyProcedure: {res: deployment, checks: perms(authz.PermRetentionUpdate)},
-	orkstackv1connect.SystemServiceUpdateImagePolicyProcedure:     {res: deployment, checks: perms(authz.PermImagePolicyUpdate)},
+	orkstackv1connect.SystemServiceGetSystemInfoProcedure:          {res: deployment, checks: perms(authz.PermSystemRead)},
+	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure:     {res: deployment, checks: perms(authz.PermSystemRead)},
+	orkstackv1connect.SystemServicePreviewArtifactReclaimProcedure: {res: deployment, checks: perms(authz.PermSystemRead)},
+	orkstackv1connect.SystemServiceGetImagePolicyProcedure:         {res: deployment, checks: perms(authz.PermSystemRead)},
+	orkstackv1connect.SystemServiceListReleasesProcedure:           {res: deployment, checks: perms(authz.PermSystemRead)},
+	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:     {res: deployment, checks: perms(authz.PermCatalogRead)},
+	orkstackv1connect.SystemServiceUpdateRetentionPolicyProcedure:  {res: deployment, checks: perms(authz.PermRetentionUpdate)},
+	orkstackv1connect.SystemServiceUpdateImagePolicyProcedure:      {res: deployment, checks: perms(authz.PermImagePolicyUpdate)},
 
 	// IdentityService: the task identity issuer, at the deployment
 	// (docs/TASK_IDENTITY.md, "Administering the issuer").

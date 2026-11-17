@@ -253,6 +253,12 @@ var Schema = []Var{
 	{Path: "engine.cleanup.interval", Env: "ORK_CLEANUP_INTERVAL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(archive.DefaultCleanupInterval)},
 	{Path: "engine.cleanup.retention_buffer", Env: "ORK_CLEANUP_RETENTION_BUFFER", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(archive.DefaultRetentionBuffer)},
 	{Path: "engine.cleanup.batch_size", Env: "ORK_CLEANUP_BATCH_SIZE", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(archive.DefaultBatchSize))},
+	// The artifact GC (docs/STORAGE.md, "Reclaiming space"): off, dry_run
+	// or delete; it runs only with cleanup. ork refuses any other mode, and
+	// a grace below archive.MinReclaimGrace, at boot.
+	{Path: "engine.cleanup.artifact_gc", Env: "ORK_CLEANUP_ARTIFACT_GC", Binaries: usesOrk, Kind: KindString, Default: string(archive.DefaultReclaimMode)},
+	{Path: "engine.cleanup.artifact_gc_grace", Env: "ORK_CLEANUP_ARTIFACT_GC_GRACE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(archive.DefaultReclaimGrace)},
+	{Path: "engine.cleanup.artifact_gc_batch", Env: "ORK_CLEANUP_ARTIFACT_GC_BATCH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(archive.DefaultReclaimBatch))},
 
 	// activities has no single scalar default: it is the built-in catalog
 	// baked into internal/dsl, not a value this package can format.

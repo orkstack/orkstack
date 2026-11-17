@@ -161,6 +161,17 @@ func (b *s3Blobs) modified(ctx context.Context, key string) (time.Time, error) {
 	return out.LastModified.UTC(), nil
 }
 
+func (b *s3Blobs) stat(ctx context.Context, key string) (blobObject, error) {
+	out, err := b.client.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String(b.bucket), Key: aws.String(key)})
+	if err != nil {
+		if isNotFound(err) {
+			return blobObject{}, errBlobNotFound
+		}
+		return blobObject{}, err
+	}
+	return blobObject{Key: key, Size: aws.ToInt64(out.ContentLength), Modified: aws.ToTime(out.LastModified)}, nil
+}
+
 func (b *s3Blobs) putInput(key, contentType string, body []byte) *s3.PutObjectInput {
 	in := &s3.PutObjectInput{
 		Bucket:        aws.String(b.bucket),

@@ -437,6 +437,13 @@ type Config struct {
 	// says: when false, every run is kept for the maximum plus the
 	// enforcement margin regardless of a tighter namespace value.
 	RetentionEnforced bool
+	// ArtifactReclaim answers SystemService.PreviewArtifactReclaim: the
+	// artifact GC this replica runs, nil when it runs none (cleanup off, or
+	// cleanup.artifact_gc off).
+	ArtifactReclaim ArtifactReclaimer
+	// AcceptedRuns notes each run this replica started, for the artifact
+	// GC's index canary. Nil notes nothing.
+	AcceptedRuns AcceptedRunNoter
 
 	// ImagePolicies is the deployment's image supply-chain floor store,
 	// backing SystemService.GetImagePolicy/UpdateImagePolicy and read at
@@ -613,6 +620,8 @@ type Service struct {
 	// Unimplemented.
 	retention         *archive.RetentionController
 	retentionEnforced bool
+	artifactReclaim   ArtifactReclaimer
+	acceptedRuns      AcceptedRunNoter
 	// imagePolicies is the deployment's image supply-chain floor (see
 	// Config.ImagePolicies); signatures verifies a namespace's signer.
 	imagePolicies   artifacts.ImagePolicyStore
@@ -694,6 +703,8 @@ func NewService(cfg Config) *Service {
 		memos:                  cfg.Memos,
 		retention:              cfg.Retention,
 		retentionEnforced:      cfg.RetentionEnforced,
+		artifactReclaim:        cfg.ArtifactReclaim,
+		acceptedRuns:           cfg.AcceptedRuns,
 		imagePolicies:          cfg.ImagePolicies,
 		signatures:             cfg.Signatures,
 		transferBudget:         cfg.TransferBudgetSeconds,

@@ -121,6 +121,9 @@ func (s *Service) GetArtifactProvenance(
 	case err == nil:
 		res.BytesPresent = true
 	case errors.Is(err, artifacts.ErrNotFound):
+		if s.reclaimedByGC(ctx, ref.GetUri()) {
+			return nil, artifactReclaimed(fmt.Sprintf("artifact %q", ref.GetName()))
+		}
 		res.BytesPresent = false
 	default:
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("stat recorded artifact %q: %w", ref.GetName(), err))
@@ -150,19 +153,25 @@ func (s *Service) GetArtifactProvenance(
 		}
 		others = append(others, id)
 	}
-	if held {
+	// A retired run's marker is released whether or not it still stands:
+	// with the artifact GC on, retirement keeps markers until the GC has
+	// decided every object they name (docs/STORAGE.md, "Reclaiming space").
+	state, err := index.CleanupState(ctx, run.GetId())
+	switch {
+	case err == nil:
+		res.OwnReference = orkstackv1.ReferenceState_REFERENCE_STATE_RELEASED
+		res.ReleasedAt = timestamppb.New(state.TemporalDeletedAt)
+		held = false
+	case !errors.Is(err, artifacts.ErrNotFound):
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read cleanup state of run %q: %w", run.GetId(), err))
+	case held:
 		res.OwnReference = orkstackv1.ReferenceState_REFERENCE_STATE_HELD
-	} else {
-		state, err := index.CleanupState(ctx, run.GetId())
-		switch {
-		case err == nil:
-			res.OwnReference = orkstackv1.ReferenceState_REFERENCE_STATE_RELEASED
-			res.ReleasedAt = timestamppb.New(state.TemporalDeletedAt)
-		case errors.Is(err, artifacts.ErrNotFound):
-			res.OwnReference = orkstackv1.ReferenceState_REFERENCE_STATE_ABSENT
-		default:
-			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read cleanup state of run %q: %w", run.GetId(), err))
-		}
+	default:
+		res.OwnReference = orkstackv1.ReferenceState_REFERENCE_STATE_ABSENT
+	}
+	others, err = s.unretired(ctx, index, others)
+	if err != nil {
+		return nil, err
 	}
 
 	loaded, unreadable, err := s.loadReferencingRuns(ctx, others)
@@ -202,6 +211,43 @@ func (s *Service) GetArtifactProvenance(
 // counted, never listed; any other read failure fails the whole answer, since
 // a transient error counted as "unreadable" would make one question answer
 // differently twice.
+// unretired drops the runs with a cleanup sidecar: a retired run's marker is
+// a released reference, not a holder.
+func (s *Service) unretired(ctx context.Context, index ObjectReferenceReader, runIDs []string) ([]string, error) {
+	retired := make([]bool, len(runIDs))
+	errs := make([]error, len(runIDs))
+	var (
+		wg    sync.WaitGroup
+		slots = make(chan struct{}, provenanceFetchConcurrency)
+	)
+	for i, runID := range runIDs {
+		wg.Add(1)
+		slots <- struct{}{}
+		go func(i int, runID string) {
+			defer wg.Done()
+			defer func() { <-slots }()
+			_, err := index.CleanupState(ctx, runID)
+			switch {
+			case err == nil:
+				retired[i] = true
+			case !errors.Is(err, artifacts.ErrNotFound):
+				errs[i] = err
+			}
+		}(i, runID)
+	}
+	wg.Wait()
+	out := make([]string, 0, len(runIDs))
+	for i, runID := range runIDs {
+		if errs[i] != nil {
+			return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("read cleanup state of run %q holding a reference: %w", runID, errs[i]))
+		}
+		if !retired[i] {
+			out = append(out, runID)
+		}
+	}
+	return out, nil
+}
+
 func (s *Service) loadReferencingRuns(ctx context.Context, runIDs []string) ([]*orkstackv1.Run, int64, error) {
 	runs := make([]*orkstackv1.Run, len(runIDs))
 	errs := make([]error, len(runIDs))

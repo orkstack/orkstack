@@ -1,8 +1,19 @@
-// Package oidctest is a small OpenID Connect provider for tests and the
-// development stack: discovery, a key set, the authorization code flow with
-// PKCE (S256 only), refresh tokens that rotate, the device authorization
-// grant, revocation and an end-session endpoint. It signs in whichever user
-// it is told to, with no page of its own. It is never a production issuer.
+// Package oidctest is a small OpenID Connect provider, in process, for the
+// unit tests of sign-in: discovery, a key set, the authorization code flow
+// with PKCE (S256 only), refresh tokens that rotate, the device
+// authorization grant, revocation and an end-session endpoint. It signs in
+// whichever user it is told to, with no page of its own. It is never a
+// production issuer, and it is not the development stack's: that is Dex
+// (internal/testsupport/dextest), and so is the interop test that proves
+// sign-in against a real provider (TestIntegration_SigninWithDex).
+//
+// It stays for what a real server cannot be made to do on demand: a key set
+// that breaks or a key rotated mid-session, a clock skewed against the
+// engine's, a refresh or a revocation the issuer refuses
+// (SetRefreshFailure), a user removed at the issuer (RemoveUser), and
+// discovery that drops what a provider must offer, such as
+// code_challenge_methods_supported without S256. A behaviour every real
+// provider has belongs in the interop test, not here.
 package oidctest
 
 import (

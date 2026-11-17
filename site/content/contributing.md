@@ -27,8 +27,14 @@ this machine and from no other. `ORK_HTTP_ADDR=:8080 make up` opens the engine
 to other machines.
 
 The UI is at http://localhost:5173, served by its dev server with hot reload;
-its API and live-stream calls go to the engine on 8080. Use `./bin/orkctl`
-wherever these docs say `orkctl`. `make down` stops what `make up` started.
+its API and live-stream calls go to the engine on 8080. The stack
+authenticates, as a deployment does: sign in to the UI as `dev@example.test`
+with the password `password`, at Dex, the development identity provider. Use
+`./bin/orkctl` wherever these docs say `orkctl`, after
+`export ORK_TOKEN_FILE=.data/identity/admin.token` (the line `make up`
+prints), or `./bin/orkctl login --issuer people --issuer-ca-file
+.data/identity/dex/tls/ca.pem`. `make up IDENTITY=0` starts the stack with no
+sign-in. `make down` stops what `make up` started.
 
 The engine serves the UI built into `bin/ork` at http://localhost:8080. A
 build from Go alone serves a placeholder page there: `make ui` builds the UI

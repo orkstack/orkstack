@@ -156,7 +156,7 @@ cover: ## Run tests with coverage -> coverage.out
 
 ## ---- whole stack ----
 .PHONY: up
-up: ## Start everything: Temporal, SeaweedFS, engine, orker and the UI (IDENTITY=1: authenticating, in enforce)
+up: ## Start everything: Temporal, SeaweedFS, Dex, engine, orker and the UI, authenticating (IDENTITY=0: asserted, no sign-in)
 	@scripts/stack.sh up
 
 .PHONY: down

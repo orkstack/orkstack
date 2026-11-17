@@ -206,6 +206,7 @@ are two members.
 | `commit_missing` | the commit record was reclaimed by cleanup; its recorded digest is preserved |
 | `object_missing` | the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved |
 | `attempt_record_missing` | no record: the orker died before filing one, or it was reclaimed |
+| `artifact_reclaimed` | the artifact GC deleted the object after its run was retired; its recorded digest is preserved |
 
 A client prints the token and its sentence; an unknown token is printed as
 itself.

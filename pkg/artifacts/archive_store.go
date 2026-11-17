@@ -130,7 +130,17 @@ func (a *BlobRunArchive) PutRun(ctx context.Context, rec RunRecord) error {
 	if err != nil {
 		return err
 	}
-	listBody, err := stablejson.Marshal(objectIDs)
+	// The list is the union of what it held and this record's references:
+	// a write naming fewer (an earlier release's walk, a re-archive) never
+	// shrinks it, because the artifact GC delegates an object to a run only
+	// while that run's list holds it. A list that cannot be read is never
+	// replaced: the write fails and is retried.
+	existing, _, err := a.readObjectList(ctx, listKey)
+	if err != nil {
+		return fmt.Errorf("artifacts: archive run %q: read object list: %w", rec.RunID, err)
+	}
+	listIDs := dedupeObjectIDs(append(existing, objectIDs...))
+	listBody, err := stablejson.Marshal(listIDs)
 	if err != nil {
 		return fmt.Errorf("artifacts: archive run %q: encode object list: %w", rec.RunID, err)
 	}
@@ -280,6 +290,15 @@ func (a *BlobRunArchive) MarkArtifactsCleaned(ctx context.Context, runID string,
 // claim: shared workload objects stay untouched until
 // DeleteUnreferencedObjects observes that no claims remain.
 func (a *BlobRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runID string) (CleanupResult, error) {
+	return a.RetireRunArtifacts(ctx, namespace, runID, false)
+}
+
+// RetireRunArtifacts is DeleteRunArtifacts with a choice about the run's
+// reference markers and run-objects list. With the artifact GC on (dry_run or
+// delete) retirement keeps them (keepReferences): the GC releases them itself,
+// once it has decided about every object they name, so a retired run stays a
+// claimant until then. With it off they are released here, as before.
+func (a *BlobRunArchive) RetireRunArtifacts(ctx context.Context, namespace, runID string, keepReferences bool) (CleanupResult, error) {
 	logPrefix, err := RunLogPrefix(runID)
 	if err != nil {
 		return CleanupResult{}, err
@@ -318,6 +337,9 @@ func (a *BlobRunArchive) DeleteRunArtifacts(ctx context.Context, namespace, runI
 	}
 	if err := errors.Join(errs...); err != nil {
 		return result, err
+	}
+	if keepReferences {
+		return result, nil
 	}
 
 	listKey, err := RunObjectListKey(runID)

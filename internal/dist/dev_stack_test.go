@@ -96,8 +96,8 @@ func TestDevStack_TheEngineListensWhereTheContributorSays(t *testing.T) {
 	s.assertClientsDial("http://127.0.0.1:9090")
 }
 
-// TestDevStack_IdentityEnforces: IDENTITY=1 writes a configuration on which
-// the engine enforces, trusting the development issuer, with dev-admin in
+// TestDevStack_IdentityEnforces: by default make up writes a configuration
+// on which the engine enforces, trusting the development issuer, with dev-admin in
 // auth.admins and the Orker bound by auth.orkers and reaching the engine
 // with its own token; the tokens are signed afresh, and the script's own
 // orkctl calls present the admin's (CONTRIBUTING.md).
@@ -105,7 +105,7 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 	t.Parallel()
 	s := newStackRepo(t)
 
-	code, out := s.up("IDENTITY=1")
+	code, out := s.up()
 
 	if code != 0 {
 		t.Fatalf("scripts/stack.sh up exited %d; want 0:\n%s", code, out)
@@ -150,11 +150,13 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 	if !strings.Contains(out, "export ORK_TOKEN_FILE=") {
 		t.Fatalf("up printed no ORK_TOKEN_FILE line:\n%s", out)
 	}
-	// People sign in at oidctest: the issuer people offers sign-in, the
-	// sign-in key exists, and the provider was started for the UI's callback.
+	// People sign in at Dex: the issuer people offers sign-in with a refresh
+	// token (offline_access), the sign-in key exists, and Dex was started for
+	// the UI's callback, its container recorded for make down.
 	issuers, err := authn.ParseIssuers([]byte(ork["ORK_AUTH_ISSUERS"]))
 	must.OK(t, err)
-	if people, ok := issuers.ByName("people"); !ok || people.Login == nil || people.Login.CLIClientID != "orkctl" {
+	if people, ok := issuers.ByName("people"); !ok || people.Login == nil || people.Login.CLIClientID != "orkctl" ||
+		!strings.HasSuffix(people.Issuer, "/dex") || !slices.Contains(people.Login.Scopes, "offline_access") {
 		t.Fatalf("the people issuer = %+v", people)
 	}
 	if !strings.HasSuffix(ork["ORK_AUTH_SIGNIN_KEY_FILES"], filepath.Join(".data", "identity", "signin.key")) || ork["ORK_AUTH_PUBLIC_URL"] == "" {
@@ -163,10 +165,49 @@ func TestDevStack_IdentityEnforces(t *testing.T) {
 	if info, err := os.Stat(filepath.Join(s.root, ".data", "identity", "signin.key")); err != nil || info.Size() != 32 || info.Mode().Perm() != 0o600 {
 		t.Fatalf("the sign-in key: %v %v", info, err)
 	}
-	started, err := os.ReadFile(filepath.Join(s.logs, "oidctest"))
+	started, err := os.ReadFile(filepath.Join(s.logs, "dexrun"))
 	must.OK(t, err)
-	if !strings.Contains(string(started), "/v1/auth/callback/people") {
-		t.Fatalf("oidctest was started with %q", started)
+	if !strings.Contains(string(started), "start ") || !strings.Contains(string(started), "/v1/auth/callback/people") {
+		t.Fatalf("dexrun was called with %q", started)
+	}
+	cid, err := os.ReadFile(filepath.Join(s.root, ".run", "dex.cid"))
+	if err != nil || strings.TrimSpace(string(cid)) != "0123abcd" {
+		t.Fatalf("the Dex container recorded for make down: %q %v", cid, err)
+	}
+}
+
+// TestDevStack_IdentityZeroIsAsserted: IDENTITY=0 runs the stack asserted:
+// no Dex, no sign-in settings, no development tokens.
+func TestDevStack_IdentityZeroIsAsserted(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	code, out := s.up("IDENTITY=0")
+
+	if code != 0 {
+		t.Fatalf("scripts/stack.sh up exited %d; want 0:\n%s", code, out)
+	}
+	s.engineAddr() // the engine was started on the script's configuration
+	conf, err := os.ReadFile(filepath.Join(s.root, ".run", "orkstack.yaml"))
+	must.OK(t, err)
+	if strings.Contains(string(conf), "auth:") || strings.Contains(string(conf), "mode: enforce") {
+		t.Fatalf("IDENTITY=0 wrote auth settings:\n%s", conf)
+	}
+	if _, err := os.Stat(filepath.Join(s.logs, "dexrun")); err == nil {
+		t.Fatal("IDENTITY=0 started Dex")
+	}
+}
+
+// TestDevStack_IdentityRefusesOtherValues: IDENTITY is 1 or 0; anything else
+// is refused before anything starts, rather than read as one of them.
+func TestDevStack_IdentityRefusesOtherValues(t *testing.T) {
+	t.Parallel()
+	s := newStackRepo(t)
+
+	code, out := s.up("IDENTITY=yes")
+
+	if code != 2 || !strings.Contains(out, "IDENTITY is 1") {
+		t.Fatalf("IDENTITY=yes: exit %d:\n%s", code, out)
 	}
 }
 
@@ -196,6 +237,7 @@ func newStackRepo(t *testing.T) *stackRepo {
 	t.Cleanup(s.stopStandIns)
 
 	s.write(filepath.Join(s.root, "scripts", "stack.sh"), string(readRepoFile(t, "scripts/stack.sh")))
+	s.write(filepath.Join(s.root, "deploy", "dex-image.txt"), string(readRepoFile(t, "deploy/dex-image.txt")))
 	// Present, so the script installs nothing.
 	must.OK(t, os.MkdirAll(filepath.Join(s.root, "ui", "node_modules"), 0o755))
 	// A process the script starts stays up until the test stops it, or until
@@ -218,10 +260,10 @@ esac
 `,
 		filepath.Join(standIns, "sleep"): "",
 		// `go build -o OUT` writes a stand-in that records its calls: devtoken's
-		// returns, oidctest's (a server) stays up.
+		// returns; dexrun's prints the container it started, as dexrun does.
 		filepath.Join(standIns, "go"): `out=""; while [ $# -gt 0 ]; do [ "$1" = -o ] && { out="$2"; shift; }; shift; done
 case "$out" in
-*/oidctest) printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "oidctest")) + `\nexec ` + shellQuote(realSleep) + ` 120\n' > "$out" ;;
+*/dexrun) printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "dexrun")) + `\necho {\\"id\\":\\"0123abcd\\"}\n' > "$out" ;;
 *) printf '#!/bin/sh\necho "$*" >> ` + shellQuote(filepath.Join(s.logs, "devtoken")) + `\n' > "$out" ;;
 esac
 chmod +x "$out"

@@ -823,23 +823,35 @@ func TestRunOnce_StopsAfterBatchSizeProcessedRuns(t *testing.T) {
 }
 
 func TestCleanupConfigFromEnv(t *testing.T) {
-	for _, key := range []string{"ORK_CLEANUP_ENABLED", "ORK_CLEANUP_INTERVAL", "ORK_CLEANUP_RETENTION_BUFFER", "ORK_CLEANUP_BATCH_SIZE"} {
+	for _, key := range []string{"ORK_CLEANUP_ENABLED", "ORK_CLEANUP_INTERVAL", "ORK_CLEANUP_RETENTION_BUFFER", "ORK_CLEANUP_BATCH_SIZE",
+		"ORK_CLEANUP_ARTIFACT_GC", "ORK_CLEANUP_ARTIFACT_GC_GRACE", "ORK_CLEANUP_ARTIFACT_GC_BATCH"} {
 		t.Setenv(key, "")
 	}
-	if got := CleanupConfigFromEnv(); got != (CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}) {
+	gcDefaults := CleanupConfig{ArtifactGC: ReclaimDryRun, ArtifactGCGrace: time.Hour, ArtifactGCBatch: 1000}
+	withGC := func(c CleanupConfig) CleanupConfig {
+		c.ArtifactGC, c.ArtifactGCGrace, c.ArtifactGCBatch = gcDefaults.ArtifactGC, gcDefaults.ArtifactGCGrace, gcDefaults.ArtifactGCBatch
+		return c
+	}
+	if got := CleanupConfigFromEnv(); got != withGC(CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}) {
 		t.Fatalf("defaults = %+v", got)
 	}
 	t.Setenv("ORK_CLEANUP_ENABLED", "true")
 	t.Setenv("ORK_CLEANUP_INTERVAL", "30m")
 	t.Setenv("ORK_CLEANUP_RETENTION_BUFFER", "48h")
 	t.Setenv("ORK_CLEANUP_BATCH_SIZE", "7")
-	if got := CleanupConfigFromEnv(); got != (CleanupConfig{Enabled: true, Interval: 30 * time.Minute, RetentionBuffer: 48 * time.Hour, BatchSize: 7}) {
+	t.Setenv("ORK_CLEANUP_ARTIFACT_GC", "delete")
+	t.Setenv("ORK_CLEANUP_ARTIFACT_GC_GRACE", "2h")
+	t.Setenv("ORK_CLEANUP_ARTIFACT_GC_BATCH", "50")
+	if got := CleanupConfigFromEnv(); got != (CleanupConfig{Enabled: true, Interval: 30 * time.Minute, RetentionBuffer: 48 * time.Hour, BatchSize: 7,
+		ArtifactGC: ReclaimDelete, ArtifactGCGrace: 2 * time.Hour, ArtifactGCBatch: 50}) {
 		t.Fatalf("configured = %+v", got)
 	}
-	for key, value := range map[string]string{"ORK_CLEANUP_ENABLED": "maybe", "ORK_CLEANUP_INTERVAL": "no", "ORK_CLEANUP_RETENTION_BUFFER": "0", "ORK_CLEANUP_BATCH_SIZE": "-1"} {
+	for key, value := range map[string]string{"ORK_CLEANUP_ENABLED": "maybe", "ORK_CLEANUP_INTERVAL": "no", "ORK_CLEANUP_RETENTION_BUFFER": "0", "ORK_CLEANUP_BATCH_SIZE": "-1",
+		"ORK_CLEANUP_ARTIFACT_GC": "Delete", "ORK_CLEANUP_ARTIFACT_GC_GRACE": "x", "ORK_CLEANUP_ARTIFACT_GC_BATCH": "0"} {
 		t.Setenv(key, value)
 	}
-	if got := CleanupConfigFromEnv(); got != (CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}) {
+	// A malformed mode is dry_run: the mode that deletes nothing.
+	if got := CleanupConfigFromEnv(); got != withGC(CleanupConfig{Interval: time.Hour, RetentionBuffer: 24 * time.Hour, BatchSize: 100}) {
 		t.Fatalf("malformed = %+v", got)
 	}
 }

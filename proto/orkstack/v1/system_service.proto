@@ -45,6 +45,17 @@ service SystemService {
   // are retired on the next cleanup pass.
   rpc UpdateRetentionPolicy(UpdateRetentionPolicyRequest) returns (UpdateRetentionPolicyResponse);
 
+  // PreviewArtifactReclaim answers what the artifact GC — reclaim, as this
+  // API calls it; `orkctl admin gc preview` — would do now with at most
+  // `limit` (and never more than 1000) retired runs of the run index after
+  // `cursor`, within 30 seconds, and writes nothing (docs/STORAGE.md,
+  // "Reclaiming space"). Any replica answers; one preview at a time per
+  // replica, else RESOURCE_EXHAUSTED. Its low-water mark is the answering
+  // replica's last reclaim pass's, or one computed for this answer alone.
+  // Samples are returned only with `namespace`. The run holding the low-water
+  // mark is named with its namespace whether or not `namespace` is set.
+  rpc PreviewArtifactReclaim(PreviewArtifactReclaimRequest) returns (PreviewArtifactReclaimResponse);
+
   // ListTelemetrySinks names the telemetry sinks this deployment declared
   // (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
   // only: endpoints and headers are the operator's and never leave the
@@ -458,4 +469,75 @@ message PromoteReleaseResponse {
   string previous_build_id = 2;
   bool routing_confirmed = 3;
   string revision = 4;
+}
+
+message PreviewArtifactReclaimRequest {
+  // namespace limits the preview to retired runs of one namespace, and is
+  // required for samples. Empty covers every namespace.
+  string namespace = 1;
+  // limit is how many runs of the index to cover: 1 to 1000; 0 is 1000.
+  int32 limit = 2;
+  // samples is how many objects to name, at most 100; only with namespace.
+  int32 samples = 3;
+  // cursor is a previous answer's next_cursor; empty starts at the index's
+  // beginning.
+  string cursor = 4;
+}
+
+// ReclaimReasonCount is how many objects, and how many bytes, one reason
+// kept.
+message ReclaimReasonCount {
+  string reason = 1;
+  int64 objects = 2;
+  int64 bytes = 3;
+}
+
+// ReclaimNamespaceSummary is one namespace's answer: the producing run's
+// namespace.
+message ReclaimNamespaceSummary {
+  string namespace = 1;
+  int64 would_delete_objects = 2;
+  int64 would_delete_bytes = 3;
+  repeated ReclaimReasonCount kept = 4;
+}
+
+// ReclaimSample is one object a preview names.
+message ReclaimSample {
+  string run_id = 1;
+  string task_id = 2;
+  string artifact_name = 3;
+  int64 bytes = 4;
+  // outcome is would_delete or kept.
+  string outcome = 5;
+  string reason = 6;
+  google.protobuf.Timestamp producer_retired_at = 7;
+  int32 stale_claims = 8;
+  int32 live_claims = 9;
+  // waits_for_runs_created_before is set for a lowwater object: every run
+  // created before it must finish and be archived first.
+  google.protobuf.Timestamp waits_for_runs_created_before = 10;
+}
+
+message PreviewArtifactReclaimResponse {
+  // mode is off, dry_run or delete (cleanup.artifact_gc).
+  string mode = 1;
+  // held says a pass would delete nothing now; held_reason names why.
+  bool held = 2;
+  string held_reason = 3;
+  repeated ReclaimNamespaceSummary namespaces = 4;
+  // samples are returned only with a namespace.
+  repeated ReclaimSample samples = 5;
+  int64 runs_examined = 6;
+  // next_cursor continues the preview; empty at the end of the index.
+  string next_cursor = 7;
+  google.protobuf.Timestamp computed_at = 8;
+  bool cleanup_enabled = 9;
+  bool store_versioned = 10;
+  bool low_water_known = 11;
+  string low_water_unknown_cause = 12;
+  google.protobuf.Timestamp low_water_created_at = 13;
+  string low_water_run_id = 14;
+  string low_water_namespace = 15;
+  int64 waiting_runs = 16;
+  google.protobuf.Timestamp low_water_computed_at = 17;
 }

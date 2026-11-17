@@ -65,16 +65,17 @@ activity container reaches only a test's own server on the host, by
 profile's services reach each other on the compose network.
 `TestDevCompose_PublishesOnlyOnLoopback` holds the rule.
 
-`make up` starts the engine on `127.0.0.1:8080` for the same reason: its API
-has no login, and whatever reaches it can start a run on this machine's Docker.
+`make up` starts the engine on `127.0.0.1:8080` for the same reason: whatever
+reaches it, signed in, can start a run on this machine's Docker, and with
+`IDENTITY=0` it asks nobody to sign in.
 `orkctl` and the UI's dev server reach it on loopback, and the suites and the
 proofs start engines of their own, at addresses of their own.
 `ORK_HTTP_ADDR=:8080 make up` opens it to other machines; an engine already
 running keeps its address until `make down`.
 `TestDevStack_EngineListensOnlyOnLoopback` holds the default.
 
-`make up IDENTITY=1` runs the stack the way a deployment that authenticates
-does: the engine in `enforce`, with a development issuer `dev` whose key pair
+`make up` runs the stack the way a deployment that authenticates does: the
+engine in `enforce`, with a development issuer `dev` whose key pair
 `test/tools/devtoken` makes once under `.data/identity/`, beside the engine's
 own signing key (`identity.signing.key_files`, which `enforce` requires), and
 two tokens it
@@ -84,16 +85,24 @@ signs afresh at every `make up`, each living thirty days. `dev-admin` is in
 by `auth.orkers`, so the engine starts before the Orker. Present the admin's
 token to `orkctl` with the line `make up` prints,
 `export ORK_TOKEN_FILE=.data/identity/admin.token`. People sign in at a
-second issuer, `people`: `test/tools/oidctest`, a development identity
-provider `make up` starts on `127.0.0.1:5556` (`OIDC_ADDR`), with its CA,
-certificate and web client secret under `.data/identity/oidc/`, which signs
-in `dev@example.test` (`DEV_USER_EMAIL`) in the group `dev-admins`, an admin
-by `auth.admins`, with no page of its own. Sign in to the UI at its dev
-server, which is `auth.public_url`, or in a terminal with
-`./bin/orkctl --server http://127.0.0.1:8080 login --issuer people
---issuer-ca-file .data/identity/oidc/ca.pem`. The sign-in key is
-`.data/identity/signin.key`, made once. Without the flag the stack is in
-`asserted` mode, as before.
+second issuer, `people`: Dex, a real OpenID Connect provider, which `make up`
+runs in a container from the image `deploy/dex-image.txt` pins (pulled once)
+and publishes on `127.0.0.1:5556` (`OIDC_ADDR`; its issuer is
+`https://127.0.0.1:5556/dex`), with its CA, certificate and web client secret
+under `.data/identity/dex/`. Its users and clients are in
+`deploy/dex/config.yaml`: sign in as `dev@example.test`, password `password`,
+in the group `dev-admins`, an admin by `auth.admins`; `admin@example.test`
+(`admins`) and `vera@example.test` (`viewers`) are there for the tests. Dex
+offers no token revocation and no end-session endpoint, so signing out ends
+the OrkStack sign-in, and Dex's own login form asks again at the next. Sign in to the UI at its dev server, which is `auth.public_url`, or in
+a terminal with `./bin/orkctl --server http://127.0.0.1:8080 login --issuer
+people --issuer-ca-file .data/identity/dex/tls/ca.pem`. `make down` stops
+Dex with the rest. The sign-in key is
+`.data/identity/signin.key`, made once. `make up IDENTITY=0` runs the stack
+in `asserted` mode instead: no Dex, no sign-in, and nothing verified; stop the
+stack first (`make down`), since an engine refuses to start below the mode a
+deployment's bucket records, and lowering it is `orkctl admin auth lower`
+(docs/AUTHENTICATION.md).
 
 `make status` shows what is running, and `make logs` tails the engine, Orker
 and UI logs. Then `./bin/orkctl orkflow create examples/each-fan-out.ork.yaml` and the

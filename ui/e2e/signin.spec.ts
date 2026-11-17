@@ -1,9 +1,10 @@
 import { expect, test, type Page } from './test';
+import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
-import https from 'node:https';
 import os from 'node:os';
 import path from 'node:path';
+import { browserServerOwner } from './browser-server';
 import {
 	bin,
 	clusterEnv,
@@ -12,6 +13,7 @@ import {
 	ownBucket,
 	proofOut,
 	removeBucket,
+	repoRoot,
 	spawnLogged,
 	storeEnv,
 	tcpOpen,
@@ -25,8 +27,9 @@ import {
 } from './harness';
 
 // Sign-in to the web UI (UX35; docs/AUTHENTICATION.md, "Sign-in for the web
-// UI") against a real enforcing engine and oidctest, the development identity
-// provider: a visitor with no sign-in goes to /signin and lands where they
+// UI") against a real enforcing engine and Dex, the development identity
+// provider (deploy/dex/config.yaml's users, signed in through Dex's own login
+// form; test/tools/dexrun starts it): a visitor with no sign-in goes to /signin and lands where they
 // were going; the account menu names them; a viewer sees no write control and
 // is refused when it calls the RPC anyway; an admin's binding reaches a second
 // browser within the refresh interval; disabling a principal ends its other
@@ -37,36 +40,32 @@ const BUCKET = ownBucket('signin');
 const PORT = 18761;
 const IDP_PORT = 18762;
 const ENGINE = `http://127.0.0.1:${PORT}`;
-const IDP = `https://127.0.0.1:${IDP_PORT}`;
+const IDP = `https://127.0.0.1:${IDP_PORT}/dex`;
 const TEMPORAL_NAMESPACE = temporalNamespace('signin');
 const proof = proofOut(process.env.ORK_PROOF_DIR ? path.join(process.env.ORK_PROOF_DIR, 'signin') : path.join(uiDir, 'test-results', 'signin'));
 const shot = (page: Page, name: string) => page.screenshot({ path: proof(name), fullPage: true });
 
 test.use({ ignoreHTTPSErrors: true });
 
-// This process asks oidctest, which serves its own CA, trusting that CA alone.
-let idpCA = '';
-function idpRequest(method: string, path0: string, body = ''): Promise<number> {
-	return new Promise((resolve, reject) => {
-		const req = https.request(`${IDP}${path0}`, { method, ca: idpCA }, (res) => {
-			res.resume();
-			resolve(res.statusCode ?? 0);
-		});
-		req.on('error', reject);
-		req.end(body);
-	});
-}
+// Every user deploy/dex/config.yaml configures signs in with this password.
+const PASSWORD = 'password';
+let dexID = '';
 
-async function asUser(email: string, groups: string[]): Promise<void> {
-	const status = await idpRequest('POST', '/_control/user', JSON.stringify({ email, groups }));
-	if (status !== 204) throw new Error(`oidctest did not take the user: ${status}`);
-}
-
-async function signIn(page: Page, path0: string): Promise<void> {
+/** signIn opens path0, is sent to /signin, and signs in at Dex as email. */
+async function signIn(page: Page, path0: string, email: string): Promise<void> {
 	await page.goto(`${ENGINE}${path0}`);
 	await expect(page).toHaveURL(/\/signin\?return=/);
-	await page.getByTestId('signin-issuer-people').click();
+	await atDex(page, email);
 	await expect(page).toHaveURL(new RegExp(`${path0.replace(/[?]/g, '\\?')}$`));
+}
+
+/** atDex follows the issuer's button and fills Dex's login form as email. */
+async function atDex(page: Page, email: string): Promise<void> {
+	await page.getByTestId('signin-issuer-people').click();
+	await expect(page).toHaveURL(new RegExp(`^${IDP}/auth`));
+	await page.locator('input[name="login"]').fill(email);
+	await page.locator('input[name="password"]').fill(PASSWORD);
+	await page.locator('button[type="submit"]').click();
 }
 
 test.beforeAll(async () => {
@@ -76,24 +75,21 @@ test.beforeAll(async () => {
 	if (!(await tcpOpen(9000))) throw new Error('the object store is not reachable on 127.0.0.1:9000');
 	for (const p of [PORT, IDP_PORT]) if (await tcpOpen(p)) throw new Error(`port ${p} already in use`);
 	const dir = mkdtempSync(path.join(os.tmpdir(), 'signin-spec-'));
-	const oidcDir = path.join(dir, 'oidc');
-	spawnLogged(proof('oidctest.log'), bin('oidctest'), [
-		'-dir', oidcDir, '-addr', `127.0.0.1:${IDP_PORT}`, '-redirect', `${ENGINE}/v1/auth/callback/people`,
-		'-email', 'admin@example.test', '-groups', 'admins', '-control'
-	], {});
-	await waitFor('oidctest', async () => {
-		try {
-			idpCA = readFileSync(path.join(oidcDir, 'ca.pem'), 'utf8');
-			return (await idpRequest('GET', '/.well-known/openid-configuration')) === 200;
-		} catch {
-			return false;
-		}
-	});
+	// Dex, labelled with the proof (or this worker) it lives for, so a sweep
+	// stops it should this worker die before afterAll.
+	const started = JSON.parse(
+		execFileSync(bin('dexrun'), [
+			'start', '-dir', path.join(dir, 'dex'), '-addr', `127.0.0.1:${IDP_PORT}`, '-redirect', `${ENGINE}/v1/auth/callback/people`,
+			'-proof', process.env.ORK_PROOF_ID ?? `e2e-${process.pid}`, '-owner', browserServerOwner()
+		], { cwd: repoRoot, encoding: 'utf8' })
+	) as { id: string; issuer: string; ca_file: string; secret_file: string };
+	dexID = started.id;
+	if (started.issuer !== IDP) throw new Error(`Dex's issuer is ${started.issuer}, not ${IDP}`);
 	const signinKey = path.join(dir, 'signin.key');
 	writeFileSync(signinKey, randomBytes(32), { mode: 0o600 });
 	const engineKey = path.join(dir, 'engine-signing.pem');
 	writeFileSync(engineKey, generateKeyPairSync('ec', { namedCurve: 'P-256' }).privateKey.export({ type: 'pkcs8', format: 'pem' }), { mode: 0o600 });
-	const secret = readFileSync(path.join(oidcDir, 'web-client.secret'), 'utf8').trim();
+	const secret = readFileSync(started.secret_file, 'utf8').trim();
 	spawnLogged(proof('engine.log'), bin('ork'), [], {
 		...clusterEnv(TEMPORAL_NAMESPACE),
 		...storeEnv(BUCKET),
@@ -114,18 +110,18 @@ test.beforeAll(async () => {
 			`    issuer: ${IDP}`,
 			'    kind: user',
 			'    audiences: [orkstack-web, orkctl]',
-			'    algorithms: [ES256]',
+			'    algorithms: [RS256]',
 			'    username_claim: email',
 			'    require_verified_email: true',
 			'    groups_claim: groups',
 			'    max_lifetime: 2h',
-			`    ca_file: ${path.join(oidcDir, 'ca.pem')}`,
+			`    ca_file: ${started.ca_file}`,
 			'    login:',
 			'      client_id: orkstack-web',
 			'      client_secret:',
 			'        source: env:SIGNIN_SPEC_WEB_SECRET',
 			'      cli_client_id: orkctl',
-			'      scopes: [openid, email, groups]'
+			'      scopes: [openid, email, groups, offline_access]'
 		].join('\n')
 	});
 	await waitFor('the engine', async () => (await fetch(`${ENGINE}/signin`).catch(() => null))?.ok === true);
@@ -133,15 +129,18 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
 	await killStarted();
-	removeBucket(BUCKET);
+	try {
+		if (dexID) execFileSync(bin('dexrun'), ['stop', dexID], { cwd: repoRoot });
+	} finally {
+		removeBucket(BUCKET);
+	}
 });
 
 test('a visitor signs in, lands where they were going, and the account menu names them', async ({ page }) => {
-	await asUser('admin@example.test', ['admins']);
 	await page.goto(`${ENGINE}/signin`);
 	await expect(page.getByTestId('signin-issuer-people')).toBeVisible();
 	await shot(page, 'signin.png');
-	await signIn(page, '/admin/access');
+	await signIn(page, '/admin/access', 'admin@example.test');
 	await expect(page.getByTestId('access-title')).toBeVisible();
 	await page.getByTestId('account-trigger').click();
 	await expect(page.getByTestId('account-principal')).toHaveText('user:people:admin@example.test');
@@ -158,12 +157,10 @@ test('a viewer sees no write control and is refused when it calls the RPC anyway
 	const viewer = await browser.newContext({ ignoreHTTPSErrors: true });
 	const a = await admin.newPage();
 	const v = await viewer.newPage();
-	await asUser('admin@example.test', ['admins']);
-	await signIn(a, '/admin/access');
+	await signIn(a, '/admin/access', 'admin@example.test');
 	// The viewer signs in bound to nothing, and is told so.
-	await asUser('vera@example.test', ['viewers']);
 	await v.goto(`${ENGINE}/admin/access`);
-	await v.getByTestId('signin-issuer-people').click();
+	await atDex(v, 'vera@example.test');
 	await expect(v.getByTestId('no-access-who')).toContainText('user:people:vera@example.test');
 	await expect(v.getByTestId('no-access-who')).toContainText('viewers');
 	await shot(v, 'signin-no-access.png');
@@ -223,8 +220,7 @@ test('a viewer sees no write control and is refused when it calls the RPC anyway
 });
 
 test('a sign-in past its revalidation is refreshed under a form being written, and signing out ends it', async ({ page }) => {
-	await asUser('admin@example.test', ['admins']);
-	await signIn(page, '/admin/access/explain');
+	await signIn(page, '/admin/access/explain', 'admin@example.test');
 	await page.getByTestId('explain-principal').fill('user:people:someone');
 	// Past the 4 s revalidation interval the next call is refused stale, and
 	// the page refreshes the sign-in and sends it again: the form keeps what
@@ -241,7 +237,9 @@ test('a sign-in past its revalidation is refreshed under a form being written, a
 
 	await page.getByTestId('account-trigger').click();
 	await page.getByTestId('account-signout').click();
-	await expect(page).toHaveURL(new RegExp(`^${IDP}/end-session`));
+	// Dex offers no end-session endpoint: signing out ends the sign-in here
+	// and lands on /signin.
+	await expect(page).toHaveURL(/\/signin$/);
 	await page.goto(`${ENGINE}/runs`);
 	await expect(page).toHaveURL(/\/signin\?return=%2Fruns/);
 });

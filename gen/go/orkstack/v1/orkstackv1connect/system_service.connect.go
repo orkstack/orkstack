@@ -42,6 +42,9 @@ const (
 	// SystemServiceUpdateRetentionPolicyProcedure is the fully-qualified name of the SystemService's
 	// UpdateRetentionPolicy RPC.
 	SystemServiceUpdateRetentionPolicyProcedure = "/orkstack.v1.SystemService/UpdateRetentionPolicy"
+	// SystemServicePreviewArtifactReclaimProcedure is the fully-qualified name of the SystemService's
+	// PreviewArtifactReclaim RPC.
+	SystemServicePreviewArtifactReclaimProcedure = "/orkstack.v1.SystemService/PreviewArtifactReclaim"
 	// SystemServiceListTelemetrySinksProcedure is the fully-qualified name of the SystemService's
 	// ListTelemetrySinks RPC.
 	SystemServiceListTelemetrySinksProcedure = "/orkstack.v1.SystemService/ListTelemetrySinks"
@@ -92,6 +95,16 @@ type SystemServiceClient interface {
 	// follow the new maximum immediately: finished runs already older than it
 	// are retired on the next cleanup pass.
 	UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error)
+	// PreviewArtifactReclaim answers what the artifact GC — reclaim, as this
+	// API calls it; `orkctl admin gc preview` — would do now with at most
+	// `limit` (and never more than 1000) retired runs of the run index after
+	// `cursor`, within 30 seconds, and writes nothing (docs/STORAGE.md,
+	// "Reclaiming space"). Any replica answers; one preview at a time per
+	// replica, else RESOURCE_EXHAUSTED. Its low-water mark is the answering
+	// replica's last reclaim pass's, or one computed for this answer alone.
+	// Samples are returned only with `namespace`. The run holding the low-water
+	// mark is named with its namespace whether or not `namespace` is set.
+	PreviewArtifactReclaim(context.Context, *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error)
 	// ListTelemetrySinks names the telemetry sinks this deployment declared
 	// (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
 	// only: endpoints and headers are the operator's and never leave the
@@ -179,6 +192,12 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(systemServiceMethods.ByName("UpdateRetentionPolicy")),
 			connect.WithClientOptions(opts...),
 		),
+		previewArtifactReclaim: connect.NewClient[v1.PreviewArtifactReclaimRequest, v1.PreviewArtifactReclaimResponse](
+			httpClient,
+			baseURL+SystemServicePreviewArtifactReclaimProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("PreviewArtifactReclaim")),
+			connect.WithClientOptions(opts...),
+		),
 		listTelemetrySinks: connect.NewClient[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse](
 			httpClient,
 			baseURL+SystemServiceListTelemetrySinksProcedure,
@@ -220,15 +239,16 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 
 // systemServiceClient implements SystemServiceClient.
 type systemServiceClient struct {
-	getSystemInfo         *connect.Client[v1.GetSystemInfoRequest, v1.GetSystemInfoResponse]
-	getRetentionPolicy    *connect.Client[v1.GetRetentionPolicyRequest, v1.GetRetentionPolicyResponse]
-	updateRetentionPolicy *connect.Client[v1.UpdateRetentionPolicyRequest, v1.UpdateRetentionPolicyResponse]
-	listTelemetrySinks    *connect.Client[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse]
-	getImagePolicy        *connect.Client[v1.GetImagePolicyRequest, v1.GetImagePolicyResponse]
-	updateImagePolicy     *connect.Client[v1.UpdateImagePolicyRequest, v1.UpdateImagePolicyResponse]
-	listReleases          *connect.Client[v1.ListReleasesRequest, v1.ListReleasesResponse]
-	rampRelease           *connect.Client[v1.RampReleaseRequest, v1.RampReleaseResponse]
-	promoteRelease        *connect.Client[v1.PromoteReleaseRequest, v1.PromoteReleaseResponse]
+	getSystemInfo          *connect.Client[v1.GetSystemInfoRequest, v1.GetSystemInfoResponse]
+	getRetentionPolicy     *connect.Client[v1.GetRetentionPolicyRequest, v1.GetRetentionPolicyResponse]
+	updateRetentionPolicy  *connect.Client[v1.UpdateRetentionPolicyRequest, v1.UpdateRetentionPolicyResponse]
+	previewArtifactReclaim *connect.Client[v1.PreviewArtifactReclaimRequest, v1.PreviewArtifactReclaimResponse]
+	listTelemetrySinks     *connect.Client[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse]
+	getImagePolicy         *connect.Client[v1.GetImagePolicyRequest, v1.GetImagePolicyResponse]
+	updateImagePolicy      *connect.Client[v1.UpdateImagePolicyRequest, v1.UpdateImagePolicyResponse]
+	listReleases           *connect.Client[v1.ListReleasesRequest, v1.ListReleasesResponse]
+	rampRelease            *connect.Client[v1.RampReleaseRequest, v1.RampReleaseResponse]
+	promoteRelease         *connect.Client[v1.PromoteReleaseRequest, v1.PromoteReleaseResponse]
 }
 
 // GetSystemInfo calls orkstack.v1.SystemService.GetSystemInfo.
@@ -244,6 +264,11 @@ func (c *systemServiceClient) GetRetentionPolicy(ctx context.Context, req *conne
 // UpdateRetentionPolicy calls orkstack.v1.SystemService.UpdateRetentionPolicy.
 func (c *systemServiceClient) UpdateRetentionPolicy(ctx context.Context, req *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error) {
 	return c.updateRetentionPolicy.CallUnary(ctx, req)
+}
+
+// PreviewArtifactReclaim calls orkstack.v1.SystemService.PreviewArtifactReclaim.
+func (c *systemServiceClient) PreviewArtifactReclaim(ctx context.Context, req *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error) {
+	return c.previewArtifactReclaim.CallUnary(ctx, req)
 }
 
 // ListTelemetrySinks calls orkstack.v1.SystemService.ListTelemetrySinks.
@@ -306,6 +331,16 @@ type SystemServiceHandler interface {
 	// follow the new maximum immediately: finished runs already older than it
 	// are retired on the next cleanup pass.
 	UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error)
+	// PreviewArtifactReclaim answers what the artifact GC — reclaim, as this
+	// API calls it; `orkctl admin gc preview` — would do now with at most
+	// `limit` (and never more than 1000) retired runs of the run index after
+	// `cursor`, within 30 seconds, and writes nothing (docs/STORAGE.md,
+	// "Reclaiming space"). Any replica answers; one preview at a time per
+	// replica, else RESOURCE_EXHAUSTED. Its low-water mark is the answering
+	// replica's last reclaim pass's, or one computed for this answer alone.
+	// Samples are returned only with `namespace`. The run holding the low-water
+	// mark is named with its namespace whether or not `namespace` is set.
+	PreviewArtifactReclaim(context.Context, *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error)
 	// ListTelemetrySinks names the telemetry sinks this deployment declared
 	// (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
 	// only: endpoints and headers are the operator's and never leave the
@@ -389,6 +424,12 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(systemServiceMethods.ByName("UpdateRetentionPolicy")),
 		connect.WithHandlerOptions(opts...),
 	)
+	systemServicePreviewArtifactReclaimHandler := connect.NewUnaryHandler(
+		SystemServicePreviewArtifactReclaimProcedure,
+		svc.PreviewArtifactReclaim,
+		connect.WithSchema(systemServiceMethods.ByName("PreviewArtifactReclaim")),
+		connect.WithHandlerOptions(opts...),
+	)
 	systemServiceListTelemetrySinksHandler := connect.NewUnaryHandler(
 		SystemServiceListTelemetrySinksProcedure,
 		svc.ListTelemetrySinks,
@@ -433,6 +474,8 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 			systemServiceGetRetentionPolicyHandler.ServeHTTP(w, r)
 		case SystemServiceUpdateRetentionPolicyProcedure:
 			systemServiceUpdateRetentionPolicyHandler.ServeHTTP(w, r)
+		case SystemServicePreviewArtifactReclaimProcedure:
+			systemServicePreviewArtifactReclaimHandler.ServeHTTP(w, r)
 		case SystemServiceListTelemetrySinksProcedure:
 			systemServiceListTelemetrySinksHandler.ServeHTTP(w, r)
 		case SystemServiceGetImagePolicyProcedure:
@@ -464,6 +507,10 @@ func (UnimplementedSystemServiceHandler) GetRetentionPolicy(context.Context, *co
 
 func (UnimplementedSystemServiceHandler) UpdateRetentionPolicy(context.Context, *connect.Request[v1.UpdateRetentionPolicyRequest]) (*connect.Response[v1.UpdateRetentionPolicyResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.UpdateRetentionPolicy is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) PreviewArtifactReclaim(context.Context, *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.PreviewArtifactReclaim is not implemented"))
 }
 
 func (UnimplementedSystemServiceHandler) ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error) {

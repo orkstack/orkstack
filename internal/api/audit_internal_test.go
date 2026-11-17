@@ -59,17 +59,18 @@ var auditReadRPCs = map[string]bool{
 	orkstackv1connect.CacheServiceGetCacheStatsProcedure:        true,
 	// InspectActivity resolves one reference against the registry and writes
 	// nothing (docs/ACTIVITY_IMAGES.md "Declaring the interface").
-	orkstackv1connect.ActivityServiceInspectActivityProcedure:  true,
-	orkstackv1connect.SystemServiceGetSystemInfoProcedure:      true,
-	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure: true,
-	orkstackv1connect.SystemServiceGetImagePolicyProcedure:     true,
-	orkstackv1connect.SystemServiceListTelemetrySinksProcedure: true,
-	orkstackv1connect.SystemServiceListReleasesProcedure:       true,
-	orkstackv1connect.StatsServiceGetStatsProcedure:            true,
-	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure: true,
-	orkstackv1connect.StatsServiceGetFlakeIndexProcedure:       true,
-	orkstackv1connect.StatsServiceGetUsageProcedure:            true,
-	orkstackv1connect.AuditServiceListAuditRecordsProcedure:    true,
+	orkstackv1connect.ActivityServiceInspectActivityProcedure:      true,
+	orkstackv1connect.SystemServiceGetSystemInfoProcedure:          true,
+	orkstackv1connect.SystemServiceGetRetentionPolicyProcedure:     true,
+	orkstackv1connect.SystemServicePreviewArtifactReclaimProcedure: true,
+	orkstackv1connect.SystemServiceGetImagePolicyProcedure:         true,
+	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:     true,
+	orkstackv1connect.SystemServiceListReleasesProcedure:           true,
+	orkstackv1connect.StatsServiceGetStatsProcedure:                true,
+	orkstackv1connect.StatsServiceGetFailureBreakdownProcedure:     true,
+	orkstackv1connect.StatsServiceGetFlakeIndexProcedure:           true,
+	orkstackv1connect.StatsServiceGetUsageProcedure:                true,
+	orkstackv1connect.AuditServiceListAuditRecordsProcedure:        true,
 	// PlanAutomation and ExportAutomation write nothing, ever
 	// (docs/AUTOMATION.md): an apply is the client sending the plan's
 	// requests to the audited write RPCs, each recorded under its own action.
@@ -112,7 +113,7 @@ var auditStreamingReads = map[string]bool{
 // CompareInterfaces, which classifies two stored documents and writes nothing
 // (docs/UI_CLI_PARITY.md "Interface compatibility"). Explain is the verb of
 // ExplainAccess, which answers a decision and writes nothing.
-var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare", "Explain", "Evaluate"}
+var auditReadVerbs = []string{"Get", "List", "Validate", "Diff", "Describe", "Stream", "Plan", "Inspect", "Export", "Compare", "Explain", "Evaluate", "Preview"}
 
 // orkstackProcedures walks every service in the generated orkstack.v1 file
 // registry and returns each method's procedure and whether it streams.

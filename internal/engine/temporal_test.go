@@ -3,8 +3,10 @@ package engine_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"testing"
+	"time"
 
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
@@ -176,9 +178,11 @@ func TestStartRun_WritesTheOrkflowCoordinatesAsAQualifiedMemo(t *testing.T) {
 			t.Errorf("memo %q = %v, want %v", key, got, wantValue)
 		}
 	}
-	if len(c.options.Memo) != len(want) {
-		t.Errorf("the execution carries the memo keys %v, want exactly %v",
-			memoKeys(c.options.Memo), memoKeys(want))
+	// Plus the start stamp the artifact GC dates a run by
+	// (TestRunStartMemoAndAttributes_MatchStartRun checks its value).
+	if _, ok := c.options.Memo[engine.MemoStartStamp]; !ok || len(c.options.Memo) != len(want)+1 {
+		t.Errorf("the execution carries the memo keys %v, want exactly %v and %s",
+			memoKeys(c.options.Memo), memoKeys(want), engine.MemoStartStamp)
 	}
 }
 
@@ -309,8 +313,15 @@ func TestRunStartMemoAndAttributes_MatchStartRun(t *testing.T) {
 			plan.Origin = origin
 			wf := twoTaskOrkflow()
 			wf.Namespace = "payments"
+			before := time.Now()
 			must.OKf(t, starter.StartRun(context.Background(), "ork-1-1", wf, nil, plan), "StartRun")
-			memo := engine.RunStartMemo(wf, plan)
+			// The start stamp is taken just before the start: never later than
+			// the run's creation, which is the execution's own start time.
+			stamp, err := time.Parse(time.RFC3339Nano, fmt.Sprint(c.options.Memo[engine.MemoStartStamp]))
+			if err != nil || stamp.Before(before) || stamp.After(time.Now()) {
+				t.Fatalf("start stamp %v (%v) not taken at the start", c.options.Memo[engine.MemoStartStamp], err)
+			}
+			memo := engine.RunStartMemoAt(wf, plan, stamp)
 			if len(memo) != len(c.options.Memo) {
 				t.Fatalf("memo %v, StartRun sent %v", memo, c.options.Memo)
 			}

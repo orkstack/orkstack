@@ -76,6 +76,7 @@ const (
 	ReasonObjectMissing            = "object_missing"
 	ReasonCommitMissing            = "commit_missing"
 	ReasonAttemptRecordMissing     = "attempt_record_missing"
+	ReasonArtifactReclaimed        = "artifact_reclaimed"
 )
 
 var reasonSentences = map[string]string{
@@ -84,6 +85,7 @@ var reasonSentences = map[string]string{
 	ReasonCommitMissing:            "the commit record was reclaimed by cleanup; its recorded digest is preserved",
 	ReasonObjectMissing:            "the object was removed from the store by a lifecycle rule or cleanup; its recorded digest is preserved",
 	ReasonAttemptRecordMissing:     "no record: the orker died before filing one, or it was reclaimed",
+	ReasonArtifactReclaimed:        "the artifact GC deleted the object after its run was retired; its recorded digest is preserved",
 }
 
 // ReasonText is the documented sentence for a reason token; an unknown token

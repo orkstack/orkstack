@@ -45,6 +45,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -72,6 +73,14 @@ type CleanupConfig struct {
 	// maximum run retention the backstop TTL sits (see RetentionController).
 	RetentionBuffer time.Duration
 	BatchSize       int
+	// ArtifactGC is cleanup.artifact_gc. With dry_run or delete,
+	// retirement keeps a run's reference markers and run-objects list for
+	// the GC to release (rule 1); off releases them at retirement.
+	ArtifactGC ReclaimMode
+	// ArtifactGCGrace is G, at least MinReclaimGrace.
+	ArtifactGCGrace time.Duration
+	// ArtifactGCBatch is how many objects one GC pass examines.
+	ArtifactGCBatch int
 }
 
 // CleanupConfigFromEnv reads cleanup's ORK_* configuration. Invalid values use
@@ -82,7 +91,20 @@ func CleanupConfigFromEnv() CleanupConfig {
 		Interval:        envDuration("ORK_CLEANUP_INTERVAL", DefaultCleanupInterval),
 		RetentionBuffer: envDuration("ORK_CLEANUP_RETENTION_BUFFER", DefaultRetentionBuffer),
 		BatchSize:       envPositiveInt("ORK_CLEANUP_BATCH_SIZE", DefaultBatchSize),
+		ArtifactGC:      envReclaimMode("ORK_CLEANUP_ARTIFACT_GC"),
+		ArtifactGCGrace: envDuration("ORK_CLEANUP_ARTIFACT_GC_GRACE", DefaultReclaimGrace),
+		ArtifactGCBatch: envPositiveInt("ORK_CLEANUP_ARTIFACT_GC_BATCH", DefaultReclaimBatch),
 	}
+}
+
+// envReclaimMode reads the GC mode. An unknown value is dry_run, the mode
+// that deletes nothing; the configuration loader refuses it before here.
+func envReclaimMode(key string) ReclaimMode {
+	mode, err := ParseReclaimMode(os.Getenv(key))
+	if err != nil {
+		return ReclaimDryRun
+	}
+	return mode
 }
 
 func envBool(key string, fallback bool) bool {
@@ -227,7 +249,7 @@ type Cleaner struct {
 	// before it, would not be held. Both are process-local, as a cordon is:
 	// a restart forgets them, and each run is still checked against its own
 	// retention.
-	holdMissing   bool
+	holdMissing   atomic.Bool
 	walkOverShare bool
 	// ticker paces Run; a test replaces it to drive passes by hand.
 	ticker func(time.Duration) (<-chan time.Time, func())
@@ -250,6 +272,9 @@ func NewCleaner(
 	}
 	if config.BatchSize <= 0 {
 		config.BatchSize = DefaultBatchSize
+	}
+	if config.ArtifactGC == "" {
+		config.ArtifactGC = DefaultReclaimMode
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -602,11 +627,11 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 	}
 	if stats.missingHeld() {
 		c.walkOverShare = true
-		c.holdMissing = true
+		c.holdMissing.Store(true)
 	}
 	switch {
 	case len(missingDue) == 0:
-	case c.holdMissing:
+	case c.holdMissing.Load():
 		stats.MissingHeld = len(missingDue)
 		c.logger.Error("artifact cleanup held every run whose execution is missing: too many are missing before their run retention",
 			"runs_missing_not_due", stats.MissingNotDue, "runs_looked_up", stats.LookedUp,
@@ -623,7 +648,7 @@ func (c *Cleaner) pass(ctx context.Context, startAfter string) (stats CleanupSta
 	}
 	if reachedEnd {
 		// A whole walk with no pass over the share lifts the hold.
-		c.holdMissing = c.walkOverShare
+		c.holdMissing.Store(c.walkOverShare)
 	}
 	return stats, resume, errors.Join(errs...)
 }
@@ -643,12 +668,36 @@ func (c *Cleaner) finishedAt(ctx context.Context, runID string) (time.Time, erro
 	return at, nil
 }
 
+// MissingHeld reports whether this worker holds every missing execution's
+// retirement. The artifact GC holds its deletes while it does.
+func (c *Cleaner) MissingHeld() bool { return c.holdMissing.Load() }
+
+// referenceKeepingRetirer is an archive that can retire a run and keep its
+// reference markers and run-objects list (rule 1).
+type referenceKeepingRetirer interface {
+	RetireRunArtifacts(ctx context.Context, namespace, runID string, keepReferences bool) (artifacts.CleanupResult, error)
+}
+
 // reclaim removes a retired run's run-scoped storage, then marks it cleaned.
 // The mark is last, so a failure leaves the run for a later pass.
 func (c *Cleaner) reclaim(ctx context.Context, entry artifacts.RunIndexEntry, now time.Time, stats *CleanupStats,
 	fail func(artifacts.RunIndexEntry, error, string),
 ) {
-	result, err := c.archive.DeleteRunArtifacts(ctx, entry.Namespace, entry.RunID)
+	var (
+		result artifacts.CleanupResult
+		err    error
+	)
+	if retirer, ok := c.archive.(referenceKeepingRetirer); ok {
+		// The GC reclaims nothing on a local directory, so nothing would
+		// ever release what retirement kept there.
+		keep := c.config.ArtifactGC.KeepsReferences()
+		if local, ok := c.archive.(interface{ Local() bool }); ok && local.Local() {
+			keep = false
+		}
+		result, err = retirer.RetireRunArtifacts(ctx, entry.Namespace, entry.RunID, keep)
+	} else {
+		result, err = c.archive.DeleteRunArtifacts(ctx, entry.Namespace, entry.RunID)
+	}
 	stats.ObjectsDeleted += result.ObjectsDeleted
 	stats.BytesReclaimed += result.BytesReclaimed
 	if err != nil {

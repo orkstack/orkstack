@@ -43,6 +43,13 @@ const work = path.join(repo, 'site', '.media-work');
 // engine) and says where.
 const UI = process.env.ORK_UI_URL ?? 'http://127.0.0.1:4173';
 const ENGINE = process.env.ORK_SERVER ?? 'http://127.0.0.1:8080';
+// make up authenticates by default, and media/run.sh hands this the
+// development admin's token (ORK_TOKEN_FILE). orkctl reads it from the
+// environment; every browser context presents it as a bearer, which needs no
+// sign-in and no CSRF token: the capture's preview server is not the stack's
+// auth.public_url, so a signed-in cookie would be refused here.
+const BEARER = process.env.ORK_TOKEN_FILE ? readFileSync(process.env.ORK_TOKEN_FILE, 'utf8').trim() : '';
+const AUTH_HEADERS: Record<string, string> = BEARER ? { Authorization: `Bearer ${BEARER}` } : {};
 const NS = 'default';
 const ORKFLOWS = [
 	'examples/each-fan-out.ork.yaml',
@@ -300,7 +307,7 @@ async function contexts(browser: Browser, size: { width: number; height: number 
 	const made: BrowserContext[] = [];
 	for (const theme of themes) {
 		for (const scale of scales) {
-			const ctx = await browser.newContext({ viewport: size, deviceScaleFactor: scale, colorScheme: theme, reducedMotion: 'reduce' });
+			const ctx = await browser.newContext({ viewport: size, deviceScaleFactor: scale, colorScheme: theme, reducedMotion: 'reduce', extraHTTPHeaders: AUTH_HEADERS });
 			made.push(ctx);
 			views.push({ theme, scale, page: await ctx.newPage() });
 		}
@@ -1017,7 +1024,7 @@ const takes: Script[] = [
 
 /** One take of a script in one theme, encoded into public/media. Returns its length in seconds. */
 async function record(browser: Browser, script: Script, theme: Theme): Promise<number> {
-	const ctx = await browser.newContext({ viewport: REC, deviceScaleFactor: 2, colorScheme: theme });
+	const ctx = await browser.newContext({ viewport: REC, deviceScaleFactor: 2, colorScheme: theme, extraHTTPHeaders: AUTH_HEADERS });
 	await stage(ctx);
 	const p = await ctx.newPage();
 	await script.open(p);

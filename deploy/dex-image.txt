@@ -1,0 +1,9 @@
+# The Dex image the development stack (make up) and the sign-in
+# interop tests run (internal/testsupport/dextest), pinned by its multi-arch
+# index digest. v2.45.1 is the first release that gives a static user groups
+# and a verified email. Not v2.46.x: its refresh-token grant deadlocks the
+# token endpoint on in-memory storage (dexidp/dex#5017, fixed after v2.46.1),
+# which TestIntegration_SigninWithDex finds. It is a development and test
+# image only: no release ships or runs it. A bump is a pull request that
+# proves it with TestIntegration_SigninWithDex and ui/e2e/signin.spec.ts.
+ghcr.io/dexidp/dex:v2.45.1@sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462

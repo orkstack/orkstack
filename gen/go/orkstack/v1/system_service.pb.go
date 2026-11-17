@@ -1638,6 +1638,508 @@ func (x *PromoteReleaseResponse) GetRevision() string {
 	return ""
 }
 
+type PreviewArtifactReclaimRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// namespace limits the preview to retired runs of one namespace, and is
+	// required for samples. Empty covers every namespace.
+	Namespace string `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	// limit is how many runs of the index to cover: 1 to 1000; 0 is 1000.
+	Limit int32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
+	// samples is how many objects to name, at most 100; only with namespace.
+	Samples int32 `protobuf:"varint,3,opt,name=samples,proto3" json:"samples,omitempty"`
+	// cursor is a previous answer's next_cursor; empty starts at the index's
+	// beginning.
+	Cursor        string `protobuf:"bytes,4,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PreviewArtifactReclaimRequest) Reset() {
+	*x = PreviewArtifactReclaimRequest{}
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[20]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewArtifactReclaimRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewArtifactReclaimRequest) ProtoMessage() {}
+
+func (x *PreviewArtifactReclaimRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[20]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewArtifactReclaimRequest.ProtoReflect.Descriptor instead.
+func (*PreviewArtifactReclaimRequest) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_system_service_proto_rawDescGZIP(), []int{20}
+}
+
+func (x *PreviewArtifactReclaimRequest) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *PreviewArtifactReclaimRequest) GetLimit() int32 {
+	if x != nil {
+		return x.Limit
+	}
+	return 0
+}
+
+func (x *PreviewArtifactReclaimRequest) GetSamples() int32 {
+	if x != nil {
+		return x.Samples
+	}
+	return 0
+}
+
+func (x *PreviewArtifactReclaimRequest) GetCursor() string {
+	if x != nil {
+		return x.Cursor
+	}
+	return ""
+}
+
+// ReclaimReasonCount is how many objects, and how many bytes, one reason
+// kept.
+type ReclaimReasonCount struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Reason        string                 `protobuf:"bytes,1,opt,name=reason,proto3" json:"reason,omitempty"`
+	Objects       int64                  `protobuf:"varint,2,opt,name=objects,proto3" json:"objects,omitempty"`
+	Bytes         int64                  `protobuf:"varint,3,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ReclaimReasonCount) Reset() {
+	*x = ReclaimReasonCount{}
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[21]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReclaimReasonCount) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReclaimReasonCount) ProtoMessage() {}
+
+func (x *ReclaimReasonCount) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[21]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReclaimReasonCount.ProtoReflect.Descriptor instead.
+func (*ReclaimReasonCount) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_system_service_proto_rawDescGZIP(), []int{21}
+}
+
+func (x *ReclaimReasonCount) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ReclaimReasonCount) GetObjects() int64 {
+	if x != nil {
+		return x.Objects
+	}
+	return 0
+}
+
+func (x *ReclaimReasonCount) GetBytes() int64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+// ReclaimNamespaceSummary is one namespace's answer: the producing run's
+// namespace.
+type ReclaimNamespaceSummary struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Namespace          string                 `protobuf:"bytes,1,opt,name=namespace,proto3" json:"namespace,omitempty"`
+	WouldDeleteObjects int64                  `protobuf:"varint,2,opt,name=would_delete_objects,json=wouldDeleteObjects,proto3" json:"would_delete_objects,omitempty"`
+	WouldDeleteBytes   int64                  `protobuf:"varint,3,opt,name=would_delete_bytes,json=wouldDeleteBytes,proto3" json:"would_delete_bytes,omitempty"`
+	Kept               []*ReclaimReasonCount  `protobuf:"bytes,4,rep,name=kept,proto3" json:"kept,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ReclaimNamespaceSummary) Reset() {
+	*x = ReclaimNamespaceSummary{}
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReclaimNamespaceSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReclaimNamespaceSummary) ProtoMessage() {}
+
+func (x *ReclaimNamespaceSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReclaimNamespaceSummary.ProtoReflect.Descriptor instead.
+func (*ReclaimNamespaceSummary) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_system_service_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *ReclaimNamespaceSummary) GetNamespace() string {
+	if x != nil {
+		return x.Namespace
+	}
+	return ""
+}
+
+func (x *ReclaimNamespaceSummary) GetWouldDeleteObjects() int64 {
+	if x != nil {
+		return x.WouldDeleteObjects
+	}
+	return 0
+}
+
+func (x *ReclaimNamespaceSummary) GetWouldDeleteBytes() int64 {
+	if x != nil {
+		return x.WouldDeleteBytes
+	}
+	return 0
+}
+
+func (x *ReclaimNamespaceSummary) GetKept() []*ReclaimReasonCount {
+	if x != nil {
+		return x.Kept
+	}
+	return nil
+}
+
+// ReclaimSample is one object a preview names.
+type ReclaimSample struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	RunId        string                 `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3" json:"run_id,omitempty"`
+	TaskId       string                 `protobuf:"bytes,2,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	ArtifactName string                 `protobuf:"bytes,3,opt,name=artifact_name,json=artifactName,proto3" json:"artifact_name,omitempty"`
+	Bytes        int64                  `protobuf:"varint,4,opt,name=bytes,proto3" json:"bytes,omitempty"`
+	// outcome is would_delete or kept.
+	Outcome           string                 `protobuf:"bytes,5,opt,name=outcome,proto3" json:"outcome,omitempty"`
+	Reason            string                 `protobuf:"bytes,6,opt,name=reason,proto3" json:"reason,omitempty"`
+	ProducerRetiredAt *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=producer_retired_at,json=producerRetiredAt,proto3" json:"producer_retired_at,omitempty"`
+	StaleClaims       int32                  `protobuf:"varint,8,opt,name=stale_claims,json=staleClaims,proto3" json:"stale_claims,omitempty"`
+	LiveClaims        int32                  `protobuf:"varint,9,opt,name=live_claims,json=liveClaims,proto3" json:"live_claims,omitempty"`
+	// waits_for_runs_created_before is set for a lowwater object: every run
+	// created before it must finish and be archived first.
+	WaitsForRunsCreatedBefore *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=waits_for_runs_created_before,json=waitsForRunsCreatedBefore,proto3" json:"waits_for_runs_created_before,omitempty"`
+	unknownFields             protoimpl.UnknownFields
+	sizeCache                 protoimpl.SizeCache
+}
+
+func (x *ReclaimSample) Reset() {
+	*x = ReclaimSample{}
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ReclaimSample) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ReclaimSample) ProtoMessage() {}
+
+func (x *ReclaimSample) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ReclaimSample.ProtoReflect.Descriptor instead.
+func (*ReclaimSample) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_system_service_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *ReclaimSample) GetRunId() string {
+	if x != nil {
+		return x.RunId
+	}
+	return ""
+}
+
+func (x *ReclaimSample) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *ReclaimSample) GetArtifactName() string {
+	if x != nil {
+		return x.ArtifactName
+	}
+	return ""
+}
+
+func (x *ReclaimSample) GetBytes() int64 {
+	if x != nil {
+		return x.Bytes
+	}
+	return 0
+}
+
+func (x *ReclaimSample) GetOutcome() string {
+	if x != nil {
+		return x.Outcome
+	}
+	return ""
+}
+
+func (x *ReclaimSample) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *ReclaimSample) GetProducerRetiredAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ProducerRetiredAt
+	}
+	return nil
+}
+
+func (x *ReclaimSample) GetStaleClaims() int32 {
+	if x != nil {
+		return x.StaleClaims
+	}
+	return 0
+}
+
+func (x *ReclaimSample) GetLiveClaims() int32 {
+	if x != nil {
+		return x.LiveClaims
+	}
+	return 0
+}
+
+func (x *ReclaimSample) GetWaitsForRunsCreatedBefore() *timestamppb.Timestamp {
+	if x != nil {
+		return x.WaitsForRunsCreatedBefore
+	}
+	return nil
+}
+
+type PreviewArtifactReclaimResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// mode is off, dry_run or delete (cleanup.artifact_gc).
+	Mode string `protobuf:"bytes,1,opt,name=mode,proto3" json:"mode,omitempty"`
+	// held says a pass would delete nothing now; held_reason names why.
+	Held       bool                       `protobuf:"varint,2,opt,name=held,proto3" json:"held,omitempty"`
+	HeldReason string                     `protobuf:"bytes,3,opt,name=held_reason,json=heldReason,proto3" json:"held_reason,omitempty"`
+	Namespaces []*ReclaimNamespaceSummary `protobuf:"bytes,4,rep,name=namespaces,proto3" json:"namespaces,omitempty"`
+	// samples are returned only with a namespace.
+	Samples      []*ReclaimSample `protobuf:"bytes,5,rep,name=samples,proto3" json:"samples,omitempty"`
+	RunsExamined int64            `protobuf:"varint,6,opt,name=runs_examined,json=runsExamined,proto3" json:"runs_examined,omitempty"`
+	// next_cursor continues the preview; empty at the end of the index.
+	NextCursor           string                 `protobuf:"bytes,7,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
+	ComputedAt           *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=computed_at,json=computedAt,proto3" json:"computed_at,omitempty"`
+	CleanupEnabled       bool                   `protobuf:"varint,9,opt,name=cleanup_enabled,json=cleanupEnabled,proto3" json:"cleanup_enabled,omitempty"`
+	StoreVersioned       bool                   `protobuf:"varint,10,opt,name=store_versioned,json=storeVersioned,proto3" json:"store_versioned,omitempty"`
+	LowWaterKnown        bool                   `protobuf:"varint,11,opt,name=low_water_known,json=lowWaterKnown,proto3" json:"low_water_known,omitempty"`
+	LowWaterUnknownCause string                 `protobuf:"bytes,12,opt,name=low_water_unknown_cause,json=lowWaterUnknownCause,proto3" json:"low_water_unknown_cause,omitempty"`
+	LowWaterCreatedAt    *timestamppb.Timestamp `protobuf:"bytes,13,opt,name=low_water_created_at,json=lowWaterCreatedAt,proto3" json:"low_water_created_at,omitempty"`
+	LowWaterRunId        string                 `protobuf:"bytes,14,opt,name=low_water_run_id,json=lowWaterRunId,proto3" json:"low_water_run_id,omitempty"`
+	LowWaterNamespace    string                 `protobuf:"bytes,15,opt,name=low_water_namespace,json=lowWaterNamespace,proto3" json:"low_water_namespace,omitempty"`
+	WaitingRuns          int64                  `protobuf:"varint,16,opt,name=waiting_runs,json=waitingRuns,proto3" json:"waiting_runs,omitempty"`
+	LowWaterComputedAt   *timestamppb.Timestamp `protobuf:"bytes,17,opt,name=low_water_computed_at,json=lowWaterComputedAt,proto3" json:"low_water_computed_at,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *PreviewArtifactReclaimResponse) Reset() {
+	*x = PreviewArtifactReclaimResponse{}
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[24]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PreviewArtifactReclaimResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PreviewArtifactReclaimResponse) ProtoMessage() {}
+
+func (x *PreviewArtifactReclaimResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_system_service_proto_msgTypes[24]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PreviewArtifactReclaimResponse.ProtoReflect.Descriptor instead.
+func (*PreviewArtifactReclaimResponse) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_system_service_proto_rawDescGZIP(), []int{24}
+}
+
+func (x *PreviewArtifactReclaimResponse) GetMode() string {
+	if x != nil {
+		return x.Mode
+	}
+	return ""
+}
+
+func (x *PreviewArtifactReclaimResponse) GetHeld() bool {
+	if x != nil {
+		return x.Held
+	}
+	return false
+}
+
+func (x *PreviewArtifactReclaimResponse) GetHeldReason() string {
+	if x != nil {
+		return x.HeldReason
+	}
+	return ""
+}
+
+func (x *PreviewArtifactReclaimResponse) GetNamespaces() []*ReclaimNamespaceSummary {
+	if x != nil {
+		return x.Namespaces
+	}
+	return nil
+}
+
+func (x *PreviewArtifactReclaimResponse) GetSamples() []*ReclaimSample {
+	if x != nil {
+		return x.Samples
+	}
+	return nil
+}
+
+func (x *PreviewArtifactReclaimResponse) GetRunsExamined() int64 {
+	if x != nil {
+		return x.RunsExamined
+	}
+	return 0
+}
+
+func (x *PreviewArtifactReclaimResponse) GetNextCursor() string {
+	if x != nil {
+		return x.NextCursor
+	}
+	return ""
+}
+
+func (x *PreviewArtifactReclaimResponse) GetComputedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ComputedAt
+	}
+	return nil
+}
+
+func (x *PreviewArtifactReclaimResponse) GetCleanupEnabled() bool {
+	if x != nil {
+		return x.CleanupEnabled
+	}
+	return false
+}
+
+func (x *PreviewArtifactReclaimResponse) GetStoreVersioned() bool {
+	if x != nil {
+		return x.StoreVersioned
+	}
+	return false
+}
+
+func (x *PreviewArtifactReclaimResponse) GetLowWaterKnown() bool {
+	if x != nil {
+		return x.LowWaterKnown
+	}
+	return false
+}
+
+func (x *PreviewArtifactReclaimResponse) GetLowWaterUnknownCause() string {
+	if x != nil {
+		return x.LowWaterUnknownCause
+	}
+	return ""
+}
+
+func (x *PreviewArtifactReclaimResponse) GetLowWaterCreatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LowWaterCreatedAt
+	}
+	return nil
+}
+
+func (x *PreviewArtifactReclaimResponse) GetLowWaterRunId() string {
+	if x != nil {
+		return x.LowWaterRunId
+	}
+	return ""
+}
+
+func (x *PreviewArtifactReclaimResponse) GetLowWaterNamespace() string {
+	if x != nil {
+		return x.LowWaterNamespace
+	}
+	return ""
+}
+
+func (x *PreviewArtifactReclaimResponse) GetWaitingRuns() int64 {
+	if x != nil {
+		return x.WaitingRuns
+	}
+	return 0
+}
+
+func (x *PreviewArtifactReclaimResponse) GetLowWaterComputedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LowWaterComputedAt
+	}
+	return nil
+}
+
 var File_orkstack_v1_system_service_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_system_service_proto_rawDesc = "" +
@@ -1745,7 +2247,58 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"\achanged\x18\x01 \x01(\bR\achanged\x12*\n" +
 	"\x11previous_build_id\x18\x02 \x01(\tR\x0fpreviousBuildId\x12+\n" +
 	"\x11routing_confirmed\x18\x03 \x01(\bR\x10routingConfirmed\x12\x1a\n" +
-	"\brevision\x18\x04 \x01(\tR\brevision*\x96\x01\n" +
+	"\brevision\x18\x04 \x01(\tR\brevision\"\x85\x01\n" +
+	"\x1dPreviewArtifactReclaimRequest\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x12\x14\n" +
+	"\x05limit\x18\x02 \x01(\x05R\x05limit\x12\x18\n" +
+	"\asamples\x18\x03 \x01(\x05R\asamples\x12\x16\n" +
+	"\x06cursor\x18\x04 \x01(\tR\x06cursor\"\\\n" +
+	"\x12ReclaimReasonCount\x12\x16\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\x12\x18\n" +
+	"\aobjects\x18\x02 \x01(\x03R\aobjects\x12\x14\n" +
+	"\x05bytes\x18\x03 \x01(\x03R\x05bytes\"\xcc\x01\n" +
+	"\x17ReclaimNamespaceSummary\x12\x1c\n" +
+	"\tnamespace\x18\x01 \x01(\tR\tnamespace\x120\n" +
+	"\x14would_delete_objects\x18\x02 \x01(\x03R\x12wouldDeleteObjects\x12,\n" +
+	"\x12would_delete_bytes\x18\x03 \x01(\x03R\x10wouldDeleteBytes\x123\n" +
+	"\x04kept\x18\x04 \x03(\v2\x1f.orkstack.v1.ReclaimReasonCountR\x04kept\"\x9a\x03\n" +
+	"\rReclaimSample\x12\x15\n" +
+	"\x06run_id\x18\x01 \x01(\tR\x05runId\x12\x17\n" +
+	"\atask_id\x18\x02 \x01(\tR\x06taskId\x12#\n" +
+	"\rartifact_name\x18\x03 \x01(\tR\fartifactName\x12\x14\n" +
+	"\x05bytes\x18\x04 \x01(\x03R\x05bytes\x12\x18\n" +
+	"\aoutcome\x18\x05 \x01(\tR\aoutcome\x12\x16\n" +
+	"\x06reason\x18\x06 \x01(\tR\x06reason\x12J\n" +
+	"\x13producer_retired_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\x11producerRetiredAt\x12!\n" +
+	"\fstale_claims\x18\b \x01(\x05R\vstaleClaims\x12\x1f\n" +
+	"\vlive_claims\x18\t \x01(\x05R\n" +
+	"liveClaims\x12\\\n" +
+	"\x1dwaits_for_runs_created_before\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\x19waitsForRunsCreatedBefore\"\xb1\x06\n" +
+	"\x1ePreviewArtifactReclaimResponse\x12\x12\n" +
+	"\x04mode\x18\x01 \x01(\tR\x04mode\x12\x12\n" +
+	"\x04held\x18\x02 \x01(\bR\x04held\x12\x1f\n" +
+	"\vheld_reason\x18\x03 \x01(\tR\n" +
+	"heldReason\x12D\n" +
+	"\n" +
+	"namespaces\x18\x04 \x03(\v2$.orkstack.v1.ReclaimNamespaceSummaryR\n" +
+	"namespaces\x124\n" +
+	"\asamples\x18\x05 \x03(\v2\x1a.orkstack.v1.ReclaimSampleR\asamples\x12#\n" +
+	"\rruns_examined\x18\x06 \x01(\x03R\frunsExamined\x12\x1f\n" +
+	"\vnext_cursor\x18\a \x01(\tR\n" +
+	"nextCursor\x12;\n" +
+	"\vcomputed_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"computedAt\x12'\n" +
+	"\x0fcleanup_enabled\x18\t \x01(\bR\x0ecleanupEnabled\x12'\n" +
+	"\x0fstore_versioned\x18\n" +
+	" \x01(\bR\x0estoreVersioned\x12&\n" +
+	"\x0flow_water_known\x18\v \x01(\bR\rlowWaterKnown\x125\n" +
+	"\x17low_water_unknown_cause\x18\f \x01(\tR\x14lowWaterUnknownCause\x12K\n" +
+	"\x14low_water_created_at\x18\r \x01(\v2\x1a.google.protobuf.TimestampR\x11lowWaterCreatedAt\x12'\n" +
+	"\x10low_water_run_id\x18\x0e \x01(\tR\rlowWaterRunId\x12.\n" +
+	"\x13low_water_namespace\x18\x0f \x01(\tR\x11lowWaterNamespace\x12!\n" +
+	"\fwaiting_runs\x18\x10 \x01(\x03R\vwaitingRuns\x12M\n" +
+	"\x15low_water_computed_at\x18\x11 \x01(\v2\x1a.google.protobuf.TimestampR\x12lowWaterComputedAt*\x96\x01\n" +
 	"\vReleaseRole\x12\x1c\n" +
 	"\x18RELEASE_ROLE_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14RELEASE_ROLE_CURRENT\x10\x01\x12\x18\n" +
@@ -1762,11 +2315,12 @@ const file_orkstack_v1_system_service_proto_rawDesc = "" +
 	"$RELEASE_BLOCKER_KIND_POOL_NOT_SERVED\x10\x02\x12(\n" +
 	"$RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED\x10\x03\x12)\n" +
 	"%RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS\x10\x04\x12#\n" +
-	"\x1fRELEASE_BLOCKER_KIND_UNVERIFIED\x10\x052\xe6\x06\n" +
+	"\x1fRELEASE_BLOCKER_KIND_UNVERIFIED\x10\x052\xd9\a\n" +
 	"\rSystemService\x12V\n" +
 	"\rGetSystemInfo\x12!.orkstack.v1.GetSystemInfoRequest\x1a\".orkstack.v1.GetSystemInfoResponse\x12e\n" +
 	"\x12GetRetentionPolicy\x12&.orkstack.v1.GetRetentionPolicyRequest\x1a'.orkstack.v1.GetRetentionPolicyResponse\x12n\n" +
-	"\x15UpdateRetentionPolicy\x12).orkstack.v1.UpdateRetentionPolicyRequest\x1a*.orkstack.v1.UpdateRetentionPolicyResponse\x12e\n" +
+	"\x15UpdateRetentionPolicy\x12).orkstack.v1.UpdateRetentionPolicyRequest\x1a*.orkstack.v1.UpdateRetentionPolicyResponse\x12q\n" +
+	"\x16PreviewArtifactReclaim\x12*.orkstack.v1.PreviewArtifactReclaimRequest\x1a+.orkstack.v1.PreviewArtifactReclaimResponse\x12e\n" +
 	"\x12ListTelemetrySinks\x12&.orkstack.v1.ListTelemetrySinksRequest\x1a'.orkstack.v1.ListTelemetrySinksResponse\x12Y\n" +
 	"\x0eGetImagePolicy\x12\".orkstack.v1.GetImagePolicyRequest\x1a#.orkstack.v1.GetImagePolicyResponse\x12b\n" +
 	"\x11UpdateImagePolicy\x12%.orkstack.v1.UpdateImagePolicyRequest\x1a&.orkstack.v1.UpdateImagePolicyResponse\x12S\n" +
@@ -1788,83 +2342,98 @@ func file_orkstack_v1_system_service_proto_rawDescGZIP() []byte {
 }
 
 var file_orkstack_v1_system_service_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_orkstack_v1_system_service_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
+var file_orkstack_v1_system_service_proto_msgTypes = make([]protoimpl.MessageInfo, 25)
 var file_orkstack_v1_system_service_proto_goTypes = []any{
-	(ReleaseRole)(0),                      // 0: orkstack.v1.ReleaseRole
-	(ReleaseDrainState)(0),                // 1: orkstack.v1.ReleaseDrainState
-	(ReleaseBlockerKind)(0),               // 2: orkstack.v1.ReleaseBlockerKind
-	(*GetSystemInfoRequest)(nil),          // 3: orkstack.v1.GetSystemInfoRequest
-	(*GetSystemInfoResponse)(nil),         // 4: orkstack.v1.GetSystemInfoResponse
-	(*GetRetentionPolicyRequest)(nil),     // 5: orkstack.v1.GetRetentionPolicyRequest
-	(*GetRetentionPolicyResponse)(nil),    // 6: orkstack.v1.GetRetentionPolicyResponse
-	(*UpdateRetentionPolicyRequest)(nil),  // 7: orkstack.v1.UpdateRetentionPolicyRequest
-	(*UpdateRetentionPolicyResponse)(nil), // 8: orkstack.v1.UpdateRetentionPolicyResponse
-	(*ListTelemetrySinksRequest)(nil),     // 9: orkstack.v1.ListTelemetrySinksRequest
-	(*ListTelemetrySinksResponse)(nil),    // 10: orkstack.v1.ListTelemetrySinksResponse
-	(*GetImagePolicyRequest)(nil),         // 11: orkstack.v1.GetImagePolicyRequest
-	(*GetImagePolicyResponse)(nil),        // 12: orkstack.v1.GetImagePolicyResponse
-	(*UpdateImagePolicyRequest)(nil),      // 13: orkstack.v1.UpdateImagePolicyRequest
-	(*UpdateImagePolicyResponse)(nil),     // 14: orkstack.v1.UpdateImagePolicyResponse
-	(*ReleaseBlocker)(nil),                // 15: orkstack.v1.ReleaseBlocker
-	(*Release)(nil),                       // 16: orkstack.v1.Release
-	(*ListReleasesRequest)(nil),           // 17: orkstack.v1.ListReleasesRequest
-	(*ListReleasesResponse)(nil),          // 18: orkstack.v1.ListReleasesResponse
-	(*RampReleaseRequest)(nil),            // 19: orkstack.v1.RampReleaseRequest
-	(*RampReleaseResponse)(nil),           // 20: orkstack.v1.RampReleaseResponse
-	(*PromoteReleaseRequest)(nil),         // 21: orkstack.v1.PromoteReleaseRequest
-	(*PromoteReleaseResponse)(nil),        // 22: orkstack.v1.PromoteReleaseResponse
-	(*timestamppb.Timestamp)(nil),         // 23: google.protobuf.Timestamp
-	(*RetentionPolicy)(nil),               // 24: orkstack.v1.RetentionPolicy
-	(*durationpb.Duration)(nil),           // 25: google.protobuf.Duration
-	(*ImagePolicy)(nil),                   // 26: orkstack.v1.ImagePolicy
-	(*Orker)(nil),                         // 27: orkstack.v1.Orker
-	(*Run)(nil),                           // 28: orkstack.v1.Run
-	(*FieldFilter)(nil),                   // 29: orkstack.v1.FieldFilter
+	(ReleaseRole)(0),                       // 0: orkstack.v1.ReleaseRole
+	(ReleaseDrainState)(0),                 // 1: orkstack.v1.ReleaseDrainState
+	(ReleaseBlockerKind)(0),                // 2: orkstack.v1.ReleaseBlockerKind
+	(*GetSystemInfoRequest)(nil),           // 3: orkstack.v1.GetSystemInfoRequest
+	(*GetSystemInfoResponse)(nil),          // 4: orkstack.v1.GetSystemInfoResponse
+	(*GetRetentionPolicyRequest)(nil),      // 5: orkstack.v1.GetRetentionPolicyRequest
+	(*GetRetentionPolicyResponse)(nil),     // 6: orkstack.v1.GetRetentionPolicyResponse
+	(*UpdateRetentionPolicyRequest)(nil),   // 7: orkstack.v1.UpdateRetentionPolicyRequest
+	(*UpdateRetentionPolicyResponse)(nil),  // 8: orkstack.v1.UpdateRetentionPolicyResponse
+	(*ListTelemetrySinksRequest)(nil),      // 9: orkstack.v1.ListTelemetrySinksRequest
+	(*ListTelemetrySinksResponse)(nil),     // 10: orkstack.v1.ListTelemetrySinksResponse
+	(*GetImagePolicyRequest)(nil),          // 11: orkstack.v1.GetImagePolicyRequest
+	(*GetImagePolicyResponse)(nil),         // 12: orkstack.v1.GetImagePolicyResponse
+	(*UpdateImagePolicyRequest)(nil),       // 13: orkstack.v1.UpdateImagePolicyRequest
+	(*UpdateImagePolicyResponse)(nil),      // 14: orkstack.v1.UpdateImagePolicyResponse
+	(*ReleaseBlocker)(nil),                 // 15: orkstack.v1.ReleaseBlocker
+	(*Release)(nil),                        // 16: orkstack.v1.Release
+	(*ListReleasesRequest)(nil),            // 17: orkstack.v1.ListReleasesRequest
+	(*ListReleasesResponse)(nil),           // 18: orkstack.v1.ListReleasesResponse
+	(*RampReleaseRequest)(nil),             // 19: orkstack.v1.RampReleaseRequest
+	(*RampReleaseResponse)(nil),            // 20: orkstack.v1.RampReleaseResponse
+	(*PromoteReleaseRequest)(nil),          // 21: orkstack.v1.PromoteReleaseRequest
+	(*PromoteReleaseResponse)(nil),         // 22: orkstack.v1.PromoteReleaseResponse
+	(*PreviewArtifactReclaimRequest)(nil),  // 23: orkstack.v1.PreviewArtifactReclaimRequest
+	(*ReclaimReasonCount)(nil),             // 24: orkstack.v1.ReclaimReasonCount
+	(*ReclaimNamespaceSummary)(nil),        // 25: orkstack.v1.ReclaimNamespaceSummary
+	(*ReclaimSample)(nil),                  // 26: orkstack.v1.ReclaimSample
+	(*PreviewArtifactReclaimResponse)(nil), // 27: orkstack.v1.PreviewArtifactReclaimResponse
+	(*timestamppb.Timestamp)(nil),          // 28: google.protobuf.Timestamp
+	(*RetentionPolicy)(nil),                // 29: orkstack.v1.RetentionPolicy
+	(*durationpb.Duration)(nil),            // 30: google.protobuf.Duration
+	(*ImagePolicy)(nil),                    // 31: orkstack.v1.ImagePolicy
+	(*Orker)(nil),                          // 32: orkstack.v1.Orker
+	(*Run)(nil),                            // 33: orkstack.v1.Run
+	(*FieldFilter)(nil),                    // 34: orkstack.v1.FieldFilter
 }
 var file_orkstack_v1_system_service_proto_depIdxs = []int32{
-	23, // 0: orkstack.v1.GetSystemInfoResponse.server_time:type_name -> google.protobuf.Timestamp
-	24, // 1: orkstack.v1.GetRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
-	25, // 2: orkstack.v1.UpdateRetentionPolicyRequest.max_run_retention:type_name -> google.protobuf.Duration
-	24, // 3: orkstack.v1.UpdateRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
-	26, // 4: orkstack.v1.GetImagePolicyResponse.policy:type_name -> orkstack.v1.ImagePolicy
-	26, // 5: orkstack.v1.UpdateImagePolicyRequest.policy:type_name -> orkstack.v1.ImagePolicy
-	26, // 6: orkstack.v1.UpdateImagePolicyResponse.policy:type_name -> orkstack.v1.ImagePolicy
+	28, // 0: orkstack.v1.GetSystemInfoResponse.server_time:type_name -> google.protobuf.Timestamp
+	29, // 1: orkstack.v1.GetRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
+	30, // 2: orkstack.v1.UpdateRetentionPolicyRequest.max_run_retention:type_name -> google.protobuf.Duration
+	29, // 3: orkstack.v1.UpdateRetentionPolicyResponse.policy:type_name -> orkstack.v1.RetentionPolicy
+	31, // 4: orkstack.v1.GetImagePolicyResponse.policy:type_name -> orkstack.v1.ImagePolicy
+	31, // 5: orkstack.v1.UpdateImagePolicyRequest.policy:type_name -> orkstack.v1.ImagePolicy
+	31, // 6: orkstack.v1.UpdateImagePolicyResponse.policy:type_name -> orkstack.v1.ImagePolicy
 	2,  // 7: orkstack.v1.ReleaseBlocker.kind:type_name -> orkstack.v1.ReleaseBlockerKind
 	0,  // 8: orkstack.v1.Release.role:type_name -> orkstack.v1.ReleaseRole
-	23, // 9: orkstack.v1.Release.role_since:type_name -> google.protobuf.Timestamp
-	23, // 10: orkstack.v1.Release.first_seen_at:type_name -> google.protobuf.Timestamp
-	27, // 11: orkstack.v1.Release.orkers:type_name -> orkstack.v1.Orker
-	28, // 12: orkstack.v1.Release.runs:type_name -> orkstack.v1.Run
+	28, // 9: orkstack.v1.Release.role_since:type_name -> google.protobuf.Timestamp
+	28, // 10: orkstack.v1.Release.first_seen_at:type_name -> google.protobuf.Timestamp
+	32, // 11: orkstack.v1.Release.orkers:type_name -> orkstack.v1.Orker
+	33, // 12: orkstack.v1.Release.runs:type_name -> orkstack.v1.Run
 	1,  // 13: orkstack.v1.Release.drain_state:type_name -> orkstack.v1.ReleaseDrainState
-	23, // 14: orkstack.v1.Release.drain_checked_at:type_name -> google.protobuf.Timestamp
+	28, // 14: orkstack.v1.Release.drain_checked_at:type_name -> google.protobuf.Timestamp
 	15, // 15: orkstack.v1.Release.blockers:type_name -> orkstack.v1.ReleaseBlocker
-	29, // 16: orkstack.v1.ListReleasesRequest.filters:type_name -> orkstack.v1.FieldFilter
+	34, // 16: orkstack.v1.ListReleasesRequest.filters:type_name -> orkstack.v1.FieldFilter
 	16, // 17: orkstack.v1.ListReleasesResponse.releases:type_name -> orkstack.v1.Release
-	27, // 18: orkstack.v1.ListReleasesResponse.unattributed_orkers:type_name -> orkstack.v1.Orker
-	23, // 19: orkstack.v1.ListReleasesResponse.observed_at:type_name -> google.protobuf.Timestamp
-	3,  // 20: orkstack.v1.SystemService.GetSystemInfo:input_type -> orkstack.v1.GetSystemInfoRequest
-	5,  // 21: orkstack.v1.SystemService.GetRetentionPolicy:input_type -> orkstack.v1.GetRetentionPolicyRequest
-	7,  // 22: orkstack.v1.SystemService.UpdateRetentionPolicy:input_type -> orkstack.v1.UpdateRetentionPolicyRequest
-	9,  // 23: orkstack.v1.SystemService.ListTelemetrySinks:input_type -> orkstack.v1.ListTelemetrySinksRequest
-	11, // 24: orkstack.v1.SystemService.GetImagePolicy:input_type -> orkstack.v1.GetImagePolicyRequest
-	13, // 25: orkstack.v1.SystemService.UpdateImagePolicy:input_type -> orkstack.v1.UpdateImagePolicyRequest
-	17, // 26: orkstack.v1.SystemService.ListReleases:input_type -> orkstack.v1.ListReleasesRequest
-	19, // 27: orkstack.v1.SystemService.RampRelease:input_type -> orkstack.v1.RampReleaseRequest
-	21, // 28: orkstack.v1.SystemService.PromoteRelease:input_type -> orkstack.v1.PromoteReleaseRequest
-	4,  // 29: orkstack.v1.SystemService.GetSystemInfo:output_type -> orkstack.v1.GetSystemInfoResponse
-	6,  // 30: orkstack.v1.SystemService.GetRetentionPolicy:output_type -> orkstack.v1.GetRetentionPolicyResponse
-	8,  // 31: orkstack.v1.SystemService.UpdateRetentionPolicy:output_type -> orkstack.v1.UpdateRetentionPolicyResponse
-	10, // 32: orkstack.v1.SystemService.ListTelemetrySinks:output_type -> orkstack.v1.ListTelemetrySinksResponse
-	12, // 33: orkstack.v1.SystemService.GetImagePolicy:output_type -> orkstack.v1.GetImagePolicyResponse
-	14, // 34: orkstack.v1.SystemService.UpdateImagePolicy:output_type -> orkstack.v1.UpdateImagePolicyResponse
-	18, // 35: orkstack.v1.SystemService.ListReleases:output_type -> orkstack.v1.ListReleasesResponse
-	20, // 36: orkstack.v1.SystemService.RampRelease:output_type -> orkstack.v1.RampReleaseResponse
-	22, // 37: orkstack.v1.SystemService.PromoteRelease:output_type -> orkstack.v1.PromoteReleaseResponse
-	29, // [29:38] is the sub-list for method output_type
-	20, // [20:29] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	32, // 18: orkstack.v1.ListReleasesResponse.unattributed_orkers:type_name -> orkstack.v1.Orker
+	28, // 19: orkstack.v1.ListReleasesResponse.observed_at:type_name -> google.protobuf.Timestamp
+	24, // 20: orkstack.v1.ReclaimNamespaceSummary.kept:type_name -> orkstack.v1.ReclaimReasonCount
+	28, // 21: orkstack.v1.ReclaimSample.producer_retired_at:type_name -> google.protobuf.Timestamp
+	28, // 22: orkstack.v1.ReclaimSample.waits_for_runs_created_before:type_name -> google.protobuf.Timestamp
+	25, // 23: orkstack.v1.PreviewArtifactReclaimResponse.namespaces:type_name -> orkstack.v1.ReclaimNamespaceSummary
+	26, // 24: orkstack.v1.PreviewArtifactReclaimResponse.samples:type_name -> orkstack.v1.ReclaimSample
+	28, // 25: orkstack.v1.PreviewArtifactReclaimResponse.computed_at:type_name -> google.protobuf.Timestamp
+	28, // 26: orkstack.v1.PreviewArtifactReclaimResponse.low_water_created_at:type_name -> google.protobuf.Timestamp
+	28, // 27: orkstack.v1.PreviewArtifactReclaimResponse.low_water_computed_at:type_name -> google.protobuf.Timestamp
+	3,  // 28: orkstack.v1.SystemService.GetSystemInfo:input_type -> orkstack.v1.GetSystemInfoRequest
+	5,  // 29: orkstack.v1.SystemService.GetRetentionPolicy:input_type -> orkstack.v1.GetRetentionPolicyRequest
+	7,  // 30: orkstack.v1.SystemService.UpdateRetentionPolicy:input_type -> orkstack.v1.UpdateRetentionPolicyRequest
+	23, // 31: orkstack.v1.SystemService.PreviewArtifactReclaim:input_type -> orkstack.v1.PreviewArtifactReclaimRequest
+	9,  // 32: orkstack.v1.SystemService.ListTelemetrySinks:input_type -> orkstack.v1.ListTelemetrySinksRequest
+	11, // 33: orkstack.v1.SystemService.GetImagePolicy:input_type -> orkstack.v1.GetImagePolicyRequest
+	13, // 34: orkstack.v1.SystemService.UpdateImagePolicy:input_type -> orkstack.v1.UpdateImagePolicyRequest
+	17, // 35: orkstack.v1.SystemService.ListReleases:input_type -> orkstack.v1.ListReleasesRequest
+	19, // 36: orkstack.v1.SystemService.RampRelease:input_type -> orkstack.v1.RampReleaseRequest
+	21, // 37: orkstack.v1.SystemService.PromoteRelease:input_type -> orkstack.v1.PromoteReleaseRequest
+	4,  // 38: orkstack.v1.SystemService.GetSystemInfo:output_type -> orkstack.v1.GetSystemInfoResponse
+	6,  // 39: orkstack.v1.SystemService.GetRetentionPolicy:output_type -> orkstack.v1.GetRetentionPolicyResponse
+	8,  // 40: orkstack.v1.SystemService.UpdateRetentionPolicy:output_type -> orkstack.v1.UpdateRetentionPolicyResponse
+	27, // 41: orkstack.v1.SystemService.PreviewArtifactReclaim:output_type -> orkstack.v1.PreviewArtifactReclaimResponse
+	10, // 42: orkstack.v1.SystemService.ListTelemetrySinks:output_type -> orkstack.v1.ListTelemetrySinksResponse
+	12, // 43: orkstack.v1.SystemService.GetImagePolicy:output_type -> orkstack.v1.GetImagePolicyResponse
+	14, // 44: orkstack.v1.SystemService.UpdateImagePolicy:output_type -> orkstack.v1.UpdateImagePolicyResponse
+	18, // 45: orkstack.v1.SystemService.ListReleases:output_type -> orkstack.v1.ListReleasesResponse
+	20, // 46: orkstack.v1.SystemService.RampRelease:output_type -> orkstack.v1.RampReleaseResponse
+	22, // 47: orkstack.v1.SystemService.PromoteRelease:output_type -> orkstack.v1.PromoteReleaseResponse
+	38, // [38:48] is the sub-list for method output_type
+	28, // [28:38] is the sub-list for method input_type
+	28, // [28:28] is the sub-list for extension type_name
+	28, // [28:28] is the sub-list for extension extendee
+	0,  // [0:28] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_system_service_proto_init() }
@@ -1883,7 +2452,7 @@ func file_orkstack_v1_system_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_system_service_proto_rawDesc), len(file_orkstack_v1_system_service_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   20,
+			NumMessages:   25,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

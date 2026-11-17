@@ -1,0 +1,60 @@
+# Dex for the development stack (make up) and the sign-in interop
+# tests (internal/testsupport/dextest starts it, from deploy/dex-image.txt).
+# Dex's entrypoint renders this file with gomplate: each getenv call is a
+# value the starter passes. It serves https only, with a certificate the
+# starter makes, because OrkStack requires every endpoint of an issuer to be
+# https. The users and their password are for development and tests, never
+# for a deployment.
+issuer: '{{ getenv "DEX_ISSUER" }}'
+storage:
+  type: memory
+web:
+  https: 0.0.0.0:5554
+  tlsCert: /etc/dex/tls/tls.crt
+  tlsKey: /etc/dex/tls/tls.key
+# Dex signs RS256 (v2.45.1 has no other algorithm).
+expiry:
+  idTokens: 1h
+oauth2:
+  responseTypes:
+    - code
+  skipApprovalScreen: true
+enablePasswordDB: true
+# Every user's password is `password`.
+staticPasswords:
+  - email: dev@example.test
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: dev
+    name: Dev
+    userID: 5e3cbd2a-6a43-4d6e-9d0a-3c8f2f6b6d01
+    emailVerified: true
+    groups:
+      - dev-admins
+  - email: admin@example.test
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: admin
+    name: Admin
+    userID: 5e3cbd2a-6a43-4d6e-9d0a-3c8f2f6b6d02
+    emailVerified: true
+    groups:
+      - admins
+  - email: vera@example.test
+    hash: $2a$10$2b2cU8CPhOTaGrs1HRQuAueS7JTT5ZHsHSzYiFPm1leZck7Mc8T4W
+    username: vera
+    name: Vera
+    userID: 5e3cbd2a-6a43-4d6e-9d0a-3c8f2f6b6d03
+    emailVerified: true
+    groups:
+      - viewers
+staticClients:
+  # The engine's web sign-in: a confidential client with one callback.
+  - id: orkstack-web
+    name: OrkStack
+    secretEnv: DEX_WEB_SECRET
+    redirectURIs:
+      - '{{ getenv "DEX_WEB_REDIRECT" }}'
+  # orkctl login: a public client, so any loopback redirect and the device
+  # flow are allowed (RFC 8252).
+  - id: orkctl
+    name: orkctl
+    public: true

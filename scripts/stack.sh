@@ -45,18 +45,27 @@ UI_URL="http://localhost:$UI_PORT"
 # works everywhere without asking. `make reset` wipes it with the rest of .data.
 WORK_DIR="${ORK_ORKER_WORKDIR:-$REPO/.data/work}"
 
-# IDENTITY=1 makes the stack authenticate (CONTRIBUTING.md, "The development
-# stack"): the engine in enforce, a development issuer `dev` whose key pair
-# lives under .data/identity, and two tokens test/tools/devtoken signs afresh
-# at every `make up`, each living thirty days: dev-admin, which auth.admins
-# lists and orkctl presents through ORK_TOKEN_FILE, and dev-orker, the
-# Orker's own, bound to the orker role at main by auth.orkers. Without it the
-# stack is asserted, exactly as before.
-IDENTITY="${IDENTITY:-}"
+# The stack authenticates by default (CONTRIBUTING.md, "The development
+# stack"), as a deployment does: the engine in enforce; Dex, where people sign
+# in (deploy/dex/config.yaml's users); a development issuer `dev` whose key
+# pair lives under .data/identity; and two tokens test/tools/devtoken signs
+# afresh at every `make up`, each living thirty days: dev-admin, which
+# auth.admins lists and orkctl presents through ORK_TOKEN_FILE, and
+# dev-orker, the Orker's own, bound to the orker role at main by
+# auth.orkers. IDENTITY=0 runs it asserted instead: no Dex, nothing verified.
+IDENTITY="${IDENTITY:-1}"
+case "$IDENTITY" in
+0) IDENTITY="" ;;
+1) ;;
+*) echo "IDENTITY is 1 (the default: the stack authenticates) or 0 (asserted), not \"$IDENTITY\"" >&2; exit 2 ;;
+esac
 IDENTITY_DIR="$REPO/.data/identity"
 DEV_ORKER_ID="dev-orker"
-# OIDC_ADDR is where oidctest, the development identity provider, listens.
+# OIDC_ADDR is where Dex, the development identity provider, is published
+# (test/tools/dexrun, deploy/dex/config.yaml; its issuer is
+# https://$OIDC_ADDR/dex).
 OIDC_ADDR="${OIDC_ADDR:-127.0.0.1:5556}"
+DEX_DIR="$IDENTITY_DIR/dex"
 
 # The image the mount probe uses. A small image most machines already hold, so
 # the probe usually pulls nothing.
@@ -437,31 +446,33 @@ write_run_config() {
 			echo "      max_lifetime: 720h"
 			echo "      orker_id_claim: orker_id"
 			echo "      jwks_file: $IDENTITY_DIR/dev-issuer.jwks.json"
-			# People sign in to the UI and orkctl at oidctest (the
-			# development identity provider, test/tools/oidctest).
+			# People sign in to the UI and orkctl at Dex (the development
+			# identity provider, deploy/dex/config.yaml's users).
 			echo "    people:"
-			echo "      issuer: https://$OIDC_ADDR"
+			echo "      issuer: https://$OIDC_ADDR/dex"
 			echo "      kind: user"
 			echo "      audiences:"
 			echo "        - orkstack-web"
 			echo "        - orkctl"
 			echo "      algorithms:"
-			echo "        - ES256"
+			echo "        - RS256"
 			echo "      username_claim: email"
 			echo "      require_verified_email: true"
 			echo "      groups_claim: groups"
 			echo "      max_lifetime: 2h"
-			echo "      ca_file: $IDENTITY_DIR/oidc/ca.pem"
+			echo "      ca_file: $DEX_DIR/tls/ca.pem"
 			echo "      login:"
 			echo "        client_id: orkstack-web"
 			echo "        client_secret:"
-			echo "          source: file:$IDENTITY_DIR/oidc/web-client.secret"
+			echo "          source: file:$DEX_DIR/web-client.secret"
 			echo "        cli_client_id: orkctl"
 			echo "        device_flow: true"
 			echo "        scopes:"
 			echo "          - openid"
 			echo "          - email"
 			echo "          - groups"
+			# Dex issues a refresh token only when the login asks for it.
+			echo "          - offline_access"
 			echo "  public_url: $UI_URL"
 			echo "  signin:"
 			echo "    key_files:"
@@ -574,8 +585,8 @@ cmd_up() {
 		"$UI_URL/ws/runs/ork-probe-nonexistent?from_sequence=0" || true)"
 	case "$ws_probe" in
 	404) say "  websocket ready (through the dev server, origin $UI_URL accepted)" ;;
-	401) [ -n "$IDENTITY" ] || die "the engine asked the websocket probe for a credential, and IDENTITY is not set"
-		say "  websocket reaches the engine, which asks for a credential (IDENTITY=1; the UI signs in once sign-in lands)" ;;
+	401) [ -n "$IDENTITY" ] || die "the engine asked the websocket probe for a credential, and IDENTITY=0 runs it asserted"
+		say "  websocket reaches the engine, which asks for a credential (the UI signs in first)" ;;
 	403) die "the engine refuses the websockets the dev server proxies from $UI_URL: the proxy must pass the browser's Host through (ui/vite.config.ts); the UI would never go live" ;;
 	*) die "unexpected websocket probe response through the dev server: $ws_probe" ;;
 	esac
@@ -592,8 +603,9 @@ cmd_up() {
 		say "  The engine enforces. Present the development admin's token to orkctl:"
 		say "    export ORK_TOKEN_FILE=$IDENTITY_DIR/admin.token"
 		say "  Both tokens live thirty days; make up signs them afresh."
-		say "  Or sign in as ${DEV_USER_EMAIL:-dev@example.test} (an admin) at $UI_URL, and in a terminal with"
-		say "    orkctl --server $ENGINE_URL login --issuer people --issuer-ca-file $IDENTITY_DIR/oidc/ca.pem"
+		say "  Or sign in at $UI_URL as dev@example.test, password \"password\" (an admin; deploy/dex/config.yaml"
+		say "  lists the other users), and in a terminal with"
+		say "    orkctl --server $ENGINE_URL login --issuer people --issuer-ca-file $DEX_DIR/tls/ca.pem"
 	fi
 	say "  stop           make down"
 }
@@ -603,7 +615,7 @@ cmd_up() {
 # admin's and the Orker's tokens afresh, and exports the admin's for the
 # orkctl calls this script makes.
 setup_identity() {
-	say "== identity (IDENTITY=1) =="
+	say "== identity (IDENTITY=0 turns it off) =="
 	(cd "$REPO" && go build -o "$REPO/bin/devtoken" ./test/tools/devtoken)
 	"$REPO/bin/devtoken" init -dir "$IDENTITY_DIR"
 	# The sign-in key: 32 random bytes, made once.
@@ -611,11 +623,7 @@ setup_identity() {
 	if [ ! -s "$IDENTITY_DIR/signin.key" ]; then
 		(umask 077 && head -c 32 /dev/urandom >"$IDENTITY_DIR/signin.key")
 	fi
-	(cd "$REPO" && go build -o "$REPO/bin/oidctest" ./test/tools/oidctest)
-	start oidc "$REPO/bin/oidctest" -dir "$IDENTITY_DIR/oidc" -addr "$OIDC_ADDR" \
-		-redirect "$UI_URL/v1/auth/callback/people" -email "${DEV_USER_EMAIL:-dev@example.test}" -groups dev-admins
-	wait_for "identity provider (oidctest)" 30 curl -fs -o /dev/null --cacert "$IDENTITY_DIR/oidc/ca.pem" \
-		"https://$OIDC_ADDR/.well-known/openid-configuration"
+	start_dex
 	"$REPO/bin/devtoken" sign -dir "$IDENTITY_DIR" -iss orkstack-dev -aud orkstack -sub dev-admin \
 		-ttl 720h -out "$IDENTITY_DIR/admin.token"
 	"$REPO/bin/devtoken" sign -dir "$IDENTITY_DIR" -iss orkstack-dev -aud orkstack -sub "$DEV_ORKER_ID" \
@@ -624,13 +632,53 @@ setup_identity() {
 	say "  issuer dev, tokens under $IDENTITY_DIR"
 }
 
+# DEX_CID records the container start_dex started: stop_dex stops that
+# container, and no other.
+DEX_CID="$RUN_DIR/dex.cid"
+
+# start_dex runs Dex, the development identity provider, from the image
+# deploy/dex-image.txt pins (pulled here when the daemon lacks it) with the
+# users and clients deploy/dex/config.yaml holds, through test/tools/dexrun,
+# which makes its certificate and the web client's secret under $DEX_DIR
+# once. A Dex this worktree started before is stopped first.
+start_dex() {
+	local image out id
+	(cd "$REPO" && go build -o "$REPO/bin/dexrun" ./test/tools/dexrun)
+	stop_dex
+	image="$(grep -v '^#' "$REPO/deploy/dex-image.txt" | grep -v '^$' | head -n1)"
+	[ -n "$image" ] || die "deploy/dex-image.txt names no image"
+	if ! docker image inspect "$image" >/dev/null 2>&1; then
+		say "  pulling $image"
+		docker pull -q "$image" >/dev/null || die "cannot pull $image"
+	fi
+	out="$(cd "$REPO" && "$REPO/bin/dexrun" start -dir "$DEX_DIR" -addr "$OIDC_ADDR" \
+		-redirect "$UI_URL/v1/auth/callback/people")" || die "Dex did not start (bin/dexrun start)"
+	id="$(printf '%s' "$out" | sed -n 's/.*"id":"\([0-9a-f]*\)".*/\1/p')"
+	[ -n "$id" ] || die "bin/dexrun printed no container id: $out"
+	mkdir -p "$RUN_DIR"
+	printf '%s\n' "$id" >"$DEX_CID"
+	say "  identity provider (Dex) at https://$OIDC_ADDR/dex"
+}
+
+# stop_dex stops the Dex start_dex recorded, by its container id; a container
+# that is already gone is not an error.
+stop_dex() {
+	local id
+	[ -f "$DEX_CID" ] || return 0
+	id="$(head -n1 "$DEX_CID")"
+	if [ -n "$id" ] && docker container inspect "$id" >/dev/null 2>&1; then
+		docker stop -t 5 "$id" >/dev/null || return 1
+	fi
+	rm -f "$DEX_CID"
+}
+
 cmd_down() {
 	local survived=""
 	say "== stopping engine, orker and ui =="
 	stop ui || survived="$survived ui"
 	stop ork || survived="$survived ork"
 	stop orker || survived="$survived orker"
-	stop oidc || survived="$survived oidc"
+	stop_dex || survived="$survived dex"
 	# A worker started by hand from this worktree's bin/ outlives any pidfile
 	# and steals activities from every later run. It is found by the identity
 	# of its executable, never by name or pattern (AGENTS.md §11.1), and only
@@ -659,7 +707,7 @@ cmd_down() {
 
 cmd_status() {
 	local any=0
-	for name in orker ork ui oidc; do
+	for name in orker ork ui; do
 		if alive "$name"; then
 			say "  $name    running (pid $(recorded "$name"))"
 			any=1
@@ -667,6 +715,9 @@ cmd_status() {
 			say "  $name    stopped"
 		fi
 	done
+	if [ -f "$DEX_CID" ] && docker container inspect "$(head -n1 "$DEX_CID")" >/dev/null 2>&1; then
+		say "  dex      running (container $(head -c 12 "$DEX_CID"))"
+	fi
 	say ""
 	"${COMPOSE[@]}" ps --format 'table {{.Service}}\t{{.Status}}' 2>/dev/null || true
 	[ "$any" -eq 1 ] && say "" && say "  UI (dev server) $UI_URL   engine $ENGINE_URL"

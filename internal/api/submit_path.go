@@ -545,6 +545,11 @@ func (s *Service) startRun(
 		if firstStartOf(sub.binding) == nil {
 			s.starts.record(runID, fingerprint)
 		}
+		if s.acceptedRuns != nil {
+			// The artifact GC's index canary: a run this replica started
+			// must show in the cluster's index (docs/STORAGE.md).
+			s.acceptedRuns.NoteAccepted(runID, time.Now())
+		}
 		return s.startedResponse(run, sub), nil
 	case startRefused:
 		return nil, s.recordFailedStart(ctx, run, err)

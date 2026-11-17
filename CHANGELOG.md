@@ -68,9 +68,12 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `ORK_TELEMETRY_METRIC_CARDINALITY_LIMIT` bounds each instrument's series and `ORK_TELEMETRY_CENSUS_REQUESTS_PER_MINUTE` an engine's census budget ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration)).
 - Each task attempt's record now holds the CPU time and peak memory its container used, or why they were not measured; `orker.usage_sample_interval` sets how often (`0s` turns it off) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration)).
 - Orkers log each task attempt's CPU and memory as `ork.record=usage` records on its run's telemetry sink, every `orker.usage_log_interval`, and report running totals as gauges ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#1-configuration)).
+- Retention cleanup can now delete retired runs' artifact bytes on S3 (`ORK_CLEANUP_ARTIFACT_GC`); it starts in `dry_run`, and `orkctl admin gc preview` shows what `delete` would do ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#the-artifact-gc)).
+- Reading an artifact the GC deleted answers `ARTIFACT_RECLAIMED`, and an evidence bundle records it as `artifact_reclaimed` ([REASONS.md](https://github.com/orkstack/orkstack/blob/main/docs/REASONS.md#reads-of-reclaimed-artifacts)).
 
 ### Changed
 
+- With the artifact GC in `dry_run` (the default) or `delete`, a retired run keeps its reference markers until the GC has decided; provenance still shows it released ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#the-artifact-gc)).
 - **BREAKING:** an Orkflow whose top-level key is a merge key (`<<`), an alias, or anchored or tagged is now refused; write each top-level key out as a plain name ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#top-level-fields)).
 - **BREAKING:** an idempotency key reused for a different Orkflow, version or input is now refused (`already_exists`), not answered with the first run; use one key for one submission ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - **BREAKING:** Orkers stop drain-first: on SIGTERM they take no new work and let running tasks finish for up to `orker.stop.grace` (24h by default, at most 31 days); raise your stop timeout to match ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#stop-timeouts)).

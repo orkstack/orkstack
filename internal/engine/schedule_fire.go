@@ -110,7 +110,9 @@ func ScheduleFireWorkflow(ctx workflow.Context, rec *orkstackv1.ScheduleRecord) 
 		// A cancelled fire stays open until its run has actually ended, so a
 		// buffered fire starts after the cancelled run is gone.
 		WaitForCancellation: true,
-		Memo:                RunStartMemo(prep.GetOrkflow(), plan),
+		// Stamped with workflow time, read from history: never later than
+		// the run's own start, and the same on every replay.
+		Memo: RunStartMemoAt(prep.GetOrkflow(), plan, workflow.Now(ctx)),
 	}
 	if attrs := RunStartSearchAttributes(prep.GetOrkflow(), plan, prep.GetNamespaceIndexed(), prep.GetOriginIndexed()); len(attrs) > 0 {
 		options.TypedSearchAttributes = temporal.NewSearchAttributes(attrs...)

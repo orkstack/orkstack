@@ -535,3 +535,31 @@ func TestGetArtifactProvenance_NeverAcceptsAURI(t *testing.T) {
 		t.Fatalf("a non-content-addressed reference reached the store (%d Stat calls)", stats.Load())
 	}
 }
+
+func TestGetArtifactProvenance_ARetiredRunWhoseMarkerTheGCKeepsIsReleased(t *testing.T) {
+	f := newProvenanceFixture(t)
+	report := f.put(t, "report.txt", "hello\n")
+	run := f.newRun("ork-1-1", "default", t0, provTask{id: "completed", outputs: []*orkstackv1.ArtifactRef{report}})
+	other := f.newRun("ork-1-2", "default", t0.Add(time.Minute), provTask{id: "completed", outputs: []*orkstackv1.ArtifactRef{report}})
+	live := f.newRun("ork-1-3", "default", t0.Add(2*time.Minute), provTask{id: "completed", outputs: []*orkstackv1.ArtifactRef{report}})
+	f.archive(t, run)
+	f.archive(t, other)
+	f.archive(t, live)
+	cleaned := time.Date(2026, 1, 9, 3, 4, 5, 0, time.UTC)
+	for _, id := range []string{run.GetId(), other.GetId()} {
+		// Retirement with the artifact GC on: the marker stays.
+		if _, err := f.local.RetireRunArtifacts(context.Background(), "default", id, true); err != nil {
+			t.Fatal(err)
+		}
+		must.OK(t, f.local.MarkArtifactsCleaned(context.Background(), id, cleaned))
+	}
+	res, err := f.ask("default", run.GetId(), "completed", "report.txt")
+	must.OKf(t, err, "GetArtifactProvenance")
+	if res.GetOwnReference() != orkstackv1.ReferenceState_REFERENCE_STATE_RELEASED || !res.GetReleasedAt().AsTime().Equal(cleaned) {
+		t.Fatalf("own_reference = %s at %v; want RELEASED at %v", res.GetOwnReference(), res.GetReleasedAt(), cleaned)
+	}
+	rows := refRows(res)
+	if len(res.GetReferences()) != 1 || res.GetReferences()[0].GetRunId() != live.GetId() {
+		t.Fatalf("references = %v; want only the unretired run", rows)
+	}
+}

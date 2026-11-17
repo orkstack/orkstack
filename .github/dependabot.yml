@@ -61,7 +61,7 @@ updates:
 
   # The development stack's and the quickstart's compose files pin images by
   # digest too. deploy/skopeo-image.txt, deploy/cosign-image.txt,
-  # deploy/grype-image.txt, the QEMU and BuildKit images in release.yml's
+  # deploy/grype-image.txt, deploy/dex-image.txt, the QEMU and BuildKit images in release.yml's
   # `with:`, proof.yml's BuildKit, and the BuildKit image in nightly.yml's
   # vuln-images job, both kept equal to release.yml's, are moved by hand.
   - package-ecosystem: docker-compose

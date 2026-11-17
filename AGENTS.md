@@ -112,6 +112,17 @@ Production infrastructure should consist primarily of Temporal, S3-compatible
 object storage, OrkStack services, and Orkers. Additional durable systems are
 not OrkStack requirements.
 
+Artifact bytes of a retired run are reclaimed by the retention cleanup, when it
+is enabled and its GC is set to delete, once the run that produced them and
+every run that claims them have been retired for longer than the GC grace, and
+every run created before the latest of those retirements, plus a margin, has
+finished and been archived (`docs/STORAGE.md`, "Reclaiming space"). The GC
+starts in dry-run, never takes a lock, never delays a retirement, keeps between
+passes only a process-local low-water mark, a cursor and the write-once GC
+records, decides that a run is retired only from its current archive body, its
+namespace's retention, its resume record, its empty commit prefix and the
+cluster, never from a sidecar alone, and on the local backend reclaims nothing.
+
 ### 2.3 OCI owns computation
 
 The OCI image is the computation ABI. An activity is not a Python, Go, or Java
@@ -781,7 +792,11 @@ original replica is gone. Aggregates (stats, failures, flakes, usage, cache
 hit rates) are derived on read from Temporal and the records already in object
 storage; there is no stored counter or index database. Audit, delivery and
 attempt records are immutable objects written once; they are records, never a
-read path for a decision.
+read path for a decision. The object-index markers and the cleanup and GC
+records are the one exception: the artifact GC reads them, with the run's
+archive body and the cluster's index of runs, to decide a delete, and nothing
+else decides from them. The run-objects list is not write-once: `PutRun`
+rewrites it, only as the union of what it held and the run's references.
 
 RunWorkflow assigns event sequence numbers. The bus honors supplied numbers and
 assigns one only when none is supplied. Temporal history, the in-process log,
@@ -1097,7 +1112,21 @@ includes:
   where the definition still passes by reference, overlays are written
   and the run carries on across at least two generations. The default
   ceilings themselves, and the overlay saving at a thousand tasks, are
-  proven only by the deferred tests (below).
+  proven only by the deferred tests (below);
+- a memo hit racing the GC, a child run staging its parent's object and a
+  parent holding its child's returned object while the other is retired, a
+  producer outliving its consumer's retention, two replicas reclaiming the
+  same object, an engine killed mid-reclaim, and dry-run deleting nothing: no
+  object a live or retained run references is ever deleted, and retirement is
+  never delayed;
+- a memo hit made by an Orker of any release, a hit racing its source's
+  retirement, a run continuing as new or resumed while the GC walks the open
+  runs, a run that finished without an archive, a forged or premature
+  sidecar, an execution missing from the cluster, an engine clock skewed
+  against the store, an engine restart or a Temporal outage between passes,
+  and a restored bucket: no object a live, retained or unarchived run
+  references is deleted, and none of them postpones reclamation beyond the
+  oldest open run.
 
 Scale and soak tests leave the per-merge proof only through
 `scripts/proof-nightly-tests.txt`, and Playwright specs through its spec-side
@@ -1816,7 +1845,13 @@ Unless an accepted contract explicitly changes one, these are non-negotiable:
 - no activity needs an OrkStack SDK or control-plane network access;
 - no Temporal workflow state exists exclusively inside an OrkStack process;
 - every terminal failure has machine-readable and human-readable reasons;
-- an engineer must never edit a database record to unstick an execution.
+- an engineer must never edit a database record to unstick an execution;
+- the artifact GC never deletes an object that a live run, a retained run or a
+  finished run not yet archived references (as recorded in its current archive
+  body, or in its history while it is unarchived), or that a commit still
+  present can hand to a memo hit, except for a commit created by a suspended
+  Orker inside the moment between the GC's last check and its delete
+  (`docs/STORAGE.md`, "Reclaiming space").
 
 The first has one stated exception (accepted 2026-11-04): a finished run with no
 archive is lost if object storage stays down until the cluster's delete time for

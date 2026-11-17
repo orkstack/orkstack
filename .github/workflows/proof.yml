@@ -501,6 +501,7 @@ jobs:
         timeout-minutes: 10
         with:
           cosign: "true"
+          dex: "true"
           cleanup-disk: "true"
       - name: fetch plan
         uses: ./.github/actions/proof-fetch
@@ -578,6 +579,7 @@ jobs:
         timeout-minutes: 10
         with:
           temporal-cli: "true"
+          dex: "true"
       - name: fetch plan
         uses: ./.github/actions/proof-fetch
         timeout-minutes: 10

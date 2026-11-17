@@ -162,7 +162,9 @@ func (s *TemporalStarter) StartRun(
 		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 	}
-	options.Memo = RunStartMemo(wf, plan)
+	// Stamped just before the start, so it is never later than the
+	// execution's own start time, which is the run's created_at.
+	options.Memo = RunStartMemoAt(wf, plan, time.Now())
 	if attrs := RunStartSearchAttributes(wf, plan, s.namespaceIndexed, s.originIndexed); len(attrs) > 0 {
 		options.TypedSearchAttributes = temporal.NewSearchAttributes(attrs...)
 	}
@@ -208,6 +210,18 @@ func RunStartMemo(wf *orkstackv1.Orkflow, plan RunPlan) map[string]any {
 			memo[MemoOriginRootRunID] = plan.Origin.RootRunID
 		}
 	}
+	return memo
+}
+
+// RunStartMemoAt is RunStartMemo with MemoStartStamp: an instant no later
+// than the start it is given to, so never later than the run's created_at
+// (its first execution's start time). Every start of a run carries it, so the artifact
+// GC dates a run from its record alone (docs/STORAGE.md, "Reclaiming
+// space"); a run started before this release has none, and is dated by
+// asking the cluster how many executions of it there are.
+func RunStartMemoAt(wf *orkstackv1.Orkflow, plan RunPlan, createdAt time.Time) map[string]any {
+	memo := RunStartMemo(wf, plan)
+	memo[MemoStartStamp] = createdAt.UTC().Format(time.RFC3339Nano)
 	return memo
 }
 

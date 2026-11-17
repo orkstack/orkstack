@@ -35,6 +35,15 @@ and §4.7. `ORK_REGISTRY_AUTH_FILE` grants no push and no execution
 (`internal/config/config.go`). `ORK_ORKER_REGISTRY_AUTH_FILE` is never mounted into
 a container (`internal/orker/security_profile.go`).
 
+With the artifact GC set to `delete`, `ork`'s object-storage credential must
+let it delete under `orkflows/` (`docs/STORAGE.md`, "Reclaiming space"); an
+Orker's must never let it delete under `metadata/` or `orkflows/`. The GC's
+preview (`SystemService.PreviewArtifactReclaim`, `orkctl admin gc preview`)
+needs `system.read` at the deployment. It names the run holding the
+low-water mark, with its namespace, whichever namespace the caller asked
+about, because the operator needs that id; it returns object samples only for
+the one namespace asked.
+
 ## The Orker is the security boundary
 
 An activity container receives no Temporal, object-storage or control-plane

@@ -69,6 +69,12 @@ const (
 	// the run's. The first switch upserts it, so it merges into generation
 	// 0's record too, and every switch copies the memo onward.
 	MemoCreatedAt = "orkflow_created_at"
+	// MemoStartStamp is an RFC 3339 nano UTC instant no later than the
+	// run's created_at, set by whatever started the run and copied onward
+	// by every switch. Only the artifact GC reads it, to date a run from its
+	// record alone; listings never do (their created_at is MemoCreatedAt or
+	// the record's start).
+	MemoStartStamp = "orkflow_start_stamp"
 	// DefaultRunPageSize bounds an unlimited ListRuns.
 	DefaultRunPageSize = 200
 

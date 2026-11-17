@@ -76,6 +76,11 @@ type statsIndex struct {
 	idRecords []indexedExecution
 	// pageLimit, when set, pages every listing at that many records.
 	pageLimit int
+	// startedOnly, when set, answers the artifact GC's started-since listing
+	// (a query ending in StartTime >= "…") (the artifact GC's
+	// started-since read): records started during a walk that the walk
+	// itself did not see.
+	startedOnly []indexedExecution
 }
 
 // indexedExecution is one visibility record and the namespace memo the cluster
@@ -127,6 +132,13 @@ func (s *statsIndex) ListWorkflow(
 	s.calls = append(s.calls, "list")
 	if s.rejectIN && strings.Contains(query, "WorkflowId IN") {
 		return nil, serviceerror.NewInvalidArgument("unsupported operator IN")
+	}
+	if s.startedOnly != nil && startedSinceQuery.MatchString(query) {
+		infos := make([]*workflowpb.WorkflowExecutionInfo, 0, len(s.startedOnly))
+		for _, rec := range s.startedOnly {
+			infos = append(infos, rec.info)
+		}
+		return &workflowservice.ListWorkflowExecutionsResponse{Executions: infos}, nil
 	}
 	matching, err := s.match(query)
 	if err != nil {
@@ -502,3 +514,6 @@ func TestExecutions_SamplesTheSameRunsTheArchiveCounts(t *testing.T) {
 			"window that created it", got)
 	}
 }
+
+// startedSinceQuery recognises the artifact GC's started-since listing.
+var startedSinceQuery = regexp.MustCompile(`^WorkflowType = "RunWorkflow" AND StartTime >= "[^"]*"$`)

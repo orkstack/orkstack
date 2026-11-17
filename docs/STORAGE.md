@@ -53,10 +53,11 @@ One bucket, one key family per kind of record. The builders in
 | `metadata/index/roots/{ns}/{root-run-id}/{parent-run-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the root index row (`RunRootIndexKey`), one for each run with a root of a composed chain recorded; read keys-only by a `ListRuns` filtered on `origin.root_run_id`. The parent is in the key because every run with a root is a `PARENT_RUN`, so the row answers `origin.kind` and `origin.id` too. | with the archive body, only for a run with a root recorded, before its run-index row | nothing |
 | `metadata/index/origins/{ns}/{kind}/{origin-id}/{orkflow}/{status}/{stamp}/{run-id}` | zero bytes; the origin index row (`RunOriginIndexKey`): `kind` is `submit`, `trigger`, `schedule`, `parent-run` or `run-again`, `origin-id` the originating object's id or `none`; read keys-only by an origin-filtered `ListRuns` | with the archive body, only for a run with a recorded origin, before its run-index row | nothing |
 | `metadata/index/recent/{ns}/{inverted-stamp}/{orkflow}/{status}/{run-id}` | zero bytes; the newest-first index row (`RunRecentIndexKey`): `inverted-stamp` is the `created_at` stamp with every digit `d` written `9-d`, so ascending key order is newest first; read keys-only by a `ListRuns` page, which walks it from the page cursor and stops once the page and its last instant's ties are read | with the archive body, before its run-index row | nothing |
-| `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`) | with the archive body | cleanup, when it releases the run's claims |
-| `metadata/index/run-objects/{run-id}.json` | the object ids the run references (`RunObjectListKey`) | with the archive body, before it | cleanup |
-| `metadata/cleanup/runs/{run-id}.json` | the sidecar recording that the run was retired and cleaned (`RunCleanupKey`) | once, by cleanup | nothing |
-| `metadata/cleanup/gc-clock` | a probe whose store-assigned modification time tells each engine its clock skew against the store (`ork.store.clock_skew`) | overwritten by every engine, once per cleanup interval | nothing: it decides nothing and is read only by the engine that just wrote it |
+| `metadata/index/objects/{sha256(object-id)}/{run-id}` | zero bytes; one marker per artifact object the run references (`RunObjectRefKey`) | with the archive body | cleanup at retirement when the artifact GC is `off`; otherwise the artifact GC, once it has decided every object the run names (see "Reclaiming space") |
+| `metadata/index/run-objects/{run-id}.json` | the object ids the run references (`RunObjectListKey`): the union of every list an archive write of the run wrote, never shrunk by a later write | with the archive body, before it | as its markers |
+| `metadata/cleanup/runs/{run-id}.json` | the sidecar recording that the run was retired and cleaned (`RunCleanupKey`); its store `LastModified` is when the run was retired, on the store's clock, which the artifact GC reads as the latest instant that stamp can stand for (a whole-second stamp as the end of its second) against a lower bound of the store's now, so a retirement never reads older than it is | once, by cleanup | nothing |
+| `metadata/cleanup/objects/{run-id}.json` | the GC record: the artifact GC finished with the run, its objects deleted or kept for good (`ReclaimRecordKey`), with `late_commit` and the ids of the objects kept for good | create-only, by the artifact GC in `delete` mode | nothing |
+| `metadata/cleanup/gc-clock` | a probe whose store-assigned modification time tells each engine its clock skew against the store (`ork.store.clock_skew`), and the artifact GC the store's now (`StoreClockKey`) | overwritten by every engine, once per cleanup interval, and by the artifact GC once a pass | nothing. It is read only by the engine that just wrote it, though the stamp it reads may be another engine's later write; the GC reads it as a lower bound of the store's now, a second below the stamp, so a later stamp or one rounded up never makes a retirement read older than it is |
 | `metadata/snapshots/{ns}/{run-id}/{sequence}.pb` | the run snapshot behind a projected event, kept out of Temporal history (`RunSnapshotKey`); a fan-out's item events between its stride snapshots carry none, and on a run that records the `lean-event-path` version (`docs/DEPLOY.md` §6) a plain or fan-out task's `TASK_STARTED` publishes with its `TASK_SCHEDULED`'s object, since nothing changes between them | by the workflow's snapshot local activity | cleanup |
 | `metadata/snapshots/{ns}/{run-id}/{sequence}.ovl` | a snapshot overlay (`RunSnapshotOverlayKey`): for an event of a run that writes overlays (`docs/DEPLOY.md` §1, `engine.snapshot_overlays`), a `RunSnapshotOverlay` holding the run's header and the task and item rows that differ from a full `{sequence}.pb` of the same run, which it names by URI and by the SHA-256 of the bytes it was written against; never another overlay. A reader verifies the base against that digest and replaces its rows by key — at most two reads; a base gone or changed is an error, never a mixed answer. A run's last event's snapshot is never an overlay | by the run's snapshot local activity, plain put, like a `.pb` | cleanup, with the run's snapshot prefix. **Never expire a `{sequence}.pb` with a lifecycle rule while its run lives**: overlays name it |
 | `metadata/snapshots/{ns}/{run-id}/continuations/{generation}-{checkpoint\|events\|snapshot\|definition}-{sha256}.pb.gz` | what a run writes when it carries on into a fresh history (`RunContinuationKey`; the generation is six or more digits): its saved state at the switch (`checkpoint`, gzip members of `RunCheckpointPart`), the gzipped full `Run` at the switch (`snapshot`), or the gzipped `RunEventSegment` holding the events of the history that closed (`events`); and, for a run whose planned definition is too large to travel with its start (`docs/DEPLOY.md` §1, `engine.definition_by_reference`), that definition (`definition`, always generation `000000`: gzip members of `Orkflow`, part 0 the definition with its tasks cleared, then parts of tasks only), which every generation of the run copies into its own history before it decides anything. Content-addressed by the SHA-256 of the stored bytes, and verified against it by every reader; a definition is found by its run id and the digest its plan records, never by a stored location | create-if-absent by the run's local activities at a switch; a `definition`, by the submitting engine immediately before each start that uses it (a reissued run id gets its own copy), or by a schedule fire's preparation as its last step. An object already at the key is accepted only when its bytes hash the same | cleanup, with the run's snapshot prefix. **Never expire it with a lifecycle rule**: a live run reads its segments for its whole life, and its archive is built from them. Three kinds of `definition` object belong to no run that started: one written by an engine that died before its start, one under a run id the cluster refused as taken, and one written by a fire preparation retried after its write; each is at most a quarter of `engine.continuation.bytes` and never read. The second lies under the prefix of the run that held the id, so when that run is of the same namespace its cleanup reclaims it; every other one is left for an operator's sweep, which finds it by a run id `orkctl run get` answers `NotFound` for (`docs/DEPLOY.md` §5) |
@@ -79,7 +80,7 @@ One bucket, one key family per kind of record. The builders in
 | `metadata/delivery-bodies/{delivery-id}/{sha256}.json` | the signed body of one webhook delivery still being sent, so every attempt, on whichever engine replica, sends the bytes that were signed (`DeliveryBodyKey`); read back only by that delivery's attempts, verified against its SHA-256 | create-only, by the engine when it queues the delivery | the delivery's own last step deletes it; a delivery stopped from outside leaves it to a bucket lifecycle rule |
 | `metadata/probes/commit-store/…/commit.json` | the probe proving conditional create works on this store | at every Orker boot | nothing |
 | `metadata/probes/conditional-answers/{id}/{missing\|present}` | the probe asking the store's other conditional answers (If-Match on a missing key, a conditional delete); `{id}` is fresh for each boot | at every Orker and every engine boot | the probe itself, before the boot goes on; a killed process can leave the two small objects to a bucket lifecycle rule. On a bucket with versioning enabled, a delete keeps the object as a noncurrent version behind a delete marker ([AWS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/DeletingObjectVersions.html)), so every boot leaves a noncurrent version and delete markers under this prefix; a lifecycle rule on it that expires noncurrent versions and expired delete markers reclaims them ([AWS](https://docs.aws.amazon.com/AmazonS3/latest/userguide/lifecycle-configuration-examples.html#lifecycle-config-conceptual-ex7)) |
-| `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`) | by the Orker, content-addressed | a bucket lifecycle rule, or `DeleteUnreferencedObjects` |
+| `orkflows/{orkflow}/{run-id}/{task-id}/{artifact}/{sha256}` | workload artifact bytes on the `s3` backend (`s3ObjectKey`) | by the Orker, content-addressed | the artifact GC in `delete` mode (see "Reclaiming space"), or a bucket lifecycle rule |
 | `manifests/{object-key}` | the artifact's exact logical name, beside its object | with the object | with the object |
 | `objects/n-{name}[/c-{…}]/{sha256}` | workload artifact bytes on the `local` backend (`objectKey`) | by the Orker, content-addressed | nothing automatic |
 
@@ -335,15 +336,17 @@ addressed by its run, task, kind and recorded name and resolved against the
 namespace-checked run — never by a caller-supplied URI or key — it answers:
 
 - **`bytes_present`** — a `Stat` of the recorded object, no bytes
-  transferred. `false` means a lifecycle rule, an operator, or
-  `DeleteUnreferencedObjects` removed the bytes while the references stand. A
-  store that cannot answer fails the call; it never reports `false`.
+  transferred. `false` means a lifecycle rule or an operator removed the bytes
+  while the references stand. A store that cannot answer fails the call; it
+  never reports `false`. Bytes the artifact GC deleted answer
+  `ARTIFACT_RECLAIMED` instead (see "Reclaiming space").
 - **`own_reference`** — the addressed run's marker: `HELD`; `RELEASED`, with
-  `released_at` from the cleanup sidecar's `temporal_deleted_at`; or `ABSENT`,
-  meaning no marker and no sidecar (not archived yet, or archived before the
-  index existed).
+  `released_at` from the cleanup sidecar's `temporal_deleted_at`, whenever the
+  run is retired, whether its marker was released at retirement or is kept
+  for the artifact GC; or `ABSENT`, meaning no marker and no sidecar (not
+  archived yet, or archived before the index existed).
 - **`references`** — every marker under the object's prefix whose run is in
-  the calling namespace, newest `created_at` first. Markers of other
+  the calling namespace and not retired, newest `created_at` first. Markers of other
   namespaces are dropped and not counted; a marker whose run body is missing
   is counted in `references_unreadable` and listed nowhere. More than
   `MaxObjectReferences` (1000) markers is `ResourceExhausted`, never a
@@ -366,8 +369,9 @@ index in key order, and for each archived run past its OWN namespace's run
 retention (falling back to the deployment maximum) it explicitly retires the
 execution, deletes the run's `metadata/logs/{run-id}/`,
 `metadata/attempts/{run-id}/`, `metadata/commits/{ns}/{run-id}/` and
-`metadata/snapshots/{ns}/{run-id}/`, releases its object markers, and writes
-the cleanup sidecar.
+`metadata/snapshots/{ns}/{run-id}/`, and writes the cleanup sidecar. With the
+artifact GC `off` it also releases the run's object markers and list; in
+`dry_run` and `delete` it keeps them, and the GC releases them (below).
 
 Cleanup pages in run-index key order, because it must visit every archived
 run once and order does not matter to it: the walk resumes after the last key
@@ -415,10 +419,97 @@ a run that exhausted it would have no archive body. The cost is still linear
 in a run's artifact count, so a very wide run can still approach that budget.
 
 `DeleteRunArtifacts` releases only the calling run's markers and list; it
-never deletes artifact bytes. `DeleteUnreferencedObjects` deletes an object
-only when its marker prefix is empty, and treats an object already gone as a
-no-op. Cleanup does not call it — that is a scan of the whole reference
-index, not a delete under one run's prefixes — and on `local` deleting by
-producing run would destroy another run's committed result, because objects
-there carry no run id. Artifact bytes are therefore reclaimed by a bucket
-lifecycle rule on `orkflows/` (or `objects/`).
+never deletes artifact bytes. Retirement with the GC on keeps them
+(`RetireRunArtifacts`), and provenance reports such a marker's run as
+`RELEASED`, because a retired run has no live reference.
+
+### The artifact GC
+
+`internal/archive/reclaim.go` deletes the artifact bytes of retired runs on
+the `s3` backend. It runs inside `ork` beside retention cleanup, and only when
+cleanup runs (`ORK_CLEANUP_ENABLED=true`). `ORK_CLEANUP_ARTIFACT_GC` chooses
+its mode: `off`, `dry_run` (the default) or `delete`. On the `local` backend
+it reclaims nothing, because a local object key names no producing run; there
+a bucket lifecycle rule is still the only reclaimer, as before.
+
+An object O's producer P is the run segment of O's key. O is deleted only
+when all of these hold, decided object by object:
+
+1. **P is verified retired** more than the grace G ago
+   (`ORK_CLEANUP_ARTIFACT_GC_GRACE`, 1 h, at least 10 m), measured on the
+   store's clock from P's sidecar. *Verified retired* is six checks, never the
+   sidecar alone: the sidecar exists; P's current archive body exists, names
+   P, is terminal and records a finish; P's namespace's current run retention
+   has passed since that finish; the cluster holds no execution of P; no
+   resume record of P is newer than that body; and P's commit prefix
+   `metadata/commits/{ns}/{P}/` lists empty. Anything it cannot read keeps O.
+2. **Every other run holding a marker on O**, listed after the pass's walk of
+   the cluster's open runs, is verified retired more than G ago.
+3. **The low-water mark admits it**: L(O) + G is before LW, where L(O) is the
+   latest retirement among P and those runs, and LW is the earliest creation
+   of any run that is open, or closed without an archive body.
+
+The third rule is what makes a memo hit safe without the Orker telling
+anyone: a run can take O from P only while P's commit exists, so it was
+created before P retired. While it is open or unarchived it holds LW at or
+below its creation; once archived it has a marker and must retire like any
+claimant. So every run that could reference O has either a marker the GC
+lists, or holds LW low enough to keep O.
+
+LW is computed once per pass. It needs this replica's latest archive-sweep
+pass to have completed clean (else `lowwater_unknown{sweep_unclean}`, or
+`{no_sweep}` before the first); a walk of every live chain, each dated by its
+original creation (the memo `orkflow_created_at` or its first execution's
+start; a later execution without one fails the pass closed, `no_creation`,
+and so does a chain still caught between its records, `mid_switch`); and a
+listing of the runs closed since the sweep's start less the cleanup interval
+and G, checking for an archive body, in ascending creation, at most a batch of
+them. LW is the minimum of this pass's mark and the previous pass's, so a run
+the walk skipped while its record moved is still counted; the first pass after
+an engine starts has no previous mark, deletes nothing and only reports
+(`warming`).
+
+A run whose objects the GC has finished with gets a create-only GC record
+(`metadata/cleanup/objects/{run-id}.json`, in `delete` mode only), and its
+markers and list are deleted. Before each delete the GC lists O's markers
+again and P's commit prefix again: a commit that appeared after P was retired
+— an Orker suspended past the run's retention that then committed — keeps
+everything P produced, for good (`late_commit`), and nothing ever re-empties
+it. The one residue: such a commit created in the moment between that last
+listing and the delete, by an Orker that thawed from a suspension longer than
+the run's retention exactly then.
+
+The GC never takes a lock, never delays a retirement, and keeps between passes
+only a process-local mark, a cursor and the set of runs with a GC record. A
+pass is held, and deletes nothing while still reporting what it would, when
+the engines disagree on the `composed-artifacts` capability, when the mark is
+unknown, when this replica's clock is more than G/4 from the store's
+(`clock_skew`), when retention cleanup holds missing executions
+(`executions_missing`), or on the `local` backend.
+
+`orkctl admin gc preview` asks any replica what a pass would do now, for at
+most 1000 runs, within 30 s, writing nothing (docs/CLI.md). Run it before
+switching `dry_run` to `delete`.
+
+**Reclaim lag.** Nothing produced before the oldest open or unarchived run was
+created is reclaimed while that run lives: a 30-day await holds back 30 days.
+It is a cost, never a loss, and the preview names the run holding the mark.
+
+**Preconditions of `delete`.** Every engine's clock and the cluster's within
+G/4 of the store's; strong list-after-write on the store (true on AWS S3 and
+on single-filer SeaweedFS); the cluster's visibility index lagging less than
+G; and store permissions that let `ork` delete under `orkflows/`. On a bucket
+with versioning, a delete adds a delete marker: reclaiming the bytes needs a
+`NoncurrentVersionExpiration` rule. An Object Lock refusal is counted
+`failed{store_refused}` and the object stays.
+
+**Reads of reclaimed objects.** An artifact download, a provenance read and
+`orkctl task run --from-run` that find an object missing whose producer has a
+GC record not listing it as kept answer `ARTIFACT_RECLAIMED`
+(`FailedPrecondition`, docs/REASONS.md); a run evidence export records the
+member `reclaimed` with the reason `artifact_reclaimed`. A run diff reads no
+artifact bytes. An object missing for any other reason answers as before.
+
+Archive bodies, memos, audit records, deliveries, orphan definitions,
+multipart uploads, run evidence and `_unattributed` objects are out of the
+GC's scope: a bucket lifecycle rule remains their only retention.

@@ -47,6 +47,10 @@ type blobs interface {
 	// LastModified (whole seconds), a local file's modification time. A
 	// missing object is errBlobNotFound.
 	modified(ctx context.Context, key string) (time.Time, error)
+	// stat reports an object's size and the store's own last-modified time
+	// without reading it: the store's clock, never this process's. A missing
+	// object is errBlobNotFound.
+	stat(ctx context.Context, key string) (blobObject, error)
 
 	// put writes body at key, replacing whatever is there; a reader sees the
 	// old object or the new one, never a partial write.

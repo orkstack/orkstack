@@ -33,7 +33,9 @@ is created beside the one a store already holds.
 Start a stack first, from the repository's root: the quickstart,
 `docker compose up --build -d --wait` with `orkctl` from its image
 ([Getting started](../docs/GETTING_STARTED.md)), or `make up`
-([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack"). Then:
+([CONTRIBUTING.md](../CONTRIBUTING.md), "The local development stack"), whose
+engine authenticates: present its development token first,
+`export ORK_TOKEN_FILE=.data/identity/admin.token`. Then:
 
 ```sh
 orkctl orkflow create examples/decide-and-route.ork.yaml  # store one example

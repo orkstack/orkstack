@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -48,6 +49,20 @@ type Sweeper struct {
 	// a test shortens them.
 	questionBudget time.Duration
 	runBudget      time.Duration
+
+	// mu guards last: this replica's latest completed pass, which the
+	// artifact GC's low-water rule reads (SweepRecord).
+	mu      sync.Mutex
+	last    SweepPass
+	hasLast bool
+}
+
+// LastCompletedSweep reports this replica's latest pass that ran to its end.
+// A pass the engine's shutdown cut short is not one.
+func (s *Sweeper) LastCompletedSweep() (SweepPass, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.last, s.hasLast
 }
 
 // FinishedRunLister is the cluster's index of finished runs
@@ -210,6 +225,7 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 		storeErr error
 		atRisk   []atRiskRun
 	)
+	started := s.now()
 	note := func(err error) {
 		if firstErr == nil {
 			firstErr = err
@@ -268,6 +284,16 @@ func (s *Sweeper) RunOnce(ctx context.Context) (SweepResult, error) {
 		note(fmt.Errorf("archive sweep: list finished runs: %w", walkErr))
 	}
 	s.reportRisk(&result, atRisk, retention)
+	if ctx.Err() == nil {
+		s.mu.Lock()
+		s.last = SweepPass{
+			Started: started, Finished: s.now(),
+			Clean: firstErr == nil && !result.ListFailed && !result.StoreFailed &&
+				result.Unconfirmed == 0 && !result.IntervalTooLong,
+		}
+		s.hasLast = true
+		s.mu.Unlock()
+	}
 	if s.observer != nil {
 		s.observer.ObserveSweep(ctx, result)
 	}

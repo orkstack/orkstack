@@ -478,6 +478,11 @@ func (s *runState) startChild(ctx, runCtx workflow.Context, id string) (workflow
 
 	// 5. Start it, and wait for the start to be confirmed.
 	options := childWorkflowOptions(workflow.GetInfo(ctx).TaskQueueName, c.plan, c.wf, childPlan)
+	// The start stamp, in workflow time read from history: never later than
+	// the child's own start, and the same on every replay. The memo is not
+	// part of what a replay compares, so a recorded child start replays as
+	// it was (docs/STORAGE.md, "Reclaiming space").
+	options.Memo = RunStartMemoAt(c.wf, childPlan, workflow.Now(ctx))
 	if limit := s.historyLimit(); limit != nil {
 		s.noteCommand(ctx, 1, limit.Reserve.ChildStartBytes)
 		s.chargeTaskDispatch()

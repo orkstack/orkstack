@@ -229,6 +229,21 @@ func loadConfig() config {
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
 	}
 	cfg.cleanup.TemporalNamespace = cfg.temporalNamespace
+	// The artifact GC's settings are refused at boot rather than read as a
+	// safe default: an operator who wrote `delete` wrong should hear so.
+	if _, err := archivecleanup.ParseReclaimMode(os.Getenv("ORK_CLEANUP_ARTIFACT_GC")); err != nil {
+		cfg.limitsErr = errors.Join(cfg.limitsErr, fmt.Errorf("ORK_CLEANUP_ARTIFACT_GC: %w", err))
+	}
+	if raw := os.Getenv("ORK_CLEANUP_ARTIFACT_GC_BATCH"); raw != "" {
+		if n, err := strconv.Atoi(raw); err != nil || n <= 0 {
+			cfg.limitsErr = errors.Join(cfg.limitsErr, fmt.Errorf("ORK_CLEANUP_ARTIFACT_GC_BATCH %q: must be a positive number of objects", raw))
+		}
+	}
+	if raw := os.Getenv("ORK_CLEANUP_ARTIFACT_GC_GRACE"); raw != "" {
+		if grace, err := time.ParseDuration(raw); err != nil || grace < archivecleanup.MinReclaimGrace {
+			cfg.limitsErr = errors.Join(cfg.limitsErr, fmt.Errorf("ORK_CLEANUP_ARTIFACT_GC_GRACE %q: must be a duration of at least %s", raw, archivecleanup.MinReclaimGrace))
+		}
+	}
 	cfg.activityCatalog, cfg.catalogErr = dsl.ParseCatalog([]byte(env("ORK_ACTIVITY_CATALOG", "")))
 	cfg.webhookNetworks, cfg.webhookNetworksErr = webhooks.ParseNetworks(strings.FieldsFunc(
 		env("ORK_WEBHOOK_ALLOWED_NETWORKS", ""), func(r rune) bool { return r == ',' || r == ' ' }))
@@ -1620,8 +1635,28 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if wireEventObserver(tcfg) {
 		archiveSweepObserver = sweepObserver{o: observer, now: time.Now}
 	}
-	go archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, engine.NewHistoryArchiver(reader, archive),
-		reader, archiveSweepObserver, logger).Run(ctx)
+	sweeper := archivecleanup.NewSweeper(cfg.cleanup, reader, archiveStore, engine.NewHistoryArchiver(reader, archive),
+		reader, archiveSweepObserver, logger)
+	go sweeper.Run(ctx)
+	// The artifact GC runs beside retention cleanup, only when it does, and
+	// never in the cleanup worker's own loop: it never delays a retirement
+	// (docs/STORAGE.md, "Reclaiming space").
+	var reclaimer *archivecleanup.Reclaimer
+	acceptedRuns := &archivecleanup.AcceptedRunTracker{}
+	reclaimStore, reclaimable := archiveStore.(archivecleanup.ReclaimStore)
+	// The mode in force: the GC runs only beside retention cleanup, on a
+	// store it can reclaim from. ork.gc.mode reports it from boot, off
+	// included, so an operator can tell a GC that is off from one that is
+	// silent (docs/DEPLOY.md, "The artifact GC's metrics").
+	gcMode := gcModeInForce(cfg.cleanup.Enabled, reclaimable, cfg.cleanup.ArtifactGC)
+	var gcObserver *telemetry.GCObserver
+	if wireEventObserver(tcfg) {
+		// A namespace's series go where its telemetry policy says, and are
+		// dropped, never sent to the default sink, while it is unknown.
+		gcObserver = telemetry.NewGCObserver(sinks.Default(), func(ctx context.Context, namespace string) (*telemetry.Providers, bool) {
+			return policyCache.For(ctx, namespace, telemetry.SignalMetrics)
+		}, gcMode, cfg.cleanup.ArtifactGCGrace, logger)
+	}
 	if cfg.cleanup.Enabled {
 		// A run whose execution is missing is dated from its archive body
 		// before cleanup retires it (docs/DEPLOY.md, "Retention cleanup").
@@ -1634,7 +1669,28 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		logger.Info("artifact cleanup worker started",
 			"interval", cfg.cleanup.Interval,
 			"retention_buffer", cfg.cleanup.RetentionBuffer,
-			"batch_size", cfg.cleanup.BatchSize)
+			"batch_size", cfg.cleanup.BatchSize,
+			"artifact_gc", cfg.cleanup.ArtifactGC)
+		if gcMode != archivecleanup.ReclaimOff {
+			reclaimer = archivecleanup.NewReclaimer(archivecleanup.ReclaimConfig{
+				Mode: gcMode, Grace: cfg.cleanup.ArtifactGCGrace,
+				Batch: cfg.cleanup.ArtifactGCBatch, Interval: cfg.cleanup.Interval,
+			}, reclaimStore, archive, reader, sweeper, namespaces, retention, cfg.temporalNamespace, logger).
+				WithMissingHold(cleaner).
+				// No run can be resumed in this release; E85 replaces this
+				// with its resume records before any resume ships.
+				WithResumes(archivecleanup.NoResumes{}).
+				WithAcceptedRuns(acceptedRuns)
+			if gcObserver != nil {
+				reclaimer.WithObserver(gcObserver)
+			}
+			go reclaimer.Run(ctx)
+			// The composed-artifacts hold comes with E87, where no composed
+			// reference exists before it; say so rather than be silent.
+			logger.Info("artifact gc started", "mode", reclaimer.Mode(), "grace", reclaimer.Grace(),
+				"batch", cfg.cleanup.ArtifactGCBatch, "composed_artifacts_hold", "inactive: no engine passes artifacts between runs",
+				"resume_check", "no run can be resumed in this release")
+		}
 	}
 	// ork.store.clock_skew: this engine's clock against the store's, probed
 	// once per cleanup interval whether or not cleanup is enabled
@@ -1761,6 +1817,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// and each fire starts on the engine's own run channel.
 	scheduler := engine.NewTemporalScheduler(temporalClient, q.run).WithLogger(logger)
 
+	// A nil *Reclaimer must reach the API as no reclaimer at all.
+	var artifactReclaim api.ArtifactReclaimer
+	if reclaimer != nil {
+		artifactReclaim = reclaimer
+	}
 	svc := api.NewService(api.Config{
 		Orkflows:   orkflows,
 		Namespaces: namespaces,
@@ -1814,6 +1875,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// value has no effect yet, and GetRetentionPolicy says so.
 		Retention:                     retention,
 		RetentionEnforced:             cfg.cleanup.Enabled,
+		ArtifactReclaim:               artifactReclaim,
+		AcceptedRuns:                  acceptedRuns,
 		Artifacts:                     archiveConfig,
 		Limits:                        cfg.contractLimits,
 		EachMaxItems:                  cfg.eachMaxItems,
@@ -1954,4 +2017,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 	return <-serverErr
+}
+
+// gcModeInForce is the artifact GC's mode as it runs: off unless retention
+// cleanup is enabled on a store the GC can reclaim from.
+func gcModeInForce(cleanupEnabled, reclaimable bool, configured archivecleanup.ReclaimMode) archivecleanup.ReclaimMode {
+	if !cleanupEnabled || !reclaimable {
+		return archivecleanup.ReclaimOff
+	}
+	return configured
 }

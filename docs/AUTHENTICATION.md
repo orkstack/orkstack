@@ -135,7 +135,12 @@ each use), `cli_client_id` for `orkctl login`, `scopes` (with `openid`) and
 `device_flow`. Such an issuer must be `https`; the engine reads its
 discovery document for its endpoints. Register
 `<auth.public_url>/v1/auth/callback/<issuer>` as the web client's redirect
-URI.
+URI. Many providers (Dex, Keycloak) issue a refresh token only when the
+login asks for `offline_access`: add it to `scopes`, or a sign-in is renewed
+by signing in again once it is past `auth.signin.revalidate_interval`.
+Sign-in is proven against Dex, a real provider
+(`TestIntegration_SigninWithDex`): Dex has neither a revocation nor an
+end-session endpoint, so signing out ends the OrkStack sign-in alone.
 
 1. The page reads `GetSystemInfo.auth_mode`, then `AuthService.GetAuthConfig`,
    and sends a visitor with no sign-in to `/signin`.

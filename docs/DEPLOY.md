@@ -711,6 +711,9 @@ then the variable it becomes.
 | `engine.cleanup.interval` | `ORK_CLEANUP_INTERVAL` | `1h` | `ork` | interval between cleanup scans; the first scan runs when the worker starts. Also the archive sweep's interval, and how long a run has been closed before the sweep looks at it, with cleanup on or off ("The archive sweep", below) |
 | `engine.cleanup.retention_buffer` | `ORK_CLEANUP_RETENTION_BUFFER` | `24h` | `ork` | the enforcement margin: how far past the deployment maximum run retention the underlying (never user-facing) backstop TTL sits, so it can never be what actually retires a run. The maximum plus this margin is also how long a run with no archive survives an object-storage outage ("The archive sweep", below) |
 | `engine.cleanup.batch_size` | `ORK_CLEANUP_BATCH_SIZE` | `100` | `ork` | maximum eligible runs checked in one cleanup iteration; a full iteration starts the next one at once (a backlog drains without waiting for the interval). Also the archive sweep's listing page size |
+| `engine.cleanup.artifact_gc` | `ORK_CLEANUP_ARTIFACT_GC` | `dry_run` | `ork` | the artifact GC, which runs only with cleanup: `off` (retirement releases a run's markers, as before), `dry_run` (decides and reports, deletes nothing; retirement keeps a run's markers and run-objects list for the GC) or `delete`; any other value refuses the boot (`docs/STORAGE.md`, "Reclaiming space") |
+| `engine.cleanup.artifact_gc_grace` | `ORK_CLEANUP_ARTIFACT_GC_GRACE` | `1h` | `ork` | how long a retirement stands, on the store's clock, before the GC counts it, and the margin over its low-water mark; at least `10m`, else the boot is refused |
+| `engine.cleanup.artifact_gc_batch` | `ORK_CLEANUP_ARTIFACT_GC_BATCH` | `1000` | `ork` | how many objects one GC pass examines |
 | `storage.dir` | `ORK_ARTIFACT_DIR` | `./.data/artifacts` | both | filesystem root for the `local` backend; ignored under `s3` |
 | `storage.s3.endpoint` | `ORK_S3_ENDPOINT` | `http://localhost:9000` | both | S3-compatible endpoint. `ork` reads orkflow definitions from S3 whatever `ORK_ARTIFACT_BACKEND` says, so this one is never optional for the engine |
 | `storage.s3.region` | `ORK_S3_REGION` | `us-east-1` | both | — |
@@ -1679,10 +1682,61 @@ For each candidate it asks the cluster whether the execution still exists and
 when it CLOSED; one not yet past its OWN namespace's run retention (else the
 deployment maximum) is left alone. One past it is retired explicitly — the
 cleaner deletes the execution itself rather than waiting for a TTL — and its
-run-scoped storage is removed: logs, attempt records, snapshots, the commit
-records, and its object-reference markers (`docs/STORAGE.md`, "Reclaiming
-space"). The archive body, its index rows and the cleanup sidecar are
-permanent, so a retired run stays listable and readable.
+run-scoped storage is removed: logs, attempt records, snapshots and the commit
+records. Its object-reference markers are released too when the artifact GC is
+`off`, and kept for the GC otherwise (`docs/STORAGE.md`, "Reclaiming space").
+The archive body, its index rows and the cleanup sidecar are permanent, so a
+retired run stays listable and readable.
+
+**The artifact GC** deletes the artifact bytes of retired runs on the `s3`
+backend, beside the cleanup worker and only when it runs.
+`ORK_CLEANUP_ARTIFACT_GC` is `dry_run` by default: every pass decides and
+reports what it would delete, and deletes nothing. While it is `dry_run` or
+`delete`, retirement keeps each run's reference markers (one zero-byte object
+per artifact object the run referenced) and its run-objects list, which
+retirement released before; only a `delete` pass releases them, once it has
+decided the run. A deployment left in `dry_run` therefore keeps them for every
+run it retires, beside the artifact bytes they name, which nothing deletes in
+`dry_run` either. Switching from `dry_run` to `off` stops keeping new ones,
+and leaves those already kept until a `delete` pass decides their runs. Run
+`orkctl admin gc preview` and read its counts and the run holding the
+low-water mark before you set `delete`. `ORK_CLEANUP_ARTIFACT_GC_GRACE` (1 h,
+at least 10 m) is how long a retirement stands before it counts, and the
+margin over the mark; `ORK_CLEANUP_ARTIFACT_GC_BATCH` (1000) is how many
+objects one pass examines, within half of `ORK_CLEANUP_INTERVAL`. It reclaims at
+most batch × passes a day (24,000 objects a day at the defaults), whatever the
+number of replicas: replicas duplicate the walk and add nothing. Each pass costs
+⌈open runs / 1000⌉ index listings, one listing of the runs closed since the last
+sweep, one of the runs started in the last hour, at most a batch of `HEAD`s, the
+clock probe's `PUT` and `HEAD`, and, per object examined, a few reads of the
+store and one lookup in the cluster per run it has to verify. Every run started
+by this release carries its start stamp in its memo, so the walk dates it from
+its record alone. A run started before the upgrade carries none until it carries
+on into a fresh history: the walk lists every record of such runs from the
+cluster, 100 run ids a listing (one a run where the cluster has no `IN`), and
+dates one by its start only when the cluster holds exactly one execution of it.
+That costs up to about ten times the walk's own listings while such runs are
+open, and never more than 20,000 listings a pass (the walk reads at most
+2,000,000 records). A listing that fails, or reaches its page bound, holds the
+pass (`lowwater_unknown{walk_failed}`), never truncates it. One residue remains, for runs started before the upgrade only: an operator's
+manual Temporal reset of such a run, whose earlier executions have since left
+the cluster's index, is dated by the reset; a run started by this release
+carries its stamp through a reset.
+
+Before `delete`, check its preconditions (`docs/STORAGE.md`, "Reclaiming
+space"):
+
+- every engine's clock and the cluster's are within a quarter of the grace of
+  the store's; a replica past that holds its deletes (`clock_skew`);
+- the store lists what was just written (AWS S3 and single-filer SeaweedFS do);
+- the store lets `ork` delete under `orkflows/`, and the Orkers' credential is
+  denied `metadata/` and `orkflows/` deletes;
+- a versioned bucket has a `NoncurrentVersionExpiration` rule.
+
+Nothing produced before the oldest open or unarchived run was created is
+reclaimed while that run lives, so reclaim lags behind the oldest open run.
+After a bucket restore, set `ORK_CLEANUP_ARTIFACT_GC=off` until the sweep has
+re-archived every run the restore lost.
 
 **An execution the cluster no longer holds** is retired only once its own
 namespace's run retention, counted from the finish its archive body records,
@@ -5687,6 +5741,33 @@ needs a run's order sorts its records by `sequence`.
 `ORK_TELEMETRY_HIGH_CARDINALITY=true` additionally puts `ork.run_id` and
 `ork.task_id` (and, on the engine's, `ork.orkflow.name`/`.version`) on the ones
 above that know them — see "High-cardinality labels".
+
+**The artifact GC's metrics** (§1, "The artifact GC") are recorded once per
+pass, never by workflow code, and recording them never delays or fails a pass.
+Per-namespace series follow the namespace's telemetry policy; the
+`ork.deployment.gc.*` twins carry no namespace and go to the default sink.
+`ork.gc.mode` and `ork.gc.grace` are reported from boot, and
+`ork.gc.last_pass` and `ork.gc.last_progress` from the engine's first pass.
+Every other gauge has no series until a pass gets far enough to see what it
+reports, so a GC that has never got that far reads as unknown, never as a
+healthy 0. A failed pass moves only `ork.gc.last_pass`, and
+`ork.gc.last_progress` when it finished a run or deleted an object before it
+failed.
+
+| Metric | Labels | Emitted by |
+|---|---|---|
+| `ork.gc.objects`, `ork.gc.bytes` | `ork.namespace`, `ork.gc.object_class`, `outcome`, `ork.gc.reason` (`.bytes` has no reason) | engine in `delete` mode, each pass: objects `deleted` (`unreferenced`), `already_gone`, `kept` (with why) or `failed` (with why). Twins: `ork.deployment.gc.objects`, `ork.deployment.gc.bytes` |
+| `ork.gc.would_delete.objects`, `ork.gc.would_delete.bytes`, `ork.gc.kept.objects` | `ork.namespace`, `ork.gc.object_class` (`kept`: and `ork.gc.reason`) | engine in `dry_run` mode: the totals of the last complete cycle of the run index, replaced only when a cycle completes. Twin: `ork.deployment.gc.would_delete.bytes`, the deployment total |
+| `ork.gc.runs` | `outcome` | engine, each pass: retired runs `finished`, `carried_over` to the next pass, `waiting` on another run or the low-water mark, or `held` for good by a commit that appeared after retirement |
+| `ork.gc.passes`, `ork.gc.pass.duration` | `outcome` (passes only) | engine, each pass: `completed`, `partial`, `held`, `warming` or `failed` |
+| `ork.gc.mode` | `mode` | every engine, from boot: 1 for the mode in force (`off`, `dry_run`, `delete`), 0 for the others |
+| `ork.gc.grace` | — | every engine, from boot: the grace in force, in seconds |
+| `ork.gc.held` | `ork.gc.hold_reason` | engine: 1 for each reason the last pass was held, 0 for the others. **Alert on 1** for any reason but `local_backend` |
+| `ork.gc.lowwater.unknown` | `ork.gc.lowwater_cause` | engine: 1 for the reason the last pass could not compute its low-water mark, 0 for the others |
+| `ork.gc.lowwater.age`, `ork.gc.lowwater.chains` | — | engine, from a known mark: how old the oldest open or unarchived run that blocks reclaim is (0 when none does), and how many open runs the walk read |
+| `ork.gc.lag`, `ork.gc.due_runs`, `ork.gc.waiting_runs` | — | engine, the last pass: how long the oldest due run has waited since it retired, and the runs carried over and waiting |
+| `ork.gc.last_pass`, `ork.gc.last_progress` | — | engine: unix time of the last pass, and of the last one that finished a run or deleted an object (the engine's start until then). **Alert** when the last pass is older than a few intervals, and when runs are due and progress is older than several |
+| `ork.gc.store_versioned` | — | engine: 1 when the bucket keeps versions, so a delete only adds a delete marker |
 
 **At-least-once, not exactly-once.** A run or task's terminal metric is
 recorded from the projection that observes its lifecycle event; a replica that

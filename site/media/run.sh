@@ -89,6 +89,13 @@ ui_pw="$(node -p "require('$REPO/ui/node_modules/playwright-core/package.json').
 site_pw="$(node -p "require('$SITE/node_modules/@playwright/test/package.json').version")"
 [ "$ui_pw" = "$site_pw" ] || need "Playwright differs: the UI runs $ui_pw, the site $site_pw; pin site/package.json's @playwright/test to $ui_pw"
 [ -x "$REPO/bin/orkctl" ] || need "bin/orkctl is missing: run make build"
+# make up authenticates by default: every orkctl call here, the terminal
+# recordings' and the UI capture's present the development admin's token it
+# signs (CONTRIBUTING.md, "The development stack"). A stack started with
+# IDENTITY=0 needs none, and an ORK_TOKEN_FILE already set is kept.
+if [ -z "${ORK_TOKEN_FILE:-}" ] && [ -s "$REPO/.data/identity/admin.token" ]; then
+	export ORK_TOKEN_FILE="$REPO/.data/identity/admin.token"
+fi
 [ "$ONLY" = terminal ] || [ -x "$REPO/bin/orker" ] || need "bin/orker is missing: run make build (the capture starts an Orker of its own for the capacity recording)"
 "$REPO/bin/orkctl" --server "$ENGINE" pool list --json 2>/dev/null | grep -q '"liveOrkerCount": [1-9]' ||
 	need "no engine with a live Orker at $ENGINE: run make infra-up, make -C images push, make up"
@@ -198,6 +205,7 @@ for theme in light dark; do
 			-v "$VHS/tmp:$VHS/tmp" \
 			-v "$DOCKER_SOCK:/var/run/docker.sock" \
 			-v "$REPO/examples:/work/examples:ro" \
+			${ORK_TOKEN_FILE:+-v "$ORK_TOKEN_FILE:/work/admin.token:ro" -e ORK_TOKEN_FILE=/work/admin.token} \
 			"$VHS_IMAGE" "tapes/run-$name.tape"
 		# The poster is the tape's own screenshot of the finished watch, not a
 		# frame of the lossy video (and not its last frame, which shows only

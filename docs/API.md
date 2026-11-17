@@ -331,6 +331,7 @@ Defined in `proto/orkstack/v1/system_service.proto`.
 | `GetSystemInfo` | [`GetSystemInfoRequest`](#getsysteminforequest) | [`GetSystemInfoResponse`](#getsysteminforesponse) | GetSystemInfo describes THE REPLICA THAT ANSWERED. Every field is configuration- or build-derived — read from the process's own configuration, not observed from the cluster — except server_time. Replicas of one release answer identically by construction; mid-rollout, build_id is exactly the field that differs, which is the point of it.<br><br>It is the one admin read that does not leave the process, and it is the one question only the process can answer: everything else an operator asks — which namespaces exist, which pools have Orkers, what those Orkers run — comes from the store or the cluster, so any replica gives the same reply. This one describes the replica in front of you, on purpose, because that is what an operator behind a load balancer needs |
 | `GetRetentionPolicy` | [`GetRetentionPolicyRequest`](#getretentionpolicyrequest) | [`GetRetentionPolicyResponse`](#getretentionpolicyresponse) | GetRetentionPolicy reads the deployment's maximum run retention: the ceiling on every namespace's run_retention, and what a namespace that sets none inherits. Read from the store, so any replica answers it.<br><br>It is deployment-wide on purpose. Per-namespace retention is a field of orkstack.v1.Namespace (NamespaceService); this is the bound on all of them. |
 | `UpdateRetentionPolicy` | [`UpdateRetentionPolicyRequest`](#updateretentionpolicyrequest) | [`UpdateRetentionPolicyResponse`](#updateretentionpolicyresponse) | UpdateRetentionPolicy changes the maximum. A non-positive or malformed duration is INVALID_ARGUMENT before anything is written. Lowering it below a namespace's explicit run_retention is FAILED_PRECONDITION naming that namespace — lower the namespace first. Namespaces that set nothing follow the new maximum immediately: finished runs already older than it are retired on the next cleanup pass. |
+| `PreviewArtifactReclaim` | [`PreviewArtifactReclaimRequest`](#previewartifactreclaimrequest) | [`PreviewArtifactReclaimResponse`](#previewartifactreclaimresponse) | PreviewArtifactReclaim answers what the artifact GC — reclaim, as this API calls it; `orkctl admin gc preview` — would do now with at most `limit` (and never more than 1000) retired runs of the run index after `cursor`, within 30 seconds, and writes nothing (docs/STORAGE.md, "Reclaiming space"). Any replica answers; one preview at a time per replica, else RESOURCE_EXHAUSTED. Its low-water mark is the answering replica's last reclaim pass's, or one computed for this answer alone. Samples are returned only with `namespace`. The run holding the low-water mark is named with its namespace whether or not `namespace` is set. |
 | `ListTelemetrySinks` | [`ListTelemetrySinksRequest`](#listtelemetrysinksrequest) | [`ListTelemetrySinksResponse`](#listtelemetrysinksresponse) | ListTelemetrySinks names the telemetry sinks this deployment declared (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names only: endpoints and headers are the operator's and never leave the process. CONFIGURATION-DERIVED; "default" is always present. |
 | `GetImagePolicy` | [`GetImagePolicyRequest`](#getimagepolicyrequest) | [`GetImagePolicyResponse`](#getimagepolicyresponse) | GetImagePolicy reads the deployment's image supply-chain floor: whether a `uses:` may be a mutable tag, which registries images may come from, and which signing keys a namespace may require by name. Read from the store, so any replica answers it. A deployment that never wrote one answers the EMPTY policy with updated_at unset — that is a real answer (everything is permitted), not a missing document.<br><br>Deployment-wide on purpose. The per-namespace tightening is a field of orkstack.v1.Namespace (require_signed_by); this is the floor under all of them. |
 | `UpdateImagePolicy` | [`UpdateImagePolicyRequest`](#updateimagepolicyrequest) | [`UpdateImagePolicyResponse`](#updateimagepolicyresponse) | UpdateImagePolicy replaces the floor. Every entry and key is validated before anything is written (INVALID_ARGUMENT naming the entry). An allowed_registries list that excludes an activity of this engine's catalog is FAILED_PRECONDITION naming the activities — widen the list or change ORK_ACTIVITY_CATALOG first, because a floor that silently refuses every `uses: shell` is not a floor an operator meant. Removing a signing key a namespace still names is FAILED_PRECONDITION naming the namespace — clear the namespace first. Definitions already stored are untouched; they are re-checked at their next submit. |
@@ -3288,6 +3289,37 @@ one that started nothing and holds no state of its own.
 | `last_seen` | `google.protobuf.Timestamp` | last_seen is the most recent moment an Orker of this pool was observed STILL POLLING.<br><br>Temporal remembers a poller for minutes after its worker died, so the probe drops a record older than the freshness window before counting or timestamping anything (internal/engine/pool_probe.go). One consequence is load-bearing and stated here rather than discovered: a pool whose Orkers have all gone quiet reports NO last_seen at all, not the moment the last of them was heard. This field answers "how fresh is the number beside it", never "when did this pool die". |
 | `unavailable_reason` | `string` | unavailable_reason says that this pool COULD NOT BE ASKED, and why.<br><br>Empty is the normal case: live_orker_count is a measurement. Non-empty means nothing was measured — the cluster did not answer for this pool — and live_orker_count is 0 because there is no number to report, NOT because nobody is serving it. The two need opposite reactions: an empty pool is fixed by starting an Orker, an unreachable one by asking again, and a renderer that showed them alike would tell an operator to scale a pool that may be perfectly healthy.<br><br>It exists so that ListPools can NARROW instead of refusing. One pool the cluster could not answer for used to fail the whole call, hiding every healthy pool beside it — and an admin read is opened precisely when something is already wrong. Each pool carries its own verdict now. |
 
+### PreviewArtifactReclaimRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` | namespace limits the preview to retired runs of one namespace, and is required for samples. Empty covers every namespace. |
+| `limit` | `int32` | limit is how many runs of the index to cover: 1 to 1000; 0 is 1000. |
+| `samples` | `int32` | samples is how many objects to name, at most 100; only with namespace. |
+| `cursor` | `string` | cursor is a previous answer's next_cursor; empty starts at the index's beginning. |
+
+### PreviewArtifactReclaimResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `mode` | `string` | mode is off, dry_run or delete (cleanup.artifact_gc). |
+| `held` | `bool` | held says a pass would delete nothing now; held_reason names why. |
+| `held_reason` | `string` |  |
+| `namespaces` | repeated [`ReclaimNamespaceSummary`](#reclaimnamespacesummary) |  |
+| `samples` | repeated [`ReclaimSample`](#reclaimsample) | samples are returned only with a namespace. |
+| `runs_examined` | `int64` |  |
+| `next_cursor` | `string` | next_cursor continues the preview; empty at the end of the index. |
+| `computed_at` | `google.protobuf.Timestamp` |  |
+| `cleanup_enabled` | `bool` |  |
+| `store_versioned` | `bool` |  |
+| `low_water_known` | `bool` |  |
+| `low_water_unknown_cause` | `string` |  |
+| `low_water_created_at` | `google.protobuf.Timestamp` |  |
+| `low_water_run_id` | `string` |  |
+| `low_water_namespace` | `string` |  |
+| `waiting_runs` | `int64` |  |
+| `low_water_computed_at` | `google.protobuf.Timestamp` |  |
+
 ### ProfileCordon
 
 ProfileCordon is one profile cause that holds an Orker's cordon. A drift
@@ -3375,6 +3407,46 @@ No fields.
 | `kind` | [`ArtifactKind`](#artifactkind) |  |
 | `name` | `string` |  |
 | `item` | optional `int32` | item names the item of a fan-out task_id whose artifact is read; required for a fan-out task (two items may record the same name), refused for any other task. |
+
+### ReclaimNamespaceSummary
+
+ReclaimNamespaceSummary is one namespace's answer: the producing run's
+namespace.
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `would_delete_objects` | `int64` |  |
+| `would_delete_bytes` | `int64` |  |
+| `kept` | repeated [`ReclaimReasonCount`](#reclaimreasoncount) |  |
+
+### ReclaimReasonCount
+
+ReclaimReasonCount is how many objects, and how many bytes, one reason
+kept.
+
+| Field | Type | Description |
+|---|---|---|
+| `reason` | `string` |  |
+| `objects` | `int64` |  |
+| `bytes` | `int64` |  |
+
+### ReclaimSample
+
+ReclaimSample is one object a preview names.
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `task_id` | `string` |  |
+| `artifact_name` | `string` |  |
+| `bytes` | `int64` |  |
+| `outcome` | `string` | outcome is would_delete or kept. |
+| `reason` | `string` |  |
+| `producer_retired_at` | `google.protobuf.Timestamp` |  |
+| `stale_claims` | `int32` |  |
+| `live_claims` | `int32` |  |
+| `waits_for_runs_created_before` | `google.protobuf.Timestamp` | waits_for_runs_created_before is set for a lowwater object: every run created before it must finish and be archived first. |
 
 ### RecordRef
 
