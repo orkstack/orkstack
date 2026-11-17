@@ -688,36 +688,25 @@ func TestIntegration_InspectRunMarksALostOrkerStale(t *testing.T) {
 				variant.name, time.Since(killedAt).Round(time.Second), a.HeartbeatStale, a.LastHeartbeatAt, a.HeartbeatDeadlineAt, stale.ComputedAt)
 			s.mustCLI(0, "run", "inspect", runID)
 
-			if variant.retry == "    retry:\n      maximum_attempts: 1\n" {
-				final := s.awaitInspect(0, runID, 90*time.Second, "the run failing on the heartbeat timeout", func(d *inspectDoc) bool {
-					return d.terminal()
-				})
-				if final.RunStatus != "FAILED" || len(final.Attempts) != 0 {
-					t.Fatalf("after the heartbeat timeout: %+v, want FAILED with no attempts", final)
-				}
-				got := s.mustCLI(0, "--json", "run", "get", runID)
-				if !strings.Contains(got, "ORKER_HEARTBEAT_TIMEOUT") {
-					t.Fatalf("run get does not carry the heartbeat timeout category:\n%s", got)
-				}
-				t.Logf("I4 (%s) the attempt disappeared and the run FAILED with ORKER_HEARTBEAT_TIMEOUT", variant.name)
-			} else {
-				retried := s.awaitInspect(0, runID, 90*time.Second, "attempt 2 after the timeout", func(d *inspectDoc) bool {
-					b := d.attempt("talk")
-					return b != nil && b.Attempt == 2 && (b.State == "SCHEDULED" || b.State == "STARTED")
-				}).attempt("talk")
-				if retried.BytesLogged != 0 || retried.HeartbeatAvailable {
-					t.Fatalf("attempt 2 = %+v, want its byte count reset and no heartbeat (no orker is alive)", retried)
-				}
-				t.Logf("I4 (%s) attempt 2 reappeared: state=%s bytesLogged=%d heartbeatAvailable=%v reason=%s",
-					variant.name, retried.State, retried.BytesLogged, retried.HeartbeatAvailable, retried.HeartbeatUnavailableReason)
+			// The heartbeat timeout is an interruption (AGENTS.md §4): with or
+			// without a retry: the task is dispatched again once the loss's
+			// fence (its grace plus the heartbeat timeout) has passed, and no
+			// Orker is alive to take it.
+			retried := s.awaitInspect(0, runID, 2*time.Minute, "the task dispatched again after the loss", func(d *inspectDoc) bool {
+				b := d.attempt("talk")
+				return b != nil && (b.State == "SCHEDULED" || b.State == "STARTED") && b.AttemptScheduledAt != "" &&
+					parseTime(t, b.AttemptScheduledAt).After(killedAt)
+			}).attempt("talk")
+			if retried.BytesLogged != 0 || retried.HeartbeatAvailable {
+				t.Fatalf("the dispatch after the loss = %+v, want its byte count reset and no heartbeat (no orker is alive)", retried)
 			}
+			t.Logf("I4 (%s) the task was dispatched again: state=%s scheduledAt=%s bytesLogged=%d heartbeatAvailable=%v reason=%s",
+				variant.name, retried.State, retried.AttemptScheduledAt, retried.BytesLogged, retried.HeartbeatAvailable, retried.HeartbeatUnavailableReason)
 			row := s.awaitAttempt(runID, "talk", 1, "UNREPORTED", 60*time.Second)
 			t.Logf("I4 (%s) run attempts: attempt %d %s", variant.name, row.Attempt, row.Outcome)
 			s.mustCLI(0, "run", "attempts", runID)
-			if variant.retry != "    retry:\n      maximum_attempts: 1\n" {
-				s.mustCLI(0, "run", "cancel", runID)
-				awaitTerminalOnB(ctx, t, s.replicas[0], runID)
-			}
+			s.mustCLI(0, "run", "cancel", runID)
+			awaitTerminalOnB(ctx, t, s.replicas[0], runID)
 		})
 	}
 }

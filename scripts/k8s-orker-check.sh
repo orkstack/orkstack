@@ -410,6 +410,17 @@ wait_started() { # wait_started RUN N: until N tasks have logged that they start
 		sleep 1
 	done
 }
+wait_rerun() { # wait_rerun RUN TASK...: until each task is RUNNING again after a hand-back, at most 5 minutes
+	local run=$1 deadline=$((SECONDS + 300)) task got
+	shift
+	for task; do
+		until got=$(orkctl run get "$run" -j | jq -r --arg t "$task" '.run.taskRuns[] | select(.taskId == $t) | "\(.status) \(.interruptions.handedBack // 0)"') &&
+			[ "${got%% *}" = RUNNING ] && [ "${got##* }" -ge 1 ]; do
+			[ $SECONDS -lt $deadline ] || fail "run $run: $task is '$got', not running again after its hand-back within 5 minutes"
+			sleep 2
+		done
+	done
+}
 # The engine's own record of what it signalled, as "<unix ns> <action> <task> signal= exit=".
 events_format='{{.TimeNano}} {{.Action}} {{index .Actor.Attributes "ork.task"}} signal={{index .Actor.Attributes "signal"}} exit={{index .Actor.Attributes "exitCode"}}'
 signals() { # signals POD SINCE UNTIL
@@ -571,17 +582,22 @@ check_shape() { # check_shape SHAPE
 	wait "$stream" || :
 	check_signals "$dir/pod-delete-signals.txt"
 	log "ok: $shape: the engine outlived the Orker and delivered every signal"
-	wait_terminal "$run"
-	orkctl run get "$run" -j | jq -r '.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-")"' | tee "$dir/pod-delete-tasks.txt"
-	# The stopping Orker hands both back and reports them itself: graceful's
-	# exit 0 after SIGTERM is never committed (docs/OCI_ACTIVITY_CONTRACT.md §6.3).
-	# graceful is reported first, 5 s before stubborn's SIGKILL; with no retry:
-	# its failure fails the run, which cancels stubborn unless stubborn's own
-	# report landed first. Either way stubborn ends explicitly.
-	expect "$dir/pod-delete-tasks.txt" '^graceful FAILED ORKER_STOPPED$' "$shape: a task with no retry: ends explicitly when its Orker stops"
-	expect "$dir/pod-delete-tasks.txt" '^stubborn (FAILED ORKER_STOPPED|CANCELED TASK_CANCELED)$' "$shape: a task that ignores SIGTERM ends explicitly too"
 	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the replacement pod never became ready"
 	log "ok: $shape: the Deployment replaced the pod"
+	# The stopping Orker hands both back and reports them itself: graceful's
+	# exit 0 after SIGTERM is never committed (docs/OCI_ACTIVITY_CONTRACT.md
+	# §6.3). A hand-back is an interruption (AGENTS.md §4): neither task has a
+	# retry:, and both run again on the replacement pod without spending one.
+	wait_rerun "$run" graceful stubborn
+	orkctl run get "$run" -j | jq -r '.run.taskRuns[] | "\(.taskId) \(.status) handed_back=\(.interruptions.handedBack // 0) own=\(.interruptions.ownAttemptsUsed // 0)"' | tee "$dir/pod-delete-tasks.txt"
+	expect "$dir/pod-delete-tasks.txt" '^graceful RUNNING handed_back=1 own=0$' "$shape: a task with no retry: runs again when its Orker stops, spending no attempt"
+	expect "$dir/pod-delete-tasks.txt" '^stubborn RUNNING handed_back=1 own=0$' "$shape: a task that ignores SIGTERM runs again too"
+	orkctl run cancel "$run" --reason "k8s-orker-check: the re-run tasks are cancelled" >/dev/null
+	wait_terminal "$run"
+	orkctl run get "$run" -j | jq -r '.run.status, (.run.taskRuns[] | "\(.taskId) \(.status)")' | tee "$dir/pod-delete-cancel.txt"
+	expect "$dir/pod-delete-cancel.txt" '^CANCELED$' "$shape: the re-run tasks' run is cancelled"
+	expect "$dir/pod-delete-cancel.txt" '^graceful CANCELED$' "$shape: graceful ends cancelled"
+	expect "$dir/pod-delete-cancel.txt" '^stubborn CANCELED$' "$shape: stubborn ends cancelled"
 	check_stop_grace "$shape" "$dir"
 	remove_orkers
 }
@@ -670,17 +686,26 @@ check_stop_grace() { # check_stop_grace SHAPE DIR
 	took=$((SECONDS - started))
 	orkctl run get "$run" -j | jq -r '.run.status, (.run.taskRuns[] | "\(.taskId) \(.status) \(.error.code // "-") \(.error.message // "-")")' | tee "$dir/force-tasks.txt"
 	echo "the run ended ${took} s after the forced deletion" | tee -a "$dir/force-tasks.txt"
-	expect "$dir/force-tasks.txt" '^FAILED$' "$shape: a run whose Orker was killed at once fails"
-	# The kubelet still signals both containers: the engine's daemon may stop
-	# the task before the Orker dies, which the Orker reports as
-	# CONTAINER_STOPPED_BY_RUNTIME (AGENTS.md §3.2); otherwise the task ends on
-	# its 30 s heartbeat timeout. Either is explicit; nothing else is.
-	expect "$dir/force-tasks.txt" '^drain FAILED (CONTAINER_STOPPED_BY_RUNTIME|ORKER_HEARTBEAT_TIMEOUT) ' "$shape: its task, with no retry:, ends explicitly"
-	if grep -q '^drain FAILED ORKER_HEARTBEAT_TIMEOUT ' "$dir/force-tasks.txt"; then
-		[ "$took" -ge 20 ] || fail "$shape: the run ended ${took} s after the forced deletion, sooner than its heartbeat timeout"
+	orkctl run get "$run" -j | jq -r '.run.taskRuns[] | "interrupted \(.taskId) lost=\(.interruptions.lost // 0) handed_back=\(.interruptions.handedBack // 0) own=\(.interruptions.ownAttemptsUsed // 0)"' | tee -a "$dir/force-tasks.txt"
+	# The kubelet still signals both containers. An Orker that saw its stop
+	# signal hands the task back, CONTAINER_STOPPED_BY_RUNTIME while stopping;
+	# one killed first loses it to the 30 s heartbeat timeout. Either is an
+	# interruption (AGENTS.md §4), so the task, with no retry:, runs again on
+	# the replacement pod without spending an attempt, after the loss's fence
+	# when it was lost. Only a daemon that stopped the container before the
+	# Orker saw its signal ends it, explicitly: CONTAINER_STOPPED_BY_RUNTIME
+	# outside a stop is not in the class (AGENTS.md §3.2).
+	if grep -q '^FAILED$' "$dir/force-tasks.txt"; then
+		expect "$dir/force-tasks.txt" '^drain FAILED CONTAINER_STOPPED_BY_RUNTIME ' "$shape: a task its daemon stopped first ends explicitly"
+	else
+		expect "$dir/force-tasks.txt" '^SUCCEEDED$' "$shape: a run whose Orker was killed at once runs its task again and succeeds"
+		expect "$dir/force-tasks.txt" '^interrupted drain (lost=1 handed_back=0|lost=0 handed_back=1) own=0$' "$shape: its task, with no retry:, ran again without spending an attempt"
+		if grep -q '^interrupted drain lost=1 ' "$dir/force-tasks.txt"; then
+			[ "$took" -ge 60 ] || fail "$shape: the run ended ${took} s after the forced deletion, sooner than its loss's fence and the task's 40 s"
+		fi
 	fi
 	k -n "$ns" rollout status deploy/orker --timeout=600s >/dev/null || fail "$shape: the Deployment did not replace the force-deleted pod"
-	log "ok: $shape: a pod deleted at once loses its task explicitly"
+	log "ok: $shape: a pod deleted at once interrupts its task, explicitly"
 }
 
 for shape in userns privileged; do

@@ -225,10 +225,18 @@ func (a *SnapshotActivities) WriteSwitchSnapshot(
 // items cleared, in definition order, then the item rows in (definition
 // order, index) order. A part closes before a row that would take its raw
 // size above checkpointPartRawBytes; a larger row goes alone.
-func checkpointParts(run *orkstackv1.Run) []*orkstackv1.RunCheckpointPart {
+//
+// lossEvents, the run's loss events (E92), ride part 0 beside the header and
+// never on the Run, so GetRun never shows them; a run that lost no Orker
+// writes none, and its checkpoint is byte-identical to one written before
+// the field.
+func checkpointParts(run *orkstackv1.Run, lossEvents *orkstackv1.RunLossEvents) []*orkstackv1.RunCheckpointPart {
 	header := proto.Clone(run).(*orkstackv1.Run)
 	header.TaskRuns = nil
 	current := &orkstackv1.RunCheckpointPart{Header: header}
+	if lossEvents.GetCount() > 0 || len(lossEvents.GetOpen()) > 0 {
+		current.LossEvents = lossEvents
+	}
 	size := proto.Size(current)
 	parts := []*orkstackv1.RunCheckpointPart{current}
 	add := func(row *orkstackv1.TaskRun, item bool) {
@@ -269,6 +277,7 @@ func (a *SnapshotActivities) WriteCheckpoint(
 	generation int64,
 	capBytes int64,
 	obs ContinuationObservationInput,
+	lossEvents *orkstackv1.RunLossEvents,
 ) (*orkstackv1.ContinuationObject, error) {
 	started := time.Now()
 	failed := func(err error) (*orkstackv1.ContinuationObject, error) {
@@ -284,7 +293,7 @@ func (a *SnapshotActivities) WriteCheckpoint(
 	}
 	obj := &orkstackv1.ContinuationObject{}
 	var data []byte
-	for i, part := range checkpointParts(run) {
+	for i, part := range checkpointParts(run, lossEvents) {
 		plain, err := proto.MarshalOptions{Deterministic: true}.Marshal(part)
 		if err != nil {
 			return failed(fmt.Errorf("engine: encode the run's saved state, part %d: %w", i, err))

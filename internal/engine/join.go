@@ -426,6 +426,7 @@ func (s *runState) failWithHandlers(
 	if timedOut {
 		s.runTimeout.timeoutDrain = true
 	}
+	s.failingRun = !timedOut
 	s.cancelInFlight(s.eventContext(ctx), inFlight, s.isFailureHandlerID,
 		func(string) string {
 			if timedOut {
@@ -547,7 +548,7 @@ func (s *runState) cancelWithHandlers(
 	s.runError.Code = "RUN_CANCELED"
 	if taskRun, ok := s.taskRuns[taskID]; ok &&
 		taskRun.GetStatus() != orkstackv1.Status_STATUS_AWAITING &&
-		taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING {
+		taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING && !waitingToRunAgain(taskRun) {
 		taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	}
 	if v := s.version(ctx, cancelSiblingsChange, 1); v >= 1 {
@@ -580,6 +581,8 @@ func (s *runState) cancelWithHandlers(
 func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]workflow.Future) {
 	// Check point 4's count: every handler still PENDING (only handlers can
 	// be, after F6), once, then decremented as each one leaves PENDING.
+	s.failingPhase = true
+	defer func() { s.failingPhase = false }()
 	s.pendingHandlers = 0
 	for _, id := range s.order {
 		if s.taskRuns[id].GetStatus() == orkstackv1.Status_STATUS_PENDING {
@@ -591,6 +594,10 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		s.settleDetachedPublishes(ctx)
 		ectx := s.eventContext(ctx)
 		stopping := ctx.Err() != nil || s.hardEnded()
+		if stopping {
+			// A handler waiting to run again is stopped as a pending one is.
+			s.dropHandlerWaits()
+		}
 		// Only failure handlers can be PENDING here (F6). Declaration order.
 		for _, id := range s.readyTasks() {
 			if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_PENDING {
@@ -658,7 +665,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				inFlight[id] = future
 			}
 		}
-		if len(inFlight) == 0 && s.openAwaits() == 0 && s.openSleeps() == 0 {
+		if len(inFlight) == 0 && s.openAwaits() == 0 && s.openSleeps() == 0 && len(s.waits) == 0 {
 			if len(s.readyTasks()) == 0 {
 				return
 			}
@@ -699,6 +706,10 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				selector.AddFuture(sl.wake, func(workflow.Future) { woke = sleepID })
 			}
 		}
+		// Then every handler waiting to run again, in the order its wait was
+		// armed, as the main loop's.
+		var waitOver *interruptionWait
+		s.addInterruptionWaits(selector, &waitOver)
 		// The run timeout's hard end, after every case above; each case sets
 		// its own marker.
 		hardCanceled, hardFired := false, false
@@ -720,6 +731,10 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		case hardFired:
 			s.takeHardEnd()
 			continue
+		case waitOver != nil:
+			// A handler is due again: the next scan dispatches it, or
+			// cancels it when the run is stopping.
+			_ = s.interruptionWaitOver(ectx, s.runCtx, waitOver, inFlight)
 		case woke != "":
 			// A sleeping handler woke and succeeded, or its timer was
 			// cancelled by the operator's cancel and it is recorded CANCELED.
