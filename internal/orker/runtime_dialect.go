@@ -246,6 +246,9 @@ var (
 	// engines say in these words ("no container with name or ID … found: no
 	// such container" on Podman).
 	goneSubstring = "no such container"
+	// inspectGoneSubstring is Docker's word for a container its untyped
+	// `inspect` cannot find ("Error: No such object: …").
+	inspectGoneSubstring = "no such object"
 )
 
 func containsFold(s, substring string) bool {
@@ -282,6 +285,12 @@ func (x dialect) notRunning(message string) bool {
 // gone recognizes a container that no longer exists.
 func (x dialect) gone(message string) bool {
 	return containsFold(message, goneSubstring)
+}
+
+// inspectGone recognizes an inspect that found no such container: an answer
+// about the container, never a daemon that could not be asked.
+func (x dialect) inspectGone(message string) bool {
+	return x.gone(message) || containsFold(message, inspectGoneSubstring)
 }
 
 // eventArgs is the command that follows one container's events, one a line: the

@@ -480,6 +480,101 @@ func TestDockerRuntime_StartCancelledBeforeTheContainerRunsIsACancelledStart(t *
 	}
 }
 
+// TestDockerRuntime_StartWhoseStateCannotBeObservedIsUnknown is R8-1's CLI half:
+// a start that failed is told apart by what inspect answers. A daemon that
+// cannot answer leaves the container's started-ness unknown
+// (ErrRuntimeStateUnknown); a container inspect still describes as created, or
+// one it says is gone, never started, and that start failure stays what it was.
+func TestDockerRuntime_StartWhoseStateCannotBeObservedIsUnknown(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		inspect     string
+		wantUnknown bool
+	}{
+		{"the daemon cannot answer", "echo 'Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?' >&2; exit 1", true},
+		{"the container is still created", "echo created", false},
+		{"docker says the object is gone", "echo 'Error: No such object: fake-container' >&2; exit 1", false},
+		{"podman says the container is gone", "echo 'Error: no container with name or ID \"fake-container\" found: no such container' >&2; exit 125", false},
+		// A reply lost between daemon and CLI: the CLI fails, but the daemon
+		// ran the container. It started, never "never started".
+		{"the reply was lost but it ran and exited", "echo exited", false},
+		{"the reply was lost but it is running", "echo running", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\ncase \"$1\" in\n" +
+				"  inspect) " + tc.inspect + " ;;\n" +
+				"  start) echo 'Error response from daemon: start failed' >&2; exit 1 ;;\n" +
+				"  *) exit 1 ;;\n" +
+				"esac\n"
+			bin := filepath.Join(dir, "docker")
+			must.OKf(t, os.WriteFile(bin, []byte(script), 0o755), "write fake docker binary")
+			// The deadline is short: a daemon that never answers is asked
+			// again until it passes.
+			runtime := &DockerRuntime{Bin: bin, startState: time.Second}
+
+			var stdout, stderr bytes.Buffer
+			err := runtime.Start(context.Background(), "fake-container", &stdout, &stderr)
+			if strings.HasPrefix(tc.name, "the reply was lost") {
+				if err != nil {
+					t.Fatalf("Start = %v for a container inspect says ran; want it started", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("Start succeeded for a start the daemon refused")
+			}
+			if got := errors.Is(err, ErrRuntimeStateUnknown); got != tc.wantUnknown {
+				t.Fatalf("Start = %v; ErrRuntimeStateUnknown %v, want %v", err, got, tc.wantUnknown)
+			}
+		})
+	}
+}
+
+// TestDockerRuntime_StartAsksAgainWhenAnObservationFails: one inspect the
+// daemon could not answer is not an answer. Asked again, a container that ran
+// is started, both while its attach still runs and after it ended (a fast
+// exit); one never observed before the deadline is unknown.
+func TestDockerRuntime_StartAsksAgainWhenAnObservationFails(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		start       string
+		inspect     string // after the first, failing, observation
+		wantUnknown bool
+		wantOK      bool
+	}{
+		{"running after a blip, attach live", "sleep 2", "echo running", false, true},
+		{"exited after a blip, attach ended", "exit 1", "echo exited", false, true},
+		{"never answered before the deadline", "sleep 5", "echo 'Cannot connect to the Docker daemon' >&2; exit 1", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			first := filepath.Join(dir, "asked")
+			script := "#!/bin/sh\ncase \"$1\" in\n" +
+				"  inspect) if [ ! -e " + shellQuote(first) + " ]; then touch " + shellQuote(first) +
+				"; echo 'Cannot connect to the Docker daemon' >&2; exit 1; fi; " + tc.inspect + " ;;\n" +
+				"  start) " + tc.start + " ;;\n" +
+				"  *) exit 1 ;;\n" +
+				"esac\n"
+			bin := filepath.Join(dir, "docker")
+			must.OKf(t, os.WriteFile(bin, []byte(script), 0o755), "write fake docker binary")
+			runtime := &DockerRuntime{Bin: bin, startState: 2 * time.Second}
+
+			var stdout, stderr bytes.Buffer
+			err := runtime.Start(context.Background(), "fake-container", &stdout, &stderr)
+			if tc.wantOK {
+				if err != nil {
+					t.Fatalf("Start = %v; want started once the daemon answered", err)
+				}
+				return
+			}
+			if got := errors.Is(err, ErrRuntimeStateUnknown); got != tc.wantUnknown {
+				t.Fatalf("Start = %v; ErrRuntimeStateUnknown %v, want %v", err, got, tc.wantUnknown)
+			}
+		})
+	}
+}
+
 // awaitFile waits, against a deadline, for path to exist.
 func awaitFile(t *testing.T, path string, within time.Duration) {
 	t.Helper()

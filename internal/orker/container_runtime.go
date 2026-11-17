@@ -261,6 +261,12 @@ type RuntimeInfo struct {
 // or fail with IMAGE_PULL_FAILED rather than guessing.
 var ErrNotInLayout = errors.New("digest not present in OCI image layout")
 
+// ErrRuntimeStateUnknown reports a start that failed and a runtime that could
+// not then say whether the container started: the observation that decides it
+// failed too. Start returns an error matching it; the caller cannot treat the
+// container as never started, nor as one that ran.
+var ErrRuntimeStateUnknown = errors.New("the container runtime cannot say whether the container started")
+
 // ErrNotBindable reports that the container daemon cannot bind-mount a host
 // path. On macOS with a VM-hosted daemon $HOME is shared and /var/folders is
 // not, so this is a real, common, and completely undiagnosable-by-accident

@@ -3,6 +3,7 @@ package orker
 import (
 	"context"
 	"errors"
+	"io"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -564,5 +565,60 @@ func TestShutdown_AServerCancelAfterTheWorkersStopIsReportedCancelled(t *testing
 	}
 	if len(reports.reports) != 1 || !temporal.IsCanceledError(reports.reports[0]) {
 		t.Fatalf("reports = %v, want one cancel", reports.reports)
+	}
+}
+
+// sweptMidStartRuntime is stateUnknownRuntime whose start is in flight when
+// the stop's sweep takes the attempt back: the sweep happens, then the start
+// fails with its state unknown.
+type sweptMidStartRuntime struct {
+	stateUnknownRuntime
+	starting chan struct{}
+	release  chan struct{}
+}
+
+func (r *sweptMidStartRuntime) Start(ctx context.Context, id ContainerID, stdout, stderr io.Writer) error {
+	close(r.starting)
+	<-r.release
+	return r.stateUnknownRuntime.Start(ctx, id, stdout, stderr)
+}
+
+// TestShutdown_AnUnknownStartIsNotRelabelledAHandBack: the stop's sweep takes
+// back an attempt whose start is in flight, and the start then fails with its
+// state unknown. The attempt reports RUNTIME_STATE_UNKNOWN, never ORKER_STOPPED:
+// a hand-back would say whether the container ran, which nobody knows (E92
+// R8-1).
+func TestShutdown_AnUnknownStartIsNotRelabelledAHandBack(t *testing.T) {
+	runtime := &sweptMidStartRuntime{starting: make(chan struct{}), release: make(chan struct{})}
+	d, reports := stoppingDispatcher(t, runtime, artifacts.NewMemoryAttemptStore())
+	in := baseExportInput("unknown-while-stopping")
+	in.CancellationGracePeriodSeconds = 1
+	r := newStopRegistry()
+	stage := r.admit()
+	defer r.leave(stage)
+	go func() {
+		<-runtime.starting
+		r.handBack()
+		close(runtime.release)
+	}()
+
+	_, err := d.Execute(withStage(context.Background(), stage), in)
+	if !stage.handedBack() {
+		t.Fatal("the sweep did not take the attempt back; the test proves nothing")
+	}
+	// A stopping Orker reports what it ends itself, through the SDK or not;
+	// either way the one report is the fault, never ORKER_STOPPED.
+	reported := append([]error{err}, reports.reports...)
+	var unknown, stopped int
+	for _, r := range reported {
+		if reportedReason(r, ReasonRuntimeStateUnknown) {
+			unknown++
+		}
+		if reportedReason(r, ReasonOrkerStopped) {
+			stopped++
+		}
+	}
+	if unknown != 1 || stopped != 0 {
+		t.Fatalf("Execute = %v, reports = %v; want one RUNTIME_STATE_UNKNOWN and no ORKER_STOPPED", err, reports.reports)
 	}
 }

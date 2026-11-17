@@ -115,6 +115,9 @@ type DockerRuntime struct {
 	watches map[ContainerID]*stopWatch
 	// stopSettle overrides stopWatchSettle, for a test.
 	stopSettle time.Duration
+	// startState, when set, bounds how long Start waits for the container to
+	// leave created (startStateTimeout otherwise); tests shorten it.
+	startState time.Duration
 	// described is the first successful Describe, kept for the process's
 	// lifetime. A failure is never kept.
 	described *RuntimeInfo
@@ -1010,33 +1013,37 @@ func (d *DockerRuntime) awaitLeftCreated(
 	attach *dockerAttach,
 	diagnostics *boundedBuffer,
 ) error {
-	deadline := time.Now().Add(startStateTimeout)
+	deadline := time.Now().Add(d.startStateTimeout())
 	poll := startStatePoll
+	// The last observation's failure, if it failed: the daemon cannot say
+	// what the container is doing, so the loop keeps asking, and only an
+	// answer it never gets makes the start's outcome unknown (E92 R8-1).
+	var unobserved error
+	// attachDone is nil once the attach has ended: from then an observation
+	// that still says created means the runtime exited without running it.
+	attachDone := attach.done
 	for {
 		started, err := d.leftCreated(ctx, id)
-		if err != nil {
-			if ctx.Err() != nil {
-				return d.startedDespiteCancel(ctx, id)
-			}
-			return err
+		if err != nil && ctx.Err() != nil {
+			return d.startedDespiteCancel(ctx, id)
 		}
+		unobserved = err
 		if started {
 			return nil
 		}
-
-		select {
-		case <-attach.done:
-			// The attach process is gone. Re-observe once: a container that
-			// ran and exited very quickly is a success, not a refusal.
-			started, err := d.leftCreated(ctx, id)
-			if err != nil {
-				return err
-			}
-			if started {
-				return nil
-			}
+		if err == nil && attachDone == nil {
 			return fmt.Errorf("start container %s: the runtime exited without running it: %v: %s",
 				id, attach.err, strings.TrimSpace(diagnostics.String()))
+		}
+
+		select {
+		case <-attachDone:
+			// The attach process is gone. Observe again at once: a container
+			// that ran and exited very quickly is a success, not a refusal,
+			// and one observation the daemon could not answer is asked again
+			// until the deadline, never read as an answer.
+			attachDone = nil
+			continue
 		case <-ctx.Done():
 			return d.startedDespiteCancel(ctx, id)
 		case <-time.After(poll):
@@ -1049,10 +1056,21 @@ func (d *DockerRuntime) awaitLeftCreated(
 		}
 
 		if time.Now().After(deadline) {
+			if unobserved != nil {
+				return unobserved
+			}
 			return fmt.Errorf("start container %s: it was still in the created state after %s: %s",
-				id, startStateTimeout, strings.TrimSpace(diagnostics.String()))
+				id, d.startStateTimeout(), strings.TrimSpace(diagnostics.String()))
 		}
 	}
+}
+
+// startStateTimeout is startStateTimeout, or a test's shorter bound.
+func (d *DockerRuntime) startStateTimeout() time.Duration {
+	if d.startState > 0 {
+		return d.startState
+	}
+	return startStateTimeout
 }
 
 // startedDespiteCancel decides what a cancellation that arrives while Start is
@@ -1079,10 +1097,17 @@ func (d *DockerRuntime) startedDespiteCancel(ctx context.Context, id ContainerID
 func (d *DockerRuntime) leftCreated(ctx context.Context, id ContainerID) (bool, error) {
 	answer, err := d.control(ctx, "inspect", "--format", "{{.State.Status}}", string(id))
 	if err != nil {
-		return false, fmt.Errorf("start container %s: observe its state: %w", id, err)
+		return false, fmt.Errorf("start container %s: observe its state: %w: %w", id, ErrRuntimeStateUnknown, err)
 	}
 	if answer.code != 0 {
-		return false, nil
+		// A container the engine says is gone never left created here. Any
+		// other refusal is the daemon failing to answer, which says nothing
+		// about the container (E92 R8-1).
+		if d.grammar().inspectGone(answer.said()) {
+			return false, nil
+		}
+		return false, fmt.Errorf("start container %s: observe its state: %w: exit %d: %s",
+			id, ErrRuntimeStateUnknown, answer.code, strings.TrimSpace(answer.said()))
 	}
 	// Named on both sides (runtime_dialect.go). A state on neither list is
 	// not read as started: a Wait that raced a container that never started

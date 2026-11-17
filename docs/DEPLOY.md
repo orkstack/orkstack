@@ -3968,10 +3968,15 @@ run fails is not run again, and fails with its interruption's reason.
   started) runs again at once the first time and then waits, at least 45 s
   (the store-outage cordon's detection time at the Orker's defaults) and
   doubling up to 60 s, so a one-attempt task outlives a store blip until the
-  cordon trips. `RUNTIME_STATE_UNKNOWN` would mean an Orker could not tell
-  whether the container started, so the task's side effects may already have
-  run once; no Orker of this release reports it, and the engine accepts and
-  classifies it for a later Orker.
+  cordon trips. `RUNTIME_STATE_UNKNOWN` means a container's start failed and
+  its runtime could not then say whether it started. The Orker stops and
+  removes the container, holding its resources until the removal succeeds,
+  but the container may have run: the re-run can repeat an external side
+  effect, so a task with one keys it on `idempotencyKey`. If the stop also
+  fails on that daemon, the container may still be running while the task
+  runs again, at most for the fault's budget of five. It spends that budget
+  even when the Orker was stopping, because a hand-back would claim to know
+  whether the container ran.
 
 #### The Orker's load, as metrics
 
