@@ -46,10 +46,18 @@ var retryMaxIntervalGateDisabledForTest atomic.Bool
 // means a single attempt: leaving it nil would inherit Temporal's default of
 // unlimited retries, which contradicts the proto contract ("0 or 1 = no
 // retries").
-func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *temporal.RetryPolicy {
+//
+// row and key are the unit about to be scheduled (a task's own row, or an
+// item's): where its run carries interruption budgets, the policy lists the
+// interruptions its execution takes as its own (NonRetryableErrorTypes) and
+// allows only the attempts interruptions have not spent. The listing is
+// decided above the one-attempt return, so a task with no retry: lists it
+// too; with nothing listed the policy is today's, byte for byte.
+func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task, row *orkstackv1.TaskRun, key string) *temporal.RetryPolicy {
+	budgets, types := s.interruptionListing(ctx, t, row, key)
 	retry := t.GetRetry()
 	if retry == nil || retry.GetMaximumAttempts() <= 1 {
-		return &temporal.RetryPolicy{MaximumAttempts: 1}
+		return &temporal.RetryPolicy{MaximumAttempts: 1, NonRetryableErrorTypes: types}
 	}
 	policy := &temporal.RetryPolicy{
 		MaximumAttempts:    retry.GetMaximumAttempts(),
@@ -82,6 +90,10 @@ func (s *runState) retryPolicyFor(ctx workflow.Context, t *orkstackv1.Task) *tem
 		policy.MaximumInterval = s.unsetRetryMaxInterval(ctx, policy.InitialInterval)
 	} else {
 		policy.MaximumInterval = max(policy.MaximumInterval, policy.InitialInterval)
+	}
+	if budgets != nil {
+		policy.MaximumAttempts = remainingAttempts(retry.GetMaximumAttempts(), row.GetInterruptions())
+		policy.NonRetryableErrorTypes = types
 	}
 	return policy
 }

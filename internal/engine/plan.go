@@ -249,6 +249,16 @@ type RunPlan struct {
 	// before the field existed.
 	RetryMaxIntervalSeconds int32 `json:"retry_max_interval_seconds,omitzero"`
 
+	// Interruptions are the run's interruption budgets (E92): how many times
+	// an interrupted attempt runs again without spending a task's own
+	// attempts. Decided at submit from the deployment's
+	// engine.interruptions.* settings, because a code constant may not decide
+	// a re-dispatch (AGENTS.md §7.2); a run-tree value, copied into each
+	// child's start plan. Nil on every plan built before it: such a run
+	// re-runs nothing for an interruption, as before. omitzero, so a plan
+	// with none encodes exactly as it did before the field existed.
+	Interruptions *InterruptionBudgets `json:"interruptions,omitzero"`
+
 	// RecordRootRun says this run's child runs record the root of their chain
 	// (RunOrigin.RootRunID, childStartPlan). It changes what a child start
 	// carries and no command. It rides the plan rather than a gate so that a
@@ -725,4 +735,32 @@ func (p RunPlan) pools() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// InterruptionBudgets are a run's interruption budgets (E92, design §4.3),
+// pinned in its plan at submit.
+type InterruptionBudgets struct {
+	// Lost is how many times a task re-runs after its Orker stopped answering.
+	Lost int32 `json:"lost"`
+	// LostRunCap bounds the run's lost-Orker events across all its tasks.
+	LostRunCap int32 `json:"run_cap"`
+	// HandedBack is how many times a task re-runs after a stopping Orker
+	// handed it back.
+	HandedBack int32 `json:"handed_back"`
+	// NeverStarted is how many times a task re-runs, with no wait, after a
+	// stopping Orker returned it before it started; past it, with a back-off.
+	NeverStarted int32 `json:"never_started"`
+	// NeverStartedFaults is how many consecutive never-started faults
+	// (object storage refusing the attempt's record, a drifted profile) a
+	// task survives before they spend its own attempts.
+	NeverStartedFaults int32 `json:"faults"`
+	// NeverStartedBackoffMillis is the initial wait of the never-started
+	// back-off, doubling (exponent clamped at 6, wait at 60 s).
+	NeverStartedBackoffMillis int64 `json:"backoff_ms"`
+	// NeverStartedFaultFloorMillis floors the fault back-off's initial wait
+	// at the time an Orker's store-outage cordon takes to trip (its store
+	// check's interval times its failures, at the Orker's defaults), so a
+	// one-attempt task outlives a store blip until the cordon can act (design
+	// §4.8 4a). 0, in a plan from before the field, floors nothing.
+	NeverStartedFaultFloorMillis int64 `json:"fault_floor_ms,omitzero"`
 }

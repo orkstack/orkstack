@@ -12,6 +12,8 @@ package config
 
 import (
 	"go.temporal.io/sdk/client"
+	"strconv"
+	"time"
 
 	"github.com/orkstack/orkstack/internal/api"
 	"github.com/orkstack/orkstack/internal/archive"
@@ -228,6 +230,14 @@ var Schema = []Var{
 	// how long a pin waits for a pin host's free slot before its first task
 	// fails PIN_UNAVAILABLE. Pinned, in seconds, into each top-level plan.
 	{Path: "engine.pin_creation_timeout", Env: "ORK_PIN_CREATION_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultPinCreationTimeout)},
+	// engine.interruptions.* (E92): the budgets every accepted run pins in
+	// its plan; each default is engine.DefaultInterruptionBudgets'.
+	{Path: "engine.interruptions.lost", Env: "ORK_INTERRUPTIONS_LOST", Binaries: usesOrk, Kind: KindInt, Default: strconv.Itoa(int(engine.DefaultInterruptionBudgets.Lost))},
+	{Path: "engine.interruptions.lost_run_cap", Env: "ORK_INTERRUPTIONS_LOST_RUN_CAP", Binaries: usesOrk, Kind: KindInt, Default: strconv.Itoa(int(engine.DefaultInterruptionBudgets.LostRunCap))},
+	{Path: "engine.interruptions.handed_back", Env: "ORK_INTERRUPTIONS_HANDED_BACK", Binaries: usesOrk, Kind: KindInt, Default: strconv.Itoa(int(engine.DefaultInterruptionBudgets.HandedBack))},
+	{Path: "engine.interruptions.never_started", Env: "ORK_INTERRUPTIONS_NEVER_STARTED", Binaries: usesOrk, Kind: KindInt, Default: strconv.Itoa(int(engine.DefaultInterruptionBudgets.NeverStarted))},
+	{Path: "engine.interruptions.never_started_faults", Env: "ORK_INTERRUPTIONS_NEVER_STARTED_FAULTS", Binaries: usesOrk, Kind: KindInt, Default: strconv.Itoa(int(engine.DefaultInterruptionBudgets.NeverStartedFaults))},
+	{Path: "engine.interruptions.never_started_backoff", Env: "ORK_INTERRUPTIONS_NEVER_STARTED_BACKOFF", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(time.Duration(engine.DefaultInterruptionBudgets.NeverStartedBackoffMillis) * time.Millisecond)},
 	// ORK_RUN_TIMEOUT_HANDLER_GRACE's fallback is
 	// engine.DefaultRunTimeoutHandlerGrace: how long after a run's deadline
 	// its failure handlers may still run. Pinned, in seconds, into the plan

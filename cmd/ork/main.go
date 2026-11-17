@@ -119,6 +119,9 @@ type config struct {
 	// PIN_UNAVAILABLE. Whole seconds, 1s to 24h, refused at boot otherwise
 	// (docs/DEPLOY.md §1).
 	pinCreationTimeout time.Duration
+	// interruptions are engine.interruptions.*, pinned into every run's
+	// plan at submit.
+	interruptions engine.InterruptionBudgets
 	// runTimeoutHandlerGrace is ORK_RUN_TIMEOUT_HANDLER_GRACE
 	// (runTimeoutHandlerGraceFromEnv): how long after a run's deadline its
 	// failure handlers may still run. Whole seconds, 0s to 24h, refused at
@@ -193,6 +196,7 @@ func loadConfig() config {
 		engine.DefaultDefinitionByReference)
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	pinCreationTimeout, pinCreationErr := pinCreationTimeoutFromEnv()
+	interruptions, interruptionsErr := interruptionBudgetsFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
@@ -221,6 +225,7 @@ func loadConfig() config {
 		continuation:                  continuation,
 		runMaxInFlight:                runMaxInFlight,
 		pinCreationTimeout:            pinCreationTimeout,
+		interruptions:                 interruptions,
 		runTimeoutHandlerGrace:        runTimeoutGrace,
 		runPauseTimeout:               runPauseTimeout,
 		runPauseTimeoutMax:            runPauseTimeoutMax,
@@ -231,7 +236,8 @@ func loadConfig() config {
 		cacheMaxTTL:                   cacheMaxTTL,
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
-			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr),
+			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr,
+			interruptionsErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1913,6 +1919,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		ContinuationRestoreTimeout:    cfg.continuation.restoreTimeout,
 		RunMaxInFlight:                cfg.runMaxInFlight,
 		PinCreationTimeout:            cfg.pinCreationTimeout,
+		Interruptions:                 &cfg.interruptions,
 		RunTimeoutHandlerGrace:        cfg.runTimeoutHandlerGrace,
 		RunPauseTimeout:               cfg.runPauseTimeout,
 		RunPauseTimeoutMax:            cfg.runPauseTimeoutMax,

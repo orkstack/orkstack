@@ -194,7 +194,7 @@ func (s *runState) retainedClosureEntries() int {
 func (s *runState) fanOutCanDispatch(id string) bool {
 	e := s.eaches[id]
 	return e != nil && e.expanded && s.taskRuns[id].GetStatus() == orkstackv1.Status_STATUS_RUNNING &&
-		e.next < e.count && e.inFlight < e.limit
+		(e.next < e.count || len(e.again) > 0) && e.inFlight < e.limit
 }
 
 // anyFanOutHeld is heldFanOuts' definition: some expanded RUNNING fan-out
