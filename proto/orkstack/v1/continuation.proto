@@ -101,7 +101,8 @@ message RunContinuation {
   // request is still refused after the switch.
   int64 last_cascade_seq = 15;
 
-  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  // concurrency is the run's concurrency slots carried forward: only held
+  // run-level slots cross, since a waiting run never carries on.
   RunConcurrencyCarry concurrency = 16;
 
   // deferred_pause_requests are the pause requests the run received but
@@ -167,9 +168,31 @@ message RunSnapshotOverlay {
   string base_sha256 = 5;
 }
 
-// RunConcurrencyCarry is E88's; it is empty until E88 lands (v0.4.0 proto
-// batch).
-message RunConcurrencyCarry {}
+// RunConcurrencyCarry is a run's concurrency slots as it carries on.
+message RunConcurrencyCarry {
+  // attempted is every gate the run asked for a slot.
+  repeated string attempted = 1;
+  // held is every run-level slot it holds.
+  repeated HeldSlot held = 2;
+  // ordinals is each slot's current ordinal, for those given back and
+  // asked for again (n above 0).
+  repeated SlotOrdinal ordinals = 3;
+}
+
+// HeldSlot is one run-level slot a run holds: its gate and the line's seq
+// it was granted at.
+message HeldSlot {
+  string gate_id = 1;
+  int64 seq = 2;
+}
+
+// SlotOrdinal is one slot's ordinal: how many times the run gave it back
+// and asked for it again.
+message SlotOrdinal {
+  string gate_id = 1;
+  int32 task_ix = 2;
+  int64 n = 3;
+}
 
 // RunLossEvents is a run's lost-Orker events so far, carried forward with
 // its saved state: the run's cap on how many lost Orkers re-run its tasks.

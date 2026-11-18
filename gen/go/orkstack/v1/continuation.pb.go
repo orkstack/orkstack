@@ -309,7 +309,8 @@ type RunContinuation struct {
 	// last_cascade_seq is the last parent cascade counter applied, so a stale
 	// request is still refused after the switch.
 	LastCascadeSeq int64 `protobuf:"varint,15,opt,name=last_cascade_seq,json=lastCascadeSeq,proto3" json:"last_cascade_seq,omitempty"`
-	// concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+	// concurrency is the run's concurrency slots carried forward: only held
+	// run-level slots cross, since a waiting run never carries on.
 	Concurrency *RunConcurrencyCarry `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
 	// deferred_pause_requests are the pause requests the run received but
 	// could not record within its history limit, in the order they arrived;
@@ -714,10 +715,16 @@ func (x *RunSnapshotOverlay) GetBaseSha256() string {
 	return ""
 }
 
-// RunConcurrencyCarry is E88's; it is empty until E88 lands (v0.4.0 proto
-// batch).
+// RunConcurrencyCarry is a run's concurrency slots as it carries on.
 type RunConcurrencyCarry struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// attempted is every gate the run asked for a slot.
+	Attempted []string `protobuf:"bytes,1,rep,name=attempted,proto3" json:"attempted,omitempty"`
+	// held is every run-level slot it holds.
+	Held []*HeldSlot `protobuf:"bytes,2,rep,name=held,proto3" json:"held,omitempty"`
+	// ordinals is each slot's current ordinal, for those given back and
+	// asked for again (n above 0).
+	Ordinals      []*SlotOrdinal `protobuf:"bytes,3,rep,name=ordinals,proto3" json:"ordinals,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -752,6 +759,143 @@ func (*RunConcurrencyCarry) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{7}
 }
 
+func (x *RunConcurrencyCarry) GetAttempted() []string {
+	if x != nil {
+		return x.Attempted
+	}
+	return nil
+}
+
+func (x *RunConcurrencyCarry) GetHeld() []*HeldSlot {
+	if x != nil {
+		return x.Held
+	}
+	return nil
+}
+
+func (x *RunConcurrencyCarry) GetOrdinals() []*SlotOrdinal {
+	if x != nil {
+		return x.Ordinals
+	}
+	return nil
+}
+
+// HeldSlot is one run-level slot a run holds: its gate and the line's seq
+// it was granted at.
+type HeldSlot struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GateId        string                 `protobuf:"bytes,1,opt,name=gate_id,json=gateId,proto3" json:"gate_id,omitempty"`
+	Seq           int64                  `protobuf:"varint,2,opt,name=seq,proto3" json:"seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HeldSlot) Reset() {
+	*x = HeldSlot{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HeldSlot) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HeldSlot) ProtoMessage() {}
+
+func (x *HeldSlot) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HeldSlot.ProtoReflect.Descriptor instead.
+func (*HeldSlot) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *HeldSlot) GetGateId() string {
+	if x != nil {
+		return x.GateId
+	}
+	return ""
+}
+
+func (x *HeldSlot) GetSeq() int64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+// SlotOrdinal is one slot's ordinal: how many times the run gave it back
+// and asked for it again.
+type SlotOrdinal struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	GateId        string                 `protobuf:"bytes,1,opt,name=gate_id,json=gateId,proto3" json:"gate_id,omitempty"`
+	TaskIx        int32                  `protobuf:"varint,2,opt,name=task_ix,json=taskIx,proto3" json:"task_ix,omitempty"`
+	N             int64                  `protobuf:"varint,3,opt,name=n,proto3" json:"n,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SlotOrdinal) Reset() {
+	*x = SlotOrdinal{}
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SlotOrdinal) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SlotOrdinal) ProtoMessage() {}
+
+func (x *SlotOrdinal) ProtoReflect() protoreflect.Message {
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SlotOrdinal.ProtoReflect.Descriptor instead.
+func (*SlotOrdinal) Descriptor() ([]byte, []int) {
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *SlotOrdinal) GetGateId() string {
+	if x != nil {
+		return x.GateId
+	}
+	return ""
+}
+
+func (x *SlotOrdinal) GetTaskIx() int32 {
+	if x != nil {
+		return x.TaskIx
+	}
+	return 0
+}
+
+func (x *SlotOrdinal) GetN() int64 {
+	if x != nil {
+		return x.N
+	}
+	return 0
+}
+
 // RunLossEvents is a run's lost-Orker events so far, carried forward with
 // its saved state: the run's cap on how many lost Orkers re-run its tasks.
 type RunLossEvents struct {
@@ -766,7 +910,7 @@ type RunLossEvents struct {
 
 func (x *RunLossEvents) Reset() {
 	*x = RunLossEvents{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -778,7 +922,7 @@ func (x *RunLossEvents) String() string {
 func (*RunLossEvents) ProtoMessage() {}
 
 func (x *RunLossEvents) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[8]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -791,7 +935,7 @@ func (x *RunLossEvents) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunLossEvents.ProtoReflect.Descriptor instead.
 func (*RunLossEvents) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{8}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *RunLossEvents) GetCount() int32 {
@@ -819,7 +963,7 @@ type OpenLossEvent struct {
 
 func (x *OpenLossEvent) Reset() {
 	*x = OpenLossEvent{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -831,7 +975,7 @@ func (x *OpenLossEvent) String() string {
 func (*OpenLossEvent) ProtoMessage() {}
 
 func (x *OpenLossEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[9]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -844,7 +988,7 @@ func (x *OpenLossEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OpenLossEvent.ProtoReflect.Descriptor instead.
 func (*OpenLossEvent) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{9}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *OpenLossEvent) GetOrkerId() string {
@@ -871,7 +1015,7 @@ type RunResumeCarry struct {
 
 func (x *RunResumeCarry) Reset() {
 	*x = RunResumeCarry{}
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -883,7 +1027,7 @@ func (x *RunResumeCarry) String() string {
 func (*RunResumeCarry) ProtoMessage() {}
 
 func (x *RunResumeCarry) ProtoReflect() protoreflect.Message {
-	mi := &file_orkstack_v1_continuation_proto_msgTypes[10]
+	mi := &file_orkstack_v1_continuation_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -896,7 +1040,7 @@ func (x *RunResumeCarry) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RunResumeCarry.ProtoReflect.Descriptor instead.
 func (*RunResumeCarry) Descriptor() ([]byte, []int) {
-	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{10}
+	return file_orkstack_v1_continuation_proto_rawDescGZIP(), []int{12}
 }
 
 var File_orkstack_v1_continuation_proto protoreflect.FileDescriptor
@@ -974,8 +1118,18 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\ttask_runs\x18\x03 \x03(\v2\x14.orkstack.v1.TaskRunR\btaskRuns\x12*\n" +
 	"\x05items\x18\x04 \x03(\v2\x14.orkstack.v1.TaskRunR\x05items\x12\x1f\n" +
 	"\vbase_sha256\x18\x05 \x01(\tR\n" +
-	"baseSha256\"\x15\n" +
-	"\x13RunConcurrencyCarry\"U\n" +
+	"baseSha256\"\x94\x01\n" +
+	"\x13RunConcurrencyCarry\x12\x1c\n" +
+	"\tattempted\x18\x01 \x03(\tR\tattempted\x12)\n" +
+	"\x04held\x18\x02 \x03(\v2\x15.orkstack.v1.HeldSlotR\x04held\x124\n" +
+	"\bordinals\x18\x03 \x03(\v2\x18.orkstack.v1.SlotOrdinalR\bordinals\"5\n" +
+	"\bHeldSlot\x12\x17\n" +
+	"\agate_id\x18\x01 \x01(\tR\x06gateId\x12\x10\n" +
+	"\x03seq\x18\x02 \x01(\x03R\x03seq\"M\n" +
+	"\vSlotOrdinal\x12\x17\n" +
+	"\agate_id\x18\x01 \x01(\tR\x06gateId\x12\x17\n" +
+	"\atask_ix\x18\x02 \x01(\x05R\x06taskIx\x12\f\n" +
+	"\x01n\x18\x03 \x01(\x03R\x01n\"U\n" +
 	"\rRunLossEvents\x12\x14\n" +
 	"\x05count\x18\x01 \x01(\x05R\x05count\x12.\n" +
 	"\x04open\x18\x02 \x03(\v2\x1a.orkstack.v1.OpenLossEventR\x04open\"a\n" +
@@ -997,7 +1151,7 @@ func file_orkstack_v1_continuation_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_continuation_proto_rawDescData
 }
 
-var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
+var file_orkstack_v1_continuation_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*ContinuationPart)(nil),      // 0: orkstack.v1.ContinuationPart
 	(*ContinuationObject)(nil),    // 1: orkstack.v1.ContinuationObject
@@ -1007,48 +1161,52 @@ var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*RunEventSegment)(nil),       // 5: orkstack.v1.RunEventSegment
 	(*RunSnapshotOverlay)(nil),    // 6: orkstack.v1.RunSnapshotOverlay
 	(*RunConcurrencyCarry)(nil),   // 7: orkstack.v1.RunConcurrencyCarry
-	(*RunLossEvents)(nil),         // 8: orkstack.v1.RunLossEvents
-	(*OpenLossEvent)(nil),         // 9: orkstack.v1.OpenLossEvent
-	(*RunResumeCarry)(nil),        // 10: orkstack.v1.RunResumeCarry
-	nil,                           // 11: orkstack.v1.RunContinuation.VersionDecisionsEntry
-	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
-	(*RunPause)(nil),              // 13: orkstack.v1.RunPause
-	(*InheritedPause)(nil),        // 14: orkstack.v1.InheritedPause
-	(*RunPauseSignal)(nil),        // 15: orkstack.v1.RunPauseSignal
-	(*Run)(nil),                   // 16: orkstack.v1.Run
-	(*TaskRun)(nil),               // 17: orkstack.v1.TaskRun
-	(*Event)(nil),                 // 18: orkstack.v1.Event
+	(*HeldSlot)(nil),              // 8: orkstack.v1.HeldSlot
+	(*SlotOrdinal)(nil),           // 9: orkstack.v1.SlotOrdinal
+	(*RunLossEvents)(nil),         // 10: orkstack.v1.RunLossEvents
+	(*OpenLossEvent)(nil),         // 11: orkstack.v1.OpenLossEvent
+	(*RunResumeCarry)(nil),        // 12: orkstack.v1.RunResumeCarry
+	nil,                           // 13: orkstack.v1.RunContinuation.VersionDecisionsEntry
+	(*timestamppb.Timestamp)(nil), // 14: google.protobuf.Timestamp
+	(*RunPause)(nil),              // 15: orkstack.v1.RunPause
+	(*InheritedPause)(nil),        // 16: orkstack.v1.InheritedPause
+	(*RunPauseSignal)(nil),        // 17: orkstack.v1.RunPauseSignal
+	(*Run)(nil),                   // 18: orkstack.v1.Run
+	(*TaskRun)(nil),               // 19: orkstack.v1.TaskRun
+	(*Event)(nil),                 // 20: orkstack.v1.Event
 }
 var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ContinuationObject.parts:type_name -> orkstack.v1.ContinuationPart
 	1,  // 1: orkstack.v1.EventSegmentRef.object:type_name -> orkstack.v1.ContinuationObject
-	12, // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
-	12, // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
+	14, // 2: orkstack.v1.RunContinuation.created_at:type_name -> google.protobuf.Timestamp
+	14, // 3: orkstack.v1.RunContinuation.started_at:type_name -> google.protobuf.Timestamp
 	1,  // 4: orkstack.v1.RunContinuation.checkpoint:type_name -> orkstack.v1.ContinuationObject
 	2,  // 5: orkstack.v1.RunContinuation.segments:type_name -> orkstack.v1.EventSegmentRef
-	11, // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
+	13, // 6: orkstack.v1.RunContinuation.version_decisions:type_name -> orkstack.v1.RunContinuation.VersionDecisionsEntry
 	1,  // 7: orkstack.v1.RunContinuation.snapshot:type_name -> orkstack.v1.ContinuationObject
-	10, // 8: orkstack.v1.RunContinuation.resume:type_name -> orkstack.v1.RunResumeCarry
-	13, // 9: orkstack.v1.RunContinuation.pause:type_name -> orkstack.v1.RunPause
-	13, // 10: orkstack.v1.RunContinuation.last_pause:type_name -> orkstack.v1.RunPause
-	14, // 11: orkstack.v1.RunContinuation.paused_by_parent:type_name -> orkstack.v1.InheritedPause
+	12, // 8: orkstack.v1.RunContinuation.resume:type_name -> orkstack.v1.RunResumeCarry
+	15, // 9: orkstack.v1.RunContinuation.pause:type_name -> orkstack.v1.RunPause
+	15, // 10: orkstack.v1.RunContinuation.last_pause:type_name -> orkstack.v1.RunPause
+	16, // 11: orkstack.v1.RunContinuation.paused_by_parent:type_name -> orkstack.v1.InheritedPause
 	7,  // 12: orkstack.v1.RunContinuation.concurrency:type_name -> orkstack.v1.RunConcurrencyCarry
-	15, // 13: orkstack.v1.RunContinuation.deferred_pause_requests:type_name -> orkstack.v1.RunPauseSignal
-	16, // 14: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
-	17, // 15: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
-	17, // 16: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
-	8,  // 17: orkstack.v1.RunCheckpointPart.loss_events:type_name -> orkstack.v1.RunLossEvents
-	18, // 18: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
-	16, // 19: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
-	17, // 20: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
-	17, // 21: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
-	9,  // 22: orkstack.v1.RunLossEvents.open:type_name -> orkstack.v1.OpenLossEvent
-	12, // 23: orkstack.v1.OpenLossEvent.first_at:type_name -> google.protobuf.Timestamp
-	24, // [24:24] is the sub-list for method output_type
-	24, // [24:24] is the sub-list for method input_type
-	24, // [24:24] is the sub-list for extension type_name
-	24, // [24:24] is the sub-list for extension extendee
-	0,  // [0:24] is the sub-list for field type_name
+	17, // 13: orkstack.v1.RunContinuation.deferred_pause_requests:type_name -> orkstack.v1.RunPauseSignal
+	18, // 14: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
+	19, // 15: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
+	19, // 16: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
+	10, // 17: orkstack.v1.RunCheckpointPart.loss_events:type_name -> orkstack.v1.RunLossEvents
+	20, // 18: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
+	18, // 19: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
+	19, // 20: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
+	19, // 21: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
+	8,  // 22: orkstack.v1.RunConcurrencyCarry.held:type_name -> orkstack.v1.HeldSlot
+	9,  // 23: orkstack.v1.RunConcurrencyCarry.ordinals:type_name -> orkstack.v1.SlotOrdinal
+	11, // 24: orkstack.v1.RunLossEvents.open:type_name -> orkstack.v1.OpenLossEvent
+	14, // 25: orkstack.v1.OpenLossEvent.first_at:type_name -> google.protobuf.Timestamp
+	26, // [26:26] is the sub-list for method output_type
+	26, // [26:26] is the sub-list for method input_type
+	26, // [26:26] is the sub-list for extension type_name
+	26, // [26:26] is the sub-list for extension extendee
+	0,  // [0:26] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_continuation_proto_init() }
@@ -1063,7 +1221,7 @@ func file_orkstack_v1_continuation_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_continuation_proto_rawDesc), len(file_orkstack_v1_continuation_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   12,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

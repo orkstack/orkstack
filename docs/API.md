@@ -959,17 +959,40 @@ sibling read, field for field.
 
 ### ConcurrencyQueued
 
-ConcurrencyQueued is E88's; it is empty until E88 lands (v0.4.0 proto
-batch).
+ConcurrencyQueued is a run waiting in line for a slot of a concurrency
+limit's key.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `key` | `string` | key is the rendered key the run waits for. |
+| `limit` | `int32` | limit is how many runs may hold its slots at once. |
+| `strategy` | [`ConcurrencyStrategy`](#concurrencystrategy) | strategy is the declaration's on_limit. |
+| `position_at_arrival` | `int32` | position_at_arrival is the run's place in line when it arrived, from 1. |
+| `position` | `int32` | position is its place in line now, read live by GetRun only, and only when position_known says it could be read. |
+| `position_known` | `bool` |  |
+| `holders_ahead` | repeated `string` | holders_ahead names runs holding the key's slots, at most ten; holders_count is how many there are. holders_as_of_arrival says both are as the run found them when it arrived, not live. |
+| `holders_count` | `int32` |  |
+| `holders_as_of_arrival` | `bool` |  |
+| `queued_since` | `google.protobuf.Timestamp` | queued_since is when the run began waiting; times_out_at is when it stops. |
+| `times_out_at` | `google.protobuf.Timestamp` |  |
+| `note_code` | `string` | note_code says why the wait may take longer than the line explains: NOT_ANSWERING, REBUILD_FAILING, REBUILDING, HOLDER_STALLED or LINE_FULL, empty when nothing does. note says it in words. |
+| `note` | `string` |  |
+| `cause` | [`ConcurrencyQueueCause`](#concurrencyqueuecause) | cause is why the run waits: it arrived, or it waits again after an unpause or a resume. |
 
 ### ConcurrencySpec
 
-ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
-batch).
+ConcurrencySpec is one declared concurrency limit (docs/DSL.md
+"Concurrency limits"). Its identity is its namespace and its rendered key:
+every declaration in a namespace that renders the same key shares its
+slots and its line.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `limit` | `int32` | limit is how many runs may hold a slot of the key at once, from 1. |
+| `key` | `string` | key is the template a run renders its key from, once, at submit. Empty is the Orkflow's own key, shared by every version of it in the namespace that runs it. |
+| `on_limit` | [`ConcurrencyStrategy`](#concurrencystrategy) | on_limit is what a run does when every slot of its key is held. |
+| `queue_timeout_seconds` | `int64` | queue_timeout_seconds is how long a run waits in line for a slot before it ends; 0 is the deployment's default. |
+| `max_queued` | `int32` | max_queued is how many runs may wait in line for the key, checked at submit, best-effort; 0 sets no bound of its own. |
 
 ### ConsentView
 
@@ -3007,7 +3030,7 @@ Orkflow is the compiled, validated form of a DSL document.
 | `shared_with` | repeated [`OrkflowShare`](#orkflowshare) | shared_with is who in other namespaces may compose this version through `uses: orkflow:<namespace>/<name>@<version>` (docs/DSL.md "Sharing across namespaces"). Empty means nobody: an Orkflow is closed to every other namespace unless its definition says otherwise. Composition is the only door — a submit, a schedule or a trigger runs only its own namespace's Orkflows. It is part of the definition, so a new version changes who may call it, and part of canonicalOrkflow only when non-empty (see pins). |
 | `definition_namespace` | `string` | definition_namespace is set ONLY on a run's planned copy of an Orkflow that another namespace's Orkflow composed: the namespace that owns the stored definition, while namespace names the namespace the child run executes in and whose rules it follows. Never stored, never applied and not part of canonicalOrkflow: definition_digest is the owner's. |
 | `output_artifacts` | map&lt;`string`, [`OutputArtifact`](#outputartifact)&gt; | output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
-| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is the Orkflow's run-level concurrency limit (docs/DSL.md "Concurrency limits"): its runs share at most limit slots of one key, and a run past them waits in order. Unset, its runs are not limited. Part of canonicalOrkflow only when set, so an Orkflow that declares none keeps its digest. |
 | `timeout_seconds` | `int64` | timeout_seconds is the run's own time limit from its start, from the DSL's `timeout:` (docs/DSL.md "Run timeout"); 0 means none. It is part of canonicalOrkflow, in its short form, only when non-zero, so an Orkflow that declares none keeps its digest. |
 
 ### OrkflowCaller
@@ -3827,7 +3850,7 @@ Run is one execution of an Orkflow.
 | `trace_id` | `string` | trace_id is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `run_context` | [`RunContextState`](#runcontextstate) | run_context is set from E86; unset until it lands (v0.4.0 proto batch). |
 | `canceled_by_verified` | `bool` | canceled_by_verified says canceled_by is a principal OrkStack authenticated (auth.mode observe or enforce). Unset, canceled_by is what the deployment's gateway asserted in Ork-Principal, unauthenticated. |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is present while the run waits in line for a slot of its concurrency limit's key (docs/DSL.md "Concurrency limits"): status PENDING, or RUNNING when an unpaused or resumed run waits again. |
 | `superseded_by` | `string` | superseded_by is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `resumes` | repeated [`RunResume`](#runresume) | resumes is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_hint` | [`ResumeHint`](#resumehint) | resume_hint is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -4376,7 +4399,7 @@ execution on an Orker, and an activity is an OCI image.
 | `input_artifacts` | repeated `string` | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `credentials` | repeated [`CredentialRef`](#credentialref) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
-| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88's task-level limits; unset until they land. |
 | `device_contracts` | map&lt;`string`, `string`&gt; | device_contracts maps a profile the task names in devices to the contract label the task needs of it: the image's declaration, or the author's `name@label`. Written at create, only when non-empty. |
 
 ### TaskAttempt
@@ -4564,7 +4587,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `timing` | [`TaskTiming`](#tasktiming) | timing is where this task's time went, derived from scheduled_at, started_at and finished_at above (TaskTiming). It is DERIVED ON READ: GetRun sets it on every row, a fan-out's items included, and nothing stores it — the engine never writes it, and a copy read back from anywhere else is not one GetRun answered. |
 | `sleep` | [`TaskSleep`](#tasksleep) | sleep is this task's sleep state, set for a task whose definition declares `sleep:` and unset otherwise (see TaskSleep). |
 | `interruptions` | [`TaskInterruptions`](#taskinterruptions) | interruptions is set from E92; unset until it lands (v0.4.0 proto batch). |
-| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `queued` | [`ConcurrencyQueued`](#concurrencyqueued) | queued is set from E88's task-level limits; unset until they land. |
 | `pending_reason` | `string` | pending_reason says why a task, or a fan-out item, of a live run is not running yet. GetRun derives it on read and nothing stores it. It is one of: the instant the task waits for to run again after an interruption; that no Orker of its pool (on a versioned fleet, of its run's release) takes work, for a task the run dispatched that no Orker has started; or that its pin waits for a pin host. It is empty when none applies, and when the reason cannot be known: the Orker inventory or the run's release could not be read, or a live Orker did not answer. |
 | `result_epoch` | `int64` | result_epoch is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `resume_disposition` | [`ResumeDisposition`](#resumedisposition) | resume_disposition is set from E85; unset until it lands (v0.4.0 proto batch). |
@@ -5077,6 +5100,30 @@ CacheScope is who may reuse a cached task's memo (docs/DSL.md "Caching").
 | `CACHE_SCOPE_ORKFLOW` | 1 | Runs of the same Orkflow, in the same namespace. |
 | `CACHE_SCOPE_NAMESPACE` | 2 | Runs of any Orkflow of the same namespace whose task of the same id computes the same key. The Orkflow's name is then not part of the key. |
 
+### ConcurrencyQueueCause
+
+ConcurrencyQueueCause is why a run waits in line.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_QUEUE_CAUSE_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_QUEUE_CAUSE_ARRIVAL` | 1 | ARRIVAL: the run arrived to a key whose slots were all held. |
+| `CONCURRENCY_QUEUE_CAUSE_RESUME` | 2 | RESUME: the resumed run waits for its slot again. |
+| `CONCURRENCY_QUEUE_CAUSE_UNPAUSE` | 3 | UNPAUSE: the run gave its slot back while paused and waits for it again. |
+
+### ConcurrencyStrategy
+
+ConcurrencyStrategy is what a run does when every slot of its key is held.
+
+| Value | Number | Description |
+|---|---|---|
+| `CONCURRENCY_STRATEGY_UNSPECIFIED` | 0 |  |
+| `CONCURRENCY_STRATEGY_QUEUE` | 1 | QUEUE: wait in line, in order of arrival. The default. |
+| `CONCURRENCY_STRATEGY_REFUSE` | 2 | REFUSE: the run fails at once. |
+| `CONCURRENCY_STRATEGY_SKIP` | 3 | SKIP: the run is not started. |
+| `CONCURRENCY_STRATEGY_CANCEL_OLDEST` | 4 | CANCEL_OLDEST: the oldest holder is canceled to make room. |
+| `CONCURRENCY_STRATEGY_REPLACE` | 5 | REPLACE: the runs waiting in line are replaced by this one. |
+
 ### DeliveryClass
 
 DeliveryClass is what a source's image promises about a message that
@@ -5148,6 +5195,8 @@ EventType classifies a run event on the realtime stream.
 | `EVENT_TYPE_TASK_RESOLVED` | 12 | TASK_RESOLVED: an awaited task was resolved from outside the run. Status is the outcome it decided — SUCCEEDED for a completion, FAILED for a rejection — and TASK_SUCCEEDED or TASK_FAILED follows with the same status, so a reader that only knows the older task events still sees the task end. |
 | `EVENT_TYPE_STREAM_GAP` | 13 | STREAM_GAP: numbers of the run's event sequence hold no event, because the run used them without publishing one (an event whose record object storage refused). Its sequence is the last of those numbers and its message names them all; no run or task changed state. Only a live read of the stream serves it, and the read goes on to the run's terminal event. It is part of the read, not of the run's events: the run's archive records the same numbers as a gap in its stream instead, and a read over that gap ends DataLoss. |
 | `EVENT_TYPE_TASK_SLEEPING` | 14 | TASK_SLEEPING: a sleeping task started its fixed wait. Status SLEEPING; the message names the wake-up time. TASK_SUCCEEDED follows when it wakes; a run that ends first records the task CANCELED. |
+| `EVENT_TYPE_RUN_QUEUED` | 15 | RUN_QUEUED: the run waits in line for a slot of its concurrency limit's key. Status PENDING, or RUNNING for a run that waits again; the message names the key and its place in line. Not in a webhook's default events. |
+| `EVENT_TYPE_TASK_QUEUED` | 16 | TASK_QUEUED: a task waits in line for a slot of its concurrency limit's key. Not in a webhook's default events. |
 | `EVENT_TYPE_RUN_PAUSED` | 19 | RUN_PAUSED: the run became paused, or is still paused with its causes changed (pause_transition says which). Status PAUSED. |
 | `EVENT_TYPE_RUN_UNPAUSED` | 20 | RUN_UNPAUSED: no pause cause remains, or the run was not paused (pause_transition NOT_PAUSED). Status RUNNING. |
 

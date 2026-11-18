@@ -182,7 +182,7 @@ message Task {
   // credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch).
   repeated CredentialRef credentials = 29;
 
-  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  // concurrency is set from E88's task-level limits; unset until they land.
   ConcurrencySpec concurrency = 32;
 
   // 27 was a field of a draft that recorded histories hold: never reuse it.
@@ -356,7 +356,11 @@ message Orkflow {
   // output_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
   map<string, OutputArtifact> output_artifacts = 15;
 
-  // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
+  // concurrency is the Orkflow's run-level concurrency limit (docs/DSL.md
+  // "Concurrency limits"): its runs share at most limit slots of one key,
+  // and a run past them waits in order. Unset, its runs are not limited. Part
+  // of canonicalOrkflow only when set, so an Orkflow that declares none keeps
+  // its digest.
   ConcurrencySpec concurrency = 16;
 
   // timeout_seconds is the run's own time limit from its start, from the
@@ -370,9 +374,41 @@ message Orkflow {
 // batch).
 message ChildArtifact {}
 
-// ConcurrencySpec is E88's; it is empty until E88 lands (v0.4.0 proto
-// batch).
-message ConcurrencySpec {}
+// ConcurrencySpec is one declared concurrency limit (docs/DSL.md
+// "Concurrency limits"). Its identity is its namespace and its rendered key:
+// every declaration in a namespace that renders the same key shares its
+// slots and its line.
+message ConcurrencySpec {
+  // limit is how many runs may hold a slot of the key at once, from 1.
+  int32 limit = 1;
+  // key is the template a run renders its key from, once, at submit. Empty
+  // is the Orkflow's own key, shared by every version of it in the
+  // namespace that runs it.
+  string key = 2;
+  // on_limit is what a run does when every slot of its key is held.
+  ConcurrencyStrategy on_limit = 3;
+  // queue_timeout_seconds is how long a run waits in line for a slot before
+  // it ends; 0 is the deployment's default.
+  int64 queue_timeout_seconds = 4;
+  // max_queued is how many runs may wait in line for the key, checked at
+  // submit, best-effort; 0 sets no bound of its own.
+  int32 max_queued = 5;
+}
+
+// ConcurrencyStrategy is what a run does when every slot of its key is held.
+enum ConcurrencyStrategy {
+  CONCURRENCY_STRATEGY_UNSPECIFIED = 0;
+  // QUEUE: wait in line, in order of arrival. The default.
+  CONCURRENCY_STRATEGY_QUEUE = 1;
+  // REFUSE: the run fails at once.
+  CONCURRENCY_STRATEGY_REFUSE = 2;
+  // SKIP: the run is not started.
+  CONCURRENCY_STRATEGY_SKIP = 3;
+  // CANCEL_OLDEST: the oldest holder is canceled to make room.
+  CONCURRENCY_STRATEGY_CANCEL_OLDEST = 4;
+  // REPLACE: the runs waiting in line are replaced by this one.
+  CONCURRENCY_STRATEGY_REPLACE = 5;
+}
 
 // CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
 // batch).
