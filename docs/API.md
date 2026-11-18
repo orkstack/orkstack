@@ -1307,7 +1307,7 @@ is alive by answering DescribeOrker (§6.5).
 | `masks_secrets` | `bool` | masks_secrets is whether this Orker masks a task's secrets in its logs (orker.log.mask_secrets). It reads secrets[].unmasked either way. |
 | `metadata_reachable` | repeated `string` | metadata_reachable is every address in metadata_probes that answered. Empty when none did, or when no probe ran (orker.metadata_probe off). |
 | `run_context_supported` | `bool` | run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch). |
-| `each_lines_supported` | `bool` | each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch). |
+| `each_lines_supported` | `bool` | each_lines_supported is true when this Orker indexes the lines of an artifact a fan-out reads, resolves such an item's span and stages a batch's slice file. Submit refuses a fan-out over lines on a pool where an uncordoned Orker answers false. |
 | `metadata_probes` | repeated [`MetadataProbe`](#metadataprobe) | metadata_probes is what the boot's metadata probe found, one entry per address it asked (docs/DEPLOY.md, "Keeping tasks away from the host's identity"). Empty when orker.metadata_probe is off, and from an Orker built before the probe existed. |
 | `store_scope` | [`StoreScope`](#storescope) | store_scope is this Orker's verdict on its own storage credential, from its scope check (docs/DEPLOY.md, "An Orker's own storage credential"). Unspecified for an Orker that never ran the check (an older build). |
 | `store_scope_detail` | `string` | store_scope_detail is the last round's result: the first prefix the credential reached, or the store's code for an unclear answer. It never holds a credential. |
@@ -1358,17 +1358,26 @@ is alive by answering DescribeOrker (§6.5).
 
 ### EachArtifactSource
 
-EachArtifactSource is E89's; it is empty until E89 lands (v0.4.0 proto
-batch).
+EachArtifactSource is the artifact a fan-out runs over the lines of:
+"&lt;producer>/&lt;name>" of EachSpec.over_artifact, split on the first "/".
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `producer` | `string` | producer is a task in the fan-out's own needs:. |
+| `name` | `string` | name is the artifact's name as its producer wrote it. |
 
 ### EachLines
 
-EachLines is E89's; it is empty until E89 lands (v0.4.0 proto
-batch).
+EachLines is a fan-out over an artifact's lines, once expanded: the
+committed source, the immutable line index its expansion wrote, and how
+the lines were cut into items.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `source` | [`ArtifactRef`](#artifactref) | source is the producer's committed artifact; its sha256 and size_bytes are what every read of it is held to. |
+| `index` | [`ArtifactRef`](#artifactref) | index is the line index (docs/STORAGE.md, "Line indexes"); its sha256 is what every read of it is held to. |
+| `format` | [`EachLineFormat`](#eachlineformat) |  |
+| `batch` | `int32` | batch is the lines per item; 0 or 1 is one line per item. |
 
 ### EachSource
 
@@ -1382,7 +1391,7 @@ parse `over`.
 | `input` | `string` | input names a declared input (.inputs.&lt;input>); task_id names a task in the fan-out's needs closure (.tasks.&lt;task_id>.output). Exactly one is set. |
 | `task_id` | `string` |  |
 | `path` | repeated `string` | path is the object keys below that root, outermost first. It is empty only for an input declared `type: array`; a task source always has at least one key, because a values.json is an object. There is no array index and no wildcard. |
-| `artifact` | [`EachArtifactSource`](#eachartifactsource) | artifact is set from E89; unset until it lands (v0.4.0 proto batch). |
+| `artifact` | [`EachArtifactSource`](#eachartifactsource) | artifact names an artifact of a task in the fan-out's needs, compiled from EachSpec.over_artifact: the fan-out runs over its lines. When it is set, input, task_id and path are empty. |
 
 ### EachSpec
 
@@ -1399,8 +1408,9 @@ Task.pin).
 | `max_items` | `int32` | max_items is the author's bound, 1..10000; the sum over every fan-out of one Orkflow is at most 10000, and at most the deployment's ORK_EACH_MAX_ITEMS (1000 unless the deployment raises it). An array longer than this fails the task EACH_TOO_MANY_ITEMS before any item runs. |
 | `max_parallel` | `int32` | max_parallel bounds how many items are in flight at once; 0 means no bound of the task's own. |
 | `source` | [`EachSource`](#eachsource) | source is over, compiled at apply (EachSource). |
-| `over_artifact` | `string` | over_artifact is set from E89; unset until it lands (v0.4.0 proto batch). |
-| `format` | [`EachLineFormat`](#eachlineformat) | format is set from E89; unset until it lands (v0.4.0 proto batch). |
+| `over_artifact` | `string` | over_artifact names an artifact of a task in this task's own needs:, "&lt;task>/&lt;name>", and makes the fan-out run one item per non-empty line of it (or per batch of lines). Exactly one of over and over_artifact is set. Part of canonicalOrkflow only when set, so a definition without it keeps its digest. |
+| `format` | [`EachLineFormat`](#eachlineformat) | format is how the lines of over_artifact are read: JSONL (each line one JSON value) or LINES (each line a string). Required with over_artifact, refused with over. |
+| `batch` | `int32` | batch makes one item of every batch consecutive non-empty lines of over_artifact, 2..10000; the last item may hold fewer. Unset (or 1, which the compiler normalises to unset) is one line per item. Refused with over. max_items counts items, so the line ceiling is max_items x batch. |
 
 ### EffectiveProfile
 
@@ -4392,7 +4402,7 @@ before this message existed.
 |---|---|---|
 | `expanded` | `bool` | expanded is true once the array was counted and the items created. It stays false while PENDING, when the task was SKIPPED, and when the array could not be counted (the task then FAILED with an EACH_* code). |
 | `count` | `int32` | count is the number of items, equal to len(TaskRun.items), once expanded. |
-| `lines` | [`EachLines`](#eachlines) | lines is set from E89; unset until it lands (v0.4.0 proto batch). |
+| `lines` | [`EachLines`](#eachlines) | lines is set once a fan-out over an artifact's lines has expanded: the source and the line index the items read their spans from. |
 
 ### TaskInterruption
 
@@ -4987,12 +4997,13 @@ starts no run.
 
 ### EachLineFormat
 
-EachLineFormat is E89's; it holds only its zero value until E89 lands
-(v0.4.0 proto batch).
+EachLineFormat is how a fan-out over an artifact's lines reads each line.
 
 | Value | Number | Description |
 |---|---|---|
 | `EACH_LINE_FORMAT_UNSPECIFIED` | 0 |  |
+| `EACH_LINE_FORMAT_JSONL` | 1 | JSONL: each non-empty line is one JSON value, decoded strictly. |
+| `EACH_LINE_FORMAT_LINES` | 2 | LINES: each non-empty line is a string, its bytes as written. |
 
 ### EvaluationOutcome
 

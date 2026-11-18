@@ -788,6 +788,23 @@ func TestIntegration_ExamplesRunWithNoInputs(t *testing.T) {
 				t.Fatalf("merged.txt = %q", got)
 			}
 		},
+		"each-lines": func(t *testing.T) {
+			run := x.runToEnd("each-lines")
+			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)
+			requireStatuses(t, run, orkstackv1.Status_STATUS_SUCCEEDED, "rows", "per-row", "per-batch", "report")
+			// Seven lines: one item per line, and ceil(7/3) = 3 batches.
+			for id, want := range map[string]int{"per-row": 7, "per-batch": 3} {
+				items := taskRunOf(t, run, id).GetItems()
+				if len(items) != want {
+					t.Fatalf("%s ran %d items, want %d", id, len(items), want)
+				}
+				for _, item := range items {
+					if item.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
+						t.Fatalf("%s item %d = %s, want SUCCEEDED", id, item.GetItem(), item.GetStatus())
+					}
+				}
+			}
+		},
 		"http-post": func(t *testing.T) {
 			run := x.runToEnd("http-post")
 			requireRunStatus(t, run, orkstackv1.Status_STATUS_SUCCEEDED)

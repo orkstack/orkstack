@@ -251,3 +251,46 @@ func TestSubmitRun_FleetCheckCoversComposedChildren(t *testing.T) {
 		t.Fatalf("submit = %v; want the child's items refused", err)
 	}
 }
+
+// TestFleetCheck_EachLines: a run whose definition declares a fan-out over an
+// artifact's lines is refused while an engine process lacks each-lines, and
+// asks nothing for a run without one.
+func TestFleetCheck_EachLines(t *testing.T) {
+	const doc = `apiVersion: orkstack/v1
+kind: Orkflow
+name: lines
+tasks:
+  - id: list
+    uses: busybox:latest
+  - id: convert
+    uses: busybox:latest
+    needs: [list]
+    each: {over_artifact: list/rows.jsonl, format: jsonl, max_items: 10}
+`
+	starter := &fakeStarter{}
+	caps := &fakeCapabilities{lacking: []string{"77@old@"}}
+	svc := itemsService(t, engine.NewMemoryOrkflowStore(), starter, 5000, caps, nil)
+	must.OK(t, applyDoc(t, svc, doc))
+	err := submitName(svc, "lines")
+	if connect.CodeOf(err) != connect.CodeFailedPrecondition ||
+		!strings.Contains(err.Error(), "declares a fan-out over an artifact's lines") ||
+		!strings.Contains(err.Error(), "cannot expand a fan-out over an artifact's lines") {
+		t.Fatalf("submit = %v; want the each-lines refusal", err)
+	}
+	if want := fmt.Sprintf("%s/%d", engine.CapabilityEachLines, engine.ScopeWorkflow); len(caps.asked) != 1 || caps.asked[0] != want {
+		t.Fatalf("asked %v, want [%s]", caps.asked, want)
+	}
+	if len(starter.startedRuns()) != 0 {
+		t.Fatalf("a refused submission started %v", starter.startedRuns())
+	}
+	caps.lacking = nil
+	if err := submitName(svc, "lines"); err != nil {
+		t.Fatalf("submit with every process capable = %v", err)
+	}
+	quiet := &fakeCapabilities{err: errors.New("never asked")}
+	plain := itemsService(t, engine.NewMemoryOrkflowStore(), &fakeStarter{}, 5000, quiet, nil)
+	must.OK(t, applyDoc(t, plain, fanOutDoc("small", 10, 1)))
+	if err := submitName(plain, "small"); err != nil || quiet.questions() != 0 {
+		t.Fatalf("an array fan-out = %v after %d questions; want no fleet check", err, quiet.questions())
+	}
+}

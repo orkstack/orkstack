@@ -139,3 +139,61 @@ func TestPoolResolverPlan_JudgesOnlyPoolsOfFanOutsAndTheirDirectDependents(t *te
 		t.Fatalf("Plan: %v", err)
 	}
 }
+
+const eachLinesPoolsDocument = `
+apiVersion: orkstack/v1
+kind: Orkflow
+name: each-lines-pools
+tasks:
+  - id: list
+    uses: shell
+    pool: cpu
+    with: {op: exec}
+  - id: convert
+    uses: shell
+    pool: gpu
+    needs: [list]
+    each: {over_artifact: list/files.jsonl, format: jsonl, max_items: 10}
+    with: {op: exec}
+`
+
+// TestSubmit_RefusesLinesOnAnyOrkerWithoutCapability: every Orker of the pool
+// a lines fan-out runs on must answer each_lines_supported, since one indexes
+// the lines and any may take an item; the pools without one are not asked.
+func TestSubmit_RefusesLinesOnAnyOrkerWithoutCapability(t *testing.T) {
+	fleet := eachFleet(true)
+	for _, o := range fleet.orkers {
+		o.EachLinesSupported = o.GetOrkerId() != "gpu-3"
+	}
+	fleet.orkers = append(fleet.orkers, func() *orkstackv1.DescribeOrkerResult {
+		o := currentOrker("gpu-1", "gpu", 0)
+		o.EachLinesSupported = true
+		return o
+	}())
+	_, _, err := eachPoolsResolver(fleet, nil).Plan(context.Background(),
+		&orkstackv1.Namespace{Name: "data"}, compile(t, eachLinesPoolsDocument), false)
+	var refused *engine.PoolNoEachSupportError
+	if !errors.As(err, &refused) || !refused.Lines || refused.OrkerID != "gpu-3" || fmt.Sprint(refused.Tasks) != "[convert]" {
+		t.Fatalf("Plan = %v (%+v), want the lines refusal naming gpu-3 and convert", err, refused)
+	}
+	for _, want := range []string{`Orker "gpu-3" (build "2026.09.01")`, "predates fan-out over an artifact's lines", "Upgrade the pool's Orkers"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("message %q lacks %q", err.Error(), want)
+		}
+	}
+	for _, o := range fleet.orkers {
+		o.EachLinesSupported = true
+	}
+	if _, _, err := eachPoolsResolver(fleet, nil).Plan(context.Background(),
+		&orkstackv1.Namespace{Name: "data"}, compile(t, eachLinesPoolsDocument), false); err != nil {
+		t.Fatalf("a pool whose Orkers all support lines = %v", err)
+	}
+	// An array fan-out asks nothing about lines.
+	for _, o := range fleet.orkers {
+		o.EachLinesSupported = false
+	}
+	if _, _, err := eachPoolsResolver(fleet, nil).Plan(context.Background(),
+		&orkstackv1.Namespace{Name: "data"}, compile(t, eachPoolsDocument), false); err != nil {
+		t.Fatalf("an array fan-out was refused for lines: %v", err)
+	}
+}

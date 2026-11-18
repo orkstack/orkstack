@@ -8,6 +8,7 @@ import (
 	"go.temporal.io/sdk/temporal"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/eachlines"
 	"github.com/orkstack/orkstack/internal/task"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
@@ -35,6 +36,8 @@ var allReasonCodes = []string{
 	ReasonMetadataEndpointReachable, ReasonMetadataProbeFailed,
 	ReasonValuesContainSecret, ReasonMaskCapacityExceeded,
 	ReasonProfileNotOffered, ReasonProfileChanged, ReasonProfileDrifted,
+	eachlines.ReasonLineInvalid, eachlines.ReasonTooManyItems, eachlines.ReasonSourceTooLarge,
+	eachlines.ReasonBatchTooLarge, eachlines.ReasonExpansionFailed,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake

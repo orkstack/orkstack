@@ -225,11 +225,23 @@ message EachSpec {
   // source is over, compiled at apply (EachSource).
   EachSource source = 5;
 
-  // over_artifact is set from E89; unset until it lands (v0.4.0 proto batch).
+  // over_artifact names an artifact of a task in this task's own needs:,
+  // "<task>/<name>", and makes the fan-out run one item per non-empty line
+  // of it (or per batch of lines). Exactly one of over and over_artifact is
+  // set. Part of canonicalOrkflow only when set, so a definition without it
+  // keeps its digest.
   string over_artifact = 6;
 
-  // format is set from E89; unset until it lands (v0.4.0 proto batch).
+  // format is how the lines of over_artifact are read: JSONL (each line one
+  // JSON value) or LINES (each line a string). Required with over_artifact,
+  // refused with over.
   EachLineFormat format = 7;
+
+  // batch makes one item of every batch consecutive non-empty lines of
+  // over_artifact, 2..10000; the last item may hold fewer. Unset (or 1, which
+  // the compiler normalises to unset) is one line per item. Refused with over.
+  // max_items counts items, so the line ceiling is max_items x batch.
+  int32 batch = 8;
 }
 
 // AwaitSpec makes a Task an awaited task: it starts no container and reaches
@@ -356,12 +368,6 @@ message ConcurrencySpec {}
 // CredentialRef is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto
 // batch).
 message CredentialRef {}
-
-// EachLineFormat is E89's; it holds only its zero value until E89 lands
-// (v0.4.0 proto batch).
-enum EachLineFormat {
-  EACH_LINE_FORMAT_UNSPECIFIED = 0;
-}
 
 // IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
 // batch).

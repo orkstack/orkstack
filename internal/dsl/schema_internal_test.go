@@ -273,6 +273,28 @@ func slots() map[string]slot {
 		out["tasks[].each."+key] = slot{doc: taskDocWith("inputs: {l: {type: array}}\n", "    each: {"+eachBase[key]+", "+key+": @V@}\n"),
 			field: "tasks[0].each." + key, baseline: baseline, absent: taskDocWith("inputs: {l: {type: array}}\n", "    each: {"+eachBase[key]+"}\n")}
 	}
+	// over is required unless over_artifact is set: a choice between two
+	// keys, which the compiler states (rule 53) and the schema does not.
+	over := out["tasks[].each.over"]
+	over.absent = ""
+	out["tasks[].each.over"] = over
+	linesDoc := func(each string) string {
+		return slotHeader + "name: x\ntasks:\n  - id: list\n    uses: busybox:1\n  - id: a\n    uses: busybox:1\n" +
+			"    needs: [list]\n    each: {" + each + "}\n"
+	}
+	linesBase := map[string]string{
+		"over_artifact": "format: jsonl, max_items: 2",
+		"format":        "over_artifact: list/x.jsonl, max_items: 2",
+		"batch":         "over_artifact: list/x.jsonl, format: jsonl, max_items: 2",
+	}
+	for key, baseline := range map[string]string{"over_artifact": "list/x.jsonl", "format": "lines", "batch": "3"} {
+		absent := ""
+		if key == "batch" {
+			absent = linesDoc(linesBase[key])
+		}
+		out["tasks[].each."+key] = slot{doc: linesDoc(linesBase[key] + ", " + key + ": @V@"),
+			field: "tasks[1].each." + key, baseline: baseline, absent: absent}
+	}
 	cacheBase := map[string]string{"enabled": "", "ttl_seconds": "enabled: true, ", "scope": "enabled: true, "}
 	for key, baseline := range map[string]string{"enabled": "true", "ttl_seconds": "60", "scope": "namespace"} {
 		out["tasks[].cache."+key] = slot{doc: taskDoc("    cache: {" + cacheBase[key] + key + ": @V@}\n"), field: "tasks[0].cache." + key,

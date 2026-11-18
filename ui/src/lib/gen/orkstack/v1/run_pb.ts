@@ -49,7 +49,8 @@ export type TaskEach = Message<"orkstack.v1.TaskEach"> & {
   count: number;
 
   /**
-   * lines is set from E89; unset until it lands (v0.4.0 proto batch).
+   * lines is set once a fan-out over an artifact's lines has expanded: the
+   * source and the line index the items read their spans from.
    *
    * @generated from field: orkstack.v1.EachLines lines = 3;
    */

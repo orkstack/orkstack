@@ -1182,6 +1182,34 @@ answered on its own channel, so whether … is unknown`). The probe is a guard
 for a mixed rollout, not a substitute for running every Orker of a pool on one
 release.
 
+### Fan-out over an artifact's lines
+
+A fan-out over `each.over_artifact` (`docs/DSL.md`, "Fan-out over an artifact's
+lines") has no new setting. When the run reaches it, one Orker of its pool
+runs the line indexer: it reads the source once, in ranged reads, and writes
+the line index (`docs/STORAGE.md`, "Line indexes"). It runs no container but
+holds one activity slot like a task, and on an Orker that declares a capacity
+a fixed reservation of 1 CPU and 64 MiB, capped by the pool's per-task cap.
+Its reading is bounded by `artifact_max_bytes` and the fan-out's `max_items`;
+it logs `each index progress` every 10 seconds and `each index written` when
+it ends. The index has 5 attempts, retried on any Orker of the pool, and an
+Orker stopped, handed back or lost while it indexes spends one: the
+interruption budgets cover a task's attempts, not the index. A rolling restart
+of a small pool during one large index can therefore fail the fan-out
+`EACH_EXPANSION_FAILED`; drain each Orker first (`orkctl orker drain`), which
+lets a running index finish.
+
+An Orker built before this feature cannot index or run a lines item, so submit
+asks every uncordoned Orker of the pool whether it supports it
+(`DescribeOrkerResult` `each_lines_supported`) and refuses the run with
+`FailedPrecondition`, naming the pool, the tasks and the first Orker that does
+not and its build; `allow_empty_pool` does not override that. A batched item
+reads up to 64 MiB of its source and writes a slice file of up to 64 MiB into
+the Orker's work root (`ORK_ORKER_WORKDIR`) for the attempt, so size the disk
+for `max_parallel` such items beside the pool's other tasks. To roll back to a
+release without the feature, drain first: a run whose lines fan-out is in
+flight needs an Orker that supports it ("4. Rolling back").
+
 ### Upgrading a pool's Orkers
 
 From v0.4.0 an Orker numbers each task's attempts itself, claiming an ordinal

@@ -850,6 +850,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 
 	opts := orkerOptions(cfg, tcfg, sinks, logStore, logOptions, attemptStore, commitStore, refPredictor, logger)
+	// The line indexes of fan-outs over an artifact's lines: written beside
+	// the fan-out's commit, under the same prefix, by IndexEachLines.
+	eachIndexes, err := artifacts.NewEachIndexStore(ctx, artifacts.ConfigFromEnv())
+	if err != nil {
+		return err
+	}
+	opts.EachIndexes = eachIndexes
 	opts.Memos = memoStore
 	logger.Info("task log export ready", "enabled", opts.TaskLogs != nil)
 
@@ -946,6 +953,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	taskWorker.RegisterActivityWithOptions(
 		activities.DescribeOrker,
 		activity.RegisterOptions{Name: task.ActivityDescribeOrker},
+	)
+	// The line indexer of a fan-out over an artifact's lines, scheduled on
+	// the fan-out's pool channel (docs/DSL.md, "Fan-out over an artifact's
+	// lines"). It starts no container.
+	taskWorker.RegisterActivityWithOptions(
+		activities.IndexEachLines,
+		activity.RegisterOptions{Name: task.ActivityIndexEachLines},
 	)
 	// Registered unconditionally, on the ordinary worker. The engine schedules
 	// it on the pin's own SESSION context, which is what routes it to the host

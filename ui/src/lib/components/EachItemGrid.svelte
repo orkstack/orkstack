@@ -14,6 +14,8 @@
 		each?: TaskEach;
 		/** The definition's `each:`, for the not-yet-expanded summary. */
 		spec?: EachSpec;
+		/** The fan-out's own status: RUNNING before expansion is a lines index. */
+		status?: Status;
 		items: ItemView[];
 		/** The selected item, or undefined for none. */
 		selected?: number;
@@ -24,7 +26,7 @@
 		waitingWord?: string;
 	}
 
-	let { taskId, each, spec, items, selected, onSelect, waitingOf, waitingWord = 'waiting for capacity' }: Props = $props();
+	let { taskId, each, spec, status, items, selected, onSelect, waitingOf, waitingWord = 'waiting for capacity' }: Props = $props();
 
 	// Past a few hundred items a cell is only its index, and the grid is skipped off screen.
 	const compact = $derived(items.length > 200);
@@ -33,7 +35,7 @@
 		const words = compact ? itemAriaLabel(item) : itemAriaLabel(item).replace(/^item \d+/, itemLabel(taskId, item.index));
 		return item.status === Status.RUNNING && waitingOf?.(item.index) ? `${words}, ${waitingWord}` : words;
 	}
-	const summary = $derived(items.length > 0 ? eachCounts(items, waitingOf, waitingWord) : eachSummary(each?.expanded ?? false, items, spec));
+	const summary = $derived(items.length > 0 ? eachCounts(items, waitingOf, waitingWord) : eachSummary(each?.expanded ?? false, items, spec, status));
 
 	let grid = $state<HTMLDivElement | undefined>();
 

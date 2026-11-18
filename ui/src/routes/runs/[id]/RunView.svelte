@@ -2897,6 +2897,7 @@
 								taskId={task.id}
 								each={task.each}
 								spec={def?.each}
+								status={task.status}
 								items={task.items}
 								selected={task.id === activeTask ? activeItem : undefined}
 								onSelect={(item) => selectItem(task.id, item)}

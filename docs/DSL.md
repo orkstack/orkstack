@@ -1350,9 +1350,10 @@ tasks:
       - convert
 ```
 
-`each:` takes four keys:
+`each:` takes four keys, and three more for a fan-out over an artifact's
+lines (below):
 
-- `over` — **required**: exactly one template action naming an array, in one
+- `over` — **required** unless `over_artifact` is set: exactly one template action naming an array, in one
   of four shapes and nothing else:
 
   | Shape | Reads |
@@ -1460,6 +1461,91 @@ it.
 `run timing`, `run inspect`, `run evidence export` and `task run` take
 `--item N`. The run page draws
 one card with a cell per item. See `examples/each-fan-out.ork.yaml`.
+
+### Fan-out over an artifact's lines (`over_artifact:`)
+
+A fan-out may instead run one item per line of a file an upstream task
+wrote, however large: the lines never pass through the run's history or a
+`values.json`.
+
+```yaml
+tasks:
+  - id: list
+    uses: shell
+    with:
+      op: exec
+      command:
+        - sh
+        - -c
+        - "find /data -name '*.csv' | jq -R -c '{path: .}' > /orkstack/output/artifacts/files.jsonl"
+  - id: convert
+    uses: ghcr.io/acme/convert:v3
+    needs:
+      - list
+    each:
+      over_artifact: list/files.jsonl
+      format: jsonl
+      as: file
+      max_items: 5000
+      max_parallel: 64
+    with:
+      src: "{{ .each.file.path }}"
+```
+
+- `over_artifact` — `<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.
+- `format` — required with `over_artifact`: `jsonl` (each line one JSON value) or `lines` (each line a string).
+- `batch` — optional: one item per batch of this many consecutive non-empty lines, 1 to 10,000; absent or `1` is one line per item.
+
+The producer may not be a fan-out, an awaited, sleeping or composed task, and
+no template of the fan-out may read the source (`artifact "list/files.jsonl"`):
+it is never staged, and each item receives only its own line or batch. A
+run input artifact (`_inputs/<name>`) is not supported in this release.
+
+**Lines.** A line ends at an LF; one CR right before it (or at the end of the
+file) is removed, and a last line without an LF counts. Empty lines are
+skipped and counted toward nothing; in `jsonl` a line of only whitespace is
+refused, in `lines` it is a line. A byte-order mark at the very start is
+skipped. Every line must be UTF-8. In `jsonl` a line is any JSON value,
+decoded strictly (duplicate keys refused); in `lines` it is the line's text as
+a JSON string. A line is at most the run's `values_max_bytes` (256 KiB by
+default). Item `i` holds the `i`-th non-empty line, in file order.
+
+**Indexing.** When the run reaches the fan-out, one Orker of its pool reads the
+source once — every byte held to the producer's committed SHA-256 — checks
+**every** line and writes an immutable line index beside the fan-out's commit
+(`docs/STORAGE.md`, "Line indexes"); the node shows `RUNNING` and "indexing"
+meanwhile. An invalid line anywhere fails the node `EACH_LINE_INVALID` before
+any item starts, naming the line; more items than `max_items`
+`EACH_TOO_MANY_ITEMS`; a source larger than the most a fan-out of `max_items`
+items can read `EACH_SOURCE_TOO_LARGE`, without reading it (the limit counts
+bytes, so long runs of empty lines count too); a source whose bytes are not
+the committed ones `EACH_EXPANSION_FAILED`. An empty file is zero items. The
+index holds an Orker slot while it runs, like a task (`docs/DEPLOY.md`). It
+gets 5 attempts, each retried on any Orker of the pool; a store outage and an
+Orker stopped or lost while it indexes each spend one, because the index is
+not a task and no interruption budget covers it. Drain an Orker before
+stopping it while lines are being indexed (`orkctl orker drain`).
+
+**Inside an item.** `.each.<as>`, `.each.index` and `.each.count` are as for
+an array; `task.json`'s `each.item` is the line's value and `each.lines` says
+where it came from (`docs/OCI_ACTIVITY_CONTRACT.md` §3.2).
+
+**Batches.** With `batch: K` (K ≥ 2) an item is K consecutive non-empty lines
+— item `i` holds lines `i·K … (i+1)·K − 1`, the last item fewer — and
+`max_items` counts items, so a fan-out reaches up to `max_items × K` lines. A
+batched item has no single value: `as:` is refused, `with:` may read only
+`.each.index` and `.each.count`, and the item reads its lines from the
+read-only file `/orkstack/input/each/lines.jsonl` (`format: jsonl`) or
+`/orkstack/input/each/lines.txt` (`format: lines`): each line as the source
+holds it, without its CR, one LF after each, empty lines left out. A batch
+whose lines span more than 64 MiB fails `EACH_BATCH_TOO_LARGE`; lower `batch`.
+
+**Memo.** A cached lines fan-out's item key holds its line's value (or its
+batch's file), the format, the batch, the item's index and the count — not the
+source's digest — so an item whose line and position are unchanged hits.
+`task.json`'s `each.lines` (`line`, `first`, `sizeBytes`, the source digest)
+then describes the run that computed the result: caching a lines fan-out
+asserts the result does not depend on them. See `examples/each-lines.ork.yaml`.
 
 ## Composition (`uses: orkflow:`)
 
@@ -2174,6 +2260,15 @@ How each node reads:
     and `timeout: <value> is outside 10s … 8760h; omit timeout: for a run with
     no time limit`. An integer, `null`, an empty string, a tag or an anchor is
     refused.
+53. A fan-out over an artifact's lines sets `each.over_artifact` and not
+    `each.over`; `over_artifact` is `<task>/<name>`, split on the first `/`,
+    with a task id and a file name (no `/`, no NUL, not `.` or `..`), and the
+    task is in the fan-out's own `needs:` and is not a fan-out, an awaited,
+    sleeping or composed task; `each.format` is `jsonl` or `lines`; and
+    `each.batch` is 1 to 10,000. With `batch` of 2 or more, `each.as` is
+    refused and `.each` reads only `.each.index` and `.each.count`. `format`
+    and `batch` are refused with `over`. No template of the fan-out reads its
+    source artifact.
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

@@ -884,6 +884,10 @@ var runStateFieldClass = map[string]fieldClass{
 	// waits and queued items rebuilt from the rows (restoreInterruptionWaits).
 	"runState.lossEvents": fieldRestored, "runState.waits": fieldRestored, "runState.waiting": fieldRestored,
 	"eachState.again": fieldRestored,
+	// A lines fan-out's expansion crosses in TaskEach.lines; its index is
+	// in flight only, and a switch waits for anything in flight.
+	"eachState.lines":    fieldRestored,
+	"eachState.indexing": fieldEphemeral,
 
 	// Ephemeral: zero or fresh at a switch.
 	// listed holds only in-flight units, and nothing is in flight at a

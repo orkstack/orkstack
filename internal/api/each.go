@@ -109,6 +109,11 @@ func (s *Service) itemInputFloor() int64 {
 	return s.continuation.ItemInputFloorBytes
 }
 
+// eachLinesRefAllowance is what apply counts for the EachLines every item of
+// a fan-out over an artifact's lines carries: two artifact references and the
+// format, well under a KiB. The engine's own check at dispatch is exact.
+const eachLinesRefAllowance = 1 << 10
+
 // checkEachLimits is apply and validate's fan-out check: the
 // declared total against ORK_EACH_MAX_ITEMS, and each fan-out's OWN part of
 // every item's input — the image, command, with, env, secrets and resources
@@ -140,6 +145,11 @@ func (s *Service) checkEachLimits(wf *orkstackv1.Orkflow) error {
 		if err != nil {
 			return connect.NewError(connect.CodeInvalidArgument, fmt.Errorf("task %q: measure the item input: %w", t.GetId(), err))
 		}
+		if dsl.IsEachLines(t.GetEach()) {
+			// Every item of a lines fan-out also carries its EachLines: the
+			// source and index references, which apply cannot measure yet.
+			size += eachLinesRefAllowance
+		}
 		if size > inputLimit {
 			return connect.NewError(connect.CodeInvalidArgument, &validationFieldError{
 				Field: fmt.Sprintf("tasks[%d].with", i),
@@ -163,4 +173,13 @@ func (s *Service) checkEachCapAtSubmit(wf *orkstackv1.Orkflow) error {
 		"orkflow %s declares %d items across its fan-outs (%s); this deployment now allows %d "+
 			"(ORK_EACH_MAX_ITEMS was lowered after version %s was applied)",
 		wf.GetName(), total, dsl.EachContributors(wf), s.eachMaxItems, wf.GetVersion()))
+}
+
+// eachLinesPolicyFor is the line policy a run of wf pins: the defaults when
+// wf declares a fan-out over an artifact's lines, nil otherwise.
+func eachLinesPolicyFor(wf *orkstackv1.Orkflow) *engine.EachLinesPolicy {
+	if !engine.DeclaresEachLines(wf) {
+		return nil
+	}
+	return engine.DefaultEachLinesPolicy()
 }

@@ -146,6 +146,9 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 	orker.RegisterActivityWithOptions(execute, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	orker.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
+	if pace != nil && pace.register != nil {
+		pace.register(s, orker)
+	}
 	events := worker.New(c, engine.EventQueue, worker.Options{DisableRegistrationAliasing: true, DisableWorkflowWorker: true})
 	events.RegisterActivityWithOptions(publish, activity.RegisterOptions{Name: engine.ActivityPublishEvent})
 	for name, w := range map[string]worker.Worker{"run": runWorker, "orker": orker, "events": events} {

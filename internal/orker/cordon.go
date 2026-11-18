@@ -451,6 +451,20 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		}
 		defer admission.Done()
 		return i.Next.ExecuteActivity(withStage(withAdmission(ctx, admission), stage), in)
+	case task.ActivityIndexEachLines:
+		// The line indexer of a fan-out over an artifact's lines runs no
+		// container but holds an activity slot like a task (AGENTS.md §5):
+		// counted as running, so a stopping Orker and a drain wait for it,
+		// and admitted with its fixed reservation, so an Orker at capacity
+		// does not take it.
+		i.a.running.add()
+		defer i.a.running.done()
+		admission, err := i.a.admit(info.TaskQueue, indexEachLinesRequest(i.a.dispatcher.Policy))
+		if err != nil {
+			return nil, err
+		}
+		defer admission.Done()
+		return i.Next.ExecuteActivity(ctx, in)
 	case sessionCreationActivityName:
 	default:
 		// Anything else polled on the pool channel (DescribeOrker) holds a
@@ -573,6 +587,27 @@ func (a *Activities) admit(queue string, request amount) (*Admission, error) {
 // memo hit, or fails RESOURCE_REQUEST_REFUSED before any container exists.
 // An input this cannot read keeps the whole per-task cap: unknown is never
 // nothing.
+// indexEachLinesReservation is the line indexer's fixed request: one core and
+// 64 MiB, its read buffer and one line many times over (docs/DEPLOY.md, "The
+// line indexer").
+var indexEachLinesReservation = amountOf(1, 64<<20)
+
+// indexEachLinesRequest is the indexer's reservation, capped by the pool's
+// per-task cap so the ledger can always admit what it reserved before the
+// poll (the admission mismatch branch never applies to it).
+func indexEachLinesRequest(policy SecurityPolicy) amount {
+	request := indexEachLinesReservation
+	if ceiling, err := policy.ceiling(); err == nil {
+		if ceiling.milli > 0 {
+			request.milli = min(request.milli, ceiling.milli)
+		}
+		if ceiling.bytes > 0 {
+			request.bytes = min(request.bytes, ceiling.bytes)
+		}
+	}
+	return request
+}
+
 func executeTaskRequest(policy SecurityPolicy, in *interceptor.ExecuteActivityInput) amount {
 	var input *orkstackv1.ExecuteTaskInput
 	if len(in.Args) > 0 {

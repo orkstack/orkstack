@@ -868,7 +868,8 @@ type TaskEach struct {
 	Expanded bool `protobuf:"varint,1,opt,name=expanded,proto3" json:"expanded,omitempty"`
 	// count is the number of items, equal to len(TaskRun.items), once expanded.
 	Count int32 `protobuf:"varint,2,opt,name=count,proto3" json:"count,omitempty"`
-	// lines is set from E89; unset until it lands (v0.4.0 proto batch).
+	// lines is set once a fan-out over an artifact's lines has expanded: the
+	// source and the line index the items read their spans from.
 	Lines         *EachLines `protobuf:"bytes,3,opt,name=lines,proto3" json:"lines,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

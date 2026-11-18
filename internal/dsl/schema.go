@@ -96,7 +96,7 @@ func orkflowAnnotations() map[string]annotation {
 		"tasks[].secrets[].source":      required,
 		"tasks[].await.timeout_seconds": required,
 		"tasks[].sleep.seconds":         required,
-		"tasks[].each.over":             required,
+		"tasks[].each.format":           {enum: []string{"jsonl", "lines"}},
 		"tasks[].each.max_items":        required,
 		"tasks[].each.as":               {pattern: eachAsPattern},
 		"tasks[].cache.enabled":         required,
@@ -166,10 +166,13 @@ var orkflowDescriptions = map[string]string{
 
 	"tasks[].sleep.seconds": "required, 1 s … 30 days",
 
-	"tasks[].each.over":         "required: one reference to an array",
-	"tasks[].each.as":           "the name an item is bound to under `.each`: `^[a-z][a-z0-9_]*$`, at most 64 bytes, never `index` or `count`. Absent means `item`.",
-	"tasks[].each.max_items":    "required: the most items this task may expand",
-	"tasks[].each.max_parallel": "at most this many items run at once; absent or `0` means no bound of the task's own (the pool's Orkers are the bound).",
+	"tasks[].each.over":          "required: one reference to an array",
+	"tasks[].each.over_artifact": "`<task>/<name>`: an artifact a task in this fan-out's own `needs:` writes. Exactly one of `over` and `over_artifact`.",
+	"tasks[].each.format":        "required with `over_artifact`: `jsonl` (each line one JSON value) or `lines` (each line a string).",
+	"tasks[].each.batch":         "optional: one item per batch of this many consecutive non-empty lines, 1 to 10,000; absent or `1` is one line per item.",
+	"tasks[].each.as":            "the name an item is bound to under `.each`: `^[a-z][a-z0-9_]*$`, at most 64 bytes, never `index` or `count`. Absent means `item`.",
+	"tasks[].each.max_items":     "required: the most items this task may expand",
+	"tasks[].each.max_parallel":  "at most this many items run at once; absent or `0` means no bound of the task's own (the pool's Orkers are the bound).",
 
 	"tasks[].cache.enabled":     "required: the opt-in, and the author's assertion of purity",
 	"tasks[].cache.ttl_seconds": "optional: 0/absent = the deployment's cap (ORK_CACHE_MAX_TTL)",

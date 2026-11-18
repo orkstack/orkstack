@@ -115,6 +115,13 @@ type resolvedEachItem struct {
 	As    string
 	Index int32
 	Count int32
+	// Format is set for an item of a fan-out over an artifact's lines
+	// ("jsonl" or "lines"), and Batch for a batch of them (2 or more): then
+	// Digest is the SHA-256 of the batch's slice file, which stands for its
+	// bytes, never held in memory, and Bytes and As are empty.
+	Format string
+	Batch  int32
+	Digest string
 }
 
 // memoTrace is one attempt's memo decision, declared in Execute beside
@@ -307,10 +314,23 @@ func computeMemoKey(in *orkstackv1.ExecuteTaskInput, config, runJSON []byte,
 		}{files, eachUpstream}),
 	}
 	if item != nil {
-		components["item"] = sha256Hex(item.Bytes)
-		components["item_as"] = item.As
+		if item.Digest != "" {
+			components["item"] = item.Digest
+		} else {
+			components["item"] = sha256Hex(item.Bytes)
+			components["item_as"] = item.As
+		}
 		components["item_index"] = strconv.FormatInt(int64(item.Index), 10)
 		components["item_count"] = strconv.FormatInt(int64(item.Count), 10)
+		// A line's item is keyed by its own bytes and position, never by the
+		// source's digest (docs/DSL.md, "Fan-out over an artifact's lines"):
+		// an unchanged line at an unchanged position hits.
+		if item.Format != "" {
+			components["item_format"] = item.Format
+		}
+		if item.Batch >= 2 {
+			components["item_batch"] = strconv.FormatInt(int64(item.Batch), 10)
+		}
 	}
 	if len(profiles) > 0 {
 		// Each profile by name, structural identity and revision: a result

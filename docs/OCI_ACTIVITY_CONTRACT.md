@@ -244,6 +244,8 @@ a redirect. If it needs anything else, this section is wrong.
 │   │       ├── <safe-name>         0444  one regular file per input artifact
 │   │       └── <item>/             0555  FAN-OUT PRODUCER ONLY: one per item, 00000…
 │   │           └── <safe-name>     0444  that item's artifact
+│   ├── each/                       0555  BATCHED LINES FAN-OUT ITEM ONLY
+│   │   └── lines.jsonl | lines.txt 0444  that batch's lines (§3.2)
 │   └── upstream/                   0555
 │       └── <task-id>/
 │           ├── values.json         0444  that ancestor's committed values.json
@@ -515,6 +517,13 @@ rule below and an image that has never heard of the feature loses nothing:
   directory and is informational to the workload) and `paths.shared`.
 - **An item of a fan-out** carries `each` (`index`, `count`, `as`, and `item`,
   the element itself as exact JSON). `task.id` stays the fan-out's.
+- **An item of a fan-out over an artifact's lines** (`each.over_artifact`)
+  carries `each.lines` (§3.2 table): where its line or batch came from. A
+  batched item has no `each.item` and no `each.as`; it reads its lines from the
+  read-only file `/orkstack/input/each/lines.jsonl` (`format: jsonl`) or
+  `/orkstack/input/each/lines.txt` (`format: lines`), each line as the source
+  holds it without its CR, one LF after each, empty lines left out, at most
+  64 MiB.
 - **A task with a fan-out among its direct upstreams** carries
   `inputs.eachUpstream`, so it can tell "zero items" from "no such upstream".
 - **A failure handler** (`join:` `any_failed` or `all_done`, `docs/DSL.md`,
@@ -580,6 +589,18 @@ present only under the stated condition; a workload MUST tolerate its absence.
 | `each.count` | integer | required in `each` | — | the number of items, counted once by the engine |
 | `each.as` | string | required in `each` | — | the name the item is bound to under `.each` in `with:` (default `"item"`) |
 | `each.item` | any JSON | required in `each` | — | the element: its exact JSON text for an upstream-task source (key order and number spelling preserved), the protojson rendering of the value for a run-input source |
+| `each.lines` | object | optional | absent | present only for an item of a fan-out over an artifact's lines |
+| `each.lines.producer` | string | required in `each.lines` | — | the task that wrote the source artifact |
+| `each.lines.name` | string | required in `each.lines` | — | the artifact's name |
+| `each.lines.nameB64` | string | required in `each.lines` | — | the name as the unpadded base64url of the name, as `nameB64` is elsewhere in this file |
+| `each.lines.sha256` | string | required in `each.lines` | — | the source's SHA-256 (lowercase hex) |
+| `each.lines.sizeBytes` | integer | required in `each.lines` | — | the source's size |
+| `each.lines.format` | string | required in `each.lines` | — | `jsonl` or `lines` |
+| `each.lines.line` | integer | required in `each.lines` | — | the 1-based file line, empty ones counted, the item's first line is on |
+| `each.lines.batch` | integer | optional | absent | `K`, for a batched item only |
+| `each.lines.first` | integer | optional | absent | a batch's first non-empty line's 0-based position among the non-empty lines |
+| `each.lines.count` | integer | optional | absent | the number of lines in this batch |
+| `each.lines.path` | string | optional | absent | a batch's slice file, `/orkstack/input/each/lines.jsonl` or `lines.txt` |
 | `image.reference` | string | required | — | as authored |
 | `image.pinned` | string | required | — | `{registry}/{repo}@sha256:…` — what ran |
 | `image.indexDigest` | string | required | — | `sha256:<64 hex>` |
@@ -1916,7 +1937,12 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `INPUT_ARTIFACT_UNAVAILABLE` | InfrastructureError | yes | an upstream artifact could not be fetched |
 | `INPUT_ARTIFACT_CORRUPT` | ContractViolation | no | fetched bytes do not match the recorded sha256 |
 | `INPUT_TOO_LARGE` | ContractViolation | no | `ExecuteTaskInput` would exceed 256 KiB (raised by the engine); the same code refuses a run input over 256 KiB at submit, before any run starts (`docs/DSL.md`, "Inputs") |
-| `EACH_ITEM_UNAVAILABLE` | ContractViolation | no | an item's `each.over` no longer resolves to the array, of the length, the engine counted — unreachable while the store honours its digests |
+| `EACH_ITEM_UNAVAILABLE` | ContractViolation | no | an item's `each.over` no longer resolves to the array, of the length, the engine counted; for a lines fan-out, its line index contradicts the source, the span or the line count, the source is gone, or the index is missing on the last attempt — unreachable while the store honours its digests |
+| `EACH_LINE_INVALID` | ContractViolation | no | a line of the artifact a fan-out reads is not UTF-8, is over `values_max_bytes`, or in `jsonl` is not one JSON value; named by its line, before any item starts |
+| `EACH_SOURCE_TOO_LARGE` | ContractViolation | no | the artifact is larger than `max_items` items can read (never above `artifact_max_bytes`); refused without a read |
+| `EACH_BATCH_TOO_LARGE` | ContractViolation | no | one batch's lines span more than 64 MiB |
+| `EACH_TOO_MANY_ITEMS` | ContractViolation | no | the artifact holds more lines or batches than `max_items` |
+| `EACH_EXPANSION_FAILED` | InfrastructureError | yes, for a store read or write | the line indexer could not read the source or write its index; not retried when the bytes are not the committed ones or another index is already stored |
 | `RENDER_FAILED` | ContractViolation | no | template error, missing key, `<no value>`, or an `env` name not allowlisted |
 | `SECRET_UNRESOLVED` | InfrastructureError | yes | a `SecretRef.source` could not be resolved |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |

@@ -1797,6 +1797,7 @@ func (s *Service) prepare(
 	// The run timeout's plan, for a definition declaring `timeout:` only;
 	// each child run gets its own (planChildren).
 	plan.RunTimeout = s.runTimeoutPlanFor(planned)
+	plan.EachLines = eachLinesPolicyFor(planned)
 	plan.Pause = s.pausePlanFor()
 	// Every child run this submission can start, planned recursively under
 	// the parent's namespace, resolver, allow_empty_pool, image-policy

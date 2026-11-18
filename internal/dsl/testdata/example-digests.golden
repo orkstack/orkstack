@@ -4,6 +4,7 @@ config-from-git.ork.yaml sha256:cbb7482b6f355fedc8718fb85e3c83f1462e421ad53a0d7c
 custom-image.ork.yaml sha256:f32e32533d932d46a970c1818c1e4963df6cb1f7cd14c4287b8209aad394b25c 0.2.1
 decide-and-route.ork.yaml sha256:2daa0de67c19d56c1a96e71976e1f10de2f2638c778e937bdf87b9c786689e52 0.1.0
 each-fan-out.ork.yaml sha256:644bee0e25f760996d2f2fd7e4deed8bee66534209ecefab871ccaf880b442b4 0.3.0
+each-lines.ork.yaml sha256:a602e725f0bc768c9ba90d2414cc89caf0abced22c79dbb313ca70aec938575d 0.4.0
 http-post.ork.yaml sha256:10ddfa39949a8f4724d0302d5f43e7d66c66e19fa7cb827469ae3eed95cd35f2 0.3.0
 inputs-and-escaping.ork.yaml sha256:743cea7728635efb91d779f8fa8252d01df5b4ee12f67f1a1e3c6fee334038b6 0.2.0
 notify-block.ork.yaml sha256:fc9efd609d6e0576ecea876c1fe71900a16afc6ffee97bad23b6bb49ed412bb3 0.2.0

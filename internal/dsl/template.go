@@ -47,6 +47,10 @@ type templateChecker struct {
 	// Both are unset while checking a condition.
 	each   string
 	fanOut bool
+	// batched is set for a fan-out over an artifact's lines with batch: K
+	// of 2 or more: an item is a batch with no single value, so .each holds
+	// only .each.index and .each.count (docs/DSL.md, "Batches").
+	batched bool
 	// engine is set while checking a template the ENGINE renders — a
 	// composed task's with: and an Orkflow's outputs: (rule 28). It refuses
 	// the three Orker helpers, a .tasks read of anything but output, .each,
@@ -163,6 +167,14 @@ func (c *templateChecker) checkEachRoot(path, key string) error {
 	if !c.fanOut {
 		return c.refuseAt(path, fmt.Errorf("task %q: %s: .each is available only in the with: of a task "+
 			"that declares each: (a fan-out)", c.taskID, path))
+	}
+	if c.batched {
+		if key == "index" || key == "count" {
+			return nil
+		}
+		return c.refuseAt(path, fmt.Errorf("task %q: %s: a batch has no single value, so .each holds "+
+			"only .each.index and .each.count; read the batch's lines from %s", c.taskID, path,
+			batchSliceSentence))
 	}
 	if key == c.each || key == "index" || key == "count" {
 		return nil

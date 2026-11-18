@@ -86,6 +86,32 @@ The run page shows the items as they run, and opens one with a click:
 
 <!-- site-media: ui-fanout-run -->
 
+## Fan out over the lines of a file
+
+When the list is a file an upstream task writes — a JSONL export, a list of
+paths — run one item per line of it instead. The lines never go through the
+run's history, so the file may be as large as an artifact may be:
+
+```yaml
+  - id: convert
+    uses: ghcr.io/acme/convert:v3
+    needs:
+      - list
+    each:
+      over_artifact: list/files.jsonl   # <task>/<artifact>, a task in needs:
+      format: jsonl                     # or lines: each line a string
+      max_items: 5000
+    with:
+      src: "{{ .each.item.path }}"
+```
+
+Before any item starts, one Orker reads the whole file and checks every line;
+the run page says "Indexing the lines of list/files.jsonl…" meanwhile, and a
+bad line fails the task at once. Add `batch: 500` to give each item 500
+lines, which it reads from `/orkstack/input/each/lines.jsonl`; a batch has no
+`.each.item`, only `.each.index` and `.each.count`. See
+[`examples/each-lines.ork.yaml`](https://github.com/orkstack/orkstack/blob/main/examples/each-lines.ork.yaml).
+
 ## When an item fails
 
 An item retries on its own, under the task's `retry:`. If it still fails, the

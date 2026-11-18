@@ -307,17 +307,33 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	// would produce a different definition and must produce a different digest.
 	if e := t.GetEach(); e != nil {
 		src := e.GetSource()
-		out["each"] = map[string]any{
+		source := map[string]any{
+			"input":  src.GetInput(),
+			"taskId": src.GetTaskId(),
+			"path":   canonicalStrings(src.GetPath()),
+		}
+		each := map[string]any{
 			"over":        e.GetOver(),
 			"as":          e.GetAs(),
 			"maxItems":    int64(e.GetMaxItems()),
 			"maxParallel": int64(e.GetMaxParallel()),
-			"source": map[string]any{
-				"input":  src.GetInput(),
-				"taskId": src.GetTaskId(),
-				"path":   canonicalStrings(src.GetPath()),
-			},
+			"source":      source,
 		}
+		// A fan-out over an artifact's lines adds its keys ONLY when set, so
+		// a fan-out over an array keeps the digest it had before they existed.
+		if e.GetOverArtifact() != "" {
+			each["overArtifact"] = e.GetOverArtifact()
+		}
+		if e.GetFormat() != orkstackv1.EachLineFormat_EACH_LINE_FORMAT_UNSPECIFIED {
+			each["format"] = int64(e.GetFormat())
+		}
+		if e.GetBatch() != 0 {
+			each["batch"] = int64(e.GetBatch())
+		}
+		if a := src.GetArtifact(); a != nil {
+			source["artifact"] = map[string]any{"producer": a.GetProducer(), "name": a.GetName()}
+		}
+		out["each"] = each
 	}
 	// cache is emitted ONLY when set — the same exception, for the same
 	// reason, as `pin`. It is part of the definition: a version that consults

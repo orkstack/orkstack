@@ -156,6 +156,11 @@ type Options struct {
 	// Logger records Orker lifecycle decisions such as durable commit adoption.
 	// Nil uses slog.Default.
 	Logger *slog.Logger
+	// EachIndexes is the line-index store a fan-out over an artifact's lines
+	// writes its index to (IndexEachLines) and its items read it from. Nil
+	// fails such an index EACH_EXPANSION_FAILED and such an item
+	// EACH_ITEM_UNAVAILABLE; cmd/orker always builds one.
+	EachIndexes *artifacts.EachIndexStore
 }
 
 // Activities implements the engine<->Orker activity seam.
@@ -206,6 +211,9 @@ type Activities struct {
 	// scope is the storage scope watch (scope_watch.go), nil until
 	// WatchStoreScope starts one: DescribeOrker then leaves its fields unset.
 	scope atomic.Pointer[ScopeWatch]
+	// eachIndexes is Options.EachIndexes, as an interface so a test can
+	// write indexes elsewhere; nil when none was given.
+	eachIndexes eachIndexStore
 }
 
 // NewActivitiesWithOptions builds the activity set with explicit options.
@@ -255,7 +263,8 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		opts.UsageGauges(usage.Totals)
 	}
 	a := &Activities{
-		usage: usage,
+		usage:       usage,
+		eachIndexes: eachIndexStoreOf(opts.EachIndexes),
 		dispatcher: &OCIDispatcher{
 			Runtime:             runtime,
 			Store:               store,
@@ -266,6 +275,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 			Attempts:            opts.Attempts,
 			Claims:              claimerOf(opts.Attempts),
 			Memos:               opts.Memos,
+			EachIndexes:         eachIndexReaderOf(opts.EachIndexes),
 			Policy:              policy,
 			WorkRoot:            workRoot,
 			OrkerID:             orkerID,
@@ -512,6 +522,9 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// This build reads a secret's `unmasked` whatever the setting, so
 		// submit may send a `mask: false` secret to its pool.
 		SecretMaskingSupported: true,
+		// A fan-out over an artifact's lines (IndexEachLines and its items)
+		// needs the line-index store, which cmd/orker always gives.
+		EachLinesSupported: a.eachIndexes != nil,
 	}
 	if ceiling, err := a.dispatcher.Policy.ceiling(); err == nil {
 		result.MaxRequest = ceiling.proto()

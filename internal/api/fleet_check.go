@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"connectrpc.com/connect"
 
@@ -60,6 +61,25 @@ func timeoutDeclaration(planned *orkstackv1.Orkflow, plan *engine.RunPlan) (*ork
 	return found, err
 }
 
+// linesDeclaration is the first run of the tree whose definition declares a
+// fan-out over an artifact's lines, or nil.
+func linesDeclaration(planned *orkstackv1.Orkflow, plan *engine.RunPlan) (*orkstackv1.Orkflow, error) {
+	declares := func(wf *orkstackv1.Orkflow) bool {
+		return slices.ContainsFunc(wf.GetTasks(), func(t *orkstackv1.Task) bool { return dsl.IsEachLines(t.GetEach()) })
+	}
+	if declares(planned) {
+		return planned, nil
+	}
+	var found *orkstackv1.Orkflow
+	err := engine.ForEachChild(planned, plan, func(_ string, _ *engine.ChildRunPlan, def *orkstackv1.Orkflow) error {
+		if found == nil && declares(def) {
+			found = def
+		}
+		return nil
+	})
+	return found, err
+}
+
 // fleetCheck refuses a run tree whose runs need a capability some engine
 // process that could decide them lacks. It runs after planChildren, so every
 // child definition is known, and before anything is minted, so a refusal
@@ -77,6 +97,20 @@ func (s *Service) fleetCheck(ctx context.Context, planned *orkstackv1.Orkflow, p
 				largest.wf.GetName(), largest.wf.GetVersion(), largest.total),
 			ability: fmt.Sprintf("run more than %d", engine.LegacyEachMaxItems),
 			attrs:   []any{"items", largest.total},
+		}); err != nil {
+			return err
+		}
+	}
+	lines, err := linesDeclaration(planned, plan)
+	if err != nil {
+		return connect.NewError(connect.CodeInternal, fmt.Errorf("read the planned child runs: %w", err))
+	}
+	if lines != nil {
+		if err := s.requireCapability(ctx, capabilityNeed{
+			capability: engine.CapabilityEachLines,
+			wf:         lines,
+			what:       fmt.Sprintf("orkflow %s@%s declares a fan-out over an artifact's lines", lines.GetName(), lines.GetVersion()),
+			ability:    "expand a fan-out over an artifact's lines",
 		}); err != nil {
 			return err
 		}
