@@ -86,6 +86,9 @@ engine:
     never_started: 20  # ork
     never_started_faults: 5  # ork
     never_started_backoff: 2s  # ork
+  pool_metrics:
+    pools: []  # ork
+    interval: 15s  # ork
   run_timeout_handler_grace: 10m  # ork
   run_pause_timeout: 168h  # ork
   run_pause_timeout_max: 744h  # ork

@@ -873,7 +873,8 @@ Other valid pools resolve to `ork-pool-<slug>`. The reserved
 `ork-engine-events` channel, the Orker control and presence channels and the
 engines' presence channel cannot be a bound default. A task's pool must be
 resolved inside the engine; Temporal queue names must not leak into the user
-contract.
+contract. A metric about a pool is labelled with the pool (`ork.pool`), never
+its channel.
 
 The deployment's engine workflows use fixed internal channels: `RunWorkflow`
 (including every child run) uses `ork-tasks` and engine events use

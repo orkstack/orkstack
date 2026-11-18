@@ -238,6 +238,10 @@ var Schema = []Var{
 	{Path: "engine.interruptions.never_started", Env: "ORK_INTERRUPTIONS_NEVER_STARTED", Binaries: usesOrk, Kind: KindInt, Default: strconv.Itoa(int(engine.DefaultInterruptionBudgets.NeverStarted))},
 	{Path: "engine.interruptions.never_started_faults", Env: "ORK_INTERRUPTIONS_NEVER_STARTED_FAULTS", Binaries: usesOrk, Kind: KindInt, Default: strconv.Itoa(int(engine.DefaultInterruptionBudgets.NeverStartedFaults))},
 	{Path: "engine.interruptions.never_started_backoff", Env: "ORK_INTERRUPTIONS_NEVER_STARTED_BACKOFF", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(time.Duration(engine.DefaultInterruptionBudgets.NeverStartedBackoffMillis) * time.Millisecond)},
+	// engine.pool_metrics.* (E92): the pools beside the default one whose
+	// backlog each replica reads for the ork.pool.* gauges, and how often.
+	{Path: "engine.pool_metrics.pools", Env: "ORK_POOL_METRICS_POOLS", Binaries: usesOrk, Kind: KindList, Default: EmptyDefault},
+	{Path: "engine.pool_metrics.interval", Env: "ORK_POOL_METRICS_INTERVAL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultPoolMetricsInterval)},
 	// ORK_RUN_TIMEOUT_HANDLER_GRACE's fallback is
 	// engine.DefaultRunTimeoutHandlerGrace: how long after a run's deadline
 	// its failure handlers may still run. Pinned, in seconds, into the plan
