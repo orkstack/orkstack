@@ -34,7 +34,6 @@
 			type="button"
 			class="flex w-full items-center gap-2.5 rounded-sm px-2.5 py-1.75 text-left text-side-strong hover:bg-side-hover"
 			aria-expanded={open}
-			aria-haspopup="true"
 			onclick={() => (open = !open)}
 			data-testid="account-trigger"
 		>
@@ -48,7 +47,10 @@
 		<div style:width="min(20rem, 80vw)" data-testid="account-panel">
 			<p class="text-xs font-semibold text-ink-3">Signed in as</p>
 			<p class="font-mono text-sm break-all" data-testid="account-principal">{me.principalId}</p>
-			<p class="mt-1 text-sm text-ink-2">Verified by OrkStack ({me.method}), from {me.issuer}</p>
+			<!-- The same tag every principal carries (Principal.svelte), so a verified sign-in reads alike everywhere. -->
+			<p class="mt-1 flex flex-wrap items-center gap-1.5 text-sm text-ink-2">
+				<span class="atag atag-verified">verified</span><span>by OrkStack ({me.method}), from {me.issuer}</span>
+			</p>
 			<p class="mt-3 text-xs font-semibold text-ink-3">Roles</p>
 			{#if roles.length === 0}
 				<p class="text-sm text-ink-3">None</p>

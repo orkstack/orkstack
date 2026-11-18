@@ -10,6 +10,7 @@
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import AccessTabs from '../AccessTabs.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { accessClient } from '#lib/clients/access.ts';
 	import { RoleSchema, type Role } from '#lib/gen/orkstack/v1/access_pb.ts';
@@ -87,6 +88,7 @@
 		{#if !canWrite}<p id="roles-write-reason" class="w-full text-sm text-ink-3">{missing('access.write')}</p>{/if}
 	{/snippet}
 </SheetHeader>
+<AccessTabs />
 
 {#if data.accessError || data.permissionsError}
 	<ErrorPanel message={data.accessError ?? data.permissionsError ?? ''} subject="the roles" testid="roles-error" onretry={() => invalidateAll()} />
