@@ -28,6 +28,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- The observability kit's Grafana now provisions two read-only dashboards, OrkStack and OrkStack / Run, with linked logs, traces and metrics ([README](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md#dashboards)).
 - Each engine exports every pool's backlog, `ork.pool.backlog.tasks` and `.age`, its rates and `ork.pool.pollers`, to scale Orkers on; `engine.pool_metrics.*` picks the pools ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#a-pools-backlog-as-metrics)).
 - `ork.orker.task.wait.duration` measures how long a task waited for an Orker, and `ork.orker.memo.lookups`, `.reused` and `.writes` count a cached task's memo ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - Every Orker exports `ork.orker.present`, `ork.orker.task_log.export_enabled` and `ork.orker.attempt_records`, which counts attempts left with no record; its resource carries `ork.orker_id` ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-orkers-load-as-metrics)).

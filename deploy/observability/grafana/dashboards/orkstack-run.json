@@ -1,0 +1,338 @@
+{
+  "uid": "orkstack-run",
+  "title": "OrkStack / Run",
+  "description": "One run: its spans, the engine's events, its attempts' usage and its tasks' logs.",
+  "tags": [
+    "orkstack"
+  ],
+  "timezone": "browser",
+  "editable": false,
+  "graphTooltip": 0,
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "fiscalYearStartMonth": 0,
+  "schemaVersion": 42,
+  "panels": [
+    {
+      "type": "table",
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "traceql",
+          "query": "{ .ork.run_id = \"$run\" }",
+          "limit": 50,
+          "filters": [],
+          "tableType": "spans",
+          "datasource": {
+            "type": "tempo",
+            "uid": "${tempo}"
+          }
+        }
+      ],
+      "title": "Spans of the run",
+      "description": "The run's spans: each attempt, its phases and the engine's work, newest first.",
+      "transparent": false,
+      "datasource": {
+        "type": "tempo",
+        "uid": "${tempo}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "repeatDirection": "h",
+      "options": {
+        "frameIndex": 0,
+        "showHeader": true,
+        "showTypeIcons": false,
+        "footer": {
+          "show": false,
+          "reducer": null,
+          "countRows": false
+        },
+        "cellHeight": "sm"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "custom": {
+            "align": "auto",
+            "inspect": false
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "logs",
+      "targets": [
+        {
+          "expr": "{service_name=~\".*ork\"} | run_id=\"$run\"",
+          "legendFormat": "",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        }
+      ],
+      "title": "Engine events",
+      "description": "The engine's event lines for the run.",
+      "transparent": false,
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "repeatDirection": "h",
+      "options": {
+        "showLabels": false,
+        "showCommonLabels": false,
+        "showTime": true,
+        "showLogContextToggle": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": ""
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "logs",
+      "targets": [
+        {
+          "expr": "{service_name=~\".*orker\"} | ork_record=\"usage\" | ork_run_id=\"$run\" | ork_task_id=~\"$task\"",
+          "legendFormat": "",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        }
+      ],
+      "title": "Attempt usage",
+      "description": "Each attempt's measured CPU and memory summary, and its samples.",
+      "transparent": false,
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "repeatDirection": "h",
+      "options": {
+        "showLabels": false,
+        "showCommonLabels": false,
+        "showTime": true,
+        "showLogContextToggle": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": ""
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "logs",
+      "targets": [
+        {
+          "expr": "{service_name=~\".*orker\"} | ork_stream=\"stderr\" | ork_run_id=\"$run\" | ork_task_id=~\"$task\"",
+          "legendFormat": "",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        }
+      ],
+      "title": "Task stderr",
+      "description": "What the run's tasks wrote to stderr.",
+      "transparent": false,
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "repeatDirection": "h",
+      "options": {
+        "showLabels": false,
+        "showCommonLabels": false,
+        "showTime": true,
+        "showLogContextToggle": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": ""
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    },
+    {
+      "type": "logs",
+      "targets": [
+        {
+          "expr": "{service_name=~\".*orker\"} | ork_stream=\"stdout\" | ork_run_id=\"$run\" | ork_task_id=~\"$task\"",
+          "legendFormat": "",
+          "refId": "A",
+          "datasource": {
+            "type": "loki",
+            "uid": "${loki}"
+          }
+        }
+      ],
+      "title": "Task stdout",
+      "description": "What the run's tasks wrote to stdout.",
+      "transparent": false,
+      "datasource": {
+        "type": "loki",
+        "uid": "${loki}"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 24
+      },
+      "repeatDirection": "h",
+      "options": {
+        "showLabels": false,
+        "showCommonLabels": false,
+        "showTime": true,
+        "showLogContextToggle": false,
+        "wrapLogMessage": false,
+        "prettifyLogMessage": false,
+        "enableLogDetails": true,
+        "sortOrder": "Descending",
+        "dedupStrategy": ""
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none"
+        },
+        "overrides": []
+      }
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "type": "datasource",
+        "name": "loki",
+        "label": "Logs",
+        "skipUrlSync": false,
+        "query": "loki",
+        "multi": false,
+        "allowCustomValue": true,
+        "includeAll": false,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      },
+      {
+        "type": "datasource",
+        "name": "tempo",
+        "label": "Traces",
+        "skipUrlSync": false,
+        "query": "tempo",
+        "multi": false,
+        "allowCustomValue": true,
+        "includeAll": false,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      },
+      {
+        "type": "textbox",
+        "name": "run",
+        "label": "Run",
+        "skipUrlSync": false,
+        "description": "The run's id, as the OrkStack UI and orkctl show it.",
+        "multi": false,
+        "allowCustomValue": true,
+        "includeAll": false,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      },
+      {
+        "type": "textbox",
+        "name": "task",
+        "label": "Task",
+        "skipUrlSync": false,
+        "description": "A pattern of the task ids to show; every task by default.",
+        "query": ".+",
+        "multi": false,
+        "allowCustomValue": true,
+        "includeAll": false,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      },
+      {
+        "type": "constant",
+        "name": "ui_url",
+        "hide": 2,
+        "skipUrlSync": false,
+        "description": "The OrkStack UI's address, for links to a run's page.",
+        "query": "http://localhost:8080",
+        "multi": false,
+        "allowCustomValue": true,
+        "includeAll": false,
+        "auto": false,
+        "auto_min": "10s",
+        "auto_count": 30
+      }
+    ]
+  },
+  "annotations": {},
+  "links": [
+    {
+      "title": "Open the run in OrkStack",
+      "type": "link",
+      "icon": "",
+      "tooltip": "",
+      "url": "${ui_url}/runs/${run}",
+      "tags": [],
+      "asDropdown": false,
+      "placement": "inControlsMenu",
+      "targetBlank": true,
+      "includeVars": false,
+      "keepTime": false
+    }
+  ]
+}
