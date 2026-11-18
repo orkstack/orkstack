@@ -320,6 +320,13 @@ type EngineInstruments struct {
 	// ork.namespace and ork.refusal.reason. A refused submission is not a
 	// run and is never also counted on Runs.
 	RunsRefused metric.Int64Counter
+	// RunTimeouts counts runs their own timeout ended (Run.timeout.timed_out),
+	// labelled ork.namespace, once per terminal run event.
+	RunTimeouts metric.Int64Counter
+	// RunTimeoutHardEnds counts runs whose failure handlers were stopped, or
+	// never started, at their run timeout's hard end
+	// (Run.timeout.hard_end_reached), labelled ork.namespace.
+	RunTimeoutHardEnds metric.Int64Counter
 	// Continuations counts a run's continuations, labelled ork.namespace and
 	// outcome=written|write_failed|over_cap|restored, or a failed restore's
 	// RUN_STATE_* code. Recorded by the run's own local activities, never by
@@ -342,10 +349,6 @@ type EngineInstruments struct {
 	// ArchiveSweepRuns counts what the archive sweep did with finished runs
 	// that had no archive, labelled outcome=archived|failed|expired.
 	ArchiveSweepRuns metric.Int64Counter
-	// ArchiveCleanupRuns counts what cleanup did with the runs it came to, by
-	// outcome; not_found_not_due is a run whose execution went missing before
-	// its retention, which is never cleanup's doing.
-	ArchiveCleanupRuns metric.Int64Counter
 	// ArchiveSweepUnconfirmed is how many finished runs the last sweep could
 	// not confirm have an archive.
 	ArchiveSweepUnconfirmed metric.Int64Gauge
@@ -425,6 +428,18 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	runTimeouts, err := meter.Int64Counter(RunTimeoutsMetric,
+		metric.WithDescription("Runs that ended RUN_TIMED_OUT, by namespace; a run already failing when its deadline passed keeps its own cause and is not counted."),
+		metric.WithUnit("{run}"))
+	if err != nil {
+		return nil, err
+	}
+	runTimeoutHardEnds, err := meter.Int64Counter(RunTimeoutHardEndsMetric,
+		metric.WithDescription("Runs whose failure handlers were stopped at their run timeout's hard end, by namespace."),
+		metric.WithUnit("{run}"))
+	if err != nil {
+		return nil, err
+	}
 	continuations, err := meter.Int64Counter("ork.run.continuations",
 		metric.WithDescription("Run continuations into a fresh history, by namespace and outcome."),
 		metric.WithUnit("{switch}"))
@@ -457,12 +472,6 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	}
 	sweepRuns, err := meter.Int64Counter("ork.archive.sweep.runs",
 		metric.WithDescription("Finished runs with no archive the archive sweep came to, by outcome."),
-		metric.WithUnit("{run}"))
-	if err != nil {
-		return nil, err
-	}
-	cleanupRuns, err := meter.Int64Counter("ork.archive.cleanup.runs",
-		metric.WithDescription("Finished runs the cleanup worker came to, by outcome."),
 		metric.WithUnit("{run}"))
 	if err != nil {
 		return nil, err
@@ -500,7 +509,6 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 		ArchiveSweepIntervalTooLong: sweepIntervalTooLong,
 		ArchiveSweepLastSuccess:     sweepLastSuccess,
 		ArchiveSweepRuns:            sweepRuns,
-		ArchiveCleanupRuns:          cleanupRuns,
 		ArchiveSweepUnconfirmed:     sweepUnconfirmed,
 		ArchiveSweepEarliestExpiry:  sweepExpiry,
 		Continuations:               continuations,
@@ -514,6 +522,8 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 		TaskDuration:                taskDuration,
 		TaskAttempts:                taskAttempts,
 		RunsRefused:                 runsRefused,
+		RunTimeouts:                 runTimeouts,
+		RunTimeoutHardEnds:          runTimeoutHardEnds,
 		Cardinality:                 highCard,
 	}, nil
 }

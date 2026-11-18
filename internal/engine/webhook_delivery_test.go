@@ -74,11 +74,15 @@ type deliveryHarness struct {
 	bodies   *artifacts.BlobDeliveryBodyStore
 	registry *webhooks.Registry
 	options  *activityOptionsCapture
+	// told is what the activities told their observer.
+	told *recordingWebhookObserver
 
 	mu        sync.Mutex
 	recorded  []webhooks.Result
 	observed  []webhooks.Result
 	failWrite int
+	// recordExists makes every record write find its record already there.
+	recordExists bool
 }
 
 func newDeliveryHarness(t *testing.T) *deliveryHarness {
@@ -97,6 +101,9 @@ func newDeliveryHarness(t *testing.T) *deliveryHarness {
 				h.failWrite--
 				return errors.New("the store is down")
 			}
+			if h.recordExists {
+				return webhooks.ErrRecordExists
+			}
 			h.recorded = append(h.recorded, result)
 			return nil
 		},
@@ -112,6 +119,8 @@ func newDeliveryHarness(t *testing.T) *deliveryHarness {
 	h.env.RegisterWorkflowWithOptions(engine.WebhookDeliveryWorkflow, workflow.RegisterOptions{Name: engine.WebhookDeliveryWorkflowType})
 	activities := engine.NewWebhookDeliveryActivities(bodies, h.registry,
 		webhooks.NewDispatcher(webhooks.DispatcherOptions{Policy: webhooktest.LoopbackPolicy()}), notifier, nil)
+	h.told = &recordingWebhookObserver{}
+	activities.WithObserver(h.told)
 	h.env.RegisterActivityWithOptions(activities.SendWebhookAttempt, activity.RegisterOptions{Name: engine.ActivitySendWebhookAttempt})
 	h.env.RegisterActivityWithOptions(activities.SettleWebhookDelivery, activity.RegisterOptions{Name: engine.ActivitySettleWebhookDelivery})
 	return h

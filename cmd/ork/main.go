@@ -22,6 +22,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1366,6 +1367,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return fmt.Errorf("open delivery record store: %w", err)
 	}
 	deliveryRecorder := api.NewDeliveryRecorder(deliveryStore, logger)
+	var webhookMetrics atomic.Pointer[telemetry.WebhookMetrics]
 	// Delivery bodies: the signed body of each delivery still being sent, so
 	// whichever replica runs an attempt sends the bytes the queuing replica
 	// signed. The delivery's last step deletes its body.
@@ -1388,6 +1390,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			Logger:   logger,
 			Launcher: webhookLauncher,
 			Record:   deliveryRecorder.RecordContext,
+			// The webhook metrics are built once the policy cache is, below;
+			// until then a delivery not queued is logged only.
+			OnNotQueued: func(ctx context.Context, namespace, reason string) {
+				webhookMetrics.Load().NotQueued(ctx, namespace, reason)
+			},
 		},
 	)
 	webhookActivities := engine.NewWebhookDeliveryActivities(deliveryBodies, webhookRegistry, webhookDispatcher,
@@ -1692,13 +1699,39 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			return policyCache.For(ctx, namespace, telemetry.SignalMetrics)
 		}, gcMode, cfg.cleanup.ArtifactGCGrace, logger)
 	}
+	// The area metrics: retention cleanup, webhooks, schedules and triggers.
+	// Each namespace's series go where its telemetry policy says, and are
+	// dropped while it is unknown; cleanup's settings are reported from boot,
+	// cleanup off included (docs/DEPLOY.md, "Retention cleanup").
+	var (
+		cleanupMetrics  *telemetry.CleanupObserver
+		triggerMetrics  *telemetry.TriggerMetrics
+		scheduleMetrics *telemetry.ScheduleMetrics
+	)
+	if wireEventObserver(tcfg) {
+		route := func(ctx context.Context, namespace string) (*telemetry.Providers, bool) {
+			return policyCache.For(ctx, namespace, telemetry.SignalMetrics)
+		}
+		objectLabels, err := telemetry.ObjectLabelsFromEnv()
+		if err != nil {
+			return err
+		}
+		cleanupMetrics = telemetry.NewCleanupObserver(sinks.Default(), route, telemetry.CleanupSettings{
+			Enabled: cfg.cleanup.Enabled, Interval: cfg.cleanup.Interval, RetentionBuffer: cfg.cleanup.RetentionBuffer,
+		}, logger)
+		triggerMetrics = telemetry.NewTriggerMetrics(sinks.Default(), route, logger)
+		scheduleMetrics = telemetry.NewScheduleMetrics(sinks.Default(), route, objectLabels, logger)
+		hooks := telemetry.NewWebhookMetrics(sinks.Default(), route, objectLabels, logger)
+		webhookMetrics.Store(hooks)
+		webhookActivities.WithObserver(webhookObserver{hooks})
+	}
 	if cfg.cleanup.Enabled {
 		// A run whose execution is missing is dated from its archive body
 		// before cleanup retires it (docs/DEPLOY.md, "Retention cleanup").
 		cleaner := archivecleanup.NewCleaner(cfg.cleanup, archiveStore, reader, namespaces, retention, logger)
 		cleaner.WithFinishReader(archive)
 		if wireEventObserver(tcfg) {
-			cleaner.WithObserver(cleanupObserver{o: observer})
+			cleaner.WithObserver(cleanupMetrics)
 		}
 		go cleaner.Run(ctx)
 		logger.Info("artifact cleanup worker started",
@@ -1771,6 +1804,33 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 					},
 				}
 			}
+			// Pending webhook deliveries: a deployment gauge, on the default sink.
+			sources.WebhookPending = engine.PendingWebhookDeliveries(censusClient, time.Now)
+		}
+		// The schedule census: each namespace's series go where its policy
+		// says, like every other namespaced record.
+		objectLabels, err := telemetry.ObjectLabelsFromEnv()
+		if err != nil {
+			return err
+		}
+		censusScheduler := engine.NewTemporalScheduler(temporalClient, "").WithLogger(logger)
+		sources.Schedules = &telemetry.ScheduleCensusSource{
+			Read: func(ctx context.Context, maxDescribes int) ([]telemetry.ScheduleSample, error) {
+				census, err := censusScheduler.Census(ctx, maxDescribes)
+				if err != nil {
+					return nil, err
+				}
+				samples := make([]telemetry.ScheduleSample, 0, len(census.Entries))
+				for _, e := range census.Entries {
+					samples = append(samples, telemetry.ScheduleSample(e))
+				}
+				return samples, nil
+			},
+			Requests: censusScheduler.CensusRequests,
+			Route: func(ctx context.Context, namespace string) (*telemetry.Providers, bool) {
+				return policyCache.For(ctx, namespace, telemetry.SignalMetrics)
+			},
+			ObjectLabels: objectLabels,
 		}
 		telemetry.StartCensuses(ctx, sinks.Default(), tcfg.CensusRequestsPerMinute, sources, logger)
 	}
@@ -1959,6 +2019,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		FloorThroughputBytesPerSecond: cfg.floorThroughputBytesPerSecond,
 		Observer:                      eventObserver,
 		Admissions:                    admissionObserver,
+		TriggerMetrics:                triggerMetrics,
+		ScheduleMetrics:               scheduleMetrics,
 		// One usage measurement is shared by GetUsage and an enforced
 		// budget's admission check, reused for ORK_USAGE_CACHE_TTL.
 		UsageCacheTTL:  api.UsageCacheTTLFromEnv(),

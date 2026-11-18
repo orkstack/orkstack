@@ -2,11 +2,13 @@ package engine_test
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"go.temporal.io/sdk/converter"
 
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -24,6 +26,86 @@ const (
 	pauseIndexedG0 = "testdata/history/pause-indexed-continued-g0-v1.json"
 	pauseIndexedG1 = "testdata/history/pause-indexed-continued-g1-v1.json"
 )
+
+// E103 PR2a's fixtures: the carried pause request
+// (TestIntegration_RecordPauseDeferredHistories), the cascade's parent and
+// child (TestIntegration_RecordPauseCascadeHistories) and a paused run's pin
+// (TestIntegration_RecordPausePinHistory).
+const (
+	pauseDeferredG0    = "testdata/history/pause-deferred-g0-v1.json"
+	pauseDeferredG1    = "testdata/history/pause-deferred-g1-v1.json"
+	pauseCascadeParent = "testdata/history/pause-cascade-parent-v1.json"
+	pauseCascadeChild  = "testdata/history/pause-cascade-child-v1.json"
+	pausePinFixture    = "testdata/history/pause-pin-clock-v1.json"
+)
+
+// pausePR2Fixtures pairs each with the start whose run id it replays as, and
+// the plan field that enters its path: with it cleared from the start, the
+// replayer must refuse the history.
+// nondeterminismCode is the SDK's code for a history the code does not
+// reproduce: a negative replay must be refused with it, not for a reason of
+// its own.
+const nondeterminismCode = "TMPRL1100"
+
+var pausePR2Fixtures = []struct {
+	path, first string
+	clear       func(p *engine.PausePlan)
+}{
+	{pauseDeferredG0, pauseDeferredG0, func(p *engine.PausePlan) { p.MaxDeferredRequests = 0 }},
+	{pauseDeferredG1, pauseDeferredG0, func(p *engine.PausePlan) { p.MaxDeferredRequests = 0 }},
+	{pauseCascadeParent, pauseCascadeParent, func(p *engine.PausePlan) { p.Cascades = false }},
+	{pausePinFixture, pausePinFixture, func(p *engine.PausePlan) { p.PinTimeoutPausable = false }},
+}
+
+// TestRunWorkflow_ReplaysCommittedPausePR2Histories is the command half of
+// the carried request, the cascade and the pausable pin, and each one's
+// negative: replayed as recorded, and refused with the plan field that
+// enters its path cleared. The cascade's child replays as recorded; its
+// commands are PR1's inherited pause.
+func TestRunWorkflow_ReplaysCommittedPausePR2Histories(t *testing.T) {
+	for _, f := range pausePR2Fixtures {
+		t.Run(filepath.Base(f.path), func(t *testing.T) {
+			requireCommittedFixture(t, f.path)
+			requireCommittedFixture(t, f.first)
+			runID, _, _, _, _ := startArgs(t, loadHistoryFile(t, f.first))
+			recorded := loadHistoryFile(t, f.path)
+			if err := replayRunTimeoutHistory(t, recorded, runID); err != nil {
+				t.Fatalf("replaying %s against current code failed: %v", f.path, err)
+			}
+			attrs := recorded.GetEvents()[0].GetWorkflowExecutionStartedEventAttributes()
+			id, wf, input, plan, carry := startArgs(t, recorded)
+			if plan.Pause == nil {
+				t.Fatalf("%s started without a pause plan", f.path)
+			}
+			// The control: the start re-encoded as it was still replays, so
+			// the cleared field is the one difference the refusal can be for.
+			payloads, err := converter.GetDefaultDataConverter().ToPayloads(id, wf, input, plan, carry)
+			must.OKf(t, err, "re-encode the start")
+			attrs.Input = payloads
+			if err := replayRunTimeoutHistory(t, recorded, runID); err != nil {
+				t.Fatalf("%s re-encoded unchanged does not replay: %v", f.path, err)
+			}
+			f.clear(plan.Pause)
+			payloads, err = converter.GetDefaultDataConverter().ToPayloads(id, wf, input, plan, carry)
+			must.OKf(t, err, "re-encode the start")
+			attrs.Input = payloads
+			err = replayRunTimeoutHistory(t, recorded, runID)
+			if err == nil {
+				t.Fatalf("%s replayed with its path's plan field cleared: it does not pin that path", f.path)
+			}
+			if !strings.Contains(err.Error(), nondeterminismCode) {
+				t.Fatalf("%s with its plan field cleared was refused for another reason: %v", f.path, err)
+			}
+		})
+	}
+	t.Run(filepath.Base(pauseCascadeChild), func(t *testing.T) {
+		requireCommittedFixture(t, pauseCascadeChild)
+		runID, _, _, _, _ := startArgs(t, loadHistoryFile(t, pauseCascadeChild))
+		if err := replayRunTimeoutHistory(t, loadHistoryFile(t, pauseCascadeChild), runID); err != nil {
+			t.Fatalf("replaying %s against current code failed: %v", pauseCascadeChild, err)
+		}
+	})
+}
 
 var pauseContinuedFixtures = []struct{ path, first string }{
 	{pauseCarriedG0, pauseCarriedG0},

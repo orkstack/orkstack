@@ -10,6 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -334,7 +338,12 @@ func TestConnectionEnded(t *testing.T) {
 		{"a wrapped close", fmt.Errorf("body: %w", io.ErrUnexpectedEOF), true},
 		{"closed after a GOAWAY", errors.New(goAwayEnded + `; LastStreamID=1, ErrCode=NO_ERROR, debug=""`), true},
 		{"a failed network read", read, true},
+		{"closed under the request's own write", errors.New(clientConnClosed), true},
+		{"closed by this client", errors.New("http2: client connection force closed via ClientConn.Close"), false},
 		{"a failed network write", &net.OpError{Op: "write", Net: "tcp", Err: syscall.EPIPE}, false},
+		{"a write on a connection already closed", &net.OpError{Op: "write", Net: "tcp", Err: net.ErrClosed}, true},
+		{"a wrapped write on a closed connection", fmt.Errorf("envelope: %w", &net.OpError{Op: "write", Net: "tcp", Err: net.ErrClosed}), true},
+		{"a closed connection outside a write", net.ErrClosed, false},
 		{"a clean end", io.EOF, false},
 		{"a peer's stream reset", errors.New("stream error: stream ID 1; INTERNAL_ERROR; received from peer"), false},
 		{"a cancel", context.Canceled, false},
@@ -489,5 +498,21 @@ func TestCloseIdleConnections_ReleasesTheEnginesConnection(t *testing.T) {
 	case <-closed:
 	case <-time.After(30 * time.Second):
 		t.Fatal("the engine's connection was still open 30 s after closeIdleConnections")
+	}
+}
+
+// TestClientConnClosed_IsGosOwnText pins clientConnClosed to the toolchain's
+// own source: the error is unexported in net/http's HTTP/2 transport, so a Go
+// upgrade that rewords it must fail here, not leave `run logs -f` and `run
+// watch` ending on a closed connection again.
+func TestClientConnClosed_IsGosOwnText(t *testing.T) {
+	goroot, err := exec.Command("go", "env", "GOROOT").Output()
+	must.OKf(t, err, "go env GOROOT")
+	source := filepath.Join(strings.TrimSpace(string(goroot)), "src", "net", "http", "internal", "http2", "transport.go")
+	body, err := os.ReadFile(source)
+	must.OKf(t, err, "read %s", source)
+	want := regexp.MustCompile(`errClientConnClosed\s*=\s*errors\.New\(` + regexp.QuoteMeta(strconv.Quote(clientConnClosed)) + `\)`)
+	if !want.Match(body) {
+		t.Fatalf("%s no longer declares errClientConnClosed as %q; find the error a stream gets when its connection closed under its request's write, and update clientConnClosed", source, clientConnClosed)
 	}
 }

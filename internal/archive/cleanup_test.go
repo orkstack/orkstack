@@ -164,6 +164,9 @@ type fakeArchive struct {
 	// entry is an old finish unless a test says otherwise.
 	finished  map[string]time.Time
 	finishErr map[string]error
+	// listErr fails every ListRuns; stateErr fails CleanupState for a run.
+	listErr  error
+	stateErr map[string]error
 }
 
 func newFakeArchive(entries ...artifacts.RunIndexEntry) *fakeArchive {
@@ -201,6 +204,9 @@ func (f *fakeArchive) add(entries ...artifacts.RunIndexEntry) {
 // from a full scan that was truncated afterwards.
 func (f *fakeArchive) ListRuns(_ context.Context, q artifacts.RunQuery) ([]artifacts.RunIndexEntry, error) {
 	f.queries = append(f.queries, q)
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
 	matches := func(entry artifacts.RunIndexEntry) bool {
 		if f.ignoreUntil {
 			relaxed := q
@@ -264,6 +270,9 @@ func (f *fakeArchive) ListRuns(_ context.Context, q artifacts.RunQuery) ([]artif
 	return entries, nil
 }
 func (f *fakeArchive) CleanupState(_ context.Context, id string) (artifacts.RunCleanupState, error) {
+	if err := f.stateErr[id]; err != nil {
+		return artifacts.RunCleanupState{}, err
+	}
 	state, ok := f.states[id]
 	if !ok {
 		return artifacts.RunCleanupState{}, artifacts.ErrNotFound

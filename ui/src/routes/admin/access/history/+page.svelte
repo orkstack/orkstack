@@ -8,6 +8,7 @@
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import Principal from '#lib/components/Principal.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import AccessTabs from '../AccessTabs.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { accessClient } from '#lib/clients/access.ts';
@@ -62,6 +63,7 @@
 <svelte:head><title>History · Access · OrkStack</title></svelte:head>
 
 <SheetHeader title="History" testid="history-title" commands={[{ label: 'List the revisions', command: 'orkctl admin access history' }]} />
+<AccessTabs />
 
 {#if data.revisionsError}
 	<ErrorPanel message={data.revisionsError} subject="the revisions" testid="history-error" onretry={() => invalidateAll()} />

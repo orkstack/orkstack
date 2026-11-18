@@ -107,6 +107,7 @@ type TemporalScheduler struct {
 	queue     string                  // task.DefaultQueue: the engine's run channel
 	converter converter.DataConverter // the engine's (DataConverter); decodes action args and memos
 	logger    *slog.Logger
+	census    scheduleCensusState
 }
 
 // NewTemporalScheduler returns the scheduler over c, whose fires start on
