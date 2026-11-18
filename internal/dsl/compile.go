@@ -138,6 +138,10 @@ type document struct {
 	// integer, a null and a tag are each refused by name.
 	Timeout yaml.Node `yaml:"timeout"`
 
+	// Concurrency is the run-level concurrency limit (docs/DSL.md
+	// "Concurrency limits"): absent, the Orkflow's runs are not limited.
+	Concurrency *concurrencyDocument `yaml:"concurrency"`
+
 	// Pins declares every pin a task may name, by name, each with a
 	// (possibly empty) options object — `pins: {build: {}}` is legal.
 	//
@@ -382,6 +386,11 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		return nil, err
 	}
 	wf.TimeoutSeconds = timeoutSeconds
+	concurrency, err := compileConcurrency(doc.Concurrency)
+	if err != nil {
+		return nil, err
+	}
+	wf.Concurrency = concurrency
 	if len(doc.Outputs) > 0 {
 		wf.Outputs = doc.Outputs
 	}

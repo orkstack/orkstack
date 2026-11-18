@@ -79,6 +79,9 @@ func orkflowAnnotations() map[string]annotation {
 		"namespace":                     slug,
 		"version":                       {typ: map[string]any{"type": "string"}},
 		"timeout":                       {typ: map[string]any{"type": "string"}},
+		"concurrency.limit":             required,
+		"concurrency.on_limit":          {enum: []string{"queue"}},
+		"concurrency.queue_timeout":     {typ: map[string]any{"type": "string"}},
 		"tasks":                         {required: true, minItems: 1},
 		"pins":                          {keyPattern: slugPattern, keyMax: MaxSlug},
 		"outputs":                       {keyPattern: outputNamePattern, keyMax: maxOutputNameBytes},
@@ -130,6 +133,7 @@ var orkflowDescriptions = map[string]string{
 	"pins":        "Declared task pins (see below).",
 	"shared_with": "Other namespaces' Orkflows that may compose this one (see \"Sharing across namespaces\").",
 	"timeout":     "optional: a Go duration, 10s to 8760h, bounding the whole run (see \"Run timeout\").",
+	"concurrency": "optional: how many runs share one key's slots at once; the rest wait in line (see \"Concurrency limits\").",
 	"tasks":       "List of task nodes forming a DAG.",
 
 	"tasks[].id":              "unique within the Orkflow",
@@ -197,16 +201,17 @@ const orkflowInputDescription = "One declared input: `type` (string, number, boo
 
 // documentStructs are the definition each document struct becomes.
 var documentStructs = map[reflect.Type]string{
-	reflect.TypeOf(taskDocument{}):     "orkflow.task",
-	reflect.TypeOf(retryDocument{}):    "orkflow.retry",
-	reflect.TypeOf(resourceDocument{}): "orkflow.resources",
-	reflect.TypeOf(secretDocument{}):   "orkflow.secret",
-	reflect.TypeOf(pinDocument{}):      "orkflow.pin",
-	reflect.TypeOf(awaitDocument{}):    "orkflow.await",
-	reflect.TypeOf(sleepDocument{}):    "orkflow.sleep",
-	reflect.TypeOf(eachDocument{}):     "orkflow.each",
-	reflect.TypeOf(cacheDocument{}):    "orkflow.cache",
-	reflect.TypeOf(shareDocument{}):    "orkflow.share",
+	reflect.TypeOf(taskDocument{}):        "orkflow.task",
+	reflect.TypeOf(retryDocument{}):       "orkflow.retry",
+	reflect.TypeOf(resourceDocument{}):    "orkflow.resources",
+	reflect.TypeOf(secretDocument{}):      "orkflow.secret",
+	reflect.TypeOf(pinDocument{}):         "orkflow.pin",
+	reflect.TypeOf(awaitDocument{}):       "orkflow.await",
+	reflect.TypeOf(sleepDocument{}):       "orkflow.sleep",
+	reflect.TypeOf(eachDocument{}):        "orkflow.each",
+	reflect.TypeOf(cacheDocument{}):       "orkflow.cache",
+	reflect.TypeOf(shareDocument{}):       "orkflow.share",
+	reflect.TypeOf(concurrencyDocument{}): "orkflow.concurrency",
 }
 
 var yamlNodeType = reflect.TypeOf(yaml.Node{})

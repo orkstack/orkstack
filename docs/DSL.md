@@ -24,6 +24,7 @@ check among them, reads the same keys ([ACCESS.md](ACCESS.md#how-a-request-is-de
 | `pins`        | no       | Declared task pins (see below).                        |
 | `shared_with` | no       | Other namespaces' Orkflows that may compose this one (see "Sharing across namespaces"). |
 | `timeout`     | no       | optional: a Go duration, 10s to 8760h, bounding the whole run (see "Run timeout"). |
+| `concurrency` | no       | optional: how many runs share one key's slots at once; the rest wait in line (see "Concurrency limits"). |
 | `tasks`       | yes      | List of task nodes forming a DAG.                      |
 
 `orkctl orkflow create` and `orkctl automation apply` each read a file's `kind:`
@@ -2021,6 +2022,55 @@ What the run does with it:
   release that enforces one: a submit is refused `FAILED_PRECONDITION` while
   one does not (`docs/DEPLOY.md` §5, "Engine capabilities and the fleet
   check").
+
+## Concurrency limits (`concurrency:`)
+
+`concurrency:` is a top-level key that limits how many of the Orkflow's runs
+hold one key at once. A run past the limit waits in line, in order of
+arrival, and starts when a run holding the key ends:
+
+```yaml
+apiVersion: orkstack/v1
+kind: Orkflow
+name: db-migrate
+inputs:
+  env:
+    type: string
+concurrency:
+  key: "db-migrate:{{ .inputs.env }}"
+  limit: 1
+  queue_timeout: 2h
+  max_queued: 50
+tasks:
+  - id: apply
+    uses: ghcr.io/acme/migrate:1
+```
+
+| key | required | meaning |
+|---|---|---|
+| `limit` | yes | how many runs may hold the key at once, from 1 |
+| `key` | no | the key's template; absent is the Orkflow's own key, shared by all its versions in the namespace that runs it |
+| `on_limit` | no | what a run does when every slot is held: `queue`, the default and the only strategy this release supports |
+| `queue_timeout` | no | how long a run waits in line, a Go duration of whole seconds (`30m`, `2h`); absent is the deployment's default (`engine.concurrency.default_queue_timeout`, 2h) |
+| `max_queued` | no | how many runs may wait in line for the key, checked when a run is submitted, best-effort; absent sets no bound of its own |
+
+- **The key** is rendered once, when the run is submitted. Its template reads
+  only fields, `{{ .inputs.<name> }}`, `{{ .run.orkflow }}`,
+  `{{ .run.version }}`, `{{ .run.origin.kind }}` and `{{ .run.origin.id }}`,
+  with no function, pipeline, condition or loop, and is at most 512 bytes. The
+  run id, timestamps and the origin's reference and principal are refused.
+- **A rendered key** is 1 to 128 bytes of letters, digits and `. _ : / @ + = -`,
+  starting with a letter or a digit and not with `ork:`. A key that is not is
+  refused `CONCURRENCY_KEY_INVALID`, naming its first bad byte: at validate
+  when the key is literal, and at submit when it is rendered.
+- **Every declaration in a namespace** that renders the same key shares its
+  slots and its line, across Orkflows and versions. Keys are never shared
+  across namespaces.
+- `on_limit: refuse`, `skip`, `cancel_oldest` and `replace` are refused at
+  validate as not available yet.
+- The block is part of the definition digest, its timeout in its short form
+  (`2h` and `120m` are one definition), and an Orkflow that omits it keeps
+  its digest. It is not part of the declared interface.
 
 ## Planning a run (`orkctl run plan`)
 
