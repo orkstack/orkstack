@@ -991,7 +991,10 @@ type Release struct {
 	QueuedRuns int64 `protobuf:"varint,17,opt,name=queued_runs,json=queuedRuns,proto3" json:"queued_runs,omitempty"`
 	// resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch).
 	ResumableRuns int64 `protobuf:"varint,18,opt,name=resumable_runs,json=resumableRuns,proto3" json:"resumable_runs,omitempty"`
-	// paused_runs is set from E103; unset until it lands (v0.4.0 proto batch).
+	// paused_runs is how many of runs_in_flight are paused: each keeps this
+	// release from draining until its pause ends (at most the deployment's
+	// engine.run_pause_timeout_max). 0 where the cluster does not index paused
+	// runs.
 	PausedRuns int64 `protobuf:"varint,19,opt,name=paused_runs,json=pausedRuns,proto3" json:"paused_runs,omitempty"`
 	// event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch).
 	EventSourceInstances int64 `protobuf:"varint,20,opt,name=event_source_instances,json=eventSourceInstances,proto3" json:"event_source_instances,omitempty"`

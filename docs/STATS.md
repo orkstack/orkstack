@@ -26,7 +26,7 @@ read, `orkctl run timing` (`docs/UI_CLI_PARITY.md`, "Task timing").
 
 | Field | Where it comes from | Over which runs |
 |---|---|---|
-| `runs_by_status["running"]`, `running[]` | the cluster's index of executions | executing now, created before the window's end (§2) |
+| `runs_by_status["running"]`, `paused`, `running[]` | the cluster's index of executions | executing now, created before the window's end (§2); a paused run counts in `paused`, never in `running`, and `running[]` lists both, each row with its status |
 | `runs_by_status["succeeded"/"failed"/"canceled"]` | the run archive's INDEX KEYS | created in the window and finished |
 | `success_rate`, `success_rate_defined` | the same index keys | the same |
 | `most_failing[]` | the same index keys | the same |
@@ -168,7 +168,9 @@ last buckets may be partial; `partial` marks a bucket the window cut short.
 
 **The sums.** Across the series, `succeeded`, `failed`, `canceled` (and any
 other status the archive spells) add up exactly to the window's
-`runs_by_status`. `running` adds up to at most the window's `running`: the
+`runs_by_status`. `running` adds up to at most the window's `running` plus
+`paused` (a bucket counts a paused run it created as running, since a bucket
+has no paused key): the
 difference is the runs still going that were created before `window_since`,
 which the window counts as a fact about now and no bucket can claim.
 `orkctl` prints that difference. A bucket's keys sum to the runs it created,
@@ -215,8 +217,11 @@ things.
 
 There is no `pending` key. Telling an accepted run from a started one means
 reading that run's history, one read per run, which is the cost this whole
-service exists to avoid. `running` means "accepted and not finished", and the
-`running` list is the same set.
+service exists to avoid. `running` means "accepted, not finished and not
+paused", `paused` is the paused runs (`orkctl run pause`), and the `running`
+list is the two together. A deployment whose cluster does not index paused
+runs (docs/DEPLOY.md, "The paused-run index") reports `paused` as 0 and counts
+them in `running`; the two counts come from one read, so they never overlap.
 
 A run is never counted twice. The cluster's index of executions reports a
 run's close a moment after the archive holds the run, so for that moment one

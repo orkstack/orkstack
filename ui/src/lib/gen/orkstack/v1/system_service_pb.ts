@@ -535,7 +535,10 @@ export type Release = Message<"orkstack.v1.Release"> & {
   resumableRuns: bigint;
 
   /**
-   * paused_runs is set from E103; unset until it lands (v0.4.0 proto batch).
+   * paused_runs is how many of runs_in_flight are paused: each keeps this
+   * release from draining until its pause ends (at most the deployment's
+   * engine.run_pause_timeout_max). 0 where the cluster does not index paused
+   * runs.
    *
    * @generated from field: int64 paused_runs = 19;
    */

@@ -402,6 +402,11 @@ func IsSubscribableEvent(event *orkstackv1.Event) bool {
 		return true
 	case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 		return event.GetStatus() == orkstackv1.Status_STATUS_FAILED
+	// A pause's two events, whatever their status (rule W): transitions
+	// inside an open run, never terminal, so never IsRunTransitionEvent.
+	case orkstackv1.EventType_EVENT_TYPE_RUN_PAUSED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED:
+		return true
 	}
 	return IsRunTransitionEvent(event)
 }

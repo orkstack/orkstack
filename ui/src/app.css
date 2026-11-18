@@ -11,6 +11,12 @@
  * own layout, with its own breakpoints, lives in that component's <style>.
  */
 @import 'tailwindcss';
+/* Generated clients and the test suites hold no class a page uses: words in
+   them ("ordinal", "to-run") would otherwise become utilities shipped to
+   every first load (ui/e2e/shell.spec.ts holds the stylesheet's weight). */
+@source not './lib/gen';
+@source not '../test';
+@source not '../e2e';
 @import '@fontsource-variable/inter/wght.css';
 @import '@fontsource-variable/jetbrains-mono/wght.css';
 @import './tokens.css';
@@ -524,6 +530,7 @@
 	.mark-hollow::before,
 	.mark-dotted::before,
 	.mark-half::before,
+	.mark-pause::before,
 	.mark-dot,
 	.mark-ring,
 	.mark-diamond,
@@ -586,6 +593,15 @@
 		border-radius: var(--radius-full);
 		background-image: linear-gradient(90deg, var(--color-await) 50%, transparent 50%);
 	}
+	/* Paused: two upright bars in waiting's amber, the run's own hold. */
+	.mark-pause::before {
+		background-image: linear-gradient(
+			90deg,
+			var(--color-wait-mark) 0 34%,
+			transparent 34% 66%,
+			var(--color-wait-mark) 66%
+		);
+	}
 	.pill-wait {
 		background-color: var(--color-wait-tint);
 		color: var(--color-wait);
@@ -631,6 +647,7 @@
 		.mark-hollow::before,
 		.mark-dotted::before,
 		.mark-half::before,
+		.mark-pause::before,
 		.mark-dot,
 		.mark-ring,
 		.mark-diamond,
@@ -1230,12 +1247,6 @@
 	}
 	.btn-disclosure[aria-expanded='true']::before {
 		transform: rotate(45deg);
-	}
-	/* A run's task card the reader selected. Inset, because a card skipped
-	   by content-visibility clips paint outside its box. */
-	.task-card[data-selected='true'] {
-		outline: var(--rule-frame) solid var(--color-select);
-		outline-offset: calc(var(--rule-frame) * -1);
 	}
 	/* A caveat that is not an alarm. */
 	.note {

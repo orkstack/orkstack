@@ -13,9 +13,10 @@ export const RUN_EVENTS: EventType[] = [
 
 /**
  * Run events a subscription must name to receive: opt-in, like the task
- * events, and offered beside them. Empty until a design adds one.
+ * events, and offered beside them. A pause's two are transitions inside an
+ * open run, so a subscription with no events does not receive them.
  */
-export const OPT_IN_RUN_EVENTS: EventType[] = [];
+export const OPT_IN_RUN_EVENTS: EventType[] = [EventType.RUN_PAUSED, EventType.RUN_UNPAUSED];
 
 /**
  * Task events: opt-in by name, always, in lifecycle order — an awaited task's

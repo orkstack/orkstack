@@ -209,7 +209,7 @@ func TestRunList_FiltersByStatusAndRejectsUnknownStatus(t *testing.T) {
 	if outcome.code != exitError {
 		t.Fatalf("exit code = %d, want %d", outcome.code, exitError)
 	}
-	if !strings.Contains(outcome.stderr, `"nonsense" is not a status this list can select; status is one of PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED, SKIPPED`) {
+	if !strings.Contains(outcome.stderr, `"nonsense" is not a status this list can select; status is one of PENDING, RUNNING, PAUSED, SUCCEEDED, FAILED, CANCELED, SKIPPED`) {
 		t.Fatalf("stderr does not carry the server's enum refusal:\n%s", outcome.stderr)
 	}
 }

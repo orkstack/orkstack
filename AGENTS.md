@@ -658,6 +658,11 @@ internal never appears on any of those surfaces.
   values; nothing outside the run resolves it. It is `SLEEPING` while it
   waits, and like an await it crosses a continuation with its absolute
   wake-up time.
+- **Paused run** means a run that starts nothing new until it is unpaused:
+  what is running finishes, its child runs are paused with it, and its
+  status is `PAUSED`. A pause lasts at most its timeout; a run still paused
+  then fails `RUN_PAUSE_TIMEOUT`, or keeps its own cause if it was already
+  failing.
 - **Cached task** means a task declaring `cache:` with `enabled: true`. A
   **memo** is one stored pointer from a memo key to a `SUCCEEDED` commit
   (§4.1); a memo step's outcome is a **hit**, **miss** or **bypassed**.
@@ -996,7 +1001,9 @@ where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
 `snapshot-overlay`, `fairness-keys`, `pin-creation-timeout`,
 `fairness-pin-creation`, `retry-max-interval`, `task-publish-window`,
-`emit-past-cancel`, `interruption-retry`, `schedule-fire-concurrency`), so a
+`emit-past-cancel`, `interruption-retry`, `schedule-fire-concurrency`,
+`run-pause`, `pause-carry`, `pause-cascade`, `pause-deferred`,
+`pausable-pin-timeout`), so a
 history recorded before the gate replays its `DefaultVersion` branch; the
 AutoUpgrade workflows gate every later change the same way under a prefix of
 their own (`concurrency-gate-*`, `force-cancel-*`), each with its recorded
@@ -1246,6 +1253,18 @@ includes:
   its objects, nor a silent success; a saved state over its bound never
   switches; a run with more work than its in-flight cap never exceeds the
   cluster's pending-activity limit and never stalls with nothing in flight;
+- a paused run starts nothing new while what was running finishes, an open
+  pin's members included; it carries its pause, its timeout and the requests
+  it could not yet record across a continuation and still ends on time; an
+  unpause, a cancel or its timeout ends it; a failing paused run's failure
+  handlers wait, and its timeout keeps the original cause; a pause reaches a
+  running child run, a child started without support for pausing is never
+  sent it and is named in a warning, and a child whose parent's pause never
+  lifts ends at its backstop; a run that cannot record a pause stops
+  `RUN_HISTORY_LIMIT`, explicitly; where the cluster does not index paused
+  runs nothing is written to the index and none is listed as paused; and a
+  pause and an unpause sent through `orkctl` to two replicas, and their
+  webhooks, reach the run and its subscribers;
 - a run at the deployment's task ceiling and a run at the fan-out item
   ceiling complete across generations with their definition passed by
   reference and snapshot overlays on, each generation within the measured

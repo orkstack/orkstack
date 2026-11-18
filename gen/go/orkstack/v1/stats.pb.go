@@ -474,8 +474,9 @@ type GetStatsResponse struct {
 	// has not started its first task is still one executing entry in the
 	// cluster's index, and telling the two apart means reading that run's
 	// history — one read per run, which is the cost this whole service is built
-	// to avoid. "running" therefore means "accepted and not finished", and the
-	// `running` list below is exactly the same set. A key that could only ever
+	// to avoid. "running" therefore means "accepted, not finished and not
+	// paused"; a paused run counts in `paused` instead, and the `running` list
+	// below is the two together, each row with its status. A key that could only ever
 	// be answered by guessing is not reported at all.
 	RunsByStatus map[string]int64 `protobuf:"bytes,1,rep,name=runs_by_status,json=runsByStatus,proto3" json:"runs_by_status,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"varint,2,opt,name=value"`
 	// success_rate is succeeded / finished, between 0 and 1, over the window's
@@ -520,7 +521,8 @@ type GetStatsResponse struct {
 	// most_failing lists the orkflows with the most failed runs in the window,
 	// worst first, and only those that failed at least once.
 	MostFailing []*OrkflowFailures `protobuf:"bytes,8,rep,name=most_failing,json=mostFailing,proto3" json:"most_failing,omitempty"`
-	// running is every run executing when the answer was computed, newest first.
+	// running is every run executing when the answer was computed, newest first,
+	// paused runs among them (their status is PAUSED).
 	// Each is the shallow projection an index can give — id, namespace, orkflow,
 	// status and start time. A run's tasks, input and output live elsewhere;
 	// GetRun reads them.
@@ -550,7 +552,10 @@ type GetStatsResponse struct {
 	// empty timezone answers "UTC". Unset when no series was asked for.
 	BucketWidth StatsBucketWidth `protobuf:"varint,16,opt,name=bucket_width,json=bucketWidth,proto3,enum=orkstack.v1.StatsBucketWidth" json:"bucket_width,omitempty"`
 	Timezone    string           `protobuf:"bytes,17,opt,name=timezone,proto3" json:"timezone,omitempty"`
-	// paused is set from E103; unset until it lands (v0.4.0 proto batch).
+	// paused is how many runs executing now are paused (orkctl run pause): not
+	// in runs_by_status["running"], and in the running list. 0 where the
+	// cluster does not index paused runs, which then count as running. A
+	// series bucket counts a paused run it created as running.
 	Paused int64 `protobuf:"varint,18,opt,name=paused,proto3" json:"paused,omitempty"`
 	// queued is set from E88; unset until it lands (v0.4.0 proto batch).
 	Queued int64 `protobuf:"varint,19,opt,name=queued,proto3" json:"queued,omitempty"`

@@ -2780,6 +2780,9 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
+	if !s.pausePlan.Indexed && filtersName(set, "status", "PAUSED") {
+		return nil, connect.NewError(connect.CodeFailedPrecondition, engine.ErrPausedFilterUnavailable)
+	}
 	size := int(req.Msg.GetPageSize())
 	switch {
 	case size < 0:
@@ -2823,6 +2826,9 @@ func (s *Service) ListRuns(
 		// so a later higher-ID tie cannot disappear behind this cursor.
 		query.BeforeCreated, query.BeforeID, query.Limit, query.Complete = beforeCreated, beforeID, size+1, true
 		listed, err := binding.Reader.ListRuns(ctx, query)
+		if errors.Is(err, engine.ErrPausedFilterUnavailable) {
+			return nil, connect.NewError(connect.CodeFailedPrecondition, err)
+		}
 		if err != nil {
 			return nil, connect.NewError(connect.CodeUnavailable,
 				fmt.Errorf("list runs in namespace %q: %w", ns.GetName(), err))

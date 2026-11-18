@@ -143,6 +143,11 @@ func (o *EngineObserver) ObserveEvent(ctx context.Context, event *orkstackv1.Eve
 }
 
 func (o *EngineObserver) recordMetric(ctx context.Context, event *orkstackv1.Event, run *orkstackv1.Run) {
+	if event.GetPauseTransition() != orkstackv1.PauseTransition_PAUSE_TRANSITION_UNSPECIFIED && run != nil {
+		if p, ok := o.sinkFor(run); ok {
+			o.recordPause(ctx, event, run, o.instrumentsOf(ctx, p))
+		}
+	}
 	switch event.GetType() {
 	case orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,

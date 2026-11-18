@@ -179,7 +179,8 @@ func noteAudit(ctx context.Context, detail string) {
 }
 
 // auditExtractor derives the entry from the request and, on success, the
-// response. resp is nil when the handler returned an error.
+// response. resp is nil when the handler returned an error. An entry with no
+// Action records nothing: the request wrote nothing (a PauseRun dry run).
 type auditExtractor func(req, resp proto.Message) auditEntry
 
 // auditedProcedures is the complete classification of the audited writes: one
@@ -370,6 +371,35 @@ var auditedProcedures = map[string]auditExtractor{
 		in, _ := req.(*orkstackv1.CancelRunRequest)
 		return auditEntry{
 			Action:    "run.cancel",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetRunId(),
+			Detail:    "reason=" + in.GetReason(),
+		}
+	},
+	// One record per request that passed the checks, its request id in the
+	// detail (noted by sendPause): "recorded" means delivered, not applied —
+	// the RUN_PAUSED or RUN_UNPAUSED event carrying that id says what the
+	// run did. A cascaded child pause has no record of its own.
+	orkstackv1connect.RunServicePauseRunProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.PauseRunRequest)
+		if in.GetDryRun() {
+			return auditEntry{}
+		}
+		detail := "reason=" + in.GetReason()
+		if timeout := in.GetTimeout(); timeout != nil {
+			detail += " timeout=" + timeout.AsDuration().String()
+		}
+		return auditEntry{
+			Action:    "run.pause",
+			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
+			Target:    in.GetRunId(),
+			Detail:    detail,
+		}
+	},
+	orkstackv1connect.RunServiceUnpauseRunProcedure: func(req, _ proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.UnpauseRunRequest)
+		return auditEntry{
+			Action:    "run.unpause",
 			Namespace: artifacts.ResolveNamespace(in.GetNamespace()),
 			Target:    in.GetRunId(),
 			Detail:    "reason=" + in.GetReason(),
@@ -925,6 +955,10 @@ func (s *Service) auditUnary(
 		respMsg, _ = resp.Any().(proto.Message)
 	}
 	entry := extract(reqMsg, respMsg)
+	if entry.Action == "" {
+		// The extractor says this request writes nothing (a dry run).
+		return resp, err
+	}
 	if err == nil && note.detail != "" {
 		entry.Detail = strings.TrimSpace(entry.Detail + " " + note.detail)
 	}

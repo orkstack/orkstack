@@ -252,7 +252,9 @@ func isRunLevelEvent(event *orkstackv1.Event) bool {
 		orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
-		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED:
+		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_PAUSED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED:
 		return true
 	default:
 		return false
