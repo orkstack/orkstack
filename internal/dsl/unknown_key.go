@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"go.yaml.in/yaml/v4"
@@ -69,12 +70,28 @@ func strictDecodeError(source []byte, doc reflect.Type, kind string, err error) 
 	}
 	where := "at the top level"
 	if found.parent != "" {
-		where = "in " + found.parent
+		where = "in " + shownPath(found.parent)
 	}
 	return validationError(joinPath(found.parent, found.key),
 		fmt.Errorf("line %d: unknown key %q %s of the %s%s; allowed: %s",
 			found.line, found.key, where, kind, more, strings.Join(found.allowed, ", ")))
 }
+
+// shownPath is a field path as the refusal's sentence shows it: as it is
+// when it is made only of plainPath's characters, and quoted otherwise. A path
+// is made of the author's own map keys, which may say anything: written as
+// it is, a quote in one would read as the end of a quoted key, and words in
+// one ("; allowed: ", "(and 2 more unknown keys") as the sentence's own.
+func shownPath(path string) string {
+	if plainPath.MatchString(path) {
+		return path
+	}
+	return strconv.Quote(path)
+}
+
+// plainPath is a field path that reads as nothing but a path: keys of
+// letters, digits, '_' and '-', joined by '.', with [n] indexes.
+var plainPath = regexp.MustCompile(`^[A-Za-z0-9_.\[\]-]*$`)
 
 // moreUnknownKeys words the unknown keys after the first: how many, and the
 // first moreUnknownKeysNamed of them with their lines.

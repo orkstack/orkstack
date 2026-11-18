@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json/jsontext"
 	json "encoding/json/v2"
+	"fmt"
+	"io"
 	"math/big"
 	"strings"
 	"testing"
@@ -43,17 +45,21 @@ func FuzzJSONStream(f *testing.F) {
 		if !ok {
 			return
 		}
-		var tree any
-		if err := json.Unmarshal(body, &tree); err != nil {
-			t.Fatalf("reference cannot decode an accepted body: %v", err)
+		// The reference keeps every number as its text: the reader never
+		// converts one, and a body is matched as exact decimals, never through
+		// a float (docs/EVENT_SOURCES.md, "Filtering"), so a number beyond a
+		// float64's range (2e310) is a body it must accept and select.
+		tree, refErr := decodeExact(body)
+		if refErr != nil {
+			t.Fatalf("reference cannot decode an accepted body: %v", refErr)
 		}
 		want, found := lookup(tree, pointer)
 		if !found {
 			t.Fatalf("selected %q at %q where the reference finds nothing", got, pointer)
 		}
-		var gotValue any
-		if err := json.Unmarshal(got, &gotValue); err != nil {
-			t.Fatalf("selected text %q does not decode: %v", got, err)
+		gotValue, gotErr := decodeExact(got)
+		if gotErr != nil {
+			t.Fatalf("selected text %q does not decode: %v", got, gotErr)
 		}
 		a, _ := json.Marshal(gotValue, json.Deterministic(true))
 		b, _ := json.Marshal(want, json.Deterministic(true))
@@ -61,6 +67,67 @@ func FuzzJSONStream(f *testing.F) {
 			t.Fatalf("selected %s at %q; the reference finds %s", a, pointer, b)
 		}
 	})
+}
+
+// decodeExact is the reference's tree, built from encoding/json's own
+// tokens: objects, arrays, strings and literals as encoding/json decodes
+// them, and every number as its JSON text (a jsontext.Value), so no value
+// is rounded or out of range. Marshalled deterministically, two trees
+// compare by their encodings.
+func decodeExact(data []byte) (any, error) {
+	d := jsontext.NewDecoder(bytes.NewReader(data))
+	v, err := decodeExactValue(d)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := d.ReadToken(); err != io.EOF {
+		return nil, fmt.Errorf("text after the value: %v", err)
+	}
+	return v, nil
+}
+
+func decodeExactValue(d *jsontext.Decoder) (any, error) {
+	tok, err := d.ReadToken()
+	if err != nil {
+		return nil, err
+	}
+	switch tok.Kind() {
+	case '{':
+		obj := map[string]any{}
+		for d.PeekKind() != '}' {
+			tok, err := d.ReadToken()
+			if err != nil {
+				return nil, err
+			}
+			key := tok.String() // a token is void after the next read
+			v, err := decodeExactValue(d)
+			if err != nil {
+				return nil, err
+			}
+			obj[key] = v
+		}
+		_, err := d.ReadToken()
+		return obj, err
+	case '[':
+		arr := []any{}
+		for d.PeekKind() != ']' {
+			v, err := decodeExactValue(d)
+			if err != nil {
+				return nil, err
+			}
+			arr = append(arr, v)
+		}
+		_, err := d.ReadToken()
+		return arr, err
+	case '0':
+		return jsontext.Value(tok.String()), nil
+	case '"':
+		return tok.String(), nil
+	case 't', 'f':
+		return tok.Bool(), nil
+	default:
+		return nil, nil
+	}
 }
 
 func lookup(tree any, pointer string) (any, bool) {

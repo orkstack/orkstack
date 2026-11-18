@@ -75,6 +75,20 @@ interpreter never re-runs a task for its own failure and never adds a reason
 to the class without a change to this file. Cron scheduling
 must use Temporal Schedules. Interaction with a running Temporal workflow must
 use Temporal Signals, including approval, external completion, resume, and abort.
+The two exceptions are a cancel request and a force cancel's termination (§7,
+Force cancel); neither carries data into the workflow.
+
+A concurrency limit is held per namespace and key by a Temporal workflow of its
+own (the concurrency gate), which exists only while the key has runs holding or
+queued for its slots, as an idempotency key is held by its claim workflow: those
+runs and tasks are that workflow's state, every change to it is serialized by
+Temporal, and a run waits for it on its own Signal and Timer. It decides only
+when an accepted run or task may begin, never where or by whom work is
+dispatched; no OrkStack process holds any of its state, and a lost record is
+rebuilt from the runs' own records in the cluster. It is the one permitted
+semaphore, not a lock service for anything else. Its gauges come from the
+concurrency census, a Temporal Schedule whose workflow reads the gates and
+reports; it decides nothing.
 
 ### 2.2 Object storage owns data and artifacts
 
@@ -323,7 +337,9 @@ Successful completion conceptually does this, in order:
 
 Anything the engine itself records as a task's result (an await's resolution
 values, a composed task's values) is written to object storage before the
-history record that references it, the same order as a commit.
+history record that references it, the same order as a commit. An attempt's
+claim and its release marker are protocol objects that `ResumeRun` reads only
+to raise the unknown-attempt warning; its attempt record stays a record.
 
 Use a deterministic commit key. At retry start, if a valid `commit.json` exists,
 return its committed result and do not execute the container again. This only
@@ -588,8 +604,10 @@ internal never appears on any of those surfaces.
 - **Temporal workflow** means Temporal's workflow context, history, workflow
   type, workflow ID, or workflow task.
 - **Pool** means the user-facing set of Orkers.
-- **Queue** means only an internal Temporal task queue and never a user-facing
-  OrkStack concept.
+- **Queue**, on a user surface, means only a concurrency limit's ordered line
+  of accepted runs or tasks waiting for one key's slot (a run is *queued*); a
+  Temporal task queue stays internal and is never named on any surface, and
+  `pool:` remains the only selector of which Orkers run a task.
 - **Pin** means a named group of tasks of one Orkflow that execute on one Orker
   process and share `/orkstack/shared`.
 - **Session** means Temporal's Worker Session, the mechanism a pin is
@@ -689,6 +707,21 @@ internal never appears on any of those surfaces.
   surface may present an asserted principal as a verified one. A force
   cancel's principal is shown from the signed record of that cancel, and as
   verified only when that record says so and verifies.
+- **Force cancel** means an operator's cancel that ends a run by Temporal
+  termination only after an ordinary cancel and a stated grace (at least the
+  run's longest task cancellation grace plus 30 seconds) in which the run
+  completed no workflow task, extended while it progresses up to a stated
+  ceiling. It is recorded (who, why, when) in the termination's details and in
+  audit records, read as CANCELED `RUN_FORCE_CANCELED` everywhere, and kept in
+  every list, count and archive. No workflow code of the run runs after it: no
+  failure handler runs, no output is produced, task states are as of its last
+  event, and an open pin is left to its lease sweep. Without the caller's
+  opt-in it never cascades, and composed children are only asked to cancel;
+  with it, each descendant run is force-canceled under the same decision.
+  OrkStack terminates a run only on a force cancel's verified decision: by the
+  force-cancel workflow, or, after two failed supersedes or exhausted
+  attempts, by the API in-process under the same decision, permission,
+  cascade intent and staleness check.
 - **Automation document** means one authored YAML file
   (`kind: Automation`) declaring a namespace's settings, schedules, triggers
   and webhooks by name (`docs/AUTOMATION.md`). Its plan
@@ -719,6 +752,15 @@ internal never appears on any of those surfaces.
   GiB-seconds over a rolling period, soft (reported only) or enforced (the
   third check of the admission gate, after hold and `max_running`). It is a
   field of `orkstack.v1.Namespace` (`budget`), unset meaning unbounded.
+- **Concurrency limit** means a bound per namespace and key on runs or tasks.
+  The key is rendered at submit, is at most 128 bytes, and is shared by the
+  namespace's declarations. Strategies: `queue` (default), `refuse`, `skip`,
+  `cancel_oldest`, `replace`. A run or task holds a **slot** of its key while
+  it runs, waits **queued** for one, and is **superseded** when a newer one
+  replaces it (`cancel_oldest`, `replace`).
+- **Concurrency gate** and **concurrency census** are internal, exactly as a
+  Temporal task queue is: the workflow that holds one key's slots (§2.1), and
+  the engine's own Schedule that reads the gates and reports.
 - **Usage** means reservation × held time — the cpu and memory an Orker
   granted each attempt, multiplied by how long it held it — derived on read
   (`StatsService.GetUsage`), never measured utilization and never a stored
@@ -810,7 +852,8 @@ Submission is the last place a run's routing and policy may be decided:
 workflow code is deterministic and may not read a namespace document,
 process configuration, or the cluster. `SubmitRun`'s preparation resolves the
 namespace and Orkflow, applies the admission gate (hold, then `max_running`,
-then an enforced budget), resolves each task's pool against the namespace's
+then an enforced budget, then each declared concurrency limit's submit-time
+check), resolves each task's pool against the namespace's
 allow-list and checks, from the Orker inventory, that a live, capable Orker
 serves it, refuses a task whose declared request exceeds its pool's per-task
 cap, which is a pool-wide setting, asking the pool's Orkers over their own
@@ -822,8 +865,12 @@ replay-pinned `RunPlan` and is never re-read. Every refusal happens before a
 run ID is minted or an idempotency key claimed, so a refused submission leaves
 nothing behind. Admission is never retroactive. A guard that reads the
 cluster's index or usage (`max_running`, an enforced budget) is a lock-free
-read-then-act and therefore best-effort by a bounded overshoot; a lock would
-be the distributed lock service §2.1 forbids.
+read-then-act and therefore best-effort by a bounded overshoot. `max_running`
+and an enforced budget stay read-then-act; a declared concurrency limit is
+strict, held by its concurrency gate (§2.1), and only its submit-time refusal
+is best-effort. The one exception to submission deciding everything is a
+concurrency limit's gate (§2.1), which a run asks through a local activity
+whose answer its history records.
 
 Temporal is the read model for live runs — for a run that has continued as
 new (§7.3), for its current generation. The events of its earlier generations
@@ -852,16 +899,23 @@ archive body and the cluster's index of runs, to decide a delete, and nothing
 else decides from them. The run-objects list is not write-once: `PutRun`
 rewrites it, only as the union of what it held and the run's references.
 
-RunWorkflow assigns event sequence numbers. The bus honors supplied numbers and
-assigns one only when none is supplied. Temporal history, the in-process log,
-and archived event JSON must therefore remain identical, and clients can resume
-by sequence from another replica.
+RunWorkflow assigns event sequence numbers. One event is not assigned by
+RunWorkflow: the terminal event of a force-canceled run, which no workflow code
+of the run can emit. Its force-cancel workflow publishes it with the next
+number after the run's last recorded event, and every reader, the stream, the
+archive and the evidence bundle build the same bytes from the run's last
+recorded state and its termination record with one function, so they still
+agree. Webhooks are delivered for it as for any terminal event. The bus honors
+supplied numbers and assigns one only when none is supplied. Temporal history,
+the in-process log, and archived event JSON must therefore remain identical,
+and clients can resume by sequence from another replica.
 
 ### 7.1 Pools and Temporal task queues
 
 `pool:` is the only user-facing selector of *which Orkers*; `pin:` constrains a
 group of tasks to *one* member of that set. Neither exposes a queue, a session,
-or a host name. No user-facing surface may expose `queue:` or a queue name.
+or a host name. A concurrency limit's line is not a channel and exposes none.
+No user-facing surface may expose `queue:` or a queue name.
 `internal/task/pool.go` builds every channel name and is the complete mapping:
 `QueueForPool`, `RouteForPool`, `DefaultRoute`, `PoolForQueue`, the single
 `ork-pool-` prefix construction, the Orker control (`ork-orker-<id>`) and
@@ -902,7 +956,9 @@ One Worker Deployment spans `ork` and `orker` for a release. They share
 `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` and are released together. With
 versioning enabled, `RunWorkflow`, `ScheduleFireWorkflow` and
 `WebhookDeliveryWorkflow` are Pinned,
-`IdempotencyClaimWorkflow` is AutoUpgrade, and the projection worker on
+`IdempotencyClaimWorkflow`, `ConcurrencyGateWorkflow`,
+`ConcurrencyCensusWorkflow` and `ForceCancelWorkflow` are AutoUpgrade, and the
+projection worker on
 `ork-engine-events` is unversioned. A child run started by a Pinned parent
 inherits the parent's version, so its plan is interpreted by the release that
 built it. Versioning is off unless `ORK_BUILD_ID` is set; leave
@@ -940,8 +996,11 @@ where the path first diverges (`lean-event-path`, `run-history-guard`,
 `continue-as-new`, `run-in-flight-cap`, `definition-by-reference`,
 `snapshot-overlay`, `fairness-keys`, `pin-creation-timeout`,
 `fairness-pin-creation`, `retry-max-interval`, `task-publish-window`,
-`emit-past-cancel`, `interruption-retry`), so a
-history recorded before the gate replays its `DefaultVersion` branch; each
+`emit-past-cancel`, `interruption-retry`, `schedule-fire-concurrency`), so a
+history recorded before the gate replays its `DefaultVersion` branch; the
+AutoUpgrade workflows gate every later change the same way under a prefix of
+their own (`concurrency-gate-*`, `force-cancel-*`), each with its recorded
+fixture; each
 new command path
 gets its own
 recorded history fixture. Every tunable number that decides whether, which,
@@ -1027,6 +1086,10 @@ machine, or expression runtime for these operations. An awaited task
 completion: a Temporal Timer for its deadline and a Signal for its resolution,
 and no container. A sleeping task (`sleep:`) is the DSL form of wait / sleep:
 one Temporal Timer and no Signal. A schedule is a Temporal Schedule; a
+concurrency limit is one gate workflow per active key: an Update to take a
+slot, Signals to grant and release; the engine's own internal Schedules (the
+concurrency census) are created by each engine at boot if absent and are never
+user objects, and are no **schedule** in §7's sense; a
 composed task is a Temporal child workflow of the same `RunWorkflow`
 interpreter; a fan-out's
 items are ordinary activities in the interpreter's own in-flight set; a webhook
@@ -1206,7 +1269,35 @@ includes:
   against the store, an engine restart or a Temporal outage between passes,
   and a restored bucket: no object a live, retained or unarchived run
   references is deleted, and none of them postpones reclamation beyond the
-  oldest open run.
+  oldest open run;
+- an engine killed mid-acquire, mid-pass and mid-continue-as-new of a gate;
+- a gate's record lost with runs queued and holding: restored in order,
+  nothing granted past a queued run, and a rebuild with visibility down ending
+  explicitly;
+- a reset drops no holder of an answering gate, even with acquires racing it
+  or the RPC stalling past the freeze window;
+- a cold key after a clean close grants at once;
+- late acquires, tombstone overflow, and sequential tasks on one key: no
+  phantom holder and no false fence;
+- a run terminated while holding or queued, and a stalled holder terminated by
+  an operator: reclaimed within one sweep;
+- a resumed run, including a second resume, a continued run and a run with
+  task-only gates: `RUN_RESUMED`, read-back, `RUN_RESULTS_KEPT`, steps 4.1–4.4
+  (E85's resume holder), every earlier holder released;
+- a release during a frontend outage;
+- a cancel and a supersede racing a grant;
+- a Worker Deployment rollout with runs queued and a gate continuing as new;
+- at a fire: an unavailable check, a full namespace queue, a `max_running`
+  filled by queued runs, a failing count, or a rollout. The schedule is not
+  paused, and a pre-0.4 fire history replays;
+- a run in a workflow-task failure loop, holding a concurrency slot and an open
+  pin, force-canceled: it ends CANCELED `RUN_FORCE_CANCELED` with its
+  principal and one terminal event and webhook, its slot is released at once,
+  its pin directory only after the lease, and it is archived; a healthy run
+  whose tasks have long cancellation graces, force-canceled, ends
+  `RUN_CANCELED` on its own path and is never terminated; an engine killed
+  between the termination and the terminal event still publishes the event
+  once.
 
 Scale and soak tests leave the per-merge proof only through
 `scripts/proof-nightly-tests.txt`, and Playwright specs through its spec-side
@@ -1903,6 +1994,9 @@ Do not build:
 - PostgreSQL, MySQL, Redis, Kafka, NATS, RabbitMQ, Elasticsearch, ZooKeeper,
   etcd, SQLite, or another required durable system.
 
+A concurrency limit's line orders when accepted runs begin; it is Temporal
+workflow state, dispatches nothing, and is not a task queue.
+
 Temporal's own external requirements and a user's deployment requirements are
 not OrkStack dependencies. Disposable caches and in-memory caches are allowed.
 Focus on the smallest durable execution substrate.
@@ -1943,6 +2037,9 @@ Unless an accepted contract explicitly changes one, these are non-negotiable:
   present can hand to a memo hit, except for a commit created by a suspended
   Orker inside the moment between the GC's last check and its delete
   (`docs/STORAGE.md`, "Reclaiming space").
+
+A force cancel does not make an execution disappear: termination keeps its
+history, and its terminal state is read from that history.
 
 The first has one stated exception (accepted 2026-11-04): a finished run with no
 archive is lost if object storage stays down until the cluster's delete time for
