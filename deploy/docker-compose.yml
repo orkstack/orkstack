@@ -190,14 +190,13 @@ services:
     command:
       - --config.file=/etc/prometheus/prometheus.yml
       - --web.enable-otlp-receiver
+      # Exemplars ride OTLP with the points they sample; Grafana links each
+      # to its trace (grafana/datasources.yaml).
+      - --enable-feature=exemplar-storage
     volumes:
       - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./observability/prometheus/rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
-    extra_hosts:
-      # so the container can reach ork's and orker's ORK_ADMIN_ADDR on the
-      # host; some Docker installs resolve this without the entry,
-      # but Linux needs host-gateway explicitly.
-      - "host.docker.internal:host-gateway"
 
   grafana:
     image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf

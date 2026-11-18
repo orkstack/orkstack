@@ -544,6 +544,7 @@ shows (50 by default), never one per namespace in the deployment.
 | task-seconds | Σ held time — `finished_at − started_at` of every recorded attempt: from the Orker picking the activity up to it writing the record, image pull, staging and upload included, because the Orker's slot was held for all of it |
 | cpu-seconds | Σ `TaskAttempt.resources.cpu × held time` over recorded attempts carrying a reservation |
 | GiB-seconds | Σ `TaskAttempt.resources.memory_bytes ÷ 2³⁰ × held time` over the same attempts |
+| GPU-seconds (`gpu_seconds`) | Σ `TaskAttempt.resources.gpu × held time` over the same attempts: the gpu units each attempt was granted; reported only, never part of a budget |
 
 The **reservation** is what the Orker granted the container after its
 defaults filled a missing request and its caps admitted it

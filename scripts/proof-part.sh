@@ -47,6 +47,9 @@ part_require() {
 		part_need "node on PATH (the site's scripts and astro run on it)" command -v node
 		part_need "site/node_modules (cd site && bun install --frozen-lockfile)" test -d "$REPO/site/node_modules"
 		part_need "make on PATH" command -v make
+		part_need "docker on PATH (the alerts gate runs promtool in the pinned Prometheus image)" command -v docker
+		part_need "the pinned Prometheus image (proof.yml's fast job fetches it)" \
+			bash -c 'docker image inspect "$(scripts/check-alerts.sh --image)"'
 		;;
 	race | race-repeat)
 		part_need "go on PATH" command -v go
@@ -326,6 +329,7 @@ part_main() { # <part>
 		git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 		git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+		git show "$BASE_COMMIT:scripts/proof-gpu-tests.txt" >"$DIR/gpu-base.txt" 2>/dev/null || : >"$DIR/gpu-base.txt"
 		local mode=defer
 		[ "$TIER" = release ] && mode=include
 		[ "$TIER" = nightly ] && mode=only
@@ -385,6 +389,8 @@ part_main() { # <part>
 		(cd "$REPO/ui" && bun test test/ >"$DIR/ui-unit.log" 2>&1) && printf 'ui-unit\tpass\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv" || printf 'ui-unit\tfail\t0\tui-unit.log\tbun test test/\n' >>"$DIR/gates.tsv"
 		# The site's check and build, recorded as the UI gates are.
 		(cd "$REPO/site" && bun run check && bun run build) >"$DIR/site.log" 2>&1 && printf 'site\tpass\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv" || printf 'site\tfail\t0\tsite.log\tbun run check && bun run build\n' >>"$DIR/gates.tsv"
+		# The kit's alert rules under promtool, after the site, as in a local proof.
+		part_run alerts alerts.log scripts/check-alerts.sh || true
 		;;
 	race)
 		# The unit suites under the race detector, on a runner of its own (the

@@ -4,6 +4,7 @@
 #
 #   scripts/proof.sh [NAME]                     full proof    -> proof/NAME/
 #   scripts/proof.sh --tier nightly|release [NAME]
+#   ORK_PROOF_GPU_HOST=1 scripts/proof.sh --tier gpu [NAME]
 #   scripts/proof.sh --part PART --plan FILE [--setup-log FILE] ...
 #                                               one CI part -> proof/<id>-part-PART-aN/
 #
@@ -25,6 +26,12 @@
 # its own: the race repeat (the concurrency-heavy packages' unit suites under
 # the race detector, RACE_REPEAT_COUNT times) and the fuzz lane (every Fuzz
 # target, sharing FUZZ_BUDGET). Both run alone, before the integration phase.
+#
+# The GPU-host tier runs the tests scripts/proof-gpu-tests.txt lists, on the
+# GPU host, one at a time: a full proof with ORK_PROOF_GPU_HOST=1 runs them as
+# its gpu gate after the integration phase, and --tier gpu (make proof-gpu)
+# runs that gate alone. Without the flag a proof records them host-deferred.
+# See docs/PROOFS.md, "The GPU-host tier".
 #
 # Exit status: 0 pass, 1 a gate failed, 2 an invalid invocation (an unknown
 # option, an existing proof directory), 77 a prerequisite is absent.
@@ -54,6 +61,9 @@
 #                       gate to its end, as before; it changes no eligibility rule
 #   ORK_TEST_IMAGE_TAG  set from outside: resolve those activity images instead
 #                       of pushing this tree's — never merge-eligible
+#   ORK_PROOF_GPU_HOST=1  this host is the GPU host (scripts/gpu-host-setup.sh):
+#                       run the GPU-host tests; a missing GPU device, spec, lock
+#                       directory or lock group exits 77
 #
 # proof/ is gitignored on purpose: the evidence is regenerated per change and
 # quoted in the commit or pull request; what the repository keeps is the
@@ -88,7 +98,7 @@ invalid() {
 	say "proof: $*" >&2
 	exit 2
 }
-usage() { sed -n '2,46p' "$SELF" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,66p' "$SELF" | sed 's/^# \{0,1\}//'; }
 
 # ---- arguments (exit 2) -------------------------------------------------------
 TIER=full
@@ -140,9 +150,17 @@ while [ $# -gt 0 ]; do
 	esac
 done
 case "$TIER" in
-full | nightly | release) ;;
-*) invalid "--tier must be full, nightly or release, not '$TIER'" ;;
+full | nightly | release | gpu) ;;
+*) invalid "--tier must be full, nightly, release or gpu, not '$TIER'" ;;
 esac
+GPU_HOST="${ORK_PROOF_GPU_HOST:-}"
+case "$GPU_HOST" in "" | 1) ;; *) invalid "ORK_PROOF_GPU_HOST must be 1 or unset, not '$GPU_HOST'" ;; esac
+if [ "$TIER" = gpu ] && [ "$GPU_HOST" != 1 ]; then
+	invalid "--tier gpu runs on the GPU host: set ORK_PROOF_GPU_HOST=1 (make proof-gpu does)"
+fi
+if [ "$TIER" = gpu ] && [ -n "$PART" ]; then
+	invalid "--tier gpu is a local proof of the GPU host; no CI part runs it"
+fi
 # The runner's setup log (.github/actions/proof-fetch): every fetch attempt
 # made before a CI part, copied into the part's directory so its part.json and
 # the merged proof carry it. A local proof fetches nothing before itself.
@@ -265,7 +283,7 @@ if [ -n "$PART" ]; then
 	exit $?
 fi
 
-ALL_GATES="temporal binaries integration-compile lint build unit vet-integration images integration activity-fixture ui-check ui-unit site race race-repeat fuzz ui-e2e observability"
+ALL_GATES="temporal binaries integration-compile lint build unit vet-integration images integration activity-fixture ui-check ui-unit site alerts race race-repeat fuzz gpu ui-e2e observability"
 declare -A RUN=()
 SPEC_ARGS=()
 cleanup_tmp() {
@@ -273,7 +291,7 @@ cleanup_tmp() {
 }
 trap cleanup_tmp EXIT
 
-for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit site race ui-e2e observability; do RUN[$g]=1; done
+for g in lint build unit vet-integration images integration activity-fixture ui-check ui-unit site alerts race ui-e2e observability; do RUN[$g]=1; done
 if [ "$TIER" = nightly ]; then
 	# The nightly tier runs the deferred tests and spec files and its two
 	# lanes, and nothing else: the integration tests
@@ -288,6 +306,13 @@ if [ "$TIER" = nightly ]; then
 		awk -F'\t' 'NF >= 4 && $1 != "" { sub(/^ui\//, "", $1); print $1 }')
 	if [ ${#SPEC_ARGS[@]} -gt 0 ]; then RUN[ui-e2e]=1; fi
 fi
+if [ "$TIER" = gpu ]; then
+	# The GPU gate alone: the GPU-host list's tests, nothing else.
+	RUN=()
+fi
+# On the GPU host every tier runs the GPU gate; elsewhere no proof does, and
+# the merger records the list host-deferred.
+if [ "$GPU_HOST" = 1 ]; then RUN[gpu]=1; fi
 if [ -n "${PROOF_GATES:-}" ]; then
 	# A full proof runs exactly the gates named (and the setup they need); a
 	# nightly or release proof runs the named gates its tier has. Either way
@@ -385,6 +410,11 @@ if runs site; then
 	need "node on PATH (the site's scripts and astro run on it)" command -v node
 	need "site/node_modules (cd site && bun install --frozen-lockfile)" test -d "$REPO/site/node_modules"
 fi
+if runs alerts; then
+	need "a docker daemon (docker info)" docker info
+	need "the pinned Prometheus image (docker pull \"\$(scripts/check-alerts.sh --image)\")" \
+		bash -c 'docker image inspect "$(scripts/check-alerts.sh --image)"'
+fi
 if runs ui-e2e; then
 	need "flock on PATH (the Playwright gate's host lock)" command -v flock
 	need "the temporal CLI on PATH (ui/e2e/admin.spec.ts induces a real cluster failure with it)" command -v temporal
@@ -397,6 +427,35 @@ if runs observability; then
 	need "Loki on 127.0.0.1:3100 (make infra-up-observability)" curl -sf -o /dev/null http://127.0.0.1:3100/ready
 	need "Tempo on 127.0.0.1:3200 (make infra-up-observability)" curl -sf -o /dev/null http://127.0.0.1:3200/ready
 	need "Prometheus on 127.0.0.1:9090 (make infra-up-observability)" curl -sf -o /dev/null http://127.0.0.1:9090/-/ready
+fi
+# The GPU host (ORK_PROOF_GPU_HOST=1): scripts/gpu-host-setup.sh reports the
+# host set up (its devices, the CDI spec, the lock group and directory), this
+# process holds the lock group, and the lock directory is root's 0750.
+GPU_LOCK_DIR=/run/orkstack/gpu-orker
+# Each check captures its command's output first and then matches it: a
+# `grep -q` that exits at its first match would end the pipeline's writer with
+# SIGPIPE, which pipefail reports as a missing host.
+gpu_host_set_up() {
+	local said
+	said=$("$REPO/scripts/gpu-host-setup.sh" 2>&1) || return 1
+	case "$said" in
+	"gpu-host-setup: this host is set up"* | *$'\n'"gpu-host-setup: this host is set up"*) return 0 ;;
+	esac
+	return 1
+}
+gpu_lock_group() {
+	local groups
+	groups=" $(id -nG) "
+	case "$groups" in *" orkstack-gpu "*) return 0 ;; esac
+	return 1
+}
+gpu_lock_dir() { [ -d "$GPU_LOCK_DIR" ] && [ "$(stat -c %a "$GPU_LOCK_DIR")" = 750 ]; }
+if runs gpu; then
+	need "a docker daemon (docker info)" docker info
+	need "flock on PATH (the GPU gate's host lock)" command -v flock
+	need "the GPU host set up: scripts/gpu-host-setup.sh prints the root steps it still needs" gpu_host_set_up
+	need "the group orkstack-gpu in this process's groups (id -nG): log in again, or run the proof under newgrp orkstack-gpu" gpu_lock_group
+	need "$GPU_LOCK_DIR, mode 0750 (scripts/gpu-host-setup.sh)" gpu_lock_dir
 fi
 if [ -n "$missing" ]; then
 	say "proof: prerequisites absent, nothing measured, nothing written:$missing"
@@ -647,6 +706,7 @@ wait_bg() {
 git show "$BASE_COMMIT:scripts/proof-nightly-tests.txt" >"$DIR/nightly-base.txt" 2>/dev/null || : >"$DIR/nightly-base.txt"
 git show "$BASE_COMMIT:scripts/proof-nightly-specs.txt" >"$DIR/nightly-specs-base.txt" 2>/dev/null || : >"$DIR/nightly-specs-base.txt"
 git show "$BASE_COMMIT:scripts/proof-quarantine.txt" >"$DIR/quarantine-base.txt" 2>/dev/null || : >"$DIR/quarantine-base.txt"
+git show "$BASE_COMMIT:scripts/proof-gpu-tests.txt" >"$DIR/gpu-base.txt" 2>/dev/null || : >"$DIR/gpu-base.txt"
 # The gate files this change edits, and the rows its excusing lists add or
 # remove (plan §6.4), computed whatever gates run. A failure is written into
 # the file as an error entry, never as "no gate file changed", and makes the
@@ -676,6 +736,10 @@ step ui-unit ui-unit.log in_ui bun test test/
 # command checks it (the docs sync, the token drift check, astro check) and
 # builds it (link validation included). It needs no Temporal and no Docker.
 step site site.log in_site bash -c 'bun run check && bun run build'
+# The kit's alert rules: promtool, at the Prometheus the kit pins, checks the
+# rule files and the kit's config and runs every rule's cases (docs/RUNBOOKS.md).
+# It needs Docker and the pinned image, and no network.
+step alerts alerts.log scripts/check-alerts.sh
 # The race gate and the nightly lanes run alone, after the cheap gates and
 # before the setup: the detector multiplies every test's time several times
 # over, so a race run beside other gates would only make both load-sensitive,
@@ -926,6 +990,28 @@ if [ -n "$UI_PREBUILD" ]; then
 	UI_PREBUILD=""
 fi
 
+# ---- P3b: the GPU gate, on the GPU host only ----------------------------------------
+# The GPU-host list's tests, one at a time, after the integration phase and
+# alone: they share the host's GPUs and its GPU host lock. One proof's GPU
+# gate runs on a host at a time; a second waits for the host-wide lock at most
+# 45 minutes, naming the holder, then fails.
+GPU_PROOF_LOCK=/tmp/orkstack-proof-gpu.lock
+gpu_gate() {
+	{
+		if ! flock -n 8; then
+			say "waiting for $GPU_PROOF_LOCK, held by: $(cat "$GPU_PROOF_LOCK" 2>/dev/null || echo unknown)"
+			if ! flock -w 2700 8; then
+				say "another proof's GPU gate held $GPU_PROOF_LOCK for 45 minutes: $(cat "$GPU_PROOF_LOCK" 2>/dev/null || echo unknown)"
+				return 77
+			fi
+		fi
+		printf 'proof %s, pid %s, since %s\n' "$NAME" "$$" "$(date -u +%FT%TZ)" >"$GPU_PROOF_LOCK"
+		say "holding $GPU_PROOF_LOCK: one proof's GPU gate at a time on this host"
+		env "${STACK_ENV[@]}" ORK_REQUIRE_INFRA=1 "$PR" gpu -out "$DIR" -base "$DIR/gpu-base.txt" -host -tier "$TIER" -print-progress
+	} 8>>"$GPU_PROOF_LOCK"
+}
+step gpu gpu.log gpu_gate
+
 # ---- P4: Playwright ------------------------------------------------------------------
 # Spec files run PROOF_UI_WORKERS at a time: the browser runs in a network
 # namespace of its own (ui/e2e/browser-server.ts, started by the suite's
@@ -1039,8 +1125,8 @@ step ui-e2e ui-e2e.log ui_e2e
 # ---- P5: observability ------------------------------------------------------------------
 # One real run through ork and orker with telemetry switched on; every
 # signal it should have produced is queried back out of Loki, Tempo and
-# Prometheus and asserted. Its admin ports are fixed (Prometheus scrapes
-# them), so the script holds a host-wide lock.
+# Prometheus and asserted. Its admin ports are fixed (the gate checks
+# them directly), so the script holds a host-wide lock.
 step observability observability.log env "${STACK_ENV[@]}" scripts/proof-observability.sh
 
 # ---- a proof that stopped: the gates it never started ------------------------------------
@@ -1085,8 +1171,11 @@ mkdir -p "$DIR/parts/local-a1"
 record_args+=(-part local -attempt 1 -out-dir "$DIR/parts/local-a1")
 merge_args=(-plan "$DIR/integration-plan.json" -parts "$DIR/parts" -out "$DIR" -name "$NAME")
 # A proof that stopped before `proofrun integration` ran has no plan: the
-# merger then writes its failing verdict from the local part alone.
-if [ -f "$DIR/integration-plan.json" ]; then
+# merger then writes its failing verdict from the local part alone. A
+# GPU-host-tier proof has none either: its verdict is its gpu gate's.
+if [ "$TIER" = gpu ]; then
+	merge_args=(-gpu-tier -parts "$DIR/parts" -out "$DIR" -name "$NAME")
+elif [ -f "$DIR/integration-plan.json" ]; then
 	record_args+=(-plan "$DIR/integration-plan.json")
 else
 	merge_args+=(-stopped)

@@ -143,22 +143,32 @@ func TestUnstampedBuild_ReportsUnknownAndStillRuns(t *testing.T) {
 
 // TestMakeDist_StampsTheCheckoutsCommit: `make dist` hands the tool the commit
 // the tree is checked out at, an override wins for a tree with no git, and with
-// neither it stops rather than build a release that cannot say what it is.
+// neither it stops rather than build a release that cannot say what it is. The
+// make it starts never inherits an outer make's variables (MAKEFLAGS carries
+// them, under `make merge-check PROOF=… GPU=…` or a release's own), checked
+// with an outer MAKEFLAGS that names another commit.
 func TestMakeDist_StampsTheCheckoutsCommit(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
-	dry := func(args ...string) (string, error) {
+	dryIn := func(env []string, args ...string) (string, error) {
 		cmd := exec.Command("make", append([]string{"-n", "dist", "VERSION=v1.2.3", "SOURCE_DATE_EPOCH=1700000000"}, args...)...)
 		cmd.Dir = root
+		cmd.Env = childMakeEnv(env)
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
+	dry := func(args ...string) (string, error) { return dryIn(os.Environ(), args...) }
 	got, err := dry()
 	if err != nil {
 		t.Fatalf("make -n dist: %v\n%s", err, got)
 	}
 	if !regexp.MustCompile(`-commit [0-9a-f]{40,64} `).MatchString(got) {
 		t.Errorf("make -n dist prints\n%s\nwhich names no whole commit", got)
+	}
+	outer := append(os.Environ(), "MAKEFLAGS= -- SOURCE_COMMIT="+otherCommit+" GPU=/tmp/outer PROOF=/tmp/outer",
+		"MAKELEVEL=1", "SOURCE_COMMIT="+otherCommit)
+	if got, err := dryIn(outer); err != nil || strings.Contains(got, "-commit "+otherCommit) {
+		t.Errorf("make -n dist under an outer make that names %s: %v\n%s\nwant the checkout's commit, never the outer one", otherCommit, err, got)
 	}
 	got, err = dry("SOURCE_COMMIT=" + otherCommit)
 	if err != nil || !strings.Contains(got, "-commit "+otherCommit) {
@@ -168,6 +178,22 @@ func TestMakeDist_StampsTheCheckoutsCommit(t *testing.T) {
 	if err == nil || !strings.Contains(got, "SOURCE_COMMIT") {
 		t.Errorf("make -n dist with no commit: %v\n%s\nwant a refusal naming SOURCE_COMMIT", err, got)
 	}
+}
+
+// childMakeEnv is env without what a make started under another make
+// inherits from it: its flags and level, and the variables a test here sets on
+// its own command line or a merge-check or release passes down.
+func childMakeEnv(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		switch name {
+		case "MAKEFLAGS", "MFLAGS", "MAKELEVEL", "GPU", "PROOF", "SOURCE_COMMIT", "VERSION", "SOURCE_DATE_EPOCH":
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 func hostTarget(t *testing.T, binary string) dist.Target {

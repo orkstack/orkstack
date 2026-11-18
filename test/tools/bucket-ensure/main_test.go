@@ -132,3 +132,17 @@ func TestCleanup(t *testing.T) {
 		})
 	}
 }
+
+// TestNewBareClient_RefusesWithoutAnEndpoint: an unset ORK_S3_ENDPOINT would
+// leave the SDK on AWS's own endpoint, so every action refuses it, naming the
+// variable, before any request is made.
+func TestNewBareClient_RefusesWithoutAnEndpoint(t *testing.T) {
+	t.Setenv("ORK_S3_ENDPOINT", "")
+	t.Setenv("ORK_S3_BUCKET", "orkstack-test-1-1")
+	for name, run := range map[string]func() error{"ensure": ensure, "cleanup": cleanup, "list": list} {
+		err := run()
+		if err == nil || !strings.Contains(err.Error(), "ORK_S3_ENDPOINT is required") {
+			t.Errorf("%s with no endpoint = %v; want it refused, naming ORK_S3_ENDPOINT", name, err)
+		}
+	}
+}

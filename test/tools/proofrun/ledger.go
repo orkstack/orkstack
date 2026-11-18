@@ -378,6 +378,13 @@ type ledger struct {
 	// no allowed-skip entry names recorded rather than refused (race.go), and
 	// the merger accepts such a skip only from a ledger that says so.
 	Short bool `json:"short,omitzero"`
+	// The gpu suite's ledger (gpu.go) also records whether this host was the
+	// GPU host (ORK_PROOF_GPU_HOST=1), whether the GPU gate ran, and the
+	// hashes of the tree's and the base's GPU-host lists it was judged on.
+	GPUHost    bool   `json:"gpu_host,omitzero"`
+	GPUGateRan bool   `json:"gpu_gate_ran,omitzero"`
+	ListSHA256 string `json:"list_sha256,omitempty"`
+	BaseSHA256 string `json:"base_sha256,omitempty"`
 }
 
 type summary struct {

@@ -42,7 +42,10 @@ type viewEntry struct {
 	GID   uint32 `json:"gid,omitzero"`
 	Dev   uint64 `json:"dev,omitzero"`
 	Ino   uint64 `json:"ino,omitzero"`
-	Error string `json:"error,omitempty"`
+	// Driver is what a unit probe's driver said of a gpu node (unit_probe.go):
+	// its DRM driver name and version, or kfd's version. Empty elsewhere.
+	Driver string `json:"driver,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // probeView is the probe's report.
@@ -59,6 +62,11 @@ const (
 	checkDevice viewCheck = iota + 1
 	// checkBind: the same object, by kind and dev:inode.
 	checkBind
+	// checkCDINode: the same character node, by device number only. The
+	// runtime gives a CDI device node the container user's uid and gid, never
+	// the host node's, and a task reaches the host group through the spec's
+	// additionalGids (cdi_audit.go), so the gid says nothing about the unit.
+	checkCDINode
 )
 
 // viewWant is one path the probe must report, and the Orker's own view of it.
@@ -191,6 +199,10 @@ func viewDiff(w viewWant, p viewEntry) string {
 		if p.GID != own.GID {
 			return fmt.Sprintf("%s has gid %d to the Orker and gid %d to the probe", own.Path, own.GID, p.GID)
 		}
+	case checkCDINode:
+		if p.Major != own.Major || p.Minor != own.Minor {
+			return fmt.Sprintf("%s is %d:%d to the Orker and %d:%d to the probe", own.Path, own.Major, own.Minor, p.Major, p.Minor)
+		}
 	case checkBind:
 		if p.Dev != own.Dev || p.Ino != own.Ino {
 			return fmt.Sprintf("%s is %d:%d to the Orker and %d:%d to the probe", own.Path, own.Dev, own.Ino, p.Dev, p.Ino)
@@ -211,6 +223,9 @@ const maxProbePaths = 64
 // and reaches nothing: its only output is the report. Exit 2 is a malformed
 // invocation, which writes nothing to stdout.
 func Probe(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "unit" {
+		return probeUnitNodes(args[1:], stdout, stderr)
+	}
 	if len(args) < 2 || args[0] != "view" || len(args)-1 > maxProbePaths {
 		fmt.Fprintf(stderr, "usage: orker probe view PATH... (1 to %d absolute paths)\n", maxProbePaths)
 		return 2

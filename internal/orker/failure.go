@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // The five failure categories of the OCI Activity Contract (§8.1).
@@ -77,7 +79,13 @@ const (
 	// no floor admits (SecurityPolicy.AllowsSecretSource). A policy refusal
 	// refuses identically forever, so it is a ContractViolation and never
 	// retried.
-	ReasonSecretNotPermitted   = "SECRET_NOT_PERMITTED"
+	ReasonSecretNotPermitted = "SECRET_NOT_PERMITTED"
+	// ReasonNamespaceNotServed is a task of a namespace this Orker does not
+	// serve (ORK_ORKER_NAMESPACES), or one whose input names a commit or memo
+	// of a namespace other than its own, refused before anything of it is
+	// read or written. Every Orker of a pool serves the same list, so it is
+	// a ContractViolation and never retried.
+	ReasonNamespaceNotServed   = "NAMESPACE_NOT_SERVED"
 	ReasonCommitReadFailed     = "COMMIT_READ_FAILED"
 	ReasonCommitWriteFailed    = "COMMIT_WRITE_FAILED"
 	ReasonCommitSchema         = "COMMIT_SCHEMA_UNSUPPORTED"
@@ -219,9 +227,11 @@ var reasonCategory = map[string]string{
 	ReasonProfileNotOffered:         CategoryInfrastructureError,
 	ReasonProfileChanged:            CategoryInfrastructureError,
 	ReasonProfileDrifted:            CategoryInfrastructureError,
+	ReasonGPUUnitsUnavailable:       CategoryInfrastructureError,
 	ReasonSecretUnresolved:          CategoryInfrastructureError,
 	ReasonSecretSchemeForbid:        CategoryContractViolation,
 	ReasonSecretNotPermitted:        CategoryContractViolation,
+	ReasonNamespaceNotServed:        CategoryContractViolation,
 	ReasonCommitReadFailed:          CategoryInfrastructureError,
 	ReasonCommitWriteFailed:         CategoryInfrastructureError,
 	ReasonCommitSchema:              CategoryContractViolation,
@@ -382,7 +392,15 @@ func Fail(reason string, format string, args ...any) *Failure {
 }
 
 // FailCause builds a Failure that wraps an underlying error.
+//
+// A cause the namespace guard refused (artifacts.ErrNamespaceNotServed) is
+// NAMESPACE_NOT_SERVED whatever step met it: the store was never asked, and
+// a retry is refused the same way, so it is never that step's retryable
+// store failure.
 func FailCause(reason string, cause error, format string, args ...any) *Failure {
+	if errors.Is(cause, artifacts.ErrNamespaceNotServed) {
+		reason = ReasonNamespaceNotServed
+	}
 	return &Failure{Reason: reason, Message: fmt.Sprintf(format, args...), Cause: cause}
 }
 

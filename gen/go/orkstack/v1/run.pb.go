@@ -2408,7 +2408,7 @@ type ReservedResources struct {
 	Cpu float64 `protobuf:"fixed64,1,opt,name=cpu,proto3" json:"cpu,omitempty"`
 	// memory_bytes is the memory limit in bytes: "4Gi" is 4294967296.
 	MemoryBytes int64 `protobuf:"varint,2,opt,name=memory_bytes,json=memoryBytes,proto3" json:"memory_bytes,omitempty"`
-	// gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+	// gpu is the gpu units the Orker granted the attempt; 0 for none.
 	Gpu           int64 `protobuf:"varint,3,opt,name=gpu,proto3" json:"gpu,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

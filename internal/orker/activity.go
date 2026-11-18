@@ -75,6 +75,15 @@ type Options struct {
 	// (MEMO_STORE_ABSENT) and runs, exactly like Commits being nil disables
 	// adoption.
 	Memos artifacts.MemoStore
+	// Namespaces is the set this Orker serves (NamespacesFromEnv); the zero
+	// value serves every namespace. With a list, Commits and Memos are
+	// scoped to it and the dispatcher refuses a task of any other namespace
+	// (OCIDispatcher.Namespaces).
+	Namespaces artifacts.Namespaces
+	// CommitRoot is the root every commit uri this Orker accepts lies under
+	// (artifacts.CommitRoot). With a Namespaces list it must be set: without
+	// it every commit is refused, closed rather than open.
+	CommitRoot string
 	// Runtime is the OCI runtime. Nil means DockerRuntime.
 	Runtime ContainerRuntime
 	// Policy is the Orker-local security and resource policy. The zero value
@@ -164,6 +173,9 @@ type Options struct {
 // exactly one implementation that runs one (§6.1).
 type Activities struct {
 	dispatcher *OCIDispatcher
+	// gpuWait is the GPU host lock Boot found held (gpu_boot.go); nil when it
+	// took it, or offers no gpu profile.
+	gpuWait *gpuWaiting
 	// usage is this process's running samplers, for the usage gauges.
 	usage   *UsageRegistry
 	pool    string
@@ -259,13 +271,15 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		dispatcher: &OCIDispatcher{
 			Runtime:             runtime,
 			Store:               store,
-			Commits:             opts.Commits,
+			Commits:             scopeCommits(opts.Commits, opts.CommitRoot, opts.Namespaces),
 			Refs:                opts.Refs,
 			Logs:                opts.Logs,
 			LogOpts:             opts.Log,
 			Attempts:            opts.Attempts,
 			Claims:              claimerOf(opts.Attempts),
-			Memos:               opts.Memos,
+			Memos:               scopeMemos(opts.Memos, opts.Namespaces),
+			Namespaces:          opts.Namespaces,
+			CommitRoot:          strings.TrimSuffix(opts.CommitRoot, "/"),
 			Policy:              policy,
 			WorkRoot:            workRoot,
 			OrkerID:             orkerID,
@@ -301,10 +315,35 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		_, stopping := a.cordon.Stopping()
 		return stopping
 	}
+	// The gpu profile's units, all usable until a probe says otherwise
+	// (capacity_units.go); their health holds the profile's unit reasons.
+	if p, ok := gpuProfileOf(opts.Profiles); ok && a.capacity != nil {
+		a.capacity.useUnits(p.Name, len(p.GPU.Units), int(policy.MaxGPU), unitHealthReporter(a.profiles, p.Name, time.Now))
+	}
 	// A profile cause holds this Orker's cordon (profile_state.go).
 	a.profiles.attach(a.cordon)
 	a.dispatcher.profiles = a.profiles
 	return a
+}
+
+// maxRequest is DescribeOrker's max_request: the per-task cap, with the gpu
+// profile's fixed ceiling (min(max_gpu, units)) on an Orker with units. Nil
+// when the cap cannot be read.
+func (a *Activities) maxRequest() *orkstackv1.ResourceQuantity {
+	ceiling, err := a.dispatcher.Policy.ceiling()
+	if err != nil {
+		return nil
+	}
+	q := ceiling.proto()
+	if a.capacity != nil {
+		a.capacity.mu.Lock()
+		if a.capacity.units != nil {
+			gpu := a.capacity.ceiling.gpu
+			q.Gpu = &gpu
+		}
+		a.capacity.mu.Unlock()
+	}
+	return q
 }
 
 // newCapacityFor builds the admission ledger an Orker declaring a capacity
@@ -313,8 +352,17 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 // SecurityPolicy.Validate, which Boot runs first.
 func newCapacityFor(policy SecurityPolicy, opts Options, slots int) (*Capacity, error) {
 	limit, declared, err := parseCapacity(opts.CapacityCPU, opts.CapacityMemory)
-	if err != nil || !declared {
+	if err != nil {
 		return nil, err
+	}
+	// A gpu profile builds the ledger even with no capacity declared: its
+	// units are counted whatever the cpu and memory (capacity_units.go).
+	// A gpu profile of a build that does not implement the kind refuses the
+	// boot instead (CheckSupported), so it builds nothing here.
+	_, gpu := gpuProfileOf(opts.Profiles)
+	gpu = gpu && slices.Contains(SupportedProfileKinds(), orkstackv1.ProfileKind_PROFILE_KIND_GPU)
+	if !declared && !gpu {
+		return nil, nil
 	}
 	ceiling, err := policy.ceiling()
 	if err != nil {
@@ -513,9 +561,7 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		// submit may send a `mask: false` secret to its pool.
 		SecretMaskingSupported: true,
 	}
-	if ceiling, err := a.dispatcher.Policy.ceiling(); err == nil {
-		result.MaxRequest = ceiling.proto()
-	}
+	result.MaxRequest = a.maxRequest()
 	if defaults, err := a.dispatcher.Policy.defaults(); err == nil {
 		result.DefaultRequest = defaults.proto()
 	}
@@ -981,8 +1027,12 @@ func (a *Activities) Boot(ctx context.Context) error {
 	if err := a.profiles.declared.CheckSupported(SupportedProfileKinds()); err != nil {
 		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
 	}
+	if err := checkGPUSettings(a.dispatcher.Policy, a.profiles.declared); err != nil {
+		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
+	}
 	// The boot audit (profile_audit.go): every device classified on this
 	// host and recorded, which every later check compares with.
+	a.profiles.useCDI(a.dispatcher.Policy.CDISpecDirs, runtimeSocketPath())
 	if err := a.profiles.bootAuditProfiles(); err != nil {
 		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
 	}
@@ -1097,6 +1147,11 @@ func (a *Activities) Boot(ctx context.Context) error {
 	// not even LIST the containers refuses, because then this Orker cannot
 	// account for any of them.
 	if err := a.reapContainers(ctx); err != nil {
+		return err
+	}
+	// The GPU host lock and the lock-scoped reap (gpu_boot.go), after the
+	// by-id reap and before any device-bearing probe.
+	if err := a.bootGPU(ctx); err != nil {
 		return err
 	}
 	a.startRemovalRetry()

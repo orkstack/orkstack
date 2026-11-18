@@ -95,12 +95,14 @@ const (
 	AdmissionBoundSlots    = "slots"
 )
 
-// amount is a reservation: cpu in millicores and memory in bytes, so the
-// ledger adds and subtracts exactly. In a limit, a dimension at 0 is
-// unbounded.
+// amount is a reservation: cpu in millicores, memory in bytes and units of
+// the gpu profile, so the ledger adds and subtracts exactly. In a limit, a cpu
+// or memory dimension at 0 is unbounded; the gpu dimension is always bounded,
+// and 0 admits none (capacity_units.go).
 type amount struct {
 	milli int64
 	bytes int64
+	gpu   int64
 }
 
 func amountOf(cores float64, bytes int64) amount {
@@ -111,26 +113,47 @@ func amountFromProto(r *orkstackv1.ReservedResources) amount {
 	if r == nil {
 		return amount{}
 	}
-	return amountOf(r.GetCpu(), r.GetMemoryBytes())
+	a := amountOf(r.GetCpu(), r.GetMemoryBytes())
+	a.gpu = r.GetGpu()
+	return a
 }
 
-func (a amount) add(b amount) amount { return amount{a.milli + b.milli, a.bytes + b.bytes} }
-func (a amount) sub(b amount) amount { return amount{a.milli - b.milli, a.bytes - b.bytes} }
+func (a amount) add(b amount) amount {
+	return amount{a.milli + b.milli, a.bytes + b.bytes, a.gpu + b.gpu}
+}
+func (a amount) sub(b amount) amount {
+	return amount{a.milli - b.milli, a.bytes - b.bytes, a.gpu - b.gpu}
+}
 
-// within reports whether a fits under limit, where a limit dimension at 0 is
-// unbounded.
+// cpuMemory is a without its gpu dimension.
+func (a amount) cpuMemory() amount { return amount{milli: a.milli, bytes: a.bytes} }
+
+// within reports whether a fits under limit, where a cpu or memory limit
+// dimension at 0 is unbounded and the gpu dimension always bounds.
 func (a amount) within(limit amount) bool {
-	return (limit.milli == 0 || a.milli <= limit.milli) && (limit.bytes == 0 || a.bytes <= limit.bytes)
+	return (limit.milli == 0 || a.milli <= limit.milli) && (limit.bytes == 0 || a.bytes <= limit.bytes) &&
+		a.gpu <= limit.gpu
 }
 
-// exceeds reports whether a is larger than b in either dimension.
-func (a amount) exceeds(b amount) bool { return a.milli > b.milli || a.bytes > b.bytes }
+// exceeds reports whether a is larger than b in any dimension.
+func (a amount) exceeds(b amount) bool {
+	return a.milli > b.milli || a.bytes > b.bytes || a.gpu > b.gpu
+}
 
+// proto sets gpu only when it is not 0, so an Orker with no gpu profile
+// reports exactly what it reported before units existed.
 func (a amount) proto() *orkstackv1.ResourceQuantity {
-	return &orkstackv1.ResourceQuantity{Cpu: float64(a.milli) / 1000, MemoryBytes: a.bytes}
+	q := &orkstackv1.ResourceQuantity{Cpu: float64(a.milli) / 1000, MemoryBytes: a.bytes}
+	if a.gpu != 0 {
+		q.Gpu = &a.gpu
+	}
+	return q
 }
 
 func (a amount) String() string {
+	if a.gpu != 0 {
+		return fmt.Sprintf("%g cpu, %d bytes, %d gpu", float64(a.milli)/1000, a.bytes, a.gpu)
+	}
 	return fmt.Sprintf("%g cpu, %d bytes", float64(a.milli)/1000, a.bytes)
 }
 
@@ -172,7 +195,8 @@ type Capacity struct {
 	// need not know WHICH permit it is, only how many of each state remain.
 	unclaimed int
 	claimed   int
-	unremoved map[ContainerID]amount // containers whose removal has not yet succeeded
+	unremoved map[ContainerID]unremovedHold // containers whose removal has not yet succeeded
+	units     *gpuUnits                     // nil: this Orker offers no gpu profile
 	changed   chan struct{}
 	observer  CapacityObserver // nil observes nothing
 	waiting   int              // polls parked in reserve, for a test to know one waits
@@ -181,7 +205,7 @@ type Capacity struct {
 func newCapacity(limit, ceiling amount, slots int) *Capacity {
 	return &Capacity{
 		limit: limit, ceiling: ceiling, slots: slots,
-		unremoved: map[ContainerID]amount{}, changed: make(chan struct{}),
+		unremoved: map[ContainerID]unremovedHold{}, changed: make(chan struct{}),
 	}
 }
 
@@ -193,7 +217,7 @@ func (c *Capacity) broadcast() {
 
 // grantable reports whether one more poll may be granted now. Locked.
 func (c *Capacity) grantable() bool {
-	return c.issued < c.slots && c.reserved.add(c.ceiling).within(c.limit)
+	return c.issued < c.slots && c.reserved.add(c.ceiling).within(c.limit) && !c.units.probePending()
 }
 
 // holding is what keeps a poll from being granted now: every slot taken, or
@@ -349,17 +373,25 @@ func (c *Capacity) trim(polled bool, request amount) (*Admission, error) {
 	return &Admission{c: c, held: request}, nil
 }
 
-// seed reserves the ceiling for a container this Orker could not remove at
-// boot: it was admitted within the cap by this Orker's previous life, and it
-// still holds the host until a later removal succeeds.
+// seed reserves held for a container this Orker could not remove at boot: it
+// was admitted within the cap by this Orker's previous life, and it still
+// holds the host until a later removal succeeds. It reserves the ceiling's cpu
+// and memory only: the lock-scoped reap, which runs after it, adds the
+// container's exact units (seedUnits), so the two passes never count one unit
+// twice.
 func (c *Capacity) seed(id ContainerID) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.seedLocked(id, c.ceiling.cpuMemory())
+}
+
+// seedLocked is seed's step. Locked.
+func (c *Capacity) seedLocked(id ContainerID, held amount) {
 	if _, seen := c.unremoved[id]; seen {
 		return
 	}
-	c.unremoved[id] = c.ceiling
-	c.reserved = c.reserved.add(c.ceiling)
+	c.unremoved[id] = unremovedHold{held: held}
+	c.reserved = c.reserved.add(held)
 }
 
 // reap tries again to remove every container whose removal has not yet
@@ -379,9 +411,10 @@ func (c *Capacity) reap(ctx context.Context, remove func(context.Context, Contai
 			continue
 		}
 		c.mu.Lock()
-		if held, ok := c.unremoved[id]; ok {
+		if hold, ok := c.unremoved[id]; ok {
 			delete(c.unremoved, id)
-			c.reserved = c.reserved.sub(held)
+			c.reserved = c.reserved.sub(hold.held)
+			c.units.unbind(hold.units, id)
 			c.broadcast()
 		}
 		c.mu.Unlock()
@@ -422,6 +455,7 @@ func (c *Capacity) reading() CapacityReading {
 type Admission struct {
 	c         *Capacity
 	held      amount
+	units     []int // the unit indices bind gave it, ascending; nil before bind
 	container ContainerID
 	done      bool // the reservation has left the attempt: freed, or handed to unremoved
 }
@@ -478,13 +512,15 @@ func (a *Admission) Done() {
 // keep hands the reservation to the container's pending removal. Locked.
 func (a *Admission) keep() {
 	a.done = true
-	a.c.unremoved[a.container] = a.held
+	a.c.unremoved[a.container] = unremovedHold{held: a.held, units: a.units}
+	a.c.units.rebind(a.units, a, a.container)
 }
 
-// free returns the reservation. Locked.
+// free returns the reservation and its units. Locked.
 func (a *Admission) free() {
 	a.done = true
 	a.c.reserved = a.c.reserved.sub(a.held)
+	a.c.units.unbind(a.units, a)
 	a.c.broadcast()
 }
 

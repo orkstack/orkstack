@@ -31,21 +31,21 @@ func TestProfileState_DriftLatchesAndUnavailableClears(t *testing.T) {
 		t.Fatalf("unavailable not reported: %v", r)
 	}
 
-	// A later observation of the same cause keeps the first instant.
-	s.setUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY, "gone", t0.Add(time.Minute))
-	if got := reported().GetProfileCordons()[0]; !got.GetSince().AsTime().Equal(t0) ||
-		got.GetReason() != orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY {
-		t.Errorf("since moved or reason not updated: %v", got)
+	// A later observation of the same reason keeps its first instant and
+	// takes the latest detail.
+	s.setUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE, "still not pulled", t0.Add(time.Minute))
+	if got := reported().GetProfileCordons(); len(got) != 1 || !got[0].GetSince().AsTime().Equal(t0) || got[0].GetDetail() != "still not pulled" {
+		t.Errorf("since moved or detail not updated: %v", got)
 	}
 
-	s.clearUnavailable("amd")
+	s.clearUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE)
 	if r := reported(); r.GetCordoned() || len(r.GetProfileCordons()) != 0 {
 		t.Fatalf("unavailable did not clear: %v", r)
 	}
 
 	s.setDrift("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED, "device replaced", t0)
 	// Nothing clears a drift, and an unavailable observation never replaces it.
-	s.clearUnavailable("amd")
+	s.clearUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY)
 	s.setUnavailable("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY, "gone", t0)
 	s.setDrift("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED, "later", t0.Add(time.Hour))
 	got := reported().GetProfileCordons()
@@ -135,5 +135,52 @@ func TestBoot_RefusesADeviceOfNoClass(t *testing.T) {
 	err = a.Boot(t.Context())
 	if err == nil || !strings.Contains(err.Error(), ReasonProfileInvalid) || !strings.Contains(err.Error(), DetailDeviceClassRefused) {
 		t.Fatalf("Boot = %v; want %s naming %s", err, ReasonProfileInvalid, DetailDeviceClassRefused)
+	}
+}
+
+// TestProfileState_ReasonsClearIndependently: a profile holds every
+// unavailable reason that stands, each cleared only by its own check, so
+// clearing one never ends another (AGENTS.md §7). The cause stands while any
+// reason does, is reported one entry per reason in value order, and keeps the
+// instant its first reason was seen.
+func TestProfileState_ReasonsClearIndependently(t *testing.T) {
+	const (
+		lockHeld = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_GPU_HOST_LOCK_HELD
+		foreign  = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD
+		absent   = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_ABSENT
+	)
+	t0 := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	c := NewCordon()
+	s := newProfileState(Profiles{}, "")
+	s.attach(c)
+	s.setUnavailable("amd", foreign, "container abc runs unit 0", t0)
+	s.setUnavailable("amd", lockHeld, "held by pid 42 (orker)", t0.Add(time.Second))
+
+	r := &orkstackv1.DescribeOrkerResult{}
+	s.report(r)
+	if got := r.GetProfileCordons(); len(got) != 2 || got[0].GetReason() != lockHeld || got[1].GetReason() != foreign {
+		t.Fatalf("both reasons not reported in value order: %v", got)
+	}
+
+	// The lock is taken: its reason clears, the foreign container's stands,
+	// and the Orker stays cordoned.
+	s.clearUnavailable("amd", lockHeld)
+	if !s.unavailable("amd") || !s.unavailableFor("amd", foreign) || s.unavailableFor("amd", lockHeld) {
+		t.Fatal("clearing the lock reason ended the foreign-units reason")
+	}
+	if cordoned, _, _ := c.State(); !cordoned {
+		t.Fatal("a standing reason left the Orker uncordoned")
+	}
+	// Clearing a reason that does not stand changes nothing.
+	s.clearUnavailable("amd", absent)
+	if !s.unavailableFor("amd", foreign) {
+		t.Fatal("clearing an absent reason ended another")
+	}
+	s.clearUnavailable("amd", foreign)
+	if s.unavailable("amd") {
+		t.Fatal("the last reason cleared, still unavailable")
+	}
+	if cordoned, reason, _ := c.State(); cordoned {
+		t.Fatalf("no reason stands, still cordoned: %q", reason)
 	}
 }

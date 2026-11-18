@@ -49,6 +49,11 @@ const MaxSlug = 200
 // MaxTaskDevices is how many device and gpu profiles one task may hold.
 const MaxTaskDevices = 8
 
+// MaxTaskGPU is the most units of its gpu profile one task may hold
+// (`resources.gpu`). Each Orker caps it further at its own ceiling, checked at
+// submit.
+const MaxTaskGPU = 64
+
 // checkSlug reports why value cannot be used as an identifier, naming the kind
 // of identifier so the message says which field is wrong.
 func checkSlug(kind, value string) error {
@@ -265,6 +270,9 @@ type secretDocument struct {
 type resourceDocument struct {
 	CPU    string `yaml:"cpu"`
 	Memory string `yaml:"memory"`
+	// GPU is how many units of the task's gpu profile it holds. A pointer, so
+	// a written 0 is refused rather than read as absent.
+	GPU *int32 `yaml:"gpu"`
 }
 
 // pinDocument is one declared pin's options.
@@ -498,6 +506,13 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			task.Resources = &orkstackv1.ResourceRequest{
 				Cpu:    td.Resources.CPU,
 				Memory: td.Resources.Memory,
+			}
+			if td.Resources.GPU != nil {
+				if *td.Resources.GPU < 1 {
+					return nil, validationError(fmt.Sprintf("tasks[%d].resources.gpu", taskIndex),
+						fmt.Errorf("task %q: `resources.gpu` is 1 to %d units, not %d", td.ID, MaxTaskGPU, *td.Resources.GPU))
+				}
+				task.Resources.Gpu = *td.Resources.GPU
 			}
 		}
 		for _, sd := range td.Secrets {

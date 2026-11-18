@@ -573,7 +573,9 @@ directory the floor lists.
 
 `resources` uses `cpu` and `memory` request strings in the Kubernetes spelling
 (`"2"`, `"500m"`; `"512Mi"`, `"4Gi"`), refused at validate and create when they do
-not read as a limit (rule 6d). A request is reserved for the task's lifetime and
+not read as a limit (rule 6d). `gpu` is a count of units of the task's gpu
+profile (rule 6d); it needs an Orker that offers a gpu profile, and this
+release's Orkers offer none, so submit refuses such a task. A request is reserved for the task's lifetime and
 is also its limit. Orker policy may refuse a request above its cap but never
 silently raises or clamps it; a submit refuses a task whose request is above
 the cap of every Orker of its pool (`RESOURCES_UNSATISFIABLE`). `network` accepts
@@ -1741,12 +1743,12 @@ whenever that run changes.
 |---|---|
 | `MEMO_ABSENT` | no memo for this key |
 | `MEMO_UNREADABLE` | the memo could not be read (store error, corrupt, unknown schema, or the 30 s lookup bound passed) |
-| `MEMO_MISMATCH` | the memo stored at this key describes another key, namespace, scope, task or Orkflow |
+| `MEMO_MISMATCH` | the memo stored at this key describes another key, namespace, scope, task or Orkflow, or the Orker's namespace guard (`ORK_ORKER_NAMESPACES`) refused to read it |
 | `MEMO_EXPIRED` | the memoized result is older than the task's effective TTL |
 | `SOURCE_COMMIT_GONE` | the run that produced the result was retired; its commit is gone |
 | `SOURCE_COMMIT_CHANGED` | the commit's stored bytes no longer hash to the digest the memo recorded |
 | `SOURCE_COMMIT_UNREADABLE` | the commit could not be read or decoded |
-| `SOURCE_COMMIT_MISMATCH` | the commit is not this task's result (namespace, task, run, time, image digest, a non-zero exit, Orkflow) |
+| `SOURCE_COMMIT_MISMATCH` | the commit is not this task's result (namespace, task, run, time, image digest, a non-zero exit, Orkflow), or the Orker's namespace guard (`ORK_ORKER_NAMESPACES`) refused it as another namespace's |
 | `SOURCE_OVER_LIMITS` | the result does not fit this run's limits (values, artifact count or size, commit size) |
 | `SOURCE_OBJECT_UNAVAILABLE` | the committed `values.json` is gone or corrupt, or an artifact object is gone |
 | `INPUT_UNHASHED` | an input reference carries no digest, so no key could be computed (no memo is written) |
@@ -1957,7 +1959,10 @@ How each node reads:
    the Kubernetes spelling that are a limit: a positive number of cpus
    (`"2"`, `"0.5"`, `"500m"`), and at least one byte of memory (`"512Mi"`,
    `"4Gi"`, `"1000000"`; `Gi`, not `GB`), refused with the path otherwise
-   (6d). Whether a request fits is Orker policy, checked at dispatch.
+   (6d). `resources.gpu`, when present, is units of the task's gpu profile, 1 to 64:
+   the task must name that profile in `devices:`, and a pinned task holds
+   none (6d). Gpu profiles are not offered by this release, so submit refuses
+   a task that names one (`PROFILE_UNAVAILABLE`). Whether a request fits is Orker policy, checked at dispatch.
 7. A task `pool`, when present, is slug-formatted.
 8. Templates parse and only reference declared inputs and upstream tasks, and
    `.each` under rule 25.

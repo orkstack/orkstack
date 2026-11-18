@@ -1065,7 +1065,7 @@ export type ReservedResources = Message<"orkstack.v1.ReservedResources"> & {
   memoryBytes: bigint;
 
   /**
-   * gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+   * gpu is the gpu units the Orker granted the attempt; 0 for none.
    *
    * @generated from field: int64 gpu = 3;
    */

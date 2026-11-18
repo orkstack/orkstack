@@ -55,6 +55,14 @@ proto-breaking: ## Refuse a proto change that breaks the release PROTO_BASE's co
 config-defaults: ## Regenerate deploy/orkstack.defaults.yaml from the code's defaults
 	go run ./internal/config/cmd/gendefaults > deploy/orkstack.defaults.yaml
 
+.PHONY: alerts
+alerts: ## Regenerate the kit's alert rules, their promtool tests and docs/RUNBOOKS.md's alert entries
+	go run ./internal/alerts/cmd/genalerts
+
+.PHONY: alerts-check
+alerts-check: ## Check the kit's alert rules with promtool at the Prometheus the kit pins (needs Docker; not in make check)
+	scripts/check-alerts.sh
+
 .PHONY: tsgen
 tsgen: ## Install UI codegen deps and regenerate Go+TS clients from proto
 	cd ui && bun install
@@ -162,6 +170,10 @@ cover: ## Run tests with coverage -> coverage.out
 .PHONY: up
 up: ## Start everything: Temporal, SeaweedFS, Dex, engine, orker and the UI, authenticating (IDENTITY=0: asserted, no sign-in)
 	@scripts/stack.sh up
+
+.PHONY: up-observability
+up-observability: ## make up, plus the observability profile: ork and orker push OTLP to its Collector; Grafana on :3000 (TASK_LOGS=1: task logs too)
+	@OBSERVABILITY=1 scripts/stack.sh up
 
 .PHONY: down
 down: ## Stop everything `make up` started (data is kept)
@@ -329,11 +341,11 @@ check: ## The contributor's fast path, no Docker: gofmt, vet, vet the integratio
 	cd ui && bun install --frozen-lockfile && bun run check && bun test test/
 
 .PHONY: merge-check
-merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, and with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required)
+merge-check: build lint test ## Gate a merge: build, lint, unit, vet the integration suites; with PROOF=proof/<name>, also require that full proof of exactly this tree, with NIGHTLY=proof/<name> verify that nightly proof of main's tip (AGENTS.md §11.3; none is required), and with GPU=proof/<name> that GPU-host-tier proof of this tree (required when the change touches a path scripts/proof-gpu-tests.txt names)
 	go vet -tags=integration ./...
 	@echo "merge-check OK: the tree builds, passes lint and unit tests, and its integration suites compile"
 ifneq ($(strip $(PROOF)),)
-	go run ./test/tools/proofrun verify -proof $(PROOF) $(if $(NIGHTLY),-nightly $(NIGHTLY))
+	go run ./test/tools/proofrun verify -proof $(PROOF) $(if $(NIGHTLY),-nightly $(NIGHTLY)) $(if $(GPU),-gpu $(GPU))
 else
 	@echo "NOTE: COMPILE, not run. Without PROOF=proof/<name> this gate needs no"
 	@echo "      infrastructure, and an integration test can be red while it is green."
@@ -378,6 +390,10 @@ proof-nightly: ## The nightly tier: the deferred scale and soak tests and specs,
 .PHONY: proof-release
 proof-release: ## The pre-release gate: every gate, observability always -> proof/<NAME>-release/
 	@scripts/proof.sh --tier release $(if $(NAME),$(NAME),release)
+
+.PHONY: proof-gpu
+proof-gpu: ## The GPU-host tier's gate alone, on the GPU host: the tests scripts/proof-gpu-tests.txt lists, serially -> proof/<NAME>-gpu/ (set up the host first: scripts/gpu-host-setup.sh)
+	@ORK_PROOF_GPU_HOST=1 scripts/proof.sh --tier gpu $(if $(NAME),$(NAME),gpu)
 
 # Release artifacts (docs/UPGRADING.md, "Release artifacts"). release.yml
 # runs these for every release; each also runs by hand. VERSION must be
@@ -440,10 +456,11 @@ examples-smoke: ## Run the Quickstart, then every shipped example with no inputs
 	@scripts/quickstart-smoke.sh --examples
 
 .PHONY: release-tag
-release-tag: ## Tag HEAD only after a passing release proof of it: VERSION=vX.Y.Z PROOF=proof/<name>
+release-tag: ## Tag HEAD only after a passing release proof and a passing GPU-host-tier proof of it: VERSION=vX.Y.Z PROOF=proof/<name> GPU=proof/<name>
 	@test -n "$(VERSION)" || (echo "release-tag needs VERSION=vX.Y.Z"; exit 2)
 	@test -n "$(PROOF)" || (echo "release-tag needs PROOF=proof/<name>"; exit 2)
-	go run ./test/tools/proofrun verify -release -tag $(VERSION) -proof $(PROOF)
+	@test -n "$(GPU)" || (echo "release-tag needs GPU=proof/<name>: a passing GPU-host-tier proof of this commit (make proof-gpu on the GPU host, AGENTS.md §11.2)"; exit 2)
+	go run ./test/tools/proofrun verify -release -tag $(VERSION) -proof $(PROOF) -gpu $(GPU)
 	@git tag -a $(VERSION) -m "OrkStack $(VERSION) — proof $(PROOF), tree $$(git rev-parse HEAD^{tree})"
 
 .PHONY: proof-observability

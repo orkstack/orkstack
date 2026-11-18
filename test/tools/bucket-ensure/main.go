@@ -1,9 +1,11 @@
 // Command bucket-ensure creates or removes the bucket ORK_S3_BUCKET names,
-// against the S3-compatible endpoint ORK_S3_* names.
+// against the S3-compatible endpoint ORK_S3_* names. ORK_S3_ENDPOINT is
+// required: an unset one would be AWS itself.
 //
-//	ORK_S3_BUCKET=orkstack-admin-<stamp> go run ./test/tools/bucket-ensure
-//	ORK_BUCKET_ACTION=cleanup ORK_S3_BUCKET=orkstack-admin-<stamp> \
+//	ORK_S3_ENDPOINT=http://127.0.0.1:9000 ORK_S3_BUCKET=orkstack-admin-<stamp> \
 //		go run ./test/tools/bucket-ensure
+//	ORK_BUCKET_ACTION=cleanup ORK_S3_ENDPOINT=http://127.0.0.1:9000 \
+//		ORK_S3_BUCKET=orkstack-admin-<stamp> go run ./test/tools/bucket-ensure
 //
 // ORK_BUCKET_ACTION selects the mode: "ensure" (the default — create if
 // absent, idempotently), "cleanup" (delete the bucket, emptying it first when
@@ -100,6 +102,11 @@ func newClient(ctx context.Context) (client *s3.Client, bucket, endpoint string,
 func newBareClient(ctx context.Context) (client *s3.Client, endpoint string, err error) {
 	region := envOr("ORK_S3_REGION", "us-east-1")
 	endpoint = os.Getenv("ORK_S3_ENDPOINT")
+	// No endpoint would leave the SDK on AWS's own: this tool creates and
+	// deletes buckets, and never reaches a store it was not pointed at.
+	if endpoint == "" {
+		return nil, "", errors.New("ORK_S3_ENDPOINT is required: this tool never guesses a store, and an unset endpoint would be AWS itself")
+	}
 	accessKey := os.Getenv("ORK_S3_ACCESS_KEY")
 	secretKey := os.Getenv("ORK_S3_SECRET_KEY")
 
@@ -118,9 +125,7 @@ func newBareClient(ctx context.Context) (client *s3.Client, endpoint string, err
 		return nil, "", fmt.Errorf("load aws config: %w", err)
 	}
 	client = s3.NewFromConfig(awsCfg, func(o *s3.Options) {
-		if endpoint != "" {
-			o.BaseEndpoint = aws.String(endpoint)
-		}
+		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
 	})
 	return client, endpoint, nil

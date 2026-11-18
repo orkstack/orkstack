@@ -291,8 +291,8 @@ func TestExecuteTaskRequest_ReservesTheRequestAndNeverLessThanItCannotRead(t *te
 		args []any
 		want amount
 	}{
-		"a request":            {[]any{&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "1.5", Memory: "512Mi"}}}, amount{1500, 512 << 20}},
-		"no request":           {[]any{&orkstackv1.ExecuteTaskInput{}}, amount{1000, 1 << 30}},
+		"a request":            {[]any{&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "1.5", Memory: "512Mi"}}}, amount{milli: 1500, bytes: 512 << 20}},
+		"no request":           {[]any{&orkstackv1.ExecuteTaskInput{}}, amount{milli: 1000, bytes: 1 << 30}},
 		"a request it refuses": {[]any{&orkstackv1.ExecuteTaskInput{Resources: &orkstackv1.ResourceRequest{Cpu: "64"}}}, amount{}},
 		"no arguments":         {nil, ceiling},
 		"an input of no shape": {[]any{"not an input"}, ceiling},

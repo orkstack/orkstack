@@ -326,40 +326,35 @@ Linux-host-only: an Orker reads `/proc/devices` and the host's own device
 numbers, and Docker Desktop on macOS passes only its Linux VM's devices, never
 the Mac's, so this test does not run there.
 
-The same applies to the observability stack (`make infra-up-observability`).
-Its Prometheus container scrapes `ork` and `orker` at
-`host.docker.internal:9464` and `:9465`, but it sits on the compose network,
-and on Linux a listener on `127.0.0.1` cannot be reached from a container. To
-scrape a stack you run by hand:
+The observability stack (`make infra-up-observability`, `make up-observability`)
+needs none of this: `ork` and `orker` push every signal to its Collector on
+`127.0.0.1:4318`, and its Prometheus scrapes nothing, so no container reaches
+the host. Keep admin listeners on `127.0.0.1`.
 
-1. Bind each process's admin listener to the gateway: `ORK_ADMIN_ADDR=172.17.0.1:9464`
-   for `ork`, `172.17.0.1:9465` for `orker`.
-2. Let each answer the name Prometheus scrapes it by:
-   `ORK_ADMIN_ALLOWED_HOSTS=host.docker.internal`. The admin listener refuses
-   any other `Host` with a dot (`docs/DEPLOY.md`, "The API listener's bounds").
-3. Enable the `prometheus` metrics exporter (`OTEL_METRICS_EXPORTER=prometheus`;
-   see `docs/DEPLOY.md` §1).
-4. Attach Prometheus to the default bridge:
+### The GPU host
+
+The tests `scripts/proof-gpu-tests.txt` lists need a GPU host: this project's
+proof host, with an AMD and an Intel GPU. Every other proof records them
+`host-deferred`, and a change that touches a path the list names merges only
+with a passing GPU-host proof of its tree (docs/PROOFS.md §2.4, "The GPU-host
+tier"). To make one, set the host up once. `scripts/gpu-host-setup.sh` never
+runs sudo: it prints the root steps the host still needs, or, with
+`--script`, writes them as one script to read and then run:
 
 ```bash
-docker network connect bridge "$(docker ps -q --filter label=com.docker.compose.service=prometheus)"
+scripts/gpu-host-setup.sh --script >/tmp/gpu-setup.sh
+less /tmp/gpu-setup.sh
+sudo sh /tmp/gpu-setup.sh
 ```
 
-The observability proof gate (`scripts/proof-observability.sh`) does the same
-for its own run, and detaches Prometheus afterwards only if it attached it.
+The steps add you to the `orkstack-gpu` group, which a session already
+running does not have until you log in again. To run a command with it now,
+pipe it to `newgrp`; the proof's preflight reads `id -nG` and exits 77 without
+the group:
 
-This is development and proof setup only: never bind a deployment's admin
-listeners to the bridge gateway, and nothing in `deploy/` does. While a
-listener is bound there, every container on Docker's default bridge can reach
-it, and that includes the activity containers an Orker starts with network
-`default`. What they can reach is the admin surface of that `ork` or
-`orker`: `/metrics`, `/healthz`, `/readyz`, and, under
-`ORK_PPROF_ENABLED=true`, `/debug/pprof/` (profiles, goroutine stacks and the
-process's command line). It is not the Connect API,
-not Temporal and not object storage, but an activity needs none of it
-(AGENTS.md §15), so unbind it (unset `ORK_ADMIN_ADDR`, or set it back to
-`127.0.0.1:…`) when you are done. The proof gate binds there only for its own
-run, with its own `ork` and `orker`, and stops them when it ends.
+```bash
+echo 'make proof-gpu' | newgrp orkstack-gpu
+```
 
 ## What CI runs on your pull request
 

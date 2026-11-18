@@ -96,6 +96,7 @@ var gateFilePatterns = []string{
 	"scripts/proof-part.sh",
 	"scripts/proof-nightly-tests.txt",
 	"scripts/proof-nightly-specs.txt",
+	"scripts/proof-gpu-tests.txt",
 	"scripts/proof-quarantine.txt",
 	"scripts/proof-allowed-skips.txt",
 	"scripts/proof-test-costs.tsv",
@@ -118,6 +119,7 @@ var gateFilePatterns = []string{
 var excusingLists = []string{
 	"scripts/proof-nightly-tests.txt",
 	"scripts/proof-nightly-specs.txt",
+	"scripts/proof-gpu-tests.txt",
 	"scripts/proof-quarantine.txt",
 	"scripts/proof-allowed-skips.txt",
 }
