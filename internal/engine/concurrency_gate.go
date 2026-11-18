@@ -82,6 +82,9 @@ type GateRelease struct {
 	Run     string `json:"run"`
 	SeqBase int64  `json:"seq_base"`
 	TaskIx  int    `json:"task_ix"`
+	// N is the slot's ordinal (§22.14.1), sent only above 0, after a
+	// protocol 2 acquire.
+	N int64 `json:"n,omitempty"`
 }
 
 type GateReleaseAll struct {
@@ -96,6 +99,9 @@ type ConcurrencyGrant struct {
 	TaskIx  int    `json:"task_ix"`
 	SeqBase int64  `json:"seq_base"`
 	Seq     int64  `json:"seq"`
+	// N is the granted entry's ordinal (§22.15), omitted at 0, so a grant
+	// with none matches only a run's n = 0.
+	N int64 `json:"n,omitempty"`
 }
 
 // DescribeConcurrencyEntriesInput and ListConcurrencyEntriesInput are the
@@ -130,6 +136,32 @@ type gateRun struct {
 	// emptySince is when the gate last became empty; zero while it holds
 	// or queues anything.
 	emptySince time.Time
+	// ordinal is the concurrency-gate-ordinal decision, asked the first time
+	// an acquire or a release carries a slot ordinal: 0 until then.
+	ordinal workflow.Version
+}
+
+// GateOrdinalChange marks the first decision a gate makes on a slot
+// ordinal (E88 P3, D1). An acquire or release with n above 0 is the only way
+// into the ordinal rules; no history recorded before them holds one, so
+// every such history replays its DefaultVersion branch, which reads n as 0
+// as a gate before them did.
+const GateOrdinalChange = "concurrency-gate-ordinal"
+
+// ordinalOf is n as this gate's history decides it: the ordinal itself, or
+// 0 on a history whose ordinal decision is DefaultVersion.
+func (w *gateRun) ordinalOf(ctx workflow.Context, n int64) int64 {
+	if n == 0 {
+		return 0
+	}
+	if w.ordinal == 0 {
+		// DefaultVersion is -1, so 0 stays "not asked yet".
+		w.ordinal = workflow.GetVersion(ctx, GateOrdinalChange, workflow.DefaultVersion, 1)
+	}
+	if w.ordinal < 1 {
+		return 0
+	}
+	return n
 }
 
 func (w *gateRun) poke() { w.wake.SendAsync(struct{}{}) }
@@ -157,6 +189,13 @@ func ConcurrencyGateWorkflow(ctx workflow.Context, in GateStart) (GateResult, er
 	// other start (absent, unclean, or unstated) rebuilds, and starts a new
 	// epoch; only an unclean one also settles (§5.1.6, G8).
 	rebuild := false
+	if w.g != nil {
+		// A carry the gate's own modulus cannot order would be misread, so
+		// it fails the gate explicitly; the next start rebuilds.
+		if err := w.g.checkOrdinals(); err != nil {
+			return GateResult{}, temporal.NewNonRetryableApplicationError(err.Error(), "CONCURRENCY_GATE_CARRY_INVALID", nil)
+		}
+	}
 	if w.g == nil {
 		w.g = &gateState{Tunables: in.Tunables, Phase: gatePhaseActive}
 		if in.Previous != GatePreviousClean {
@@ -234,11 +273,11 @@ func (w *gateRun) applySignal(ctx workflow.Context, name string, ch workflow.Rec
 		if !receive(&r) {
 			return false
 		}
-		if r.Run == "" || r.SeqBase < 1 || r.TaskIx < gateRunLevel {
+		if r.Run == "" || r.SeqBase < 1 || r.TaskIx < gateRunLevel || r.N < 0 || (r.N > 0 && r.N >= w.g.Tunables.OrdinalModulus) {
 			workflow.GetLogger(ctx).Warn("a concurrency gate ignored a malformed release", "gate", w.in.GateID, "release", r)
 			return true
 		}
-		w.g.release(r.Run, r.SeqBase, r.TaskIx, now())
+		w.g.release(r.Run, r.SeqBase, r.TaskIx, w.ordinalOf(ctx, r.N), now())
 	case GateSignalReleaseAll:
 		var r GateReleaseAll
 		if !receive(&r) {
@@ -286,8 +325,18 @@ func gateRejectionError(err error) error {
 // for one pass, at most verify_await, and decides again.
 func (w *gateRun) acquire(ctx workflow.Context, req gateAcquire) (gateAnswer, error) {
 	w.updates++
+	req.N = w.ordinalOf(ctx, req.N)
 	reassert := !req.ArrivedAt.IsZero() && req.Seq > 0
 	d := w.g.decideAcquire(req, workflow.Now(ctx), false)
+	// A replacement admitted waiters from the line; they are granted by
+	// signal, as the loop grants any head. Once replaced, the acquire is a
+	// new arrival: a decision after a pass must not take it back to the
+	// place it re-asserts.
+	w.grant(ctx, d.Admitted)
+	if d.Replaced {
+		req.ArrivedAt, req.Seq = time.Time{}, 0
+		reassert = false
+	}
 	if d.WantsPass && d.Answer.Answer == "" {
 		mine := w.passSeq
 		w.passWant = true
@@ -296,6 +345,7 @@ func (w *gateRun) acquire(ctx workflow.Context, req gateAcquire) (gateAnswer, er
 			return gateAnswer{}, err
 		}
 		d = w.g.decideAcquire(req, workflow.Now(ctx), true)
+		w.grant(ctx, d.Admitted)
 	} else if d.WantsPass || (reassert && w.passDebounced(workflow.Now(ctx))) {
 		w.passWant = true
 	}
@@ -487,7 +537,7 @@ func (w *gateRun) passRuns() []string {
 // drain never waits on a retry.
 func (w *gateRun) grant(ctx workflow.Context, granted []gateEntry) {
 	for _, h := range granted {
-		payload := ConcurrencyGrant{Gate: w.in.GateID, Run: h.Run, TaskIx: h.TaskIx, SeqBase: h.SeqBase, Seq: h.Seq}
+		payload := ConcurrencyGrant{Gate: w.in.GateID, Run: h.Run, TaskIx: h.TaskIx, SeqBase: h.SeqBase, Seq: h.Seq, N: h.N}
 		// Counted before the coroutine runs, so a drain in the same
 		// workflow task waits for this signal's first attempt.
 		w.signals++
@@ -502,13 +552,15 @@ func (w *gateRun) grant(ctx workflow.Context, granted []gateEntry) {
 				w.signals--
 				i := w.g.holderIx(payload.Run, payload.SeqBase, payload.TaskIx)
 				switch {
-				case i < 0:
+				case i < 0 || w.g.Holders[i].N != payload.N:
+					// Released, or replaced by a newer ordinal whose own
+					// grant is its own coroutine's.
 					return
 				case err == nil:
 					w.g.Holders[i].GrantPending = false
 					return
 				case categoryOf(err).unknownRun:
-					w.g.release(payload.Run, payload.SeqBase, payload.TaskIx, workflow.Now(ctx))
+					w.g.release(payload.Run, payload.SeqBase, payload.TaskIx, payload.N, workflow.Now(ctx))
 					return
 				}
 				workflow.GetLogger(ctx).Warn("a concurrency grant could not be delivered; retrying",

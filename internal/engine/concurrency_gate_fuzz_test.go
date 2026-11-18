@@ -24,28 +24,39 @@ import (
 //   - release_all{below} removes exactly the run's entries below it;
 //   - a re-assert is never answered full_bound;
 //   - the tombstones stay within max_tombstones;
-//   - the state survives an encode and decode unchanged (it is the carry).
+//   - the state survives an encode and decode unchanged (it is the carry);
+//   - ordinals (§22.14.1): a slot holds at most one entry; acquire(n+1)
+//     arriving before release(n) never raises the holder count past R1; a
+//     late release(n) leaves the n+1 entry in place; a release never removes
+//     an entry of another ordinal.
 func FuzzGateState(f *testing.F) {
 	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9})
 	f.Add([]byte{0, 0, 0, 0, 1, 1, 1, 3, 3, 4})
 	f.Add([]byte{0, 16, 32, 48, 2, 0, 5, 64, 7, 0, 0, 0})
 	f.Add([]byte{6, 6, 0, 0, 0, 2, 2, 8, 8, 0, 3})
+	f.Add([]byte{0, 0, 0, 1, 8, 0, 9, 0, 8, 1, 3, 0, 9, 1})
 	f.Fuzz(func(t *testing.T, ops []byte) {
 		g := newTestGate()
 		g.Tunables.MaxEntries = 6
 		g.Tunables.MaxTombstones = 5
+		// A small modulus, so a short run of ops wraps the ordinal.
+		g.Tunables.OrdinalModulus = 6
 		now := gateT0
 		strategies := []string{gateStrategyQueue, gateStrategyRefuse, gateStrategySkip}
 		answers := map[string]gateAnswer{}
 		released := map[string]time.Time{}
+		ords := map[string]int64{} // each slot's latest ordinal asked for
 		for i := 0; i+1 < len(ops); i += 2 {
-			op, arg := ops[i]%8, int(ops[i+1])
+			op, arg := ops[i]%10, int(ops[i+1])
 			run := fmt.Sprintf("r%d", arg%5)
 			seqBase := int64(1 + (arg>>3)%2)
 			switch op {
-			case 0, 1: // acquire
+			case 0, 1: // acquire, or retry it, at the slot's current ordinal
 				req := acq(run, 1+(arg>>4)%3, strategies[(arg>>2)%3], now)
 				req.SeqBase = seqBase
+				if n := ords[slotTombKey(run, seqBase, gateRunLevel)]; n > 0 {
+					req.N, req.Proto = n, gateProtoOrdinal
+				}
 				d := g.decideAcquire(req, now, false)
 				if d.WantsPass {
 					d = g.decideAcquire(req, now, true)
@@ -75,8 +86,8 @@ func FuzzGateState(f *testing.F) {
 				if d := g.decideAcquire(req, now, true); d.Answer.Answer == gateAnswerFullBound {
 					t.Fatalf("step %d: a re-assert was answered full_bound", i)
 				}
-			case 3: // release
-				g.release(run, seqBase, gateRunLevel, now)
+			case 3: // release, at the slot's current ordinal
+				g.release(run, seqBase, gateRunLevel, ords[slotTombKey(run, seqBase, gateRunLevel)], now)
 				released[slotTombKey(run, seqBase, gateRunLevel)] = now.Add(g.Tunables.tombstoneLife())
 				g.admitHeads(now)
 			case 4: // release_all
@@ -103,6 +114,38 @@ func FuzzGateState(f *testing.F) {
 				}
 				g.FrozenUntil, g.Rebuild = time.Time{}, gateRebuild{}
 			case 7:
+				g.admitHeads(now)
+			case 8: // a give-back's re-acquire, arriving before its release
+				key := slotTombKey(run, seqBase, gateRunLevel)
+				// The ordinal wraps (decision D11); the run's latest
+				// ordinal moves on only when the gate took it.
+				next := (ords[key] + 1) % g.Tunables.OrdinalModulus
+				req := acq(run, 1+(arg>>4)%3, gateStrategyQueue, now)
+				req.SeqBase, req.N, req.Proto = seqBase, next, gateProtoOrdinal
+				d := g.decideAcquire(req, now, true)
+				if d.Answer.Answer == gateAnswerQueued || d.Answer.Answer == gateAnswerGranted {
+					answers[key], ords[key] = d.Answer, next
+				}
+				g.admitHeads(now)
+			case 9: // the late release of the ordinal before the latest
+				key := slotTombKey(run, seqBase, gateRunLevel)
+				if ords[key] == 0 {
+					continue
+				}
+				late := (ords[key] - 1 + g.Tunables.OrdinalModulus) % g.Tunables.OrdinalModulus
+				var current *gateEntry
+				for _, e := range slices.Concat(g.Holders, g.Queue) {
+					if e.same(run, seqBase, gateRunLevel) {
+						current = &e
+					}
+				}
+				g.release(run, seqBase, gateRunLevel, late, now)
+				if current != nil && current.N == ords[key] {
+					h, q := g.holderIx(run, seqBase, gateRunLevel), g.queueIx(run, seqBase, gateRunLevel)
+					if (h < 0 || g.Holders[h].N != ords[key]) && (q < 0 || g.Queue[q].N != ords[key]) {
+						t.Fatalf("step %d: a late release(%d) removed %s's entry of ordinal %d", i, late, run, ords[key])
+					}
+				}
 				g.admitHeads(now)
 			}
 			checkGateInvariants(t, g, i)
@@ -154,20 +197,25 @@ func checkGateInvariants(t *testing.T, g *gateState, step int) {
 
 // FuzzDecodeGateMemoEntry: a run's memo entry is read back from the cluster.
 // Whatever the bytes, decoding never panics, an accepted entry has a
-// protocol this gate speaks, a limit of at least one and a strategy it
-// decides, and it re-encodes to bytes that decode to the same entry.
+// protocol this gate speaks, a limit of at least one, a strategy it decides
+// and an ordinal within the cap that only protocol 2 carries, and it
+// re-encodes to bytes that decode to the same entry.
 func FuzzDecodeGateMemoEntry(f *testing.F) {
 	f.Add([]byte(`{"proto":1,"held":true,"limit":2,"strategy":"queue","arrived_at":"2026-11-17T12:00:00Z","seq":4,"seq_base":1}`))
 	f.Add([]byte(`{"proto":1,"limit":"two"}`))
-	f.Add([]byte(`{"proto":2,"limit":1,"strategy":"queue","arrived_at":"2026-11-17T12:00:00Z","seq":1,"seq_base":1}`))
+	f.Add([]byte(`{"proto":3,"limit":1,"strategy":"queue","arrived_at":"2026-11-17T12:00:00Z","seq":1,"seq_base":1}`))
 	f.Add([]byte(`{"proto":1,"limit":1,"strategy":"replace","arrived_at":"2026-11-17T12:00:00Z","seq":1,"seq_base":1,"extra":1}`))
 	f.Add([]byte(`null`))
+	f.Add([]byte(`{"proto":2,"limit":1,"strategy":"queue","arrived_at":"2026-11-17T12:00:00Z","seq":1,"seq_base":1,"n":3}`))
+	f.Add([]byte(`{"proto":1,"limit":1,"strategy":"queue","arrived_at":"2026-11-17T12:00:00Z","seq":1,"seq_base":1,"n":3}`))
+	f.Add([]byte(`{"proto":2,"limit":1,"strategy":"queue","arrived_at":"2026-11-17T12:00:00Z","seq":1,"seq_base":1,"n":65536}`))
 	f.Fuzz(func(t *testing.T, raw []byte) {
 		var m gateMemoEntry
 		if err := decodeGateMemoEntry(raw, &m); err != nil {
 			return
 		}
-		if m.Proto < 1 || m.Proto > gateProto || m.Limit < 1 || !gateStrategyDecided(m.Strategy) {
+		if m.Proto < 1 || m.Proto > gateProtoOrdinal || m.Limit < 1 || !gateStrategyDecided(m.Strategy) ||
+			m.N < 0 || m.N >= gateOrdinalWire || (m.N > 0 && m.Proto < gateProtoOrdinal) {
 			t.Fatalf("accepted %+v", m)
 		}
 		again, err := stablejson.Marshal(m)
