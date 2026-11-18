@@ -240,14 +240,21 @@ const DefaultRunPauseTimeoutMax = 31 * 24 * time.Hour
 func DefaultPausePlan(defaultTimeoutSeconds, maxTimeoutSeconds int64) PausePlan {
 	const applyEvents, cascadeEvents = 20, 4
 	return PausePlan{
-		DefaultTimeoutSeconds:   defaultTimeoutSeconds,
-		MaxTimeoutSeconds:       maxTimeoutSeconds,
-		ApplyReserveEvents:      applyEvents,
-		ApplyReserveBytes:       applyEvents * DefaultHistoryReserve.BytesPerEvent,
-		CascadeEventsPerChild:   cascadeEvents,
-		CascadeBytesPerChild:    cascadeEvents * DefaultHistoryReserve.BytesPerEvent,
-		InheritedGraceSeconds:   600,
-		InheritedGraceMaxLevels: 8,
+		DefaultTimeoutSeconds:       defaultTimeoutSeconds,
+		MaxTimeoutSeconds:           maxTimeoutSeconds,
+		ApplyReserveEvents:          applyEvents,
+		ApplyReserveBytes:           applyEvents * DefaultHistoryReserve.BytesPerEvent,
+		CascadeEventsPerChild:       cascadeEvents,
+		CascadeBytesPerChild:        cascadeEvents * DefaultHistoryReserve.BytesPerEvent,
+		InheritedGraceSeconds:       600,
+		InheritedGraceMaxLevels:     8,
+		MaxDeferredRequests:         DefaultMaxDeferredPauseRequests,
+		Cascades:                    true,
+		CascadeRetries:              DefaultCascadeRetries,
+		CascadeRetryIntervalSeconds: DefaultCascadeRetryIntervalSeconds,
+		PinTimeoutPausable:          true,
+		PinOuterMarginSeconds:       DefaultPinOuterMarginSeconds,
+		PinTimerEvents:              DefaultPinTimerEvents,
 	}
 }
 
