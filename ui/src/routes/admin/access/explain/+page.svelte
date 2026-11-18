@@ -5,6 +5,7 @@
 	import { untrack } from 'svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import AccessTabs from '../AccessTabs.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { accessClient } from '#lib/clients/access.ts';
 	import { AccessDecision, BindingMatch } from '#lib/gen/orkstack/v1/access_pb.ts';
@@ -49,6 +50,7 @@
 <svelte:head><title>Explain · Access · OrkStack</title></svelte:head>
 
 <SheetHeader title="Explain" testid="explain-title" commands={[{ label: 'Explain this decision', command }]} />
+<AccessTabs />
 
 {#if data.permissionsError}
 	<ErrorPanel message={data.permissionsError} subject="the permissions" testid="explain-error" />
@@ -65,7 +67,12 @@
 			</select>
 		</label>
 		<label class="flex flex-col gap-1"><span class="text-sm font-semibold text-ink-2">Namespace</span><input class="field font-mono" bind:value={namespace} placeholder="The deployment" data-testid="explain-namespace" /></label>
-		<label class="flex flex-col gap-1"><span class="text-sm font-semibold text-ink-2">Orkflow</span><input class="field font-mono" bind:value={orkflow} disabled={!namespace} data-testid="explain-orkflow" /></label>
+		<label class="flex flex-col gap-1"
+			><span class="text-sm font-semibold text-ink-2">Orkflow</span><input class="field font-mono" bind:value={orkflow} disabled={!namespace.trim()} aria-describedby="explain-orkflow-hint" data-testid="explain-orkflow" /><span
+				id="explain-orkflow-hint"
+				class="text-sm text-ink-3">{namespace.trim() ? 'Leave empty for the whole namespace.' : 'An Orkflow is named within a namespace: name one first.'}</span
+			></label
+		>
 		<label class="flex flex-col gap-1"><span class="text-sm font-semibold text-ink-2">Pool</span><input class="field font-mono" bind:value={pool} data-testid="explain-pool" /></label>
 		<div class="flex items-end justify-end"><button type="submit" class="btn" disabled={busy || !principal.trim()} data-testid="explain-run">{busy ? 'Asking…' : 'Explain'}</button></div>
 	</form>

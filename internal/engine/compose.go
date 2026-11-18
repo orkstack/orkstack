@@ -573,6 +573,7 @@ func canonicalValuesJSON(values map[string]any) ([]byte, error) {
 
 // collectChild records a composed task's outcome from its child's result.
 func (s *runState) collectChild(ctx workflow.Context, id string, future workflow.Future) error {
+	s.cascadeChildEnded(id)
 	c := s.children[id]
 	taskRun := s.taskRuns[id]
 	result := &orkstackv1.Run{}

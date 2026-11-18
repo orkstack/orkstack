@@ -217,6 +217,13 @@ type scheduleHarness struct {
 
 func newScheduleHarness(t *testing.T) *scheduleHarness {
 	t.Helper()
+	return newScheduleHarnessWith(t, nil)
+}
+
+// newScheduleHarnessWith is newScheduleHarness with the Service's
+// configuration adjusted by configure before it is built.
+func newScheduleHarnessWith(t *testing.T, configure func(*api.Config)) *scheduleHarness {
+	t.Helper()
 	h := &scheduleHarness{
 		schedules: newFakeSchedules(),
 		starter:   &fakeStarter{},
@@ -224,7 +231,7 @@ func newScheduleHarness(t *testing.T) *scheduleHarness {
 		now:       time.Date(2026, 9, 24, 12, 0, 0, 0, time.UTC),
 	}
 	var counter int
-	h.svc = api.NewService(api.Config{
+	cfg := api.Config{
 		Orkflows:   engine.NewMemoryOrkflowStore(),
 		Namespaces: newFakeRegistry(),
 		Runs:       h.runs,
@@ -236,7 +243,11 @@ func newScheduleHarness(t *testing.T) *scheduleHarness {
 			counter++
 			return fmt.Sprintf("ork-sched-%d", counter)
 		},
-	})
+	}
+	if configure != nil {
+		configure(&cfg)
+	}
+	h.svc = api.NewService(cfg)
 	h.apply(t, helloYAML(t))
 	return h
 }

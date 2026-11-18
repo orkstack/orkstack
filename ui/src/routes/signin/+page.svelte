@@ -13,6 +13,9 @@
 
 	let { data }: PageProps = $props();
 	const problem = $derived(problemOf(data.error));
+	// Only an issuer whose login path makes a link is offered; none left is
+	// the same as none at all.
+	const offered = $derived(data.mode === 'asserted' ? [] : data.issuers.filter((i) => loginHref(i.loginPath, data.ret) !== ''));
 	let retrying = $state(false);
 	async function retry() {
 		retrying = true;
@@ -58,14 +61,13 @@
 					busy={retrying}
 					onretry={retry}
 				/>
-			{:else if data.issuers.length === 0}
+			{:else if offered.length === 0}
 				<p class="signin-empty" data-testid="signin-none">
-					No identity provider offers sign-in on this deployment. An administrator gives one a login in the engine’s
-					configuration.
+					No identity provider offers sign-in on this deployment yet. An administrator of the deployment can set one up.
 				</p>
 			{:else}
 				<ul class="signin-list" aria-label="Identity providers">
-					{#each data.issuers.filter((i) => loginHref(i.loginPath, data.ret) !== '') as issuer (issuer.name)}
+					{#each offered as issuer (issuer.name)}
 						<li>
 							<a class="btn signin-issuer" href={loginHref(issuer.loginPath, data.ret)} data-testid="signin-issuer-{issuer.name}">
 								<span class="signin-issuer-name">Continue with {issuer.name}</span>

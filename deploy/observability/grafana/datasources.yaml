@@ -1,20 +1,60 @@
 # Provisioned datasources for the `observability` compose profile's Grafana.
 # Anonymous Viewer access is for local use only — see the profile's README.
+#
+# The uids are fixed so the links between them hold: an exemplar or a log
+# line's trace_id opens the trace in Tempo, and a span opens its logs (by
+# ork.run_id, ork.task_id and ork.attempt) and its namespace's metrics. The
+# kit's dashboards read every datasource through a variable, never a uid.
 apiVersion: 1
 
 datasources:
   - name: Prometheus
+    uid: orkstack-prometheus
     type: prometheus
     access: proxy
     url: http://prometheus:9090
     isDefault: true
+    jsonData:
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: orkstack-tempo
 
   - name: Loki
+    uid: orkstack-loki
     type: loki
     access: proxy
     url: http://loki:3100
+    jsonData:
+      # trace_id is structured metadata on every OTLP log record, so it is
+      # matched as a label, never by a regex over the line. Grafana
+      # provisioning reads $$ as a literal $.
+      derivedFields:
+        - name: Trace
+          matcherType: label
+          matcherRegex: trace_id
+          url: "$${__value.raw}"
+          datasourceUid: orkstack-tempo
 
   - name: Tempo
+    uid: orkstack-tempo
     type: tempo
     access: proxy
     url: http://tempo:3200
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: orkstack-loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        filterBySpanID: true
+        tags:
+          - key: ork.run_id
+            value: ork_run_id
+          - key: ork.task_id
+            value: ork_task_id
+          - key: ork.attempt
+            value: ork_attempt
+      tracesToMetrics:
+        datasourceUid: orkstack-prometheus
+        tags:
+          - key: ork.namespace
+            value: ork_namespace

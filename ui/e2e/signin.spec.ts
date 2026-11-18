@@ -1,7 +1,7 @@
 import { expect, test, type Page } from './test';
 import { execFileSync } from 'node:child_process';
 import { generateKeyPairSync, randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { browserServerOwner } from './browser-server';
@@ -242,4 +242,96 @@ test('a sign-in past its revalidation is refreshed under a form being written, a
 	await expect(page).toHaveURL(/\/signin$/);
 	await page.goto(`${ENGINE}/runs`);
 	await expect(page).toHaveURL(/\/signin\?return=%2Fruns/);
+});
+
+// The identity screens as they are drawn, in light and dark and at a
+// phone's width, each once its own content is in; and what the design review
+// changed, proven where it is drawn: a person with no access copies what an
+// administrator needs, a new key's private half is saved before its public
+// half is stored, under the id the engine then names it by, and disabling
+// yourself says it is you.
+const ACCESS_SCREENS = [
+	{ path: '/admin/access', name: 'bindings', ready: 'binding-new' },
+	{ path: '/admin/access/roles', name: 'roles', ready: 'role-new' },
+	{ path: '/admin/access/service-accounts', name: 'service-accounts', ready: 'sa-new' },
+	{ path: '/admin/access/principals', name: 'people', ready: 'people-table' },
+	{ path: '/admin/access/explain', name: 'explain', ready: 'explain-run' },
+	{ path: '/admin/access/history', name: 'history', ready: 'history-table' }
+] as const;
+
+test('every identity screen is drawn in light, dark and at a phone’s width, and says what a change does to you', async ({ browser }) => {
+	// Four browsers, each signing in twice through Dex, and one key made and stored.
+	test.setTimeout(240_000);
+	for (const scheme of ['light', 'dark'] as const) {
+		for (const [width, height, tag] of [[1440, 900, 'wide'], [390, 844, 'phone']] as const) {
+			const first = scheme === 'light' && tag === 'wide';
+			const ctx = await browser.newContext({ ignoreHTTPSErrors: true, colorScheme: scheme, viewport: { width, height }, acceptDownloads: true, permissions: first ? ['clipboard-read', 'clipboard-write'] : [] });
+			const page = await ctx.newPage();
+			const at = `${scheme}-${tag}`;
+			await page.goto(`${ENGINE}/signin`);
+			await expect(page.getByTestId('signin-issuer-people')).toBeVisible();
+			await shot(page, `screens/${at}-signin.png`);
+			// A person bound to nothing is told so.
+			await page.goto(`${ENGINE}/runs`);
+			await atDex(page, 'dev@example.test');
+			await expect(page.getByTestId('no-access-who')).toContainText('user:people:dev@example.test');
+			await shot(page, `screens/${at}-no-access.png`);
+			if (first) {
+				await page.getByTestId('no-access-copy').click();
+				await expect(page.getByTestId('no-access-copied')).toHaveText('Copied.');
+				expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('Principal: user:people:dev@example.test\nSigned in with: people\nGroups: dev-admins');
+			}
+			await ctx.clearCookies();
+			await signIn(page, '/admin/access', 'admin@example.test');
+			for (const s of ACCESS_SCREENS) {
+				await page.goto(`${ENGINE}${s.path}`);
+				await expect(page.getByTestId(s.ready)).toBeVisible();
+				await shot(page, `screens/${at}-access-${s.name}.png`);
+			}
+			if (first) {
+				// A key is offered, again on asking, and stored only once saved.
+				await page.goto(`${ENGINE}/admin/access/service-accounts`);
+				await page.getByTestId('sa-new').click();
+				await page.getByTestId('sa-name').fill('deployer');
+				await page.getByTestId('sa-save').click();
+				await expect(page.getByTestId('sa-key-store')).toBeDisabled();
+				await expect(page.getByTestId('sa-key-confirm')).toBeDisabled();
+				const kid = (await page.getByTestId('sa-key-kid').innerText()).replace(/^Key\s*/, '').trim();
+				expect(kid).toMatch(/^[A-Za-z0-9_-]{43}$/);
+				const offered = page.waitForEvent('download');
+				await page.getByTestId('sa-key-download').click();
+				const file = await offered;
+				expect(file.suggestedFilename()).toBe(`deployer-${kid.slice(0, 12)}.pem`);
+				// saveAs, not path(): the browser runs behind a browser server.
+				const saved = proof(`screens/${file.suggestedFilename()}`);
+				await file.saveAs(saved);
+				try {
+					expect(readFileSync(saved, 'utf8')).toMatch(/^-----BEGIN PRIVATE KEY-----\n/);
+				} finally {
+					rmSync(saved);
+				}
+				await expect(page.getByTestId('sa-key-download')).toHaveText('Download again');
+				await page.getByTestId('sa-key-confirm').check();
+				await shot(page, `screens/${at}-access-save-key.png`);
+				await page.getByTestId('sa-key-store').click();
+				await expect(page.getByTestId('sa-saved')).toContainText(kid);
+				// The engine names the stored key by the same thumbprint.
+				await expect(page.getByTestId('sa-deployer')).toContainText(kid);
+				await shot(page, `screens/${at}-access-service-accounts-saved.png`);
+				// Disabling yourself says it is you, and nothing changes until confirmed.
+				await page.goto(`${ENGINE}/admin/access/principals`);
+				await page.getByTestId('person-disable-user:people:admin@example.test').click();
+				await expect(page.getByTestId('person-self')).toContainText('This is you.');
+				await shot(page, `screens/${at}-access-disable-self.png`);
+				await page.getByTestId('person-cancel').click();
+				await expect(page.getByTestId('person-disabled-user:people:admin@example.test')).toHaveCount(0);
+			}
+			if (tag === 'wide') {
+				await page.getByTestId('account-trigger').click();
+				await expect(page.getByTestId('account-panel')).toBeVisible();
+				await page.screenshot({ path: proof(`screens/${at}-account-menu.png`) });
+			}
+			await ctx.close();
+		}
+	}
 });

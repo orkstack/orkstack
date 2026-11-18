@@ -42,6 +42,11 @@
 # ends FAILED with that step's error, after release, refund, report and notify
 # ran to their own outcomes.
 #
+# timeout: 1h bounds the whole run. A run still going an hour after it
+# started fails RUN_TIMED_OUT: the step still running is stopped, and
+# release, refund, report and notify still run, within the deployment's
+# handler grace (docs/DSL.md, "Run timeout").
+#
 # Plan both paths before anything runs:
 #   orkctl run plan -f examples/order-saga.ork.yaml --assert-skipped release --assert-skipped refund --assert-runs report --assert-runs notify
 #   orkctl run plan -f examples/order-saga.ork.yaml --assume-failed shipped --assert-runs release --assert-runs refund --assert-runs report --assert-runs notify
@@ -50,8 +55,9 @@
 apiVersion: orkstack/v1
 kind: Orkflow
 name: order-saga
-version: "0.2.1"
+version: "0.2.2"
 description: "Reserve, charge and ship an order over HTTP; release and refund when a later step fails; report either way. Store notify-block first: orkctl orkflow create examples/notify-block.ork.yaml, then orkctl orkflow create examples/order-saga.ork.yaml."
+timeout: 1h
 
 inputs:
   api:

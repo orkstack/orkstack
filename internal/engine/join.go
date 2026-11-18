@@ -628,7 +628,7 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 			}
 			// A paused run holds every handler not yet started, but what an
 			// open pin needs: PENDING, nothing emitted, nothing classified.
-			if s.paused() && !s.pinClosureAllows(id) {
+			if s.pauseHolds(id) {
 				continue
 			}
 			run, err := s.classify(ectx, id) // a condition error records CONDITION_FAILED itself
@@ -737,6 +737,9 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		pauseWoke := false
 		if s.pauseActsOnHandlers() && ctx.Err() == nil {
 			selector.AddReceive(s.pauses, func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			if r := s.cascade.results; r != nil {
+				selector.AddReceive(r, func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			}
 			if p := s.pause; p != nil {
 				selector.AddFuture(p.timer, func(workflow.Future) { pauseWoke = true })
 			}

@@ -27,6 +27,9 @@ type failureReading struct {
 	// terminated: the chain holds a TerminatedError (a child run terminated
 	// from outside).
 	terminated bool
+	// unknownRun: the run a signal was sent to does not exist, or has
+	// already closed (UnknownExternalWorkflowExecutionError).
+	unknownRun bool
 	// viaActivity and viaChild: the chain holds an activity's, or a child
 	// run's, failure wrapper, so the error is that task's and not the run's
 	// own.
@@ -57,6 +60,8 @@ func categoryOf(err error) failureReading {
 	r.canceled = temporal.IsCanceledError(err)
 	var terminated *temporal.TerminatedError
 	r.terminated = errors.As(err, &terminated)
+	var unknown *temporal.UnknownExternalWorkflowExecutionError
+	r.unknownRun = errors.As(err, &unknown)
 	var activityErr *temporal.ActivityError
 	if errors.As(err, &activityErr) {
 		r.viaActivity = true

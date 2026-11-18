@@ -4050,10 +4050,20 @@ func (x *NamedArtifact) GetTaskId() string {
 	return ""
 }
 
-// PauseWarning is E103's; it is empty until E103 lands (v0.4.0 proto
-// batch).
+// PauseWarning is one way the run's pause did not reach a child run: the
+// child keeps running. A run's warnings are those of its latest pause, shown
+// while it is paused.
 type PauseWarning struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// task_id is the composed task whose child run the pause did not reach.
+	TaskId string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3" json:"task_id,omitempty"`
+	// child_run_id is that child run's id.
+	ChildRunId string `protobuf:"bytes,2,opt,name=child_run_id,json=childRunId,proto3" json:"child_run_id,omitempty"`
+	// code is CHILD_NOT_PAUSABLE (the child was started without support for
+	// pausing) or CHILD_PAUSE_FAILED (the pause could not be delivered to it).
+	Code string `protobuf:"bytes,3,opt,name=code,proto3" json:"code,omitempty"`
+	// message says what happened, in words.
+	Message       string `protobuf:"bytes,4,opt,name=message,proto3" json:"message,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -4086,6 +4096,34 @@ func (x *PauseWarning) ProtoReflect() protoreflect.Message {
 // Deprecated: Use PauseWarning.ProtoReflect.Descriptor instead.
 func (*PauseWarning) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{26}
+}
+
+func (x *PauseWarning) GetTaskId() string {
+	if x != nil {
+		return x.TaskId
+	}
+	return ""
+}
+
+func (x *PauseWarning) GetChildRunId() string {
+	if x != nil {
+		return x.ChildRunId
+	}
+	return ""
+}
+
+func (x *PauseWarning) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *PauseWarning) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
 }
 
 // RecordRef is identity (O39)'s; it is empty until identity (O39) lands (v0.4.0 proto
@@ -5033,8 +5071,13 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x124\n" +
 	"\bartifact\x18\x02 \x01(\v2\x18.orkstack.v1.ArtifactRefR\bartifact\x12\x15\n" +
 	"\x06run_id\x18\x03 \x01(\tR\x05runId\x12\x17\n" +
-	"\atask_id\x18\x04 \x01(\tR\x06taskId\"\x0e\n" +
-	"\fPauseWarning\"\v\n" +
+	"\atask_id\x18\x04 \x01(\tR\x06taskId\"w\n" +
+	"\fPauseWarning\x12\x17\n" +
+	"\atask_id\x18\x01 \x01(\tR\x06taskId\x12 \n" +
+	"\fchild_run_id\x18\x02 \x01(\tR\n" +
+	"childRunId\x12\x12\n" +
+	"\x04code\x18\x03 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x04 \x01(\tR\amessage\"\v\n" +
 	"\tRecordRef\"\f\n" +
 	"\n" +
 	"ResumeHint\"\x11\n" +

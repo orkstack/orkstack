@@ -10,6 +10,10 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -210,6 +214,39 @@ func oneEventThen(t *testing.T, rest ...byte) []byte {
 // A prefix promising 100 bytes, and 3 of them.
 var cutInsideAMessage = []byte{0, 0, 0, 0, 100, 1, 2, 3}
 
+// finEnded matches the cause a resume line gives for a FIN that ended a
+// stream after what connect-go says (its envelope reader's words). Go's
+// HTTP/2 client reports one FIN as whichever of three errors aborts the
+// stream first (connectionEnded): the read's unexpected EOF, or, while the
+// stream's request still had a write to make, errClientConnClosed or that
+// write's own use of the closed connection. So the line may name any of
+// them, and a test of a FIN pins which words came before, not the race.
+func finEnded(what string) *regexp.Regexp {
+	return regexp.MustCompile(regexp.QuoteMeta(what) + `: (unexpected EOF|` + regexp.QuoteMeta(clientConnClosed) +
+		`|write tcp \S+: use of closed network connection)\)`)
+}
+
+// TestFinEnded_MatchesEachWayAFINSurfaces: the three errors one FIN reaches a
+// stream as, the third exactly as Train 15's proof saw it, and not an error
+// that is no connection's end.
+func TestFinEnded_MatchesEachWayAFINSurfaces(t *testing.T) {
+	said := finEnded("(internal: protocol error: incomplete envelope")
+	for _, tc := range []struct {
+		line string
+		want bool
+	}{
+		{"(internal: protocol error: incomplete envelope: unexpected EOF)", true},
+		{"(internal: protocol error: incomplete envelope: " + clientConnClosed + ")", true},
+		{"(internal: protocol error: incomplete envelope: write tcp 127.0.0.1:37230->127.0.0.1:34427: use of closed network connection)", true},
+		{"(internal: protocol error: incomplete envelope: stream error: stream ID 1; INTERNAL_ERROR; received from peer)", false},
+		{"(unknown: read enveloped message: unexpected EOF)", false},
+	} {
+		if got := said.MatchString(tc.line); got != tc.want {
+			t.Errorf("finEnded matches %q = %v, want %v", tc.line, got, tc.want)
+		}
+	}
+}
+
 // TestRunWatch_ResumesAConnectionThatEndsMidStream: an engine that closes its
 // side (a FIN, what a replica that exits sends) ends the stream as INTERNAL
 // between messages and inside the prefix, and as UNKNOWN inside a message
@@ -222,9 +259,9 @@ func TestRunWatch_ResumesAConnectionThatEndsMidStream(t *testing.T) {
 		rest []byte
 		said string
 	}{
-		{name: "between messages", said: "internal: protocol error: incomplete envelope: unexpected EOF"},
-		{name: "inside the prefix", rest: []byte{0, 0}, said: "internal: protocol error: incomplete envelope: unexpected EOF"},
-		{name: "inside a message", rest: cutInsideAMessage, said: "unknown: read enveloped message: unexpected EOF"},
+		{name: "between messages", said: "internal: protocol error: incomplete envelope"},
+		{name: "inside the prefix", rest: []byte{0, 0}, said: "internal: protocol error: incomplete envelope"},
+		{name: "inside a message", rest: cutInsideAMessage, said: "unknown: read enveloped message"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			// The FIN waits for the event to print: on an end that races the
@@ -247,8 +284,8 @@ func TestRunWatch_ResumesAConnectionThatEndsMidStream(t *testing.T) {
 				t.Fatalf("from_sequence per stream = %v, want [0 1]", got)
 			}
 			lines := resumeLines(outcome.stderr)
-			if len(lines) != 1 || !strings.Contains(lines[0], "interrupted ("+tc.said+")") {
-				t.Fatalf("resume lines = %v, want one saying %q", lines, tc.said)
+			if said := finEnded("interrupted (" + tc.said); len(lines) != 1 || !said.MatchString(lines[0]) {
+				t.Fatalf("resume lines = %v, want one matching %s", lines, said)
 			}
 		})
 	}
@@ -334,7 +371,12 @@ func TestConnectionEnded(t *testing.T) {
 		{"a wrapped close", fmt.Errorf("body: %w", io.ErrUnexpectedEOF), true},
 		{"closed after a GOAWAY", errors.New(goAwayEnded + `; LastStreamID=1, ErrCode=NO_ERROR, debug=""`), true},
 		{"a failed network read", read, true},
+		{"closed under the request's own write", errors.New(clientConnClosed), true},
+		{"closed by this client", errors.New("http2: client connection force closed via ClientConn.Close"), false},
 		{"a failed network write", &net.OpError{Op: "write", Net: "tcp", Err: syscall.EPIPE}, false},
+		{"a write on a connection already closed", &net.OpError{Op: "write", Net: "tcp", Err: net.ErrClosed}, true},
+		{"a wrapped write on a closed connection", fmt.Errorf("envelope: %w", &net.OpError{Op: "write", Net: "tcp", Err: net.ErrClosed}), true},
+		{"a closed connection outside a write", net.ErrClosed, false},
 		{"a clean end", io.EOF, false},
 		{"a peer's stream reset", errors.New("stream error: stream ID 1; INTERNAL_ERROR; received from peer"), false},
 		{"a cancel", context.Canceled, false},
@@ -489,5 +531,21 @@ func TestCloseIdleConnections_ReleasesTheEnginesConnection(t *testing.T) {
 	case <-closed:
 	case <-time.After(30 * time.Second):
 		t.Fatal("the engine's connection was still open 30 s after closeIdleConnections")
+	}
+}
+
+// TestClientConnClosed_IsGosOwnText pins clientConnClosed to the toolchain's
+// own source: the error is unexported in net/http's HTTP/2 transport, so a Go
+// upgrade that rewords it must fail here, not leave `run logs -f` and `run
+// watch` ending on a closed connection again.
+func TestClientConnClosed_IsGosOwnText(t *testing.T) {
+	goroot, err := exec.Command("go", "env", "GOROOT").Output()
+	must.OKf(t, err, "go env GOROOT")
+	source := filepath.Join(strings.TrimSpace(string(goroot)), "src", "net", "http", "internal", "http2", "transport.go")
+	body, err := os.ReadFile(source)
+	must.OKf(t, err, "read %s", source)
+	want := regexp.MustCompile(`errClientConnClosed\s*=\s*errors\.New\(` + regexp.QuoteMeta(strconv.Quote(clientConnClosed)) + `\)`)
+	if !want.Match(body) {
+		t.Fatalf("%s no longer declares errClientConnClosed as %q; find the error a stream gets when its connection closed under its request's write, and update clientConnClosed", source, clientConnClosed)
 	}
 }

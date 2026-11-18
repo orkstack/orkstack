@@ -54,6 +54,17 @@ export const OPERATE_PAGES: readonly NavPage[] = [
 	{ id: 'access', href: '/admin/access', label: 'Access', title: 'Access', mode: 'operate', icon: 'shield' }
 ];
 
+/** Access's screens, one tab each, in the order its tab bar shows them; the
+ * breadcrumb calls each by its label. */
+export const ACCESS_TABS: readonly { href: string; label: string }[] = [
+	{ href: '/admin/access', label: 'Bindings' },
+	{ href: '/admin/access/roles', label: 'Roles' },
+	{ href: '/admin/access/service-accounts', label: 'Service accounts' },
+	{ href: '/admin/access/principals', label: 'People' },
+	{ href: '/admin/access/explain', label: 'Explain' },
+	{ href: '/admin/access/history', label: 'History' }
+];
+
 /** The mode a path belongs to: everything under /admin is Operate. */
 export function modeOf(pathname: string): Mode {
 	return pathname === '/admin' || pathname.startsWith('/admin/') ? 'operate' : 'build';

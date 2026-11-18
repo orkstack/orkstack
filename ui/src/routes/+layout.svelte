@@ -15,7 +15,7 @@
 	import ThemeSwitch from '#lib/components/ThemeSwitch.svelte';
 	import Tooltip from '#lib/components/Tooltip.svelte';
 	import TopBar, { type Crumb } from '#lib/components/TopBar.svelte';
-	import { BUILD_PAGES, pageOf } from '#lib/navigation.ts';
+	import { ACCESS_TABS, BUILD_PAGES, pageOf } from '#lib/navigation.ts';
 	import { shortRunId } from '#lib/runDetail.ts';
 	import { pollWhileVisible } from '#lib/visibility.ts';
 	import { statsClient } from '#lib/clients/stats.ts';
@@ -330,8 +330,8 @@
 			// A run's crumb is its Orkflow, once the page has read it; the run id is the page's own plate.
 			const runName = (page.data as { run?: { orkflowName?: string } | null }).run?.orkflowName;
 			const at = `${here!.href}/${rest.slice(0, i + 1).join('/')}`;
-			// A page of its own under another (Create Orkflow under Orkflows) is called by its name.
-			const named = BUILD_PAGES.find((p) => p.href === at)?.label;
+			// A page of its own under another (Create Orkflow under Orkflows, Roles under Access) is called by its name.
+			const named = [...BUILD_PAGES, ...ACCESS_TABS].find((p) => p.href === at)?.label;
 			const label = named ?? (here?.id === 'runs' && i === 0 ? (runName ?? shortRunId(value)) : value === 'compare' ? 'Compare' : value);
 			out.push({ label, href: link(at) });
 		}
