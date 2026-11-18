@@ -292,6 +292,7 @@ var Schema = []Var{
 	{Path: "orker.env_allowlist", Env: "ORK_ORKER_ENV_ALLOWLIST", Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
 	{Path: "orker.secret_schemes", Env: "ORK_ORKER_SECRET_SCHEMES", Binaries: usesOrker, Kind: KindList, Default: formatList(orker.DefaultSecretSchemes)},
 	{Path: "orker.secret_allow", Env: "ORK_ORKER_SECRET_ALLOW", Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
+	{Path: "orker.namespaces", Env: "ORK_ORKER_NAMESPACES", Binaries: usesOrker, Kind: KindList, Default: EmptyDefault},
 	{Path: "orker.registry_auth_file", Env: "ORK_ORKER_REGISTRY_AUTH_FILE", Binaries: usesOrker, Kind: KindString, File: true, Default: EmptyDefault},
 	{Path: "orker.task_log_export", Env: "ORK_ORKER_TASK_LOG_EXPORT", Binaries: usesOrker, Kind: KindBool, Default: "false"},
 	{Path: "orker.heartbeat_interval", Env: "ORK_ORKER_HEARTBEAT_INTERVAL", Binaries: usesOrker, Kind: KindDuration, Default: formatDuration(orker.DefaultHeartbeatInterval)},
@@ -325,6 +326,10 @@ var Schema = []Var{
 	{Path: "orker.resources.default_memory", Env: "ORK_ORKER_DEFAULT_MEMORY", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultMemory},
 	{Path: "orker.resources.max_cpu", Env: "ORK_ORKER_MAX_CPU", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultMaxCPU},
 	{Path: "orker.resources.max_memory", Env: "ORK_ORKER_MAX_MEMORY", Binaries: usesOrker, Kind: KindString, Default: orker.DefaultMaxMemory},
+	{Path: "orker.resources.max_gpu", Env: orker.MaxGPUVar, Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultMaxGPU)},
+	// The trusted CDI spec directories a gpu profile's audit reads
+	// (internal/orker/cdi_audit.go); the defaults are the CDI library's.
+	{Path: "orker.cdi.spec_dirs", Env: orker.CDISpecDirsVar, Binaries: usesOrker, Kind: KindList, Default: formatList(orker.DefaultCDISpecDirs)},
 	{Path: "orker.resources.pids_limit", Env: "ORK_ORKER_PIDS_LIMIT", Binaries: usesOrker, Kind: KindInt, Default: formatInt(orker.DefaultPidsLimit)},
 	{Path: "orker.resources.tmpfs_bytes", Env: "ORK_ORKER_TMPFS_BYTES", Binaries: usesOrker, Kind: KindInt, Default: formatBytes(orker.DefaultTmpfsBytes)},
 	{Path: "orker.resources.force_user", Env: "ORK_ORKER_FORCE_USER", Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultForceUser)},

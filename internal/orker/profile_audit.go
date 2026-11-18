@@ -2,10 +2,12 @@ package orker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
 	"slices"
+	"strings"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -82,6 +84,119 @@ func auditProfiles(declared Profiles, procDevices string, inspect func(string) (
 	return audits, described, nil
 }
 
+// auditGPUProfiles is the boot audit of every declared gpu profile: its CDI
+// specs audited (cdi_audit.go) from dirs, its structural identity recorded.
+// A profile with no spec of its kind is returned in absent, for SPEC_ABSENT,
+// with its identity and no spec audit; any other refusal refuses the boot.
+func auditGPUProfiles(declared Profiles, dirs []string, host cdiHost) (map[string]profileAudit, []string, error) {
+	audits := map[string]profileAudit{}
+	var absent []string
+	for _, p := range declared.List {
+		if p.Kind != orkstackv1.ProfileKind_PROFILE_KIND_GPU || p.GPU == nil {
+			continue
+		}
+		identity, err := p.StructuralIdentity(nil)
+		if err != nil {
+			return nil, nil, err
+		}
+		audit := profileAudit{identity: identity}
+		found, err := auditGPUSpecs(dirs, p.GPU.CDIKind, p.GPU.Units, host)
+		switch {
+		case errors.Is(err, errCDISpecAbsent):
+			absent = append(absent, p.Name)
+		case err != nil:
+			return nil, nil, fmt.Errorf("profile %s: %w", p.Name, err)
+		default:
+			audit = gpuAuditOf(identity, found)
+		}
+		audits[p.Name] = audit
+	}
+	return audits, absent, nil
+}
+
+// gpuAuditOf is a gpu profile's audit record from what its CDI audit found.
+func gpuAuditOf(identity string, found gpuSpecAudit) profileAudit {
+	audit := profileAudit{identity: identity, gpu: &found}
+	for _, unit := range found.units {
+		var nodes []auditedDevice
+		for _, n := range unit.nodes {
+			nodes = append(nodes, auditedDevice{
+				ProfileDevice: ProfileDevice{Path: n.hostPath, ContainerPath: n.path, Permissions: n.permissions},
+				Host:          n.host,
+			})
+		}
+		audit.unitNodes = append(audit.unitNodes, nodes)
+		audit.gpuNodes = append(audit.gpuNodes, nodes...)
+	}
+	return audit
+}
+
+// auditGPUOnce is the periodic full audit of every gpu profile that has not
+// drifted (design §4.11): its CDI specs read and validated again. A profile
+// whose spec was absent at boot is adopted by the first audit that finds it,
+// which starts its lifetime. Specs gone hold it unavailable (SPEC_ABSENT);
+// back as audited, that ends. Specs the rules now refuse, or that differ from
+// the audit, latch a drift (SPEC_CHANGED). It returns the drifts it found.
+func (s *profileState) auditGPUOnce(host cdiHost, now time.Time) map[string]string {
+	const (
+		absent  = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT
+		changed = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED
+	)
+	drifted := map[string]string{}
+	for _, p := range s.declared.List {
+		if p.Kind != orkstackv1.ProfileKind_PROFILE_KIND_GPU || p.GPU == nil || s.drifted(p.Name) {
+			continue
+		}
+		old, ok := s.audit(p.Name)
+		if !ok {
+			continue
+		}
+		found, err := auditGPUSpecs(s.cdiDirs, p.GPU.CDIKind, p.GPU.Units, host)
+		switch {
+		case errors.Is(err, errCDISpecAbsent):
+			s.setUnavailable(p.Name, absent, err.Error(), now)
+		case err != nil:
+			drifted[p.Name] = err.Error()
+			s.setDrift(p.Name, changed, err.Error(), now)
+		case old.gpu == nil:
+			s.adoptAudit(p.Name, gpuAuditOf(old.identity, found))
+			s.clearUnavailable(p.Name, absent)
+		case !sameGPUAudit(old, gpuAuditOf(old.identity, found)):
+			detail := "the CDI specs or the nodes they pass differ from this Orker's audit"
+			drifted[p.Name] = detail
+			s.setDrift(p.Name, changed, detail, now)
+		default:
+			s.clearUnavailable(p.Name, absent)
+		}
+	}
+	return drifted
+}
+
+// sameGPUAudit reports whether two audits of one gpu profile found the same
+// spec bytes and the same nodes.
+func sameGPUAudit(a, b profileAudit) bool {
+	return a.gpu != nil && b.gpu != nil && maps.Equal(a.gpu.files, b.gpu.files) &&
+		slices.EqualFunc(a.unitNodes, b.unitNodes, func(x, y []auditedDevice) bool { return slices.Equal(x, y) })
+}
+
+// adoptAudit records a gpu profile's first audit after boot.
+func (s *profileState) adoptAudit(name string, audit profileAudit) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.audits == nil {
+		s.audits = map[string]profileAudit{}
+	}
+	s.audits[name] = audit
+}
+
+// useCDI sets what a gpu profile's audit reads: the trusted spec directories
+// (orker.cdi.spec_dirs) and the container runtime's socket. Called before the
+// boot audit.
+func (s *profileState) useCDI(dirs []string, socket string) {
+	s.cdiDirs = slices.Clone(dirs)
+	s.cdiSocket = socket
+}
+
 // bootAuditProfiles runs the boot audit against this host and records it.
 // With no profile declared it reads nothing.
 func (s *profileState) bootAuditProfiles() error {
@@ -95,6 +210,15 @@ func (s *profileState) bootAuditProfiles() error {
 	audits, described, err := auditProfiles(s.declared, string(raw), inspectHostDevice)
 	if err != nil {
 		return err
+	}
+	gpuAudits, absent, err := auditGPUProfiles(s.declared, s.cdiDirs, hostCDI(parseProcDevices(string(raw)), s.cdiSocket))
+	if err != nil {
+		return err
+	}
+	maps.Copy(audits, gpuAudits)
+	for _, name := range absent {
+		s.setUnavailable(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT,
+			fmt.Sprintf("no CDI spec of its kind in %s", strings.Join(s.cdiDirs, ", ")), time.Now())
 	}
 	s.setAudited(audits)
 	s.setDescribed(described)
@@ -143,6 +267,8 @@ func (a *Activities) RunProfileAudit(ctx context.Context) {
 		return
 	}
 	root := a.probeRoot()
+	go a.awaitGPULock(ctx, gpuLockRetry)
+	go a.runUnitRecovery(ctx, root, s.declared.ProbeImage, s.declared.RecoveryInterval)
 	good := map[string]int{}
 	timer := time.NewTimer(s.nextAuditDelay())
 	defer timer.Stop()
@@ -154,11 +280,18 @@ func (a *Activities) RunProfileAudit(ctx context.Context) {
 		}
 		now := time.Now()
 		drifted, present := s.auditOnce(inspectHostDevice, now)
+		if raw, err := os.ReadFile(procDevicesPath); err == nil {
+			if drifted == nil {
+				drifted = map[string]string{}
+			}
+			maps.Copy(drifted, s.auditGPUOnce(hostCDI(parseProcDevices(string(raw)), s.cdiSocket), now))
+		}
 		for _, name := range slices.Sorted(maps.Keys(drifted)) {
 			a.dispatcher.logger().Error("a device profile drifted: it is out of service on this Orker until it restarts",
 				"profile", name, "reason", ReasonProfileDrifted, "detail", drifted[name])
 		}
 		a.hostViewOnce(ctx, root, now, present, good)
+		a.probeUnitsOnce(ctx, root, s.declared.ProbeImage)
 		timer.Reset(s.nextAuditDelay())
 	}
 }

@@ -1937,6 +1937,14 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	if reclaimer != nil {
 		artifactReclaim = reclaimer
 	}
+	// A restore reconcile reads the run archive's cleanup records and the
+	// cluster (docs/RUNBOOKS.md, "Backup and disaster recovery").
+	var restoreReconciler api.RestoreReconciler
+	if store, ok := archiveStore.(archivecleanup.RestoreStore); ok {
+		restoreReconciler = archivecleanup.NewRestoreReconciler(store, reader, cfg.temporalNamespace)
+	} else {
+		logger.Warn("the run archive cannot be listed for a restore reconcile; ReconcileRestore answers FAILED_PRECONDITION")
+	}
 	svc := api.NewService(api.Config{
 		Orkflows:   orkflows,
 		Namespaces: namespaces,
@@ -1991,6 +1999,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Retention:                     retention,
 		RetentionEnforced:             cfg.cleanup.Enabled,
 		ArtifactReclaim:               artifactReclaim,
+		RestoreReconciler:             restoreReconciler,
 		AcceptedRuns:                  acceptedRuns,
 		Artifacts:                     archiveConfig,
 		Limits:                        cfg.contractLimits,

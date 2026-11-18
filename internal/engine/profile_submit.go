@@ -107,6 +107,22 @@ func (e *DevicesNotAProfileError) Error() string {
 		"devices nor a gpu profile", e.Task, e.Profile, e.Pool, e.Namespace)
 }
 
+// GPUWithoutGPUProfileError refuses a task that asks for gpu units and names
+// no profile its pool defines as a gpu profile: an Orker would hold the count
+// and give the task no unit.
+type GPUWithoutGPUProfileError struct {
+	Namespace string
+	Pool      string
+	Task      string
+	GPU       int32
+}
+
+func (e *GPUWithoutGPUProfileError) Error() string {
+	return fmt.Sprintf("task %q asks for %d gpu units (resources.gpu), but none of the profiles it names in "+
+		"devices: is a gpu profile on pool %q (namespace %q); name the pool's gpu profile in devices:",
+		e.Task, e.GPU, e.Pool, e.Namespace)
+}
+
 // profileKindName is the word a refusal uses for a kind.
 func profileKindName(k orkstackv1.ProfileKind) string {
 	switch k {
@@ -148,6 +164,7 @@ func judgeTaskProfiles(namespace, pool string, tasks []*orkstackv1.Task, orkers 
 		return nil, nil
 	}
 	identities := make(map[string]string, len(names))
+	kinds := make(map[string]orkstackv1.ProfileKind, len(names))
 	for _, name := range names {
 		if len(orkers) == 0 {
 			return nil, &ProfileUnavailableError{Namespace: namespace, Pool: pool, Profile: name, Tasks: naming[name]}
@@ -182,6 +199,14 @@ func judgeTaskProfiles(namespace, pool string, tasks []*orkstackv1.Task, orkers 
 			}
 		}
 		identities[name] = ref.GetIdentityDigest()
+		kinds[name] = kind
+	}
+	for _, t := range tasks {
+		if gpu := t.GetResources().GetGpu(); gpu != 0 && !slices.ContainsFunc(t.GetDevices(), func(name string) bool {
+			return kinds[name] == orkstackv1.ProfileKind_PROFILE_KIND_GPU
+		}) {
+			return nil, &GPUWithoutGPUProfileError{Namespace: namespace, Pool: pool, Task: t.GetId(), GPU: gpu}
+		}
 	}
 	return identities, nil
 }

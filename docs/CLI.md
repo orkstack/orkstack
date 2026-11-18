@@ -980,6 +980,65 @@ Inherited flags:
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
+## `orkctl admin restore`
+
+Reconcile the deployment after a restore of Temporal or the bucket
+
+restore holds the steps of a restore that only OrkStack can take
+(docs/RUNBOOKS.md, "Backup and disaster recovery").
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin restore reconcile`
+
+Find runs a restore of Temporal brought back after cleanup retired them
+
+After Temporal was restored to the instant --temporal-restored-at, list the
+runs retention cleanup retired after that instant whose executions the restore
+brought back, and, without --dry-run, delete those executions where the bucket
+holds the run's archive, which then answers for the run. A running execution
+is never deleted: cancel it, or let it finish. It also lists the runs Temporal
+shows open whose finished archive the bucket holds: they will run their tail,
+and send its events and webhooks, again. Nothing acts on them.
+
+It deletes no object. Without --dry-run the engine refuses while its retention
+cleanup is on: turn cleanup off on every engine first (ORK_CLEANUP_ENABLED=false).
+Without --dry-run it asks for confirmation; it refuses when standard input is
+not a terminal unless --yes is given.
+
+Flags:
+
+- `--dry-run` — list what it would delete, and delete nothing
+- `--limit INT32` — cleanup records each request reads, 1 to 1000 (default 1000)
+- `--temporal-restored-at STRING` — the instant Temporal was restored to, in RFC 3339 (required)
+- `--yes` — do not ask for confirmation (required when standard input is not a terminal)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
 ## `orkctl admin retention`
 
 Read or change the deployment's maximum run retention

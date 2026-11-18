@@ -166,7 +166,7 @@ type auditEntry struct {
 // auditNote is what a handler adds to its own record's detail, such as the
 // access revision a write produced, which neither its request nor its
 // response carries.
-type auditNote struct{ detail string }
+type auditNote struct{ detail, always string }
 
 type auditNoteKey struct{}
 
@@ -175,6 +175,14 @@ type auditNoteKey struct{}
 func noteAudit(ctx context.Context, detail string) {
 	if n, ok := ctx.Value(auditNoteKey{}).(*auditNote); ok {
 		n.detail = strings.TrimSpace(n.detail + " " + detail)
+	}
+}
+
+// noteAuditAlways adds detail to the record whether or not the call
+// succeeds: what a destructive call did before it failed.
+func noteAuditAlways(ctx context.Context, detail string) {
+	if n, ok := ctx.Value(auditNoteKey{}).(*auditNote); ok {
+		n.always = strings.TrimSpace(n.always + " " + detail)
 	}
 }
 
@@ -660,6 +668,23 @@ var auditedProcedures = map[string]auditExtractor{
 			Detail: "max_run_retention=" + requested,
 		}
 	},
+	orkstackv1connect.SystemServiceReconcileRestoreProcedure: func(req, resp proto.Message) auditEntry {
+		in, _ := req.(*orkstackv1.ReconcileRestoreRequest)
+		deleted := 0
+		if out, ok := resp.(*orkstackv1.ReconcileRestoreResponse); ok && out != nil {
+			for _, r := range out.GetRetired() {
+				if r.GetDeleted() {
+					deleted++
+				}
+			}
+		}
+		return auditEntry{
+			Action: "restore.reconcile",
+			Target: "deployment",
+			Detail: fmt.Sprintf("temporal_restored_at=%s dry_run=%t deleted=%d",
+				in.GetTemporalRestoredAt().AsTime().UTC().Format(time.RFC3339), in.GetDryRun(), deleted),
+		}
+	},
 	orkstackv1connect.IdentityServiceRetireSigningKeyProcedure: func(req, _ proto.Message) auditEntry {
 		in, _ := req.(*orkstackv1.RetireSigningKeyRequest)
 		// Deployment-wide: the key id is a public thumbprint.
@@ -927,6 +952,9 @@ func (s *Service) auditUnary(
 	entry := extract(reqMsg, respMsg)
 	if err == nil && note.detail != "" {
 		entry.Detail = strings.TrimSpace(entry.Detail + " " + note.detail)
+	}
+	if note.always != "" {
+		entry.Detail = strings.TrimSpace(entry.Detail + " " + note.always)
 	}
 	at := s.audit.now().UTC()
 	rec := &orkstackv1.AuditRecord{

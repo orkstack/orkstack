@@ -1314,10 +1314,10 @@ Orker-side behaviour and changes nothing a container sees: no file,
    | # | Check | Otherwise |
    |---|---|---|
    | 1 | the Orker has a memo store, a commit store and a commit URI | `MEMO_STORE_ABSENT` |
-   | 2 | the memo reads | absent → `MEMO_ABSENT`; corrupt, store error or timeout → `MEMO_UNREADABLE` |
-   | 3 | schema 1; key, namespace, scope, task (and Orkflow under orkflow scope) are ours | `MEMO_UNREADABLE` / `MEMO_MISMATCH` |
+   | 2 | the memo reads | absent → `MEMO_ABSENT`; corrupt, store error or timeout → `MEMO_UNREADABLE`; refused by the namespace guard → `MEMO_MISMATCH` |
+   | 3 | schema 1; key, namespace, scope, task (and Orkflow under orkflow scope) are ours; under `ORK_ORKER_NAMESPACES`, the source's key is a commit of our namespace | `MEMO_UNREADABLE` / `MEMO_MISMATCH` / `SOURCE_COMMIT_MISMATCH` |
    | 4 | the source finished less than the effective TTL ago | `MEMO_EXPIRED` |
-   | 5 | the source commit reads, schema 1 | `SOURCE_COMMIT_GONE` / `SOURCE_COMMIT_UNREADABLE` |
+   | 5 | the source commit reads, schema 1 | `SOURCE_COMMIT_GONE` / `SOURCE_COMMIT_UNREADABLE`; refused by the namespace guard → `SOURCE_COMMIT_MISMATCH` |
    | 6 | its stored bytes hash to the memo's `commit_sha256` | `SOURCE_COMMIT_CHANGED` |
    | 7 | its namespace, task, run, `finished_at`, index digest and Orkflow are the memo's and ours; exit 0 | `SOURCE_COMMIT_MISMATCH` |
    | 8 | it fits this run's value, artifact-count and artifact-size limits | `SOURCE_OVER_LIMITS` |
@@ -1720,6 +1720,7 @@ heard of.
 
 | # | Phase | Step |
 |---|---|---|
+| 0 | — | **Namespace**: with `ORK_ORKER_NAMESPACES` set, a task of a namespace it does not name, or whose input names a commit of another namespace, fails `NAMESPACE_NOT_SERVED` here, before the log, a heartbeat, a claim or any read; nothing of the attempt is written, an existing commit is not read (`docs/DEPLOY.md`, "Trust zones: a deployment per zone") |
 | 1 | — | **Open the log**, first, always; its lines wait for the attempt's ordinal (step 4c or 5b″, or a best-effort claim at step 16) and are dropped for an attempt stopped before its claim; closed before return |
 | 2 | `start` | **Heartbeat loop start**, until step 15; the input checks that are the same on every Orker: a pinned image, a network mode that exists, a well-formed resource request, well-formed secret names |
 | 3 | `commit-check` | **Commit check**: GET `commit_uri` → adopt and jump to 15, or proceed (§5.4) |
@@ -1920,9 +1921,11 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `RENDER_FAILED` | ContractViolation | no | template error, missing key, `<no value>`, or an `env` name not allowlisted |
 | `SECRET_UNRESOLVED` | InfrastructureError | yes | a `SecretRef.source` could not be resolved |
 | `SECRET_SCHEME_FORBIDDEN` | ContractViolation | no | the Orker does not resolve that source scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed |
+| `NAMESPACE_NOT_SERVED` | ContractViolation | no | the task's namespace is not one this Orker serves (`ORK_ORKER_NAMESPACES`), or its input names a commit of another namespace or store, refused at step 0 before anything is read or written; or a later step's read or write of another namespace's commit or memo, refused before the store is asked (`docs/DEPLOY.md`, "Trust zones: a deployment per zone") |
 | `SECRET_NOT_PERMITTED` | ContractViolation | no | the source is outside this Orker's `ORK_ORKER_SECRET_ALLOW` floor, or is one of the Orker's own sources, which no floor admits (`docs/DEPLOY.md`, "Secrets on a shared pool"; `docs/SECURITY_MODEL.md`, "The Orker's own sources") |
 | `RESOURCE_REQUEST_REFUSED` | ContractViolation | no | the request exceeds the Orker's cap, or is not a positive finite quantity |
 | `RESOURCE_ADMISSION_MISMATCH` | ContractViolation | no | on an Orker declaring a capacity, the resolved request is larger than the reservation it was polled under and free capacity cannot cover it; it cannot happen while every poll reserves the per-task cap |
+| `GPU_UNITS_UNAVAILABLE` | InfrastructureError | yes | the gpu units a task asks for could not be bound; every polled task's units are reserved at poll, so on a healthy Orker it cannot happen and is logged as an invariant failure |
 | `NETWORK_MODE_REFUSED` | ContractViolation | no | the requested mode is not `default` or `none` |
 | `COMMIT_READ_FAILED` | InfrastructureError | yes | commit store unreadable at step 0 |
 | `COMMIT_WRITE_FAILED` | InfrastructureError | yes | conditional PUT failed for a non-precondition reason |

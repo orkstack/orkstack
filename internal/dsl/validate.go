@@ -229,6 +229,9 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 							"\"512Mi\" or \"4Gi\" (Gi, not GB)", task.GetId(), memory, err))
 				}
 			}
+			if err := validateGPU(taskIndex, task); err != nil {
+				return err
+			}
 		}
 		// Rule 47: a retry: the cluster would refuse is refused here. The
 		// cluster fails the workflow task that schedules such an attempt and
@@ -607,6 +610,31 @@ func validateRetry(taskIndex int, task *orkstackv1.Task) error {
 // validateDevices is rule 6e: `devices:` names at most MaxTaskDevices
 // profiles, each a slug, none twice. Which profiles exist, and of which kind,
 // is the submit's to check against the pool's Orkers.
+// validateGPU is rule 6d's gpu half: `resources.gpu` counts units of the
+// task's gpu profile, 1 to MaxTaskGPU (0 is absent on the wire). It needs a
+// profile named in `devices:`; whether that profile is a gpu one is the
+// Orker's to say, at submit. A pinned task holds no GPU in v0.4.0, because a
+// pin's members cannot wait for units (AGENTS.md §5).
+func validateGPU(taskIndex int, task *orkstackv1.Task) error {
+	gpu := task.GetResources().GetGpu()
+	if gpu == 0 {
+		return nil
+	}
+	field := fmt.Sprintf("tasks[%d].resources.gpu", taskIndex)
+	switch {
+	case gpu < 0 || gpu > MaxTaskGPU:
+		return validationError(field,
+			fmt.Errorf("task %q: `resources.gpu` is 1 to %d units, not %d", task.GetId(), MaxTaskGPU, gpu))
+	case len(task.GetDevices()) == 0:
+		return validationError(field,
+			fmt.Errorf("task %q: `resources.gpu` counts units of a gpu profile, so the task must name one in `devices:`", task.GetId()))
+	case task.GetPin() != "":
+		return validationError(field,
+			fmt.Errorf("task %q: a pinned task cannot hold GPU units (`pin:` with `resources.gpu`)", task.GetId()))
+	}
+	return nil
+}
+
 func validateDevices(taskIndex int, task *orkstackv1.Task) error {
 	devices := task.GetDevices()
 	if len(devices) > MaxTaskDevices {

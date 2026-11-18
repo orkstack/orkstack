@@ -308,6 +308,10 @@ jobs:
         run: |
           set -euo pipefail
           go run ./test/tools/proofrun verify -release -tag "$VERSION" -proof "$RUNNER_TEMP/ci/proof"
+          # A release also requires a passing GPU-host-tier proof of this
+          # commit, which no runner here can make (AGENTS.md §11.2): the
+          # approver reads this line, and `make release-tag GPU=` checks it.
+          echo "GPU-host proof not checked: approve only after make release-tag PROOF=... GPU=proof/<name> passed for $VERSION's commit" >>"$GITHUB_STEP_SUMMARY"
 
   # A release is not tagged while the nightly of its commit is red
   # (AGENTS.md §11). On main only: off main a dispatch is a dry run, and no

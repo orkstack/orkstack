@@ -381,6 +381,7 @@ type PoolResourcesUnsatisfiableError struct {
 	Task      string
 	CPU       string // as the task wrote it; empty when it asked for none
 	Memory    string
+	GPU       int32 // resources.gpu; 0 when it asked for none
 	Largest   *orkstackv1.ResourceQuantity
 }
 
@@ -392,11 +393,15 @@ func (e *PoolResourcesUnsatisfiableError) Error() string {
 	if e.Memory != "" {
 		asked = append(asked, fmt.Sprintf("memory %s", e.Memory))
 	}
+	if e.GPU != 0 {
+		asked = append(asked, fmt.Sprintf("gpu %d", e.GPU))
+	}
 	return fmt.Sprintf("%s: task %q requests %s, which no Orker of pool %q (namespace %q) runs: its largest "+
-		"per-task caps are %g cpu and %d bytes of memory, not always on one Orker. Ask for less, or run the task "+
-		"on a pool whose Orkers set larger caps (orker.resources.max_cpu, orker.resources.max_memory)",
+		"per-task caps are %g cpu, %d bytes of memory and %d gpu units, not always on one Orker. Ask for less, "+
+		"or run the task on a pool whose Orkers set larger caps (orker.resources.max_cpu, "+
+		"orker.resources.max_memory, orker.resources.max_gpu)",
 		ReasonResourcesUnsatisfiable, e.Task, strings.Join(asked, " and "), e.Pool, e.Namespace,
-		e.Largest.GetCpu(), e.Largest.GetMemoryBytes())
+		e.Largest.GetCpu(), e.Largest.GetMemoryBytes(), e.Largest.GetGpu())
 }
 
 // PoolUnreachableError reports that the cluster could not be asked whether a
@@ -764,7 +769,7 @@ func (r *PoolResolver) Plan(
 		case len(t.GetSecrets()) > 0:
 			maskedTasksByPool[route.Pool] = append(maskedTasksByPool[route.Pool], t.GetId())
 		}
-		if res := t.GetResources(); strings.TrimSpace(res.GetCpu()) != "" || strings.TrimSpace(res.GetMemory()) != "" {
+		if res := t.GetResources(); strings.TrimSpace(res.GetCpu()) != "" || strings.TrimSpace(res.GetMemory()) != "" || res.GetGpu() != 0 {
 			sizedTasksByPool[route.Pool] = append(sizedTasksByPool[route.Pool], t)
 		}
 		if eachRelated[t.GetId()] {
@@ -1360,15 +1365,19 @@ func (r *PoolResolver) checkResourcesFit(ctx context.Context, census *poolCensus
 	for _, c := range caps {
 		largest.Cpu = max(largest.Cpu, c.GetCpu())
 		largest.MemoryBytes = max(largest.MemoryBytes, c.GetMemoryBytes())
+		if gpu := c.GetGpu(); gpu > largest.GetGpu() {
+			largest.Gpu = &gpu
+		}
 	}
 	for _, t := range tasks {
 		cpu := strings.TrimSpace(t.GetResources().GetCpu())
 		memory := strings.TrimSpace(t.GetResources().GetMemory())
-		if requestFitsOne(cpu, memory, caps) {
+		gpu := t.GetResources().GetGpu()
+		if requestFitsOne(cpu, memory, gpu, caps) {
 			continue
 		}
 		return &PoolResourcesUnsatisfiableError{
-			Namespace: namespace, Pool: pool, Task: t.GetId(), CPU: cpu, Memory: memory, Largest: largest,
+			Namespace: namespace, Pool: pool, Task: t.GetId(), CPU: cpu, Memory: memory, GPU: gpu, Largest: largest,
 		}
 	}
 	return nil
@@ -1377,13 +1386,16 @@ func (r *PoolResolver) checkResourcesFit(ctx context.Context, census *poolCensus
 // requestFitsOne reports whether some cap holds every declared dimension of a
 // request. A dimension that does not read is left to the Orker, which refuses
 // it at dispatch by name; validate already refused it for an applied document.
-func requestFitsOne(cpu, memory string, caps []*orkstackv1.ResourceQuantity) bool {
+// A gpu count fits only a cap that names gpu units: an Orker reporting none
+// has no gpu profile.
+func requestFitsOne(cpu, memory string, gpu int32, caps []*orkstackv1.ResourceQuantity) bool {
 	cores, cpuErr := quantity.CPU(cpu)
 	bytes, memErr := quantity.Memory(memory)
 	for _, c := range caps {
 		cpuFits := cpu == "" || cpuErr != nil || cores <= c.GetCpu()
 		memFits := memory == "" || memErr != nil || bytes <= float64(c.GetMemoryBytes())
-		if cpuFits && memFits {
+		gpuFits := gpu == 0 || int64(gpu) <= c.GetGpu()
+		if cpuFits && memFits && gpuFits {
 			return true
 		}
 	}

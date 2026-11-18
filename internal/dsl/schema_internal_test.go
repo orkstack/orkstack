@@ -256,6 +256,8 @@ func slots() map[string]slot {
 	for key, baseline := range map[string]string{"cpu": "'1'", "memory": "1Gi"} {
 		out["tasks[].resources."+key] = slot{doc: taskDoc("    resources: {" + key + ": @V@}\n"), field: "tasks[0].resources." + key, baseline: baseline, absent: taskDoc("    resources: {}\n")}
 	}
+	out["tasks[].resources.gpu"] = slot{doc: taskDoc("    devices: [amd]\n    resources: {gpu: @V@}\n"), field: "tasks[0].resources.gpu", baseline: "1",
+		absent: taskDoc("    devices: [amd]\n    resources: {}\n")}
 	for key, baseline := range map[string]string{"timeout_seconds": "60", "callback": "true", "schema": "{f: {type: string}}"} {
 		base := map[string]string{"timeout_seconds": "", "callback": "timeout_seconds: 60, ", "schema": "timeout_seconds: 60, "}[key]
 		out["tasks[].await."+key] = slot{doc: awaitDoc("{" + base + key + ": @V@}"), field: "tasks[0].await." + key, baseline: baseline,

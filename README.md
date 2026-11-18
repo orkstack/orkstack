@@ -272,6 +272,7 @@ reference.
   [Task identity](./docs/TASK_IDENTITY.md) ·
   [Upgrading](./docs/UPGRADING.md) · [Limitations](./docs/LIMITATIONS.md) ·
   [Troubleshooting](./docs/TROUBLESHOOTING.md) ·
+  [Runbooks, backup and Temporal outages](./docs/RUNBOOKS.md) ·
   [Storage](./docs/STORAGE.md) · [Stats](./docs/STATS.md) ·
   [Run evidence](./docs/RUN_EVIDENCE.md) ·
   [UI and CLI parity](./docs/UI_CLI_PARITY.md) ·

@@ -648,6 +648,8 @@ then the variable it becomes.
 | `orker.values.refuse_secrets` | `ORK_ORKER_VALUES_REFUSE_SECRETS` | `true` | `orker` | whether a `values.json` holding one of the task's own secrets fails the attempt, `VALUES_CONTAIN_SECRET`, before anything is uploaded; independent of `orker.log.mask_secrets`. The same on every Orker of a pool ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#94-secrets)) |
 | `orker.refuse_readable_engine_keys` | `ORK_ORKER_REFUSE_READABLE_ENGINE_KEYS` | `false` | `orker` | refuse to start when this Orker can open a file one of the engine's key settings names (`identity.signing.key_files`, `identity.keys_copy_file`, `auth.break_glass_key_file`, an issuer's `jwks_file`); by default each is an error in its log — see "An engine's key files and an Orker on one host" |
 | `orker.resources.max_cpu`, `orker.resources.max_memory` | `ORK_ORKER_MAX_CPU`, `ORK_ORKER_MAX_MEMORY` | `8`, `16Gi` | `orker` | caps on what a task may request; a request above the cap is refused, never clamped |
+| `orker.resources.max_gpu` | `ORK_ORKER_MAX_GPU` | `1` | `orker` | the most units of this Orker's gpu profile one task may hold, 0 to 64; a request above it is refused, never clamped, and a gpu profile under `0` refuses boot (`ORKER_PROFILE_INVALID`, naming the setting) |
+| `orker.cdi.spec_dirs` | `ORK_ORKER_CDI_SPEC_DIRS` | `/etc/cdi`, `/var/run/cdi` | `orker` | the trusted CDI spec directories a gpu profile's audit reads: absolute, clean paths that must hold every directory the container runtime reads specs from; a malformed entry refuses boot, naming the setting |
 | `orker.capacity.cpu`, `orker.capacity.memory` | `ORK_ORKER_CAPACITY_CPU`, `ORK_ORKER_CAPACITY_MEMORY` | *(empty)* | `orker` | what this Orker admits tasks within, in the Kubernetes spelling (`"16"`, `"64Gi"`). Unset admits by `max_concurrent` alone, best effort, and the Orker logs `capacity not declared: admission is best effort, bounded only by max_concurrent` at boot. Set, a poll is granted only while the per-task cap fits beside what is reserved; boot refuses a capacity the cap does not fit in. Either may be set alone — see "Declaring an Orker's capacity" below |
 | `orker.resources.default_cpu`, `orker.resources.default_memory` | `ORK_ORKER_DEFAULT_CPU`, `ORK_ORKER_DEFAULT_MEMORY` | `1`, `1Gi` | `orker` | what a task that requests nothing gets |
 | `orker.resources.pids_limit` | `ORK_ORKER_PIDS_LIMIT` | `512` | `orker` | pids limit applied to every container |
@@ -655,6 +657,7 @@ then the variable it becomes.
 | `orker.resources.force_user` | `ORK_ORKER_FORCE_USER` | `false` | `orker` | `true` runs every container as the Orker's own user, as if each task had set `run_as_orker_user: true` — the readability escape hatch for hosts where the image's own USER leaves output unreadable. An Orker whose boot probe finds that user does not land as the Orker (a rootless or user-namespaced daemon) refuses to start with it set, as `RUN_AS_ORKER_UNAVAILABLE` |
 | `orker.secret_schemes` | `ORK_ORKER_SECRET_SCHEMES` | `env,file` | `orker` | comma-separated secret sources this Orker resolves for a task's `secrets:` |
 | `orker.secret_allow` | `ORK_ORKER_SECRET_ALLOW` | *(empty)* | `orker` | comma-separated `scheme:pattern` floor of the `secrets:` sources this Orker resolves, e.g. `env:SANDBOX_*,file:/etc/orkstack/secrets/*`; `*` is the one wildcard and does not cross `/`. Empty resolves every source of an allowed scheme except the Orker's own, and logs a warning at boot. No entry admits the Orker's own sources: its `ORK_*` and `OTEL_*` settings, its process files, its work root, its configuration and credential files (§5, "Secrets on a shared pool"). With `orker.workdir` unset the work root is the temp directory, so a `file:/tmp/…` source is refused and an entry under `/tmp` stops the Orker at boot: give tasks' secret files a directory of their own. A namespace's `allowed_secrets` can only narrow this, never widen it. Refused at boot if an entry is malformed, names a scheme not in `orker.secret_schemes`, or can match only the Orker's own sources |
+| `orker.namespaces` | `ORK_ORKER_NAMESPACES` | *(empty)* | `orker` | comma-separated namespaces this Orker serves, e.g. `payments,billing`. A task of another namespace fails `NAMESPACE_NOT_SERVED` before the Orker reads or writes anything of it, and a commit or memo of another namespace is never read or written. Empty serves every namespace, and logs so at boot. Every Orker of a pool sets the same list. A guard, not a boundary: give each trust zone a deployment of its own (§5, "Trust zones: a deployment per zone"). Refused at boot if a name breaks the namespace rule |
 | `orker.registry_auth_file` | `ORK_ORKER_REGISTRY_AUTH_FILE` | *(empty)* | `orker` | a docker `config.json` used only for the manifest and blob GETs that verify a cosign signature when a namespace sets `require_signed_by` (§5, "Image supply-chain policy"); grants no push, never reaches a container. Empty verifies anonymously, which public registries allow |
 | `orker.env_allowlist` | `ORK_ORKER_ENV_ALLOWLIST` | *(empty)* | `orker` | comma-separated names `{{ env "NAME" }}` may read in a task's `with:` — resolved on the Orker, so the value is the pool's |
 | `orker.workdir` | `ORK_ORKER_WORKDIR` | temp dir | `orker` | root under which each task attempt gets its own working directory. **It must be bind-mountable by the docker daemon**, since every task's `/orkstack` workspace is bind-mounted from it, and its path must be a plain one: a mount is a comma-separated option list, so an Orker whose work root holds a comma or a control character refuses to start (`WORKDIR_NOT_BINDABLE`, naming `ORK_ORKER_WORKDIR`). The default is `os.TempDir()` — `/var/folders/...` on macOS — which a Docker daemon running in a virtual machine (colima, Lima, Rancher) does not share, so a container task fails with `bind source path does not exist` on a path that plainly exists. `make up` sets it to `.data/work`, under `$HOME`, which every one of those VMs shares; it also probes the daemon at startup and warns if the path is unreachable. It also holds two process-scoped scratch directories that boot empties: `ork-spool/`, where an upload whose source cannot be re-read is staged, and `ork-stage/`, the staging cache — attempts staging the same input digest at the same time (the items of a fan-out over one upstream) share one verified download, hard-linked into each attempt's read-only input tree and deleted when the last of them ends. Where the root cannot hard-link, each attempt downloads its own copy, as before |
@@ -1007,15 +1010,17 @@ the pool offers. Give each Orker of a pool the same:
 - log masking, `orker.log.mask_secrets`, and whether a secret may be a task's
   result, `orker.values.refuse_secrets`: Orkers that differ mask the same
   task's logs, or fail the same task `VALUES_CONTAIN_SECRET`, by which of
-  them took it.
+  them took it;
+- the namespaces it serves, `orker.namespaces` ("Trust zones: a deployment
+  per zone", §5).
 
 Network modes need no setting: every Orker offers `default` and `none`.
 
 While the settings match, a run never fails because of which Orker took a
 task. When they differ, a task that lands on an Orker that will not run it
 fails there, explicitly, with its own reason: `RESOURCE_REQUEST_REFUSED`,
-`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED` or
-`RUN_AS_ORKER_UNAVAILABLE`, none of them retried; `RENDER_FAILED`, not
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`,
+`RUN_AS_ORKER_UNAVAILABLE` or `NAMESPACE_NOT_SERVED`, none of them retried; `RENDER_FAILED`, not
 retried, for an `env` name outside the Orker's allow-list; or
 `IMAGE_SIGNATURE_UNAVAILABLE`, retried under the task's policy, for a
 signature its registry credentials cannot read. A differing default request
@@ -1027,8 +1032,11 @@ What a task that runs no container here is spared depends on why it runs
 none ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#71-the-sequence),
 "§7.1"):
 
-- **A result already committed** is never refused for any of these settings:
-  the commit check comes before everything that refuses for them.
+- **A result already committed** is never refused for any of these settings
+  but one: the commit check comes before everything that refuses for them.
+  The exception is `orker.namespaces`, checked before anything is read: an
+  Orker never reads, let alone adopts, a commit of a namespace it does not
+  serve.
 - **A memo hit** is never refused for the caps, the secret schemes and floor,
   or the runtime: those are checked only after the memo step misses. But a
   cached task's image policy is checked before its memo lookup, and its
@@ -1487,10 +1495,11 @@ task whose pool has an Orker that does not offer a profile it names
 profile as submit saw it, and every attempt is held to that.
 
 **A profile is fixed for the Orker's lifetime.** The Orker checks the
-profile's devices again at dispatch and just before it creates the container.
+profile's devices again at dispatch, just before it creates the container,
+and once more just before it starts it.
 A device replaced, or changed in its numbers or group, is drift: the profile
 leaves service on that Orker until it restarts, and the attempt that met it
-fails `PROFILE_DRIFTED` before any container: an interruption, so the task
+fails `PROFILE_DRIFTED` before any container starts: an interruption, so the task
 runs again on another Orker without spending its own attempts, within the
 run's never-started budget (§5, "Interruption budgets"). A device that is not there, such as an adapter unplugged, is
 not drift: the profile is unavailable (`DEVICE_ABSENT`), cordoning the Orker,
@@ -1501,6 +1510,24 @@ profile to service. Plugged back as another node, it has drifted. A
 `retry:` makes one, so give a profiled task one. To change a profile, drain the Orker, stop it, edit its
 configuration and start it (§ "Removing an Orker safely: cordon and drain").
 A `revision` change alters only cache keys.
+
+**Admin → Pools shows each Orker's profiles.** Every profile it offers, by
+name and kind. The page can show a `gpu` profile's unit cells and a **gpu
+reserved** column and meter, but none appears in this release: gpu profiles
+are not offered by this release, which refuses an Orker that declares one
+(`ORKER_PROFILE_INVALID`). A profile that holds the
+Orker's cordon carries its cause, and
+the row says why, with the reason's code and how it ends: a drift
+(**profile drifted**) only with a restart; an unavailable profile
+(**profile unavailable**) by itself after good checks once what was found is
+put right. Unless an operator's cordon or a drift also holds the Orker, its
+pool stays in service: runs sent there are accepted and wait for the profile
+to come back, and the pool's card reads **Profile unavailable** (or
+**N profile unavailable** while other Orkers serve it), never **Cordoned**. A cause the
+page cannot read (an Orker of a newer release) reads **profile out of
+service**: the Orker takes no work from its pool. None is an operator's
+cordon, so none offers Uncordon, and one that stands beside an operator's
+cordon keeps a stamp of its own.
 
 ### An engine's key files and an Orker on one host
 
@@ -4781,6 +4808,59 @@ carries the source string and what refused it, never a value.
 During a rolling upgrade the namespace list is enforced only by engine
 replicas that know it; the Orker floor is unaffected by the rollout.
 
+### Trust zones: a deployment per zone
+
+Every Orker of a deployment holds an object-storage credential that writes
+results: commits, memos, artifacts and committed values. A credential that
+writes one namespace's results writes every namespace's, because they share
+one bucket. A stolen Orker of any pool can therefore plant a `commit.json`, a
+memo or an artifact that a task of another namespace adopts or stages. An
+Orker's Temporal credential can also poll any pool. Namespaces and pools are
+how teams share one deployment. They are not a security boundary between
+them.
+
+**Give each trust zone a deployment of its own**: production and development,
+or two tenants that must not reach each other. Each zone gets:
+
+- its own bucket or object store, with its own credentials for engines and
+  Orkers (`storage.s3.bucket`, and the credentials of "The object store's
+  credentials", §1);
+- its own Temporal namespace (`temporal.namespace`) and, where the cluster
+  supports it, a Temporal credential limited to that namespace;
+- its own engines and its own Orkers, which no other zone's runs reach.
+
+One deployment always holds one bucket; OrkStack does not split a deployment
+across stores.
+
+**Inside a deployment, name what each Orker serves.** `orker.namespaces` /
+`ORK_ORKER_NAMESPACES` lists the namespaces an Orker runs tasks of, e.g.
+`ORK_ORKER_NAMESPACES=payments,billing`. A task of any other namespace fails
+`NAMESPACE_NOT_SERVED`, a `ContractViolation` that is never retried, before
+the Orker writes a log line, claims an attempt or reads anything of it, an
+existing commit included. A commit or a memo of a namespace the list does not
+name is never read or written, whatever the task's input says, and a memo whose
+source is not a commit of the task's own namespace, by its key, is a miss
+before the source is read. Such a miss is `MEMO_MISMATCH` or
+`SOURCE_COMMIT_MISMATCH`, and its detail names the guard. Empty, the
+default, serves every namespace, and the Orker logs that at boot. Every Orker of a pool sets the same list
+("Every Orker of a pool has the same settings" in §1). Bound the namespaces
+that may use the pool to the same list, with their `allowed_pools`, so a
+refusal never reaches a run. Until submit asks Orkers about it, a run whose
+pool's Orkers do not serve its namespace is accepted and its first task fails.
+
+The list is a guard for honest Orkers, not a boundary. It keeps an Orker from
+running another team's task when routing is wrong: a namespace allowed a pool
+it should not use, or a pool shared by mistake. It does not stop a stolen
+credential, whose holder does not run the guard. Artifacts, committed values,
+task logs and attempt records carry no namespace in their keys, so the guard
+cannot scope them, and a bucket policy cannot either. A deployment per zone
+remains the boundary.
+
+A pin of a run whose namespace its host does not serve still opens, because
+opening a pin names no namespace, and its first member is then refused, which
+fails the pin and its run. Until then the pin holds one of the host's pin
+slots.
+
 ### Image supply-chain policy
 
 By default any `uses:` a document names is pulled and run: the engine pins it
@@ -5562,26 +5642,21 @@ A local, disposable stack for trying all of this — a Collector, Loki, Tempo,
 Prometheus and Grafana — is the `observability` compose profile:
 
 ```bash
-make infra-up-observability
+make up-observability
 ```
 
-It never starts on its own. Point `ork`/`orker` at it with a config file
-(§1) — this is the Grafana profile in full, one file passed to both
-binaries with `--config`:
+That is `make up` with the profile: `ork` and `orker` push every signal to
+its Collector, Prometheus scrapes nothing, and Grafana provisions the OrkStack
+and OrkStack / Run dashboards. For the profile alone (`make
+infra-up-observability`), point `ork`/`orker` at it with a config file
+(§1), one file passed to both binaries with `--config`:
 
 ```yaml
 telemetry:
   log_format: json
-  admin_addr:
-    ork: ":9464"
-    orker: ":9465"
-  admin_allowed_hosts:
-    - host.docker.internal   # the name the profile's Prometheus scrapes by
   exporters:
     logs: otlp
-    metrics:
-      - prometheus
-      - otlp
+    metrics: otlp
     traces: otlp
   otlp:
     endpoint: http://localhost:4318

@@ -10,6 +10,7 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/reflect/protoreflect"
 	"google.golang.org/protobuf/reflect/protoregistry"
+	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
@@ -230,4 +231,30 @@ func TestAuditInterceptor_DetachedFromRequestCancellation(t *testing.T) {
 	if len(page.Records) != 1 || page.Records[0].GetAction() != "namespace.delete" || page.Records[0].GetTarget() != "gone" {
 		t.Fatalf("records = %v, want the delete recorded despite the cancelled request", page.Records)
 	}
+}
+
+// A restore reconcile is audited with its instant, whether it was a dry run,
+// and how many runs' executions it deleted; a note kept on error carries what
+// a failed call had already deleted, which a success-only note would drop.
+func TestAudit_RestoreReconcileRecordsWhatItDeleted(t *testing.T) {
+	extract := auditedProcedures[orkstackv1connect.SystemServiceReconcileRestoreProcedure]
+	at := time.Date(2026, 11, 17, 3, 0, 0, 0, time.UTC)
+	req := &orkstackv1.ReconcileRestoreRequest{TemporalRestoredAt: timestamppb.New(at)}
+	resp := &orkstackv1.ReconcileRestoreResponse{Retired: []*orkstackv1.RestoreRetiredRun{{RunId: "ork-a", Deleted: true}, {RunId: "ork-b", Open: true}}}
+	entry := extract(req, resp)
+	if entry.Action != "restore.reconcile" || entry.Target != "deployment" ||
+		entry.Detail != "temporal_restored_at=2026-11-17T03:00:00Z dry_run=false deleted=1" {
+		t.Fatalf("entry = %+v", entry)
+	}
+	if got := extract(&orkstackv1.ReconcileRestoreRequest{TemporalRestoredAt: timestamppb.New(at), DryRun: true}, nil); !strings.Contains(got.Detail, "dry_run=true deleted=0") {
+		t.Fatalf("a refused or failed dry run: detail %q", got.Detail)
+	}
+	note := &auditNote{}
+	ctx := context.WithValue(context.Background(), auditNoteKey{}, note)
+	noteAudit(ctx, "on-success")
+	noteAuditAlways(ctx, "deleted_before_failure=1 runs=ork-a")
+	if note.detail != "on-success" || note.always != "deleted_before_failure=1 runs=ork-a" {
+		t.Fatalf("note = %+v", note)
+	}
+	noteAuditAlways(context.Background(), "outside an audited call") // does nothing, and does not panic
 }

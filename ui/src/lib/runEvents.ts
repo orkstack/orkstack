@@ -1,26 +1,12 @@
-import { fromJson, type JsonObject, type JsonValue } from '@bufbuild/protobuf';
+import { fromJson } from '@bufbuild/protobuf';
 import { EventSchema, type Event } from './gen/orkstack/v1/run_pb';
+import { withProtoEnumNames } from './protoEnumNames';
 import { isTerminalEventType } from './status';
 import { describeClose } from './taskLogs';
 import { wsBaseUrl } from './ws';
 
 // 'failed' is TERMINAL: the stream stopped reconnecting, and the detail says why.
 export type RunSocketState = 'connecting' | 'open' | 'closed' | 'error' | 'failed';
-
-// The bridge writes enum values without their proto prefix ("RUNNING"), while
-// the generated decoder only knows the declared names. Restore the prefix on
-// the way in; frames that still use the long form pass through untouched.
-function withProtoEnumNames(frame: JsonValue): JsonValue {
-	if (typeof frame !== 'object' || frame === null || Array.isArray(frame)) return frame;
-	const restored: JsonObject = { ...frame };
-	if (typeof restored.type === 'string' && !restored.type.startsWith('EVENT_TYPE_')) {
-		restored.type = `EVENT_TYPE_${restored.type}`;
-	}
-	if (typeof restored.status === 'string' && !restored.status.startsWith('STATUS_')) {
-		restored.status = `STATUS_${restored.status}`;
-	}
-	return restored;
-}
 
 export interface WatchRunEventsOptions {
 	/**
@@ -102,9 +88,12 @@ export function watchRunEvents(
 		socket.onmessage = (msg) => {
 			let event: Event;
 			try {
-				event = fromJson(EventSchema, withProtoEnumNames(JSON.parse(String(msg.data))));
-			} catch {
-				return; // ignore malformed frames
+				event = fromJson(EventSchema, withProtoEnumNames(JSON.parse(String(msg.data)), EventSchema));
+			} catch (err) {
+				// A frame the client cannot read is skipped, never silently:
+				// the page would otherwise miss a transition with no trace.
+				console.error('run event stream: an undecodable frame was skipped', err);
+				return;
 			}
 			// A frame is progress: this connection is serving.
 			retries = 0;

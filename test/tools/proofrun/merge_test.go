@@ -215,7 +215,7 @@ func (f *mergeFixture) writeLocal(integration ledger) {
 // fast gate of the full proof, passing.
 func fastGateRecords() []gateRecord {
 	var g []gateRecord
-	for _, name := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site"} {
+	for _, name := range []string{"lint", "build", "unit", "vet-integration", "ui-check", "ui-unit", "site", "alerts"} {
 		g = append(g, gateRecord{Gate: name, Result: "pass"})
 	}
 	return g

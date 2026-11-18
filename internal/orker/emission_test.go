@@ -583,3 +583,83 @@ func TestExecute_ADriftAtTheRecheckBeforeCreateCreatesNothing(t *testing.T) {
 		t.Fatal("a drift at the recheck left the Orker uncordoned")
 	}
 }
+
+// driftAtCreateRuntime is a runtime during whose Create a profile's device
+// changes: the moment between the recheck before create and the start, which
+// a real daemon cannot be made to open on demand. It records whether Start
+// was called and what was removed.
+type driftAtCreateRuntime struct {
+	creatingRuntime
+	drift   func()
+	started bool
+	removed []ContainerID
+}
+
+func (r *driftAtCreateRuntime) Create(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
+	id, err := r.creatingRuntime.Create(ctx, spec)
+	r.drift()
+	return id, err
+}
+
+func (r *driftAtCreateRuntime) Start(ctx context.Context, id ContainerID, stdout, stderr io.Writer) error {
+	r.started = true
+	return r.creatingRuntime.Start(ctx, id, stdout, stderr)
+}
+
+func (r *driftAtCreateRuntime) Remove(ctx context.Context, id ContainerID) error {
+	r.removed = append(r.removed, id)
+	return r.creatingRuntime.Remove(ctx, id)
+}
+
+// TestProfileDrifted_NeverStartedOnlyBeforeStartIsCalled: Docker resolves a
+// CDI device at start (design Q18), so the profile checks run once more just
+// before it. A drift found there fails PROFILE_DRIFTED marked never-started,
+// with Start never called and the created container removed; once Start is
+// asked for, an attempt counts as started (design Q18's start-error-after-exec).
+func TestProfileDrifted_NeverStartedOnlyBeforeStartIsCalled(t *testing.T) {
+	listed := []string{InterruptionType(ReasonProfileDrifted)}
+	profiles, _ := gateState(t)
+	runtime := &driftAtCreateRuntime{
+		creatingRuntime: creatingRuntime{ContainerRuntime: &phaseCapturingRuntime{exitCode: 0}},
+		drift: func() {
+			profiles.setDrift("sensor", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED, "renumbered after create", time.Now())
+		},
+	}
+	d := newAttemptDispatcher(t, runtime, artifacts.NewMemoryAttemptStore())
+	d.heartbeaters = sdkRouteHeartbeater
+	d.profiles = profiles
+	d.inspectDevice = sameNode
+	d.listed = func(context.Context) []string { return listed }
+	probe := func(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput) error {
+		ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+			RetryPolicy: &temporal.RetryPolicy{MaximumAttempts: 1, InitialInterval: time.Millisecond,
+				NonRetryableErrorTypes: listed},
+		})
+		return workflow.ExecuteActivity(ctx, "ExecuteTask", in).Get(ctx, nil)
+	}
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(60 * time.Second)
+	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
+	env.RegisterWorkflowWithOptions(probe, workflow.RegisterOptions{Name: "probe"})
+	env.RegisterActivityWithOptions(d.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
+	in := baseExportInput("drift-at-start")
+	in.Devices = sensorRef(gateIdentity)
+	env.ExecuteWorkflow("probe", in)
+
+	var app *temporal.ApplicationError
+	if err := env.GetWorkflowError(); !errors.As(err, &app) || app.Type() != InterruptionType(ReasonProfileDrifted) {
+		t.Fatalf("workflow error = %v, want the typed PROFILE_DRIFTED interruption", err)
+	}
+	var detail *orkstackv1.ActivityFailureDetail
+	if err := app.Details(&detail); err != nil || !detail.GetNeverStarted() || detail.GetStarted() {
+		t.Fatalf("detail = %v, %v; want never_started and not started", detail, err)
+	}
+	if runtime.started {
+		t.Fatal("Start was called for a container whose profile drifted before it")
+	}
+	if len(runtime.creates()) != 1 || len(runtime.removed) != 1 {
+		t.Fatalf("created %d, removed %v; want the created container removed", len(runtime.creates()), runtime.removed)
+	}
+}

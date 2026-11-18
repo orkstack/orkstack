@@ -344,7 +344,12 @@ to raise the unknown-attempt warning; its attempt record stays a record.
 Use a deterministic commit key. At retry start, if a valid `commit.json` exists,
 return its committed result and do not execute the container again. This only
 prevents duplicate container execution after OrkStack has durably committed the
-result; it does not make arbitrary external side effects exactly once.
+result; it does not make arbitrary external side effects exactly once. The one
+exception is an Orker's namespace guard (§5): an Orker that does not serve the
+task's namespace reads no commit of it, so it fails the attempt explicitly
+and terminally with `NAMESPACE_NOT_SERVED`, a `ContractViolation` that is
+never retried. The commit stays where it is, durable and undeleted, and its
+result never becomes pending again (§15).
 
 A cached task's memo is advisory. A hit writes this run's own `commit.json`
 referencing the source commit's content-addressed objects and starts no
@@ -401,6 +406,8 @@ check the task against this Orker's own policy, once no commit or memo answers i
 check the task's profiles against this Orker's and the run's, after the
   commit check and before the memo step
 resolve the OCI image and digest
+bind a `gpu` profile's units, after the image is pulled and before the
+  container is created
 create an isolated workspace
 materialize input artifacts
 resolve secret files
@@ -416,23 +423,32 @@ return a compact ActivityResult
 cleanup
 ```
 
-An Orker that declares a capacity (`orker.capacity`) admits no task that
-would take its reservations above it. It reserves before it polls the
-largest request the channel it polls can carry, trims that reservation to
-the task's resolved request once the task is in hand, and frees it when the
-attempt's container is removed. A pinned member is counted but never made
+An Orker that declares a capacity (`orker.capacity`) or a `gpu` profile admits
+no task that would take its reservations above it. It reserves before it polls
+the largest request the channel it polls can carry — cpu, memory and GPU units
+— trims that reservation to the task's resolved request once the task is in
+hand, and frees it when the attempt's container is removed, or when the
+attempt ends without one. A pinned member is counted but never made
 to wait, because it can run nowhere else; while the reservations stand at
-or above capacity, the Orker polls for no new task. The ledger is
+or above capacity, the Orker polls for no new task. GPU units are bound, not
+only counted: a task is given its whole set of units, each held by no other
+task, and a pinned task holds none. One Orker on a host holds its `gpu`
+profile at a time; another waits, paused, until it exits. The ledger is
 process-local, exactly as a cordon is: never stored, never shared, gone
 with the process. It is admission, not placement: Temporal decides which
 polling Orker receives a task, and OrkStack never chooses a host.
 
 Every Orker of a pool has the same settings — caps, default request,
 capacity, `max_concurrent`, secret schemes and floor, `env` allow-list,
-registry credentials, runtime, pin hosting, profiles, stop grace, log masking, whether a
-secret may be a task's result — so a run never fails because of
+registry credentials, runtime, pin hosting, profiles, stop grace, log masking, the
+namespaces it serves, whether a secret may be a task's result — so a run never fails because of
 which Orker took a task. Where they differ, a task fails explicitly with its
-own reason. A committed result is never refused for any of them. A memo hit
+own reason. A committed result is never refused for any of them but the
+namespaces an Orker serves (`orker.namespaces`), which it checks before it
+reads anything: a task of a namespace it does not serve, or whose input names
+a commit of another namespace, fails `NAMESPACE_NOT_SERVED`, a
+`ContractViolation` that ends the task and is never retried, and the Orker
+neither reads nor deletes any commit of it (§4.1). Unset, an Orker serves every namespace. A memo hit
 is never refused for the caps, secret schemes, floor or runtime, but a cached
 task is rendered, its image policy checked and its profiles checked before its
 memo lookup, so a differing `env` allow-list, registry credentials or profile
@@ -462,13 +478,23 @@ Orker-credential mounts
 capability additions, device cgroup rules, or a device an Orkflow names by path
 ```
 
-Profile kinds are a closed set compiled into the Orker (`devices`), as
+Profile kinds are a closed set compiled into the Orker (`devices`, `gpu`), as
 `cosign:` is (§5): a profile is data an operator writes, never code. A task
 reaches a host device only through a **device profile** the Orker's operator
 defined; an Orkflow names the profile, never a path, flag or CDI name. Only an
 Orker that runs on its container daemon's own host offers a device profile,
 and it proves that at boot and periodically. A device is a character device
 of a class the Orker's compiled allow-list names.
+
+A GPU reaches a task only as a counted, exclusive unit of a `gpu` profile,
+through CDI. A CDI spec is operator data read only from directories root
+alone can write, and its owners hold the trust of the host's root; it may
+pass a unit's device nodes and groups only, and a hook, an environment
+variable or a mount in it is refused. The spec bytes and device nodes of a
+profile the Orker audited stay fixed for its lifetime: any change is detected
+before a container is started, is drift, and is never adopted; only a restart
+audits again. No device grants a capability or `--privileged`, and the
+mandatory profile is unchanged.
 
 Prefer `no-new-privileges`, default seccomp, resource limits, isolated working
 directories, and rootless execution when supported. Initially support only
@@ -488,6 +514,15 @@ caps requested resources, and an Orker that declares a capacity admits a task
 only within it (§5). Workflows must not receive unlimited resources by
 default. Put complicated execution logic in a container instead of adding
 platform primitives.
+
+Every Orker of a deployment writes results to one bucket, and its Temporal
+credential can poll any pool, so namespaces and pools divide a deployment
+among cooperating teams and are not a boundary between them. A trust zone
+(production and development, or tenants that must not reach each other) is a
+deployment of its own, with its own bucket, credentials, Temporal namespace,
+engines and Orkers. An Orker's namespace list (§5) guards honest Orkers
+against wrong routing; it is not that boundary (`docs/DEPLOY.md`, "Trust
+zones: a deployment per zone").
 
 Secrets come from secret references or explicitly supplied workload secrets,
 never committed source. `.env` is gitignored. Shell commands must not
@@ -624,7 +659,9 @@ internal never appears on any of those surfaces.
   its checkpoint its "saved state" (`RUN_STATE_*`); `RUN_HISTORY_LIMIT`
   speaks of the run's history as a whole.
 - **Profile** means a named, operator-defined Orker setting a task selects by
-  name: a device profile (`devices:`, kind `devices`).
+  name: a device profile (`devices:`, kind `devices` or `gpu`). A **unit** is
+  one exclusively bound element of a `gpu` profile, identified by its 0-based
+  position in the profile's list.
 - **Pin host** means an Orker configured to accept pins
   (`ORK_ORKER_MAX_PINS` above zero). Every Orker still runs ordinary tasks;
   only a pin host runs pinned ones.
@@ -807,8 +844,8 @@ internal never appears on any of those surfaces.
   | operator | an operator, over the Orker's control channel | the operator | no |
   | store outage | the Orker, after consecutive failed object-storage checks | the Orker, after consecutive good ones | yes |
   | stopping | the Orker, on its first stop signal; from then it accepts no new task, pin or pin creation, and what its open polls still deliver runs in flight | the process's exit | yes, until the process exits |
-  | profile drift | the Orker, when a profile no longer matches what it audited | a restart | no |
-  | profile unavailable | the Orker, when a profile's devices or units are absent | the Orker, after consecutive good checks | yes |
+  | profile drift | the Orker, when a profile no longer matches what it audited, or the GPU host lock directory was replaced | a restart | no |
+  | profile unavailable | the Orker, when a profile's devices or units are absent, or the GPU host lock is held by another process, or fewer usable GPU units than a task may hold | the Orker, after consecutive good checks, or once the lock is held or the units are back | yes |
 - **Drain** means setting an operator's cordon on an Orker and waiting until it
   reports no running task and no open pin. It is a client-side wait over the inventory read
   (`orkctl orker drain`); nothing server-side holds drain state. An Orker's
@@ -1183,10 +1220,15 @@ includes:
 - exit `1`, exit `0` without `values.json`, malformed JSON, output-size excess,
   timeout, cancellation, ignored SIGTERM, unavailable input artifact, failed
   image pull, and a tag changing between executions;
-- a device of a profile changed after boot, even to one that would pass the
-  audit: the Orker cordons itself for drift, at the periodic audit or at the
-  latest before its container starts, with no container started, and only a
-  restart audits again;
+- a device or CDI spec of a profile changed after boot, even to one that would
+  pass the audit: the Orker cordons itself for drift, at the periodic audit or
+  at the latest before its container starts, with no container started, and
+  only a restart audits again;
+- a `gpu` profile's units, on real devices: two tasks never hold one unit, a
+  create that fails frees its units, a health probe never takes a unit a task
+  was promised, a restarted Orker reaps or keeps only containers bound under
+  the GPU lock it now holds, and a second Orker of the host waits, paused,
+  until the first exits;
 - every task of a pin landing on ONE Orker while three real pin hosts poll the
   same pool, and no failover when that host is killed mid-container: the run
   fails `PIN_HOST_LOST`, and the survivors' own execution records and work
@@ -1315,6 +1357,13 @@ its base's list also carries: an entry the change itself adds is run, and
 recorded as it ran. The deferred tests and specs run in the nightly tier and
 in the pre-release gate, and a release tag requires a passing pre-release
 proof of the exact commit it names.
+
+The tests `scripts/proof-gpu-tests.txt` lists need the GPU host it names: a
+proof without `ORK_PROOF_GPU_HOST=1` records them as `host-deferred`; a proof of
+the **GPU-host tier** (a full proof, or the GPU gate alone, `make proof-gpu`,
+run on that host with the flag) runs them; and a change to a path the list
+names merges only with a passing GPU-host proof of its tree
+(`make merge-check GPU=`).
 
 The merge gate's absolute wall-clock budgets — the soaks' live `GetRun` p95,
 the run page's and the item list's 5 s — were calibrated on the 16-CPU
@@ -1565,12 +1614,11 @@ Some suites have an activity container call a stub on the host at
 `host.docker.internal`; a Linux host with plain Docker Engine needs one-time
 host setup for that name (CONTRIBUTING.md, "Linux hosts"). It is host setup, never
 Orker behavior: the Orker must not add `--add-host` or any host-network
-configuration to activity containers (§6). The observability gate's
-Prometheus reaches the admin listeners over that same default bridge:
-`scripts/proof-observability.sh` attaches its own Prometheus container to the
-bridge and binds that run's admin listeners to the bridge's gateway, for the
-gate only. That is proof and development setup, never a `deploy/` default or a
-production listener (CONTRIBUTING.md, "Linux hosts", says what it exposes).
+configuration to activity containers (§6). The observability gate needs no
+such route: `ork` and `orker` push every signal over OTLP to the observability
+profile's Collector on loopback, the kit's Prometheus scrapes nothing
+(`TestKit_NoScrapeConfigs`), and the gate binds its admin listeners to
+loopback.
 
 Integration tests run concurrently: as separate processes within a proof, and
 beside other agents' proofs on the same host. Each integration test owns these
@@ -1620,8 +1668,8 @@ proof runs Playwright specs on a host at a time: the Playwright gate takes a
 host-wide lock, so one proof's specs wait for another's, and never run beside
 them. Specs run by hand (`cd ui && bun run test`) take no lock; do
 not run them while a proof's Playwright gate runs. The observability gate is
-the other exception: its Prometheus scrape targets are fixed ports, so it runs
-under a host-wide lock of its own. A test that proves something did NOT happen within a
+the other exception: its admin listeners bind fixed ports, so it runs under a
+host-wide lock of its own. A test that proves something did NOT happen within a
 window also observes, in that window, that the system was making progress, so
 a slow host cannot make it pass.
 
@@ -1681,7 +1729,7 @@ detector, several times in one run) and the fuzz lane (every Fuzz target,
 sharing one time budget for the whole lane, a crasher failing it and its input
 kept) — and is never merge
 evidence. The pre-release gate is the full tier with nothing
-deferred. A release tag
+deferred except the entries it records `host-deferred`. A release tag
 requires a passing pre-release proof of the exact commit. docs/PROOFS.md is
 the reference for what each tier runs.
 
@@ -1716,7 +1764,10 @@ the reference for what each tier runs.
   and publishes only from `main`, in one job, after one approval of its
   `release` environment, pushing the tag with a token of the GitHub App that
   environment holds and never through the API; `make release-tag` tags locally
-  and publishes nothing.
+  and publishes nothing. A release requires a passing GPU-host proof of the
+  exact commit; `release.yml` does not check it, its release-environment
+  approval summary says `GPU-host proof not checked`, and
+  `make release-tag GPU=` checks it locally.
 - A skip is never a pass. The ledgers list every test the binaries report; a
   listed test without an outcome, an unlisted test, and an allowance naming
   no test all fail the gate.
@@ -1737,14 +1788,17 @@ images, built and pushed from this tree under a tag of the proof's own
 differs from its unit build, except the deferred ones, against real Temporal
 and SeaweedFS with `ORK_REQUIRE_INFRA=1`; the activity contract fixture, run
 on those images; the UI type-check and unit suites; the site's check and
-build; the race gate (the unit suites under the race detector, `-short`);
+build; the alerts gate (promtool on the observability kit's rules, at the
+pinned Prometheus); the race gate (the unit suites under the race detector,
+`-short`);
 every Playwright spec; and the observability gate. Its base is not a choice:
 the gate lists are anchored to `main` (an entry the change itself adds excuses
 nothing and defers nothing), a full proof whose recorded base is not `main` is
 not merge-eligible, and `merge-check PROOF=` requires that base to be `main`'s
 current tip. Concurrency is how the full proof is fast, never a
 reason to run less: the fast gates (lint, build, unit, vet, the UI type-check
-and unit suites, the site's check and build and the race gate) run first and
+and unit suites, the site's check and build, the alerts gate and the race
+gate) run first and
 alone, and a failure there or in any later gate stops a local proof
 (`PROOF_FAIL_FAST`, docs/PROOFS.md §2.2), which still writes its failing
 verdict; integration
@@ -1764,7 +1818,12 @@ Playwright ledger, list every test that `go test -list` and
 duration. A listed test without an outcome fails the gate. In the full tier,
 `deferred` is a recorded outcome, not a missing one. It is legal only for a
 test the nightly list names, or a test of a spec file the nightly spec list
-names, and in every other tier it fails the gate. A skip
+names, and in every other tier it fails the gate.
+`host-deferred` is legal in the full, nightly and pre-release tiers only for
+an entry both the base's and the tree's `scripts/proof-gpu-tests.txt` carry;
+in the GPU-host tier it fails the gate. With `ORK_PROOF_GPU_HOST=1` a missing
+GPU device, spec or lock group exits 77, never `host-deferred`, and
+`proof.json` records whether the GPU gate ran. A skip
 also fails it, unless `scripts/proof-allowed-skips.txt` names the test and the
 reason (an opt-in recorder, a helper subprocess); an allowed-skip entry that
 names no listed test fails it too. The race gate alone records a skip it
@@ -1816,7 +1875,10 @@ enablement applies unless it is told not to (`CODEOWNER_REVIEW=0`), requires
 the maintainer's review for a change to the gate's own files. A Dependabot pull
 request's `proof` fails until someone adds the `ci:proof` label, which starts the
 proof (`proof-label.yml`, docs/PROOFS.md §5); a required check must never be
-reported skipped, because GitHub counts that as passing.
+reported skipped, because GitHub counts that as passing. This path cannot
+check `GPU=`: a CI proof records every row of `scripts/proof-gpu-tests.txt`
+`host-deferred`, so a pull request that touches a path the list names merges
+only through path (b), with `make merge-check GPU=` locally.
 
 **(b) Locally.** Branch from `main`'s tip and squash the feature branch onto it
 with `git merge --squash`, then one Conventional Commit. Several branches that

@@ -1870,7 +1870,8 @@ type UsageRow struct {
 	// by reason; an older Orker's records, and a reason this engine does not
 	// know, count under UNMEASURED_REASON_UNSPECIFIED.
 	AttemptsUnmeasuredByReason []*UnmeasuredReasonCount `protobuf:"bytes,21,rep,name=attempts_unmeasured_by_reason,json=attemptsUnmeasuredByReason,proto3" json:"attempts_unmeasured_by_reason,omitempty"`
-	// gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch).
+	// gpu_seconds is gpu units × held time, counted as cpu and memory are;
+	// reported only, never budgeted.
 	GpuSeconds float64 `protobuf:"fixed64,22,opt,name=gpu_seconds,json=gpuSeconds,proto3" json:"gpu_seconds,omitempty"`
 	// memory_utilization_attempts is how many records the memory percentiles
 	// cover: measured records whose container had a limit and whose peak is
