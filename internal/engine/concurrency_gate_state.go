@@ -20,9 +20,25 @@ import (
 // into signals, timers and local activities, so every rule is unit-tested and
 // fuzzed apart from Temporal.
 
-// gateProto is the gate protocol's version (§5.1.3). A payload naming a newer
-// one is refused; every earlier one is accepted.
-const gateProto = 1
+// gateProto is the protocol of what the gate writes: its answers and the
+// entries it adopts (§5.1.3). An acquire may speak any protocol up to
+// gateProtoOrdinal; a newer one is refused.
+const gateProto = gateProtoLegacy
+
+// The acquire protocols (§22.14.1): an acquire whose slot ordinal n is 0 is
+// sent as protocol 1, unchanged; one with n above 0 as protocol 2, which a
+// gate that predates the ordinal refuses in its validator, explicitly.
+const (
+	gateProtoLegacy  = 1
+	gateProtoOrdinal = 2
+)
+
+// gateOrdinalWire is the largest ordinal modulus the carry's encoding and
+// the wire take (E88 P3, decision D11): a slot ordinal is below it, so it
+// costs a full gate's carry at most ten digits an entry and a tombstone.
+// The modulus a gate decides with is its tunables' OrdinalModulus, pinned
+// when it starts and carried; this bounds what one may be set to.
+const gateOrdinalWire = 1 << 32
 
 // The strategies a limit declares (§3). P2's gate decides queue, refuse and
 // skip; cancel_oldest and replace are refused by the validator until the
@@ -65,8 +81,11 @@ const (
 
 // gateCarryBound is the most a gate's encoded state may take (§5.1.9): the
 // boot refuses tunables whose worst case is larger, so a continue-as-new
-// carry stays inside the 256 KiB payload bound with room for its envelope.
-const gateCarryBound = 224 << 10
+// carry stays inside the 256 KiB payload bound with room for its envelope
+// (GateStart's other fields, under 1 KiB). 240 KiB since slot ordinals
+// (E88 P3, decision D11). It decides no workflow command, only whether the
+// boot accepts the tunables, so it is a code constant (AGENTS.md §7.2).
+const gateCarryBound = 240 << 10
 
 // GateTunables are the gate's own input (§5.1.8, §9.6 "gate input"): decided
 // by the acquire that starts it and carried by every continue-as-new, so a
@@ -100,6 +119,34 @@ type GateTunables struct {
 	ContinueEvents      int           `json:"gate_continue_events"`
 	ContinueUpdates     int           `json:"gate_continue_updates"`
 	Linger              time.Duration `json:"gate_linger"`
+	// OrdinalModulus is what a slot's ordinal n wraps at (§22.14.1, decision
+	// D11). n counts a run's give-backs of one slot, one per pause, and
+	// nothing bounds how often a run is paused, so it wraps rather than
+	// running into a cap that would refuse a legitimate run. Ordinals are
+	// compared in serial-number arithmetic (RFC 1982): a is newer than b
+	// when (a − b) mod OrdinalModulus is in [1, OrdinalModulus/2). The gate
+	// keeps at most one entry and one tombstone per slot, so only their
+	// order against the next acquire matters, and the default modulus is
+	// 2^32: a comparison goes wrong only after 2^31 give-backs of one slot
+	// within one tombstone's life. Each give-back is a pause, an unpause and
+	// an acquire Update the gate answers, seconds apart at the least: at one
+	// a second, 2^31 of them take 68 years, longer than any tombstone life a
+	// deployment could configure, so no timing bound needs enforcing. Half the modulus apart is neither
+	// newer nor older, and is fenced. Zero, as a gate started before
+	// ordinals carries it, accepts only n = 0.
+	OrdinalModulus int64 `json:"ordinal_modulus,omitempty"`
+}
+
+// ordinalNewer reports that ordinal a is newer than b, in serial-number
+// arithmetic modulo OrdinalModulus. Without a modulus only 0 exists, and
+// nothing is newer.
+func (t GateTunables) ordinalNewer(a, b int64) bool {
+	m := t.OrdinalModulus
+	if m <= 0 {
+		return false
+	}
+	d := ((a-b)%m + m) % m
+	return d >= 1 && d < m/2
 }
 
 // DefaultGateTunables are §9.6's defaults.
@@ -133,6 +180,7 @@ func DefaultGateTunables() GateTunables {
 		ContinueEvents:      2000,
 		ContinueUpdates:     500,
 		Linger:              5 * time.Minute,
+		OrdinalModulus:      gateOrdinalWire,
 	}
 }
 
@@ -196,6 +244,10 @@ type gateEntry struct {
 	// and whether a pass found it stalled.
 	MissingSince time.Time `json:"missing_since,omitzero"`
 	Stalled      bool      `json:"stalled,omitempty"`
+	// N is the slot's ordinal (§22.14.1): how many times the run gave this
+	// slot back and took it again. The gate keeps at most one entry per
+	// (run, seq_base, task_ix), of one ordinal.
+	N int64 `json:"n,omitempty"`
 }
 
 func (e gateEntry) same(run string, seqBase int64, taskIx int) bool {
@@ -218,6 +270,10 @@ type gateTomb struct {
 	Below     int64     `json:"below,omitempty"`
 	Until     time.Time `json:"until"`
 	RemovedBy string    `json:"removed_by,omitempty"`
+	// N is the highest ordinal a slot tombstone fences (§22.15): an acquire
+	// of its slot whose n is at most N is fenced. A tombstone written before
+	// ordinals has none, which is 0.
+	N int64 `json:"n,omitempty"`
 }
 
 // gateRebuild is the rebuild's progress (§5.1.6).
@@ -259,6 +315,13 @@ type gateAcquire struct {
 	IssuedAt  time.Time `json:"issued_at"`
 	ArrivedAt time.Time `json:"arrived_at,omitzero"`
 	Seq       int64     `json:"seq,omitempty"`
+	// N is the slot's ordinal (§22.14.1), 0 unless the run gave the slot back
+	// and asks for it again; sent only with protocol 2.
+	N int64 `json:"n,omitempty"`
+	// Requeue marks an acquire made again after a give-back (§22.5). The
+	// gate never enforces max_queued (decision D9), so it decides nothing
+	// here; it is carried so the run's record says why it asked.
+	Requeue bool `json:"requeue,omitempty"`
 }
 
 // gateAnswer is an acquire's reply.
@@ -293,8 +356,12 @@ func (r *gateRejection) Error() string { return r.Reason }
 // anything is written to history.
 func (g *gateState) validateAcquire(req gateAcquire, now time.Time) error {
 	switch {
-	case req.Proto > gateProto:
-		return &gateRejection{Protocol: true, Reason: fmt.Sprintf("acquire speaks protocol %d; this gate speaks %d", req.Proto, gateProto)}
+	case req.Proto > gateProtoOrdinal:
+		return &gateRejection{Protocol: true, Reason: fmt.Sprintf("acquire speaks protocol %d; this gate speaks up to %d", req.Proto, gateProtoOrdinal)}
+	case req.N < 0 || (req.N > 0 && req.N >= g.Tunables.OrdinalModulus):
+		return &gateRejection{Protocol: true, Reason: fmt.Sprintf("acquire's slot ordinal is %d; this gate takes 0 to %d", req.N, max(0, g.Tunables.OrdinalModulus-1))}
+	case req.N > 0 && req.Proto < gateProtoOrdinal:
+		return &gateRejection{Protocol: true, Reason: fmt.Sprintf("acquire carries slot ordinal %d with protocol %d; an ordinal needs protocol %d", req.N, req.Proto, gateProtoOrdinal)}
 	case req.Proto < 1:
 		return &gateRejection{Protocol: true, Reason: fmt.Sprintf("acquire names no protocol (%d)", req.Proto)}
 	case !gateStrategyDecided(req.Strategy):
@@ -349,14 +416,15 @@ func (g *gateState) queueIx(run string, seqBase int64, taskIx int) int {
 	return slices.IndexFunc(g.Queue, func(e gateEntry) bool { return e.same(run, seqBase, taskIx) })
 }
 
-// tombFor is the live tombstone that fences (run, seqBase, taskIx), if any.
-func (g *gateState) tombFor(run string, seqBase int64, taskIx int, now time.Time) (gateTomb, bool) {
+// tombFor is the live tombstone that fences (run, seqBase, taskIx) at
+// ordinal n, if any.
+func (g *gateState) tombFor(run string, seqBase int64, taskIx int, n int64, now time.Time) (gateTomb, bool) {
 	slot, whole := slotTombKey(run, seqBase, taskIx), runTombKey(run)
 	for _, t := range g.Tombstones {
 		if !now.Before(t.Until) {
 			continue
 		}
-		if (!t.RunLevel && t.Key == slot) || (t.RunLevel && t.Key == whole && t.Below > seqBase) {
+		if (!t.RunLevel && t.Key == slot && !g.Tunables.ordinalNewer(n, t.N)) || (t.RunLevel && t.Key == whole && t.Below > seqBase) {
 			return t, true
 		}
 	}
@@ -397,10 +465,20 @@ type gateDecision struct {
 	// Granted: this decision moved the acquirer into the holders. The run
 	// learns it from the answer, not from a grant signal.
 	Granted bool
+	// Admitted are the entries this decision moved from the line into the
+	// holders when it replaced the acquirer's older ordinal (§22.15): the
+	// gate signals them as it signals any grant.
+	Admitted []gateEntry
+	// Replaced: this decision replaced the acquirer's older ordinal, so a
+	// decision after a pass treats it as a new arrival, never at the place
+	// it re-asserts.
+	Replaced bool
 }
 
-// decideAcquire is §5.1.4's order. A pass request leaves g unchanged; the
-// gate runs the pass and decides again with afterPass set.
+// decideAcquire is §5.1.4's order, with §22.14.1's ordinal rules. A pass
+// request leaves g unchanged but for a replacement it made, whose Admitted
+// entries it returns with the request; the gate runs the pass and decides
+// again with afterPass set.
 func (g *gateState) decideAcquire(req gateAcquire, now time.Time, afterPass bool) gateDecision {
 	answer := func(a string) gateDecision {
 		return gateDecision{Answer: gateAnswer{Proto: gateProto, Answer: a, Epoch: g.Epoch}}
@@ -410,7 +488,7 @@ func (g *gateState) decideAcquire(req gateAcquire, now time.Time, afterPass bool
 		return answer(gateAnswerFenced)
 	}
 	// 2. Tombstoned.
-	if t, ok := g.tombFor(req.Run, req.SeqBase, req.TaskIx, now); ok {
+	if t, ok := g.tombFor(req.Run, req.SeqBase, req.TaskIx, req.N, now); ok {
 		if t.RemovedBy != "" {
 			d := answer(gateAnswerSuperseded)
 			d.Answer.By, d.Answer.Strategy = t.RemovedBy, req.Strategy
@@ -418,19 +496,50 @@ func (g *gateState) decideAcquire(req gateAcquire, now time.Time, afterPass bool
 		}
 		return answer(gateAnswerFenced)
 	}
-	// 3. Already a holder.
+	// 3. Already a holder, and 4. already queued: the same ordinal is this
+	// acquire's own entry; a newer one fences it; an older one is replaced
+	// (§22.14.1, §22.15): removed and fenced at its ordinal, the holders it
+	// freed admitted from the line, and this acquire decided as a new
+	// arrival at the tail.
+	var admitted []gateEntry
+	replaced := false
 	if i := g.holderIx(req.Run, req.SeqBase, req.TaskIx); i >= 0 {
-		d := answer(gateAnswerGranted)
-		d.Answer.Seq, d.Answer.ArrivedAt = g.Holders[i].Seq, g.Holders[i].ArrivedAt
-		return d
+		switch h := g.Holders[i]; {
+		case h.N == req.N:
+			d := answer(gateAnswerGranted)
+			d.Answer.Seq, d.Answer.ArrivedAt = h.Seq, h.ArrivedAt
+			return d
+		case !g.Tunables.ordinalNewer(req.N, h.N):
+			// Older, or half the modulus away and so neither: fenced.
+			return answer(gateAnswerFenced)
+		}
+		g.release(req.Run, req.SeqBase, req.TaskIx, g.Holders[i].N, now)
+		admitted, replaced = g.admitHeads(now), true
+	} else if i := g.queueIx(req.Run, req.SeqBase, req.TaskIx); i >= 0 {
+		switch q := g.Queue[i]; {
+		case q.N == req.N:
+			d := g.queuedAnswer(i)
+			d.WantsPass = !afterPass && g.checkDue(now)
+			return d
+		case !g.Tunables.ordinalNewer(req.N, q.N):
+			return answer(gateAnswerFenced)
+		}
+		g.release(req.Run, req.SeqBase, req.TaskIx, g.Queue[i].N, now)
+		admitted, replaced = g.admitHeads(now), true
 	}
-	// 4. Already queued.
-	if i := g.queueIx(req.Run, req.SeqBase, req.TaskIx); i >= 0 {
-		d := g.queuedAnswer(i)
-		d.WantsPass = !afterPass && g.checkDue(now)
-		return d
+	// A replacement joins the tail as a new arrival, never at a re-asserted
+	// place: a paused run gives up its place in the line (§22.15).
+	d := g.decideArrival(req, now, afterPass, !replaced && !req.ArrivedAt.IsZero() && req.Seq > 0)
+	d.Admitted, d.Replaced = append(admitted, d.Admitted...), replaced
+	return d
+}
+
+// decideArrival is §5.1.4 from step 5: an acquire the gate holds no entry
+// for. reassert is whether it takes the place it re-asserts.
+func (g *gateState) decideArrival(req gateAcquire, now time.Time, afterPass, reassert bool) gateDecision {
+	answer := func(a string) gateDecision {
+		return gateDecision{Answer: gateAnswer{Proto: gateProto, Answer: a, Epoch: g.Epoch}}
 	}
-	reassert := !req.ArrivedAt.IsZero() && req.Seq > 0
 	// 5. Rebuilding, or settling after one: refuse and skip cannot be told
 	// the key is full when the gate does not yet know.
 	if g.rebuilding() || g.settling(now) {
@@ -477,7 +586,7 @@ func (g *gateState) grant(req gateAcquire, now, arrivedAt time.Time, seq int64) 
 		Run: req.Run, TaskIx: req.TaskIx, SeqBase: req.SeqBase, Limit: req.Limit,
 		Strategy: req.Strategy, Proto: req.Proto, LabelIx: g.labelIx(req.Label),
 		ArrivedAt: arrivedAt, Seq: seq, GrantedAt: now,
-		VerifyPending: now.Before(g.FenceDegradedUntil),
+		VerifyPending: now.Before(g.FenceDegradedUntil), N: req.N,
 	})
 	g.Seq = max(g.Seq, seq)
 	return gateDecision{
@@ -500,7 +609,7 @@ func (g *gateState) enqueue(req gateAcquire, now time.Time, reassert bool) gateD
 	g.Queue = slices.Insert(g.Queue, at, gateEntry{
 		Run: req.Run, TaskIx: req.TaskIx, SeqBase: req.SeqBase, Limit: req.Limit,
 		Strategy: req.Strategy, Proto: req.Proto, LabelIx: g.labelIx(req.Label),
-		ArrivedAt: arrivedAt, Seq: seq, WaitUntil: req.WaitUntil,
+		ArrivedAt: arrivedAt, Seq: seq, WaitUntil: req.WaitUntil, N: req.N,
 	})
 	g.Seq = max(g.Seq, seq)
 	return g.queuedAnswer(at)
@@ -532,12 +641,55 @@ func (g *gateState) admitHeads(now time.Time) []gateEntry {
 	return granted
 }
 
-// release removes (run, seqBase, taskIx) and fences it (§5.1.4). It is
-// idempotent: a second release only refreshes the tombstone.
-func (g *gateState) release(run string, seqBase int64, taskIx int, now time.Time) {
-	g.Holders = slices.DeleteFunc(g.Holders, func(e gateEntry) bool { return e.same(run, seqBase, taskIx) })
-	g.Queue = slices.DeleteFunc(g.Queue, func(e gateEntry) bool { return e.same(run, seqBase, taskIx) })
-	g.addTomb(gateTomb{Key: slotTombKey(run, seqBase, taskIx), Until: now.Add(g.Tunables.tombstoneLife())}, now)
+// release removes the entry of (run, seqBase, taskIx) at ordinal n, or at
+// an older one, and fences the slot up to n (§5.1.4, §22.14.1). It reports
+// whether it freed an entry, and it is idempotent: a second release only
+// refreshes the tombstone.
+//
+// An entry of a newer ordinal than n is the run's later acquire, and a late
+// release(n) leaves it, and fences nothing. An entry of an older ordinal is
+// one the run already gave back and moved past: it sends release(n) only for
+// an n it asked for, after releasing every earlier one, so an older entry
+// still here means that release, or the acquire n replaced it with, was
+// lost. Leaving it would hold a slot no run will release; it is freed.
+// Half the modulus away is neither newer nor older: left, and fenced
+// nothing, like a newer one, and reported not freed.
+func (g *gateState) release(run string, seqBase int64, taskIx int, n int64, now time.Time) bool {
+	for _, e := range slices.Concat(g.Holders, g.Queue) {
+		if e.same(run, seqBase, taskIx) && e.N != n && !g.Tunables.ordinalNewer(n, e.N) {
+			return false
+		}
+	}
+	freed := false
+	match := func(e gateEntry) bool {
+		if e.same(run, seqBase, taskIx) {
+			freed = true
+			return true
+		}
+		return false
+	}
+	g.Holders = slices.DeleteFunc(g.Holders, match)
+	g.Queue = slices.DeleteFunc(g.Queue, match)
+	g.addTomb(gateTomb{Key: slotTombKey(run, seqBase, taskIx), Until: now.Add(g.Tunables.tombstoneLife()), N: n}, now)
+	return freed
+}
+
+// checkOrdinals refuses a state whose entries or tombstones carry an
+// ordinal this gate's modulus cannot hold: a carry the gate could only
+// misorder (decision D11).
+func (g *gateState) checkOrdinals() error {
+	bad := func(n int64) bool { return n < 0 || (n > 0 && n >= g.Tunables.OrdinalModulus) }
+	for _, e := range slices.Concat(g.Holders, g.Queue) {
+		if bad(e.N) {
+			return fmt.Errorf("a gate's carried entry of run %s has ordinal %d; its modulus is %d", e.Run, e.N, g.Tunables.OrdinalModulus)
+		}
+	}
+	for _, t := range g.Tombstones {
+		if bad(t.N) {
+			return fmt.Errorf("a gate's carried tombstone %s has ordinal %d; its modulus is %d", t.Key, t.N, g.Tunables.OrdinalModulus)
+		}
+	}
+	return nil
 }
 
 // releaseAll removes every entry of run whose seq_base is below below, and
@@ -559,7 +711,18 @@ func (g *gateState) releaseAll(run string, below int64, now time.Time) {
 // (§5.1.4).
 func (g *gateState) addTomb(t gateTomb, now time.Time) {
 	g.Tombstones = slices.DeleteFunc(g.Tombstones, func(o gateTomb) bool {
-		return !now.Before(o.Until) || (o.Key == t.Key && o.RunLevel == t.RunLevel)
+		if !now.Before(o.Until) {
+			return true
+		}
+		if o.Key == t.Key && o.RunLevel == t.RunLevel {
+			// One tombstone per identity, whose fenced ordinal only moves
+			// forward.
+			if g.Tunables.ordinalNewer(o.N, t.N) {
+				t.N = o.N
+			}
+			return true
+		}
+		return false
 	})
 	g.Tombstones = append(g.Tombstones, t)
 	for len(g.Tombstones) > g.Tunables.MaxTombstones {
@@ -644,6 +807,8 @@ func (t GateTunables) Check() error {
 		return fmt.Errorf("engine.concurrency.gate_continue_events is %d; it must be at least %d, four check passes", t.ContinueEvents, 4*gatePassEvents)
 	case t.ContinueUpdates < 4:
 		return fmt.Errorf("engine.concurrency.gate_continue_updates is %d; it must be at least 4", t.ContinueUpdates)
+	case t.OrdinalModulus < 2 || t.OrdinalModulus > gateOrdinalWire || t.OrdinalModulus%2 != 0:
+		return fmt.Errorf("the gate's ordinal modulus is %d; it must be even, from 2 to %d", t.OrdinalModulus, gateOrdinalWire)
 	case t.Linger <= t.tombstoneLife():
 		return fmt.Errorf("engine.concurrency.gate_linger (%s) must be above acquire_timeout + clock_grace + tombstone_margin (%s): "+
 			"a gate closed sooner could reopen clean while a release's fence still stands", t.Linger, t.tombstoneLife())
@@ -709,13 +874,13 @@ func worstCaseGateState(t GateTunables) gateState {
 	}
 	full := gateEntry{Run: runID, TaskIx: 1 << 20, SeqBase: 1 << 62, Limit: 1 << 30, Strategy: gateStrategyCancelOldest,
 		Proto: gateProto, LabelIx: t.MaxLabels, ArrivedAt: at, Seq: 1 << 62, WaitUntil: at, GrantedAt: at,
-		VerifyPending: true, Adopted: true, GrantPending: true, MissingSince: at, Stalled: true}
+		VerifyPending: true, Adopted: true, GrantPending: true, MissingSince: at, Stalled: true, N: gateOrdinalWire - 1}
 	g.Holders = append(g.Holders, full)
 	for range max(1, t.MaxEntries-1) {
 		g.Queue = append(g.Queue, full)
 	}
 	for range t.MaxTombstones {
-		g.Tombstones = append(g.Tombstones, gateTomb{Key: strings.Repeat("k", 16), RunLevel: true, Below: 1 << 62, Until: at, RemovedBy: runID})
+		g.Tombstones = append(g.Tombstones, gateTomb{Key: strings.Repeat("k", 16), RunLevel: true, Below: 1 << 62, Until: at, RemovedBy: runID, N: gateOrdinalWire - 1})
 	}
 	g.Draining = true
 	return g
