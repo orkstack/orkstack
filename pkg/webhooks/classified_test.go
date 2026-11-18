@@ -10,8 +10,9 @@ import (
 
 // notSubscribable is every event type a subscription can never name.
 // RUN_PAUSED and RUN_UNPAUSED join KnownEvents when pausing reaches the API
-// (E103 PR3); no run emits them before then.
-var notSubscribable = []Event{"RUN_CREATED", "TASK_LOG", "STREAM_GAP"}
+// (E103 PR3); no run emits them before then. RUN_QUEUED and TASK_QUEUED join
+// it, opt-in, with E88 P3's webhook rule.
+var notSubscribable = []Event{"RUN_CREATED", "TASK_LOG", "STREAM_GAP", "RUN_QUEUED", "TASK_QUEUED"}
 
 // TestWebhooks_EveryEventTypeIsClassified: a new proto event type fails here
 // until it is placed in KnownEvents or in notSubscribable, so no event is
