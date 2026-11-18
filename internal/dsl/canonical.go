@@ -157,6 +157,23 @@ func canonicalOrkflow(wf *orkstackv1.Orkflow) ([]byte, error) {
 	if seconds := wf.GetTimeoutSeconds(); seconds > 0 {
 		out["timeout"] = shortDuration(time.Duration(seconds) * time.Second)
 	}
+	// concurrency is emitted ONLY when declared, as timeout is: a definition
+	// without one keeps its digest. Its queue timeout is Go's short form,
+	// and an absent key, queue timeout or max_queued is left out, so the
+	// defaults written out are the same definition.
+	if c := wf.GetConcurrency(); c != nil {
+		limit := map[string]any{"limit": int64(c.GetLimit()), "onLimit": concurrencyStrategyName(c.GetOnLimit())}
+		if c.GetKey() != "" {
+			limit["key"] = c.GetKey()
+		}
+		if seconds := c.GetQueueTimeoutSeconds(); seconds > 0 {
+			limit["queueTimeout"] = shortDuration(time.Duration(seconds) * time.Second)
+		}
+		if c.GetMaxQueued() > 0 {
+			limit["maxQueued"] = int64(c.GetMaxQueued())
+		}
+		out["concurrency"] = limit
+	}
 	// definition_namespace is NOT here: it is set only on a run's planned
 	// copy, never on a stored definition, and the digest is the owner's.
 	return canonicalJSON(out)

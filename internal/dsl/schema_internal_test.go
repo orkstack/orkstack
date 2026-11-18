@@ -192,7 +192,7 @@ func slots() map[string]slot {
 		"apiVersion": "orkstack/v1", "kind": "Orkflow", "name": "x", "namespace": "ns", "version": `"1"`,
 		"description": "d", "labels": "{l: v}", "inputs": "{i: {type: string}}", "outputs": "{r: x}",
 		"pins": "{p: {}}", "tasks": "[{id: a, uses: 'busybox:1'}]", "shared_with": "[{namespace: b}]",
-		"timeout": "6h",
+		"timeout": "6h", "concurrency": "{limit: 1}",
 	} {
 		s := rootDoc(key, "")
 		s.baseline = baseline
@@ -301,6 +301,12 @@ func slots() map[string]slot {
 	for key, baseline := range map[string]string{"enabled": "true", "ttl_seconds": "60", "scope": "namespace"} {
 		out["tasks[].cache."+key] = slot{doc: taskDoc("    cache: {" + cacheBase[key] + key + ": @V@}\n"), field: "tasks[0].cache." + key,
 			baseline: baseline, absent: taskDoc("    cache: {" + strings.TrimSuffix(cacheBase[key], ", ") + "}\n")}
+	}
+	concurrencyBase := map[string]string{"limit": "", "key": "limit: 1, ", "on_limit": "limit: 1, ", "queue_timeout": "limit: 1, ", "max_queued": "limit: 1, "}
+	for key, baseline := range map[string]string{"limit": "1", "key": "k", "on_limit": "queue", "queue_timeout": "2h", "max_queued": "5"} {
+		out["concurrency."+key] = slot{doc: slotHeader + "name: x\nconcurrency: {" + concurrencyBase[key] + key + ": @V@}\ntasks: [{id: a, uses: 'busybox:1'}]\n",
+			field: "concurrency." + key, baseline: baseline,
+			absent: slotHeader + "name: x\nconcurrency: {" + strings.TrimSuffix(concurrencyBase[key], ", ") + "}\ntasks: [{id: a, uses: 'busybox:1'}]\n"}
 	}
 	return out
 }

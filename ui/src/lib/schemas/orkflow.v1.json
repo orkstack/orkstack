@@ -73,6 +73,36 @@
       ],
       "type": "object"
     },
+    "orkflow.concurrency": {
+      "additionalProperties": false,
+      "properties": {
+        "key": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "limit": {
+          "type": "integer"
+        },
+        "max_queued": {
+          "type": "integer"
+        },
+        "on_limit": {
+          "enum": [
+            "queue"
+          ]
+        },
+        "queue_timeout": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "limit"
+      ],
+      "type": "object"
+    },
     "orkflow.each": {
       "additionalProperties": false,
       "properties": {
@@ -1588,6 +1618,14 @@
     "apiVersion": {
       "const": "orkstack/v1",
       "description": "The document format's version: exactly `orkstack/v1` (see \"The document header\")."
+    },
+    "concurrency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/orkflow.concurrency"
+        }
+      ],
+      "description": "optional: how many runs share one key's slots at once; the rest wait in line (see \"Concurrency limits\")."
     },
     "description": {
       "description": "Human description.",
