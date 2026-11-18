@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -503,5 +504,82 @@ func TestExecute_AStartWhoseStateIsUnknownIsANeverStartedFault(t *testing.T) {
 				t.Fatal("the container was never removed; its removal is mandatory")
 			}
 		})
+	}
+}
+
+// driftAfterPullRuntime is creatingRuntime whose Pull marks the moment the
+// attempt has passed its profile check (step 3c) and not yet reached the
+// recheck before create: the device changes then.
+type driftAfterPullRuntime struct {
+	creatingRuntime
+	pulled atomic.Bool
+}
+
+func (r *driftAfterPullRuntime) Pull(ctx context.Context, pinned string) (PullInfo, error) {
+	r.pulled.Store(true)
+	return r.creatingRuntime.Pull(ctx, pinned)
+}
+
+// TestExecute_ADriftAtTheRecheckBeforeCreateCreatesNothing: a device that
+// passes the profile check and then changes while the image is pulled is
+// caught by the recheck just before create. The attempt creates no container,
+// cordons the Orker and is a never-started PROFILE_DRIFTED, typed when its
+// policy lists it (E91 §4.4, E92 R5E91-H3).
+func TestExecute_ADriftAtTheRecheckBeforeCreateCreatesNothing(t *testing.T) {
+	runtime := &driftAfterPullRuntime{creatingRuntime: creatingRuntime{ContainerRuntime: &phaseCapturingRuntime{exitCode: 0}}}
+	d := newAttemptDispatcher(t, runtime, artifacts.NewMemoryAttemptStore())
+	d.heartbeaters = sdkRouteHeartbeater
+	profiles, cordon := gateState(t)
+	d.profiles = profiles
+	var inspected atomic.Int32
+	d.inspectDevice = func(p string) (hostDevice, error) {
+		inspected.Add(1)
+		if runtime.pulled.Load() {
+			return hostDevice{Resolved: "/dev/ttyUSB199", Char: true, Major: 188, Minor: 0, GID: 1000}, nil
+		}
+		return sameNode(p)
+	}
+	listed := []string{InterruptionType(ReasonProfileDrifted)}
+	d.listed = func(context.Context) []string { return listed }
+	probe := func(ctx workflow.Context, in *orkstackv1.ExecuteTaskInput) error {
+		ctx = workflow.WithActivityOptions(ctx, workflow.ActivityOptions{
+			StartToCloseTimeout: time.Minute,
+			RetryPolicy: &temporal.RetryPolicy{
+				MaximumAttempts:        1,
+				InitialInterval:        time.Millisecond,
+				NonRetryableErrorTypes: listed,
+			},
+		})
+		return workflow.ExecuteActivity(ctx, "ExecuteTask", in).Get(ctx, nil)
+	}
+	var suite testsuite.WorkflowTestSuite
+	env := suite.NewTestWorkflowEnvironment()
+	env.SetTestTimeout(60 * time.Second)
+	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: testDeadlockDetectionTimeout})
+	env.RegisterWorkflowWithOptions(probe, workflow.RegisterOptions{Name: "probe"})
+	env.RegisterActivityWithOptions(d.Execute, activity.RegisterOptions{Name: "ExecuteTask"})
+	in := baseExportInput("drift-at-recheck")
+	in.Devices = sensorRef(gateIdentity)
+	env.ExecuteWorkflow("probe", in)
+
+	if !runtime.pulled.Load() {
+		t.Fatal("the attempt never pulled: the drift was caught before the recheck, so this proves nothing")
+	}
+	if inspected.Load() != 2 {
+		t.Fatalf("the device was inspected %d times; want once at the check and once at the recheck", inspected.Load())
+	}
+	var app *temporal.ApplicationError
+	if err := env.GetWorkflowError(); !errors.As(err, &app) || app.Type() != InterruptionType(ReasonProfileDrifted) {
+		t.Fatalf("workflow error = %v; want a typed %s", env.GetWorkflowError(), ReasonProfileDrifted)
+	}
+	var detail *orkstackv1.ActivityFailureDetail
+	if err := app.Details(&detail); err != nil || !detail.GetNeverStarted() || detail.GetStarted() {
+		t.Fatalf("detail = %v, %v; want never started", detail, err)
+	}
+	if created := len(runtime.creates()); created != 0 {
+		t.Fatalf("a drift at the recheck created %d containers; want none", created)
+	}
+	if cordoned, _, _ := cordon.State(); !cordoned {
+		t.Fatal("a drift at the recheck left the Orker uncordoned")
 	}
 }

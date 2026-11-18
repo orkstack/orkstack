@@ -390,7 +390,14 @@ func FuzzStrictDecodeError_NamesOnlyAKeyTheDecoderRefused(f *testing.F) {
 			t.Fatalf("%q is placed at %q, not at the path of %q, the first key the decoder refused (%q)",
 				message, validation.Field, first.key, loadErrs)
 		}
-		if !strings.Contains(unquoted, kind) || (parent != "" && !strings.Contains(message, parent)) {
+		// The path is the author's keys, so it is written as it is only when
+		// it holds nothing but a path's own characters, and quoted otherwise:
+		// a quote or a word in it would read as the sentence's.
+		shown := parent
+		if strings.Trim(parent, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.[]-") != "" {
+			shown = strconv.Quote(parent)
+		}
+		if !strings.Contains(unquoted, kind) || (parent != "" && !strings.Contains(message, "in "+shown+" of the "+kind)) {
 			t.Fatalf("refusal %q does not say where %q stands: %q of the %s", message, first.key, parent, kind)
 		}
 		// The allowed keys end the sentence: sorted, distinct, and not the

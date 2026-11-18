@@ -239,14 +239,20 @@ func FuzzPublishedKeys_ADocumentReadKeepsItsRules(f *testing.F) {
 	} {
 		f.Add([]byte(seed))
 	}
+	// One double and one store for every input: a server and a client an
+	// input would leave connections behind it, and enough inputs exhaust the
+	// host's ports. The store holds no state, so an input sees only the
+	// object it lays down.
+	ctx := context.Background()
+	d := newS3Double(f)
+	s, err := NewPublishedKeysStore(ctx, d.config())
+	if err != nil {
+		f.Fatal(err)
+	}
 	f.Fuzz(func(t *testing.T, body []byte) {
-		ctx := context.Background()
-		d := newS3Double(t)
-		s, err := NewPublishedKeysStore(ctx, d.config())
-		if err != nil {
-			t.Fatal(err)
-		}
-		d.objects[PublishedKeysKey] = body
+		d.mu.Lock()
+		d.objects = map[string][]byte{PublishedKeysKey: body}
+		d.mu.Unlock()
 		doc, err := s.Read(ctx)
 		if err != nil {
 			if !errors.Is(err, ErrPublishedKeysUnreadable) {
@@ -260,7 +266,10 @@ func FuzzPublishedKeys_ADocumentReadKeepsItsRules(f *testing.F) {
 		if _, err := s.Update(ctx, func(*PublishedKeys) (bool, error) { return false, nil }); err != nil {
 			t.Fatalf("an update that changes nothing failed: %v", err)
 		}
-		if !bytes.Equal(d.objects[PublishedKeysKey], body) {
+		d.mu.Lock()
+		stored := d.objects[PublishedKeysKey]
+		d.mu.Unlock()
+		if !bytes.Equal(stored, body) {
 			t.Fatal("an update that changes nothing rewrote the document")
 		}
 	})

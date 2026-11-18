@@ -102,6 +102,11 @@ type OCIDispatcher struct {
 	// lists; nil reads activity.Info.RetryPolicy (listedTypes). A test seam:
 	// the SDK's test environment leaves the policy out of the info.
 	listed func(context.Context) []string
+	// inspectDevice overrides what the host says a profile's device path is
+	// at the profile check and the recheck before create; nil reads the host
+	// (inspectHostDevice). A test seam: a device that changes between the two
+	// is a fault no host produces on demand.
+	inspectDevice func(string) (hostDevice, error)
 	// AttemptRecords hears of every attempt record of an earlier release this
 	// Orker meets (ork.orker.attempt_record_legacy). Nil tells nobody.
 	AttemptRecords AttemptRecordObserver

@@ -189,7 +189,7 @@ func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heart
 	if d.profiles == nil {
 		return nil, Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
 	}
-	return d.profiles.gate(in.GetDevices(), inspectHostDevice, time.Now())
+	return d.profiles.gate(in.GetDevices(), d.deviceInspector(), time.Now())
 }
 
 // profileRecheck is the device comparison just before the container is
@@ -201,7 +201,16 @@ func (d *OCIDispatcher) profileRecheck(in *orkstackv1.ExecuteTaskInput) *Failure
 	if d.profiles == nil {
 		return Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
 	}
-	return d.profiles.recheck(in.GetDevices(), inspectHostDevice, time.Now())
+	return d.profiles.recheck(in.GetDevices(), d.deviceInspector(), time.Now())
+}
+
+// deviceInspector is what the attempt asks of a device path: the host, or a test's
+// seam (inspectDevice).
+func (d *OCIDispatcher) deviceInspector() func(string) (hostDevice, error) {
+	if d.inspectDevice != nil {
+		return d.inspectDevice
+	}
+	return inspectHostDevice
 }
 
 // profileMemoEntries is the profiles a cached task's memo key covers: each it

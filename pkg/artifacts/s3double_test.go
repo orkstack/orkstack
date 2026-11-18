@@ -90,7 +90,7 @@ type doubleUpload struct {
 	parts map[int][]byte
 }
 
-func newS3Double(t *testing.T) *s3Double {
+func newS3Double(t testing.TB) *s3Double {
 	t.Helper()
 	d := &s3Double{bucket: "double", objects: map[string][]byte{}, refuse: map[string]bool{},
 		headers: map[string]http.Header{}, uploads: map[string]*doubleUpload{},

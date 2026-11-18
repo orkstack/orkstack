@@ -389,7 +389,13 @@ func (r *reader) openObject() int {
 	i := len(r.objects)
 	if i < cap(r.objects) {
 		r.objects = r.objects[:i+1]
-		clear(r.objects[i].seen)
+		// A slot past the last length append grew the slice to is zero: its
+		// key set was never made.
+		if r.objects[i].seen == nil {
+			r.objects[i].seen = map[uint64]struct{}{}
+		} else {
+			clear(r.objects[i].seen)
+		}
 	} else {
 		r.objects = append(r.objects, openObject{seen: map[uint64]struct{}{}})
 	}

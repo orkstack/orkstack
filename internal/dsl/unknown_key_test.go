@@ -141,6 +141,32 @@ func TestUnknownKey_NamesTheKeyWhereItStandsAndTheDocument(t *testing.T) {
 			wantPrefix:  `line 5: unknown key "feilds" in ops.get of the activity interface; allowed: `,
 			wantAllowed: "fields",
 		},
+		{
+			// The path holds the author's own keys; one that holds a quote or a
+			// line break would end the sentence's quoting, so the path is quoted.
+			name:        "a key under an op whose name holds a quote",
+			parse:       parseInterface,
+			source:      iface + "ops:\n  'g\"0':\n    feilds: 0\n",
+			wantField:   "ops.g\"0.feilds",
+			wantPrefix:  `line 5: unknown key "feilds" in "ops.g\"0" of the activity interface; allowed: `,
+			wantAllowed: "fields",
+		},
+		{
+			name:        "a key under an op whose name holds the sentence's words",
+			parse:       parseInterface,
+			source:      iface + "ops:\n  'x; allowed: y':\n    feilds: 0\n",
+			wantField:   "ops.x; allowed: y.feilds",
+			wantPrefix:  `line 5: unknown key "feilds" in "ops.x; allowed: y" of the activity interface; allowed: `,
+			wantAllowed: "fields",
+		},
+		{
+			name:        "a key under an op whose name holds a line break",
+			parse:       parseInterface,
+			source:      iface + "ops:\n  \"g\\n0\":\n    feilds: 0\n",
+			wantField:   "ops.g\n0.feilds",
+			wantPrefix:  `line 5: unknown key "feilds" in "ops.g\n0" of the activity interface; allowed: `,
+			wantAllowed: "fields",
+		},
 		// Every other level an author writes keys at, once each: a level whose
 		// decoder refusal is not reworded (a nested type the walk cannot read)
 		// would show the decoder's own sentence here. A level added to a
