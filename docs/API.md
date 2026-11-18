@@ -3240,6 +3240,7 @@ and stored nowhere.
 | `unused_assume_failed` | repeated `string` | unused_assume_failed lists request entries whose task is not ASSUMED_FAILED (it was SKIPPED or UNREACHED), in request order. |
 | `fails_at` | `string` | fails_at is the task at which the planned run starts failing — the first FAILS or ASSUMED_FAILED in decision order — or empty when nothing fails. The run is planned FAILED exactly when it is set; each UNREACHED task names its own cause in PlanTask.unreached_by. |
 | `sleeps` | `int32` | count of SLEEPS |
+| `timeout_seconds` | `int64` | timeout_seconds is the planned definition's own run timeout, from its top-level `timeout:` (docs/DSL.md "Run timeout"): how long a run of it may take from its start. 0 means the definition sets none. A plan starts no clock: a submitted run's deadline is on Run.timeout. |
 
 ### PlanTask
 

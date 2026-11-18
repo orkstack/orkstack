@@ -546,6 +546,11 @@ message PlanRunResponse {
   // names its own cause in PlanTask.unreached_by.
   string fails_at = 16;
   int32 sleeps = 17;                     // count of SLEEPS
+  // timeout_seconds is the planned definition's own run timeout, from its
+  // top-level `timeout:` (docs/DSL.md "Run timeout"): how long a run of it
+  // may take from its start. 0 means the definition sets none. A plan
+  // starts no clock: a submitted run's deadline is on Run.timeout.
+  int64 timeout_seconds = 18;
 }
 
 // InterfaceVerdict is how one version's DECLARED interface — its inputs:

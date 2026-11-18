@@ -5827,6 +5827,8 @@ policy names one — they can land on a different sink than the process default
 |---|---|---|
 | `ork.runs` | `status` | engine, once per terminal run (succeeded/failed/canceled) |
 | `ork.run.duration` | `status` | engine, same event, `finished_at - started_at` |
+| `ork.run.timeouts` | `ork.namespace` | engine, once per terminal run its own `timeout:` ended (`RUN_TIMED_OUT`, `docs/DSL.md` "Run timeout"); a run already failing when its deadline passed keeps its own cause and counts only on `ork.run.timeout.hard_ends`, if its handlers were stopped |
+| `ork.run.timeout.hard_ends` | `ork.namespace` | engine, once per terminal run whose failure handlers were stopped, or never started, at its run timeout's hard end (`engine.run_timeout_handler_grace`) |
 | `ork.tasks` | `ork.pool`, `status`, `failure_category`, `ork.cache.outcome` | engine, once per terminal task (succeeded/failed) |
 | `ork.task.duration` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
 | `ork.task.attempts` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event: the attempt number the task finished on — one observation per fan-out item, none for a composed task |

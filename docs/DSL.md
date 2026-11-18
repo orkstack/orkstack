@@ -1881,6 +1881,17 @@ What the run does with it:
   stop at the same hard end.
 - **An operator's cancel** wins: a run cancelled as its deadline falls due
   ends `CANCELED`.
+- **Nothing is retried** for it: a run that timed out, and a task it
+  stopped, are `TimedOut` and never retried automatically. Run it again
+  with `orkctl run again`.
+- **Where it shows**: `orkctl orkflow get` prints `Timeout: 6h`, `orkctl
+  run plan` prints `timeout     6h` under its input, and
+  `orkctl run get` prints the run's `Timeout:` line: `6h (starts when the
+  run starts)` while it waits to start, `6h (deadline …, 1h12m left)`
+  while it runs, `6h (timed out at …)` once it timed out, and `; failure
+  handlers stop at …` (or `stopped at …`) while its hard end applies. The
+  run page shows the same words in its header, and a row the timeout
+  stopped reads `TASK_STOPPED_BY_RUN_TIMEOUT`.
 - A run timeout needs every engine process of the deployment to run a
   release that enforces one: a submit is refused `FAILED_PRECONDITION` while
   one does not (`docs/DEPLOY.md` §5, "Engine capabilities and the fleet

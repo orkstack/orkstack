@@ -320,6 +320,13 @@ type EngineInstruments struct {
 	// ork.namespace and ork.refusal.reason. A refused submission is not a
 	// run and is never also counted on Runs.
 	RunsRefused metric.Int64Counter
+	// RunTimeouts counts runs their own timeout ended (Run.timeout.timed_out),
+	// labelled ork.namespace, once per terminal run event.
+	RunTimeouts metric.Int64Counter
+	// RunTimeoutHardEnds counts runs whose failure handlers were stopped, or
+	// never started, at their run timeout's hard end
+	// (Run.timeout.hard_end_reached), labelled ork.namespace.
+	RunTimeoutHardEnds metric.Int64Counter
 	// Continuations counts a run's continuations, labelled ork.namespace and
 	// outcome=written|write_failed|over_cap|restored, or a failed restore's
 	// RUN_STATE_* code. Recorded by the run's own local activities, never by
@@ -425,6 +432,18 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	runTimeouts, err := meter.Int64Counter(RunTimeoutsMetric,
+		metric.WithDescription("Runs that ended RUN_TIMED_OUT, by namespace; a run already failing when its deadline passed keeps its own cause and is not counted."),
+		metric.WithUnit("{run}"))
+	if err != nil {
+		return nil, err
+	}
+	runTimeoutHardEnds, err := meter.Int64Counter(RunTimeoutHardEndsMetric,
+		metric.WithDescription("Runs whose failure handlers were stopped at their run timeout's hard end, by namespace."),
+		metric.WithUnit("{run}"))
+	if err != nil {
+		return nil, err
+	}
 	continuations, err := meter.Int64Counter("ork.run.continuations",
 		metric.WithDescription("Run continuations into a fresh history, by namespace and outcome."),
 		metric.WithUnit("{switch}"))
@@ -514,6 +533,8 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 		TaskDuration:                taskDuration,
 		TaskAttempts:                taskAttempts,
 		RunsRefused:                 runsRefused,
+		RunTimeouts:                 runTimeouts,
+		RunTimeoutHardEnds:          runTimeoutHardEnds,
 		Cardinality:                 highCard,
 	}, nil
 }
