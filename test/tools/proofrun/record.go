@@ -104,6 +104,11 @@ type proofRecord struct {
 	QuarantineWarnings []string  `json:"quarantine_warnings,omitempty"`
 	PR                 *prRecord `json:"pr,omitzero"`
 	CI                 *ciRecord `json:"ci,omitzero"`
+	// GPUHost and GPUGateRan say whether the proof ran on the GPU host
+	// (ORK_PROOF_GPU_HOST=1) and whether its GPU gate ran (gpu.go): a proof
+	// of the GPU-host tier has both.
+	GPUHost    bool `json:"gpu_host"`
+	GPUGateRan bool `json:"gpu_gate_ran"`
 }
 
 // mainBranch is the branch a merge candidate fast-forwards, and the only base
@@ -111,10 +116,11 @@ type proofRecord struct {
 const mainBranch = "main"
 
 // fullGates is every gate the merge gate runs. The site gate runs right after
-// the UI's fast gates (scripts/proof.sh), ui-e2e after the integration gate,
+// the UI's fast gates (scripts/proof.sh), the alerts gate right after it,
+// ui-e2e after the integration gate,
 // and observability last. The nightly tier is
 // held to the integration gate and the two lanes of nightlyGates (merge.go).
-var fullGates = []string{"lint", "build", "unit", suiteRace, "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "ui-e2e", "observability"}
+var fullGates = []string{"lint", "build", "unit", suiteRace, "vet-integration", "images", "integration", "activity-fixture", "ui-check", "ui-unit", "site", "alerts", "ui-e2e", "observability"}
 
 // nightlyGates are the gates the nightly tier is held to besides the
 // integration gate (and ui-e2e, when the tree lists a spec file): the race
@@ -123,7 +129,7 @@ var nightlyGates = []string{suiteRaceRepeat, suiteFuzz}
 
 // laneLedgers are the ledgers a proof reads besides the Playwright one: one
 // per suite, <suite>-tests.json, named for the gate that wrote it.
-var laneLedgers = []string{suiteUnit, suiteRace, suiteRaceRepeat, suiteFuzz, "integration"}
+var laneLedgers = []string{suiteUnit, suiteRace, suiteRaceRepeat, suiteFuzz, "integration", suiteGPU}
 
 func readGates(file string) ([]gateRecord, error) {
 	f, err := os.Open(file)
@@ -431,9 +437,10 @@ func cmdVerify(args []string) int {
 	nightlyDir := fs.String("nightly", "", "optional: a nightly proof of main's tip, verified when given (a merge needs none)")
 	commit := fs.String("commit", "", "instead of -proof: the commit a release names, whose nightly proof -nightly is")
 	jobsFile := fs.String("nightly-jobs", "", "with -commit: the nightly run's jobs, one name<TAB>conclusion per line")
+	gpuDir := fs.String("gpu", "", "a GPU-host-tier proof of the same tree: required for a merge whose diff touches a path scripts/proof-gpu-tests.txt's paths: header names, checked whenever given")
 	if err := fs.Parse(args); err != nil || fs.NArg() > 0 || (*dir == "") == (*commit == "") ||
-		(*commit != "" && (*release || *tag != "" || *nightlyDir == "" || *jobsFile == "")) {
-		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name> [-release -tag vX.Y.Z] [-nightly DIR]")
+		(*commit != "" && (*release || *tag != "" || *nightlyDir == "" || *jobsFile == "" || *gpuDir != "")) {
+		fmt.Fprintln(os.Stderr, "proofrun verify -proof proof/<name> [-release -tag vX.Y.Z] [-nightly DIR] [-gpu DIR]")
 		fmt.Fprintln(os.Stderr, "proofrun verify -commit SHA -nightly DIR -nightly-jobs FILE")
 		return 2
 	}
@@ -441,7 +448,7 @@ func cmdVerify(args []string) int {
 		return verifyNightlyOf(*nightlyDir, *commit, *jobsFile)
 	}
 	if *release {
-		return verifyRelease(*dir, *tag)
+		return verifyRelease(*dir, *tag, *gpuDir)
 	}
 	// A flag given with an empty value names a proof that is not there; it is
 	// not the flag left out. Only the latter asks for no nightly proof.
@@ -477,6 +484,12 @@ func cmdVerify(args []string) int {
 		problems = append(problems, "-nightly names no proof directory: leave the flag out to ask for no nightly proof, or name the one to verify")
 	}
 	problems = append(problems, verifyNightlyProblems(*nightlyDir, mainTip)...)
+	gpuGiven := false
+	fs.Visit(func(f *flag.Flag) { gpuGiven = gpuGiven || f.Name == "gpu" })
+	if gpuGiven && *gpuDir == "" {
+		problems = append(problems, "-gpu names no proof directory: leave the flag out, or name the GPU-host-tier proof to verify")
+	}
+	problems = append(problems, mergeGPUProblems(*gpuDir, head, mainTip)...)
 	if len(problems) > 0 {
 		fmt.Printf("merge-check: %s is not merge evidence for HEAD:\n", *dir)
 		for _, p := range problems {
@@ -491,7 +504,7 @@ func cmdVerify(args []string) int {
 // verifyRelease is the tag precondition: a passing release proof, of the exact
 // commit the tag names (or of HEAD, before the tag is created), clean, whose
 // every identity and eligibility rule held.
-func verifyRelease(dir, tag string) int {
+func verifyRelease(dir, tag, gpuDir string) int {
 	var r proofRecord
 	if err := readJSON(filepath.Join(dir, "proof.json"), &r); err != nil {
 		fmt.Printf("release-check: %v\n", err)
@@ -508,6 +521,9 @@ func verifyRelease(dir, tag string) int {
 		tree = strings.TrimSpace(mustGit("rev-parse", target+"^{tree}"))
 	}
 	problems := releaseProofProblems(r, target, tree)
+	if gpuDir != "" {
+		problems = append(problems, gpuProofProblems(gpuDir, tree)...)
+	}
 	if len(problems) > 0 {
 		fmt.Printf("release-check: %s cannot tag %s:\n", dir, orDash(tag))
 		for _, p := range problems {
@@ -516,6 +532,11 @@ func verifyRelease(dir, tag string) int {
 		return 1
 	}
 	fmt.Printf("release-check: %s is a passing release proof of %s (tree %s).\n", dir, short(r.Commit), r.Tree)
+	if gpuDir != "" {
+		fmt.Printf("release-check: %s is a passing GPU-host-tier proof of the same tree.\n", gpuDir)
+	} else {
+		fmt.Println("release-check: GPU-host proof not checked: a release requires one of this commit (make release-tag GPU=proof/<name>, AGENTS.md §11.2).")
+	}
 	return 0
 }
 

@@ -461,6 +461,10 @@ type Config struct {
 	// artifact GC this replica runs, nil when it runs none (cleanup off, or
 	// cleanup.artifact_gc off).
 	ArtifactReclaim ArtifactReclaimer
+	// RestoreReconciler answers SystemService.ReconcileRestore: the run
+	// archive and the cluster, as a restore reconcile reads them. Nil answers
+	// FAILED_PRECONDITION.
+	RestoreReconciler RestoreReconciler
 	// AcceptedRuns notes each run this replica started, for the artifact
 	// GC's index canary. Nil notes nothing.
 	AcceptedRuns AcceptedRunNoter
@@ -649,6 +653,7 @@ type Service struct {
 	retention         *archive.RetentionController
 	retentionEnforced bool
 	artifactReclaim   ArtifactReclaimer
+	restoreReconciler RestoreReconciler
 	acceptedRuns      AcceptedRunNoter
 	// imagePolicies is the deployment's image supply-chain floor (see
 	// Config.ImagePolicies); signatures verifies a namespace's signer.
@@ -736,6 +741,7 @@ func NewService(cfg Config) *Service {
 		retention:              cfg.Retention,
 		retentionEnforced:      cfg.RetentionEnforced,
 		artifactReclaim:        cfg.ArtifactReclaim,
+		restoreReconciler:      cfg.RestoreReconciler,
 		acceptedRuns:           cfg.AcceptedRuns,
 		imagePolicies:          cfg.ImagePolicies,
 		signatures:             cfg.Signatures,

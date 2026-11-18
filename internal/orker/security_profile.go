@@ -6,9 +6,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+
+	cdi "tags.cncf.io/container-device-interface/pkg/cdi"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/dsl"
@@ -42,6 +45,13 @@ const (
 	TmpfsBytesVar    = "ORK_ORKER_TMPFS_BYTES"
 	ForceUserVar     = "ORK_ORKER_FORCE_USER"
 	SecretSchemesVar = "ORK_ORKER_SECRET_SCHEMES"
+	// MaxGPUVar is orker.resources.max_gpu: the most units of the gpu
+	// profile one task may hold (0 to 64).
+	MaxGPUVar = "ORK_ORKER_MAX_GPU"
+	// CDISpecDirsVar is orker.cdi.spec_dirs: the trusted directories the gpu
+	// profile's CDI audit reads, which must hold every directory the runtime
+	// reads specs from.
+	CDISpecDirsVar = "ORK_ORKER_CDI_SPEC_DIRS"
 
 	// RegistryAuthFileVar is ORK_ORKER_REGISTRY_AUTH_FILE: a docker
 	// config.json used ONLY for the manifest and blob GETs signature
@@ -70,7 +80,14 @@ const (
 	// DefaultForceUser is DefaultSecurityPolicy's ForceUser: containers run
 	// as the image's own USER unless an operator opts in.
 	DefaultForceUser = false
+	// DefaultMaxGPU is DefaultSecurityPolicy's MaxGPU: a gpu task holds one
+	// unit unless the operator raises the cap.
+	DefaultMaxGPU int64 = 1
 )
+
+// DefaultCDISpecDirs is DefaultSecurityPolicy's CDISpecDirs: the CDI library's
+// own defaults, which are Docker's (/etc/cdi and /var/run/cdi).
+var DefaultCDISpecDirs = slices.Clone(cdi.DefaultSpecDirs)
 
 // DefaultSecretSchemes is DefaultSecurityPolicy's SecretSchemes: the
 // SecretRef.source schemes an Orker resolves with no operator
@@ -106,6 +123,10 @@ type SecurityPolicy struct {
 	// opt-in because it overrides the image's own USER and breaks images that
 	// need their baked-in identity.
 	ForceUser bool
+	// MaxGPU caps how many gpu units one task may hold; 0 admits none.
+	MaxGPU int64
+	// CDISpecDirs are the trusted CDI spec directories (cdi_audit.go).
+	CDISpecDirs []string
 	// SecretSchemes are the SecretRef.source schemes this Orker resolves. An
 	// unknown scheme is refused rather than ignored (§9.4).
 	SecretSchemes []string
@@ -147,6 +168,8 @@ func DefaultSecurityPolicy() SecurityPolicy {
 		PidsLimit:     DefaultPidsLimit,
 		TmpfsBytes:    DefaultTmpfsBytes,
 		ForceUser:     DefaultForceUser,
+		MaxGPU:        DefaultMaxGPU,
+		CDISpecDirs:   slices.Clone(DefaultCDISpecDirs),
 		SecretSchemes: append([]string(nil), DefaultSecretSchemes...),
 	}
 }
@@ -179,6 +202,34 @@ func SecurityPolicyFromEnv() SecurityPolicy {
 		if err == nil {
 			policy.TmpfsBytes = parsed
 		}
+	}
+	if v := strings.TrimSpace(os.Getenv(MaxGPUVar)); v != "" {
+		parsed, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || parsed < 0 || parsed > maxProfileGPUUnits {
+			err = fmt.Errorf("%s=%q must be a base-10 integer from 0 to %d", MaxGPUVar, v, maxProfileGPUUnits)
+			policy.configErr = errors.Join(policy.configErr, err)
+		} else {
+			policy.MaxGPU = parsed
+		}
+	}
+	if v, set := os.LookupEnv(CDISpecDirsVar); set && v != "" {
+		var dirs []string
+		for _, dir := range strings.Split(v, ",") {
+			if dir = strings.TrimSpace(dir); dir == "" {
+				continue
+			}
+			if !filepath.IsAbs(dir) || filepath.Clean(dir) != dir {
+				policy.configErr = errors.Join(policy.configErr,
+					fmt.Errorf("%s: %q is not an absolute, clean directory", CDISpecDirsVar, dir))
+				continue
+			}
+			dirs = append(dirs, dir)
+		}
+		if len(dirs) == 0 {
+			policy.configErr = errors.Join(policy.configErr,
+				fmt.Errorf("%s=%q names no directory; unset it for the defaults %v", CDISpecDirsVar, v, DefaultCDISpecDirs))
+		}
+		policy.CDISpecDirs = dirs
 	}
 	if v := strings.TrimSpace(os.Getenv(ForceUserVar)); v == "1" || strings.EqualFold(v, "true") {
 		policy.ForceUser = true
@@ -934,7 +985,24 @@ func (p SecurityPolicy) ResolveResources(req *orkstackv1.ResourceRequest) (cpu, 
 				"silently reduced, because a workload that asked for more and got less fails confusingly later",
 			memory, p.MaxMemory, MaxMemoryVar)
 	}
+	if gpu := int64(req.GetGpu()); gpu > p.MaxGPU {
+		return "", "", Fail(ReasonResourceRefused,
+			"gpu request %d exceeds this orker's cap of %d units (%s); the request is refused rather than "+
+				"silently reduced", gpu, p.MaxGPU, MaxGPUVar)
+	}
 	return cpu, memory, nil
+}
+
+// checkGPUSettings refuses boot for a gpu profile this Orker could run no gpu
+// task on: max_gpu 0.
+func checkGPUSettings(p SecurityPolicy, declared Profiles) error {
+	for _, profile := range declared.List {
+		if profile.Kind == orkstackv1.ProfileKind_PROFILE_KIND_GPU && p.MaxGPU == 0 {
+			return fmt.Errorf("%s=0 with the gpu profile %s: no task could hold one of its units; "+
+				"set %s to at least 1, or remove the profile", MaxGPUVar, profile.Name, MaxGPUVar)
+		}
+	}
+	return nil
 }
 
 // requestShapeFailure refuses a request whose own fields are malformed,
@@ -1006,7 +1074,7 @@ func (p SecurityPolicy) ReservedResources(req *orkstackv1.ResourceRequest) *orks
 	// errors are unreachable.
 	cores, _ := quantity.ParseCPU(cpu)
 	bytes, _ := quantity.ParseMemory(memory)
-	return &orkstackv1.ReservedResources{Cpu: cores, MemoryBytes: int64(bytes)}
+	return &orkstackv1.ReservedResources{Cpu: cores, MemoryBytes: int64(bytes), Gpu: int64(req.GetGpu())}
 }
 
 // ResolveNetwork maps the proto enum to the runtime's word, refusing anything

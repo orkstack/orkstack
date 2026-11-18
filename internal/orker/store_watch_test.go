@@ -3,6 +3,7 @@ package orker
 import (
 	"context"
 	"errors"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -251,12 +252,26 @@ func TestStoreWatch_NeverStacksChecksBehindOneThatHangs(t *testing.T) {
 		return nil
 	})
 	watch.cfg.Timeout = time.Millisecond
-	for range 5 {
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return started
+	}
+	watch.Step(context.Background())
+	// The first check runs on its own goroutine and may not have begun when
+	// its timeout ends the step: wait for it, the positive control, before
+	// the steps that must start nothing behind it.
+	deadline := time.Now().Add(10 * time.Second)
+	for count() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first check never started")
+		}
+		runtime.Gosched()
+	}
+	for range 4 {
 		watch.Step(context.Background())
 	}
-	mu.Lock()
-	got := started
-	mu.Unlock()
+	got := count()
 	close(release)
 	if got != 1 {
 		t.Fatalf("%d checks were started behind one that hung, want 1", got)

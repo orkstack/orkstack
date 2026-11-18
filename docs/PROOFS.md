@@ -32,6 +32,7 @@ missing prerequisite.
 | **full** | `make proof` | yes, on a local host; in CI, the `proof` job | every gate, every test and every spec, except the nightly lists' entries the base also carries |
 | **nightly** | `make proof-nightly` | no | only the tests `scripts/proof-nightly-tests.txt` names and the spec files `scripts/proof-nightly-specs.txt` names, and two lanes of its own: the race repeat and the fuzz lane (§2.3) |
 | **release** | `make proof-release` | no; it is a tag precondition | every gate, the nightly tests and specs included, observability always; not the nightly lanes |
+| **GPU-host** | `make proof-gpu`, or any tier with `ORK_PROOF_GPU_HOST=1` | no on its own; `make merge-check GPU=` and `make release-tag GPU=` require it (§2.4) | the tests `scripts/proof-gpu-tests.txt` lists, on the GPU host, one at a time |
 
 A full proof records each nightly-listed test as `deferred`, never as passed,
 and only when its base's list also carries it; an entry the change adds runs.
@@ -50,10 +51,14 @@ spec file, up to the requested UI shards. Today the list holds
 `run-page-ceiling.spec.ts`, the run page at the 4,000-task default ceiling;
 the merge gate runs `run-page-reduced-ceiling.spec.ts`, the same measurement
 with `engine.orkflow_max_tasks` lowered to 1,000.
-The pre-release gate is the full tier with nothing deferred, the race gate
-included. A tag requires a passing release proof of the exact commit: `make
-release-tag` and the workflow both refuse without one, and the workflow also
-refuses a commit whose nightly did not pass (§5).
+The pre-release gate is the full tier with nothing deferred except the
+entries it records `host-deferred` (§2.4), the race gate included. A tag
+requires a passing release proof of the exact commit: `make release-tag` and
+the workflow both refuse without one, and the workflow also refuses a commit
+whose nightly did not pass (§5). A release also requires a passing GPU-host
+proof of the exact commit: `make release-tag GPU=` checks it, and
+`release.yml` cannot, so its `verify` job's summary says `GPU-host proof not
+checked` (§2.4).
 
 A local full, release or nightly proof runs its gates on one host and writes one part, `local`, then merges it
 with `proofrun merge`. The CI `proof` job runs the same merger over many
@@ -82,7 +87,7 @@ after another — lint (`make lint`: `go vet`, gofmt, and staticcheck as built
 and with `-tags=integration`; the vulnerability scan is not part of it, §5),
 build, unit, `go vet -tags=integration`, then the UI
 type-check and unit suites (after one `svelte-kit sync`, which both read), then
-the site gate, then the race gate (§2.3); then the **setup**, as one
+the site gate, then the alerts gate, then the race gate (§2.3); then the **setup**, as one
 concurrent group — the proof's own Temporal, the activity images, the binaries
 and the integration test binaries (`proofrun compile`), each its own row of
 `gates.tsv` (`temporal`, `images`, `binaries`, `integration-compile`) and the
@@ -99,8 +104,8 @@ time; then the observability gate. A full proof runs: lint; build; unit; `go vet
 images, built once from this tree; every integration test whose package's
 integration build differs from its unit build, against real Temporal and the
 S3-compatible store; the activity contract fixture; the UI type-check, unit
-and every Playwright spec; the site's check and build; the race gate; and the
-observability gate. A release proof runs the same gates.
+and every Playwright spec; the site's check and build; the alerts gate; the
+race gate; and the observability gate. A release proof runs the same gates.
 
 The proof's own Temporal is the `temporal` service of
 `deploy/docker-compose.yml`: its image and its command, read by `proofrun
@@ -140,6 +145,14 @@ merge` requires it, so a full proof without a passing `site` gate is not
 merge-eligible. The nightly tier does not run it. In CI it is part of the
 `fast` job, recorded beside the UI gates; that job installs the pinned Node and
 `site/node_modules` for it.
+
+The **alerts gate** runs `scripts/check-alerts.sh`, logged to `alerts.log`:
+promtool, from the Prometheus image `deploy/docker-compose.yml` pins and with
+no network, checks the observability kit's rule files and its
+`deploy/observability/prometheus.yml` with them mounted, and runs every rule's promtool cases
+(docs/RUNBOOKS.md, "Using the rules"). It needs Docker and the image. The full
+and release tiers always run it and `proofrun merge` requires it; the nightly
+tier does not. In CI it runs in the `fast` job, after the site gate.
 
 Integration tests run as separate processes, `PROOF_JOBS` at a time (default
 6; the ordinary jobs keep every slot busy, so the phase's wall is their total
@@ -432,6 +445,92 @@ phase, and is one CI part (§5):
 runs the lane with `FUZZ_BUDGET` (default `45m`; `FUZZTIME=30s` gives every
 target that time instead), keeping its logs and crashers under `FUZZ_OUT`.
 
+### 2.4 The GPU-host tier
+
+The tests `scripts/proof-gpu-tests.txt` lists need a real GPU host: this
+project's proof host, with an AMD and an Intel GPU, set up as below. They are
+files `internal/orker/*_gpuhost_test.go` built with
+`-tags=integration,gpuhost`, so no other binary lists them, and they never
+`t.Skip`. The list has the nightly list's format (package, test, covering
+merge-gate tests, approved, reason), changes only with the user's approval,
+and its `# paths:` header names the files a change must prove on the GPU
+host.
+
+- **Without `ORK_PROOF_GPU_HOST=1`** (every CI proof, and a local proof on any
+  other host) no `gpu` gate runs. The merger writes the `gpu` ledger itself:
+  each entry both the tree's list and the base's copy (`gpu-base.txt`, beside
+  the plan) carry is recorded `host-deferred`, never as passed. An entry only
+  the tree's list carries has no outcome and fails the proof: the change that
+  adds an entry lands through a GPU-host-tier proof.
+- **With `ORK_PROOF_GPU_HOST=1`** a missing GPU device, CDI spec, lock
+  directory or lock group exits 77 before anything is written, never
+  `host-deferred`. The `gpu` gate runs after the integration phase:
+  `proofrun gpu -host` compiles the listed packages with
+  `-tags=integration,gpuhost`, checks every entry is a listed test of its
+  package and every cover a listed test not itself on the list, and runs them
+  one process at a time. One proof's GPU gate runs on a host at a time: a
+  second waits for `/tmp/orkstack-proof-gpu.lock` at most 45 minutes, naming
+  the holder, then fails. The lock is a fixed path in `/tmp`, which assumes a
+  single-user proof host: on a host other users share, any of them could hold
+  or remove it. In this tier `host-deferred` fails the gate.
+- **`make proof-gpu`** (`ORK_PROOF_GPU_HOST=1 scripts/proof.sh --tier gpu`) runs
+  the `gpu` gate alone, in 10 to 15 minutes, in its own proof directory; its
+  verdict is `proofrun merge -gpu-tier`'s, from its local part. It is never
+  merge evidence on its own.
+
+`proof.json` records `gpu_host` (the flag was set) and `gpu_gate_ran`. A
+GPU-host-tier proof is a passing full or release proof with both, or a
+passing gpu-tier proof, of a clean tree. The plan records the SHA-256 of the
+tree's list and of `gpu-base.txt`, and the merger judges the `gpu` ledger only
+on those bytes, with `gpu-base.txt` byte for byte the list at the plan's base
+commit, so a swapped base copy cannot host-defer an entry the change adds.
+
+**Merging.** A change whose diff against `main` (`git diff --no-renames`, so a
+file moved away counts) touches a covered path merges only with a passing
+GPU-host-tier proof of its tree. The covered paths are those the `paths:`
+header names in `main`'s list or in the tree's — a pattern ending in `/`
+covers a directory — and always the list itself, `test/tools/proofrun/gpu*.go`,
+`scripts/proof.sh`, `scripts/proof-part.sh` and `scripts/gpu-host-setup.sh`,
+so a change cannot drop its own obligation by editing the header or deleting
+the list (a deleted list is refused). When `main`'s tip, its list or the diff
+cannot be read, `GPU=` is required: `make merge-check PROOF=proof/<full> GPU=proof/<gpu>` (`proofrun verify
+-gpu`). `GPU=` may name the same directory as `PROOF=` when that full proof
+ran with the flag; one that is named is checked whatever the change touches.
+Rule for path (a): the GitHub merge path (AGENTS.md §11.3(a)) cannot check
+`GPU=`, so a pull request touching a listed path is merged through
+`make merge-check GPU=` locally (path (b)), or waits for the coordinator; a
+green `proof` check is never enough for it, because a CI proof records every
+row `host-deferred`. The rule's own call sites — merge-check's GPU check, the
+merger's gpu ledger and the Makefile's `GPU=` pass-through — are not in the
+header; the merge gate's tests (`test/tools/proofrun/gpu_callsites_test.go`)
+fail if any of them is removed. Emptying the list, rather than deleting it,
+is guarded only by code-owner review and the user's approval of the list: a
+GPU-host proof of an empty list runs no test. The header is narrow: it names the GPU-specific
+files only. A change to a file the GPU code shares (`capacity.go`,
+`oci_dispatcher.go`, `activity.go`, the runtime files) needs no GPU-host
+proof to merge; the merge-gate covers each row names, and the GPU-host proof
+every release requires, are what hold it.
+
+**Releasing.** `make release-tag VERSION=vX.Y.Z PROOF=proof/<release>
+GPU=proof/<gpu>` refuses without a passing GPU-host-tier proof of the commit's
+tree. `release.yml` runs on hosted runners, which have no GPU: its `verify`
+job writes `GPU-host proof not checked` to its summary, and the approver
+approves the `release` environment only after `make release-tag GPU=` passed
+for that commit.
+
+**Setting up the GPU host.** `scripts/gpu-host-setup.sh` never runs sudo: it
+prints the root steps the host still needs, one per line, and nothing once
+the host is set up. `scripts/gpu-host-setup.sh --script >/tmp/gpu-setup.sh`
+writes the same steps as one script: read the file, then run
+`sudo sh /tmp/gpu-setup.sh`. The steps install the CDI spec into `/etc/cdi`
+(its host nodes named by PCI path, its container paths fixed, so a boot that
+renumbers the render nodes changes nothing), create the `orkstack-gpu` group
+and add you to it, and install the tmpfiles entry that makes
+`/run/orkstack/gpu-orker` (root, `orkstack-gpu`, 0750). A session that was
+already running when you were added lacks the group until you log in again;
+`echo 'make proof-gpu' | newgrp orkstack-gpu` runs a command with it now. The
+preflight reads `id -nG`, so a proof started without the group exits 77.
+
 ## 3. Checking a change on its branch
 
 There is no scoped proof tier: the full proof runs every test and spec, and it
@@ -575,7 +674,7 @@ saves is the runner time the shards had left when `fast` ended (§11.5).
 | `proof.yml` › `base` | decides the base: a pull request's first parent, which must be an ancestor of its head ("update this branch") unless `MERGE_GATE_MODE` is `queue`; a merge group's base; a validate push's first parent; a dispatch's input | nothing; job outputs |
 | `proof.yml` › `plan` | compiles and lists the packages; writes both plans; decides observability | the plans, the listing, the base lists |
 | `proof.yml` › `build` | builds every activity image once as an OCI layout and records its digests | the layouts and `images.tsv` |
-| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build; its last step says whether one of its gates failed (`failed_gate`) | one part |
+| `proof.yml` › `fast` | lint, build, unit (no `-short`), vet-integration, UI type-check and unit, the site's check and build, the alerts gate; its last step says whether one of its gates failed (`failed_gate`) | one part |
 | `proof.yml` › `cancel` | only when a `fast` gate failed: cancels the run, from a job that checks out and runs nothing of the repository and alone holds `actions: write` | nothing |
 | `proof.yml` › `race` | the race gate (§2.3), on a runner of its own; the full and release tiers | one part |
 | `proof.yml` › `race-repeat` | the nightly race repeat (§2.3); the nightly tier alone | one part |
@@ -1833,7 +1932,8 @@ listing with no bucket at all.
 | `make fuzz` | the fuzz lane: every Fuzz target, sharing `FUZZ_BUDGET` (default 45m) or given `FUZZTIME` each, logs and crashers under `FUZZ_OUT` |
 | `make proof-nightly` | the nightly tier |
 | `make proof-release` | the pre-release gate |
-| `make release-tag` | tag HEAD after a passing release proof of it |
+| `make proof-gpu` | the GPU-host tier's gate alone, on the GPU host (§2.4) |
+| `make release-tag` | tag HEAD after a passing release proof and a passing GPU-host-tier proof of it (`GPU=`, §2.4) |
 | `make dist` | the release's binaries, archives and `SHA256SUMS` for `VERSION=vX.Y.Z` |
 | `make release-images` | the release images as OCI layouts under `OUT`, for `PLATFORMS` |
 | `make release-smoke` | build both for this machine and run `compose.yaml` on those images |
@@ -1851,6 +1951,7 @@ listing with no bucket at all.
 |---|---|---|
 | `scripts/proof-allowed-skips.txt` | suite, package, test, reason | a skip with no entry, or an entry naming no listed test, fails |
 | `scripts/proof-nightly-tests.txt` | package, test, covering tests, approved, reason | a stale name or a missing covering test fails the plan |
+| `scripts/proof-gpu-tests.txt` | package, test, covering tests, approved, reason; a `# paths:` header | a stale name or a missing covering test fails the GPU gate; an entry the base's copy does not carry has no outcome without the GPU host (§2.4) |
 | `scripts/proof-nightly-specs.txt` | spec, covering specs, approved, reason | a stale spec or a missing covering spec fails the UI plan; a full proof defers the rows its base also carries |
 | `scripts/proof-quarantine.txt` | suite, package, test, owner, since, review-by, reason | structure, budget, a stale name, or an allowed-skip overlap fails; an expired entry stops excusing |
 | `scripts/proof-test-costs.tsv` | package, test, seconds | an unmeasured test gets the conservative default |
@@ -1864,11 +1965,12 @@ listing with no bucket at all.
 | `fuzz` | `-out DIR`, `-budget DURATION` or `-fuzztime DURATION`, one of the two |
 | `integration` | `-out DIR`, `-bin DIR`, `-jobs N`, `-namespace-prefix S`, `-costs FILE`, `-allow FILE`, `-quarantine FILE`, `-quarantine-base FILE`, `-run REGEX`, `-plan-only`, `-plan FILE`, `-shard K`, `-shards N`, `-matrix-out FILE`, `-nightly FILE`, `-nightly-mode MODE`, `-nightly-base FILE`, `-tier TIER`, `-proof-id S`, `-base-commit SHA`, `-merge-base SHA`, `-print-progress`, `-fail-fast`, `-ci`, `-lists-changed FILE`, `-pr-number N`, `-pr-head-sha SHA`, `-pr-base-sha SHA`, `-pr-contains-base BOOL`, `-ui-shards N`, `-nightly-specs FILE` |
 | `compile` | `-out DIR` |
+| `gpu` | `-out DIR`, `-list FILE`, `-base FILE`, `-host`, `-tier TIER`, `-bin DIR`, `-print-progress` (§2.4) |
 | `ui-ledger` | `-report FILE`, `-list FILE`, `-plan FILE`, `-out DIR`, `-config FILE`, `-log FILE`, `-shard K`, `-part NAME` |
 | `ui-plan` | `-list FILE`, `-costs FILE`, `-shards N`, `-out FILE`, `-matrix-out FILE`, `-nightly-mode MODE`, `-nightly-specs FILE`, `-nightly-specs-base FILE`, `-run-files-out FILE` |
 | `record` | `-dir DIR`, `-tier TIER`, `-name S`, `-commit SHA`, `-branch S`, `-tree-start SHA`, `-tree-end SHA`, `-clean-start BOOL`, `-clean-end BOOL`, `-base-ref REF`, `-base-commit SHA`, `-merge-base SHA`, `-jobs N`, `-ui-workers N`, `-temporal MODE`, `-temporal-image IMAGE`, `-temporal-address ADDR`, `-image-tag TAG`, `-images FILE`, `-image-tag-own`, `-gates-override S`, `-part NAME`, `-attempt N`, `-out-dir DIR`, `-plan FILE`, `-ui-plan FILE`, `-setup-log FILE`, `-status N` |
-| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped` |
-| `verify` | `-proof DIR`, `-nightly DIR`, `-release`, `-tag S`; or, for `release.yml`'s nightly check, `-commit SHA` with `-nightly DIR` and `-nightly-jobs FILE` |
+| `merge` | `-plan FILE`, `-ui-plan FILE`, `-parts DIR`, `-jobs DIR`, `-nightly-specs FILE`, `-out DIR`, `-name S`, `-ci-run-id S`, `-ci-attempt N`, `-ci-event S`, `-ci-url URL`, `-stopped`, `-gpu-tier` |
+| `verify` | `-proof DIR`, `-nightly DIR`, `-gpu DIR`, `-release`, `-tag S`; or, for `release.yml`'s nightly check, `-commit SHA` with `-nightly DIR` and `-nightly-jobs FILE` |
 | `temporal-args` | `-compose FILE` |
 | `temporal-log` | `-container NAME`, `-out FILE`, `-max-bytes N`, `-timeout D` |
 | `costs` | `-from DIR`, `-costs-out FILE`, `-ui-costs-out FILE` |

@@ -332,6 +332,7 @@ Defined in `proto/orkstack/v1/system_service.proto`.
 | `GetRetentionPolicy` | [`GetRetentionPolicyRequest`](#getretentionpolicyrequest) | [`GetRetentionPolicyResponse`](#getretentionpolicyresponse) | GetRetentionPolicy reads the deployment's maximum run retention: the ceiling on every namespace's run_retention, and what a namespace that sets none inherits. Read from the store, so any replica answers it.<br><br>It is deployment-wide on purpose. Per-namespace retention is a field of orkstack.v1.Namespace (NamespaceService); this is the bound on all of them. |
 | `UpdateRetentionPolicy` | [`UpdateRetentionPolicyRequest`](#updateretentionpolicyrequest) | [`UpdateRetentionPolicyResponse`](#updateretentionpolicyresponse) | UpdateRetentionPolicy changes the maximum. A non-positive or malformed duration is INVALID_ARGUMENT before anything is written. Lowering it below a namespace's explicit run_retention is FAILED_PRECONDITION naming that namespace — lower the namespace first. Namespaces that set nothing follow the new maximum immediately: finished runs already older than it are retired on the next cleanup pass. |
 | `PreviewArtifactReclaim` | [`PreviewArtifactReclaimRequest`](#previewartifactreclaimrequest) | [`PreviewArtifactReclaimResponse`](#previewartifactreclaimresponse) | PreviewArtifactReclaim answers what the artifact GC — reclaim, as this API calls it; `orkctl admin gc preview` — would do now with at most `limit` (and never more than 1000) retired runs of the run index after `cursor`, within 30 seconds, and writes nothing (docs/STORAGE.md, "Reclaiming space"). Any replica answers; one preview at a time per replica, else RESOURCE_EXHAUSTED. Its low-water mark is the answering replica's last reclaim pass's, or one computed for this answer alone. Samples are returned only with `namespace`. The run holding the low-water mark is named with its namespace whether or not `namespace` is set. |
+| `ReconcileRestore` | [`ReconcileRestoreRequest`](#reconcilerestorerequest) | [`ReconcileRestoreResponse`](#reconcilerestoreresponse) | ReconcileRestore reconciles the cluster with the bucket after Temporal was restored to `temporal_restored_at` (`orkctl admin restore reconcile`; docs/RUNBOOKS.md, "Backup and disaster recovery"). It pages through the cleanup records retention cleanup wrote, at most `limit` (1 to 1000; 0 is 1000) after `cursor`, and lists each run cleanup retired after that instant whose execution the restore brought back; without `dry_run` it deletes those executions, only where the bucket holds the run's archive, which then answers for the run, and never one that is running. The first page also lists the runs the cluster shows open whose finished archive the bucket holds: they will run their tail again, and nothing acts on them. It deletes no object. Without `dry_run` it is refused FAILED_PRECONDITION while the answering engine's retention cleanup is on, which would race it. A read it cannot make fails the call; nothing is skipped. |
 | `ListTelemetrySinks` | [`ListTelemetrySinksRequest`](#listtelemetrysinksrequest) | [`ListTelemetrySinksResponse`](#listtelemetrysinksresponse) | ListTelemetrySinks names the telemetry sinks this deployment declared (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names only: endpoints and headers are the operator's and never leave the process. CONFIGURATION-DERIVED; "default" is always present. |
 | `GetImagePolicy` | [`GetImagePolicyRequest`](#getimagepolicyrequest) | [`GetImagePolicyResponse`](#getimagepolicyresponse) | GetImagePolicy reads the deployment's image supply-chain floor: whether a `uses:` may be a mutable tag, which registries images may come from, and which signing keys a namespace may require by name. Read from the store, so any replica answers it. A deployment that never wrote one answers the EMPTY policy with updated_at unset — that is a real answer (everything is permitted), not a missing document.<br><br>Deployment-wide on purpose. The per-namespace tightening is a field of orkstack.v1.Namespace (require_signed_by); this is the floor under all of them. |
 | `UpdateImagePolicy` | [`UpdateImagePolicyRequest`](#updateimagepolicyrequest) | [`UpdateImagePolicyResponse`](#updateimagepolicyresponse) | UpdateImagePolicy replaces the floor. Every entry and key is validated before anything is written (INVALID_ARGUMENT naming the entry). An allowed_registries list that excludes an activity of this engine's catalog is FAILED_PRECONDITION naming the activities — widen the list or change ORK_ACTIVITY_CATALOG first, because a floor that silently refuses every `uses: shell` is not a floor an operator meant. Removing a signing key a namespace still names is FAILED_PRECONDITION naming the namespace — clear the namespace first. Definitions already stored are untouched; they are re-checked at their next submit. |
@@ -3460,6 +3461,25 @@ ReclaimSample is one object a preview names.
 | `live_claims` | `int32` |  |
 | `waits_for_runs_created_before` | `google.protobuf.Timestamp` | waits_for_runs_created_before is set for a lowwater object: every run created before it must finish and be archived first. |
 
+### ReconcileRestoreRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `temporal_restored_at` | `google.protobuf.Timestamp` | temporal_restored_at is the instant Temporal was restored to. Required. |
+| `dry_run` | `bool` | dry_run lists and deletes nothing. |
+| `limit` | `int32` | limit is how many cleanup records the page reads: 1 to 1000; 0 is 1000. |
+| `cursor` | `string` | cursor is a previous answer's next_cursor; empty starts at the beginning, and only that page lists finished_run_ids. |
+
+### ReconcileRestoreResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `retired` | repeated [`RestoreRetiredRun`](#restoreretiredrun) |  |
+| `finished_run_ids` | repeated `string` | finished_run_ids are the runs the cluster shows open whose finished archive the bucket holds; on the first page only. |
+| `listed` | `int32` | listed is how many cleanup records this page read. |
+| `next_cursor` | `string` | next_cursor continues the walk; empty when this was the last page. |
+| `finished_truncated` | `bool` | finished_truncated says there were more open runs than one answer lists (10000), so finished_run_ids is incomplete. |
+
 ### RecordRef
 
 RecordRef is identity (O39)'s; it is empty until identity (O39) lands (v0.4.0 proto
@@ -3567,7 +3587,7 @@ of it the workload used.
 |---|---|---|
 | `cpu` | `double` | cpu is the cpu limit in cores: "2" is 2, "500m" is 0.5. |
 | `memory_bytes` | `int64` | memory_bytes is the memory limit in bytes: "4Gi" is 4294967296. |
-| `gpu` | `int64` | gpu is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `gpu` | `int64` | gpu is the gpu units the Orker granted the attempt; 0 for none. |
 
 ### ResolveAwaitRequest
 
@@ -3605,7 +3625,7 @@ task: cpu in cores ("500m" is 0.5) and memory in bytes ("4Gi" is
 |---|---|---|
 | `cpu` | `double` |  |
 | `memory_bytes` | `int64` |  |
-| `gpu` | optional `int64` | gpu is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `gpu` | optional `int64` | gpu is a count of gpu units; unset on an Orker that offers no gpu profile. |
 
 ### ResourceRequest
 
@@ -3616,7 +3636,20 @@ ResourceRequest is what a task asks the Orker for. Orker policy may cap it
 |---|---|---|
 | `cpu` | `string` | Kubernetes spelling: "2", "500m" |
 | `memory` | `string` | Kubernetes spelling: "4Gi", "512Mi" |
-| `gpu` | `int32` | gpu is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `gpu` | `int32` | gpu is how many units of the task's gpu profile it holds (resources.gpu): 0 for none, otherwise 1 to 64. |
+
+### RestoreRetiredRun
+
+RestoreRetiredRun is one run retention cleanup retired after the restore
+instant whose execution the restored cluster holds again.
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `retired_at` | `google.protobuf.Timestamp` | retired_at is when cleanup retired it, as its cleanup record says. |
+| `archived` | `bool` | archived says the bucket holds the run's archive; only then are its executions deleted. |
+| `deleted` | `bool` | deleted says this call deleted its executions. |
+| `open` | `bool` | open says the restored execution is running (a run replaying its tail, or one resumed since the restore). It is never deleted; cancel it or let it finish. |
 
 ### ResumeEventSourceRequest
 
@@ -4285,7 +4318,7 @@ execution on an Orker, and an activity is an OCI image.
 | `cache` | [`CacheSpec`](#cachespec) | cache opts this container task into memoization across runs. It may not name a pin (docs/DSL.md rule 36), and an awaited or composed task may not carry it (rules 15, 27). |
 | `join` | [`JoinPolicy`](#joinpolicy) | join is when this task may start, decided from how its needs ended (docs/DSL.md "Joins and failure handlers"). UNSPECIFIED is all_succeeded. Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no join keeps its digest. A task whose join is ANY_FAILED or ALL_DONE is a failure handler: it may not name a pin, carry each or carry cache (docs/DSL.md rule 39). |
 | `sleep` | [`SleepSpec`](#sleepspec) | sleep makes this a sleeping task: it starts no container, reaches no Orker, and succeeds once its fixed time has passed. Mutually exclusive with uses, await and every field that shapes a container (docs/DSL.md rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin), so a definition with no sleep keeps its digest. |
-| `devices` | repeated `string` | devices is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `devices` | repeated `string` | devices names the operator-defined profiles the task's container gets (devices:), never a device path. |
 | `child_artifacts` | repeated [`ChildArtifact`](#childartifact) | child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `input_artifacts` | repeated `string` | input_artifacts is set from E87; unset until it lands (v0.4.0 proto batch). |
 | `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
@@ -4801,7 +4834,7 @@ grouped by". The total row has every key empty.
 | `memory_utilization_p50` | optional `double` | memory_utilization_p50 and memory_utilization_p95 are peak ÷ limit over the memory_utilization_attempts records, as the upper edge of the quantile's 0.5 % step; at or above the limit reads 1. Unset when no record qualifies, which is not 0 %. |
 | `memory_utilization_p95` | optional `double` |  |
 | `attempts_unmeasured_by_reason` | repeated [`UnmeasuredReasonCount`](#unmeasuredreasoncount) | attempts_unmeasured_by_reason counts the records that measured nothing, by reason; an older Orker's records, and a reason this engine does not know, count under UNMEASURED_REASON_UNSPECIFIED. |
-| `gpu_seconds` | `double` | gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch). |
+| `gpu_seconds` | `double` | gpu_seconds is gpu units × held time, counted as cpu and memory are; reported only, never budgeted. |
 | `memory_utilization_attempts` | `int64` | memory_utilization_attempts is how many records the memory percentiles cover: measured records whose container had a limit and whose peak is the kernel's own, or that were stopped at the limit. |
 
 ### ValidateOrkflowRequest
@@ -5395,6 +5428,7 @@ ProfileCordonReason is the machine-readable reason of a ProfileCordon.
 | `PROFILE_CORDON_REASON_HOOK_BUILD_UNKNOWN` | 11 |  |
 | `PROFILE_CORDON_REASON_FOREIGN_UNITS_HELD` | 12 |  |
 | `PROFILE_CORDON_REASON_DEVICE_ABSENT` | 13 | DEVICE_ABSENT: a device of the profile is not there after the boot audit. The profile is unavailable until it is back unchanged. |
+| `PROFILE_CORDON_REASON_UNITS_BELOW_CEILING` | 14 | UNITS_BELOW_CEILING: fewer of a gpu profile's units are usable than the per-task cap every poll reserves (max_request.gpu), so the Orker polls for no task. The profile is unavailable, and its pool stays live, until enough units are usable again. |
 
 ### ProfileKind
 

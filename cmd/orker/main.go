@@ -851,6 +851,12 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 
 	opts := orkerOptions(cfg, tcfg, sinks, logStore, logOptions, attemptStore, commitStore, refPredictor, logger)
 	opts.Memos = memoStore
+	// The namespaces this Orker serves. It is read after the commit store's
+	// probe, which writes a probe key no namespace owns, and scopes every
+	// commit and memo read or write from here on.
+	if opts.Namespaces, opts.CommitRoot, err = servedNamespaces(logger); err != nil {
+		return err
+	}
 	logger.Info("task log export ready", "enabled", opts.TaskLogs != nil)
 
 	// One dispatcher runs every activity. There is no registry and no name
@@ -1523,4 +1529,25 @@ func checkEngineKeyFiles(files []cfgfile.FileSetting, refuse bool, logger *slog.
 		return fmt.Errorf("%s is true and this Orker can read, or cannot check, the engine's key files: %s", orker.RefuseReadableEngineKeysVar, strings.Join(problems, ", "))
 	}
 	return nil
+}
+
+// servedNamespaces reads orker.namespaces and the commit root it is checked
+// against. An empty list serves every namespace, which the boot says once; a
+// bad name refuses the boot.
+func servedNamespaces(logger *slog.Logger) (artifacts.Namespaces, string, error) {
+	served, err := orker.NamespacesFromEnv()
+	if err != nil {
+		return artifacts.Namespaces{}, "", err
+	}
+	if served.Every() {
+		logger.Info("orker serves every namespace: set " + orker.NamespacesVar +
+			" to the namespaces it may run tasks of (docs/DEPLOY.md, \"Trust zones: a deployment per zone\")")
+		return served, "", nil
+	}
+	root, err := artifacts.CommitRoot(artifacts.ConfigFromEnv())
+	if err != nil {
+		return artifacts.Namespaces{}, "", fmt.Errorf("%s: the commit root: %w", orker.NamespacesVar, err)
+	}
+	logger.Info("orker serves only the listed namespaces", "namespaces", served.Names(), "commit_root", root)
+	return served, root, nil
 }

@@ -45,6 +45,9 @@ const (
 	// SystemServicePreviewArtifactReclaimProcedure is the fully-qualified name of the SystemService's
 	// PreviewArtifactReclaim RPC.
 	SystemServicePreviewArtifactReclaimProcedure = "/orkstack.v1.SystemService/PreviewArtifactReclaim"
+	// SystemServiceReconcileRestoreProcedure is the fully-qualified name of the SystemService's
+	// ReconcileRestore RPC.
+	SystemServiceReconcileRestoreProcedure = "/orkstack.v1.SystemService/ReconcileRestore"
 	// SystemServiceListTelemetrySinksProcedure is the fully-qualified name of the SystemService's
 	// ListTelemetrySinks RPC.
 	SystemServiceListTelemetrySinksProcedure = "/orkstack.v1.SystemService/ListTelemetrySinks"
@@ -105,6 +108,21 @@ type SystemServiceClient interface {
 	// Samples are returned only with `namespace`. The run holding the low-water
 	// mark is named with its namespace whether or not `namespace` is set.
 	PreviewArtifactReclaim(context.Context, *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error)
+	// ReconcileRestore reconciles the cluster with the bucket after Temporal
+	// was restored to `temporal_restored_at` (`orkctl admin restore
+	// reconcile`; docs/RUNBOOKS.md, "Backup and disaster recovery"). It pages
+	// through the cleanup records retention cleanup wrote, at most `limit`
+	// (1 to 1000; 0 is 1000) after `cursor`, and lists each run cleanup retired
+	// after that instant whose execution the restore brought back; without
+	// `dry_run` it deletes those executions, only where the bucket holds the
+	// run's archive, which then answers for the run, and never one that is
+	// running. The first page also lists
+	// the runs the cluster shows open whose finished archive the bucket holds:
+	// they will run their tail again, and nothing acts on them. It deletes no
+	// object. Without `dry_run` it is refused FAILED_PRECONDITION while the
+	// answering engine's retention cleanup is on, which would race it. A read
+	// it cannot make fails the call; nothing is skipped.
+	ReconcileRestore(context.Context, *connect.Request[v1.ReconcileRestoreRequest]) (*connect.Response[v1.ReconcileRestoreResponse], error)
 	// ListTelemetrySinks names the telemetry sinks this deployment declared
 	// (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
 	// only: endpoints and headers are the operator's and never leave the
@@ -198,6 +216,12 @@ func NewSystemServiceClient(httpClient connect.HTTPClient, baseURL string, opts 
 			connect.WithSchema(systemServiceMethods.ByName("PreviewArtifactReclaim")),
 			connect.WithClientOptions(opts...),
 		),
+		reconcileRestore: connect.NewClient[v1.ReconcileRestoreRequest, v1.ReconcileRestoreResponse](
+			httpClient,
+			baseURL+SystemServiceReconcileRestoreProcedure,
+			connect.WithSchema(systemServiceMethods.ByName("ReconcileRestore")),
+			connect.WithClientOptions(opts...),
+		),
 		listTelemetrySinks: connect.NewClient[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse](
 			httpClient,
 			baseURL+SystemServiceListTelemetrySinksProcedure,
@@ -243,6 +267,7 @@ type systemServiceClient struct {
 	getRetentionPolicy     *connect.Client[v1.GetRetentionPolicyRequest, v1.GetRetentionPolicyResponse]
 	updateRetentionPolicy  *connect.Client[v1.UpdateRetentionPolicyRequest, v1.UpdateRetentionPolicyResponse]
 	previewArtifactReclaim *connect.Client[v1.PreviewArtifactReclaimRequest, v1.PreviewArtifactReclaimResponse]
+	reconcileRestore       *connect.Client[v1.ReconcileRestoreRequest, v1.ReconcileRestoreResponse]
 	listTelemetrySinks     *connect.Client[v1.ListTelemetrySinksRequest, v1.ListTelemetrySinksResponse]
 	getImagePolicy         *connect.Client[v1.GetImagePolicyRequest, v1.GetImagePolicyResponse]
 	updateImagePolicy      *connect.Client[v1.UpdateImagePolicyRequest, v1.UpdateImagePolicyResponse]
@@ -269,6 +294,11 @@ func (c *systemServiceClient) UpdateRetentionPolicy(ctx context.Context, req *co
 // PreviewArtifactReclaim calls orkstack.v1.SystemService.PreviewArtifactReclaim.
 func (c *systemServiceClient) PreviewArtifactReclaim(ctx context.Context, req *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error) {
 	return c.previewArtifactReclaim.CallUnary(ctx, req)
+}
+
+// ReconcileRestore calls orkstack.v1.SystemService.ReconcileRestore.
+func (c *systemServiceClient) ReconcileRestore(ctx context.Context, req *connect.Request[v1.ReconcileRestoreRequest]) (*connect.Response[v1.ReconcileRestoreResponse], error) {
+	return c.reconcileRestore.CallUnary(ctx, req)
 }
 
 // ListTelemetrySinks calls orkstack.v1.SystemService.ListTelemetrySinks.
@@ -341,6 +371,21 @@ type SystemServiceHandler interface {
 	// Samples are returned only with `namespace`. The run holding the low-water
 	// mark is named with its namespace whether or not `namespace` is set.
 	PreviewArtifactReclaim(context.Context, *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error)
+	// ReconcileRestore reconciles the cluster with the bucket after Temporal
+	// was restored to `temporal_restored_at` (`orkctl admin restore
+	// reconcile`; docs/RUNBOOKS.md, "Backup and disaster recovery"). It pages
+	// through the cleanup records retention cleanup wrote, at most `limit`
+	// (1 to 1000; 0 is 1000) after `cursor`, and lists each run cleanup retired
+	// after that instant whose execution the restore brought back; without
+	// `dry_run` it deletes those executions, only where the bucket holds the
+	// run's archive, which then answers for the run, and never one that is
+	// running. The first page also lists
+	// the runs the cluster shows open whose finished archive the bucket holds:
+	// they will run their tail again, and nothing acts on them. It deletes no
+	// object. Without `dry_run` it is refused FAILED_PRECONDITION while the
+	// answering engine's retention cleanup is on, which would race it. A read
+	// it cannot make fails the call; nothing is skipped.
+	ReconcileRestore(context.Context, *connect.Request[v1.ReconcileRestoreRequest]) (*connect.Response[v1.ReconcileRestoreResponse], error)
 	// ListTelemetrySinks names the telemetry sinks this deployment declared
 	// (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
 	// only: endpoints and headers are the operator's and never leave the
@@ -430,6 +475,12 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 		connect.WithSchema(systemServiceMethods.ByName("PreviewArtifactReclaim")),
 		connect.WithHandlerOptions(opts...),
 	)
+	systemServiceReconcileRestoreHandler := connect.NewUnaryHandler(
+		SystemServiceReconcileRestoreProcedure,
+		svc.ReconcileRestore,
+		connect.WithSchema(systemServiceMethods.ByName("ReconcileRestore")),
+		connect.WithHandlerOptions(opts...),
+	)
 	systemServiceListTelemetrySinksHandler := connect.NewUnaryHandler(
 		SystemServiceListTelemetrySinksProcedure,
 		svc.ListTelemetrySinks,
@@ -476,6 +527,8 @@ func NewSystemServiceHandler(svc SystemServiceHandler, opts ...connect.HandlerOp
 			systemServiceUpdateRetentionPolicyHandler.ServeHTTP(w, r)
 		case SystemServicePreviewArtifactReclaimProcedure:
 			systemServicePreviewArtifactReclaimHandler.ServeHTTP(w, r)
+		case SystemServiceReconcileRestoreProcedure:
+			systemServiceReconcileRestoreHandler.ServeHTTP(w, r)
 		case SystemServiceListTelemetrySinksProcedure:
 			systemServiceListTelemetrySinksHandler.ServeHTTP(w, r)
 		case SystemServiceGetImagePolicyProcedure:
@@ -511,6 +564,10 @@ func (UnimplementedSystemServiceHandler) UpdateRetentionPolicy(context.Context, 
 
 func (UnimplementedSystemServiceHandler) PreviewArtifactReclaim(context.Context, *connect.Request[v1.PreviewArtifactReclaimRequest]) (*connect.Response[v1.PreviewArtifactReclaimResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.PreviewArtifactReclaim is not implemented"))
+}
+
+func (UnimplementedSystemServiceHandler) ReconcileRestore(context.Context, *connect.Request[v1.ReconcileRestoreRequest]) (*connect.Response[v1.ReconcileRestoreResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.SystemService.ReconcileRestore is not implemented"))
 }
 
 func (UnimplementedSystemServiceHandler) ListTelemetrySinks(context.Context, *connect.Request[v1.ListTelemetrySinksRequest]) (*connect.Response[v1.ListTelemetrySinksResponse], error) {

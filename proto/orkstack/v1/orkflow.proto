@@ -166,7 +166,8 @@ message Task {
   // so a definition with no sleep keeps its digest.
   SleepSpec sleep = 25;
 
-  // devices is set from E91; unset until it lands (v0.4.0 proto batch).
+  // devices names the operator-defined profiles the task's container gets
+  // (devices:), never a device path.
   repeated string devices = 26;
 
   // child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).

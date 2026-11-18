@@ -14,7 +14,7 @@ export OTEL_TRACES_EXPORTER=otlp
 export OTEL_LOGS_EXPORTER=otlp
 ```
 
-To try this on a laptop first, start a local Collector, Loki, Tempo, Prometheus and Grafana with `make infra-up-observability`. That command needs a clone of the repository, and it runs from the clone's folder. Grafana is then at `http://localhost:3000`, on this machine only: every port the profile publishes is bound to `127.0.0.1`.
+To try this on a laptop first, run `make up-observability`: it starts OrkStack with a local Collector, Loki, Tempo, Prometheus and Grafana, and sends them everything. That command needs a clone of the repository, and it runs from the clone's folder. Grafana is then at `http://localhost:3000`, with two dashboards, OrkStack and OrkStack / Run, on this machine only: every port the profile publishes is bound to `127.0.0.1`.
 
 ## What each kind of telemetry gives you
 

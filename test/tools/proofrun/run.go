@@ -109,6 +109,12 @@ const modulePath = "github.com/orkstack/orkstack"
 // compile builds every package's integration test binary into binDir, a few
 // at a time (each `go test -c` is itself parallel).
 func compile(pkgs []pkgInfo, binDir string, logw io.Writer) (map[string]string, error) {
+	return compileTags(pkgs, binDir, "integration", logw)
+}
+
+// compileTags is compile under the build tags tags (the GPU gate's are
+// integration,gpuhost).
+func compileTags(pkgs []pkgInfo, binDir, tags string, logw io.Writer) (map[string]string, error) {
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		return nil, err
 	}
@@ -125,7 +131,7 @@ func compile(pkgs []pkgInfo, binDir string, logw io.Writer) (map[string]string, 
 			defer func() { <-sem }()
 			bin := filepath.Join(binDir, testBinaryName(p.ImportPath))
 			started := time.Now()
-			cmd := exec.Command("go", "test", "-c", "-tags=integration", "-o", bin, p.ImportPath)
+			cmd := exec.Command("go", "test", "-c", "-tags="+tags, "-o", bin, p.ImportPath)
 			out, err := cmd.CombinedOutput()
 			mu.Lock()
 			defer mu.Unlock()
@@ -1029,6 +1035,18 @@ func writePlan(o integrationPlanOptions, p *integrationPlan, measured costs, nig
 	p.Nightly.SHA256, _ = fileSHA256(o.nightlyFile)
 	if o.nightlyBase != "" {
 		p.Nightly.BaseSHA256, _ = fileSHA256(o.nightlyBase)
+	}
+	// The GPU-host lists the gpu ledger is judged on (gpu.go): the tree's,
+	// and the base's copy scripts/proof.sh wrote beside the plan.
+	p.GPU = gpuListRef{File: gpuListFile}
+	var err error
+	if p.GPU.SHA256, err = fileSHA256(gpuListFile); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration: hash the GPU-host list:", err)
+		return 1
+	}
+	if p.GPU.BaseSHA256, err = fileSHA256(filepath.Join(o.out, gpuBaseFileName)); err != nil {
+		fmt.Fprintln(os.Stderr, "proofrun integration: hash the base's GPU-host list:", err)
+		return 1
 	}
 	p.Costs = fileRef{File: o.costsFile}
 	p.Costs.SHA256, _ = fileSHA256(o.costsFile)

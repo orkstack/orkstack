@@ -339,6 +339,20 @@ func (c *objectReferenceCollector) add(key string) error {
 	return nil
 }
 
+// RunIDFromCleanupKey is the run id a cleanup-state key names, and whether
+// key is one RunCleanupKey writes.
+func RunIDFromCleanupKey(key string) (string, bool) {
+	rest, ok := strings.CutPrefix(key, RunCleanupNamespace+"/")
+	if !ok {
+		return "", false
+	}
+	segment, ok := strings.CutSuffix(rest, ".json")
+	if !ok || strings.Contains(segment, "/") {
+		return "", false
+	}
+	return decodeArchiveSegment(segment)
+}
+
 // RunCleanupKey renders the immutable cleanup-state key for a run id.
 func RunCleanupKey(runID string) (string, error) {
 	segment, err := encodeArchiveSegment(runID)

@@ -102,6 +102,17 @@ func TestDocs_OrkerSpawnsSetAStopGrace(t *testing.T) {
 			t.Errorf("stopGraceExempt names %s, which does not exist", rel)
 		}
 	}
+	// A build-only file must exist and start nothing that may be the Orker.
+	for rel := range orkerBuildOnly {
+		path := filepath.Join(root, rel)
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("orkerBuildOnly names %s, which does not exist", rel)
+			continue
+		}
+		if found, _ := goOrkerSpawns(t, path); found != 0 {
+			t.Errorf("orkerBuildOnly names %s, which starts %d program(s) that may be the Orker: remove it from the list", rel, found)
+		}
+	}
 }
 
 // shRunsOrker matches a script line that names this tree's bin/orker.
@@ -118,6 +129,13 @@ func runsOrker(text string) bool {
 	return false
 }
 
+// orkerBuildOnly are test files that build ./cmd/orker only to copy the
+// binary into an image and never start it on the host, so they do not make
+// their package one whose handed programs may be the Orker.
+var orkerBuildOnly = map[string]string{
+	"internal/orker/gpuhost_fixture_gpuhost_test.go": "copies the Orker into the GPU probe image it builds; never runs it",
+}
+
 // orkerStartingPackages are the directories one of whose tests starts
 // ./cmd/orker: only there may a program a helper was handed be the Orker.
 func orkerStartingPackages(t *testing.T, root string) map[string]bool {
@@ -129,6 +147,10 @@ func orkerStartingPackages(t *testing.T, root string) map[string]bool {
 		}
 		if d.IsDir() && slices.Contains([]string{".git", "node_modules", "proof", ".data", "ui", "site"}, d.Name()) {
 			return filepath.SkipDir
+		}
+		rel, _ := filepath.Rel(root, path)
+		if _, buildOnly := orkerBuildOnly[filepath.ToSlash(rel)]; buildOnly {
+			return nil
 		}
 		if !d.IsDir() && strings.HasSuffix(path, "_test.go") && strings.Contains(readFile(t, path), `"./cmd/orker"`) {
 			dirs[filepath.Dir(path)] = true

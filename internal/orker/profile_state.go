@@ -1,8 +1,8 @@
 package orker
 
 import (
+	"maps"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,20 +29,60 @@ type profileState struct {
 	// cordon is the Orker's cordon, which holds while any profile cause
 	// does (attach). Nil in a state no Orker runs, which then only reports.
 	cordon *Cordon
+	// cdiDirs are the trusted CDI spec directories a gpu profile's audit
+	// reads, and cdiSocket the container runtime's socket no unit's group may
+	// own (useCDI).
+	cdiDirs   []string
+	cdiSocket string
 
 	mu        sync.Mutex
 	described []*orkstackv1.OrkerProfile
 	// audits is each profile as its boot audit found it (profile_gate.go):
 	// what every later check compares with, fixed for the process's life.
 	audits map[string]profileAudit
-	// cordons holds at most one cause per profile. A drift latches: no later
-	// observation replaces it and nothing clears it. An unavailable cause is
-	// replaced by a drift and cleared by consecutive good checks.
-	cordons map[string]*orkstackv1.ProfileCordon
+	// causes holds what keeps each profile out of service. Only profiles
+	// with a cause have an entry.
+	causes map[string]*profileCauses
+}
+
+// profileCauses is what keeps one profile out of service. A drift latches:
+// no later observation replaces it and nothing clears it, and while it
+// stands it alone is reported. Otherwise every unavailable reason that
+// stands is held, each set and cleared only by its own check, so clearing
+// one never ends another (AGENTS.md §7: "clearing one never touches
+// another").
+type profileCauses struct {
+	drift       *orkstackv1.ProfileCordon
+	unavailable map[orkstackv1.ProfileCordonReason]*orkstackv1.ProfileCordon
+}
+
+// entries are the causes as reported: the drift alone if it stands, else
+// every unavailable reason in value order, so the lowest comes first.
+func (c *profileCauses) entries() []*orkstackv1.ProfileCordon {
+	if c.drift != nil {
+		return []*orkstackv1.ProfileCordon{c.drift}
+	}
+	reasons := slices.Sorted(maps.Keys(c.unavailable))
+	out := make([]*orkstackv1.ProfileCordon, len(reasons))
+	for i, r := range reasons {
+		out[i] = c.unavailable[r]
+	}
+	return out
+}
+
+// since is the instant the earliest standing cause was first seen.
+func (c *profileCauses) since() time.Time {
+	var since time.Time
+	for _, e := range c.entries() {
+		if at := e.GetSince().AsTime(); since.IsZero() || at.Before(since) {
+			since = at
+		}
+	}
+	return since
 }
 
 func newProfileState(declared Profiles, build string) *profileState {
-	return &profileState{declared: declared, build: build, cordons: map[string]*orkstackv1.ProfileCordon{}}
+	return &profileState{declared: declared, build: build, causes: map[string]*profileCauses{}}
 }
 
 // attach makes the profile causes hold c, the Orker's cordon.
@@ -60,24 +100,20 @@ func (s *profileState) syncLocked() {
 	if s.cordon == nil {
 		return
 	}
-	if len(s.cordons) == 0 {
+	if len(s.causes) == 0 {
 		s.cordon.ClearProfiles()
 		return
 	}
-	names := make([]string, 0, len(s.cordons))
+	names := slices.Sorted(maps.Keys(s.causes))
 	var since time.Time
-	for name, held := range s.cordons {
-		names = append(names, name)
-		if at := held.GetSince().AsTime(); since.IsZero() || at.Before(since) {
-			since = at
-		}
-	}
-	sort.Strings(names)
 	parts := make([]string, len(names))
 	for i, name := range names {
-		held := s.cordons[name]
+		held := s.causes[name]
+		if at := held.since(); since.IsZero() || at.Before(since) {
+			since = at
+		}
 		word := "is unavailable"
-		if held.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT {
+		if held.drift != nil {
 			word = "drifted"
 		}
 		parts[i] = "profile " + name + " " + word
@@ -98,10 +134,15 @@ func (s *profileState) setDescribed(described []*orkstackv1.OrkerProfile) {
 func (s *profileState) setDrift(profile string, reason orkstackv1.ProfileCordonReason, detail string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if held, ok := s.cordons[profile]; ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT {
+	held := s.causes[profile]
+	if held == nil {
+		held = &profileCauses{}
+		s.causes[profile] = held
+	}
+	if held.drift != nil {
 		return
 	}
-	s.cordons[profile] = &orkstackv1.ProfileCordon{
+	held.drift = &orkstackv1.ProfileCordon{
 		Cause:   orkstackv1.ProfileCordon_CAUSE_DRIFT,
 		Profile: profile,
 		Reason:  reason,
@@ -111,19 +152,27 @@ func (s *profileState) setDrift(profile string, reason orkstackv1.ProfileCordonR
 	s.syncLocked()
 }
 
-// setUnavailable marks one profile unavailable, keeping the instant it was
-// first seen and the latest reason. A drifted profile stays drifted.
+// setUnavailable holds one profile unavailable for one reason, keeping the
+// instant that reason was first seen and its latest detail. A drifted
+// profile stays drifted.
 func (s *profileState) setUnavailable(profile string, reason orkstackv1.ProfileCordonReason, detail string, now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	held, ok := s.cordons[profile]
-	switch {
-	case ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT:
+	held := s.causes[profile]
+	if held == nil {
+		held = &profileCauses{}
+		s.causes[profile] = held
+	}
+	if held.drift != nil {
 		return
-	case ok:
-		held.Reason, held.Detail = reason, detail
-	default:
-		s.cordons[profile] = &orkstackv1.ProfileCordon{
+	}
+	if held.unavailable == nil {
+		held.unavailable = map[orkstackv1.ProfileCordonReason]*orkstackv1.ProfileCordon{}
+	}
+	if existing, ok := held.unavailable[reason]; ok {
+		existing.Detail = detail
+	} else {
+		held.unavailable[reason] = &orkstackv1.ProfileCordon{
 			Cause:   orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE,
 			Profile: profile,
 			Reason:  reason,
@@ -134,22 +183,55 @@ func (s *profileState) setUnavailable(profile string, reason orkstackv1.ProfileC
 	s.syncLocked()
 }
 
-// clearUnavailable ends an unavailable cause. It never clears a drift.
-func (s *profileState) clearUnavailable(profile string) {
+// clearUnavailable ends the named unavailable reasons of one profile, and
+// only those: a reason another check holds stands. It never clears a drift.
+func (s *profileState) clearUnavailable(profile string, reasons ...orkstackv1.ProfileCordonReason) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if held, ok := s.cordons[profile]; ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE {
-		delete(s.cordons, profile)
-		s.syncLocked()
+	held := s.causes[profile]
+	if held == nil || held.drift != nil {
+		return
 	}
+	changed := false
+	for _, r := range reasons {
+		if _, ok := held.unavailable[r]; ok {
+			delete(held.unavailable, r)
+			changed = true
+		}
+	}
+	if !changed {
+		return
+	}
+	if len(held.unavailable) == 0 {
+		delete(s.causes, profile)
+	}
+	s.syncLocked()
 }
 
-// unavailable reports whether a profile is held unavailable.
+// unavailable reports whether a profile is held unavailable, for any reason.
 func (s *profileState) unavailable(profile string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	held, ok := s.cordons[profile]
-	return ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE
+	held := s.causes[profile]
+	return held != nil && held.drift == nil && len(held.unavailable) > 0
+}
+
+// unavailableFor reports whether a profile is held unavailable for any of
+// reasons: what a check that owns those reasons asks before it counts the
+// good observations that clear them.
+func (s *profileState) unavailableFor(profile string, reasons ...orkstackv1.ProfileCordonReason) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	held := s.causes[profile]
+	if held == nil || held.drift != nil {
+		return false
+	}
+	for _, r := range reasons {
+		if _, ok := held.unavailable[r]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 // hostViewAudits is every audited profile with devices that has not
@@ -159,7 +241,7 @@ func (s *profileState) hostViewAudits() map[string]profileAudit {
 	defer s.mu.Unlock()
 	out := map[string]profileAudit{}
 	for name, audit := range s.audits {
-		if held, ok := s.cordons[name]; ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT {
+		if held := s.causes[name]; held != nil && held.drift != nil {
 			continue
 		}
 		if len(audit.devices) > 0 {
@@ -174,8 +256,8 @@ func (s *profileState) hostViewAudits() map[string]profileAudit {
 func (s *profileState) nextAuditDelay() time.Duration {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, held := range s.cordons {
-		if held.GetCause() == orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE {
+	for _, held := range s.causes {
+		if held.drift == nil && len(held.unavailable) > 0 {
 			return s.declared.RecoveryInterval
 		}
 	}
@@ -183,19 +265,27 @@ func (s *profileState) nextAuditDelay() time.Duration {
 }
 
 // cordonDetail is what the Orker observed of a profile's cause, for its own
-// log and the control channel only.
+// log and the control channel only: the drift's, or the first standing
+// unavailable reason's.
 func (s *profileState) cordonDetail(profile string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.cordons[profile].GetDetail()
+	held := s.causes[profile]
+	if held == nil {
+		return ""
+	}
+	if entries := held.entries(); len(entries) > 0 {
+		return entries[0].GetDetail()
+	}
+	return ""
 }
 
 // drifted reports whether a profile has drifted.
 func (s *profileState) drifted(profile string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	held, ok := s.cordons[profile]
-	return ok && held.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT
+	held := s.causes[profile]
+	return held != nil && held.drift != nil
 }
 
 // report fills the profile fields of this Orker's answer with copies, sorted
@@ -212,13 +302,10 @@ func (s *profileState) report(result *orkstackv1.DescribeOrkerResult) {
 	for _, p := range s.described {
 		result.Profiles = append(result.Profiles, proto.CloneOf(p))
 	}
-	names := make([]string, 0, len(s.cordons))
-	for name := range s.cordons {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		result.ProfileCordons = append(result.ProfileCordons, proto.CloneOf(s.cordons[name]))
+	for _, name := range slices.Sorted(maps.Keys(s.causes)) {
+		for _, entry := range s.causes[name].entries() {
+			result.ProfileCordons = append(result.ProfileCordons, proto.CloneOf(entry))
+		}
 	}
 	if len(result.ProfileCordons) > 0 {
 		result.Cordoned = true

@@ -27,6 +27,7 @@ func newAdminCommand(g *globalFlags) *cobra.Command {
 	cmd.AddCommand(newAdminImagePolicyCommand(g))
 	cmd.AddCommand(newAdminAuditCommand(g))
 	cmd.AddCommand(newAdminGCCommand(g))
+	cmd.AddCommand(newAdminRestoreCommand(g))
 	cmd.AddCommand(newAdminAuthCommand(g), newAdminRoleCommand(g), newAdminBindingCommand(g),
 		newAdminServiceAccountCommand(g), newAdminPrincipalCommand(g), newAdminAccessCommand(g),
 		newAdminIdentityCommand(g))

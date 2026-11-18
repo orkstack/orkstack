@@ -60,6 +60,9 @@ type OCIDispatcher struct {
 	// profiles is what this Orker offers and audited (profile_gate.go);
 	// nil offers no profile.
 	profiles *profileState
+	// gpu is this Orker's gpu profile and its held lock (dispatch_units.go);
+	// nil offers none.
+	gpu atomic.Pointer[gpuOffer]
 	// LogUnmasked is orker.log.mask_secrets turned off: a task's secrets are
 	// not masked in its logs. The zero value masks.
 	LogUnmasked bool
@@ -103,7 +106,7 @@ type OCIDispatcher struct {
 	// the SDK's test environment leaves the policy out of the info.
 	listed func(context.Context) []string
 	// inspectDevice overrides what the host says a profile's device path is
-	// at the profile check and the recheck before create; nil reads the host
+	// at the profile check and the rechecks before create and start; nil reads the host
 	// (inspectHostDevice). A test seam: a device that changes between the two
 	// is a fault no host produces on demand.
 	inspectDevice func(string) (hostDevice, error)
@@ -115,6 +118,17 @@ type OCIDispatcher struct {
 	// (MEMO_STORE_ABSENT) and runs, exactly like Commits being nil disables
 	// adoption.
 	Memos artifacts.MemoStore
+	// Namespaces is the set this Orker serves (ORK_ORKER_NAMESPACES). Its
+	// zero value serves every namespace and checks nothing. Otherwise a task
+	// of any other namespace, or whose input names a commit outside
+	// CommitRoot or of another namespace, is refused NAMESPACE_NOT_SERVED
+	// before the attempt opens its log (refuseNamespace); Commits and Memos
+	// are scoped to the same set by the caller (artifacts.ScopeCommits,
+	// artifacts.ScopeMemos), so no other read reaches another namespace's.
+	Namespaces artifacts.Namespaces
+	// CommitRoot is the store root every commit uri this Orker accepts lies
+	// under (artifacts.CommitRoot); read only while Namespaces is a list.
+	CommitRoot string
 	// LogOpts bounds that stream.
 	LogOpts LogOptions
 	// Policy is the Orker-local half of §9.
@@ -394,6 +408,18 @@ func (d *OCIDispatcher) executeAttempt(
 	}
 	if stage.handedBack() {
 		return d.handBackUnstarted(ctx, in, attempt)
+	}
+	// STEP 0′. The namespace guard: a task this Orker may not touch is
+	// refused before its log, heartbeat, claim or any read, so nothing of it
+	// is written and a commit already there is not read (AGENTS.md §5). It
+	// comes after the hand-back above on purpose: a stopping Orker starts
+	// nothing either way, and the Orker the task goes to next decides.
+	if failure := d.refuseNamespace(in); failure != nil {
+		d.logger().Warn("refused a task of a namespace this orker does not serve",
+			"orker", d.OrkerID, "served", d.Namespaces.Names(),
+			"run", in.GetRunId(), "task", in.GetTaskId(), "namespace", artifacts.ResolveNamespace(in.GetNamespace()),
+			"pool", in.GetPool(), "reason", failure.Reason, "detail", failure.Message)
+		return nil, d.emit(ctx, in, failure)
 	}
 
 	// STEP 1. The live log sink, first and always. Its Close is deferred
@@ -1204,6 +1230,14 @@ func (d *OCIDispatcher) execute(
 		return nil, failure
 	}
 
+	// STEP 6b. The gpu units the task asks for, bound from its admission
+	// under the held GPU host lock (dispatch_units.go); freed when its
+	// container is removed.
+	units, failure := d.bindUnits(ctx, in, admissionFrom(ctx))
+	if failure != nil {
+		return nil, failure
+	}
+
 	// STEP 7. Render, then compose and SEAL the input tree.
 	beat.Phase("render")
 	effectiveCPU, effectiveMem, resFailure := d.Policy.ResolveResources(in.GetResources())
@@ -1291,6 +1325,10 @@ func (d *OCIDispatcher) execute(
 		return nil, failure
 	}
 	spec.Devices = devices
+	spec.CDIDevices = units.cdi
+	for key, value := range units.labels {
+		spec.Labels[key] = value
+	}
 	// Nothing is created for an attempt that is being stopped: a run
 	// terminated during the pull leaves no container (resume/design.md
 	// §26.2). Execute says how it was stopped.
@@ -2214,6 +2252,15 @@ func (d *OCIDispatcher) runContainer(
 		}
 	}()
 
+	// The profiles once more, just before the start (profile_gate.go): the
+	// runtime resolves a CDI device when it starts the container, not when it
+	// creates it (design Q18), so a spec or node changed since the create is
+	// drift here. Start is never called, so the attempt never started; the
+	// deferred removal frees the container and its units.
+	if failure := d.profileRecheck(in); failure != nil {
+		beat.setUsage(unmeasuredSampler(reasonNotRun))
+		return capture, failure
+	}
 	// The start runs on a context the stop's sweep never cancels: a start in
 	// flight returns, and the CAS below decides. A container the sweep took
 	// back as it started is stopped by the cancellation sequence, below.

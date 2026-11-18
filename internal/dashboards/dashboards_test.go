@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/orkstack/orkstack/internal/testsupport/metriccatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -259,7 +260,7 @@ func TestDashboards_NoUnboundedMetricLabel(t *testing.T) {
 // internal/telemetry exports the label, no query may filter on it, because a
 // matcher on a label nothing records matches everything and only seems to.
 func TestDashboards_RunCountsExcludeResumed(t *testing.T) {
-	exported := declaredAttributes(t)["ork_run_resumed"]
+	exported := metriccatalog.DeclaredAttributes(t)["ork_run_resumed"]
 	run := regexp.MustCompile(`ork_runs_total\{[^}]*\}|ork_run_duration_seconds_bucket\{[^}]*\}`)
 	counted := 0
 	for _, p := range allPanels(dashboardsByUID(t)[UIDOrkStack]) {

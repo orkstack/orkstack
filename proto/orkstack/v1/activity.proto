@@ -68,7 +68,8 @@ message ResourceRequest {
   string cpu = 1;     // Kubernetes spelling: "2", "500m"
   string memory = 2;  // Kubernetes spelling: "4Gi", "512Mi"
 
-  // gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+  // gpu is how many units of the task's gpu profile it holds
+  // (resources.gpu): 0 for none, otherwise 1 to 64.
   int32 gpu = 3;
 }
 
@@ -952,7 +953,8 @@ message ResourceQuantity {
   double cpu = 1;
   int64 memory_bytes = 2;
 
-  // gpu is set from E91; unset until it lands (v0.4.0 proto batch).
+  // gpu is a count of gpu units; unset on an Orker that offers no gpu
+  // profile.
   optional int64 gpu = 3;
 }
 
@@ -1174,6 +1176,11 @@ enum ProfileCordonReason {
   // DEVICE_ABSENT: a device of the profile is not there after the boot
   // audit. The profile is unavailable until it is back unchanged.
   PROFILE_CORDON_REASON_DEVICE_ABSENT = 13;
+  // UNITS_BELOW_CEILING: fewer of a gpu profile's units are usable than the
+  // per-task cap every poll reserves (max_request.gpu), so the Orker polls
+  // for no task. The profile is unavailable, and its pool stays live, until
+  // enough units are usable again.
+  PROFILE_CORDON_REASON_UNITS_BELOW_CEILING = 14;
 }
 
 // ProfileKind is the closed set of profile kinds compiled into the Orker

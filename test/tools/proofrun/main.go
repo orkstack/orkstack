@@ -6,6 +6,7 @@
 //	proofrun fuzz         run every Fuzz target for a bounded time and write its ledger
 //	proofrun integration  plan a run once, or run one shard of that plan
 //	proofrun compile      compile and list the integration test binaries ahead
+//	proofrun gpu          the GPU-host gate: run the GPU-host list, or record it host-deferred
 //	proofrun ui-ledger    check the Playwright report against its listing
 //	proofrun ui-plan      split Playwright spec files by measured wall
 //	proofrun record       write a part.json
@@ -43,6 +44,7 @@ var subcommands = []subcommand{
 	{"fuzz", "run every Fuzz target for a bounded time and write its ledger", cmdFuzz},
 	{"integration", "plan a run once, or run one shard of that plan", cmdIntegration},
 	{"compile", "compile and list the integration test binaries a later integration adopts", cmdCompile},
+	{"gpu", "the GPU-host gate: run the GPU-host list, or record it host-deferred", cmdGPU},
 	{"ui-ledger", "check the Playwright report against its listing", cmdUILedger},
 	{"ui-plan", "split the Playwright spec files by measured wall", cmdUIPlan},
 	{"record", "write a part.json", cmdRecord},
