@@ -118,8 +118,11 @@ func definitionPlan(t *testing.T, ref DefinitionRef) RunPlan {
 }
 
 // TestDefinitionLoad_FitsTheDeadlockBudget: a definition at the 2 MiB bound
-// (a quarter of the default copy cap) loads through the bootstrap's batches
-// with the production 1 s deadlock detector, and the slowest batch's
+// (a quarter of the default copy cap) loads through the bootstrap's batches,
+// every stretch of its workflow code within the deadlock detector's budget,
+// held on thread CPU time at half the 1 s detector (deadlockCPUBound: the
+// detector is a wall clock that a loaded host moves, and half leaves room for
+// a loaded host's slower cores), and the slowest batch's
 // workflow-side verify and decode — the per-batch work the detector times —
 // is quoted, under the bound the saved-state restore keeps.
 func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
@@ -136,7 +139,8 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newRefusalHarnessOver(t, store)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+	budget := newDeadlockBudget(t)
+	h.env.SetWorkerOptions(budget.options(worker.Options{}))
 	started := time.Now()
 	h.env.ExecuteWorkflow(RunWorkflowType, refusalWorkflowID, DefinitionStub(planned), (*orkstackv1.Payload)(nil),
 		definitionPlan(t, ref), (*orkstackv1.RunContinuation)(nil))
@@ -147,6 +151,7 @@ func TestDefinitionLoad_FitsTheDeadlockBudget(t *testing.T) {
 		t.Fatalf("a run with its %d-byte definition passed by reference failed: %v", ref.SizeBytes, err)
 	}
 	elapsed := time.Since(started)
+	budget.check(t)
 
 	var merged *orkstackv1.Orkflow
 	decoder := &partDecoder{refs: ref.object().GetParts(), decode: func(index int, plain []byte) error {

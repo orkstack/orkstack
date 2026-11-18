@@ -54,13 +54,13 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 	CGO_ENABLED=0 GOOS=linux GOARCH=$TARGETARCH GOTOOLCHAIN=local \
 	go build -trimpath -buildvcs=false -tags timetzdata -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT}" -o /out/ ./cmd/ork ./cmd/orker ./cmd/orkctl
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99 AS ork
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS ork
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=binaries /out/ork /usr/local/bin/ork
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/ork"]
 
-FROM gcr.io/distroless/static-debian13:nonroot@sha256:18f4cc26c9ffa7f20a359298be7deadac5c607c8e03a02b8119f1a5fc2f82c99 AS orkctl
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931 AS orkctl
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=binaries /out/orkctl /usr/local/bin/orkctl
 WORKDIR /work
@@ -69,9 +69,9 @@ ENTRYPOINT ["/usr/local/bin/orkctl"]
 # The Orker drives the docker CLI against the host's daemon, through the
 # socket compose.yaml mounts: that makes it root on the host whatever user it
 # runs as, so it runs as root and says so.
-FROM docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb AS docker-cli
+FROM docker:29.9.3-cli@sha256:5a7af0dcb0e46c803efe9b45371dd21cb500e5b4453250394ac6f06d49b6e6f1 AS docker-cli
 
-FROM gcr.io/distroless/static-debian13:latest@sha256:15f8637509792e05b97d83451b0b6ccfa4abd548f997e406ac1e72c87fe1fa78 AS orker
+FROM gcr.io/distroless/static-debian13:latest@sha256:1a64f46364620465ef9e9a8f5413757dfdf22695e050bbfd7303eeaf17a59383 AS orker
 COPY LICENSE /usr/share/doc/orkstack/LICENSE
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=binaries /out/orker /usr/local/bin/orker

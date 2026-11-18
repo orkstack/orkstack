@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"testing"
 	"time"
 
 	historypb "go.temporal.io/api/history/v1"
@@ -19,9 +20,33 @@ var (
 	SkipReasonCondition = skipReasonCondition
 )
 
-// ProductionDeadlockForTest is the deadlock budget a test proves a path
-// within: 1 s, scaled in a race build (productionDeadlock).
-func ProductionDeadlockForTest() time.Duration { return productionDeadlock() }
+// DeadlockBudgetForTest holds a test's workflow code to the deadlock
+// detector's budget on thread CPU time (deadlockBudget).
+type DeadlockBudgetForTest struct{ budget *deadlockBudget }
+
+// NewDeadlockBudgetForTest is a budget over every run of the test.
+func NewDeadlockBudgetForTest(t testing.TB) *DeadlockBudgetForTest {
+	t.Helper()
+	return &DeadlockBudgetForTest{budget: newDeadlockBudget(t)}
+}
+
+// Options is options with the budget (deadlockBudget.options).
+func (b *DeadlockBudgetForTest) Options(options worker.Options) worker.Options {
+	return b.budget.options(options)
+}
+
+// Check fails t when a stretch of workflow code ran over the budget.
+func (b *DeadlockBudgetForTest) Check(t testing.TB) {
+	t.Helper()
+	b.budget.check(t)
+}
+
+// PassGuardForTest fails a run whose main loop passes more than limit times
+// over the test (passGuard).
+func PassGuardForTest(t testing.TB, limit int) {
+	t.Helper()
+	passGuard(t, limit)
+}
 
 // DropCacheContextForTest sets the test-only switch that makes cacheContextFor
 // return nil, and returns the function that clears it.

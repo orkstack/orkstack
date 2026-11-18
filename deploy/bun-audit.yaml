@@ -1,0 +1,29 @@
+# The advisories `make vuln-js` (nightly.yml › vuln-js) sets aside: the twin
+# of deploy/grype.yaml's waivers, for the UI's and the site's JavaScript
+# dependencies. bun audit still lists every advisory; the run that fails on a
+# high or critical one passes each vulnerability below to `bun audit --ignore`.
+#
+# Waivers: one advisory set aside in one package, with the user's approval,
+# only when no published version fixes it (`bun audit fix --dry-run` says
+# "no published version fixes"). Each names the advisory's GHSA id, the
+# package's exact name and every version and directory it is found in, and a
+# reason that opens with the date it is reviewed by, at most 30 days ahead;
+# past that date the waiver is renewed or removed (no test enforces the date
+# or the shape). Remove a waiver once the fix ships, in the pull request that
+# moves the package to it.
+ignore:
+  - vulnerability: GHSA-fc5q-39xc-vjpf
+    reason: >-
+      review-by 2026-12-17: picomatch's ReDoS through repeated extglobs is
+      in every release up to 4.0.7, its latest, and no published version
+      fixes it. Only the build tools use it (vite, astro, tinyglobby,
+      anymatch), and they match OrkStack's own globs, never a user's.
+      Remove this waiver when picomatch publishes a fix.
+    package:
+      name: picomatch
+      versions:
+        - 4.0.7
+        - 2.3.2
+      directories:
+        - ui
+        - site

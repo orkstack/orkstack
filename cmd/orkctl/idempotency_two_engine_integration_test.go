@@ -325,7 +325,7 @@ func awaitWorkflowCompleted(ctx context.Context, t *testing.T, c client.Client, 
 	deadline := time.Now().Add(2 * time.Minute)
 	var last enumspb.WorkflowExecutionStatus
 	for time.Now().Before(deadline) {
-		described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(c, ctx, runID, "")
 		if err == nil {
 			last = described.GetWorkflowExecutionInfo().GetStatus()
 			switch last {

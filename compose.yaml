@@ -47,7 +47,7 @@ x-source: &source
 
 services:
   temporal:
-    image: temporalio/temporal:1.9.1@sha256:ad4c82c97bd12b417d1ea942610dbcd511afb250c4d5ed26c694009533df447e
+    image: temporalio/temporal:1.10.1@sha256:b228dadf9cdb6c7c02a1394b89dd76f827aac9760e458fce42f0899a10141225
     command:
       - server
       - start-dev
@@ -69,7 +69,7 @@ services:
   # an upload to a bucket that does not exist. With no keys set this store checks
   # none, and with them auto-create would let an admin's upload make that bucket.
   seaweedfs:
-    image: chrislusf/seaweedfs:4.51@sha256:f7a49e3f3972ebed5be2ed4befa4a0c68eb7bdddba6e692d42729ceb545134b8
+    image: chrislusf/seaweedfs:4.53@sha256:ccad23e18639c8b98cee17e7100b95830a06077b56d8e5b006d6dcf8ec5e94a0
     command: ["mini", "-dir=/data", "-bucket=orkstack-artifacts", "-s3.autoCreateBucket=false"]
     environment:
       AWS_ACCESS_KEY_ID: orkstack
@@ -88,7 +88,7 @@ services:
       retries: 20
 
   registry:
-    image: registry:3@sha256:d4032d4cc323c1731c707931ecada07a53076eac38e3b61ae57533f170f2c6c3
+    image: registry:3@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
     ports:
       - "127.0.0.1:${ORKSTACK_REGISTRY_PORT-5002}:5000"
     volumes:
@@ -129,7 +129,7 @@ services:
   # Pushes the six activities to the registry, where they get the digests the
   # engine pins, and exits; the engine starts only once it has.
   activities:
-    image: docker:29.9.2-cli@sha256:5e6baf67325a79f64ed3bed6863954d5e05d0f3d4e57cbdb14809346814bbfdb
+    image: docker:29.9.3-cli@sha256:5a7af0dcb0e46c803efe9b45371dd21cb500e5b4453250394ac6f06d49b6e6f1
     entrypoint: ["sh", "-ec"]
     command:
       - |

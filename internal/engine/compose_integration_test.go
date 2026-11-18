@@ -314,7 +314,7 @@ func TestIntegration_TerminatedParentCancelsItsChild(t *testing.T) {
 	if !strings.Contains(logged, "got SIGTERM") {
 		t.Fatalf("the child's container did not record SIGTERM: %q", logged)
 	}
-	described, err := e.temporal.DescribeWorkflowExecution(e.ctx, childID, "")
+	described, err := describeExecution(e.temporal, e.ctx, childID, "")
 	must.OK(t, err)
 	if status := described.GetWorkflowExecutionInfo().GetStatus(); status == enums.WORKFLOW_EXECUTION_STATUS_RUNNING {
 		t.Fatal("the child is still running after its parent was terminated")

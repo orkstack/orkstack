@@ -257,9 +257,9 @@ func TestIntegration_SubmitRunReissuesARunIDTheClusterRefuses(t *testing.T) {
 	}
 
 	// The reissued id names a real execution, and it is not the occupied one.
-	described, err := c.DescribeWorkflowExecution(ctx, reissued, "")
+	described, err := describeExecution(c, ctx, reissued, "")
 	must.OKf(t, err, "describe %s", reissued)
-	occupied, err := c.DescribeWorkflowExecution(ctx, taken, "")
+	occupied, err := describeExecution(c, ctx, taken, "")
 	must.OKf(t, err, "describe %s", taken)
 	reissuedExecution := described.GetWorkflowExecutionInfo().GetExecution().GetRunId()
 	occupiedExecution := occupied.GetWorkflowExecutionInfo().GetExecution().GetRunId()
@@ -285,7 +285,7 @@ func TestIntegration_OldAndNewRunIDShapesCoexistOnOneCluster(t *testing.T) {
 
 	for _, runID := range []string{oldShape, newShape} {
 		must.OKf(t, replica.StartRun(ctx, runID, twoTaskOrkflow(), nil, defaultPlan()), "start %s", runID)
-		described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(c, ctx, runID, "")
 		must.OKf(t, err, "describe %s", runID)
 		if got := described.GetWorkflowExecutionInfo().GetExecution().GetWorkflowId(); got != runID {
 			t.Fatalf("describe %s named %q", runID, got)

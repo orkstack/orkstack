@@ -431,11 +431,11 @@ func (s *TemporalScheduler) recentFires(ctx context.Context, actions []client.Sc
 // past the cluster's execution retention, or the cluster did not answer —
 // reports the details unavailable rather than guessing.
 func (s *TemporalScheduler) fireDetails(ctx context.Context, workflowID, runID string) (string, string, bool) {
-	resp, err := s.client.DescribeWorkflowExecution(ctx, workflowID, runID)
-	if err != nil || resp == nil {
+	desc, err := s.client.DescribeWorkflow(ctx, workflowID, runID)
+	if err != nil || desc == nil || desc.RawResponse == nil {
 		return "", "", false
 	}
-	fields := resp.GetWorkflowExecutionInfo().GetMemo().GetFields()
+	fields := desc.RawResponse.GetWorkflowExecutionInfo().GetMemo().GetFields()
 	runIDValue, ok1 := s.memoString(fields, MemoScheduledRunID)
 	refusal, ok2 := s.memoString(fields, MemoScheduleFireRefusal)
 	if !ok1 || !ok2 {

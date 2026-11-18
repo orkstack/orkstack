@@ -233,7 +233,7 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 		t.Fatalf("the stream opened at submit ended with %v", err)
 	}
 
-	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.client, ctx, runID, "")
 	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 3 {
@@ -272,7 +272,7 @@ func TestIntegration_ContinuationRunIsTransparent(t *testing.T) {
 	records := make([]generationRecord, len(chain))
 	natural, held := 0, 0
 	for i, h := range histories {
-		info, err := s.client.DescribeWorkflowExecution(ctx, runID, chain[i])
+		info, err := describeExecution(s.client, ctx, runID, chain[i])
 		must.OK(t, err)
 		records[i] = generationRecord{Execution: chain[i], Length: len(h.GetEvents()),
 			SizeBytes: info.GetWorkflowExecutionInfo().GetHistorySizeBytes()}
@@ -464,7 +464,7 @@ func TestIntegration_ContinuationReplaysEveryGeneration(t *testing.T) {
 	wf := compile(t, "apiVersion: orkstack/v1\nkind: Orkflow\nname: gens\ntasks:\n"+guardChain("g", 30, ""))
 	must.OKf(t, s.starter.StartRun(ctx, runID, wf, nil, s.plan(1000, &budget)), "StartRun")
 	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the run failed")
-	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.client, ctx, runID, "")
 	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {
@@ -526,7 +526,7 @@ tasks:
 	plan.Children = map[string]*engine.ChildRunPlan{"release": cp}
 	must.OKf(t, s.starter.StartRun(ctx, runID, parent, nil, plan), "StartRun")
 	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the parent did not complete")
-	described, err := s.client.DescribeWorkflowExecution(ctx, cp.RunID, "")
+	described, err := describeExecution(s.client, ctx, cp.RunID, "")
 	must.OK(t, err)
 	chain := s.chainOf(cp.RunID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {
@@ -615,7 +615,7 @@ func TestIntegration_ScheduledRunThatContinuesCompletesItsFire(t *testing.T) {
 	}
 	waitWorkflowStarted(t, ctx, s.client, runID)
 	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the scheduled run did not complete")
-	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.client, ctx, runID, "")
 	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {

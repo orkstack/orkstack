@@ -77,6 +77,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Changed
 
+- The release images are rebuilt on current alpine and distroless bases, and the Orker image's Docker CLI is now 29.9.3; nothing to do ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-the-published-images)).
 - With the artifact GC in `dry_run` (the default) or `delete`, a retired run keeps its reference markers until the GC has decided; provenance still shows it released ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#the-artifact-gc)).
 - **BREAKING:** an Orkflow whose top-level key is a merge key (`<<`), an alias, or anchored or tagged is now refused; write each top-level key out as a plain name ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#top-level-fields)).
 - **BREAKING:** an idempotency key reused for a different Orkflow, version or input is now refused (`already_exists`), not answered with the first run; use one key for one submission ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).

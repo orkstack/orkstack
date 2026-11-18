@@ -43,7 +43,7 @@ spec:
         # probe, before the Orker boots, and it stops only after the Orker
         # has exited, so a task is never left without its daemon.
         - name: engine
-          image: docker:29.9.2-dind@sha256:9e79b879b177fbd72c34376a3dd3d91747da5db49e1f560f76aea59561471977
+          image: docker:29.9.3-dind@sha256:7bf70dcb85c822e3fa6f2d332143e474b99147b9d7b39102b0cfe8b04a7dd61b
           restartPolicy: Always
           command:
             - sh

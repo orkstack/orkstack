@@ -570,7 +570,7 @@ func (e *eachSoak) soakRun(t *testing.T, ctx context.Context, shape string, maxP
 	chain, histories := e.histories(runID)
 	completions := map[string]int{}
 	for i, h := range histories {
-		info, err := e.control.DescribeWorkflowExecution(ctx, runID, chain[i])
+		info, err := describeExecution(e.control, ctx, runID, chain[i])
 		must.OK(t, err)
 		g := soakGeneration{Execution: chain[i], Events: len(h.GetEvents()),
 			Bytes: info.GetWorkflowExecutionInfo().GetHistorySizeBytes()}
@@ -724,7 +724,7 @@ func (e *eachSoak) waitRetired(t *testing.T, ctx context.Context, runID string) 
 	tick := time.NewTicker(250 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		_, describeErr := e.control.DescribeWorkflowExecution(ctx, runID, "")
+		_, describeErr := describeExecution(e.control, ctx, runID, "")
 		var notFound *serviceerror.NotFound
 		gone := errors.As(describeErr, &notFound)
 		if gone {

@@ -58,6 +58,7 @@ tasks:
 // that starts while a pin is open lets the composed task a member needs
 // start its child run, so the pin closes and the run then switches.
 func TestContinuation_PinMemberNeedingComposedTaskDoesNotDeadlock(t *testing.T) {
+	budget := engine.NewDeadlockBudgetForTest(t)
 	wf := compile(t, pinComposedDocument)
 	for _, task := range wf.GetTasks() {
 		if task.GetOrkflow() != nil {
@@ -68,12 +69,13 @@ func TestContinuation_PinMemberNeedingComposedTaskDoesNotDeadlock(t *testing.T) 
 	_, composed, _ := composedFixture(t, reproducedChildDocument)
 	plan.Children = composed.Children
 	g := runGenerations(t, "ork-pin-composed", wf, payload(t, nil), plan, okBehavior, func(h *harness, generation int) {
-		pinSetup(h, generation)
+		pinSetup(budget, h)
 		if generation == 0 {
 			raiseHistoryWhen(h, 650, taskStatusIs("prep", orkstackv1.Status_STATUS_SUCCEEDED))
 		}
 	})
 	generationsOK(t, g, 2)
+	budget.Check(t)
 	gen0 := strings.Join(sortedTaskOrder(g.harnesses[0]), ",")
 	if !strings.Contains(gen0, "compile") || !strings.Contains(gen0, "prep") {
 		t.Fatalf("generation 0 ran %q, want both pin members — the composed task between them started under the hold", gen0)
@@ -154,8 +156,8 @@ func TestContinuation_UnreadableCheckpointFailsUnavailableAfterTheRestoreTimeout
 }
 
 // holdNeverSpinsAfterCancel is TestContinuation_HoldNeverSpins' cancel case:
-// a cancel while the run holds, under the production 1 s deadlock detector,
-// ends the run without a spin.
+// a cancel while the run holds ends the run without a spin: its main loop
+// makes a bounded number of passes (engine.PassGuardForTest).
 func holdNeverSpinsAfterCancel(t *testing.T) {
 	const doc = `
 apiVersion: orkstack/v1
@@ -181,7 +183,9 @@ tasks:
 		}
 		return okBehavior(ctx, in)
 	})
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+	engine.PassGuardForTest(t, spinPassLimit)
+	budget := engine.NewDeadlockBudgetForTest(t)
+	h.env.SetWorkerOptions(budget.Options(worker.Options{}))
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-spin-cancel"})
 	var once sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
@@ -198,6 +202,7 @@ tasks:
 	if err := h.env.GetWorkflowError(); !temporal.IsCanceledError(errors.Unwrap(err)) && !temporal.IsCanceledError(err) {
 		t.Fatalf("workflow error = %v, want a cancellation", err)
 	}
+	budget.Check(t)
 }
 
 // TestContinuation_PlanWithoutBudgetIsByteIdentical: with no continuation
@@ -294,10 +299,12 @@ func fixtureBehavior(results map[string]*orkstackv1.ExecuteTaskResult, current *
 // and then fails EVERY attempt of its switch's first write (object storage
 // down for the whole of the local activity's retry policy), must end its
 // hold: failedAttempt clears quiescing, so the run is never left holding
-// with nothing in flight and a switch it may not try yet — a spin the 1 s
-// deadlock detector would trip. It dispatches again, tries no switch until
+// with nothing in flight and a switch it may not try yet — a spin, which the
+// pass guard ends (engine.PassGuardForTest). It dispatches again, tries no switch until
 // it has grown by the plan's RetryEvents, holds again, and then switches.
 func holdNeverSpinsAfterFailedWrite(t *testing.T) {
+	engine.PassGuardForTest(t, spinPassLimit)
+	budget := engine.NewDeadlockBudgetForTest(t)
 	var suite testsuite.WorkflowTestSuite
 	logs := &lineLogger{}
 	suite.SetLogger(logs)
@@ -314,7 +321,7 @@ func holdNeverSpinsAfterFailedWrite(t *testing.T) {
 	)
 	g := runGenerationsIn(t, &suite, "ork-spin-write", compile(t, spreadDocument), spreadInput(t, 16), plan, itemBehavior,
 		func(h *harness, generation int) {
-			h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+			h.env.SetWorkerOptions(budget.Options(worker.Options{}))
 			if generation != 0 {
 				return
 			}
@@ -338,6 +345,7 @@ func holdNeverSpinsAfterFailedWrite(t *testing.T) {
 			}
 		})
 	generationsOK(t, g, 2)
+	budget.Check(t)
 	if attempts < 4 {
 		t.Fatalf("%d write attempts, want the failed try's 3 and a retry", attempts)
 	}

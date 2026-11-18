@@ -83,7 +83,7 @@ func TestIntegration_RecordPauseContinuedHistories(t *testing.T) {
 		ApplyReserveEvents: 20, CascadeEventsPerChild: 4, InheritedGraceSeconds: 600, InheritedGraceMaxLevels: 8}
 	runID := fmt.Sprintf("ork-pause-carry-%d", time.Now().UnixNano())
 	must.OKf(t, s.starter.StartRun(ctx, runID, compile(t, pauseCarryDocument(30)), nil, plan), "StartRun")
-	first, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+	first, err := describeExecution(s.client, ctx, runID, "")
 	must.OK(t, err)
 	firstExecution := first.GetWorkflowExecutionInfo().GetExecution().GetRunId()
 
@@ -167,7 +167,7 @@ func TestIntegration_RecordPauseIndexedHistories(t *testing.T) {
 		Indexed: true}
 	runID := fmt.Sprintf("ork-pause-indexed-%d", time.Now().UnixNano())
 	must.OKf(t, s.starter.StartRun(ctx, runID, compile(t, pauseCarryDocument(30)), nil, plan), "StartRun")
-	first, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+	first, err := describeExecution(s.client, ctx, runID, "")
 	must.OK(t, err)
 	firstExecution := first.GetWorkflowExecutionInfo().GetExecution().GetRunId()
 
@@ -219,7 +219,7 @@ func pausedAttributeWrites(h *historypb.History) int {
 func waitForNextExecution(t *testing.T, s *canStack, ctx context.Context, runID, execution string) string {
 	t.Helper()
 	for {
-		described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(s.client, ctx, runID, "")
 		must.OK(t, err)
 		if id := described.GetWorkflowExecutionInfo().GetExecution().GetRunId(); id != execution {
 			return id

@@ -1,11 +1,21 @@
 # The site: the landing page and the docs (site/), built and checked on every
-# pull request that could change them, and deployed to GitHub Pages on every
-# push to main.
+# pull request that could change them and on every push to main, and deployed
+# to GitHub Pages only for a published release, so the live docs always
+# describe a version someone can install.
+#
+# A deploy follows a run of release.yml that succeeded, or a dispatch naming a
+# release by its tag. Either way the deploy reads the release from GitHub, not
+# from the event: it goes ahead only for a published release (not a draft)
+# whose tag points at the commit it builds, and builds that tag. A release
+# run that published nothing (refused, or not from main) deploys nothing, and
+# a push to main only builds. release.yml creates its release with the
+# workflow's own token, whose events start no other workflow, so the deploy
+# hangs off the run's completion instead.
 #
 # A pull request gets no live preview: Pages serves one deployment at a time,
 # so its preview is the built site, uploaded as the run's `site-<run_id>`
-# artifact (download it and open index.html). The deploy job runs only for
-# main, with the only write permissions in this file.
+# artifact (download it and open index.html). The deploy job holds the only
+# write permissions in this file.
 name: site
 
 on:
@@ -23,7 +33,15 @@ on:
       - "deploy/orkstack.defaults.yaml"
       - "proto/**"
       - ".github/workflows/site.yml"
+  workflow_run:
+    workflows: [release]
+    types: [completed]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "the published release to deploy the site of, vX.Y.Z"
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -33,7 +51,61 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  # The release to deploy, if any: its tag and the commit it points at.
+  # Skipped for a pull request and a push to main, which deploy nothing.
+  release:
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.find.outputs.tag }}
+      sha: ${{ steps.find.outputs.sha }}
+    steps:
+      - id: find
+        timeout-minutes: 3
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          VERSION: ${{ inputs.version }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          # A published release's tag and the commit it points at; nothing for
+          # a draft, a tag with no release, or a malformed name.
+          resolve() {
+            local tag="$1" sha
+            [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "not a release tag: $tag" >&2; return 1; }
+            [[ "$(gh api "repos/$REPO/releases/tags/$tag" --jq '.draft')" == "false" ]] || { echo "$tag is not a published release" >&2; return 1; }
+            sha="$(gh api "repos/$REPO/commits/$tag" --jq '.sha')"
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
+            echo "sha=$sha" >> "$GITHUB_OUTPUT"
+            echo "deploying the site of $tag ($sha)"
+          }
+          if [[ "$EVENT" == "workflow_dispatch" ]]; then
+            resolve "$VERSION"
+            exit 0
+          fi
+          # The release this run published: the newest published release
+          # whose tag points at the run's commit.
+          tag=""
+          while read -r candidate; do
+            if [[ "$(gh api "repos/$REPO/commits/$candidate" --jq '.sha')" == "$RUN_SHA" ]]; then
+              tag="$candidate"
+              break
+            fi
+          done < <(gh api "repos/$REPO/releases?per_page=20" --jq '.[] | select(.draft == false) | .tag_name')
+          if [[ -z "$tag" ]]; then
+            echo "the release run published no release at $RUN_SHA: nothing to deploy"
+            exit 0
+          fi
+          resolve "$tag"
+
   build:
+    needs: release
+    # A pull request and a push to main build with no release; a deploy
+    # builds only once a release was found.
+    if: ${{ !cancelled() && (needs.release.result == 'skipped' || needs.release.outputs.tag != '') }}
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -41,6 +113,7 @@ jobs:
         timeout-minutes: 5
         with:
           persist-credentials: false
+          ref: ${{ needs.release.outputs.sha || '' }}
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         timeout-minutes: 5
         with:
@@ -66,15 +139,15 @@ jobs:
           path: site/dist
           retention-days: 7
       - name: upload the Pages artifact
-        if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+        if: needs.release.outputs.tag != ''
         timeout-minutes: 2
         uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
         with:
           path: site/dist
 
   deploy:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: build
+    needs: [release, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' && needs.release.outputs.tag != '' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:

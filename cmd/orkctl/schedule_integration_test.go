@@ -464,7 +464,7 @@ type fireExecution struct {
 
 func (s *scheduleStack) fireStatus(ctx context.Context, t *testing.T, workflowID string) enumspb.WorkflowExecutionStatus {
 	t.Helper()
-	described, err := s.temporal.DescribeWorkflowExecution(ctx, workflowID, "")
+	described, err := describeExecution(s.temporal, ctx, workflowID, "")
 	must.OKf(t, err, "describe fire %s", workflowID)
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }

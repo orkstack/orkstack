@@ -518,8 +518,11 @@ func segmentObjectForTest(t testing.TB, namespace, runID string) *orkstackv1.Con
 }
 
 // TestContinuation_RestoreFitsTheDeadlockBudget: restoring a saved state at
-// the 8 MiB bound, built from incompressible rows, completes under the
-// production 1 s deadlock detector; and one batch's decode (a megabyte of
+// the 8 MiB bound, built from incompressible rows, completes with
+// every stretch of its workflow code within the deadlock detector's budget,
+// held on thread CPU time at half the 1 s detector (deadlockCPUBound: the
+// detector is a wall clock that a loaded host moves, and half leaves room for
+// a loaded host's slower cores); and one batch's decode (a megabyte of
 // chunks, its parts verified, gunzipped and unmarshalled) takes at most
 // 200 ms, a 5x margin.
 // restoreBatchDecodeBound is the spec's bound on one batch's decode, a
@@ -537,11 +540,13 @@ const (
 func TestContinuation_RestoreFitsTheDeadlockBudget(t *testing.T) {
 	wf, store, carry, size := cappedRestore(t, 4000)
 	h := newRefusalHarnessOver(t, store)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+	budget := newDeadlockBudget(t)
+	h.env.SetWorkerOptions(budget.options(worker.Options{}))
 	started := time.Now()
 	h.env.ExecuteWorkflow(RunWorkflowType, "", wf, (*orkstackv1.Payload)(nil), refusalRoutedPlan(t), carry)
 	must.OKf(t, h.env.GetWorkflowError(), "restoring %d bytes failed", size)
 	elapsed := time.Since(started)
+	budget.check(t)
 
 	data, _ := store.get(carry.GetCheckpoint().GetUri())
 	decoder := &partDecoder{refs: carry.GetCheckpoint().GetParts(), decode: func(_ int, plain []byte) error {

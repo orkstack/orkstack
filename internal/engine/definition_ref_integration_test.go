@@ -451,7 +451,7 @@ func TestIntegration_ScheduledFireOfALargeDefinitionRuns(t *testing.T) {
 	}
 	// The fire starts the run as its child after the preparation returns.
 	for deadline := time.Now().Add(time.Minute); ; {
-		if _, err := s.control.DescribeWorkflowExecution(ctx, runID, ""); err == nil {
+		if _, err := describeExecution(s.control, ctx, runID, ""); err == nil {
 			break
 		} else if time.Now().After(deadline) {
 			t.Fatalf("the fire never started run %s: %v", runID, err)

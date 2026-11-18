@@ -166,7 +166,7 @@ func waitWorkflowStarted(t *testing.T, ctx context.Context, c client.Client, wor
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		_, err := c.DescribeWorkflowExecution(ctx, workflowID, "")
+		_, err := describeExecution(c, ctx, workflowID, "")
 		if err == nil {
 			return
 		}

@@ -474,7 +474,7 @@ func assertRunVersion(
 	want task.Deployment,
 ) {
 	t.Helper()
-	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(c, ctx, runID, "")
 	must.OKf(t, err, "describe %s", runID)
 	info := described.GetWorkflowExecutionInfo().GetVersioningInfo()
 	if info == nil {

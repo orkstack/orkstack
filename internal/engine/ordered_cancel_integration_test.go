@@ -80,7 +80,7 @@ func TestIntegration_RecordOrderedCancelHistory(t *testing.T) {
 	idle := time.NewTicker(100 * time.Millisecond)
 	defer idle.Stop()
 	for deadline := time.Now().Add(time.Minute); ; <-idle.C {
-		described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(s.control, ctx, runID, "")
 		must.OKf(t, err, "describe %s", runID)
 		if len(described.GetPendingActivities()) == 0 {
 			break

@@ -189,7 +189,7 @@ func awaitVersioningVerdict(
 	t.Helper()
 	deadline := time.Now().Add(60 * time.Second)
 	for {
-		described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(c, ctx, runID, "")
 		if err == nil {
 			version := described.GetWorkflowExecutionInfo().GetVersioningInfo().GetDeploymentVersion()
 			if version.GetBuildId() == want.BuildID && version.GetDeploymentName() == want.Name {
@@ -221,7 +221,7 @@ func executionStatus(
 	runID string,
 ) enums.WorkflowExecutionStatus {
 	t.Helper()
-	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(c, ctx, runID, "")
 	must.OKf(t, err, "describe %s", runID)
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }

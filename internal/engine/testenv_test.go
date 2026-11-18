@@ -18,14 +18,10 @@ import (
 // testDeadlockDetectionTimeout is the deadlock detector's budget in the
 // mocked-environment harnesses. Left unset, the SDK applies its production
 // 1 s default to every workflow task, so a loaded CI runner — not the code
-// under test — could fail a correctness assertion. The 1 s budget is
-// proven where a test sets it explicitly (worker.Options{
-// DeadlockDetectionTimeout: time.Second}), which still wins.
+// under test — could fail a correctness assertion. A test that proves a path
+// within the production budget holds it on thread CPU time instead
+// (engine.NewDeadlockBudgetForTest), which a host's load cannot move.
 const testDeadlockDetectionTimeout = 60 * time.Second
-
-// productionDeadlock is the deadlock budget a test proves a path within: the
-// SDK's production 1 s, scaled under a race build (testenv_internal_test.go).
-func productionDeadlock() time.Duration { return engine.ProductionDeadlockForTest() }
 
 // generousDeadlock gives a fresh test environment the harnesses' deadlock
 // budget.

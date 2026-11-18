@@ -4,9 +4,6 @@ import (
 	"sync/atomic"
 
 	"go.temporal.io/sdk/workflow"
-
-	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
-	"github.com/orkstack/orkstack/internal/task"
 )
 
 // TaskPublishChange is the workflow.GetVersion change id of the detached
@@ -88,20 +85,6 @@ func (s *runState) paceTaskDispatch(ctx workflow.Context, bytes int64) {
 		s.dispatchTaskLength, s.dispatchTaskBytes = workflow.GetInfo(ctx).GetCurrentHistoryLength(), 0
 	}
 	s.dispatchTaskBytes += bytes
-}
-
-// taskInputBytes is what a plain task's ExecuteTask command carries: the
-// deterministic upper bound on its input's payload as Temporal records it
-// (task.PayloadSize, the measure CheckInputSize bounds), a pure function of
-// the definition and the run's state. An input it cannot measure counts as
-// the whole budget, so it is sent in a workflow task of its own; it never
-// reaches here, because CheckInputSize refused it first.
-func (s *runState) taskInputBytes(input *orkstackv1.ExecuteTaskInput) int64 {
-	size, err := task.PayloadSize(input)
-	if err != nil {
-		return s.plan.InFlight.DispatchBytes
-	}
-	return size
 }
 
 // settleDetachedPublishes lets go of every outstanding publish that has

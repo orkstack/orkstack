@@ -493,7 +493,7 @@ func TestIntegration_SetRoutingIsConfirmedOnTheEngineChannel(t *testing.T) {
 // executes on.
 func assertRunVersionPlain(t *testing.T, ctx context.Context, c client.Client, runID string, want task.Deployment) {
 	t.Helper()
-	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(c, ctx, runID, "")
 	must.OKf(t, err, "describe %s", runID)
 	version := described.GetWorkflowExecutionInfo().GetVersioningInfo().GetDeploymentVersion()
 	if version.GetBuildId() != want.BuildID || version.GetDeploymentName() != want.Name {

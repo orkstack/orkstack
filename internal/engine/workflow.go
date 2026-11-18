@@ -8,10 +8,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -2068,12 +2070,12 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	// first, because its size paces the workflow task, but any error it has
 	// is returned where the awaited path returns it: after the two events.
 	detached := s.detachTaskPublishes(ctx)
-	var input *orkstackv1.ExecuteTaskInput
+	var input dispatchInput
 	var inputErr error
 	if detached {
-		input, inputErr = s.taskDispatchInput(t, id, pool, pinContext)
+		input, inputErr = s.taskDispatch(t, id, pool, pinContext)
 		if inputErr == nil {
-			s.paceTaskDispatch(ctx, s.taskInputBytes(input))
+			s.paceTaskDispatch(ctx, input.size)
 		}
 	}
 	scheduledURI, err := s.emitTaskEvent(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_SCHEDULED, id,
@@ -2090,7 +2092,7 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 	activityCtx := s.taskActivityContext(activityBase, t, queue, taskRun, id)
 
 	if !detached {
-		input, inputErr = s.taskDispatchInput(t, id, pool, pinContext)
+		input, inputErr = s.taskDispatch(t, id, pool, pinContext)
 	}
 	if inputErr != nil {
 		return nil, inputErr
@@ -2101,12 +2103,49 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 		s.noteCommand(ctx, 1, s.valuesBound()+limit.Reserve.CommandBytes)
 		s.chargeTaskDispatch()
 	}
-	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
+	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, converter.NewRawValue(input.payload)), nil
+}
+
+// dispatchInput is a plain task's input encoded once: the bytes the
+// ExecuteTask command carries, and their size by task.PayloadDataSize, the
+// measure CheckInputSize bounds and the detached path paces by.
+type dispatchInput struct {
+	payload *commonpb.Payload
+	size    int64
+}
+
+// taskDispatch is taskDispatchInput's message encoded once and checked
+// against the wire bound by that encoding's size. The bytes are the ones
+// the SDK would have written itself (TestTaskInputPayload_IsWhatTheSDKWouldWrite),
+// so the commands a run issues are unchanged and every recorded history
+// replays.
+func (s *runState) taskDispatch(t *orkstackv1.Task, id, pool string, pinContext *orkstackv1.PinContext) (dispatchInput, error) {
+	input, err := s.taskDispatchInput(t, id, pool, pinContext)
+	if err != nil {
+		return dispatchInput{}, err
+	}
+	payload, err := DataConverter().ToPayload(input)
+	if err != nil {
+		err = fmt.Errorf("%s: task %q: encode the activity input: %w", task.ReasonInputTooLarge, id, err)
+		return dispatchInput{}, temporal.NewNonRetryableApplicationError(err.Error(), task.CategoryContractViolation, err)
+	}
+	size := task.PayloadDataSize(payload)
+	// The wire bound is checked HERE, deterministically, before scheduling.
+	// The deployment's limit is replay-pinned on the plan; the checker also
+	// preserves Temporal's absolute 256 KiB ceiling.
+	limit := s.plan.Limits.Proto().GetValuesMaxBytes()
+	if limit <= 0 || limit > task.MaxActivityInputBytes {
+		limit = task.MaxActivityInputBytes
+	}
+	if err := task.CheckSize(id, size, limit); err != nil {
+		return dispatchInput{}, temporal.NewNonRetryableApplicationError(err.Error(), task.CategoryContractViolation, err)
+	}
+	return dispatchInput{payload: payload, size: size}, nil
 }
 
 // taskDispatchInput is the ExecuteTaskInput schedule sends for the plain task
-// id, checked against the wire bound. Pure: it reads only the definition, the
-// plan and the run's state.
+// id, before it is encoded and checked against the wire bound (taskDispatch).
+// Pure: it reads only the definition, the plan and the run's state.
 func (s *runState) taskDispatchInput(
 	t *orkstackv1.Task, id, pool string, pinContext *orkstackv1.PinContext,
 ) (*orkstackv1.ExecuteTaskInput, error) {
@@ -2125,13 +2164,6 @@ func (s *runState) taskDispatchInput(
 	// every other task, whose payload stays byte-identical.
 	if isFailureHandler(t) {
 		input.Join = joinContextFor(t, func(need string) *orkstackv1.TaskRun { return s.taskRuns[need] })
-	}
-	// The wire bound is checked HERE, deterministically, before scheduling.
-	// The deployment's limit is replay-pinned on the plan; the checker also
-	// preserves Temporal's absolute 256 KiB ceiling.
-	if err := task.CheckInputSize(input, s.plan.Limits.Proto().GetValuesMaxBytes()); err != nil {
-		return nil, temporal.NewNonRetryableApplicationError(
-			err.Error(), task.CategoryContractViolation, err)
 	}
 	return input, nil
 }

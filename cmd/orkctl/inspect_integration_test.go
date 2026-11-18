@@ -592,7 +592,7 @@ tasks:
 		backoff.HeartbeatUnavailableReason, backoff.NextAttemptAt)
 
 	// Temporal itself still holds attempt 1's detail for the pending activity.
-	described, err := s.temporal.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.temporal, ctx, runID, "")
 	must.OKf(t, err, "DescribeWorkflowExecution")
 	var carried *task.HeartbeatProgress
 	for _, pa := range described.GetPendingActivities() {

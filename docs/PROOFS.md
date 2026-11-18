@@ -652,8 +652,9 @@ publishes the site:
 
 | Job | Runs |
 |---|---|
-| `site.yml` › `build` | `bun run check && bun run build` in `site/` on every pull request that touches a path the site reads, and on a push to `main`; a pull request uploads the built site as its preview, a push to `main` uploads the Pages artifact |
-| `site.yml` › `deploy` | on `main` only (a push, or a dispatch from `main`), after `build`: publishes the Pages artifact. It holds the workflow's only write permissions (`pages`, `id-token`) and checks out and runs no repository code |
+| `site.yml` › `release` | after a `release.yml` run on `main` that succeeded, or a dispatch naming a tag: finds the published (not draft) release whose tag points at the run's commit, or the named one, and its commit. A run that published nothing finds none, and nothing deploys |
+| `site.yml` › `build` | `bun run check && bun run build` in `site/` on every pull request that touches a path the site reads, and on a push to `main`, which deploy nothing; a pull request uploads the built site as its preview. For a release `release` found, it builds that release's tag and uploads the Pages artifact |
+| `site.yml` › `deploy` | only for a release `release` found, after `build`: publishes the Pages artifact, so the live site always describes a published release. It holds the workflow's only write permissions (`pages`, `id-token`) and checks out and runs no repository code |
 
 The proof's site gate (§2.1) runs the same command, so a change that breaks the
 build is stopped before it merges; the workflow publishes only a build that
@@ -698,7 +699,15 @@ the network, so neither is in any proof. `vuln-js` runs `bun audit` over
 advisory and fails the run on one of high or critical severity. It audits the
 development dependencies too, because Svelte and SvelteKit, which the UI lists
 there, compile into the bundle `ork` serves. The fix is the version
-`bun audit fix` names, in a pull request proven like any other.
+`bun audit fix` names, in a pull request proven like any other. Where no
+published version fixes an advisory (`bun audit fix --dry-run` says so), the
+user may approve a waiver in `deploy/bun-audit.yaml`, the twin of
+`deploy/grype.yaml`'s: one advisory, by its GHSA id, in one package named by its
+exact name, the versions and directories it is found in, with a reason that
+opens with a review-by date at most 30 days ahead. `make vuln-js` passes each
+one to `bun audit --ignore` in the run that fails, while its listing still
+shows every advisory. No test refuses a waiver of another shape or one past
+its date: review does, and the waiver is removed when the fix ships.
 `vuln-images` builds what a release of the commit publishes — the `ork`,
 `orker` and `orkctl` images and every activity image — for linux/amd64 as
 `release.yml` › `artifacts` builds them (`make dist`, `make release-images`,
@@ -1448,7 +1457,8 @@ git rev-parse main
   log lists every advisory and the package path that pulls the vulnerable one
   in; `bun audit fix --dry-run` in that directory names the versions that fix
   it. Move them, run `make check`, and merge that change on its own proof.
-  `make vuln-js` reproduces it.
+  When it names none, only a waiver the user approves in
+  `deploy/bun-audit.yaml` clears it (§5). `make vuln-js` reproduces it.
 - Only `nightly.yml` › `vuln-images` failed: a fixed high or critical
   vulnerability in an image a release would publish, or a scan that could not
   run, which is a regression on `main` too. The job's log has one Grype table
@@ -1813,7 +1823,7 @@ listing with no bucket at all.
 | `make check` | `make lint` (`go vet ./...`, gofmt, and `go tool staticcheck` with its default checks as built and with `-tags=integration`), `go vet -tags=integration ./...`, and `go test -short ./...` with the test cache kept, except for `GIT_STATE_PACKAGES` (the packages whose unit tests run git, whose reads the cache cannot see), run with `-count=1`; then `bun install --frozen-lockfile`, `bun run check` and `bun test test/` in `ui/`, the `ui-check` and `ui-unit` gates; no Docker |
 | `make vuln` | `go tool govulncheck ./...`: the known vulnerabilities whose vulnerable code the module reaches. It needs the network, so it is in no proof gate; `ci.yml` and `nightly.yml` run it (§5) |
 | `make proto-breaking` | `buf breaking` of `proto/` against the tree of the tag `PROTO_BASE` (default `v0.1.0`, which the clone must hold), under `buf.yaml`'s rules, by the buf image `deploy/buf-image.txt` pins, run with no network; `ci.yml` › `proto` runs it (§5) |
-| `make vuln-js` | `bun audit` over `ui/` and `site/`: every advisory listed, a high or critical one fails. It needs the network, so it is in no proof gate; `nightly.yml` runs it (§5) |
+| `make vuln-js` | `bun audit` over `ui/` and `site/`: every advisory listed, a high or critical one fails unless `deploy/bun-audit.yaml` waives it. It needs the network, so it is in no proof gate; `nightly.yml` runs it (§5) |
 | `make vuln-images` | build the release images for linux/amd64 (`make dist`, `make release-images`; `LAYOUTS=<dir>` scans layouts already built) and scan each with the Grype `deploy/grype-image.txt` pins, by `deploy/grype.yaml`: a fixed high or critical vulnerability fails. It needs the network, so it is in no proof gate; `nightly.yml` runs it (§5) |
 | `make release-notes-check` | every published `vX.Y.Z` release's body, above its image footer, against `dist notes` of its `CHANGELOG.md` section: a release that differs fails, naming the version and its first differing line. It reads the releases with `gh` over the network, so it is in no proof gate; `nightly.yml` runs it (§5) |
 | `make release-notes-publish VERSION=vX.Y.Z` | the one way to change a published release's notes: it rebuilds the body from the `CHANGELOG.md` section above the footer the release already has, shows the diff, and runs `gh release edit` only after a yes typed at a terminal; it refuses a release whose body has no footer (§10) |

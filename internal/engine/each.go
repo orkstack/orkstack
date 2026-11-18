@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
@@ -624,7 +625,18 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		As:     e.spec.GetAs(),
 		Source: e.spec.GetSource(),
 	}
-	if err := s.checkItemInput(id, index, input); err != nil {
+	// The input is encoded once: sized from these bytes and handed to the
+	// SDK as they are, so a fan-out's expansion does not encode each item
+	// twice. They are the bytes the SDK would have written itself
+	// (TestItemInputPayload_IsWhatTheSDKWouldWrite), so the commands a run
+	// issues are unchanged and every recorded history replays.
+	payload, err := DataConverter().ToPayload(input)
+	if err != nil {
+		return nil, temporal.NewNonRetryableApplicationError(
+			fmt.Sprintf("%s: task %q item %d: encode the activity input: %v", task.ReasonInputTooLarge, id, index, err),
+			task.CategoryContractViolation, err)
+	}
+	if err := s.checkItemInput(id, index, task.PayloadDataSize(payload)); err != nil {
 		return nil, err
 	}
 	if limit := s.historyLimit(); limit != nil {
@@ -632,29 +644,23 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		s.chargeItemDispatch()
 	}
 	activityCtx := s.taskActivityContext(runCtx, t, queue, item, itemFlightKey(id, index))
-	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, input), nil
+	return workflow.ExecuteActivity(activityCtx, task.ActivityExecuteTask, converter.NewRawValue(payload)), nil
 }
 
-// checkItemInput is CheckInputSize at the per-item bound, with the
-// shared-budget sentence when the bound is the fan-outs' share rather than the
-// plan's own limit.
-func (s *runState) checkItemInput(id string, index int32, input *orkstackv1.ExecuteTaskInput) error {
+// checkItemInput is CheckInputSize at the per-item bound, for an input
+// already measured (size), with the shared-budget sentence when the bound is
+// the fan-outs' share rather than the plan's own limit.
+func (s *runState) checkItemInput(id string, index int32, size int64) error {
 	planLimit := s.plan.Limits.Proto().GetValuesMaxBytes()
 	if planLimit <= 0 || planLimit > task.MaxActivityInputBytes {
 		planLimit = task.MaxActivityInputBytes
 	}
 	if s.itemInputLimit >= planLimit {
-		if err := task.CheckInputSize(input, planLimit); err != nil {
+		if err := task.CheckSize(id, size, planLimit); err != nil {
 			return temporal.NewNonRetryableApplicationError(
 				fmt.Sprintf("%v (item %d)", err, index), task.CategoryContractViolation, err)
 		}
 		return nil
-	}
-	size, err := task.InputSize(input)
-	if err != nil {
-		return temporal.NewNonRetryableApplicationError(
-			fmt.Sprintf("%s: task %q item %d: encode the activity input: %v", task.ReasonInputTooLarge, id, index, err),
-			task.CategoryContractViolation, err)
 	}
 	if size <= s.itemInputLimit {
 		return nil
@@ -1028,4 +1034,22 @@ func WithoutItems(run *orkstackv1.Run) *orkstackv1.Run {
 		taskRun.Items = nil
 	}
 	return clone
+}
+
+// ActivityTaskInput is the task input an ExecuteTask activity argument
+// carries, as a workflow outbound interceptor sees it: the message itself,
+// or a fan-out item's input, which the engine encodes once and passes as a
+// raw value. False for anything else.
+func ActivityTaskInput(arg any) (*orkstackv1.ExecuteTaskInput, bool) {
+	switch v := arg.(type) {
+	case *orkstackv1.ExecuteTaskInput:
+		return v, true
+	case converter.RawValue:
+		var in *orkstackv1.ExecuteTaskInput
+		if err := DataConverter().FromPayload(v.Payload(), &in); err != nil || in == nil {
+			return nil, false
+		}
+		return in, true
+	}
+	return nil, false
 }

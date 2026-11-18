@@ -157,7 +157,7 @@ func (k *canContract) firstEvent(id, execution string) (*historypb.HistoryEvent,
 }
 
 func (k *canContract) current(id string) (*workflowpb.WorkflowExecutionInfo, error) {
-	resp, err := k.c.DescribeWorkflowExecution(k.ctx, id, "")
+	resp, err := describeExecution(k.c, k.ctx, id, "")
 	if err != nil {
 		return nil, err
 	}

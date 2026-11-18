@@ -34,7 +34,7 @@ func TestIntegration_PinsAndCarriedGenerationsCarryTheFairnessKey(t *testing.T) 
 	runID := fmt.Sprintf("ork-fair-reach-%d", time.Now().UnixNano())
 	must.OKf(t, s.starter.StartRun(ctx, runID, compile(t, carriedFairDocument), spreadInput(t, 8), plan), "StartRun")
 	must.OKf(t, s.client.GetWorkflow(ctx, runID, "").Get(ctx, nil), "the run failed")
-	described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.client, ctx, runID, "")
 	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {

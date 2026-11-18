@@ -267,6 +267,16 @@ func newFakeScheduleCluster() *fakeScheduleCluster {
 
 func (c *fakeScheduleCluster) ScheduleClient() client.ScheduleClient { return c.sc }
 
+// DescribeWorkflow is the cluster's description of a fire workflow, as
+// DescribeWorkflowExecution answers it.
+func (c *fakeScheduleCluster) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*client.WorkflowExecutionDescription, error) {
+	resp, err := c.DescribeWorkflowExecution(ctx, workflowID, runID)
+	if err != nil {
+		return nil, err
+	}
+	return &client.WorkflowExecutionDescription{RawResponse: resp}, nil
+}
+
 func (c *fakeScheduleCluster) DescribeWorkflowExecution(_ context.Context, workflowID, _ string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
 	resp, ok := c.fires[workflowID]
 	if !ok {

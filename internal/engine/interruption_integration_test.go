@@ -192,7 +192,7 @@ func TestIntegration_ALossWhoseFenceSpansAContinuationWaitsItsRecordedInstant(t 
 	must.OKf(t, s.starter.StartRun(s.ctx, runID, compile(t, interruptionFixtureDocument), nil,
 		interruptionFixturePlan(s, &budget, nil)), "StartRun")
 	must.OKf(t, s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil), "the run failed")
-	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+	described, err := describeExecution(s.client, s.ctx, runID, "")
 	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) < 2 {
@@ -258,7 +258,7 @@ func TestIntegration_AnInterruptionStormStaysWithinTheHistoryBound(t *testing.T)
 	must.OKf(t, s.starter.StartRun(s.ctx, runID, compile(t, strings.Replace(interruptionItemsDocument, "max_items: 10", "max_items: 100", 1)),
 		payload(t, map[string]any{"parts": parts}), plan), "StartRun")
 	must.OKf(t, s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil), "the storm run failed")
-	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+	described, err := describeExecution(s.client, s.ctx, runID, "")
 	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	for i, execution := range chain {

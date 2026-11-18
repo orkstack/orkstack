@@ -142,7 +142,7 @@ func TestIntegration_CanceledByIsTheAssertedPrincipalOnEveryReplica(t *testing.T
 	}
 	deadline := time.Now().Add(90 * time.Second)
 	for {
-		_, err := s.temporal.DescribeWorkflowExecution(ctx, named, "")
+		_, err := describeExecution(s.temporal, ctx, named, "")
 		var notFound *serviceerror.NotFound
 		if errors.As(err, &notFound) {
 			break
