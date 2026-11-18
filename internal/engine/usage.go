@@ -63,6 +63,8 @@ type UsageTask struct {
 	TaskSeconds      float64
 	CPUSeconds       float64
 	GiBSeconds       float64
+	// GPUSeconds is gpu units × held time (gpu_seconds), reported only.
+	GPUSeconds float64
 
 	// Measured usage (E94), from the records whose container's cgroup was
 	// read: what it used, and what was reserved for those same attempts so
@@ -119,6 +121,7 @@ func UsageOfTask(s TaskSample) UsageTask {
 		usage.TaskSeconds += seconds
 		usage.CPUSeconds += cpu
 		usage.GiBSeconds += gib
+		usage.GPUSeconds += float64(record.GetResources().GetGpu()) * seconds
 	}
 	for _, record := range s.Records {
 		usage.addMeasured(record)
@@ -212,6 +215,7 @@ func (a *usageAccumulator) add(runID string, task UsageTask) {
 	a.row.TaskSeconds += task.TaskSeconds
 	a.row.CpuSeconds += task.CPUSeconds
 	a.row.GibSeconds += task.GiBSeconds
+	a.row.GpuSeconds += task.GPUSeconds
 	a.row.AttemptsWithoutResources += task.WithoutResources
 	a.row.AttemptsUnmeasured += task.Unmeasured
 	a.row.UnreportedAttempts += task.Unreported

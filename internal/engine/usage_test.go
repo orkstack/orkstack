@@ -442,3 +442,21 @@ func TestFoldUsage_NothingToCompareIsUnsetNeverZero(t *testing.T) {
 		t.Fatalf("a measured idle attempt: %v; want efficiency set to 0 and one covered attempt", total)
 	}
 }
+
+// TestUsage_GPUSecondsAreUnitsTimesHeldTime: gpu_seconds is the gpu units an
+// attempt was granted times the time it held them, counted as cpu and memory
+// are; an attempt with no gpu adds nothing.
+func TestUsage_GPUSecondsAreUnitsTimesHeldTime(t *testing.T) {
+	withGPU := reserve(1, 1)
+	withGPU.Gpu = 2
+	sample := engine.TaskSample{RunID: "r1", Orkflow: "o", TaskID: "train", Pool: "gpu", Observed: true, Attempts: 2,
+		Records: []*orkstackv1.TaskAttempt{heldRecord(1, 90*time.Second, withGPU), heldRecord(2, 30*time.Second, reserve(1, 1))}}
+	task := engine.UsageOfTask(sample)
+	if task.GPUSeconds != 180 {
+		t.Fatalf("GPUSeconds = %v, want 2 units × 90 s", task.GPUSeconds)
+	}
+	total, _, _ := engine.FoldUsage([]engine.UsageRun{{RunID: "r1", Orkflow: "o", Tasks: []engine.UsageTask{task}}}, nil)
+	if total.GetGpuSeconds() != 180 {
+		t.Fatalf("total gpu_seconds = %v, want 180", total.GetGpuSeconds())
+	}
+}

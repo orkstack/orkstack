@@ -56,6 +56,16 @@ const (
 	MemoMissStoreAbsent        = "MEMO_STORE_ABSENT"
 )
 
+// The details of a memo miss the namespace guard (ORK_ORKER_NAMESPACES)
+// causes, by the Orker's own check before a read or by a scoped store's
+// refusal of one. Each is one fixed sentence: it names the guard, and never
+// the refused key or the store's own words. A guard refusal is permanent, so
+// it is a mismatch, never an unreadable store.
+const (
+	guardMemoMissDetail   = "this Orker reads no memo outside the namespaces it serves (ORK_ORKER_NAMESPACES)"
+	guardSourceMissDetail = "the memo's source commit is not a commit of namespace %q, and this Orker reads no commit outside the namespaces it serves (ORK_ORKER_NAMESPACES)"
+)
+
 // memoLookupTimeout bounds the whole lookup — memo read, source commit read,
 // value refetch and object checks. Exceeding it is a MISS (MEMO_UNREADABLE,
 // "timed out"): the lookup can cost bounded time and never more. A variable
@@ -392,8 +402,13 @@ func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTa
 	// Row 2.
 	ref := memoRefFor(in, key)
 	memo, err := d.Memos.GetMemo(lookupCtx, ref)
+	// A guard refusal is permanent and is asked first, so no other error the
+	// refusal might wrap, or a deadline passing beside it, reclassifies it.
 	switch {
 	case err == nil:
+	case errors.Is(err, artifacts.ErrNamespaceNotServed):
+		trace.miss(key, MemoMissMismatch, "%s", guardMemoMissDetail)
+		return nil
 	case timedOut():
 		trace.miss(key, MemoMissUnreadable, "the memo lookup for key %s timed out after %s", key.short(), memoLookupTimeout)
 		return nil
@@ -436,6 +451,17 @@ func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTa
 		return nil
 	}
 	source := memo.GetSource()
+	// Under the namespace guard the source must be a commit of this task's
+	// own namespace by its KEY, before it is read: a commit planted under
+	// another served namespace's key that claims this one in its body would
+	// pass the body's check below. A doubt is a miss (§4.1), and the trace
+	// names neither the key nor the store's words.
+	if !d.Namespaces.Every() {
+		if got, err := artifacts.NamespaceOfURI(d.CommitRoot, source.GetCommitUri()); err != nil || got != namespace {
+			trace.miss(key, MemoMissSourceMismatch, guardSourceMissDetail, namespace)
+			return nil
+		}
+	}
 	// Row 4.
 	now := d.clock()
 	ttl := time.Duration(in.GetCache().GetTtlSeconds()) * time.Second
@@ -448,6 +474,9 @@ func (d *OCIDispatcher) lookupMemo(ctx context.Context, in *orkstackv1.ExecuteTa
 	record, err := d.Commits.Get(lookupCtx, source.GetCommitUri())
 	switch {
 	case err == nil:
+	case errors.Is(err, artifacts.ErrNamespaceNotServed): // first, as for the memo read
+		trace.miss(key, MemoMissSourceMismatch, guardSourceMissDetail, namespace)
+		return nil
 	case timedOut():
 		trace.miss(key, MemoMissUnreadable, "the memo lookup for key %s timed out after %s", key.short(), memoLookupTimeout)
 		return nil

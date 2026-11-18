@@ -138,6 +138,7 @@ orker:
     - env
     - file
   secret_allow: []  # orker
+  namespaces: []  # orker
   registry_auth_file: ""  # orker
   task_log_export: false  # orker
   heartbeat_interval: 5s  # orker
@@ -168,9 +169,14 @@ orker:
     default_memory: 1Gi  # orker
     max_cpu: 8  # orker
     max_memory: 16Gi  # orker
+    max_gpu: 1  # orker
     pids_limit: 512  # orker
     tmpfs_bytes: 67108864  # 64 MiB; orker
     force_user: false  # orker
+  cdi:
+    spec_dirs:  # orker
+      - /etc/cdi
+      - /var/run/cdi
   docker:
     # bin: ""  # orker; docker on PATH
     cli: docker  # orker

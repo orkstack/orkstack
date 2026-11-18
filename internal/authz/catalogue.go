@@ -107,6 +107,7 @@ const (
 	PermOrkerCordon        Permission = "orker.cordon"
 	PermSystemRead         Permission = "system.read"
 	PermRetentionUpdate    Permission = "retention.update"
+	PermSystemRestore      Permission = "system.restore"
 	PermImagePolicyUpdate  Permission = "image-policy.update"
 	PermReleaseOperate     Permission = "release.operate"
 	PermAuditRead          Permission = "audit.read"
@@ -190,6 +191,7 @@ var catalogue = map[Permission]entry{
 	PermOrkerCordon:        {kindD, "cordon and uncordon an Orker"},
 	PermSystemRead:         {kindD, "read system information, policies and releases"},
 	PermRetentionUpdate:    {kindD, "change the deployment's retention policy"},
+	PermSystemRestore:      {kindD, "reconcile the cluster with the bucket after a restore, deleting the executions of runs retired since"},
 	PermImagePolicyUpdate:  {kindD, "change the deployment's image policy"},
 	PermReleaseOperate:     {kindD, "ramp and promote a release"},
 	PermAuditRead:          {kindN, "read the audit trail; of one namespace with a namespace filter"},

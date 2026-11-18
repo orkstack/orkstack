@@ -24,7 +24,7 @@ var allReasonCodes = []string{
 	ReasonArtifactLimit, ReasonArtifactNameNotUTF8, ReasonArtifactUploadFailed,
 	ReasonInputUnavailable, ReasonInputCorrupt, ReasonInputTooLarge,
 	ReasonRenderFailed, ReasonWorkdirFailed, ReasonSecretUnresolved,
-	ReasonSecretSchemeForbid, ReasonSecretNotPermitted, ReasonCommitReadFailed, ReasonCommitWriteFailed,
+	ReasonSecretSchemeForbid, ReasonSecretNotPermitted, ReasonNamespaceNotServed, ReasonCommitReadFailed, ReasonCommitWriteFailed,
 	ReasonCommitSchema, ReasonCommitIdentity, ReasonCommitUndecodable,
 	ReasonCommitTooLarge, ReasonCommitNotConditional, ReasonCommitStoreUnavailable, ReasonOutputNotReadable,
 	ReasonValuesCorrupt, ReasonValuesRefetchFailed, ReasonResourceRefused, ReasonResourceAdmissionMismatch,
@@ -34,7 +34,7 @@ var allReasonCodes = []string{
 	ReasonBindProbeTimedOut, ReasonRuntimePostureRefused, ReasonRunAsOrkerUnavailable,
 	ReasonMetadataEndpointReachable, ReasonMetadataProbeFailed,
 	ReasonValuesContainSecret, ReasonMaskCapacityExceeded,
-	ReasonProfileNotOffered, ReasonProfileChanged, ReasonProfileDrifted,
+	ReasonProfileNotOffered, ReasonProfileChanged, ReasonProfileDrifted, ReasonGPUUnitsUnavailable,
 }
 
 // TestReasonCodes_EveryCodeIsClassified is the guard against the one mistake

@@ -1,0 +1,36 @@
+# The tests that need the GPU host (AGENTS.md §11, docs/PROOFS.md, "The
+# GPU-host tier"). A proof without ORK_PROOF_GPU_HOST=1 records each entry
+# both the base's and the tree's list carry as host-deferred; an entry only the
+# tree carries has no outcome, so the change that adds it lands through a
+# GPU-host-tier proof. A GPU-host-tier proof (a full proof with the flag, or
+# make proof-gpu) runs them, one at a time, in a phase of their own. The list
+# changes only with the user's approval, and it is parsed as strictly as the
+# nightly list:
+#
+#   package<TAB>test<TAB>covering merge-gate tests<TAB>approved<TAB>reason
+#
+# Every test named here is a listed test of its package built with
+# -tags=integration,gpuhost (files *_gpuhost_test.go, which never t.Skip), and
+# every covering test is a listed merge-gate test of the same package that is
+# not itself on this list. "Approved" is "YYYY-MM-DD <name>".
+#
+# A change that touches a path the header below names merges only with a
+# passing GPU-host-tier proof of its tree (make merge-check GPU=proof/<name>).
+#
+# paths: internal/orker/device_classes.go internal/orker/cdi_audit.go internal/orker/cdi_host_linux.go
+#   internal/orker/profiles.go internal/orker/gpu_lock_linux.go internal/orker/gpu_lock_procfs.go
+#   internal/orker/capacity_units.go internal/orker/unit_probe.go internal/orker/unit_probe_linux.go
+#   internal/orker/unit_reap.go internal/orker/dispatch_units.go internal/orker/gpu_boot.go
+#   internal/orker/profile_gate.go internal/orker/profile_audit.go internal/orker/device_mapping.go
+#   internal/orker/*_gpuhost_test.go scripts/gpu-host-setup.sh
+github.com/orkstack/orkstack/internal/orker	TestGPUHost_SetupSpecPassesTheAudit	TestAuditGPUSpecs_AcceptsTheHookless	2026-11-18 Daniel Santos	the spec gpu-host-setup.sh installs, read by dockerd's validator and the audit on the real nodes
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_UnitsExclusive	TestCapacity_BindTakesLowestFreeUsable,TestBindUnits_NamesTheBoundUnitsAndLabelsThem	2026-11-18 Daniel Santos	two gpu: 1 tasks each see one render node and distinct drivers, with a progress control
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_TwoUnitTask	TestCapacity_GPUCeilingFixedAcrossHealth,TestCapacity_BindTakesLowestFreeUsable	2026-11-18 Daniel Santos	gpu: 2 under max_gpu 2 gets both; a concurrent gpu: 1 is not polled until they are freed
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_CreateFailureFreesUnits	TestCapacity_FailedRemovalKeepsUnits,TestCapacity_BindTakesLowestFreeUsable	2026-11-18 Daniel Santos	a create that fails on the real daemon frees its units
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_ReapAndSeedUnderLock	TestReapUnits_ActsOnlyUnderItsLock,TestReapUnits_SeedsExactIndicesOnFailedRemove,TestBootGPU_TakesTheLockReapsAndOffers	2026-11-18 Daniel Santos	SIGKILL under a unit container; a removal that fails seeds exactly its unit; another lock's container is untouched
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_HostLockSecondOrkerWaits	TestBootGPU_HeldLockWaitsThenOffers,TestGPULock_WaitNamesTheHolderThenTakesIt	2026-11-18 Daniel Santos	a second real Orker of the host waits, paused, until the first exits
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_AdditionalGidsApplied	TestAuditGPUSpecs_AcceptsTheHookless	2026-11-18 Daniel Santos	a task as a non-root user opens its render node through the spec's render group (design Q3)
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_ProbeAndBindOnOneUnit	TestCapacity_ProbeVsPolledBindOneUnit	2026-11-18 Daniel Santos	a real unit probe holds the one unit; the poll is not granted until it releases
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_UnitHealthExclusion	TestProbeUnitsOnce_FlipsHealthUnderTheLedger,TestProfileState_UnitsBelowCeilingNamed	2026-11-18 Daniel Santos	a unit whose probe fails leaves service and returns after three good probes
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_DriftAtStart	TestProfileDrifted_NeverStartedOnlyBeforeStartIsCalled	2026-11-18 Daniel Santos	the spec changed between create and start: never started, PROFILE_DRIFTED (design Q18)
+github.com/orkstack/orkstack/internal/orker	TestIntegrationGPU_LockRecreatedWhileForeignUnitsRun	TestReapUnits_ActsOnlyUnderItsLock	2026-11-18 Daniel Santos	the lock directory recreated under a running unit container: the restarted Orker holds FOREIGN_UNITS_HELD until it is gone

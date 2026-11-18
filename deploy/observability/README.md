@@ -9,6 +9,17 @@ output on a laptop. It never starts on its own: plain `docker compose up`,
 ## Bring it up
 
 ```bash
+make up-observability
+```
+
+That is `make up` with this profile: `ork` and `orker` push their logs,
+traces and metrics to the Collector, and Grafana opens at
+http://localhost:3000. `TASK_LOGS=1 make up-observability` exports task logs
+too. `make down` stops what it started, the profile included.
+
+For the profile alone, with `ork` and `orker` run by hand:
+
+```bash
 make infra-up-observability
 # or: docker compose -f deploy/docker-compose.yml --profile observability up -d --wait
 ```
@@ -20,22 +31,14 @@ which have none, are running. `make infra-down-observability` stops everything, 
 ## Point `ork` and `orker` at it
 
 Save this as `orkstack.yaml` and pass it to both binaries with
-`--config orkstack.yaml`. `admin_addr` is written per binary because it is the
-one setting the two must not share:
+`--config orkstack.yaml`:
 
 ```yaml
 telemetry:
   log_format: json
-  admin_addr:
-    ork: ":9464"
-    orker: ":9465"
-  admin_allowed_hosts:
-    - host.docker.internal   # the name Prometheus scrapes by (below)
   exporters:
     logs: otlp
-    metrics:
-      - prometheus
-      - otlp
+    metrics: otlp
     traces: otlp        # spans: ork.task.attempt, ork.task.phase, and the engine's own
   otlp:
     endpoint: http://localhost:4318
@@ -48,21 +51,12 @@ orker:
 profile expects. Every key has an `ORK_*`/`OTEL_*` environment equivalent
 (`docs/DEPLOY.md`, "Configuration"); the environment overrides the file.
 
-With `make up`, the binaries run from a generated `.run/orkstack.yaml`. When
-any `OTEL_*` variable (or `ORK_ADMIN_ADDR`) is exported, that file gains an
-`admin_addr:` with `ork: "127.0.0.1:9464"` and `orker: "127.0.0.1:9465"`;
-export the exporter and OTLP variables above and the rest follows. An exported
-`ORK_ADMIN_ADDR` applies to both binaries, so set admin ports through the file
-instead.
-
-Metrics reach Prometheus twice: the Collector pushes OTLP metrics to it, and
-it scrapes each binary's `/metrics` on `host.docker.internal:9464`/`9465`
-(`prometheus.yml`). Either path alone is enough. The admin listeners answer
-only names they know in a request's `Host`, and `host.docker.internal` has a
-dot, so the file above lists it in `admin_allowed_hosts:`, and `make up`
-lists it in the generated file beside `admin_addr:`. Without it, every
-scrape is refused `403`, and the binaries log `request refused: Host not
-allowed` with `listener="admin listener"`.
+Every signal is pushed: the Collector writes metrics to Prometheus through
+its OTLP receiver, and Prometheus scrapes nothing (`prometheus.yml`), so no
+container needs a route to the host and the binaries need no admin listener.
+An admin listener (`telemetry.admin_addr`) still serves `/metrics` to a
+scraper of your own; the profile does not read it, and
+`make up-observability` opens one only when `ORK_ADMIN_ADDR` is set.
 
 ## Where things are
 
@@ -115,6 +109,16 @@ change them there and run `go run ./internal/dashboards/cmd/gendashboards`,
 never by hand or from the UI. `$namespace` filters the view and isolates
 nothing: one tenant's data apart from another's needs a sink of its own.
 
+## Alerts
+
+The profile's Prometheus loads OrkStack's alert and recording rules from
+`prometheus/rules/` (`rule_files:` in `prometheus.yml`), so its Alerts page
+shows what fires. The profile runs no Alertmanager: to be paged, load the same
+files into your own Prometheus and route them, the Watchdog to a dead man's
+switch. Every alert's runbook is in [docs/RUNBOOKS.md](../../docs/RUNBOOKS.md).
+The files are generated (`make alerts`) and checked by promtool at this
+profile's pinned Prometheus (`make alerts-check`).
+
 ## Example queries
 
 Loki, one Orker's task-log lines for one run (LogQL):
@@ -162,10 +166,11 @@ deployment a named sink is a genuinely different destination. See
 ## Evidence
 
 `make proof-observability` (with this profile up) starts `ork` and `orker`
-with telemetry on, runs `examples/each-fan-out.ork.yaml`, and queries Loki, Tempo
-and Prometheus back to assert the run's signals arrived
+with telemetry on, runs `examples/each-fan-out.ork.yaml`, and queries Loki, Tempo,
+Prometheus and Grafana back to assert the run's signals arrived
 (`scripts/proof-observability.sh`). Every full and release proof runs the
-same gate (AGENTS.md §11.2). The engine's API listens on a free port, but the two
-admin ports are the fixed targets `prometheus.yml` scrapes (9464, 9465), so
-the gate holds a host-wide lock (`$XDG_RUNTIME_DIR/orkstack-observability.lock`)
+same gate (AGENTS.md §11.2). It also reads the two provisioned dashboards
+through Grafana and holds their top row to an answer. The engine's API listens
+on a free port, but the gate checks the two admin listeners on fixed ports
+(9464, 9465), so it holds a host-wide lock (`$XDG_RUNTIME_DIR/orkstack-observability.lock`)
 and two proofs never run it at once.

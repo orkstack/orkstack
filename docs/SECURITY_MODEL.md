@@ -52,10 +52,31 @@ and it re-checks the policies that govern each attempt at dispatch
 ([AGENTS.md](../AGENTS.md), §2.3). A container may be given a credential only
 when a user supplies it explicitly, as a workload secret (see "Secrets" below).
 
-The Orker's checks at dispatch are the image policy, the secret floor, the
-resource caps and the network mode. It makes no control-plane read at dispatch.
+The Orker's checks at dispatch are the namespaces it serves, the image policy,
+the secret floor, the resource caps and the network mode. It makes no control-plane read at dispatch.
 The policy travels on the input, pinned at submit
 ([OCI_ACTIVITY_CONTRACT.md](OCI_ACTIVITY_CONTRACT.md), §4.7).
+
+### Trust zones
+
+Every Orker of a deployment holds an object-storage credential that writes
+results: commits, memos, artifacts and committed values. They share one
+bucket, so a credential that writes one namespace's results writes every
+namespace's. A stolen Orker of any pool can plant a result a task of another
+namespace adopts or stages, and its Temporal credential can poll any pool.
+Namespaces and pools divide a deployment among cooperating teams; they are not
+a boundary between them. The boundary is a deployment per trust zone, each
+with its own bucket, credentials, Temporal namespace, engines and Orkers
+([DEPLOY.md](DEPLOY.md#trust-zones-a-deployment-per-zone), "Trust zones: a
+deployment per zone").
+
+Inside a deployment, `ORK_ORKER_NAMESPACES` names the namespaces an Orker
+serves. It refuses a task of any other namespace (`NAMESPACE_NOT_SERVED`)
+before it reads or writes anything of it, and it never reads or writes a commit
+or memo of a namespace outside the list. That guards honest Orkers against
+wrong routing. It does not stop a stolen credential, and it cannot scope
+artifacts, committed values, logs or attempt records, whose keys carry no
+namespace.
 
 ### The Orker's own access to the host
 

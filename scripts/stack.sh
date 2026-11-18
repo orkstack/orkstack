@@ -25,6 +25,25 @@ REPO="$PWD"
 RUN_DIR="$REPO/.run"
 COMPOSE=(docker compose -f "$REPO/deploy/docker-compose.yml")
 
+# OBSERVABILITY=1 (make up-observability) adds the compose observability
+# profile, its Collector, Loki, Tempo, Prometheus and Grafana, and points ork
+# and orker at the Collector over OTLP: every signal is pushed, nothing is
+# scraped, and no admin listener is opened. TASK_LOGS=1 also exports task
+# logs. .run/observability records that this stack started the profile, so
+# make down stops it only then (deploy/observability/README.md).
+OBSERVABILITY="${OBSERVABILITY:-0}"
+OBSERVABILITY_MARK="$RUN_DIR/observability"
+observability_env() {
+	export OTEL_EXPORTER_OTLP_ENDPOINT="${OTEL_EXPORTER_OTLP_ENDPOINT:-http://127.0.0.1:4318}"
+	export OTEL_METRICS_EXPORTER="${OTEL_METRICS_EXPORTER:-otlp}"
+	export OTEL_LOGS_EXPORTER="${OTEL_LOGS_EXPORTER:-otlp}"
+	export OTEL_TRACES_EXPORTER="${OTEL_TRACES_EXPORTER:-otlp}"
+	export OTEL_METRIC_EXPORT_INTERVAL="${OTEL_METRIC_EXPORT_INTERVAL:-15000}"
+	if [ "${TASK_LOGS:-0}" = 1 ]; then
+		export ORK_ORKER_TASK_LOG_EXPORT=true
+	fi
+}
+
 # Loopback, as deploy/docker-compose.yml publishes the infrastructure: the
 # engine's API has no login, and only this host's own clients need it. The
 # binary's own default stays every interface; ORK_HTTP_ADDR=:8080 make up asks
@@ -364,6 +383,8 @@ local_activity_catalog() {
 # "zero-config control" phase).
 wants_admin_addr() {
 	[ -n "${ORK_ADMIN_ADDR:-}" ] && return 0
+	# The observability profile is pushed to; it needs no listener.
+	[ "$OBSERVABILITY" = 1 ] && return 1
 	env | grep -q '^OTEL_' && return 0
 	return 1
 }
@@ -372,7 +393,7 @@ wants_admin_addr() {
 # .run/orkstack.yaml from exactly the five values `up` computes (backend,
 # workdir, http_addr, ws_allowed_origins — empty unless exported, which is the
 # engine's same-origin default — and the local activity catalog), plus
-# telemetry.admin_addr and admin_allowed_hosts when wants_admin_addr says so.
+# telemetry.admin_addr when wants_admin_addr says so.
 # Both binaries are started against this one file with --config; the
 # ambient environment still wins over anything it sets
 # (config.Document.Apply's precedence — docs/DEPLOY.md §1), so a variable
@@ -486,21 +507,24 @@ write_run_config() {
 			echo "    algorithm: ES256"
 		fi
 		if wants_admin_addr; then
-			# The observability profile's Prometheus scrapes these listeners
-			# as host.docker.internal, a name with a dot, which an admin
-			# listener answers only when it is listed (docs/DEPLOY.md, "The
-			# API listener's bounds").
 			echo "telemetry:"
 			echo "  admin_addr: {ork: \"127.0.0.1:9464\", orker: \"127.0.0.1:9465\"}"
-			echo "  admin_allowed_hosts:"
-			echo "    - host.docker.internal"
 		fi
 	} >"$RUN_DIR/orkstack.yaml"
 }
 
 cmd_up() {
-	say "== infrastructure (Temporal, SeaweedFS) =="
-	"${COMPOSE[@]}" up -d
+	if [ "$OBSERVABILITY" = 1 ]; then
+		say "== infrastructure (Temporal, SeaweedFS) and the observability profile =="
+		"${COMPOSE[@]}" --profile observability up -d --wait
+		mkdir -p "$RUN_DIR"
+		: >"$OBSERVABILITY_MARK"
+		observability_env
+		[ "${TASK_LOGS:-0}" = 1 ] && say "  task logs are exported too (TASK_LOGS=1): everything a task prints reaches Loki"
+	else
+		say "== infrastructure (Temporal, SeaweedFS) =="
+		"${COMPOSE[@]}" up -d
+	fi
 	wait_for "temporal" 60 docker exec orkstack-temporal-1 \
 		temporal operator cluster health --address 127.0.0.1:7233
 	# The bucket, not just the port: on an empty volume the store serves S3 for
@@ -592,6 +616,7 @@ cmd_up() {
 	esac
 	say ""
 	say "OrkStack is up."
+	[ "$OBSERVABILITY" = 1 ] && say "  Grafana        http://localhost:3000  (dashboards: OrkStack, OrkStack / Run)"
 	say "  UI             $UI_URL  (the dev server, with hot reload)"
 	say "  Engine         $ENGINE_URL  (the API; the UI too, once built in with make ui)"
 	say "  Temporal UI    http://localhost:8233"
@@ -695,7 +720,12 @@ cmd_down() {
 	done
 
 	say "== stopping infrastructure =="
-	"${COMPOSE[@]}" down
+	if [ -e "$OBSERVABILITY_MARK" ]; then
+		"${COMPOSE[@]}" --profile observability down
+		rm -f -- "$OBSERVABILITY_MARK"
+	else
+		"${COMPOSE[@]}" down
+	fi
 
 	# What make up recorded is checked by its record; a stray by its exe,
 	# which an undumpable one hides (AGENTS.md §11.1).

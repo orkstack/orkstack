@@ -371,7 +371,8 @@ export type Task = Message<"orkstack.v1.Task"> & {
   sleep?: SleepSpec | undefined;
 
   /**
-   * devices is set from E91; unset until it lands (v0.4.0 proto batch).
+   * devices names the operator-defined profiles the task's container gets
+   * (devices:), never a device path.
    *
    * @generated from field: repeated string devices = 26;
    */

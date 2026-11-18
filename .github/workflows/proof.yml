@@ -288,6 +288,22 @@ jobs:
         timeout-minutes: 3
         working-directory: site
         run: bun install --frozen-lockfile
+      # The alerts gate runs promtool in the Prometheus image the kit pins
+      # (scripts/check-alerts.sh --image), and pulls nothing itself: it is
+      # fetched here, by digest, through proof-fetch, when the daemon lacks it.
+      - name: prometheus image
+        id: prometheus-image
+        timeout-minutes: 1
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="$(scripts/check-alerts.sh --image)"
+          docker image inspect "$image" >/dev/null 2>&1 || echo "image=$image" >>"$GITHUB_OUTPUT"
+      - name: fetch prometheus image
+        if: steps.prometheus-image.outputs.image != ''
+        uses: ./.github/actions/proof-fetch
+        with:
+          image: ${{ steps.prometheus-image.outputs.image }}
       - name: fast
         id: fast
         # 30: the unit gate alone took 689 s on a slower 4-vCPU runner (CI
@@ -581,6 +597,7 @@ jobs:
         with:
           temporal-cli: "true"
           dex: "true"
+          usb-serial: "true"
       - name: fetch plan
         uses: ./.github/actions/proof-fetch
         timeout-minutes: 10

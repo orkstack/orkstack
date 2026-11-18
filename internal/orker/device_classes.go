@@ -21,12 +21,19 @@ type deviceClass struct {
 	name    string
 	drivers []string
 	node    *regexp.Regexp
+	// gpu says the class is the gpu kind's (a unit's nodes, through CDI),
+	// never the devices kind's.
+	gpu bool
+	// minMinor, when set, is the least minor a node of the class has: a DRM
+	// render node is minor 128 and up, and a card node below it is refused.
+	minMinor uint32
 }
 
-// deviceClasses is the table the devices kind uses. The gpu classes arrive
-// with the gpu kind.
+// deviceClasses is the table both kinds use, each only its own classes.
 var deviceClasses = []deviceClass{
 	{name: "usb-serial", drivers: []string{"ttyUSB", "ttyACM"}, node: regexp.MustCompile(`^tty(USB|ACM)[0-9]+$`)},
+	{name: "drm-render", drivers: []string{"drm"}, node: regexp.MustCompile(`^renderD[0-9]+$`), gpu: true, minMinor: 128},
+	{name: "kfd", drivers: []string{"kfd"}, node: regexp.MustCompile(`^kfd$`), gpu: true},
 }
 
 // hostDevice is what the host says one device path is.
@@ -69,6 +76,16 @@ func parseProcDevices(raw string) map[uint32]string {
 
 // classifyDevice is the class of dev, or why it has none.
 func classifyDevice(dev hostDevice, drivers map[uint32]string) (string, error) {
+	return classifyNode(dev, drivers, false)
+}
+
+// classifyGPUNode is classifyDevice for a gpu unit's node: only the gpu
+// kind's classes.
+func classifyGPUNode(dev hostDevice, drivers map[uint32]string) (string, error) {
+	return classifyNode(dev, drivers, true)
+}
+
+func classifyNode(dev hostDevice, drivers map[uint32]string, gpu bool) (string, error) {
 	if !dev.Char {
 		return "", fmt.Errorf("%s is not a character device", dev.Resolved)
 	}
@@ -78,11 +95,14 @@ func classifyDevice(dev hostDevice, drivers map[uint32]string) (string, error) {
 	}
 	name := path.Base(dev.Resolved)
 	for _, c := range deviceClasses {
+		if c.gpu != gpu {
+			continue
+		}
 		for _, d := range c.drivers {
 			if d != driver {
 				continue
 			}
-			if !c.node.MatchString(name) {
+			if !c.node.MatchString(name) || dev.Minor < c.minMinor {
 				return "", fmt.Errorf("%s: driver %s, but %s is not a %s node", dev.Resolved, driver, name, c.name)
 			}
 			return c.name, nil

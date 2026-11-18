@@ -19,7 +19,7 @@
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import type { Orker } from '#lib/gen/orkstack/v1/activity_pb.ts';
-	import { operatorCordoned } from '#lib/orkers.ts';
+	import { fullDimension, loadOf, stateOf, type PoolLoad } from '#lib/poolLoad.ts';
 	import { formatBytes } from '#lib/resources.ts';
 	import type { Pool } from '#lib/gen/orkstack/v1/namespace_pb.ts';
 	import { namespaceLabel } from '#lib/namespace.ts';
@@ -68,61 +68,28 @@
 	let expanded = $state<Record<string, boolean>>({});
 	const shown = (pool: string) => expanded[pool] ?? true;
 
-	// Nothing unavailable is ever drawn as zero: a pool the
-	// cluster could not answer for has NO number at all, only the reason.
-	/** What a pool's live Orkers reserved of what they declared. */
-	interface PoolLoad {
-		orkers: number;
-		cordoned: number;
-		/** Orkers an operator cordoned; the rest of `cordoned` hold it for a store outage alone. */
-		operatorCordons: number;
-		/** Orkers cordoned because object storage does not answer them. */
-		storeOutages: number;
-		/** Orkers stopping: they take no new work and finish what they run. */
-		stopping: number;
-		tasks: number;
-		pins: number;
-		cpu: { reserved: number; capacity: number };
-		memory: { reserved: number; capacity: number };
-	}
-	function loadOf(pool: string, orkers: Orker[]): PoolLoad {
-		const mine = orkers.filter((o) => o.pool === pool && !o.unavailableReason);
-		const sum = (f: (o: Orker) => number) => mine.reduce((a, o) => a + f(o), 0);
-		return {
-			orkers: mine.length,
-			cordoned: mine.filter((o) => o.cordoned).length,
-			operatorCordons: mine.filter(operatorCordoned).length,
-			storeOutages: mine.filter((o) => o.storeOutage).length,
-			stopping: mine.filter((o) => o.stopping).length,
-			tasks: sum((o) => o.runningTasks),
-			pins: sum((o) => o.openPins),
-			cpu: { reserved: sum((o) => o.reserved?.cpu ?? 0), capacity: sum((o) => o.capacity?.cpu ?? 0) },
-			memory: { reserved: sum((o) => Number(o.reserved?.memoryBytes ?? 0n)), capacity: sum((o) => Number(o.capacity?.memoryBytes ?? 0n)) }
+	// The Orker inventory the cards and the capacity note draw from: the last
+	// one a load answered, kept on screen while the next is read (a Refresh,
+	// or a Cordon or Uncordon below, which reads the page again), so a card
+	// never blanks and never keeps a state the list beneath it has left. An
+	// answer a newer load has replaced is dropped, whichever arrives first.
+	let inv = $state<{ orkers: Orker[]; error: string | null } | null>(null);
+	$effect(() => {
+		const pending = data.orkers;
+		let latest = true;
+		void pending.then((answer) => {
+			if (latest) inv = answer;
+		});
+		return () => {
+			latest = false;
 		};
-	}
-	/** Ready, Full or Cordoned, in words; colour only beside the word. */
-	function stateOf(pool: Pool, load: PoolLoad | null): { word: string; tone: 'ok' | 'wait' | 'fail' | 'plain' } {
-		if (pool.unavailableReason) return { word: 'Unknown', tone: 'plain' };
-		if (load && load.orkers > 0 && load.storeOutages === load.orkers) return { word: 'Object storage unreachable', tone: 'fail' };
-		if (pool.liveOrkerCount === 0) return { word: 'No Orkers', tone: 'fail' };
-		if (load && load.storeOutages > 0) return { word: `${load.storeOutages} cannot reach object storage`, tone: 'fail' };
-		if (load && load.orkers > 0 && load.stopping === load.orkers) return { word: 'Stopping', tone: 'wait' };
-		if (load && load.orkers > 0 && load.cordoned === load.orkers) return { word: 'Cordoned', tone: 'wait' };
-		if (load && isFull(load)) return { word: 'Full', tone: 'wait' };
-		if (load && load.operatorCordons > 0) return { word: `${load.operatorCordons} cordoned`, tone: 'wait' };
-		if (load && load.stopping > 0) return { word: `${load.stopping} stopping`, tone: 'wait' };
-		return { word: 'Ready', tone: 'ok' };
-	}
-	/** Every Orker has reserved all it declared, in a dimension their capacity bounds. */
-	function isFull(load: PoolLoad): boolean {
-		const at = (d: { reserved: number; capacity: number }) => d.capacity > 0 && d.reserved >= d.capacity;
-		return load.orkers > 0 && (at(load.cpu) || at(load.memory));
-	}
+	});
+
 	function fullPools(pools: Pool[], orkers: Orker[]): { name: string; dimension: string }[] {
 		return pools.flatMap((pool) => {
 			const load = loadOf(pool.name, orkers);
-			if (pool.unavailableReason || !isFull(load)) return [];
-			return [{ name: pool.name, dimension: load.cpu.capacity > 0 && load.cpu.reserved >= load.cpu.capacity ? 'cpu' : 'memory' }];
+			const dimension = pool.unavailableReason ? null : fullDimension(load);
+			return dimension ? [{ name: pool.name, dimension: dimension === 'gpu' ? 'gpu units' : dimension }] : [];
 		});
 	}
 	const cpuWords = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
@@ -175,7 +142,7 @@
 	<!-- A card per pool: its state in words, its live Orkers, and how much of
 		what they declared is reserved now. A pool no Orker serves says so; one
 		the cluster could not answer for has no number at all. -->
-	{#await data.orkers then inv}
+	{#if inv}
 		{@const full = inv.error ? [] : fullPools(data.pools, inv.orkers)}
 		{#if full.length}
 			<!-- The capacity note: what a full pool means for what is sent to it. -->
@@ -186,15 +153,15 @@
 				<a class="ml-auto font-semibold whitespace-nowrap" data-testid="pools-capacity-runs" href={listHref('/runs', { ns: namespaceLabel(data.namespace) }, { filter: runWindowFilters('', 'RUNNING', '', '') })}>View running runs</a>
 			</div>
 		{/if}
-	{/await}
+	{/if}
 	<ul class="poolgrid" data-testid="pool-list">
 		{#each data.pools as pool (pool.name)}
 			<li class="card flex flex-col" id="pool-{pool.name}" data-testid="pool-card-{pool.name}">
-				{#await data.orkers}
-					{@render card(pool, null, '')}
-				{:then inv}
+				{#if inv}
 					{@render card(pool, inv.error ? null : loadOf(pool.name, inv.orkers), inv.error ?? '')}
-				{/await}
+				{:else}
+					{@render card(pool, null, '')}
+				{/if}
 			</li>
 		{/each}
 	</ul>
@@ -206,7 +173,7 @@
 		{#if shown(pool.name) && !pool.unavailableReason}
 			<section class="card mt-4" aria-labelledby="orkers-{pool.name}-h" id="orkers-{pool.name}">
 				<div class="card-head"><h2 id="orkers-{pool.name}-h">Orkers in {pool.name}</h2><span class="card-sub">{orkerLabel(pool)} live · reserved, not measured use</span></div>
-				<PoolOrkers pool={pool.name} namespace={data.namespace} refresh={refreshed} />
+				<PoolOrkers pool={pool.name} namespace={data.namespace} refresh={refreshed} onchange={() => void invalidateAll()} />
 			</section>
 		{/if}
 	{/each}
@@ -229,7 +196,7 @@
 	<div class="phead">
 		<h2>{pool.name}</h2>
 		{#if pool.isDefault}<span class="pill-plain" data-testid="pool-default-{pool.name}">Default</span>{/if}
-		<span class="ml-auto stamp {st.tone === 'ok' ? 'bg-ok-tint text-ok mark-square' : st.tone === 'wait' ? 'pill-wait' : st.tone === 'fail' ? 'bg-fail-tint text-fail mark-tri' : 'pill-plain'}"
+		<span data-testid="pool-state-{pool.name}" class="ml-auto stamp {st.tone === 'ok' ? 'bg-ok-tint text-ok mark-square' : st.tone === 'wait' ? 'pill-wait' : st.tone === 'fail' ? 'bg-fail-tint text-fail mark-tri' : 'pill-plain'}"
 			>{#if st.tone === 'wait'}<span class="mark-wait" aria-hidden="true"></span>{/if}{st.word}</span
 		>
 	</div>
@@ -251,7 +218,10 @@
 			{#if load && load.memory.capacity > 0}
 				{@render meter('memory reserved', load.memory.reserved, load.memory.capacity, `${formatBytes(load.memory.reserved)} of ${formatBytes(load.memory.capacity)}`, load.memory.reserved >= load.memory.capacity)}
 			{/if}
-			{#if load && load.cpu.capacity === 0 && load.orkers > 0}
+			{#if load && load.gpu.capacity > 0}
+				{@render meter('gpu reserved', load.gpu.reserved, load.gpu.capacity, `${load.gpu.reserved} of ${load.gpu.capacity}`, load.gpu.reserved >= load.gpu.capacity)}
+			{/if}
+			{#if load && load.cpu.capacity === 0 && load.memory.capacity === 0 && load.gpu.capacity === 0 && load.orkers > 0}
 				<p class="text-sm text-ink-3">These Orkers declare no capacity, so nothing caps what they take.</p>
 			{/if}
 			{#if invError}<p class="text-sm text-ink-3">Reservations could not be read: {invError}</p>{/if}
@@ -259,7 +229,7 @@
 	</div>
 	<div class="mt-auto flex items-center gap-3 px-4 pt-1 pb-3.5 text-dense text-ink-2">
 		{#if !pool.unavailableReason}
-			<span class="min-w-0"><span class="num" data-testid="pool-orker-count-{pool.name}">{orkerLabel(pool)}</span> {pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}{#if load}{' · '}{load.tasks} running {load.tasks === 1 ? 'task' : 'tasks'}{' · '}{load.pins} open {load.pins === 1 ? 'pin' : 'pins'}{/if}{#if load && load.operatorCordons > 0}{' · '}{load.operatorCordons} cordoned{/if}{#if load && load.stopping > 0}{' · '}<span data-testid="pool-stopping-{pool.name}">{load.stopping} stopping</span>{/if}{#if load && load.storeOutages > 0}{' · '}<span data-testid="pool-store-outages-{pool.name}">{load.storeOutages} cannot reach object storage</span>{/if}</span>
+			<span class="min-w-0"><span class="num" data-testid="pool-orker-count-{pool.name}">{orkerLabel(pool)}</span> {pool.liveOrkerCount === 1 ? 'Orker' : 'Orkers'}{#if load}{' · '}{load.tasks} running {load.tasks === 1 ? 'task' : 'tasks'}{' · '}{load.pins} open {load.pins === 1 ? 'pin' : 'pins'}{/if}{#if load && load.operatorCordons > 0}{' · '}{load.operatorCordons} cordoned{/if}{#if load && load.profileOut > 0}{' · '}<span data-testid="pool-profile-out-{pool.name}">{load.profileOut} profile out of service</span>{/if}{#if load && load.profileUnavailable > 0}{' · '}<span data-testid="pool-profile-unavailable-{pool.name}">{load.profileUnavailable} profile unavailable</span>{/if}{#if load && load.stopping > 0}{' · '}<span data-testid="pool-stopping-{pool.name}">{load.stopping} stopping</span>{/if}{#if load && load.storeOutages > 0}{' · '}<span data-testid="pool-store-outages-{pool.name}">{load.storeOutages} cannot reach object storage</span>{/if}</span>
 			<button
 				type="button"
 				class="btn btn-sm ml-auto shrink-0"

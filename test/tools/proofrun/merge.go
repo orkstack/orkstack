@@ -292,9 +292,15 @@ func cmdMerge(args []string) int {
 	ciAttempt := fs.Int("ci-attempt", 0, "the CI run attempt")
 	ciEvent := fs.String("ci-event", "", "the CI event")
 	ciURL := fs.String("ci-url", "", "the CI run URL")
+	gpuTier := fs.Bool("gpu-tier", false, "a local proof of the GPU-host tier (scripts/proof.sh --tier gpu): judge its gpu gate from its local part, with no integration plan")
 	stopped := fs.Bool("stopped", false, "a local proof stopped at a failing gate before it wrote -plan: judge it a failure from its local part alone")
-	if err := fs.Parse(args); err != nil || *planFile == "" || *partsDir == "" || *out == "" || fs.NArg() > 0 {
+	parseErr := fs.Parse(args)
+	if parseErr == nil && *gpuTier && *partsDir != "" && *out != "" && fs.NArg() == 0 {
+		return mergeGPUTierProof(*partsDir, *out, *name)
+	}
+	if err := parseErr; err != nil || *gpuTier || *planFile == "" || *partsDir == "" || *out == "" || fs.NArg() > 0 {
 		fmt.Fprintln(os.Stderr, "proofrun merge -plan FILE -parts DIR -out DIR [-ui-plan FILE] [-jobs DIR] -name NAME")
+		fmt.Fprintln(os.Stderr, "proofrun merge -gpu-tier -parts DIR -out DIR -name NAME")
 		return 2
 	}
 	if _, statErr := os.Stat(*planFile); *stopped && os.IsNotExist(statErr) {
@@ -373,6 +379,7 @@ func cmdMerge(args []string) int {
 	for name, v := range map[string]any{
 		"unit-tests.json": m.unit, "integration-tests.json": m.integration, "ui-e2e-tests.json": m.ui,
 		suiteRace + "-tests.json": m.race, suiteRaceRepeat + "-tests.json": m.raceRepeat, suiteFuzz + "-tests.json": m.fuzz,
+		suiteGPU + "-tests.json": m.gpu,
 	} {
 		if isNilLedger(v) {
 			continue
@@ -484,6 +491,7 @@ type merger struct {
 	race            *ledger
 	raceRepeat      *ledger
 	fuzz            *ledger
+	gpu             *ledger
 	ui              *uiLedger
 	notes           []string
 	digestNotes     []string
@@ -850,6 +858,7 @@ func (m *merger) merge(name string) {
 	m.mergeIntegration()
 	m.mergeUnit()
 	m.mergeLanes()
+	m.mergeGPU()
 	if m.plan.Tier == tierNightly {
 		m.checkNightlyUI()
 	}
@@ -933,7 +942,13 @@ func (m *merger) merge(name string) {
 	if m.ui != nil {
 		proof.Ledgers.(map[string]any)["ui-e2e"] = map[string]any{"listed": m.ui.Listed, "pass": m.ui.Pass, "deferred": m.ui.Deferred, "problems": len(m.ui.Problems)}
 	}
+	if m.gpu != nil {
+		proof.Ledgers.(map[string]any)[suiteGPU] = map[string]any{"summary": m.gpu.Summary, "problems": len(m.gpu.Problems)}
+	}
 	ledgersOK := map[string]bool{}
+	if m.gpu != nil {
+		ledgersOK[suiteGPU] = m.gpu.ok()
+	}
 	for suite, l := range m.laneLedgers() {
 		ledgersOK[suite] = l.ok()
 	}
@@ -2229,6 +2244,8 @@ func writeMergeREADME(file string, r *proofRecord, m *merger) error {
 		first = "NIGHTLY PROOF"
 	case tierRelease:
 		first = "RELEASE PROOF"
+	case tierGPU:
+		first = "GPU-HOST PROOF"
 	}
 	fmt.Fprintf(&b, "# %s: %s\n\n", first, r.Name)
 	fmt.Fprintf(&b, "- tier:   %s\n", r.Tier)

@@ -647,6 +647,12 @@ func dockerContainerFlags(spec ContainerSpec, name string, spoken dialect) ([]st
 		}
 		args = append(args, "--device", d.HostPath+":"+d.ContainerPath+":"+d.Permissions)
 	}
+	for _, name := range spec.CDIDevices {
+		if err := checkCDIDevice(name); err != nil {
+			return nil, err
+		}
+		args = append(args, "--device", name)
+	}
 
 	args = append(args, spec.Image)
 	args = append(args, spec.Command...)
@@ -1431,6 +1437,22 @@ func parseOwnContainers(answer string) []OwnContainer {
 		own = append(own, OwnContainer{ID: fields[0], RunID: fields[1], TaskID: fields[2], Item: fields[3], Attempt: fields[4]})
 	}
 	return own
+}
+
+// The Docker runtime can host a gpu profile.
+var _ unitContainerLister = (*DockerRuntime)(nil)
+
+// UnitContainers lists every container labelled ork.units.lock, whichever
+// Orker labelled it, for the lock-scoped reap (unit_reap.go).
+func (d *DockerRuntime) UnitContainers(ctx context.Context) ([]UnitContainer, error) {
+	answer, err := d.control(ctx, "ps", "--all", "--filter", "label="+labelUnitsLock, "--format", unitContainersFormat)
+	if err != nil {
+		return nil, err
+	}
+	if answer.code != 0 {
+		return nil, fmt.Errorf("list unit containers: docker exited %d: %s", answer.code, answer.said())
+	}
+	return parseUnitContainers(answer.stdout), nil
 }
 
 // otherContainersFormat is one container a line, tab-separated. Its label

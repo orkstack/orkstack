@@ -1,10 +1,14 @@
 package orker
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
+	"os"
+	"slices"
 	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -42,6 +46,16 @@ type auditedDevice struct {
 type profileAudit struct {
 	identity string
 	devices  []auditedDevice
+	// gpu is a gpu profile's CDI audit (cdi_audit.go): the audit set's
+	// digests, re-hashed at 3c and before create. Nil for a devices profile,
+	// and for a gpu profile whose spec was absent at boot.
+	gpu *gpuSpecAudit
+	// gpuNodes are a gpu profile's unit nodes, stat'ed as devices are; they
+	// reach a container through CDI (dispatch_units.go), never as a mapping.
+	gpuNodes []auditedDevice
+	// unitNodes are gpuNodes by unit, in the profile's unit order, for the
+	// unit probes.
+	unitNodes [][]auditedDevice
 }
 
 // setAudited records the boot audit. It is set once, before the Orker polls.
@@ -89,7 +103,7 @@ func (s *profileState) gate(refs []*orkstackv1.ProfileRef, inspect func(string) 
 }
 
 // recheck is the device comparison again, just before the container is
-// created.
+// created, and again just before it is started.
 func (s *profileState) recheck(refs []*orkstackv1.ProfileRef, inspect func(string) (hostDevice, error), now time.Time) *Failure {
 	for _, ref := range refs {
 		audit, ok := s.audit(ref.GetName())
@@ -127,14 +141,46 @@ func (s *profileState) compareDevices(name string, audit profileAudit, inspect f
 			"profile %q is unavailable on this Orker until its devices and its host-view probe pass again; "+
 				"the task runs on an Orker of its pool that offers it", name)
 	}
+	if failure := s.checkSpecBytes(name, audit, now); failure != nil {
+		return failure
+	}
 	return s.statDevices(name, audit, inspect, now)
+}
+
+// checkSpecBytes re-hashes a gpu profile's audit set (design §4.11, at 3c and
+// just before create): a file that is gone, or that cannot be read, holds the
+// profile unavailable (SPEC_ABSENT); one whose bytes differ latches a drift
+// (SPEC_CHANGED).
+func (s *profileState) checkSpecBytes(name string, audit profileAudit, now time.Time) *Failure {
+	if audit.gpu == nil {
+		return nil
+	}
+	for _, path := range slices.Sorted(maps.Keys(audit.gpu.files)) {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			s.setUnavailable(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_ABSENT,
+				fmt.Sprintf("%s: %v", path, err), now)
+			return Fail(ReasonProfileNotOffered,
+				"profile %q is unavailable on this Orker: a CDI spec it was audited from cannot be read; "+
+					"the task runs on an Orker of its pool that offers it", name)
+		}
+		sum := sha256.Sum256(raw)
+		if hex.EncodeToString(sum[:]) != audit.gpu.files[path] {
+			s.setDrift(name, orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_SPEC_CHANGED,
+				path+" differs from the bytes this Orker audited", now)
+			return Fail(ReasonProfileDrifted,
+				"profile %q drifted on this Orker: a CDI spec it was audited from changed; "+
+					"it stays out of service until the Orker restarts", name)
+		}
+	}
+	return nil
 }
 
 // statDevices compares every device of a profile with its audit. A device
 // that is not there holds the profile unavailable (DEVICE_ABSENT) until it is
 // back unchanged; one that differs latches a drift.
 func (s *profileState) statDevices(name string, audit profileAudit, inspect func(string) (hostDevice, error), now time.Time) *Failure {
-	for _, d := range audit.devices {
+	for _, d := range slices.Concat(audit.devices, audit.gpuNodes) {
 		detail, absent := deviceDrift(d, inspect)
 		switch {
 		case detail == "":
@@ -193,7 +239,7 @@ func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heart
 }
 
 // profileRecheck is the device comparison just before the container is
-// created.
+// created, and again just before it is started.
 func (d *OCIDispatcher) profileRecheck(in *orkstackv1.ExecuteTaskInput) *Failure {
 	if len(in.GetDevices()) == 0 {
 		return nil

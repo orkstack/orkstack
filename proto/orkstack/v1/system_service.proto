@@ -56,6 +56,22 @@ service SystemService {
   // mark is named with its namespace whether or not `namespace` is set.
   rpc PreviewArtifactReclaim(PreviewArtifactReclaimRequest) returns (PreviewArtifactReclaimResponse);
 
+  // ReconcileRestore reconciles the cluster with the bucket after Temporal
+  // was restored to `temporal_restored_at` (`orkctl admin restore
+  // reconcile`; docs/RUNBOOKS.md, "Backup and disaster recovery"). It pages
+  // through the cleanup records retention cleanup wrote, at most `limit`
+  // (1 to 1000; 0 is 1000) after `cursor`, and lists each run cleanup retired
+  // after that instant whose execution the restore brought back; without
+  // `dry_run` it deletes those executions, only where the bucket holds the
+  // run's archive, which then answers for the run, and never one that is
+  // running. The first page also lists
+  // the runs the cluster shows open whose finished archive the bucket holds:
+  // they will run their tail again, and nothing acts on them. It deletes no
+  // object. Without `dry_run` it is refused FAILED_PRECONDITION while the
+  // answering engine's retention cleanup is on, which would race it. A read
+  // it cannot make fails the call; nothing is skipped.
+  rpc ReconcileRestore(ReconcileRestoreRequest) returns (ReconcileRestoreResponse);
+
   // ListTelemetrySinks names the telemetry sinks this deployment declared
   // (ORK_TELEMETRY_SINKS), so a namespace admin can choose one by name. Names
   // only: endpoints and headers are the operator's and never leave the
@@ -469,6 +485,49 @@ message PromoteReleaseResponse {
   string previous_build_id = 2;
   bool routing_confirmed = 3;
   string revision = 4;
+}
+
+message ReconcileRestoreRequest {
+  // temporal_restored_at is the instant Temporal was restored to. Required.
+  google.protobuf.Timestamp temporal_restored_at = 1;
+  // dry_run lists and deletes nothing.
+  bool dry_run = 2;
+  // limit is how many cleanup records the page reads: 1 to 1000; 0 is 1000.
+  int32 limit = 3;
+  // cursor is a previous answer's next_cursor; empty starts at the
+  // beginning, and only that page lists finished_run_ids.
+  string cursor = 4;
+}
+
+// RestoreRetiredRun is one run retention cleanup retired after the restore
+// instant whose execution the restored cluster holds again.
+message RestoreRetiredRun {
+  string run_id = 1;
+  // retired_at is when cleanup retired it, as its cleanup record says.
+  google.protobuf.Timestamp retired_at = 2;
+  // archived says the bucket holds the run's archive; only then are its
+  // executions deleted.
+  bool archived = 3;
+  // deleted says this call deleted its executions.
+  bool deleted = 4;
+  // open says the restored execution is running (a run replaying its tail,
+  // or one resumed since the restore). It is never deleted; cancel it or let
+  // it finish.
+  bool open = 5;
+}
+
+message ReconcileRestoreResponse {
+  repeated RestoreRetiredRun retired = 1;
+  // finished_run_ids are the runs the cluster shows open whose finished
+  // archive the bucket holds; on the first page only.
+  repeated string finished_run_ids = 2;
+  // listed is how many cleanup records this page read.
+  int32 listed = 3;
+  // next_cursor continues the walk; empty when this was the last page.
+  string next_cursor = 4;
+  // finished_truncated says there were more open runs than one answer lists
+  // (10000), so finished_run_ids is incomplete.
+  bool finished_truncated = 5;
 }
 
 message PreviewArtifactReclaimRequest {
