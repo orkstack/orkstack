@@ -801,6 +801,7 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.SystemServiceListReleasesProcedure:           {res: deployment, checks: perms(authz.PermSystemRead)},
 	orkstackv1connect.SystemServiceListTelemetrySinksProcedure:     {res: deployment, checks: perms(authz.PermCatalogRead)},
 	orkstackv1connect.SystemServiceUpdateRetentionPolicyProcedure:  {res: deployment, checks: perms(authz.PermRetentionUpdate)},
+	orkstackv1connect.SystemServiceReconcileRestoreProcedure:       {res: deployment, checks: perms(authz.PermSystemRestore)},
 	orkstackv1connect.SystemServiceUpdateImagePolicyProcedure:      {res: deployment, checks: perms(authz.PermImagePolicyUpdate)},
 
 	// IdentityService: the task identity issuer, at the deployment

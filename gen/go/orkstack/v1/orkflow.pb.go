@@ -424,7 +424,8 @@ type Task struct {
 	// rules 49 and 50). Part of canonicalOrkflow(Task) ONLY when set (see pin),
 	// so a definition with no sleep keeps its digest.
 	Sleep *SleepSpec `protobuf:"bytes,25,opt,name=sleep,proto3" json:"sleep,omitempty"`
-	// devices is set from E91; unset until it lands (v0.4.0 proto batch).
+	// devices names the operator-defined profiles the task's container gets
+	// (devices:), never a device path.
 	Devices []string `protobuf:"bytes,26,rep,name=devices,proto3" json:"devices,omitempty"`
 	// child_artifacts is set from E87; unset until it lands (v0.4.0 proto batch).
 	ChildArtifacts []*ChildArtifact `protobuf:"bytes,30,rep,name=child_artifacts,json=childArtifacts,proto3" json:"child_artifacts,omitempty"`

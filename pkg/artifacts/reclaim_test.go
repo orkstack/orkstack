@@ -254,6 +254,69 @@ func TestListUnder_BoundsAndTruncation(t *testing.T) {
 	}
 }
 
+// ListUnderAfter resumes after a key, exclusively, and refuses a resume key
+// outside the prefix it lists.
+func TestListUnderAfter_ResumesAfterTheKey(t *testing.T) {
+	store, root := reclaimArchive(t)
+	for _, k := range []string{"p/a", "p/b", "p/c", "q/a"} {
+		writeRaw(t, root, k, []byte(k))
+	}
+	ctx := context.Background()
+	got, more, err := store.ListUnderAfter(ctx, "p/", "p/a", 1)
+	if err != nil || !more || len(got) != 1 || got[0].Key != "p/b" {
+		t.Fatalf("after p/a = %+v more=%v err=%v; want [p/b], more", got, more, err)
+	}
+	got, more, err = store.ListUnderAfter(ctx, "p/", "p/b", 5)
+	if err != nil || more || len(got) != 1 || got[0].Key != "p/c" {
+		t.Fatalf("after p/b = %+v more=%v err=%v; want [p/c], no more", got, more, err)
+	}
+	if _, _, err := store.ListUnderAfter(ctx, "p/", "q/a", 5); err == nil {
+		t.Fatal("a resume key outside the prefix was accepted")
+	}
+}
+
+// A cleanup record's key gives back the run id it was written for, and no
+// other key names a run.
+func TestRunIDFromCleanupKey(t *testing.T) {
+	for _, id := range []string{"ork-01jq3k6m8b7x2t5v9c4n1r0hzd", "ork-1786856120616785000-1", "a run/with odd bytes"} {
+		key, err := RunCleanupKey(id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := RunIDFromCleanupKey(key); !ok || got != id {
+			t.Errorf("RunIDFromCleanupKey(%q) = %q, %v; want %q", key, got, ok, id)
+		}
+	}
+	for _, key := range []string{"", RunCleanupNamespace + "/", RunCleanupNamespace + "/ork-1", RunCleanupNamespace + "/a/b.json",
+		RunCleanupNamespace + "/.json", "metadata/runs/ork-1.json", RunCleanupNamespace + "x/ork-1.json"} {
+		if got, ok := RunIDFromCleanupKey(key); ok {
+			t.Errorf("RunIDFromCleanupKey(%q) = %q; want no run", key, got)
+		}
+	}
+}
+
+// FuzzRunIDFromCleanupKey holds the parse of a key listed back from the store
+// to what RunCleanupKey writes: a key it accepts is exactly the key its run
+// id renders.
+func FuzzRunIDFromCleanupKey(f *testing.F) {
+	for _, seed := range []string{RunCleanupNamespace + "/ork-1.json", RunCleanupNamespace + "/a/b.json", RunCleanupNamespace + "/.json", "", "metadata/runs/ork-1.json"} {
+		f.Add(seed)
+	}
+	if key, err := RunCleanupKey("a run/with odd bytes"); err == nil {
+		f.Add(key)
+	}
+	f.Fuzz(func(t *testing.T, key string) {
+		id, ok := RunIDFromCleanupKey(key)
+		if !ok {
+			return
+		}
+		again, err := RunCleanupKey(id)
+		if err != nil || again != key {
+			t.Fatalf("RunIDFromCleanupKey(%q) = %q, which renders %q (%v)", key, id, again, err)
+		}
+	})
+}
+
 func TestReclaimRecord_CreateOnlyAndRoundTrip(t *testing.T) {
 	store, _ := reclaimArchive(t)
 	ctx := context.Background()

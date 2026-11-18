@@ -21,6 +21,18 @@ type DeviceMapping struct {
 	Permissions string
 }
 
+// checkCDIDevice refuses a CDI device name that is not kind=name with a kind
+// and a unit name a gpu profile could declare (profiles.go): never a path, a
+// flag, `all`, or an nvidia.com kind, whatever reached the spec.
+func checkCDIDevice(name string) error {
+	kind, unit, ok := strings.Cut(name, "=")
+	if !ok || !cdiKindPattern.MatchString(kind) || !cdiUnitPattern.MatchString(unit) ||
+		unit == "all" || strings.HasPrefix(kind, "nvidia.com/") {
+		return fmt.Errorf("CDI device %q is not a qualified name of a gpu profile's unit", name)
+	}
+	return nil
+}
+
 // checkDeviceMapping refuses a mapping that is not a host node under /dev
 // to a container path a profile may name, with r, w or rw. It is the argv
 // boundary's own check: a mapping reaches it only from an audited profile,

@@ -240,14 +240,23 @@ func (a *BlobRunArchive) readObjectList(ctx context.Context, key string) ([]stri
 // whether more follow. A non-positive limit is refused: every GC listing is
 // bounded.
 func (a *BlobRunArchive) ListUnder(ctx context.Context, prefix string, limit int) ([]StoredObject, bool, error) {
+	return a.ListUnderAfter(ctx, prefix, "", limit)
+}
+
+// ListUnderAfter is ListUnder resumed after the key after (exclusive; "" for
+// the start), so a caller can page through a prefix of any size.
+func (a *BlobRunArchive) ListUnderAfter(ctx context.Context, prefix, after string, limit int) ([]StoredObject, bool, error) {
 	if limit <= 0 {
 		return nil, false, fmt.Errorf("artifacts: list %q: a listing needs a positive bound", prefix)
+	}
+	if after != "" && !strings.HasPrefix(after, prefix) {
+		return nil, false, fmt.Errorf("artifacts: list %q: resume key %q is outside the prefix", prefix, after)
 	}
 	var (
 		out  []StoredObject
 		more bool
 	)
-	err := listObjects(ctx, a.b, blobListInput{Prefix: prefix}, func(object blobObject) (bool, error) {
+	err := listObjects(ctx, a.b, blobListInput{Prefix: prefix, StartAfter: after}, func(object blobObject) (bool, error) {
 		if len(out) == limit {
 			more = true
 			return true, nil

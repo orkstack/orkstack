@@ -327,6 +327,12 @@ It prints the rendered `config.json` and starts no container ([CLI.md](./CLI.md)
 
 **Fix.** A run keeps the policy it was submitted under, so a later tightening does not change it. Restore the signature for that exact digest, or move the image under an allowed registry, then start a new run with `orkctl run again <run-id>`.
 
+### A task failed with `NAMESPACE_NOT_SERVED`
+
+**Cause.** The pool's Orkers list the namespaces they serve (`ORK_ORKER_NAMESPACES`), and the run's namespace is not one of them, or the task's input named a commit of another namespace or of another object store. Every task of a pool failing this way, whatever its namespace, means the Orkers' object store differs from the engine's (`ORK_ARTIFACT_BACKEND`, `ORK_S3_BUCKET`, `ORK_ARTIFACT_DIR`). The Orker refused the task before it read or wrote anything of it. It is a `ContractViolation` and is never retried ([DEPLOY.md](./DEPLOY.md), "Trust zones: a deployment per zone").
+
+**Fix.** Send the namespace's tasks to a pool whose Orkers serve it (its `allowed_pools`, and the task's `pool:`), or have the operator add the namespace to `ORK_ORKER_NAMESPACES` on every Orker of the pool. Then run the Orkflow again.
+
 ### A task failed with `SECRET_UNRESOLVED`, `SECRET_NOT_PERMITTED` or `SECRET_SCHEME_FORBIDDEN`
 
 **Cause.** `SECRET_UNRESOLVED`: the Orker could not read the source. For `env:NAME`, the variable is not set on that Orker. For `file:PATH`, the file cannot be read. It is an `InfrastructureError` and is retried under the task's policy. `SECRET_NOT_PERMITTED`: the source is outside the Orker's `ORK_ORKER_SECRET_ALLOW` floor, or is one of the Orker's own sources, such as an `ORK_*` or `OTEL_*` setting, a file under `/proc` or `/run/secrets`, or its configuration file, which no floor admits ([SECURITY_MODEL.md](./SECURITY_MODEL.md), "The Orker's own sources"). It is refused before the image is pulled and is never retried. `SECRET_SCHEME_FORBIDDEN`: the Orker does not resolve that scheme (`ORK_ORKER_SECRET_SCHEMES`), or the name is malformed (`internal/orker/oci_dispatcher.go`; [DEPLOY.md](./DEPLOY.md), "Secrets on a shared pool").
@@ -664,7 +670,7 @@ A `200` means the name is admitted. A `403` means it is refused.
 
 ### `host.docker.internal` does not resolve inside a container (Linux)
 
-**Cause.** On Linux the name `host.docker.internal` does not resolve inside containers by default. Some integration and browser test suites, and the observability stack, rely on it. The Orker never adds a host mapping to an activity container, by design ([README.md](../README.md), "Linux hosts"; [AGENTS.md](../AGENTS.md), "11.1 Development workflow").
+**Cause.** On Linux the name `host.docker.internal` does not resolve inside containers by default. Some integration and browser test suites rely on it. The Orker never adds a host mapping to an activity container, by design ([README.md](../README.md), "Linux hosts"; [AGENTS.md](../AGENTS.md), "11.1 Development workflow").
 
 **Confirm.** The check in [CONTRIBUTING.md](../CONTRIBUTING.md), "Linux hosts", prints nothing when the name is not mapped:
 

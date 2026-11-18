@@ -34,6 +34,12 @@ A secret value does not appear in the Orkflow, the logs, the archive or `task.js
 
 An `env:` value in a task is configuration. It is stored in the Orkflow, so put credentials in `secrets:`, never in `env:`.
 
+## Trust zones
+
+Every Orker of a deployment writes results to one bucket, so a stolen Orker of any pool can plant a result another namespace's task reads. Namespaces and pools share a deployment between teams; they do not wall them off. Give each trust zone, such as production and development, a deployment of its own: its own bucket, credentials, Temporal namespace, engines and Orkers.
+
+Inside a deployment, `ORK_ORKER_NAMESPACES` lists the namespaces an Orker serves. A task of any other namespace fails `NAMESPACE_NOT_SERVED` before the Orker reads or writes anything of it. It guards against wrong routing, not against a stolen credential.
+
 ## Callers and the principal
 
 With `auth.mode` set to `observe` or `enforce`, OrkStack checks each caller's token itself, decides every request against roles, and records the caller as verified. By default it does not: your gateway authenticates callers and may assert a caller's name in the `Ork-Principal` header, which OrkStack records as asserted and never presents as a verified identity.
@@ -61,5 +67,6 @@ The engine answers only the names it knows: an IP address, `localhost` and the n
 - [docs/SECURITY_MODEL.md, Who holds what](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#who-holds-what): what each component holds, and what it never holds.
 - [docs/SECURITY_MODEL.md, What the Orker refuses](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#what-the-orker-refuses): the refusals, and the container profile.
 - [docs/SECURITY_MODEL.md, Secrets](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#secrets): sources, lists and refusals.
+- [docs/DEPLOY.md, Trust zones: a deployment per zone](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#trust-zones-a-deployment-per-zone): what to give each zone, and what the namespace list guards.
 - [docs/SECURITY_MODEL.md, Transport, listeners and configuration](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#transport-listeners-and-configuration): the API listener, the web UI on it, and the admin listener.
 - [docs/SECURITY_MODEL.md, What this model does not cover](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#what-this-model-does-not-cover): the areas left to the deployment.

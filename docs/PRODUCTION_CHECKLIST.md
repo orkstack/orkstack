@@ -12,7 +12,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Grant the engine's identity the permissions the release commands need, if the cluster sits behind an authorizer. Without them those commands answer `permission_denied` ([DEPLOY.md](./DEPLOY.md), "Underneath: the cluster commands").
 - [ ] Let each engine register its search attributes at boot. If the cluster refuses, the engine warns, lists walk the whole index, and a list that cannot finish that walk fails rather than returning a short one ([DEPLOY.md](./DEPLOY.md), "5. Ops notes").
 - [ ] Leave the cluster's own retention alone. OrkStack derives it from the maximum run retention plus a margin, and no client sets it ([DEPLOY.md](./DEPLOY.md), "Run retention: a deployment maximum, a value per namespace").
-- [ ] Plan backups for both stores. Temporal holds live runs, the bucket holds definitions, artifacts and archives, and OrkStack ships no backup or restore command ([DEPLOY.md](./DEPLOY.md), "Nothing durable lives in a process").
+- [ ] Plan backups for both stores, Temporal first and then the bucket at the same moment or later. Temporal holds live runs, the bucket holds definitions, artifacts and archives, and OrkStack ships no backup or restore command ([DEPLOY.md](./DEPLOY.md), "Nothing durable lives in a process"; [RUNBOOKS.md](./RUNBOOKS.md), "Backup and disaster recovery").
 
 ## Object storage
 
@@ -132,6 +132,7 @@ Read [LIMITATIONS.md](./LIMITATIONS.md) before you plan a deployment, because se
 - [ ] Keep task-log export off unless you want the lines in your logs. `ORK_ORKER_TASK_LOG_EXPORT` needs `OTEL_LOGS_EXPORTER=otlp` ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 - [ ] Keep high-cardinality labels off, which is their default, unless you accept the label cost ([DEPLOY.md](./DEPLOY.md), "High-cardinality labels").
 - [ ] Set `ORK_LOG_FORMAT=json` if your log pipeline reads JSON. The default is `text` ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
+- [ ] Load the alert rules under `deploy/observability/prometheus/rules/` and route `OrkStackWatchdog` to a dead man's switch. Each alert links its runbook ([RUNBOOKS.md](./RUNBOOKS.md), "Using the rules").
 - [ ] Expect telemetry never to fail a task or a run. An exporter that cannot reach its collector is logged and counted, and a record that cannot be queued is dropped ([DEPLOY.md](./DEPLOY.md), "7. Telemetry").
 
 ## Before you depend on it

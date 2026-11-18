@@ -4,6 +4,7 @@
 /scripts/proof-part.sh @danlsgiga
 /scripts/proof-nightly-tests.txt @danlsgiga
 /scripts/proof-nightly-specs.txt @danlsgiga
+/scripts/proof-gpu-tests.txt @danlsgiga
 /scripts/proof-quarantine.txt @danlsgiga
 /scripts/proof-allowed-skips.txt @danlsgiga
 /scripts/proof-test-costs.tsv @danlsgiga

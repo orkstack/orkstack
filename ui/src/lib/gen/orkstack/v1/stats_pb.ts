@@ -1324,7 +1324,8 @@ export type UsageRow = Message<"orkstack.v1.UsageRow"> & {
   attemptsUnmeasuredByReason: UnmeasuredReasonCount[];
 
   /**
-   * gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch).
+   * gpu_seconds is gpu units × held time, counted as cpu and memory are;
+   * reported only, never budgeted.
    *
    * @generated from field: double gpu_seconds = 22;
    */

@@ -54,12 +54,12 @@ func TestProfileState_SyncsTheCordon(t *testing.T) {
 	if cordoned, _, _ := c.State(); !cordoned {
 		t.Fatal("an unavailable profile left the Orker uncordoned")
 	}
-	s.clearUnavailable("sensor")
+	s.clearUnavailable("sensor", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE)
 	if cordoned, reason, _ := c.State(); cordoned {
 		t.Fatalf("the last cause cleared, still cordoned: %q", reason)
 	}
 	s.setDrift("sensor", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_DEVICE_CHANGED, "188:199 is now 188:0", now)
-	s.clearUnavailable("sensor")
+	s.clearUnavailable("sensor", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE)
 	if cordoned, reason, _ := c.State(); !cordoned || reason == "" {
 		t.Fatalf("a drift did not hold the cordon: %v %q", cordoned, reason)
 	}

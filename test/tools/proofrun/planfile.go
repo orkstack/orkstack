@@ -124,6 +124,7 @@ type integrationPlan struct {
 	PR                    *prRecord     `json:"pr,omitzero"`
 	Costs                 fileRef       `json:"costs"`
 	Nightly               nightlyRef    `json:"nightly"`
+	GPU                   gpuListRef    `json:"gpu_list"`
 	AllowedSkips          fileRef       `json:"allowed_skips"`
 	Quarantine            quarantineRef `json:"quarantine"`
 	PartsExpected         []string      `json:"parts_expected"`

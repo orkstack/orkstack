@@ -496,6 +496,36 @@
 					]
 				},
 				{
+					"route": "docs/operate/alerts",
+					"title": "Alert on a deployment",
+					"description": "Load OrkStack's Prometheus alert rules, route them, and follow each alert's runbook.",
+					"parts": [
+						{
+							"source": "site/content/how-to/alerts.md"
+						}
+					]
+				},
+				{
+					"route": "docs/operate/backup-restore",
+					"title": "Back up and restore",
+					"description": "Back up Temporal and the bucket in the right order, and restore them without losing runs.",
+					"parts": [
+						{
+							"source": "site/content/how-to/backup-restore.md"
+						}
+					]
+				},
+				{
+					"route": "docs/operate/temporal-outage",
+					"title": "Ride out a Temporal outage",
+					"description": "Tell a Temporal outage from an OrkStack fault, see what stops and what carries on, and check the recovery.",
+					"parts": [
+						{
+							"source": "site/content/how-to/temporal-outage.md"
+						}
+					]
+				},
+				{
 					"route": "docs/operate/authentication",
 					"title": "Turn on authentication",
 					"description": "Make OrkStack check who calls its API and decide what each caller may do with roles.",

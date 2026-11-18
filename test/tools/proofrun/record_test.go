@@ -68,8 +68,8 @@ func TestFullGates_NameTheSiteGateAmongTheFastGates(t *testing.T) {
 	if !ok {
 		t.Fatalf("fullGates = %v: no site gate", fullGates)
 	}
-	if site != idx["ui-unit"]+1 || idx["ui-e2e"] != len(fullGates)-2 || idx["observability"] != len(fullGates)-1 {
-		t.Errorf("fullGates = %v: the site gate runs right after ui-unit, then ui-e2e, and observability last", fullGates)
+	if site != idx["ui-unit"]+1 || idx["alerts"] != site+1 || idx["ui-e2e"] != len(fullGates)-2 || idx["observability"] != len(fullGates)-1 {
+		t.Errorf("fullGates = %v: the site gate runs right after ui-unit, the alerts gate right after it, then ui-e2e, and observability last", fullGates)
 	}
 	// The nightly tier runs the deferred tests and nothing else.
 	r := passingFull()

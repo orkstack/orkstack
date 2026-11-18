@@ -1155,6 +1155,12 @@
             "boolean"
           ]
         },
+        "gpu": {
+          "description": "units of the task's gpu profile, 1 to 64",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        },
         "memory": {
           "type": [
             "string",

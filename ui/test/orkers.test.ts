@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test';
 import { create } from '@bufbuild/protobuf';
-import { MetadataProbeOutcome, OrkerSchema } from '../src/lib/gen/orkstack/v1/activity_pb';
-import { cordonCommand, metadataConcerns, metadataProbeText, metadataReachable, operatorCordoned, orkerCommand, orkerLoad, orkerPins, orkerState, orkerStateLabel, orkerTasks, stoppingNote } from '../src/lib/orkers';
+import { MetadataProbeOutcome, OrkerProfileSchema, OrkerSchema, ProfileCordonReason, ProfileCordonSchema, ProfileCordon_Cause, ProfileKind } from '../src/lib/gen/orkstack/v1/activity_pb';
+import { cordonCommand, metadataConcerns, metadataProbeText, metadataReachable, operatorCordoned, orkerCommand, orkerGpu, orkerLoad, orkerPins, orkerState, orkerStateLabel, orkerTasks, MAX_UNIT_CELLS, profileCause, profileCauseChip, profileCauseNote, profileState, profileCauses, profileKindLabel, profileReasonCode, profileUnits, profileUnitsText, stoppingNote } from '../src/lib/orkers';
 import { timestampFromDate } from '@bufbuild/protobuf/wkt';
 
 test('an Orker that could not be asked is unreachable and has no numbers, never zero', () => {
@@ -114,4 +114,94 @@ test('the metadata probe names what answered or could not tell, as orkctl orker 
 	const unknown = create(OrkerSchema, { orkerId: 'n', metadataProbes: [{ address: 'a', outcome: MetadataProbeOutcome.UNSPECIFIED }] });
 	expect(metadataConcerns(unknown)).toEqual(['a unknown']);
 	expect(metadataReachable(unknown)).toBe(false);
+});
+
+// Profiles (docs/DEPLOY.md, "Running a device Orker").
+const at = timestampFromDate(new Date('2026-11-17T10:00:00Z'));
+const fmt = () => '10:00';
+const drift = create(ProfileCordonSchema, { cause: ProfileCordon_Cause.DRIFT, profile: 'sensor', reason: ProfileCordonReason.DEVICE_CHANGED, since: at });
+const absent = create(ProfileCordonSchema, { cause: ProfileCordon_Cause.UNAVAILABLE, profile: 'sensor', reason: ProfileCordonReason.DEVICE_ABSENT, since: at });
+const probe = create(ProfileCordonSchema, { cause: ProfileCordon_Cause.UNAVAILABLE, profile: 'camera', reason: ProfileCordonReason.PROBE_IMAGE_UNAVAILABLE });
+
+test('a profile cause is never read as an operator’s cordon, and has its own state', () => {
+	const o = create(OrkerSchema, { orkerId: 'o', cordoned: true, profileCordons: [probe] });
+	expect(operatorCordoned(o)).toBe(false);
+	expect(orkerState(o)).toBe('profile-unavailable');
+	expect(orkerStateLabel(orkerState(o))).toBe('profile unavailable');
+	expect(orkerCommand(o)).toBe('orkctl orker get o');
+	const drifted = create(OrkerSchema, { orkerId: 'o', cordoned: true, profileCordons: [probe, drift] });
+	expect(orkerState(drifted)).toBe('profile-drift');
+	expect(orkerStateLabel('profile-drift')).toBe('profile drifted');
+});
+
+test('the state ranks stopping, an operator, drift, a store outage, then an unavailable profile', () => {
+	const storeOutage = { reason: 'object storage unreachable' };
+	expect(orkerState(create(OrkerSchema, { cordoned: true, cordonReason: 'cve', profileCordons: [drift] }))).toBe('cordoned');
+	expect(orkerState(create(OrkerSchema, { cordoned: true, storeOutage, profileCordons: [drift] }))).toBe('profile-drift');
+	expect(orkerState(create(OrkerSchema, { cordoned: true, storeOutage, profileCordons: [probe] }))).toBe('store-outage');
+	expect(orkerState(create(OrkerSchema, { cordoned: true, stopping: {}, profileCordons: [drift] }))).toBe('stopping');
+});
+
+test('causes read drift first, then by reason, and each says how it ends, with its code', () => {
+	const o = create(OrkerSchema, { profileCordons: [probe, absent, drift] });
+	expect(profileCauses(o).map((c) => c.reason)).toEqual([ProfileCordonReason.DEVICE_CHANGED, ProfileCordonReason.PROBE_IMAGE_UNAVAILABLE, ProfileCordonReason.DEVICE_ABSENT]);
+	expect(profileCauseNote(drift, fmt)).toBe('Profile sensor drifted since 10:00: a device was replaced, or changed its numbers or group (DEVICE_CHANGED). It stays out of service on this Orker until the Orker restarts.');
+	expect(profileCauseNote(probe, fmt)).toBe('Profile camera unavailable: its probe image cannot be pulled or run (PROBE_IMAGE_UNAVAILABLE). Once that is put right, it returns by itself after consecutive good checks.');
+	expect(profileCause(o, 'sensor')?.reason).toBe(ProfileCordonReason.DEVICE_CHANGED);
+	expect(profileCause(o, 'other')).toBeUndefined();
+});
+
+test('a reason this release does not know is still named, by its number', () => {
+	const later = create(ProfileCordonSchema, { cause: ProfileCordon_Cause.UNAVAILABLE, profile: 'gpu', reason: 99 as ProfileCordonReason });
+	expect(profileReasonCode(later.reason)).toBe('REASON_99');
+	expect(profileCauseNote(later, fmt)).toContain('the Orker found a fault (REASON_99)');
+});
+
+test('a gpu profile’s units split into bound, free and unhealthy, clamped; a devices profile has none', () => {
+	const gpu = create(OrkerProfileSchema, { name: 'amd', kind: ProfileKind.GPU, units: 4, usableUnits: 3, boundUnits: 1 });
+	expect(profileUnits(gpu)).toEqual({ bound: 1, free: 2, unusable: 1, total: 4 });
+	expect(profileUnitsText(gpu)).toBe('1 of 3 usable units in use; 1 unhealthy');
+	const skewed = create(OrkerProfileSchema, { kind: ProfileKind.GPU, units: 1, usableUnits: 5, boundUnits: 9 });
+	expect(profileUnits(skewed)).toEqual({ bound: 1, free: 0, unusable: 0, total: 1 });
+	expect(profileUnitsText(skewed)).toBe('1 of 1 usable unit in use');
+	expect(profileUnits(create(OrkerProfileSchema, { kind: ProfileKind.GPU, units: 0 }))).toBeNull();
+	const huge = create(OrkerProfileSchema, { kind: ProfileKind.GPU, units: 2 ** 31 - 1, usableUnits: 2 ** 31 - 1 });
+	expect(profileUnits(huge)?.total).toBe(2 ** 31 - 1);
+	expect(MAX_UNIT_CELLS).toBe(64);
+	const devices = create(OrkerProfileSchema, { name: 'sensor', kind: ProfileKind.DEVICES });
+	expect(profileUnits(devices)).toBeNull();
+	expect(profileUnitsText(devices)).toBe('');
+	expect(profileKindLabel(ProfileKind.DEVICES)).toBe('devices');
+	expect(profileKindLabel(ProfileKind.GPU)).toBe('gpu');
+});
+
+test('a cause this release cannot read keeps the Orker out of its pool, never a wait that clears itself', () => {
+	const unknown = create(ProfileCordonSchema, { cause: 7 as ProfileCordon_Cause, profile: 'x', reason: ProfileCordonReason.SPEC_ABSENT });
+	const o = create(OrkerSchema, { orkerId: 'o', cordoned: true, storeOutage: { reason: 'store' }, profileCordons: [unknown, probe] });
+	expect(profileState(o)).toBe('profile-out');
+	expect(orkerState(o)).toBe('profile-out');
+	expect(orkerStateLabel('profile-out')).toBe('profile out of service');
+	expect(profileCauseChip(unknown)).toEqual({ word: 'out of service', failure: true });
+	expect(profileCauseChip(probe)).toEqual({ word: 'unavailable', failure: false });
+	expect(profileCauseChip(drift)).toEqual({ word: 'drifted', failure: true });
+	expect(profileCauseNote(unknown, fmt)).not.toContain('returns by itself');
+	expect(profileCauses(create(OrkerSchema, { profileCordons: [probe, unknown, drift] })).map((c) => c.cause)).toEqual([ProfileCordon_Cause.DRIFT, 7, ProfileCordon_Cause.UNAVAILABLE]);
+	expect(profileState(create(OrkerSchema, {}))).toBeNull();
+	expect(profileState(create(OrkerSchema, { cordoned: true, cordonReason: 'cve', profileCordons: [drift] }))).toBe('profile-drift');
+});
+
+test('gpu reserved reads units of capacity, and nothing for an Orker that reports no gpu capacity', () => {
+	expect(orkerGpu(create(OrkerSchema, { orkerId: 'g', capacity: { gpu: 4n }, reserved: { gpu: 1n } }))).toBe('1 of 4');
+	expect(orkerGpu(create(OrkerSchema, { orkerId: 'g', capacity: { gpu: 2n } }))).toBe('0 of 2');
+	expect(orkerGpu(create(OrkerSchema, { orkerId: 'c', capacity: { cpu: 2 } }))).toBe(null);
+	expect(orkerGpu(create(OrkerSchema, { orkerId: 'u', unavailableReason: 'deadline', capacity: { gpu: 2n } }))).toBe(null);
+});
+
+test('a gpu profile below its per-task ceiling is unavailable, named and said in words', () => {
+	const cause = create(ProfileCordonSchema, { cause: ProfileCordon_Cause.UNAVAILABLE, profile: 'gpu', reason: ProfileCordonReason.UNITS_BELOW_CEILING });
+	expect(profileReasonCode(cause.reason)).toBe('UNITS_BELOW_CEILING');
+	const note = profileCauseNote(cause, () => '');
+	expect(note.includes('fewer of its units are usable than the per-task gpu cap')).toBe(true);
+	expect(note.includes('(UNITS_BELOW_CEILING)')).toBe(true);
+	expect(profileCauseChip(cause)).toEqual({ word: 'unavailable', failure: false });
 });

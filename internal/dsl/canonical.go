@@ -240,7 +240,13 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	}
 	var resources any
 	if r := t.GetResources(); r != nil {
-		resources = map[string]any{"cpu": r.GetCpu(), "memory": r.GetMemory()}
+		m := map[string]any{"cpu": r.GetCpu(), "memory": r.GetMemory()}
+		// Only when set, so every digest stored before resources.gpu
+		// existed is unchanged.
+		if gpu := r.GetGpu(); gpu != 0 {
+			m["gpu"] = int64(gpu)
+		}
+		resources = m
 	}
 	out := map[string]any{
 		"id":                             t.GetId(),

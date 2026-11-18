@@ -646,7 +646,8 @@ message UsageRow {
   // know, count under UNMEASURED_REASON_UNSPECIFIED.
   repeated UnmeasuredReasonCount attempts_unmeasured_by_reason = 21;
 
-  // gpu_seconds is set from E91; unset until it lands (v0.4.0 proto batch).
+  // gpu_seconds is gpu units × held time, counted as cpu and memory are;
+  // reported only, never budgeted.
   double gpu_seconds = 22;
 
   // memory_utilization_attempts is how many records the memory percentiles

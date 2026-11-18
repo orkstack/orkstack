@@ -42,7 +42,10 @@ type viewEntry struct {
 	GID   uint32 `json:"gid,omitzero"`
 	Dev   uint64 `json:"dev,omitzero"`
 	Ino   uint64 `json:"ino,omitzero"`
-	Error string `json:"error,omitempty"`
+	// Driver is what a unit probe's driver said of a gpu node (unit_probe.go):
+	// its DRM driver name and version, or kfd's version. Empty elsewhere.
+	Driver string `json:"driver,omitempty"`
+	Error  string `json:"error,omitempty"`
 }
 
 // probeView is the probe's report.
@@ -211,6 +214,9 @@ const maxProbePaths = 64
 // and reaches nothing: its only output is the report. Exit 2 is a malformed
 // invocation, which writes nothing to stdout.
 func Probe(args []string, stdout, stderr io.Writer) int {
+	if len(args) > 0 && args[0] == "unit" {
+		return probeUnitNodes(args[1:], stdout, stderr)
+	}
 	if len(args) < 2 || args[0] != "view" || len(args)-1 > maxProbePaths {
 		fmt.Fprintf(stderr, "usage: orker probe view PATH... (1 to %d absolute paths)\n", maxProbePaths)
 		return 2

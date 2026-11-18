@@ -119,6 +119,10 @@ type ContainerSpec struct {
 	// Devices are the host devices a task's device profiles pass
 	// (device_mapping.go); empty for every other task.
 	Devices []DeviceMapping
+	// CDIDevices are the fully qualified CDI device names (kind=name) of a
+	// task's bound gpu units (dispatch_units.go); empty for every other task.
+	// The runtime resolves them at start (design Q18).
+	CDIDevices []string
 	// RunAsOrker is the §3.1 readability escape hatch: run the workload as
 	// the Orker's own user, so the Orker can read every file it writes
 	// whatever its umask. It is an intent, not a uid: the runtime renders it

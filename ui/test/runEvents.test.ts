@@ -164,3 +164,23 @@ test('stopping cancels a pending reconnect', () => {
 	w.elapse();
 	expect(w.count()).toBe(1);
 });
+
+// The bridge writes every enum short, nested ones too: a task's interruption
+// notice (interruption.phase) once failed to decode and was dropped, so the
+// page never showed it.
+test('an interruption notice reaches the page', () => {
+	const w = watcher();
+	w.socket().open();
+	w.socket().onmessage?.({
+		data: JSON.stringify({
+			runId: 'ork-1',
+			sequence: '3',
+			type: 'TASK_LOG',
+			taskId: 'a',
+			status: 'PENDING',
+			message: 'interrupted: its Orker was lost',
+			interruption: { reason: 'ORKER_HEARTBEAT_LOST', phase: 'RUNNING' }
+		})
+	});
+	expect(w.events).toEqual([3n]);
+});
