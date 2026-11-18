@@ -1256,6 +1256,9 @@ than widened.
 A task that was skipped, or that was running or pending when its run ended, is
 never delivered as a task outcome, so a `TASK_FAILED` delivery always reads
 `"status":"FAILED"`; a cancellation is read from the run's terminal delivery.
+The one exception is a run's own `timeout:`: each task it stops is recorded
+`FAILED` `TASK_STOPPED_BY_RUN_TIMEOUT` and delivered as `TASK_FAILED`
+([WEBHOOKS.md](WEBHOOKS.md), "Events").
 Every delivery lookup lists the whole registry (no cache), up to four more
 times per task with task events subscribed.
 

@@ -23,15 +23,19 @@ const reasons: Record<string, SigninProblem> = {
 	issuer_unavailable: { title: 'The identity provider could not be reached.', detail: 'Try again in a moment.' }
 };
 
+// The reason arrives in the page's own URL, so anyone can write one: only a
+// reason this page knows is said in its own words, and any other gets the
+// general ones, never repeating what the link carried. The engine's log
+// holds the detail.
 const fallback: SigninProblem = {
 	title: 'The sign-in could not be completed.',
-	detail: 'Try again. If it keeps failing, the deployment’s sign-in settings need a look; the engine’s log says why.'
+	detail: 'Try again. If it keeps failing, tell an administrator of this deployment when it happened.'
 };
 
 /** problemOf says why a sign-in failed; null when no reason was given. */
 export function problemOf(reason: string | null): SigninProblem | null {
 	if (!reason) return null;
-	return reasons[reason] ?? fallback;
+	return Object.hasOwn(reasons, reason) ? reasons[reason] : fallback;
 }
 
 /** The host an issuer's URL names, to tell two issuers apart. */

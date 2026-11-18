@@ -1653,6 +1653,12 @@ directories). It ends by whichever of three paths comes first:
    inside it, so nothing a workload can reach can forge or extend it. It is
    written once, on first arrival, as first arrival + the pin's lifetime +
    6 minutes of slack, and never re-armed, with the identity that opened the pin.
+   The lifetime it is given (`PinContext.timeout_seconds`) is the pin's host
+   limit: for a run that can be paused, the pin's own lifetime plus
+   `engine.run_pause_timeout_max` plus 10 minutes, because the pin's clock stops
+   while its run is paused and the session lives that long at most. So the
+   directory of a pin whose run was terminated from outside stays until that
+   limit passes.
    A sweep every minute removes any pin directory whose lease expired, whoever
    opened it — or, with the lease missing or
    undecodable, whose directory is older than the slack. It is the only

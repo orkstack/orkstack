@@ -1918,10 +1918,15 @@ type PlanRunResponse struct {
 	// FAILS or ASSUMED_FAILED in decision order — or empty when nothing fails.
 	// The run is planned FAILED exactly when it is set; each UNREACHED task
 	// names its own cause in PlanTask.unreached_by.
-	FailsAt       string `protobuf:"bytes,16,opt,name=fails_at,json=failsAt,proto3" json:"fails_at,omitempty"`
-	Sleeps        int32  `protobuf:"varint,17,opt,name=sleeps,proto3" json:"sleeps,omitempty"` // count of SLEEPS
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	FailsAt string `protobuf:"bytes,16,opt,name=fails_at,json=failsAt,proto3" json:"fails_at,omitempty"`
+	Sleeps  int32  `protobuf:"varint,17,opt,name=sleeps,proto3" json:"sleeps,omitempty"` // count of SLEEPS
+	// timeout_seconds is the planned definition's own run timeout, from its
+	// top-level `timeout:` (docs/DSL.md "Run timeout"): how long a run of it
+	// may take from its start. 0 means the definition sets none. A plan
+	// starts no clock: a submitted run's deadline is on Run.timeout.
+	TimeoutSeconds int64 `protobuf:"varint,18,opt,name=timeout_seconds,json=timeoutSeconds,proto3" json:"timeout_seconds,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *PlanRunResponse) Reset() {
@@ -2069,6 +2074,13 @@ func (x *PlanRunResponse) GetFailsAt() string {
 func (x *PlanRunResponse) GetSleeps() int32 {
 	if x != nil {
 		return x.Sleeps
+	}
+	return 0
+}
+
+func (x *PlanRunResponse) GetTimeoutSeconds() int64 {
+	if x != nil {
+		return x.TimeoutSeconds
 	}
 	return 0
 }
@@ -2886,7 +2898,7 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\v_each_count\"9\n" +
 	"\bPlanWave\x12\x12\n" +
 	"\x04wave\x18\x01 \x01(\x05R\x04wave\x12\x19\n" +
-	"\btask_ids\x18\x02 \x03(\tR\ataskIds\"\xf2\x04\n" +
+	"\btask_ids\x18\x02 \x03(\tR\ataskIds\"\x9b\x05\n" +
 	"\x0fPlanRunResponse\x12!\n" +
 	"\forkflow_name\x18\x01 \x01(\tR\vorkflowName\x12'\n" +
 	"\x0forkflow_version\x18\x02 \x01(\tR\x0eorkflowVersion\x12\x1c\n" +
@@ -2906,7 +2918,8 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x0eassumed_failed\x18\x0e \x01(\x05R\rassumedFailed\x120\n" +
 	"\x14unused_assume_failed\x18\x0f \x03(\tR\x12unusedAssumeFailed\x12\x19\n" +
 	"\bfails_at\x18\x10 \x01(\tR\afailsAt\x12\x16\n" +
-	"\x06sleeps\x18\x11 \x01(\x05R\x06sleeps\"\xd5\x01\n" +
+	"\x06sleeps\x18\x11 \x01(\x05R\x06sleeps\x12'\n" +
+	"\x0ftimeout_seconds\x18\x12 \x01(\x03R\x0etimeoutSeconds\"\xd5\x01\n" +
 	"\x10InterfaceFinding\x12\x14\n" +
 	"\x05field\x18\x01 \x01(\tR\x05field\x124\n" +
 	"\x06change\x18\x02 \x01(\x0e2\x1c.orkstack.v1.InterfaceChangeR\x06change\x127\n" +

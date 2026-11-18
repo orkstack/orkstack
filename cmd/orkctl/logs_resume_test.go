@@ -4,6 +4,7 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -129,6 +130,7 @@ func logResumeLines(stderr string) []string {
 
 // TestRunLogs_FollowResumesAfterTheLastChunk: wherever a connection or a
 // stopping replica cuts the stream, each line prints exactly once, in order.
+// A FIN's cause is any of the errors one FIN can surface as (finEnded).
 func TestRunLogs_FollowResumesAfterTheLastChunk(t *testing.T) {
 	const run, task = "run-logs-cut", "build"
 	for _, tc := range []struct {
@@ -136,10 +138,10 @@ func TestRunLogs_FollowResumesAfterTheLastChunk(t *testing.T) {
 		said string
 		cut  func(t *testing.T, f *fixture, printed <-chan struct{}) func(http.ResponseWriter, *http.Request)
 	}{
-		{"a FIN between chunks", "internal: protocol error: incomplete envelope: unexpected EOF", func(t *testing.T, f *fixture, printed <-chan struct{}) func(http.ResponseWriter, *http.Request) {
+		{"a FIN between chunks", "internal: protocol error: incomplete envelope", func(t *testing.T, f *fixture, printed <-chan struct{}) func(http.ResponseWriter, *http.Request) {
 			return finOn(f, logChunks(t, run, task, 1, 1, 2), printed)
 		}},
-		{"a FIN inside a chunk", "unknown: read enveloped message: unexpected EOF", func(t *testing.T, f *fixture, printed <-chan struct{}) func(http.ResponseWriter, *http.Request) {
+		{"a FIN inside a chunk", "unknown: read enveloped message", func(t *testing.T, f *fixture, printed <-chan struct{}) func(http.ResponseWriter, *http.Request) {
 			return finOn(f, append(logChunks(t, run, task, 1, 1, 2), 0, 0, 0, 0, 100, 1, 2, 3), printed)
 		}},
 		{"a stopping replica's answer", "unavailable: this engine replica is shutting down", func(t *testing.T, f *fixture, _ <-chan struct{}) func(http.ResponseWriter, *http.Request) {
@@ -166,9 +168,13 @@ func TestRunLogs_FollowResumesAfterTheLastChunk(t *testing.T) {
 				t.Fatalf("streams opened = %d, want 2", got)
 			}
 			lines := logResumeLines(out.stderr)
-			if len(lines) != 1 || !strings.Contains(lines[0], "("+tc.said+")") ||
+			said := regexp.MustCompile(regexp.QuoteMeta("(" + tc.said + ")"))
+			if strings.HasPrefix(tc.name, "a FIN") {
+				said = finEnded("(" + tc.said)
+			}
+			if len(lines) != 1 || !said.MatchString(lines[0]) ||
 				!strings.Contains(lines[0], "resuming after chunk 2 of attempt 1") {
-				t.Fatalf("resume lines = %v, want one saying %q after chunk 2 of attempt 1", lines, tc.said)
+				t.Fatalf("resume lines = %v, want one matching %s after chunk 2 of attempt 1", lines, said)
 			}
 		})
 	}

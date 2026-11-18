@@ -36,7 +36,7 @@ With cleanup on, each pass retires finished runs that are older than their names
 
 The archived run record stays, so a retired run is still listed and readable. A pass that cannot read the retention settings deletes nothing.
 
-A run whose execution has gone missing from the cluster before its retention passed is kept, not retired, and counted on `ork.archive.cleanup.runs`. Turn cleanup off before restoring the cluster.
+A run whose execution has gone missing from the cluster before its retention passed is kept, not retired, and counted on `ork.cleanup.runs`. Turn cleanup off before restoring the cluster.
 
 Without cleanup, every run is kept for the deployment maximum plus a margin (24 hours by default). `orkctl admin retention get` says `not enforced` in that case.
 
