@@ -199,7 +199,11 @@ func (m *censusMetrics) fail(ctx context.Context, name string, err error) {
 type census struct {
 	name     string
 	requests int
-	budget   *censusBudget
+	// budget pays for each pass; nil runs every pass and only records what it
+	// spent (the pool backlog, whose cost the operator's settings bound).
+	budget *censusBudget
+	// interval is how often it runs; zero is censusInterval.
+	interval time.Duration
 	metrics  *censusMetrics
 	now      func() time.Time
 	pass     func(context.Context) error
@@ -219,10 +223,10 @@ func (c census) once(ctx context.Context) {
 	// afterwards (spent), is admitted for the whole budget once the budget is
 	// full and charged the rest as debt: it runs as often as the budget pays
 	// for, never not at all.
-	if c.spent != nil {
+	if c.spent != nil && c.budget != nil {
 		admitted = min(admitted, c.budget.capacity())
 	}
-	if !c.budget.take(admitted) {
+	if c.budget != nil && !c.budget.take(admitted) {
 		c.metrics.skip(ctx, c.name)
 		return
 	}
@@ -239,7 +243,9 @@ func (c census) once(ctx context.Context) {
 	made := admitted
 	if c.spent != nil {
 		made = int(c.spent() - before)
-		c.budget.charge(made - admitted)
+		if c.budget != nil {
+			c.budget.charge(made - admitted)
+		}
 	}
 	c.metrics.spent(ctx, c.name, made)
 	if err != nil {
@@ -265,14 +271,18 @@ func (c census) runPass(ctx context.Context) (err error) {
 // run runs a pass after a random delay within the interval, so replicas do
 // not ask together, then once per interval until ctx ends.
 func (c census) run(ctx context.Context) {
-	jitter := time.NewTimer(rand.N(censusInterval))
+	interval := c.interval
+	if interval <= 0 {
+		interval = censusInterval
+	}
+	jitter := time.NewTimer(rand.N(interval))
 	select {
 	case <-ctx.Done():
 		jitter.Stop()
 		return
 	case <-jitter.C:
 	}
-	ticker := time.NewTicker(censusInterval)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
 		c.once(ctx)
@@ -326,6 +336,12 @@ type CensusSources struct {
 	// Policy is the engine's policy cache, refreshed as the telemetry_policy
 	// census: the listing and one read per namespace, each minute.
 	Policy *PolicyCache
+	// PoolBacklog feeds the pool gauges (ork.pool.backlog.*), as the
+	// pool_backlog census: one read per pool each of its own interval. It is
+	// outside the budget, because its cost is what the operator configured
+	// (engine.pool_metrics.pools and .interval), and a skipped pass would
+	// leave an autoscaler without its signal.
+	PoolBacklog *PoolBacklogSource
 }
 
 // runsOpenRequests is what one ork.runs.open pass is admitted for: its two
@@ -354,6 +370,12 @@ func StartCensuses(ctx context.Context, p *Providers, perMinute int, sources Cen
 		sources.Policy.SetRefreshBatch(perMinute / 2)
 		c := census{name: "telemetry_policy", budget: budget, metrics: metrics, now: time.Now,
 			pass: sources.Policy.Refresh, spent: sources.Policy.Requests, cost: sources.Policy.cost}
+		metrics.register(c.name)
+		go c.run(ctx)
+	}
+	if src := sources.PoolBacklog; src != nil && len(src.Pools) > 0 && src.Interval > 0 {
+		c := census{name: poolBacklogCensus, requests: len(src.Pools), interval: src.Interval, metrics: metrics, now: time.Now,
+			pass: newPoolBacklogGauges(p, logger, *src, time.Now)}
 		metrics.register(c.name)
 		go c.run(ctx)
 	}

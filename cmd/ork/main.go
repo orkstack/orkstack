@@ -122,6 +122,9 @@ type config struct {
 	// interruptions are engine.interruptions.*, pinned into every run's
 	// plan at submit.
 	interruptions engine.InterruptionBudgets
+	// poolMetrics is engine.pool_metrics.*: the pools whose backlog this
+	// replica reads for the ork.pool.* gauges, and how often.
+	poolMetrics poolMetricsSettings
 	// runTimeoutHandlerGrace is ORK_RUN_TIMEOUT_HANDLER_GRACE
 	// (runTimeoutHandlerGraceFromEnv): how long after a run's deadline its
 	// failure handlers may still run. Whole seconds, 0s to 24h, refused at
@@ -197,6 +200,7 @@ func loadConfig() config {
 	runMaxInFlight, inFlightErr := inFlightCapFromEnv()
 	pinCreationTimeout, pinCreationErr := pinCreationTimeoutFromEnv()
 	interruptions, interruptionsErr := interruptionBudgetsFromEnv()
+	poolMetrics, poolMetricsErr := poolMetricsFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
@@ -226,6 +230,7 @@ func loadConfig() config {
 		runMaxInFlight:                runMaxInFlight,
 		pinCreationTimeout:            pinCreationTimeout,
 		interruptions:                 interruptions,
+		poolMetrics:                   poolMetrics,
 		runTimeoutHandlerGrace:        runTimeoutGrace,
 		runPauseTimeout:               runPauseTimeout,
 		runPauseTimeoutMax:            runPauseTimeoutMax,
@@ -237,7 +242,7 @@ func loadConfig() config {
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
 			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr,
-			interruptionsErr),
+			interruptionsErr, poolMetricsErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1738,6 +1743,10 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	// They start when any telemetry is on: the policy cache's refresh serves
 	// every signal it routes. ork.runs.open, a default-sink gauge, only when
 	// the default sink exports metrics.
+	if !tcfg.MetricsEnabled() && len(cfg.poolMetrics.pools) > 0 {
+		logger.Info("engine.pool_metrics.pools is set but the default sink exports no metrics; ork.pool.* is not read",
+			"pools", cfg.poolMetrics.pools)
+	}
 	if wireEventObserver(tcfg) || sinks.AnyMetrics() {
 		sources := telemetry.CensusSources{Policy: policyCache}
 		if tcfg.MetricsEnabled() {
@@ -1746,6 +1755,22 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			censusClient, censusRequests := telemetry.CountingTemporalClient(temporalClient)
 			censusReader := engine.NewTemporalRunReader(censusClient).WithSnapshotStore(snapshots)
 			sources.OpenRuns, sources.OpenRunsRequests = censusReader.RunningRuns, censusRequests
+			// The pool gauges (ork.pool.*): each pool's channel read
+			// directly, outside the budget (docs/DEPLOY.md, "A pool's
+			// backlog, as metrics").
+			if backlog, err := engine.NewTemporalPoolBacklog(temporalClient, cfg.temporalNamespace, cfg.orkerQueue, cfg.poolMetrics.pools); err != nil {
+				logger.Warn("the pool backlog gauges could not be set up; ork.pool.* is not reported", "error", err)
+			} else {
+				sources.PoolBacklog = &telemetry.PoolBacklogSource{
+					Pools:    backlog.Pools(),
+					Interval: cfg.poolMetrics.interval,
+					Read: func(ctx context.Context, pool string) (telemetry.PoolReading, error) {
+						r, err := backlog.Read(ctx, pool)
+						return telemetry.PoolReading{Backlog: r.Backlog, BacklogAge: r.BacklogAge,
+							AddRate: r.AddRate, DispatchRate: r.DispatchRate, Pollers: int64(r.Pollers)}, err
+					},
+				}
+			}
 		}
 		telemetry.StartCensuses(ctx, sinks.Default(), tcfg.CensusRequestsPerMinute, sources, logger)
 	}

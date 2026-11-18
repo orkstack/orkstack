@@ -702,6 +702,8 @@ then the variable it becomes.
 | `engine.interruptions.never_started` | `ORK_INTERRUPTIONS_NEVER_STARTED` | `20` | `ork` | how many times a task runs again with no wait after a stopping Orker returned it before it started; past it, with a doubling back-off (`engine.interruptions.never_started_backoff`). It never fails the task. From 1 to 100; pinned per run |
 | `engine.interruptions.never_started_faults` | `ORK_INTERRUPTIONS_NEVER_STARTED_FAULTS` | `5` | `ork` | how many consecutive attempts that never started because of a fault (object storage refusing the attempt's record, a drifted Orker profile) a task survives before they spend its own attempts; past the first, each waits at least 45 s ("Interruption budgets", §5). From 1 to 20; pinned per run |
 | `engine.interruptions.never_started_backoff` | `ORK_INTERRUPTIONS_NEVER_STARTED_BACKOFF` | `2s` | `ork` | the first wait of the never-started back-off, doubling each time up to 60 s. From `1s` to `30s`; pinned per run |
+| `engine.pool_metrics.pools` | `ORK_POOL_METRICS_POOLS` | (empty) | `ork` | the pools, beside the default pool, whose backlog each replica reads for the `ork.pool.*` gauges ("A pool's backlog, as metrics"). Valid pool names, at most 64; anything else is refused at boot. A pool that answers to the default channel is the default pool and is read once |
+| `engine.pool_metrics.interval` | `ORK_POOL_METRICS_INTERVAL` | `15s` | `ork` | how often each replica reads each of those pools, one cluster request per pool each time. From `5s` to `5m`; anything else is refused at boot |
 | `engine.run_timeout_handler_grace` | `ORK_RUN_TIMEOUT_HANDLER_GRACE` | `10m` | `ork` | how long after a run's deadline (an Orkflow's `timeout:`, `docs/DSL.md` "Run timeout") its failure handlers may still run; at that hard end a handler still running is stopped and one not yet started never starts. A duration of whole seconds, `0s` to `24h`; `0s` starts no failure handler once the run timed out; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only, and a child run carries the value its parent's submit read |
 | `engine.run_pause_timeout` | `ORK_RUN_PAUSE_TIMEOUT` | `168h` | `ork` | how long a run's pause lasts when its request names no timeout; at its end a paused run that is not failing fails `RUN_PAUSE_TIMEOUT`. A duration of whole seconds, from `1m` to `engine.run_pause_timeout_max`; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only, and a child run carries the value its parent's submit read. No surface can pause a run yet |
 | `engine.run_pause_timeout_max` | `ORK_RUN_PAUSE_TIMEOUT_MAX` | `744h` | `ork` | the longest a run's pause may last, whatever its request asks. A duration of whole seconds, from `1m` to `744h`; a deployment may lower it, never raise it, and boot refuses a default above it: lowering it below `168h` needs `engine.run_pause_timeout` set too, at most the new maximum. Read at submit and carried by the run, as `engine.run_pause_timeout` is |
@@ -4000,6 +4002,41 @@ series then go stale and disappear, so alert on a missing series with
 `absent()`, never by reading it as 0. Pushed over OTLP, the backend may keep
 the last value, `stopping` 1 included, until it expires the series.
 
+#### A pool's backlog, as metrics
+
+With the default sink exporting metrics, every engine replica reads each
+measured pool from the cluster every `engine.pool_metrics.interval` (15 s by
+default): the default pool, and each pool `engine.pool_metrics.pools` names.
+Each series carries `ork.pool` and nothing else; the pool's channel is never
+exported.
+
+| Metric | Prometheus | What it reads |
+|---|---|---|
+| `ork.pool.backlog.tasks` | `ork_pool_backlog_tasks` | the cluster's approximate count of the pool's tasks waiting for an Orker |
+| `ork.pool.backlog.age` | `ork_pool_backlog_age_seconds` | how long the oldest of them has waited |
+| `ork.pool.tasks.add_rate` | `ork_pool_tasks_add_rate_per_second` | tasks the pool received per second, the cluster's own recent rate (about 30 s) |
+| `ork.pool.tasks.dispatch_rate` | `ork_pool_tasks_dispatch_rate_per_second` | tasks handed to its Orkers per second, likewise |
+| `ork.pool.pollers` | `ork_pool_pollers` | the Orkers that asked the pool for work within the last 90 seconds, one per process |
+
+- **Aggregate with `max by (ork_pool)`**, never `sum`: every replica reads the
+  same pool. The Orker's own gauges above are summed by pool.
+- **Absent is never 0.** A pool is reported from its last good read, and
+  dropped once that read is three intervals old, so alert on a missing
+  series with `absent()`, never `or vector(0)`. `ork.census.last_success`
+  and `ork.census.failed` with `ork.census="pool_backlog"` show the reads.
+- **Pollers are not the pool's Orkers.** A saturated, cordoned or stopping
+  Orker asks for no work, so `ork_pool_pollers` 0 beside a backlog is a
+  signal to add Orkers. `sum by (ork_pool) (ork_orker_present)` counts them.
+- **What waits inside a run is not in the backlog:** tasks its in-flight cap
+  or history hold keeps back, the wait after a lost Orker or a hand-back,
+  retry back-off, and members of an open pin.
+- **The backlog counts every release's tasks.** On a versioned fleet, a run
+  keeps its release, and its tasks wait for that release's Orkers. A backlog
+  with pollers present that grows, or whose oldest task never clears
+  (`min_over_time(ork_pool_backlog_age_seconds[30m]) > 900`), may be a
+  stranded release rather than demand: `orkctl release status` names it
+  (the autoscaling paragraph under "Stop timeouts").
+
 #### Stop timeouts
 
 A process manager kills an Orker some time after its first signal. Killed
@@ -5773,7 +5810,7 @@ visible rather than silently dropped.
 When any sink exports metrics, each engine replica runs periodic reads,
 called censuses, that feed gauges. Each census runs once a minute, starting at a
 random point in its first minute so that replicas do not ask together, and
-all of a replica's censuses share one budget of
+all of a replica's censuses but `pool_backlog` share one budget of
 `telemetry.census_requests_per_minute` requests (60 by default). A pass
 the budget cannot pay for is skipped and counted, never retried in line, and
 no census touches a submit. `ork.census.requests{ork.census}` counts the
@@ -5793,6 +5830,7 @@ passes. A census skipped five times in a row is logged at Warn: raise
 | Census | Gauge | Reads |
 |---|---|---|
 | `runs_open` | `ork.runs.open`: runs open in the deployment, each run counted once however many times it has carried on, and never as zero while it carries on | two counts of the cluster's run index a pass, plus a listing of the runs that carried on within the hour when there are any, each charged |
+| `pool_backlog` | `ork.pool.*`, each pool's backlog ("A pool's backlog, as metrics") | one read of each measured pool's channel every `engine.pool_metrics.interval` (15 s by default) instead of once a minute, outside the budget: its cost is what those settings choose, and a skipped pass would leave an autoscaler without its signal |
 | `telemetry_policy` | `ork.telemetry.namespaces{routing}`: the namespaces the engine's policy cache holds, by where their records go (`default`, `named`, `named_without_metrics`, `sink_unknown`); it refreshes the cache ("Where a namespace's records go") | one listing of the namespace names and at most half the budget of namespace documents a pass (30 by default): a namespace never read first, then the others in turn, so every namespace is read again within ⌈N / 30⌉ minutes and the refresh never takes the other censuses' share |
 
 A gauge reports its last good reading, and nothing after a pass that failed.

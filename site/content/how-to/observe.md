@@ -50,6 +50,8 @@ The listener answers only names it knows in a request's `Host`: an IP address, `
 | `ork.orker.store_outage.active` | `ork.orker_id` | 1 while an Orker has cordoned itself because object storage does not answer. `ork.orker.store_outage.transitions` counts each entry and exit. |
 | `ork.orker.running_tasks`, `.open_pins`, `.max_concurrent` | `ork.orker_id`, `ork.pool` | An Orker's tasks running now, its open pins and how many tasks it runs at once. Sum them by `ork.pool`. |
 | `ork.orker.cordoned` | `ork.orker_id`, `ork.pool`, `ork.cordon.cause` | 1 while that cause of a cordon holds, else 0: `operator`, `store_outage` or `stopping`. |
+| `ork.pool.backlog.tasks`, `ork.pool.backlog.age` | `ork.pool` | Tasks waiting for an Orker of the pool, and how long the oldest has waited. Every engine reads them, so take `max` by `ork.pool`. Scale a pool on these. |
+| `ork.pool.pollers` | `ork.pool` | Orkers that asked the pool for work recently. A busy, cordoned or stopping Orker asks for none, so 0 beside a backlog means add Orkers. |
 
 Prometheus shows the dotted names with underscores, and counters with a `_total` suffix. For example, `ork.runs.refused` appears as `ork_runs_refused_total`.
 
