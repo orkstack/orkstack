@@ -65,6 +65,11 @@ type LocalTask struct {
 	// for an input source means "count it from Input", as the interpreter
 	// does; nil for a task source is a caller error.
 	ItemCount *int32
+	// Lines is a fan-out over an artifact's lines' expansion, the run's
+	// TaskEach.lines (--from-run): the source and the index its items read
+	// their spans from. Required for such a fan-out; there is no index
+	// without a run.
+	Lines *orkstackv1.EachLines
 	// Join is how a failure handler's needs ended (JoinContextFromRun, or the
 	// caller's --need). Required for a failure handler, refused for any other
 	// task.
@@ -277,6 +282,9 @@ func localItemInput(wf *orkstackv1.Orkflow, spec *orkstackv1.Task, t LocalTask, 
 	each := spec.GetEach()
 	var count int32
 	switch {
+	case dsl.IsEachLines(each) && (t.Lines == nil || t.ItemCount == nil):
+		return nil, fmt.Errorf("task %q fans out over the lines of %s: run it with --from-run of a run that "+
+			"indexed them, whose line index the item reads", t.TaskID, each.GetOverArtifact())
 	case t.ItemCount != nil:
 		count = *t.ItemCount
 	case each.GetSource().GetInput() != "":
@@ -314,6 +322,10 @@ func localItemInput(wf *orkstackv1.Orkflow, spec *orkstackv1.Task, t LocalTask, 
 	input.Limits = proto.Clone(input.GetLimits()).(*orkstackv1.WorkspaceLimits)
 	input.Limits.ArtifactMaxCount = artifactMax
 	input.Each = &orkstackv1.EachContext{Index: index, Count: count, As: each.GetAs(), Source: each.GetSource()}
+	if dsl.IsEachLines(each) {
+		input.Each.Lines = proto.Clone(t.Lines).(*orkstackv1.EachLines)
+		input.Upstream = dropSource(input.GetUpstream(), each.GetSource().GetArtifact())
+	}
 	if err := task.CheckInputSize(input, inputLimit); err != nil {
 		return nil, &LocalTaskRefusal{Code: task.ReasonInputTooLarge, Category: task.CategoryContractViolation, Err: err}
 	}

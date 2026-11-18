@@ -114,6 +114,11 @@ type RunPlan struct {
 	// their plans encode exactly as before.
 	RunTimeout *RunTimeoutPlan `json:"run_timeout,omitempty"`
 
+	// EachLines is set at submit for a run whose definition declares a
+	// fan-out over an artifact's lines (each_lines.go), and nil for every
+	// other run, so their plans encode exactly as before.
+	EachLines *EachLinesPolicy `json:"each_lines,omitempty"`
+
 	// Pause, when non-nil, says this run accepts pause requests (pause.go).
 	// Set at submit on every run and composed child; nil for a run that
 	// predates it, so its plan encodes exactly as before.

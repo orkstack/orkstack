@@ -22,6 +22,7 @@ Tasks reach the internet, not your stack, so an example that talks to a service 
 | [config-from-git](/docs/examples/config-from-git/) | resolve a branch to a commit, render one config per service, cached while the commit holds | internet access to `github.com` |
 | [decide-and-route](/docs/examples/decide-and-route/) | decide in a json task, branch three ways, re-join | nothing |
 | [each-fan-out](/docs/examples/each-fan-out/) | a fan-out over a list a json task computes | nothing |
+| [each-lines](/docs/examples/each-lines/) | a fan-out over the lines of an artifact, one item per line and one per batch of three | nothing |
 | [http-post](/docs/examples/http-post/) | a POST whose JSON body is a YAML mapping, and a condition on its status | internet access to `httpbin.org` |
 | [inputs-and-escaping](/docs/examples/inputs-and-escaping/) | typed inputs; argv, positional arguments, `sh` and jq `vars` against a hostile default | nothing |
 | [notify-block](/docs/examples/notify-block/) | a reusable block: one JSON notification, its status as the declared output | internet access to `httpbin.org` |

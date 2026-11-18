@@ -318,6 +318,7 @@ func validate(wf *orkstackv1.Orkflow, opts Options) error {
 		}
 		checker.each = task.GetEach().GetAs()
 		checker.fanOut = task.GetEach() != nil
+		checker.batched = task.GetEach().GetBatch() >= 2
 		// Rule 28: a composed task's with: is rendered by the ENGINE into the
 		// child run's input.
 		if task.GetOrkflow() != nil {

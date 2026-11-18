@@ -1,0 +1,77 @@
+# OrkStack orkflow DSL
+#
+# Fan out over the lines of a file, not over an array in values.json. `rows`
+# writes seven JSON lines to an artifact; `per-row` runs one item per line and
+# reads its row as `.each.item`; `per-batch` runs one item per three lines
+# (3, 3 and 1) and reads them from /orkstack/input/each/lines.jsonl. The lines
+# never pass through the run's history, so the file may be as large as an
+# artifact may be.
+#
+# Pattern: docs/ORKFLOW_PATTERNS.md, "Batch transforms into one prepare task"
+apiVersion: orkstack/v1
+kind: Orkflow
+name: each-lines
+version: "0.4.0"
+description: "Write seven JSON lines, run one item per line, then one item per batch of three."
+
+tasks:
+  - id: rows
+    uses: shell
+    network: none
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        for n in 1 2 3 4 5 6 7; do
+          printf '{"id": %s, "name": "row-%s"}\n' "$n" "$n"
+        done > /orkstack/output/artifacts/rows.jsonl
+
+  - id: per-row
+    uses: shell
+    network: none
+    needs:
+      - rows
+    each:
+      over_artifact: rows/rows.jsonl
+      format: jsonl
+      as: row
+      max_items: 10
+      max_parallel: 3
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo row {{ .each.row.id }} named {{ sh .each.row.name }} "({{ .each.index }} of {{ .each.count }})"
+
+  - id: per-batch
+    uses: shell
+    network: none
+    needs:
+      - rows
+    each:
+      over_artifact: rows/rows.jsonl
+      format: jsonl
+      batch: 3
+      max_items: 10
+      max_parallel: 3
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo batch {{ .each.index }} of {{ .each.count }}: $(wc -l < /orkstack/input/each/lines.jsonl) lines
+
+  - id: report
+    uses: shell
+    network: none
+    needs:
+      - per-row
+      - per-batch
+    with:
+      op: script
+      interpreter: sh
+      script: |
+        set -eu
+        echo "all rows and batches done"

@@ -88,7 +88,9 @@ message EachSource {
   // index and no wildcard.
   repeated string path = 3;
 
-  // artifact is set from E89; unset until it lands (v0.4.0 proto batch).
+  // artifact names an artifact of a task in the fan-out's needs, compiled
+  // from EachSpec.over_artifact: the fan-out runs over its lines. When it is
+  // set, input, task_id and path are empty.
   EachArtifactSource artifact = 4;
 }
 
@@ -382,7 +384,9 @@ message EachContext {
   // length equals count and fails the attempt EACH_ITEM_UNAVAILABLE if not.
   EachSource source = 4;
 
-  // lines is set from E89; unset until it lands (v0.4.0 proto batch).
+  // lines is set for an item of a fan-out over an artifact's lines: the
+  // source and its line index, which the Orker reads the item's span from.
+  // The source is never staged.
   EachLines lines = 5;
 }
 
@@ -914,7 +918,10 @@ message DescribeOrkerResult {
   // run_context_supported is set from E86; unset until it lands (v0.4.0 proto batch).
   bool run_context_supported = 31;
 
-  // each_lines_supported is set from E89; unset until it lands (v0.4.0 proto batch).
+  // each_lines_supported is true when this Orker indexes the lines of an
+  // artifact a fan-out reads, resolves such an item's span
+  // and stages a batch's slice file. Submit refuses a fan-out over lines on a
+  // pool where an uncordoned Orker answers false.
   bool each_lines_supported = 32;
 
   // metadata_probes is what the boot's metadata probe found, one entry per
@@ -1063,13 +1070,69 @@ message Orker {
   repeated MetadataProbe metadata_probes = 21;
 }
 
-// EachArtifactSource is E89's; it is empty until E89 lands (v0.4.0 proto
-// batch).
-message EachArtifactSource {}
+// EachLineFormat is how a fan-out over an artifact's lines reads each line.
+enum EachLineFormat {
+  EACH_LINE_FORMAT_UNSPECIFIED = 0;
+  // JSONL: each non-empty line is one JSON value, decoded strictly.
+  EACH_LINE_FORMAT_JSONL = 1;
+  // LINES: each non-empty line is a string, its bytes as written.
+  EACH_LINE_FORMAT_LINES = 2;
+}
 
-// EachLines is E89's; it is empty until E89 lands (v0.4.0 proto
-// batch).
-message EachLines {}
+// EachArtifactSource is the artifact a fan-out runs over the lines of:
+// "<producer>/<name>" of EachSpec.over_artifact, split on the first "/".
+message EachArtifactSource {
+  // producer is a task in the fan-out's own needs:.
+  string producer = 1;
+  // name is the artifact's name as its producer wrote it.
+  string name = 2;
+}
+
+// EachLines is a fan-out over an artifact's lines, once expanded: the
+// committed source, the immutable line index its expansion wrote, and how
+// the lines were cut into items.
+message EachLines {
+  // source is the producer's committed artifact; its sha256 and size_bytes
+  // are what every read of it is held to.
+  ArtifactRef source = 1;
+  // index is the line index (docs/STORAGE.md, "Line indexes"); its sha256
+  // is what every read of it is held to.
+  ArtifactRef index = 2;
+  EachLineFormat format = 3;
+  // batch is the lines per item; 0 or 1 is one line per item.
+  int32 batch = 4;
+}
+
+// IndexEachLinesInput is the engine's request to an Orker of a fan-out's pool
+// to index the lines of the fan-out's source (the internal IndexEachLines
+// activity). Engine-internal: no user-facing surface names it.
+message IndexEachLinesInput {
+  string run_id = 1;
+  string namespace = 2;
+  // task_id is the fan-out task; the index is written under its commit key.
+  string task_id = 3;
+  string definition_digest = 4;
+  ArtifactRef source = 5;
+  // producer and name are the source's, for messages.
+  string producer = 6;
+  string name = 7;
+  EachLineFormat format = 8;
+  int32 batch = 9;
+  int32 max_items = 10;
+  int64 values_max_bytes = 11;
+  // slice_max_bytes is the largest span of one item, the plan's bound.
+  int64 slice_max_bytes = 12;
+  // read_cap is the most bytes the index reads; a larger source is refused.
+  int64 read_cap = 13;
+}
+
+// IndexEachLinesResult is what an index found: the items and lines it holds,
+// and where it was written.
+message IndexEachLinesResult {
+  int32 count = 1;
+  int64 total_lines = 2;
+  ArtifactRef index = 3;
+}
 
 // IdentityContext is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
 // batch).

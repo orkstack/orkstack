@@ -192,6 +192,13 @@ type OCIDispatcher struct {
 	// work root.
 	stageOnce sync.Once
 	stage     *stagingCache
+	// EachIndexes is the line-index store the items of a fan-out over an
+	// artifact's lines read their index from; nil fails such an item
+	// EACH_ITEM_UNAVAILABLE. indexCache is the process's copy of the indexes
+	// it read (each_index_cache.go), built on first use.
+	EachIndexes    eachIndexReader
+	indexCacheOnce sync.Once
+	indexCache     *eachIndexCache
 	// runAsOrker is the boot probe's finding about the §3.1 escape hatch on
 	// this host: nil until a probe ran (`orkctl activity test` and `task run`
 	// run none, and render the hatch as before), then what the probe found.
@@ -1126,18 +1133,18 @@ func (d *OCIDispatcher) execute(
 	// render twice.
 	var (
 		eachItem    stablejson.RawJSON
+		eachLines   *taskJSONEachLines
 		rendered    map[string]any
 		preRendered bool
 	)
 	if cached {
 		beat.Phase("memo")
 		var item *resolvedEachItem
-		if each := in.GetEach(); each != nil {
-			eachItem, failure = d.resolveEachItem(in, ws)
+		if in.GetEach() != nil {
+			eachItem, item, eachLines, failure = d.eachItemOf(ctx, in, ws)
 			if failure != nil {
 				return nil, failure
 			}
-			item = &resolvedEachItem{Bytes: eachItem, As: each.GetAs(), Index: each.GetIndex(), Count: each.GetCount()}
 		}
 		rendered, failure = d.render(ctx, in, staged, eachItem)
 		if failure != nil {
@@ -1264,7 +1271,7 @@ func (d *OCIDispatcher) execute(
 	// values.json) and before render (.each reads it).
 	if !preRendered {
 		if in.GetEach() != nil {
-			eachItem, failure = d.resolveEachItem(in, ws)
+			eachItem, _, eachLines, failure = d.eachItemOf(ctx, in, ws)
 			if failure != nil {
 				return nil, failure
 			}
@@ -1307,6 +1314,7 @@ func (d *OCIDispatcher) execute(
 		// the `each` key out of its task.json entirely.
 		Each:               in.GetEach(),
 		EachItem:           eachItem,
+		EachLines:          eachLines,
 		StagedEachUpstream: staged.eachUpstream,
 	}); err != nil {
 		return nil, FailCause(ReasonWorkdirFailed, err, "write task.json: %v", err)
