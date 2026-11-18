@@ -136,11 +136,13 @@ type config struct {
 	// length and its longest. Refused at boot outside their bounds
 	// (docs/DEPLOY.md §1).
 	runPauseTimeout, runPauseTimeoutMax time.Duration
-	// gateTunables and censusSettings are engine.concurrency.*
-	// (concurrencySettingsFromEnv): what a concurrency gate this engine
-	// starts runs on, and the census schedule's settings.
+	// gateTunables, censusSettings and concurrency are
+	// engine.concurrency.* (concurrencySettingsFromEnv): what a concurrency
+	// gate this engine starts runs on, the census schedule's settings, and
+	// what a run's submit and plan read.
 	gateTunables   engine.GateTunables
 	censusSettings engine.CensusSettings
+	concurrency    engine.ConcurrencySettings
 	// definitionByReference is engine.definition_by_reference's effective
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
@@ -209,7 +211,7 @@ func loadConfig() config {
 	poolMetrics, poolMetricsErr := poolMetricsFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
-	gateTunables, censusSettings, concurrencyErr := concurrencySettingsFromEnv()
+	gateTunables, censusSettings, concurrencySettings, concurrencyErr := concurrencySettingsFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
@@ -243,6 +245,7 @@ func loadConfig() config {
 		runPauseTimeoutMax:            runPauseTimeoutMax,
 		gateTunables:                  gateTunables,
 		censusSettings:                censusSettings,
+		concurrency:                   concurrencySettings,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
 		snapshotOverlays:              snapshotOverlays,
