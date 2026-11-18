@@ -36,7 +36,7 @@ const InFlightCapChange = "run-in-flight-cap"
 // pins): livePins is counted once per call, and pinClosureAllows is a set
 // lookup, built at most once per pass.
 func (s *runState) holdDispatch(ctx workflow.Context, id string, inFlight map[string]workflow.Future) bool {
-	if s.paused() && !s.pinClosureAllows(id) {
+	if s.pauseHolds(id) {
 		return true
 	}
 	if s.quiescing && !s.pinClosureAllows(id) {

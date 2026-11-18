@@ -160,11 +160,15 @@ func TestRunOnce_FoundExecutionsAreNotHeldByMissingOnes(t *testing.T) {
 	}
 }
 
-// recordingObserver keeps every pass's tally.
-type recordingObserver struct{ passes []CleanupStats }
+// recordingObserver keeps every pass's tally, and every pass as handed over.
+type recordingObserver struct {
+	passes  []CleanupStats
+	details []CleanupPass
+}
 
-func (r *recordingObserver) ObserveCleanup(_ context.Context, s CleanupStats) {
-	r.passes = append(r.passes, s)
+func (r *recordingObserver) ObserveCleanup(_ context.Context, p CleanupPass) {
+	r.passes = append(r.passes, p.CleanupStats)
+	r.details = append(r.details, p)
 }
 
 // TestRunOnce_CountsMissingExecutions: a run kept because its execution went

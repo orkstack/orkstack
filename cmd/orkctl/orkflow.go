@@ -200,6 +200,10 @@ func renderOrkflow(out io.Writer, wf *orkstackv1.Orkflow, id string) error {
 	fmt.Fprintf(header, "Version:\t%s\n", wf.GetVersion())
 	fmt.Fprintf(header, "Description:\t%s\n", orDash(wf.GetDescription()))
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(wf.GetCreatedAt()))
+	// Only an Orkflow that bounds its runs names its timeout, as written.
+	if seconds := wf.GetTimeoutSeconds(); seconds > 0 {
+		fmt.Fprintf(header, "Timeout:\t%s\n", timeoutLabel(seconds))
+	}
 	// Only a shared Orkflow names who else may compose it: an Orkflow is
 	// closed to every other namespace unless its definition says otherwise.
 	if len(wf.GetSharedWith()) > 0 {

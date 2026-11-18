@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
@@ -152,6 +153,12 @@ func parityPlan(wf *orkstackv1.Orkflow) engine.RunPlan {
 	plan.ImagePolicy = &engine.ImagePolicySelection{
 		RequireDigest:     true,
 		AllowedRegistries: []string{"registry.parity.example"},
+	}
+	// Submit pins the run-timeout plan for a definition that declares
+	// timeout: (internal/api/service.go); without it the run would end
+	// RUN_DEFINITION_UNSUPPORTED before scheduling anything.
+	if wf.GetTimeoutSeconds() > 0 {
+		plan.RunTimeout = &engine.RunTimeoutPlan{HandlerGraceSeconds: int64(engine.DefaultRunTimeoutHandlerGrace / time.Second), ResolutionsPerPass: engine.DefaultResolutionsPerPass}
 	}
 	return plan
 }

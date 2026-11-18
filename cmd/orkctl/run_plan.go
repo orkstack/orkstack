@@ -465,6 +465,9 @@ func renderPlan(out io.Writer, plan *orkstackv1.PlanRunResponse, file string, as
 	fmt.Fprintln(&buf, header)
 	fmt.Fprintf(&buf, "definition  %s\n", plan.GetDefinitionDigest())
 	fmt.Fprintf(&buf, "input       %s\n", input)
+	if seconds := plan.GetTimeoutSeconds(); seconds > 0 {
+		fmt.Fprintf(&buf, "timeout     %s\n", timeoutLabel(seconds))
+	}
 	fmt.Fprintln(&buf)
 
 	failing := ""

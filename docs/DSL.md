@@ -1122,7 +1122,7 @@ fails the run:
 |---|---|---|
 | `PIN_UNAVAILABLE` | `InfrastructureError` | every pin host of the pool stayed full (or cordoned) for the whole pin creation timeout, **5 minutes** by default (`engine.pin_creation_timeout`, [DEPLOY.md](./DEPLOY.md) §1). Only the task whose readiness asked for the pin fails; it never reached an Orker, so its `scheduled_at` and `started_at` stay unset. |
 | `PIN_HOST_LOST` | `InfrastructureError` | the run lost contact with the host: it stopped heartbeating the pin, or the cluster stopped hearing from it (noticed within the 30-second heartbeat timeout) before the pin's lifetime ran out. Every member running at that moment is `FAILED` with this code — never `CANCELED`, because the platform lost it — and members not yet started are `CANCELED`. A member that already committed stays `SUCCEEDED`. |
-| `PIN_TIMEOUT` | `TimedOut` | the pin was open for at least its lifetime (`timeout_seconds`, or the derived sum). Members still running are stopped with it, as above. |
+| `PIN_TIMEOUT` | `TimedOut` | the pin was open for at least its lifetime (`timeout_seconds`, or the derived sum). Members still running are stopped with it, as above. The lifetime is counted only while the run that owns the pin is not paused; a pin whose clock was stopped for longer than `engine.run_pause_timeout_max` allows also ends this way, at its host's limit. |
 
 A pool with **no** pin host at all is refused at submit instead (above), so
 `PIN_UNAVAILABLE` only ever means saturation. The pin creation timeout is
@@ -1881,6 +1881,17 @@ What the run does with it:
   stop at the same hard end.
 - **An operator's cancel** wins: a run cancelled as its deadline falls due
   ends `CANCELED`.
+- **Nothing is retried** for it: a run that timed out, and a task it
+  stopped, are `TimedOut` and never retried automatically. Run it again
+  with `orkctl run again`.
+- **Where it shows**: `orkctl orkflow get` prints `Timeout: 6h`, `orkctl
+  run plan` prints `timeout     6h` under its input, and
+  `orkctl run get` prints the run's `Timeout:` line: `6h (starts when the
+  run starts)` while it waits to start, `6h (deadline …, 1h12m left)`
+  while it runs, `6h (timed out at …)` once it timed out, and `; failure
+  handlers stop at …` (or `stopped at …`) while its hard end applies. The
+  run page shows the same words in its header, and a row the timeout
+  stopped reads `TASK_STOPPED_BY_RUN_TIMEOUT`.
 - A run timeout needs every engine process of the deployment to run a
   release that enforces one: a submit is refused `FAILED_PRECONDITION` while
   one does not (`docs/DEPLOY.md` §5, "Engine capabilities and the fleet

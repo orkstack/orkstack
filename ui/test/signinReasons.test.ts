@@ -10,6 +10,12 @@ test('every reason the engine sends has its own words, and an unknown one is sti
 	expect(problemOf('')).toBeNull();
 });
 
+test('a reason the page does not know is never repeated, inherited names included', () => {
+	for (const r of ['exchange_failed', 'account_suspended_call_helpdesk', 'constructor', 'toString', '__proto__']) {
+		expect(problemOf(r)).toEqual({ title: 'The sign-in could not be completed.', detail: 'Try again. If it keeps failing, tell an administrator of this deployment when it happened.' });
+	}
+});
+
 test('issuerHost names the host, or the text when it is not a URL', () => {
 	expect(issuerHost('https://login.example.com/realms/acme')).toBe('login.example.com');
 	expect(issuerHost('orkstack-dev')).toBe('orkstack-dev');

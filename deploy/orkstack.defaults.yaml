@@ -199,6 +199,7 @@ telemetry:
   pprof_enabled: false
   high_cardinality: false
   orkflow_label: true  # ork
+  object_labels: false  # ork
   metric_cardinality_limit: 2000
   census_requests_per_minute: 60  # ork
   service_name:

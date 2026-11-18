@@ -28,7 +28,9 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- The observability kit's Grafana now provisions two read-only dashboards, OrkStack and OrkStack / Run, with linked logs, traces and metrics ([README](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md#dashboards)).
 - Each engine exports every pool's backlog, `ork.pool.backlog.tasks` and `.age`, its rates and `ork.pool.pollers`, to scale Orkers on; `engine.pool_metrics.*` picks the pools ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#a-pools-backlog-as-metrics)).
+- Metrics for retention cleanup, webhook deliveries, schedules and HTTP triggers, and the `telemetry.object_labels` setting that adds schedule names and webhook ids to them ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - `ork.orker.task.wait.duration` measures how long a task waited for an Orker, and `ork.orker.memo.lookups`, `.reused` and `.writes` count a cached task's memo ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - Every Orker exports `ork.orker.present`, `ork.orker.task_log.export_enabled` and `ork.orker.attempt_records`, which counts attempts left with no record; its resource carries `ork.orker_id` ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#the-orkers-load-as-metrics)).
 - Operator twins: `ork.deployment.runs`, `.tasks`, `.runs.refused`, `.run.continuations` and `.orker.*` count every namespace on the default sink, with no names ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#operator-twins)).
@@ -56,6 +58,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - A task, even without `retry:`, runs again when its Orker stops or is lost, spending no attempt (`engine.interruptions.*`, `retry.max_interruptions`); `task.attempt` may repeat: key on `idempotencyKey` ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#tasks)).
 - A container whose start the daemon cannot account for fails `RUNTIME_STATE_UNKNOWN` and runs again; it may have run, so key side effects on `idempotencyKey` ([REASONS.md](https://github.com/orkstack/orkstack/blob/main/docs/REASONS.md#task-outcomes)).
 - An Orkflow can bound a whole run with a top-level `timeout:`; at the deadline the run fails `RUN_TIMED_OUT` and its failure handlers get `engine.run_timeout_handler_grace` to finish ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#run-timeout-timeout)).
+- Two engine metrics count run timeouts per namespace: `ork.run.timeouts` (runs their own `timeout:` ended) and `ork.run.timeout.hard_ends` (runs whose failure handlers it stopped) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#7-telemetry)).
 - The archive sweep now says when it is blind: alert on `ork.archive.sweep.list_failed` and a stale `ork.archive.sweep.last_success`; an undated expiry reads 0 ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#retention-cleanup-and-bucket-lifecycle-rules)).
 - People sign in to the web UI with your identity provider: give an issuer a `login:` block, `auth.public_url` and `auth.signin.key_files` ([AUTHENTICATION.md](https://github.com/orkstack/orkstack/blob/main/docs/AUTHENTICATION.md#sign-in-for-the-web-ui)).
 - The web UI's Access screens show and change bindings, roles, service accounts and people, explain a decision and diff revisions; the audit trail shows each request's decision ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md)).
@@ -77,6 +80,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Changed
 
+- **BREAKING:** the metric `ork.archive.cleanup.runs` is gone; read `ork.cleanup.runs`, by namespace and outcome, instead ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - With the artifact GC in `dry_run` (the default) or `delete`, a retired run keeps its reference markers until the GC has decided; provenance still shows it released ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#the-artifact-gc)).
 - **BREAKING:** an Orkflow whose top-level key is a merge key (`<<`), an alias, or anchored or tagged is now refused; write each top-level key out as a plain name ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#top-level-fields)).
 - **BREAKING:** an idempotency key reused for a different Orkflow, version or input is now refused (`already_exists`), not answered with the first run; use one key for one submission ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
@@ -102,6 +106,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- `orkctl run watch` and `run logs -f` now resume, rather than fail with `protocol error: incomplete envelope`, when the engine's connection closes as a stream starts
 - Schedule calls no longer answer `internal` while Temporal is down or rate-limiting, and a submit Temporal rate-limited answers `resource_exhausted`; ask again ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - Task logs no longer lose a task's last output when the task is cancelled or its Orker stops while a chunk is uploading ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#live-task-logs-where-they-are-what-bounds-them-how-long-they-stay)).
 - With more than one engine, a namespace's run list, stats and running count could miss runs started by an engine that booted before its Temporal namespace was ready; they are now included ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).

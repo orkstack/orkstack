@@ -449,6 +449,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	fmt.Fprintf(header, "Created:\t%s\n", formatTime(run.GetCreatedAt()))
 	fmt.Fprintf(header, "Started:\t%s\n", formatTime(run.GetStartedAt()))
 	fmt.Fprintf(header, "Finished:\t%s\n", formatTime(run.GetFinishedAt()))
+	if line := runTimeoutLine(run, nowFunc()); line != "" {
+		fmt.Fprintf(header, "Timeout:\t%s\n", line)
+	}
 	writeOriginLines(header, run.GetOrigin())
 	fmt.Fprintf(header, "Input:\t%s\n", payloadSummary(run.GetInput(), run.GetId(), run.GetNamespace()))
 	fmt.Fprintf(header, "Output:\t%s\n", payloadSummary(run.GetOutput(), run.GetId(), run.GetNamespace()))

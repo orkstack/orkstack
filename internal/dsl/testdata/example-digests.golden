@@ -7,6 +7,6 @@ each-fan-out.ork.yaml sha256:644bee0e25f760996d2f2fd7e4deed8bee66534209ecefab871
 http-post.ork.yaml sha256:10ddfa39949a8f4724d0302d5f43e7d66c66e19fa7cb827469ae3eed95cd35f2 0.3.0
 inputs-and-escaping.ork.yaml sha256:743cea7728635efb91d779f8fa8252d01df5b4ee12f67f1a1e3c6fee334038b6 0.2.0
 notify-block.ork.yaml sha256:fc9efd609d6e0576ecea876c1fe71900a16afc6ffee97bad23b6bb49ed412bb3 0.2.0
-order-saga.ork.yaml sha256:6f750481783cfafb7a87a2d45198d8e1152a9376b6cb0faa2b29898cc33dc089 0.2.1
+order-saga.ork.yaml sha256:65e509b8156cb261d99139ccec1fa6f8af8817002c73da434fc513514140a371 0.2.2
 pinned-checkout.ork.yaml sha256:ab37d80ff27ffaf40a23ce0ad5766b66ea22fc606f1e74af38da9afa2ed03a49 0.2.0
 poll-until-ready.ork.yaml sha256:4d72b92b609d8c05bbc665276cf880417b8bfc458db8d512372135ae84ca4214 0.2.0

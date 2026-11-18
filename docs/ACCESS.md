@@ -223,12 +223,19 @@ Admin → Access shows the document and changes it through the same
 state and every binding's pin, configuration's shown read only), **Roles**
 (built-in read only; custom ones with the catalogue's permissions grouped by
 resource), **Service accounts** (a key made in the browser has its private
-half offered once, as a file, and kept nowhere), **People** (who is signed in
-now, disabled, or named by a binding; disable, enable, end sign-ins),
+half offered as a file named `<account>-<first 12 characters of its kid>.pem`,
+again on asking, and its public half is stored only once you say the file is
+saved; the private half is kept nowhere), **People** (who is signed in now,
+disabled, or named by a binding; disable, enable, end sign-ins; disabling or
+signing out yourself says it is you), **No access** (a person signed in and
+bound to nothing sees their principal, issuer and groups, and copies them for
+an administrator),
 **Explain** and **History** (any two revisions diffed; a revision written
 around the API acknowledged). A control the caller lacks the permission for
 is disabled, with the permission it needs beside it; the server still
-decides every request. In `asserted` mode the page says authentication is
+decides every request. Changing or deleting a binding you hold a role by says
+so first, and a write refused because the document changed since the page
+read it offers to read it again, keeping what you entered. In `asserted` mode the page says authentication is
 off.
 
 ### Pinned bindings

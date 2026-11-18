@@ -59,7 +59,12 @@ only the events below, and a subscription receives only the ones it names
 - A `TASK_FAILED` delivery always reads `"status":"FAILED"`, and a task that was
   skipped, or still pending or running when its run ended, is never delivered as
   a task outcome ([UI_CLI_PARITY.md](UI_CLI_PARITY.md), "Scoped subscriptions and
-  task outcome events").
+  task outcome events"), with one exception: a run's own `timeout:` stops each
+  task still running, waiting or sleeping as `FAILED`
+  `TASK_STOPPED_BY_RUN_TIMEOUT` ([DSL.md](DSL.md), "Run timeout"), so a
+  `TASK_FAILED` subscriber gets one delivery per task the timeout stopped, then
+  the run's `RUN_FAILED` with `RUN_TIMED_OUT`. Tasks that had not started stay
+  `CANCELED` and are not delivered.
 
 ### Scope
 

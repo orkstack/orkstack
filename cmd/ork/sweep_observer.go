@@ -5,7 +5,9 @@ import (
 	"time"
 
 	archivecleanup "github.com/orkstack/orkstack/internal/archive"
+	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/pkg/webhooks"
 )
 
 // sweepObserver adapts the telemetry observer to archive.SweepObserver: this
@@ -36,11 +38,16 @@ func (s sweepObserver) ObserveSweep(ctx context.Context, r archivecleanup.SweepR
 	})
 }
 
-// cleanupObserver adapts the telemetry observer to archive.CleanupObserver.
-type cleanupObserver struct{ o *telemetry.EngineObserver }
+// webhookObserver adapts the telemetry webhook metrics to
+// engine.WebhookObserver.
+type webhookObserver struct{ m *telemetry.WebhookMetrics }
 
-var _ archivecleanup.CleanupObserver = cleanupObserver{}
+var _ engine.WebhookObserver = webhookObserver{}
 
-func (c cleanupObserver) ObserveCleanup(ctx context.Context, s archivecleanup.CleanupStats) {
-	c.o.RecordArchiveCleanup(ctx, int64(s.RunsCleaned), int64(s.RunsFailed), int64(s.MissingNotDue), int64(s.MissingHeld))
+func (w webhookObserver) ObserveWebhookAttempt(ctx context.Context, namespace, webhookID string, a webhooks.Attempt, outcome string) {
+	w.m.Attempt(ctx, namespace, webhookID, a, outcome)
+}
+
+func (w webhookObserver) ObserveWebhookDelivery(ctx context.Context, namespace, webhookID, outcome string, attempts int, queuedAt, settledAt time.Time) {
+	w.m.Delivery(ctx, namespace, webhookID, outcome, attempts, queuedAt, settledAt)
 }
