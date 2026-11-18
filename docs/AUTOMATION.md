@@ -127,6 +127,7 @@ that one field; each key absent leaves the stored value exactly as it is.
 | `allowed_secrets` | list of strings | `[]` | set |
 | `require_signed_by` | string | `""` | exact |
 | `budget` | mapping: `cpu_seconds`, `gib_seconds` (integers ≥ 0), `period` (Go duration), `enforce` (boolean) — the `--budget-*` flags | `{}` | per sub-field; written as a unit, an all-zero budget is unset (`--clear-budget`) |
+| `identity` | mapping: the namespace's identity policy (below), written in an update of its own | `{}` | per sub-field; written as a unit |
 
 The comparisons are exactly `CreateNamespace`'s idempotency comparison. A
 document never manages `name` (it is `namespace:`), the registry-owned
@@ -134,6 +135,21 @@ document never manages `name` (it is `namespace:`), the registry-owned
 `settings.hold` is refused, and a live hold is shown as a note and never
 changed. A namespace field a later release adds must be classified as managed
 or unmanaged before it ships; a test walks the descriptor and fails otherwise.
+
+**`identity`, the namespace's identity policy.**
+
+The namespace's identity policy (docs/TASK_IDENTITY.md, "A namespace's
+identity policy"), written as a unit: a document that sets `identity` sets
+every key below, and one it leaves out is cleared. The server writes the
+policy in an update of its own, so a plan that changes it beside other
+settings has two namespace steps, the settings first and the policy after.
+
+| Key | Value | Absent means |
+| --- | --- | --- |
+| `audiences` | list of strings: token audiences the namespace's tasks may ask for; a trailing `*` matches any rest | none |
+| `grants` | mapping of grant names, each with `provider`, `principal`, `orkflows` (a name, `*` or `<owner>/<name>`), `current_only` (boolean) and `origins` (`submit`, `schedule`, `trigger`, `event-source`, `parent-run`, `run-again`) | none |
+| `identities_current_only` | boolean: give an identity only to a run of its Orkflow's current version | `false` |
+| `attempts_extra` | integer ≥ 0, at most `identity.attempts.max_extra`: attempts past a task's own retries that may hold its identity | the deployment's `identity.attempts.extra` |
 
 ### `schedules`
 

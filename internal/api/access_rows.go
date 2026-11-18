@@ -808,8 +808,14 @@ var accessRows = map[string]accessRow{
 	orkstackv1connect.IdentityServiceGetIssuerProcedure:        {res: deployment, checks: perms(authz.PermIdentityRead)},
 	orkstackv1connect.IdentityServiceListSigningKeysProcedure:  {res: deployment, checks: perms(authz.PermIdentityRead)},
 	orkstackv1connect.IdentityServiceRetireSigningKeyProcedure: {res: deployment, checks: perms(authz.PermIdentityKeysRetire)},
-	orkstackv1connect.SystemServiceRampReleaseProcedure:        {res: deployment, checks: perms(authz.PermReleaseOperate)},
-	orkstackv1connect.SystemServicePromoteReleaseProcedure:     {res: deployment, checks: perms(authz.PermReleaseOperate)},
+	// The mint asks its two permissions at the pool the run's admission
+	// names, which only its handler reads (docs/TASK_IDENTITY.md). Until the
+	// handler lands it answers that it is not available, and its row asks
+	// both at the deployment, which no Orker's pool binding holds.
+	orkstackv1connect.IdentityServiceMintAttemptTokensProcedure: {res: deployment, checks: perms(authz.PermIdentityTokenMint, authz.PermTaskResultCommit)},
+	orkstackv1connect.IdentityServiceListIssuedTokensProcedure:  {res: runIn("run_id"), checks: perms(authz.PermRunRead), notFound: true},
+	orkstackv1connect.SystemServiceRampReleaseProcedure:         {res: deployment, checks: perms(authz.PermReleaseOperate)},
+	orkstackv1connect.SystemServicePromoteReleaseProcedure:      {res: deployment, checks: perms(authz.PermReleaseOperate)},
 
 	// AuditService: the deployment's trail, or one namespace's with a
 	// namespace filter.

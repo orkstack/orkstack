@@ -241,3 +241,77 @@ func TestSetupIssuer_AnUnreadableDocumentRefusesTheBoot(t *testing.T) {
 		t.Fatalf("setupIssuer = %v", err)
 	}
 }
+
+// TestConfig_IdentityAttemptsBounds: the attempt cap's three settings take
+// their defaults, and each outside its bounds, or extra above max_extra,
+// refuses the boot naming the setting.
+func TestConfig_IdentityAttemptsBounds(t *testing.T) {
+	c, err := identityFromEnv(lookupFrom(nil))
+	if err != nil || c.attemptsExtra != 0 || c.attemptsMaxExtra != 4 || c.attemptsMax != 32 {
+		t.Fatalf("defaults = %+v, %v", c, err)
+	}
+	c, err = identityFromEnv(lookupFrom(map[string]string{
+		"ORK_IDENTITY_ATTEMPTS_EXTRA": "2", "ORK_IDENTITY_ATTEMPTS_MAX_EXTRA": "16", "ORK_IDENTITY_ATTEMPTS_MAX": "256",
+	}))
+	if err != nil || c.attemptsExtra != 2 || c.attemptsMaxExtra != 16 || c.attemptsMax != 256 {
+		t.Fatalf("set = %+v, %v", c, err)
+	}
+	for _, tc := range []struct {
+		want string
+		env  map[string]string
+	}{
+		{"identity.attempts.extra", map[string]string{"ORK_IDENTITY_ATTEMPTS_EXTRA": "5"}},
+		{"identity.attempts.extra", map[string]string{"ORK_IDENTITY_ATTEMPTS_EXTRA": "-1"}},
+		{"identity.attempts.extra", map[string]string{"ORK_IDENTITY_ATTEMPTS_EXTRA": "one"}},
+		{"identity.attempts.max_extra", map[string]string{"ORK_IDENTITY_ATTEMPTS_MAX_EXTRA": "17"}},
+		{"identity.attempts.max", map[string]string{"ORK_IDENTITY_ATTEMPTS_MAX": "0"}},
+		{"identity.attempts.max", map[string]string{"ORK_IDENTITY_ATTEMPTS_MAX": "257"}},
+	} {
+		if _, err := identityFromEnv(lookupFrom(tc.env)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: %v, want it to name %s", tc.env, err, tc.want)
+		}
+	}
+}
+
+// TestConfig_TokenTTLOrder: a token's life is identity.token.ttl, held
+// between min_ttl and max_ttl, which must be in order and at most a day.
+func TestConfig_TokenTTLOrder(t *testing.T) {
+	c, err := identityFromEnv(lookupFrom(nil))
+	if err != nil || c.tokenTTL != (identity.TTLBounds{Default: time.Hour, Min: 10 * time.Minute, Max: 12 * time.Hour}) {
+		t.Fatalf("defaults = %+v, %v", c.tokenTTL, err)
+	}
+	for _, tc := range []struct {
+		want string
+		env  map[string]string
+	}{
+		{"identity.token.ttl", map[string]string{"ORK_IDENTITY_TOKEN_TTL": "5m"}},
+		{"identity.token.ttl", map[string]string{"ORK_IDENTITY_TOKEN_TTL": "13h"}},
+		{"identity.token.min_ttl", map[string]string{"ORK_IDENTITY_TOKEN_MIN_TTL": "0s"}},
+		{"identity.token.max_ttl", map[string]string{"ORK_IDENTITY_TOKEN_MAX_TTL": "25h"}},
+		{"identity.token.max_ttl", map[string]string{"ORK_IDENTITY_TOKEN_MAX_TTL": "5m", "ORK_IDENTITY_TOKEN_TTL": "5m"}},
+		{"identity.token.ttl", map[string]string{"ORK_IDENTITY_TOKEN_TTL": "soon"}},
+	} {
+		if _, err := identityFromEnv(lookupFrom(tc.env)); err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%v: %v, want it to name %s", tc.env, err, tc.want)
+		}
+	}
+}
+
+// TestConfig_IssuanceAndUnscopedOrkers: the record of what was issued is
+// required unless off, and an unscoped Orker refuses new identity runs
+// unless report; any other value refuses the boot.
+func TestConfig_IssuanceAndUnscopedOrkers(t *testing.T) {
+	c, err := identityFromEnv(lookupFrom(nil))
+	if err != nil || c.issuanceRecords != identity.IssuanceRequired || c.unscopedOrkers != identity.UnscopedRefuse {
+		t.Fatalf("defaults = %+v, %v", c, err)
+	}
+	c, err = identityFromEnv(lookupFrom(map[string]string{"ORK_IDENTITY_ISSUANCE_RECORDS": "off", "ORK_IDENTITY_UNSCOPED_ORKERS": "report"}))
+	if err != nil || c.issuanceRecords != identity.IssuanceOff || c.unscopedOrkers != identity.UnscopedReport {
+		t.Fatalf("set = %+v, %v", c, err)
+	}
+	for env, want := range map[string]string{"ORK_IDENTITY_ISSUANCE_RECORDS": "identity.issuance.records", "ORK_IDENTITY_UNSCOPED_ORKERS": "identity.unscoped_orkers"} {
+		if _, err := identityFromEnv(lookupFrom(map[string]string{env: "sometimes"})); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", env, err)
+		}
+	}
+}

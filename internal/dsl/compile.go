@@ -210,6 +210,10 @@ type taskDocument struct {
 	// /orkstack/input/secrets. The VALUE never appears in this document.
 	Secrets []secretDocument `yaml:"secrets"`
 
+	// Identities are the tokens the task holds, one an audience, minted for
+	// each attempt (docs/DSL.md, "Task identity").
+	Identities []identityDocument `yaml:"identities"`
+
 	// Resources is what the task asks the Orker for. Orker policy may cap it;
 	// it may never raise it (§9.3).
 	Resources *resourceDocument `yaml:"resources"`
@@ -456,6 +460,10 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 		if err != nil {
 			return nil, err
 		}
+		identities, err := compileIdentities(taskIndex, td)
+		if err != nil {
+			return nil, err
+		}
 		task := &orkstackv1.Task{
 			Join:           join,
 			Each:           each,
@@ -471,6 +479,7 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 			TimeoutSeconds: DefaultTimeoutSeconds,
 			Pool:           td.Pool,
 			Pin:            td.Pin,
+			Identities:     identities,
 		}
 		if td.Devices != nil {
 			if len(*td.Devices) == 0 {

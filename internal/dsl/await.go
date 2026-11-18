@@ -55,6 +55,7 @@ func awaitExecutionKeys(td taskDocument) []struct {
 		{"command", td.Command != nil},
 		{"env", td.Env != nil},
 		{"secrets", td.Secrets != nil},
+		{"identities", td.Identities != nil},
 		{"resources", td.Resources != nil},
 		{"network", td.Network != ""},
 		{"devices", td.Devices != nil},
@@ -152,6 +153,8 @@ func validateAwaitTask(taskIndex int, task *orkstackv1.Task) error {
 		{"command", len(task.GetCommand()) > 0},
 		{"env", len(task.GetEnv()) > 0},
 		{"secrets", len(task.GetSecrets()) > 0},
+		// Rule 54: no identity on a task that runs no container of its own.
+		{"identities", len(task.GetIdentities()) > 0},
 		{"resources", task.GetResources() != nil},
 		{"network", task.GetNetwork() != orkstackv1.NetworkMode_NETWORK_MODE_UNSPECIFIED},
 		{"devices", len(task.GetDevices()) > 0},

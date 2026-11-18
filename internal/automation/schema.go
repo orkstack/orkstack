@@ -45,6 +45,7 @@ var automationDescriptions = map[string]string{
 	"settings.allowed_secrets":   "list of strings",
 	"settings.require_signed_by": "string",
 	"settings.budget":            "mapping: `cpu_seconds`, `gib_seconds` (integers ≥ 0), `period` (Go duration), `enforce` (boolean) — the `--budget-*` flags",
+	"settings.identity":          "mapping: the namespace's identity policy (below), written in an update of its own",
 
 	"schedules.*.orkflow":          "slug of this namespace's Orkflow, **required**, fixed at creation",
 	"schedules.*.version":          "string — absent means the current pointer at each fire",
@@ -177,6 +178,9 @@ func scalarSchema(fd protoreflect.FieldDescriptor) (map[string]any, error) {
 		properties := map[string]any{}
 		for i := 0; i < message.Fields().Len(); i++ {
 			field := message.Fields().Get(i)
+			if outputOnlySettingFields[field.FullName()] {
+				continue
+			}
 			schema, err := settingSchema(field)
 			if err != nil {
 				return nil, err
@@ -388,4 +392,12 @@ func withDescription(schema map[string]any, text string) map[string]any {
 	}
 	out["description"] = text
 	return out
+}
+
+// outputOnlySettingFields are fields of a managed message the server sets and
+// a document never writes: the identity policy's id, etag and revision.
+var outputOnlySettingFields = map[protoreflect.FullName]bool{
+	"orkstack.v1.NamespaceIdentity.namespace_id": true,
+	"orkstack.v1.NamespaceIdentity.etag":         true,
+	"orkstack.v1.NamespaceIdentity.revision":     true,
 }

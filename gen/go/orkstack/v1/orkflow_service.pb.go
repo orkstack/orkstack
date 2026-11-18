@@ -2733,12 +2733,23 @@ func (x *DeleteOrkflowResponse) GetDeletedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
+// StaleConsent is a schedule, trigger or event source bound to the Orkflow
+// whose consent no longer covers what the version now current asks for. Its
+// runs are refused an identity until it is consented to again.
 type StaleConsent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is `schedule`, `trigger` or `event-source`.
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// name is the object's name.
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// digest is the consent digest to consent to: "c1:" and 64 hexadecimal
+	// digits.
+	Digest string `protobuf:"bytes,3,opt,name=digest,proto3" json:"digest,omitempty"`
+	// older_projection is true when the object's consent was given under an
+	// earlier consent projection, so it is stale whatever changed.
+	OlderProjection bool `protobuf:"varint,4,opt,name=older_projection,json=olderProjection,proto3" json:"older_projection,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *StaleConsent) Reset() {
@@ -2769,6 +2780,34 @@ func (x *StaleConsent) ProtoReflect() protoreflect.Message {
 // Deprecated: Use StaleConsent.ProtoReflect.Descriptor instead.
 func (*StaleConsent) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_orkflow_service_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *StaleConsent) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *StaleConsent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StaleConsent) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *StaleConsent) GetOlderProjection() bool {
+	if x != nil {
+		return x.OlderProjection
+	}
+	return false
 }
 
 var File_orkstack_v1_orkflow_service_proto protoreflect.FileDescriptor
@@ -2970,8 +3009,12 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x129\n" +
 	"\n" +
-	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"\x0e\n" +
-	"\fStaleConsent*y\n" +
+	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"y\n" +
+	"\fStaleConsent\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06digest\x18\x03 \x01(\tR\x06digest\x12)\n" +
+	"\x10older_projection\x18\x04 \x01(\bR\x0folderProjection*y\n" +
 	"\x12ValidationSeverity\x12#\n" +
 	"\x1fVALIDATION_SEVERITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19VALIDATION_SEVERITY_ERROR\x10\x01\x12\x1f\n" +

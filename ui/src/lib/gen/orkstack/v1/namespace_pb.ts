@@ -14,7 +14,7 @@ import type { Message } from "@bufbuild/protobuf";
  * Describes the file orkstack/v1/namespace.proto.
  */
 export const file_orkstack_v1_namespace: GenFile = /*@__PURE__*/
-  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIvQECglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRIXCg9hbGxvd2VkX3NlY3JldHMYDSADKAkSGQoRcmVxdWlyZV9zaWduZWRfYnkYDiABKAkSIwoGYnVkZ2V0GA8gASgLMhMub3Jrc3RhY2sudjEuQnVkZ2V0EhkKEWZhaXJfc2hhcmVfd2VpZ2h0GBAgASgBEjAKCGlkZW50aXR5GBEgASgLMh4ub3Jrc3RhY2sudjEuTmFtZXNwYWNlSWRlbnRpdHkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJKCg1OYW1lc3BhY2VIb2xkEg4KBnJlYXNvbhgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAibgoGQnVkZ2V0EhMKC2NwdV9zZWNvbmRzGAEgASgDEhMKC2dpYl9zZWNvbmRzGAIgASgDEikKBnBlcmlvZBgDIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIPCgdlbmZvcmNlGAQgASgIIpwBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRISCgppc19kZWZhdWx0GAQgASgIEi0KCWxhc3Rfc2VlbhgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGgoSdW5hdmFpbGFibGVfcmVhc29uGAYgASgJSgQIAxAEUgdwbHVnaW5zIikKEU5hbWVzcGFjZUlkZW50aXR5EhQKDG5hbWVzcGFjZV9pZBgGIAEoCUKqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
+  fileDesc("ChtvcmtzdGFjay92MS9uYW1lc3BhY2UucHJvdG8SC29ya3N0YWNrLnYxIvQECglOYW1lc3BhY2USDAoEbmFtZRgBIAEoCRITCgtkZXNjcmlwdGlvbhgCIAEoCRIyCgZsYWJlbHMYAyADKAsyIi5vcmtzdGFjay52MS5OYW1lc3BhY2UuTGFiZWxzRW50cnkSFAoMZGVmYXVsdF9wb29sGAQgASgJEhUKDWFsbG93ZWRfcG9vbHMYBSADKAkSLgoKY3JlYXRlZF9hdBgGIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASLgoKdXBkYXRlZF9hdBgHIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASDAoEZXRhZxgIIAEoCRIwCg1ydW5fcmV0ZW50aW9uGAkgASgLMhkuZ29vZ2xlLnByb3RvYnVmLkR1cmF0aW9uEi8KCXRlbGVtZXRyeRgKIAEoCzIcLm9ya3N0YWNrLnYxLlRlbGVtZXRyeVBvbGljeRIoCgRob2xkGAsgASgLMhoub3Jrc3RhY2sudjEuTmFtZXNwYWNlSG9sZBITCgttYXhfcnVubmluZxgMIAEoBRIXCg9hbGxvd2VkX3NlY3JldHMYDSADKAkSGQoRcmVxdWlyZV9zaWduZWRfYnkYDiABKAkSIwoGYnVkZ2V0GA8gASgLMhMub3Jrc3RhY2sudjEuQnVkZ2V0EhkKEWZhaXJfc2hhcmVfd2VpZ2h0GBAgASgBEjAKCGlkZW50aXR5GBEgASgLMh4ub3Jrc3RhY2sudjEuTmFtZXNwYWNlSWRlbnRpdHkaLQoLTGFiZWxzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ASJKCg1OYW1lc3BhY2VIb2xkEg4KBnJlYXNvbhgBIAEoCRIpCgVzaW5jZRgCIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXAibgoGQnVkZ2V0EhMKC2NwdV9zZWNvbmRzGAEgASgDEhMKC2dpYl9zZWNvbmRzGAIgASgDEikKBnBlcmlvZBgDIAEoCzIZLmdvb2dsZS5wcm90b2J1Zi5EdXJhdGlvbhIPCgdlbmZvcmNlGAQgASgIIpwBCgRQb29sEgwKBG5hbWUYASABKAkSGAoQbGl2ZV9vcmtlcl9jb3VudBgCIAEoBRISCgppc19kZWZhdWx0GAQgASgIEi0KCWxhc3Rfc2VlbhgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGgoSdW5hdmFpbGFibGVfcmVhc29uGAYgASgJSgQIAxAEUgdwbHVnaW5zIqwCChFOYW1lc3BhY2VJZGVudGl0eRIRCglhdWRpZW5jZXMYASADKAkSOgoGZ3JhbnRzGAIgAygLMioub3Jrc3RhY2sudjEuTmFtZXNwYWNlSWRlbnRpdHkuR3JhbnRzRW50cnkSHwoXaWRlbnRpdGllc19jdXJyZW50X29ubHkYAyABKAgSDAoEZXRhZxgEIAEoCRIQCghyZXZpc2lvbhgFIAEoAxIbCg5hdHRlbXB0c19leHRyYRgHIAEoBUgAiAEBEhQKDG5hbWVzcGFjZV9pZBgGIAEoCRpBCgtHcmFudHNFbnRyeRILCgNrZXkYASABKAkSIQoFdmFsdWUYAiABKAsyEi5vcmtzdGFjay52MS5HcmFudDoCOAFCEQoPX2F0dGVtcHRzX2V4dHJhImsKBUdyYW50EhAKCHByb3ZpZGVyGAEgASgJEhEKCXByaW5jaXBhbBgCIAEoCRIQCghvcmtmbG93cxgDIAMoCRIUCgxjdXJyZW50X29ubHkYBCABKAgSDwoHb3JpZ2lucxgFIAMoCUoECAYQB0KqAQoPY29tLm9ya3N0YWNrLnYxQg5OYW1lc3BhY2VQcm90b1ABWjpnaXRodWIuY29tL29ya3N0YWNrL29ya3N0YWNrL2dlbi9nby9vcmtzdGFjay92MTtvcmtzdGFja3YxogIDT1hYqgILT3Jrc3RhY2suVjHKAgtPcmtzdGFja1xWMeICF09ya3N0YWNrXFYxXEdQQk1ldGFkYXRh6gIMT3Jrc3RhY2s6OlYxYgZwcm90bzM", [file_google_protobuf_duration, file_google_protobuf_timestamp, file_orkstack_v1_telemetry]);
 
 /**
  * Namespace is a tenant of one OrkStack deployment: a scope that owns orkflow
@@ -469,13 +469,62 @@ export const PoolSchema: GenMessage<Pool> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_namespace, 3);
 
 /**
- * NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
- * registered for the policy itself (audiences, grants and their bounds),
- * which a later change adds.
+ * NamespaceIdentity is the namespace's identity policy: the audiences its
+ * tasks may ask for, the principals they may act as, and its id. It is
+ * written with its own etag, and an UpdateNamespace that changes it changes
+ * nothing else (docs/TASK_IDENTITY.md).
  *
  * @generated from message orkstack.v1.NamespaceIdentity
  */
 export type NamespaceIdentity = Message<"orkstack.v1.NamespaceIdentity"> & {
+  /**
+   * audiences are the token audiences the namespace's tasks may ask for. A
+   * trailing `*` matches any rest.
+   *
+   * @generated from field: repeated string audiences = 1;
+   */
+  audiences: string[];
+
+  /**
+   * grants are the principals the namespace's tasks may act as, by name.
+   *
+   * @generated from field: map<string, orkstack.v1.Grant> grants = 2;
+   */
+  grants: { [key: string]: Grant };
+
+  /**
+   * identities_current_only, true, gives an identity only to a run of its
+   * Orkflow's current version.
+   *
+   * @generated from field: bool identities_current_only = 3;
+   */
+  identitiesCurrentOnly: boolean;
+
+  /**
+   * etag is the policy's own: an update that names another is
+   * FAILED_PRECONDITION. Output only.
+   *
+   * @generated from field: string etag = 4;
+   */
+  etag: string;
+
+  /**
+   * revision counts the policy's changes: each change writes an immutable
+   * revision. Output only.
+   *
+   * @generated from field: int64 revision = 5;
+   */
+  revision: bigint;
+
+  /**
+   * attempts_extra is how many attempts past a task's own retries may hold
+   * its identity, inside the deployment's identity.attempts.max_extra.
+   * Unset takes the deployment's identity.attempts.extra.
+   *
+   * @generated from field: optional int32 attempts_extra = 7;
+   */
+  attemptsExtra?: number | undefined;
+
   /**
    * namespace_id is the namespace's immutable id: a namespace deleted and
    * created again under its name has another one, and a binding pinned to
@@ -495,4 +544,58 @@ export type NamespaceIdentity = Message<"orkstack.v1.NamespaceIdentity"> & {
  */
 export const NamespaceIdentitySchema: GenMessage<NamespaceIdentity> = /*@__PURE__*/
   messageDesc(file_orkstack_v1_namespace, 4);
+
+/**
+ * Grant is a principal a namespace's tasks may act as, through a provider,
+ * and which of its Orkflows may use it.
+ *
+ * @generated from message orkstack.v1.Grant
+ */
+export type Grant = Message<"orkstack.v1.Grant"> & {
+  /**
+   * provider names where the principal is.
+   *
+   * @generated from field: string provider = 1;
+   */
+  provider: string;
+
+  /**
+   * principal is whom the provider gives the task, such as a role.
+   *
+   * @generated from field: string principal = 2;
+   */
+  principal: string;
+
+  /**
+   * orkflows may use the grant: a name of this namespace, `*` for every
+   * Orkflow of it, or `<owner>/<name>` for one another namespace shares.
+   *
+   * @generated from field: repeated string orkflows = 3;
+   */
+  orkflows: string[];
+
+  /**
+   * current_only, true, lets only a run of its Orkflow's current version
+   * use the grant.
+   *
+   * @generated from field: bool current_only = 4;
+   */
+  currentOnly: boolean;
+
+  /**
+   * origins are the kinds of start the grant serves: submit, schedule,
+   * trigger, event-source, parent-run, run-again. Empty serves every kind.
+   * A child run is judged by its root's.
+   *
+   * @generated from field: repeated string origins = 5;
+   */
+  origins: string[];
+};
+
+/**
+ * Describes the message orkstack.v1.Grant.
+ * Use `create(GrantSchema)` to create a new message.
+ */
+export const GrantSchema: GenMessage<Grant> = /*@__PURE__*/
+  messageDesc(file_orkstack_v1_namespace, 5);
 

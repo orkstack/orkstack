@@ -216,3 +216,15 @@ func timestampOrNil(t time.Time) *timestamppb.Timestamp {
 func servedButNotNow(err error) bool {
 	return errors.Is(err, identity.ErrKeysNotRead) || errors.Is(err, identity.ErrKeysStale) || errors.Is(err, identity.ErrNoServedKeys)
 }
+
+// MintAttemptTokens is not available in this build: the mint lands with
+// task identity (docs/TASK_IDENTITY.md), and no task can declare an
+// identity yet.
+func (s *Service) MintAttemptTokens(context.Context, *connect.Request[orkstackv1.MintAttemptTokensRequest]) (*connect.Response[orkstackv1.MintAttemptTokensResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("task identity tokens are not available in this build"))
+}
+
+// ListIssuedTokens is not available in this build: no token is issued yet.
+func (s *Service) ListIssuedTokens(context.Context, *connect.Request[orkstackv1.ListIssuedTokensRequest]) (*connect.Response[orkstackv1.ListIssuedTokensResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("no task identity token is issued in this build"))
+}

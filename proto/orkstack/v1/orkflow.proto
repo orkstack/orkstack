@@ -363,9 +363,32 @@ enum EachLineFormat {
   EACH_LINE_FORMAT_UNSPECIFIED = 0;
 }
 
-// IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message IdentityRef {}
+// IdentityRef is one identity a task holds: a token for one audience,
+// minted for each attempt and refreshed while it runs
+// (docs/TASK_IDENTITY.md).
+message IdentityRef {
+  // name names the identity within its task: the file it is written to.
+  string name = 1;
+  // audience is the token's aud: one the namespace's identity policy allows.
+  string audience = 2;
+  // ttl_seconds is the token's life, held between the deployment's
+  // identity.token.min_ttl and max_ttl; 0 is identity.token.ttl.
+  int32 ttl_seconds = 3;
+  // refresh says what a refresh that keeps failing does to the attempt.
+  RefreshPolicy refresh = 4;
+}
+
+// RefreshPolicy is what a refresh that keeps failing does to the attempt.
+enum RefreshPolicy {
+  // REFRESH_POLICY_UNSPECIFIED is REFRESH_POLICY_REQUIRED.
+  REFRESH_POLICY_UNSPECIFIED = 0;
+  // REFRESH_POLICY_REQUIRED ends the attempt when its token expires
+  // unrefreshed.
+  REFRESH_POLICY_REQUIRED = 1;
+  // REFRESH_POLICY_BEST_EFFORT lets the attempt run on with an expired
+  // token.
+  REFRESH_POLICY_BEST_EFFORT = 2;
+}
 
 // OutputArtifact is E87's; it is empty until E87 lands (v0.4.0 proto
 // batch).

@@ -438,6 +438,14 @@ var Schema = []Var{
 	{Path: "identity.keys_copy_max_age", Env: "ORK_IDENTITY_KEYS_COPY_MAX_AGE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultKeysCopyMaxAge)},
 	{Path: "identity.subject_format", Env: "ORK_IDENTITY_SUBJECT_FORMAT", Binaries: usesOrk, Kind: KindString, Default: string(identity.DefaultSubjectFormat)},
 	{Path: "identity.spiffe.trust_domain", Env: "ORK_IDENTITY_SPIFFE_TRUST_DOMAIN", Binaries: usesOrk, Kind: KindString, Default: EmptyDefault, DerivedNote: "no SPIFFE ID on any token"},
+	{Path: "identity.attempts.extra", Env: "ORK_IDENTITY_ATTEMPTS_EXTRA", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsExtra)},
+	{Path: "identity.attempts.max_extra", Env: "ORK_IDENTITY_ATTEMPTS_MAX_EXTRA", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsMaxExtra)},
+	{Path: "identity.attempts.max", Env: "ORK_IDENTITY_ATTEMPTS_MAX", Binaries: usesOrk, Kind: KindInt, Default: formatInt(identity.DefaultAttemptsMax)},
+	{Path: "identity.token.ttl", Env: "ORK_IDENTITY_TOKEN_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenTTL)},
+	{Path: "identity.token.min_ttl", Env: "ORK_IDENTITY_TOKEN_MIN_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenMinTTL)},
+	{Path: "identity.token.max_ttl", Env: "ORK_IDENTITY_TOKEN_MAX_TTL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(identity.DefaultTokenMaxTTL)},
+	{Path: "identity.issuance.records", Env: "ORK_IDENTITY_ISSUANCE_RECORDS", Binaries: usesOrk, Kind: KindString, Default: identity.IssuanceRequired},
+	{Path: "identity.unscoped_orkers", Env: "ORK_IDENTITY_UNSCOPED_ORKERS", Binaries: usesOrk, Kind: KindString, Default: identity.UnscopedRefuse},
 }
 
 // byEnv indexes Schema by environment variable name, built once at init so

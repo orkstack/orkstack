@@ -181,7 +181,7 @@ var catalogue = map[Permission]entry{
 
 	PermNamespaceRead:         {kindN, "read a namespace and its pools"},
 	PermNamespaceUpdate:       {kindN, "change a namespace's description, labels, default pool, retention, telemetry and hold"},
-	PermNamespacePolicyUpdate: {kindN, "change what a namespace may reach: pools, secrets, signers, limits, budget and weight"},
+	PermNamespacePolicyUpdate: {kindN, "change what a namespace may reach: pools, secrets, signers, limits, budget, weight and its identity policy"},
 	PermNamespaceCreate:       {kindD, "create a namespace"},
 	PermNamespaceDelete:       {kindD, "delete a namespace"},
 

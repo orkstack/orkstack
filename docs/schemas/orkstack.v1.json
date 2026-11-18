@@ -586,6 +586,55 @@
           "minimum": 0,
           "type": "number"
         },
+        "identity": {
+          "additionalProperties": false,
+          "description": "mapping: the namespace's identity policy (below), written in an update of its own",
+          "properties": {
+            "attempts_extra": {
+              "type": "integer"
+            },
+            "audiences": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "grants": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "current_only": {
+                    "type": "boolean"
+                  },
+                  "origins": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "orkflows": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "principal": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "identities_current_only": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "labels": {
           "additionalProperties": {
             "type": "string"
@@ -1115,6 +1164,40 @@
       ],
       "type": "object"
     },
+    "orkflow.identity": {
+      "additionalProperties": false,
+      "properties": {
+        "audience": {
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "name": {
+          "pattern": "^[a-z][a-z0-9-]{0,62}$",
+          "type": [
+            "string",
+            "number",
+            "boolean"
+          ]
+        },
+        "refresh": {
+          "enum": [
+            "best_effort",
+            "required"
+          ]
+        },
+        "ttl_seconds": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "audience",
+        "name"
+      ],
+      "type": "object"
+    },
     "orkflow.input": {
       "additionalProperties": false,
       "description": "One declared input: `type` (string, number, boolean, object, array), `required` and `default`. The engine reads `type`, `required` and `default` and ignores anything else; this schema refuses another key, a `type` outside the five words and a `required` that is not a boolean, so a misspelling is caught in the editor that `orkctl orkflow validate` would let through.",
@@ -1282,6 +1365,7 @@
               "devices": false,
               "each": false,
               "env": false,
+              "identities": false,
               "network": false,
               "pin": false,
               "pool": false,
@@ -1450,6 +1534,7 @@
             "devices": false,
             "each": false,
             "env": false,
+            "identities": false,
             "network": false,
             "pin": false,
             "pool": false,
@@ -1554,6 +1639,13 @@
             "number",
             "boolean"
           ]
+        },
+        "identities": {
+          "description": "optional: the tokens the task holds, one for each audience (see \"Task identity\")",
+          "items": {
+            "$ref": "#/definitions/orkflow.identity"
+          },
+          "type": "array"
         },
         "join": {
           "description": "optional: none_failed, any_failed or all_done (see \"Joins and failure handlers\")",
@@ -1667,6 +1759,7 @@
           "devices": false,
           "each": false,
           "env": false,
+          "identities": false,
           "network": false,
           "pin": false,
           "pool": false,

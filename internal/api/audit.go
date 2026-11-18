@@ -725,6 +725,10 @@ var unauditedWrites = map[string]string{
 	orkstackv1connect.RunServiceSubmitRunProcedure:      "a run's own record is the durable fact; provenance is run-origin's",
 	orkstackv1connect.AuthServiceRefreshSigninProcedure: signinRecorded,
 	orkstackv1connect.AuthServiceSignOutProcedure:       signinRecorded,
+	// A granted mint writes its own record of what it issued
+	// (ListIssuedTokens), and a refused one its own audit record
+	// (identity.token.refused): one a token, never one a refresh's call.
+	orkstackv1connect.IdentityServiceMintAttemptTokensProcedure: "a mint records what it issued, and audits a refusal itself",
 }
 
 // signinRecorded is why a sign-in's own calls are not recorded by the

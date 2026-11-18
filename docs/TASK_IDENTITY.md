@@ -227,6 +227,25 @@ first, and have an AWS trust policy list both subjects for the time of the
 change. Then switch the format. A run keeps the format it was submitted
 with.
 
+## A namespace's identity policy
+
+Each namespace has an identity policy: the token audiences its tasks may
+ask for (a trailing `*` matches any rest), its grants (a provider, the
+principal there, the Orkflows that may use it, whether only a current
+version may, and the kinds of start it serves), `identities_current_only`,
+and `attempts_extra`, how many attempts past a task's own retries may hold
+its identity, at most the deployment's `identity.attempts.max_extra`. The
+API shows it as `Namespace.identity`, beside the namespace's id. It is kept
+beside the id, never in the namespace document, and belongs to that
+incarnation of the namespace: deleting the namespace removes it first, and
+a namespace made again under the name starts with none.
+
+An `UpdateNamespace` that changes the policy changes nothing else: it names
+the policy's own `identity.etag` and needs `namespace.policy.update`. An
+update whose policy is as stored leaves it alone. Each change writes an
+immutable revision (`docs/STORAGE.md`). No task can use the policy yet; it
+decides what tasks may hold once task identity is available.
+
 ## Which run a token is for
 
 No token is issued yet. When tokens are, each will be for one attempt of

@@ -2067,20 +2067,30 @@ Flags:
 
 - `--allow-pool STRINGARRAY` — pool this namespace may dispatch onto (repeatable; empty = unrestricted)
 - `--allow-secret STRINGARRAY` — secret source this namespace's tasks may name, as scheme:pattern, e.g. 'env:SANDBOX_*' (repeatable; empty = unrestricted; on update, replaces the whole set)
+- `--attempts-extra INT32` — how many attempts past a task's own retries may hold its identity, up to identity.attempts.max_extra
+- `--audience STRINGARRAY` — add a token audience the namespace's tasks may ask for; a trailing * matches any rest (repeatable)
 - `--budget-cpu-seconds INT64` — bound on the namespace's RESERVED cpu-seconds (cpu x attempt time) over --budget-period; 0 unbounds the dimension
 - `--budget-enforce` — refuse new runs once the budget is reached (=false only reports it); check that 'orkctl stats usage --since <period>' answers before enforcing: an enforced budget that cannot be measured refuses every submit
 - `--budget-gib-seconds INT64` — bound on the namespace's RESERVED GiB-seconds (memory x attempt time) over --budget-period; 0 unbounds the dimension
 - `--budget-period STRING` — the rolling period a budget is held against, e.g. 720h (1h0m0s to 744h0m0s)
 - `--clear-allowed-secrets` — remove the namespace's secret-source list, leaving it unrestricted (each Orker's ORK_ORKER_SECRET_ALLOW still applies)
+- `--clear-attempts-extra` — take the deployment's identity.attempts.extra again
+- `--clear-audiences` — remove every audience
 - `--clear-budget` — remove the namespace's budget, leaving it unbounded
 - `--clear-require-signed-by` — stop requiring a signature: the deployment image policy alone applies
 - `--default-pool STRING` — pool a task of this namespace runs on when it names none (default "main")
 - `--description STRING` — human description
 - `--fair-share-weight FLOAT64` — this namespace's share of dispatch when several namespaces' tasks wait for one pool, pinned into each run at submit; 0 = the default weight of 1, else 0.001 to 1000. It takes effect only where the cluster has fair dispatch enabled
+- `--grant STRINGARRAY` — set a grant as NAME=PROVIDER:PRINCIPAL (repeatable)
+- `--grant-current-only STRINGARRAY` — let only a run of its Orkflow's current version use the grant NAME (repeatable)
+- `--grant-origin STRINGARRAY` — let a grant serve one kind of start, as NAME=KIND: submit, schedule, trigger, event-source, parent-run or run-again (repeatable)
+- `--grant-orkflow STRINGARRAY` — let an Orkflow use a grant, as NAME=ORKFLOW: a name, * or <owner>/<name> (repeatable)
 - `--hold STRING` — close this namespace to new runs, with the reason the next operator reads (runs already accepted finish untouched)
+- `--identities-current-only` — give an identity only to a run of its Orkflow's current version
 - `--label STRINGARRAY` — label as key=value (repeatable)
 - `--max-running INT32` — most runs of this namespace in flight at once (0 = unlimited)
 - `--release-hold` — reopen a held namespace to new runs (nothing refused while it was held is started)
+- `--remove-grant STRINGARRAY` — remove the grant NAME (repeatable)
 - `--require-signed-by STRING` — require every image executed in this namespace to carry a valid signature, as cosign:KEY naming a key of 'orkctl admin image-policy get' (tightens the deployment policy; never loosens it)
 - `--run-retention STRING` — how long a finished run stays readable, e.g. "168h" (default: the deployment maximum; "inherit" clears a value)
 - `--task-logs STRING` (default `inherit`) — override the Orker's task-log export for this namespace's runs: enabled, disabled, or inherit

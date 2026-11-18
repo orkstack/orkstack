@@ -559,3 +559,66 @@ func TestPlan_ShowsTheJSONAYAMLInputBecomes(t *testing.T) {
 	}
 	t.Fatalf("no input change among %v", step.GetChanges())
 }
+
+// TestPlan_IdentityIsAnUpdateOfItsOwn: a document that changes the
+// identity policy beside another setting plans two namespace steps, the
+// settings first with the live policy and the policy after with the
+// document's; one that changes only the policy plans one.
+func TestPlan_IdentityIsAnUpdateOfItsOwn(t *testing.T) {
+	doc := "apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\nsettings:\n  description: billing\n" +
+		"  identity:\n    audiences:\n      - https://vault.example\n    grants:\n      deployer:\n        provider: aws\n" +
+		"        principal: arn:aws:iam::1:role/deploy\n        orkflows:\n          - deploy\n"
+	live := Live{Namespace: &orkstackv1.Namespace{Name: "payments", Etag: "e1",
+		Identity: &orkstackv1.NamespaceIdentity{NamespaceId: "ns_1", Etag: "3", Revision: 3}}}
+	steps, issues := plan(t, doc, live, false)
+	requireNoErrors(t, issues)
+	var ns []*orkstackv1.AutomationStep
+	for _, s := range steps {
+		if s.GetKind() == kindNamespace && s.GetAction() == actionUpdate {
+			ns = append(ns, s)
+		}
+	}
+	if len(ns) != 2 {
+		t.Fatalf("namespace updates = %v", ns)
+	}
+	first, second := ns[0].GetUpdateNamespace().GetNamespace(), ns[1].GetUpdateNamespace().GetNamespace()
+	if first.GetDescription() != "billing" || len(first.GetIdentity().GetAudiences()) != 0 || first.GetIdentity().GetEtag() != "3" {
+		t.Fatalf("the settings step = %v", first)
+	}
+	if ns[1].GetChanges()[0].GetField() != "identity" || second.GetIdentity().GetAudiences()[0] != "https://vault.example" ||
+		second.GetIdentity().GetEtag() != "3" || second.GetIdentity().GetGrants()["deployer"].GetProvider() != "aws" {
+		t.Fatalf("the identity step = %v", ns[1])
+	}
+	only := "apiVersion: orkstack/v1\nkind: Automation\nnamespace: payments\nsettings:\n  identity:\n    audiences:\n      - a\n"
+	steps, issues = plan(t, only, live, false)
+	requireNoErrors(t, issues)
+	n := 0
+	for _, s := range steps {
+		if s.GetKind() == kindNamespace && s.GetAction() == actionUpdate {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("a policy-only change planned %d namespace updates", n)
+	}
+}
+
+// TestPlan_ANewNamespacesIdentityIsItsOwnStep: a namespace is created with
+// no identity policy, and a document that sets one writes it after the
+// create, in an update of its own.
+func TestPlan_ANewNamespacesIdentityIsItsOwnStep(t *testing.T) {
+	doc := "apiVersion: orkstack/v1\nkind: Automation\nnamespace: billing\nsettings:\n  description: b\n" +
+		"  identity:\n    audiences:\n      - https://vault.example\n"
+	steps, issues := plan(t, doc, Live{}, false)
+	requireNoErrors(t, issues)
+	var ns []*orkstackv1.AutomationStep
+	for _, s := range steps {
+		if s.GetKind() == kindNamespace {
+			ns = append(ns, s)
+		}
+	}
+	if len(ns) != 2 || ns[0].GetCreateNamespace().GetNamespace().GetIdentity() != nil ||
+		ns[1].GetUpdateNamespace().GetNamespace().GetIdentity().GetAudiences()[0] != "https://vault.example" {
+		t.Fatalf("namespace steps = %v", ns)
+	}
+}

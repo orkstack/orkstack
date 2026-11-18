@@ -715,6 +715,18 @@ message DeleteOrkflowResponse {
   google.protobuf.Timestamp deleted_at = 3;
 }
 
-// StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
-message StaleConsent {}
+// StaleConsent is a schedule, trigger or event source bound to the Orkflow
+// whose consent no longer covers what the version now current asks for. Its
+// runs are refused an identity until it is consented to again.
+message StaleConsent {
+  // kind is `schedule`, `trigger` or `event-source`.
+  string kind = 1;
+  // name is the object's name.
+  string name = 2;
+  // digest is the consent digest to consent to: "c1:" and 64 hexadecimal
+  // digits.
+  string digest = 3;
+  // older_projection is true when the object's consent was given under an
+  // earlier consent projection, so it is stale whatever changed.
+  bool older_projection = 4;
+}

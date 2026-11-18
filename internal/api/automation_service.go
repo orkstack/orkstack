@@ -273,6 +273,13 @@ func (s *Service) validNamespaceForPlan(ctx context.Context, spec, stored *orkst
 			return rerr
 		}
 	}
+	if spec.GetIdentity() != nil {
+		if err := s.checkPlannedPolicy(spec); err != nil {
+			if rerr := refuse("settings.identity", err); rerr != nil {
+				return rerr
+			}
+		}
+	}
 	if sink := spec.GetTelemetry().GetSink(); stored == nil || sink != stored.GetTelemetry().GetSink() {
 		if err := s.validNamespaceTelemetrySink(sink); err != nil {
 			if rerr := refuse("settings.telemetry", err); rerr != nil {

@@ -786,6 +786,14 @@ then the variable it becomes.
 | `identity.keys_copy_max_age` | `ORK_IDENTITY_KEYS_COPY_MAX_AGE` | `1h` | `ork` | from `5m` to `24h`: how old an engine's copy of the published keys, in memory or on disk, may be and still sign and verify; also how long after its retirement a rotated key's signatures are still taken. Set it equal on every engine, and raise it before planned work on the object store |
 | `identity.subject_format` | `ORK_IDENTITY_SUBJECT_FORMAT` | `ork` | `ork` | `ork` (`ork:namespace:…:task:…`) or `spiffe` (a SPIFFE ID in the trust domain, so a token is a JWT-SVID); `spiffe` needs a trust domain |
 | `identity.spiffe.trust_domain` | `ORK_IDENTITY_SPIFFE_TRUST_DOMAIN` | *(empty)* | `ork` | the deployment's own SPIFFE trust domain (lowercase letters, digits, `.`, `-`, `_`); set, every token carries both subject forms and the issuer serves a SPIFFE bundle |
+| `identity.attempts.extra` | `ORK_IDENTITY_ATTEMPTS_EXTRA` | `0` | `ork` | from `0` to `identity.attempts.max_extra`: how many attempts past a task's own retries may hold its identity, for a namespace whose identity policy sets none. Pinned in each run when it is submitted |
+| `identity.attempts.max_extra` | `ORK_IDENTITY_ATTEMPTS_MAX_EXTRA` | `4` | `ork` | from `0` to `16`: the most a namespace's identity policy may set as its `attempts_extra` |
+| `identity.attempts.max` | `ORK_IDENTITY_ATTEMPTS_MAX` | `32` | `ork` | from `1` to `256`: the most attempts of one task, or of one item of a fan-out, that may ever hold an identity; a task whose retries plus `extra` exceed it is refused (`IDENTITY_ATTEMPTS_OVER_LIMIT`) |
+| `identity.token.ttl` | `ORK_IDENTITY_TOKEN_TTL` | `1h` | `ork` | the life of a task's token when its identity names none; from `identity.token.min_ttl` to `identity.token.max_ttl` |
+| `identity.token.min_ttl` | `ORK_IDENTITY_TOKEN_MIN_TTL` | `10m` | `ork` | the shortest life a token is minted with: an identity that asks for less gets this |
+| `identity.token.max_ttl` | `ORK_IDENTITY_TOKEN_MAX_TTL` | `12h` | `ork` | at most `24h`: the longest life a token is minted with: an identity that asks for more gets this |
+| `identity.issuance.records` | `ORK_IDENTITY_ISSUANCE_RECORDS` | `required` | `ork` | `required`: a mint records what it issued before it answers, and a record it cannot write fails the mint (`IDENTITY_UNAVAILABLE`); `off`: nothing is recorded |
+| `identity.unscoped_orkers` | `ORK_IDENTITY_UNSCOPED_ORKERS` | `refuse` | `ork` | `refuse`: no new run that uses task identity is accepted while a live Orker of a pool it would run on reports an unscoped or unchecked storage credential (`IDENTITY_STORE_UNSCOPED`); `report`: such Orkers are only reported |
 
 The table above is the reference for what each key *means*; for the full,
 always-current set of every key at its exact built-in default, see the

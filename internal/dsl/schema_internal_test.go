@@ -218,7 +218,7 @@ func slots() map[string]slot {
 	plainTask := map[string]string{
 		"needs": "[b]", "condition": "'{{ true }}'", "timeout_seconds": "10", "retry": "{maximum_attempts: 2}",
 		"pool": "p", "command": "[x]", "env": "{A: b}", "secrets": "[{name: s, source: 'env:S'}]",
-		"resources": "{cpu: '1'}", "network": "none", "cancellation_grace_period_seconds": "5", "run_as_orker_user": "true",
+		"resources": "{cpu: '1'}", "network": "none", "cancellation_grace_period_seconds": "5", "run_as_orker_user": "true", "identities": "[{name: i, audience: a}]",
 		"cache": "{enabled: true}", "with": "{}", "description_unused": "",
 	}
 	delete(plainTask, "description_unused")
@@ -247,6 +247,16 @@ func slots() map[string]slot {
 		other := map[string]string{"name": "source: 'env:S'", "source": "name: s"}[key]
 		out["tasks[].secrets[]."+key] = slot{doc: taskDoc("    secrets: [{" + other + ", " + key + ": @V@}]\n"), field: "tasks[0].secrets[0]." + key,
 			baseline: baseline, absent: taskDoc("    secrets: [{" + other + "}]\n")}
+	}
+	out["tasks[].identities[]"] = slot{doc: taskDoc("    identities: [@V@]\n"), field: "tasks[0].identities[0]", baseline: "{name: i, audience: a}"}
+	for key, baseline := range map[string]string{"name": "i", "audience": "a"} {
+		other := map[string]string{"name": "audience: a", "audience": "name: i"}[key]
+		out["tasks[].identities[]."+key] = slot{doc: taskDoc("    identities: [{" + other + ", " + key + ": @V@}]\n"), field: "tasks[0].identities[0]." + key,
+			baseline: baseline, absent: taskDoc("    identities: [{" + other + "}]\n")}
+	}
+	for key, baseline := range map[string]string{"ttl_seconds": "600", "refresh": "best_effort"} {
+		out["tasks[].identities[]."+key] = slot{doc: taskDoc("    identities: [{name: i, audience: a, " + key + ": @V@}]\n"), field: "tasks[0].identities[0]." + key,
+			baseline: baseline, absent: taskDoc("    identities: [{name: i, audience: a}]\n")}
 	}
 	out["tasks[].secrets[].mask"] = slot{doc: taskDoc("    secrets: [{name: s, source: 'env:S', mask: @V@}]\n"), field: "tasks[0].secrets[0].mask",
 		baseline: "false", absent: taskDoc("    secrets: [{name: s, source: 'env:S'}]\n")}
@@ -366,6 +376,7 @@ func refusedOn(err error, field string, line int) bool {
 // and D — and each class excuses at least one pair the compiler accepted, so
 // a class goes stale when the compiler tightens.
 func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
+	taskIdentityFor(t)
 	b, _ := buildOrkflowSchema()
 	tree := orkflowSchemaTree(t)
 	contexts := slots()
@@ -426,6 +437,7 @@ func TestOrkflowSchema_TypesAgreeWithTheCompiler(t *testing.T) {
 // absence fails Compile; a key not required compiles absent. uses is
 // required by the task kind (the else branch), not by an annotation.
 func TestOrkflowSchema_RequiredKeysAreRequiredByTheCompiler(t *testing.T) {
+	taskIdentityFor(t)
 	annotations := orkflowAnnotations()
 	tree := orkflowSchemaTree(t)
 	for path, ctx := range slots() {
@@ -567,4 +579,14 @@ func TestOrkflowSchema_DescriptionsAreDSLText(t *testing.T) {
 			t.Errorf("task key %s has no description", path)
 		}
 	}
+}
+
+// taskIdentityFor makes task identity available for t, so the schema's
+// identity keys are held to what the compiler would accept once it is; t
+// must not be parallel.
+func taskIdentityFor(t *testing.T) {
+	t.Helper()
+	was := taskIdentityAvailable
+	taskIdentityAvailable = true
+	t.Cleanup(func() { taskIdentityAvailable = was })
 }
