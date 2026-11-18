@@ -319,7 +319,7 @@ func (s *canStack) waitIdle(runID string, within time.Duration) error {
 	defer ticker.Stop()
 	var last error // set on every pass that does not return
 	for {
-		described, err := s.client.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(s.client, ctx, runID, "")
 		switch {
 		case err != nil:
 			last = err

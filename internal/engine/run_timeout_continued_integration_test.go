@@ -109,7 +109,7 @@ func recordTwoGenerations(t *testing.T, s *canStack, label, document string, pla
 	runID := fmt.Sprintf("ork-run-timeout-%s-%d", label, time.Now().UnixNano())
 	must.OKf(t, s.starter.StartRun(s.ctx, runID, compile(t, document), nil, plan), "StartRun")
 	runErr := s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil)
-	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+	described, err := describeExecution(s.client, s.ctx, runID, "")
 	must.OK(t, err)
 	chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) != 2 {

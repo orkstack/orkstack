@@ -154,7 +154,7 @@ type itemScheduleOutbound struct {
 
 func (o *itemScheduleOutbound) ExecuteActivity(ctx workflow.Context, activityType string, args ...interface{}) workflow.Future {
 	if len(args) > 0 {
-		if in, ok := args[0].(*orkstackv1.ExecuteTaskInput); ok && in.GetEach() != nil {
+		if in, ok := ActivityTaskInput(args[0]); ok && in.GetEach() != nil {
 			o.root.items = append(o.root.items, strconv.Itoa(int(in.GetEach().GetIndex())))
 		}
 	}

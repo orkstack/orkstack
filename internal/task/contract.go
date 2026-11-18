@@ -34,6 +34,7 @@ import (
 	"strconv"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 
@@ -299,13 +300,19 @@ func CheckInputSize(in *orkstackv1.ExecuteTaskInput, planLimit ...int64) error {
 		return fmt.Errorf("%s: task %q: encode the activity input: %w",
 			ReasonInputTooLarge, in.GetTaskId(), err)
 	}
+	return CheckSize(in.GetTaskId(), size, limit)
+}
+
+// CheckSize is CheckInputSize's comparison for a size already measured with
+// PayloadSize or PayloadDataSize, against limit.
+func CheckSize(taskID string, size, limit int64) error {
 	if size > limit {
 		return fmt.Errorf(
 			"%s: task %q: the activity input serializes to %d bytes as the protojson payload "+
 				"Temporal records, over the %d-byte limit. "+
 				"Bytes never travel through Temporal — move large `with:` values into an artifact "+
 				"and reference it",
-			ReasonInputTooLarge, in.GetTaskId(), size, limit)
+			ReasonInputTooLarge, taskID, size, limit)
 	}
 	return nil
 }
@@ -320,14 +327,21 @@ func PayloadSize(m proto.Message) (int64, error) {
 	if err != nil {
 		return 0, err
 	}
+	return PayloadDataSize(payload), nil
+}
+
+// PayloadDataSize is PayloadSize's measure of a payload already encoded by
+// the default data converter, so a caller that encodes a message once can
+// size it and send those same bytes. Pure.
+func PayloadDataSize(payload *commonpb.Payload) int64 {
 	raw := payload.GetData()
 	var compact bytes.Buffer
 	if err := stablejson.Compact(&compact, raw); err != nil {
 		// Not JSON after all: the converter picked something else. Its own
 		// length is then the honest measure.
-		return int64(len(raw)), nil //nolint:nilerr // the raw length is the answer
+		return int64(len(raw))
 	}
-	return int64(compact.Len() + whitespaceSites(compact.Bytes())), nil
+	return int64(compact.Len() + whitespaceSites(compact.Bytes()))
 }
 
 // whitespaceSites counts the structural positions protojson may follow with an

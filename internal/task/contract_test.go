@@ -122,3 +122,22 @@ func mustMarshal(t *testing.T, in *orkstackv1.ExecuteTaskInput) []byte {
 	must.OK(t, err)
 	return raw
 }
+
+// PayloadDataSize measures an already-encoded payload exactly as
+// PayloadSize measures the message: the engine encodes a fan-out item's
+// input once and sizes those bytes, so the two must agree.
+func TestPayloadDataSize_AgreesWithPayloadSize(t *testing.T) {
+	in := inputWithBlob(t, "é<", 300)
+	in.IdempotencyKey = "default/ork-abc/convert/3"
+	want, err := PayloadSize(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := converter.GetDefaultDataConverter().ToPayload(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := PayloadDataSize(payload); got != want {
+		t.Fatalf("PayloadDataSize = %d, PayloadSize = %d", got, want)
+	}
+}

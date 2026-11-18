@@ -313,7 +313,7 @@ func TestIntegration_RootSurvivesContinuing(t *testing.T) {
 
 	// Every generation's history, and proof that both runs did carry on.
 	for _, id := range []string{topID, midID} {
-		described, err := s.client.DescribeWorkflowExecution(ctx, id, "")
+		described, err := describeExecution(s.client, ctx, id, "")
 		must.OK(t, err)
 		chain := s.chainOf(id, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 		if len(chain) < 2 {

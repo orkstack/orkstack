@@ -405,14 +405,16 @@ func TestReadyLoop_JoinChainClosureCost(t *testing.T) {
 		defer func() { readyLoopProbeForTest = nil }()
 
 		h := newRefusalHarnessOver(t, newMemSnapshotStore())
-		h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+		budget := newDeadlockBudget(t)
+		h.env.SetWorkerOptions(budget.options(worker.Options{}))
 		h.env.SetTestTimeout(10 * time.Minute)
 		plan := refusalRoutedPlan(t)
 		plan.History, plan.Continuation = nil, nil
 		h.env.ExecuteWorkflow(RunWorkflowType, refusalWorkflowID, wf, (*orkstackv1.Payload)(nil), plan, (*orkstackv1.RunContinuation)(nil))
 		if !h.env.IsWorkflowCompleted() || h.env.GetWorkflowError() != nil {
-			t.Fatalf("the join chain did not complete under the 1 s deadlock detector: %v", h.env.GetWorkflowError())
+			t.Fatalf("the join chain did not complete: %v", h.env.GetWorkflowError())
 		}
+		budget.check(t)
 		if probe.conditions.Load() != int64(n) {
 			t.Fatalf("%d conditions evaluated, want every task's once (%d)", probe.conditions.Load(), n)
 		}

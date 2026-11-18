@@ -239,8 +239,9 @@ the fixed version: bump the module to exactly that version, then run
 `make vuln-js` and `make vuln-images` are the scan's other two lanes, and need
 the network too, so the nightly workflow runs them and no proof does.
 `make vuln-js` runs `bun audit` over `ui/` and `site/`, development
-dependencies included, and fails on a high or critical advisory;
-`bun audit fix --dry-run` names the fixed versions. `make vuln-images` builds
+dependencies included, and fails on a high or critical advisory that
+`deploy/bun-audit.yaml` does not waive; `bun audit fix --dry-run` names the
+fixed versions. `make vuln-images` builds
 the images a release publishes, for linux/amd64, and scans each with the
 pinned Grype (`deploy/grype-image.txt`, policy `deploy/grype.yaml`): a fixed
 vulnerability of high or critical severity in an OS package or a bundled

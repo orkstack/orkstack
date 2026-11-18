@@ -23,7 +23,7 @@
 # empty and the build stops with "no pinned gomplate checksum for architecture
 # 'unset'". An architecture without a pinned checksum fails the same way,
 # explicitly.
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a AS gomplate
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf AS gomplate
 ARG TARGETARCH
 ARG GOMPLATE_VERSION=5.3.1
 # Where the release asset is fetched; an air-gapped builder points it at a mirror.
@@ -42,7 +42,7 @@ RUN set -eu; \
     echo "${sum}  /tmp/gomplate" | sha256sum -c -; \
     mkdir -p /out; install -m 0555 /tmp/gomplate /out/gomplate
 
-FROM alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a
+FROM alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
 # jq builds the root context and checks JSON datasources before the render;
 # tzdata is what makes a task's own TZ (say Europe/Berlin) mean that zone —

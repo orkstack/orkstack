@@ -767,7 +767,7 @@ func (s *chaosStack) start(runID string, wf *orkstackv1.Orkflow, input *orkstack
 // current is the run's current execution and its status.
 func (s *chaosStack) current(runID string) (string, enums.WorkflowExecutionStatus) {
 	s.t.Helper()
-	described, err := s.control.DescribeWorkflowExecution(s.ctx, runID, "")
+	described, err := describeExecution(s.control, s.ctx, runID, "")
 	must.OKf(s.t, err, "describe %s", runID)
 	info := described.GetWorkflowExecutionInfo()
 	return info.GetExecution().GetRunId(), info.GetStatus()

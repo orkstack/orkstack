@@ -27,3 +27,6 @@ func threadCPU() (time.Duration, bool) {
 	}
 	return time.Duration(ts.Nano()), true
 }
+
+// threadID is the calling OS thread's id.
+func threadID() int { return syscall.Gettid() }

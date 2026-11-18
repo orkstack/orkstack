@@ -111,7 +111,7 @@ orkctl release status                              # current, ramping and candid
 
 `--check` exits 0 or 1, naming the first error. An unknown key is refused at boot, naming its full path, and an environment variable overrides the file ([DEPLOY.md](./DEPLOY.md), "1. Configuration").
 
-Every Orker runs its boot probe's image before it takes a task, and refuses to start, `BIND_PROBE_IMAGE_UNAVAILABLE`, when it is not local and cannot be pulled ([REASONS.md](./REASONS.md)). A release that moves that image says so in its CHANGELOG section, marked **BREAKING**. On an air-gapped or rate-limited host, mirror or load the new image before the release's Orkers start: from 0.2.0, which moved the boot probe to Alpine 3.24, it is `docker.io/library/alpine:3.24@sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a`.
+Every Orker runs its boot probe's image before it takes a task, and refuses to start, `BIND_PROBE_IMAGE_UNAVAILABLE`, when it is not local and cannot be pulled ([REASONS.md](./REASONS.md)). A release that moves that image says so in its CHANGELOG section, marked **BREAKING**. On an air-gapped or rate-limited host, mirror or load the new image before the release's Orkers start: from 0.2.0, which moved the boot probe to Alpine 3.24, it is `docker.io/library/alpine:3.24@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf`.
 
 ### Rolling forward
 

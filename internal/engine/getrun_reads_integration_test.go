@@ -159,7 +159,7 @@ type executionHistory struct {
 // and its history's length.
 func (e *eachSoak) historyOf(t *testing.T, ctx context.Context, runID, execution string) executionHistory {
 	t.Helper()
-	described, err := e.control.DescribeWorkflowExecution(ctx, runID, execution)
+	described, err := describeExecution(e.control, ctx, runID, execution)
 	must.OKf(t, err, "describe run %s execution %q", runID, execution)
 	info := described.GetWorkflowExecutionInfo()
 	return executionHistory{execution: info.GetExecution().GetRunId(), events: info.GetHistoryLength(), bytes: info.GetHistorySizeBytes()}

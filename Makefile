@@ -120,8 +120,12 @@ tidy: ## go mod tidy
 
 ## ---- test ----
 .PHONY: test
+# Each package's test binary gets the proof's unit timeout, a hang guard, not
+# a budget: go test's default ten minutes judged a slow host rather than the
+# tests (test/tools/proofrun/run.go, unitTimeout, says why).
+UNIT_TIMEOUT ?= 15m
 test: ## Run unit tests
-	go test ./... -count=1
+	go test ./... -count=1 -timeout $(UNIT_TIMEOUT)
 
 # The race gate's run, without its ledger (docs/PROOFS.md §2.3): the unit suites
 # under the race detector with -short, which skips the scale tests the unit
@@ -245,12 +249,16 @@ vuln: ## Scan for reachable known vulnerabilities with the pinned govulncheck (n
 # development dependencies included, because svelte and SvelteKit compile into
 # the UI's bundle.
 .PHONY: vuln-js
-vuln-js: ## Audit the UI's and the site's JavaScript dependencies with bun audit, failing on a high or critical advisory (needs the network; in no lint or proof gate)
+# vuln-js lists every advisory, then fails on a high or critical one that
+# deploy/bun-audit.yaml does not waive: each of its `- vulnerability:` ids is
+# passed to bun audit --ignore.
+VULN_JS_IGNORE = $(foreach id,$(shell sed -n 's/^  - vulnerability: *\(GHSA-[0-9a-z-]*\) *$$/\1/p' deploy/bun-audit.yaml),--ignore=$(id))
+vuln-js: ## Audit the UI's and the site's JavaScript dependencies with bun audit, failing on a high or critical advisory deploy/bun-audit.yaml does not waive (needs the network; in no lint or proof gate)
 	@failed=; for d in ui site; do \
 	  echo "bun audit ($$d): every advisory"; \
 	  (cd $$d && bun audit) || true; \
-	  echo "bun audit ($$d): high or critical, which fail the audit"; \
-	  (cd $$d && bun audit --audit-level=high) || failed="$$failed $$d"; \
+	  echo "bun audit ($$d): high or critical, which fail the audit, less the waivers of deploy/bun-audit.yaml:$(if $(VULN_JS_IGNORE), $(VULN_JS_IGNORE), none)"; \
+	  (cd $$d && bun audit --audit-level=high $(VULN_JS_IGNORE)) || failed="$$failed $$d"; \
 	done; \
 	if [ -n "$$failed" ]; then echo "make vuln-js: a high or critical advisory, or an audit that could not run, in:$$failed (bun audit fix --dry-run names the fixed versions)" >&2; exit 1; fi
 

@@ -732,7 +732,7 @@ func soakTaskRun(t *testing.T, ctx context.Context, e *eachSoak, metrics *latenc
 	completions := map[string]int{}
 	dispatchedBefore := 0
 	for i, h := range histories {
-		info, err := e.control.DescribeWorkflowExecution(ctx, runID, chain[i])
+		info, err := describeExecution(e.control, ctx, runID, chain[i])
 		must.OK(t, err)
 		g := taskSoakGeneration{Execution: chain[i], Events: len(h.GetEvents()),
 			Bytes: info.GetWorkflowExecutionInfo().GetHistorySizeBytes()}

@@ -404,7 +404,15 @@ func (c *countingTemporalClient) ListWorkflow(ctx context.Context, request *work
 	return c.Client.ListWorkflow(ctx, request)
 }
 
+// DescribeWorkflowExecution is still what the engine's readers call, through
+// interfaces of their own, so it is counted as well as DescribeWorkflow.
 func (c *countingTemporalClient) DescribeWorkflowExecution(ctx context.Context, workflowID, runID string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
 	c.n.Add(1)
+	//lint:ignore SA1019 the readers' own interfaces still name this method; counting it is the point of this wrapper
 	return c.Client.DescribeWorkflowExecution(ctx, workflowID, runID)
+}
+
+func (c *countingTemporalClient) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*client.WorkflowExecutionDescription, error) {
+	c.n.Add(1)
+	return c.Client.DescribeWorkflow(ctx, workflowID, runID)
 }

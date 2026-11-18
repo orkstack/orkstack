@@ -47,7 +47,7 @@ func (c *countingReadClient) DescribeWorkflowExecution(
 	c.mu.Lock()
 	c.describes++
 	c.mu.Unlock()
-	return c.Client.DescribeWorkflowExecution(ctx, workflowID, runID)
+	return describeExecution(c.Client, ctx, workflowID, runID)
 }
 
 func (c *countingReadClient) GetWorkflowHistory(

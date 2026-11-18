@@ -240,7 +240,7 @@ func TestIntegration_RecordInterruptionRetryHistories(t *testing.T) {
 		must.OKf(t, s.starter.StartRun(s.ctx, runID, compile(t, interruptionItemsDocument),
 			payload(t, map[string]any{"parts": []any{"x", "y"}}), plan), "StartRun")
 		must.OKf(t, s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil), "the item run failed")
-		described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+		described, err := describeExecution(s.client, s.ctx, runID, "")
 		must.OK(t, err)
 		chain := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 		if len(chain) != 2 {

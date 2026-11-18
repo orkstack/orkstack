@@ -585,8 +585,11 @@ func flatDocument(n int) string {
 // quick O(1) bound crosses and the exact count does not, so every guard check
 // of the pass takes the per-pass path. One pass's guard checks — one per
 // ready task, as the ready loop makes them — stay within 20 ms of CPU time
-// (scaled under the race detector, gatedSizeBound), under the production 1 s
-// deadlock detector.
+// (scaled under the race detector, gatedSizeBound), and the pass keeps
+// its workflow code within the deadlock detector's budget,
+// held on thread CPU time at half the 1 s detector (deadlockCPUBound: the
+// detector is a wall clock that a loaded host moves, and half leaves room for
+// a loaded host's slower cores).
 func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 	wf := guardCompile(t, flatDocument(4000))
 	for _, state := range []struct {
@@ -608,8 +611,9 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 			var checks int
 			var guardErr error
 			var suite testsuite.WorkflowTestSuite
-			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
-			env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+			env := suite.NewTestWorkflowEnvironment()
+			budget := newDeadlockBudget(t)
+			env.SetWorkerOptions(budget.options(worker.Options{}))
 			env.SetCurrentHistoryLength(state.length)
 			env.ExecuteWorkflow(func(ctx workflow.Context) error {
 				s := newRunState(ctx, "ork-flat", wf, nil, guardPlan(t, DefaultHistoryMaxEvents, DefaultHistoryMaxBytes))
@@ -647,8 +651,9 @@ func TestHistoryGuard_FitsTheDeadlockBudget(t *testing.T) {
 				return nil
 			})
 			if !env.IsWorkflowCompleted() || env.GetWorkflowError() != nil {
-				t.Fatalf("the pass did not complete under the 1 s deadlock detector: %v", env.GetWorkflowError())
+				t.Fatalf("the pass did not complete: %v", env.GetWorkflowError())
 			}
+			budget.check(t)
 			if guardErr != nil {
 				t.Fatalf("the guard tripped below its line: %v", guardErr)
 			}

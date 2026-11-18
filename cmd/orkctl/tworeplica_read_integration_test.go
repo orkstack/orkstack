@@ -377,7 +377,7 @@ func executionStatus(
 	runID string,
 ) enumspb.WorkflowExecutionStatus {
 	t.Helper()
-	described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(c, ctx, runID, "")
 	must.OKf(t, err, "DescribeWorkflowExecution(%s)", runID)
 	return described.GetWorkflowExecutionInfo().GetStatus()
 }

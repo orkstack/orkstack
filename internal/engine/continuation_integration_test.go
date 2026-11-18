@@ -212,7 +212,7 @@ func (s *canStack) waitForSwitch(runID string, n int, within time.Duration) []st
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+		described, err := describeExecution(s.client, s.ctx, runID, "")
 		if err == nil {
 			if executions := s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId()); len(executions) > n {
 				return executions
@@ -415,7 +415,7 @@ func recordContinued(t *testing.T, s *canStack, maxEvents, events int64) (runID 
 	if err := s.client.GetWorkflow(s.ctx, runID, "").Get(s.ctx, nil); err != nil {
 		return runID, nil, nil, nil, fmt.Errorf("the run failed: %w", err)
 	}
-	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+	described, err := describeExecution(s.client, s.ctx, runID, "")
 	must.OK(t, err)
 	chain = s.chainOf(runID, described.GetWorkflowExecutionInfo().GetExecution().GetRunId())
 	if len(chain) != 2 {
@@ -449,7 +449,7 @@ func (s *canStack) waitForSwitchOrEnd(runID string, within time.Duration) []stri
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	for {
-		described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+		described, err := describeExecution(s.client, s.ctx, runID, "")
 		if err == nil {
 			info := described.GetWorkflowExecutionInfo()
 			chain := s.chainOf(runID, info.GetExecution().GetRunId())

@@ -80,8 +80,12 @@ func zeroName(m proto.Message) (name protoreflect.FullName, ok bool) {
 }
 
 // dataConverter is the SDK's default converter in the SDK's own order, with
-// its ProtoJSON converter replaced by answerProtoJSON.
-var dataConverter = converter.MakeTransferAware(converter.NewCompositeDataConverter(
+// its ProtoJSON converter replaced by answerProtoJSON. The SDK makes it
+// transfer-aware itself wherever it encodes or decodes with it (the client,
+// the worker and workflow code, since go.temporal.io/sdk v1.51.0, which made
+// that wrapper internal); the engine decodes no transfer-typed value of its
+// own.
+var dataConverter = converter.NewCompositeDataConverter(
 	converter.NewNilPayloadConverter(),
 	converter.NewByteSlicePayloadConverter(),
 	answerProtoJSON{
@@ -92,7 +96,7 @@ var dataConverter = converter.MakeTransferAware(converter.NewCompositeDataConver
 	},
 	converter.NewProtoPayloadConverter(),
 	converter.NewJSONPayloadConverter(),
-))
+)
 
 // DataConverter is the converter cmd/ork dials with, and the run reader and
 // the scheduler decode with. An Orker that leads its engines in a rollout

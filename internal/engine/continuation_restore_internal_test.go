@@ -102,11 +102,13 @@ func carryOver(t *testing.T, store *memSnapshotStore, run *orkstackv1.Run, names
 func restoreOutcome(t *testing.T, store *memSnapshotStore, plan RunPlan, carry *orkstackv1.RunContinuation) (*refusalHarness, error) {
 	t.Helper()
 	h := newRefusalHarnessOver(t, store)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+	budget := newDeadlockBudget(t)
+	h.env.SetWorkerOptions(budget.options(worker.Options{}))
 	h.env.ExecuteWorkflow(RunWorkflowType, "", restoredOrkflow(t), (*orkstackv1.Payload)(nil), plan, carry)
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the generation did not end")
 	}
+	budget.check(t)
 	return h, h.env.GetWorkflowError()
 }
 

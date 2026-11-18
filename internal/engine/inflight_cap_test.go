@@ -91,13 +91,15 @@ tasks:
 func runCapped(t *testing.T, runID, doc string, input *orkstackv1.Payload, plan engine.RunPlan) (*harness, *runningPeak) {
 	t.Helper()
 	h := newHarnessCtx(t, nil, itemBehavior)
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+	budget := engine.NewDeadlockBudgetForTest(t)
+	h.env.SetWorkerOptions(budget.Options(worker.Options{}))
 	peak := &runningPeak{}
 	h.onSnapshot = peak.observe
 	h.env.ExecuteWorkflow(engine.RunWorkflow, runID, compile(t, doc), input, plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		t.Fatal("the run did not end")
 	}
+	budget.Check(t)
 	must.OKf(t, h.env.GetWorkflowError(), "the run failed")
 	if run := mustFinalRun(t, h.store, runID); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("status = %v", run.GetStatus())
@@ -224,11 +226,18 @@ func enablePins(h *harness, options worker.Options) {
 	}, activity.RegisterOptions{Name: task.ActivityReleasePin})
 }
 
+// spinPassLimit is the most main-loop passes a "never spins" test's run may
+// make: each makes at most 21 here, waiting for its work between them, and a
+// loop that spins reaches the limit at once (engine.PassGuardForTest).
+const spinPassLimit = 1000
+
 // TestInFlightCap_NeverSpins proves the cap never holds with nothing in
-// flight and never deadlocks a pin, under the production 1 s deadlock
-// detector, with plans built by hand below the boot minimum.
+// flight and never deadlocks a pin, with plans built by hand below the boot
+// minimum: its main loop makes a bounded number of passes, and its workflow
+// code stays within the deadlock detector's budget on thread CPU time.
 func TestInFlightCap_NeverSpins(t *testing.T) {
 	t.Run("a cap of 1 over a flat stage", func(t *testing.T) {
+		engine.PassGuardForTest(t, spinPassLimit)
 		h, _ := runCapped(t, "ork-spin-a", flatDocument(3), payload(t, nil), cappedPlan(1, 1900))
 		if len(h.invocations()) != 3 {
 			t.Fatalf("%d tasks ran, want 3", len(h.invocations()))
@@ -241,10 +250,13 @@ func TestInFlightCap_NeverSpins(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
 			h := newHarnessCtx(t, &suite, itemBehavior)
-			enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+			engine.PassGuardForTest(t, spinPassLimit)
+			budget := engine.NewDeadlockBudgetForTest(t)
+			enablePins(h, budget.Options(worker.Options{}))
 			h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-spin-pin", compile(t, pinNeedsUnpinnedDocument), payload(t, nil),
 				cappedPlan(tc.cap, 1900), (*orkstackv1.RunContinuation)(nil))
 			must.OKf(t, h.env.GetWorkflowError(), "the run failed")
+			budget.Check(t)
 			if got := strings.Join(sortedTaskOrder(h), ","); got != "compile,fetch,other1,other2,prep" {
 				t.Fatalf("tasks ran %q", got)
 			}
@@ -290,10 +302,13 @@ tasks:
 `
 		var suite testsuite.WorkflowTestSuite
 		h := newHarnessCtx(t, &suite, itemBehavior)
-		enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+		engine.PassGuardForTest(t, spinPassLimit)
+		budget := engine.NewDeadlockBudgetForTest(t)
+		enablePins(h, budget.Options(worker.Options{}))
 		h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-spin-pins", compile(t, doc), payload(t, nil),
 			cappedPlan(2, 1900), (*orkstackv1.RunContinuation)(nil))
 		must.OKf(t, h.env.GetWorkflowError(), "the run failed")
+		budget.Check(t)
 		if len(h.invocations()) != 5 {
 			t.Fatalf("%d tasks ran, want 5", len(h.invocations()))
 		}
@@ -398,7 +413,8 @@ func pinClosureUnderTheCap(t *testing.T, maxInFlight, hardStop int32) {
 		}
 		return itemBehavior(ctx, in)
 	})
-	enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+	budget := engine.NewDeadlockBudgetForTest(t)
+	enablePins(h, budget.Options(worker.Options{}))
 	peak := &runningPeak{}
 	h.onSnapshot = peak.observe
 	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-cap-pin", compile(t, pinnedOverCapDocument),
@@ -409,6 +425,7 @@ func pinClosureUnderTheCap(t *testing.T, maxInFlight, hardStop int32) {
 		t.Fatal("compile did not start while the fan-out's items held the cap: the pin's closure was not exempt")
 	}
 	must.OKf(t, h.env.GetWorkflowError(), "the run failed")
+	budget.Check(t)
 	if run := mustFinalRun(t, h.store, "ork-cap-pin"); run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("status = %v", run.GetStatus())
 	}

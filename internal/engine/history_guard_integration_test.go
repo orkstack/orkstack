@@ -151,7 +151,7 @@ type closedRun struct {
 
 func (s *guardStack) describeClosed(runID string) closedRun {
 	s.t.Helper()
-	described, err := s.client.DescribeWorkflowExecution(s.ctx, runID, "")
+	described, err := describeExecution(s.client, s.ctx, runID, "")
 	must.OKf(s.t, err, "describe %s", runID)
 	info := described.GetWorkflowExecutionInfo()
 	out := closedRun{

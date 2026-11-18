@@ -425,7 +425,7 @@ func awaitRunning(ctx context.Context, t *testing.T, c client.Client, runID stri
 	t.Helper()
 	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
-		described, err := c.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(c, ctx, runID, "")
 		if err == nil &&
 			described.GetWorkflowExecutionInfo().GetStatus() ==
 				enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {

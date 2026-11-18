@@ -86,13 +86,15 @@ func (c *rampClock) reachedCap(t *testing.T, tasks int, limit int32) time.Durati
 }
 
 // runRamp runs rampDocument(tasks) over items parts under plan, every
-// PublishEvent taking rampPublishLatency, and returns how long the run took
-// to first reach its cap and the most work it kept pending.
+// PublishEvent taking rampPublishLatency, its workflow code within the
+// deadlock detector's budget on thread CPU time, and returns how long the
+// run took to first reach its cap and the most work it kept pending.
 func runRamp(t *testing.T, runID string, tasks, items int, plan engine.RunPlan) (time.Duration, int) {
 	t.Helper()
 	var suite testsuite.WorkflowTestSuite
 	h := newHarnessCtx(t, &suite, itemBehavior)
-	h.env.SetWorkerOptions(testWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()}))
+	budget := engine.NewDeadlockBudgetForTest(t)
+	h.env.SetWorkerOptions(testWorkerOptions(budget.Options(worker.Options{})))
 	h.env.SetTestTimeout(5 * time.Minute)
 	h.env.OnActivity(engine.ActivityPublishEvent, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		After(rampPublishLatency).Return(nil)
@@ -110,6 +112,7 @@ func runRamp(t *testing.T, runID string, tasks, items int, plan engine.RunPlan) 
 	if err := h.env.GetWorkflowError(); err != nil {
 		t.Fatalf("the run failed: %v", err)
 	}
+	budget.Check(t)
 	if got := len(h.invocations()); got != tasks+items {
 		t.Fatalf("%d activities ran, want %d tasks and %d items", got, tasks, items)
 	}

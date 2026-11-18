@@ -133,8 +133,10 @@ func generationsOK(t *testing.T, g *generations, atLeast int) *orkstackv1.Run {
 	return run
 }
 
-func pinSetup(h *harness, _ int) {
-	enablePins(h, worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+// pinSetup enables pins in every generation, its workflow code held to
+// budget.
+func pinSetup(budget *engine.DeadlockBudgetForTest, h *harness) {
+	enablePins(h, budget.Options(worker.Options{}))
 }
 
 const pinOpenDocument = `
@@ -240,6 +242,7 @@ func (p *pinCloseProbe) closeFinished() bool {
 // closing. A run that switched there would record the switch's first write
 // while ReleasePin is still running and the session not yet completed.
 func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
+	budget := engine.NewDeadlockBudgetForTest(t)
 	probe := &pinCloseProbe{gate: make(chan struct{}), released: make(chan struct{})}
 	defer probe.open() // never leave a ReleasePin blocked past the test
 	behavior := func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
@@ -255,7 +258,7 @@ func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
 	}
 	g := runGenerations(t, "ork-pin-open", compile(t, pinCloseDocument), payload(t, nil), continuedPlan(1), behavior,
 		func(h *harness, _ int) {
-			h.env.SetWorkerOptions(worker.Options{EnableSessionWorker: true, DeadlockDetectionTimeout: productionDeadlock()})
+			h.env.SetWorkerOptions(budget.Options(worker.Options{EnableSessionWorker: true}))
 			h.env.RegisterActivityWithOptions(func(ctx context.Context, in *orkstackv1.ReleasePinInput) error {
 				h.mu.Lock()
 				h.released = append(h.released, in)
@@ -287,6 +290,7 @@ func TestContinuation_PinOpenAtTriggerClosesBeforeSwitch(t *testing.T) {
 			}
 		})
 	generationsOK(t, g, 2)
+	budget.Check(t)
 	if len(probe.atSwitch) == 0 {
 		t.Fatal("the run never switched")
 	}
@@ -349,14 +353,16 @@ tasks:
 // that starts while a pin is open lets the fan-out (its items included) that
 // a member needs run, so the pin closes and the run then switches.
 func TestContinuation_PinMemberDownstreamOfFanOutDoesNotDeadlock(t *testing.T) {
+	budget := engine.NewDeadlockBudgetForTest(t)
 	g := runGenerations(t, "ork-pin-fan", compile(t, pinFanOutDocument), spreadInput(t, 6), holdPlan(), itemBehavior,
 		func(h *harness, generation int) {
-			pinSetup(h, generation)
+			pinSetup(budget, h)
 			if generation == 0 {
 				raiseHistoryWhen(h, 650, taskStatusIs("prep", orkstackv1.Status_STATUS_SUCCEEDED))
 			}
 		})
 	generationsOK(t, g, 2)
+	budget.Check(t)
 	if got := len(itemsDispatched(g.harnesses[0])); got != 6 {
 		t.Fatalf("generation 0 dispatched %d items of the pin's closure, want all 6", got)
 	}
@@ -405,13 +411,14 @@ tasks:
 // it, so the quiesce is given up — the held work runs — and the run switches
 // at its next natural idle point, after the pin closes.
 func TestContinuation_PinBlockedOnAwaitGivesTheHoldUp(t *testing.T) {
+	budget := engine.NewDeadlockBudgetForTest(t)
 	var suite testsuite.WorkflowTestSuite
 	logs := &lineLogger{}
 	suite.SetLogger(logs)
 	resolved := false
 	g := runGenerationsIn(t, &suite, "ork-pin-await", compile(t, pinAwaitDocument), payload(t, nil), holdPlan(), okBehavior,
 		func(h *harness, generation int) {
-			pinSetup(h, generation)
+			pinSetup(budget, h)
 			if generation == 0 {
 				raiseHistoryWhen(h, 650, taskStatusIs("prep", orkstackv1.Status_STATUS_SUCCEEDED))
 			}
@@ -421,6 +428,7 @@ func TestContinuation_PinBlockedOnAwaitGivesTheHoldUp(t *testing.T) {
 			}
 		})
 	generationsOK(t, g, 2)
+	budget.Check(t)
 	// Given up, and — the run still past its budget — tried again after its
 	// retry spacing, and given up again, until the pin closes.
 	if logs.count(logGiveUp) < 1 {
@@ -469,17 +477,19 @@ tasks:
 // pass. The idle check re-scans rather than give the hold up; the member
 // dispatches, the pin closes, and the run switches at its natural idle point.
 func TestContinuation_GiveUpWaitsForSkipPropagation(t *testing.T) {
+	budget := engine.NewDeadlockBudgetForTest(t)
 	var suite testsuite.WorkflowTestSuite
 	logs := &lineLogger{}
 	suite.SetLogger(logs)
 	g := runGenerationsIn(t, &suite, "ork-skip", compile(t, skipPropagationDocument), payload(t, nil), holdPlan(), okBehavior,
 		func(h *harness, generation int) {
-			pinSetup(h, generation)
+			pinSetup(budget, h)
 			if generation == 0 {
 				raiseHistoryWhen(h, 650, taskStatusIs("prep", orkstackv1.Status_STATUS_SUCCEEDED))
 			}
 		})
 	generationsOK(t, g, 2)
+	budget.Check(t)
 	if logs.count(logGiveUp) != 0 {
 		t.Fatal("the hold was given up: the member was ready, one re-scan away")
 	}
@@ -653,7 +663,8 @@ tasks:
 		}
 		return okBehavior(ctx, in)
 	})
-	h.env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: productionDeadlock()})
+	budget := engine.NewDeadlockBudgetForTest(t)
+	h.env.SetWorkerOptions(budget.Options(worker.Options{}))
 	h.env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: "ork-hold-cancel"})
 	var once sync.Once
 	h.onSnapshot = func(run *orkstackv1.Run, _ int64) error {
@@ -677,6 +688,7 @@ tasks:
 	if h.continuationCount("events") != 0 {
 		t.Fatal("a canceled run switched")
 	}
+	budget.Check(t)
 }
 
 // TestContinuation_FailureDuringHoldTakesTheFailPath: a task that fails
@@ -708,16 +720,18 @@ func TestContinuation_FailureDuringHoldTakesTheFailPath(t *testing.T) {
 }
 
 // TestContinuation_HoldNeverSpins proves a held, idle run always makes
-// progress under the production 1 s deadlock detector: idle with an open
-// await (it switches); after every attempt of a held switch's write failed
+// progress, its main loop making a bounded number of passes and its workflow
+// code within the deadlock detector's budget on thread CPU time: idle with
+// an open await (it switches); after every attempt of a held switch's write failed
 // (it resumes dispatch, and retries only after growth); after a cancel (it
 // ends); with an opening pin and a closing pin (it waits on them).
 func TestContinuation_HoldNeverSpins(t *testing.T) {
-	deadlock := worker.Options{DeadlockDetectionTimeout: productionDeadlock()}
 	t.Run("idle with an open await", func(t *testing.T) {
+		engine.PassGuardForTest(t, spinPassLimit)
+		budget := engine.NewDeadlockBudgetForTest(t)
 		g := runGenerations(t, "ork-spin-await", compile(t, awaitAcrossDocument), payload(t, nil), holdPlan(), okBehavior,
 			func(h *harness, generation int) {
-				h.env.SetWorkerOptions(deadlock)
+				h.env.SetWorkerOptions(budget.Options(worker.Options{}))
 				if generation == 0 {
 					raiseHistoryWhen(h, 650, taskStatusIs("a", orkstackv1.Status_STATUS_SUCCEEDED))
 				} else {
@@ -725,18 +739,22 @@ func TestContinuation_HoldNeverSpins(t *testing.T) {
 				}
 			})
 		generationsOK(t, g, 2)
+		budget.Check(t)
 	})
 	t.Run("after a failed write while holding", holdNeverSpinsAfterFailedWrite)
 	t.Run("after cancel", holdNeverSpinsAfterCancel)
 	t.Run("with an opening and a closing pin", func(t *testing.T) {
+		engine.PassGuardForTest(t, spinPassLimit)
+		budget := engine.NewDeadlockBudgetForTest(t)
 		g := runGenerations(t, "ork-spin-pins", compile(t, pinOpenDocument), payload(t, nil), holdPlan(), okBehavior,
 			func(h *harness, generation int) {
-				enablePins(h, deadlock)
+				enablePins(h, budget.Options(worker.Options{}))
 				if generation == 0 {
 					raiseHistoryWhen(h, 650, taskStatusIs("prep", orkstackv1.Status_STATUS_RUNNING))
 				}
 			})
 		generationsOK(t, g, 2)
+		budget.Check(t)
 	})
 }
 

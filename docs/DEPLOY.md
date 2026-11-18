@@ -1945,10 +1945,10 @@ outage's holes must not be written into one.
 **What it cannot do.** The cluster fixes a run's deletion when the run closes,
 as its close plus the cluster's retention at that moment, and nothing a client
 does postpones it afterwards: raising the retention moves only runs that close
-later. (Read in the source of Temporal server 1.32.0, which the
-`temporalio/temporal:1.9.1` image this repository pins bundles:
-`GenerateDeleteHistoryEventTask` and `executeDeleteHistoryEventTask`. It has not
-been tested against a running cluster.) So a
+later. (Read in the source of Temporal server 1.32.0:
+`GenerateDeleteHistoryEventTask` and `executeDeleteHistoryEventTask`; the
+`temporalio/temporal:1.10.1` image this repository pins bundles 1.32.2, a patch
+release of it. It has not been tested against a running cluster.) So a
 finished run with no archive is **lost** if object storage is down at every pass
 from a cleanup interval after its close until that deletion: by default 95 hours
 of the 96 the maximum run retention and `ORK_CLEANUP_RETENTION_BUFFER` add up
@@ -3427,7 +3427,7 @@ shows the overlay.
 
 **What a pod holds.**
 
-- `engine` runs `docker:29.9.2-dind` by digest, the Docker release whose CLI the
+- `engine` runs `docker:29.9.3-dind` by digest, the Docker release whose CLI the
   `orker` image carries. It is a native sidecar, an init container with
   `restartPolicy: Always`. It starts, and answers `docker info`, before the
   Orker boots. It stops only after the Orker has exited, so deleting a pod

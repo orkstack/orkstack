@@ -81,7 +81,7 @@ type scheduleOutbound struct {
 
 func (o *scheduleOutbound) ExecuteActivity(ctx workflow.Context, activityType string, args ...interface{}) workflow.Future {
 	if activityType == task.ActivityExecuteTask && len(args) > 0 {
-		if in, ok := args[0].(*orkstackv1.ExecuteTaskInput); ok {
+		if in, ok := engine.ActivityTaskInput(args[0]); ok {
 			o.root.mu.Lock()
 			o.root.scheduled = append(o.root.scheduled, scheduleKey(in))
 			o.root.mu.Unlock()

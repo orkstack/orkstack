@@ -1174,7 +1174,7 @@ type countingClient struct {
 
 func (c *countingClient) DescribeWorkflowExecution(ctx context.Context, id, run string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
 	c.describes.Add(1)
-	return c.Client.DescribeWorkflowExecution(ctx, id, run)
+	return describeExecution(c.Client, ctx, id, run)
 }
 
 // livenessPoll is one 100 ms reading of the liveness questions a switching
@@ -1302,7 +1302,7 @@ func TestIntegration_ContinuationChaosC9_RolloutWhileAChainSwitches(t *testing.T
 		t.Fatalf("the run closed %v: %v", status, err)
 	}
 	chain, histories := s.histories(runID)
-	described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.control, ctx, runID, "")
 	must.OK(t, err)
 	ended := described.GetWorkflowExecutionInfo().GetCloseTime().AsTime()
 	s.transcript.step("the chain ended at %s after %d generations; polling on until v1 reports Drained", ended.Format(time.RFC3339Nano), len(chain))
@@ -1711,7 +1711,7 @@ func TestIntegration_ContinuationChaosC12_ARunIsNeverInvisibleWhileItSwitches(t 
 	if status != enums.WORKFLOW_EXECUTION_STATUS_COMPLETED || err != nil {
 		t.Fatalf("the run closed %v: %v", status, err)
 	}
-	described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.control, ctx, runID, "")
 	must.OK(t, err)
 	ended := described.GetWorkflowExecutionInfo().GetCloseTime().AsTime()
 	close(stopPolling)
@@ -2676,7 +2676,7 @@ func TestIntegration_ContinuationChaosC22_CurrentGenerationTerminated(t *testing
 	// ...and the run has nothing pending: every event of its last
 	// completion published.
 	for {
-		described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
+		described, err := describeExecution(s.control, ctx, runID, "")
 		if err == nil && len(described.GetPendingActivities()) == 0 {
 			break
 		}
@@ -3128,7 +3128,7 @@ func TestIntegration_ContinuationChaosC27_BytesDrivenGuard(t *testing.T) {
 	if !strings.Contains(run.GetError().GetMessage(), "MiB") {
 		t.Fatalf("RUN_HISTORY_LIMIT says %q: want it to name the history's MiB", run.GetError().GetMessage())
 	}
-	described, err := s.control.DescribeWorkflowExecution(ctx, runID, "")
+	described, err := describeExecution(s.control, ctx, runID, "")
 	must.OK(t, err)
 	size := described.GetWorkflowExecutionInfo().GetHistorySizeBytes()
 	if size >= maxBytes {
@@ -3414,7 +3414,7 @@ func (s *chaosStack) waitPending(t *testing.T, runID string, n int, within time.
 	t.Helper()
 	deadline := time.Now().Add(within)
 	for {
-		described, err := s.control.DescribeWorkflowExecution(s.ctx, runID, "")
+		described, err := describeExecution(s.control, s.ctx, runID, "")
 		if err == nil && len(described.GetPendingActivities()) == n {
 			return
 		}
