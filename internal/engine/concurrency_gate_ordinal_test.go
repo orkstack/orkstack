@@ -264,3 +264,23 @@ func entriesOf(g *gateState, run string) int {
 	}
 	return n
 }
+
+// A replacement on a full key with a check due is answered at once, its
+// entry in the line, while the pass it is due is still asked for: there is
+// no wait between taking the old entry and writing the new one for a timed
+// out Update to fall into, and its retry finds its own place.
+func TestGateOrdinal_ReplacementIsQueuedBeforeAnyPass(t *testing.T) {
+	g := newTestGate()
+	g.decideAcquire(acqN("h", 1, 0, gateT0), gateT0, false)
+	g.decideAcquire(acqN("a", 1, 0, gateT0), gateT0, false)
+	late := gateT0.Add(g.Tunables.VerifyMinAge + time.Second) // h is old enough to check
+	d := g.decideAcquire(acqN("a", 1, 1, late), late, false)
+	if d.Answer.Answer != gateAnswerQueued || !d.WantsPass || !d.Replaced {
+		t.Fatalf("the replacement = %+v; want queued at once, a pass asked for, and reported replaced", d)
+	}
+	g.decideAcquire(acqN("b", 1, 0, late.Add(time.Second)), late.Add(time.Second), true)
+	retry := g.decideAcquire(acqN("a", 1, 1, late.Add(2*time.Second)), late.Add(2*time.Second), true)
+	if retry.Answer.Answer != gateAnswerQueued || retry.Answer.Position != 1 {
+		t.Fatalf("the replacement's retry = %+v; want its own place, first, ahead of b", retry.Answer)
+	}
+}

@@ -528,8 +528,17 @@ func (g *gateState) decideAcquire(req gateAcquire, now time.Time, afterPass bool
 		admitted, replaced = g.admitHeads(now), true
 	}
 	// A replacement joins the tail as a new arrival, never at a re-asserted
-	// place: a paused run gives up its place in the line (§22.15).
-	d := g.decideArrival(req, now, afterPass, !replaced && !req.ArrivedAt.IsZero() && req.Seq > 0)
+	// place: a paused run gives up its place in the line (§22.15). It is
+	// decided at once, as after a pass, so its entry is in the line before
+	// the handler could wait on one: an Update that then timed out would
+	// otherwise have taken the old entry and left none, and the retry would
+	// arrive behind every run that came in meanwhile. Its retry carries the
+	// same n and finds its own entry. A pass a full key is due is still
+	// asked for (WantsPass), and runs on its own.
+	d := g.decideArrival(req, now, afterPass || replaced, !replaced && !req.ArrivedAt.IsZero() && req.Seq > 0)
+	if replaced && !afterPass && g.checkDue(now) {
+		d.WantsPass = true
+	}
 	d.Admitted, d.Replaced = append(admitted, d.Admitted...), replaced
 	return d
 }
