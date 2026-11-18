@@ -236,6 +236,7 @@ func (o *EngineObserver) recordRun(ctx context.Context, run *orkstackv1.Run, ins
 	attrs = append(attrs, inst.Cardinality.orkflowAttr(run.GetOrkflowName())...)
 	attrs = append(attrs, selectionMetricAttrs(inst, run)...)
 	inst.Runs.Add(ctx, 1, metric.WithAttributes(attrs...))
+	recordRunTimeout(ctx, run, inst)
 
 	started := run.GetStartedAt()
 	if started == nil {
@@ -465,4 +466,29 @@ func CacheOutcomeLabel(c *orkstackv1.CacheResult) string {
 		return "bypassed"
 	}
 	return ""
+}
+
+// The run-timeout counters (docs/DEPLOY.md §7, "Run and task metrics").
+const (
+	RunTimeoutsMetric        = "ork.run.timeouts"
+	RunTimeoutHardEndsMetric = "ork.run.timeout.hard_ends"
+)
+
+// recordRunTimeout counts a terminal run its own timeout ended, and one
+// whose failure handlers its hard end stopped, from the run's own
+// Run.timeout. Only the namespace labels them (and a run id with high
+// cardinality), as on every run metric; a run that declares no timeout
+// records nothing.
+func recordRunTimeout(ctx context.Context, run *orkstackv1.Run, inst *EngineInstruments) {
+	timeout := run.GetTimeout()
+	if timeout == nil || (!timeout.GetTimedOut() && !timeout.GetHardEndReached()) {
+		return
+	}
+	attrs := metric.WithAttributes(inst.Cardinality.RunAttrs(run, "")...)
+	if timeout.GetTimedOut() {
+		inst.RunTimeouts.Add(ctx, 1, attrs)
+	}
+	if timeout.GetHardEndReached() {
+		inst.RunTimeoutHardEnds.Add(ctx, 1, attrs)
+	}
 }

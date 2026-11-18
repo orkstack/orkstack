@@ -71,7 +71,7 @@ func TestPinFailureError_SeparatesALostHostFromAnExpiredLifetime(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := pinFailureError("build", tc.elapsed, tc.limit)
+			got := pinFailureError("build", tc.elapsed, tc.limit, false)
 			if got.GetCode() != tc.wantCode {
 				t.Errorf("code = %q, want %q", got.GetCode(), tc.wantCode)
 			}

@@ -230,6 +230,11 @@ type Config struct {
 	// Nil counts nothing; the refusal is returned to the caller either way.
 	Admissions engine.AdmissionObserver
 
+	// TriggerMetrics and ScheduleMetrics count HTTP trigger invocations,
+	// schedule fires and the schedule API's requests. Nil counts nothing.
+	TriggerMetrics  *telemetry.TriggerMetrics
+	ScheduleMetrics *telemetry.ScheduleMetrics
+
 	// UsageCacheTTL is how long one whole usage measurement is reused, by
 	// GetUsage and by the admission gate alike. Used verbatim: zero or
 	// negative switches the answer cache off. `ork` fills it from
@@ -577,6 +582,9 @@ type Service struct {
 	notifier   engine.RunNotifier
 	observer   engine.EventObserver
 	admissions engine.AdmissionObserver
+	// triggerMetrics and scheduleMetrics are Config's; nil counts nothing.
+	triggerMetrics  *telemetry.TriggerMetrics
+	scheduleMetrics *telemetry.ScheduleMetrics
 	// usage measures a namespace's reserved consumption for GetUsage and for
 	// an enforced budget's admission check — one measurement both share
 	// (usage.go). It is a measuring component, not a map of answers: its
@@ -705,6 +713,8 @@ func NewService(cfg Config) *Service {
 		notifier:               cfg.Notifier,
 		observer:               cfg.Observer,
 		admissions:             cfg.Admissions,
+		triggerMetrics:         cfg.TriggerMetrics,
+		scheduleMetrics:        cfg.ScheduleMetrics,
 		artifacts:              cfg.Artifacts,
 		limits:                 cfg.Limits,
 		eachMaxItems:           eachMaxItemsOf(cfg.EachMaxItems),

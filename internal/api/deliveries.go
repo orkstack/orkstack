@@ -88,15 +88,17 @@ func (r *DeliveryRecorder) Record(result webhooks.Result) {
 // error, so a caller that can retry — the engine's settle activity, through
 // webhooks.NotifierOptions.Record — retries a record that could not be
 // written. A record already there is a retried write's success: records are
-// create-only, and the one there is this delivery's.
+// create-only, and the one there is this delivery's, so it is returned as
+// webhooks.ErrRecordExists, which the notifier counts as written before.
 func (r *DeliveryRecorder) RecordContext(ctx context.Context, result webhooks.Result) error {
 	if r == nil || r.store == nil {
 		return nil
 	}
-	if err := r.record(ctx, deliveryRecordFromResult(result)); err != nil && !errors.Is(err, artifacts.ErrDeliveryExists) {
-		return err
+	err := r.record(ctx, deliveryRecordFromResult(result))
+	if errors.Is(err, artifacts.ErrDeliveryExists) {
+		return fmt.Errorf("%w: %w", webhooks.ErrRecordExists, err)
 	}
-	return nil
+	return err
 }
 
 // record writes one record synchronously and returns the store's error. It

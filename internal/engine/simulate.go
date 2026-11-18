@@ -338,7 +338,10 @@ func Simulate(
 		return nil, fmt.Errorf("orkflow %s has tasks that can never become ready", OrkflowRefText(wf))
 	}
 
-	resp := &orkstackv1.PlanRunResponse{Input: proto.Clone(effective).(*orkstackv1.Payload)}
+	resp := &orkstackv1.PlanRunResponse{
+		Input:          proto.Clone(effective).(*orkstackv1.Payload),
+		TimeoutSeconds: wf.GetTimeoutSeconds(),
+	}
 	for _, id := range order {
 		planned := result[id]
 		resp.Tasks = append(resp.Tasks, planned)

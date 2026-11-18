@@ -6,12 +6,29 @@
 	import Mark from '#lib/components/Mark.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { authClient } from '#lib/clients/auth.ts';
+	import { MANUAL_COPY_MESSAGE, copyText, selectByTestid } from '#lib/clipboard.ts';
 	import { endSessionTarget } from '#lib/signin.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 	let leaving = $state(false);
 	let leaveError = $state('');
+	let copied = $state('');
+
+	// What an administrator needs to bind this person: the three facts, as
+	// lines they can paste into a message.
+	// Each value on its own line, whatever the identity provider put in it.
+	const one = (v: string) => v.replace(/\s+/g, ' ').trim();
+	const details = $derived(
+		data.me ? [`Principal: ${one(data.me.principalId)}`, `Signed in with: ${one(data.me.issuer)}`, `Groups: ${data.me.groups.map(one).join(', ') || 'none'}`].join('\n') : ''
+	);
+	async function copyDetails() {
+		if ((await copyText(details)) === 'copied') copied = 'Copied.';
+		else {
+			selectByTestid('no-access-who');
+			copied = MANUAL_COPY_MESSAGE;
+		}
+	}
 
 	async function signOut() {
 		leaving = true;
@@ -66,9 +83,13 @@
 		{/if}
 
 		<div class="flex flex-wrap items-center gap-3">
+			{#if data.me}
+				<button class="btn" type="button" onclick={copyDetails} data-testid="no-access-copy">Copy these details</button>
+			{/if}
 			<button class="btn" type="button" onclick={signOut} disabled={leaving} data-testid="no-access-signout">
-				{leaving ? 'Signing out…' : 'Sign out'}
+				{leaving ? 'Signing out…' : 'Sign out, to use another account'}
 			</button>
+			<span class="text-sm text-ink-2" role="status" data-testid="no-access-copied">{copied}</span>
 			{#if leaveError}<p class="text-fail" role="alert">{leaveError}</p>{/if}
 		</div>
 	</div>

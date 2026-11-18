@@ -103,6 +103,12 @@ message RunContinuation {
 
   // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
   RunConcurrencyCarry concurrency = 16;
+
+  // deferred_pause_requests are the pause requests the run received but
+  // could not record within its history limit, in the order they arrived;
+  // the next generation applies them before any other. At most the plan's
+  // max_deferred_requests.
+  repeated RunPauseSignal deferred_pause_requests = 17;
 }
 
 // RunCheckpointPart is one gzip member of a checkpoint. Concatenated

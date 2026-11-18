@@ -94,6 +94,27 @@ This profile is for one machine. A production Collector needs bearer or mTLS
 auth on its receiver and a network that activity containers cannot reach, and
 Grafana needs real sign-in.
 
+## Dashboards
+
+Grafana provisions two dashboards, read-only, in its OrkStack folder:
+
+- **OrkStack** (`/d/orkstack`): a top row that always loads (runs per
+  minute, failure ratio, open runs, pollers and Orkers, tasks waiting, the
+  oldest waiting task, Temporal and object storage, telemetry age), then
+  collapsed rows, each named by the question it answers: runs and tasks,
+  Orkers and pools, the cache, the engine with Temporal and object storage,
+  and the artifact GC. Its variables are the namespace, the Orkflow and the
+  pool; the Orkflow variable lists names only while `telemetry.orkflow_label`
+  is on (the default).
+- **OrkStack / Run** (`/d/orkstack-run?var-run=<run-id>`): one run's spans,
+  the engine's events, its attempts' usage and its tasks' logs, with a link
+  to the run's page in the OrkStack UI.
+
+They are generated from `internal/dashboards` with Grafana's own builder;
+change them there and run `go run ./internal/dashboards/cmd/gendashboards`,
+never by hand or from the UI. `$namespace` filters the view and isolates
+nothing: one tenant's data apart from another's needs a sink of its own.
+
 ## Example queries
 
 Loki, one Orker's task-log lines for one run (LogQL):
@@ -113,12 +134,11 @@ histogram_quantile(0.95, sum(rate(temporal_activity_execution_latency_bucket[5m]
 Every process log line carries `trace_id` when a span is live on its context,
 including the engine's structured "run event" line. In Grafana, read the
 `trace_id` of a Loki line (the query above, or search by `run_id`), then paste
-it into the Tempo data source's "Search by trace ID". The trace shows the
+it into the Tempo data source's "Search by trace ID", or open the line and
+follow its Trace link. The trace shows the
 run's own span with every `ork.task.attempt` and `ork.task.phase` span it
-started, across however many Orkers ran its tasks. (The provisioned Loki data
-source, `grafana/datasources.yaml`, has no derived field for a one-click
-log→trace link; a `jsonData.derivedFields` entry pointed at Tempo would add
-one.)
+started, across however many Orkers ran its tasks. From a span, its logs and
+its namespace's metrics are one link away (`grafana/datasources.yaml`).
 
 ## Named sinks
 

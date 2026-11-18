@@ -13,6 +13,7 @@ import (
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
+	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/schedules"
 )
@@ -121,6 +122,7 @@ func (s *Service) CreateSchedule(
 		return nil, scheduleConnectError(ctx, err, ns, msg.GetName())
 	}
 	s.trimScheduleBindings(ctx, ns, view, entry)
+	s.scheduleMetrics.Request(ctx, ns, telemetry.ScheduleActionCreate)
 	return connect.NewResponse(&orkstackv1.CreateScheduleResponse{Schedule: s.scheduleProtoWith(ctx, view)}), nil
 }
 
@@ -295,6 +297,7 @@ func (s *Service) UpdateSchedule(
 	} else {
 		s.trimScheduleBindings(ctx, ns, view, entry)
 	}
+	s.scheduleMetrics.Request(ctx, ns, telemetry.ScheduleActionUpdate)
 	return connect.NewResponse(&orkstackv1.UpdateScheduleResponse{Schedule: s.scheduleProtoWith(ctx, view)}), nil
 }
 
@@ -327,6 +330,7 @@ func (s *Service) PauseSchedule(
 	if err != nil {
 		return nil, err
 	}
+	s.scheduleMetrics.Request(ctx, ns, telemetry.ScheduleActionPause)
 	return connect.NewResponse(&orkstackv1.PauseScheduleResponse{Schedule: schedule}), nil
 }
 
@@ -346,6 +350,7 @@ func (s *Service) ResumeSchedule(
 	if err != nil {
 		return nil, err
 	}
+	s.scheduleMetrics.Request(ctx, ns, telemetry.ScheduleActionResume)
 	return connect.NewResponse(&orkstackv1.ResumeScheduleResponse{Schedule: schedule}), nil
 }
 
@@ -371,6 +376,7 @@ func (s *Service) FireSchedule(
 	if err != nil {
 		return nil, err
 	}
+	s.scheduleMetrics.Request(ctx, ns, telemetry.ScheduleActionFire)
 	return connect.NewResponse(&orkstackv1.FireScheduleResponse{Schedule: schedule}), nil
 }
 
@@ -406,6 +412,7 @@ func (s *Service) BackfillSchedule(
 	if err != nil {
 		return nil, err
 	}
+	s.scheduleMetrics.Request(ctx, ns, telemetry.ScheduleActionBackfill)
 	return connect.NewResponse(&orkstackv1.BackfillScheduleResponse{Schedule: schedule}), nil
 }
 
@@ -466,5 +473,6 @@ func (s *Service) DeleteSchedule(
 				"namespace", ns, "schedule", req.Msg.GetName(), "error", err)
 		}
 	}
+	s.scheduleMetrics.Request(ctx, ns, telemetry.ScheduleActionDelete)
 	return connect.NewResponse(&orkstackv1.DeleteScheduleResponse{}), nil
 }

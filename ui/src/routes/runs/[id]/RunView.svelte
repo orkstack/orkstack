@@ -8,6 +8,7 @@
 	import { navigating, page } from '$app/state';
 	import { chainListHref, childrenListHref } from '#lib/compose.ts';
 	import { sleepWakeAt, wakesWords } from '#lib/sleeps.ts';
+	import { runTimeoutFact, taskStoppedByRunTimeout } from '#lib/runTimeout.ts';
 	import { orkflowOwner, runOrkflowLabel } from '#lib/sharing.ts';
 	import ItemCard from '#lib/components/ItemCard.svelte';
 	import SeenBefore from '#lib/components/SeenBefore.svelte';
@@ -1979,6 +1980,10 @@
 		const end = finishedAt ?? run?.finishedAt;
 		return end ? formatDuration(from, end) : formatDuration(from, { seconds: BigInt(Math.floor(clock / 1000)), nanos: (clock % 1000) * 1e6 });
 	});
+	// The run's own timeout, counted down on the same one-second clock.
+	const timeoutFact = $derived(
+		runTimeoutFact(run?.timeout, runStatus, startedAt ?? run?.startedAt, { seconds: BigInt(Math.floor(clock / 1000)), nanos: (clock % 1000) * 1e6 }, finishedAt ?? run?.finishedAt)
+	);
 	// ---- The Tasks card ----
 	const timelineEnd = $derived.by(() => {
 		// The axis grows with a live run: every second for a small one, every
@@ -2095,7 +2100,7 @@
 	// task of a failed run that never started (its pill alone would read Pending),
 	// and a task that was retried. Everything else is on its panel.
 	function rowSecondLine(task: TaskView, kind: RowKind): boolean {
-		if (kind.never) return true;
+		if (kind.never || taskStoppedByRunTimeout(task)) return true;
 		if (kind.fanOut) return retriedItemsLabel(task.items) !== null;
 		return flakesByTask.has(task.id) || attemptsSeen(attemptsByTask.get(task.id) ?? NO_ATTEMPTS) > 1;
 	}
@@ -2366,6 +2371,9 @@
 	{/snippet}
 	{#snippet startedWhen()}<TimeAgo clock at={startedAt ?? run?.startedAt ?? run?.createdAt} testid="run-started" />{/snippet}
 	{#snippet finishedWhen()}<TimeAgo at={finishedAt ?? run?.finishedAt} since={startedAt ?? run?.startedAt ?? run?.createdAt} testid="run-finished" />{/snippet}
+	<!-- The deadline is the tip's, so the value is a tab stop as a TimeAgo is. -->
+	<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+	{#snippet timeoutWhen()}{#if timeoutFact}<span class="num" data-testid="run-timeout-value" data-state={timeoutFact.state} data-tip={timeoutFact.tip || undefined} tabindex={timeoutFact.tip ? 0 : undefined}>{timeoutFact.text}</span>{#if timeoutFact.tip}<span class="sr">, {timeoutFact.tip}</span>{/if}{/if}{/snippet}
 	{#snippet lastedFor()}<b class="num" data-testid="run-lasted">{lasted}</b>{/snippet}
 	{#snippet progressFact()}<ProgressRing {progress} status={runStatus} testid="run-progress" />{#if isTerminal(runStatus) && (progress.skipped > 0 || neverTasks.length > 0)}<span class="text-sm text-ink-3" data-testid="run-progress-words">{[`${progress.ran} ran`, progress.skipped ? `${progress.skipped} skipped` : '', neverTasks.length ? `${neverTasks.length} never started` : ''].filter(Boolean).join(' · ')}</span>{/if}{/snippet}
 	{#snippet canceledBy()}{#if run?.canceledBy}<span data-testid="run-canceled-by">by <Principal name={run.canceledBy} verified={run.canceledByVerified} /></span>{/if}{/snippet}
@@ -2426,6 +2434,7 @@
 					{ label: 'Started', value: startedWhen },
 					...(isTerminal(runStatus) && (finishedAt ?? run.finishedAt) ? [{ label: 'Finished', value: finishedWhen }] : []),
 					{ label: isTerminal(runStatus) ? 'Ran for' : 'Running for', value: lastedFor },
+					...(timeoutFact ? [{ label: 'Timeout', value: timeoutWhen, testid: 'run-timeout' }] : []),
 					{ label: 'Progress', value: progressFact },
 					...(runStatus === Status.CANCELED && run.canceledBy ? [{ label: 'Canceled', value: canceledBy }] : [])
 				] satisfies Fact[]}
@@ -2722,7 +2731,7 @@
 									><button type="button" class="tname" aria-pressed="false" data-testid="task-deep-link-{task.id}" onclick={() => toggleRow(task.id)}
 										><svg viewBox="0 0 16 16" aria-hidden="true" focusable="false" class="rico"><use href={lit ? iconHref(task.id, kind) : undefined} /></svg>{task.id}</button
 									>{#if kind.kindWord}<span class="sr">{`, ${kind.kindWord}`}</span>{/if}{#if task.pin}<span class="sr">{`, pin ${task.pin}`}</span>{/if}{#if task.status === Status.RUNNING}{@const live = liveByTask.get(task.id)}{#if live && !live.heartbeatAvailable && line.words === ''}<span class="sr">{liveLine(live, liveNowMs).text}</span>{/if}{/if}{#if rowSecondLine(task, kind)}<small class="tsub"
-										>{#if kind.never}<span data-testid="task-{task.id}-status-note" data-tip={task.message || undefined}>never started</span>{/if}{@render rowMarks(task, kind)}</small
+										>{#if kind.never}<span data-testid="task-{task.id}-status-note" data-tip={task.message || undefined}>never started</span>{:else if taskStoppedByRunTimeout(task)}<span data-testid="task-{task.id}-status-note">stopped when the run timed out</span>{/if}{@render rowMarks(task, kind)}</small
 									>{/if}</span
 								><span class="tl" role={line.bars.length ? 'img' : undefined} aria-label={line.bars.length ? line.words : undefined} data-testid="task-{task.id}-timing"
 									>{#each line.bars as bar, i (i)}<i class="tl-{bar.kind}" data-testid="task-{task.id}-{bar.kind === 'wait' ? 'wait' : 'run'}-segment" style:left="{bar.left * 100}%" style:width="{bar.width * 100}%"></i>{/each}</span

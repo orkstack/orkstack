@@ -161,6 +161,36 @@ type WebhookDeliveryActivities struct {
 	dispatcher *webhooks.Dispatcher
 	notifier   *webhooks.Notifier
 	logger     *slog.Logger
+	observer   WebhookObserver
+}
+
+// What became of one webhook attempt, and of one settled delivery, as a
+// WebhookObserver is told.
+const (
+	WebhookOutcomeDelivered    = "delivered"
+	WebhookOutcomeRetry        = "retry"
+	WebhookOutcomeFinalFailure = "final_failure"
+)
+
+// WebhookObserver is told each attempt a delivery makes and each delivery
+// that settles. It is the activities' telemetry seam: this package never
+// imports the telemetry it feeds. Its methods must not block.
+type WebhookObserver interface {
+	// ObserveWebhookAttempt: one attempt, and whether it delivered, will be
+	// retried, or ended the delivery without delivering it.
+	ObserveWebhookAttempt(ctx context.Context, namespace, webhookID string, attempt webhooks.Attempt, outcome string)
+	// ObserveWebhookDelivery: one delivery's record was written, delivered
+	// or not, after attempts, queued at queuedAt and settled at settledAt.
+	// It is told at most once per record: a settle retried after it wrote
+	// the record is not told again, so one that wrote it and then died
+	// before telling is never told.
+	ObserveWebhookDelivery(ctx context.Context, namespace, webhookID, outcome string, attempts int, queuedAt, settledAt time.Time)
+}
+
+// WithObserver sets the activities' observer; nil observes nothing.
+func (a *WebhookDeliveryActivities) WithObserver(o WebhookObserver) *WebhookDeliveryActivities {
+	a.observer = o
+	return a
 }
 
 // NewWebhookDeliveryActivities wires the activities to the body store, the
@@ -225,9 +255,15 @@ func (a *WebhookDeliveryActivities) SendWebhookAttempt(ctx context.Context, in W
 	result.Attempts = append(prior, attempt)
 	result.Delivered = attempt.Delivered()
 	if result.Delivered || final || !attempt.Retryable() || int32(n) >= in.Policy.MaxAttempts {
+		outcome := WebhookOutcomeFinalFailure
+		if result.Delivered {
+			outcome = WebhookOutcomeDelivered
+		}
+		a.observeAttempt(ctx, in, attempt, outcome)
 		result.SettledAt = time.Now().UTC()
 		return result, nil
 	}
+	a.observeAttempt(ctx, in, attempt, WebhookOutcomeRetry)
 	activity.RecordHeartbeat(ctx, result.Attempts)
 	return webhooks.Result{}, temporal.NewApplicationError(
 		fmt.Sprintf("webhook delivery %s attempt %d did not land: %v", delivery.ID, n, attempt.Failure()),
@@ -311,8 +347,19 @@ func (a *WebhookDeliveryActivities) SettleWebhookDelivery(ctx context.Context, i
 			return fmt.Errorf("read the body of webhook delivery %s for its record: %w", in.Delivery.ID, err)
 		}
 	}
-	if err := a.notifier.Settle(ctx, result); err != nil {
+	created, err := a.notifier.SettleRecord(ctx, result)
+	if err != nil {
 		return fmt.Errorf("record webhook delivery %s: %w", in.Delivery.ID, err)
+	}
+	// Told once per record: a settle retried after it wrote the record finds
+	// it there.
+	if a.observer != nil && created {
+		outcome := WebhookOutcomeFinalFailure
+		if result.Delivered {
+			outcome = WebhookOutcomeDelivered
+		}
+		a.observer.ObserveWebhookDelivery(ctx, in.Delivery.Namespace, in.WebhookID, outcome,
+			len(result.Attempts), in.Delivery.QueuedAt, result.SettledAt)
 	}
 	if result.Delivered {
 		a.logger.Info("webhook delivered",
@@ -329,6 +376,13 @@ func (a *WebhookDeliveryActivities) SettleWebhookDelivery(ctx context.Context, i
 		return fmt.Errorf("delete the body of webhook delivery %s: %w", in.Delivery.ID, err)
 	}
 	return nil
+}
+
+// observeAttempt tells the observer about one attempt.
+func (a *WebhookDeliveryActivities) observeAttempt(ctx context.Context, in WebhookDeliveryInput, attempt webhooks.Attempt, outcome string) {
+	if a.observer != nil {
+		a.observer.ObserveWebhookAttempt(ctx, in.Delivery.Namespace, in.WebhookID, attempt, outcome)
+	}
 }
 
 // lastSettle reports whether this is the settle's last attempt under policy.
@@ -460,11 +514,11 @@ func NewWebhookLauncher(c client.Client, queue string, bodies artifacts.Delivery
 func (l *WebhookLauncher) Launch(ctx context.Context, hook webhooks.Webhook, delivery webhooks.Delivery) error {
 	body, err := delivery.Body()
 	if err != nil {
-		return &webhooks.NotQueuedError{Reason: "its body could not be encoded", Err: err}
+		return &webhooks.NotQueuedError{Reason: "its body could not be encoded", Code: webhooks.NotQueuedBodyUnencodable, Err: err}
 	}
 	sum, err := l.bodies.PutDeliveryBody(ctx, delivery.ID, body)
 	if err != nil {
-		return &webhooks.NotQueuedError{Reason: "its body could not be stored", Err: err}
+		return &webhooks.NotQueuedError{Reason: "its body could not be stored", Code: webhooks.NotQueuedBodyUnstored, Err: err}
 	}
 	in := WebhookDeliveryInput{
 		Delivery: delivery, WebhookID: hook.ID,
@@ -484,7 +538,7 @@ func (l *WebhookLauncher) Launch(ctx context.Context, hook webhooks.Webhook, del
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 		_ = l.bodies.DeleteDeliveryBody(cleanup, delivery.ID, sum)
-		return &webhooks.NotQueuedError{Reason: "the engine could not start it", Err: err}
+		return &webhooks.NotQueuedError{Reason: "the engine could not start it", Code: webhooks.NotQueuedNotStarted, Err: err}
 	}
 	return nil
 }

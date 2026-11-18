@@ -111,9 +111,12 @@ func TestStop_ADeliveryDuringTheGraceRunsInFlightAndT1SweepsThenStops(t *testing
 		// would never end.
 		<-running.handBack.Done()
 		<-workerStopped
+		// Reported first: the stop waits for the attempt to leave the
+		// registry (AwaitHandedBack), so a close after the leave could
+		// still be pending when the stop returns.
+		close(reported)
 		a.stops.leave(running)
 		a.running.done()
-		close(reported)
 	}()
 
 	endGrace := make(chan struct{})

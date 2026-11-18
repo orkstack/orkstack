@@ -188,6 +188,17 @@ func awaitInventory(t *testing.T, s *timingStack, why string, want ...string) {
 	}
 }
 
+// awaitOffering waits until the Orker inventory lists orkerID offering the
+// sensor profile. Submit refuses a profiled task (PROFILE_UNAVAILABLE) while no
+// Orker of its pool answered on its own channel, and startOrkerWithEnv waits
+// only for the pool channel's poller, which can be up before the Orker's
+// presence and control channels answer: a submit in that gap was refused
+// (Train 15 proof 44244800706, shard 5).
+func awaitOffering(t *testing.T, s *timingStack, orkerID string) {
+	t.Helper()
+	awaitInventory(t, s, "the Orker offering the profile, before the submit", orkerID, `"sensor"`)
+}
+
 // TestIntegration_DeviceProfilePassesTheDevice: an Orker on its daemon's own
 // host boots with a device profile whose probe image is its own build, a task
 // that selects the profile sees the host's node at its container path, and
@@ -205,6 +216,7 @@ func TestIntegration_DeviceProfilePassesTheDevice(t *testing.T) {
 	probeImage := buildProbeImage(ctx, t, s.root, orkerBin, "orker-probe", commit)
 	startOrkerWithEnv(ctx, t, s.temporal, orkerBin, s.address, s.namespace, s.queue,
 		"ORK_ORKER_ID="+proof.OrkerID("device-sensor"), "ORK_ORKER_PROFILES="+sensorProfiles(probeImage, usbSerialTestDevice, "60s"))
+	awaitOffering(t, s, proof.OrkerID("device-sensor"))
 
 	name := fmt.Sprintf("device-profile-%d", time.Now().UnixNano()%1_000_000_000)
 	s.apply(sensorOrkflow(name, 1))
@@ -300,6 +312,7 @@ func TestIntegration_ProfileDriftedReDispatched(t *testing.T) {
 	driftID := proof.OrkerID("device-drift")
 	startOrkerWithEnv(ctx, t, s.temporal, orkerBin, s.address, s.namespace, s.queue,
 		"ORK_ORKER_ID="+driftID, "ORK_ORKER_PROFILES="+sensorProfiles(probeImage, usbSerialDriftDevice, "1h"))
+	awaitOffering(t, s, driftID)
 	if err := os.Chown(usbSerialDriftDevice, -1, otherGID); err != nil {
 		t.Fatalf("move %s to group %d: %v", usbSerialDriftDevice, otherGID, err)
 	}

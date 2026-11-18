@@ -12,11 +12,13 @@
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import SheetHeader from '#lib/components/SheetHeader.svelte';
+	import AccessTabs from './AccessTabs.svelte';
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { accessClient } from '#lib/clients/access.ts';
 	import { BindingSchema, type Binding } from '#lib/gen/orkstack/v1/access_pb.ts';
 	import { keep, parseSubjects, pinWords, type BindingFilter } from '#lib/accessBindings.ts';
+	import { conflictWords, grantsMe, isConflict } from '#lib/accessSelf.ts';
 	import { can, canAnywhere } from '#lib/permissions.ts';
 	import type { PageProps } from './$types';
 
@@ -38,18 +40,31 @@
 	let editing = $state<{ creating: boolean; name: string; role: string; scope: string; subjects: string } | null>(null);
 	let saveBusy = $state(false);
 	let saveError = $state('');
+	// The document changed under the page: read it again and keep what the
+	// dialog holds, so the person saves their change on top of the new one.
+	let conflict = $state(false);
+	async function readAgain() {
+		await invalidateAll();
+		// A read that failed leaves the page's copy as it was: say so.
+		conflict = false;
+		saveError = data.accessError ?? '';
+		actError = data.accessError ?? '';
+	}
 	function openCreate() {
 		editing = { creating: true, name: '', role: roles[0] ?? 'viewer', scope: 'deployment', subjects: '' };
 		saveError = '';
+		conflict = false;
 	}
 	function openEdit(b: Binding) {
 		editing = { creating: false, name: b.name, role: b.role, scope: b.scope, subjects: b.subjects.join('\n') };
 		saveError = '';
+		conflict = false;
 	}
 	async function save() {
 		if (!editing || !doc) return;
 		saveBusy = true;
 		saveError = '';
+		conflict = false;
 		const binding = create(BindingSchema, { name: editing.name.trim(), role: editing.role, scope: editing.scope.trim(), subjects: parseSubjects(editing.subjects) });
 		try {
 			if (editing.creating) await accessClient(fetch).createBinding({ binding, etag: doc.etag });
@@ -57,7 +72,8 @@
 			editing = null;
 			await invalidateAll();
 		} catch (err) {
-			saveError = errorMessage(err);
+			saveError = isConflict(err) ? conflictWords : errorMessage(err);
+			conflict = isConflict(err);
 		} finally {
 			saveBusy = false;
 		}
@@ -72,12 +88,14 @@
 		if (!deleting || !doc) return;
 		actBusy = true;
 		actError = '';
+		conflict = false;
 		try {
 			await accessClient(fetch).deleteBinding({ name: deleting.name, etag: doc.etag });
 			deleting = null;
 			await invalidateAll();
 		} catch (err) {
-			actError = errorMessage(err);
+			actError = isConflict(err) ? conflictWords : errorMessage(err);
+			conflict = isConflict(err);
 		} finally {
 			actBusy = false;
 		}
@@ -86,21 +104,24 @@
 		if (!repinning || !doc) return;
 		actBusy = true;
 		actError = '';
+		conflict = false;
 		try {
 			await accessClient(fetch).updateBinding({ binding: repinning, etag: doc.etag, repin: true });
 			repinning = null;
 			await invalidateAll();
 		} catch (err) {
-			actError = errorMessage(err);
+			actError = isConflict(err) ? conflictWords : errorMessage(err);
+			conflict = isConflict(err);
 		} finally {
 			actBusy = false;
 		}
 	}
+	const mine = (name: string) => grantsMe(data.me, name).map((g) => `${g.role} at ${g.scope}`).join(', ');
 </script>
 
-<svelte:head><title>Access · OrkStack</title></svelte:head>
+<svelte:head><title>Bindings · Access · OrkStack</title></svelte:head>
 
-<SheetHeader title="Access" testid="access-title" commands={[{ label: 'List the bindings', command: 'orkctl admin binding list' }]}>
+<SheetHeader title="Bindings" testid="access-title" commands={[{ label: 'List the bindings', command: 'orkctl admin binding list' }]}>
 	{#snippet actions()}
 		<button
 			type="button"
@@ -114,6 +135,7 @@
 		{#if !canBind}<p id="access-write-reason" class="w-full text-ink-3 text-sm">{writeReason}</p>{/if}
 	{/snippet}
 </SheetHeader>
+<AccessTabs />
 
 <p class="mb-4 max-w-prose text-sm text-ink-2" data-testid="access-bucket-line">
 	Whoever can write this deployment’s bucket with an engine’s credential can rewrite this document, and is an administrator
@@ -198,8 +220,8 @@
 			</div>
 		</div>
 		<div class="overflow-x-auto">
-			<table class="register min-w-[760px]" data-testid="binding-table">
-				<thead>
+			<table class="register register-stacked register-pairs wide-reg" data-testid="binding-table">
+				<thead class="max-sm:sr-only">
 					<tr><th>Name</th><th>Role</th><th>Scope</th><th>Subjects</th><th><span class="sr-only">Actions</span></th></tr>
 				</thead>
 				<tbody>
@@ -207,19 +229,19 @@
 						{@const pin = pinWords(b)}
 						<tr data-testid="binding-{b.name}">
 							<td class="font-mono">{b.name}</td>
-							<td>{b.role}</td>
-							<td>
+							<td data-label="Role">{b.role}</td>
+							<td data-label="Scope">
 								<span class="font-mono">{b.scope}</span>
 								{#if pin}<span class="ml-2 {pin.stale ? 'stamp stamp-sm pill-outline' : 'tag'}" data-tip={pin.tip}>{pin.word}</span>{/if}
 							</td>
-							<td><ul class="font-mono text-sm">{#each b.subjects as s (s)}<li>{s}</li>{/each}</ul></td>
-							<td class="text-right whitespace-nowrap">
+							<td data-label="Subjects"><ul class="font-mono text-sm break-all">{#each b.subjects as s (s)}<li>{s}</li>{/each}</ul></td>
+							<td class="row-acts text-right whitespace-nowrap max-sm:col-span-2">
 								{#if b.fromConfiguration}
 									<span class="pill-plain stamp stamp-sm" data-tip="Made by the engine’s configuration (auth.admins, auth.orkers); change it there.">From configuration</span>
 								{:else if canBind}
-									{#if canWrite && pin?.stale}<button type="button" class="btn btn-sm" onclick={() => { repinning = b; actError = ''; }} data-testid="binding-repin-{b.name}">Pin again</button>{/if}
+									{#if canWrite && pin?.stale}<button type="button" class="btn btn-sm" onclick={() => { repinning = b; actError = ''; conflict = false; }} data-testid="binding-repin-{b.name}">Pin again</button>{/if}
 									{#if canWrite}<button type="button" class="btn btn-sm" onclick={() => openEdit(b)} data-testid="binding-edit-{b.name}">Edit</button>{/if}
-									<button type="button" class="btn btn-sm" onclick={() => { deleting = b; actError = ''; }} data-testid="binding-delete-{b.name}"><Icon name="trash" />Delete</button>
+									<button type="button" class="btn btn-sm" onclick={() => { deleting = b; actError = ''; conflict = false; }} data-testid="binding-delete-{b.name}"><Icon name="trash" />Delete</button>
 								{/if}
 							</td>
 						</tr>
@@ -254,7 +276,15 @@
 					<textarea class="field font-mono" rows="4" bind:value={editing!.subjects} required data-testid="binding-subjects" aria-describedby="binding-subjects-hint"></textarea>
 					<span id="binding-subjects-hint" class="text-sm text-ink-3"><code>user:ISSUER:NAME</code>, <code>group:ISSUER:GROUP</code>, <code>serviceaccount:NAME</code>…</span>
 				</label>
-				{#if saveError}<p class="text-fail" role="alert" data-testid="binding-error">{saveError}</p>{/if}
+				{#if !editing!.creating && mine(editing!.name)}
+					<p class="alert" data-testid="binding-self"><span class="alert-ic"><Icon name="info" /></span><span class="min-w-0 flex-1">You hold <strong>{mine(editing!.name)}</strong> by this binding. A change to it changes what you can do.</span></p>
+				{/if}
+				{#if saveError}
+					<div class="flex flex-wrap items-center gap-3" role="alert" data-testid="binding-error">
+						<p class="text-fail">{saveError}</p>
+						{#if conflict}<button type="button" class="btn btn-sm" onclick={readAgain} data-testid="binding-read-again">Read it again</button>{/if}
+					</div>
+				{/if}
 				<div class="flex justify-end gap-2">
 					<button type="button" class="btn" onclick={() => (editing = null)}>Keep as it was</button>
 					<button type="submit" class="btn btn-primary" disabled={saveBusy} data-testid="binding-save"><Icon name="apply" />{saveBusy ? 'Saving…' : 'Save binding'}</button>
@@ -281,6 +311,8 @@
 	>
 		{#snippet body()}
 			<p>Everyone it names loses <strong>{deleting!.role}</strong> at <code>{deleting!.scope}</code> within each engine’s refresh interval. Sources and objects saved through it pause or are refused one interval later unless saved again. To stop one person, disable them instead.</p>
+			{#if mine(deleting!.name)}<p class="mt-3 font-semibold" data-testid="binding-delete-self">You hold {mine(deleting!.name)} by it: you lose that too, unless another binding grants it.</p>{/if}
+			{#if conflict}<button type="button" class="btn btn-sm mt-3" onclick={readAgain} data-testid="binding-delete-read-again">Read it again</button>{/if}
 		{/snippet}
 	</ConfirmDialog>
 {/if}
@@ -301,6 +333,22 @@
 	>
 		{#snippet body()}
 			<p>It will grant <strong>{repinning!.role}</strong> on the <code>{repinning!.scope}</code> that exists now, which is not the one it was saved for.</p>
+			{#if conflict}<button type="button" class="btn btn-sm mt-3" onclick={readAgain}>Read it again</button>{/if}
 		{/snippet}
 	</ConfirmDialog>
 {/if}
+
+<style>
+	/* Below 640 px the register stacks: a row's actions take its full width, from the left. */
+	@media (max-width: 639.98px) {
+		.row-acts {
+			text-align: left;
+		}
+	}
+	/* From 640 px it is a table, scrolling sideways in its frame below 760 px. */
+	@media (min-width: 640px) {
+		.wide-reg {
+			min-width: 760px;
+		}
+	}
+</style>

@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
-import { BUILD_PAGES, OPERATE_PAGES, buildPageOf, modeOf, operatePageOf, pageOf } from '../src/lib/navigation';
+import { ACCESS_TABS, BUILD_PAGES, OPERATE_PAGES, buildPageOf, modeOf, operatePageOf, pageOf } from '../src/lib/navigation';
 import { pageCommands } from '../src/lib/palette/commands';
 
 // The app's map (#lib/navigation.ts) is the one list the top bar, the Operate
@@ -84,4 +84,14 @@ test('Create Orkflow sits on a segment no Orkflow name can take, so /orkflows/ne
 		expect(`${dir}: ${slug.test(dir) ? 'shadows an Orkflow name' : 'ok'}`).toBe(`${dir}: ok`);
 	}
 	expect(pageOf('/orkflows/new')?.id).toBe('orkflows');
+});
+
+test('Access has one tab per screen of its own, and every screen is a tab', () => {
+	const screens = readdirSync(`${routes}/admin/access`, { recursive: true })
+		.filter((rel) => rel.endsWith('+page.svelte'))
+		.map((rel) => (rel === '+page.svelte' ? '/admin/access' : `/admin/access/${rel.replace(/\/\+page\.svelte$/, '')}`))
+		.sort();
+	expect(ACCESS_TABS.map((t) => t.href).sort()).toEqual(screens);
+	expect(ACCESS_TABS[0]).toEqual({ href: '/admin/access', label: 'Bindings' });
+	expect(new Set(ACCESS_TABS.map((t) => t.label)).size).toBe(ACCESS_TABS.length);
 });
