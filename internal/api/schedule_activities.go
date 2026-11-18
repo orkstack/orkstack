@@ -14,6 +14,8 @@ import (
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/internal/task"
+	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 )
 
 // IndexAnswerer reports the engine's boot answers about the run search
@@ -46,6 +48,29 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	rec *orkstackv1.ScheduleRecord,
 	scheduledAt time.Time,
 ) (*orkstackv1.ScheduledRunPreparation, error) {
+	prep, reason, err := a.prepareScheduledRun(ctx, rec, scheduledAt)
+	// Each try is counted: a preparation the local activity retries is
+	// counted at least once, never less.
+	outcome := telemetry.ScheduleFireStarted
+	switch {
+	case err == nil:
+	case reason != "":
+		outcome = telemetry.ScheduleFireRefused
+	default:
+		outcome = telemetry.ScheduleFireUnavailable
+	}
+	a.svc.scheduleMetrics.Fire(ctx, artifacts.ResolveNamespace(rec.GetNamespace()), rec.GetName(), outcome, reason,
+		a.svc.now().Sub(scheduledAt))
+	return prep, err
+}
+
+// prepareScheduledRun is PrepareScheduledRun, also returning a refusal's
+// reason: "" for a preparation that did not refuse.
+func (a *ScheduleActivities) prepareScheduledRun(
+	ctx context.Context,
+	rec *orkstackv1.ScheduleRecord,
+	scheduledAt time.Time,
+) (*orkstackv1.ScheduledRunPreparation, string, error) {
 	// The SCHEDULE origin (docs/UI_CLI_PARITY.md "Run origin"), with its open
 	// cell decided: the
 	// reference is the nominal fire time in RFC 3339 UTC, so a backfilled run
@@ -64,7 +89,8 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 		AllowEmptyPool: false,
 	}, origin)
 	if err != nil {
-		return nil, fireError(err)
+		reason, err := fireError(err)
+		return nil, reason, err
 	}
 
 	// The pending run is NOT saved: a scheduled run's pending window is
@@ -73,7 +99,7 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	run := a.svc.newPendingRun(a.svc.newRunID(), sub.wf, sub.input, origin)
 	plan, err := stablejson.Marshal(sub.plan)
 	if err != nil {
-		return nil, refusedFire(fmt.Sprintf("encode the run plan: %v", err))
+		return nil, fireRefusedInternal, refusedFire(fmt.Sprintf("encode the run plan: %v", err))
 	}
 	var nsIdx, orIdx bool
 	if a.indexes != nil {
@@ -93,7 +119,7 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	// whose payloads each fit but whose sum does not; a submission would
 	// start it.
 	if proto.Size(prep) > task.MaxActivityInputBytes {
-		return nil, refusedFire("prepared run exceeds 256 KiB")
+		return nil, fireRefusedInternal, refusedFire("prepared run exceeds 256 KiB")
 	}
 	// Last, after the run id is minted and after every refusal: a definition
 	// passed by reference is written under that id, so the fire's start
@@ -101,10 +127,14 @@ func (a *ScheduleActivities) PrepareScheduledRun(
 	// retry mints a new id, leaving at most one object no run reads
 	// (docs/DEPLOY.md §5).
 	if err := a.svc.writeDefinitionObject(ctx, run.GetId(), sub); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return prep, nil
+	return prep, "", nil
 }
+
+// fireRefusedInternal is the reason of a refusal this engine made itself:
+// a preparation it could not encode or bound.
+const fireRefusedInternal = "internal"
 
 // refusedFire is a final refusal: the fire started no run, and retrying the
 // same preparation would refuse again.
@@ -113,17 +143,17 @@ func refusedFire(msg string) error {
 }
 
 // fireError sorts a preparation failure. A caller-shaped Connect code is a
-// refusal and is final; anything else — an unreachable store or cluster — is
-// returned as-is and retried by the local activity's policy within its
-// budget.
-func fireError(err error) error {
+// refusal and is final, and its reason is the code's name; anything else —
+// an unreachable store or cluster — is returned as-is, with no reason, and
+// retried by the local activity's policy within its budget.
+func fireError(err error) (string, error) {
 	var ce *connect.Error
 	if errors.As(err, &ce) {
 		switch ce.Code() {
 		case connect.CodeInvalidArgument, connect.CodeNotFound, connect.CodeFailedPrecondition,
 			connect.CodeResourceExhausted, connect.CodePermissionDenied:
-			return refusedFire(ce.Message())
+			return ce.Code().String(), refusedFire(ce.Message())
 		}
 	}
-	return err
+	return "", err
 }

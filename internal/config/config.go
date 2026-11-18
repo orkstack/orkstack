@@ -352,6 +352,7 @@ var Schema = []Var{
 	{Path: "telemetry.pprof_enabled", Env: "ORK_PPROF_ENABLED", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.high_cardinality", Env: "ORK_TELEMETRY_HIGH_CARDINALITY", Binaries: usesBoth, Kind: KindBool, Default: "false"},
 	{Path: "telemetry.orkflow_label", Env: telemetry.OrkflowLabelVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultOrkflowLabel)},
+	{Path: "telemetry.object_labels", Env: telemetry.ObjectLabelsVar, Binaries: usesOrk, Kind: KindBool, Default: formatBool(telemetry.DefaultObjectLabels)},
 	{Path: "telemetry.metric_cardinality_limit", Env: telemetry.MetricCardinalityLimitVar, Binaries: usesBoth, Kind: KindInt, Default: formatInt(int64(telemetry.DefaultMetricCardinalityLimit))},
 	{Path: "telemetry.census_requests_per_minute", Env: telemetry.CensusRequestsPerMinuteVar, Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(telemetry.DefaultCensusRequestsPerMinute))},
 

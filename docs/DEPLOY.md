@@ -739,6 +739,7 @@ then the variable it becomes.
 | `telemetry.pprof_enabled` | `ORK_PPROF_ENABLED` | `false` | both | mounts `net/http/pprof` on the admin listener. Off by default: an Orker's heap holds resolved secret bytes |
 | `telemetry.high_cardinality` | `ORK_TELEMETRY_HIGH_CARDINALITY` | `false` | both | adds `ork.run_id`/`ork.task_id`/`ork.orkflow.name`/`ork.orkflow.version` labels to `ork_*` metrics — see §7, "High-cardinality labels" |
 | `telemetry.orkflow_label` | `ORK_TELEMETRY_ORKFLOW_LABEL` | `true` | ork | puts `ork.orkflow.name` on `ork.runs`, `ork.tasks`, `ork.run.duration` and `ork.runs.refused`; never on a task duration or an Orker's metric (§7, "The Orkflow label") |
+| `telemetry.object_labels` | `ORK_TELEMETRY_OBJECT_LABELS` | `false` | ork | puts a schedule's name (`ork.schedule`) on the schedule metrics and a webhook's id (`ork.webhook.id`) on the webhook metrics; each name is a series of its own, bounded by `telemetry.metric_cardinality_limit` |
 | `telemetry.metric_cardinality_limit` | `ORK_TELEMETRY_METRIC_CARDINALITY_LIMIT` | `2000` | both | the most series one instrument keeps; past it new series fold into one marked `otel.metric.overflow="true"` (§7, "The Orkflow label") |
 | `telemetry.census_requests_per_minute` | `ORK_TELEMETRY_CENSUS_REQUESTS_PER_MINUTE` | `60` | ork | each engine replica's budget of census requests (§7, "Censuses") |
 | `orker.task_log_export` | `ORK_ORKER_TASK_LOG_EXPORT` | `false` | `orker` | exports every task stdout/stderr line as an OTel log record. Requires `OTEL_LOGS_EXPORTER=otlp` — see §7, "Task logs" |
@@ -5794,6 +5795,8 @@ passes. A census skipped five times in a row is logged at Warn: raise
 |---|---|---|
 | `runs_open` | `ork.runs.open`: runs open in the deployment, each run counted once however many times it has carried on, and never as zero while it carries on | two counts of the cluster's run index a pass, plus a listing of the runs that carried on within the hour when there are any, each charged |
 | `telemetry_policy` | `ork.telemetry.namespaces{routing}`: the namespaces the engine's policy cache holds, by where their records go (`default`, `named`, `named_without_metrics`, `sink_unknown`); it refreshes the cache ("Where a namespace's records go") | one listing of the namespace names and at most half the budget of namespace documents a pass (30 by default): a namespace never read first, then the others in turn, so every namespace is read again within ⌈N / 30⌉ minutes and the refresh never takes the other censuses' share |
+| `webhook_pending` | `ork.webhook.deliveries.pending{ork.age_over}`: webhook deliveries not yet settled that were queued more than `5m` and more than `1h` ago, in the deployment | two counts of the cluster's running delivery workflows a pass |
+| `schedules` | `ork.schedules{ork.namespace, state}` (`active`, `paused`), `ork.schedule.next_fire{ork.namespace}` (unix seconds: the soonest active schedule's next fire; by `ork.schedule` too with `telemetry.object_labels`), the counter `ork.schedule.actions.skipped{ork.namespace, ork.schedule.skip_reason}` (`overlap`, `catchup_window`), and on the default sink `ork.schedule.census.coverage` (the share of schedules described this pass) and `ork.schedule.census.unavailable` (1 when the list failed) | one listing of every schedule, which gives each one's state and next fire, and at most half the budget of describes a pass (30 by default, never more than 200), in turn, for the skipped-fire totals; a pass's schedule gauges report nothing after a list that failed, and a namespace whose records are dropped loses the skips seen meanwhile: below 1, `coverage` says those counts lag. A schedule's first describe is its baseline, so fires skipped before this engine watched are never counted. The cluster does not expose fires dropped from its buffer, so no `buffer` reason is reported |
 
 A gauge reports its last good reading, and nothing after a pass that failed.
 Every replica reports the deployment's whole count, so aggregate
@@ -5924,6 +5927,47 @@ failed.
 | `ork.gc.lag`, `ork.gc.due_runs`, `ork.gc.waiting_runs` | — | engine, the last pass: how long the oldest due run has waited since it retired, and the runs carried over and waiting |
 | `ork.gc.last_pass`, `ork.gc.last_progress` | — | engine: unix time of the last pass, and of the last one that finished a run or deleted an object (the engine's start until then). **Alert** when the last pass is older than a few intervals, and when runs are due and progress is older than several |
 | `ork.gc.store_versioned` | — | engine: 1 when the bucket keeps versions, so a delete only adds a delete marker |
+
+**Retention cleanup's metrics** (§1, "Retention cleanup and bucket lifecycle
+rules") are recorded once per pass; recording never delays or fails a pass,
+and a pass the engine's shutdown stopped is not recorded.
+`ork.cleanup.enabled`, `ork.cleanup.interval` and `ork.cleanup.retention_buffer`
+are reported from boot, cleanup off included. `ork.cleanup.last_pass` and the
+retention lag are reported once a walk of the whole run index completes; a
+walk that could not read some run's cleanup state or execution has unknown lag
+and is no walk for them: `last_pass` stops advancing, so it goes stale through
+an outage, and the deployment lag stops reporting rather than repeat an old
+value. Per-namespace series follow the namespace's telemetry policy; the twins
+carry no namespace and go to the default sink.
+
+| Metric | Labels | Emitted by |
+|---|---|---|
+| `ork.cleanup.enabled`, `ork.cleanup.interval`, `ork.cleanup.retention_buffer` | — | every engine with metrics, from boot: 1 when cleanup is on, and the interval and retention buffer in force, in seconds |
+| `ork.cleanup.runs` | `ork.namespace`, `outcome` | engine, each run a pass decided on: `retired`, `failed` (a step failed; a later pass tries again), `not_archived` (due, but its archive body is not written yet), `still_running` (archived, yet the cluster says it is executing; refused) or `not_found_not_due` (its execution is missing before its run retention; kept). Twin: `ork.deployment.cleanup.runs` |
+| `ork.cleanup.objects`, `ork.cleanup.bytes` | `ork.namespace` | engine: run-scoped objects and bytes retirement removed |
+| `ork.cleanup.passes`, `ork.cleanup.pass.duration` | `outcome` | engine, each pass: `completed` (it reached the end of the index), `drain` (it stopped at a full batch and the next pass continues at once) or `failed` (the walk itself failed: the policy, the namespace list, the index list) |
+| `ork.cleanup.errors` | `ork.cleanup.step` | engine, each failure, by the step that failed: `policy`, `namespaces`, `backstop`, `list`, `state`, `lookup`, `archive_check`, `retire`, `delete`, `mark` |
+| `ork.cleanup.last_pass` | — | engine: unix time of the last complete walk whose every run could be read. **Alert** when cleanup is enabled and it is older than three intervals |
+| `ork.cleanup.retention_lag` | `ork.namespace` | engine, from the last walk that could tell: how far past its own due time the most overdue run the walk left unretired is, 0 when none is. Twin: `ork.deployment.cleanup.retention_lag`, the deployment maximum |
+
+`ork.archive.cleanup.runs` (above) still counts the same passes in its own
+outcomes.
+
+**Webhook, schedule and trigger metrics** are recorded on each namespace's
+sink, as every other namespaced record is, and dropped while its policy is
+unknown. A schedule's name (`ork.schedule`) and a webhook's id
+(`ork.webhook.id`) are labels only with `telemetry.object_labels` on.
+
+| Metric | Labels | Emitted by |
+|---|---|---|
+| `ork.webhook.attempts` | `ork.namespace`, `ork.webhook.class` (`2xx`…`5xx`, `transport`, `not_sent`, `blocked`), `outcome` (`delivered`, `retry`, `final_failure`), `ork.webhook.attempt` (`1`…`9`, `10+`) | engine, each attempt a delivery makes; counted at least once |
+| `ork.webhook.attempt.duration` | `ork.namespace`, `ork.webhook.class` | engine: how long the attempt's request took |
+| `ork.webhook.deliveries`, `ork.webhook.delivery.attempts`, `ork.webhook.delivery.latency` | `ork.namespace`, `outcome` (`delivered`, `final_failure`) | engine, at most once per delivery record written: the attempts it took and how long after it was queued it settled. A delivery whose record could not be written, and the attempt a lost worker never reported, are not counted |
+| `ork.webhook.not_queued` | `ork.namespace`, `reason` (`body_unencodable`, `body_unstored`, `not_started`, `unknown`) | engine, each delivery that could not be queued and so made no request |
+| `ork.schedule.fires` | `ork.namespace`, `outcome` (`started`, `refused`, `unavailable`), `ork.refusal.reason` (refused only: `invalid_argument`, `not_found`, `failed_precondition`, `resource_exhausted`, `permission_denied`, `internal`) | engine, each try of a fire's preparation: `started` means the run was prepared; a try that is `unavailable` is retried within the fire's budget, and a fire whose budget runs out is counted only by its tries |
+| `ork.schedule.fire.lag` | `ork.namespace` | engine: how long after its nominal time a fire that started or was refused was prepared; a backfill is as late as the time it stands in for |
+| `ork.schedule.requests` | `ork.namespace`, `action` (`create`, `update`, `delete`, `pause`, `resume`, `fire`, `backfill`) | API, each schedule request that succeeded |
+| `ork.trigger.invocations` | `ork.namespace`, `outcome` (`started`, `unauthenticated`, `not_found`, `invalid_argument`, `refused`, `unavailable`, `conflict`, `internal`) | API, each HTTP trigger invocation; one that named no trigger carries no namespace and goes to the default sink |
 
 **At-least-once, not exactly-once.** A run or task's terminal metric is
 recorded from the projection that observes its lifecycle event; a replica that
