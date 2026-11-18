@@ -11,12 +11,29 @@ function pem(label: string, der: ArrayBuffer): string {
 export interface KeyPairPEM {
 	publicPem: string;
 	privatePem: string;
+	/** The key's id, as the engine will name it: its RFC 7638 thumbprint. */
+	kid: string;
+}
+
+const b64url = (buf: ArrayBuffer) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+/** thumbprint is an EC public key's RFC 7638 thumbprint (SHA-256, base64url):
+ * the hash of its required members in lexicographic order, no whitespace. */
+export async function thumbprint(jwk: { crv?: string; x?: string; y?: string }, subtle: SubtleCrypto = crypto.subtle): Promise<string> {
+	const canonical = JSON.stringify({ crv: jwk.crv, kty: 'EC', x: jwk.x, y: jwk.y });
+	return b64url(await subtle.digest('SHA-256', new TextEncoder().encode(canonical)));
 }
 
 export async function generateKeyPair(subtle: SubtleCrypto = crypto.subtle): Promise<KeyPairPEM> {
 	const pair = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign', 'verify']);
-	const [spki, pkcs8] = await Promise.all([subtle.exportKey('spki', pair.publicKey), subtle.exportKey('pkcs8', pair.privateKey)]);
-	return { publicPem: pem('PUBLIC KEY', spki), privatePem: pem('PRIVATE KEY', pkcs8) };
+	const [spki, pkcs8, jwk] = await Promise.all([subtle.exportKey('spki', pair.publicKey), subtle.exportKey('pkcs8', pair.privateKey), subtle.exportKey('jwk', pair.publicKey)]);
+	return { publicPem: pem('PUBLIC KEY', spki), privatePem: pem('PRIVATE KEY', pkcs8), kid: await thumbprint(jwk, subtle) };
+}
+
+/** keyFileName names a private key's file by its account and the start of
+ * its id, so two keys of one account never share a name. */
+export function keyFileName(account: string, kid: string): string {
+	return `${account}-${kid.slice(0, 12)}.pem`;
 }
 
 /** offerDownload hands the browser a file to save, then lets go of it. */

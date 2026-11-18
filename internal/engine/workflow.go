@@ -313,8 +313,17 @@ func RunWorkflow(
 		// The pause's requests, then a ready expiry: after the operator's
 		// cancel and before the run timeout's deadline (the fixed order).
 		if state.pauses != nil {
+			state.takeCascadeResults(ctx)
 			if _, err := state.drainPauseRequests(ctx, inFlight, pauseInMainLoop); err != nil {
 				return state.fail(ctx, cancelRun, inFlight, "", err)
+			}
+			if state.deferredPauseStrandedBy() {
+				return state.fail(ctx, cancelRun, inFlight, "", state.deferredPauseStranded(ctx, inFlight))
+			}
+			if name := state.pinDeadlineDue(ctx); name != "" {
+				if id, err := state.pinDeadlineReached(ctx, name, inFlight); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, id, err)
+				}
 			}
 			state.syncPauseIndexWithin(ctx, inFlight) // retries a write the cluster refused
 			if due, canceled := state.pauseExpiryDue(ctx); canceled {
@@ -372,9 +381,10 @@ func RunWorkflow(
 			if state.canceledBeforeDispatch(ctx) {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
-			// A paused run starts nothing but what an open pin needs to
-			// finish: held PENDING, nothing emitted, nothing classified.
-			if state.paused() && !state.pinClosureAllows(id) {
+			// A paused run, or one carrying a pause request to its switch,
+			// starts nothing new (pauseHolds): held PENDING, nothing
+			// emitted, nothing classified.
+			if state.pauseHolds(id) {
 				continue
 			}
 			// The run timeout's deadline, before every dispatch decision.
@@ -499,12 +509,24 @@ func RunWorkflow(
 			if state.openAwaits() == 0 && state.openSleeps() == 0 && len(state.waits) == 0 &&
 				!(state.quiescing && state.closingPins() > 0) {
 				if len(state.readyTasks()) == 0 && !state.heldFanOuts {
+					state.dropDeferredPause(ctx, "the run has nothing left to do")
 					break
 				}
 				if !state.paused() {
-					// The prior scan only propagated skips (or a hold just
-					// lifted); scan again without waiting for an activity.
-					continue
+					switch state.idleUnpaused() {
+					case idleStranded:
+						// Idle, holding for a switch it cannot make now:
+						// the carried request can never be applied.
+						return state.fail(ctx, cancelRun, inFlight, "", state.deferredPauseStranded(ctx, inFlight))
+					case idleRescan:
+						// The prior scan only propagated skips (or a hold
+						// just lifted); scan again without waiting for an
+						// activity.
+						continue
+					case idleWait:
+						// A cascade send still running holds the switch;
+						// its result wakes the selector.
+					}
 				}
 				// Paused: wait in the selector for a request or an expiry.
 			}
@@ -557,10 +579,10 @@ func RunWorkflow(
 				selectedPin = pinName
 			})
 		}
-		// While quiescing ONLY, every closing pin's close, in pin-name order:
-		// a quiescing run with nothing else in flight waits for its pins to
-		// close, so it can switch.
-		if state.quiescing {
+		// While quiescing or holding for a carried pause request ONLY, every
+		// closing pin's close, in pin-name order: such a run with nothing
+		// else in flight waits for its pins to close, so it can switch.
+		if state.quiescing || state.deferHold {
 			for _, name := range state.pinOrder {
 				if p := state.pins[name]; p.doneSent && p.closed != nil && !p.closed.IsReady() {
 					selector.AddFuture(p.closed, func(workflow.Future) { selectedClosed = true })
@@ -610,6 +632,14 @@ func RunWorkflow(
 		pauseWoke := false
 		if state.pauses != nil {
 			selector.AddReceive(state.pauses, func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			if r := state.cascade.results; r != nil {
+				selector.AddReceive(r, func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+			}
+			for _, name := range state.pinOrder {
+				if p := state.pins[name]; p != nil && p.deadline != nil && p.deadline.timer != nil && !p.deadlineReached {
+					selector.AddFuture(p.deadline.timer, func(workflow.Future) { pauseWoke = true })
+				}
+			}
 			if p := state.pause; p != nil {
 				selector.AddFuture(p.timer, func(workflow.Future) { pauseWoke = true })
 			}
@@ -909,6 +939,15 @@ type runState struct {
 	// (emitPause); pauseExpired, that a pause's expiry is ending the run.
 	pauseEvent   *pauseEventFields
 	pauseExpired bool
+	// deferredPause is the pause requests this generation could not record
+	// and carries into the next one; restoredPause, those its predecessor
+	// carried, applied before any other; deferHold, that the run starts
+	// nothing new while it makes its way to the switch (pause_deferred.go).
+	deferredPause []*orkstackv1.RunPauseSignal
+	restoredPause []*orkstackv1.RunPauseSignal
+	deferHold     bool
+	// cascade is what the run's pause told its child runs (pause_cascade.go).
+	cascade cascadeState
 
 	// declaredRows is this run's declared rows — its tasks plus every
 	// fan-out's max_items (DeclaredRows) — which decides whether it writes
@@ -995,6 +1034,17 @@ type pinState struct {
 	// the pin outlived its ExecutionTimeout. It is what turns a member's
 	// cancellation into PIN_HOST_LOST/PIN_TIMEOUT rather than CANCELED.
 	lost bool
+
+	// pausable says the pin took the pausable-timeout path (pause_pin.go):
+	// its working timeout is deadline, a clock its run's pause stops; its
+	// members run on memberCtx, which cancelMembers cancels when that
+	// deadline is reached (deadlineReached). None crosses a switch: a run
+	// with an open pin never switches.
+	pausable        bool
+	deadline        *pinDeadline
+	memberCtx       workflow.Context
+	cancelMembers   workflow.CancelFunc
+	deadlineReached bool
 }
 
 func newRunState(
@@ -1377,6 +1427,12 @@ func (s *runState) openPin(runCtx workflow.Context, id string) (bool, error) {
 	p.triggeredBy = id
 	p.openedAt = workflow.Now(runCtx)
 	p.timeout = s.pinLifetime(p)
+	if p.pausable = s.pinPausable(runCtx); p.pausable {
+		p.deadline = newPinDeadline(p.timeout, p.openedAt)
+		if s.paused() {
+			p.deadline.stop(p.openedAt)
+		}
+	}
 	p.creationTimeout = s.pinCreationTimeoutFor(runCtx)
 	p.creationPriority = s.pinCreationPriorityFor(runCtx)
 	p.ready, p.readySettable = workflow.NewFuture(runCtx)
@@ -1413,7 +1469,7 @@ func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 		s.noteCommand(gctx, 1, limit.Reserve.SessionBytes)
 	}
 	sessionCtx, err := workflow.CreateSession(base, &workflow.SessionOptions{
-		ExecutionTimeout: p.timeout,
+		ExecutionTimeout: s.sessionBound(p),
 		CreationTimeout:  p.creationTimeout,
 		// The dead-host detector for the pin, and the same number a task's own
 		// heartbeat uses. The SDK ticks the creation activity's heartbeat at
@@ -1433,6 +1489,10 @@ func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 	// `ready` has, and a coroutine's writes are visible to the loop exactly
 	// when this one next blocks.
 	p.ctx = sessionCtx
+	if p.pausable {
+		// Creating a cancelable context issues no command.
+		p.memberCtx, p.cancelMembers = workflow.WithCancel(sessionCtx)
+	}
 	p.readySettable.Set(nil, nil)
 
 	// Blocks until the loop says every member is terminal. Channel.Receive
@@ -1461,7 +1521,7 @@ func (s *runState) hostPin(gctx workflow.Context, p *pinState, queue string) {
 			Pin: &orkstackv1.PinContext{
 				Name:           p.name,
 				InstanceId:     info.SessionID,
-				TimeoutSeconds: int32(p.timeout / time.Second),
+				TimeoutSeconds: int32(s.sessionBound(p) / time.Second),
 			},
 		}
 		if err := workflow.ExecuteActivity(releaseCtx, task.ActivityReleasePin, in).
@@ -1494,6 +1554,7 @@ func (s *runState) pinOpened(ctx workflow.Context, name string) error {
 	p.readyConsumed = true
 	err := p.ready.Get(ctx, nil)
 	if err == nil {
+		s.armPinDeadline(ctx, p)
 		return nil
 	}
 
@@ -1595,6 +1656,11 @@ func (s *runState) closePinFor(ctx workflow.Context, id string) {
 	// which "no member ever reported" is finally true (attributeLostPinHost).
 	s.attributeLostPinHost(p)
 	p.doneSent = true
+	if p.deadline != nil {
+		// Its working timeout ends with it: no timer outlives the pin.
+		p.deadline.stop(workflow.Now(ctx))
+		p.deadline = nil
+	}
 	// Every member is terminal: the pin's closures are no longer read.
 	for _, member := range p.tasks {
 		delete(s.pinMemberClosures, member)
@@ -1668,17 +1734,22 @@ func (s *runState) awaitPinsClosed(ctx workflow.Context) {
 // A member that failed on its OWN — a container exited non-zero — leaves the
 // session Open ("Session will not be marked as failed if an activity within it
 // returns an error"), so this returns nil and the ordinary path runs unchanged.
-func (s *runState) pinLoss(ctx workflow.Context, id string) *orkstackv1.Error {
+func (s *runState) pinLoss(ctx workflow.Context, id string, err error) *orkstackv1.Error {
 	p := s.pins[s.tasks[id].GetPin()]
 	if p == nil || p.ctx == nil {
 		return nil
+	}
+	// The working timeout canceled it; a member that failed on its own in
+	// the same moment keeps its own failure.
+	if p.deadlineReached && categoryOf(err).canceled {
+		return s.pinTimeoutError(ctx, p)
 	}
 	info := workflow.GetSessionInfo(p.ctx)
 	if info == nil || info.SessionState != workflow.SessionStateFailed {
 		return nil
 	}
 	p.lost = true
-	return pinFailureError(p.name, workflow.Now(ctx).Sub(p.openedAt), p.timeout)
+	return pinFailureError(p.name, workflow.Now(ctx).Sub(p.openedAt), s.sessionBound(p), p.pausable)
 }
 
 // pinLossOf is the pin-level error already recorded against a task, or nil.
@@ -1717,14 +1788,22 @@ func (s *runState) pinLossOf(id string) *orkstackv1.Error {
 //
 // Neither is retryable and neither is the workload's fault, which is why both
 // are non-retryable and neither is ACTIVITY_FAILED.
-func pinFailureError(name string, elapsed, limit time.Duration) *orkstackv1.Error {
+func pinFailureError(name string, elapsed, limit time.Duration, pausedBound bool) *orkstackv1.Error {
 	if limit > 0 && elapsed >= limit {
+		message := fmt.Sprintf(
+			"pin %q reached its %s lifetime after %s, so the pin closed and every task "+
+				"still running on that Orker was stopped with it",
+			name, limit, elapsed)
+		if pausedBound {
+			// The outer bound (pause_pin.go): reached only by a clock
+			// stopped longer than the pin's limit allows.
+			message = fmt.Sprintf("pin %q reached its host's limit of %s: its clock was stopped for "+
+				"longer than the pin's limit allows, so the pin closed and every task still running "+
+				"on that Orker was stopped with it", name, limit)
+		}
 		return &orkstackv1.Error{
-			Code: "PIN_TIMEOUT",
-			Message: fmt.Sprintf(
-				"pin %q reached its %s lifetime after %s, so the pin closed and every task "+
-					"still running on that Orker was stopped with it",
-				name, limit, elapsed),
+			Code:      "PIN_TIMEOUT",
+			Message:   message,
 			Category:  orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT,
 			Retryable: false,
 		}
@@ -2046,13 +2125,18 @@ func (s *runState) schedule(ctx workflow.Context, id string) (workflow.Future, e
 				"INVALID_PIN", nil)
 		}
 		activityBase = p.ctx
+		if p.memberCtx != nil {
+			activityBase = p.memberCtx // canceled when the pin's working timeout is reached
+		}
 		pinContext = &orkstackv1.PinContext{
 			Name: p.name,
 			// ONE opening of this pin, taken from the session the engine
 			// opened and from nothing else. The Orker keys the shared
 			// directory by it.
-			InstanceId:     workflow.GetSessionInfo(p.ctx).SessionID,
-			TimeoutSeconds: int32(p.timeout / time.Second),
+			InstanceId: workflow.GetSessionInfo(p.ctx).SessionID,
+			// The lease the Orker keeps the directory by: the outer bound
+			// in the pausable path, so the session is dead by its expiry.
+			TimeoutSeconds: int32(s.sessionBound(p) / time.Second),
 		}
 	}
 
@@ -2388,7 +2472,7 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 		// pin whose session has failed did not fail on its own and did not get
 		// cancelled in the sense a client means — the platform lost the host
 		// it was pinned to (PIN_HOST_LOST, docs/DSL.md "Pins").
-		if loss := s.pinLoss(ctx, id); loss != nil {
+		if loss := s.pinLoss(ctx, id, err); loss != nil {
 			taskRun.Status = orkstackv1.Status_STATUS_FAILED
 			taskRun.FinishedAt = timestamppb.New(workflow.Now(ctx))
 			taskRun.Error = loss
@@ -2794,6 +2878,10 @@ func (s *runState) fail(
 	taskID string,
 	cause error,
 ) (*orkstackv1.Run, error) {
+	// Every ending names the pause requests it will never apply; a failing
+	// run's handler loop would, but a canceled, timed-out or handler-less one
+	// has none.
+	s.dropDeferredPause(ctx, "the run is ending")
 	// The history guard's failure belongs to the run, never to the task or
 	// fan-out where it tripped: every caller reaches here with the id it was
 	// working on.
@@ -3027,6 +3115,7 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		Pause:          s.livePauseProto(),
 		LastPause:      s.lastPauseProto(),
 		PausedByParent: s.liveInheritedPauseProto(),
+		PauseWarnings:  s.pauseWarningsProto(),
 	}
 	for _, id := range s.order {
 		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])

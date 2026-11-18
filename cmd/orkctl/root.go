@@ -436,17 +436,42 @@ func (e *connectionEndedError) Unwrap() error { return e.err }
 // holds a real one to this.
 const goAwayEnded = "http2: server sent GOAWAY and closed the connection"
 
+// clientConnClosed is the text of the error Go's HTTP/2 client gives a stream
+// whose connection had already closed when the stream's request still had a
+// write to make: errClientConnClosed in net/http/internal/http2/transport.go
+// (awaitFlowControl), as of Go 1.27.4, the toolchain go.mod pins. A FIN reaches
+// a stream either as that or as io.ErrUnexpectedEOF, whichever aborts the
+// stream first, so both are the connection's end. The error is unexported and
+// neither net/http nor golang.org/x/net/http2 exports a sentinel for it, so its
+// text is all there is to read; TestClientConnClosed_IsGosOwnText holds this
+// string to the toolchain's source, so a Go upgrade that changes it fails that
+// test rather than silently ending follows again. A client's own Close says
+// "force closed" instead and is not this.
+const clientConnClosed = "http2: client conn is closed"
+
+// closedUnderTheRequest reports whether err is clientConnClosed's error.
+func closedUnderTheRequest(err error) bool {
+	return strings.HasPrefix(err.Error(), clientConnClosed)
+}
+
 // connectionEnded reports whether err, a response body's read error, is the
 // connection's end and not the stream's: the connection closed under the read
-// (the HTTP/2 client's io.ErrUnexpectedEOF for a FIN, HTTP/1.1's for a cut
-// body), closed after a GOAWAY, or failed a network read. A peer's RST_STREAM
-// is none of them, and neither is the clean end of an HTTP stream, io.EOF.
+// (the HTTP/2 client's io.ErrUnexpectedEOF or errClientConnClosed for a FIN,
+// HTTP/1.1's io.ErrUnexpectedEOF for a cut body), closed after a GOAWAY,
+// failed a network read, or failed a network write because the connection was
+// already closed (net.ErrClosed: the HTTP/2 client's read loop closed it on the
+// FIN while the stream's request still had a write to make, the third way the
+// same FIN reaches a stream). A peer's RST_STREAM is none of them, and neither
+// is the clean end of an HTTP stream, io.EOF.
 func connectionEnded(err error) bool {
-	if errors.Is(err, io.ErrUnexpectedEOF) || strings.HasPrefix(err.Error(), goAwayEnded) {
+	if errors.Is(err, io.ErrUnexpectedEOF) || strings.HasPrefix(err.Error(), goAwayEnded) || closedUnderTheRequest(err) {
 		return true
 	}
 	var network *net.OpError
-	return errors.As(err, &network) && network.Op == "read"
+	if !errors.As(err, &network) {
+		return false
+	}
+	return network.Op == "read" || network.Op == "write" && errors.Is(network, net.ErrClosed)
 }
 
 func (g *globalFlags) orkflowClient() orkstackv1connect.OrkflowServiceClient {

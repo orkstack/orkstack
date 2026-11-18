@@ -336,6 +336,12 @@ type CensusSources struct {
 	// Policy is the engine's policy cache, refreshed as the telemetry_policy
 	// census: the listing and one read per namespace, each minute.
 	Policy *PolicyCache
+	// WebhookPending counts the webhook deliveries still running that
+	// started more than an age ago: two counts a pass.
+	WebhookPending func(ctx context.Context, olderThan time.Duration) (int64, error)
+	// Schedules is the schedule census: one list and at most half the
+	// budget of describes (MaxScheduleDescribes at most) a pass.
+	Schedules *ScheduleCensusSource
 	// PoolBacklog feeds the pool gauges (ork.pool.backlog.*), as the
 	// pool_backlog census: one read per pool each of its own interval. It is
 	// outside the budget, because its cost is what the operator configured
@@ -343,6 +349,9 @@ type CensusSources struct {
 	// leave an autoscaler without its signal.
 	PoolBacklog *PoolBacklogSource
 }
+
+// webhookPendingRequests is what one webhook-pending pass is admitted for.
+const webhookPendingRequests = 2
 
 // runsOpenRequests is what one ork.runs.open pass is admitted for: its two
 // counts. Settling runs that carried on within the hour costs more; that is
@@ -370,6 +379,21 @@ func StartCensuses(ctx context.Context, p *Providers, perMinute int, sources Cen
 		sources.Policy.SetRefreshBatch(perMinute / 2)
 		c := census{name: "telemetry_policy", budget: budget, metrics: metrics, now: time.Now,
 			pass: sources.Policy.Refresh, spent: sources.Policy.Requests, cost: sources.Policy.cost}
+		metrics.register(c.name)
+		go c.run(ctx)
+	}
+	if sources.WebhookPending != nil {
+		c := census{name: "webhook_pending", requests: webhookPendingRequests, budget: budget, metrics: metrics, now: time.Now,
+			pass: newWebhookPendingCensus(p, logger, sources.WebhookPending)}
+		metrics.register(c.name)
+		go c.run(ctx)
+	}
+	if src := sources.Schedules; src != nil && src.Read != nil {
+		sc := newScheduleCensus(p, *src, perMinute, logger)
+		// Priced from the last pass's listing; what a pass really made is
+		// charged after it.
+		c := census{name: "schedules", requests: 1, budget: budget, metrics: metrics, now: time.Now,
+			pass: sc.pass, spent: src.Requests, cost: sc.cost}
 		metrics.register(c.name)
 		go c.run(ctx)
 	}

@@ -370,6 +370,33 @@ tasks:
     with: {op: exec}
 `
 
+// gatedUntilRerun is b.run, except that task gate's call answers only once
+// key's second call has started. The run is then never idle until key's second
+// fault, so the switch (at its first idle moment) always finds key waiting
+// with its wait's instant, whatever order the test environment's activity
+// goroutines finish in: without it, a, b and c could all end before key's
+// first fault, and the run would switch with key waiting only for its
+// immediate re-run.
+func gatedUntilRerun(t *testing.T, b *scriptedBehavior, gate, key string) func(context.Context, *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+	t.Helper()
+	rerun := make(chan struct{})
+	var once sync.Once
+	return func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if in.GetTaskId() == gate {
+			select {
+			case <-rerun:
+			case <-time.After(30 * time.Second):
+				return nil, fmt.Errorf("%s's second call never started", key)
+			}
+		}
+		result, err := b.run(ctx, in)
+		if b.count(key) >= 2 {
+			once.Do(func() { close(rerun) })
+		}
+		return result, err
+	}
+}
+
 // TestContinuation_AUnitWaitingToRunAgainCrossesASwitch: a task waiting to
 // run again is not in flight, so the run switches with it waiting; the next
 // generation re-arms its wait toward the original instant, and it runs once
@@ -379,7 +406,8 @@ func TestContinuation_AUnitWaitingToRunAgainCrossesASwitch(t *testing.T) {
 	plan := continuedPlan(1)
 	budgets := engine.DefaultInterruptionBudgets
 	plan.Interruptions = &budgets
-	g := runGenerations(t, "ork-interrupted-across", compile(t, interruptedAcrossDocument), payload(t, nil), plan, b.run, nil)
+	g := runGenerations(t, "ork-interrupted-across", compile(t, interruptedAcrossDocument), payload(t, nil), plan,
+		gatedUntilRerun(t, b, "c", "work"), nil)
 	run := generationsOK(t, g, 2)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run = %v / %v", run.GetStatus(), run.GetError())
@@ -387,8 +415,11 @@ func TestContinuation_AUnitWaitingToRunAgainCrossesASwitch(t *testing.T) {
 	if got := b.count("work"); got != 3 {
 		t.Fatalf("work ran %d times across generations, want 3", got)
 	}
-	first := mustFinalRun(t, g.harnesses[0].store, g.runID)
-	before := taskRunOf(t, first, "work")
+	// The switch snapshot, never the harness's RunStore: a task's publishes
+	// are detached and land in any order (as in
+	// TestContinuation_AnItemWaitingToRunAgainCrossesASwitch).
+	atSwitch, _ := decodeCarried(t, g.harnesses[0].snapshots, g.carries[0])
+	before := taskRunOf(t, atSwitch, "work")
 	notBefore := before.GetInterruptions().GetNotBefore()
 	if before.GetStatus() != orkstackv1.Status_STATUS_PENDING || notBefore == nil {
 		t.Fatalf("work was %v (not_before %v) when generation 0 switched, want PENDING and waiting",
@@ -471,7 +502,7 @@ tasks:
 	budgets := engine.DefaultInterruptionBudgets
 	plan.Interruptions = &budgets
 	g := runGenerations(t, "ork-interrupted-items-across", compile(t, doc),
-		payload(t, map[string]any{"parts": []any{"x", "y"}}), plan, b.run, nil)
+		payload(t, map[string]any{"parts": []any{"x", "y"}}), plan, gatedUntilRerun(t, b, "c", "spread#0"), nil)
 	run := generationsOK(t, g, 2)
 	if run.GetStatus() != orkstackv1.Status_STATUS_SUCCEEDED {
 		t.Fatalf("run = %v / %v", run.GetStatus(), run.GetError())
@@ -479,8 +510,12 @@ tasks:
 	if got := b.count("spread#0"); got != 3 {
 		t.Fatalf("item 0 ran %d times across generations, want 3", got)
 	}
-	first := mustFinalRun(t, g.harnesses[0].store, g.runID)
-	if item := taskRunOf(t, first, "spread").GetItems()[0]; item.GetStatus() != orkstackv1.Status_STATUS_PENDING ||
+	// The state at the switch is the switch snapshot's, never the harness's
+	// RunStore: that is the publishes' write-side helper, and a run's item
+	// publishes are detached and land in any order, so its last copy can be
+	// an older event's view of item 0 (RUNNING) than the switch's.
+	atSwitch, _ := decodeCarried(t, g.harnesses[0].snapshots, g.carries[0])
+	if item := taskRunOf(t, atSwitch, "spread").GetItems()[0]; item.GetStatus() != orkstackv1.Status_STATUS_PENDING ||
 		item.GetInterruptions().GetNotBefore() == nil {
 		t.Fatalf("item 0 was %v when generation 0 switched, want PENDING and waiting", item.GetStatus())
 	}

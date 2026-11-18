@@ -310,9 +310,14 @@ type RunContinuation struct {
 	// request is still refused after the switch.
 	LastCascadeSeq int64 `protobuf:"varint,15,opt,name=last_cascade_seq,json=lastCascadeSeq,proto3" json:"last_cascade_seq,omitempty"`
 	// concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
-	Concurrency   *RunConcurrencyCarry `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Concurrency *RunConcurrencyCarry `protobuf:"bytes,16,opt,name=concurrency,proto3" json:"concurrency,omitempty"`
+	// deferred_pause_requests are the pause requests the run received but
+	// could not record within its history limit, in the order they arrived;
+	// the next generation applies them before any other. At most the plan's
+	// max_deferred_requests.
+	DeferredPauseRequests []*RunPauseSignal `protobuf:"bytes,17,rep,name=deferred_pause_requests,json=deferredPauseRequests,proto3" json:"deferred_pause_requests,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *RunContinuation) Reset() {
@@ -446,6 +451,13 @@ func (x *RunContinuation) GetLastCascadeSeq() int64 {
 func (x *RunContinuation) GetConcurrency() *RunConcurrencyCarry {
 	if x != nil {
 		return x.Concurrency
+	}
+	return nil
+}
+
+func (x *RunContinuation) GetDeferredPauseRequests() []*RunPauseSignal {
+	if x != nil {
+		return x.DeferredPauseRequests
 	}
 	return nil
 }
@@ -914,7 +926,7 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"\rlast_sequence\x18\x04 \x01(\x03R\flastSequence\x12\x1f\n" +
 	"\vevent_count\x18\x05 \x01(\x03R\n" +
 	"eventCount\x127\n" +
-	"\x06object\x18\x06 \x01(\v2\x1f.orkstack.v1.ContinuationObjectR\x06object\"\x93\a\n" +
+	"\x06object\x18\x06 \x01(\v2\x1f.orkstack.v1.ContinuationObjectR\x06object\"\xe8\a\n" +
 	"\x0fRunContinuation\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\x05R\aversion\x12\x1e\n" +
 	"\n" +
@@ -937,7 +949,8 @@ const file_orkstack_v1_continuation_proto_rawDesc = "" +
 	"last_pause\x18\r \x01(\v2\x15.orkstack.v1.RunPauseR\tlastPause\x12E\n" +
 	"\x10paused_by_parent\x18\x0e \x01(\v2\x1b.orkstack.v1.InheritedPauseR\x0epausedByParent\x12(\n" +
 	"\x10last_cascade_seq\x18\x0f \x01(\x03R\x0elastCascadeSeq\x12B\n" +
-	"\vconcurrency\x18\x10 \x01(\v2 .orkstack.v1.RunConcurrencyCarryR\vconcurrency\x1aC\n" +
+	"\vconcurrency\x18\x10 \x01(\v2 .orkstack.v1.RunConcurrencyCarryR\vconcurrency\x12S\n" +
+	"\x17deferred_pause_requests\x18\x11 \x03(\v2\x1b.orkstack.v1.RunPauseSignalR\x15deferredPauseRequests\x1aC\n" +
 	"\x15VersionDecisionsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\x05R\x05value:\x028\x01\"\xd9\x01\n" +
@@ -1001,9 +1014,10 @@ var file_orkstack_v1_continuation_proto_goTypes = []any{
 	(*timestamppb.Timestamp)(nil), // 12: google.protobuf.Timestamp
 	(*RunPause)(nil),              // 13: orkstack.v1.RunPause
 	(*InheritedPause)(nil),        // 14: orkstack.v1.InheritedPause
-	(*Run)(nil),                   // 15: orkstack.v1.Run
-	(*TaskRun)(nil),               // 16: orkstack.v1.TaskRun
-	(*Event)(nil),                 // 17: orkstack.v1.Event
+	(*RunPauseSignal)(nil),        // 15: orkstack.v1.RunPauseSignal
+	(*Run)(nil),                   // 16: orkstack.v1.Run
+	(*TaskRun)(nil),               // 17: orkstack.v1.TaskRun
+	(*Event)(nil),                 // 18: orkstack.v1.Event
 }
 var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	0,  // 0: orkstack.v1.ContinuationObject.parts:type_name -> orkstack.v1.ContinuationPart
@@ -1019,21 +1033,22 @@ var file_orkstack_v1_continuation_proto_depIdxs = []int32{
 	13, // 10: orkstack.v1.RunContinuation.last_pause:type_name -> orkstack.v1.RunPause
 	14, // 11: orkstack.v1.RunContinuation.paused_by_parent:type_name -> orkstack.v1.InheritedPause
 	7,  // 12: orkstack.v1.RunContinuation.concurrency:type_name -> orkstack.v1.RunConcurrencyCarry
-	15, // 13: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
-	16, // 14: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
-	16, // 15: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
-	8,  // 16: orkstack.v1.RunCheckpointPart.loss_events:type_name -> orkstack.v1.RunLossEvents
-	17, // 17: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
-	15, // 18: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
-	16, // 19: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
-	16, // 20: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
-	9,  // 21: orkstack.v1.RunLossEvents.open:type_name -> orkstack.v1.OpenLossEvent
-	12, // 22: orkstack.v1.OpenLossEvent.first_at:type_name -> google.protobuf.Timestamp
-	23, // [23:23] is the sub-list for method output_type
-	23, // [23:23] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	15, // 13: orkstack.v1.RunContinuation.deferred_pause_requests:type_name -> orkstack.v1.RunPauseSignal
+	16, // 14: orkstack.v1.RunCheckpointPart.header:type_name -> orkstack.v1.Run
+	17, // 15: orkstack.v1.RunCheckpointPart.task_runs:type_name -> orkstack.v1.TaskRun
+	17, // 16: orkstack.v1.RunCheckpointPart.items:type_name -> orkstack.v1.TaskRun
+	8,  // 17: orkstack.v1.RunCheckpointPart.loss_events:type_name -> orkstack.v1.RunLossEvents
+	18, // 18: orkstack.v1.RunEventSegment.events:type_name -> orkstack.v1.Event
+	16, // 19: orkstack.v1.RunSnapshotOverlay.header:type_name -> orkstack.v1.Run
+	17, // 20: orkstack.v1.RunSnapshotOverlay.task_runs:type_name -> orkstack.v1.TaskRun
+	17, // 21: orkstack.v1.RunSnapshotOverlay.items:type_name -> orkstack.v1.TaskRun
+	9,  // 22: orkstack.v1.RunLossEvents.open:type_name -> orkstack.v1.OpenLossEvent
+	12, // 23: orkstack.v1.OpenLossEvent.first_at:type_name -> google.protobuf.Timestamp
+	24, // [24:24] is the sub-list for method output_type
+	24, // [24:24] is the sub-list for method input_type
+	24, // [24:24] is the sub-list for extension type_name
+	24, // [24:24] is the sub-list for extension extendee
+	0,  // [0:24] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_continuation_proto_init() }

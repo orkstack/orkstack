@@ -895,3 +895,59 @@ The pause carry's run with an Indexed pause plan, recorded paced by
   `g1` 56; three repeats and the recording identical). It never skips, and
   fails unless the switch carries the pause and the attribute writes are one
   in `g0` and two in `g1`
+
+### `pause-deferred-g{0,1}-v1.json` — a pause request carried into the next history
+
+The pause carry's run under a plan whose history limit is 2,000 events and
+whose apply reserve is 1,700, recorded paced by
+`TestIntegration_RecordPauseDeferredHistories`
+(`pause_pr2_integration_test.go`), with `MaxDeferredRequests` pinned:
+
+- `g0`: q30 asks for the pause past the reserve; the run records no
+  `RUN_PAUSED`, starts nothing more, and carries the request in its switch
+  (`deferred_pause_requests`, behind the `pause-deferred` marker).
+- `g1`: the generation applies the carried request before anything else,
+  starts nothing until the unpause, then runs final alone.
+
+- command and negative: `TestRunWorkflow_ReplaysCommittedPausePR2Histories`
+  (each generation replays; with `MaxDeferredRequests` cleared from its plan,
+  each is refused)
+- payload: none
+- recorder: `TestIntegration_RecordPauseDeferredHistories` (`g0` 844 events,
+  `g1` 61; three repeats and the recording identical). It never skips, and
+  fails unless the carry holds the request and `g1` dispatches final alone
+
+### `pause-cascade-{parent,child}-v1.json` — a pause passed to a child run
+
+A parent whose composed task's child asks for the parent's pause, recorded by
+`TestIntegration_RecordPauseCascadeHistories`
+(`pause_pr2_integration_test.go`), with `Cascades` pinned:
+
+- `parent`: the pause, behind the `pause-cascade` marker, is sent on to the
+  running child, and the unpause after it (two signals to the child).
+- `child`: the child, paused by its parent, starts nothing until its parent's
+  unpause reaches it; both succeed.
+
+- command and negative: `TestRunWorkflow_ReplaysCommittedPausePR2Histories`
+  (the parent replays, and is refused with `Cascades` cleared; the child
+  replays as recorded, its commands PR1's inherited pause)
+- payload: none
+- recorder: `TestIntegration_RecordPauseCascadeHistories` (`parent` 147
+  events, `child` 106; three repeats and the recording identical). It never
+  skips, and fails unless the parent records the marker and two signals
+
+### `pause-pin-clock-v1.json` — a pin's working timeout stopped by a pause
+
+A pinned run of two members, recorded on the chaos stack by
+`TestIntegration_RecordPausePinHistory` (`pause_pr2_integration_test.go`),
+with `PinTimeoutPausable` pinned: a's run asks for the pause, the pin's
+clock stops (its timer canceled, behind the `pausable-pin-timeout` marker)
+and b is held; the unpause runs the clock again and b runs on the same pin.
+The session carries the pin's outer bound.
+
+- command and negative: `TestRunWorkflow_ReplaysCommittedPausePR2Histories`
+  (replays; with `PinTimeoutPausable` cleared, refused)
+- payload: none
+- recorder: `TestIntegration_RecordPausePinHistory` (137 events; three
+  repeats and the recording identical). It never skips, and fails unless the
+  history holds the marker and a canceled timer

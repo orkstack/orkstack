@@ -15,6 +15,8 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
 	"github.com/orkstack/orkstack/internal/stablejson"
+	"github.com/orkstack/orkstack/internal/telemetry"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
@@ -52,10 +54,16 @@ func NewTriggerHandler(svc *Service) http.Handler {
 // them, so a body key named "orkflow_name" is input data like any other key
 // and a token can start exactly the orkflow its trigger was created for.
 func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
+	// Every answer is counted once, under the found trigger's namespace, or
+	// under none while no trigger is found.
+	outcome, namespace := telemetry.TriggerInternal, ""
+	defer func() { svc.triggerMetrics.Invocation(r.Context(), namespace, outcome) }()
+
 	// 1. The Authorization header is read before any lookup: an unauthorized
 	//    caller must not be able to probe the store at all.
 	token, ok := bearerToken(r.Header.Get("Authorization"))
 	if !ok {
+		outcome = telemetry.TriggerUnauthenticated
 		writeTriggerError(w, http.StatusUnauthorized, "unauthenticated",
 			"an Authorization: Bearer <token> header is required")
 		return
@@ -66,6 +74,7 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	//    live on it. An id that is not even shaped like one names nothing.
 	id := r.PathValue("id")
 	if !triggers.ValidID(id) {
+		outcome = telemetry.TriggerNotFound
 		writeTriggerError(w, http.StatusNotFound, "not_found", fmt.Sprintf("trigger %q not found", id))
 		return
 	}
@@ -75,6 +84,7 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 		return
 	}
 	if !found {
+		outcome = telemetry.TriggerNotFound
 		writeTriggerError(w, http.StatusNotFound, "not_found", fmt.Sprintf("trigger %q not found", id))
 		return
 	}
@@ -82,7 +92,9 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	// 3. A wrong token on a real id (401) and an unknown id (404) are
 	//    deliberately distinguishable: trigger ids are not confidential, only
 	//    tokens are, the same way webhook ids are not treated as secrets.
+	namespace = artifacts.ResolveNamespace(record.Namespace)
 	if !triggers.VerifySecret(record, token) {
+		outcome = telemetry.TriggerUnauthenticated
 		writeTriggerError(w, http.StatusUnauthorized, "unauthenticated",
 			"the bearer token does not authenticate this trigger")
 		return
@@ -91,6 +103,7 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	// 4. The body IS the run's input object, not an envelope around it.
 	input, err := triggerInput(w, r)
 	if err != nil {
+		outcome = telemetry.TriggerInvalidArgument
 		writeTriggerError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return
 	}
@@ -102,6 +115,7 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	//    the caller's own correlation and selects nothing.
 	reference := r.Header.Get(OriginReferenceHeader)
 	if err := ValidateOriginReference(reference); err != nil {
+		outcome = telemetry.TriggerInvalidArgument
 		writeTriggerError(w, http.StatusBadRequest, "invalid_argument", err.Error())
 		return
 	}
@@ -129,9 +143,12 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	})
 	if err != nil {
 		status, code := triggerSubmitStatus(err)
+		outcome = triggerOutcome(status)
 		writeTriggerError(w, status, code, err.Error())
 		return
 	}
+	// The run is started, whatever the answer's encoding does next.
+	outcome = telemetry.TriggerStarted
 
 	// 8. The same envelope `orkctl run submit --json` and the UI already read,
 	//    in the short-enum dialect every other JSON surface uses (json.go).
@@ -221,6 +238,25 @@ func triggerSubmitStatus(err error) (int, string) {
 		return http.StatusConflict, code.String()
 	default:
 		return http.StatusInternalServerError, "internal"
+	}
+}
+
+// triggerOutcome is the metric outcome of a submission this route refused,
+// from the status triggerSubmitStatus chose for it.
+func triggerOutcome(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return telemetry.TriggerInvalidArgument
+	case http.StatusNotFound:
+		return telemetry.TriggerNotFound
+	case http.StatusPreconditionFailed:
+		return telemetry.TriggerRefused
+	case http.StatusServiceUnavailable:
+		return telemetry.TriggerUnavailable
+	case http.StatusConflict:
+		return telemetry.TriggerConflict
+	default:
+		return telemetry.TriggerInternal
 	}
 }
 

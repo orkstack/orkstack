@@ -1,6 +1,7 @@
 <script lang="ts">
 	import OrkflowDelete from '#lib/components/OrkflowDelete.svelte';
 	import { sharedWithLabel } from '#lib/sharing.ts';
+	import { humanTimeout } from '#lib/awaits.ts';
 	import VersionText from '#lib/components/VersionText.svelte';
 	import { shortVersion, versionTip } from '#lib/version.ts';
 	import type { Snippet } from 'svelte';
@@ -201,7 +202,7 @@
 			{#snippet digest()}{#if wf.definitionDigest}<Plate key="digest" value={wf.definitionDigest.replace(/^sha256:/, '').slice(0, 12).replace(/(.{4})(?=.)/g, '$1 ')} tip={wf.definitionDigest} />{:else}—{/if}{/snippet}
 			{#snippet createdAt()}<TimeAgo at={wf.createdAt} />{/snippet}
 			{#snippet sharedWith()}<span data-testid="orkflow-shared-with">{sharedWithLabel(wf.sharedWith).join(' · ')}</span>{/snippet}
-			<FactsStrip facts={[{ label: 'Current', value: version }, { label: 'Definition', value: digest }, { label: 'Created', value: createdAt }, ...(wf.sharedWith.length > 0 ? [{ label: 'Shared with', value: sharedWith }] : [])]} />
+			<FactsStrip facts={[{ label: 'Current', value: version }, { label: 'Definition', value: digest }, { label: 'Created', value: createdAt }, ...(wf.timeoutSeconds > 0n ? [{ label: 'Timeout', value: humanTimeout(Number(wf.timeoutSeconds)), testid: 'orkflow-timeout' }] : []), ...(wf.sharedWith.length > 0 ? [{ label: 'Shared with', value: sharedWith }] : [])]} />
 			{#if wf.description && data.tab !== 'edit'}<p class="mt-2 max-w-prose">{wf.description}</p>{/if}
 		{/if}
 	{/snippet}

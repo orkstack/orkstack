@@ -352,13 +352,15 @@ var carriedGenerations = map[string]bool{
 	"pause-indexed-continued-g1-v1.json":                  true,
 	"pause-continued-carried-g1-v2.json":                  true,
 	"run-interruption-retry-item-continuation-g1-v1.json": true,
+	"pause-deferred-g1-v1.json":                           true,
 }
 
 // continuedStackFixtureNames are the fixtures recorded under the
 // continuation stack's plan, whose in-flight limit carries the publish
 // window (TestIntegration_RecordRunTimeoutContinuedHistories,
 // TestIntegration_RecordPauseContinuedHistories,
-// TestIntegration_RecordPauseIndexedHistories).
+// TestIntegration_RecordPauseIndexedHistories,
+// TestIntegration_RecordPauseDeferredHistories).
 var continuedStackFixtureNames = []string{
 	"run-timeout-continued-carried-g0-v1.json", "run-timeout-continued-carried-g1-v1.json",
 	"run-timeout-continued-past-deadline-g0-v1.json", "run-timeout-continued-past-deadline-g1-v1.json",
@@ -366,6 +368,7 @@ var continuedStackFixtureNames = []string{
 	"pause-continued-carried-g0-v1.json", "pause-continued-carried-g1-v1.json",
 	"pause-indexed-continued-g0-v1.json", "pause-indexed-continued-g1-v1.json",
 	"pause-continued-carried-g0-v2.json", "pause-continued-carried-g1-v2.json",
+	"pause-deferred-g0-v1.json", "pause-deferred-g1-v1.json",
 }
 
 // TestCommittedFixtures_StartWithFourArgumentsAndNoCarry: every committed

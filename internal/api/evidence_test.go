@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -989,4 +990,32 @@ func TestExportRunEvidence_AwaitedTaskHasOnlyItsValues(t *testing.T) {
 		t.Fatalf("tasks = %+v", r.manifest.Tasks)
 	}
 	verifyBundle(t, r.data)
+}
+
+// TestEvidence_RunTimeoutRoundTrips: a timed-out run's Run.timeout — its
+// limit, deadline, hard end and both flags — reaches the bundle's run.jsonl
+// as archived and decodes back unchanged (docs/DSL.md "Run timeout").
+func TestEvidence_RunTimeoutRoundTrips(t *testing.T) {
+	f := newEvidenceFixture(t)
+	timeout := &orkstackv1.RunTimeout{
+		Seconds:        60,
+		Deadline:       timestamppb.New(evidenceNow.Add(-time.Hour + 30*time.Second)),
+		HardEnd:        timestamppb.New(evidenceNow.Add(-time.Hour + 40*time.Second)),
+		TimedOut:       true,
+		HardEndReached: true,
+	}
+	f.finish(&orkstackv1.Run{
+		Id: "ork-ev-timeout", Status: orkstackv1.Status_STATUS_FAILED, Timeout: timeout,
+		Error: &orkstackv1.Error{Code: "RUN_TIMED_OUT", Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT},
+	})
+	r := f.mustExport(&orkstackv1.ExportRunEvidenceRequest{RunId: "ork-ev-timeout"})
+	verifyBundle(t, r.data)
+	archived, _, err := engine.UnmarshalRunArchive(tarMembers(t, r.data)["run.jsonl"])
+	must.OKf(t, err, "UnmarshalRunArchive")
+	if !proto.Equal(archived.GetTimeout(), timeout) {
+		t.Fatalf("run.jsonl's timeout = %v, want %v", archived.GetTimeout(), timeout)
+	}
+	if r.manifest.RunStatus != "FAILED" {
+		t.Fatalf("manifest run_status = %q, want FAILED", r.manifest.RunStatus)
+	}
 }

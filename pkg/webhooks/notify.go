@@ -61,6 +61,7 @@ type Notifier struct {
 	dispatcher *Dispatcher
 	launcher   Launcher
 	record     func(ctx context.Context, result Result) error
+	notQueued  func(ctx context.Context, namespace, reason string)
 	logger     *slog.Logger
 	newID      func(queuedAt time.Time) (string, error)
 
@@ -87,8 +88,13 @@ type NotifierOptions struct {
 	Launcher Launcher
 	// Record writes a settled delivery's immutable record. Nil records
 	// nothing. Settle returns its error, so the engine's activity retries a
-	// record that could not be written.
+	// record that could not be written. An error wrapping ErrRecordExists
+	// says the record was already there — a retried write's success — and
+	// is not returned.
 	Record func(ctx context.Context, result Result) error
+	// OnNotQueued, when set, is told each delivery that could not be queued,
+	// with its namespace and one of NotQueuedReasons. It must not block.
+	OnNotQueued func(ctx context.Context, namespace, reason string)
 	// Logger records delivery outcomes. Nil discards them.
 	Logger *slog.Logger
 	// NewDeliveryID generates delivery ids from the instant the delivery was
@@ -103,6 +109,7 @@ func NewNotifier(registry *Registry, dispatcher *Dispatcher, options NotifierOpt
 		dispatcher: dispatcher,
 		launcher:   options.Launcher,
 		record:     options.Record,
+		notQueued:  options.OnNotQueued,
 		logger:     options.Logger,
 		newID:      options.NewDeliveryID,
 	}
@@ -236,17 +243,51 @@ func (n *Notifier) dispatch(ctx context.Context, hook Webhook, delivery Delivery
 	n.logger.Error("webhook delivery not queued",
 		"webhook_id", hook.ID, "delivery_id", delivery.ID, "url", hook.URL,
 		"event", string(delivery.Event), "run_id", delivery.RunID, "error", err)
+	if n.notQueued != nil {
+		n.notQueued(ctx, delivery.Namespace, NotQueuedReason(err))
+	}
 	result := NotQueued(hook, delivery, err)
 	n.settleLogged(ctx, result)
 }
 
 // NotQueuedError is a Launcher's refusal. Reason is what the delivery's
-// record says, in OrkStack's own words; Err is the underlying failure, which
-// only the engine's log names.
+// record says, in OrkStack's own words; Code is one of NotQueuedReasons, for
+// a metric; Err is the underlying failure, which only the engine's log names.
 type NotQueuedError struct {
 	Reason string
+	Code   string
 	Err    error
 }
+
+// Why a delivery could not be queued, a closed set.
+const (
+	NotQueuedBodyUnencodable = "body_unencodable"
+	NotQueuedBodyUnstored    = "body_unstored"
+	NotQueuedNotStarted      = "not_started"
+	NotQueuedUnknown         = "unknown"
+)
+
+// NotQueuedReasons is the closed set of not-queued reasons, a fresh copy.
+func NotQueuedReasons() []string {
+	return []string{NotQueuedBodyUnencodable, NotQueuedBodyUnstored, NotQueuedNotStarted, NotQueuedUnknown}
+}
+
+// NotQueuedReason is the closed reason of a Launcher's refusal: its Code
+// when it names one of NotQueuedReasons, unknown otherwise.
+func NotQueuedReason(err error) string {
+	var refused *NotQueuedError
+	if errors.As(err, &refused) {
+		switch refused.Code {
+		case NotQueuedBodyUnencodable, NotQueuedBodyUnstored, NotQueuedNotStarted:
+			return refused.Code
+		}
+	}
+	return NotQueuedUnknown
+}
+
+// ErrRecordExists is what a Record returns, wrapped, for a delivery whose
+// record is already there.
+var ErrRecordExists = errors.New("webhook delivery record already exists")
 
 func (e *NotQueuedError) Error() string { return e.Reason + ": " + e.Err.Error() }
 
@@ -305,12 +346,24 @@ func (n *Notifier) settleLogged(ctx context.Context, result Result) {
 // record that already exists is the recorder's success, so a retried Settle
 // is safe.
 func (n *Notifier) Settle(ctx context.Context, result Result) error {
+	_, err := n.SettleRecord(ctx, result)
+	return err
+}
+
+// SettleRecord is Settle, also saying whether this call wrote the record:
+// false for a record already there, which a retried settle finds. The
+// observers are handed the result either way.
+func (n *Notifier) SettleRecord(ctx context.Context, result Result) (created bool, err error) {
 	if n == nil {
-		return nil
+		return false, nil
 	}
+	created = true
 	if n.record != nil {
 		if err := n.record(ctx, result); err != nil {
-			return err
+			if !errors.Is(err, ErrRecordExists) {
+				return false, err
+			}
+			created = false
 		}
 	}
 	n.mu.Lock()
@@ -319,7 +372,7 @@ func (n *Notifier) Settle(ctx context.Context, result Result) error {
 	for _, observe := range observers {
 		observe(result)
 	}
-	return nil
+	return created, nil
 }
 
 // Wait blocks until every delivery this process is matching, queuing or
