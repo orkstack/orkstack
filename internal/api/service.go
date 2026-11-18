@@ -2720,7 +2720,86 @@ func (s *Service) GetRun(
 		return nil, err
 	}
 	SetRunTiming(run, time.Now())
+	s.applyCensusPendingReasons(ctx, run)
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
+}
+
+// applyCensusPendingReasons sets the fleet-census half of pending_reason
+// (engine.ApplyCensusPendingReasons) on a live run that may have a task
+// waiting for an Orker. Its cost is bounded, because GetRun is polled:
+//   - a run whose snapshot has no such row reads nothing (engine.AwaitsCensus);
+//   - otherwise one describe of the run says its release, whether a pin is
+//     opening and whether a task activity has waited for an Orker; a run with
+//     neither reads nothing more;
+//   - then the replica's shared Orker inventory (sharedInventory), read at most
+//     once a capacityInventoryTTL for every caller;
+//   - and only when a task activity waits, the history read that names it
+//     (LiveAttempts), as InspectRun does.
+//
+// All of it runs within censusReadTimeout. Whatever cannot be read leaves the
+// reason unset, never guessed, and never fails the read.
+func (s *Service) applyCensusPendingReasons(ctx context.Context, run *orkstackv1.Run) {
+	if s.inventory == nil || !engine.AwaitsCensus(run) {
+		return
+	}
+	// The caller's own end is not a reason to warn; the census's bound is.
+	caller := ctx
+	ctx, cancel := context.WithTimeout(ctx, censusReadTimeout)
+	defer cancel()
+	binding, err := s.locate(ctx, run.GetId())
+	if err != nil {
+		return
+	}
+	reader, ok := binding.Reader.(engine.RunDispatchReader)
+	if binding.Reader == nil || !ok {
+		return
+	}
+	now := s.now()
+	dispatch, err := reader.RunDispatch(ctx, run.GetId(), now)
+	if err != nil {
+		s.warnCensus(caller, run, "the run could not be described", err)
+		return
+	}
+	if !dispatch.Scheduled && !dispatch.OpeningPins {
+		return
+	}
+	orkers, err := s.inventory.read(ctx)
+	if err != nil {
+		s.warnCensus(caller, run, "the Orker inventory could not be read", err)
+		return
+	}
+	// Without the history read no task is said to wait for an Orker, but a
+	// pin's wait for a pin host still can be.
+	if live, ok := binding.Reader.(engine.LiveAttemptReader); ok && dispatch.Scheduled {
+		attempts, err := live.LiveAttempts(ctx, run.GetId(), now)
+		if err != nil {
+			s.warnCensus(caller, run, "the run's waiting tasks could not be read", err)
+		} else {
+			dispatch.Waiting = map[engine.WaitingAttempt]bool{}
+			for _, attempt := range attempts.Attempts {
+				if engine.WaitsForAnOrker(attempt, now) {
+					dispatch.Waiting[engine.WaitingFor(attempt)] = true
+				}
+			}
+		}
+	}
+	engine.ApplyCensusPendingReasons(run, orkers, dispatch, now)
+}
+
+// censusReadTimeout bounds everything GetRun reads to say why a task waits:
+// the inventory's own bound (capacityReadTimeout) and a describe and a history
+// read beside it. A read slower than this answers without the reason.
+const censusReadTimeout = 3 * time.Second
+
+// warnCensus logs why GetRun says no reason for a waiting task: at most once
+// a capacityWarnInterval on this replica, since every poll of a run page would
+// repeat it, and not at all when the caller left or the run just closed.
+func (s *Service) warnCensus(ctx context.Context, run *orkstackv1.Run, what string, err error) {
+	if ctx.Err() != nil || errors.Is(err, engine.ErrRunNotFound) || !s.inventory.warnDue() {
+		return
+	}
+	s.logger.Warn("get run: "+what+", so no task says why it waits for an Orker (said at most once a minute)",
+		"run_id", run.GetId(), "error", err)
 }
 
 // MaxRunPageSize is the most runs one ListRuns page returns. A larger

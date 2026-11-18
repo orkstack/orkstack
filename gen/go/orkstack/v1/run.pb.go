@@ -1175,7 +1175,14 @@ type TaskRun struct {
 	Interruptions *TaskInterruptions `protobuf:"bytes,28,opt,name=interruptions,proto3" json:"interruptions,omitempty"`
 	// queued is set from E88; unset until it lands (v0.4.0 proto batch).
 	Queued *ConcurrencyQueued `protobuf:"bytes,29,opt,name=queued,proto3" json:"queued,omitempty"`
-	// pending_reason is set from E92; unset until it lands (v0.4.0 proto batch).
+	// pending_reason says why a task, or a fan-out item, of a live run is not
+	// running yet. GetRun derives it on read and nothing stores it. It is one
+	// of: the instant the task waits for to run again after an interruption;
+	// that no Orker of its pool (on a versioned fleet, of its run's release)
+	// takes work, for a task the run dispatched that no Orker has started; or
+	// that its pin waits for a pin host. It is empty when none applies, and when
+	// the reason cannot be known: the Orker inventory or the run's release could
+	// not be read, or a live Orker did not answer.
 	PendingReason string `protobuf:"bytes,30,opt,name=pending_reason,json=pendingReason,proto3" json:"pending_reason,omitempty"`
 	// result_epoch is set from E85; unset until it lands (v0.4.0 proto batch).
 	ResultEpoch int64 `protobuf:"varint,31,opt,name=result_epoch,json=resultEpoch,proto3" json:"result_epoch,omitempty"`

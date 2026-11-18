@@ -2464,7 +2464,11 @@ release runs nothing at all (§1).
    While v1 has runs in flight, `orkctl release status` and `wait` name such a
    pool, as a warning that changes no exit code: `release v1 has 3 runs and no
    Orker taking work on pool gpu; a task they send there waits until one does`
-   (`Release.unserved_pools`). To recover, start an
+   (`Release.unserved_pools`). The waiting task says the same on the run:
+   `orkctl run get` prints `fetch waits: waiting for an Orker of release v1 on
+   pool gpu; none takes work (1 stopping)` (`TaskRun.pending_reason`, derived
+   on read from the run's release and this replica's Orker inventory, never
+   stored, and omitted when either cannot be read). To recover, start an
    Orker with v1's `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on that pool, or
    uncordon one; the tasks then run on it. Run each release's Orkers as their
    own Deployment (or ECS service, or systemd unit) and remove the old one only
