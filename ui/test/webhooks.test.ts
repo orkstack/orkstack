@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 import { EventType } from '../src/lib/gen/orkstack/v1/run_pb';
-import { RUN_EVENTS, SCOPE_SLUG_PATTERN, TASK_EVENTS, webhookScope } from '../src/lib/webhooks';
+import { OPT_IN_RUN_EVENTS, RUN_EVENTS, SCOPE_SLUG_PATTERN, TASK_EVENTS, webhookScope } from '../src/lib/webhooks';
 
 // The scope cell reads exactly as orkctl's SCOPE column does
 // (cmd/orkctl/webhook.go webhookScopeCell), except that the all-empty case
@@ -18,14 +18,16 @@ test('a scope is positional, with * for each unset component', () => {
 	expect(webhookScope({ namespace: 'analytics', orkflowName: '', taskId: 'extract' })).toBe('analytics/*/extract');
 });
 
-test('the offered events are the eleven subscribable ones in lifecycle order, never TASK_LOG', () => {
+test('the offered events are the fifteen subscribable ones in lifecycle order, never TASK_LOG', () => {
 	expect(RUN_EVENTS).toEqual([
 		EventType.RUN_STARTED,
 		EventType.RUN_SUCCEEDED,
 		EventType.RUN_FAILED,
 		EventType.RUN_CANCELED
 	]);
+	expect(OPT_IN_RUN_EVENTS).toEqual([EventType.RUN_QUEUED, EventType.RUN_PAUSED, EventType.RUN_UNPAUSED]);
 	expect(TASK_EVENTS).toEqual([
+		EventType.TASK_QUEUED,
 		EventType.TASK_SCHEDULED,
 		EventType.TASK_STARTED,
 		EventType.TASK_AWAITING,
@@ -34,7 +36,8 @@ test('the offered events are the eleven subscribable ones in lifecycle order, ne
 		EventType.TASK_SUCCEEDED,
 		EventType.TASK_FAILED
 	]);
-	expect([...RUN_EVENTS, ...TASK_EVENTS]).not.toContain(EventType.TASK_LOG);
+	expect([...RUN_EVENTS, ...OPT_IN_RUN_EVENTS, ...TASK_EVENTS]).toHaveLength(15);
+	expect([...RUN_EVENTS, ...OPT_IN_RUN_EVENTS, ...TASK_EVENTS]).not.toContain(EventType.TASK_LOG);
 });
 
 test('the client slug pattern is the server rule, anchored as the pattern attribute anchors it', () => {

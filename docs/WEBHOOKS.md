@@ -39,10 +39,12 @@ only the events below, and a subscription receives only the ones it names
 
 | Event | Delivered when |
 | --- | --- |
+| `RUN_QUEUED` | the run waits for a concurrency slot before it starts, or, after a resume or an unpause, before it continues |
 | `RUN_STARTED` | the run moves from pending to running |
 | `RUN_SUCCEEDED` | the run ends successfully |
 | `RUN_FAILED` | the run ends failed |
 | `RUN_CANCELED` | the run ends cancelled |
+| `TASK_QUEUED` | a task waits for a task-level concurrency slot |
 | `TASK_SCHEDULED` | a task is handed to the scheduler |
 | `TASK_STARTED` | a task is dispatched to an Orker; the activity is scheduled, which does not mean a container is running |
 | `TASK_AWAITING` | an awaited task starts waiting to be resolved |
@@ -54,7 +56,7 @@ only the events below, and a subscription receives only the ones it names
 | `RUN_UNPAUSED` | the run continues after a pause (status `RUNNING`), or an unpause found it not paused (`pause_transition` `NOT_PAUSED`); a pause its run's end closed has none: the terminal delivery's `pause_transition` and the run's `last_pause` say so |
 
 - An empty `events` selects the four run transitions and no task event. Task
-  events, `RUN_PAUSED` and `RUN_UNPAUSED` are opt-in, by name.
+  events, `RUN_QUEUED`, `RUN_PAUSED` and `RUN_UNPAUSED` are opt-in, by name.
 - `TASK_LOG` is refused: a log line is not a transition (`ParseEvent`).
 - Duplicates are removed and the list is kept in lifecycle order on registration
   (`normalizeEvents`).

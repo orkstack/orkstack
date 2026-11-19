@@ -4667,7 +4667,7 @@ an HMAC-SHA256 of the request body in the X-Ork-Signature header.
 
 Flags:
 
-- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
 - `--name STRING` — handle an automation document addresses this subscription by (needs -n)
 - `--orkflow STRING` — narrow to runs of this orkflow (exact name; empty means every orkflow)
 - `--secret STRING` — signing secret to use instead of a generated one
@@ -4731,7 +4731,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   run_id       = != =a,b       text
   webhook_id   = != =a,b       text
-  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED
+  event        = != =a,b       RUN_QUEUED RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_QUEUED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED
   delivered    =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
@@ -4856,7 +4856,7 @@ Flags:
 
 - `--clear-events` — empty the event list: every run transition
 - `--deployment-wide` — clear the namespace scope
-- `--event STRINGARRAY` — replace the event list (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — replace the event list (repeatable): RUN_QUEUED | RUN_STARTED | TASK_QUEUED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
 - `--name STRING` — new handle ("" makes the subscription unnamed; needs a namespace scope)
 - `--orkflow STRING` — narrow to runs of this orkflow ("" clears it)
 - `-t, --task STRING` — narrow task events to this task ("" clears it)
