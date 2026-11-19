@@ -36,6 +36,10 @@ Then restart the engines, so each one finds them. On Temporal Cloud, which OrkSt
 temporal operator search-attribute list --namespace ork-main
 ```
 
+## Run without admin rights
+
+On a cluster another team runs, ask its admin to create the namespace with a retention of at least four days (`--retention 96h`) and the attributes above. The engine then needs no admin rights. It takes its maximum run retention from that retention, and refuses to start, naming what to set, when the retention is too short. DEPLOY.md lists the exact permissions.
+
 ## Mind the limits
 
 Temporal limits custom attributes per namespace. A SQL visibility store (PostgreSQL, MySQL, SQLite) takes 10 Keyword attributes, and OrkStack uses five, leaving five for your own.
@@ -47,4 +51,5 @@ A run that was started while `OrkflowRunPaused` existed stops at its next pause 
 ## See also
 
 - [DEPLOY.md, "Temporal search attributes"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#temporal-search-attributes): every attribute, what it is for, what happens without it, Temporal Cloud and the limits per store
+- [DEPLOY.md, "Running without Temporal admin rights"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-without-temporal-admin-rights): what the cluster admin creates, the permissions the engine needs, and the boot lines that confirm it
 - [LIMITATIONS.md, "Engine, cluster and gateway"](https://github.com/orkstack/orkstack/blob/main/docs/LIMITATIONS.md#engine-cluster-and-gateway): the paused-run index, and Temporal Cloud

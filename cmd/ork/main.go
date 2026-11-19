@@ -1591,7 +1591,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 	}
 	retention := archivecleanup.NewRetentionController(
 		retentionPolicies, reader, cfg.temporalNamespace, cfg.cleanup.RetentionBuffer, logger).
-		WithKeyLife(engine.ClaimLife(cfg.idempotencyTTL))
+		WithKeyLife(engine.ClaimLife(cfg.idempotencyTTL)).WithObserver(telemetry.NewRetentionObserver(sinks.Default(), logger))
 	policy, err := retention.Ensure(ctx)
 	if err != nil {
 		// Fail closed: an engine that cannot establish the ceiling must not
