@@ -23,10 +23,35 @@ import (
 // number its wait decides with. The key and line checks of §7.1 steps 5-7
 // land with the key's own checks; until then a full key queues.
 
+// createSupportCheckTimeout bounds the fleet read create and validate make
+// for their warning.
+const createSupportCheckTimeout = 10 * time.Second
+
 const (
 	minQueueTimeoutSetting = "engine.concurrency.min_queue_timeout"
 	maxQueueTimeoutSetting = "engine.concurrency.max_queue_timeout"
 )
+
+// busyRefusal marks a submit refusal that says the namespace or the key is
+// full for now: a limit's line or keys, or a max_running filled by queued
+// runs. A trigger answers it 429 with Retry-After
+// (engine.concurrency.retry_after) rather than 503, which stays the
+// cluster's own unavailability and rate limiting.
+type busyRefusal struct{ err error }
+
+func (b *busyRefusal) Error() string { return b.err.Error() }
+func (b *busyRefusal) Unwrap() error { return b.err }
+
+// busy is a ResourceExhausted refusal marked busyRefusal.
+func busy(err error) error {
+	return connect.NewError(connect.CodeResourceExhausted, &busyRefusal{err: err})
+}
+
+// isBusy reports a busyRefusal anywhere in err's chain.
+func isBusy(err error) bool {
+	var b *busyRefusal
+	return errors.As(err, &b)
+}
 
 // concurrencySettingsOf is Config.Concurrency, the defaults for a zero value.
 func concurrencySettingsOf(c engine.ConcurrencySettings) engine.ConcurrencySettings {
@@ -222,8 +247,7 @@ func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key string,
 			engine.ConcurrencyCheckUnavailableCode, scope, what, err))
 	}
 	full := func(cause, format string, args ...any) error {
-		return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("%s (cause=%s): %s",
-			engine.ConcurrencyQueueFullCode, cause, fmt.Sprintf(format, args...)))
+		return busy(fmt.Errorf("%s (cause=%s): %s", engine.ConcurrencyQueueFullCode, cause, fmt.Sprintf(format, args...)))
 	}
 	reader := s.concurrencyReader
 	if reader == nil {
@@ -243,7 +267,7 @@ func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key string,
 			return unavailable("namespace", fmt.Sprintf("namespace %q's active keys", namespace), err)
 		}
 		if bound := int64(s.concurrency.MaxActiveKeysPerNamespace); active >= bound {
-			return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf(
+			return busy(fmt.Errorf(
 				"%s: namespace %q already has %d keys with runs holding or queued, its bound "+
 					"(engine.concurrency.max_active_keys_per_namespace); submit again once one is free",
 				engine.ConcurrencyKeysExhaustedCode, namespace, active))
@@ -319,7 +343,7 @@ func (s *Service) concurrencySupport(ctx context.Context, wf *orkstackv1.Orkflow
 			"(docs/DEPLOY.md, \"Search attributes\")")
 	}
 	if s.capabilities == nil && len(causes) > 0 {
-		return unsupported(wf, causes)
+		return unsupported(wf, causes, false)
 	}
 	if s.capabilities == nil {
 		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
@@ -335,6 +359,7 @@ func (s *Service) concurrencySupport(ctx context.Context, wf *orkstackv1.Orkflow
 			"%s (scope=fleet): orkflow %s@%s declares a concurrency limit, and the cluster's "+
 				"list of engine processes could not be read; try again", engine.ConcurrencyCheckUnavailableCode, wf.GetName(), wf.GetVersion()))
 	}
+	indexMissing := len(causes) > 0
 	if len(lacking) > 0 {
 		s.logger.Warn("submit refused: engine processes run a release without concurrency limits",
 			"missing_capability", engine.CapabilityConcurrency, "identities", lacking,
@@ -345,12 +370,51 @@ func (s *Service) concurrencySupport(ctx context.Context, wf *orkstackv1.Orkflow
 	if len(causes) == 0 {
 		return nil
 	}
-	return unsupported(wf, causes)
+	return unsupported(wf, causes, !indexMissing)
 }
 
-// unsupported is CONCURRENCY_UNSUPPORTED naming every cause.
-func unsupported(wf *orkstackv1.Orkflow, causes []string) error {
-	return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+// unsupported is CONCURRENCY_UNSUPPORTED naming every cause. A fleet
+// mid-rollout is the only cause (fleetOnly) that clears by itself, so it is
+// Unavailable (a trigger's 503, a fire's retry); a cluster that does not
+// index the limit is FailedPrecondition.
+func unsupported(wf *orkstackv1.Orkflow, causes []string, fleetOnly bool) error {
+	code := connect.CodeFailedPrecondition
+	if fleetOnly {
+		code = connect.CodeUnavailable
+	}
+	return connect.NewError(code, fmt.Errorf(
 		"%s: orkflow %s@%s declares a concurrency limit this deployment cannot hold (%s)",
 		engine.ConcurrencyUnsupportedCode, wf.GetName(), wf.GetVersion(), strings.Join(causes, "; ")))
+}
+
+// concurrencyIssues are create's and validate's warnings for a limit the
+// deployment could not hold now (§7.1, "At create"): the Orkflow is stored,
+// and every cause the submit would refuse with is said. A WARNING only: a
+// deployment finishing its rollout, or indexing the attributes, holds it
+// later. An Orkflow with no limit asks nothing.
+func (s *Service) concurrencyIssues(ctx context.Context, ns *orkstackv1.Namespace, wf *orkstackv1.Orkflow) []*orkstackv1.ValidationIssue {
+	if wf.GetConcurrency() == nil {
+		return nil
+	}
+	binding, err := s.binding(ns.GetName())
+	if err != nil {
+		s.logger.Warn("create could not check whether the deployment can hold a concurrency limit",
+			"namespace", ns.GetName(), "orkflow", wf.GetName(), "error", err)
+	} else {
+		// A warning is worth a short wait only: a slow cluster leaves the
+		// create answered, with the check said to be unmade.
+		wctx, cancel := context.WithTimeout(ctx, createSupportCheckTimeout)
+		err = s.concurrencySupport(wctx, wf, binding.Starter)
+		cancel()
+	}
+	if err == nil {
+		return nil
+	}
+	var connectErr *connect.Error
+	message := err.Error()
+	if errors.As(err, &connectErr) {
+		message = connectErr.Message()
+	}
+	return []*orkstackv1.ValidationIssue{composeIssue("concurrency",
+		"a run of this Orkflow would be refused now: "+message, orkstackv1.ValidationSeverity_VALIDATION_SEVERITY_WARNING)}
 }

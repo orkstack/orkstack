@@ -3,6 +3,8 @@ package api_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"testing"
@@ -139,6 +141,7 @@ func TestSubmitRun_PinsTheRunConcurrencyPlan(t *testing.T) {
 			caps := &fakeCapabilities{}
 			svc := concService(t, starter, caps, nil)
 			must.OK(t, applyDoc(t, svc, limitedYAML(tc.block)))
+			createAsked := caps.questions() // create's warning asks once too
 			must.OKf(t, submitEnv(svc, "migrate", tc.env, ""), "submit")
 			plan := starter.plans[0]
 			c := plan.Concurrency
@@ -158,8 +161,8 @@ func TestSubmitRun_PinsTheRunConcurrencyPlan(t *testing.T) {
 			if got, want := plan.History.Reserve.Fixed, engine.DefaultHistoryReserve.Fixed; got <= want {
 				t.Fatalf("history reserve Fixed = %d, want above %d for the release the run sends", got, want)
 			}
-			if len(caps.asked) != 1 || caps.asked[0] != capabilityQuestion(engine.CapabilityConcurrency) {
-				t.Fatalf("asked %v, want %s once", caps.asked, engine.CapabilityConcurrency)
+			if asked := caps.asked[createAsked:]; len(asked) != 1 || asked[0] != capabilityQuestion(engine.CapabilityConcurrency) {
+				t.Fatalf("submit asked %v, want %s once", asked, engine.CapabilityConcurrency)
 			}
 		})
 	}
@@ -190,7 +193,7 @@ func TestSubmitRun_RefusesALimitTheDeploymentCannotHold(t *testing.T) {
 		{name: "unindexed", caps: &fakeCapabilities{},
 			wantCode: connect.CodeFailedPrecondition, wantText: []string{"CONCURRENCY_UNSUPPORTED", "cause=index"}},
 		{name: "an older process", indexed: true, caps: &fakeCapabilities{lacking: []string{"1@h@ ork-caps="}},
-			wantCode: connect.CodeFailedPrecondition, wantText: []string{"CONCURRENCY_UNSUPPORTED", "cause=fleet", "1 engine process runs"}},
+			wantCode: connect.CodeUnavailable, wantText: []string{"CONCURRENCY_UNSUPPORTED", "cause=fleet", "1 engine process runs"}},
 		{name: "both", caps: &fakeCapabilities{lacking: []string{"a", "b"}},
 			wantCode: connect.CodeFailedPrecondition, wantText: []string{"cause=index", "cause=fleet", "2 engine processes run"}},
 		{name: "the fleet cannot be read", indexed: true, caps: &fakeCapabilities{err: errors.New("describe failed")},
@@ -297,7 +300,7 @@ func TestSubmitRun_AKeyedRetryReturnsItsRunWhateverTheLimitChecks(t *testing.T) 
 	if got := len(starter.startedRuns()); got != 1 {
 		t.Fatalf("started %d runs, want the one", got)
 	}
-	if err := submitEnv(svc, "migrate", "staging", "order-43"); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+	if err := submitEnv(svc, "migrate", "staging", "order-43"); connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("a new key = %v; want the fleet's refusal", err)
 	}
 }
@@ -329,7 +332,7 @@ func TestSubmitRun_ARefusedLimitBindsNoKey(t *testing.T) {
 	caps := &fakeCapabilities{lacking: []string{"1@h@ ork-caps="}}
 	svc := concService(t, starter, caps, newSharedClaimer())
 	must.OK(t, applyDoc(t, svc, limitedYAML(templatedLimit)))
-	if err := submitEnv(svc, "migrate", "", "order-7"); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+	if err := submitEnv(svc, "migrate", "", "order-7"); connect.CodeOf(err) != connect.CodeUnavailable {
 		t.Fatalf("submit = %v; want the fleet's refusal", err)
 	}
 	caps.mu.Lock()
@@ -500,9 +503,103 @@ func TestSubmitRun_MaxRunningNamesTheQueuedRuns(t *testing.T) {
 			if !tc.queued && !strings.Contains(err.Error(), "2 runs in flight, which is its max_running") {
 				t.Fatalf("submit = %v; want today's text exactly", err)
 			}
+			var refusal *engine.AdmissionRefusedError
+			if !errors.As(err, &refusal) || refusal.Reason != engine.AdmissionMaxRunning {
+				t.Fatalf("submit = %v; want the admission refusal reachable through it", err)
+			}
 			if got := strings.Contains(err.Error(), "2 of them queued on concurrency limits"); got != tc.queued {
 				t.Fatalf("submit = %v; the queued clause present = %v, want %v", err, got, tc.queued)
 			}
 		})
+	}
+}
+
+// TestTriggerInvoke_AFullLineIsTooManyRequests: on the trigger's plain HTTP
+// route a concurrency refusal that says "full, send again later" is 429 with
+// Retry-After (engine.concurrency.retry_after); a fleet mid-rollout is 503;
+// a deployment that does not index the limit is 412.
+var defaultRetryAfter = fmt.Sprint(int64(engine.DefaultConcurrencySettings().RetryAfter / time.Second))
+
+func TestTriggerInvoke_AFullLineIsTooManyRequests(t *testing.T) {
+	gate := engine.GateID("default", "", "db:prod")
+	for _, tc := range []struct {
+		name       string
+		indexed    bool
+		caps       *fakeCapabilities
+		reader     *fakeConcReader
+		wantStatus int
+		wantRetry  string
+	}{
+		{name: "a full line", indexed: true, caps: &fakeCapabilities{},
+			reader:     &fakeConcReader{lines: map[string]engine.GateLine{gate: {Present: true, Holders: 2, Queued: 3}}},
+			wantStatus: http.StatusTooManyRequests, wantRetry: defaultRetryAfter},
+		{name: "keys exhausted", indexed: true, caps: &fakeCapabilities{},
+			reader:     &fakeConcReader{active: int64(engine.DefaultConcurrencySettings().MaxActiveKeysPerNamespace)},
+			wantStatus: http.StatusTooManyRequests, wantRetry: defaultRetryAfter},
+		{name: "a fleet mid-rollout", indexed: true, caps: &fakeCapabilities{lacking: []string{"a"}},
+			reader: &fakeConcReader{}, wantStatus: http.StatusServiceUnavailable},
+		{name: "unindexed", caps: &fakeCapabilities{}, reader: &fakeConcReader{}, wantStatus: http.StatusPreconditionFailed},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newFixtureWith(t, func(cfg *api.Config) {
+				cfg.Starter = &concStarter{fakeStarter: cfg.Starter.(*fakeStarter), indexed: tc.indexed}
+				cfg.Capabilities = tc.caps
+				cfg.ConcurrencyReader = tc.reader
+			})
+			_, err := f.orkflowClient().ApplyOrkflow(context.Background(),
+				connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: limitedYAML(templatedLimit + "\n  max_queued: 3")}))
+			must.OK(t, err)
+			trigger, secret := f.createTrigger(t, &orkstackv1.CreateTriggerRequest{OrkflowName: "migrate"})
+			status, body, header := f.invokeWithHeaders(t, trigger.GetId(), bearer(secret), "")
+			if status != tc.wantStatus || header.Get("Retry-After") != tc.wantRetry {
+				t.Fatalf("invoke = %d, Retry-After %q: %s; want %d, %q", status, header.Get("Retry-After"), body,
+					tc.wantStatus, tc.wantRetry)
+			}
+			if len(f.starter.startedRuns()) != 0 {
+				t.Fatal("a refused invoke started a run")
+			}
+		})
+	}
+}
+
+// TestApplyOrkflow_WarnsOfALimitTheDeploymentCannotHold: create stores an
+// Orkflow with a limit the deployment could not hold now, and says so; a
+// deployment that can hold it warns of nothing.
+func TestApplyOrkflow_WarnsOfALimitTheDeploymentCannotHold(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		indexed bool
+		caps    *fakeCapabilities
+		want    []string
+	}{
+		{name: "can hold it", indexed: true, caps: &fakeCapabilities{}},
+		{name: "unindexed", caps: &fakeCapabilities{}, want: []string{"CONCURRENCY_UNSUPPORTED", "cause=index"}},
+		{name: "an older process", indexed: true, caps: &fakeCapabilities{lacking: []string{"a"}},
+			want: []string{"CONCURRENCY_UNSUPPORTED", "cause=fleet"}},
+		{name: "the fleet cannot be read", indexed: true, caps: &fakeCapabilities{err: errors.New("describe failed")},
+			want: []string{"CONCURRENCY_CHECK_UNAVAILABLE"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			starter := &concStarter{fakeStarter: &fakeStarter{}, indexed: tc.indexed}
+			svc := concService(t, starter, tc.caps, nil)
+			resp, err := svc.ApplyOrkflow(context.Background(), connect.NewRequest(&orkstackv1.ApplyOrkflowRequest{Yaml: limitedYAML(templatedLimit)}))
+			must.OKf(t, err, "create")
+			warnings := strings.Join(resp.Msg.GetWarnings(), "\n")
+			if len(tc.want) == 0 && strings.Contains(warnings, "CONCURRENCY_") {
+				t.Fatalf("warnings = %q, want none about the limit", warnings)
+			}
+			for _, text := range tc.want {
+				if !strings.Contains(warnings, text) {
+					t.Fatalf("warnings = %q, want them to name %q", warnings, text)
+				}
+			}
+		})
+	}
+	// An Orkflow with no limit asks the fleet nothing at create.
+	caps := &fakeCapabilities{}
+	svc := concService(t, &concStarter{fakeStarter: &fakeStarter{}}, caps, nil)
+	must.OK(t, applyDoc(t, svc, untimedInnerYAML))
+	if caps.questions() != 0 {
+		t.Fatalf("create asked the fleet %d times for an Orkflow with no limit", caps.questions())
 	}
 }

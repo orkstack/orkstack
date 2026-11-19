@@ -178,5 +178,8 @@ func (s *Service) refuseCode(
 		s.admissions.ObserveRefusal(ctx, refusal.Namespace, engine.RefusalTelemetry(ns, wf),
 			wf.GetName(), string(refusal.Reason))
 	}
+	if code == connect.CodeResourceExhausted {
+		return busy(refusal)
+	}
 	return connect.NewError(code, refusal)
 }

@@ -1270,6 +1270,9 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// join can leave absent. Never an ERROR; rules 37–42 already refused in
 	// Compile.
 	issues = append(issues, dsl.JoinWarnings(wf)...)
+	// A concurrency limit the deployment could not hold now: a warning,
+	// never a refusal of the document.
+	issues = append(issues, s.concurrencyIssues(ctx, ns, wf)...)
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}

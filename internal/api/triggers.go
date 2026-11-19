@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/structpb"
@@ -144,6 +146,9 @@ func invokeTrigger(w http.ResponseWriter, r *http.Request, svc *Service) {
 	if err != nil {
 		status, code := triggerSubmitStatus(err)
 		outcome = triggerOutcome(status)
+		if status == http.StatusTooManyRequests {
+			w.Header().Set("Retry-After", strconv.FormatInt(retryAfterSeconds(svc.concurrency.RetryAfter), 10))
+		}
 		writeTriggerError(w, status, code, err.Error())
 		return
 	}
@@ -219,6 +224,11 @@ func bearerToken(header string) (string, bool) {
 // run id is minted, so a refused invoke leaves nothing behind — no id burnt,
 // no claim taken, no run recorded.
 func triggerSubmitStatus(err error) (int, string) {
+	if isBusy(err) {
+		// A concurrency limit's line or keys full, or a max_running filled by
+		// queued runs: worth sending again after Retry-After.
+		return http.StatusTooManyRequests, connect.CodeResourceExhausted.String()
+	}
 	switch code := connect.CodeOf(err); code {
 	case connect.CodeInvalidArgument:
 		return http.StatusBadRequest, code.String()
@@ -251,7 +261,7 @@ func triggerOutcome(status int) string {
 		return telemetry.TriggerNotFound
 	case http.StatusPreconditionFailed:
 		return telemetry.TriggerRefused
-	case http.StatusServiceUnavailable:
+	case http.StatusServiceUnavailable, http.StatusTooManyRequests:
 		return telemetry.TriggerUnavailable
 	case http.StatusConflict:
 		return telemetry.TriggerConflict
@@ -265,4 +275,9 @@ func triggerOutcome(status int) string {
 // failure on this port the same way.
 func writeTriggerError(w http.ResponseWriter, status int, code, message string) {
 	writeWebhookError(w, status, code, message)
+}
+
+// retryAfterSeconds is Retry-After's whole seconds, at least 1.
+func retryAfterSeconds(d time.Duration) int64 {
+	return max(1, int64((d+time.Second-1)/time.Second))
 }
