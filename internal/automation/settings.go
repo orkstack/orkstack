@@ -223,6 +223,15 @@ var namespaceSettings = []settingRow{
 		},
 		export: exportBudget,
 	},
+	{
+		key: "identity", field: "identity",
+		parse:  parseIdentity,
+		render: renderIdentity,
+		equal: func(a, b *orkstackv1.Namespace) bool {
+			return identityKey(a.GetIdentity()) == identityKey(b.GetIdentity())
+		},
+		export: exportIdentity,
+	},
 }
 
 // unmanagedNamespaceFields is every Namespace field a document never
@@ -234,7 +243,6 @@ var unmanagedNamespaceFields = map[protoreflect.Name]string{
 	"updated_at": "registry-owned; never supplied by a client",
 	"etag":       "registry-owned; never supplied by a client",
 	"hold":       "operational state: a hold is set and released with orkctl namespace update, never by a document",
-	"identity":   "declared ahead of task identity (v0.4.0 proto batch); no namespace holds one until it lands",
 }
 
 // holdRefusal is the ERROR a `settings.hold` key earns.
@@ -306,6 +314,9 @@ func overlay(name string, live *orkstackv1.Namespace, settings *Settings) *orkst
 		} else {
 			dst.Clear(fd)
 		}
+	}
+	if settings.Present["identity"] {
+		keepLiveIdentity(live, out)
 	}
 	return out
 }

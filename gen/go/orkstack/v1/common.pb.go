@@ -395,7 +395,11 @@ type AsksFor struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// digest is the consent digest of what the Orkflow asks for: "c1:" and 64
 	// hexadecimal digits.
-	Digest        string `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	Digest string `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
+	// audiences are the distinct token audiences it asks for.
+	Audiences []string `protobuf:"bytes,2,rep,name=audiences,proto3" json:"audiences,omitempty"`
+	// grants are the distinct grants it asks for, by name.
+	Grants        []string `protobuf:"bytes,3,rep,name=grants,proto3" json:"grants,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -437,6 +441,20 @@ func (x *AsksFor) GetDigest() string {
 	return ""
 }
 
+func (x *AsksFor) GetAudiences() []string {
+	if x != nil {
+		return x.Audiences
+	}
+	return nil
+}
+
+func (x *AsksFor) GetGrants() []string {
+	if x != nil {
+		return x.Grants
+	}
+	return nil
+}
+
 // ConsentView is the consent a schedule or a trigger records with its
 // binder: the digest of what its Orkflow asked for when it was bound.
 type ConsentView struct {
@@ -444,7 +462,11 @@ type ConsentView struct {
 	// digest is the consent digest recorded: "c1:" and 64 hexadecimal digits.
 	Digest string `protobuf:"bytes,1,opt,name=digest,proto3" json:"digest,omitempty"`
 	// at is when it was recorded.
-	At            *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
+	At *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=at,proto3" json:"at,omitempty"`
+	// audiences are the distinct token audiences it covers.
+	Audiences []string `protobuf:"bytes,3,rep,name=audiences,proto3" json:"audiences,omitempty"`
+	// grants are the distinct grants it covers, by name.
+	Grants        []string `protobuf:"bytes,4,rep,name=grants,proto3" json:"grants,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -493,6 +515,20 @@ func (x *ConsentView) GetAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ConsentView) GetAudiences() []string {
+	if x != nil {
+		return x.Audiences
+	}
+	return nil
+}
+
+func (x *ConsentView) GetGrants() []string {
+	if x != nil {
+		return x.Grants
+	}
+	return nil
+}
+
 var File_orkstack_v1_common_proto protoreflect.FileDescriptor
 
 const file_orkstack_v1_common_proto_rawDesc = "" +
@@ -517,12 +553,16 @@ const file_orkstack_v1_common_proto_rawDesc = "" +
 	"\adetails\x18\x03 \x01(\tR\adetails\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryable\x128\n" +
 	"\bcategory\x18\x05 \x01(\x0e2\x1c.orkstack.v1.FailureCategoryR\bcategory\x12\x1b\n" +
-	"\ttask_code\x18\x06 \x01(\tR\btaskCode\"!\n" +
+	"\ttask_code\x18\x06 \x01(\tR\btaskCode\"W\n" +
 	"\aAsksFor\x12\x16\n" +
-	"\x06digest\x18\x01 \x01(\tR\x06digest\"Q\n" +
+	"\x06digest\x18\x01 \x01(\tR\x06digest\x12\x1c\n" +
+	"\taudiences\x18\x02 \x03(\tR\taudiences\x12\x16\n" +
+	"\x06grants\x18\x03 \x03(\tR\x06grants\"\x87\x01\n" +
 	"\vConsentView\x12\x16\n" +
 	"\x06digest\x18\x01 \x01(\tR\x06digest\x12*\n" +
-	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at*\xd7\x01\n" +
+	"\x02at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x02at\x12\x1c\n" +
+	"\taudiences\x18\x03 \x03(\tR\taudiences\x12\x16\n" +
+	"\x06grants\x18\x04 \x03(\tR\x06grants*\xd7\x01\n" +
 	"\x06Status\x12\x16\n" +
 	"\x12STATUS_UNSPECIFIED\x10\x00\x12\x12\n" +
 	"\x0eSTATUS_PENDING\x10\x01\x12\x12\n" +

@@ -84,6 +84,10 @@ message AsksFor {
   // digest is the consent digest of what the Orkflow asks for: "c1:" and 64
   // hexadecimal digits.
   string digest = 1;
+  // audiences are the distinct token audiences it asks for.
+  repeated string audiences = 2;
+  // grants are the distinct grants it asks for, by name.
+  repeated string grants = 3;
 }
 
 // ConsentView is the consent a schedule or a trigger records with its
@@ -93,4 +97,8 @@ message ConsentView {
   string digest = 1;
   // at is when it was recorded.
   google.protobuf.Timestamp at = 2;
+  // audiences are the distinct token audiences it covers.
+  repeated string audiences = 3;
+  // grants are the distinct grants it covers, by name.
+  repeated string grants = 4;
 }
