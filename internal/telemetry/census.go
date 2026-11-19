@@ -333,6 +333,11 @@ type CensusSources struct {
 	// (CountingTemporalClient), which the budget charges.
 	OpenRuns         func(context.Context) (int64, error)
 	OpenRunsRequests func() int64
+	// PausedRuns reads the deployment's paused runs by namespace (engine
+	// PausedRuns), and PausedRunsRequests the requests it made, charged as
+	// OpenRunsRequests is.
+	PausedRuns         func(context.Context) (map[string]PausedSummary, error)
+	PausedRunsRequests func() int64
 	// Policy is the engine's policy cache, refreshed as the telemetry_policy
 	// census: the listing and one read per namespace, each minute.
 	Policy *PolicyCache
@@ -370,6 +375,12 @@ func StartCensuses(ctx context.Context, p *Providers, perMinute int, sources Cen
 	if sources.OpenRuns != nil {
 		c := census{name: "runs_open", requests: runsOpenRequests, budget: budget, metrics: metrics, now: time.Now,
 			pass: newRunsOpenGauge(p, logger, sources.OpenRuns), spent: sources.OpenRunsRequests}
+		metrics.register(c.name)
+		go c.run(ctx)
+	}
+	if sources.PausedRuns != nil {
+		c := census{name: "runs_paused", requests: 1, budget: budget, metrics: metrics, now: time.Now,
+			pass: newRunsPausedGauges(p, logger, time.Now, sources.PausedRuns), spent: sources.PausedRunsRequests}
 		metrics.register(c.name)
 		go c.run(ctx)
 	}
@@ -439,4 +450,81 @@ func (c *countingTemporalClient) DescribeWorkflowExecution(ctx context.Context, 
 func (c *countingTemporalClient) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*client.WorkflowExecutionDescription, error) {
 	c.n.Add(1)
 	return c.Client.DescribeWorkflow(ctx, workflowID, runID)
+}
+
+// RunsPausedMetric and RunsPausedSoonestMetric are the paused-run census's
+// gauges: how many live runs of each namespace are paused, and how many
+// seconds remain until the soonest of their own pauses ends (absent for a
+// namespace whose paused runs are all held by a parent's pause).
+const (
+	RunsPausedMetric        = "ork.runs.paused"
+	RunsPausedSoonestMetric = "ork.runs.paused.soonest_expiry"
+)
+
+// PausedSummary is one namespace's paused runs, as the census reads them.
+type PausedSummary struct {
+	Count   int64
+	Soonest time.Time
+}
+
+// newRunsPausedGauges registers the paused-run gauges and returns the pass
+// that feeds them. Each reports the last good pass and nothing after a pass
+// that failed; a namespace with no paused run reads 0 once it has had one.
+func newRunsPausedGauges(p *Providers, logger *slog.Logger, now func() time.Time,
+	read func(context.Context) (map[string]PausedSummary, error)) func(context.Context) error {
+	var mu sync.Mutex
+	var last map[string]PausedSummary
+	seen := map[string]bool{}
+	known := false
+	meter := meterFor(p)
+	_, err := meter.Int64ObservableGauge(RunsPausedMetric,
+		metric.WithDescription("Live runs paused, by namespace, from this replica's last good count."),
+		metric.WithUnit("{run}"),
+		metric.WithInt64Callback(func(_ context.Context, o metric.Int64Observer) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if !known {
+				return nil
+			}
+			for ns := range seen {
+				o.Observe(last[ns].Count, metric.WithAttributes(attribute.String(AttrNamespace, ns)))
+			}
+			return nil
+		}))
+	if err != nil && logger != nil {
+		logger.Warn("telemetry: "+RunsPausedMetric+" could not be built; it is not exported", "error", err)
+	}
+	_, err = meter.Float64ObservableGauge(RunsPausedSoonestMetric,
+		metric.WithDescription("Seconds until the soonest own pause of a namespace's paused runs ends."),
+		metric.WithUnit("s"),
+		metric.WithFloat64Callback(func(_ context.Context, o metric.Float64Observer) error {
+			mu.Lock()
+			defer mu.Unlock()
+			if !known {
+				return nil
+			}
+			for ns, s := range last {
+				if !s.Soonest.IsZero() {
+					o.Observe(s.Soonest.Sub(now()).Seconds(), metric.WithAttributes(attribute.String(AttrNamespace, ns)))
+				}
+			}
+			return nil
+		}))
+	if err != nil && logger != nil {
+		logger.Warn("telemetry: "+RunsPausedSoonestMetric+" could not be built; it is not exported", "error", err)
+	}
+	return func(ctx context.Context) error {
+		got, err := read(ctx)
+		mu.Lock()
+		defer mu.Unlock()
+		if err != nil {
+			known = false
+			return err
+		}
+		last, known = got, true
+		for ns := range got {
+			seen[ns] = true
+		}
+		return nil
+	}
 }

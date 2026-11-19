@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Status } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import '../app.css';
 	import { goto, invalidateAll, replaceState } from '$app/navigation';
 	import { navigating, page } from '$app/state';
@@ -214,10 +215,14 @@
 	// it counts a run, so a finished run does not linger in it. The build is
 	// read once.
 	let running = $state<number | null>(null);
+	// paused is how many of those are paused: their rows read PAUSED where the
+	// cluster indexes paused runs, and RUNNING (so none here) where it does not.
+	let paused = $state(0);
 	let version = $state('');
 	$effect(() => {
 		void data.namespace;
 		running = null;
+		paused = 0;
 	});
 	const counting = $derived((running ?? 0) > 0);
 	$effect(() => {
@@ -229,7 +234,9 @@
 				statsClient(fetch)
 					.getStats({ namespace: ns, lookback: { seconds: 3600n, nanos: 0 } })
 					.then((res) => {
-						if (live) running = res.running.length;
+						if (!live) return;
+						running = res.running.length;
+						paused = res.running.filter((r) => r.status === Status.PAUSED).length;
 					})
 					.catch(() => {
 						if (live) running = null;
@@ -382,6 +389,7 @@
 		pathname={page.url.pathname}
 		{link}
 		{running}
+		{paused}
 		counts={navCounts}
 		{version}
 		picker={namespacePicker}

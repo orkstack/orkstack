@@ -40,8 +40,10 @@ X-Ork-Signature: sha256=…
 | `TASK_SLEEPING` | A sleeping task starts its fixed wait. |
 | `TASK_SUCCEEDED` | A task's result is committed. |
 | `TASK_FAILED` | A task fails for good, after its retries. |
+| `RUN_PAUSED` | A run is paused, by a person or by its parent run. |
+| `RUN_UNPAUSED` | A paused run continues. |
 
-The four run events are the default. Task events are opt-in: name each one with `--event`. A task event adds `taskId`, and `attempt` when the engine has numbered the attempt. Task events are hints with a short retry budget. A receiver that must not miss one reads the run again through the API (`GetRun`).
+The four run events are the default. Task events and the two pause events are opt-in: name each one with `--event`. A task event adds `taskId`, and `attempt` when the engine has numbered the attempt. Task events are hints with a short retry budget. A receiver that must not miss one reads the run again through the API (`GetRun`).
 
 ## Limit the scope
 

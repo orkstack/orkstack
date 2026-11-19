@@ -6,10 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
+
+	"github.com/prometheus/procfs"
 )
 
 // openGPULock opens the lock directory O_RDONLY|O_DIRECTORY|O_CLOEXEC and
@@ -74,16 +78,34 @@ func (l *gpuHostLock) wait(ctx context.Context, every time.Duration, onHeld func
 	}
 }
 
-// holder names who holds the lock, from /proc/locks and /proc/<pid>/comm.
+// holder names who holds the lock, from /proc/locks and /proc/<pid>/comm. The
+// lock directory's device is the one /proc/locks prints, its superblock's,
+// read from the mount the held fd is on: stat's st_dev is not it on btrfs,
+// whose subvolumes report a device of their own.
 func (l *gpuHostLock) holder() lockHolder {
+	dev, err := lockedFileDev(l.fd)
+	if err != nil {
+		return lockHolder{err: err}
+	}
 	f, err := os.Open("/proc/locks")
 	if err != nil {
 		return lockHolder{err: err}
 	}
 	defer func() { _ = f.Close() }()
-	pids, err := parseProcLocks(f, l.dev, l.ino)
+	return holderFrom(f, dev, l.ino)
+}
+
+// holderFrom names the holders /proc/locks lists for the inode ino of device
+// dev. It is asked once the lock was found held, so a body that lists no
+// holder cannot name one (errHolderNotListed), never says "nobody": the holder
+// may be in another pid namespace, or may have let go since.
+func holderFrom(locks io.Reader, dev, ino uint64) lockHolder {
+	pids, err := parseProcLocks(locks, dev, ino)
 	if err != nil {
 		return lockHolder{err: err}
+	}
+	if len(pids) == 0 {
+		return lockHolder{err: errHolderNotListed}
 	}
 	h := lockHolder{pids: pids, comms: make([]string, len(pids))}
 	for i, pid := range pids {
@@ -95,6 +117,31 @@ func (l *gpuHostLock) holder() lockHolder {
 		h.comms[i] = strings.TrimSpace(string(comm))
 	}
 	return h
+}
+
+// lockedFileDev is the device /proc/locks prints for the file open at fd: the
+// major:minor of the mount fd is on, from /proc/self/fdinfo and
+// /proc/self/mountinfo, both read by prometheus/procfs.
+func lockedFileDev(fd int) (uint64, error) {
+	self, err := procfs.Self()
+	if err != nil {
+		return 0, fmt.Errorf("read this process's /proc: %w", err)
+	}
+	info, err := self.FDInfo(strconv.Itoa(fd))
+	if err != nil {
+		return 0, fmt.Errorf("read the GPU host lock fd's mount: %w", err)
+	}
+	mounts, err := procfs.GetProcMounts(os.Getpid())
+	if err != nil {
+		return 0, fmt.Errorf("read this process's mounts: %w", err)
+	}
+	for _, m := range mounts {
+		if strconv.Itoa(m.MountID) != info.MntID {
+			continue
+		}
+		return parseMajorMinor(m.MajorMinorVer)
+	}
+	return 0, fmt.Errorf("no mount of this process has the GPU host lock fd's mount id %q", info.MntID)
 }
 
 // check fails closed unless the directory at the lock's path is still the

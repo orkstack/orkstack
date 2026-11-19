@@ -790,6 +790,26 @@ func releaseRunsQuery(indexedVersion string) string {
 // size, deduplicated by workflow id and settled), each through listedRun. The
 // index is deployment-wide on purpose: a release carries runs of every
 // namespace.
+// ReleasePausedRuns counts the live runs on one release whose
+// OrkflowRunPaused is "true": what keeps a release from draining for as long
+// as their pauses last. Where the cluster does not index paused runs it asks
+// nothing and answers ok false.
+func (r *TemporalRunReader) ReleasePausedRuns(ctx context.Context, deployment, buildID string) (int64, bool, error) {
+	if !r.pausedIndexed {
+		return 0, false, nil
+	}
+	indexed, err := task.IndexedVersion(deployment, buildID)
+	if err != nil {
+		return 0, false, err
+	}
+	base := fmt.Sprintf("%s AND %s = %q", releaseRunsQuery(indexed), task.SearchAttrOrkflowRunPaused, "true")
+	n, err := r.liveRunCount(ctx, base, 0)
+	if err != nil {
+		return 0, false, fmt.Errorf("engine: count the paused runs on release %s: %w", buildID, err)
+	}
+	return n, true, nil
+}
+
 func (r *TemporalRunReader) ReleaseRuns(ctx context.Context, deployment, buildID string, limit int) (int64, []*orkstackv1.Run, error) {
 	indexed, err := task.IndexedVersion(deployment, buildID)
 	if err != nil {
@@ -834,4 +854,44 @@ func (r *TemporalRunReader) RunningRuns(ctx context.Context) (int64, error) {
 		return 0, fmt.Errorf("engine: count the runs in flight: %w", err)
 	}
 	return count, nil
+}
+
+// PausedNamespace is one namespace's paused runs, as the paused-run census
+// reads them: how many, and the soonest instant an own pause ends (zero when
+// none of them has an own pause, only a parent's).
+type PausedNamespace struct {
+	Count   int64
+	Soonest time.Time
+}
+
+// PausedRuns reads every live paused run's record, deployment-wide, and
+// groups them by namespace: the census behind ork.runs.paused. Where the
+// cluster does not index paused runs it asks nothing and answers none. A
+// run between two records is one run (dedupeChains).
+func (r *TemporalRunReader) PausedRuns(ctx context.Context) (map[string]PausedNamespace, error) {
+	out := map[string]PausedNamespace{}
+	if !r.pausedIndexed {
+		return out, nil
+	}
+	query := fmt.Sprintf("WorkflowType = %q AND %s AND %s = %q",
+		RunWorkflowType, liveRunPredicate(r.clock()), task.SearchAttrOrkflowRunPaused, "true")
+	var records []*workflowpb.WorkflowExecutionInfo
+	if err := r.listAll(ctx, query, func(info *workflowpb.WorkflowExecutionInfo) {
+		records = append(records, info)
+	}); err != nil {
+		return nil, fmt.Errorf("engine: list the paused runs: %w", err)
+	}
+	for _, info := range dedupeChains(records) {
+		if r.listedRun(info).GetStatus() != orkstackv1.Status_STATUS_PAUSED {
+			continue
+		}
+		ns := artifacts.ResolveNamespace(r.memoString(info.GetMemo(), MemoNamespace))
+		entry := out[ns]
+		entry.Count++
+		if at, ok := r.memoTime(info.GetMemo(), MemoPauseExpiresAt); ok && (entry.Soonest.IsZero() || at.Before(entry.Soonest)) {
+			entry.Soonest = at
+		}
+		out[ns] = entry
+	}
+	return out, nil
 }

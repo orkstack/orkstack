@@ -346,6 +346,10 @@ func (h *StatsHandler) compute(
 			fmt.Errorf("read the execution index for namespace %q: %w", window.Namespace, err))
 	}
 	running := stillRunning(executions.Running, tally)
+	// Disjoint counts (E103): a paused row is counted in paused, never in
+	// running. Rows read PAUSED only where the cluster indexes paused runs,
+	// so elsewhere paused is 0 and running counts every open run.
+	paused := pausedRows(running)
 	pools, err := h.pools(ctx, ns, binding)
 	if err != nil {
 		return nil, err
@@ -353,7 +357,8 @@ func (h *StatsHandler) compute(
 
 	now := h.now()
 	response := &orkstackv1.GetStatsResponse{
-		RunsByStatus: statusCounts(tally, len(running)),
+		RunsByStatus: statusCounts(tally, len(running)-int(paused)),
+		Paused:       paused,
 		MostFailing:  mostFailing(tally),
 		Running:      running,
 		Pools:        pools,
@@ -488,6 +493,17 @@ func stillRunning(running []*orkstackv1.Run, tally engine.RunTally) []*orkstackv
 		}
 	}
 	return out
+}
+
+// pausedRows counts the live rows that read PAUSED.
+func pausedRows(running []*orkstackv1.Run) int64 {
+	var n int64
+	for _, run := range running {
+		if run.GetStatus() == orkstackv1.Status_STATUS_PAUSED {
+			n++
+		}
+	}
+	return n
 }
 
 // statusCounts merges the archive's finished counts with the cluster's live

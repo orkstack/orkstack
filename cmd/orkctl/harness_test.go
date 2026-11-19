@@ -48,6 +48,22 @@ type stubStarter struct {
 	onStart   func(runID string, wf *orkstackv1.Orkflow, input *orkstackv1.Payload)
 	signals   []*orkstackv1.AwaitSignal
 	signalErr error
+	// pauses is every pause request delivered; onPause, when set, runs
+	// inside the delivery, as a test's stand-in for the run applying it.
+	pauses  []*orkstackv1.RunPauseSignal
+	onPause func(runID string, sig *orkstackv1.RunPauseSignal)
+}
+
+// SignalPause records the pause request delivered to a run.
+func (s *stubStarter) SignalPause(_ context.Context, runID string, sig *orkstackv1.RunPauseSignal) error {
+	s.mu.Lock()
+	s.pauses = append(s.pauses, sig)
+	onPause := s.onPause
+	s.mu.Unlock()
+	if onPause != nil {
+		onPause(runID, sig)
+	}
+	return nil
 }
 
 func (s *stubStarter) StartRun(
