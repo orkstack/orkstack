@@ -216,7 +216,7 @@ orker:
     pull_timeout: 5m  # orker
     bind_probe_timeout: 2m  # orker
   metadata_probe: off  # orker
-  # profiles: {}  # orker; no profiles
+  # profiles: {}  # orker; no profiles; probe_image, when profiles are set: this release's ghcr.io/orkstack/orker:<version>, resolved at boot
   values:
     refuse_secrets: true  # orker
   refuse_readable_engine_keys: false  # orker

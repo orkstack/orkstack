@@ -227,7 +227,11 @@ profile is data an operator writes, never code.
   `audit_interval` that a probe container sees the same device, by number and
   group, at each path. This proves equal views, not that the Orker runs on the
   host: an Orker in a privileged container that bind-mounts the same paths
-  passes, and that shape is unsupported.
+  passes, and that shape is unsupported. The probe image runs with the
+  devices attached, so it is judged first: on the default path the release
+  image is verified against the release's cosign key before it runs, and an
+  explicit `probe_image` is trusted as the operator pinned it. Either way its
+  build label must be the Orker's own commit.
 - **A profile is fixed for the Orker's lifetime.** It is audited at boot and
   checked again at dispatch and just before each container is created. A
   device replaced, removed or renumbered is drift, which takes the profile out

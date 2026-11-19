@@ -56,8 +56,9 @@ const (
 
 // Profiles is a parsed orker.profiles document.
 type Profiles struct {
-	// ProbeImage is the published orker image, pinned by digest, that runs
-	// the profile probes. Required whenever a profile is declared.
+	// ProbeImage is the orker image, pinned by digest, that runs the profile
+	// probes, used as given. Empty on a release build means this release's
+	// own image (probe_image.go); a build with no release image needs it.
 	ProbeImage       string
 	AuditInterval    time.Duration
 	RecoveryInterval time.Duration
@@ -268,9 +269,6 @@ func ParseProfiles(raw []byte) (Profiles, error) {
 		}
 	}
 	sort.Slice(out.List, func(i, j int) bool { return out.List[i].Name < out.List[j].Name })
-	if len(out.List) > 0 && out.ProbeImage == "" {
-		return Profiles{}, errors.New("profiles.probe_image is required whenever a profile is declared: the orker image pinned by digest")
-	}
 	if err := checkOnePerKind(out.List); err != nil {
 		return Profiles{}, err
 	}

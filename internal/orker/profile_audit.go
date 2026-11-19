@@ -341,7 +341,7 @@ func (a *Activities) RunProfileAudit(ctx context.Context) {
 	}
 	root := a.probeRoot()
 	go a.awaitGPULock(ctx, gpuLockRetry)
-	go a.runUnitRecovery(ctx, root, s.declared.ProbeImage, s.declared.RecoveryInterval)
+	go a.runUnitRecovery(ctx, root, s.declared.RecoveryInterval)
 	good := map[string]int{}
 	timer := time.NewTimer(s.nextAuditDelay())
 	defer timer.Stop()
@@ -364,7 +364,7 @@ func (a *Activities) RunProfileAudit(ctx context.Context) {
 				"profile", name, "reason", ReasonProfileDrifted, "detail", drifted[name])
 		}
 		a.hostViewOnce(ctx, root, now, present, good)
-		a.probeUnitsOnce(ctx, root, s.declared.ProbeImage)
+		a.probeUnitsOnce(ctx, root)
 		timer.Reset(s.nextAuditDelay())
 	}
 }
