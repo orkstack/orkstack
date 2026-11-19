@@ -2012,10 +2012,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// The fleet check reads the same cluster seam (docs/DEPLOY.md §5).
 		Capabilities: releases,
 		// engine.concurrency.*: what a run's limit is planned with.
-		Concurrency:  cfg.concurrency,
-		GateTunables: cfg.gateTunables,
-		Catalog:      cfg.activityCatalog,
-		Resolver:     resolver,
+		Concurrency:       cfg.concurrency,
+		GateTunables:      cfg.gateTunables,
+		ConcurrencyReader: engine.NewTemporalConcurrencyReader(temporalClient, 0),
+		Catalog:           cfg.activityCatalog,
+		Resolver:          resolver,
 		// The image policy store and the signature verifier, over the same
 		// resolver: one registry client, one credential file.
 		ImagePolicies:       imagePolicies,

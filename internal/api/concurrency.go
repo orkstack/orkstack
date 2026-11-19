@@ -152,28 +152,24 @@ func (s *Service) planConcurrency(
 		}
 		key = rendered
 	}
+	incarnation, err := concurrencyIncarnation(ns)
+	if err != nil {
+		return err
+	}
+	gateID := engine.GateID(namespace, incarnation, key)
 	if !s.keyBound(ctx, namespace, msg) {
 		if err := s.concurrencySupport(ctx, planned, starter); err != nil {
 			return err
 		}
-	}
-	incarnation := ""
-	if namespace != artifacts.DefaultNamespace {
-		if ns.GetCreatedAt() == nil {
-			// Every stored namespace has one; without it two incarnations
-			// would share their gates.
-			return connect.NewError(connect.CodeInternal, fmt.Errorf(
-				"plan a concurrency limit: namespace %q records no creation time", namespace))
+		if err := s.lineChecks(ctx, namespace, gateID, key, spec); err != nil {
+			return err
 		}
-		// RFC 3339 UTC to the nanosecond, so two incarnations a second apart
-		// stay apart; the gate id is all that reads it.
-		incarnation = ns.GetCreatedAt().AsTime().UTC().Format(time.RFC3339Nano)
 	}
 	run := 0
 	settings, gate := s.concurrency, s.gateTunables
 	plan.Concurrency = &engine.ConcurrencyPlan{
 		Slots: []engine.ConcurrencySlotPlan{{
-			GateID: engine.GateID(namespace, incarnation, key), Key: key, Label: label,
+			GateID: gateID, Key: key, Label: label,
 			Limit: int(spec.GetLimit()), Strategy: engine.ConcurrencyStrategyQueue,
 			QueueTimeoutSeconds: int64(s.queueTimeoutOf(spec) / time.Second), MaxQueued: int(spec.GetMaxQueued()),
 		}},
@@ -186,6 +182,93 @@ func (s *Service) planConcurrency(
 		EventHoldersShown: settings.EventHoldersShown, Gate: gate,
 	}
 	reserveConcurrencyRelease(plan, len(plan.Concurrency.Slots))
+	return nil
+}
+
+// concurrencyIncarnation is the namespace's incarnation at its gates
+// (§3.1): "" for the never-stored default, else its created_at in RFC 3339
+// UTC to the nanosecond (decision D13), so two incarnations a second apart
+// stay apart. Every stored namespace has one; without it two incarnations
+// would share their gates, so its absence refuses.
+func concurrencyIncarnation(ns *orkstackv1.Namespace) (string, error) {
+	if ns.GetName() == artifacts.DefaultNamespace {
+		return "", nil
+	}
+	if ns.GetCreatedAt() == nil {
+		return "", connect.NewError(connect.CodeInternal, fmt.Errorf(
+			"plan a concurrency limit: namespace %q records no creation time", ns.GetName()))
+	}
+	return ns.GetCreatedAt().AsTime().UTC().Format(time.RFC3339Nano), nil
+}
+
+// lineChecks are §7.1 steps 5-7 for a queue limit, each a lock-free read,
+// best-effort by a bounded overshoot (the gate holds the limit itself):
+//   - a key no gate holds is a new active key, refused
+//     CONCURRENCY_KEYS_EXHAUSTED at the namespace's bound (§3.6);
+//   - a run that would queue (its key at its limit) is refused
+//     CONCURRENCY_QUEUE_FULL when its line is at max_queued or the gate's
+//     max_entries, or its namespace's queued runs at
+//     max_queued_runs_per_namespace.
+//
+// A read that cannot be made refuses CONCURRENCY_CHECK_UNAVAILABLE,
+// scope=key for the gate's line and scope=namespace for a count. A holder
+// that has ended still counts until the gate's own check frees it: the
+// verify a full key sends lands with the strategies that refuse at a full
+// key.
+func (s *Service) lineChecks(ctx context.Context, namespace, gateID, key string, spec *orkstackv1.ConcurrencySpec) error {
+	unavailable := func(scope, what string, err error) error {
+		s.logger.Warn("concurrency check could not read the cluster", "scope", scope, "key", key, "error", err)
+		return connect.NewError(connect.CodeUnavailable, fmt.Errorf("%s (scope=%s): %s could not be read; try again: %w",
+			engine.ConcurrencyCheckUnavailableCode, scope, what, err))
+	}
+	full := func(cause, format string, args ...any) error {
+		return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf("%s (cause=%s): %s",
+			engine.ConcurrencyQueueFullCode, cause, fmt.Sprintf(format, args...)))
+	}
+	reader := s.concurrencyReader
+	if reader == nil {
+		return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+			"%s (scope=key): this engine is not wired to a cluster, so the line for key %s cannot be read",
+			engine.ConcurrencyCheckUnavailableCode, key))
+	}
+	line, err := reader.GateLine(ctx, gateID)
+	if err != nil {
+		return unavailable("key", "the line for key "+key, err)
+	}
+	// A gate that lingers empty, or has just closed, holds nothing: a run
+	// on its key opens it again, as a new key would.
+	if !line.Present || line.Holders+line.Queued == 0 {
+		active, err := reader.ActiveGates(ctx, namespace)
+		if err != nil {
+			return unavailable("namespace", fmt.Sprintf("namespace %q's active keys", namespace), err)
+		}
+		if bound := int64(s.concurrency.MaxActiveKeysPerNamespace); active >= bound {
+			return connect.NewError(connect.CodeResourceExhausted, fmt.Errorf(
+				"%s: namespace %q already has %d keys with runs holding or queued, its bound "+
+					"(engine.concurrency.max_active_keys_per_namespace); submit again once one is free",
+				engine.ConcurrencyKeysExhaustedCode, namespace, active))
+		}
+		return nil
+	}
+	if line.Holders < int(spec.GetLimit()) {
+		return nil // it would hold a slot at once
+	}
+	if bound := int(spec.GetMaxQueued()); bound > 0 && line.Queued >= bound {
+		return full("max_queued", "the line for key %s already has %d runs waiting, its max_queued; submit again later",
+			key, line.Queued)
+	}
+	if bound := s.gateTunables.MaxEntries; line.Holders+line.Queued >= bound {
+		return full("max_entries", "key %s already has %d runs holding or waiting, the most one key holds "+
+			"(engine.concurrency.max_entries); submit again later", key, line.Holders+line.Queued)
+	}
+	queued, err := reader.QueuedRuns(ctx, namespace)
+	if err != nil {
+		return unavailable("namespace", fmt.Sprintf("namespace %q's queued runs", namespace), err)
+	}
+	if bound := int64(s.concurrency.MaxQueuedRunsPerNamespace); queued >= bound {
+		return full("namespace", "namespace %q already has %d runs waiting on concurrency limits, its bound "+
+			"(engine.concurrency.max_queued_runs_per_namespace); submit again later", namespace, queued)
+	}
 	return nil
 }
 

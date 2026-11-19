@@ -2077,6 +2077,16 @@ tasks:
   composed child: a tree that would start one is refused
   `CONCURRENCY_UNSUPPORTED`. A retry under an idempotency key its first
   submit bound returns that run without these checks.
+- **A full line is refused at submit**, `CONCURRENCY_QUEUE_FULL`: a run that
+  would wait, when its line already holds `max_queued` waiting runs, or its
+  key the most one key holds (`engine.concurrency.max_entries`), or its
+  namespace as many queued runs as it may
+  (`engine.concurrency.max_queued_runs_per_namespace`, 1000). A new key is
+  refused `CONCURRENCY_KEYS_EXHAUSTED` when the namespace already has
+  `engine.concurrency.max_active_keys_per_namespace` (1000) keys in use. These
+  counts are read without a lock, so a burst of submits can overshoot them a
+  little; the limit itself is never exceeded. A run holding a slot that has
+  ended counts as holding until the limit's own check frees it.
 - **A run that ends while it waits**, or that its limit refuses, starts no
   task, failure handlers included: it never held the key, so it ends `FAILED`
   or `CANCELED` with its own reason and nothing runs.
