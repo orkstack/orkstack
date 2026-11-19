@@ -834,6 +834,7 @@ func (r *PoolResolver) Plan(
 	// it, so a submit whose pools' channels are polled and that needs no
 	// capability probe asks the inventory nothing.
 	census := newPoolCensus(r.Fleet)
+	census.now = r.now
 	var livePools []string
 	for _, pool := range order {
 		live, err := r.Probe.ObservePool(ctx, routes[pool])
@@ -900,18 +901,13 @@ func (r *PoolResolver) Plan(
 				return nil, RunPlan{}, err
 			}
 			// And, for a pool that carries a task naming profiles: does every
-			// Orker offer each with one identity, which the run then pins.
-			identities, err := r.checkProfiles(ctx, census, namespaceName(ns), wf.GetName(), pool,
+			// Orker serve each profile's contracts, which the run then pins.
+			pins, err := r.checkProfiles(ctx, census, namespaceName(ns), wf.GetName(), pool,
 				profiledTasksByPool[pool])
 			if err != nil {
 				return nil, RunPlan{}, err
 			}
-			if identities != nil {
-				if plan.ProfileIdentities == nil {
-					plan.ProfileIdentities = map[string]map[string]string{}
-				}
-				plan.ProfileIdentities[pool] = identities
-			}
+			plan.pinProfiles(pool, pins, census.readAt)
 			// And, for a pool that carries a `mask: false` secret: can its
 			// Orker read one at all.
 			if err := r.checkSecretMasking(ctx, census, namespaceName(ns), wf.GetName(), pool,
@@ -945,7 +941,7 @@ func (r *PoolResolver) Plan(
 		// A device cannot be assumed present: a pool no Orker serves offers
 		// no profile, and allow_empty_pool does not change that.
 		if tasks := profiledTasksByPool[pool]; len(tasks) > 0 {
-			if _, err := judgeTaskProfiles(empty.Namespace, pool, tasks, nil); err != nil {
+			if _, err := judgeTaskProfiles(empty.Namespace, pool, tasks, nil, nil); err != nil {
 				return nil, RunPlan{}, err
 			}
 		}
@@ -1356,23 +1352,58 @@ func (r *PoolResolver) checkJoinSupport(ctx context.Context, census *poolCensus,
 // that carries a task naming profiles, so any other submit reads no census
 // for it. Unlike the capability checks, no Orker answering is refused
 // (PROFILE_UNAVAILABLE), never logged and passed: a device cannot be assumed
-// present, and allow_empty_pool never downgrades it.
-func (r *PoolResolver) checkProfiles(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []*orkstackv1.Task) (map[string]string, error) {
+// present, and allow_empty_pool never downgrades it. When a pinned contract
+// has no definition from any Orker that answered and some live Orker did not
+// answer, the census asks those once more (askAgain) and judges again.
+func (r *PoolResolver) checkProfiles(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []*orkstackv1.Task) (profilePins, error) {
 	if len(tasks) == 0 {
-		return nil, nil
+		return profilePins{}, nil
 	}
-	var orkers []*orkstackv1.DescribeOrkerResult
-	if r.Fleet != nil {
-		ids := make([]string, len(tasks))
-		for i, t := range tasks {
-			ids[i] = t.GetId()
+	judge := func() (profilePins, error) {
+		var serving, cordoned []*orkstackv1.DescribeOrkerResult
+		if r.Fleet != nil {
+			ids := make([]string, len(tasks))
+			for i, t := range tasks {
+				ids[i] = t.GetId()
+			}
+			// A census that could not be read measured nothing: Unavailable,
+			// never "no Orker offers it".
+			if _, err := census.serving(ctx, pool); err != nil {
+				return profilePins{}, &PoolUnreachableError{Pool: pool, Err: err}
+			}
+			serving = r.probeOrkers(ctx, census, capabilityProbe{
+				namespace: namespace, orkflow: orkflow, pool: pool, tasks: ids,
+				carrying: "a profiled task", question: "it offers the profiles",
+			})
+			owners, err := census.cordonedOwners(ctx, pool)
+			if err != nil {
+				return profilePins{}, &PoolUnreachableError{Pool: pool, Err: err}
+			}
+			for _, o := range owners {
+				cordoned = append(cordoned, o.Described)
+			}
 		}
-		orkers = r.probeOrkers(ctx, census, capabilityProbe{
-			namespace: namespace, orkflow: orkflow, pool: pool, tasks: ids,
-			carrying: "a profiled task", question: "it offers the profiles",
-		})
+		return judgeTaskProfiles(namespace, pool, tasks, serving, cordoned)
 	}
-	return judgeTaskProfiles(namespace, pool, tasks, orkers)
+	pins, err := judge()
+	if err == nil && pins.unpinnedDigest && census.unansweredCount() > 0 && census.askAgain(ctx) {
+		pins, err = judge()
+	}
+	if err != nil {
+		return profilePins{}, err
+	}
+	if pins.unpinnedDigest {
+		r.logger().Warn("submit: a pinned profile contract has no definition from any Orker that answered, "+
+			"so only an Orker that accepts it serves the run",
+			"namespace", namespace, "pool", pool, "orkflow", orkflow, "unanswered", census.unansweredCount())
+	}
+	for _, w := range pins.warnings {
+		r.logger().Warn("submit: operator-cordoned Orkers give a pinned profile contract different definitions; "+
+			"the run pins every one of them",
+			"namespace", namespace, "pool", pool, "orkflow", orkflow,
+			"profile", w.Profile, "contract", w.Contract, "orkers", strings.Join(w.Orkers, ","))
+	}
+	return pins, nil
 }
 
 // checkResourcesFit refuses a live pool none of whose Orkers could hold a

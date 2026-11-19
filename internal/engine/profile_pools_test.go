@@ -30,6 +30,7 @@ func sensorOrker(id string) *orkstackv1.DescribeOrkerResult {
 	o.ProfileKindsSupported = []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}
 	o.Profiles = []*orkstackv1.OrkerProfile{{
 		Name: "sensor", Kind: orkstackv1.ProfileKind_PROFILE_KIND_DEVICES, IdentityDigest: sensorDigest,
+		DefaultContract: "1", Contracts: []*orkstackv1.OrkerProfileContract{{Label: "1", IdentityDigest: sensorDigest}},
 	}}
 	return o
 }
@@ -40,7 +41,8 @@ func profileResolver(fleet engine.FleetReader, orkers int) *engine.PoolResolver 
 }
 
 // TestPoolResolverPlan_PinsTheProfileIdentities: a submit whose task names a
-// profile pins, per pool, the identity every Orker there offers it with.
+// profile pins, per pool, the identity every Orker there offers it with, and
+// the contracts they serve it under.
 func TestPoolResolverPlan_PinsTheProfileIdentities(t *testing.T) {
 	_, plan, err := profileResolver(fleetOf(sensorOrker("e1"), sensorOrker("e2")), 2).Plan(context.Background(),
 		&orkstackv1.Namespace{Name: "lab"}, compile(t, profilePoolsDocument), false)
@@ -49,6 +51,13 @@ func TestPoolResolverPlan_PinsTheProfileIdentities(t *testing.T) {
 	}
 	if got := plan.ProfileIdentities["edge"]["sensor"]; got != sensorDigest {
 		t.Fatalf("ProfileIdentities = %v", plan.ProfileIdentities)
+	}
+	set := plan.ProfileContracts["edge"]["sensor"].Set
+	if len(set) != 1 || set[0].Label != "1" || len(set[0].Digests) != 1 || set[0].Digests[0] != sensorDigest {
+		t.Fatalf("ProfileContracts = %+v", plan.ProfileContracts)
+	}
+	if plan.ProfileCensusReadAt().IsZero() {
+		t.Fatal("a plan that pinned contracts says no census was read")
 	}
 }
 

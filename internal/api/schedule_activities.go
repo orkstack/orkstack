@@ -96,6 +96,12 @@ func (a *ScheduleActivities) prepareScheduledRun(
 	// The pending run is NOT saved: a scheduled run's pending window is
 	// served from the child's own start event, and a process-memory row
 	// would exist only on the replica that ran this activity.
+	// A census too old to pin profile contracts on is Unavailable: the
+	// local activity's policy retries the fire, which plans again.
+	if err := a.svc.profileCensusFresh(sub); err != nil {
+		reason, err := fireError(err)
+		return nil, reason, err
+	}
 	run := a.svc.newPendingRun(a.svc.newRunID(), sub.wf, sub.input, origin)
 	plan, err := stablejson.Marshal(sub.plan)
 	if err != nil {

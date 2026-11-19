@@ -88,6 +88,8 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - Retention cleanup can now delete retired runs' artifact bytes on S3 (`ORK_CLEANUP_ARTIFACT_GC`); it starts in `dry_run`, and `orkctl admin gc preview` shows what `delete` would do ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#the-artifact-gc)).
 - Reading an artifact the GC deleted answers `ARTIFACT_RECLAIMED`, and an evidence bundle records it as `artifact_reclaimed` ([REASONS.md](https://github.com/orkstack/orkstack/blob/main/docs/REASONS.md#reads-of-reclaimed-artifacts)).
 - Device profiles: an Orker on the device's own host can pass named character devices, such as USB serial ports, to the tasks that select them with `devices:` ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-device-orker)).
+- Device profiles can change without new names: roll a new contract in on the pool's Orkers, and let images declare the contract they need (`devices:` in their interface) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#changing-a-profile)).
+- `orkctl orker list` says when the engine read the fleet, as an "As of" line ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#changing-a-profile)).
 - Admin → Pools, `orkctl orker list` and `orkctl orker get` show each Orker's device profiles and why a profile holds an Orker's cordon ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-device-orker)).
 
 ### Changed
