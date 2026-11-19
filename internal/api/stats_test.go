@@ -983,9 +983,38 @@ func assertRunning(
 	if strings.Join(ids, ",") != strings.Join(want, ",") {
 		t.Errorf("%s: running = %v, want %v", namespace, ids, want)
 	}
-	if int64(len(ids)) != got.GetRunsByStatus()["running"] {
-		t.Errorf("%s: runs_by_status[running] = %d but the list holds %d; "+
-			"the count and the list are supposed to be the same set",
-			namespace, got.GetRunsByStatus()["running"], len(ids))
+	if int64(len(ids)) != got.GetRunsByStatus()["running"]+got.GetPaused() {
+		t.Errorf("%s: runs_by_status[running] = %d and paused = %d but the list holds %d; "+
+			"the list is the two counts' runs together",
+			namespace, got.GetRunsByStatus()["running"], got.GetPaused(), len(ids))
+	}
+}
+
+// TestGetStats_PausedRunsAreTheirOwnCount: a run the cluster lists as live
+// and paused counts in paused, not in running; both stay in the running
+// list, each row saying its status, and a bucket counts every run still going
+// (design E103 §5.5).
+func TestGetStats_PausedRunsAreTheirOwnCount(t *testing.T) {
+	now := time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
+	fixture := newStatsFixture(t, now, "payments")
+	created := now.Add(-time.Hour)
+	held := liveRun("ork-held", "payments", "charge", created)
+	held.Status = orkstackv1.Status_STATUS_PAUSED
+	fixture.reader.executions["payments"] = engine.Executions{Running: []*orkstackv1.Run{
+		held, liveRun("ork-going", "payments", "charge", created),
+	}}
+	handler := api.NewStatsHandler(fixture.svc, 0)
+	got := getStats(t, handler, &orkstackv1.GetStatsRequest{Namespace: "payments", BucketWidth: orkstackv1.StatsBucketWidth_STATS_BUCKET_WIDTH_DAY})
+	assertCounts(t, "payments", got, map[string]int64{"running": 1, "succeeded": 0, "failed": 0, "canceled": 0})
+	if got.GetPaused() != 1 {
+		t.Fatalf("paused = %d, want 1", got.GetPaused())
+	}
+	assertRunning(t, "payments", got, []string{"ork-held", "ork-going"})
+	var going int64
+	for _, b := range got.GetBuckets() {
+		going += b.GetRunsByStatus()["running"]
+	}
+	if going != 2 {
+		t.Errorf("the buckets count %d runs going, want 2 (running and paused)", going)
 	}
 }

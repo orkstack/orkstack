@@ -40,6 +40,12 @@ type Delivery struct {
 	// omitted there too: an input queued before deliveries carried a sequence
 	// encodes as it was recorded (internal/engine/testdata/history).
 	Sequence int64 `json:",omitzero"`
+	// PauseTransition is what a RUN_PAUSED or RUN_UNPAUSED, or a terminal
+	// event that ended a pause, did to the run's pause, in the short enum
+	// spelling (PAUSED, CAUSES_CHANGED, UNPAUSED, NOT_PAUSED, ENDED_TIMED_OUT,
+	// ENDED_RUN_ENDED); empty on every other delivery, and then omitted from
+	// the body and from a delivery input, which encodes as it did before.
+	PauseTransition string `json:",omitempty"`
 	// Namespace is the run's resolved namespace, used to match; it is not
 	// part of the body (the embedded run already carries it).
 	Namespace string
@@ -67,14 +73,15 @@ type Delivery struct {
 // byte-identical to what it was before task outcomes were deliverable, apart
 // from sequence. sequence is omitted only when the delivery has none.
 type payload struct {
-	RunID       string             `json:"runId"`
-	OrkflowName string             `json:"orkflowName"`
-	Status      string             `json:"status"`
-	Timestamp   string             `json:"timestamp"`
-	Sequence    int64              `json:"sequence,omitzero"`
-	TaskID      string             `json:"taskId,omitempty"`
-	Attempt     int32              `json:"attempt,omitzero"`
-	Run         stablejson.RawJSON `json:"run"`
+	RunID           string             `json:"runId"`
+	OrkflowName     string             `json:"orkflowName"`
+	Status          string             `json:"status"`
+	Timestamp       string             `json:"timestamp"`
+	Sequence        int64              `json:"sequence,omitzero"`
+	PauseTransition string             `json:"pauseTransition,omitempty"`
+	TaskID          string             `json:"taskId,omitempty"`
+	Attempt         int32              `json:"attempt,omitzero"`
+	Run             stablejson.RawJSON `json:"run"`
 }
 
 // Body renders the signed request body. It is computed once per delivery and
@@ -93,14 +100,15 @@ func (d Delivery) Body() ([]byte, error) {
 		}
 	}
 	body, err := stablejson.Marshal(payload{
-		RunID:       d.RunID,
-		OrkflowName: d.OrkflowName,
-		Status:      d.Status,
-		Timestamp:   d.Timestamp.UTC().Format(time.RFC3339Nano),
-		Sequence:    d.Sequence,
-		TaskID:      d.TaskID,
-		Attempt:     d.Attempt,
-		Run:         d.Run,
+		RunID:           d.RunID,
+		OrkflowName:     d.OrkflowName,
+		Status:          d.Status,
+		Timestamp:       d.Timestamp.UTC().Format(time.RFC3339Nano),
+		Sequence:        d.Sequence,
+		PauseTransition: d.PauseTransition,
+		TaskID:          d.TaskID,
+		Attempt:         d.Attempt,
+		Run:             d.Run,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("webhooks: encode delivery %s: %w", d.ID, err)

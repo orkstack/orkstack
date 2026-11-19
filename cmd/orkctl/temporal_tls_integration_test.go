@@ -270,46 +270,68 @@ func TestIntegration_ClientCertificateReplacedMidRun(t *testing.T) {
 }
 
 // TestIntegration_APIKeyReplacedMidRun runs against a front that holds every
-// call to an API key. While a task runs the key files are replaced and the
-// front accepts both keys; once the new key is in use the old one is
-// refused, and the run still finishes: no call kept the old key.
+// call to an API key. The engine and the Orker each have keys of their own,
+// so the front's record says which process sent a call. While a task runs
+// both key files are replaced and the front accepts old and new keys; once
+// each process's calls carry its new key the old ones are refused, and the
+// run still finishes. After the revoke both processes keep working, on their
+// new keys only: no call kept an old key.
 func TestIntegration_APIKeyReplacedMidRun(t *testing.T) {
+	const (
+		engineOld, engineNew = "ork-key-one", "ork-key-two"
+		orkerOld, orkerNew   = "orker-key-one", "orker-key-two"
+	)
 	dir := t.TempDir()
 	serverCA := testpki.NewCA(t, "temporal-server")
 	front := tlsfront.StartKeyFront(t, temporalAddress(),
-		serverCA.Issue(t, testpki.LeafOptions{Name: "temporal", Hosts: []string{"127.0.0.1"}}).TLS(t), "key-one")
+		serverCA.Issue(t, testpki.LeafOptions{Name: "temporal", Hosts: []string{"127.0.0.1"}}).TLS(t), engineOld, orkerOld)
 	ca := testpki.Write(t, dir, "ca.pem", serverCA.PEM)
-	engineKey := testpki.Write(t, dir, "ork.key", []byte("key-one\n"))
-	orkerKey := testpki.Write(t, dir, "orker.key", []byte("key-one\n"))
+	engineKey := testpki.Write(t, dir, "ork.key", []byte(engineOld+"\n"))
+	orkerKey := testpki.Write(t, dir, "orker.key", []byte(orkerOld+"\n"))
 	s := startTLSStack(t, front.Addr,
 		[]string{"ORK_TEMPORAL_TLS_CA_FILE=" + ca, "ORK_TEMPORAL_API_KEY_FILE=" + engineKey},
 		[]string{"ORK_TEMPORAL_TLS_CA_FILE=" + ca, "ORK_TEMPORAL_API_KEY_FILE=" + orkerKey})
 
 	runID := s.submit("key-rotation", "sleep 20; echo done")
 	s.until(runID, "RUNNING")
-	front.SetKeys("key-one", "key-two")
-	replace(t, engineKey, []byte("key-two\n"))
-	replace(t, orkerKey, []byte("key-two\n"))
+	front.SetKeys(engineOld, orkerOld, engineNew, orkerNew)
+	replace(t, engineKey, []byte(engineNew+"\n"))
+	replace(t, orkerKey, []byte(orkerNew+"\n"))
 	mark := len(front.Seen())
-	_, err := bootwait.Wait{What: "calls with the new key", Logf: t.Logf}.Until(s.ctx, func(context.Context) error {
-		for _, k := range front.Seen()[mark:] {
-			if k == "key-two" {
-				return nil
-			}
-		}
-		return errors.New("not yet")
-	})
+	// Each process adopts its new key on its first call a second or more
+	// after its last look at the file: the engine is asked (run get) so it
+	// makes calls while the wait holds, and the Orker heartbeats its task.
+	_, err := bootwait.Wait{What: "the engine's and the Orker's calls on their new keys", Logf: t.Logf}.Until(s.ctx,
+		func(context.Context) error {
+			s.status(runID) // a call of the engine's, through run get
+			return keysInUse(front.Seen()[mark:], engineNew, orkerNew)
+		})
 	must.OK(t, err)
-	front.SetKeys("key-two")
+	revoked := front.SetKeys(engineNew, orkerNew)
 	if got := s.until(runID, "SUCCEEDED", "FAILED", "CANCELED"); !strings.Contains(got, "SUCCEEDED") {
 		t.Fatalf("run %s ended %s after the rotation", runID, got)
 	}
 	s.alive()
-	for _, k := range front.Seen() {
+	// The positive control: both processes made calls after the revoke, so
+	// the check below saw each of them working, not a quiet window.
+	_, err = bootwait.Wait{What: "calls of both processes after the revoke", Logf: t.Logf}.Until(s.ctx,
+		func(context.Context) error {
+			s.status(runID) // a call of the engine's, through run get
+			return keysInUse(front.Seen()[revoked:], engineNew, orkerNew)
+		})
+	must.OK(t, err)
+	seen := front.Seen()
+	for _, k := range seen {
 		if k == "" {
 			t.Fatal("a call reached the front with no API key")
 		}
 	}
+	// No process kept its old key: once a process's call after the revoke
+	// carried its new key, none of its later calls carried the old one. A
+	// call that took the old key just before the process adopted the new one
+	// may still land after the revoke, and is refused as a cluster would.
+	must.OK(t, oldKeyAfterNew(seen[revoked:], engineOld, engineNew))
+	must.OK(t, oldKeyAfterNew(seen[revoked:], orkerOld, orkerNew))
 }
 
 // TestIntegration_BootRefusesABadTemporalTLSSetting: a wrong CA, half a

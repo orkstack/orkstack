@@ -7,9 +7,9 @@
 import { Status } from './gen/orkstack/v1/common_pb';
 import { statusClasses } from './status';
 
-export type MarkShape = 'square' | 'dot' | 'diamond' | 'half' | 'triangle' | 'strike' | 'dash' | 'hollow' | 'dotted';
-/** live: running blue; live-outline: awaiting and sleeping violet; alarm: failed red; the rest are ink. */
-export type MarkFill = 'solid' | 'live' | 'live-outline' | 'alarm' | 'outline' | 'hatched' | 'none';
+export type MarkShape = 'square' | 'dot' | 'diamond' | 'half' | 'triangle' | 'strike' | 'dash' | 'hollow' | 'dotted' | 'bars';
+/** live: running blue; live-outline: awaiting and sleeping violet; alarm: failed red; held: paused amber; the rest are ink. */
+export type MarkFill = 'solid' | 'live' | 'live-outline' | 'alarm' | 'outline' | 'hatched' | 'held' | 'none';
 
 export interface StatusMark {
 	shape: MarkShape;
@@ -30,8 +30,8 @@ export const STATUS_MARKS: Record<Status, StatusMark> = {
 	[Status.SKIPPED]: { shape: 'dash', fill: 'hatched', className: 'mark-dash', inner: false },
 	[Status.AWAITING]: { shape: 'diamond', fill: 'live-outline', className: 'mark-diamond', inner: true },
 	[Status.SLEEPING]: { shape: 'half', fill: 'live-outline', className: 'mark-half', inner: false },
-	// PAUSED is drawn as a live run until the pause's own mark lands (E103's UI pass).
-	[Status.PAUSED]: { shape: 'dot', fill: 'live', className: 'mark-dot', inner: true }
+	// A run status only, never a task's: two upright bars in waiting's amber.
+	[Status.PAUSED]: { shape: 'bars', fill: 'held', className: 'mark-pause', inner: false }
 };
 
 export function statusMark(status: Status | undefined): StatusMark {
@@ -98,6 +98,13 @@ export function svgMark(status: Status | undefined, x: number, y: number, size: 
 			return [{ el: 'path', d: inset, cls: `mark-line-${word}` }];
 		case 'dotted':
 			return [{ el: 'path', d: inset, cls: `mark-line-${word}`, dash: '1 1.5' }];
+		case 'bars': {
+			const w = s * 0.34;
+			return [
+				{ el: 'path', d: `M ${x} ${y} h ${w} v ${s} h ${-w} Z`, cls: `mark-fill-${word}` },
+				{ el: 'path', d: `M ${x + s - w} ${y} h ${w} v ${s} h ${-w} Z`, cls: `mark-fill-${word}` }
+			];
+		}
 	}
 }
 
@@ -111,7 +118,7 @@ const CLASS_WORD: Record<Status, string> = {
 	[Status.SKIPPED]: 'skipped',
 	[Status.AWAITING]: 'awaiting',
 	[Status.SLEEPING]: 'sleeping',
-	[Status.PAUSED]: 'running'
+	[Status.PAUSED]: 'paused'
 };
 
 /** The status's word as the token families spell it (`--color-failed-solid`). */

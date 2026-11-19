@@ -185,7 +185,10 @@ func TestIsSubscribableEvent_SelectsRunTransitionsAndTaskOutcomes(t *testing.T) 
 				orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING,
 				orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED,
 				// A sleep's start.
-				orkstackv1.EventType_EVENT_TYPE_TASK_SLEEPING:
+				orkstackv1.EventType_EVENT_TYPE_TASK_SLEEPING,
+				// A pause's two events, whatever their status (rule W).
+				orkstackv1.EventType_EVENT_TYPE_RUN_PAUSED,
+				orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED:
 				want = true
 			case orkstackv1.EventType_EVENT_TYPE_TASK_FAILED:
 				want = status == orkstackv1.Status_STATUS_FAILED
@@ -212,6 +215,8 @@ func TestIsSubscribableEvent_SelectsRunTransitionsAndTaskOutcomes(t *testing.T) 
 		{orkstackv1.EventType_EVENT_TYPE_RUN_CREATED, orkstackv1.Status_STATUS_PENDING, false},
 		{orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, orkstackv1.Status_STATUS_RUNNING, true},
 		{orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED, orkstackv1.Status_STATUS_CANCELED, true},
+		{orkstackv1.EventType_EVENT_TYPE_RUN_PAUSED, orkstackv1.Status_STATUS_PAUSED, true},
+		{orkstackv1.EventType_EVENT_TYPE_RUN_UNPAUSED, orkstackv1.Status_STATUS_RUNNING, true},
 		{orkstackv1.EventType_EVENT_TYPE_TASK_AWAITING, orkstackv1.Status_STATUS_AWAITING, true},
 		{orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED, orkstackv1.Status_STATUS_SUCCEEDED, true},
 		{orkstackv1.EventType_EVENT_TYPE_TASK_RESOLVED, orkstackv1.Status_STATUS_FAILED, true},

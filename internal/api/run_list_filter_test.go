@@ -176,7 +176,7 @@ func TestListRuns_AwaitingIsNotAnAllowedStatus(t *testing.T) {
 	_, err := svc.ListRuns(context.Background(), connect.NewRequest(&orkstackv1.ListRunsRequest{
 		Filters: filters(t, "status=AWAITING"),
 	}))
-	const want = `filters[0]: "AWAITING" is not a status this list can select; status is one of PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED, SKIPPED`
+	const want = `filters[0]: "AWAITING" is not a status this list can select; status is one of PENDING, RUNNING, PAUSED, SUCCEEDED, FAILED, CANCELED, SKIPPED`
 	if connect.CodeOf(err) != connect.CodeInvalidArgument || !strings.Contains(err.Error(), want) {
 		t.Fatalf("status=AWAITING = %v, want InvalidArgument %q", err, want)
 	}

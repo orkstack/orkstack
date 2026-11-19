@@ -79,6 +79,9 @@ func (s *takenIDStarter) CancelRun(context.Context, string, engine.CancelRequest
 func (s *takenIDStarter) SignalAwait(context.Context, string, *orkstackv1.AwaitSignal) error {
 	return nil
 }
+func (s *takenIDStarter) SignalPause(context.Context, string, *orkstackv1.RunPauseSignal) error {
+	return nil
+}
 
 func (s *takenIDStarter) attempts() (rejected, started []string) {
 	s.mu.Lock()

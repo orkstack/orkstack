@@ -297,6 +297,9 @@ func (noopStarter) CancelRun(context.Context, string, engine.CancelRequest) erro
 func (noopStarter) SignalAwait(context.Context, string, *orkstackv1.AwaitSignal) error {
 	return nil
 }
+func (noopStarter) SignalPause(context.Context, string, *orkstackv1.RunPauseSignal) error {
+	return nil
+}
 
 func (r *recordingStore) FindDerivedVersion(ctx context.Context, namespace, name, contentHash string) (string, error) {
 	return r.inner.FindDerivedVersion(ctx, namespace, name, contentHash)

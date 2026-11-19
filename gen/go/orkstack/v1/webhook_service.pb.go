@@ -1375,22 +1375,23 @@ const file_orkstack_v1_webhook_service_proto_rawDesc = "" +
 	"\n" +
 	"settled_at\x18\x13 \x01(\v2\x1a.google.protobuf.TimestampR\tsettledAt\x12#\n" +
 	"\rredelivery_of\x18\x14 \x01(\tR\fredeliveryOf\x12\x1a\n" +
-	"\bsequence\x18\x15 \x01(\x03R\bsequence\"\xa2\x04\n" +
+	"\bsequence\x18\x15 \x01(\x03R\bsequence\"\xbc\x04\n" +
 	"\x15ListDeliveriesRequest\x12\x1b\n" +
 	"\tpage_size\x18\b \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\t \x01(\tR\tpageToken\x122\n" +
 	"\afilters\x18\n" +
-	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xd5\x02\xa2\xbb\x18\xd0\x02\n" +
+	" \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xef\x02\xa2\xbb\x18\xea\x02\n" +
 	"\x14orkstack.v1.Delivery\x12\x18\n" +
 	"\n" +
 	"created_at\x12\x06Queued\x1a\x02\x06\a\x12\x1f\n" +
 	"\tnamespace\x12\tNamespace\x1a\x05\x01\x02\x03\x04\x058\x01\x12\x12\n" +
 	"\x06run_id\x12\x03Run\x1a\x03\x01\x02\x03\x12\x1a\n" +
 	"\n" +
-	"webhook_id\x12\aWebhook\x1a\x03\x01\x02\x03\x12\xb1\x01\n" +
+	"webhook_id\x12\aWebhook\x1a\x03\x01\x02\x03\x12\xcb\x01\n" +
 	"\x05event\x12\x05Event\x1a\x03\x01\x02\x03\"\vRUN_STARTED\"\rRUN_SUCCEEDED\"\n" +
-	"RUN_FAILED\"\fRUN_CANCELED\"\x0eTASK_SCHEDULED\"\fTASK_STARTED\"\rTASK_AWAITING\"\rTASK_RESOLVED\"\rTASK_SLEEPING\"\x0eTASK_SUCCEEDED\"\vTASK_FAILED\x12\x19\n" +
+	"RUN_FAILED\"\fRUN_CANCELED\"\x0eTASK_SCHEDULED\"\fTASK_STARTED\"\rTASK_AWAITING\"\rTASK_RESOLVED\"\rTASK_SLEEPING\"\x0eTASK_SUCCEEDED\"\vTASK_FAILED\"\n" +
+	"RUN_PAUSED\"\fRUN_UNPAUSED\x12\x19\n" +
 	"\tdelivered\x12\tDelivered\x1a\x01\x01J\x04\b\x01\x10\bR\n" +
 	"webhook_idR\x06run_idR\x05eventR\aoutcomeR\tnamespaceR\x05sinceR\x05until\"\x88\x02\n" +
 	"\x16ListDeliveriesResponse\x125\n" +

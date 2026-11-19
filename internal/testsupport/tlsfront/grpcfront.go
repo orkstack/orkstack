@@ -71,14 +71,17 @@ func StartKeyFront(t testing.TB, upstream string, certificate tls.Certificate, k
 	return f
 }
 
-// SetKeys replaces the accepted keys.
-func (f *KeyFront) SetKeys(keys ...string) {
+// SetKeys replaces the accepted keys and returns how many calls Seen holds
+// at that instant, under the same lock: every call after that index was
+// admitted against the new keys.
+func (f *KeyFront) SetKeys(keys ...string) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.accepted = map[string]bool{}
 	for _, k := range keys {
 		f.accepted[k] = true
 	}
+	return len(f.seen)
 }
 
 // Seen are the keys of every call so far, in order; a call with no bearer is
