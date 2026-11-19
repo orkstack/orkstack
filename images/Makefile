@@ -45,9 +45,8 @@ PLATFORMS ?=
 LABELS ?=
 
 # DOCKER_BUILD_FLAGS is passed to every image build, e.g. an air-gapped
-# builder's --build-arg GOMPLATE_BASE_URL=<mirror> for activity-template (whose
-# Dockerfile verifies the downloaded binary against its pinned SHA-256 whatever
-# served it). Images that declare no such ARG ignore it; BuildKit only warns.
+# builder's --build-context pointing activity-template's digest-pinned
+# gomplate image at a mirrored copy of the same digest (see that Dockerfile).
 DOCKER_BUILD_FLAGS ?=
 
 # ref/1 is the one place a first-party image reference is spelled.
