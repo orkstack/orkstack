@@ -519,6 +519,7 @@ func connectTemporal(ctx context.Context, cfg config, sinks *telemetry.Sinks, lo
 	// The engine decodes an Orker's answer leniently (engine.DataConverter);
 	// the Orker dials with the SDK default and stays strict.
 	temporalOptions.DataConverter = engine.DataConverter()
+	temporalOptions.FailureConverter = engine.FailureConverter()
 	temporalOptions.Identity = engine.EngineIdentityWith(sdkIdentity(),
 		append(cfg.auth.capabilities(), described.Tokens()...)...)
 	if dialing != nil {

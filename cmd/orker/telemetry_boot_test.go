@@ -88,10 +88,12 @@ func requireOrkerDial(t *testing.T, got client.Options, cfg config, logger *slog
 	if !got.DisableWorkerEnvironmentInfo {
 		t.Fatalf("client.Options.DisableWorkerEnvironmentInfo = false, want true: the worker's environment is never reported")
 	}
-	// The Orker stays strict on what it is sent: the SDK default refuses an
-	// ExecuteTaskInput field it cannot read rather than dropping it.
-	if got.DataConverter != nil {
-		t.Fatalf("client.Options.DataConverter = %v, want none: the Orker decodes with the SDK default", got.DataConverter)
+	// The Orker stays strict on what it is sent: it decodes with the SDK
+	// default, under the payload-encryption converter, which passes every
+	// payload that is not sealed through untouched.
+	if got.DataConverter != orkerDataConverter || got.FailureConverter != orkerFailureConverter {
+		t.Fatalf("client.Options converters = %v, %v; want the Orker's payload-encryption converters",
+			got.DataConverter, got.FailureConverter)
 	}
 }
 
