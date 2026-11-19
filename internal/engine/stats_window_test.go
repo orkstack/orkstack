@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
+	"maps"
 	"regexp"
 	"strconv"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 
+	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
 
@@ -304,6 +306,9 @@ type statsCorpusRun struct {
 	createdAt time.Time
 	closedAt  time.Time
 	status    orkstackv1.Status
+	// queued is a run waiting for a concurrency slot: the cluster indexes it
+	// with OrkflowRunQueued = "true".
+	queued bool
 }
 
 // statsCorpus is the corpus both sources are asked about. Every row is a case
@@ -382,6 +387,11 @@ func statsIndexOver(t *testing.T, corpus []statsCorpusRun) *statsIndex {
 				MemoOrkflowName: payload(run.orkflow),
 				MemoNamespace:   payload(run.namespace),
 			}},
+		}
+		if run.queued {
+			info.SearchAttributes = &commonpb.SearchAttributes{IndexedFields: map[string]*commonpb.Payload{
+				task.SearchAttrOrkflowRunQueued: payload("true"),
+			}}
 		}
 		if !run.closedAt.IsZero() {
 			info.Status = enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED
@@ -517,3 +527,40 @@ func TestExecutions_SamplesTheSameRunsTheArchiveCounts(t *testing.T) {
 
 // startedSinceQuery recognises the artifact GC's started-since listing.
 var startedSinceQuery = regexp.MustCompile(`^WorkflowType = "RunWorkflow" AND StartTime >= "[^"]*"$`)
+
+// TestExecutions_NamesTheRunsWaitingForASlot is GetStats' queued bucket at its
+// source: of the runs still going, exactly those the cluster indexes as queued
+// for a concurrency slot. A run that has finished is never among them, even
+// with the attribute left on its record.
+func TestExecutions_NamesTheRunsWaitingForASlot(t *testing.T) {
+	corpus := append(statsCorpus(),
+		statsCorpusRun{
+			id: "ork-queued", namespace: "alpha", orkflow: "deploy",
+			createdAt: statsWindowEnd.Add(-10 * time.Minute),
+			status:    orkstackv1.Status_STATUS_RUNNING, queued: true,
+		},
+		statsCorpusRun{
+			id: "ork-queued-then-ended", namespace: "alpha", orkflow: "deploy",
+			createdAt: statsWindowStart.Add(time.Hour),
+			closedAt:  statsWindowStart.Add(2 * time.Hour),
+			status:    orkstackv1.Status_STATUS_SUCCEEDED, queued: true,
+		},
+		statsCorpusRun{
+			id: "ork-queued-elsewhere", namespace: "beta", orkflow: "deploy",
+			createdAt: statsWindowEnd.Add(-10 * time.Minute),
+			status:    orkstackv1.Status_STATUS_RUNNING, queued: true,
+		},
+	)
+	reader := newRunReader(statsIndexOver(t, corpus), converter.GetDefaultDataConverter())
+	executions, err := reader.Executions(context.Background(), StatsWindow{
+		Namespace: "alpha", Since: statsWindowStart, Until: statsWindowEnd,
+	})
+	must.OKf(t, err, "Executions")
+	if len(executions.Running) != 2 {
+		t.Fatalf("Running = %v, want ork-running and ork-queued", executions.Running)
+	}
+	want := map[string]struct{}{"ork-queued": {}}
+	if !maps.Equal(executions.Queued, want) {
+		t.Errorf("Queued = %v, want %v: only a run still going and indexed as waiting counts", executions.Queued, want)
+	}
+}

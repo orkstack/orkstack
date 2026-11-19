@@ -2126,8 +2126,8 @@ No fields.
 | `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width and timezone are the series actually drawn, resolved: an empty timezone answers "UTC". Unset when no series was asked for. |
 | `timezone` | `string` |  |
 | `paused` | `int64` | paused is how many runs executing now are paused (orkctl run pause): not in runs_by_status["running"], and in the running list. 0 where the cluster does not index paused runs, which then count as running. A series bucket counts a paused run it created as running. |
-| `queued` | `int64` | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
-| `executing` | `int64` | executing is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `queued` | `int64` | queued is how many of the running runs wait for a concurrency slot. |
+| `executing` | `int64` | executing is how many of the running runs do not: running minus queued. |
 
 ### GetSystemInfoRequest
 

@@ -367,6 +367,13 @@ func (h *StatsHandler) compute(
 		WindowSince:  timestamppb.New(window.Since),
 		WindowUntil:  timestamppb.New(window.Until),
 	}
+	// queued is the running runs waiting for a concurrency slot, executing
+	// the rest: running, less the paused (counted apart) and the queued. A
+	// queued run is never paused, and all three come from the one read that
+	// listed the running runs, so executing never goes below zero; the clamp
+	// states it rather than trusting it.
+	response.Queued = queuedAmong(running, executions.Queued)
+	response.Executing = max(0, int64(len(running))-paused-response.Queued)
 	if finished := tally.Finished(); finished > 0 {
 		response.SuccessRate = float64(tally.Succeeded()) / float64(finished)
 		response.SuccessRateDefined = true
@@ -500,6 +507,18 @@ func pausedRows(running []*orkstackv1.Run) int64 {
 	var n int64
 	for _, run := range running {
 		if run.GetStatus() == orkstackv1.Status_STATUS_PAUSED {
+			n++
+		}
+	}
+	return n
+}
+
+// queuedAmong counts the runs of running whose ids the index named as
+// queued for a concurrency slot.
+func queuedAmong(running []*orkstackv1.Run, queued map[string]struct{}) int64 {
+	var n int64
+	for _, run := range running {
+		if _, ok := queued[run.GetId()]; ok {
 			n++
 		}
 	}
