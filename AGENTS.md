@@ -1307,6 +1307,13 @@ includes:
   runs nothing is written to the index and none is listed as paused; and a
   pause and an unpause sent through `orkctl` to two replicas, and their
   webhooks, reach the run and its subscribers;
+- a pause under chaos: an engine replica killed while a run is paused,
+  inside the workflow task that applies a pause, or while a child run
+  applies the pause its parent cascaded, leaves each run paused once and
+  starting nothing until its unpause; an unpause racing a running task's
+  failure ends the run failed with that task's cause and runs its failure
+  handlers once; and an unpause racing the pause's own expiry either
+  unpauses the run or lets it fail `RUN_PAUSE_TIMEOUT`, never both;
 - a run at the deployment's task ceiling and a run at the fan-out item
   ceiling complete across generations with their definition passed by
   reference and snapshot overlays on, each generation within the measured
