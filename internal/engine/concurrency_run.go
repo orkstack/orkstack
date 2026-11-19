@@ -449,3 +449,63 @@ func (c *concRunState) adoptCarry(in *orkstackv1.RunConcurrencyCarry) error {
 	}
 	return nil
 }
+
+// failInLine ends a run that never held its run-level slot: one whose wait
+// in line ended, or that its gate refused. It starts no task, failure
+// handlers included, because a handler would run outside the limit the run
+// waited for; the run ends FAILED or CANCELED with its own reason, as a run
+// without handlers does. Reached only with a plan that carries a limit, so
+// no history recorded before one replays it.
+func (s *runState) failInLine(ctx workflow.Context, cancelRun workflow.CancelFunc, inFlight map[string]workflow.Future, cause error) (*orkstackv1.Run, error) {
+	// It no longer waits: its record and index stop saying so. A failed
+	// upsert is logged, never put in place of the run's own reason.
+	if c := s.conc; c != nil && c.queued != nil {
+		c.queued = nil
+		if err := s.syncConcAttributes(ctx); err != nil {
+			workflow.GetLogger(ctx).Warn("a run that left the line could not update its index", "run_id", s.runID, "error", err)
+		}
+	}
+	// The run returns from fail at once, so clearing this derived field is
+	// never read by anything after it.
+	if s.hasHandlers {
+		s.hasHandlers = false
+		// The handlers' context issues no command; ending it is tidiness.
+		if s.cancelHandlers != nil {
+			s.cancelHandlers()
+		}
+	}
+	return s.fail(ctx, cancelRun, inFlight, "", cause)
+}
+
+// concCauseCode is the code of a run-level ending of a concurrency limit, or
+// "": as runTimeoutCauseCode, only an error this workflow's own code raised.
+func concCauseCode(cause error) string {
+	failure := categoryOf(cause)
+	if !failure.isApplication() || failure.viaActivity || failure.viaChild {
+		return ""
+	}
+	switch code := failure.appType(); code {
+	case RunConcurrencyLimitCode, RunConcurrencyFullCode, RunConcurrencyUnavailableCode,
+		RunConcurrencyFencedCode, RunConcurrencyUnsupportedCode, RunQueueTimeoutCode, RunSupersededCode:
+		return code
+	}
+	return ""
+}
+
+// concFailure is the run's error for a concurrency ending: its own code and
+// sentence, and the category that says what kind of ending it was.
+func concFailure(cause error) *orkstackv1.Error {
+	read := categoryOf(cause)
+	failure := &orkstackv1.Error{Code: read.appType(), Message: read.appMessage()}
+	switch failure.Code {
+	case RunQueueTimeoutCode:
+		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT
+	case RunConcurrencyUnavailableCode:
+		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
+	case RunSupersededCode:
+		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
+	default:
+		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
+	}
+	return failure
+}

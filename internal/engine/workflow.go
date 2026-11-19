@@ -289,7 +289,7 @@ func runWorkflow(
 		// waits in line for it, before it starts (E88 §5.2.1).
 		if state.conc != nil {
 			if err := state.acquireRunSlot(ctx); err != nil {
-				return state.fail(ctx, cancelRun, inFlight, "", err)
+				return state.failInLine(ctx, cancelRun, inFlight, err)
 			}
 		}
 		state.start(ctx)
@@ -2970,7 +2970,7 @@ func (s *runState) fail(
 	// An operator's cancel comes first in the ending order: a run-level
 	// timeout that meets a canceled run ends it canceled, with the cancel's
 	// own text rather than a timeout's.
-	if ctx.Err() != nil && runTimeoutCauseCode(cause) != "" {
+	if ctx.Err() != nil && (runTimeoutCauseCode(cause) != "" || concCauseCode(cause) != "") {
 		cause = temporal.NewCanceledError()
 	}
 	// A definition with a failure handler takes its own failure path
@@ -3067,6 +3067,9 @@ func (s *runState) runFailureFor(taskID string, cause error) *orkstackv1.Error {
 	}
 	if runTimeoutCauseCode(cause) != "" {
 		return s.runTimeoutFailure(cause)
+	}
+	if concCauseCode(cause) != "" {
+		return concFailure(cause)
 	}
 	failure := &orkstackv1.Error{
 		Code:    "RUN_FAILED",

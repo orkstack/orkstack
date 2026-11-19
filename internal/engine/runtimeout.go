@@ -171,7 +171,7 @@ func runTimeoutCauseCode(cause error) string {
 // isRunLevelCause reports a cause that belongs to the run, never to the task
 // or fan-out where it was noticed.
 func isRunLevelCause(cause error) bool {
-	return isHistoryLimit(cause) || runTimeoutCauseCode(cause) != ""
+	return isHistoryLimit(cause) || runTimeoutCauseCode(cause) != "" || concCauseCode(cause) != ""
 }
 
 // runTimeoutFailure is the run's error for a cause of this family.
