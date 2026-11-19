@@ -365,6 +365,8 @@ type EngineInstruments struct {
 	// ArchiveSweepLastSuccess is the unix time of the last pass that saw
 	// everything: the index listed to its end and object storage answered.
 	ArchiveSweepLastSuccess metric.Int64Gauge
+	// pause is the run-pause counter and histogram (pause_metrics.go).
+	pause *pauseInstruments
 	// Cardinality is the label policy EngineObserver applies through
 	// RunAttrs above.
 	Cardinality Cardinality
@@ -504,7 +506,12 @@ func NewEngineInstruments(p *Providers) (*EngineInstruments, error) {
 	if err != nil {
 		return nil, err
 	}
+	pause, err := newPauseInstruments(meter)
+	if err != nil {
+		return nil, err
+	}
 	return &EngineInstruments{
+		pause:                       pause,
 		ArchiveSweepListFailed:      sweepListFailed,
 		ArchiveSweepIntervalTooLong: sweepIntervalTooLong,
 		ArchiveSweepLastSuccess:     sweepLastSuccess,

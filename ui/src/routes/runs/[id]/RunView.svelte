@@ -55,6 +55,11 @@
 	import { taskTiming } from '#lib/timing.ts';
 	import { timestampMs } from '#lib/stats.ts';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import RunPauseControls from '#lib/components/RunPauseControls.svelte';
+	import { tipWhenTruncated } from '#lib/tipWhenTruncated.ts';
+	import RunPausedCard from '#lib/components/RunPausedCard.svelte';
+	import { can } from '#lib/permissions.ts';
+	import { howLastPauseEnded, pausedChildCount } from '#lib/pause.ts';
 	import CliPopover from '#lib/components/CliPopover.svelte';
 	import FactsStrip, { type Fact } from '#lib/components/FactsStrip.svelte';
 	import LiveControl from '#lib/components/LiveControl.svelte';
@@ -1001,6 +1006,24 @@
 		}
 	}
 
+	// refreshPause re-reads the run once for a pause event the snapshot does
+	// not yet reflect, coalescing a burst into one read. A finished run's
+	// replay asks nothing: its snapshot already holds how its pause ended.
+	let pauseRefresh: ReturnType<typeof setTimeout> | undefined;
+	function refreshPause(event: Event): void {
+		const snap = untrack(() => data.run);
+		if (!snap || isTerminal(snap.status)) return;
+		const known = event.type === EventType.RUN_PAUSED
+			? (snap.pause?.requestId !== undefined && snap.pause.requestId === event.requestId) || (!event.requestId && snap.pausedByParent !== undefined)
+			: snap.pause === undefined && snap.pausedByParent === undefined;
+		if (known || pauseRefresh) return;
+		pauseRefresh = setTimeout(() => {
+			pauseRefresh = undefined;
+			void invalidateAll();
+		}, 250);
+	}
+	onDestroy(() => clearTimeout(pauseRefresh));
+
 	// When a task ended, as its event says, until a snapshot brings the record's
 	// own: a live task's Finished does not wait for the run's terminal re-read.
 	function finishOf(event: Event): Pick<TaskView, 'finishedAt'> | object {
@@ -1037,6 +1060,16 @@
 				finishedAt = event.timestamp;
 				if (event.message) runErrorMessage = event.message;
 				if (!terminalFactsRead) refreshTerminalFacts();
+				break;
+			// A pause's two events move the run's status; the snapshot re-read
+			// brings who paused it, until when, and how it ended.
+			case EventType.RUN_PAUSED:
+				if (!isTerminal(runStatus)) runStatus = status ?? Status.PAUSED;
+				refreshPause(event);
+				break;
+			case EventType.RUN_UNPAUSED:
+				if (!isTerminal(runStatus)) runStatus = status ?? Status.RUNNING;
+				refreshPause(event);
 				break;
 			case EventType.RUN_CANCELED:
 				runStatus = status ?? Status.CANCELED;
@@ -1968,6 +2001,16 @@
 
 	// ---- Harbour's header: progress, how long, the screen's commands ----
 	const progress = $derived(runProgress(tasks));
+	// ---- Pausing (E103): who may, what still runs, the children held with it ----
+	const pauseAllowed = $derived(can(data.grants, 'run.pause', { namespace: data.namespace, orkflow: run?.orkflowName }));
+	const pauseRunning = $derived(tasks.filter((t) => t.status === Status.RUNNING).length);
+	const pauseChildren = $derived(
+		pausedChildCount((run?.taskRuns ?? []).map((t) => ({ childRunId: t.child?.runId, status: findTask(t.taskId)?.status ?? t.status })))
+	);
+	const pausedNow = $derived(runStatus === Status.PAUSED && !!run && (run.pause !== undefined || run.pausedByParent !== undefined));
+	function runHref(runId: string): string {
+		return withNamespace(`/runs/${encodeURIComponent(runId)}`, data.namespace);
+	}
 	let clock = $state(Date.now());
 	$effect(() => {
 		if (isTerminal(runStatus)) return;
@@ -2382,6 +2425,7 @@
 	{#snippet timeoutWhen()}{#if timeoutFact}<span class="num" data-testid="run-timeout-value" data-state={timeoutFact.state} data-tip={timeoutFact.tip || undefined} tabindex={timeoutFact.tip ? 0 : undefined}>{timeoutFact.text}</span>{#if timeoutFact.tip}<span class="sr">, {timeoutFact.tip}</span>{/if}{/if}{/snippet}
 	{#snippet lastedFor()}<b class="num" data-testid="run-lasted">{lasted}</b>{/snippet}
 	{#snippet progressFact()}<ProgressRing {progress} status={runStatus} testid="run-progress" />{#if isTerminal(runStatus) && (progress.skipped > 0 || neverTasks.length > 0)}<span class="text-sm text-ink-3" data-testid="run-progress-words">{[`${progress.ran} ran`, progress.skipped ? `${progress.skipped} skipped` : '', neverTasks.length ? `${neverTasks.length} never started` : ''].filter(Boolean).join(' · ')}</span>{/if}{/snippet}
+	{#snippet lastPauseFact()}{#if run?.lastPause}<span data-testid="run-last-pause">{howLastPauseEnded(run.lastPause.end)}{#if run.lastPause.pausedBy}, paused by <Principal name={run.lastPause.pausedBy} verified={run.lastPause.pausedByVerified} />{/if}</span>{/if}{/snippet}
 	{#snippet canceledBy()}{#if run?.canceledBy}<span data-testid="run-canceled-by">by <Principal name={run.canceledBy} verified={run.canceledByVerified} /></span>{/if}{/snippet}
 
 	<header class="rh" data-testid="run-header">
@@ -2389,8 +2433,9 @@
 			<a
 				href={withNamespace(`/orkflows/${encodeURIComponent(run.orkflowName)}?version=${encodeURIComponent(run.orkflowVersion)}`, orkflowOwner(run, data.namespace))}
 				data-testid="pinned-orkflow-link"
+				use:tipWhenTruncated={runOrkflowLabel(run)}
 				class="text-ink no-underline hover:underline">{runOrkflowLabel(run)}</a
-			><StatusPill status={runStatus} testid="run-status" />
+			><StatusPill status={runStatus} testid="run-status" />{#if runStatus === Status.PAUSED}<span class="sr">: no new tasks start</span>{/if}
 		</h1>
 		<div class="rh-actions">
 			<button type="button" data-testid="run-evidence" aria-disabled={isTerminal(runStatus) ? undefined : 'true'} aria-describedby={isTerminal(runStatus) ? undefined : 'run-evidence-why'} data-tip={isTerminal(runStatus) ? undefined : 'A bundle is for a finished run'} onclick={() => { if (isTerminal(runStatus)) evidenceDialogOpen = true; }} class="btn btn-quiet">Evidence</button>
@@ -2413,6 +2458,7 @@
 			<a class="btn" href={withNamespace(`/orkflows/${encodeURIComponent(run.orkflowName)}?tab=edit&version=${encodeURIComponent(run.orkflowVersion)}`, orkflowOwner(run, data.namespace))} data-testid="run-edit" data-tip="Edit from {run.orkflowVersion}"><Icon name="edit" />Edit</a>
 			{#if !isTerminal(runStatus)}
 				<span class="act-gap act-break" aria-hidden="true"></span>
+				<RunPauseControls {run} status={runStatus} namespace={data.namespace} allowed={pauseAllowed} {runHref} onrecorded={() => setTimeout(() => void invalidateAll(), 3_000)} />
 				<button
 					type="button"
 					data-testid="cancel-run"
@@ -2442,7 +2488,8 @@
 					{ label: isTerminal(runStatus) ? 'Ran for' : 'Running for', value: lastedFor },
 					...(timeoutFact ? [{ label: 'Timeout', value: timeoutWhen, testid: 'run-timeout' }] : []),
 					{ label: 'Progress', value: progressFact },
-					...(runStatus === Status.CANCELED && run.canceledBy ? [{ label: 'Canceled', value: canceledBy }] : [])
+					...(runStatus === Status.CANCELED && run.canceledBy ? [{ label: 'Canceled', value: canceledBy }] : []),
+					...(isTerminal(runStatus) && run.lastPause ? [{ label: 'Last pause', value: lastPauseFact }] : [])
 				] satisfies Fact[]}
 			/>
 			{#if !isTerminal(runStatus)}
@@ -3117,6 +3164,9 @@
 		</div>
 
 		<aside class="run-aside" aria-label="Run details">
+			{#if pausedNow && run}
+				<RunPausedCard {run} running={pauseRunning} children={pauseChildren} failing={!!(runError || runErrorMessage)} now={wallNow} {runHref} onended={() => void invalidateAll()} />
+			{/if}
 			{#if runError || runErrorMessage}
 				<!--
 					WHY IT ENDED: the run's terminal error, in full when the snapshot
@@ -3752,6 +3802,26 @@
 		gap: 6px 12px;
 		min-width: 0;
 		overflow-wrap: anywhere;
+	}
+	/* Where the actions share the title's row, the title keeps one line: a
+	   long name ends in an ellipsis (its whole text the link's name and its
+	   tooltip, tipWhenTruncated) rather than wrapping, so the header keeps
+	   its height when a live run's Pause and Cancel leave at its end and
+	   nothing below it moves under the reader's pointer. Narrower, the
+	   actions have a row of their own and the name wraps whole. */
+	@media (min-width: 1100px) {
+		.rh-title {
+			flex-wrap: nowrap;
+		}
+		.rh-title > a {
+			min-width: 0;
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
+		.rh-title > :global(.stamp) {
+			flex: none;
+		}
 	}
 	.rh-actions {
 		grid-column: 2;

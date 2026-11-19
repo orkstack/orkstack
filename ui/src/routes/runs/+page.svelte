@@ -297,7 +297,7 @@
 		{ value: '', label: 'any' },
 		...['SUBMIT', 'TRIGGER', 'SCHEDULE', 'PARENT_RUN', 'RUN_AGAIN'].map((v) => ({ value: v, label: originWords[RunOriginKind[v as keyof typeof RunOriginKind]] }))
 	];
-	const statusOptions = [{ value: '', label: 'any' }, ...['RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED', 'PENDING'].map((v) => ({ value: v, label: v[0] + v.slice(1).toLowerCase() }))];
+	const statusOptions = [{ value: '', label: 'any' }, ...['RUNNING', 'PAUSED', 'SUCCEEDED', 'FAILED', 'CANCELED', 'PENDING'].map((v) => ({ value: v, label: v[0] + v.slice(1).toLowerCase() }))];
 
 	// A run still going is listed from the cluster's index, with no tasks: its
 	// progress is read from the run itself, for the rows on this page only,
@@ -408,6 +408,18 @@
 							><span class="lbl"><span class={t.mark === 'mark-dot' ? 'mark-dot' : `${t.mark} inline-flex`} aria-hidden="true"></span>{t.label}</span><b class="num">{count}</b></button
 						>
 					{/each}
+					{#if (day.value?.paused ?? 0n) > 0n || statusShown === 'PAUSED'}
+						<!-- Paused is live and its own count: shown only where there are some, since a
+						     cluster that does not index paused runs counts them as running. -->
+						<button
+							type="button"
+							class="tile"
+							aria-pressed={statusShown === 'PAUSED'}
+							data-testid="runs-tile-paused"
+							onclick={() => void tileFilter('PAUSED')}
+							><span class="lbl"><span class="mark-pause inline-flex" aria-hidden="true"></span>Paused</span><b class="num">{Number(day.value?.paused ?? 0n)}</b></button
+						>
+					{/if}
 				</div>
 			{/if}
 		{/await}
@@ -603,7 +615,8 @@
 	}
 	.tiles {
 		display: grid;
-		grid-template-columns: repeat(4, minmax(0, 1fr));
+		grid-auto-flow: column;
+		grid-auto-columns: minmax(0, 1fr);
 		gap: 12px;
 	}
 	.tile .lbl {
@@ -672,6 +685,7 @@
 	}
 	@media (max-width: 900px) {
 		.tiles {
+			grid-auto-flow: row;
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
 	}

@@ -247,8 +247,9 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
    * has not started its first task is still one executing entry in the
    * cluster's index, and telling the two apart means reading that run's
    * history — one read per run, which is the cost this whole service is built
-   * to avoid. "running" therefore means "accepted and not finished", and the
-   * `running` list below is exactly the same set. A key that could only ever
+   * to avoid. "running" therefore means "accepted, not finished and not
+   * paused"; a paused run counts in `paused` instead, and the `running` list
+   * below is the two together, each row with its status. A key that could only ever
    * be answered by guessing is not reported at all.
    *
    * @generated from field: map<string, int64> runs_by_status = 1;
@@ -332,7 +333,8 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
   mostFailing: OrkflowFailures[];
 
   /**
-   * running is every run executing when the answer was computed, newest first.
+   * running is every run executing when the answer was computed, newest first,
+   * paused runs among them (their status is PAUSED).
    * Each is the shallow projection an index can give — id, namespace, orkflow,
    * status and start time. A run's tasks, input and output live elsewhere;
    * GetRun reads them.
@@ -404,7 +406,10 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
   timezone: string;
 
   /**
-   * paused is set from E103; unset until it lands (v0.4.0 proto batch).
+   * paused is how many runs executing now are paused (orkctl run pause): not
+   * in runs_by_status["running"], and in the running list. 0 where the
+   * cluster does not index paused runs, which then count as running. A
+   * series bucket counts a paused run it created as running.
    *
    * @generated from field: int64 paused = 18;
    */

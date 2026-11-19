@@ -128,6 +128,7 @@ func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.
 		webhooks.EventTaskScheduled, webhooks.EventTaskStarted,
 		webhooks.EventTaskAwaiting, webhooks.EventTaskResolved, webhooks.EventTaskSleeping,
 		webhooks.EventTaskSucceeded, webhooks.EventTaskFailed,
+		webhooks.EventRunPaused, webhooks.EventRunUnpaused,
 		webhooks.EventRunSucceeded, webhooks.EventRunFailed, webhooks.EventRunCanceled,
 	}
 	if got := webhooks.KnownEvents(); !equalEvents(got, want) {
@@ -135,7 +136,8 @@ func TestKnownEvents_KeepsRunTransitionsInTheirExistingRelativeOrder(t *testing.
 	}
 	var runs []webhooks.Event
 	for _, event := range webhooks.KnownEvents() {
-		if strings.HasPrefix(string(event), "RUN_") {
+		// The opt-in run events (a pause's two) are not transitions.
+		if strings.HasPrefix(string(event), "RUN_") && event != webhooks.EventRunPaused && event != webhooks.EventRunUnpaused {
 			runs = append(runs, event)
 		}
 	}

@@ -8,6 +8,8 @@
     "TASK_SLEEPING",
     "TASK_SUCCEEDED",
     "TASK_FAILED",
+    "RUN_PAUSED",
+    "RUN_UNPAUSED",
     "RUN_SUCCEEDED",
     "RUN_FAILED",
     "RUN_CANCELED"

@@ -41,6 +41,10 @@ const (
 	RunServiceListRunsProcedure = "/orkstack.v1.RunService/ListRuns"
 	// RunServiceCancelRunProcedure is the fully-qualified name of the RunService's CancelRun RPC.
 	RunServiceCancelRunProcedure = "/orkstack.v1.RunService/CancelRun"
+	// RunServicePauseRunProcedure is the fully-qualified name of the RunService's PauseRun RPC.
+	RunServicePauseRunProcedure = "/orkstack.v1.RunService/PauseRun"
+	// RunServiceUnpauseRunProcedure is the fully-qualified name of the RunService's UnpauseRun RPC.
+	RunServiceUnpauseRunProcedure = "/orkstack.v1.RunService/UnpauseRun"
 	// RunServiceStreamEventsProcedure is the fully-qualified name of the RunService's StreamEvents RPC.
 	RunServiceStreamEventsProcedure = "/orkstack.v1.RunService/StreamEvents"
 	// RunServiceStreamTaskLogsProcedure is the fully-qualified name of the RunService's StreamTaskLogs
@@ -74,6 +78,35 @@ type RunServiceClient interface {
 	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
+	// PauseRun stops a running run starting anything new, failure handlers
+	// included, and pauses its running child runs too; the one exception is
+	// what an already-open pin needs to finish. Work it already started
+	// finishes under its own rules, and every clock keeps running: a task's or
+	// the run's timeout, an await's deadline and a sleep's wake-up are not
+	// stretched. The run's status is PAUSED from its RUN_PAUSED event until
+	// RUN_UNPAUSED or its end. A pause lasts at most its timeout (the
+	// deployment's default when the request names none): a run that is not
+	// failing then ends FAILED with RUN_PAUSE_TIMEOUT, and a failing run ends
+	// with its own reason, its held failure handlers never started.
+	//
+	// It answers once the run has recorded the request, not once it has
+	// applied it: the RUN_PAUSED event carrying the response's request_id says
+	// it did, read from after_sequence. The checks before sending read the run
+	// as the read model has it and refuse FAILED_PRECONDITION with a reason
+	// (docs/REASONS.md, "Pausing a run"); in a race the run's own decision is
+	// final. A request that recording would take past the run's history limit
+	// is not applied: the run stops RUN_HISTORY_LIMIT naming the request, or, a
+	// run already failing, drops the request, records no event for it and ends
+	// with its own reason. A pause cannot be changed: unpause and pause again.
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
+	// UnpauseRun lifts a run's own pause, and the pauses of its child runs
+	// that it caused; a child paused on its own stays paused. The run then
+	// starts what it held, in the order it would have with no pause. The
+	// RUN_UNPAUSED event carrying the response's request_id says it applied
+	// (pause_transition NOT_PAUSED when the run was not paused). A run paused
+	// because its parent run is paused is refused RUN_PAUSE_INHERITED: unpause
+	// the parent.
+	UnpauseRun(context.Context, *connect.Request[v1.UnpauseRunRequest]) (*connect.Response[v1.UnpauseRunResponse], error)
 	// StreamEvents server-streams realtime events for a run. from_sequence
 	// allows resuming after a disconnect (0 = from start): the stream
 	// continues after that event, so a client that passes the last sequence it
@@ -234,6 +267,18 @@ func NewRunServiceClient(httpClient connect.HTTPClient, baseURL string, opts ...
 			connect.WithSchema(runServiceMethods.ByName("CancelRun")),
 			connect.WithClientOptions(opts...),
 		),
+		pauseRun: connect.NewClient[v1.PauseRunRequest, v1.PauseRunResponse](
+			httpClient,
+			baseURL+RunServicePauseRunProcedure,
+			connect.WithSchema(runServiceMethods.ByName("PauseRun")),
+			connect.WithClientOptions(opts...),
+		),
+		unpauseRun: connect.NewClient[v1.UnpauseRunRequest, v1.UnpauseRunResponse](
+			httpClient,
+			baseURL+RunServiceUnpauseRunProcedure,
+			connect.WithSchema(runServiceMethods.ByName("UnpauseRun")),
+			connect.WithClientOptions(opts...),
+		),
 		streamEvents: connect.NewClient[v1.StreamEventsRequest, v1.Event](
 			httpClient,
 			baseURL+RunServiceStreamEventsProcedure,
@@ -303,6 +348,8 @@ type runServiceClient struct {
 	getRun                *connect.Client[v1.GetRunRequest, v1.GetRunResponse]
 	listRuns              *connect.Client[v1.ListRunsRequest, v1.ListRunsResponse]
 	cancelRun             *connect.Client[v1.CancelRunRequest, v1.CancelRunResponse]
+	pauseRun              *connect.Client[v1.PauseRunRequest, v1.PauseRunResponse]
+	unpauseRun            *connect.Client[v1.UnpauseRunRequest, v1.UnpauseRunResponse]
 	streamEvents          *connect.Client[v1.StreamEventsRequest, v1.Event]
 	streamTaskLogs        *connect.Client[v1.StreamTaskLogsRequest, v1.TaskLogChunk]
 	listRunArtifacts      *connect.Client[v1.ListRunArtifactsRequest, v1.ListRunArtifactsResponse]
@@ -333,6 +380,16 @@ func (c *runServiceClient) ListRuns(ctx context.Context, req *connect.Request[v1
 // CancelRun calls orkstack.v1.RunService.CancelRun.
 func (c *runServiceClient) CancelRun(ctx context.Context, req *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error) {
 	return c.cancelRun.CallUnary(ctx, req)
+}
+
+// PauseRun calls orkstack.v1.RunService.PauseRun.
+func (c *runServiceClient) PauseRun(ctx context.Context, req *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return c.pauseRun.CallUnary(ctx, req)
+}
+
+// UnpauseRun calls orkstack.v1.RunService.UnpauseRun.
+func (c *runServiceClient) UnpauseRun(ctx context.Context, req *connect.Request[v1.UnpauseRunRequest]) (*connect.Response[v1.UnpauseRunResponse], error) {
+	return c.unpauseRun.CallUnary(ctx, req)
 }
 
 // StreamEvents calls orkstack.v1.RunService.StreamEvents.
@@ -391,6 +448,35 @@ type RunServiceHandler interface {
 	GetRun(context.Context, *connect.Request[v1.GetRunRequest]) (*connect.Response[v1.GetRunResponse], error)
 	ListRuns(context.Context, *connect.Request[v1.ListRunsRequest]) (*connect.Response[v1.ListRunsResponse], error)
 	CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error)
+	// PauseRun stops a running run starting anything new, failure handlers
+	// included, and pauses its running child runs too; the one exception is
+	// what an already-open pin needs to finish. Work it already started
+	// finishes under its own rules, and every clock keeps running: a task's or
+	// the run's timeout, an await's deadline and a sleep's wake-up are not
+	// stretched. The run's status is PAUSED from its RUN_PAUSED event until
+	// RUN_UNPAUSED or its end. A pause lasts at most its timeout (the
+	// deployment's default when the request names none): a run that is not
+	// failing then ends FAILED with RUN_PAUSE_TIMEOUT, and a failing run ends
+	// with its own reason, its held failure handlers never started.
+	//
+	// It answers once the run has recorded the request, not once it has
+	// applied it: the RUN_PAUSED event carrying the response's request_id says
+	// it did, read from after_sequence. The checks before sending read the run
+	// as the read model has it and refuse FAILED_PRECONDITION with a reason
+	// (docs/REASONS.md, "Pausing a run"); in a race the run's own decision is
+	// final. A request that recording would take past the run's history limit
+	// is not applied: the run stops RUN_HISTORY_LIMIT naming the request, or, a
+	// run already failing, drops the request, records no event for it and ends
+	// with its own reason. A pause cannot be changed: unpause and pause again.
+	PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error)
+	// UnpauseRun lifts a run's own pause, and the pauses of its child runs
+	// that it caused; a child paused on its own stays paused. The run then
+	// starts what it held, in the order it would have with no pause. The
+	// RUN_UNPAUSED event carrying the response's request_id says it applied
+	// (pause_transition NOT_PAUSED when the run was not paused). A run paused
+	// because its parent run is paused is refused RUN_PAUSE_INHERITED: unpause
+	// the parent.
+	UnpauseRun(context.Context, *connect.Request[v1.UnpauseRunRequest]) (*connect.Response[v1.UnpauseRunResponse], error)
 	// StreamEvents server-streams realtime events for a run. from_sequence
 	// allows resuming after a disconnect (0 = from start): the stream
 	// continues after that event, so a client that passes the last sequence it
@@ -547,6 +633,18 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 		connect.WithSchema(runServiceMethods.ByName("CancelRun")),
 		connect.WithHandlerOptions(opts...),
 	)
+	runServicePauseRunHandler := connect.NewUnaryHandler(
+		RunServicePauseRunProcedure,
+		svc.PauseRun,
+		connect.WithSchema(runServiceMethods.ByName("PauseRun")),
+		connect.WithHandlerOptions(opts...),
+	)
+	runServiceUnpauseRunHandler := connect.NewUnaryHandler(
+		RunServiceUnpauseRunProcedure,
+		svc.UnpauseRun,
+		connect.WithSchema(runServiceMethods.ByName("UnpauseRun")),
+		connect.WithHandlerOptions(opts...),
+	)
 	runServiceStreamEventsHandler := connect.NewServerStreamHandler(
 		RunServiceStreamEventsProcedure,
 		svc.StreamEvents,
@@ -617,6 +715,10 @@ func NewRunServiceHandler(svc RunServiceHandler, opts ...connect.HandlerOption) 
 			runServiceListRunsHandler.ServeHTTP(w, r)
 		case RunServiceCancelRunProcedure:
 			runServiceCancelRunHandler.ServeHTTP(w, r)
+		case RunServicePauseRunProcedure:
+			runServicePauseRunHandler.ServeHTTP(w, r)
+		case RunServiceUnpauseRunProcedure:
+			runServiceUnpauseRunHandler.ServeHTTP(w, r)
 		case RunServiceStreamEventsProcedure:
 			runServiceStreamEventsHandler.ServeHTTP(w, r)
 		case RunServiceStreamTaskLogsProcedure:
@@ -660,6 +762,14 @@ func (UnimplementedRunServiceHandler) ListRuns(context.Context, *connect.Request
 
 func (UnimplementedRunServiceHandler) CancelRun(context.Context, *connect.Request[v1.CancelRunRequest]) (*connect.Response[v1.CancelRunResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.CancelRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) PauseRun(context.Context, *connect.Request[v1.PauseRunRequest]) (*connect.Response[v1.PauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.PauseRun is not implemented"))
+}
+
+func (UnimplementedRunServiceHandler) UnpauseRun(context.Context, *connect.Request[v1.UnpauseRunRequest]) (*connect.Response[v1.UnpauseRunResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("orkstack.v1.RunService.UnpauseRun is not implemented"))
 }
 
 func (UnimplementedRunServiceHandler) StreamEvents(context.Context, *connect.Request[v1.StreamEventsRequest], *connect.ServerStream[v1.Event]) error {

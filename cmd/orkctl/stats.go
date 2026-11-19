@@ -162,8 +162,15 @@ func renderStats(out io.Writer, stats *orkstackv1.GetStatsResponse) error {
 	counts := newTable(out)
 	fmt.Fprintln(counts, "RUNS\tCOUNT")
 	// A fixed order, not the map's: a table whose rows move between calls is
-	// unreadable, and running comes first because it is the only live number.
-	for _, status := range []string{"running", "succeeded", "failed", "canceled"} {
+	// unreadable, and the live numbers (running, then paused) come first.
+	fmt.Fprintf(counts, "%s\t%d\n", "running", stats.GetRunsByStatus()["running"])
+	// Paused runs are their own live count, never in running; shown only
+	// when there are some, since a cluster that does not index paused runs
+	// counts them as running and reports none.
+	if paused := stats.GetPaused(); paused > 0 {
+		fmt.Fprintf(counts, "%s\t%d\n", "paused", paused)
+	}
+	for _, status := range []string{"succeeded", "failed", "canceled"} {
 		fmt.Fprintf(counts, "%s\t%d\n", status, stats.GetRunsByStatus()[status])
 	}
 	for _, status := range sortedKeys(stats.GetRunsByStatus()) {

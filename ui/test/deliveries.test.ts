@@ -44,7 +44,9 @@ test('the panel offers the ListDeliveries allowlist: the key coordinates, events
 	expect(spec.fields.map((f) => f.path)).toEqual(['created_at', 'namespace', 'run_id', 'webhook_id', 'event', 'delivered']);
 	const event = spec.fields.find((f) => f.path === 'event');
 	expect(event?.kind).toBe('enum');
-	expect(event?.values).toHaveLength(11);
+	expect(event?.values).toHaveLength(13);
+	expect(event?.values).toContain('RUN_PAUSED');
+	expect(event?.values).toContain('RUN_UNPAUSED');
 	expect(event?.values).not.toContain('TASK_LOG');
 	expect(event?.values).not.toContain('RUN_CREATED');
 	expect(spec.fields.find((f) => f.path === 'delivered')?.kind).toBe('bool');
