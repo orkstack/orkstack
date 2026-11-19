@@ -112,7 +112,7 @@ func (s *runState) acquireRunSlot(ctx workflow.Context) error {
 	case gateAnswerGranted:
 		return s.recordRunSlot(ctx, slot, res.Answer, true)
 	case gateAnswerQueued:
-		return s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL)
+		return s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL, nil)
 	}
 	return runLevelError(RunConcurrencyUnsupportedCode, fmt.Sprintf("the limit on key %s answered %q, which this release does not know", slot.Key, res.Answer.Answer))
 }
@@ -189,9 +189,11 @@ func concEnding(res AcquireConcurrencyResult, slot *ConcurrencySlotPlan) error {
 //
 // cause says why the run waits: it arrived (PENDING), or, failing, it asks
 // again for the slot it gave back while paused so its failure handlers run
-// inside the limit (FAILING, RUNNING; failingRegain).
+// inside the limit (FAILING, RUNNING; failingRegain). abort, when set, ends
+// the wait with errWaitAborted when it is ready: the run timeout's hard end
+// of a failing run.
 func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire, ans gateAnswer,
-	cause orkstackv1.ConcurrencyQueueCause) error {
+	cause orkstackv1.ConcurrencyQueueCause, abort workflow.Future) error {
 	c := s.conc
 	c.queued = &orkstackv1.ConcurrencyQueued{
 		Key: slot.Key, Limit: int32(slot.Limit), Strategy: concStrategyProto(req.Strategy),
@@ -253,10 +255,16 @@ func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPla
 		sel.AddFuture(deadline, func(workflow.Future) { timed = true })
 		sel.AddFuture(reassert, func(workflow.Future) { tick = true })
 		sel.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { canceled = true })
+		aborted := false
+		if abort != nil {
+			sel.AddFuture(abort, func(workflow.Future) { aborted = true })
+		}
 		sel.Select(ctx)
 		switch {
 		case canceled || ctx.Err() != nil:
 			return temporal.NewCanceledError()
+		case aborted:
+			return errWaitAborted
 		case granted:
 			return s.grantRunSlot(ctx, slot, ans)
 		case timed:
@@ -303,6 +311,9 @@ func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPla
 		}
 	}
 }
+
+// errWaitAborted ends a wait for a slot its abort future ended.
+var errWaitAborted = errors.New("the wait for the concurrency slot was ended")
 
 // grantRunSlot takes the granted slot: its records move from queued to held.
 func (s *runState) grantRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan, ans gateAnswer) error {

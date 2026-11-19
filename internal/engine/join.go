@@ -474,10 +474,10 @@ func (s *runState) failWithHandlers(
 		switch {
 		case s.pauseStop != nil && ctx.Err() == nil && status == orkstackv1.Status_STATUS_PENDING:
 			reason = s.pauseStopNotStartedReason()
-		case s.slotStop != "" && ctx.Err() == nil && status == orkstackv1.Status_STATUS_PENDING:
-			reason = s.slotStop
 		case s.hardEnded() && status == orkstackv1.Status_STATUS_PENDING:
 			reason = s.hardEndNotStartedReason()
+		case s.slotStop != "" && ctx.Err() == nil && status == orkstackv1.Status_STATUS_PENDING:
+			reason = s.slotStop
 		case ctx.Err() != nil:
 			reason = cancelReasonHandlerStopped
 		case status == orkstackv1.Status_STATUS_PENDING:
@@ -510,10 +510,12 @@ func (s *runState) failWithHandlers(
 	}
 	if s.pauseStop != nil && ctx.Err() == nil {
 		s.runError.Message = boundEscaped(s.runError.GetMessage()+s.pauseStopNote(), needErrorMessageBytes)
-	} else if s.slotStop != "" && ctx.Err() == nil {
-		s.runError.Message = boundEscaped(s.runError.GetMessage()+"; "+s.slotStop, needErrorMessageBytes)
 	} else if s.hardEnded() {
 		s.runError.Message = boundEscaped(s.runError.GetMessage()+s.hardEndNote(), needErrorMessageBytes)
+	} else if s.slotStop != "" && ctx.Err() == nil {
+		// The run's own failure first, bounded so the note always fits.
+		note := "; " + s.slotStop
+		s.runError.Message = boundEscaped(s.runError.GetMessage(), max(needErrorMessageBytes-escapedLen(note), 0)) + note
 	}
 	if timedOut {
 		cause = runLevelError(RunTimedOutCode, s.runError.GetMessage())
@@ -607,10 +609,10 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 		// A run that gave its concurrency slot back while paused asks for it
 		// again, once unpaused, before any handler starts: its handlers run
 		// inside the limit, or not at all, and its error says why (D22).
-		if !stopping && s.pendingHandlers > 0 && !s.paused() && s.concSlotGivenBack() {
+		if !stopping && s.slotStop == "" && s.pendingHandlers > 0 && !s.paused() && s.concSlotGivenBack() {
 			s.slotStop = s.failingRegain(ctx)
 		}
-		stopping = stopping || ctx.Err() != nil || s.slotStop != ""
+		stopping = ctx.Err() != nil || s.hardEnded() || s.pauseStop != nil || s.slotStop != ""
 		if stopping {
 			// A handler waiting to run again is stopped as a pending one is.
 			s.dropHandlerWaits()
@@ -628,10 +630,10 @@ func (s *runState) runFailureHandlers(ctx workflow.Context, inFlight map[string]
 				case ctx.Err() != nil:
 				case s.pauseStop != nil:
 					reason = s.pauseStopNotStartedReason()
-				case s.slotStop != "":
-					reason = s.slotStop
 				case s.hardEnded():
 					reason = s.hardEndNotStartedReason()
+				case s.slotStop != "":
+					reason = s.slotStop
 				}
 				if err := s.markCanceled(ectx, id, reason); err != nil {
 					workflow.GetLogger(ctx).Error("mark canceled failed",
