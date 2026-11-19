@@ -209,7 +209,11 @@ var (
 	orkerProfilePublic = map[string]bool{
 		"name": true, "kind": true, "units": true, "usable_units": true, "bound_units": true,
 	}
-	orkerProfileControlOnly  = map[string]bool{"revision": true, "identity_digest": true}
+	// contracts and default_contract stay off the inventory until the
+	// projection strips each contract's identity_digest (E91 contracts, CP-1).
+	orkerProfileControlOnly = map[string]bool{
+		"revision": true, "identity_digest": true, "contracts": true, "default_contract": true,
+	}
 	profileCordonPublic      = map[string]bool{"cause": true, "profile": true, "reason": true, "since": true}
 	profileCordonControlOnly = map[string]bool{"detail": true}
 )
