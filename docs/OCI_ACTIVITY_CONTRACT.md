@@ -1780,8 +1780,8 @@ required signature with this Orker's registry credentials) and its render (step
 the key hashes the rendered `config.json`, so those refuse it here even where
 the memo would hit. A task with neither a commit nor a hit is still refused at
 step 3a or 5b′, with its own reason (`RESOURCE_REQUEST_REFUSED`,
-`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `RUN_AS_ORKER_UNAVAILABLE`),
-before any secret is resolved, any image pulled or any `config.json` written.
+`SECRET_SCHEME_FORBIDDEN`, `SECRET_NOT_PERMITTED`, `IDENTITY_NOT_CONFIGURED`,
+`IDENTITY_NOT_SERVED`, `RUN_AS_ORKER_UNAVAILABLE`), before any secret is resolved, any image pulled or any `config.json` written.
 The checks that read nothing of the Orker, the network mode among them, stay at
 step 2. For a cached task the image policy, the workspace, the upstream values
 the key needs, the render and the memo lookup come first, so a failure among
@@ -1917,6 +1917,8 @@ Every reason the Orker reports for a task attempt (`internal/orker/failure.go`):
 | `BIND_PROBE_TIMED_OUT` | InfrastructureError | yes | the daemon was too slow for the boot probe: it did not say within `ORK_DOCKER_BIND_PROBE_TIMEOUT` whether the probe's image is local, or on each of two attempts did not start one of the probe's two containers within it, or ended it with a deadline error of its own, or the second one's workload did not say it was ready within it; the Orker refuses to start, saying the daemon was slow rather than that the work root is unbindable |
 | `BIND_PROBE_IMAGE_UNAVAILABLE` | InfrastructureError | yes | the boot probe's own image (`orker.BindProbeImage`, alpine 3.24 by digest) is not local and could not be pulled within `ORK_DOCKER_PULL_TIMEOUT`; the Orker refuses to start, naming the image rather than the work root |
 | `RUN_AS_ORKER_UNAVAILABLE` | InfrastructureError | **no** | the task runs as the Orker's own user (`runAsOrkerUser`, or `ORK_ORKER_FORCE_USER`), and the boot probe found that user does not land as the Orker on this host: a `0600` file its container wrote as that user is one the Orker cannot read. Refused before a container is created; under `ORK_ORKER_FORCE_USER` the Orker refuses to start instead |
+| `IDENTITY_NOT_CONFIGURED` | InfrastructureError | **no** | the task holds an identity, and this Orker reaches no engine (`orker.engine` is unset), so nothing can issue its token. Refused before a container is created ([TASK_IDENTITY.md](./TASK_IDENTITY.md#which-orkers-serve-it)) |
+| `IDENTITY_NOT_SERVED` | InfrastructureError | yes, under the task's own policy | the task holds an identity, and this Orker's self-check does not now find that it serves task identity (its engine did not answer, does not grant it the mint at its pool, its storage credential is not confirmed scoped, or the check has not answered since boot). Refused before a container is created. It is no interruption: a task without `retry:` fails |
 | `WORKDIR_FAILED` | InfrastructureError | yes | the per-attempt directory, a pin's directory, or an input file could not be created, or the Orker had no file descriptor left to hold an output artifact open |
 | `IMAGE_PULL_FAILED` | InfrastructureError | yes | pull failed or timed out (`ORK_DOCKER_PULL_TIMEOUT`), and no verified embedded copy exists |
 | `IMAGE_DIGEST_MISMATCH` | ContractViolation | no | pulled or embedded content does not match `image.pinned` |

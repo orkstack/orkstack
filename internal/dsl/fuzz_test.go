@@ -431,6 +431,9 @@ func FuzzCompile_Orkflow(f *testing.F) {
 		f.Add(source)
 	}
 	f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks: []\n"))
+	// A task's identities, refused in this build, and malformed ones.
+	f.Add([]byte(identitySource(twoIdentities)))
+	f.Add([]byte(identitySource("    identities: [{name: A, audience: ''}, {name: a, audience: 'x y', ttl_seconds: -1, refresh: no}]\n")))
 	for _, merge := range []string{"timeout_seconds: !!merge 3", "timeout_seconds: <<", "needs: <<", "!!merge needs: []", "with: {a: <<}"} {
 		f.Add([]byte("apiVersion: ! orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    " + merge + "\n"))
 	}

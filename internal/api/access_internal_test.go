@@ -247,7 +247,7 @@ func TestAuthz_PermissionMatrix(t *testing.T) {
 	cases := 0
 	for _, procedure := range procedures {
 		row := accessRows[procedure]
-		if row.noPermission || row.public {
+		if row.noPermission || row.public || row.decidedByHandler {
 			continue
 		}
 		variants := matrixVariants[procedure]

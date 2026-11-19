@@ -13,11 +13,10 @@ import (
 	"unicode"
 
 	"connectrpc.com/connect"
-	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
-	"github.com/orkstack/orkstack/internal/consent"
+	"github.com/orkstack/orkstack/internal/authz"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/stablejson"
 	"github.com/orkstack/orkstack/pkg/artifacts"
@@ -72,18 +71,32 @@ func scheduleInputSHA256(in *orkstackv1.Payload) (string, error) {
 	return hex.EncodeToString(sum[:]), nil
 }
 
-// boundBy makes the caller the binder of entry, with the empty table's
-// consent: the consent every save records while no Orkflow can ask for an
-// identity. An asserted caller is kept as asserted, and an empty one leaves
-// no binder.
-func (s *Service) boundBy(entry artifacts.ScheduleBinding, who authn.RecordedPrincipal) artifacts.ScheduleBinding {
+// boundBy makes the caller the binder of entry, with the consent the save
+// decided (decideConsent). An asserted caller is kept as asserted, and an
+// empty one leaves no binder.
+func (s *Service) boundBy(entry artifacts.ScheduleBinding, who authn.RecordedPrincipal, granted *artifacts.BinderBinding, c consentRecord) artifacts.ScheduleBinding {
 	now := s.now().UTC()
 	entry.Binder, entry.BinderVerified, entry.BinderMethod = recordedBinder(who.ID), who.Verified && who.ID != "", ""
+	entry.BinderBinding = nil
 	if entry.BinderVerified {
 		entry.BinderMethod = recordedBinder(who.Method)
+		entry.BinderBinding = granted
 	}
-	entry.BoundAt, entry.Consent, entry.ConsentAt, entry.SavedAt = now, consent.Empty(), now, now
+	entry.BoundAt, entry.SavedAt = now, now
+	return withScheduleConsent(entry, c)
+}
+
+// withScheduleConsent records c in entry.
+func withScheduleConsent(entry artifacts.ScheduleBinding, c consentRecord) artifacts.ScheduleBinding {
+	entry.Consent, entry.ConsentAt, entry.ConsentBy = c.Digest, c.At.UTC(), c.By
+	entry.ConsentAudiences, entry.ConsentGrants = c.Audiences, c.Grants
 	return entry
+}
+
+// scheduleConsentOf is the consent entry records.
+func scheduleConsentOf(entry artifacts.ScheduleBinding) consentRecord {
+	return consentRecord{Digest: entry.Consent, At: entry.ConsentAt, By: entry.ConsentBy,
+		Audiences: entry.ConsentAudiences, Grants: entry.ConsentGrants}
 }
 
 // recordedBinder is a principal as a record keeps it: valid UTF-8, no
@@ -106,7 +119,8 @@ func recordedBinder(id string) string {
 func (s *Service) keptBinder(entry, was artifacts.ScheduleBinding, doc artifacts.ScheduleBindings) artifacts.ScheduleBinding {
 	if prior, ok := doc.Find(was); ok {
 		entry.Binder, entry.BinderVerified, entry.BinderMethod = prior.Binder, prior.BinderVerified, prior.BinderMethod
-		entry.BoundAt, entry.Consent, entry.ConsentAt = prior.BoundAt, prior.Consent, prior.ConsentAt
+		entry.BoundAt, entry.BinderBinding = prior.BoundAt, prior.BinderBinding
+		entry = withScheduleConsent(entry, scheduleConsentOf(prior))
 	}
 	entry.SavedAt = s.now().UTC()
 	return entry
@@ -214,42 +228,81 @@ func (s *Service) rebindScheduleRecord(ctx context.Context, ns string, view engi
 	return nil
 }
 
-// scheduleConsent fills a schedule's consent and what it asks for: the
-// consent recorded with the entry that submits what the cluster holds, and
-// the empty table's digest, which every Orkflow asks for in this release.
-func (s *Service) scheduleConsent(ctx context.Context, view engine.ScheduleView, out *orkstackv1.Schedule) {
+// priorScheduleConsent is the consent recorded for the submission was, read
+// only to tell a refused consent what changed since. It is best effort: an
+// unreadable object makes the refusal say what is asked for, not what
+// changed, and decides nothing.
+func (s *Service) priorScheduleConsent(ctx context.Context, ns, id string, was artifacts.ScheduleBinding) consentRecord {
+	if s.scheduleBindings == nil {
+		return consentRecord{}
+	}
+	doc, err := s.scheduleBindings.Get(ctx, ns, id)
+	if err != nil {
+		return consentRecord{}
+	}
+	if prior, ok := doc.Find(was); ok {
+		return scheduleConsentOf(prior)
+	}
+	return consentRecord{}
+}
+
+// scheduleConsent fills a schedule's consent, what it asks for and whether
+// that consent is stale: the consent recorded with the entry that submits
+// what the cluster holds, and consent projection 1 of the version the
+// schedule follows now, read once per version through memo (nil reads every
+// time). Nothing is set unless both could be read, so a reader can tell
+// "could not tell" from "none recorded".
+func (s *Service) scheduleConsent(ctx context.Context, memo asksMemo, view engine.ScheduleView, out *orkstackv1.Schedule) {
 	if view.Record == nil || out.GetUnavailableReason() != "" {
 		return
 	}
-	if s.scheduleBindings == nil {
-		out.AsksFor = &orkstackv1.AsksFor{Digest: consent.Empty()}
+	asks, err := s.asksForMemo(ctx, memo, view.Namespace, view.Record.GetOrkflowName(), view.Record.GetOrkflowVersion())
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logger.Warn("what a schedule's Orkflow asks for could not be read; its consent is not shown",
+				slog.String("namespace", view.Namespace), slog.String("schedule", view.Name), slog.String("error", err.Error()))
+		}
 		return
 	}
-	held, err := scheduleSubmission(view.Record)
-	if err != nil {
-		return
-	}
-	// Neither field is set when the record cannot be read, so a reader can
-	// tell "could not tell" from "none recorded".
-	doc, err := s.scheduleBindings.Get(ctx, view.Namespace, view.ID)
-	if err != nil {
-		if ctx.Err() != nil {
+	var consented *orkstackv1.ConsentView
+	if s.scheduleBindings != nil {
+		held, err := scheduleSubmission(view.Record)
+		if err != nil {
 			return
 		}
-		s.logger.Warn("a schedule's binding record could not be read; its consent is not shown",
-			slog.String("namespace", view.Namespace), slog.String("schedule", view.Name), slog.String("error", err.Error()))
-		return
+		doc, err := s.scheduleBindings.Get(ctx, view.Namespace, view.ID)
+		if err != nil {
+			if ctx.Err() == nil {
+				s.logger.Warn("a schedule's binding record could not be read; its consent is not shown",
+					slog.String("namespace", view.Namespace), slog.String("schedule", view.Name), slog.String("error", err.Error()))
+			}
+			return
+		}
+		if entry, ok := doc.Find(held); ok {
+			consented = scheduleConsentOf(entry).view()
+		}
 	}
-	out.AsksFor = &orkstackv1.AsksFor{Digest: consent.Empty()}
-	if entry, ok := doc.Find(held); ok && consent.Valid(entry.Consent) {
-		out.Consented = &orkstackv1.ConsentView{Digest: entry.Consent, At: timestamppb.New(entry.ConsentAt)}
-	}
+	out.AsksFor = &orkstackv1.AsksFor{Digest: asks.Digest, Audiences: asks.Audiences, Grants: asks.Grants}
+	out.Consented = consented
+	out.ConsentStale = consentStale(consented, out.GetAsksFor())
+}
+
+// consentStale reports a consent that is not to what the Orkflow asks for
+// now. Either one unknown is not stale: it is not shown.
+func consentStale(given *orkstackv1.ConsentView, asks *orkstackv1.AsksFor) bool {
+	return given.GetDigest() != "" && asks.GetDigest() != "" && given.GetDigest() != asks.GetDigest()
 }
 
 // scheduleProtoWith maps view and fills its consent.
 func (s *Service) scheduleProtoWith(ctx context.Context, view engine.ScheduleView) *orkstackv1.Schedule {
+	return s.scheduleProtoMemo(ctx, nil, view)
+}
+
+// scheduleProtoMemo is scheduleProtoWith reading each Orkflow version once
+// through memo.
+func (s *Service) scheduleProtoMemo(ctx context.Context, memo asksMemo, view engine.ScheduleView) *orkstackv1.Schedule {
 	out := scheduleProto(view)
-	s.scheduleConsent(ctx, view, out)
+	s.scheduleConsent(ctx, memo, view, out)
 	return out
 }
 
@@ -270,4 +323,43 @@ func scheduleBindingError(ctx context.Context, err error) error {
 func scheduleRefused(err error) bool {
 	return errors.Is(err, engine.ErrScheduleExists) || errors.Is(err, engine.ErrScheduleSpecRefused) ||
 		errors.Is(err, engine.ErrOverlapPolicyUnknown) || errors.Is(err, engine.ErrScheduleNotFound)
+}
+
+// binderBindingFor is the binding that grants the caller run.submit on
+// Orkflow orkflow of namespace ns, recorded with a verified binder so that
+// later admissions judge the binder by it (workload-identity §3.2). nil,
+// with no error, where no access document decides (asserted mode, or no
+// access control), or where none grants: that binder's runs are then
+// refused an identity, IDENTITY_STARTER_NOT_RECORDED. In enforce mode an
+// access document that cannot be read refuses the save, unavailable, so a
+// save that looked fine never leaves a schedule that cannot start its runs;
+// in observe mode, which changes no answer, the binder is recorded with no
+// binding and logged.
+func (s *Service) binderBindingFor(ctx context.Context, ns, orkflow string) (*artifacts.BinderBinding, error) {
+	if !s.access.enabled() || authn.ModeFrom(ctx) == authn.ModeAsserted {
+		return nil, nil
+	}
+	s.access.init()
+	// Only enforce refuses a save for it: observe never changes an answer,
+	// so there the binder is recorded with no binding, and logged.
+	unreadable := func(err error) (*artifacts.BinderBinding, error) {
+		if !s.access.enforcing() {
+			s.logger.Warn("the binding that lets a binder bind could not be read; it is recorded with none", "namespace", ns, "orkflow", orkflow, "error", err)
+			return nil, nil
+		}
+		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("the binding that lets you bind could not be read; save again: %w", err))
+	}
+	policy, unavailable := s.access.policy(ctx)
+	if unavailable {
+		return unreadable(errors.New("the access document could not be read"))
+	}
+	res, err := s.withIDs(ctx, policy, authz.Resource{Namespace: artifacts.ResolveNamespace(ns), Orkflow: orkflow})
+	if err != nil {
+		return unreadable(err)
+	}
+	b, ok := policy.GrantingBinding(subjectOf(authn.FromContext(ctx)), authz.PermRunSubmit, res)
+	if !ok {
+		return nil, nil
+	}
+	return &artifacts.BinderBinding{Name: b.Name, Selector: b.Selector, Role: b.Role, Scope: b.Scope}, nil
 }

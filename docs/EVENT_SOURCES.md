@@ -261,5 +261,7 @@ source cannot be deleted.
 Creating a source makes its writer its **binder**, and so does an update
 that changes what it submits (`version`, `input`, `map`, `artifacts`) or
 says `--rebind`. A change of `uses:`, `with:` or a secret changes neither the
-binder nor the consent, and a resume does neither. A source's binder, and
+binder nor the consent, and a resume does neither. `--rebind` keeps the
+consent, and `--consent=DIGEST` records one without changing the binder
+([TASK_IDENTITY.md](./TASK_IDENTITY.md#consent)). A source's binder, and
 whether it was verified or asserted, are shown by `orkctl event-source get`.
