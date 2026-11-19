@@ -5439,7 +5439,7 @@ processes could decide it, and refuses while any of them is too old.
 
 - **What each process advertises.** Every `ork` process polls Temporal with
   its SDK identity followed by ` ork-caps=<list>`, for example
-  `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay,webhook-by-id,run-timeout,run-pause`, as
+  `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay,webhook-by-id,run-timeout,run-pause,concurrency-1`, as
   `temporal task-queue describe --task-queue ork-tasks` shows it. The run
   worker and the projection worker share the process's client, so both carry
   it. The releases page still counts one process per identity. After the
@@ -5483,6 +5483,10 @@ processes could decide it, and refuses while any of them is too old.
   refuse `FAILED_PRECONDITION` while any of them lacks it, because an older
   release would record the request and never apply it, or drop a pause at
   its next continuation.
+  `concurrency-1`: a run whose Orkflow declares a concurrency limit
+  (`concurrency:`, `docs/DSL.md` "Concurrency limits"); a submit refuses it
+  `CONCURRENCY_UNSUPPORTED` (`cause=fleet`) while a process lacks it, and
+  `cause=index` when the cluster does not index the limit's attributes.
 - **What a refused submit says.** `FAILED_PRECONDITION`, naming the Orkflow,
   how many items it declares and how many engine processes run a release
   that cannot run them ("2 engine processes … finish the rollout first") —

@@ -358,6 +358,13 @@ type Config struct {
 	// pins (E92); nil pins DefaultInterruptionBudgets.
 	Interruptions *engine.InterruptionBudgets
 
+	// Concurrency and GateTunables are engine.concurrency.*: what a run's
+	// concurrency limit is checked and planned with at submit, and the
+	// tunables a gate it starts runs on. Zero values are the defaults
+	// (cmd/ork always sets both, validated at boot).
+	Concurrency  engine.ConcurrencySettings
+	GateTunables engine.GateTunables
+
 	// RunTimeoutHandlerGrace is engine.run_timeout_handler_grace: how long
 	// after a run's deadline its failure handlers may still run. Zero is a
 	// grace of zero (cmd/ork passes engine.DefaultRunTimeoutHandlerGrace for
@@ -629,6 +636,10 @@ type Service struct {
 	// interruptions is Config.Interruptions: the budgets every run this
 	// engine accepts pins (E92); nil is the defaults.
 	interruptions *engine.InterruptionBudgets
+	// concurrency and gateTunables are Config.Concurrency and
+	// Config.GateTunables, the defaults for zero values.
+	concurrency  engine.ConcurrencySettings
+	gateTunables engine.GateTunables
 	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
 	// seconds, never negative: what runTimeoutPlanFor pins.
 	runTimeoutGraceSeconds int64
@@ -733,6 +744,8 @@ func NewService(cfg Config) *Service {
 		pinCreationSeconds:     pinCreationTimeoutSecondsOf(cfg.PinCreationTimeout),
 		interruptions:          cfg.Interruptions,
 		runTimeoutGraceSeconds: max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
+		concurrency:            concurrencySettingsOf(cfg.Concurrency),
+		gateTunables:           gateTunablesOf(cfg.GateTunables),
 		pausePlan:              pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
 		historyMaxBytes:        positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:        composeMaxDepthOf(cfg.ComposeMaxDepth),
@@ -763,6 +776,13 @@ func NewService(cfg Config) *Service {
 	}
 	if svc.logger == nil {
 		svc.logger = slog.Default()
+	}
+	// cmd/ork validates engine.concurrency.* at boot; a partly set value
+	// from anywhere else would pin zeros into every limited run's plan, so it
+	// is the defaults instead, and said.
+	if err := svc.concurrency.Check(svc.gateTunables); err != nil {
+		svc.logger.Error("the concurrency settings are not usable; using the defaults", "error", err)
+		svc.concurrency, svc.gateTunables = engine.DefaultConcurrencySettings(), engine.DefaultGateTunables()
 	}
 	svc.pools = &engine.PoolResolver{
 		Namespaces: cfg.Namespaces,
@@ -1170,6 +1190,10 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	// is looked up or resolved: a document over it is refused without one
 	// registry request per task.
 	if err := s.checkTaskCeiling(wf); err != nil {
+		return nil, nil, nil, err
+	}
+	// A concurrency limit's queue_timeout against the deployment's bounds.
+	if err := s.checkConcurrencyBounds(wf); err != nil {
 		return nil, nil, nil, err
 	}
 	selected, err := applyNamespace(requestedNamespace, wf.GetNamespace())
@@ -1825,6 +1849,12 @@ func (s *Service) prepare(
 	// minted: a run tree that needs a capability is refused while a process
 	// that could decide it lacks one (fleetCheck).
 	if err := s.fleetCheck(ctx, planned, &plan); err != nil {
+		return submission{}, err
+	}
+	// A run-level concurrency limit: its key rendered, the deployment asked
+	// whether it can hold one, and its slot pinned (planConcurrency). A run
+	// with no limit asks nothing.
+	if err := s.planConcurrency(ctx, ns, planned, &plan, msg, origin, binding.Starter); err != nil {
 		return submission{}, err
 	}
 	// The snapshot-overlay policy, a run-tree limit like those

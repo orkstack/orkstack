@@ -1921,6 +1921,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed).
 		WithRootIndex(rootIndexed).
+		// A gate is rebuilt from the limit's attributes and the namespace's.
+		WithConcurrencyIndex(concurrencyIndexed && namespaceIndexed).
 		// What the client was dialed with: a cancellation that records who
 		// asked names them on the cluster itself (TemporalStarter.CancelRun).
 		WithClusterIdentity(cfg.temporalNamespace, clusterIdentity)
@@ -2009,6 +2011,9 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		Releases:   releases,
 		// The fleet check reads the same cluster seam (docs/DEPLOY.md §5).
 		Capabilities: releases,
+		// engine.concurrency.*: what a run's limit is planned with.
+		Concurrency:  cfg.concurrency,
+		GateTunables: cfg.gateTunables,
 		Catalog:      cfg.activityCatalog,
 		Resolver:     resolver,
 		// The image policy store and the signature verifier, over the same
