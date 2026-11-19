@@ -123,6 +123,7 @@ func (s *Service) InspectRun(
 		}
 	})
 	s.markCapacityWaits(ctx, run, attempts, now)
+	s.fillLiveIdentities(ctx, run, attempts, now)
 	return connect.NewResponse(&orkstackv1.InspectRunResponse{
 		RunStatus:  run.GetStatus(),
 		Attempts:   attempts,

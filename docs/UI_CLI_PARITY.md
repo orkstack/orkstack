@@ -173,7 +173,7 @@ filter form renders it. The matcher is written once, in
 Lists that take filters: `ListNamespaces`, `ListOrkflows`, `ListWebhooks`,
 `ListTriggers`, `ListSchedules`, `ListPools`, `ListActivities`, `ListOrkers`,
 `ListReleases`, `ListDeliveries`, `ListAuditRecords` and `ListRuns`. Child listings of one parent
-(`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`), the
+(`ListOrkflowVersions`, `ListRunArtifacts`, `ListTaskAttempts`, `ListIssuedTokens`), the
 `ListOrkflowCallers` report and `ListTelemetrySinks` take no filters.
 
 ### Scoping versus filtering
