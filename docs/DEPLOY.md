@@ -3254,6 +3254,87 @@ Cloud creation](https://docs.temporal.io/self-hosted-guide/visibility/custom-sea
 [`tcld namespace search-attributes add`](https://docs.temporal.io/cloud/tcld/namespace)
 and [Cloud permissions](https://docs.temporal.io/cloud/users).
 
+#### Running without Temporal admin rights
+
+On a cluster another team runs, the engine's Temporal credential need not be
+an admin's. Three things then need a cluster admin, once, before the first
+engine boots: the namespace, its retention, and the search attributes above.
+With those in place every `ork` and `orker` boots on a credential that
+needs no admin access (below says exactly what it needs).
+
+**What the cluster admin creates.** The retention is the namespace's
+retention TTL, and it decides OrkStack's maximum run retention: an engine
+that may not change it takes the TTL less `engine.cleanup.retention_buffer`
+(24h by default) as the maximum, and refuses to boot when that is not
+longer than an idempotency key's life (`engine.idempotency_ttl`, 24h, plus
+5 minutes). `96h` gives the default 72h maximum. On a self-hosted cluster:
+
+```bash
+temporal operator namespace create --namespace ork-main --retention 96h
+```
+
+then the search attributes, with the self-hosted commands above. On
+Temporal Cloud (not supported yet as a whole, above), Cloud sets retention
+in whole days:
+
+```bash
+tcld namespace create --namespace ork-main --region <region> --retention-days 4 \
+  --search-attribute OrkflowNamespace=Keyword \
+  --search-attribute OrkflowOriginKind=Keyword \
+  --search-attribute OrkflowOriginId=Keyword \
+  --search-attribute OrkflowOriginRootRunId=Keyword \
+  --search-attribute OrkflowRunPaused=Keyword
+```
+
+**What the engine's credential then needs.** Every call `ork` and `orker`
+make, at boot and while they run, other than the three above, is one
+Temporal's own authorizer classes as read or write access to the
+namespace: starting, signalling, cancelling, describing, listing, counting
+and deleting runs, reading their history, polling and completing tasks,
+heartbeats, schedules (created only when someone creates an OrkStack
+schedule), describing task queues, and, when versioning is on, setting a
+Worker Deployment's current or ramping version (`orkctl release`). Temporal
+Cloud lists most of these under its namespace Write permission.
+
+| Cluster | The engine's and the Orker's credential |
+|---|---|
+| self-hosted, Temporal's default authorizer and claim mapper | `write` on the namespace (`ork-main:write`), and `read` on the cluster (`temporal-system:read`): the SDK asks `GetSystemInfo` before its first call, and Temporal classes that as a cluster read. That default authorizer applies a cluster role to every namespace, so `temporal-system:read` also lets the credential read every other namespace's runs and histories: on a shared cluster, agree that with its admin, or have the cluster's own authorizer allow `GetSystemInfo` alone |
+| self-hosted, an authorizer of your own | what yours grants for the calls above; none needs admin access |
+| Temporal Cloud | Write permission on the namespace, held by the user or service account whose API key or certificate the engine uses |
+
+What could not be checked against Temporal Cloud's published permissions,
+which do not list them: `GetSystemInfo`, `ListSearchAttributes`,
+`DeleteWorkflowExecution`, `StartActivityExecution` (how `orkctl orker`
+reaches one Orker) and the Worker Deployment calls. Temporal's own server
+classes each as read or write access to the namespace (`GetSystemInfo` to
+the cluster).
+
+**What still needs admin rights.** Raising the maximum run retention
+(`orkctl admin retention set`) above the TTL less the buffer is refused
+until a cluster admin raises the TTL first; lowering it needs nothing. A
+search attribute a later release adds must be created by the admin before
+that release's engines boot, or the feature it serves falls back as the
+table says.
+
+**The boot lines that confirm it.**
+
+```text
+INFO connected to temporal … run_namespace_index=true run_origin_index=true run_root_index=true run_paused_index=true
+INFO retention maximum derived from the cluster: this engine may not change the namespace's retention … cluster_retention=96h0m0s max_run_retention=72h0m0s
+WARN the cluster refused to set the retention backstop; the retention it keeps covers it … cluster_retention=96h0m0s backstop=96h0m0s
+```
+
+The first line's `true`s say every attribute was found. A first boot logs
+the INFO line: it asked whether it may set the retention, was refused, and
+derived the maximum from the TTL. The WARN line appears when the TTL is
+longer than the backstop and the engine may not lower it, once per process
+for each pair of values, and then at DEBUG. Every refusal, logged or not,
+counts `ork.retention.backstop.refused{outcome="covered"}`. A namespace whose TTL
+is too short refuses the boot, naming the TTL to set and the command that
+sets it, and counts `outcome="short"`, which pages
+([RUNBOOKS.md](./RUNBOOKS.md), RetentionBackstopShort); in the cleanup loop
+it keeps the engine running on the shorter TTL.
+
 ### Temporal over TLS
 
 `ork` and `orker` dial Temporal in plaintext by default. Each binary has its
@@ -6329,6 +6410,7 @@ carry no namespace and go to the default sink.
 | `ork.cleanup.objects`, `ork.cleanup.bytes` | `ork.namespace` | engine: run-scoped objects and bytes retirement removed |
 | `ork.cleanup.passes`, `ork.cleanup.pass.duration` | `outcome` | engine, each pass: `completed` (it reached the end of the index), `drain` (it stopped at a full batch and the next pass continues at once) or `failed` (the walk itself failed: the policy, the namespace list, the index list) |
 | `ork.cleanup.errors` | `ork.cleanup.step` | engine, each failure, by the step that failed: `policy`, `namespaces`, `backstop`, `list`, `state`, `lookup`, `archive_check`, `retire`, `delete`, `mark` |
+| `ork.retention.backstop.refused` | `outcome` | engine, each time the cluster refuses the engine the right to set its namespace's retention, at boot or in a cleanup pass: `covered` (the retention it keeps is at least the backstop) or `short` (it is less; the boot refuses) |
 | `ork.cleanup.last_pass` | — | engine: unix time of the last complete walk whose every run could be read. **Alert** when cleanup is enabled and it is older than three intervals |
 | `ork.cleanup.retention_lag` | `ork.namespace` | engine, from the last walk that could tell: how far past its own due time the most overdue run the walk left unretired is, 0 when none is. Twin: `ork.deployment.cleanup.retention_lag`, the deployment maximum |
 

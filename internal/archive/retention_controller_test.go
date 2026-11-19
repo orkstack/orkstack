@@ -29,8 +29,10 @@ func TestRetentionController_EnsureMaterializesTheObservedTTLWhenNoPolicyExists(
 	if got := cluster.retention; got != 96*time.Hour {
 		t.Fatalf("backstop after Ensure = %s, want 96h (72h + 24h margin)", got)
 	}
-	if len(cluster.setRetentionCalls) != 1 || cluster.setRetentionCalls[0] != 96*time.Hour {
-		t.Fatalf("SetNamespaceRetention calls = %v, want [96h]", cluster.setRetentionCalls)
+	// The first call sets the value the cluster already has: it asks whether
+	// this engine may change the retention, and changes nothing.
+	if len(cluster.setRetentionCalls) != 2 || cluster.setRetentionCalls[0] != 72*time.Hour || cluster.setRetentionCalls[1] != 96*time.Hour {
+		t.Fatalf("SetNamespaceRetention calls = %v, want [72h 96h]", cluster.setRetentionCalls)
 	}
 }
 
