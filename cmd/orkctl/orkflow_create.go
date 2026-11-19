@@ -201,8 +201,12 @@ func renderEachTable(out io.Writer, tasks []*orkstackv1.Task) error {
 		if spec.GetMaxParallel() > 0 {
 			parallel = fmt.Sprintf("%d", spec.GetMaxParallel())
 		}
+		as := spec.GetAs()
+		if spec.GetBatch() >= 2 {
+			as = dash // a batch has no single value to bind
+		}
 		fmt.Fprintf(table, "%s\t%s\t%d\t%s\t%s\n",
-			task.GetId(), spec.GetOver(), spec.GetMaxItems(), parallel, spec.GetAs())
+			task.GetId(), dsl.EachSourceLabel(spec), spec.GetMaxItems(), parallel, as)
 	}
 	if err := table.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

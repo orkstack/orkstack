@@ -29,7 +29,11 @@ func TestEachBounds_ReplayNeutralForRecordedSizes(t *testing.T) {
 		recorded := loadHistoryFile(t, path)
 		_, wf, _, plan := goldenWorkflowArgs(t, recorded)
 		if plan.Definition != nil || slices.Contains(continuedStackFixtureNames, filepath.Base(path)) ||
-			slices.Contains(continuedInterruptionFixtureNames, filepath.Base(path)) {
+			slices.Contains(continuedInterruptionFixtureNames, filepath.Base(path)) ||
+			// The lines carry fixtures were recorded after the item input
+			// floor existed, so their plans pin it and the neutrality check
+			// for sizes recorded before it does not apply to them.
+			slices.Contains(continuedEachLinesFixtureNames, filepath.Base(path)) {
 			// Recorded after the floor existed (a definition passed by
 			// reference is a later stage's, and so are a run timeout and an
 			// interruption), so it pins the floor itself.

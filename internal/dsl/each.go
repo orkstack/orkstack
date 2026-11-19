@@ -34,7 +34,14 @@ var eachAsPattern = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
 // misspelled key inside `each:` is refused.
 type eachDocument struct {
 	Over string `yaml:"over"`
-	As   string `yaml:"as"`
+	// OverArtifact, Format and Batch are a fan-out over an artifact's lines
+	// (docs/DSL.md, "Fan-out over an artifact's lines").
+	OverArtifact string `yaml:"over_artifact"`
+	Format       string `yaml:"format"`
+	// Batch is a pointer so a written `batch: 0` is refused by name rather
+	// than read as absent.
+	Batch *int32 `yaml:"batch"`
+	As    string `yaml:"as"`
 	// MaxItems is required: a pointer so an absent key is refused by name
 	// rather than read as 0.
 	MaxItems    *int32 `yaml:"max_items"`
@@ -54,21 +61,55 @@ func compileEach(taskIndex int, td taskDocument) (*orkstackv1.EachSpec, error) {
 			"task %q: each.max_items is required — a fan-out with no bound could expand into an "+
 				"unbounded run history, and the author is the only party who knows the real bound", td.ID))
 	}
+	at := func(field string) string { return fmt.Sprintf("tasks[%d].each.%s", taskIndex, field) }
 	as := td.Each.As
+	if td.Each.Batch != nil && *td.Each.Batch >= 2 && as != "" {
+		return nil, validationError(at("as"), fmt.Errorf(
+			"task %q: each.as is refused with batch: %d — a batch has no single value; read %s",
+			td.ID, *td.Each.Batch, batchSliceSentence))
+	}
 	if as == "" {
 		as = DefaultEachAs
+	}
+	var format orkstackv1.EachLineFormat
+	if td.Each.Format != "" {
+		f, ok := eachLineFormatWords[td.Each.Format]
+		if !ok {
+			return nil, validationError(at("format"), fmt.Errorf(
+				"task %q: each.format %q is not jsonl or lines", td.ID, td.Each.Format))
+		}
+		format = f
+	}
+	var batch int32
+	if td.Each.Batch != nil {
+		if b := *td.Each.Batch; b < 1 || b > MaxEachBatch {
+			return nil, validationError(at("batch"), fmt.Errorf(
+				"task %q: each.batch %d is out of range (1 … %d)", td.ID, b, MaxEachBatch))
+		}
+		// batch: 1 is one line per item, exactly as no batch: both compile to
+		// one message and one digest, as `as: item` and no `as` do.
+		if *td.Each.Batch >= 2 {
+			batch = *td.Each.Batch
+		}
 	}
 	var maxParallel int32
 	if td.Each.MaxParallel != nil {
 		maxParallel = *td.Each.MaxParallel
 	}
 	spec := &orkstackv1.EachSpec{
-		Over:        td.Each.Over,
-		As:          as,
-		MaxItems:    *td.Each.MaxItems,
-		MaxParallel: maxParallel,
+		Over:         td.Each.Over,
+		OverArtifact: td.Each.OverArtifact,
+		Format:       format,
+		Batch:        batch,
+		As:           as,
+		MaxItems:     *td.Each.MaxItems,
+		MaxParallel:  maxParallel,
 	}
-	if source, err := ParseEachOver(td.Each.Over); err == nil {
+	if td.Each.OverArtifact != "" {
+		if producer, name, err := ParseOverArtifact(td.Each.OverArtifact); err == nil {
+			spec.Source = &orkstackv1.EachSource{Artifact: &orkstackv1.EachArtifactSource{Producer: producer, Name: name}}
+		}
+	} else if source, err := ParseEachOver(td.Each.Over); err == nil {
 		spec.Source = source
 	}
 	return spec, nil
@@ -281,43 +322,13 @@ func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, clos
 			}
 		}
 
-		// Rule 19: `over` is one reference to an array.
-		parsed, err := ParseEachOver(spec.GetOver())
-		if err != nil {
-			return validationError(at("each.over"), fmt.Errorf("task %q: %w", id, err))
-		}
-		if !proto.Equal(spec.GetSource(), parsed) {
-			return validationError(at("each.source"), fmt.Errorf(
-				"task %q: each.source does not match each.over %q — the source is compiled from over "+
-					"and must agree with it", id, spec.GetOver()))
-		}
-		if producer := parsed.GetTaskId(); producer != "" {
-			if _, exists := byID[producer]; !exists {
-				return validationError(at("each.over"), fmt.Errorf(
-					"task %q: each.over: template references unknown task %q", id, producer))
+		// Rule 53: a fan-out over an artifact's lines.
+		if spec.GetOverArtifact() != "" || spec.GetSource().GetArtifact() != nil {
+			if err := validateEachLines(task, taskIndex, byID); err != nil {
+				return err
 			}
-			if byID[producer].GetEach() != nil {
-				return validationError(at("each.over"), fmt.Errorf(
-					"task %q: each.over: %q is a fan-out; a fan-out cannot fan out over another "+
-						"fan-out's items (no nesting)", id, producer))
-			}
-			// Rule 30: a fan-out does not read a composed task.
-			if IsComposedTask(byID[producer]) {
-				return validationError(at("each.over"), fmt.Errorf(
-					"task %q: each.over: %q is a composed task; its values are the child's declared "+
-						"outputs, which are strings and never an array", id, producer))
-			}
-			// Rule 51: a sleeping task has no values to fan out over.
-			if byID[producer].GetSleep() != nil {
-				return validationError(at("each.over"), sleepReadRefusal(id, "each.over", producer))
-			}
-			if _, ok := closures[id][producer]; !ok {
-				return validationError(at("each.over"), fmt.Errorf(
-					"task %q: each.over: template references task %q which is not in its needs closure",
-					id, producer))
-			}
-		} else if err := checkEachInput(wf, id, parsed); err != nil {
-			return validationError(at("each.over"), err)
+		} else if err := validateEachArray(spec, at, byID, closures, wf, id); err != nil {
+			return err
 		}
 
 		// Rule 20: `as` is a template field name.
@@ -359,6 +370,61 @@ func validateEach(wf *orkstackv1.Orkflow, byID map[string]*orkstackv1.Task, clos
 		return validationError(EachSumAnchor(wf, MaxEachItems), fmt.Errorf(
 			"orkflow declares %d items across its fan-outs (%s); at most %d, the built-in maximum — "+
 				"the items of one run share its per-item bounds", total, EachContributors(wf), MaxEachItems))
+	}
+	return nil
+}
+
+// validateEachArray is rule 19 for a fan-out over an array: `over` is one
+// reference to an array, and the lines-only keys are absent.
+func validateEachArray(spec *orkstackv1.EachSpec, at func(string) string, byID map[string]*orkstackv1.Task,
+	closures map[string]map[string]struct{}, wf *orkstackv1.Orkflow, id string) error {
+	if spec.GetFormat() != orkstackv1.EachLineFormat_EACH_LINE_FORMAT_UNSPECIFIED {
+		return validationError(at("each.format"), fmt.Errorf(
+			"task %q: each.format is read only with each.over_artifact; an array's items are its elements", id))
+	}
+	if spec.GetBatch() != 0 {
+		return validationError(at("each.batch"), fmt.Errorf(
+			"task %q: each.batch is read only with each.over_artifact — batch an array in the task that writes it", id))
+	}
+	{
+		// Rule 19: `over` is one reference to an array.
+		parsed, err := ParseEachOver(spec.GetOver())
+		if err != nil {
+			return validationError(at("each.over"), fmt.Errorf("task %q: %w", id, err))
+		}
+		if !proto.Equal(spec.GetSource(), parsed) {
+			return validationError(at("each.source"), fmt.Errorf(
+				"task %q: each.source does not match each.over %q — the source is compiled from over "+
+					"and must agree with it", id, spec.GetOver()))
+		}
+		if producer := parsed.GetTaskId(); producer != "" {
+			if _, exists := byID[producer]; !exists {
+				return validationError(at("each.over"), fmt.Errorf(
+					"task %q: each.over: template references unknown task %q", id, producer))
+			}
+			if byID[producer].GetEach() != nil {
+				return validationError(at("each.over"), fmt.Errorf(
+					"task %q: each.over: %q is a fan-out; a fan-out cannot fan out over another "+
+						"fan-out's items (no nesting)", id, producer))
+			}
+			// Rule 30: a fan-out does not read a composed task.
+			if IsComposedTask(byID[producer]) {
+				return validationError(at("each.over"), fmt.Errorf(
+					"task %q: each.over: %q is a composed task; its values are the child's declared "+
+						"outputs, which are strings and never an array", id, producer))
+			}
+			// Rule 51: a sleeping task has no values to fan out over.
+			if byID[producer].GetSleep() != nil {
+				return validationError(at("each.over"), sleepReadRefusal(id, "each.over", producer))
+			}
+			if _, ok := closures[id][producer]; !ok {
+				return validationError(at("each.over"), fmt.Errorf(
+					"task %q: each.over: template references task %q which is not in its needs closure",
+					id, producer))
+			}
+		} else if err := checkEachInput(wf, id, parsed); err != nil {
+			return validationError(at("each.over"), err)
+		}
 	}
 	return nil
 }

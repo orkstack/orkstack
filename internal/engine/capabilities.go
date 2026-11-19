@@ -64,11 +64,17 @@ const CapabilityWebhookByID = "webhook-by-id"
 // differently.
 const CapabilityRunTimeout = "run-timeout"
 
+// CapabilityEachLines is what a run whose definition declares a fan-out
+// over an artifact's lines (each.over_artifact) needs of every process that
+// could decide it: an older build cannot expand one, and would fail the node
+// as a definition it refuses.
+const CapabilityEachLines = "each-lines"
+
 // EngineCapabilities is what this build can run, in the order it advertises
 // them. A later stage appends its own token; a token is never removed while a
 // release that relies on it may still poll.
 var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay,
-	CapabilityWebhookByID, CapabilityRunTimeout}
+	CapabilityWebhookByID, CapabilityRunTimeout, CapabilityEachLines}
 
 // capabilitySuffix separates a process's SDK identity from what it advertises.
 const capabilitySuffix = " ork-caps="

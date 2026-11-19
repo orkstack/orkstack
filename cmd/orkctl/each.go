@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // Fan-out in the CLI (docs/UI_CLI_PARITY.md "Fan-out"). An item is addressed by its
@@ -180,7 +181,7 @@ func eachDetail(task *orkstackv1.PlanTask) string {
 		if task.GetEachCount() == 1 {
 			noun = "item"
 		}
-		return fmt.Sprintf("each over %s: %d %s (≤ %d%s)", spec.GetOver(), task.GetEachCount(), noun, spec.GetMaxItems(), parallel)
+		return fmt.Sprintf("each over %s: %d %s (≤ %d%s)", dsl.EachSourceLabel(spec), task.GetEachCount(), noun, spec.GetMaxItems(), parallel)
 	}
-	return fmt.Sprintf("each over %s (≤ %d items%s; counted when the run reaches it)", spec.GetOver(), spec.GetMaxItems(), parallel)
+	return fmt.Sprintf("each over %s (≤ %d items%s; counted when the run reaches it)", dsl.EachSourceLabel(spec), spec.GetMaxItems(), parallel)
 }

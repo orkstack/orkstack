@@ -441,6 +441,9 @@ func (s *runState) adoptRows(ctx, runCtx workflow.Context, run *orkstackv1.Run) 
 		if e != nil && row.GetEach().GetExpanded() && row.GetEach().GetCount() > 0 {
 			e.expanded = true
 			e.count = row.GetEach().GetCount()
+			// Every item of a lines fan-out carries its expansion; nil for an
+			// array's, and for every saved state recorded before lines.
+			e.lines = row.GetEach().GetLines()
 			e.next, e.settled = dispatchedAndSettled(row)
 			e.inFlight = 0
 			e.limit, e.stride = eachPacing(e.spec, e.count)
