@@ -5114,6 +5114,7 @@ ConcurrencyQueueCause is why a run waits in line.
 | `CONCURRENCY_QUEUE_CAUSE_ARRIVAL` | 1 | ARRIVAL: the run arrived to a key whose slots were all held. |
 | `CONCURRENCY_QUEUE_CAUSE_RESUME` | 2 | RESUME: the resumed run waits for its slot again. |
 | `CONCURRENCY_QUEUE_CAUSE_UNPAUSE` | 3 | UNPAUSE: the run gave its slot back while paused and waits for it again. |
+| `CONCURRENCY_QUEUE_CAUSE_FAILING` | 4 | FAILING: the failing run gave its slot back while paused and waits for it again so its failure handlers run inside the limit. |
 
 ### ConcurrencyStrategy
 

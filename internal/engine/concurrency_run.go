@@ -112,7 +112,7 @@ func (s *runState) acquireRunSlot(ctx workflow.Context) error {
 	case gateAnswerGranted:
 		return s.recordRunSlot(ctx, slot, res.Answer, true)
 	case gateAnswerQueued:
-		return s.waitForRunSlot(ctx, slot, req, res.Answer)
+		return s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL)
 	}
 	return runLevelError(RunConcurrencyUnsupportedCode, fmt.Sprintf("the limit on key %s answered %q, which this release does not know", slot.Key, res.Answer.Answer))
 }
@@ -186,21 +186,29 @@ func concEnding(res AcquireConcurrencyResult, slot *ConcurrencySlotPlan) error {
 // waitForRunSlot is the queued run's wait (§5.2.3): RUN_QUEUED, its records,
 // then a grant, a re-assert, its deadline or its cancel, whichever comes
 // first.
-func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire, ans gateAnswer) error {
+//
+// cause says why the run waits: it arrived (PENDING), or, failing, it asks
+// again for the slot it gave back while paused so its failure handlers run
+// inside the limit (FAILING, RUNNING; failingRegain).
+func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire, ans gateAnswer,
+	cause orkstackv1.ConcurrencyQueueCause) error {
 	c := s.conc
 	c.queued = &orkstackv1.ConcurrencyQueued{
-		Key: slot.Key, Limit: int32(slot.Limit), Strategy: concStrategyProto(slot.Strategy),
+		Key: slot.Key, Limit: int32(slot.Limit), Strategy: concStrategyProto(req.Strategy),
 		PositionAtArrival: int32(ans.Position), Position: int32(ans.Position), PositionKnown: true,
 		HoldersCount: int32(ans.HoldersAhead), HoldersAsOfArrival: true,
 		QueuedSince: timestamppb.New(ans.ArrivedAt), TimesOutAt: timestamppb.New(req.WaitUntil),
-		Cause: orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL,
+		Cause: cause,
 	}
 	if err := s.recordRunSlot(ctx, slot, ans, false); err != nil {
 		return err
 	}
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED, "", orkstackv1.Status_STATUS_PENDING,
-		fmt.Sprintf("queued for key %s (limit %d): position %d behind %d running; times out at %s",
-			slot.Key, slot.Limit, ans.Position, ans.HoldersAhead, req.WaitUntil.UTC().Format(time.RFC3339))); err != nil {
+	status, text := orkstackv1.Status_STATUS_PENDING, "queued for key %s (limit %d): position %d behind %d running; times out at %s"
+	if cause == orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING {
+		status, text = s.status, "waiting again for key %s (limit %d) to run its failure handlers: position %d behind %d running; times out at %s"
+	}
+	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED, "", status,
+		fmt.Sprintf(text, slot.Key, slot.Limit, ans.Position, ans.HoldersAhead, req.WaitUntil.UTC().Format(time.RFC3339))); err != nil {
 		return err
 	}
 	grants := workflow.GetSignalChannel(ctx, ConcurrencyGrantSignal)

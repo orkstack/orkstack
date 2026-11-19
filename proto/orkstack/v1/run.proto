@@ -1092,6 +1092,9 @@ enum ConcurrencyQueueCause {
   // UNPAUSE: the run gave its slot back while paused and waits for it
   // again.
   CONCURRENCY_QUEUE_CAUSE_UNPAUSE = 3;
+  // FAILING: the failing run gave its slot back while paused and waits for
+  // it again so its failure handlers run inside the limit.
+  CONCURRENCY_QUEUE_CAUSE_FAILING = 4;
 }
 
 // EffectiveProfile is one profile an attempt ran under, as the Orker applied

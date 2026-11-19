@@ -1019,9 +1019,10 @@ type runState struct {
 	// conc is the run's concurrency state (concurrency_run.go); nil when its
 	// plan declares no run-level limit.
 	conc *concRunState
-	// handlersDropped: the run ended without its failure handlers, because
-	// it had given its concurrency slot back (fail); its error says so.
-	handlersDropped bool
+	// slotStop is why a failing run's failure handlers do not run: the
+	// concurrency slot it gave back while paused was not regained
+	// (failingRegain). "" otherwise.
+	slotStop string
 
 	// The pause (pause.go): pauses is the request channel, nil for a run
 	// whose plan lacks Pause; pause and pausedByParent are the two causes;
@@ -3004,14 +3005,11 @@ func (s *runState) fail(
 	// A run that gave its slot back while paused, or waits for it again,
 	// holds none: a failure handler would run outside the limit, so it
 	// starts none, as a run that ends in line does (failInLine).
+	// A run waiting for its slot again leaves the line: its failure
+	// handlers, if any, ask for it again in the failing phase (join.go,
+	// failingRegain).
 	if s.concSlotGivenBack() {
 		s.leaveRequeue(ctx)
-		if s.hasHandlers {
-			s.handlersDropped = true
-			workflow.GetLogger(ctx).Warn("a run that gave its concurrency slot back ends without its failure handlers",
-				"run_id", s.runID)
-		}
-		s.dropHandlersOutsideLimit()
 	}
 	// The history guard's failure belongs to the run, never to the task or
 	// fan-out where it tripped: every caller reaches here with the id it was
@@ -3035,9 +3033,6 @@ func (s *runState) fail(
 	}
 	s.finished = timestamppb.New(workflow.Now(ctx))
 	s.runError = s.runFailureFor(taskID, cause)
-	if s.handlersDropped {
-		s.runError.Message += "; its failure handlers did not run, because the run had given its concurrency slot back while paused"
-	}
 
 	eventCtx := ctx
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED

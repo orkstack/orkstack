@@ -400,3 +400,75 @@ func (s *runState) requeueUnavailable(slot *ConcurrencySlotPlan) error {
 func (s *runState) requeueEnding(ending error) error {
 	return ending
 }
+
+// failingRegain asks again, for a failing run that gave its slot back while
+// paused, for the slot its failure handlers need, so they run inside the
+// limit (§22.14.3, decision D22): the next ordinal, strategy queue, cause
+// FAILING. It returns "" once the run holds the slot again, or when the run
+// is canceled meanwhile (the caller's context decides), and otherwise why its
+// failure handlers cannot run: a line that ended, refused or did not answer.
+func (s *runState) failingRegain(ctx workflow.Context) string {
+	c := s.conc
+	slot := c.plan.runSlot()
+	c.ordinal++
+	now := workflow.Now(ctx)
+	timeout := time.Duration(slot.QueueTimeoutSeconds) * time.Second
+	req := gateAcquire{
+		Proto: gateProtoOrdinal, Run: s.runID, SeqBase: c.plan.SeqBase, TaskIx: gateRunLevel,
+		Limit: slot.Limit, Strategy: gateStrategyQueue, Label: slot.Label,
+		WaitUntil: now.Add(timeout), IssuedAt: now, N: c.ordinal, Requeue: true,
+	}
+	c.noteAttempted(slot.GateID)
+	res, err := s.sendAcquire(ctx, slot, req)
+	if err != nil {
+		return "" // canceled: the caller's context ends the run
+	}
+	var ending error
+	switch {
+	case res.Unsupported != "" || res.Unavailable != "":
+		ending = concEnding(res, slot)
+	case res.Answer.Answer == gateAnswerGranted:
+		c.givenBack = false
+		if err := s.grantRunSlot(ctx, slot, res.Answer); err != nil {
+			return s.regainStop(ctx, slot, timeout, err)
+		}
+		return ""
+	case res.Answer.Answer == gateAnswerQueued:
+		ending = s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING)
+		if ending == nil {
+			c.givenBack = false
+			return ""
+		}
+		if ctx.Err() != nil {
+			return ""
+		}
+	case res.Answer.Answer == gateAnswerFull:
+		ending = runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the limit on key %s answered full to a queue request", slot.Key))
+	default:
+		ending = concEnding(res, slot)
+	}
+	return s.regainStop(ctx, slot, timeout, ending)
+}
+
+// regainStop is why a failing run's handlers do not run: its slot was not
+// regained, said with the limit's own reason. The run leaves the line, and
+// its records stop saying it waits.
+func (s *runState) regainStop(ctx workflow.Context, slot *ConcurrencySlotPlan, timeout time.Duration, ending error) string {
+	c := s.conc
+	if c.queued != nil {
+		c.queued = nil
+		if err := workflow.UpsertMemo(ctx, map[string]any{gateMemoKey(slot.GateID, gateRunLevel): nil}); err != nil {
+			workflow.GetLogger(ctx).Warn("a failing run that left the line could not drop its slot's record", "run_id", s.runID, "error", err)
+		}
+		if err := s.syncConcAttributes(ctx); err != nil {
+			workflow.GetLogger(ctx).Warn("a failing run that left the line could not update its index", "run_id", s.runID, "error", err)
+		}
+	}
+	failure := concFailure(ending)
+	if failure.GetCode() == RunQueueTimeoutCode {
+		return fmt.Sprintf("failure handlers did not run: the concurrency slot on key %s was not regained within %s (%s)",
+			slot.Key, timeout.Round(time.Second), RunQueueTimeoutCode)
+	}
+	return fmt.Sprintf("failure handlers did not run: the concurrency slot on key %s was not regained (%s: %s)",
+		slot.Key, failure.GetCode(), failure.GetMessage())
+}
