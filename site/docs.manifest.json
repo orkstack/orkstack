@@ -526,6 +526,16 @@
 					]
 				},
 				{
+					"route": "docs/operate/temporal-search-attributes",
+					"title": "Add Temporal search attributes",
+					"description": "Check the run indexes the engine registers, and add them by hand when the cluster does not let it.",
+					"parts": [
+						{
+							"source": "site/content/how-to/temporal-search-attributes.md"
+						}
+					]
+				},
+				{
 					"route": "docs/operate/authentication",
 					"title": "Turn on authentication",
 					"description": "Make OrkStack check who calls its API and decide what each caller may do with roles.",
