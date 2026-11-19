@@ -3129,7 +3129,7 @@ boot.
 | `OrkflowOriginKind` | Keyword | filtering runs by `origin.kind` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
 | `OrkflowOriginId` | Keyword | filtering runs by `origin.id` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
 | `OrkflowOriginRootRunId` | Keyword | filtering runs by `origin.root_run_id` (everything below a root) | a list filtered by root walks every run instead, and fails rather than answer short when it cannot finish | `run_root_index` |
-| `OrkflowRunPaused` | Keyword | a run records in the index whether it is paused (no list reads it yet) | a run does not record its pause; once runs have written it, removing it stops them (below) | `run_paused_index` |
+| `OrkflowRunPaused` | Keyword | showing a paused run as `PAUSED` in lists, the `PAUSED` status filter, and the paused-runs count (`ork.runs.paused`) | a paused run lists as `RUNNING`, a list filtered on `PAUSED` is refused, and paused runs are not counted; once runs have written it, removing it stops them (below) | `run_paused_index` |
 
 Never remove one while runs are open. `OrkflowRunPaused` above all: a run
 started while it was registered writes it at each pause and unpause, and
