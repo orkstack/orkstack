@@ -53,6 +53,7 @@ type interfaceDocument struct {
 	Ops         map[string]interfaceOpDocument    `yaml:"ops"`
 	DefaultOp   string                            `yaml:"defaultOp"`
 	Values      map[string]interfaceFieldDocument `yaml:"values"`
+	Devices     map[string]string                 `yaml:"devices"`
 }
 
 // interfaceOpDocument is one op: what it does, and the keys it reads beside
@@ -163,6 +164,9 @@ func ParseActivityDocument(source []byte) (*ActivityDeclaration, error) {
 			}
 			iface.Ops[name] = &orkstackv1.OpSchema{Fields: fields}
 		}
+	}
+	if len(doc.Devices) > 0 {
+		iface.Devices = doc.Devices
 	}
 	iface.SchemaVersion = lowestSchemaVersion(iface)
 	if err := validateInterface(iface); err != nil {

@@ -473,7 +473,7 @@ tasks:
       cpu: "2"
       memory: 4Gi
     network: none         # optional: `default` or `none`
-    devices:              # optional device and gpu profiles the pool's Orkers define (see "Device profiles")
+    devices:              # optional device and gpu profiles the pool's Orkers define, each a name or name@contract to pin one contract (see "Device profiles")
       - sensor
     cancellation_grace_period_seconds: 30 # SIGTERM-to-SIGKILL window
     run_as_orker_user: false # opt in to overriding the image's USER
@@ -976,6 +976,36 @@ tasks:
   one attempt.
 - `devices:` is refused on awaited, sleeping and composed tasks, which run no
   container.
+
+**Contracts.** A profile can have several definitions, each a **contract**
+with a label, so an operator can roll a change across a pool (docs/DEPLOY.md,
+"Running a device Orker"). An image says which contract it needs in its
+activity interface (docs/ACTIVITY_IMAGES.md, "Declaring the interface"):
+
+```yaml
+devices:
+  sensor: "2"
+```
+
+- At create, the image's declaration is copied into the task, so the run
+  pins that contract. A task naming a profile its image does not mention runs
+  under the profile's default contract.
+- The image needs every profile it declares: a task using it that does not
+  name one in `devices:` is refused, `image <image> needs profile sensor
+  (contract 2); add it to devices:`.
+- An image that cannot declare, such as a third-party one, gets its contract
+  from the task: write the entry `name@contract`, as in `devices:
+  [sensor@2]`. An image that declares a different contract of that profile is
+  refused.
+- When the image's declaration cannot be read (its interface label is
+  unreadable, or no image resolution is made), a task naming a profile with
+  no `@contract` is refused: `the image's device contracts cannot be read
+  (<why>); write the contract explicitly, as sensor@<contract>`. A task whose
+  every profile has an `@contract` is created with a warning instead, since
+  its pins cannot be checked against the image.
+- Every platform of a multi-platform image must declare the same contracts,
+  or the create is refused, for a task that names a profile (create reads at
+  most 16 platforms).
 
 ## Pins
 
@@ -2038,7 +2068,8 @@ How each node reads:
    skips the catalog check — it would otherwise be taken for a registry
    reference because it contains `:` and `@`. `network:`, when present, is
    `default` or `none` (6b). `devices:`, when present, names 1 to 8 profiles,
-   each a slug and none twice (6e). Every secret has a `name` matching
+   each a slug, optionally `@` a contract label (`^[A-Za-z0-9_.:+-]{1,64}$`),
+   and none twice (6e). Every secret has a `name` matching
    `^[A-Za-z0-9._-]{1,128}$` — validated, never sanitized, so it cannot
    escape the secrets directory — and a non-empty `source:` (6c).
    `resources.cpu` and `resources.memory`, when present, are quantities in
@@ -2274,6 +2305,12 @@ How each node reads:
     refused and `.each` reads only `.each.index` and `.each.count`. `format`
     and `batch` are refused with `over`. No template of the fan-out reads its
     source artifact.
+54. At create and validate, a task names in `devices:` every profile its
+    image's interface declares, a `name@contract` entry agrees with the
+    image's declaration, every platform of the image declares the same
+    contract of each profile the task names, and a task naming a profile with
+    no `@contract` has an image whose declaration can be read (see "Device
+    profiles", Contracts).
 
 Decoding is strict: a key the schema above does not define is refused, never
 ignored, so a misspelled or unsupported key cannot surface later as a run that

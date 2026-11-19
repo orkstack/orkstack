@@ -217,6 +217,9 @@ type ContainerRuntime interface {
 	// would have. A digest the layout does not hold returns an error matching
 	// ErrNotInLayout.
 	LoadLayout(ctx context.Context, layoutPath, digest string) (PullInfo, error)
+	// ImageLabel reads one label of a local image, with no registry round
+	// trip; ok is false when the image carries none of that name.
+	ImageLabel(ctx context.Context, ref, key string) (value string, ok bool, err error)
 	// Create builds a container from spec without starting it. On a failure a
 	// non-empty id names what the engine may have made regardless, which the
 	// caller then owes a removal: a CLI's or a connection's failure is not the

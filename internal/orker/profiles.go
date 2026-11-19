@@ -45,6 +45,13 @@ const (
 	minProfileInterval   = time.Second
 	maxProfileNameBytes  = 200
 	maxProfileValueBytes = 253
+	// maxProfileContracts bounds a profile's contracts, and
+	// maxContractAccepts the labels one contract also accepts.
+	maxProfileContracts = 8
+	maxContractAccepts  = 8
+	// defaultContractLabel labels a short-form profile written without
+	// `contract:`.
+	defaultContractLabel = "1"
 )
 
 // Profiles is a parsed orker.profiles document.
@@ -66,7 +73,50 @@ type Profile struct {
 	// Revision is the operator's label; it changes memo keys only.
 	Revision string
 	GPU      *GPUProfile
-	Devices  []ProfileDevice
+	// Devices are the default contract's devices: what a devices profile
+	// passes a task whose image declares no contract (docs/DEPLOY.md,
+	// "Changing a profile").
+	Devices []ProfileDevice
+	// Contracts are the profile's contracts, sorted by label: one for the
+	// short form and every gpu profile, up to maxProfileContracts for the
+	// long form. Each carries its own devices; a gpu profile's carry none.
+	Contracts []ProfileContract
+	// Default is the label of the contract an image that declares none runs
+	// under.
+	Default string
+}
+
+// ProfileContract is one contract of a profile: a label for one definition,
+// and the other labels it also serves.
+type ProfileContract struct {
+	Label string
+	// Accepts are labels of contracts this profile does not define that a run
+	// pinned to them may run under this one: the operator's assertion that the
+	// definitions are compatible.
+	Accepts []string
+	Devices []ProfileDevice
+}
+
+// DefaultContract is the profile's default contract, and whether it has one;
+// every parsed profile does.
+func (p Profile) DefaultContract() (ProfileContract, bool) {
+	contracts, def := p.contractList()
+	for _, c := range contracts {
+		if c.Label == def {
+			return c, true
+		}
+	}
+	return ProfileContract{}, false
+}
+
+// contractList is the profile's contracts and its default's label. A profile
+// built without contracts (as code before them wrote one) is one contract of
+// its Devices, labelled defaultContractLabel.
+func (p Profile) contractList() ([]ProfileContract, string) {
+	if len(p.Contracts) == 0 {
+		return []ProfileContract{{Label: defaultContractLabel, Devices: p.Devices}}, defaultContractLabel
+	}
+	return p.Contracts, p.Default
 }
 
 // GPUProfile is a `gpu` profile: counted, exclusive units, each one fully
@@ -121,6 +171,18 @@ type profileFields struct {
 	Revision string          `yaml:"revision"`
 	CDI      *cdiFields      `yaml:"cdi"`
 	Devices  *[]deviceFields `yaml:"devices"`
+	// The contract keys are read as nodes, so a label is the text written,
+	// never a number YAML resolved it to.
+	Contract  yaml.Node `yaml:"contract"`
+	Accepts   yaml.Node `yaml:"accepts"`
+	Default   yaml.Node `yaml:"default"`
+	Contracts yaml.Node `yaml:"contracts"`
+}
+
+// contractFields is one contract of the long form.
+type contractFields struct {
+	Accepts yaml.Node       `yaml:"accepts"`
+	Devices *[]deviceFields `yaml:"devices"`
 }
 
 type cdiFields struct {
@@ -327,13 +389,27 @@ func parseProfile(name string, value *yaml.Node) (Profile, error) {
 		if err := foreignKeys(at, "gpu", keys, "devices"); err != nil {
 			return Profile{}, err
 		}
-		p.GPU, err = parseGPU(at, f.CDI)
+		if keys["contracts"] || keys["default"] {
+			return Profile{}, fmt.Errorf("%s: a gpu profile has one contract: write `contract` and `accepts`, never `contracts` or `default`", at)
+		}
+		if p.GPU, err = parseGPU(at, f.CDI); err != nil {
+			return Profile{}, err
+		}
+		err = p.shortContract(at, keys, f, nil)
 	case "devices":
 		p.Kind = orkstackv1.ProfileKind_PROFILE_KIND_DEVICES
 		if err := foreignKeys(at, "devices", keys, "cdi"); err != nil {
 			return Profile{}, err
 		}
-		p.Devices, err = parseDevices(at, f.Devices)
+		if keys["contracts"] {
+			err = p.longContracts(at, keys, f)
+			break
+		}
+		devices, derr := parseDevices(at, f.Devices)
+		if derr != nil {
+			return Profile{}, derr
+		}
+		err = p.shortContract(at, keys, f, devices)
 	case "":
 		return Profile{}, fmt.Errorf("%s.kind is required: gpu or devices", at)
 	default:
@@ -343,6 +419,139 @@ func parseProfile(name string, value *yaml.Node) (Profile, error) {
 		return Profile{}, err
 	}
 	return p, nil
+}
+
+// shortContract is the short form: one contract of the profile's own keys,
+// labelled by `contract:` (defaultContractLabel when absent).
+func (p *Profile) shortContract(at string, keys map[string]bool, f profileFields, devices []ProfileDevice) error {
+	if keys["default"] {
+		return fmt.Errorf("%s.default is for contracts:; the short form's contract is its default", at)
+	}
+	label := defaultContractLabel
+	if keys["contract"] {
+		var err error
+		if label, err = contractLabel(&f.Contract, at+".contract"); err != nil {
+			return err
+		}
+	}
+	accepts, err := contractAccepts(&f.Accepts, at+".accepts", []string{label})
+	if err != nil {
+		return err
+	}
+	p.Contracts = []ProfileContract{{Label: label, Accepts: accepts, Devices: devices}}
+	p.Default, p.Devices = label, devices
+	return nil
+}
+
+// longContracts is the long form: `contracts:`, a mapping of label to
+// contract, and `default:`, required with two or more.
+func (p *Profile) longContracts(at string, keys map[string]bool, f profileFields) error {
+	switch {
+	case keys["devices"]:
+		return fmt.Errorf("%s: write devices under `contracts`, or use the short form without `contracts`", at)
+	case keys["contract"]:
+		return fmt.Errorf("%s.contract is for the short form; under contracts: each key is a label", at)
+	case keys["accepts"]:
+		return fmt.Errorf("%s.accepts: write `accepts` under each contract of `contracts`", at)
+	}
+	node := &f.Contracts
+	if node.Kind != yaml.MappingNode || len(node.Content) == 0 || len(node.Content)/2 > maxProfileContracts {
+		return fmt.Errorf("%s.contracts: declare 1 to %d contracts", at, maxProfileContracts)
+	}
+	var labels []string
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		label, err := contractLabel(node.Content[i], at+".contracts")
+		if err != nil {
+			return err
+		}
+		if slices.Contains(labels, label) {
+			return fmt.Errorf("%s.contracts: %q is declared twice", at, label)
+		}
+		labels = append(labels, label)
+	}
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		label, value := labels[i/2], node.Content[i+1]
+		cat := at + ".contracts." + label
+		if value.Kind != yaml.MappingNode {
+			return fmt.Errorf("%s: must be a mapping", cat)
+		}
+		text, err := yaml.Marshal(value)
+		if err != nil {
+			return fmt.Errorf("%s (line %d): %w", cat, value.Line, err)
+		}
+		var cf contractFields
+		if err := strictDecode(text, &cf); err != nil {
+			return fmt.Errorf("%s (line %d): %w", cat, value.Line, err)
+		}
+		accepts, err := contractAccepts(&cf.Accepts, cat+".accepts", labels)
+		if err != nil {
+			return err
+		}
+		devices, err := parseDevices(cat, cf.Devices)
+		if err != nil {
+			return err
+		}
+		p.Contracts = append(p.Contracts, ProfileContract{Label: label, Accepts: accepts, Devices: devices})
+	}
+	slices.SortFunc(p.Contracts, func(a, b ProfileContract) int { return strings.Compare(a.Label, b.Label) })
+	switch {
+	case keys["default"]:
+		def, err := contractLabel(&f.Default, at+".default")
+		if err != nil {
+			return err
+		}
+		if !slices.Contains(labels, def) {
+			return fmt.Errorf("%s.default: %q is not one of its contracts (%s)", at, def, strings.Join(slices.Sorted(slices.Values(labels)), ", "))
+		}
+		p.Default = def
+	case len(labels) == 1:
+		p.Default = labels[0]
+	default:
+		return fmt.Errorf("%s.default is required with %d contracts: name the one an image that declares none runs under", at, len(labels))
+	}
+	d, _ := p.DefaultContract()
+	p.Devices = d.Devices
+	return nil
+}
+
+// contractLabel is a label written at n: a plain scalar of the revision
+// grammar, read as the text written.
+func contractLabel(n *yaml.Node, at string) (string, error) {
+	if n.Kind != yaml.ScalarNode || n.Tag == "!!null" {
+		return "", fmt.Errorf("%s: a contract label must be a string", at)
+	}
+	if !revisionPattern.MatchString(n.Value) {
+		return "", fmt.Errorf("%s: %q is not a contract label of 1-64 letters, digits or ._:+-", at, n.Value)
+	}
+	return n.Value, nil
+}
+
+// contractAccepts is an `accepts:` list at n, sorted: at most
+// maxContractAccepts labels, none listed twice and none of own, the profile's
+// own contract labels. An absent list accepts nothing.
+func contractAccepts(n *yaml.Node, at string, own []string) ([]string, error) {
+	if n.Kind == 0 || (n.Kind == yaml.ScalarNode && n.Tag == "!!null") {
+		return nil, nil
+	}
+	if n.Kind != yaml.SequenceNode || len(n.Content) > maxContractAccepts {
+		return nil, fmt.Errorf("%s: a list of at most %d contract labels", at, maxContractAccepts)
+	}
+	var out []string
+	for _, item := range n.Content {
+		label, err := contractLabel(item, at)
+		if err != nil {
+			return nil, err
+		}
+		switch {
+		case slices.Contains(own, label):
+			return nil, fmt.Errorf("%s: %q is a contract of this profile; accepts names only other labels", at, label)
+		case slices.Contains(out, label):
+			return nil, fmt.Errorf("%s: %q is listed twice", at, label)
+		}
+		out = append(out, label)
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // foreignKeys refuses a written key that belongs to another kind, checking
@@ -545,11 +754,19 @@ type devicesIdentity struct {
 }
 
 // StructuralIdentity is the SHA-256 (hex) of what a run pins and what every
-// Orker of a pool must share: for gpu its name, kind and CDI kind; for
-// devices its name, kind and each device's class, container path and
-// permissions. Units and host paths are local to one Orker and are not in
-// it; the revision changes memo keys only.
+// Orker of a pool must share, for the profile's default contract: for gpu its
+// name, kind and CDI kind; for devices its name, kind and each device's
+// class, container path and permissions. Units and host paths are local to
+// one Orker and are not in it; the revision changes memo keys only, and a
+// contract's label is not in it, so equal definitions under two labels have
+// one identity.
 func (p Profile) StructuralIdentity(classify DeviceClassifier) (string, error) {
+	c, _ := p.DefaultContract()
+	return p.ContractIdentity(c, classify)
+}
+
+// ContractIdentity is StructuralIdentity for one contract of p.
+func (p Profile) ContractIdentity(c ProfileContract, classify DeviceClassifier) (string, error) {
 	var v any
 	switch {
 	case p.Kind == orkstackv1.ProfileKind_PROFILE_KIND_GPU && p.GPU != nil:
@@ -558,8 +775,8 @@ func (p Profile) StructuralIdentity(classify DeviceClassifier) (string, error) {
 		if classify == nil {
 			return "", fmt.Errorf("profile %s: its devices have not been classified", p.Name)
 		}
-		devices := make([]deviceIdentity, 0, len(p.Devices))
-		for _, d := range p.Devices {
+		devices := make([]deviceIdentity, 0, len(c.Devices))
+		for _, d := range c.Devices {
 			class, err := classify(d.Path)
 			if err != nil {
 				return "", fmt.Errorf("profile %s: %w", p.Name, err)
@@ -622,20 +839,31 @@ func ProfileMemoComponent(entries []ProfileMemoEntry, gpu int32) ([]byte, error)
 }
 
 // Describe is the profiles as this Orker reports them on its own channel:
-// name, kind, units, revision and identity. Health and binding counts are the
-// running Orker's to fill.
+// name, kind, units, revision, each contract with its identity and accepted
+// labels, the default contract, and the default's identity as the profile's
+// own (what an engine built before contracts pins). Health and binding counts
+// are the running Orker's to fill.
 func (p Profiles) Describe(classify DeviceClassifier) ([]*orkstackv1.OrkerProfile, error) {
 	out := make([]*orkstackv1.OrkerProfile, 0, len(p.List))
 	for _, profile := range p.List {
-		identity, err := profile.StructuralIdentity(classify)
-		if err != nil {
-			return nil, err
-		}
+		contracts, def := profile.contractList()
 		described := &orkstackv1.OrkerProfile{
-			Name:           profile.Name,
-			Kind:           profile.Kind,
-			Revision:       profile.Revision,
-			IdentityDigest: identity,
+			Name:            profile.Name,
+			Kind:            profile.Kind,
+			Revision:        profile.Revision,
+			DefaultContract: def,
+		}
+		for _, c := range contracts {
+			identity, err := profile.ContractIdentity(c, classify)
+			if err != nil {
+				return nil, err
+			}
+			described.Contracts = append(described.Contracts, &orkstackv1.OrkerProfileContract{
+				Label: c.Label, IdentityDigest: identity, Accepts: slices.Clone(c.Accepts),
+			})
+			if c.Label == def {
+				described.IdentityDigest = identity
+			}
 		}
 		if profile.GPU != nil {
 			described.Units = int32(len(profile.GPU.Units))

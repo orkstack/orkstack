@@ -82,7 +82,7 @@ func (s *runState) interruptionListing(ctx workflow.Context, t *orkstackv1.Task,
 	if b == nil {
 		return nil, nil
 	}
-	types := interruptionTypes(b, row.GetInterruptions(), s.lossEvents)
+	types := interruptionTypes(b, row.GetInterruptions(), s.lossEvents, s.profileContractsPath(t))
 	if s.listed == nil {
 		s.listed = map[string][]string{}
 	}

@@ -49,6 +49,10 @@ func (r *capturingRuntime) LoadLayout(context.Context, string, string) (PullInfo
 	return PullInfo{}, errors.New("no embedded layout in this test")
 }
 
+func (r *capturingRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (r *capturingRuntime) Create(_ context.Context, spec ContainerSpec) (ContainerID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()

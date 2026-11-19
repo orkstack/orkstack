@@ -43,6 +43,10 @@ func (r *eachRuntime) LoadLayout(context.Context, string, string) (PullInfo, err
 	return PullInfo{}, errors.New("no layout")
 }
 
+func (r *eachRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (r *eachRuntime) Create(_ context.Context, spec ContainerSpec) (ContainerID, error) {
 	var doc, cfg map[string]any
 	var raw []byte

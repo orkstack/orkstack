@@ -435,6 +435,9 @@ func FuzzCompile_Orkflow(f *testing.F) {
 		f.Add([]byte("apiVersion: ! orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    " + merge + "\n"))
 	}
 	f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    with: {op: exec, command: [echo, \"{{ sh .inputs.x }}\"]}\n"))
+	for _, devices := range []string{"[sensor@2, cam]", "[sensor@]", "[sensor@a/b]", "['@2']", "[sensor@2, sensor]", "[sensor@1@2]"} {
+		f.Add([]byte("apiVersion: orkstack/v1\nkind: Orkflow\nname: a\ntasks:\n  - id: t\n    uses: shell\n    devices: " + devices + "\n"))
+	}
 	for _, retry := range []string{
 		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 10}",
 		"{maximum_attempts: 3, initial_interval_seconds: 30, maximum_interval_seconds: 30}",
@@ -497,6 +500,18 @@ func FuzzCompile_Orkflow(f *testing.F) {
 			return
 		}
 		for _, task := range wf.GetTasks() {
+			named := map[string]bool{}
+			for _, name := range task.GetDevices() {
+				if strings.Contains(name, "@") {
+					t.Fatalf("Compile accepted %q, whose task %q keeps the pin in devices: %q", source, task.GetId(), name)
+				}
+				named[name] = true
+			}
+			for name := range task.GetDeviceContracts() {
+				if !named[name] {
+					t.Fatalf("Compile accepted %q, whose task %q pins %q, a profile its devices: does not name", source, task.GetId(), name)
+				}
+			}
 			retry := task.GetRetry()
 			initial, maximum := retry.GetInitialIntervalSeconds(), retry.GetMaximumIntervalSeconds()
 			if initial < 0 || maximum < 0 || (maximum != 0 && maximum < initial) {
@@ -537,9 +552,13 @@ func FuzzParseInterfaceLabel(f *testing.F) {
 		`{"schemaVersion":1,"fields":{"n":{"type":"nope"}}}`, `{"schemaVersion":1,"fields":{"n":{"type":"string|string"}}}`,
 		`{"schemaVersion":1,"fields":{"n":{"type":"string","required":true,"default":"x"}}}`, `{"schemaVersion":1,"unknown":1}`,
 		`{"schemaVersion":1,"fields":{"op":{"type":"string"}},"ops":{"a":{}}}`,
+		`{"schemaVersion":1,"devices":{"sensor":"2","cam":"v1.2:rc+1"}}`, `{"schemaVersion":1,"devices":{"Sensor":"1"}}`,
+		`{"schemaVersion":1,"devices":{"sensor":""}}`, `{"schemaVersion":1,"devices":{"sensor":"a b"}}`,
 	} {
 		f.Add(seed)
 	}
+	labelPattern := regexp.MustCompile(`^[A-Za-z0-9_.:+-]{1,64}$`)
+	profilePattern := regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
 	pattern := regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`)
 	vocabulary := map[string]bool{"string": true, "number": true, "boolean": true, "object": true, "array": true}
 	f.Fuzz(func(t *testing.T, raw string) {
@@ -552,6 +571,14 @@ func FuzzParseInterfaceLabel(f *testing.F) {
 		}
 		if len(raw) > dsl.MaxInterfaceLabelBytes || iface.GetSchemaVersion() != 1 || len(iface.GetOps()) > dsl.MaxInterfaceOps {
 			t.Fatalf("ParseInterfaceLabel accepted %q beyond its bounds", raw)
+		}
+		if len(iface.GetDevices()) > dsl.MaxTaskDevices {
+			t.Fatalf("ParseInterfaceLabel accepted %d device profiles", len(iface.GetDevices()))
+		}
+		for name, label := range iface.GetDevices() {
+			if !profilePattern.MatchString(name) || len(name) > dsl.MaxSlug || !labelPattern.MatchString(label) {
+				t.Fatalf("ParseInterfaceLabel accepted the device contract %q: %q", name, label)
+			}
 		}
 		check := func(where string, fields map[string]*orkstackv1.FieldSchema) {
 			if len(fields) > dsl.MaxInterfaceFields {

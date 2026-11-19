@@ -36,7 +36,13 @@ const (
 	attemptStoreUnavailableReason   = "ATTEMPT_STORE_UNAVAILABLE"
 	runtimeStateUnknownReason       = "RUNTIME_STATE_UNKNOWN"
 	profileDriftedReason            = "PROFILE_DRIFTED"
-	orkerHeartbeatLostReason        = "ORKER_HEARTBEAT_LOST"
+	// The contract faults (E91 contracts): the Orker found the profile no
+	// longer matches the contract the run pinned, or serves none of the
+	// contracts the run may run under. Listed only for a unit naming a
+	// profile under a run that pinned contracts (interruptionTypes).
+	profileChangedReason           = "PROFILE_CHANGED"
+	profileContractNotServedReason = "PROFILE_CONTRACT_NOT_SERVED"
+	orkerHeartbeatLostReason       = "ORKER_HEARTBEAT_LOST"
 
 	// reportedBeatPhase is the phase of the beat an Orker sends once it has
 	// reported an attempt (internal/orker PhaseReported), frozen here with
@@ -58,17 +64,23 @@ const (
 	maxInterruptionBackoffExponent = 6
 )
 
-// neverStartedFaultReasons are the terminating faults before a start
-// (§4.7): each spends the consecutive fault budget, then own attempts, then
+// neverStartedFaultReasons are the terminating faults before a start that
+// every unit lists (§4.7); the contract faults are listed only for a
+// profiled unit of a run that pinned contracts (interruptionTypes), so they
+// are not among these. Each spends the consecutive fault budget, then own attempts, then
 // fails with its own reason. PROFILE_DRIFTED is E91's: its Orker cordons
 // itself, so the re-dispatch goes to another Orker of the run's release.
 func neverStartedFaultReasons() [3]string {
 	return [3]string{attemptStoreUnavailableReason, runtimeStateUnknownReason, profileDriftedReason}
 }
 
+// isNeverStartedFault reports a never-started fault. The contract faults are
+// among them; they are consulted only for a type the execution listed
+// (interruptionOf), which only a profiled unit of a run with contracts lists.
 func isNeverStartedFault(reason string) bool {
 	switch reason {
-	case attemptStoreUnavailableReason, runtimeStateUnknownReason, profileDriftedReason:
+	case attemptStoreUnavailableReason, runtimeStateUnknownReason, profileDriftedReason,
+		profileChangedReason, profileContractNotServedReason:
 		return true
 	}
 	return false
@@ -292,14 +304,21 @@ func budgetsForUnit(plan *InterruptionBudgets, maxInterruptions *int32, faultFlo
 // CONTAINER_STOPPED_BY_RUNTIME while hand-backs have budget; the heartbeat
 // timeout while losses have budget and the run's loss events are under the
 // cap. Nil budgets list nothing: the policy is today's, byte for byte.
-func interruptionTypes(b *unitBudgets, st *orkstackv1.TaskInterruptions, runLoss *orkstackv1.RunLossEvents) []string {
+//
+// profileFaults lists the contract faults too, after the three existing
+// faults: a unit that names a profile under a run that pinned contracts.
+// Every other unit lists exactly what it listed before contracts.
+func interruptionTypes(b *unitBudgets, st *orkstackv1.TaskInterruptions, runLoss *orkstackv1.RunLossEvents, profileFaults bool) []string {
 	if b == nil {
 		return nil
 	}
-	types := make([]string, 0, 6)
+	types := make([]string, 0, 8)
 	types = append(types, interruptionTypePrefix+orkerStoppedReason)
 	for _, f := range neverStartedFaultReasons() {
 		types = append(types, interruptionTypePrefix+f)
+	}
+	if profileFaults {
+		types = append(types, interruptionTypePrefix+profileChangedReason, interruptionTypePrefix+profileContractNotServedReason)
 	}
 	if st.GetHandedBack() < b.handedBack {
 		types = append(types, interruptionTypePrefix+containerStoppedByRuntimeReason)

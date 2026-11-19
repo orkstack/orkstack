@@ -22,19 +22,36 @@ const DetailDeviceClassRefused = "DEVICE_CLASS_REFUSED"
 const procDevicesPath = "/proc/devices"
 
 // auditProfiles is the boot audit of every declared devices profile (design
-// §4.11): each device inspected on this host and classified against its
-// /proc/devices, the host node behind it recorded, and each profile described
-// with its structural identity. A device that is not of a class, or not there,
-// refuses the boot, as do two profiles that would give one container path.
-// inspect is what the host says a path is (inspectHostDevice).
+// §4.11): each host device inspected on this host and classified against its
+// /proc/devices once, the host node behind it recorded, and each profile's
+// contracts described with their structural identities. A device that is not
+// of a class, or not there, refuses the boot, as does a container path two
+// profiles would give: a task may hold both names, but only one contract of
+// each, so two contracts of one name may share a path. inspect is what the
+// host says a path is (inspectHostDevice).
 func auditProfiles(declared Profiles, procDevices string, inspect func(string) (hostDevice, error)) (map[string]profileAudit, []*orkstackv1.OrkerProfile, error) {
 	drivers := parseProcDevices(procDevices)
-	total := 0
+	// The probe is asked about each host device of each name once, and its
+	// paths are one set across every name: every real container path is
+	// taken before any path is given for the probe alone.
+	asked := 0
+	probePaths := map[string]bool{}
 	for _, p := range declared.List {
-		total += len(p.Devices)
+		if p.Kind != orkstackv1.ProfileKind_PROFILE_KIND_DEVICES {
+			continue
+		}
+		contracts, _ := p.contractList()
+		hosts := map[string]bool{}
+		for _, c := range contracts {
+			for _, d := range c.Devices {
+				hosts[d.Path] = true
+				probePaths[d.ContainerPath] = true
+			}
+		}
+		asked += len(hosts)
 	}
-	if total > maxProbePaths {
-		return nil, nil, fmt.Errorf("the profiles pass %d devices, more than the %d one host-view probe is asked about", total, maxProbePaths)
+	if asked > maxProbePaths {
+		return nil, nil, fmt.Errorf("the profiles pass %d host devices to their probe, more than the %d one host-view probe is asked about", asked, maxProbePaths)
 	}
 	audits := map[string]profileAudit{}
 	claimed := map[string]string{}
@@ -43,27 +60,47 @@ func auditProfiles(declared Profiles, procDevices string, inspect func(string) (
 		if p.Kind != orkstackv1.ProfileKind_PROFILE_KIND_DEVICES {
 			continue
 		}
-		audit := profileAudit{}
-		for _, d := range p.Devices {
-			if other, taken := claimed[d.ContainerPath]; taken {
-				return nil, nil, fmt.Errorf("profiles %s and %s both pass a device at %s, which a task holding both could not be given",
-					other, p.Name, d.ContainerPath)
+		contracts, def := p.contractList()
+		audit := profileAudit{contracts: map[string]contractAudit{}, def: def}
+		mine := map[string]bool{}
+		for _, c := range contracts {
+			for _, d := range c.Devices {
+				if other, taken := claimed[d.ContainerPath]; taken && other != p.Name {
+					return nil, nil, fmt.Errorf("profiles %s and %s both pass a device at %s, which a task holding both could not be given",
+						other, p.Name, d.ContainerPath)
+				}
+				claimed[d.ContainerPath] = p.Name
 			}
-			claimed[d.ContainerPath] = p.Name
-			host, err := inspect(d.Path)
-			if err != nil {
-				return nil, nil, fmt.Errorf("profile %s (%s): %w", p.Name, DetailDeviceClassRefused, err)
+		}
+		given := map[string]bool{}
+		for _, c := range contracts {
+			ca := contractAudit{accepts: c.Accepts}
+			for _, d := range c.Devices {
+				host, seen := found[d.Path]
+				if !seen {
+					var err error
+					if host, err = inspect(d.Path); err != nil {
+						return nil, nil, fmt.Errorf("profile %s (%s): %w", p.Name, DetailDeviceClassRefused, err)
+					}
+					if _, err := classifyDevice(host, drivers); err != nil {
+						return nil, nil, fmt.Errorf("profile %s (%s): %w", p.Name, DetailDeviceClassRefused, err)
+					}
+					found[d.Path] = host
+				}
+				ca.devices = append(ca.devices, auditedDevice{ProfileDevice: d, Host: host})
+				if !mine[d.Path] {
+					mine[d.Path] = true
+					probe := d
+					probe.ContainerPath = probeContainerPath(d.ContainerPath, given, probePaths)
+					audit.devices = append(audit.devices, auditedDevice{ProfileDevice: probe, Host: host})
+				}
 			}
-			if _, err := classifyDevice(host, drivers); err != nil {
-				return nil, nil, fmt.Errorf("profile %s (%s): %w", p.Name, DetailDeviceClassRefused, err)
-			}
-			found[d.Path] = host
-			audit.devices = append(audit.devices, auditedDevice{ProfileDevice: d, Host: host})
+			audit.contracts[c.Label] = ca
 		}
 		audits[p.Name] = audit
 	}
 	// The identities from the same inspection: a device is classified once,
-	// so the identity describes exactly what was audited.
+	// so each identity describes exactly what was audited.
 	classify := func(path string) (string, error) {
 		host, ok := found[path]
 		if !ok {
@@ -76,12 +113,38 @@ func auditProfiles(declared Profiles, procDevices string, inspect func(string) (
 		return nil, nil, err
 	}
 	for _, d := range described {
-		if a, ok := audits[d.GetName()]; ok {
-			a.identity = d.GetIdentityDigest()
-			audits[d.GetName()] = a
+		a, ok := audits[d.GetName()]
+		if !ok {
+			continue
 		}
+		a.identity = d.GetIdentityDigest()
+		for _, c := range d.GetContracts() {
+			ca := a.contracts[c.GetLabel()]
+			ca.identity = c.GetIdentityDigest()
+			a.contracts[c.GetLabel()] = ca
+		}
+		audits[d.GetName()] = a
 	}
 	return audits, described, nil
+}
+
+// probeContainerPath is path for the host-view probe, or, when another host
+// device of the same profile already takes it there (given), a path of the
+// probe's own: two contracts of one name may give different devices one
+// container path, and the probe sees every device of every name at once. A
+// path of its own is none in taken, which holds every real container path of
+// the audit and every path already given, so it is unique across names.
+func probeContainerPath(path string, given, taken map[string]bool) string {
+	if !given[path] {
+		given[path] = true
+		return path
+	}
+	out := path
+	for n := 1; taken[out]; n++ {
+		out = fmt.Sprintf("/dev/ork-probe-%d", n)
+	}
+	taken[out], given[out] = true, true
+	return out
 }
 
 // auditGPUProfiles is the boot audit of every declared gpu profile: its CDI
@@ -109,9 +172,17 @@ func auditGPUProfiles(declared Profiles, dirs []string, host cdiHost) (map[strin
 		default:
 			audit = gpuAuditOf(identity, found)
 		}
+		audit.contracts, audit.def = gpuContracts(p, identity)
 		audits[p.Name] = audit
 	}
 	return audits, absent, nil
+}
+
+// gpuContracts is a gpu profile's one contract, for its audit: its identity
+// is the profile's, since a gpu identity holds no device of a contract.
+func gpuContracts(p Profile, identity string) (map[string]contractAudit, string) {
+	c, _ := p.DefaultContract()
+	return map[string]contractAudit{c.Label: {identity: identity, accepts: c.Accepts}}, c.Label
 }
 
 // gpuAuditOf is a gpu profile's audit record from what its CDI audit found.
@@ -159,7 +230,9 @@ func (s *profileState) auditGPUOnce(host cdiHost, now time.Time) map[string]stri
 			drifted[p.Name] = err.Error()
 			s.setDrift(p.Name, changed, err.Error(), now)
 		case old.gpu == nil:
-			s.adoptAudit(p.Name, gpuAuditOf(old.identity, found))
+			adopted := gpuAuditOf(old.identity, found)
+			adopted.contracts, adopted.def = old.contracts, old.def
+			s.adoptAudit(p.Name, adopted)
 			s.clearUnavailable(p.Name, absent)
 		case !sameGPUAudit(old, gpuAuditOf(old.identity, found)):
 			detail := "the CDI specs or the nodes they pass differ from this Orker's audit"

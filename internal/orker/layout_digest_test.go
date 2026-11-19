@@ -24,6 +24,10 @@ func (r *layoutProbeRuntime) LoadLayout(context.Context, string, string) (PullIn
 	r.loads++
 	return PullInfo{}, nil
 }
+
+func (r *layoutProbeRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
 func (*layoutProbeRuntime) Create(context.Context, ContainerSpec) (ContainerID, error) {
 	return "", nil
 }

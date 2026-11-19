@@ -87,6 +87,10 @@ func (r *phaseCapturingRuntime) LoadLayout(context.Context, string, string) (Pul
 	return PullInfo{}, errors.New("no embedded layout in this test")
 }
 
+func (r *phaseCapturingRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (r *phaseCapturingRuntime) Create(ctx context.Context, spec ContainerSpec) (ContainerID, error) {
 	r.mu.Lock()
 	r.createCtxValue = ctx.Value(phaseObserverCtxKey{})
@@ -257,6 +261,10 @@ func (panicCreateRuntime) Pull(context.Context, string) (PullInfo, error) {
 
 func (panicCreateRuntime) LoadLayout(context.Context, string, string) (PullInfo, error) {
 	return PullInfo{}, errors.New("no embedded layout in this test")
+}
+
+func (panicCreateRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
 }
 
 func (panicCreateRuntime) Create(context.Context, ContainerSpec) (ContainerID, error) {

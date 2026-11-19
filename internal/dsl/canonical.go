@@ -276,6 +276,12 @@ func canonicalTask(t *orkstackv1.Task) (map[string]any, error) {
 	if len(t.GetDevices()) > 0 {
 		out["devices"] = canonicalStrings(t.GetDevices())
 	}
+	// deviceContracts is emitted ONLY when set, for the same reason: every
+	// definition written before contracts, and every task without one,
+	// keeps its digest.
+	if len(t.GetDeviceContracts()) > 0 {
+		out["deviceContracts"] = canonicalStringMap(t.GetDeviceContracts())
+	}
 	// join is emitted ONLY when it is not UNSPECIFIED (all_succeeded) — the
 	// same exception, for the same reason, as `pin`: a definition with no
 	// join keeps its digest.

@@ -176,6 +176,9 @@ type Heartbeater struct {
 	// usage is the attempt's usage sampler once its container started; every
 	// beat after it carries the sampler's latest reading (E94).
 	usage atomic.Pointer[usageSampler]
+	// profiles are what step 3c selected for the attempt's profiles, for its
+	// record; nil until it ran.
+	profiles atomic.Pointer[[]*orkstackv1.EffectiveProfile]
 	// calls is the loop's RPC context, which only the loop's end cancels: the
 	// t0 beat is sent on it.
 	calls context.Context
@@ -468,6 +471,25 @@ var usageUnencodable = jsontext.Value(`{"unavailable":"` + task.HeartbeatUsageUn
 
 // setUsage makes every later beat carry s's latest reading.
 func (h *Heartbeater) setUsage(s *usageSampler) { h.usage.Store(s) }
+
+// setProfiles records what the attempt's profiles run under. A nil
+// Heartbeater, as a local run without one has, records nothing.
+func (h *Heartbeater) setProfiles(p []*orkstackv1.EffectiveProfile) {
+	if h != nil {
+		h.profiles.Store(&p)
+	}
+}
+
+// effectiveProfiles is what setProfiles recorded, or nil.
+func (h *Heartbeater) effectiveProfiles() []*orkstackv1.EffectiveProfile {
+	if h == nil {
+		return nil
+	}
+	if p := h.profiles.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
 
 // encodeUsage is s's latest reading as a beat carries it, with this loop's
 // tick. A usage that cannot be encoded within HeartbeatUsageMaxBytes is sent

@@ -162,7 +162,7 @@ func TestInterruptionTypes(t *testing.T) {
 		{"never-started past its budget still listed", &b, &orkstackv1.TaskInterruptions{NeverStarted: 500, StoreFaults: 5}, 0, all},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := interruptionTypes(tc.b, tc.st, &orkstackv1.RunLossEvents{Count: tc.count})
+			got := interruptionTypes(tc.b, tc.st, &orkstackv1.RunLossEvents{Count: tc.count}, false)
 			if !slices.Equal(got, tc.want) {
 				t.Errorf("types = %v, want %v", got, tc.want)
 			}
@@ -170,7 +170,7 @@ func TestInterruptionTypes(t *testing.T) {
 	}
 	zero := testBudgets()
 	zero.lost, zero.handedBack = 0, 0
-	if got := interruptionTypes(&zero, nil, nil); !slices.Equal(got, all[:4]) {
+	if got := interruptionTypes(&zero, nil, nil, false); !slices.Equal(got, all[:4]) {
 		t.Errorf("lost and handed back capped at 0 list %v, want the never-started class alone", got)
 	}
 }

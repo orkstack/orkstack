@@ -298,6 +298,10 @@ func (r *fakeTaskRuntime) LoadLayout(context.Context, string, string) (orker.Pul
 	return orker.PullInfo{}, orker.ErrNotInLayout
 }
 
+func (r *fakeTaskRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (r *fakeTaskRuntime) Create(_ context.Context, spec orker.ContainerSpec) (orker.ContainerID, error) {
 	r.mu.Lock()
 	r.specs = append(r.specs, spec)

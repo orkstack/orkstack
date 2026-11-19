@@ -54,6 +54,10 @@ func (r *cacheRuntime) LoadLayout(context.Context, string, string) (PullInfo, er
 	return PullInfo{}, errors.New("no layout")
 }
 
+func (r *cacheRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (r *cacheRuntime) Create(_ context.Context, spec ContainerSpec) (ContainerID, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
