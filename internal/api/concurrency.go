@@ -210,6 +210,26 @@ func (s *Service) planConcurrency(
 	return nil
 }
 
+// runIndexGates readies ListRuns' concurrency filters (queued=, queued_on=,
+// holding=), which only the cluster's index of open runs can answer: a
+// deployment that does not index concurrency limits, or that has no read
+// model, refuses them, and otherwise a key stands for the gate submit plans
+// for it in this namespace's incarnation.
+func runIndexGates(index *engine.RunIndexQuery, ns *orkstackv1.Namespace, binding engine.Binding) error {
+	if binding.Reader == nil || !concurrencyIndexAnswer(binding.Starter) {
+		return connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
+			"this deployment does not index concurrency limits, so it cannot list runs by queued=, queued_on= or holding=; "+
+				"docs/DEPLOY.md, \"Underneath: the cluster commands\", says what a concurrency limit needs the cluster to index"))
+	}
+	incarnation, err := concurrencyIncarnation(ns)
+	if err != nil {
+		return err
+	}
+	namespace := ns.GetName()
+	index.GateOf = func(key string) string { return engine.GateID(namespace, incarnation, key) }
+	return nil
+}
+
 // concurrencyIncarnation is the namespace's incarnation at its gates
 // (§3.1): "" for the never-stored default, else its created_at in RFC 3339
 // UTC to the nanosecond (decision D13), so two incarnations a second apart

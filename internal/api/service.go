@@ -2948,6 +2948,11 @@ func (s *Service) ListRuns(
 	if err != nil {
 		return nil, err
 	}
+	if plan.Index != nil {
+		if err := runIndexGates(plan.Index, ns, binding); err != nil {
+			return nil, err
+		}
+	}
 	if binding.Reader != nil {
 		query := plan
 		query.Namespace = ns.GetName()
@@ -2978,7 +2983,9 @@ func (s *Service) ListRuns(
 		}
 		fromMemory = true
 	}
-	if s.archive != nil {
+	// An archived run has ended, so it waits on and holds nothing: under an
+	// index filter the archive cannot add a row, and is not read.
+	if s.archive != nil && plan.Index == nil {
 		archived, err := s.archive.ListRuns(ctx, engine.ArchiveQuery{
 			Namespace:     ns.GetName(),
 			OrkflowName:   plan.OrkflowName,
