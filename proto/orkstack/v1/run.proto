@@ -1032,6 +1032,12 @@ message EffectiveProfile {
   // identity_pinned is whether the run pinned the profile's identity at
   // submit.
   bool identity_pinned = 4;
+  // contract is the label of the contract the attempt ran under.
+  string contract = 5;
+  // run_contracts are the labels the run pinned for this profile.
+  repeated string run_contracts = 6;
+  // declared is whether the task's image chose the contract.
+  bool declared = 7;
 }
 
 // InheritedPause is a run's pause caused by its parent run's pause. Only the
