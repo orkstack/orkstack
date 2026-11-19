@@ -90,11 +90,17 @@ func (t Target) BuildEnv() []string {
 // the one fact of the checkout a release does record, is stamped too, and
 // `orkctl version`, `ork --version` and `orker --version` report it. One commit
 // builds one binary: the stamp is a function of it, as the archives' times
-// already are. Symbols are not stripped.
-func (t Target) BuildArgs(version, commit, out string) []string {
+// already are. Symbols are not stripped. The orker also carries the
+// release's signing key, releaseKey (ReleaseKey), which its profile probes
+// verify their default image with; the other binaries need none.
+func (t Target) BuildArgs(version, commit, releaseKey, out string) []string {
+	ldflags := "-X main.version=" + version + " -X main.commit=" + commit
+	if t.Binary == Orker && releaseKey != "" {
+		ldflags += " -X main.releaseKey=" + releaseKey
+	}
 	return []string{
 		"build", "-trimpath", "-buildvcs=false", "-tags", BuildTags,
-		"-ldflags", "-X main.version=" + version + " -X main.commit=" + commit,
+		"-ldflags", ldflags,
 		"-o", out, t.Package(),
 	}
 }

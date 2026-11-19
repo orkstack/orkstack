@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"regexp"
 	"strconv"
+
+	"github.com/orkstack/orkstack/internal/buildinfo"
 )
 
 // Version is a release version, vMAJOR.MINOR.PATCH: the shape of a release tag
@@ -14,7 +16,9 @@ type Version struct {
 	Major, Minor, Patch int
 }
 
-var versionPattern = regexp.MustCompile(`^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$`)
+// versionPattern is buildinfo's, so a binary takes for a release exactly the
+// versions a release stamps (TestDist_VersionPatternIsBuildinfos).
+var versionPattern = buildinfo.ReleaseVersionPattern
 
 // ParseVersion parses "v1.2.3". It accepts nothing else: no missing part, no
 // suffix, no whitespace and no leading zero, so the string it was given is

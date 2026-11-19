@@ -3,6 +3,7 @@ package dist
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"os"
@@ -12,10 +13,30 @@ import (
 	"slices"
 	"strconv"
 	"time"
+
+	"github.com/orkstack/orkstack/internal/task"
 )
 
 // LicenseFile is the licence every archive carries, at the repository root.
 const LicenseFile = "LICENSE"
+
+// ReleaseKeyFile is the public half of the key a release signs its images
+// with, which release.yml requires to be committed.
+const ReleaseKeyFile = "deploy/cosign.pub"
+
+// ReleaseKey is ReleaseKeyFile under root, base64-encoded as the orker
+// binary is stamped with it (Target.BuildArgs), once it reads as the P-256
+// public key a release verifies with.
+func ReleaseKey(root string) (string, error) {
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(ReleaseKeyFile)))
+	if err != nil {
+		return "", fmt.Errorf("read the release signing key %s: %w", ReleaseKeyFile, err)
+	}
+	if _, err := task.ParseSigningKey(raw); err != nil {
+		return "", fmt.Errorf("the release signing key %s: %w", ReleaseKeyFile, err)
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
 
 // UIIndex is the page every route of the web UI boots from, in the build
 // `make ui` writes for ork to embed (internal/webui), as a path from the
@@ -49,7 +70,15 @@ type Builder func(ctx context.Context, root string, target Target, version, comm
 // environment Target.BuildArgs and Target.BuildEnv give: static, trimmed,
 // the time zone database linked in, and the version and commit stamped.
 func GoBuilder(ctx context.Context, root string, target Target, version, commit, out string) error {
-	cmd := exec.CommandContext(ctx, "go", target.BuildArgs(version, commit, out)...)
+	var key string
+	if target.Binary == Orker {
+		k, err := ReleaseKey(root)
+		if err != nil {
+			return err
+		}
+		key = k
+	}
+	cmd := exec.CommandContext(ctx, "go", target.BuildArgs(version, commit, key, out)...)
 	cmd.Dir = root
 	// Later entries win, so the target's platform overrides the caller's.
 	cmd.Env = append(os.Environ(), target.BuildEnv()...)

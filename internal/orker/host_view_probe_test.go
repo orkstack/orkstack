@@ -135,7 +135,7 @@ func TestProbeHostView(t *testing.T) {
 			if tc.build != "" {
 				build = tc.build
 			}
-			f, err := a.dispatcher.probeHostView(t.Context(), tc.rt, a.probeRoot(), viewProbeImage, build, a.profiles.hostViewAudits())
+			f, err := a.dispatcher.probeHostView(t.Context(), tc.rt, a.probeRoot(), a.profiles.probeSource(), build, a.profiles.hostViewAudits())
 			if err != nil {
 				t.Fatalf("probeHostView: %v", err)
 			}
@@ -161,7 +161,7 @@ func TestProbeHostView(t *testing.T) {
 func TestHostViewProbeSpec(t *testing.T) {
 	rt := &viewProbeRuntime{}
 	a := viewProbeFixture(t, rt)
-	if _, err := a.dispatcher.probeHostView(t.Context(), rt, a.probeRoot(), viewProbeImage, "c0ffee", a.profiles.hostViewAudits()); err != nil {
+	if _, err := a.dispatcher.probeHostView(t.Context(), rt, a.probeRoot(), a.profiles.probeSource(), "c0ffee", a.profiles.hostViewAudits()); err != nil {
 		t.Fatal(err)
 	}
 	if len(rt.specs) != 1 {
