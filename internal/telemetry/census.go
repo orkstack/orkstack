@@ -32,8 +32,9 @@ const (
 
 	// DefaultCensusRequestsPerMinute is each replica's census budget.
 	DefaultCensusRequestsPerMinute = 60
-	// censusInterval is how often each census runs.
-	censusInterval = time.Minute
+	// CensusInterval is how often each census runs, and the most its first
+	// pass waits after boot.
+	CensusInterval = time.Minute
 	// censusPassTimeout bounds one pass.
 	censusPassTimeout = 30 * time.Second
 )
@@ -202,7 +203,7 @@ type census struct {
 	// budget pays for each pass; nil runs every pass and only records what it
 	// spent (the pool backlog, whose cost the operator's settings bound).
 	budget *censusBudget
-	// interval is how often it runs; zero is censusInterval.
+	// interval is how often it runs; zero is CensusInterval.
 	interval time.Duration
 	metrics  *censusMetrics
 	now      func() time.Time
@@ -273,7 +274,7 @@ func (c census) runPass(ctx context.Context) (err error) {
 func (c census) run(ctx context.Context) {
 	interval := c.interval
 	if interval <= 0 {
-		interval = censusInterval
+		interval = CensusInterval
 	}
 	jitter := time.NewTimer(rand.N(interval))
 	select {

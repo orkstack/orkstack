@@ -152,6 +152,7 @@ func (s *runState) beginPass() {
 	s.passReserve = reserveCount{}
 	s.passCharge = reserveCount{}
 	s.pinClosureFresh = false // pinClosureAllows' set is rebuilt at most once per pass
+	s.holdSeen = false        // the pass decides the published hold afresh (hold.go)
 }
 
 // chargeReserve adds what one dispatch can add to failReserve. Before the

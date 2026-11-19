@@ -36,6 +36,8 @@ Each row shows when, who, what, which namespace and target, and the result.
 | `namespace` | `--filter 'namespace=payments'` |
 | `succeeded` | `--filter 'succeeded=false'` |
 | `error_code` | The error code of a refused write |
+| `decision` | `--filter 'decision=denied'`: what access control decided (`allowed`, `denied`, `would-deny`) |
+| `principal_verified` | `--filter 'principal_verified=false'`: writes whose principal was asserted, not verified |
 
 - The window defaults to the seven days before now. Set `at>=` and `at<` to choose another.
 - A page holds 50 records by default, and 200 at most. Use `--page-token` for the next page.

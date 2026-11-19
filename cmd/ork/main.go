@@ -136,6 +136,11 @@ type config struct {
 	// length and its longest. Refused at boot outside their bounds
 	// (docs/DEPLOY.md §1).
 	runPauseTimeout, runPauseTimeoutMax time.Duration
+	// gateTunables and censusSettings are engine.concurrency.*
+	// (concurrencySettingsFromEnv): what a concurrency gate this engine
+	// starts runs on, and the census schedule's settings.
+	gateTunables   engine.GateTunables
+	censusSettings engine.CensusSettings
 	// definitionByReference is engine.definition_by_reference's effective
 	// value (definitionByReferenceFromEnv), and definitionByReferenceSet
 	// whether the key was set; the boot logs both.
@@ -204,6 +209,7 @@ func loadConfig() config {
 	poolMetrics, poolMetricsErr := poolMetricsFromEnv()
 	runTimeoutGrace, runTimeoutGraceErr := runTimeoutHandlerGraceFromEnv()
 	runPauseTimeout, runPauseTimeoutMax, runPauseErr := runPauseTimeoutsFromEnv()
+	gateTunables, censusSettings, concurrencyErr := concurrencySettingsFromEnv()
 	tasks, tasksErr := taskCeilingFromEnv(historyMaxEvents, historyMaxBytes, continuation, runMaxInFlight)
 	snapshotOverlays, overlaysErr := snapshotOverlaysFromEnv()
 	cacheMaxTTL, cacheErr := envPositiveDuration("ORK_CACHE_MAX_TTL", engine.DefaultCacheMaxTTL)
@@ -235,6 +241,8 @@ func loadConfig() config {
 		runTimeoutHandlerGrace:        runTimeoutGrace,
 		runPauseTimeout:               runPauseTimeout,
 		runPauseTimeoutMax:            runPauseTimeoutMax,
+		gateTunables:                  gateTunables,
+		censusSettings:                censusSettings,
 		definitionByReference:         byReference,
 		definitionByReferenceSet:      byReferenceSet,
 		snapshotOverlays:              snapshotOverlays,
@@ -243,7 +251,7 @@ func loadConfig() config {
 		limitsErr: errors.Join(valuesErr, artifactCountErr, artifactBytesErr,
 			logErr, commitErr, transferErr, throughputErr, eachErr, tasksErr, composeErr, cacheErr, historyErr,
 			continuationErr, inFlightErr, pinCreationErr, runTimeoutGraceErr, runPauseErr, byReferenceErr, overlaysErr,
-			interruptionsErr, poolMetricsErr),
+			interruptionsErr, poolMetricsErr, concurrencyErr),
 		deployment:       task.DeploymentFromEnv(),
 		registryAuthFile: env("ORK_REGISTRY_AUTH_FILE", ""),
 		cleanup:          archivecleanup.CleanupConfigFromEnv(),
@@ -1322,12 +1330,31 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			"consequence", "a paused run is listed as running",
 			"error", err)
 	}
+	// The concurrency limit's attributes are a fifth answer, all four as one:
+	// a limit cannot hold, queue or rebuild with any of them missing. Unusable
+	// is not fatal: the engine boots, and submit refuses concurrency limits
+	// with cause=index once it reads this answer (E88 §9.7, P3).
+	concurrencyIndexed, err := task.EnsureConcurrencySearchAttributes(indexCtx, temporalClient, cfg.temporalNamespace)
+	if errors.Is(err, task.ErrNamespaceNotVisible) {
+		return err
+	}
+	if err != nil {
+		logger.Warn("visibility does not index concurrency limits",
+			"consequence", "concurrency limits cannot be held on this cluster",
+			"error", err)
+	}
+	// The concurrency census schedule: created by any replica that finds it
+	// absent, updated only when its settings differ (E88 §22.6). It only
+	// reports, so a failure here never stops the boot: it is retried in the
+	// background until it succeeds or the engine stops.
+	go ensureCensusSchedule(ctx, logger, temporalClient, cfg.censusSettings)
 	logger.Info("connected to temporal",
 		"address", cfg.temporalAddress, "namespace", cfg.temporalNamespace,
 		"run_namespace_index", namespaceIndexed,
 		"run_origin_index", originIndexed,
 		"run_root_index", rootIndexed,
-		"run_paused_index", pausedIndexed)
+		"run_paused_index", pausedIndexed,
+		"concurrency_index", concurrencyIndexed && namespaceIndexed)
 
 	// Every read is answered by Temporal and the archive (AGENTS.md §7), so
 	// the bus and the store are write-side helpers here: each forgets a run
@@ -1632,6 +1659,13 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		activity.RegisterOptions{Name: engine.ActivityRenderComposedValues})
 	runWorker.RegisterActivityWithOptions(compose.StoreComposedValues,
 		activity.RegisterOptions{Name: engine.ActivityStoreComposedValues})
+	// The concurrency gates' reads of the cluster, and the census's pass, as
+	// local activities of the worker that runs their workflow tasks (E88
+	// §5.1.8). The census reports nowhere until the telemetry gauges read it.
+	engine.RegisterGateActivities(runWorker, engine.NewGateActivities(temporalClient))
+	concurrencyGauges := telemetry.NewConcurrencyGauges(sinks.Default(), cfg.censusSettings.Interval,
+		cfg.censusSettings.Timeout, !concurrencyIndexed || !namespaceIndexed, logger)
+	engine.RegisterCensusActivities(runWorker, engine.NewCensusActivities(temporalClient, censusSink{gauges: concurrencyGauges}))
 
 	// The engine's telemetry observer: a run's spans, metrics and one log
 	// line per lifecycle event, routed per-run to whatever sink
@@ -2170,4 +2204,39 @@ func gcModeInForce(cleanupEnabled, reclaimable bool, configured archivecleanup.R
 		return archivecleanup.ReclaimOff
 	}
 	return configured
+}
+
+// censusEnsureAttempt bounds one try at the census schedule, and
+// censusEnsureRetry spaces the tries after a failure.
+const (
+	censusEnsureAttempt = 30 * time.Second
+	censusEnsureRetry   = time.Minute
+)
+
+// ensureCensusSchedule ensures the census schedule, retrying a failure every
+// censusEnsureRetry until it succeeds or ctx ends. An update the cluster
+// reports applied and then reads back as the old one is left to the next
+// boot, as the design says.
+func ensureCensusSchedule(ctx context.Context, logger *slog.Logger, c client.Client, s engine.CensusSettings) {
+	for {
+		attempt, cancel := context.WithTimeout(ctx, censusEnsureAttempt)
+		outcome, err := engine.EnsureCensusSchedule(attempt, c, task.DefaultQueue, s)
+		cancel()
+		switch {
+		case err == nil && outcome == engine.CensusUpdateLost:
+			logger.Warn("the concurrency census schedule was updated and still reads back its old settings; the next boot updates it again",
+				"schedule", engine.ConcurrencyCensusScheduleID)
+			return
+		case err == nil:
+			logger.Info("concurrency census schedule", "schedule", engine.ConcurrencyCensusScheduleID, "outcome", string(outcome))
+			return
+		}
+		logger.Warn("the concurrency census schedule could not be ensured; retrying",
+			"schedule", engine.ConcurrencyCensusScheduleID, "retry_in", censusEnsureRetry, "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(censusEnsureRetry):
+		}
+	}
 }

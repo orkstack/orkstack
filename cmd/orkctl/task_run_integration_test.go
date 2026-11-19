@@ -121,7 +121,7 @@ func runTaskRunBinary(ctx context.Context, t *testing.T, orkctl, dir, sessions, 
 	full := append(append([]string{"task", "run"}, args...), "--server", server)
 	cmd := exec.CommandContext(ctx, orkctl, full...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), orker.WorkRootVar+"="+sessions)
+	cmd.Env = append(testbin.StackEnv(os.Environ()), orker.WorkRootVar+"="+sessions)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -570,7 +570,7 @@ tasks:
 	cmd := exec.CommandContext(ctx, s.orkctlPath, "task", "run", "--file", doc, "--task", "looper",
 		"--server", "http://"+s.replicas[0].addr)
 	cmd.Dir = s.root
-	cmd.Env = append(os.Environ(), orker.WorkRootVar+"="+s.sessions)
+	cmd.Env = append(testbin.StackEnv(os.Environ()), orker.WorkRootVar+"="+s.sessions)
 	pipe, err := cmd.StdoutPipe()
 	must.OK(t, err)
 	var stderr bytes.Buffer
@@ -677,7 +677,7 @@ func (s *taskRunStack) startLooper(doc string) *startedTaskRun {
 	cmd := exec.CommandContext(s.ctx, s.orkctlPath, "task", "run", "--file", doc, "--task", "looper",
 		"--server", "http://"+s.replicas[0].addr)
 	cmd.Dir = s.root
-	cmd.Env = append(os.Environ(), orker.WorkRootVar+"="+s.sessions)
+	cmd.Env = append(testbin.StackEnv(os.Environ()), orker.WorkRootVar+"="+s.sessions)
 	pipe, err := cmd.StdoutPipe()
 	must.OK(s.t, err)
 	run := &startedTaskRun{cmd: cmd, copied: make(chan struct{}), stderr: &bytes.Buffer{}}

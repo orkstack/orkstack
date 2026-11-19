@@ -1235,7 +1235,8 @@ func (x *SetPrincipalDisabledResponse) GetSigninsRevoked() int32 {
 type ListPrincipalsRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// window is how far back sign-ins are read; zero means the default
-	// (30 days), and a value above the audit trail's retention is cut to it.
+	// (30 days), and a value above 90 days is cut to 90 days
+	// (window_start says where the answer began).
 	Window *durationpb.Duration `protobuf:"bytes,1,opt,name=window,proto3" json:"window,omitempty"`
 	// page_size caps the rows answered; 0 means the default (100).
 	PageSize int32 `protobuf:"varint,2,opt,name=page_size,json=pageSize,proto3" json:"page_size,omitempty"`

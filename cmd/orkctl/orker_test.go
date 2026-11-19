@@ -83,8 +83,10 @@ func (f *scriptedFleet) CordonOrker(_ context.Context, id string, in *orkstackv1
 	defer f.mu.Unlock()
 	f.cordons = append(f.cordons, in)
 	out := proto.Clone(f.described[id]).(*orkstackv1.DescribeOrkerResult)
-	// As the Orker does: the operator's cordon is cleared, a store outage is not.
-	out.Cordoned, out.CordonReason, out.CordonedAt = in.GetCordoned() || out.GetStoreOutage() != nil, "", nil
+	// As the Orker does: the operator's cordon is cleared, a store outage or a
+	// profile's cause is not.
+	out.Cordoned, out.CordonReason, out.CordonedAt = in.GetCordoned() || out.GetStoreOutage() != nil ||
+		len(out.GetProfileCordons()) > 0, "", nil
 	if in.GetCordoned() {
 		out.CordonReason = in.GetReason()
 		out.CordonedAt = timestamppb.New(cordonedAt)

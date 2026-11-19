@@ -279,6 +279,35 @@ func isIdent(e ast.Expr, name string) bool {
 // returned, a struct field) can have none and is refused.
 func goOrkerSpawns(t *testing.T, path string) (found int, bad []string) {
 	t.Helper()
+	return goSpawns(t, path, orkerRule)
+}
+
+// spawnRule is what goSpawns holds an exec.Command to: which programs it is
+// about, what an Env assignment must do, and how a refusal reads.
+type spawnRule struct {
+	classify  func(e ast.Expr, locals map[string]programKind, params map[string]bool) programKind
+	satisfied func(env ast.Expr) bool
+	what      func(kind programKind) string
+	missing   string          // after what(kind), for a command whose Env does not satisfy
+	noEnv     string          // after what(kind), for a command no Env is ever set on
+	skip      map[string]bool // top-level functions not to check, by name
+}
+
+// orkerRule: an Orker started by a test has a stop grace (testbin.OrkerEnv).
+var orkerRule = spawnRule{
+	classify:  classifyProgram,
+	satisfied: namesGrace,
+	what:      spawnWhat,
+	missing:   " without testbin.OrkerEnv or ORK_ORKER_STOP_GRACE in its Env",
+	noEnv:     " with a command no Env is ever set on; assign it and set Env through testbin.OrkerEnv",
+}
+
+// goSpawns parses a test file and, in every top-level function (its closures
+// included, which share its names), pairs each exec.Command(Context) with the
+// Env assignments to the same command, and reports each command rule is about
+// whose Env does not satisfy it, or that has none.
+func goSpawns(t *testing.T, path string, rule spawnRule) (found int, bad []string) {
+	t.Helper()
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 	if err != nil {
@@ -288,8 +317,8 @@ func goOrkerSpawns(t *testing.T, path string) (found int, bad []string) {
 		return 0, nil
 	}
 	for _, decl := range file.Decls {
-		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil {
-			f, b := spawnsIn(fset, fn)
+		if fn, ok := decl.(*ast.FuncDecl); ok && fn.Body != nil && !rule.skip[fn.Name.Name] {
+			f, b := spawnsIn(fset, fn, rule)
 			found += f
 			bad = append(bad, b...)
 		}
@@ -297,7 +326,7 @@ func goOrkerSpawns(t *testing.T, path string) (found int, bad []string) {
 	return found, bad
 }
 
-func spawnsIn(fset *token.FileSet, fn *ast.FuncDecl) (found int, bad []string) {
+func spawnsIn(fset *token.FileSet, fn *ast.FuncDecl, rule spawnRule) (found int, bad []string) {
 	params := map[string]bool{}
 	addParams := func(ft *ast.FuncType) {
 		for _, field := range ft.Params.List {
@@ -317,11 +346,14 @@ func spawnsIn(fset *token.FileSet, fn *ast.FuncDecl) (found int, bad []string) {
 	var order []string
 	assigned := map[*ast.CallExpr]bool{}
 	var direct []*ast.CallExpr
+	// values are what a plain name was last assigned, so an Env taken from a
+	// variable is judged by what built the variable.
+	values := map[string]ast.Expr{}
 	bind := func(lhs ast.Expr, rhs ast.Expr) {
 		name := exprString(lhs)
 		if call, ok := rhs.(*ast.CallExpr); ok && isExecCommand(call) {
 			assigned[call] = true
-			kind := classifyProgram(programOf(call), locals, params)
+			kind := rule.classify(programOf(call), locals, params)
 			c, seen := commands[name]
 			if !seen {
 				order = append(order, name)
@@ -335,13 +367,18 @@ func spawnsIn(fset *token.FileSet, fn *ast.FuncDecl) (found int, bad []string) {
 			return
 		}
 		if strings.HasSuffix(name, ".Env") {
-			if c, ok := commands[strings.TrimSuffix(name, ".Env")]; ok && namesGrace(rhs) {
+			env := rhs
+			if id, ok := rhs.(*ast.Ident); ok && values[id.Name] != nil {
+				env = values[id.Name]
+			}
+			if c, ok := commands[strings.TrimSuffix(name, ".Env")]; ok && rule.satisfied(env) {
 				c.ok = true
 			}
 			return
 		}
 		if id, ok := lhs.(*ast.Ident); ok {
-			if k := classifyProgram(rhs, locals, params); k != notOrker {
+			values[id.Name] = rhs
+			if k := rule.classify(rhs, locals, params); k != notOrker {
 				locals[id.Name] = k
 			}
 		}
@@ -376,18 +413,16 @@ func spawnsIn(fset *token.FileSet, fn *ast.FuncDecl) (found int, bad []string) {
 		}
 		found++
 		if !c.ok {
-			bad = append(bad, strconv.Itoa(fset.Position(c.pos).Line)+": "+spawnWhat(c.kind)+
-				" without testbin.OrkerEnv or ORK_ORKER_STOP_GRACE in its Env")
+			bad = append(bad, strconv.Itoa(fset.Position(c.pos).Line)+": "+rule.what(c.kind)+rule.missing)
 		}
 	}
 	for _, call := range direct {
 		if assigned[call] {
 			continue
 		}
-		if kind := classifyProgram(programOf(call), locals, params); kind != notOrker {
+		if kind := rule.classify(programOf(call), locals, params); kind != notOrker {
 			found++
-			bad = append(bad, strconv.Itoa(fset.Position(call.Pos()).Line)+": "+spawnWhat(kind)+
-				" with a command no Env is ever set on; assign it and set Env through testbin.OrkerEnv")
+			bad = append(bad, strconv.Itoa(fset.Position(call.Pos()).Line)+": "+rule.what(kind)+rule.noEnv)
 		}
 	}
 	return found, bad

@@ -16,6 +16,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dist"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 const (
@@ -122,7 +123,8 @@ func TestRelease_OneCommitBuildsOneBinary(t *testing.T) {
 
 // TestUnstampedBuild_ReportsUnknownAndStillRuns: a build nobody stamped, with
 // no version control information either (the quickstart's source build, a
-// source archive), says so rather than failing or guessing.
+// source archive), says so rather than failing or guessing. The build runs in
+// an environment that names another target, which testbin.GoBuildEnv drops.
 func TestUnstampedBuild_ReportsUnknownAndStillRuns(t *testing.T) {
 	if testing.Short() {
 		t.Skip("compiles orkctl; -short skips it, the proof runs it")
@@ -133,6 +135,9 @@ func TestUnstampedBuild_ReportsUnknownAndStillRuns(t *testing.T) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, goTool(t), "build", "-trimpath", "-buildvcs=false", "-ldflags", "-X main.commit=", "-o", out, "./cmd/orkctl")
 	cmd.Dir = repoRoot(t)
+	// Built under a shell that targets another platform, as a cross-compiling
+	// one does: the binary this test runs is still this host's.
+	cmd.Env = testbin.GoBuildEnv(append(os.Environ(), "GOOS=plan9", "GOARCH=386", "GOFLAGS=-tags=dist_polluted"))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, output)
 	}
