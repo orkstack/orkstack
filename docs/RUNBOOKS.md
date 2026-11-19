@@ -855,7 +855,7 @@ Severity critical; fires at once. Temporal keeps closed runs for less than OrkSt
 - **What it means:** The engine's Temporal credential may not update the namespace, and the namespace's retention is below the maximum run retention plus the retention buffer. At boot the engine refuses to start; in the cleanup loop it keeps running on the shorter retention.
 - **Impact:** The cluster may delete a closed run before OrkStack archives it.
 - **Confirm:** the engine log names the retention to set and the command; kit: `ork_retention_backstop_refused_total` by `outcome`.
-- **Fix:** Have a cluster admin run the `temporal operator namespace update --retention` the log names, or grant the engine the right to update its namespace.
+- **Fix:** Either have a cluster admin raise the namespace's retention to the value the log names (`temporal operator namespace update --namespace <ns> --retention <value>`), or lower OrkStack's maximum run retention until the retention covers it (`orkctl admin retention set`). The engine keeps running and accepting runs meanwhile.
 - **Related:** [OrkStackExecutionsMissing](#orkstackexecutionsmissing), [the-archive-sweep-risk](#the-archive-sweep-risk)
 
 ### OrkStackExecutionsMissing
