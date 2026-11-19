@@ -143,7 +143,11 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 	execute := func(actx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 		return behavior(actx, s, in)
 	}
-	publish := engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(snapshots).PublishEvent
+	eventActivities := engine.NewArchivingEventActivities(s.bus, s.runs, s.archive).WithEventSource(s.reader).WithSnapshotStore(snapshots)
+	if canStackRunNotifier != nil {
+		eventActivities = eventActivities.WithRunNotifier(canStackRunNotifier)
+	}
+	publish := eventActivities.PublishEvent
 	if pace != nil {
 		execute, publish = pace.execute(s, execute), pace.publish(s, publish)
 	}
@@ -173,6 +177,11 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 // for the stack it builds and clears it (TestIntegration_RecordConcurrencyRunHistories).
 // The event channel is fixed, so only a test that runs alone sets it.
 var canStackPublishWrap func(publishFunc) publishFunc
+
+// canStackRunNotifier, when set before a stack is built, is the run notifier
+// its event worker announces subscribable events to, as cmd/ork wires the
+// webhook fan-out (TestIntegration_WebhookRunQueued).
+var canStackRunNotifier engine.RunNotifier
 
 // canStackSnapshotWrap is canStackPublishWrap for the run worker's snapshot
 // store: a recorder that needs one run's emit to fail at its snapshot write
