@@ -43,13 +43,19 @@ func LiveQueued(snapshot *orkstackv1.ConcurrencyQueued, runID string, line GateL
 		q.Note = fmt.Sprintf("the limit has failed to rebuild for %s; it keeps trying",
 			now.Sub(line.RebuildFailingSince).Round(time.Second))
 	case line.Rebuilding:
-		q.NoteCode = QueuedNoteRebuilding
-		q.Note = "the limit is rebuilding its record of running runs; this can take a few minutes"
+		q.NoteCode, q.Note = QueuedNoteRebuilding, rebuildingNote(q.GetKey())
 	case len(line.StalledRuns) > 0:
 		q.NoteCode = QueuedNoteHolderStalled
 		q.Note = fmt.Sprintf("waiting behind run %s, which is not making progress; an operator must end it", line.StalledRuns[0])
 	}
 	return q
+}
+
+// rebuildingNote is a queued run's note while its limit reads which runs
+// hold its key: a gate that starts with no record of a previous one (a
+// first run at a key, or a record lost) cannot tell the two apart.
+func rebuildingNote(key string) string {
+	return fmt.Sprintf("waiting while the limit on key %s reads which runs hold it (a first run at a key, or after its record was lost)", key)
 }
 
 // NotAnsweringQueued is a queued run's record when its gate could not be

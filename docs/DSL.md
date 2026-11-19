@@ -2100,6 +2100,12 @@ tasks:
   asked); `orkctl run list -F queued=true`, `queued_on=KEY` and
   `holding=KEY` list the runs waiting for or holding a key, and only a run
   still going matches them. A run waiting for its slot cannot be paused.
+- **The first run at a key** (or one after the limit's record of the key was
+  lost) waits while the limit reads which runs hold the key: it says so, its
+  place unknown. That usually takes seconds; past
+  `engine.concurrency.rebuild_timeout` (10m) the limit reports the read
+  failing and keeps trying, and the run's `queue_timeout` bounds its wait. A
+  key whose last run ended cleanly grants at once.
 - **A paused run gives its slot back** once nothing of it runs (an open
   `await:` or `sleep:` does not count), so the next run in line can start; a
   run unpaused before then keeps it. On unpause it asks again and joins the

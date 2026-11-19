@@ -51,7 +51,7 @@ func TestLiveQueued_ReadsThePlaceInLineNowFromTheGate(t *testing.T) {
 			note: "waiting behind run ork-h2, which is not making progress; an operator must end it"},
 		{name: "rebuilding outranks a stall", line: line(func(l *GateLine) { l.StalledRuns = []string{"ork-h2"}; l.Rebuilding = true }),
 			position: 3, known: true, holders: []string{"ork-h1", "ork-h2"}, noteCode: "REBUILDING",
-			note: "the limit is rebuilding its record of running runs; this can take a few minutes"},
+			note: "waiting while the limit on key db reads which runs hold it (a first run at a key, or after its record was lost)"},
 		{name: "a failing rebuild outranks rebuilding", line: line(func(l *GateLine) {
 			l.Rebuilding = true
 			l.RebuildFailingSince = now.Add(-25 * time.Minute)

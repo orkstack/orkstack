@@ -438,3 +438,52 @@ func TestConcurrencyRun_AnEndingInLineStartsNoHandler(t *testing.T) {
 			c.ran, len(c.releases), c.last.GetError().GetCode(), c.last.GetQueued())
 	}
 }
+
+// TestConcurrencyRun_AFirstRunAtANewKeySaysTheLimitIsReadingItsHolders: a
+// run that arrives while its key's limit reads which runs hold it (a first
+// run at a key, or a record lost) is told so, its place unknown, never
+// "position 1 behind 0 running"; once the limit answers, its place is known.
+func TestConcurrencyRun_AFirstRunAtANewKeySaysTheLimitIsReadingItsHolders(t *testing.T) {
+	first := queued(2, 1)
+	first.Answer.Rebuilding, first.Answer.HoldersAhead = true, 0
+	h := newConcRunHarness(t, first, queued(2, 1))
+	h.env.RegisterDelayedCallback(func() {
+		h.env.SignalWorkflow(ConcurrencyGrantSignal, ConcurrencyGrant{Gate: "ork-conc-test", Run: concRunID, TaskIx: gateRunLevel, SeqBase: 1, Seq: 2})
+	}, 3*time.Minute)
+	h.run(concPlan())
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("the run ended %v", err)
+	}
+	const note = "waiting while the limit on key deploy reads which runs hold it (a first run at a key, or after its record was lost)"
+	var queuedEvent *orkstackv1.Event
+	for _, e := range h.events {
+		if e.GetType() == orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED {
+			queuedEvent = e
+		}
+	}
+	if queuedEvent == nil || !strings.HasPrefix(queuedEvent.GetMessage(), note) || strings.Contains(queuedEvent.GetMessage(), "behind 0 running") {
+		t.Fatalf("RUN_QUEUED %v, want it to say the limit is reading its holders", queuedEvent)
+	}
+}
+
+// TestSetRebuilding_MarksThePlaceUnknownUntilTheLimitHasReadItsHolders is
+// the run's record of the same: its place unknown with the note while the
+// limit reads, and known again, the note gone, once it has.
+func TestSetRebuilding_MarksThePlaceUnknownUntilTheLimitHasReadItsHolders(t *testing.T) {
+	q := &orkstackv1.ConcurrencyQueued{Key: "deploy", Position: 1, PositionKnown: true}
+	setRebuilding(q, true)
+	if q.GetPositionKnown() || q.GetNoteCode() != QueuedNoteRebuilding ||
+		q.GetNote() != "waiting while the limit on key deploy reads which runs hold it (a first run at a key, or after its record was lost)" {
+		t.Fatalf("while the limit reads: %v", q)
+	}
+	q.Position = 2
+	setRebuilding(q, false)
+	if !q.GetPositionKnown() || q.GetNoteCode() != "" || q.GetNote() != "" || q.GetPosition() != 2 {
+		t.Fatalf("once it has read: %v", q)
+	}
+	q.NoteCode, q.Note = "LINE_FULL", "full"
+	setRebuilding(q, false)
+	if q.GetNoteCode() != "LINE_FULL" {
+		t.Fatalf("another note was cleared: %v", q)
+	}
+}

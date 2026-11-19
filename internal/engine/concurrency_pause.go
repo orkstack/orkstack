@@ -208,7 +208,7 @@ func (s *runState) waitAgain(ctx workflow.Context, slot *ConcurrencySlotPlan, re
 				workflow.Now(ctx).Add(w.interval).UTC().Format(time.RFC3339)
 		case waitRebuilding:
 			c.queued.NoteCode = QueuedNoteRebuilding
-			c.queued.Note = "the limit is rebuilding its record of running runs; this can take a few minutes"
+			c.queued.Note = rebuildingNote(slot.Key)
 		}
 		// Not in line, so no memo entry; the index says the run waits.
 		if err := s.syncConcAttributes(ctx); err != nil {
