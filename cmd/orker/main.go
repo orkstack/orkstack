@@ -23,6 +23,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
@@ -33,6 +34,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/healthcheck"
 	"github.com/orkstack/orkstack/internal/orker"
+	"github.com/orkstack/orkstack/internal/payloadcrypt"
 	"github.com/orkstack/orkstack/internal/procguard"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
@@ -656,6 +658,16 @@ func temporalSecurity(ctx context.Context, address string, sinks *telemetry.Sink
 	return sec, nil
 }
 
+// orkerDataConverter is the SDK default under payload encryption's
+// converter, which holds no key in this release: every payload that is not
+// sealed passes through untouched, so the Orker stays as strict as the SDK
+// default on what it is sent. orkerFailureConverter writes a failure's
+// details with it, as the SDK default does.
+var (
+	orkerDataConverter    = payloadcrypt.NewConverter(converter.GetDefaultDataConverter(), nil)
+	orkerFailureConverter = payloadcrypt.NewFailureConverter(orkerDataConverter, false)
+)
+
 // connectTemporal dials the cluster with the options this process runs on:
 // the telemetry package's (telemetry.ClientOptions is the one way a client's
 // options are built, TestClientOptions_IsHowOrkAndOrkerDialTemporal). Its
@@ -685,6 +697,8 @@ func connectTemporal(ctx context.Context, cfg config, orkerID string, sinks *tel
 		return nil, err
 	}
 	temporalOptions.Identity = orkerID
+	temporalOptions.DataConverter = orkerDataConverter
+	temporalOptions.FailureConverter = orkerFailureConverter
 	if reports != nil {
 		temporalOptions.ConnectionOptions.DialOptions = append(temporalOptions.ConnectionOptions.DialOptions,
 			grpc.WithChainUnaryInterceptor(reports))

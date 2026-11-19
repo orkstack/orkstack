@@ -1970,6 +1970,7 @@ internal/identity/     Task identity: the issuer and its signing keys, what engi
 internal/evidence/     Run evidence bundle format, writer, and offline verifier
 internal/schemas/      JSON Schemas of the authored documents, generated from the parsers' key tables
 internal/testsupport/  Test-only helpers shared by suites
+internal/payloadcrypt/ Payload encryption: the sealed envelope, a run's key in its memo, the data and failure converters
 internal/listfilter/   Structured list filters: allowlist, grammar, matcher
 internal/enumname/     The JSON enum-name dialect shared by the API codec and list filters
 internal/quantity/     The cpu and memory quantity grammar shared by the DSL and the Orker
