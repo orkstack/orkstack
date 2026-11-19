@@ -265,3 +265,15 @@ identity:
   subject_format: ork  # ork
   spiffe:
     trust_domain: ""  # ork; no SPIFFE ID on any token
+  attempts:
+    extra: 0  # ork
+    max_extra: 4  # ork
+    max: 32  # ork
+  admission_cache_bytes: 134217728  # ork
+  token:
+    ttl: 1h  # ork
+    min_ttl: 10m  # ork
+    max_ttl: 12h  # ork
+  issuance:
+    records: required  # ork
+  unscoped_orkers: refuse  # ork

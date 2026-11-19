@@ -193,6 +193,8 @@ Defined in `proto/orkstack/v1/identity_service.proto`.
 | `GetIssuer` | [`GetIssuerRequest`](#getissuerrequest) | [`GetIssuerResponse`](#getissuerresponse) | GetIssuer answers the issuer, its documents as this engine serves and exports them, and what this engine last read of the published keys and of the issuer URL. Needs identity.read at the deployment. |
 | `ListSigningKeys` | [`ListSigningKeysRequest`](#listsigningkeysrequest) | [`ListSigningKeysResponse`](#listsigningkeysresponse) | ListSigningKeys answers every published key and every key this engine holds. Needs identity.read at the deployment. |
 | `RetireSigningKey` | [`RetireSigningKeyRequest`](#retiresigningkeyrequest) | [`RetireSigningKeyResponse`](#retiresigningkeyresponse) | RetireSigningKey retires a key: no engine signs with it again, and it is no longer served. The key stays in the published keys. Retiring a retired key answers it as it is; marking it compromised from another instant than it was is FAILED_PRECONDITION. Needs identity.keys.retire at the deployment. |
+| `MintAttemptTokens` | [`MintAttemptTokensRequest`](#mintattempttokensrequest) | [`MintAttemptTokensResponse`](#mintattempttokensresponse) | MintAttemptTokens signs the tokens one attempt of an admitted run's task holds, for the Orker that holds the attempt. Served only when callers are authenticated (auth.mode enforce). Needs identity.token.mint and task.result.commit at the task's pool, asked once the run's admission names the pool. |
+| `ListIssuedTokens` | [`ListIssuedTokensRequest`](#listissuedtokensrequest) | [`ListIssuedTokensResponse`](#listissuedtokensresponse) | ListIssuedTokens lists what was issued for a run's attempts, in key order: who asked, and each token's claims, never a token. Needs run.read on the run's Orkflow. |
 
 ### NamespaceService
 
@@ -627,6 +629,8 @@ In this release no Orkflow asks for an identity, so it is the empty table's.
 | Field | Type | Description |
 |---|---|---|
 | `digest` | `string` | digest is the consent digest of what the Orkflow asks for: "c1:" and 64 hexadecimal digits. |
+| `audiences` | repeated `string` | audiences are the distinct token audiences it asks for. |
+| `grants` | repeated `string` | grants are the distinct grants it asks for, by name. |
 
 ### AttemptCredential
 
@@ -980,6 +984,8 @@ binder: the digest of what its Orkflow asked for when it was bound.
 |---|---|---|
 | `digest` | `string` | digest is the consent digest recorded: "c1:" and 64 hexadecimal digits. |
 | `at` | `google.protobuf.Timestamp` | at is when it was recorded. |
+| `audiences` | repeated `string` | audiences are the distinct token audiences it covers. |
+| `grants` | repeated `string` | grants are the distinct grants it covers, by name. |
 
 ### CordonOrkerRequest
 
@@ -1306,7 +1312,8 @@ is alive by answering DescribeOrker (§6.5).
 | `profile_kinds_supported` | repeated [`ProfileKind`](#profilekind) | profile_kinds_supported are the profile kinds this Orker's build implements. Submit sends a profiled task only to a pool whose answering Orkers all list its kinds. |
 | `profiles` | repeated [`OrkerProfile`](#orkerprofile) | profiles are the profiles this Orker offers. |
 | `profile_cordons` | repeated [`ProfileCordon`](#profilecordon) | profile_cordons are the profile causes that hold this Orker's cordon; cordoned is true while any is set. |
-| `identity_supported` | `bool` | identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
+| `identity_supported` | `bool` | identity_supported is whether this Orker serves task identity now: its engine confirmed, within the last ten minutes, that its credential names it and holds identity.token.mint and task.result.commit at its pool, and its storage credential is confirmed scoped. It alone decides. |
+| `identity_unsupported_reason` | `string` | identity_unsupported_reason says why this Orker does not serve task identity, for display and for naming the cause in a refusal; empty while identity_supported. It decides nothing. |
 | `providers` | repeated [`ProviderInfo`](#providerinfo) | providers is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
 | `masks_secrets` | `bool` | masks_secrets is whether this Orker masks a task's secrets in its logs (orker.log.mask_secrets). It reads secrets[].unmasked either way. |
 | `metadata_reachable` | repeated `string` | metadata_reachable is every address in metadata_probes that answered. Empty when none did, or when no probe ran (orker.metadata_probe off). |
@@ -2157,6 +2164,19 @@ No fields.
 | `window_until` | `google.protobuf.Timestamp` |  |
 | `computed_at` | `google.protobuf.Timestamp` |  |
 
+### Grant
+
+Grant is a principal a namespace's tasks may act as, through a provider,
+and which of its Orkflows may use it.
+
+| Field | Type | Description |
+|---|---|---|
+| `provider` | `string` | provider names where the principal is. |
+| `principal` | `string` | principal is whom the provider gives the task, such as a role. |
+| `orkflows` | repeated `string` | orkflows may use the grant: a name of this namespace, `*` for every Orkflow of it, or `<owner>/<name>` for one another namespace shares. |
+| `current_only` | `bool` | current_only, true, lets only a run of its Orkflow's current version use the grant. |
+| `origins` | repeated `string` | origins are the kinds of start the grant serves: submit, schedule, trigger, event-source, parent-run, run-again. Empty serves every kind. A child run is judged by its root's. |
+
 ### IconAttribute
 
 IconAttribute is one attribute of an icon element: an allowlisted name and
@@ -2179,10 +2199,16 @@ IconElement is one element of an ActivityIcon.
 
 ### IdentityRef
 
-IdentityRef is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-batch).
+IdentityRef is one identity a task holds: a token for one audience,
+minted for each attempt and refreshed while it runs
+(docs/TASK_IDENTITY.md).
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name names the identity within its task: the file it is written to. |
+| `audience` | `string` | audience is the token's aud: one the namespace's identity policy allows. |
+| `ttl_seconds` | `int32` | ttl_seconds is the token's life, held between the deployment's identity.token.min_ttl and max_ttl; 0 is identity.token.ttl. |
+| `refresh` | [`RefreshPolicy`](#refreshpolicy) | refresh says what a refresh that keeps failing does to the attempt. |
 
 ### ImagePolicy
 
@@ -2291,6 +2317,46 @@ output, or the outputs: block as a whole.
 | `to` | `string` |  |
 | `message` | `string` | message is the one sentence every client prints for this finding, verbatim. |
 
+### IssuedToken
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `audience` | `string` |  |
+| `token` | `string` | token is the signed token. Never logged and never stored. |
+| `expires_in_seconds` | `int32` | expires_in_seconds is the token's life, counted on the Orker's own clock. |
+| `issued_at` | `google.protobuf.Timestamp` | issued_at is when it was signed, for the Orker's clock check only. |
+| `jti` | `string` |  |
+| `kid` | `string` |  |
+
+### IssuedTokenEntry
+
+IssuedTokenEntry is one issued token's claims.
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` |  |
+| `audience` | `string` |  |
+| `subject` | `string` |  |
+| `jti` | `string` |  |
+| `kid` | `string` |  |
+| `issued_at` | `google.protobuf.Timestamp` |  |
+| `expires_at` | `google.protobuf.Timestamp` |  |
+
+### IssuedTokenRecord
+
+IssuedTokenRecord is what one granted mint issued.
+
+| Field | Type | Description |
+|---|---|---|
+| `task_id` | `string` |  |
+| `item` | optional `int32` |  |
+| `attempt` | `int32` |  |
+| `principal` | `string` | principal is the caller's verified principal. |
+| `orker_id` | `string` | orker_id is the Orker its credential names. |
+| `issued_at` | `google.protobuf.Timestamp` |  |
+| `tokens` | repeated [`IssuedTokenEntry`](#issuedtokenentry) |  |
+
 ### ListAccessRevisionsRequest
 
 | Field | Type | Description |
@@ -2387,6 +2453,24 @@ end). A window whose end is not after its start is INVALID_ARGUMENT.
 | Field | Type | Description |
 |---|---|---|
 | `event_sources` | repeated [`EventSource`](#eventsource) |  |
+
+### ListIssuedTokensRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `run_id` | `string` |  |
+| `task_id` | `string` | task_id narrows the list to one task. |
+| `item` | optional `int32` | item narrows it to one item of task_id. |
+| `page_size` | `int32` | page_size is at most 100; 0 is 50. |
+| `page_token` | `string` |  |
+
+### ListIssuedTokensResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `records` | repeated [`IssuedTokenRecord`](#issuedtokenrecord) |  |
+| `next_page_token` | `string` | next_page_token continues the list; empty at its end. |
 
 ### ListNamespacesRequest
 
@@ -2690,10 +2774,16 @@ answer is the TaskAttempt record the Orker writes.
 
 ### LiveIdentity
 
-LiveIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-batch).
+LiveIdentity is one identity or credential a running attempt holds, as
+its Orker last reported it: never a value, a token id or a path.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is the identity's or credential's name in its task. |
+| `kind` | `string` | kind is `identity` or `credential`. |
+| `last_refresh` | `google.protobuf.Timestamp` | last_refresh is when it was last minted or refreshed. |
+| `expires_at` | `google.protobuf.Timestamp` | expires_at is when what it holds expires. |
+| `state` | [`LiveIdentityState`](#liveidentitystate) | state is whether its last refresh succeeded. |
 
 ### LiveUsage
 
@@ -2810,6 +2900,28 @@ it.
 | `outcome` | [`MetadataProbeOutcome`](#metadataprobeoutcome) |  |
 | `detail` | `string` | detail is the request answered and its HTTP status ("HTTP 200 to PUT /latest/api/token"), or why the probe could not tell. It never holds what the endpoint sent beyond its status. |
 
+### MintAttemptTokensRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `namespace` | `string` |  |
+| `run_id` | `string` |  |
+| `task_id` | `string` |  |
+| `item` | optional `int32` | item is a fan-out item's index; unset for a task that is not one. |
+| `attempt` | `int32` |  |
+| `task_spec_sha256` | `string` | task_spec_sha256 is the digest of the task as the Orker was given it. |
+| `tokens` | repeated [`TokenRequest`](#tokenrequest) | tokens are what the attempt asks for: at most 16. |
+| `admission_sha256` | `string` | admission_sha256 names which admission of the run, as the task's input named it. |
+| `spec_members` | map&lt;`string`, `string`&gt; | spec_members maps each member of the task's digest to its own digest, used only to say what differs. |
+| `resume_scope` | `uint64` | resume_scope is the resume the attempt runs under; 0 for none. |
+| `root_scope` | `uint64` | root_scope is the root run's resume scope, for a run below a root. |
+
+### MintAttemptTokensResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `tokens` | repeated [`IssuedToken`](#issuedtoken) |  |
+
 ### NamedArtifact
 
 NamedArtifact is one artifact a run takes in or hands out, by the name
@@ -2875,12 +2987,19 @@ presence check (hold != nil) and a hold can never be half-set.
 
 ### NamespaceIdentity
 
-NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
-registered for the policy itself (audiences, grants and their bounds),
-which a later change adds.
+NamespaceIdentity is the namespace's identity policy: the audiences its
+tasks may ask for, the principals they may act as, and its id. It is
+written with its own etag, and an UpdateNamespace that changes it changes
+nothing else (docs/TASK_IDENTITY.md).
 
 | Field | Type | Description |
 |---|---|---|
+| `audiences` | repeated `string` | audiences are the token audiences the namespace's tasks may ask for. A trailing `*` matches any rest. |
+| `grants` | map&lt;`string`, [`Grant`](#grant)&gt; | grants are the principals the namespace's tasks may act as, by name. |
+| `identities_current_only` | `bool` | identities_current_only, true, gives an identity only to a run of its Orkflow's current version. |
+| `etag` | `string` | etag is the policy's own: an update that names another is FAILED_PRECONDITION. Output only. |
+| `revision` | `int64` | revision counts the policy's changes: each change writes an immutable revision. Output only. |
+| `attempts_extra` | optional `int32` | attempts_extra is how many attempts past a task's own retries may hold its identity, inside the deployment's identity.attempts.max_extra. Unset takes the deployment's identity.attempts.extra. |
 | `namespace_id` | `string` | namespace_id is the namespace's immutable id: a namespace deleted and created again under its name has another one, and a binding pinned to this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default` is always `ns_default`. Empty when none was made yet: one is made on first need, never by a read. Opaque: nothing parses it, and no request takes it where it takes a name. Output only. |
 
 ### OpDocs
@@ -4140,7 +4259,8 @@ label, authored as `kind: ServiceInterface`.
 | `updated_at` | `google.protobuf.Timestamp` |  |
 | `interface_verdict` | [`InterfaceVerdict`](#interfaceverdict) | interface_verdict is the promoted version's declared interface compared with compared_version — what ran when no version was named, until now. UNSPECIFIED, with compared_version empty, when the promotion did not change what runs. BREAKING here means the request acknowledged it. |
 | `compared_version` | `string` |  |
-| `stale_consent` | repeated [`StaleConsent`](#staleconsent) | stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch). |
+| `stale_consent` | repeated [`StaleConsent`](#staleconsent) | stale_consent lists the schedules, triggers and event sources that follow the current pointer and whose consent does not cover what the version now current asks for: their runs are refused an identity until someone consents. Empty when that version asks for nothing. |
+| `stale_consent_unchecked` | `string` | stale_consent_unchecked says why stale_consent may be incomplete: what could not be read or listed. Empty when every object was checked. |
 
 ### SetPrincipalDisabledRequest
 
@@ -4253,10 +4373,16 @@ it.
 
 ### StaleConsent
 
-StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-batch).
+StaleConsent is a schedule, trigger or event source bound to the Orkflow
+whose consent no longer covers what the version now current asks for. Its
+runs are refused an identity until it is consented to again.
 
-No fields.
+| Field | Type | Description |
+|---|---|---|
+| `kind` | `string` | kind is `schedule`, `trigger` or `event-source`. |
+| `name` | `string` | name is the object's name. |
+| `digest` | `string` | digest is the consent digest to consent to: "c1:" and 64 hexadecimal digits. |
+| `older_projection` | `bool` | older_projection is true when the object's consent was given under an earlier consent projection, so it is stale whatever changed. |
 
 ### StatsBucket
 
@@ -4656,6 +4782,13 @@ A zero duration is only ever a value somebody measured.
 |---|---|---|
 | `duration` | `google.protobuf.Duration` |  |
 | `reason` | [`TimingReason`](#timingreason) |  |
+
+### TokenRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | name is an identity's name, or "grant:&lt;name>". |
+| `audience` | `string` |  |
 
 ### Trigger
 
@@ -5289,6 +5422,17 @@ handed a state it cannot name — they map to UNSPECIFIED.
 | `LIVE_ATTEMPT_STATE_STARTED` | 2 | STARTED: an Orker picked the attempt up. Only STARTED and CANCEL_REQUESTED can carry a heartbeat. |
 | `LIVE_ATTEMPT_STATE_CANCEL_REQUESTED` | 3 | CANCEL_REQUESTED: the run was cancelled and the Orker has been (or is about to be) told through a heartbeat response; the §3.3 SIGTERM → grace → SIGKILL sequence runs on the Orker while this state holds. |
 
+### LiveIdentityState
+
+LiveIdentityState is whether an attempt's identity is current.
+
+| Value | Number | Description |
+|---|---|---|
+| `LIVE_IDENTITY_STATE_UNSPECIFIED` | 0 |  |
+| `LIVE_IDENTITY_STATE_FRESH` | 1 | LIVE_IDENTITY_STATE_FRESH: its last refresh succeeded. |
+| `LIVE_IDENTITY_STATE_RETRYING` | 2 | LIVE_IDENTITY_STATE_RETRYING: a refresh failed and is being asked again; what it holds has not expired. |
+| `LIVE_IDENTITY_STATE_EXPIRED` | 3 | LIVE_IDENTITY_STATE_EXPIRED: what it holds expired unrefreshed. |
+
 ### LiveUsageUnavailableReason
 
 LiveUsageUnavailableReason is why a running attempt shows no live CPU and
@@ -5522,6 +5666,16 @@ It exists so an empty `references` list can be read: "released" and
 | `REFERENCE_STATE_HELD` | 1 | HELD: the run is archived and its marker on this object is present. |
 | `REFERENCE_STATE_RELEASED` | 2 | RELEASED: no marker, and the run's cleanup record exists — the cleanup worker released its object claims (docs/STORAGE.md, "Reclaiming space"). released_at carries the record's timestamp. |
 | `REFERENCE_STATE_ABSENT` | 3 | ABSENT: no marker and no cleanup record. The run has not reached its terminal event, its archive write has not completed, it was archived before the object index existed, or cleanup released its markers and had not yet written its record. The server does not guess which; a client renders "no reference recorded", never "released" and never "held". |
+
+### RefreshPolicy
+
+RefreshPolicy is what a refresh that keeps failing does to the attempt.
+
+| Value | Number | Description |
+|---|---|---|
+| `REFRESH_POLICY_UNSPECIFIED` | 0 | REFRESH_POLICY_UNSPECIFIED is REFRESH_POLICY_REQUIRED. |
+| `REFRESH_POLICY_REQUIRED` | 1 | REFRESH_POLICY_REQUIRED ends the attempt when its token expires unrefreshed. |
+| `REFRESH_POLICY_BEST_EFFORT` | 2 | REFRESH_POLICY_BEST_EFFORT lets the attempt run on with an expired token. |
 
 ### ReleaseBlockerKind
 

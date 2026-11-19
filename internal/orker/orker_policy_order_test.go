@@ -85,6 +85,18 @@ var narrowerOrkers = []narrowerOrker{
 		},
 	},
 	{
+		name:   "no engine to issue an identity",
+		reason: ReasonIdentityNotConfigured,
+		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{} },
+		narrow: func(d *OCIDispatcher) { d.identity.Store(nil) },
+	},
+	{
+		name:   "an Orker that does not serve task identity",
+		reason: ReasonIdentityNotServed,
+		ask:    func(in *orkstackv1.ExecuteTaskInput) { in.Identity = &orkstackv1.IdentityContext{} },
+		narrow: func(d *OCIDispatcher) { d.identity.Store(identitySupportOf(false)) },
+	},
+	{
 		name:   "a forced run as the Orker that does not land",
 		reason: ReasonRunAsOrkerUnavailable,
 		ask:    func(*orkstackv1.ExecuteTaskInput) {},
@@ -103,7 +115,19 @@ func policyOrderHarness(t *testing.T) *cacheHarness {
 	t.Setenv(orderSecretVar, "order-secret-value")
 	h := newCacheHarness(t)
 	h.dispatcher.Policy.SecretAllow = []string{"env:" + orderSecretVar}
+	h.dispatcher.identity.Store(identitySupportOf(true))
 	return h
+}
+
+// identitySupportOf is a self-check that has judged this Orker to serve
+// task identity, or not to.
+func identitySupportOf(supported bool) *IdentitySupport {
+	who := &orkstackv1.GetSigninResponse{OrkerId: "o1", Permissions: []*orkstackv1.ScopedPermissions{{Scope: "pool:gpu", Permissions: identityPermissions}}}
+	s := NewIdentitySupport(&answers{who: who}, "o1", "gpu", func() orkstackv1.StoreScope { return orkstackv1.StoreScope_STORE_SCOPE_SCOPED }, nil, nil)
+	if supported {
+		s.Step(context.Background())
+	}
+	return s
 }
 
 // policyOrderInput is one attempt of task "work" of runID, cached or not,
