@@ -1,12 +1,18 @@
 package engine_test
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
 	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -80,15 +86,22 @@ func requireConcurrencyRunFixture(t *testing.T, f concurrencyRunFixtureCase) {
 	t.Skipf("%s is not recorded yet; record it with %s", f.path(), record)
 }
 
-// concurrencyReplayID is the run id a fixture replays as: its start's, or, for a later
-// generation, which names none, a fixed one (no command it issues carries
-// the run id).
+// concurrencyReplayID is the run id a fixture replays as: its start's, or,
+// for a later generation, whose start names none and which reads its run id
+// from its workflow id, the run its carried checkpoint is stored under
+// (…/snapshots/{ns}/{run}/continuations/…), since restoring it checks that.
 func concurrencyReplayID(t *testing.T, recorded *historypb.History) string {
 	t.Helper()
-	if runID, _, _, _, _ := startArgs(t, recorded); runID != "" {
+	runID, _, _, _, carry := startArgs(t, recorded)
+	if runID != "" {
 		return runID
 	}
-	return "ork-concurrency-replay"
+	uri := carry.GetCheckpoint().GetUri()
+	before, _, found := strings.Cut(uri, "/continuations/")
+	if !found || carry == nil {
+		t.Fatalf("a later generation's carry names no checkpoint under a run: %q", uri)
+	}
+	return before[strings.LastIndex(before, "/")+1:]
 }
 
 func replayConcurrencyRun(recorded *historypb.History, runID string) error {
@@ -260,12 +273,46 @@ func failedPublishes(t *testing.T, recorded *historypb.History) map[string]strin
 	return out
 }
 
+// An event's message quotes wall clocks (a queue's deadline, how long a run
+// waited) and, when a snapshot write failed, the store's own error, which a
+// mocked write cannot reproduce. clocklessEvent sets both aside, keeping the
+// engine's own words around them.
+var (
+	eventInstant      = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z`)
+	eventWaited       = regexp.MustCompile(`waited \S+ for`)
+	eventSnapshotFail = regexp.MustCompile(`(write snapshot for event \d+): .*`)
+)
+
+// bySequence orders encoded events by their sequence.
+func bySequence(t *testing.T, events []map[string]any) {
+	t.Helper()
+	seq := func(e map[string]any) int64 {
+		n, err := strconv.ParseInt(fmt.Sprint(e["sequence"]), 10, 64)
+		must.OKf(t, err, "an encoded event's sequence")
+		return n
+	}
+	slices.SortStableFunc(events, func(a, b map[string]any) int { return cmp.Compare(seq(a), seq(b)) })
+}
+
+func clocklessEvent(event map[string]any) map[string]any {
+	message, ok := event["message"].(string)
+	if !ok {
+		return event
+	}
+	out := maps.Clone(event)
+	message = eventInstant.ReplaceAllString(message, "<instant>")
+	message = eventWaited.ReplaceAllString(message, "waited <duration> for")
+	out["message"] = eventSnapshotFail.ReplaceAllString(message, "$1: <the store's error>")
+	return out
+}
+
 // TestConcurrencyRunHistories_PayloadsMatchWhatCurrentCodeSends is the
 // payload half: each single-generation fixture is re-executed from its own
 // input, with its recorded acquire answers, grants, cancel, task results and
 // publish failures fed back, and every payload current code sends (task
 // inputs, events, the release) is compared with what the recorded build
-// sent. Wall clocks are set aside.
+// sent. Wall clocks, and a failed write's store error, are set aside
+// (clocklessEvent).
 func TestConcurrencyRunHistories_PayloadsMatchWhatCurrentCodeSends(t *testing.T) {
 	for _, f := range concurrencyRunFixtures {
 		if !f.payload {
@@ -361,11 +408,15 @@ func TestConcurrencyRunHistories_PayloadsMatchWhatCurrentCodeSends(t *testing.T)
 			if len(sentTasks) != len(recordedTasks) {
 				t.Errorf("current code ran %d tasks, the recorded run %d", len(sentTasks), len(recordedTasks))
 			}
+			// The publish window keeps several publishes in flight, so they
+			// reach the mock in any order: compare them by sequence.
+			bySequence(t, recordedEvents)
+			bySequence(t, sentEvent)
 			if len(sentEvent) != len(recordedEvents) {
 				t.Fatalf("current code published %d events, the recorded run %d", len(sentEvent), len(recordedEvents))
 			}
 			for i := range recordedEvents {
-				if diff := payloadDiff(recordedEvents[i], sentEvent[i]); diff != "" {
+				if diff := payloadDiff(clocklessEvent(recordedEvents[i]), clocklessEvent(sentEvent[i])); diff != "" {
 					t.Errorf("event %d differs from what the recorded build published:\n%s", i, diff)
 				}
 			}
