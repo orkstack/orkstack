@@ -306,6 +306,10 @@ func eachRenderData(each *orkstackv1.EachContext, item stablejson.RawJSON) (map[
 	if each == nil {
 		return nil, nil
 	}
+	if each.GetLines().GetBatch() >= 2 {
+		// A batch binds no value: .each.index and .each.count alone.
+		return map[string]any{"index": each.GetIndex(), "count": each.GetCount()}, nil
+	}
 	var value any
 	if err := json.Unmarshal(item, &value, stablejson.UseNumber); err != nil {
 		return nil, fmt.Errorf("decode the item: %w", stablejson.Explained(err))

@@ -327,6 +327,40 @@ pointers, so a pointer can never be read as a version.
   run's logs, attempt records, snapshots, commit records and object markers,
   and it records that in the cleanup sidecar.
 
+## Line indexes
+
+A fan-out over an artifact's lines (`each.over_artifact`, `docs/DSL.md`,
+"Fan-out over an artifact's lines") expands from a line index: one immutable
+object an Orker writes once, after reading the whole source and checking every
+line.
+
+```text
+metadata/commits/{namespace}/{encoded-run-id}/{task-id}/each-lines/{format}-{sha256}.idx
+```
+
+It lies beside the fan-out task's own commit, under the run's commit prefix,
+so the run's cleanup reclaims it with that prefix. `{format}` is `jsonl` or
+`lines` and `{sha256}` the source's committed SHA-256, so the key says what the
+index is of: a producer that is run again with other bytes is indexed again,
+and one that writes the same bytes shares the index (keyed by the source's
+digest, never the producer's identity). It is written create-if-absent; an
+object already there is accepted only when its bytes are the same, and a
+different one fails the fan-out `EACH_EXPANSION_FAILED`. It is a record, never
+execution state: an item re-reads it, verifies it against the source's digest
+and its own entry's SHA-256, and a missing or contradictory one fails
+`EACH_ITEM_UNAVAILABLE`.
+
+Format v1 (`internal/eachlines/codec.go`), all integers little-endian:
+
+| Part | Bytes | Fields |
+|---|---|---|
+| Header | 64 | magic `ORKLIDX` (7), version `1` (1), source SHA-256 (32), source size u64, format u8, reserved (3, zero), batch `K` u32, item count u32, non-empty line count u32 |
+| Entry, one per item | 56 | span offset u64, span length u32, first file line u32 (1-based, empty lines counted), lines u32, reserved u32 (zero), SHA-256 of the span (32) |
+
+The size is `64 + 56 x count` whatever the batch, at most 547 KiB at 10,000
+items. An item reads only its span, by a ranged read, and holds it to the
+entry's digest.
+
 ## Artifact provenance
 
 `RunService.GetArtifactProvenance` (`orkctl run artifact provenance`, and the

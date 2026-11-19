@@ -75,13 +75,28 @@ export function eachProgress(items: ItemView[]): EachProgress {
 }
 
 /**
+ * eachSourceLabel is what a fan-out runs over, in the words every surface
+ * shows after "over" (internal/dsl.EachSourceLabel): its `over` template for
+ * an array, "the lines of list/files.jsonl", or "batches of 500 lines of
+ * list/urls.jsonl".
+ */
+export function eachSourceLabel(spec: EachSpec): string {
+	if (!spec.overArtifact) return spec.over;
+	if (spec.batch >= 2) return `batches of ${spec.batch} lines of ${spec.overArtifact}`;
+	return `the lines of ${spec.overArtifact}`;
+}
+
+/**
  * eachSummary is the card's one line: "97 of 120 settled — 95 succeeded, 2
  * failed · 2 retried", "fan-out over 0 items", or, before expansion, "Will
  * fan out over {over} (at most {max} items)".
  */
-export function eachSummary(expanded: boolean, items: ItemView[], spec?: EachSpec): string {
+export function eachSummary(expanded: boolean, items: ItemView[], spec?: EachSpec, status?: Status): string {
 	if (!expanded) {
-		return spec ? `Will fan out over ${spec.over} (at most ${spec.maxItems} items)` : 'Will fan out when the run reaches it';
+		// A fan-out over lines is RUNNING before it expands: an Orker of its
+		// pool is reading and checking every line.
+		if (spec?.overArtifact && status === Status.RUNNING) return `Indexing ${eachSourceLabel(spec)}…`;
+		return spec ? `Will fan out over ${eachSourceLabel(spec)} (at most ${spec.maxItems} items)` : 'Will fan out when the run reaches it';
 	}
 	if (items.length === 0) return 'fan-out over 0 items';
 	const p = eachProgress(items);
@@ -228,9 +243,9 @@ export function eachPlanDetail(task: PlanTask): string {
 	const parallel = spec.maxParallel > 0 ? `, ${spec.maxParallel} at a time` : '';
 	if (task.eachCount !== undefined) {
 		const noun = task.eachCount === 1 ? 'item' : 'items';
-		return `each over ${spec.over}: ${task.eachCount} ${noun} (≤ ${spec.maxItems}${parallel})`;
+		return `each over ${eachSourceLabel(spec)}: ${task.eachCount} ${noun} (≤ ${spec.maxItems}${parallel})`;
 	}
-	return `each over ${spec.over} (≤ ${spec.maxItems} items${parallel}; counted when the run reaches it)`;
+	return `each over ${eachSourceLabel(spec)} (≤ ${spec.maxItems} items${parallel}; counted when the run reaches it)`;
 }
 
 /**

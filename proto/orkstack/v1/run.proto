@@ -24,7 +24,8 @@ message TaskEach {
   // count is the number of items, equal to len(TaskRun.items), once expanded.
   int32 count = 2;
 
-  // lines is set from E89; unset until it lands (v0.4.0 proto batch).
+  // lines is set once a fan-out over an artifact's lines has expanded: the
+  // source and the line index the items read their spans from.
   EachLines lines = 3;
 }
 

@@ -467,6 +467,7 @@ Examples: [decide-and-route](../examples/decide-and-route.ork.yaml),
 | [`examples/config-from-git.ork.yaml`](../examples/config-from-git.ork.yaml) | one commit rendered per service, cached | "Pin moving inputs: resolve, then use the commit", "Batch transforms into one prepare task", "Cache only what you assert is reusable", "jq, a template, or your own image" |
 | [`examples/decide-and-route.ork.yaml`](../examples/decide-and-route.ork.yaml) | decide, branch three ways, re-join | "Decide in a task, branch on its value", "Branch and re-join", "Plan before you run" |
 | [`examples/each-fan-out.ork.yaml`](../examples/each-fan-out.ork.yaml) | a fan-out over a computed list | "Batch transforms into one prepare task" |
+| [`examples/each-lines.ork.yaml`](../examples/each-lines.ork.yaml) | a fan-out over an artifact's lines, one item per line and per batch | "Batch transforms into one prepare task" |
 | [`examples/http-post.ork.yaml`](../examples/http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and its status | "Pass values as data, never as code", "A non-2xx answer is data" |
 | [`examples/inputs-and-escaping.ork.yaml`](../examples/inputs-and-escaping.ork.yaml) | typed inputs and escaping | "Pass values as data, never as code" |
 | [`examples/notify-block.ork.yaml`](../examples/notify-block.ork.yaml) | a reusable notification block | "Reuse a block with declared outputs", "Pass values as data, never as code" |

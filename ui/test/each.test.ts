@@ -9,6 +9,7 @@ import {
 	applyItemEvent,
 	eachPlanDetail,
 	eachProgress,
+	eachSourceLabel,
 	eachSummary,
 	itemAriaLabel,
 	itemFromUrl,
@@ -64,6 +65,19 @@ test('eachSummary says settled, empty, or what the fan-out will do', () => {
 	expect(eachSummary(true, [])).toBe('fan-out over 0 items');
 	const spec = create(EachSpecSchema, { over: '{{ .tasks.list.output.parts }}', as: 'part', maxItems: 50 });
 	expect(eachSummary(false, [], spec)).toBe('Will fan out over {{ .tasks.list.output.parts }} (at most 50 items)');
+});
+
+test('a fan-out over lines names its source, and says it is indexing while it runs unexpanded', () => {
+	const lines = create(EachSpecSchema, { overArtifact: 'list/files.jsonl', maxItems: 50 });
+	const batches = create(EachSpecSchema, { overArtifact: 'list/urls.jsonl', batch: 500, maxItems: 4 });
+	expect(eachSourceLabel(lines)).toBe('the lines of list/files.jsonl');
+	expect(eachSourceLabel(batches)).toBe('batches of 500 lines of list/urls.jsonl');
+	expect(eachSourceLabel(create(EachSpecSchema, { over: '{{ .inputs.l }}' }))).toBe('{{ .inputs.l }}');
+	expect(eachSummary(false, [], lines)).toBe('Will fan out over the lines of list/files.jsonl (at most 50 items)');
+	expect(eachSummary(false, [], batches, Status.RUNNING)).toBe('Indexing batches of 500 lines of list/urls.jsonl…');
+	// An array fan-out is never "indexing".
+	const array = create(EachSpecSchema, { over: '{{ .inputs.l }}', maxItems: 5 });
+	expect(eachSummary(false, [], array, Status.RUNNING)).toBe('Will fan out over {{ .inputs.l }} (at most 5 items)');
 });
 
 test('an item TASK_LOG moves one cell and never the task', () => {

@@ -89,8 +89,11 @@ Read an input as `{{ .inputs.<name> }}`.
 
 | Key | Required | Meaning |
 |---|---|---|
-| `over` | yes | The array, as one template. |
-| `as` | no | The element's name under `.each`. Default `item`. |
+| `over` | yes, or `over_artifact` | The array, as one template. |
+| `over_artifact` | yes, or `over` | `<task>/<artifact>`: one item per line of an artifact a task in `needs:` writes. |
+| `format` | with `over_artifact` | `jsonl` (a JSON value per line) or `lines` (a string per line). |
+| `batch` | no | With `over_artifact`: lines per item, 1 to 10,000. Default 1. |
+| `as` | no | The element's name under `.each`. Default `item`; refused with `batch`. |
 | `max_items` | yes | 1 to 10,000. |
 | `max_parallel` | no | Items at once. Default: no limit of the task's own. |
 

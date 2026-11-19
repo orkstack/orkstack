@@ -261,9 +261,19 @@ type PoolNoEachSupportError struct {
 	// Dependent is the first direct dependent of a fan-out on this pool, or
 	// empty when only fan-outs themselves land here.
 	Dependent string
+	// Lines is set when the Orker implements fan-out but not a fan-out over
+	// an artifact's lines (each_lines_supported), which Tasks declare.
+	Lines bool
 }
 
 func (e *PoolNoEachSupportError) Error() string {
+	if e.Lines {
+		return fmt.Sprintf(
+			"pool %q (namespace %q, tasks: %s) is served by Orker %q (build %q), which predates fan-out over "+
+				"an artifact's lines (each.over_artifact): it can neither index the lines nor run such an item. "+
+				"Upgrade the pool's Orkers before submitting this Orkflow.",
+			e.Pool, e.Namespace, strings.Join(e.Tasks, ", "), e.OrkerID, e.BuildID)
+	}
 	consequence := "it would run items without their item"
 	if e.Dependent != "" {
 		consequence += fmt.Sprintf(" and give %s no items to read", e.Dependent)
@@ -698,6 +708,9 @@ func (r *PoolResolver) Plan(
 	// resolved pool — the pools whose Orker must implement fan-out.
 	eachRelated, dependents := eachRelatedTasks(planned)
 	eachTasksByPool := map[string][]string{}
+	// The lines view: every fan-out over an artifact's lines per pool, whose
+	// Orkers index the lines and run the items.
+	eachLinesTasksByPool := map[string][]string{}
 	eachDependentByPool := map[string]string{}
 	// The caching view: every cached task per resolved pool (a cached
 	// fan-out's items run on the fan-out's pool) — the pools whose Orker must
@@ -771,6 +784,9 @@ func (r *PoolResolver) Plan(
 		}
 		if res := t.GetResources(); strings.TrimSpace(res.GetCpu()) != "" || strings.TrimSpace(res.GetMemory()) != "" || res.GetGpu() != 0 {
 			sizedTasksByPool[route.Pool] = append(sizedTasksByPool[route.Pool], t)
+		}
+		if dsl.IsEachLines(t.GetEach()) {
+			eachLinesTasksByPool[route.Pool] = append(eachLinesTasksByPool[route.Pool], t.GetId())
 		}
 		if eachRelated[t.GetId()] {
 			eachTasksByPool[route.Pool] = append(eachTasksByPool[route.Pool], t.GetId())
@@ -863,6 +879,12 @@ func (r *PoolResolver) Plan(
 			// one: does its Orker implement fan-out at all.
 			if err := r.checkEachSupport(ctx, census, namespaceName(ns), wf.GetName(), pool,
 				eachTasksByPool[pool], eachDependentByPool[pool]); err != nil {
+				return nil, RunPlan{}, err
+			}
+			// And, for a pool that carries a fan-out over an artifact's
+			// lines: does its Orker index lines and resolve their items.
+			if err := r.checkEachLinesSupport(ctx, census, namespaceName(ns), wf.GetName(), pool,
+				eachLinesTasksByPool[pool]); err != nil {
 				return nil, RunPlan{}, err
 			}
 			// And, for a pool that carries a cached task: does its Orker
@@ -1253,6 +1275,31 @@ func (r *PoolResolver) checkEachSupport(ctx context.Context, census *poolCensus,
 		OrkerID:   old.GetOrkerId(),
 		BuildID:   old.GetBuildId(),
 		Dependent: dependent,
+	}
+}
+
+// checkEachLinesSupport is checkEachSupport for a fan-out over an artifact's
+// lines: every Orker a lines fan-out would run on must index lines and resolve
+// their items (each_lines_supported), because the index runs on one of them
+// and any of them may take an item. No Orker answering is logged, not refused.
+func (r *PoolResolver) checkEachLinesSupport(ctx context.Context, census *poolCensus, namespace, orkflow, pool string, tasks []string) error {
+	if len(tasks) == 0 || r.Fleet == nil {
+		return nil
+	}
+	old := lacking(r.probeOrkers(ctx, census, capabilityProbe{
+		namespace: namespace, orkflow: orkflow, pool: pool, tasks: tasks,
+		carrying: "a fan-out over an artifact's lines", question: "it supports fan-out over lines",
+	}), (*orkstackv1.DescribeOrkerResult).GetEachLinesSupported)
+	if old == nil {
+		return nil
+	}
+	return &PoolNoEachSupportError{
+		Namespace: namespace,
+		Pool:      pool,
+		Tasks:     tasks,
+		OrkerID:   old.GetOrkerId(),
+		BuildID:   old.GetBuildId(),
+		Lines:     true,
 	}
 }
 

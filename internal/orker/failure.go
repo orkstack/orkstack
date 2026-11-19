@@ -9,6 +9,7 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
+	"github.com/orkstack/orkstack/internal/eachlines"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -247,6 +248,12 @@ var reasonCategory = map[string]string{
 	ReasonResourceAdmissionMismatch: CategoryContractViolation,
 	ReasonNetworkModeRefused:        CategoryContractViolation,
 	ReasonEachItemUnavailable:       CategoryContractViolation,
+	// The line indexer's refusals (IndexEachLines): the source decides them.
+	eachlines.ReasonLineInvalid:     CategoryContractViolation,
+	eachlines.ReasonTooManyItems:    CategoryContractViolation,
+	eachlines.ReasonSourceTooLarge:  CategoryContractViolation,
+	eachlines.ReasonBatchTooLarge:   CategoryContractViolation,
+	eachlines.ReasonExpansionFailed: CategoryInfrastructureError,
 	ReasonOrkerStopped:              CategoryInfrastructureError,
 	ReasonReportUndelivered:         CategoryInfrastructureError,
 	ReasonHeartbeatLost:             CategoryInfrastructureError,

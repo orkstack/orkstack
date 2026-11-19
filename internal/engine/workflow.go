@@ -721,6 +721,14 @@ func RunWorkflow(
 		}
 		future := inFlight[selectedID]
 		delete(inFlight, selectedID)
+		// A fan-out over an artifact's lines has its index in flight under
+		// its own id: collected, it expands and dispatches its items.
+		if state.isIndexing(selectedID) {
+			if err := state.collectEachLines(ctx, runCtx, selectedID, future, inFlight); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, selectedID, err)
+			}
+			continue
+		}
 		if err := state.collect(ctx, selectedID, future); err != nil {
 			return state.fail(ctx, cancelRun, inFlight, selectedID, err)
 		}
@@ -2449,6 +2457,17 @@ func (s *runState) collect(ctx workflow.Context, id string, future workflow.Futu
 	// A composed task's future is its child run's, not an activity's.
 	if s.children[id] != nil {
 		return s.collectChild(ctx, id, future)
+	}
+	// A lines fan-out's index, collected only here when the run is ending
+	// (cancelInFlight): whatever it answered, nothing is dispatched and the
+	// node ends with no items.
+	if s.isIndexing(id) {
+		s.eaches[id].indexing = false
+		_ = future.Get(ctx, nil) // the run is ending; what the index answered decides nothing
+		if s.taskRuns[id].GetStatus() != orkstackv1.Status_STATUS_RUNNING {
+			return nil
+		}
+		return s.cancelExpansion(ctx, id, "the run ended while the fan-out's lines were being indexed")
 	}
 	// This task is terminal on every path out of here, so this is where its
 	// pin learns whether it was the last one.

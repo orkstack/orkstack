@@ -67,6 +67,7 @@ keeps polling until its retries run out.
 | [config-from-git](config-from-git.ork.yaml) | resolve a branch to a commit, render one config per service, cached while the commit holds | `git`, `file`, `shell`, `json`, `template` | internet access to `github.com` |
 | [decide-and-route](decide-and-route.ork.yaml) | decide in a json task, branch three ways, re-join | `json`, `shell` | nothing |
 | [each-fan-out](each-fan-out.ork.yaml) | a fan-out over a list a json task computes | `json`, `shell` | nothing |
+| [each-lines](each-lines.ork.yaml) | a fan-out over the lines of an artifact, one item per line and one per batch of three; the run ends `SUCCEEDED` | `shell` | nothing |
 | [http-post](http-post.ork.yaml) | a POST whose JSON body is a YAML mapping, and a condition on its status | `http`, `file`, `shell` | internet access to `httpbin.org` |
 | [inputs-and-escaping](inputs-and-escaping.ork.yaml) | typed inputs; argv, positional arguments, `sh` and jq `vars` against a hostile default | `shell`, `json`, `file` | nothing |
 | [notify-block](notify-block.ork.yaml) | a reusable block: one JSON notification, its status as the declared output | `json`, `http` | internet access to `httpbin.org` |
