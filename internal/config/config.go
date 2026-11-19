@@ -382,7 +382,7 @@ var Schema = []Var{
 	{Path: "orker.metadata_probe", Env: orker.MetadataProbeVar, Binaries: usesOrker, Kind: KindString, Default: string(orker.DefaultMetadataProbe)},
 	// The profiles this Orker offers tasks by name (internal/orker profiles.go),
 	// one document: probe_image, the two intervals and each named profile.
-	{Path: "orker.profiles", Env: orker.ProfilesVar, Binaries: usesOrker, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no profiles"},
+	{Path: "orker.profiles", Env: orker.ProfilesVar, Binaries: usesOrker, Kind: KindDocument, Default: EmptyDefault, DerivedNote: "no profiles; probe_image, when profiles are set: this release's ghcr.io/orkstack/orker:<version>, resolved at boot"},
 	// Secret masking in a task's logs, and the refusal of a values.json that
 	// holds a secret (internal/orker/mask.go).
 	{Path: "orker.log.mask_secrets", Env: orker.MaskSecretsVar, Binaries: usesOrker, Kind: KindBool, Default: formatBool(orker.DefaultMaskSecrets)},

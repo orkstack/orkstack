@@ -643,7 +643,7 @@ then the variable it becomes.
 | `orker.docker.pull_timeout` | `ORK_DOCKER_PULL_TIMEOUT` | `5m` | `orker` | how long an image pull may take |
 | `orker.docker.bind_probe_timeout` | `ORK_DOCKER_BIND_PROBE_TIMEOUT` | `2m` | `orker` | how long the boot bind probe waits for the daemon at each step that waits on it: identifying the engine (which one, and whether it is rootless), whether the probe's image is local, and each of two attempts to run its container, which the Orker then removes. An attempt that overruns, or that the daemon ends with a deadline error of its own, is tried once more, and a daemon that is still too slow refuses boot as `BIND_PROBE_TIMED_OUT`; a refusal of the bind in the daemon's own words is still `WORKDIR_NOT_BINDABLE`, and any other refusal, or a container that exits non-zero, is `RUNTIME_POSTURE_REFUSED`. The SIGTERM check that follows, in a container of its own, has the same budget, retry and reasons for each of two attempts to start that container, and the budget again for its workload to say it is ready, then up to 125 seconds for cancelling it (its 30-second grace included) and removing it. A daemon that is slow at every step holds boot for up to seven times this (identifying the engine, the image inspect, two attempts at each container and the ready file) plus 230 seconds for removing what it gave up on and the first container, and for that cancellation (17 minutes 50 seconds at the default), plus `orker.docker.pull_timeout` when the probe image has to be pulled; [Health checks](#health-checks) says what that means for a supervisor |
 | `orker.metadata_probe` | `ORK_ORKER_METADATA_PROBE` | `off` | `orker` | whether boot asks the host's instance metadata endpoints from a container on the `default` network: `off` runs no extra container, `warn` logs an endpoint that answered, `refuse` refuses boot when one answered or the probe failed, `METADATA_ENDPOINT_REACHABLE`. Set `refuse` on a cloud host ([Keeping tasks away from the host's identity](#keeping-tasks-away-from-the-hosts-identity)) |
-| `orker.profiles:` | `ORK_ORKER_PROFILES` | *(empty)* | `orker` | the profiles this Orker offers tasks by name: `probe_image` (the orker image pinned by digest, required with any profile), `audit_interval` (`60s`), `recovery_interval` (`5s`), and each named profile of `kind` `gpu` or `devices`, with one contract (its keys, labelled by `contract:`, `"1"` when absent, and optional `accepts:`) or, for `devices`, up to 8 under `contracts:` with a `default:` ("Changing a profile"). This release implements `devices` ("Running a device Orker"); a `gpu` profile refuses boot, `ORKER_PROFILE_INVALID` |
+| `orker.profiles:` | `ORK_ORKER_PROFILES` | *(empty)* | `orker` | the profiles this Orker offers tasks by name: `probe_image` (optional: by default this release's own `ghcr.io/orkstack/orker:<version>`, resolved to a digest and signature- and build-checked at boot; set it to a mirror's or an air-gapped copy's digest to override; required on an Orker built from source), `audit_interval` (`60s`), `recovery_interval` (`5s`), and each named profile of `kind` `gpu` or `devices`, with one contract (its keys, labelled by `contract:`, `"1"` when absent, and optional `accepts:`) or, for `devices`, up to 8 under `contracts:` with a `default:` ("Changing a profile"). This release implements `devices` ("Running a device Orker"); a `gpu` profile refuses boot, `ORKER_PROFILE_INVALID` |
 | `orker.log.mask_secrets` | `ORK_ORKER_LOG_MASK_SECRETS` | `true` | `orker` | whether a task's secrets are replaced by `***` in its logs, live and stored, and in failure messages; `false` keeps them byte-exact. A secret's `mask: false` does the same for one secret. The same on every Orker of a pool ([SECURITY_MODEL.md](./SECURITY_MODEL.md#masking-and-its-limits)) |
 | `orker.values.refuse_secrets` | `ORK_ORKER_VALUES_REFUSE_SECRETS` | `true` | `orker` | whether a `values.json` holding one of the task's own secrets fails the attempt, `VALUES_CONTAIN_SECRET`, before anything is uploaded; independent of `orker.log.mask_secrets`. The same on every Orker of a pool ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#94-secrets)) |
 | `orker.refuse_readable_engine_keys` | `ORK_ORKER_REFUSE_READABLE_ENGINE_KEYS` | `false` | `orker` | refuse to start when this Orker can open a file one of the engine's key settings names (`identity.signing.key_files`, `identity.keys_copy_file`, `auth.break_glass_key_file`, an issuer's `jwks_file`); by default each is an error in its log — see "An engine's key files and an Orker on one host" |
@@ -1474,7 +1474,6 @@ configuration.
 ```yaml
 orker:
   profiles:
-    probe_image: ghcr.io/orkstack/orker@sha256:<digest of this release's orker image>
     sensor:
       kind: devices
       devices:
@@ -1493,15 +1492,30 @@ orker:
 - `container_path` is a path under `/dev` that is not one of the nodes every
   container has (`/dev/null`, `/dev/tty` and the rest) and not under
   `/dev/shm`, `/dev/pts` or `/dev/mqueue`.
-- `probe_image` is the orker image of this Orker's own build, pinned by
-  digest. The Orker runs it as a probe container (`orker probe view`) to check
-  what a container sees, and reads its `org.orkstack.build` label: it must be
-  the commit the Orker was built from (`orker --version`). An image of another
-  build (`PROBE_IMAGE_MISMATCH`), or one that cannot be pulled or run
-  (`PROBE_IMAGE_UNAVAILABLE`), does not refuse the boot: it holds every device
-  profile unavailable, cordoning the Orker, and the probe runs again every
-  `recovery_interval` until three good checks in a row clear it. An Orker
-  built without a commit (from a source archive) can never pass this check.
+- The Orker runs a probe container (`orker probe view`) to check what a
+  container sees, from its probe image, whose `org.orkstack.build` label must
+  be the commit the Orker was built from (`orker --version`).
+  - **By default**, a release Orker uses its own release image,
+    `ghcr.io/orkstack/orker:<version>`. At boot it resolves that tag to a
+    digest, verifies the digest's cosign signature against the release key
+    the binary carries, pulls it by digest and checks its label. The digest
+    is then kept for the process's life, so a tag that moves later cannot
+    change the probe.
+  - **To override it**, set `probe_image` to the orker image of this build,
+    pinned by digest: a mirror's copy, or one on an air-gapped host. It is
+    used as given, with its label still checked.
+  - **On an Orker built from source** (`make build`, a source archive, the
+    quickstart's source build), which has no release image, `probe_image` is
+    required, and a profile without it refuses the boot
+    (`ORKER_PROFILE_INVALID`).
+- A probe image of another build, or one not signed by the release key
+  (`PROBE_IMAGE_MISMATCH`), and one that cannot be resolved, pulled or run
+  (`PROBE_IMAGE_UNAVAILABLE`), do not refuse the boot. They hold every device
+  profile unavailable, cordoning the Orker; the control channel's detail says
+  which it was. The probe runs again every `recovery_interval` until three
+  good checks in a row clear it. On the default path a failure waits longer
+  each time, doubling from `recovery_interval` to at most five minutes, so an
+  unreachable registry is not asked in a loop.
 
 **The Orker runs on the container daemon's own host.** Device profiles are
 Linux-only: the Orker reads `/proc/devices` and the host's own device numbers.

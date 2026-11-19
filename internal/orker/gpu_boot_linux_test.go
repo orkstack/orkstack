@@ -39,7 +39,7 @@ func gpuActivities(t *testing.T, rt *unitListRuntime) (*Activities, string) {
 	old := gpuLockDirPath
 	gpuLockDirPath = dir
 	t.Cleanup(func() { gpuLockDirPath = old })
-	declared := Profiles{List: []Profile{{Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU,
+	declared := Profiles{ProbeImage: viewProbeImage, List: []Profile{{Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU,
 		GPU: &GPUProfile{CDIKind: "amd.com/gpu", Units: []string{"0"}}}}}
 	s := newProfileState(declared, "c0ffee")
 	rt.label = "c0ffee"
@@ -116,13 +116,13 @@ func TestProbeUnitsOnce_FlipsHealthUnderTheLedger(t *testing.T) {
 	}
 	defer a.dispatcher.gpu.Load().lock.(*gpuHostLock).close()
 	rt.view = append(answering(amdNodes), heldLockEntry(a))
-	a.probeUnitsOnce(context.Background(), t.TempDir(), viewProbeImage)
+	a.probeUnitsOnce(context.Background(), t.TempDir())
 	if a.capacity.limit.gpu != 1 {
 		t.Fatalf("a healthy unit left the usable set: limit %d", a.capacity.limit.gpu)
 	}
 	rt.view = nil
 	rt.runErr = os.ErrDeadlineExceeded
-	a.probeUnitsOnce(context.Background(), t.TempDir(), viewProbeImage)
+	a.probeUnitsOnce(context.Background(), t.TempDir())
 	if a.capacity.limit.gpu != 0 || !a.profiles.unavailableFor("amd", orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_ALL_UNITS_UNHEALTHY) {
 		t.Fatalf("a failing unit stayed usable: limit %d", a.capacity.limit.gpu)
 	}
@@ -139,13 +139,13 @@ func TestProbeUnitsOnce_RefusesAProbeImageOfAnotherBuild(t *testing.T) {
 	}
 	defer a.dispatcher.gpu.Load().lock.(*gpuHostLock).close()
 	rt.label = "another"
-	a.probeUnitsOnce(context.Background(), t.TempDir(), viewProbeImage)
+	a.probeUnitsOnce(context.Background(), t.TempDir())
 	mismatch := orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH
 	if len(rt.specs) != 0 || !a.profiles.unavailableFor("amd", mismatch) {
 		t.Fatalf("probes run %d, mismatch held %v; want none run and PROBE_IMAGE_MISMATCH", len(rt.specs), a.profiles.unavailableFor("amd", mismatch))
 	}
 	rt.label, rt.view = "c0ffee", append(answering(amdNodes), heldLockEntry(a))
-	a.probeUnitsOnce(context.Background(), t.TempDir(), viewProbeImage)
+	a.probeUnitsOnce(context.Background(), t.TempDir())
 	if a.profiles.unavailable("amd") || len(rt.specs) != 1 {
 		t.Fatalf("an image of its own build: unavailable %v, probes %d", a.profiles.unavailable("amd"), len(rt.specs))
 	}
@@ -162,15 +162,15 @@ func TestProbeUnits_RecoveryProbesOnlyFailedUnits(t *testing.T) {
 	}
 	defer a.dispatcher.gpu.Load().lock.(*gpuHostLock).close()
 	rt.view = append(answering(amdNodes), heldLockEntry(a))
-	a.probeUnits(context.Background(), t.TempDir(), viewProbeImage, true)
+	a.probeUnits(context.Background(), t.TempDir(), true)
 	if len(rt.specs) != 0 {
 		t.Fatalf("the recovery pass probed a usable unit %d times", len(rt.specs))
 	}
 	rt.runErr = os.ErrDeadlineExceeded
-	a.probeUnitsOnce(context.Background(), t.TempDir(), viewProbeImage)
+	a.probeUnitsOnce(context.Background(), t.TempDir())
 	rt.runErr = nil
 	for range recoveryPasses {
-		a.probeUnits(context.Background(), t.TempDir(), viewProbeImage, true)
+		a.probeUnits(context.Background(), t.TempDir(), true)
 	}
 	if !a.capacity.unitUsable(0) {
 		t.Fatal("the failed unit did not recover after three good recovery probes")
@@ -199,7 +199,7 @@ func TestBootGPU_ForeignUnitsHeldUntilGone(t *testing.T) {
 	}
 	rt.listed = nil
 	rt.view = append(answering(amdNodes), heldLockEntry(a))
-	a.probeUnitsOnce(context.Background(), t.TempDir(), viewProbeImage)
+	a.probeUnitsOnce(context.Background(), t.TempDir())
 	if a.profiles.unavailableFor("amd", held) {
 		t.Fatal("the hold did not end once the foreign container was gone")
 	}

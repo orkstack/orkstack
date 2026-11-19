@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/quantity"
 )
 
@@ -132,4 +133,11 @@ func LocateUsage(ctx context.Context, d *DockerRuntime, id ContainerID) (func() 
 		r, err := read(false)
 		return UsageReading{CPUSeconds: r.cpuSeconds, Memory: r.memory, MemoryPeak: r.memoryPeak, PeakRead: r.peakRead, Limit: r.limit}, err
 	}, name, nil
+}
+
+// CheckReleaseProbeImage is the profile probes' image check on the release
+// path (probe_image.go): release resolved, its signature verified, then
+// pulled by digest and its build label held to build.
+func CheckReleaseProbeImage(ctx context.Context, rt *DockerRuntime, release *ReleaseProbe, build string) (string, orkstackv1.ProfileCordonReason, string, error) {
+	return checkProbeImage(ctx, rt, newProbeImageSource("", release, time.Second), build)
 }
