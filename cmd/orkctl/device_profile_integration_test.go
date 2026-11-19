@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"os/exec"
 	"os/user"
@@ -93,24 +92,7 @@ func buildProbeImage(ctx context.Context, t *testing.T, root, orkerBin, repo, bu
 	t.Cleanup(func() { _ = exec.Command("docker", "image", "rm", tag).Run() })
 	docker("push", "--quiet", tag)
 
-	name, reference, _ := strings.Cut(strings.TrimPrefix(tag, testRegistry()+"/"), ":")
-	req, err := http.NewRequestWithContext(ctx, http.MethodHead,
-		fmt.Sprintf("http://%s/v2/%s/manifests/%s", testRegistry(), name, reference), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Accept", "application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json, "+
-		"application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.docker.distribution.manifest.v2+json")
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("HEAD %s: %v", tag, err)
-	}
-	_ = resp.Body.Close()
-	digest := resp.Header.Get("Docker-Content-Digest")
-	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(digest, "sha256:") {
-		t.Fatalf("HEAD %s = %d, digest %q", tag, resp.StatusCode, digest)
-	}
-	return fmt.Sprintf("%s/%s@%s", testRegistry(), name, digest)
+	return pinnedInRegistry(ctx, t, tag)
 }
 
 // binaryCommit is the commit a built binary reports (`--version`).

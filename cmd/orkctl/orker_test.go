@@ -123,9 +123,14 @@ func newScriptedFleet() *scriptedFleet {
 	}
 }
 
+// newOrkerFixture is a fixture whose engine reads fleet, on a clock fixed
+// at fleetSeen plus three seconds, so a list's "as of" line is stable.
 func newOrkerFixture(t *testing.T, fleet *scriptedFleet) *fixture {
 	t.Helper()
-	return newFixtureWith(t, func(cfg *api.Config) { cfg.Fleet = fleet })
+	return newFixtureWith(t, func(cfg *api.Config) {
+		cfg.Fleet = fleet
+		cfg.Now = func() time.Time { return fleetSeen.Add(3 * time.Second) }
+	})
 }
 
 // fakeDrainClock advances only when the drain loop sleeps, so a four-hour

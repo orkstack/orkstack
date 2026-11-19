@@ -2,7 +2,10 @@ package engine
 
 import (
 	"context"
+	"slices"
+	"strings"
 	"sync"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -34,14 +37,30 @@ import (
 type poolCensus struct {
 	fleet FleetReader
 
+	// now is the replica's clock; nil is time.Now.
+	now func() time.Time
+
 	once       sync.Once
 	err        error
 	byPool     map[string][]FleetOrker
 	unanswered []string
+	// readAt is when the read began, on now: what a submit that pinned
+	// profile contracts is judged fresh against (profileCensusMaxAge).
+	readAt time.Time
+
+	againOnce sync.Once
 }
 
 func newPoolCensus(fleet FleetReader) *poolCensus {
 	return &poolCensus{fleet: fleet}
+}
+
+// clock is the census's now, time.Now when none was given.
+func (c *poolCensus) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // read takes the census, once. Only a failed presence read fails it; an Orker
@@ -53,6 +72,7 @@ func (c *poolCensus) read(ctx context.Context) error {
 		if c.fleet == nil {
 			return
 		}
+		c.readAt = c.clock()
 		readCtx, cancel := context.WithTimeout(ctx, poolDescribeTimeout)
 		defer cancel()
 		orkers, err := ReadFleet(readCtx, c.fleet)
@@ -120,6 +140,73 @@ func (c *poolCensus) serving(ctx context.Context, pool string) ([]FleetOrker, er
 		}
 	}
 	return orkers, nil
+}
+
+// cordonedOwners is the Orkers of one pool that answered under an
+// operator's cordon and hold no profile drift: they are leaving, so they speak for nothing the pool can
+// run, but a profiled submit reads the definitions they give
+// (judgeTaskProfiles), so a run pins what they would run under once
+// uncordoned. In identity order.
+func (c *poolCensus) cordonedOwners(ctx context.Context, pool string) ([]FleetOrker, error) {
+	if err := c.read(ctx); err != nil {
+		return nil, err
+	}
+	var orkers []FleetOrker
+	for _, orker := range c.byPool[pool] {
+		if orker.Described.GetCordoned() && orker.Described.GetCordonReason() != "" && !profileDrifted(orker.Described) {
+			orkers = append(orkers, orker)
+		}
+	}
+	return orkers, nil
+}
+
+// profileDrifted says an Orker holds a profile drift cordon: what it reports
+// is no longer what it audited, so its definitions are not read.
+func profileDrifted(o *orkstackv1.DescribeOrkerResult) bool {
+	for _, cause := range o.GetProfileCordons() {
+		if cause.GetCause() == orkstackv1.ProfileCordon_CAUSE_DRIFT {
+			return true
+		}
+	}
+	return false
+}
+
+// askAgain asks the live Orkers that did not answer the census's read once
+// more, together and each bounded by orkerDescribeTimeout, and files every
+// answer under its pool: at most once per census, and only after a read. It
+// says whether any answered. A late answer carries only its identity as
+// presence, and is seen by every question asked after it, never by one asked
+// before. Not for concurrent use with the census's readers: only Plan asks
+// it, and Plan asks its questions one at a time.
+func (c *poolCensus) askAgain(ctx context.Context) bool {
+	answered := false
+	c.againOnce.Do(func() {
+		if c.fleet == nil || !c.wasRead() || len(c.unanswered) == 0 {
+			return
+		}
+		ids := c.unanswered
+		got := make([]FleetOrker, len(ids))
+		probeTogether(len(ids), func(i int) {
+			describeCtx, cancel := context.WithTimeout(ctx, orkerDescribeTimeout)
+			defer cancel()
+			described, err := c.fleet.DescribeOrkerByID(describeCtx, ids[i])
+			got[i] = FleetOrker{Presence: OrkerPresence{Identity: ids[i]}, Described: described, Err: err}
+		})
+		c.unanswered = nil
+		for _, orker := range got {
+			if orker.Err != nil || orker.Described == nil {
+				c.unanswered = append(c.unanswered, orker.Presence.Identity)
+				continue
+			}
+			answered = true
+			pool := orker.Described.GetPool()
+			c.byPool[pool] = append(c.byPool[pool], orker)
+			slices.SortFunc(c.byPool[pool], func(a, b FleetOrker) int {
+				return strings.Compare(a.Presence.Identity, b.Presence.Identity)
+			})
+		}
+	})
+	return answered
 }
 
 // pausedForStoreOutage says a store outage alone holds this Orker's cordon, so

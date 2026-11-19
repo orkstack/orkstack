@@ -350,3 +350,38 @@ func TestListOrkers_CarriesTheMetadataProbe(t *testing.T) {
 		}
 	}
 }
+
+// TestListOrkers_ReadAtIsTheEngineClock: a list says when its engine
+// finished reading the fleet, on the engine's own clock, for the whole fleet
+// and for one Orker asked by id.
+func TestListOrkers_ReadAtIsTheEngineClock(t *testing.T) {
+	start := time.Date(2026, 11, 19, 12, 0, 0, 0, time.UTC)
+	clock := &stepClock{now: start}
+	at := start.Add(4 * time.Second)
+	fleet := &readingFleet{stubFleet: threeOrkerFleet(), onRead: func() { clock.set(at) }}
+	svc := api.NewService(api.Config{Fleet: fleet, Now: clock.Now})
+	for _, req := range []*orkstackv1.ListOrkersRequest{{}, orkersWhere(t, "orker_id=orker-7f3a")} {
+		clock.set(start)
+		resp, err := svc.ListOrkers(context.Background(), connect.NewRequest(req))
+		if err != nil {
+			t.Fatalf("ListOrkers: %v", err)
+		}
+		if got := resp.Msg.GetReadAt(); got == nil || !got.AsTime().Equal(at) {
+			t.Fatalf("read_at = %v, want the engine's %v", got, at)
+		}
+	}
+}
+
+// readingFleet is a stub fleet that runs onRead as each Orker is described:
+// the replica's clock moves while the inventory is read.
+type readingFleet struct {
+	*stubFleet
+	onRead func()
+}
+
+func (f *readingFleet) DescribeOrkerByID(ctx context.Context, id string) (*orkstackv1.DescribeOrkerResult, error) {
+	if f.onRead != nil {
+		f.onRead()
+	}
+	return f.stubFleet.DescribeOrkerByID(ctx, id)
+}

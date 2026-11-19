@@ -9,3 +9,5 @@ orker-91c0  build  2026.08.16-a1b2  ready                  0      0/2   16 cpu, 
 1 orker could not be asked, so its load is unknown rather than zero:
   orker-c001: describe orker: context deadline exceeded
 A stopped Orker stays listed, and counted by `orkctl pool list`, for up to 90 seconds.
+
+As of 2026-09-22T09:14:05Z, the engine's clock.

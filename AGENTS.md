@@ -455,6 +455,8 @@ memo lookup, so a differing `env` allow-list, registry credentials or profile
 can refuse it even where the memo would hit (`docs/DEPLOY.md`, "Every Orker of a pool has the same
 settings").
 
+A device or gpu profile may differ between Orkers of a pool while a roll changes it, under contract labels: a run pins the contract its image declares, or, when it declares none, the labels every Orker of the pool that answered at submit serves; an Orker serves it with a contract that owns a pinned label with a definition submit saw, or by the operator's `accepts:`, and an Orker that serves none fails the attempt before any container, a never-started fault.
+
 Docker- and Podman-specific details live in the runtime files
 (`internal/orker/runtime_docker.go` and `runtime_dialect.go`) and nowhere else:
 do not spread them through unrelated OrkStack components. Podman is a dialect
@@ -662,6 +664,9 @@ internal never appears on any of those surfaces.
   name: a device profile (`devices:`, kind `devices` or `gpu`). A **unit** is
   one exclusively bound element of a `gpu` profile, identified by its 0-based
   position in the profile's list.
+- **Profile contract** means one labelled definition of a profile, which a
+  run pins and an image may declare (`devices:` in its interface); always
+  written in full, it is unrelated to the OCI Activity Contract.
 - **Pin host** means an Orker configured to accept pins
   (`ORK_ORKER_MAX_PINS` above zero). Every Orker still runs ordinary tasks;
   only a pin host runs pinned ones.
