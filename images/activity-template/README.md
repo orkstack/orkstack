@@ -5,8 +5,8 @@ manifest — against a merged root context plus any number of named JSON or
 YAML datasources. One operation, `render`.
 
 The renderer is [gomplate](https://github.com/hairyhenderson/gomplate) 5.3.1,
-installed as the project's **published release binary**, verified against the
-release's SHA-256 when the image is built. The first line of every task's
+taken as the static binary of the project's **own published image** for the
+release, pinned by its digest when the image is built. The first line of every task's
 stdout is `activity-template: gomplate version 5.3.1`.
 
 ```yaml
@@ -186,10 +186,10 @@ A task that mounts a secret is never cached; this image refuses such a task
 at all.
 
 This inventory is for gomplate 5.3.1, the version the Dockerfile pins. When
-`GOMPLATE_VERSION` moves it must be re-derived from gomplate's function
+the pinned gomplate image moves it must be re-derived from gomplate's function
 reference at the release's tag, cross-checked against the functions the
 binary registers, with every function that could read ambient state run on
-the release binary.
+the binary the image takes.
 
 **Unsafe to cache when** the template calls one of these:
 
@@ -389,19 +389,17 @@ publishes no artifact.
 make -C images image-template
 ```
 
-The build downloads the gomplate release asset
-(`gomplate_linux-<arch>` of the `v5.3.1` release) from `github.com` and checks
-it against the SHA-256 pinned in the Dockerfile, so it needs that host (or a
-mirror) at build time, and it needs BuildKit (Docker 23+, or
-`DOCKER_BUILDKIT=1`), which supplies the target architecture; amd64 and arm64
-are pinned, and any other architecture fails the build explicitly. An
-air-gapped builder mirrors the asset and builds with
+The build takes gomplate from the project's own image,
+`docker.io/hairyhenderson/gomplate:v5.3.1`, pinned in the Dockerfile by the
+digest of its multi-arch index, so it needs that registry (or a mirror) at
+build time; any architecture the index carries builds, amd64 and arm64 among
+them. An air-gapped builder mirrors that image by its digest and builds with
 
 ```bash
-make -C images images DOCKER_BUILD_FLAGS='--build-arg GOMPLATE_BASE_URL=https://mirror.example/gomplate'
+make -C images images DOCKER_BUILD_FLAGS='--build-context docker.io/hairyhenderson/gomplate:v5.3.1@sha256:<digest>=docker-image://mirror.example/gomplate@sha256:<digest>'
 ```
 
-— the checksum verifies the bytes whatever served them, so a mirror can neither
+— the digest fixes the bytes whatever served them, so a mirror can neither
 substitute nor corrupt the binary silently. The binary is ~116 MB, so the image
 is correspondingly larger, and its first pull shows up in a task's timing
 breakdown.
