@@ -3324,6 +3324,14 @@ boot.
 | `OrkflowOriginId` | Keyword | filtering runs by `origin.id` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
 | `OrkflowOriginRootRunId` | Keyword | filtering runs by `origin.root_run_id` (everything below a root) | a list filtered by root walks every run instead, and fails rather than answer short when it cannot finish | `run_root_index` |
 | `OrkflowRunPaused` | Keyword | showing a paused run as `PAUSED` in lists, the `PAUSED` status filter, and the paused-runs count (`ork.runs.paused`) | a paused run lists as `RUNNING`, a list filtered on `PAUSED` is refused, and paused runs are not counted; once runs have written it, removing it stops them (below) | `run_paused_index` |
+| `OrkflowGatePhase` | Keyword | a concurrency gate's phase, `active` or `lingering`, so the cluster counts a namespace's active limit keys | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+| `OrkflowRunQueued` | Keyword | `true` on a run waiting for a concurrency slot | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+| `OrkflowConcurrencyHeld` | KeywordList | the gate ids a run holds, by which a rebuilding gate lists the open runs | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+| `OrkflowConcurrencyQueued` | KeywordList | the gate ids a run is queued at; a rebuilding gate lists the open runs by it too, beside `OrkflowConcurrencyHeld` | concurrency limits cannot be held on this cluster, and `ork.concurrency.index_unavailable` reads 1 | `concurrency_index` |
+
+`concurrency_index` is `true` only when the four concurrency attributes and
+`OrkflowNamespace` are all usable; one already registered under another type
+makes the four unusable, and the boot names it.
 
 Never remove one while runs are open. `OrkflowRunPaused` above all: a run
 started while it was registered writes it at each pause and unpause, and
@@ -3349,6 +3357,10 @@ temporal operator search-attribute create --namespace ork-main --name OrkflowOri
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginRootRunId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowRunPaused --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowGatePhase --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowRunQueued --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyHeld --type KeywordList
+temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyQueued --type KeywordList
 temporal operator search-attribute list --namespace ork-main
 ```
 
@@ -3366,7 +3378,11 @@ tcld namespace search-attributes add --namespace ork-main.acct1 \
   --search-attribute OrkflowOriginKind=Keyword \
   --search-attribute OrkflowOriginId=Keyword \
   --search-attribute OrkflowOriginRootRunId=Keyword \
-  --search-attribute OrkflowRunPaused=Keyword
+  --search-attribute OrkflowRunPaused=Keyword \
+  --search-attribute OrkflowGatePhase=Keyword \
+  --search-attribute OrkflowRunQueued=Keyword \
+  --search-attribute OrkflowConcurrencyHeld=KeywordList \
+  --search-attribute OrkflowConcurrencyQueued=KeywordList
 ```
 
 Replace `ork-main` with your `temporal.namespace`, and `acct1` with your
@@ -3382,8 +3398,8 @@ counts your own attributes in the same namespace against them:
 | Temporal Cloud | 40 | 5 |
 | Elasticsearch | no Temporal limit | no Temporal limit |
 
-OrkStack uses five Keyword attributes, so a SQL-backed namespace has five
-left for your own. On Elasticsearch an attribute is shared by every
+OrkStack uses seven Keyword and two KeywordList attributes, so a SQL-backed
+namespace has three Keyword and one KeywordList left for your own. On Elasticsearch an attribute is shared by every
 namespace of the cluster. Temporal Cloud does not support removing a custom
 attribute (its docs send you to Temporal Support), so one added there
 stays.
@@ -3423,7 +3439,11 @@ tcld namespace create --namespace ork-main --region <region> --retention-days 4 
   --search-attribute OrkflowOriginKind=Keyword \
   --search-attribute OrkflowOriginId=Keyword \
   --search-attribute OrkflowOriginRootRunId=Keyword \
-  --search-attribute OrkflowRunPaused=Keyword
+  --search-attribute OrkflowRunPaused=Keyword \
+  --search-attribute OrkflowGatePhase=Keyword \
+  --search-attribute OrkflowRunQueued=Keyword \
+  --search-attribute OrkflowConcurrencyHeld=KeywordList \
+  --search-attribute OrkflowConcurrencyQueued=KeywordList
 ```
 
 **What the engine's credential then needs.** Every call `ork` and `orker`
@@ -3431,8 +3451,9 @@ make, at boot and while they run, other than the three above, is one
 Temporal's own authorizer classes as read or write access to the
 namespace: starting, signalling, cancelling, describing, listing, counting
 and deleting runs, reading their history, polling and completing tasks,
-heartbeats, schedules (created only when someone creates an OrkStack
-schedule), describing task queues, and, when versioning is on, setting a
+heartbeats, schedules (the concurrency census's, `ork-conc-census`, which
+any engine creates or updates at boot, and an OrkStack schedule someone
+creates), describing task queues, and, when versioning is on, setting a
 Worker Deployment's current or ramping version (`orkctl release`). Temporal
 Cloud lists most of these under its namespace Write permission.
 
@@ -3459,7 +3480,7 @@ table says.
 **The boot lines that confirm it.**
 
 ```text
-INFO connected to temporal … run_namespace_index=true run_origin_index=true run_root_index=true run_paused_index=true
+INFO connected to temporal … run_namespace_index=true run_origin_index=true run_root_index=true run_paused_index=true concurrency_index=true
 INFO retention maximum derived from the cluster: this engine may not change the namespace's retention … cluster_retention=96h0m0s max_run_retention=72h0m0s
 WARN the cluster refused to set the retention backstop; the retention it keeps covers it … cluster_retention=96h0m0s backstop=96h0m0s
 ```

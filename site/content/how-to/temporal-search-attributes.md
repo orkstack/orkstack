@@ -7,7 +7,7 @@ OrkStack asks Temporal to index a few run fields, so run lists filter in the clu
 Look for this line in an engine's log at boot:
 
 ```text
-INFO connected to temporal … run_namespace_index=true run_origin_index=true run_root_index=true run_paused_index=true
+INFO connected to temporal … run_namespace_index=true run_origin_index=true run_root_index=true run_paused_index=true concurrency_index=true
 ```
 
 Every `true` is a group the cluster indexes. A `false` comes with a warning that names the missing attribute and what it costs:
@@ -28,6 +28,10 @@ temporal operator search-attribute create --namespace ork-main --name OrkflowOri
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowOriginRootRunId --type Keyword
 temporal operator search-attribute create --namespace ork-main --name OrkflowRunPaused --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowGatePhase --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowRunQueued --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyHeld --type KeywordList
+temporal operator search-attribute create --namespace ork-main --name OrkflowConcurrencyQueued --type KeywordList
 ```
 
 Then restart the engines, so each one finds them. On Temporal Cloud, which OrkStack does not support yet, the command is different: see DEPLOY.md below. Check with:
@@ -42,7 +46,7 @@ On a cluster another team runs, ask its admin to create the namespace with a ret
 
 ## Mind the limits
 
-Temporal limits custom attributes per namespace. A SQL visibility store (PostgreSQL, MySQL, SQLite) takes 10 Keyword attributes, and OrkStack uses five, leaving five for your own.
+Temporal limits custom attributes per namespace. A SQL visibility store (PostgreSQL, MySQL, SQLite) takes 10 Keyword and 3 KeywordList attributes. OrkStack uses seven Keyword and two KeywordList, leaving three and one for your own.
 
 ## Never remove one while runs are open
 
