@@ -454,6 +454,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	if line := runTimeoutLine(run, nowFunc()); line != "" {
 		fmt.Fprintf(header, "Timeout:\t%s\n", line)
 	}
+	if q := run.GetQueued(); q != nil {
+		fmt.Fprintf(header, "Queued:\t%s\n", queuedLine(q))
+	}
 	writeOriginLines(header, run.GetOrigin())
 	fmt.Fprintf(header, "Input:\t%s\n", payloadSummary(run.GetInput(), run.GetId(), run.GetNamespace()))
 	fmt.Fprintf(header, "Output:\t%s\n", payloadSummary(run.GetOutput(), run.GetId(), run.GetNamespace()))

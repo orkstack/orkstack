@@ -2094,6 +2094,25 @@ tasks:
 - **A run that ends while it waits**, or that its limit refuses, starts no
   task, failure handlers included: it never held the key, so it ends `FAILED`
   or `CANCELED` with its own reason and nothing runs.
+- **A waiting run** is `PENDING`, and emits `RUN_QUEUED` once, when it joins
+  the line. `orkctl run get` and the run page say where it stands, behind whom
+  and when it times out (its place is read from the limit at the moment it is
+  asked); `orkctl run list -F queued=true`, `queued_on=KEY` and
+  `holding=KEY` list the runs waiting for or holding a key, and only a run
+  still going matches them. A run waiting for its slot cannot be paused.
+- **A paused run gives its slot back** once nothing of it runs (an open
+  `await:` or `sleep:` does not count), so the next run in line can start; a
+  run unpaused before then keeps it. On unpause it asks again and joins the
+  back of the line: it stays `RUNNING`, starts nothing new until it holds the
+  slot again, and fails `RUN_QUEUE_TIMEOUT` if its `queue_timeout`, counted
+  from the unpause, passes first. A run that is failing when it is paused
+  keeps its slot.
+- **A run that fails with its slot given back** (an await that expires while
+  it is paused) asks for the slot again once unpaused, then runs its failure
+  handlers inside the limit and ends `FAILED` with its own error. If it does
+  not get the slot back before its `queue_timeout`, the handlers do not run,
+  and its error and each handler say so: "failure handlers did not run: the
+  concurrency slot on key … was not regained within …".
 - `on_limit: refuse`, `skip`, `cancel_oldest` and `replace` are refused at
   validate as not available yet.
 - The block is part of the definition digest, its timeout in its short form
