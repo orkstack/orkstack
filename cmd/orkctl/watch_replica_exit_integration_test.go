@@ -23,6 +23,7 @@ import (
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/gen/go/orkstack/v1/orkstackv1connect"
 	"github.com/orkstack/orkstack/internal/api"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 )
 
 // replicaForwarder is the load balancer in front of two replicas, reduced to
@@ -112,6 +113,7 @@ func startOrkctlProcess(t *testing.T, c *awaitCLI, orkctl string, args ...string
 	t.Helper()
 	cmd := exec.CommandContext(c.ctx, orkctl, args...)
 	cmd.Dir = c.repoRoot
+	cmd.Env = testbin.StackEnv(os.Environ())
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

@@ -260,6 +260,16 @@ message TaskRun {
 
   // record is set from identity (O39); unset until it lands (v0.4.0 proto batch).
   RecordRef record = 37;
+
+  // dispatch_held is true while the run holds this ready task back from
+  // dispatch, or a fan-out's next items: its in-flight cap is reached, or it
+  // is quiescing before carrying on into a fresh history. A pause holds
+  // dispatch too, and is said by the run's own pause state, not here. The
+  // row stays PENDING (a fan-out RUNNING) with nothing emitted; the flag is
+  // cleared when the row dispatches, and on any row that starts or ends.
+  // It is in the run's saved state and snapshot only, and a run written
+  // before it reads false.
+  bool dispatch_held = 38;
 }
 
 // TimingReason is why one timing quantity cannot be known. Each names a cause
@@ -811,6 +821,12 @@ message Run {
   // timeout is the run's own time limit; unset when its Orkflow declares no
   // `timeout:`.
   RunTimeout timeout = 35;
+
+  // dispatch_hold is why the run itself is holding back work it could start,
+  // as of the last time it looked: it is at its in-flight limit, or it is
+  // carrying on. Unspecified when nothing is held, and while the run is
+  // paused (pause says why). A task waiting behind this hold reads PENDING.
+  RunDispatchHold dispatch_hold = 36;
 }
 
 // RunCancelRequest is ENGINE-INTERNAL: the record CancelRun writes as the
@@ -1185,6 +1201,17 @@ message ResumeHint {}
 // RunContextState is E86's; it is empty until E86 lands (v0.4.0 proto
 // batch).
 message RunContextState {}
+
+// RunDispatchHold is why a run holds back work it could otherwise start.
+enum RunDispatchHold {
+  RUN_DISPATCH_HOLD_UNSPECIFIED = 0;
+  // The run has as much work in flight as its in-flight limit allows; held
+  // work starts as running work finishes.
+  RUN_DISPATCH_HOLD_IN_FLIGHT_CAP = 1;
+  // The run is carrying on: it starts nothing new until its running work
+  // finishes, then carries its state forward and continues.
+  RUN_DISPATCH_HOLD_CARRYING_ON = 2;
+}
 
 // RunPause is one pause a person asked for. Every principal here is what the
 // gateway asserted (as RunOrigin.principal), never authenticated.

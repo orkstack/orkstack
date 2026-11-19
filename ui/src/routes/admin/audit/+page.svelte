@@ -35,8 +35,8 @@
 		auditCliCommand,
 		auditHref,
 		auditPrincipalLabel,
-		auditResultLabel,
 		auditScopeSentence,
+		auditShortcuts,
 		auditStackKey
 	} from '#lib/audit.ts';
 	import { readPageStack, writePageStack } from '#lib/browsing.ts';
@@ -68,6 +68,10 @@
 		void goto(auditHref(c, { filters, cursor: '', page: 1 }));
 	}
 	const clearHref = $derived(auditHref(c, { filters: [], cursor: '', page: 1 }));
+	// The questions access control raises of the trail, one click each; only
+	// where the deployment authenticates, since an asserted deployment records
+	// no decision and verifies no principal.
+	const shortcuts = $derived(data.authMode === 'observe' || data.authMode === 'enforce' ? auditShortcuts(c.filters) : []);
 
 	let retrying = $state(false);
 	async function retry() {
@@ -115,6 +119,23 @@
 	<ListFilter request={ListAuditRecordsRequestSchema} applied={c.filters} testid="audit" onapply={applyFilters} {clearHref} />
 </div>
 
+{#if shortcuts.length > 0}
+	<!-- Independent toggles, not one choice: each is its own pill, and the one
+		in force is marked current and removes itself when pressed again. -->
+	<div class="mb-3 flex flex-wrap items-center gap-2" role="group" aria-label="Access shortcuts" data-testid="audit-shortcuts">
+		<span class="caps text-ink-muted" aria-hidden="true">Access</span>
+		{#each shortcuts as s (s.testid)}
+			<a
+				href={auditHref(c, { filters: s.filters, cursor: '', page: 1 })}
+				data-testid="audit-shortcut-{s.testid}"
+				aria-current={s.active ? 'true' : undefined}
+				class="shortcut"
+				>{s.label}{#if s.active}<span class="sr"> (on; press to remove)</span>{/if}</a
+			>
+		{/each}
+	</div>
+{/if}
+
 {#if data.auditError}
 	<ErrorPanel
 		testid="audit-error"
@@ -134,14 +155,26 @@
 	{/if}
 {:else}
 	<div class="overflow-x-auto border-t-2 border-ink">
-		<table class="register min-w-[820px]" data-testid="audit-table">
+		<table class="register audit-reg min-w-[820px]" data-testid="audit-table">
+			<!-- Fixed widths that add up to the frame: every cell wraps inside its
+			     own column, so a long target or refusal never pushes the table
+			     past the laptop floor, and the target keeps the widest share. -->
+			<colgroup>
+				<col style="width: 12%" />
+				<col style="width: 14%" />
+				<col style="width: 13%" />
+				<col style="width: 10%" />
+				<col style="width: 30%" />
+				<col style="width: 10%" />
+				<col style="width: 11%" />
+			</colgroup>
 			<thead>
 				<tr>
 					<th scope="col">When</th>
 					<th scope="col">Principal</th>
 					<th scope="col">Action</th>
 					<th scope="col">Namespace</th>
-					<th scope="col" class="w-[38%]">Target</th>
+					<th scope="col">Target</th>
 					<th scope="col">Decision</th>
 					<th scope="col">Result</th>
 				</tr>
@@ -149,7 +182,7 @@
 			<tbody>
 				{#each records as rec (rec.id)}
 					<tr class="align-top {rec.succeeded ? '' : 'bg-red-tint'}" data-testid="audit-row" data-record-id={rec.id}>
-						<td class="figure text-xs whitespace-nowrap text-ink-secondary" data-testid="audit-when">{fmtTimestamp(rec.at)}</td>
+						<td class="figure text-xs text-ink-secondary" data-testid="audit-when">{fmtTimestamp(rec.at)}</td>
 						<td>
 							{#if rec.principal}<span class="block text-2xs text-ink-muted" data-principal-mark={principalMark(rec.principalVerified, rec.authMethod).word}>{principalMark(rec.principalVerified, rec.authMethod).word}{rec.authMethod ? ` (${rec.authMethod})` : ''} by</span>{/if}
 							<span
@@ -158,21 +191,21 @@
 							>
 						</td>
 						<td class="font-mono text-xs" data-testid="audit-action">{rec.action}</td>
-						<td class="font-mono text-xs whitespace-nowrap" data-testid="audit-namespace">{rec.namespace || '-'}</td>
-						<td class="break-all font-mono text-xs" data-testid="audit-target">
+						<td class="font-mono text-xs" data-testid="audit-namespace">{rec.namespace || '-'}</td>
+						<td class="font-mono text-xs" data-testid="audit-target">
 							{rec.target || '-'}
 							{#if rec.detail}
 								<span class="mt-1 block font-sans text-xs text-ink-muted [overflow-wrap:anywhere] [word-break:normal]" data-testid="audit-detail">{rec.detail}</span>
 							{/if}
 						</td>
-						<td class="text-xs whitespace-nowrap" data-testid="audit-decision">
+						<td class="text-xs" data-testid="audit-decision">
 							{#if rec.decision}<span>{decisionWord(rec.decision)}</span>{#if rec.rule}<span class="block font-mono text-2xs text-ink-muted">{rec.rule}</span>{/if}{:else}<span class="text-ink-muted">Not decided</span>{/if}
 						</td>
 						<td>
-							<span
-								data-testid="audit-result"
-								class={refused(rec.succeeded)}
-								>{auditResultLabel(rec)}</span
+							<!-- The stamp says ok or refused; a refusal's code sits under it, so the column stays narrow. -->
+							<span data-testid="audit-result"
+								><span class={refused(rec.succeeded)}>{rec.succeeded ? 'ok' : 'refused'}</span
+								>{#if !rec.succeeded}{' '}<span class="mt-1 block font-mono text-2xs text-ink-muted">{rec.errorCode || '-'}</span>{/if}</span
 							>
 						</td>
 					</tr>
@@ -193,3 +226,55 @@
 {/if}
 
 <p class="mt-5 max-w-prose text-xs text-ink-muted" data-testid="audit-caption">{AUDIT_CAPTION}</p>
+
+<style>
+	/* An access shortcut: a full pill, as chips are (ui/DESIGN.md), 32 px and
+	   40 px on phones; the one in force is marked as "you are here" is. Scoped
+	   here, so the shell's stylesheet does not grow. */
+	.shortcut {
+		display: inline-flex;
+		align-items: center;
+		height: 2rem;
+		padding: 0 0.75rem;
+		border: 1px solid var(--color-rule-strong);
+		border-radius: 9999px;
+		background: var(--color-paper);
+		color: var(--color-ink-secondary);
+		font-size: var(--text-sm);
+		text-decoration: none;
+		transition: background-color 120ms, color 120ms;
+	}
+	.shortcut:hover {
+		background: var(--color-hover);
+		color: var(--color-ink);
+	}
+	.shortcut[aria-current='true'] {
+		border-color: var(--color-blue-strong);
+		background: var(--color-blue-tint);
+		color: var(--color-blue-strong);
+		font-weight: 600;
+	}
+	/* The columns are fixed (the colgroup), so nothing in a cell may hold
+	   it open: a heading or a value wraps at its spaces, and a word breaks
+	   only when it is wider than its column. */
+	.audit-reg {
+		table-layout: fixed;
+	}
+	.audit-reg th {
+		white-space: normal;
+	}
+	.audit-reg td {
+		overflow-wrap: break-word;
+	}
+	@media (max-width: 639px) {
+		.shortcut {
+			height: 2.5rem;
+		}
+	}
+	@media (forced-colors: active) {
+		.shortcut[aria-current='true'] {
+			outline: 2px solid Highlight;
+			outline-offset: -2px;
+		}
+	}
+</style>

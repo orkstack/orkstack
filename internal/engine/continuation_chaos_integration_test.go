@@ -3280,7 +3280,7 @@ func TestIntegration_ContinuationChaosC30_LostSegmentIsAnExplicitGap(t *testing.
 	path := filepath.Join(t.TempDir(), "evidence.tar.gz")
 	must.OK(t, os.WriteFile(path, bundle.Bytes(), 0o644))
 	cmd := exec.CommandContext(ctx, testbin.Path(t, "./cmd/orkctl"), "run", "evidence", "verify", path)
-	cmd.Env = append(os.Environ(), "ORK_SERVER=", "ORK_NAMESPACE=", "ORK_CONFIG="+filepath.Join(t.TempDir(), "config.json"))
+	cmd.Env = append(testbin.StackEnv(os.Environ()), "ORK_SERVER=", "ORK_NAMESPACE=", "ORK_CONFIG="+filepath.Join(t.TempDir(), "config.json"))
 	out, err := cmd.CombinedOutput()
 	notice := rangeText + " of this run were lost from object storage before it was archived"
 	if err != nil || !strings.Contains(string(out), notice) {

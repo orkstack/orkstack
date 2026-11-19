@@ -469,3 +469,90 @@ func TestInFlightCap_ChildRunInheritsTheParentsCap(t *testing.T) {
 		t.Fatal("the nested child plan the parent carries holds run-tree limits")
 	}
 }
+
+// heldRows records, over every snapshot, which rows read dispatch_held, and
+// any row that reads it while it is neither PENDING nor a fan-out still
+// dispatching.
+type heldRows struct {
+	mu    sync.Mutex
+	seen  map[string]bool
+	wrong []string
+}
+
+func (h *heldRows) observe(run *orkstackv1.Run, _ int64) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, row := range run.GetTaskRuns() {
+		if !row.GetDispatchHeld() {
+			continue
+		}
+		h.seen[row.GetTaskId()] = true
+		fanOut := row.GetEach() != nil && row.GetStatus() == orkstackv1.Status_STATUS_RUNNING
+		if row.GetStatus() != orkstackv1.Status_STATUS_PENDING && !fanOut {
+			h.wrong = append(h.wrong, fmt.Sprintf("%s %s", row.GetTaskId(), row.GetStatus()))
+		}
+	}
+	return nil
+}
+
+// TestInFlightCap_AHeldRowSaysSo: a ready task the cap holds back, and a
+// fan-out whose next items it holds, read dispatch_held in the run's
+// snapshot while they wait; no row reads it once it runs, and none in the
+// finished run.
+func TestInFlightCap_AHeldRowSaysSo(t *testing.T) {
+	for _, tc := range []struct {
+		name, runID, doc string
+		input            func(*testing.T) *orkstackv1.Payload
+	}{
+		{"tasks", "ork-held-tasks", flatDocument(6), func(t *testing.T) *orkstackv1.Payload { return payload(t, nil) }},
+		{"items", "ork-held-items", wideFanOutDocument, func(t *testing.T) *orkstackv1.Payload { return spreadInput(t, 8) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarnessCtx(t, nil, itemBehavior)
+			held := &heldRows{seen: map[string]bool{}}
+			h.onSnapshot = held.observe
+			h.env.ExecuteWorkflow(engine.RunWorkflow, tc.runID, compile(t, tc.doc), tc.input(t), cappedPlan(2, 1900),
+				(*orkstackv1.RunContinuation)(nil))
+			must.OKf(t, h.env.GetWorkflowError(), "the run failed")
+			if len(held.seen) == 0 {
+				t.Fatal("no snapshot read a held row; the cap of 2 holds the rest")
+			}
+			if len(held.wrong) != 0 {
+				t.Fatalf("rows read held while not waiting: %v", held.wrong)
+			}
+			for _, row := range mustFinalRun(t, h.store, tc.runID).GetTaskRuns() {
+				if row.GetDispatchHeld() {
+					t.Fatalf("finished run's row %s still reads held", row.GetTaskId())
+				}
+			}
+		})
+	}
+}
+
+// TestInFlightCap_AFailedFanOutDoesNotReadHeld: a fan-out whose items the
+// cap held, and one of whose items then fails, ends FAILED and is never
+// read as held once it has ended, in any snapshot.
+func TestInFlightCap_AFailedFanOutDoesNotReadHeld(t *testing.T) {
+	failThird := func(ctx context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
+		if in.GetEach() != nil && in.GetEach().GetIndex() == 3 {
+			return nil, fmt.Errorf("item 3 fails")
+		}
+		return itemBehavior(ctx, in)
+	}
+	h := newHarnessCtx(t, nil, failThird)
+	held := &heldRows{seen: map[string]bool{}}
+	h.onSnapshot = held.observe
+	h.env.ExecuteWorkflow(engine.RunWorkflow, "ork-held-fails", compile(t, wideFanOutDocument), spreadInput(t, 8),
+		cappedPlan(2, 1900), (*orkstackv1.RunContinuation)(nil))
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("the run succeeded; item 3 fails")
+	}
+	if len(held.wrong) != 0 {
+		t.Fatalf("rows read held while not waiting: %v", held.wrong)
+	}
+	for _, row := range mustFinalRun(t, h.store, "ork-held-fails").GetTaskRuns() {
+		if row.GetDispatchHeld() {
+			t.Fatalf("finished run's row %s (%s) still reads held", row.GetTaskId(), row.GetStatus())
+		}
+	}
+}

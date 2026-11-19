@@ -387,6 +387,11 @@ func TestCommittedFixtures_StartWithFourArgumentsAndNoCarry(t *testing.T) {
 	}
 	for _, path := range paths {
 		recorded := loadHistoryFile(t, path)
+		// The concurrency gate's and census's fixtures start workflows of
+		// their own, with their own one argument.
+		if typ := recorded.GetEvents()[0].GetWorkflowExecutionStartedEventAttributes().GetWorkflowType().GetName(); typ != engine.RunWorkflowType {
+			continue
+		}
 		starts := 0
 		for _, event := range recorded.GetEvents() {
 			input := event.GetWorkflowExecutionStartedEventAttributes().GetInput()

@@ -43,9 +43,12 @@ const gapFlushBytes = 64 << 10
 
 // Index reads r, the source, in one pass and builds its line index for batches
 // of k lines. It reads at most min(readCap, o.SourceSize) bytes: a source larger
-// than readCap is refused (EACH_SOURCE_TOO_LARGE) without a read, and the scan
-// stops, reading no further, at the first refusal: a line passing the limit,
-// an invalid line, line max_items*k + 1, or a span over the slice limit.
+// than readCap is refused (EACH_SOURCE_TOO_LARGE) without a read, from the
+// committed size alone. The scan stops parsing at the first refusal of the
+// content — a line passing the limit, an invalid line, line max_items*k + 1,
+// or a span over the slice limit — and, given the committed digest, hashes the
+// rest and reports the refusal only for the committed bytes
+// (EACH_EXPANSION_FAILED otherwise).
 // Memory is one read buffer plus one line (at most values_max_bytes + 2 bytes)
 // and the entries, whatever the source. It checks ctx once per read, and a
 // reader's own error comes back wrapped and is not a refusal.
@@ -130,11 +133,17 @@ func Index(ctx context.Context, r io.Reader, readCap int64, k int, o Options) (*
 }
 
 // drains reports whether a refusal is held while the rest of the source is
-// hashed (so a corrupted source is told from a bad line); a source with too
-// many items is refused at once.
+// hashed, so a source whose bytes are not the committed ones is told from a
+// refusal of its content: every refusal the scan meets — an invalid line, a
+// batch over its limit, too many items or too many lines. Nothing about bytes
+// that are not the committed ones is reported, and the rest read is at most
+// the committed size, which readCap already bounds.
 func drains(err error) bool {
-	r := ReasonOf(err)
-	return r == ReasonLineInvalid || r == ReasonBatchTooLarge
+	switch ReasonOf(err) {
+	case ReasonLineInvalid, ReasonBatchTooLarge, ReasonTooManyItems, ReasonSourceTooLarge:
+		return true
+	}
+	return false
 }
 
 // spanHash is a hash whose state can be saved and taken back: a gap hashed

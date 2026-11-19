@@ -154,6 +154,16 @@ message ListAuditRecordsRequest {
         path: "error_code"
         label: "Error code"
         operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "decision"
+        label: "Decision"
+        operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
+      },
+      {
+        path: "principal_verified"
+        label: "Principal verified"
+        operators: [FILTER_OPERATOR_EQUALS]
       }
     ]
   };

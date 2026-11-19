@@ -449,12 +449,12 @@ const file_orkstack_v1_audit_proto_rawDesc = "" +
 	"\bdecision\x18\x12 \x01(\tR\bdecision\x12\x12\n" +
 	"\x04rule\x18\x13 \x01(\tR\x04rule\x12+\n" +
 	"\x11policy_generation\x18\x14 \x01(\x03R\x10policyGeneration\x12\x16\n" +
-	"\x06signin\x18\x15 \x01(\tR\x06signin\"\x9f\x03\n" +
+	"\x06signin\x18\x15 \x01(\tR\x06signin\"\xe7\x03\n" +
 	"\x17ListAuditRecordsRequest\x12\x1b\n" +
 	"\tpage_size\x18\x06 \x01(\x05R\bpageSize\x12\x1d\n" +
 	"\n" +
 	"page_token\x18\a \x01(\tR\tpageToken\x122\n" +
-	"\afilters\x18\b \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xda\x01\xa2\xbb\x18\xd5\x01\n" +
+	"\afilters\x18\b \x03(\v2\x18.orkstack.v1.FieldFilterR\afilters:\xa2\x02\xa2\xbb\x18\x9d\x02\n" +
 	"\x17orkstack.v1.AuditRecord\x12\x0e\n" +
 	"\x02at\x12\x04When\x1a\x02\x06\a\x12\x1f\n" +
 	"\tnamespace\x12\tNamespace\x1a\x05\x01\x02\x03\x04\x058\x01\x12\x17\n" +
@@ -464,7 +464,9 @@ const file_orkstack_v1_audit_proto_rawDesc = "" +
 	"\tsucceeded\x12\tSucceeded\x1a\x01\x01\x12\x1d\n" +
 	"\n" +
 	"error_code\x12\n" +
-	"Error code\x1a\x03\x01\x02\x03J\x04\b\x01\x10\x06R\tnamespaceR\raction_prefixR\tprincipalR\x05sinceR\x05until\"\xda\x01\n" +
+	"Error code\x1a\x03\x01\x02\x03\x12\x19\n" +
+	"\bdecision\x12\bDecision\x1a\x03\x01\x02\x03\x12+\n" +
+	"\x12principal_verified\x12\x12Principal verified\x1a\x01\x01J\x04\b\x01\x10\x06R\tnamespaceR\raction_prefixR\tprincipalR\x05sinceR\x05until\"\xda\x01\n" +
 	"\x18ListAuditRecordsResponse\x122\n" +
 	"\arecords\x18\x01 \x03(\v2\x18.orkstack.v1.AuditRecordR\arecords\x12&\n" +
 	"\x0fnext_page_token\x18\x02 \x01(\tR\rnextPageToken\x120\n" +

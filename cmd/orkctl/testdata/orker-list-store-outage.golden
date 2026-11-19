@@ -1,7 +1,7 @@
-ORKER       POOL   BUILD  STATE                                            TASKS  PINS  CAPACITY  RESERVED  LAST SEEN
-orker-both  build  -      cordoned (operator; object storage unreachable)  0      -     -         -         2026-09-22T09:14:02Z
-orker-op    build  -      cordoned                                         0      -     -         -         2026-09-22T09:14:02Z
-orker-out   build  -      cordoned (object storage unreachable)            0      -     -         -         2026-09-22T09:14:02Z
+ORKER       POOL   BUILD  STATE                                            TASKS  PINS  PROFILES  CAPACITY  RESERVED  LAST SEEN
+orker-both  build  -      cordoned (operator; object storage unreachable)  0      -     -         -         -         2026-09-22T09:14:02Z
+orker-op    build  -      cordoned                                         0      -     -         -         -         2026-09-22T09:14:02Z
+orker-out   build  -      cordoned (object storage unreachable)            0      -     -         -         -         2026-09-22T09:14:02Z
 
 2 orkers are cordoned and are accepting no new work:
   orker-both: "patching", since 2026-09-22T08:52:10Z

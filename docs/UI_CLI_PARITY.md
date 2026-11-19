@@ -1375,7 +1375,9 @@ detail is `url=… events=[…]`, plus `scope=ns/orkflow/task` when scoped.
 
 - It is a deployment-wide listing narrowed by filters ([Filtering
   lists](#filtering-lists)) on `at`, `namespace`, `action`, `principal`,
-  `target`, `succeeded` and `error_code`, decided on each record's body.
+  `target`, `succeeded`, `error_code`, `decision` (`allowed`, `denied`,
+  `would-deny`, or empty where access control did not decide) and
+  `principal_verified`, decided on each record's body.
   `namespace=payments` selects that namespace's writes, `namespace=default`
   the default namespace's, and `namespace=` (the empty value) the
   deployment-wide writes, which carry no namespace. Both clients print the
@@ -1402,7 +1404,11 @@ it prints `Window: <since> to <until> (exclusive), newest first.` and, with no
 namespace filter, `Every namespace unless a namespace filter narrows it.`. UI:
 **Admin → Audit** — every namespace by default, the filter form (a
 `namespace` filter narrows it) with its CLI equivalent,
-`refused {code}` for a refusal, pagination, the caption.
+`refused {code}` for a refusal, pagination, the caption. Where the
+deployment authenticates, one-click Denied, Would deny (observed) and
+Principal not verified apply `decision=denied`, `decision=would-deny` and
+`principal_verified=false`, each in place of any filter on its field, and
+pressed again remove it.
 
 ### Orker inventory, cordon and drain
 
@@ -1430,6 +1436,16 @@ per-pool **Show Orkers** disclosure with a state stamp (`ready`, `cordoned`,
 pins linking to their runs; **Cordon** through a dialog that requires a reason
 and shows a server error in place; one-click **Uncordon** while an operator's
 cordon holds. The CLI's `STATE` says `cordoned (object storage unreachable)`.
+An Orker's profiles and the profile causes that hold its cordon
+([DEPLOY.md](DEPLOY.md), "Running a device Orker") read alike on both: the row's stamp
+`profile drifted`, `profile unavailable` or `profile out of service` is the
+CLI's `STATE` `cordoned (profile drifted)` and so on, with `operator; `
+first while an operator's cordon holds too. The **Profiles** column's name,
+kind and cause chip (`drifted`, `unavailable`, `out of service`) is the
+CLI's `PROFILES` column, `a100 (gpu; drifted)`. Each cause's sentence on the
+row, with its reason's code and how it ends, is the line under the CLI's
+table and a `profile cordon` line in `orker get`, which also gives a `gpu`
+profile's units. `--json` carries `profiles` and `profileCordons`.
 
 ### Releases
 
