@@ -150,11 +150,50 @@ func (s Set) Restrict(paths ...string) Set {
 	return out
 }
 
+// IndexedFilter is one filter on an indexed field: equals, so one value.
+type IndexedFilter struct {
+	Path, Value string
+}
+
+// Indexed is every filter of the set on an indexed field, in canonical
+// order: what a server pushes into its index of open rows. Each must hold.
+func (s Set) Indexed() []IndexedFilter {
+	var out []IndexedFilter
+	for _, f := range s.filters {
+		if f.field.Indexed {
+			out = append(out, IndexedFilter{Path: f.path, Value: f.values[0]})
+		}
+	}
+	return out
+}
+
+// WithoutIndexed is the set less its indexed filters: the part a row's own
+// fields decide.
+func (s Set) WithoutIndexed() Set {
+	out := Set{spec: s.spec}
+	for _, f := range s.filters {
+		if !f.field.Indexed {
+			out.filters = append(out.filters, f)
+		}
+	}
+	return out
+}
+
 // Match reports whether every filter holds for row, a message of the
 // spec's resource. A row whose unavailable field is set holds every filter
 // on a field declared kept_when_unavailable: a filter never hides a row the
-// deployment failed to ask.
+// deployment failed to ask. An indexed filter never holds here: it is no
+// field of the row (MatchIndexed).
 func (s Set) Match(row proto.Message) bool {
+	return s.MatchIndexed(row, nil)
+}
+
+// MatchIndexed is Match for a row the server's index of open rows also
+// describes: holds(path, value) reports whether the index holds value on the
+// indexed path for this row, and each indexed filter must hold there. A nil
+// holds is a row the index does not describe — one that has ended, an
+// archived one — and such a row matches no indexed filter.
+func (s Set) MatchIndexed(row proto.Message, holds func(path, value string) bool) bool {
 	if s.Empty() {
 		return true
 	}
@@ -164,6 +203,12 @@ func (s Set) Match(row proto.Message) bool {
 	}
 	unavailable := s.spec.Unavailable != nil && m.Get(s.spec.Unavailable).String() != ""
 	for _, f := range s.filters {
+		if f.field.Indexed {
+			if holds == nil || !holds(f.path, f.values[0]) {
+				return false
+			}
+			continue
+		}
 		if unavailable && f.field.KeptWhenUnavailable {
 			continue
 		}

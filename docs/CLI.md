@@ -3483,6 +3483,9 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
   origin.id            =               text; needs origin.kind=
   origin.root_run_id   =               text
+  queued               =               true; a row that has ended never matches
+  queued_on            =               text; a row that has ended never matches
+  holding              =               text; a row that has ended never matches
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 

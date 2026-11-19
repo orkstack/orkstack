@@ -2576,7 +2576,11 @@ origin.kind filter; origin.id is meaningful only within a kind, so it
 needs an equals filter on origin.kind. An id is matched whole, never by
 part. origin.root_run_id takes only equals and keeps every run below that
 root in its composed chain, however deep: the root run itself holds no root
-and is not one of them.
+and is not one of them. queued, queued_on and holding are a concurrency
+limit's: queued=true keeps the runs waiting for a slot, queued_on=KEY those
+waiting for KEY's slot, holding=KEY those holding one of KEY's slots. Only
+a run still going matches them, and a deployment that cannot index
+concurrency limits refuses them.
 
 | Field | Type | Description |
 |---|---|---|

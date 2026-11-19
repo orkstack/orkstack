@@ -130,6 +130,7 @@ func allSpecs(tb testing.TB) []*listfilter.Spec {
 	return []*listfilter.Spec{
 		specOf(tb, &orkstackv1.ListNamespacesRequest{}),
 		runsSpec(tb),
+		specOf(tb, &orkstackv1.ListRunsRequest{}), // indexed fields
 		specOf(tb, &orkstackv1.ListWebhooksRequest{}),
 		specOf(tb, &orkstackv1.ListTriggersRequest{}),
 		specOf(tb, &orkstackv1.ListSchedulesRequest{}),
