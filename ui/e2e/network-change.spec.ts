@@ -4,7 +4,8 @@ import {
   type Browser,
   type Page as RawPage,
 } from "@playwright/test";
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
+import { promisify } from "node:util";
 import { mkdirSync } from "node:fs";
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
@@ -32,6 +33,11 @@ import { expect, guardPage, NETWORK_CHANGED, type Page } from "./test";
 //   N4  (the guard, after `load`) the same load through the guarded page
 //       waits for that code, sees the loss, and navigates again: the page the
 //       spec gets ran every script.
+//   N7  (the guard, the document) a load whose document itself waits in the
+//       pool behind another page's held connections loses the document;
+//       Chromium shows its error page for it a moment after the navigation
+//       rejected, so the guard navigates again only once that page has
+//       landed, and the load it makes then is not interrupted by it.
 //   N5  (the isolation) the SUITE's browser runs in a network namespace of
 //       its own (browser-server.ts): the same load, made at the same moment
 //       on it and on a host-namespace browser, loses nothing on the suite's
@@ -42,7 +48,7 @@ import { expect, guardPage, NETWORK_CHANGED, type Page } from "./test";
 //   N6  (the isolation, after `load`) the same for a page that imports its
 //       code dynamically.
 //
-// N1–N4 run on a Chromium this spec launches itself, in the HOST's network
+// N1–N4 and N7 run on a Chromium this spec launches itself, in the HOST's network
 // namespace, because that is the only place the cause can be shown; their
 // guarded pages report their deliberate repeats to this spec's transcript,
 // not to the suite's log the ledger counts (test.ts guardPage). N5 and N6 use
@@ -310,6 +316,82 @@ unguarded(
     expect(got.aborted.length).toBeGreaterThan(0);
     expect(got.documents).toBe(2);
     expect(got.ran).toBe(CHUNKS);
+  },
+);
+
+unguarded(
+  "N7: the guarded test navigates again when the document itself was lost, once Chromium has shown its error page for it",
+  async () => {
+    // One context, so both pages draw on one connection pool: the blocker's
+    // held chunks take every connection to the spec's server, and the guarded
+    // page's document waits in the pool. The host's network then changes as
+    // changeHostNetwork changes it, but without blocking this process, so the
+    // guard acts on one loss while the next change is still to come: the
+    // first aborts the waiting document, the next the document of the
+    // navigation the guard made again. The held chunks go at that second
+    // loss, so the guard's third navigation starts at once on free
+    // connections — and Chromium's error page for the second document lands
+    // on it a moment later unless the guard waits for that page.
+    const run = promisify(execFile);
+    const network = `orkstack-e2e-netchange-${process.pid}-${Date.now().toString(36)}-n7`;
+    const context = await host!.newContext();
+    const blocker = await context.newPage();
+    const page = await context.newPage();
+    guardPage(page as Page, note);
+    const lostDocuments: string[] = [];
+    let documentQueued = false;
+    page.on("request", (request) => {
+      if (request.isNavigationRequest()) documentQueued = true;
+    });
+    const release = () => {
+      holding = false;
+      for (const res of held.splice(0)) {
+        if (!res.destroyed) sendChunk(res);
+      }
+    };
+    page.on("requestfailed", (request) => {
+      if (request.failure()?.errorText !== NETWORK_CHANGED || !request.isNavigationRequest()) return;
+      lostDocuments.push(request.url());
+      if (lostDocuments.length === 2) release();
+    });
+    documents.delete("n7");
+    held.length = 0;
+    holding = true;
+    const blocked = blocker.goto(`${origin}/?who=n7-blocker`).catch(() => null);
+    let navigation: Promise<unknown> | undefined;
+    let ran = 0;
+    let url = "";
+    try {
+      try {
+        await waitFor(`${PER_HOST} chunk requests held open`, async () => held.length >= PER_HOST, 30_000);
+        navigation = page.goto(`${origin}/dynamic?who=n7`);
+        navigation.catch(() => {}); // awaited below; a rejection is not unhandled meanwhile
+        await waitFor("n7's document to wait in the pool", async () => documentQueued, 30_000);
+        await run("docker", ["network", "create", network]);
+        await run("docker", ["network", "rm", network]);
+        await waitFor(
+          `n7's document and the document of the navigation made again to abort with ${NETWORK_CHANGED}`,
+          async () => lostDocuments.length >= 2,
+          30_000,
+        );
+      } finally {
+        release();
+      }
+      await navigation;
+      await blocked;
+      ran = await page.evaluate(() => (globalThis as { __chunks?: number }).__chunks ?? 0);
+      url = page.url();
+    } finally {
+      await context.close();
+    }
+    note(
+      `N7 guarded, host namespace, the document lost: ${lostDocuments.length} document request(s) aborted with ${NETWORK_CHANGED}; ` +
+        `document served ${documents.get("n7") ?? 0} time(s); the page the spec got is ${url}, where ${ran} of ${CHUNKS} scripts ran`,
+    );
+    expect(lostDocuments.length).toBe(2);
+    expect(documents.get("n7")).toBe(1);
+    expect(url).toBe(`${origin}/dynamic?who=n7`);
+    expect(ran).toBe(CHUNKS);
   },
 );
 

@@ -3432,7 +3432,7 @@ chain, however deep. The root itself holds no root, so it is not listed.
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   FIELD                OPERATORS       VALUES
   orkflow_name         = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
-  status               = != =a,b       PENDING RUNNING SUCCEEDED FAILED CANCELED SKIPPED
+  status               = != =a,b       PENDING RUNNING PAUSED SUCCEEDED FAILED CANCELED SKIPPED
   created_at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
   origin.kind          =               SUBMIT TRIGGER SCHEDULE PARENT_RUN RUN_AGAIN
   origin.id            =               text; needs origin.kind=
@@ -3519,6 +3519,59 @@ Inherited flags:
 - `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
 - `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
 - `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl run pause`
+
+Pause a run: running work finishes, nothing new starts
+
+pause stops a running run starting anything new: no task, fan-out item,
+child run, pin, await, sleep or failure handler, except what an
+already-open pin needs to finish. Work it started finishes under its
+own rules, and its running child runs are paused too. Every clock keeps
+running: a timeout, an await's deadline or a sleep's wake-up is not
+stretched. Unpause it with `orkctl run unpause`.
+
+A pause lasts at most --timeout (the deployment's engine.run_pause_timeout,
+7 days by default, when unset; at most engine.run_pause_timeout_max): a run
+that is not failing then ends FAILED with RUN_PAUSE_TIMEOUT. A pause cannot
+be changed: unpause and pause again.
+
+The request records who asked, as cancel does: verified under auth.mode
+observe or enforce, asserted otherwise.
+
+--dry-run makes every check and prints the warnings, and sends nothing.
+
+With --wait the command streams the run's events from the moment the
+request was checked and decides by the request's own id. Exit codes:
+  0  the run applied the request
+  1  the request was refused or failed
+  4  the run ended first; the request had no effect
+  5  --wait-timeout passed before the run applied it
+  6  the run became paused by another request, or by its parent, first
+Codes 2 and 3 are not used: they mean failed and canceled to run watch.
+Without --wait the command exits 0 once the run has recorded the request.
+Warnings print to stderr.
+
+Flags:
+
+- `--dry-run` — check the request and print its warnings; send nothing
+- `--reason STRING` — why the run is paused, recorded on the pause and its event
+- `--timeout DURATION` — how long the pause lasts unless unpaused, in whole seconds (default: the deployment's engine.run_pause_timeout)
+- `--wait` — wait until the run applies the request
+- `--wait-timeout DURATION` (default `5m0s`) — how long --wait waits
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
 - `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
 
 ## `orkctl run plan`
@@ -3673,6 +3726,47 @@ Flags:
 
 - `--item INT32` — only this item of the fan-out --task names, with its attempts
 - `-t, --task STRING` — only this task, with its phases (a fan-out also lists its items)
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl run unpause`
+
+Unpause a run paused with run pause
+
+unpause lifts a run's own pause, and the pauses of its child runs that it
+caused; a child paused on its own stays paused. The run then starts what
+it held, in the order it would have with no pause. A run paused because
+its parent run is paused is refused (RUN_PAUSE_INHERITED): unpause the
+parent.
+
+With --wait the command streams the run's events from the moment the
+request was checked and decides by the request's own id. Exit codes:
+  0  the run applied the request
+  1  the request was refused or failed
+  4  the run ended first; the request had no effect
+  5  --wait-timeout passed before the run applied it
+  6  the run is still paused: its parent run's pause holds it too
+Codes 2 and 3 are not used: they mean failed and canceled to run watch.
+Without --wait the command exits 0 once the run has recorded the request.
+Warnings print to stderr.
+
+Flags:
+
+- `--reason STRING` — why the run is unpaused, recorded on the audit record
+- `--wait` — wait until the run applies the request
+- `--wait-timeout DURATION` (default `5m0s`) — how long --wait waits
 
 Inherited flags:
 
@@ -4479,10 +4573,11 @@ Create and inspect run-event callbacks
 A webhook receives a signed POST when a run or one of its tasks changes
 state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,
 RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,
-TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED.
+TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED. A pause's
+events: RUN_PAUSED, RUN_UNPAUSED.
 
-Omitting --event means every run transition; task events are opt-in by
-name. Task events are best-effort hints with a short retry budget: a
+Omitting --event means every run transition; task events and a pause's
+events are opt-in by name. Task events are best-effort hints with a short retry budget: a
 subscriber that must not miss one reconciles with GetRun.
 
 A subscription is deployment-wide unless it names a scope: a namespace
@@ -4526,7 +4621,7 @@ an HMAC-SHA256 of the request body in the X-Ork-Signature header.
 
 Flags:
 
-- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — event to subscribe to (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
 - `--name STRING` — handle an automation document addresses this subscription by (needs -n)
 - `--orkflow STRING` — narrow to runs of this orkflow (exact name; empty means every orkflow)
 - `--secret STRING` — signing secret to use instead of a generated one
@@ -4590,7 +4685,7 @@ Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
   namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
   run_id       = != =a,b       text
   webhook_id   = != =a,b       text
-  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED
+  event        = != =a,b       RUN_STARTED RUN_SUCCEEDED RUN_FAILED RUN_CANCELED TASK_SCHEDULED TASK_STARTED TASK_AWAITING TASK_RESOLVED TASK_SLEEPING TASK_SUCCEEDED TASK_FAILED RUN_PAUSED RUN_UNPAUSED
   delivered    =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
@@ -4715,7 +4810,7 @@ Flags:
 
 - `--clear-events` — empty the event list: every run transition
 - `--deployment-wide` — clear the namespace scope
-- `--event STRINGARRAY` — replace the event list (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
+- `--event STRINGARRAY` — replace the event list (repeatable): RUN_STARTED | TASK_SCHEDULED | TASK_STARTED | TASK_AWAITING | TASK_RESOLVED | TASK_SLEEPING | TASK_SUCCEEDED | TASK_FAILED | RUN_PAUSED | RUN_UNPAUSED | RUN_SUCCEEDED | RUN_FAILED | RUN_CANCELED
 - `--name STRING` — new handle ("" makes the subscription unnamed; needs a namespace scope)
 - `--orkflow STRING` — narrow to runs of this orkflow ("" clears it)
 - `-t, --task STRING` — narrow task events to this task ("" clears it)

@@ -1179,3 +1179,19 @@ func TestAudit_PromoteDetailRecordsTheInterfaceVerdict(t *testing.T) {
 		}
 	}
 }
+
+// A PauseRun dry run writes no audit record, even when it is refused; the
+// same request without dry_run is recorded.
+func TestAudit_APauseDryRunRecordsNothing(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	runs := orkstackv1connect.NewRunServiceClient(f.server.Client(), f.server.URL)
+	_, _ = runs.PauseRun(context.Background(), connect.NewRequest(&orkstackv1.PauseRunRequest{RunId: "ork-none", DryRun: true}))
+	if got := f.records(t); len(got) != 0 {
+		t.Fatalf("a dry run recorded %v", got)
+	}
+	_, _ = runs.PauseRun(context.Background(), connect.NewRequest(&orkstackv1.PauseRunRequest{RunId: "ork-none"}))
+	got := f.records(t)
+	if len(got) != 1 || got[0].GetAction() != "run.pause" || got[0].GetSucceeded() {
+		t.Fatalf("a refused pause recorded %v, want one failed run.pause", got)
+	}
+}

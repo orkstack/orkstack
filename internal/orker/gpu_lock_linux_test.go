@@ -74,6 +74,48 @@ func TestGPULock_WaitNamesTheHolderThenTakesIt(t *testing.T) {
 	}
 }
 
+// TestGPULock_WaitNamesTheHolderOnTheTreesFilesystem: the holder is named
+// on the filesystem the tree lies on too, not only the temp directory's. On
+// btrfs stat's device is not the one /proc/locks prints, and a lookup by it
+// found no line and named nobody. The directory is under the repository's
+// .data/, which git ignores, so one a killed test leaves never dirties the
+// tree.
+func TestGPULock_WaitNamesTheHolderOnTheTreesFilesystem(t *testing.T) {
+	root := filepath.Join("..", "..", ".data")
+	if err := os.MkdirAll(root, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(root, "gpu-lock-test-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	holder := openTestGPULock(t, dir)
+	if ok, _ := holder.tryLock(); !ok {
+		t.Fatal("holder did not take the lock")
+	}
+	waiter := openTestGPULock(t, dir)
+	if h := waiter.holder(); len(h.pids) != 1 || h.pids[0] != os.Getpid() {
+		t.Fatalf("holder = %v (%v), want [%d]", h.pids, h.err, os.Getpid())
+	}
+}
+
+// TestHolderFrom_NoLineNamesAHolder: asked while the lock is held, a body
+// that lists no holder of its file says the holder cannot be named, never
+// an empty answer that reads as nobody.
+func TestHolderFrom_NoLineNamesAHolder(t *testing.T) {
+	for _, body := range []string{"", "1: FLOCK  ADVISORY  WRITE 4121772 00:59:48444562 0 EOF\n",
+		"2: -> FLOCK  ADVISORY  WRITE 77 00:1a:870304 0 EOF\n"} {
+		h := holderFrom(strings.NewReader(body), 26, 870304)
+		if len(h.pids) != 0 || !errors.Is(h.err, errHolderNotListed) {
+			t.Fatalf("holderFrom(%q) = %v, %v; want no pids and errHolderNotListed", body, h.pids, h.err)
+		}
+		if !strings.Contains(h.String(), "cannot name") {
+			t.Fatalf("holderFrom(%q) says %q", body, h.String())
+		}
+	}
+}
+
 // TestGPULock_WaitEndsWithItsContext: a stopping Orker stops waiting.
 func TestGPULock_WaitEndsWithItsContext(t *testing.T) {
 	dir := t.TempDir()

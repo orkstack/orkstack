@@ -252,6 +252,8 @@ Defined in `proto/orkstack/v1/run_service.proto`.
 | `GetRun` | [`GetRunRequest`](#getrunrequest) | [`GetRunResponse`](#getrunresponse) |  |
 | `ListRuns` | [`ListRunsRequest`](#listrunsrequest) | [`ListRunsResponse`](#listrunsresponse) |  |
 | `CancelRun` | [`CancelRunRequest`](#cancelrunrequest) | [`CancelRunResponse`](#cancelrunresponse) |  |
+| `PauseRun` | [`PauseRunRequest`](#pauserunrequest) | [`PauseRunResponse`](#pauserunresponse) | PauseRun stops a running run starting anything new, failure handlers included, and pauses its running child runs too; the one exception is what an already-open pin needs to finish. Work it already started finishes under its own rules, and every clock keeps running: a task's or the run's timeout, an await's deadline and a sleep's wake-up are not stretched. The run's status is PAUSED from its RUN_PAUSED event until RUN_UNPAUSED or its end. A pause lasts at most its timeout (the deployment's default when the request names none): a run that is not failing then ends FAILED with RUN_PAUSE_TIMEOUT, and a failing run ends with its own reason, its held failure handlers never started.<br><br>It answers once the run has recorded the request, not once it has applied it: the RUN_PAUSED event carrying the response's request_id says it did, read from after_sequence. The checks before sending read the run as the read model has it and refuse FAILED_PRECONDITION with a reason (docs/REASONS.md, "Pausing a run"); in a race the run's own decision is final. A request that recording would take past the run's history limit is not applied: the run stops RUN_HISTORY_LIMIT naming the request, or, a run already failing, drops the request, records no event for it and ends with its own reason. A pause cannot be changed: unpause and pause again. |
+| `UnpauseRun` | [`UnpauseRunRequest`](#unpauserunrequest) | [`UnpauseRunResponse`](#unpauserunresponse) | UnpauseRun lifts a run's own pause, and the pauses of its child runs that it caused; a child paused on its own stays paused. The run then starts what it held, in the order it would have with no pause. The RUN_UNPAUSED event carrying the response's request_id says it applied (pause_transition NOT_PAUSED when the run was not paused). A run paused because its parent run is paused is refused RUN_PAUSE_INHERITED: unpause the parent. |
 | `StreamEvents` | [`StreamEventsRequest`](#streameventsrequest) | stream [`Event`](#event) | StreamEvents server-streams realtime events for a run. from_sequence allows resuming after a disconnect (0 = from start): the stream continues after that event, so a client that passes the last sequence it received sees nothing repeated and nothing skipped, from any replica. A stream that ends Unavailable is resumed that way; `orkctl run watch` and the UI's run page do it, a bounded number of times in a row. Numbers the run never published (an event whose record object storage refused) read two ways. Read live, the stream serves a STREAM_GAP event naming them and goes on to the run's terminal event. Read from the archive, they are a gap in the run's events, as are events lost from object storage before the run was archived: the stream ends DataLoss, after the events before the gap, naming the range and its cause. A live read that meets lost events ends Unavailable. Resuming past a DataLoss gap's last number serves what follows it. |
 | `StreamTaskLogs` | [`StreamTaskLogsRequest`](#streamtasklogsrequest) | stream [`TaskLogChunk`](#tasklogchunk) | StreamTaskLogs server-streams one task attempt's output: every chunk already written, in order, then each new one as it lands.<br><br>Logs are a SEPARATE stream from Event on purpose. Task output is bytes, and bytes never enter a Temporal payload or the event stream (a run's history is replayed forever, and a chatty task would bloat it forever too). The Orker writes numbered chunks to the artifact store while the task runs; this RPC reads them back from there. EventType gains nothing: EVENT_TYPE_TASK_LOG stays what it always was, a human notice with no task output in it.<br><br>Any replica answers for any run, on the same terms as StreamEvents: the chunks are in the shared store and the task's state comes from the shared cluster, so a replica that started nothing serves a run to completion. |
 | `ListRunArtifacts` | [`ListRunArtifactsRequest`](#listrunartifactsrequest) | [`ListRunArtifactsResponse`](#listrunartifactsresponse) |  |
@@ -2083,7 +2085,7 @@ No fields.
 
 | Field | Type | Description |
 |---|---|---|
-| `runs_by_status` | map&lt;`string`, `int64`&gt; | ONE WINDOW, ONE POPULATION. Every number below is about the same set of runs: the runs this namespace CREATED between window_since (inclusive) and window_until (exclusive). A run is counted in the window it was submitted in, whenever it happens to end, because that is the only instant both sources agree on — the archive index stamps a run by its creation time (internal/engine/archive.go, RunIndexTime) and the cluster's execution index carries its start.<br><br>The alternative — counting a run in the window it FINISHED in — was what the percentiles used to do, and one answer carrying both is a lie no field could correct: `orkctl stats -s 15m` over hour-long runs reported `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished runs`, two populations printed as one.<br><br>The one exception is `running`, and it is stated where it is declared: it is a fact about NOW rather than about the window.<br><br>runs_by_status counts the window's runs. Keys are the lowercase, unprefixed status names: "running", "succeeded", "failed", "canceled". All four are always present, so a client renders a real zero rather than a blank.<br><br>There is deliberately no "pending" key. A run that has been accepted but has not started its first task is still one executing entry in the cluster's index, and telling the two apart means reading that run's history — one read per run, which is the cost this whole service is built to avoid. "running" therefore means "accepted and not finished", and the `running` list below is exactly the same set. A key that could only ever be answered by guessing is not reported at all. |
+| `runs_by_status` | map&lt;`string`, `int64`&gt; | ONE WINDOW, ONE POPULATION. Every number below is about the same set of runs: the runs this namespace CREATED between window_since (inclusive) and window_until (exclusive). A run is counted in the window it was submitted in, whenever it happens to end, because that is the only instant both sources agree on — the archive index stamps a run by its creation time (internal/engine/archive.go, RunIndexTime) and the cluster's execution index carries its start.<br><br>The alternative — counting a run in the window it FINISHED in — was what the percentiles used to do, and one answer carrying both is a lie no field could correct: `orkctl stats -s 15m` over hour-long runs reported `succeeded 0 / failed 0 / rate unavailable` beside `p50 58m over 12 finished runs`, two populations printed as one.<br><br>The one exception is `running`, and it is stated where it is declared: it is a fact about NOW rather than about the window.<br><br>runs_by_status counts the window's runs. Keys are the lowercase, unprefixed status names: "running", "succeeded", "failed", "canceled". All four are always present, so a client renders a real zero rather than a blank.<br><br>There is deliberately no "pending" key. A run that has been accepted but has not started its first task is still one executing entry in the cluster's index, and telling the two apart means reading that run's history — one read per run, which is the cost this whole service is built to avoid. "running" therefore means "accepted, not finished and not paused"; a paused run counts in `paused` instead, and the `running` list below is the two together, each row with its status. A key that could only ever be answered by guessing is not reported at all. |
 | `success_rate` | `double` | success_rate is succeeded / finished, between 0 and 1, over the window's runs that have finished. Canceled runs count as finished: a client that cancels half its runs has not succeeded at them, and hiding them would make the rate rise when things go wrong. |
 | `success_rate_defined` | `bool` | success_rate_defined is false when the window finished no runs at all. A rate over nothing is not 0 — it is unanswerable, and 0 is the most alarming number a dashboard can show. Render "no data", never zero. |
 | `p50_duration` | `google.protobuf.Duration` | p50_duration and p95_duration are the median and 95th percentile of how long the window's finished runs took, by nearest rank over the samples duration_sample_count reports.<br><br>"The window's finished runs" is the SAME set success_rate is a rate over: runs created inside the window that have since ended. A run created before the window and closed inside it is neither counted nor sampled, and one created inside it and still going is counted as running and sampled by neither. |
@@ -2091,7 +2093,7 @@ No fields.
 | `duration_coverage_since` | `google.protobuf.Timestamp` | duration_coverage_since is the instant the percentiles actually cover, which can be later than the window's start. How long a run took is known only while the cluster still holds its execution record; the archive index carries a run's status and time but not its duration, and reading bodies to recover one is the cost this service refuses.<br><br>So a 30-day window over a 3-day record answers for 3 days AND SAYS SO here, instead of quietly presenting three days of latency as thirty. It is also the one place the two sources can legitimately disagree about the one population: a run created before this instant is still counted from the archive, which keeps every run for ever, and can no longer be sampled from the cluster, which does not. |
 | `duration_sample_count` | `int64` | duration_sample_count is how many runs the percentiles were computed from: the window's runs that have finished and whose execution record the cluster still holds. Zero means they are unavailable and the two durations above are unset — a client shows "unavailable", never "0s", which reads as instant success. |
 | `most_failing` | repeated [`OrkflowFailures`](#orkflowfailures) | most_failing lists the orkflows with the most failed runs in the window, worst first, and only those that failed at least once. |
-| `running` | repeated [`Run`](#run) | running is every run executing when the answer was computed, newest first. Each is the shallow projection an index can give — id, namespace, orkflow, status and start time. A run's tasks, input and output live elsewhere; GetRun reads them. |
+| `running` | repeated [`Run`](#run) | running is every run executing when the answer was computed, newest first, paused runs among them (their status is PAUSED). Each is the shallow projection an index can give — id, namespace, orkflow, status and start time. A run's tasks, input and output live elsewhere; GetRun reads them. |
 | `pools` | repeated [`Pool`](#pool) | pools is the same pool health ListPools reports: every pool this namespace may dispatch onto, with the Orkers serving it right now. |
 | `computed_at` | `google.protobuf.Timestamp` | computed_at is when these numbers were measured, which is not necessarily when they were asked for: an answer may be served from a short-lived cache. It is the age of every number here, on the wire, so a client can show it. |
 | `namespace` | `string` | namespace, window_since and window_until are the question that was actually answered, with an empty request resolved. A client that asked for "the default namespace, the last day" cannot label its own numbers without them, and it should not have to know the default's name to do it. |
@@ -2100,7 +2102,7 @@ No fields.
 | `buckets` | repeated [`StatsBucket`](#statsbucket) | buckets is the series the request asked for, oldest first. It tiles [window_since, window_until) exactly: the first bucket starts at window_since, each ends where the next starts, and the last ends at window_until. With bucket_count, window_since is the start of the first whole bucket, so every number above describes exactly the span the buckets tile. Empty when the request asked for no series. |
 | `bucket_width` | [`StatsBucketWidth`](#statsbucketwidth) | bucket_width and timezone are the series actually drawn, resolved: an empty timezone answers "UTC". Unset when no series was asked for. |
 | `timezone` | `string` |  |
-| `paused` | `int64` | paused is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `paused` | `int64` | paused is how many runs executing now are paused (orkctl run pause): not in runs_by_status["running"], and in the running list. 0 where the cluster does not index paused runs, which then count as running. A series bucket counts a paused run it created as running. |
 | `queued` | `int64` | queued is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `executing` | `int64` | executing is set from E103; unset until it lands (v0.4.0 proto batch). |
 
@@ -3104,6 +3106,24 @@ No fields.
 | `event_source` | [`EventSource`](#eventsource) |  |
 | `warnings` | repeated `string` | warnings say what pausing this source loses, such as the messages an at-most-once source's broker delivers meanwhile. |
 
+### PauseRunRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `namespace` | `string` | empty = the default namespace |
+| `reason` | `string` | reason is recorded on the pause, its audit record and its event; at most 1024 bytes. |
+| `timeout` | `google.protobuf.Duration` | timeout is how long the pause lasts unless it is unpaused: whole seconds, at least 1 s and at most the deployment's engine.run_pause_timeout_max (31 days at most). Unset is the deployment's engine.run_pause_timeout (7 days by default). |
+| `dry_run` | `bool` | dry_run makes every check and returns the warnings, and sends nothing: no request id, no audit record. What a client shows before asking for the pause. |
+
+### PauseRunResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `request_id` | `string` | request_id names the request: the RUN_PAUSED event that applied it carries it, and so does its audit record. Empty for a dry run. |
+| `after_sequence` | `int64` | after_sequence is the run's last event sequence read before the request was sent; stream from it to see what the run did with it. |
+| `warnings` | repeated `string` | warnings are what the pause will not hold back: a failing run kept open, a deadline that ends before the pause does, the child runs paused with it, a schedule whose next fire cancels it. |
+
 ### PauseScheduleRequest
 
 | Field | Type | Description |
@@ -3587,7 +3607,7 @@ as a pool and a pin are (§7.1).
 | `open_identity_runs` | `int64` | open_identity_runs is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `queued_runs` | `int64` | queued_runs is set from E88; unset until it lands (v0.4.0 proto batch). |
 | `resumable_runs` | `int64` | resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch). |
-| `paused_runs` | `int64` | paused_runs is set from E103; unset until it lands (v0.4.0 proto batch). |
+| `paused_runs` | `int64` | paused_runs is how many of runs_in_flight are paused: each keeps this release from draining until its pause ends (at most the deployment's engine.run_pause_timeout_max). 0 where the cluster does not index paused runs. |
 | `event_source_instances` | `int64` | event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch). |
 | `event_sources` | `int32` | event_sources is set from E90; unset until it lands (v0.4.0 proto batch). |
 | `unserved_pools` | repeated `string` | unserved_pools are the pools this release has served, sorted, on which no ANSWERED Orker of it takes work now (every one cordoned, stopping or gone), listed only while the release has runs in flight. Their tasks wait for an Orker of this release and never move to another (docs/DEPLOY.md §3, "Rolling a release forward"). Empty when runs_unavailable_reason is set. |
@@ -3882,8 +3902,9 @@ in OrkStack reads it to decide anything.
 
 ### RunPause
 
-RunPause is one pause a person asked for. Every principal here is what the
-gateway asserted (as RunOrigin.principal), never authenticated.
+RunPause is one pause a person asked for. Each principal is marked as
+RunOrigin.principal is: verified when OrkStack authenticated it (auth.mode
+observe or enforce), and otherwise what the gateway asserted.
 
 | Field | Type | Description |
 |---|---|---|
@@ -3894,7 +3915,9 @@ gateway asserted (as RunOrigin.principal), never authenticated.
 | `request_id` | `string` |  |
 | `end` | [`PauseEnd`](#pauseend) | end is UNSPECIFIED while the pause lasts. |
 | `ended_at` | `google.protobuf.Timestamp` |  |
-| `ended_by` | `string` |  |
+| `ended_by` | `string` | ended_by is who unpaused it; empty when it timed out or the run's end closed it. |
+| `paused_by_verified` | `bool` | paused_by_verified says paused_by is a principal OrkStack authenticated. |
+| `ended_by_verified` | `bool` | ended_by_verified says ended_by is a principal OrkStack authenticated. |
 
 ### RunResume
 
@@ -4660,6 +4683,21 @@ reason.
 |---|---|---|
 | `reason` | [`UnmeasuredReason`](#unmeasuredreason) |  |
 | `attempts` | `int64` |  |
+
+### UnpauseRunRequest
+
+| Field | Type | Description |
+|---|---|---|
+| `run_id` | `string` |  |
+| `namespace` | `string` | empty = the default namespace |
+| `reason` | `string` | reason is recorded on the audit record; at most 1024 bytes. |
+
+### UnpauseRunResponse
+
+| Field | Type | Description |
+|---|---|---|
+| `request_id` | `string` | request_id names the request: the RUN_UNPAUSED event that applied it carries it, and so does its audit record. |
+| `after_sequence` | `int64` | after_sequence is the run's last event sequence read before the request was sent. |
 
 ### UpdateBindingRequest
 

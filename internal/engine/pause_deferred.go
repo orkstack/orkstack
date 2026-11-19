@@ -39,6 +39,7 @@ func (r *pauseRequest) proto() *orkstackv1.RunPauseSignal {
 		Format: r.Format, Pause: r.Pause, Principal: r.Principal, Reason: r.Reason,
 		TimeoutSeconds: r.TimeoutSeconds, RequestId: r.RequestID, Inherited: r.Inherited,
 		ParentRunId: r.ParentRunID, CascadeSeq: r.CascadeSeq, Depth: r.Depth,
+		PrincipalVerified: r.PrincipalVerified,
 	}
 	if t, err := time.Parse(time.RFC3339Nano, r.OriginExpiresAt); err == nil {
 		sig.OriginExpiresAt = timestamppb.New(t)
@@ -52,6 +53,7 @@ func pauseRequestOf(sig *orkstackv1.RunPauseSignal) *pauseRequest {
 		Format: sig.GetFormat(), Pause: sig.GetPause(), Principal: sig.GetPrincipal(), Reason: sig.GetReason(),
 		TimeoutSeconds: sig.GetTimeoutSeconds(), RequestID: sig.GetRequestId(), Inherited: sig.GetInherited(),
 		ParentRunID: sig.GetParentRunId(), CascadeSeq: sig.GetCascadeSeq(), Depth: sig.GetDepth(),
+		PrincipalVerified: sig.GetPrincipalVerified(),
 	}
 	if t := sig.GetOriginExpiresAt(); t != nil {
 		req.OriginExpiresAt = t.AsTime().UTC().Format(time.RFC3339Nano)
@@ -80,8 +82,8 @@ func (s *runState) deferPause(ctx workflow.Context, inFlight map[string]workflow
 	if int64(len(s.deferredPause)) >= s.plan.Pause.MaxDeferredRequests {
 		c, _ := s.pauseApplyCrossing(ctx, inFlight)
 		return s.historyLimitErrorNoting(ctx, inFlight, c, 0, fmt.Sprintf(
-			"pause request %s from %s (asserted) was not applied: the run already carries %d pause requests into its next history, as many as it may",
-			req.RequestID, principalOr(req.Principal), len(s.deferredPause)))
+			"pause request %s from %s was not applied: the run already carries %d pause requests into its next history, as many as it may",
+			req.RequestID, markedPrincipal(req.Principal, req.PrincipalVerified), len(s.deferredPause)))
 	}
 	s.deferredPause = append(s.deferredPause, req.proto())
 	s.deferHold = true
@@ -100,8 +102,8 @@ func (s *runState) deferredPauseStranded(ctx workflow.Context, inFlight map[stri
 	first := pauseRequestOf(s.deferredPause[0])
 	c, _ := s.pauseApplyCrossing(ctx, inFlight)
 	return s.historyLimitErrorNoting(ctx, inFlight, c, 0, fmt.Sprintf(
-		"pause request %s from %s (asserted) was not applied, because recording it would pass that limit and the run could not carry it on",
-		first.RequestID, principalOr(first.Principal)))
+		"pause request %s from %s was not applied, because recording it would pass that limit and the run could not carry it on",
+		first.RequestID, markedPrincipal(first.Principal, first.PrincipalVerified)))
 }
 
 // deferredPauseStrandedBy reports a carried request whose switch was given

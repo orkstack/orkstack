@@ -50,9 +50,11 @@ only the events below, and a subscription receives only the ones it names
 | `TASK_SLEEPING` | a sleeping task starts its fixed wait; its message names the wake-up time, and `TASK_SUCCEEDED` follows when it wakes |
 | `TASK_SUCCEEDED` | a task's success is committed |
 | `TASK_FAILED` | a task fails for good, after its retries stop; a task cancelled because its run ended is never delivered as this event |
+| `RUN_PAUSED` | the run is paused, by a person (`orkctl run pause`) or by its parent run's pause, or stays paused with its causes changed; status `PAUSED`, and `pause_transition` says which ([API.md](API.md#pauserunrequest)) |
+| `RUN_UNPAUSED` | the run continues after a pause (status `RUNNING`), or an unpause found it not paused (`pause_transition` `NOT_PAUSED`); a pause its run's end closed has none: the terminal delivery's `pause_transition` and the run's `last_pause` say so |
 
 - An empty `events` selects the four run transitions and no task event. Task
-  events are opt-in, by name.
+  events, `RUN_PAUSED` and `RUN_UNPAUSED` are opt-in, by name.
 - `TASK_LOG` is refused: a log line is not a transition (`ParseEvent`).
 - Duplicates are removed and the list is kept in lifecycle order on registration
   (`normalizeEvents`).
@@ -189,7 +191,7 @@ X-Ork-Redelivery-Of: dlv-…               (redelivery only)
 The body is one JSON object, in this field order:
 
 ```json
-{"runId":"ork-…","orkflowName":"…","status":"FAILED","timestamp":"<RFC 3339 instant>","sequence":7,"taskId":"…","attempt":2,"run":{…}}
+{"runId":"ork-…","orkflowName":"…","status":"FAILED","timestamp":"<RFC 3339 instant>","sequence":7,"pauseTransition":"…","taskId":"…","attempt":2,"run":{…}}
 ```
 
 - `sequence` is the run event's sequence: the number the run's event stream
@@ -198,6 +200,11 @@ The body is one JSON object, in this field order:
   is what a receiver orders deliveries by; see "Duplicates and ordering". A
   redelivery of a record written before deliveries carried it has none, and
   then the body and `X-Ork-Sequence` omit it rather than send 0.
+- `pauseTransition` is present only on `RUN_PAUSED`, `RUN_UNPAUSED` and a
+  terminal event that ended a pause: what the event did to the run's pause
+  (`PAUSED`, `CAUSES_CHANGED`, `UNPAUSED`, `NOT_PAUSED`, `ENDED_TIMED_OUT`,
+  `ENDED_RUN_ENDED`). The embedded run's `pause`, `pausedByParent` and
+  `lastPause` say who paused it, when and until when.
 - `taskId` and `attempt` are present only for a task event. `attempt` is the
   task's own attempt number, and it is omitted when the engine has not numbered
   it. It is never invented.
@@ -345,8 +352,12 @@ reason `WEBHOOK_DESTINATION_BLOCKED` ([REASONS.md](REASONS.md), "Webhooks").
   than its event, and a redelivery embeds the run as it reads now. A receiver
   that needs the run's current state reads it with `GetRun`.
 - Sequences have gaps. A subscription receives only the events it names, and
-  the run's stream itself can skip numbers, so a receiver never waits for a
-  missing one. Sequences of different runs are not comparable.
+  the run's stream itself can skip numbers. Opt-in events (`RUN_PAUSED`,
+  `RUN_UNPAUSED` and the task events) leave gaps in a subscription that does
+  not name them. A receiver never waits for a missing number, keeps the
+  highest sequence it has applied per run, and deduplicates on (run id,
+  sequence), the `X-Ork-Sequence` header. Sequences of different runs are not
+  comparable.
 - The sequence is the event's own: every retry, a repeated announcement of the
   same event by another replica (under another `X-Ork-Delivery` id) and an
   operator's redelivery carry the original's.

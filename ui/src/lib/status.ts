@@ -25,8 +25,10 @@ export const STATUS_CLASSES: Record<Status, string> = {
 	[Status.SKIPPED]: 'pill-outline bg-skipped-bg text-skipped-fg',
 	[Status.AWAITING]: 'bg-awaiting-bg text-awaiting-fg',
 	[Status.SLEEPING]: 'bg-sleeping-bg text-sleeping-fg',
-	// PAUSED reads as a live run until the pause's own look lands (E103's UI pass).
-	[Status.PAUSED]: 'bg-running-bg text-running-fg'
+	// A run status only. It shares waiting-for-capacity's amber (pill-wait):
+	// both are a run held from starting new work; its own two-bar mark
+	// (statusMarks.ts) and its word tell it apart.
+	[Status.PAUSED]: 'pill-wait'
 };
 
 export function statusLabel(status: Status | undefined): string {

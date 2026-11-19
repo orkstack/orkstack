@@ -11,6 +11,7 @@ import (
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/temporal"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -310,6 +311,18 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 		RequestId: newActivityID("cancel-run"),
 		Reason:    reason,
 	}
+	return s.askAgain(ctx, "cancel run "+runID, func(ctx context.Context) error {
+		_, err := s.client.WorkflowService().RequestCancelWorkflowExecution(ctx, cancel)
+		return err
+	})
+}
+
+// askAgain makes one call to the cluster and asks again, under the same
+// request (and so the same request id the cluster dedupes on), on the
+// refusals the SDK retries (cancelRetryable), for at most cancelRetryBudget.
+// The caller giving up is the answer; a budget that runs out answers with
+// the refusal that made it ask again. CancelRun and SignalPause share it.
+func (s *TemporalStarter) askAgain(ctx context.Context, what string, call func(context.Context) error) error {
 	bound, wait := context.WithTimeout, time.After
 	if s.cancelBound != nil {
 		bound, wait = s.cancelBound, s.cancelWait
@@ -319,20 +332,20 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 	defer done()
 	var refused error // the cluster's last transient refusal
 	for {
-		_, err := s.client.WorkflowService().RequestCancelWorkflowExecution(budgetCtx, cancel)
+		err := call(budgetCtx)
 		switch {
 		case err == nil:
 			return nil
 		case ctx.Err() != nil:
 			// The caller gave up, during the call or before it: that is the
 			// answer, the cluster's own the context.
-			return fmt.Errorf("cancel run %s: %w (the cluster last answered: %v)", runID, ctx.Err(), err)
+			return fmt.Errorf("%s: %w (the cluster last answered: %v)", what, ctx.Err(), err)
 		case budgetCtx.Err() != nil && refused != nil:
 			// The budget ran out under this call: the answer is the refusal
 			// that made it ask again.
-			return fmt.Errorf("cancel run %s: %w", runID, refused)
+			return fmt.Errorf("%s: %w", what, refused)
 		case !cancelRetryable(err):
-			return fmt.Errorf("cancel run %s: %w", runID, err)
+			return fmt.Errorf("%s: %w", what, err)
 		}
 		refused = err
 		select {
@@ -340,13 +353,54 @@ func (s *TemporalStarter) CancelRun(ctx context.Context, runID string, request C
 			if ctx.Err() != nil {
 				// The caller gave up: that is the answer, the cluster's last
 				// refusal only its context.
-				return fmt.Errorf("cancel run %s: %w (the cluster last answered: %v)", runID, ctx.Err(), err)
+				return fmt.Errorf("%s: %w (the cluster last answered: %v)", what, ctx.Err(), err)
 			}
-			return fmt.Errorf("cancel run %s: %w", runID, err)
+			return fmt.Errorf("%s: %w", what, err)
 		case <-wait(interval):
 		}
 		interval = min(2*interval, cancelRetryMaxInterval)
 	}
+}
+
+// ErrPauseNotWired: the starter was built without the cluster namespace and
+// identity a signal names (WithClusterIdentity), so no pause request is sent.
+var ErrPauseNotWired = errors.New("this engine was started without what it needs to signal a run, so the pause request was not sent")
+
+// SignalPause delivers one pause or unpause request to a running run: one
+// signal of PauseSignal, under the request's id, so a retried delivery is
+// recorded once. It returns when the cluster has recorded the request in the
+// run's history, not when the run has applied it: the RUN_PAUSED or
+// RUN_UNPAUSED event carrying that id says it did. A transient refusal is
+// asked again under the same id, for at most cancelRetryBudget (askAgain);
+// a closed execution is ErrRunEnded; anything else is returned wrapped.
+func (s *TemporalStarter) SignalPause(ctx context.Context, runID string, signal *orkstackv1.RunPauseSignal) error {
+	if signal.GetRequestId() == "" {
+		return fmt.Errorf("signal run %s: a pause request needs a request id", runID)
+	}
+	if s.clusterNamespace == "" {
+		return fmt.Errorf("signal run %s: %w", runID, ErrPauseNotWired)
+	}
+	input, err := converter.GetDefaultDataConverter().ToPayloads(signal)
+	if err != nil {
+		return fmt.Errorf("signal run %s: encode the pause request: %w", runID, err)
+	}
+	request := &workflowservice.SignalWorkflowExecutionRequest{
+		Namespace:         s.clusterNamespace,
+		WorkflowExecution: &commonpb.WorkflowExecution{WorkflowId: runID},
+		SignalName:        PauseSignal,
+		Input:             input,
+		Identity:          s.clusterIdentity,
+		RequestId:         signal.GetRequestId(),
+	}
+	err = s.askAgain(ctx, "signal run "+runID, func(ctx context.Context) error {
+		_, err := s.client.WorkflowService().SignalWorkflowExecution(ctx, request)
+		return err
+	})
+	var notFound *serviceerror.NotFound
+	if errors.As(err, &notFound) {
+		return errors.Join(ErrRunEnded, err)
+	}
+	return err
 }
 
 // cancelRetryable is the refusals the SDK's own CancelWorkflow asks again on

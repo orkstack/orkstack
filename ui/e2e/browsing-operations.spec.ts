@@ -251,7 +251,7 @@ test('R5: runs keep their filters in the URL, page under them, and a pasted late
 	// shown verbatim: a status the list cannot select, and an inverted
 	// created_at window.
 	await page.goto(`${UI}/runs?ns=${NS}&filter=status%3Dbogus`);
-	await expect(page.getByTestId('engine-error')).toContainText('"bogus" is not a status this list can select; status is one of PENDING, RUNNING, SUCCEEDED, FAILED, CANCELED, SKIPPED');
+	await expect(page.getByTestId('engine-error')).toContainText('"bogus" is not a status this list can select; status is one of PENDING, RUNNING, PAUSED, SUCCEEDED, FAILED, CANCELED, SKIPPED');
 	await page.goto(`${UI}/runs?ns=${NS}&filter=created_at%3E%3D2026-01-02T00%3A00%3A00Z&filter=created_at%3C2026-01-01T00%3A00%3A00Z`);
 	await expect(page.getByTestId('engine-error')).toContainText('created_at >= 2026-01-02T00:00:00Z and < 2026-01-01T00:00:00Z select no instant');
 	await page.screenshot({ path: out('screenshot-runs-invalid-range.png'), fullPage: true });

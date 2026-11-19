@@ -2,6 +2,7 @@ package engine
 
 import (
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -182,5 +183,22 @@ func TestIdleUnpaused_WaitsForALiveCascadeSend(t *testing.T) {
 				t.Fatalf("idleUnpaused = %d, want %d", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestPauseRequest_CarriedRoundTrip: a request carried into the next history
+// comes back whole, whether its principal was verified included, so a carried
+// pause is not shown as asserted after the switch.
+func TestPauseRequest_CarriedRoundTrip(t *testing.T) {
+	for _, req := range []*pauseRequest{
+		{Format: 1, Pause: true, Principal: "alice", PrincipalVerified: true, Reason: "db", TimeoutSeconds: 3600,
+			RequestID: "pause-1", OriginExpiresAt: "2026-11-19T14:00:00Z"},
+		{Format: 1, Pause: true, Inherited: true, ParentRunID: "ork-p", CascadeSeq: 4, Depth: 2, RequestID: "pause-2"},
+		{Format: 1, Pause: false, Principal: "bob", RequestID: "pause-3"},
+	} {
+		got := pauseRequestOf(req.proto())
+		if !reflect.DeepEqual(got, req) {
+			t.Errorf("round trip of %+v = %+v", req, got)
+		}
 	}
 }

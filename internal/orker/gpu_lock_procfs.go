@@ -21,6 +21,10 @@ import (
 // It is drift (HOST_LOCK_MISMATCH), latched until a restart takes the new lock.
 var errHostLockMismatch = errors.New("the GPU host lock directory is not the one this Orker holds")
 
+// errHolderNotListed is a lookup, asked while the lock is held, that found no
+// line of /proc/locks naming a holder of its file: the holder cannot be named.
+var errHolderNotListed = errors.New("no line of /proc/locks names a holder of the lock directory")
+
 // errProcLocksMalformed is parseProcLocks' only error.
 var errProcLocksMalformed = errors.New("/proc/locks has a line this parser does not read")
 
@@ -74,11 +78,30 @@ func (h lockHolder) String() string {
 	return "held by " + strings.Join(parts, ", ")
 }
 
-// devMajorMinor splits a Linux dev_t as the kernel prints it in /proc/locks.
+// devMajorMinor splits a Linux dev_t as the kernel prints it in /proc/locks,
+// with glibc's encoding (each half 32 bits). golang.org/x/sys/unix's Major
+// and Minor are not used: they follow the build's GOOS, and this file reads
+// Linux's /proc on every build.
 func devMajorMinor(dev uint64) (major, minor uint64) {
-	major = (dev>>8)&0xfff | (dev>>32)&^0xfff
-	minor = dev&0xff | (dev>>12)&^0xff
+	major = uint64(uint32((dev>>8)&0xfff | (dev>>32)&^0xfff))
+	minor = uint64(uint32(dev&0xff | (dev>>12)&^0xff))
 	return major, minor
+}
+
+// makeDev is devMajorMinor's inverse: the dev_t of major and minor.
+func makeDev(major, minor uint64) uint64 {
+	return minor&0xff | (major&0xfff)<<8 | (minor&^0xff)<<12 | (major&^0xfff)<<32
+}
+
+// parseMajorMinor reads a mountinfo "major:minor" (both decimal) as a dev_t.
+func parseMajorMinor(s string) (uint64, error) {
+	major, minor, ok := strings.Cut(s, ":")
+	maj, errMaj := strconv.ParseUint(major, 10, 32)
+	mnr, errMin := strconv.ParseUint(minor, 10, 32)
+	if !ok || errMaj != nil || errMin != nil || !isDecimal(major) || !isDecimal(minor) {
+		return 0, fmt.Errorf("a mount device %q that is not major:minor", s)
+	}
+	return makeDev(maj, mnr), nil
 }
 
 // parseProcLocks returns the pids holding an flock(2) write lock on the inode
@@ -88,7 +111,8 @@ func devMajorMinor(dev uint64) (major, minor uint64) {
 //
 // A line is: "<id>: [->] <type> <mode> <rw> <pid> <maj>:<min>:<ino> <start>
 // <end>", fields separated by spaces, major and minor in hex, the rest in
-// decimal, the end "EOF" or decimal, the pid -1 for an OFD lock.
+// decimal, the end "EOF" or decimal, the pid -1 for an OFD lock and 0 for a
+// holder outside the reader's pid namespace (neither can be named).
 func parseProcLocks(r io.Reader, dev, ino uint64) ([]int, error) {
 	wantMajor, wantMinor := devMajorMinor(dev)
 	var holders []int
@@ -125,7 +149,7 @@ func parseProcLocks(r io.Reader, dev, ino uint64) ([]int, error) {
 			}
 		}
 		pid, err := strconv.Atoi(f[3])
-		if err != nil || (pid < 1 && pid != -1) || f[3] != strconv.Itoa(pid) {
+		if err != nil || (pid < 0 && pid != -1) || f[3] != strconv.Itoa(pid) {
 			return nil, malformed("a pid that is not a number")
 		}
 		node := strings.Split(f[4], ":")
