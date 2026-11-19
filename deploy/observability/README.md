@@ -99,7 +99,10 @@ Grafana provisions two dashboards, read-only, in its OrkStack folder:
   Orkers and pools, the cache, the engine with Temporal and object storage,
   and the artifact GC. Its variables are the namespace, the Orkflow and the
   pool; the Orkflow variable lists names only while `telemetry.orkflow_label`
-  is on (the default).
+  is on (the default). Open runs, pollers and tasks waiting come from the
+  engine's censuses, whose first pass waits a random part of its interval
+  (up to a minute for open runs), so after an engine starts those tiles stay
+  empty until it has run.
 - **OrkStack / Run** (`/d/orkstack-run?var-run=<run-id>`): one run's spans,
   the engine's events, its attempts' usage and its tasks' logs, with a link
   to the run's page in the OrkStack UI.
@@ -170,7 +173,9 @@ with telemetry on, runs `examples/each-fan-out.ork.yaml`, and queries Loki, Temp
 Prometheus and Grafana back to assert the run's signals arrived
 (`scripts/proof-observability.sh`). Every full and release proof runs the
 same gate (AGENTS.md §11.2). It also reads the two provisioned dashboards
-through Grafana and holds their top row to an answer. The engine's API listens
+through Grafana and holds their top row to an answer, asking for a
+census-fed tile only once that census reports its first pass
+(`ork_census_last_success_seconds` above 0). The engine's API listens
 on a free port, but the gate checks the two admin listeners on fixed ports
 (9464, 9465), so it holds a host-wide lock (`$XDG_RUNTIME_DIR/orkstack-observability.lock`)
 and two proofs never run it at once.

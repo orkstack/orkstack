@@ -2493,7 +2493,7 @@ No fields.
 
 | Field | Type | Description |
 |---|---|---|
-| `window` | `google.protobuf.Duration` | window is how far back sign-ins are read; zero means the default (30 days), and a value above the audit trail's retention is cut to it. |
+| `window` | `google.protobuf.Duration` | window is how far back sign-ins are read; zero means the default (30 days), and a value above 90 days is cut to 90 days (window_start says where the answer began). |
 | `page_size` | `int32` | page_size caps the rows answered; 0 means the default (100). |
 | `page_token` | `string` | page_token continues a listing; it is opaque and binds the window and the filter set. |
 | `filters` | repeated [`FieldFilter`](#fieldfilter) | filters narrow the list, all of them at once (docs/UI_CLI_PARITY.md "Filtering lists"). |
@@ -3839,6 +3839,7 @@ Run is one execution of an Orkflow.
 | `pause_warnings` | repeated [`PauseWarning`](#pausewarning) | pause_warnings is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `pause_slot_kept` | `bool` | pause_slot_kept is set from E103; unset until it lands (v0.4.0 proto batch). |
 | `timeout` | [`RunTimeout`](#runtimeout) | timeout is the run's own time limit; unset when its Orkflow declares no `timeout:`. |
+| `dispatch_hold` | [`RunDispatchHold`](#rundispatchhold) | dispatch_hold is why the run itself is holding back work it could start, as of the last time it looked: it is at its in-flight limit, or it is carrying on. Unspecified when nothing is held, and while the run is paused (pause says why). A task waiting behind this hold reads PENDING. |
 
 ### RunArtifact
 
@@ -4571,6 +4572,7 @@ TaskRun is the execution record of a single Task within a Run.
 | `adopted` | `bool` | adopted is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `reading_back` | `bool` | reading_back is set from E85; unset until it lands (v0.4.0 proto batch). |
 | `record` | [`RecordRef`](#recordref) | record is set from identity (O39); unset until it lands (v0.4.0 proto batch). |
+| `dispatch_held` | `bool` | dispatch_held is true while the run holds this ready task back from dispatch, or a fan-out's next items: its in-flight cap is reached, or it is quiescing before carrying on into a fresh history. A pause holds dispatch too, and is said by the run's own pause state, not here. The row stays PENDING (a fan-out RUNNING) with nothing emitted; the flag is cleared when the row dispatches, and on any row that starts or ends. It is in the run's saved state and snapshot only, and a run written before it reads false. |
 
 ### TaskSleep
 
@@ -5599,6 +5601,16 @@ of a task that already reached a terminal outcome; it maps to UNSPECIFIED.
 | `RETRY_STATE_RETRY_POLICY_NOT_SET` | 4 |  |
 | `RETRY_STATE_CANCEL_REQUESTED` | 5 |  |
 | `RETRY_STATE_INTERNAL_SERVER_ERROR` | 6 |  |
+
+### RunDispatchHold
+
+RunDispatchHold is why a run holds back work it could otherwise start.
+
+| Value | Number | Description |
+|---|---|---|
+| `RUN_DISPATCH_HOLD_UNSPECIFIED` | 0 |  |
+| `RUN_DISPATCH_HOLD_IN_FLIGHT_CAP` | 1 | The run has as much work in flight as its in-flight limit allows; held work starts as running work finishes. |
+| `RUN_DISPATCH_HOLD_CARRYING_ON` | 2 | The run is carrying on: it starts nothing new until its running work finishes, then carries its state forward and continues. |
 
 ### RunOriginKind
 

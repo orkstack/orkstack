@@ -53,7 +53,8 @@ export const suiteBinaries: Record<string, string> = {
 	'reclaim-run': './test/tools/reclaim-run',
 	generations: './test/tools/generations',
 	'archive-legacy-run': './test/tools/archive-legacy-run',
-	'archive-sized-run': './test/tools/archive-sized-run'
+	'archive-sized-run': './test/tools/archive-sized-run',
+	'audit-seed': './test/tools/audit-seed'
 };
 
 export default function globalSetup(): void {

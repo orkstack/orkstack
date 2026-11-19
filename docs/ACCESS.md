@@ -226,9 +226,12 @@ state and every binding's pin, configuration's shown read only), **Roles**
 resource), **Service accounts** (a key made in the browser has its private
 half offered as a file named `<account>-<first 12 characters of its kid>.pem`,
 again on asking, and its public half is stored only once you say the file is
-saved; the private half is kept nowhere), **People** (who is signed in now,
-disabled, or named by a binding; disable, enable, end sign-ins; disabling or
-signing out yourself says it is you), **No access** (a person signed in and
+saved; the private half is kept nowhere), **People** (who signed in over the
+last 30 days, 7 days or 24 hours, newest first, with their name and when they
+last signed in; a window too large to read is stepped down to the next
+shorter one by itself, and the page says which it shows; who is signed in now, disabled, or named by a binding; disable,
+enable, end sign-ins; disabling or signing out yourself says it is you),
+**No access** (a person signed in and
 bound to nothing sees their principal, issuer and groups, and copies them for
 an administrator),
 **Explain** and **History** (any two revisions diffed; a revision written
@@ -297,6 +300,21 @@ From the command line: `orkctl admin role list|get|create|update|delete`,
 `key add|remove` (`create --generate-key FILE` writes the private key once,
 mode 0600), and `orkctl admin principal disable|enable`. Each reads the
 document first and sends back its etag.
+
+`orkctl admin principal list` (`AccessService.ListPrincipals`, `access.read`)
+lists who signed in over a window, `--window` (30 days by default, 90 at
+most, a longer one cut to it), newest sign-in first, with the name and groups
+of their latest sign-in, how many sign-ins they hold and whether they are
+disabled; it filters on `id`, `display`, `issuer` and `last_seen`. It is
+derived on each read from the audit trail's `auth.signin.created` and
+`.refreshed` records of verified principals and the sign-ins alive now:
+nothing stores the list. A sign-out, an expiry and a refused sign-in are not
+sightings. Each page reads the whole window again, and a window whose audit
+trail holds more than the engine examines in one step is refused
+`resource_exhausted`: ask for a shorter `--window`, which the refusal names;
+`orkctl` never retries with another window. A page token is good for
+one listing begun lately; an old one is refused, and the list is read again
+from the first page.
 
 ### Explaining a decision, and the history
 

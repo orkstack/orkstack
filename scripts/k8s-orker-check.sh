@@ -556,8 +556,14 @@ check_shape() { # check_shape SHAPE
 		fail "$shape: a task asking for more than the per-task cap was accepted as run $(jq -r .run.id "$dir/too-big-submit.json"), so the submit did not ask the pool's Orkers for their caps"
 	fi
 	cat "$dir/too-big-submit.err"
-	expect "$dir/too-big-submit.err" 'failed_precondition: RESOURCES_UNSATISFIABLE: task "too-big" requests memory 512Mi, which no Orker of pool "k8s-check" .* caps are 0\.5 cpu and 402653184 bytes' \
-		"$shape: a task asking for more than the 384Mi cap is refused at submit, by the cap its Orker reported"
+	# The refusal's reason, task and pool, then each cap the Orker reported on
+	# its own: the sentence around the numbers is the engine's to word.
+	expect "$dir/too-big-submit.err" 'failed_precondition: RESOURCES_UNSATISFIABLE: task "too-big" requests memory 512Mi, .*pool "k8s-check"' \
+		"$shape: a task asking for more than the 384Mi cap is refused at submit"
+	expect "$dir/too-big-submit.err" 'RESOURCES_UNSATISFIABLE: .*[^0-9.]0\.5 cpu\b' \
+		"$shape: naming the 0.5 cpu cap its Orker reported"
+	expect "$dir/too-big-submit.err" 'RESOURCES_UNSATISFIABLE: .*[^0-9]402653184 bytes\b' \
+		"$shape: and the 384Mi memory cap"
 	orkctl run list -F orkflow_name=k8s-orker-too-big -j >"$dir/too-big-runs.json"
 	[ "$(jq '.runs // [] | length' "$dir/too-big-runs.json")" = 0 ] || fail "$shape: the refused submit left a run of k8s-orker-too-big"
 	log "ok: $shape: and left no run behind"

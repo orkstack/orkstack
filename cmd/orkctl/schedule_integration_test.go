@@ -61,7 +61,7 @@ type managedEngine struct {
 func (s *scheduleStack) startEngine(ctx context.Context, t *testing.T, name, addr string) *managedEngine {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, s.enginePath)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(testbin.StackEnv(os.Environ()),
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+s.address,
 		"ORK_TEMPORAL_NAMESPACE="+s.partition,

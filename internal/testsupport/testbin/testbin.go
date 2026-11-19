@@ -21,6 +21,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -122,8 +123,9 @@ func compile(pkg, name string, static bool) (string, error) {
 	mu.Unlock()
 	cmd := exec.Command("go", "build", "-o", out, pkg)
 	cmd.Dir = root
+	cmd.Env = GoBuildEnv(os.Environ())
 	if static {
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+		cmd.Env = append(cmd.Env, "CGO_ENABLED=0")
 	}
 	if b, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("testbin: go build %s: %v\n%s", pkg, err, b)
@@ -176,4 +178,37 @@ func OrkerEnv(env []string) []string {
 		}
 	}
 	return append(append(make([]string, 0, len(env)+1), env...), StopGraceVar+"=0s")
+}
+
+// GoBuildEnv is env for a go build of a binary under test: env without the
+// variables a developer's shell or an outer make may set that change which
+// binary the build makes (its target, its flags, its experiments). The binary
+// a test runs is the host's ordinary build, never one the shell chose.
+func GoBuildEnv(env []string) []string {
+	return without(env, "GOFLAGS", "GOOS", "GOARCH", "GOEXPERIMENT", "CGO_ENABLED", "GO386", "GOAMD64", "GOARM", "GOARM64", "GOWASM")
+}
+
+// StackEnv is env for an ork, orker or orkctl a test starts: env without the
+// settings a developer's shell may hold for its own deployment and the proof
+// never sets, which would reconfigure the process under test. What the proof
+// and CI hand a stack on purpose (its Temporal address and namespace, the
+// object store, the container CLI, the work root) passes through, and a
+// variable the test itself appends after StackEnv still wins.
+func StackEnv(env []string) []string {
+	return without(env, "ORK_CONFIG_FILE", "ORK_ADMIN_ADDR", "ORK_PPROF_ENABLED",
+		"ORK_TEMPORAL_TLS_ENABLED", "ORK_TEMPORAL_TLS_CA_FILE", "ORK_TEMPORAL_TLS_CERT_FILE",
+		"ORK_TEMPORAL_TLS_KEY_FILE", "ORK_TEMPORAL_TLS_SERVER_NAME", "ORK_TEMPORAL_API_KEY_FILE")
+}
+
+// without is env less every entry whose name is one of names; env is not
+// changed.
+func without(env []string, names ...string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !slices.Contains(names, name) {
+			out = append(out, kv)
+		}
+	}
+	return out
 }

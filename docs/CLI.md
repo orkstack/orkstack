@@ -382,14 +382,16 @@ a gateway that authenticates callers must overwrite the header rather
 than pass it through.
 
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
-  FIELD        OPERATORS       VALUES
-  at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
-  namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
-  action       = != =a,b ~ ^   text
-  principal    = != =a,b ~ ^   text
-  target       = != =a,b ~ ^   text
-  succeeded    =               true false
-  error_code   = != =a,b       text
+  FIELD                OPERATORS       VALUES
+  at                   >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  namespace            = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  action               = != =a,b ~ ^   text
+  principal            = != =a,b ~ ^   text
+  target               = != =a,b ~ ^   text
+  succeeded            =               true false
+  error_code           = != =a,b       text
+  decision             = != =a,b       text
+  principal_verified   =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 
@@ -928,7 +930,7 @@ Inherited flags:
 
 ## `orkctl admin principal`
 
-Disable and enable principals
+List the principals seen to sign in, and disable and enable principals
 
 Inherited flags:
 
@@ -965,6 +967,46 @@ Inherited flags:
 ## `orkctl admin principal enable`
 
 Enable a principal, whatever it presents
+
+Inherited flags:
+
+- `--break-glass-reason STRING` — why a break-glass key is used, sent with each request (required with --service-account break-glass; env ORK_BREAK_GLASS_REASON)
+- `--ca-file STRING` — PEM roots to trust for an https server, in place of the system's
+- `--client-cert STRING` — a PEM client certificate to present to an https server (with --client-key)
+- `--client-key STRING` — the PEM private key of --client-cert
+- `-j, --json` — emit machine-readable JSON instead of human tables
+- `-n, --namespace STRING` — namespace to act in (env ORK_NAMESPACE, then the one saved by 'orkctl namespace use'; default "default")
+- `--server STRING` (default `http://localhost:8080`) — OrkStack engine base URL (env ORK_SERVER, then the config file's server)
+- `--service-account STRING` — sign each request as this service account (with --service-account-key; env ORK_SERVICE_ACCOUNT)
+- `--service-account-key STRING` — the PEM private key --service-account signs with (env ORK_SERVICE_ACCOUNT_KEY)
+- `--timeout DURATION` (default `30s`) — timeout for each API request (0 disables it)
+- `--token-file STRING` — a file holding the bearer token to present, read at every request (env ORK_TOKEN_FILE)
+
+## `orkctl admin principal list`
+
+List the principals seen to sign in over a window, newest first
+
+List the principals seen to sign in over a window, newest sign-in first: read
+from the audit trail's sign-in events and the sign-ins alive now, with whether
+each is disabled and how many sign-ins it holds. Nothing stores this list; it
+is derived on each read. A window whose audit trail is too large to read in
+one step is refused: ask for a shorter --window.
+
+Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
+  FIELD       OPERATORS       VALUES
+  id          = != =a,b ~ ^   text
+  display     = != =a,b ~ ^   text
+  issuer      = != =a,b       text
+  last_seen   >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
+A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
+
+Flags:
+
+- `-F, --filter STRINGARRAY` — keep only rows where FIELD OP VALUE holds (repeatable; every filter must hold; --filter help lists the fields)
+- `--limit INT32` — principals per page (0 = server default, 100; at most 500)
+- `--page-token STRING` — page token from a previous listing with the same filters
+- `--window DURATION` — how far back sign-ins are read (0 = server default, 30 days)
 
 Inherited flags:
 
@@ -2280,7 +2322,7 @@ Inherited flags:
 
 ## `orkctl orker get`
 
-Show one Orker: its state, load and open pins
+Show one Orker: its state, profiles, load and open pins
 
 Inherited flags:
 
@@ -2309,6 +2351,10 @@ listed as `unknown (unreachable)` with the reason under the table: its load
 is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.
 An Orker that stopped reads this way for up to 90 seconds, because the cluster
 still remembers it polling.
+STATE names every cause that holds a cordon, an operator's first:
+cordoned (operator; profile drifted). PROFILES is each profile the Orker
+offers with its kind and the cause on it, a100 (gpu; drifted), and each
+profile cause is a line under the table with what was found and how it ends.
 PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker
 declaring one admits tasks within, and RESERVED what stands reserved against
 it, pinned members included and each outstanding poll counted at the per-task

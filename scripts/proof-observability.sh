@@ -210,6 +210,9 @@ env \
 ORKER_PID=$!
 
 say "== starting ork (admin $ADMIN_HOST:9464, OTLP -> $COLLECTOR, --config $CONFIG_FILE) =="
+# Unix seconds before this engine starts: a census series whose last success
+# is no earlier comes from it, never from an earlier run of the gate.
+ORK_STARTED_AT="$(date +%s)"
 env \
 	ORK_ARTIFACT_BACKEND=s3 \
 	ORK_S3_BUCKET="$BUCKET" \
@@ -404,6 +407,36 @@ assert "Prometheus: scrapes nothing (no active targets)" \
 poll_prom 'ork_build_info{job=~".*ork"}' "$OUT/prom-build-info.json"
 assert "Prometheus: ork_build_info carries job from service.name (OTLP resource)" \
 	bash -c "[ \"\$(jq -r '(.data.result | length) // 0' '$OUT/prom-build-info.json')\" -ge 1 ]"
+
+# A census reports its gauge only after its first pass, which waits a random
+# part of its interval so that replicas do not ask together
+# (internal/telemetry, census.run). Its last_success series is 0 from boot
+# and then the unix second of its last good pass, so the gate waits for one
+# no earlier than this engine's start, rather than for the tile. The bound is
+# the census's interval, one pass's timeout (30 s) and two metric exports
+# (5 s each), counted from now, which is after the boot. A pass skipped or
+# failed is tried again only an interval later, so it fails the wait, and
+# the census's own skipped and failed counters are kept beside it.
+wait_census() { # <census> <interval seconds>
+	local census="$1" bound=$(($2 + 30 + 10)) out="$OUT/prom-census-$1.json" i n
+	say "  waiting up to ${bound}s for the $census census's first pass"
+	for i in $(seq 1 $((bound * 2))); do
+		prom_query "ork_census_last_success_seconds{ork_census=\"$1\"} >= $ORK_STARTED_AT" >"$out"
+		n="$(jq -r '(.data.result | length) // 0' "$out" 2>/dev/null || echo 0)"
+		[ "${n:-0}" -ge 1 ] 2>/dev/null && break
+		sleep 0.5
+	done
+	if [ "${n:-0}" -lt 1 ] 2>/dev/null; then
+		prom_query "{__name__=~\"ork_census_(skipped|failed)_total\",ork_census=\"$1\"}" >"$OUT/prom-census-$1-misses.json"
+		say "  the $census census's skipped and failed passes: $(jq -c '[.data.result[]? | {(.metric.__name__): .value[1]}]' "$OUT/prom-census-$1-misses.json" 2>/dev/null)"
+	fi
+	assert "Prometheus: the $census census completed its first pass (ork_census_last_success_seconds since the engine started)" \
+		bash -c "[ \"\$(jq -r '(.data.result | length) // 0' '$out')\" -ge 1 ]"
+}
+# runs_open runs once a minute (Open runs); pool_backlog at
+# engine.pool_metrics.interval, 15 s by default (Pollers, Tasks waiting).
+wait_census runs_open 60
+wait_census pool_backlog 15
 
 # (e) Grafana — the two provisioned dashboards, and their top row answering
 # through Grafana itself, with every variable at All.

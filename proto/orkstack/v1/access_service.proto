@@ -226,7 +226,8 @@ message ListPrincipalsRequest {
     ]
   };
   // window is how far back sign-ins are read; zero means the default
-  // (30 days), and a value above the audit trail's retention is cut to it.
+  // (30 days), and a value above 90 days is cut to 90 days
+  // (window_start says where the answer began).
   google.protobuf.Duration window = 1;
   // page_size caps the rows answered; 0 means the default (100).
   int32 page_size = 2;
