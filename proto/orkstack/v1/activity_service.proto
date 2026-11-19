@@ -279,6 +279,9 @@ message ActivityInterface {
   // render it so an author knows what `.tasks.<id>.output.<key>` may
   // reference.
   map<string, FieldSchema> values = 5;
+  // devices maps a profile name to the contract label the image needs of
+  // it. A task naming that profile runs only under that contract.
+  map<string, string> devices = 6;
 }
 
 message ListActivitiesResponse {
@@ -333,6 +336,8 @@ message ListOrkersResponse {
   // orkers is ordered by pool, then orker_id. A stable order is part of the
   // contract: the Admin page renders it.
   repeated Orker orkers = 1;
+  // read_at is the engine's clock when it finished reading the inventory.
+  google.protobuf.Timestamp read_at = 2;
 }
 
 message CordonOrkerRequest {
