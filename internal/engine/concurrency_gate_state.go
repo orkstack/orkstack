@@ -508,7 +508,7 @@ func (g *gateState) decideAcquire(req gateAcquire, now time.Time, afterPass bool
 	replaced := false
 	if i := g.holderIx(req.Run, req.SeqBase, req.TaskIx); i >= 0 {
 		switch h := g.Holders[i]; {
-		case h.N == req.N:
+		case h.N == req.N || gateOrdinalNotReplacing:
 			d := answer(gateAnswerGranted)
 			d.Answer.Seq, d.Answer.ArrivedAt = h.Seq, h.ArrivedAt
 			return d
@@ -916,3 +916,10 @@ func gateEncodedLen(s string) int {
 // answers it: to the millisecond its carry keeps, so the line's order is the
 // same before and after a continue-as-new and in every run's own record.
 func gateArrival(now time.Time) time.Time { return now.Truncate(time.Millisecond) }
+
+// gateOrdinalNotReplacing makes a holder's newer ordinal read as its own
+// entry, as a gate that predates ordinals did. It is false in every build
+// and set only by TestGateOrdinalHistory_CatchesAGateThatDoesNotReplace,
+// which flips it to prove the committed ordinal fixture sees the
+// replacement's commands: sleepTimerAfterEmit's precedent.
+var gateOrdinalNotReplacing = false

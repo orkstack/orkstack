@@ -199,7 +199,11 @@ func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPla
 	// line keeps no timer pending.
 	dctx, cancelDeadline := workflow.WithCancel(ctx)
 	defer cancelDeadline()
-	deadline := workflow.NewTimer(dctx, max(req.WaitUntil.Sub(workflow.Now(ctx)), time.Millisecond))
+	timerCtx := dctx
+	if concDeadlineLeftRunning {
+		timerCtx = ctx
+	}
+	deadline := workflow.NewTimer(timerCtx, max(req.WaitUntil.Sub(workflow.Now(ctx)), time.Millisecond))
 	interval := c.plan.RequeueInterval
 	rebuilding, unanswered := ans.Rebuilding, false
 	var reassert workflow.Future
@@ -529,3 +533,11 @@ func supersededClose(details *commonpb.Payloads) (string, bool) {
 	}
 	return sentence, true
 }
+
+// concDeadlineLeftRunning starts a waiting run's deadline timer on the run's
+// own context, so a grant leaves it pending, as the run side did before its
+// deadline was cancelled at the grant. It is false in every build and set
+// only by TestConcurrencyQueuedHistory_CatchesADeadlineLeftRunning, which
+// flips it to prove the queued fixture pins the cancel:
+// sleepTimerAfterEmit's precedent.
+var concDeadlineLeftRunning = false

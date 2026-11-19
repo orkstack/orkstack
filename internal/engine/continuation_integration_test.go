@@ -121,7 +121,11 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 		Interceptors:                engine.RunWorkerInterceptors(),
 	}))
 	engine.RegisterWorkflows(runWorker)
-	activities := engine.NewSnapshotActivities(snapshots)
+	var store engine.SnapshotStore = snapshots
+	if canStackSnapshotWrap != nil {
+		store = canStackSnapshotWrap(store)
+	}
+	activities := engine.NewSnapshotActivities(store)
 	if beforeRead != nil {
 		activities = activities.WithContinuationHooksForTest(nil, beforeRead)
 	}
@@ -143,6 +147,9 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 	if pace != nil {
 		execute, publish = pace.execute(s, execute), pace.publish(s, publish)
 	}
+	if canStackPublishWrap != nil {
+		publish = canStackPublishWrap(publish)
+	}
 	orker.RegisterActivityWithOptions(execute, activity.RegisterOptions{Name: task.ActivityExecuteTask})
 	orker.RegisterActivityWithOptions(func(context.Context, *orkstackv1.ReleasePinInput) error { return nil },
 		activity.RegisterOptions{Name: task.ActivityReleasePin})
@@ -160,6 +167,17 @@ func startCANStackWith(t *testing.T, ctx context.Context, label string, versione
 	}
 	return s
 }
+
+// canStackPublishWrap, when set before a stack is built, wraps the event
+// worker's publish: a recorder that needs one run's emit to fail sets it
+// for the stack it builds and clears it (TestIntegration_RecordConcurrencyRunHistories).
+// The event channel is fixed, so only a test that runs alone sets it.
+var canStackPublishWrap func(publishFunc) publishFunc
+
+// canStackSnapshotWrap is canStackPublishWrap for the run worker's snapshot
+// store: a recorder that needs one run's emit to fail at its snapshot write
+// sets it for the stack it builds.
+var canStackSnapshotWrap func(engine.SnapshotStore) engine.SnapshotStore
 
 // registerRunActivities registers every local activity the run worker hosts,
 // as cmd/ork does.
