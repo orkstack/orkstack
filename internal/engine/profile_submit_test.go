@@ -18,8 +18,10 @@ func deviceOrker(id string, kinds []orkstackv1.ProfileKind, profiles ...*orkstac
 	return &orkstackv1.DescribeOrkerResult{OrkerId: id, BuildId: "b-" + id, ProfileKindsSupported: kinds, Profiles: profiles}
 }
 
+// offered is a profile in the short form: one contract, "1", its default.
 func offered(name string, kind orkstackv1.ProfileKind, digest string) *orkstackv1.OrkerProfile {
-	return &orkstackv1.OrkerProfile{Name: name, Kind: kind, IdentityDigest: digest}
+	return &orkstackv1.OrkerProfile{Name: name, Kind: kind, IdentityDigest: digest, DefaultContract: "1",
+		Contracts: []*orkstackv1.OrkerProfileContract{{Label: "1", IdentityDigest: digest}}}
 }
 
 var devicesKind = []orkstackv1.ProfileKind{orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}
@@ -40,17 +42,17 @@ func TestJudgeTaskProfiles(t *testing.T) {
 	}
 
 	t.Run("one identity pinned per profile", func(t *testing.T) {
-		got, err := judgeTaskProfiles("ns", "edge", tasks, []*orkstackv1.DescribeOrkerResult{both("o1", digestA), both("o2", digestA)})
+		got, err := judgeTaskProfiles("ns", "edge", tasks, []*orkstackv1.DescribeOrkerResult{both("o1", digestA), both("o2", digestA)}, nil)
 		if err != nil {
 			t.Fatalf("judge: %v", err)
 		}
-		if want := map[string]string{"sensor": digestA, "modem": digestB}; !maps.Equal(got, want) {
+		if want := map[string]string{"sensor": digestA, "modem": digestB}; !maps.Equal(got.identities, want) {
 			t.Fatalf("identities = %v, want %v", got, want)
 		}
 	})
 	t.Run("no profiled task asks nothing", func(t *testing.T) {
-		got, err := judgeTaskProfiles("ns", "edge", []*orkstackv1.Task{{Id: "plain"}}, nil)
-		if err != nil || got != nil {
+		got, err := judgeTaskProfiles("ns", "edge", []*orkstackv1.Task{{Id: "plain"}}, nil, nil)
+		if err != nil || got.identities != nil || got.contracts != nil {
 			t.Fatalf("judge = %v, %v", got, err)
 		}
 	})
@@ -117,7 +119,7 @@ func TestJudgeTaskProfiles(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := judgeTaskProfiles("ns", "edge", tasks, tc.orkers)
+			got, err := judgeTaskProfiles("ns", "edge", tasks, tc.orkers, nil)
 			if err == nil {
 				t.Fatalf("judge = %v, want a refusal", got)
 			}

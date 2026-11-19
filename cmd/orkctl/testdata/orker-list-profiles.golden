@@ -14,3 +14,5 @@ orker-wait   gpu    -      cordoned (profile unavailable)        0      -     fp
   orker-drift: Profile a100 drifted since 2026-09-22T08:54:10Z: a device was replaced, or changed its numbers or group (DEVICE_CHANGED). It stays out of service on this Orker until the Orker restarts.
   orker-out: Profile fpga out of service since 2026-09-22T08:54:10Z: the Orker found a fault (REASON_99), for a cause this release cannot read. The Orker takes no work from its pool; see orkctl orker get.
   orker-wait: Profile fpga unavailable since 2026-09-22T08:54:10Z: a device is not there (DEVICE_ABSENT). Once that is put right, it returns by itself after consecutive good checks.
+
+As of 2026-09-22T09:14:05Z, the engine's clock.

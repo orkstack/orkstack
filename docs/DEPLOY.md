@@ -703,7 +703,7 @@ then the variable it becomes.
 | `engine.interruptions.lost_run_cap` | `ORK_INTERRUPTIONS_LOST_RUN_CAP` | `20` | `ork` | how many lost-Orker events one run survives across all its tasks before a loss spends an own attempt. From 1 to 200; pinned per run |
 | `engine.interruptions.handed_back` | `ORK_INTERRUPTIONS_HANDED_BACK` | `10` | `ork` | how many times a task runs again after a stopping Orker handed it back. From 1 to 50; pinned per run |
 | `engine.interruptions.never_started` | `ORK_INTERRUPTIONS_NEVER_STARTED` | `20` | `ork` | how many times a task runs again with no wait after a stopping Orker returned it before it started; past it, with a doubling back-off (`engine.interruptions.never_started_backoff`). It never fails the task. From 1 to 100; pinned per run |
-| `engine.interruptions.never_started_faults` | `ORK_INTERRUPTIONS_NEVER_STARTED_FAULTS` | `5` | `ork` | how many consecutive attempts that never started because of a fault (object storage refusing the attempt's record, a drifted Orker profile) a task survives before they spend its own attempts; past the first, each waits at least 45 s ("Interruption budgets", §5). From 1 to 20; pinned per run |
+| `engine.interruptions.never_started_faults` | `ORK_INTERRUPTIONS_NEVER_STARTED_FAULTS` | `5` | `ork` | how many consecutive attempts that never started because of a fault (object storage refusing the attempt's record, a drifted Orker profile, a profile contract the Orker does not serve or defines differently) a task survives before they spend its own attempts; past the first, each waits at least 45 s ("Interruption budgets", §5). From 1 to 20; pinned per run |
 | `engine.interruptions.never_started_backoff` | `ORK_INTERRUPTIONS_NEVER_STARTED_BACKOFF` | `2s` | `ork` | the first wait of the never-started back-off, doubling each time up to 60 s. From `1s` to `30s`; pinned per run |
 | `engine.pool_metrics.pools` | `ORK_POOL_METRICS_POOLS` | (empty) | `ork` | the pools, beside the default pool, whose backlog each replica reads for the `ork.pool.*` gauges ("A pool's backlog, as metrics"). Valid pool names, at most 64; anything else is refused at boot. A pool that answers to the default channel is the default pool and is read once |
 | `engine.pool_metrics.interval` | `ORK_POOL_METRICS_INTERVAL` | `15s` | `ork` | how often each replica reads each of those pools, one cluster request per pool each time. From `5s` to `5m`; anything else is refused at boot |
@@ -1551,11 +1551,34 @@ owner, group and the permissions the profile names, so a task that runs as a
 user other than root reads it only if that user is in the node's group. On
 most distributions a serial adapter's group is `dialout`.
 
-**Every Orker of the pool defines the profile the same way.** Submit refuses a
-task whose pool has an Orker that does not offer a profile it names
-(`PROFILE_UNAVAILABLE`), or two Orkers that define it differently
-(`PROFILE_MISMATCH`), and `allow_empty_pool` changes neither. The run pins the
-profile as submit saw it, and every attempt is held to that.
+**Every Orker of the pool serves the profile under a contract the run
+pins.** A profile is one or more *profile contracts*, each a label for one
+definition of its devices: the short form above is contract `"1"` (or the
+label `contract:` gives), and the long form lists up to 8 under `contracts:`
+with a `default:` ("Changing a profile"). Submit refuses a task whose pool has
+an Orker that does not offer a profile it names (`PROFILE_UNAVAILABLE`), and
+`allow_empty_pool` does not change that. Then it pins, per pool and profile:
+
+- for a task whose image declares the contract it needs (`devices:` in its
+  interface, [ACTIVITY_IMAGES.md](./ACTIVITY_IMAGES.md#declaring-the-interface)),
+  that contract, which every Orker of the pool that answered must own or
+  accept, else `PROFILE_UNAVAILABLE` names the Orker and the contract;
+- for a task whose image declares none, the labels every such Orker's
+  default contract serves (its own label and its `accepts:`), which must meet
+  in at least one, else `PROFILE_MISMATCH`.
+
+Two Orkers that define one label differently are refused `PROFILE_MISMATCH`,
+naming the label. Each pinned label carries the definition its owners gave,
+and every attempt is held to it: an Orker runs the task under a contract that
+owns a pinned label with that definition, or under one whose `accepts:` names
+a pinned label; else the attempt fails before any container, never started
+(`PROFILE_CHANGED`, `PROFILE_CONTRACT_NOT_SERVED`), and the task runs again,
+on whichever Orker of the pool takes it, within the run's never-started fault
+budget (§5, "Interruption budgets"): five in a row by default, the first at
+once and each later one after at least 45 s, so one Orker that serves the
+contract nowhere can spend the budget. Past that budget they spend the task's own
+attempts, so give a profiled task `retry:`. A profiled submit whose Orkers were read more than 60 s before its
+run would be created is refused `Unavailable`; submit again.
 
 **A profile is fixed for the Orker's lifetime.** The Orker checks the
 profile's devices again at dispatch, just before it creates the container,
@@ -1570,9 +1593,18 @@ an attempt that meets it fails `PROFILE_NOT_OFFERED`, and once the device is
 back as the same node, three good checks `recovery_interval` apart return the
 profile to service. Plugged back as another node, it has drifted. A
 `PROFILE_NOT_OFFERED` attempt spends one of the task's own, and a task without
-`retry:` makes one, so give a profiled task one. To change a profile, drain the Orker, stop it, edit its
-configuration and start it (§ "Removing an Orker safely: cordon and drain").
-A `revision` change alters only cache keys.
+`retry:` makes one, so give a profiled task one. To change a profile, change
+it as "Changing a profile" says, one Orker at a time: drain the Orker, stop
+it, edit its configuration and start it (§ "Removing an Orker safely: cordon
+and drain"). A change is read at boot and is never drift; drift is the host
+differing from what this running Orker audited.
+
+**`revision` and `contract` are two axes.** `revision` is in no definition:
+changing it alters only cache keys, for a host-side change a task's results
+depend on. A contract's definition is its devices and their container paths
+and permissions, never its label or `revision`; a cached task's key carries
+the definition of the contract it ran under, so a structural change misses
+the cache and a host-only change keeps it.
 
 **Admin → Pools shows each Orker's profiles.** Every profile it offers, by
 name and kind. The page can show a `gpu` profile's unit cells and a **gpu
@@ -1602,6 +1634,114 @@ line of its own, with a `gpu` profile's units, and each cause in full.
 `--json` carries `profiles` and `profileCordons` as the inventory has them.
 A profile's revision, identity digest and a cause's detail stay on the
 Orker's own answer to the engine.
+
+### Changing a profile
+
+A device profile changes under its one name while the pool rolls, Orker by
+Orker, by profile contracts ("Running a device Orker"). Never change a
+contract's definition under the same label: submit refuses a pool whose
+Orkers define one label two ways (`PROFILE_MISMATCH`). Give each definition a
+new label, and say with `accepts:` which older labels it still serves.
+
+```yaml
+orker:
+  profiles:
+    sensor:
+      kind: devices
+      contract: "2"        # this definition
+      accepts:
+        - "1"              # runs pinned to contract 1 may run under it
+      devices:
+        - path: /dev/serial/by-id/usb-FTDI_FT232R-if00-port0
+          container_path: /dev/sensor
+          permissions: rw
+```
+
+**Take T from the engine.** Where a step below says "note T", run `orkctl
+orker list` once the pool shows the state the step asks for; T is its
+**As of** time, the engine's clock when it finished reading the fleet
+(`ListOrkersResponse.read_at`).
+
+**A compatible change** (images keep working on the new definition: a device
+or `rw` added, a container path images read from their configuration):
+
+1. Roll the new definition in as a new label that accepts the old one, as
+   above. While the pool is mixed, a task whose image declares no contract
+   pins `1`, which every Orker serves.
+2. Note T once no Orker of the pool serves only `1`.
+3. Carry `accepts:` forward: the next change is `contract: "3"` with
+   `accepts: ["1", "2"]`.
+4. Drop an old label from `accepts:` only when it is unused (below).
+
+A device or permission the change adds is guaranteed to a run only once every
+Orker of the pool carries it.
+
+**A breaking change** (images must change, such as a container path old
+images hard-code):
+
+1. Roll the new contract in beside the old one on every Orker, keeping the
+   old one the default. One host device may back both, at one container path.
+
+   ```yaml
+   sensor:
+     kind: devices
+     default: "1"
+     contracts:
+       "1":
+         devices:
+           - path: /dev/serial/by-id/usb-FTDI_FT232R-if00-port0
+             container_path: /dev/sensor
+             permissions: rw
+       "2":
+         devices:
+           - path: /dev/serial/by-id/usb-FTDI_FT232R-if00-port0
+             container_path: /dev/ttySensor
+             permissions: rw
+   ```
+
+2. Build the new images with `devices: {sensor: "2"}` in their
+   `interface.ork.yaml` ([ACTIVITY_IMAGES.md](./ACTIVITY_IMAGES.md#declaring-the-interface)),
+   and create the Orkflows' new versions with them. Their tasks pin contract
+   `2` and run under it alone; older versions keep pinning `1` and keep
+   running. An image that cannot declare is pinned in the Orkflow instead,
+   `devices: [sensor@2]` ([DSL.md](./DSL.md#device-profiles)).
+3. Optionally move `default:` to `"2"` once no image that declares nothing
+   needs the old shape.
+4. Retire contract `1` only when it is unused (below), and no Orkflow version
+   still in use declares it: `orkctl orkflow get -j` shows each task's
+   `device_contracts`.
+
+Images that move before step 1 is done on every Orker are refused
+`PROFILE_UNAVAILABLE`, naming the Orker that lacks the contract; finish
+step 1. The same holds whenever the pool stops carrying the contract: an
+Orker rolled back, or a new one joining with an old configuration, refuses
+every submit and schedule fire that needs it (a fire is recorded
+`ScheduleFireRefused`) until it carries the contract or leaves. **A new Orker
+joins a pool only with the pool's full contract set.**
+
+**Rollback.** Roll the old definition back in under a new label (`contract:
+"3"`, `accepts: ["1", "2"]`), or move `default:` back to a contract still
+defined. Never reuse a label for another definition, a rollback included.
+
+**Knowing a label is unused.** With T noted once every Orker of the pool
+serves the replacement (the new default, or the new contract), a label may be
+dropped from `accepts:`, or retired, when, at or after T + 7 minutes, in every
+namespace (`orkctl namespace list`, and `default`),
+
+```bash
+orkctl run list -F 'status=PENDING,RUNNING,PAUSED' -F 'created_at<2026-11-19T12:02:00Z'
+```
+
+lists nothing, with the instant T + 2 minutes written as an RFC 3339 time
+(here for T = `2026-11-19T12:00:00Z`). Every run pinned only to the old label was created before T
+plus 90 s (a submit refuses a census older than 60 s, and starts within 30 s);
+the margins cover 30 s of clock skew between engine replicas and the time a
+started run takes to be listed, which is best-effort beyond 5 minutes.
+Composed children are covered by their open parent, and a run that carries on
+keeps its `created_at`. The check is conservative: any run open since before
+T + 2 minutes holds it, one pinned to the new label too, so a long run blocks
+the retire until it ends; note a later T only once every Orker still serves
+the replacement.
 
 ### An engine's key files and an Orker on one host
 
@@ -4086,8 +4226,8 @@ run fails is not run again, and fails with its interruption's reason.
   heartbeat) counts as an event of its own, so a burst of them spends the cap
   faster than one Orker's losses do.
 - A never-started fault (object storage refusing the attempt's record, a
-  drifted profile, a runtime that could not say whether the container
-  started) runs again at once the first time and then waits, at least 45 s
+  drifted profile, a profile contract the Orker does not serve or defines
+  differently, a runtime that could not say whether the container started) runs again at once the first time and then waits, at least 45 s
   (the store-outage cordon's detection time at the Orker's defaults) and
   doubling up to 60 s, so a one-attempt task outlives a store blip until the
   cordon trips. `RUNTIME_STATE_UNKNOWN` means a container's start failed and
