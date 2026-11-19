@@ -27,6 +27,10 @@ const (
 	// concurrencyReservedPrefix starts every default key, and no authored
 	// one.
 	concurrencyReservedPrefix = "ork:"
+	// ConcurrencyKeyInvalidCode refuses a key that breaks §3.3's rule, or a
+	// template that does not render: at validate for a literal key, at
+	// submit for a rendered one.
+	ConcurrencyKeyInvalidCode = "CONCURRENCY_KEY_INVALID"
 )
 
 // concurrencyDocument is a `concurrency:` block as written. The strict
@@ -242,7 +246,7 @@ func CheckConcurrencyKey(key string) error {
 		shown = shown[:64] + "…"
 	}
 	invalid := func(format string, args ...any) error {
-		return fmt.Errorf("CONCURRENCY_KEY_INVALID: the key %s %s", strconv.Quote(shown), fmt.Sprintf(format, args...))
+		return fmt.Errorf("%s: the key %s %s", ConcurrencyKeyInvalidCode, strconv.Quote(shown), fmt.Sprintf(format, args...))
 	}
 	switch {
 	case key == "":

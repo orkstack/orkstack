@@ -58,6 +58,25 @@ type ConcurrencySlotPlan struct {
 	MaxQueued           int    `json:"max_queued,omitempty"`
 }
 
+// The submit refusals of a concurrency limit (§7.1): a deployment that
+// cannot hold one (cause=index, cause=fleet, or a composed child's limit),
+// and a check that could not be made.
+const (
+	ConcurrencyUnsupportedCode      = "CONCURRENCY_UNSUPPORTED"
+	ConcurrencyCheckUnavailableCode = "CONCURRENCY_CHECK_UNAVAILABLE"
+)
+
+// ConcurrencyStrategyQueue is the queue strategy's name in a slot's plan,
+// the only one this release supports.
+const ConcurrencyStrategyQueue = gateStrategyQueue
+
+// DefaultRunConcurrencyKey is a run-level limit's key when it declares none
+// (§3.1): ork:orkflow:<owner>/<name>, owner the namespace that owns the
+// definition. The reserved prefix keeps it from any authored key.
+func DefaultRunConcurrencyKey(owner, name string) string {
+	return "ork:orkflow:" + owner + "/" + name
+}
+
 // runSlot is the plan's run-level slot, nil when it has none.
 func (p *ConcurrencyPlan) runSlot() *ConcurrencySlotPlan {
 	if p == nil || p.Run == nil || *p.Run < 0 || *p.Run >= len(p.Slots) {

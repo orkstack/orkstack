@@ -76,11 +76,19 @@ const CapabilityEachLines = "each-lines"
 // request would read as recorded and never apply.
 const CapabilityRunPause = "run-pause"
 
+// CapabilityConcurrency is what a run whose definition declares a
+// concurrency limit (`concurrency:`) needs of every process that polls the
+// engine's own channel: an older build ignores the plan's Concurrency, so it
+// would start the run without its slot, and it runs no concurrency gate
+// (docs/DSL.md "Concurrency limits"). Submit refuses CONCURRENCY_UNSUPPORTED
+// (cause=fleet) while one polls without it.
+const CapabilityConcurrency = "concurrency-1"
+
 // EngineCapabilities is what this build can run, in the order it advertises
 // them. A later stage appends its own token; a token is never removed while a
 // release that relies on it may still poll.
 var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay,
-	CapabilityWebhookByID, CapabilityRunTimeout, CapabilityEachLines, CapabilityRunPause}
+	CapabilityWebhookByID, CapabilityRunTimeout, CapabilityEachLines, CapabilityRunPause, CapabilityConcurrency}
 
 // capabilitySuffix separates a process's SDK identity from what it advertises.
 const capabilitySuffix = " ork-caps="

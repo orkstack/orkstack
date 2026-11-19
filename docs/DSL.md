@@ -2059,6 +2059,17 @@ tasks:
 - **Every declaration in a namespace** that renders the same key shares its
   slots and its line, across Orkflows and versions. Keys are never shared
   across namespaces.
+- **At submit** the key is rendered from the run's inputs, defaults applied,
+  and refused `CONCURRENCY_KEY_INVALID` when it does not render or breaks
+  the rule. A `queue_timeout` outside the deployment's bounds
+  (`engine.concurrency.min_queue_timeout`, 10s, and `max_queue_timeout`,
+  7d) is refused at validate and create, and at submit for a version created
+  before the bounds tightened. A deployment that cannot hold a limit refuses
+  the run `CONCURRENCY_UNSUPPORTED`, naming why (`cause=index`,
+  `cause=fleet`). An Orkflow that declares a limit cannot yet run as a
+  composed child: a tree that would start one is refused
+  `CONCURRENCY_UNSUPPORTED`. A retry under an idempotency key its first
+  submit bound returns that run without these checks.
 - **A run that ends while it waits**, or that its limit refuses, starts no
   task, failure handlers included: it never held the key, so it ends `FAILED`
   or `CANCELED` with its own reason and nothing runs.
