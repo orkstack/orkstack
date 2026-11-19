@@ -347,23 +347,46 @@ func TestConcurrencyRun_AnEndingInLineStartsNoHandler(t *testing.T) {
 		answer   AcquireConcurrencyResult
 		code     string
 		category orkstackv1.FailureCategory
+		// canceled is a run that ends CANCELED with its own code (design
+		// §6.1): only a supersede.
+		canceled bool
 	}{
-		"queue timeout": {timeout, queued(2, 1), RunQueueTimeoutCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT},
+		"superseded": {concPlan(), AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerSuperseded, By: "ork-newer"}}, RunSupersededCode,
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED, true},
+		"queue timeout": {timeout, queued(2, 1), RunQueueTimeoutCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT, false},
 		"line full": {concPlan(), AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerFullBound}}, RunConcurrencyFullCode,
-			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, false},
 		"limit": {concPlan(), AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerFull}}, RunConcurrencyLimitCode,
-			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, false},
 		"fenced": {concPlan(), AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerFenced}}, RunConcurrencyFencedCode,
-			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION, false},
 		"unavailable": {concPlan(), AcquireConcurrencyResult{Unavailable: "deadline"}, RunConcurrencyUnavailableCode,
-			orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			h := newConcRunHarness(t, tc.answer)
 			h.runOrkflow(tc.plan, handlerOrkflow())
-			var app *temporal.ApplicationError
-			if err := h.env.GetWorkflowError(); !errors.As(err, &app) || app.Type() != tc.code {
-				t.Fatalf("the run ended %v, want %s", err, tc.code)
+			wantStatus, wantEvent := orkstackv1.Status_STATUS_FAILED, orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
+			if tc.canceled {
+				// The execution itself closes canceled, so a list read from
+				// the cluster says what the run's own record says.
+				wantStatus, wantEvent = orkstackv1.Status_STATUS_CANCELED, orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED
+				err := h.env.GetWorkflowError()
+				if !temporal.IsCanceledError(err) {
+					t.Fatalf("the run ended %v, want canceled", err)
+				}
+				// Its close names the supersede, for a parent reading it.
+				if read := categoryOf(err); !read.superseded || read.supersededSentence != h.last.GetError().GetMessage() {
+					t.Fatalf("the close reads superseded=%v %q, want true %q", read.superseded, read.supersededSentence, h.last.GetError().GetMessage())
+				}
+			} else {
+				var app *temporal.ApplicationError
+				if err := h.env.GetWorkflowError(); !errors.As(err, &app) || app.Type() != tc.code {
+					t.Fatalf("the run ended %v, want %s", err, tc.code)
+				}
+			}
+			if got := h.last.GetStatus(); got != wantStatus {
+				t.Fatalf("the run ended %s, want %s", got, wantStatus)
 			}
 			if h.ran != 0 {
 				t.Fatalf("%d activities ran; a run that never held its slot starts none", h.ran)
@@ -380,8 +403,8 @@ func TestConcurrencyRun_AnEndingInLineStartsNoHandler(t *testing.T) {
 				t.Fatalf("the ended run still reads queued: %v", h.last.GetQueued())
 			}
 			last := h.events[len(h.events)-1]
-			if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
-				t.Fatalf("the last event is %s, want RUN_FAILED", last.GetType())
+			if last.GetType() != wantEvent {
+				t.Fatalf("the last event is %s, want %s", last.GetType(), wantEvent)
 			}
 			if len(h.releases) != 1 {
 				t.Fatalf("released %d times, want 1", len(h.releases))

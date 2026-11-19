@@ -99,10 +99,10 @@ func permanent(err error) bool {
 		invalid   *serviceerror.InvalidArgument
 		denied    *serviceerror.PermissionDenied
 		namespace *serviceerror.NamespaceNotFound
-		app       *temporal.ApplicationError
 	)
+	failure := categoryOf(err)
 	return errors.As(err, &invalid) || errors.As(err, &denied) || errors.As(err, &namespace) ||
-		(errors.As(err, &app) && app.NonRetryable() && app.Type() != GateErrBusy)
+		(failure.nonRetryable() && failure.appType() != GateErrBusy)
 }
 
 // acquireUpdateID is acq-<D>-<a>: D the slot's digest, with its ordinal
@@ -129,9 +129,8 @@ func (a *GateActivities) AcquireConcurrency(ctx context.Context, in AcquireConcu
 		if err == nil {
 			return AcquireConcurrencyResult{Answer: ans}, nil
 		}
-		var app *temporal.ApplicationError
-		if errors.As(err, &app) && app.Type() == GateErrUnsupported {
-			return AcquireConcurrencyResult{Unsupported: app.Message()}, nil
+		if failure := categoryOf(err); failure.appType() == GateErrUnsupported {
+			return AcquireConcurrencyResult{Unsupported: failure.appMessage()}, nil
 		}
 		if permanent(err) {
 			// Asking again cannot change it: answered at once, its cause

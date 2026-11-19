@@ -3009,6 +3009,17 @@ func (s *runState) fail(
 			taskRun.GetStatus() != orkstackv1.Status_STATUS_SLEEPING && !waitingToRunAgain(taskRun) {
 			taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 		}
+	} else if concCauseCode(cause) == RunSupersededCode {
+		// A newer run replaced this one on its key (design §6.1): it ends
+		// CANCELED under its own code, never under RUN_CANCELED, and its
+		// execution closes canceled so a list read from the cluster agrees;
+		// the close's details carry the code, for a reader of the close
+		// alone and for a parent (supersededClose, categoryOf). Raised
+		// only with a plan that carries a limit. Nothing below reads cause
+		// for its kind again.
+		eventType = orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED
+		s.status = orkstackv1.Status_STATUS_CANCELED
+		cause = temporal.NewCanceledError(RunSupersededCode, s.runError.GetMessage())
 	}
 
 	// Gated because it changes the COMMAND stream: a run that is genuinely
