@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	"go.temporal.io/sdk/temporal"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/task"
@@ -24,6 +25,10 @@ type pausedConcHarness struct {
 	single []GateRelease
 	// queuedSeen is every Run.queued a snapshot carried, in order.
 	queuedSeen []*orkstackv1.ConcurrencyQueued
+	// fail names the tasks whose activity fails; ranIDs is every task
+	// that ran, in order.
+	fail   map[string]bool
+	ranIDs []string
 }
 
 func newPausedConcHarness(t *testing.T, answers ...AcquireConcurrencyResult) *pausedConcHarness {
@@ -33,7 +38,12 @@ func newPausedConcHarness(t *testing.T, answers ...AcquireConcurrencyResult) *pa
 		func(_ context.Context, in *orkstackv1.ExecuteTaskInput) (*orkstackv1.ExecuteTaskResult, error) {
 			h.mu.Lock()
 			h.ran++
+			h.ranIDs = append(h.ranIDs, in.GetTaskId())
+			failing := h.fail[in.GetTaskId()]
 			h.mu.Unlock()
+			if failing {
+				return nil, temporal.NewNonRetryableApplicationError("exit 1", "ActivityFailed", nil)
+			}
 			return &orkstackv1.ExecuteTaskResult{TaskId: in.GetTaskId(), Attempt: 1, ValuesJson: []byte(`{}`)}, nil
 		}).After(10 * time.Second)
 	h.env.OnActivity(ActivityWriteSnapshot, mock.Anything, mock.Anything, mock.Anything).Return(
@@ -255,14 +265,10 @@ func TestConcurrencyPause_TheOrdinalAndTheGiveBackCrossAContinuation(t *testing.
 	}
 }
 
-// TestConcurrencyPause_ARunThatFailsWithItsSlotGivenBackStartsNoHandler: a
-// paused run whose slot is given back holds none, so when an await it had
-// open expires it ends FAILED there and then: a failure handler, started at
-// the unpause, would run outside the limit.
-func TestConcurrencyPause_ARunThatFailsWithItsSlotGivenBackStartsNoHandler(t *testing.T) {
-	h := newPausedConcHarness(t, granted(1))
-	h.pauseAt(5*time.Second, true)
-	h.pauseAt(time.Hour, false)
+// awaitWithCleanup is build, an await open from the start, and a cleanup
+// failure handler on the await: the await expires while the run is paused
+// with its slot given back.
+func awaitWithCleanup() *orkstackv1.Orkflow {
 	wf := concOrkflow()
 	wf.Tasks = []*orkstackv1.Task{
 		{Id: "build", Image: &orkstackv1.ImageRef{Reference: "alpine"}},
@@ -270,16 +276,97 @@ func TestConcurrencyPause_ARunThatFailsWithItsSlotGivenBackStartsNoHandler(t *te
 		{Id: "cleanup", Image: &orkstackv1.ImageRef{Reference: "alpine"},
 			Needs: []string{"approve"}, Join: orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED},
 	}
+	return wf
+}
+
+// TestConcurrencyPause_AFailingRunAsksForItsSlotAgainToRunItsHandlers: a
+// run whose open await expires while it is paused with its slot given back
+// asks for the slot again once unpaused (cause FAILING), runs its failure
+// handler inside the limit, and ends FAILED with its own error (D22).
+func TestConcurrencyPause_AFailingRunAsksForItsSlotAgainToRunItsHandlers(t *testing.T) {
+	h := newPausedConcHarness(t, granted(1), queued(7, 1))
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	h.grantAt(time.Hour+30*time.Second, 7, 1)
+	h.runOrkflow(pausedConcPlan(t), awaitWithCleanup())
+	if h.env.GetWorkflowError() == nil {
+		t.Fatal("the run succeeded; want its await to fail it")
+	}
+	if len(h.acquires) != 2 || h.acquires[1].Request.N != 1 || !h.acquires[1].Request.Requeue {
+		t.Fatalf("acquires %d; want the arrival and the failing run's ask with ordinal 1", len(h.acquires))
+	}
+	if len(h.queuedSeen) == 0 || h.queuedSeen[len(h.queuedSeen)-1].GetCause() != orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING {
+		t.Fatalf("queued snapshots %v, want the failing run's wait, cause FAILING", h.queuedSeen)
+	}
+	if len(h.ranIDs) != 2 || h.ranIDs[1] != "cleanup" {
+		t.Fatalf("ran %v, want build then the cleanup handler", h.ranIDs)
+	}
+	if h.last.GetStatus() != orkstackv1.Status_STATUS_FAILED || strings.HasPrefix(h.last.GetError().GetCode(), "RUN_CONCURRENCY") ||
+		strings.Contains(h.last.GetError().GetMessage(), "did not run") {
+		t.Fatalf("the run ended %s %v, want FAILED with its own error", h.last.GetStatus(), h.last.GetError())
+	}
+}
+
+// TestConcurrencyPause_AFailingRunThatDoesNotRegainItsSlotSaysItsHandlersDidNotRun:
+// the same run, whose wait for the slot times out, ends FAILED with its own
+// error, and both the error and the handler say the handlers did not run,
+// and why.
+func TestConcurrencyPause_AFailingRunThatDoesNotRegainItsSlotSaysItsHandlersDidNotRun(t *testing.T) {
+	answers := []AcquireConcurrencyResult{granted(1)}
+	for range 12 {
+		answers = append(answers, queued(7, 1))
+	}
+	h := newPausedConcHarness(t, answers...)
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	h.runOrkflow(pausedConcPlan(t), awaitWithCleanup())
+	if len(h.ranIDs) != 1 {
+		t.Fatalf("ran %v, want build alone", h.ranIDs)
+	}
+	const why = "failure handlers did not run: the concurrency slot on key deploy was not regained within 1h0m0s (RUN_QUEUE_TIMEOUT)"
+	if h.last.GetStatus() != orkstackv1.Status_STATUS_FAILED || strings.HasPrefix(h.last.GetError().GetCode(), "RUN_CONCURRENCY") ||
+		h.last.GetError().GetCode() == RunQueueTimeoutCode || !strings.Contains(h.last.GetError().GetMessage(), why) {
+		t.Fatalf("the run ended %s %v, want FAILED with its own error and %q", h.last.GetStatus(), h.last.GetError(), why)
+	}
+	if cleanup := rowOf(h.last, "cleanup"); cleanup.GetStatus() != orkstackv1.Status_STATUS_CANCELED {
+		t.Fatalf("cleanup %s, want CANCELED", cleanup.GetStatus())
+	}
+	said := false
+	for _, e := range h.withType(orkstackv1.EventType_EVENT_TYPE_TASK_LOG) {
+		said = said || (e.GetTaskId() == "cleanup" && strings.Contains(e.GetMessage(), why))
+	}
+	if !said {
+		t.Fatalf("no event says why cleanup did not run (%q)", why)
+	}
+	if h.last.GetQueued() != nil {
+		t.Fatalf("the ended run still reads as queued: %v", h.last.GetQueued())
+	}
+}
+
+// TestConcurrencyPause_ARunFailingWhilePausedKeepsItsSlotForItsHandlers: a
+// run that fails while paused, before it is quiet, keeps its slot through
+// its failing phase; its handler runs after the unpause, with no release
+// and no second acquire.
+func TestConcurrencyPause_ARunFailingWhilePausedKeepsItsSlotForItsHandlers(t *testing.T) {
+	h := newPausedConcHarness(t, granted(1))
+	h.fail = map[string]bool{"build": true}
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	wf := concOrkflow()
+	wf.Tasks = []*orkstackv1.Task{
+		{Id: "build", Image: &orkstackv1.ImageRef{Reference: "alpine"}},
+		{Id: "cleanup", Image: &orkstackv1.ImageRef{Reference: "alpine"},
+			Needs: []string{"build"}, Join: orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED},
+	}
 	h.runOrkflow(pausedConcPlan(t), wf)
 	if h.env.GetWorkflowError() == nil {
-		t.Fatal("the run succeeded; want the await to expire")
+		t.Fatal("the run succeeded; want build to fail it")
 	}
-	if len(h.single) != 1 || h.ran != 1 {
-		t.Fatalf("single releases %v, ran %d; want the give-back and build alone, no handler", h.single, h.ran)
+	if len(h.single) != 0 || len(h.acquires) != 1 {
+		t.Fatalf("single releases %v, acquires %d; want none and 1", h.single, len(h.acquires))
 	}
-	if h.last.GetStatus() != orkstackv1.Status_STATUS_FAILED ||
-		!strings.Contains(h.last.GetError().GetMessage(), "its failure handlers did not run, because the run had given its concurrency slot back") {
-		t.Fatalf("the run ended %s %v, want FAILED saying why its handlers did not run", h.last.GetStatus(), h.last.GetError())
+	if len(h.ranIDs) != 2 || h.ranIDs[1] != "cleanup" {
+		t.Fatalf("ran %v, want build then cleanup", h.ranIDs)
 	}
 }
 

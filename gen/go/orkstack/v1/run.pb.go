@@ -507,6 +507,9 @@ const (
 	// UNPAUSE: the run gave its slot back while paused and waits for it
 	// again.
 	ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_UNPAUSE ConcurrencyQueueCause = 3
+	// FAILING: the failing run gave its slot back while paused and waits for
+	// it again so its failure handlers run inside the limit.
+	ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING ConcurrencyQueueCause = 4
 )
 
 // Enum value maps for ConcurrencyQueueCause.
@@ -516,12 +519,14 @@ var (
 		1: "CONCURRENCY_QUEUE_CAUSE_ARRIVAL",
 		2: "CONCURRENCY_QUEUE_CAUSE_RESUME",
 		3: "CONCURRENCY_QUEUE_CAUSE_UNPAUSE",
+		4: "CONCURRENCY_QUEUE_CAUSE_FAILING",
 	}
 	ConcurrencyQueueCause_value = map[string]int32{
 		"CONCURRENCY_QUEUE_CAUSE_UNSPECIFIED": 0,
 		"CONCURRENCY_QUEUE_CAUSE_ARRIVAL":     1,
 		"CONCURRENCY_QUEUE_CAUSE_RESUME":      2,
 		"CONCURRENCY_QUEUE_CAUSE_UNPAUSE":     3,
+		"CONCURRENCY_QUEUE_CAUSE_FAILING":     4,
 	}
 )
 
@@ -5557,12 +5562,13 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x15EVENT_TYPE_RUN_QUEUED\x10\x0f\x12\x1a\n" +
 	"\x16EVENT_TYPE_TASK_QUEUED\x10\x10\x12\x19\n" +
 	"\x15EVENT_TYPE_RUN_PAUSED\x10\x13\x12\x1b\n" +
-	"\x17EVENT_TYPE_RUN_UNPAUSED\x10\x14*\xae\x01\n" +
+	"\x17EVENT_TYPE_RUN_UNPAUSED\x10\x14*\xd3\x01\n" +
 	"\x15ConcurrencyQueueCause\x12'\n" +
 	"#CONCURRENCY_QUEUE_CAUSE_UNSPECIFIED\x10\x00\x12#\n" +
 	"\x1fCONCURRENCY_QUEUE_CAUSE_ARRIVAL\x10\x01\x12\"\n" +
 	"\x1eCONCURRENCY_QUEUE_CAUSE_RESUME\x10\x02\x12#\n" +
-	"\x1fCONCURRENCY_QUEUE_CAUSE_UNPAUSE\x10\x03*\x9e\x01\n" +
+	"\x1fCONCURRENCY_QUEUE_CAUSE_UNPAUSE\x10\x03\x12#\n" +
+	"\x1fCONCURRENCY_QUEUE_CAUSE_FAILING\x10\x04*\x9e\x01\n" +
 	"\x11MeasurementMethod\x12\"\n" +
 	"\x1eMEASUREMENT_METHOD_UNSPECIFIED\x10\x00\x12 \n" +
 	"\x1cMEASUREMENT_METHOD_CGROUP_V2\x10\x01\x12 \n" +
