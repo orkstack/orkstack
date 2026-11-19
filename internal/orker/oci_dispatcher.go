@@ -63,6 +63,10 @@ type OCIDispatcher struct {
 	// gpu is this Orker's gpu profile and its held lock (dispatch_units.go);
 	// nil offers none.
 	gpu atomic.Pointer[gpuOffer]
+	// identity is the task identity self-check (identity_support.go), nil
+	// for an Orker that reaches no engine: it then serves no identity, and
+	// refuses a task that holds one.
+	identity atomic.Pointer[IdentitySupport]
 	// LogUnmasked is orker.log.mask_secrets turned off: a task's secrets are
 	// not masked in its logs. The zero value masks.
 	LogUnmasked bool
@@ -887,7 +891,32 @@ func (d *OCIDispatcher) checkOrkerPolicy(in *orkstackv1.ExecuteTaskInput) *Failu
 			return failure
 		}
 	}
+	if failure := d.identityFailure(in); failure != nil {
+		return failure
+	}
 	return d.runAsOrkerFailure(in)
+}
+
+// identityFailure refuses a task that holds an identity on an Orker that
+// does not serve task identity now: one that reaches no engine, or whose
+// self-check does not find it serves it. Submit asks the same of every
+// Orker of the pool that answers; this is the guard for one that did not
+// answer, or that lost support since.
+func (d *OCIDispatcher) identityFailure(in *orkstackv1.ExecuteTaskInput) *Failure {
+	if in.GetIdentity() == nil {
+		return nil
+	}
+	check := d.identity.Load()
+	if check == nil {
+		return Fail(ReasonIdentityNotConfigured,
+			"task %q holds an identity, and this Orker reaches no engine (orker.engine is unset), so nothing can issue its token",
+			in.GetTaskId())
+	}
+	if supported, reason := check.Report(); !supported {
+		return Fail(ReasonIdentityNotServed,
+			"task %q holds an identity, and this Orker does not serve task identity now: %s", in.GetTaskId(), reason)
+	}
+	return nil
 }
 
 // runsAsOrkerUser is whether in's container runs as the Orker's own user: the

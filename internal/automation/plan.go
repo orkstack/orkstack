@@ -2,6 +2,7 @@ package automation
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -81,20 +82,29 @@ func (p *planner) settings() {
 	if live == nil {
 		desired := overlay(p.namespace, nil, p.doc.Settings)
 		desired.Name = p.namespace
+		created := proto.Clone(desired).(*orkstackv1.Namespace)
+		created.Identity = nil
 		step := &orkstackv1.AutomationStep{
 			Action: actionCreate, Kind: kindNamespace, Name: p.namespace,
 			Request: &orkstackv1.AutomationStep_CreateNamespace{
-				CreateNamespace: &orkstackv1.CreateNamespaceRequest{Namespace: desired},
+				CreateNamespace: &orkstackv1.CreateNamespaceRequest{Namespace: created},
 			},
 		}
 		if p.doc.Settings != nil {
 			for _, row := range namespaceSettings {
-				if p.doc.Settings.Present[row.key] {
+				if p.doc.Settings.Present[row.key] && row.key != "identity" {
 					step.Changes = append(step.Changes, &orkstackv1.AutomationFieldChange{Field: row.key, After: row.render(desired)})
 				}
 			}
 		}
 		p.steps = append(p.steps, step)
+		// A namespace is created with no identity policy: a document that
+		// sets one writes it after the create, in an update of its own.
+		if p.doc.Settings != nil && p.doc.Settings.Present["identity"] && identityKey(desired.GetIdentity()) != identityKey(nil) {
+			p.steps = append(p.steps, &orkstackv1.AutomationStep{Action: actionUpdate, Kind: kindNamespace, Name: p.namespace,
+				Changes: []*orkstackv1.AutomationFieldChange{{Field: "identity", Before: renderIdentity(created), After: renderIdentity(desired)}},
+				Request: &orkstackv1.AutomationStep_UpdateNamespace{UpdateNamespace: &orkstackv1.UpdateNamespaceRequest{Namespace: desired}}})
+		}
 		return
 	}
 	if p.doc.Settings == nil {
@@ -103,6 +113,19 @@ func (p *planner) settings() {
 	desired := overlay(p.namespace, live, p.doc.Settings)
 	changes := NamespaceFieldChanges(live, desired, p.doc.Settings.Present)
 	step := &orkstackv1.AutomationStep{Action: actionUnchanged, Kind: kindNamespace, Name: p.namespace}
+	// The identity policy is written in an update of its own: a plan that
+	// changes it beside other settings updates the document first, with the
+	// live policy, and then the policy alone.
+	var identityStep *orkstackv1.AutomationStep
+	if i := slices.IndexFunc(changes, func(c *orkstackv1.AutomationFieldChange) bool { return c.GetField() == "identity" }); i >= 0 && len(changes) > 1 {
+		identityStep = &orkstackv1.AutomationStep{Action: actionUpdate, Kind: kindNamespace, Name: p.namespace,
+			Changes: []*orkstackv1.AutomationFieldChange{changes[i]},
+			Request: &orkstackv1.AutomationStep_UpdateNamespace{UpdateNamespace: &orkstackv1.UpdateNamespaceRequest{Namespace: desired}}}
+		changes = slices.Delete(slices.Clone(changes), i, i+1)
+		withLive := proto.Clone(desired).(*orkstackv1.Namespace)
+		withLive.Identity = live.GetIdentity()
+		desired = withLive
+	}
 	if len(changes) > 0 {
 		step.Action = actionUpdate
 		step.Changes = changes
@@ -121,6 +144,9 @@ func (p *planner) settings() {
 		step.Notes = append(step.Notes, fmt.Sprintf("on hold since %s: %s%s", since, hold.GetReason(), operationalNote))
 	}
 	p.steps = append(p.steps, step)
+	if identityStep != nil {
+		p.steps = append(p.steps, identityStep)
+	}
 }
 
 // ---------------------------------------------------------------------------

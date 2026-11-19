@@ -24,6 +24,7 @@ var reasonPackages = []string{
 	"internal/task", "internal/orker", "internal/engine", "internal/dsl",
 	"internal/evidence", "pkg/webhooks", "internal/authz", "pkg/eventsources",
 	"internal/eachlines",
+	"internal/identity",
 }
 
 type reasonConst struct {

@@ -3,6 +3,8 @@ package api_test
 import (
 	"context"
 	"errors"
+	"github.com/orkstack/orkstack/internal/consent"
+	"google.golang.org/protobuf/proto"
 	"strings"
 	"sync"
 	"testing"
@@ -483,5 +485,47 @@ func TestEventSourceService_ImagePolicyBeforeAnyRegistryIsAsked(t *testing.T) {
 	_, err = f.client.InspectSourceImage(ctx, connect.NewRequest(&orkstackv1.InspectSourceImageRequest{Namespace: "nope", Reference: "registry.example/s:1"}))
 	if connect.CodeOf(err) != connect.CodeNotFound {
 		t.Fatalf("a namespace that does not exist: %v", err)
+	}
+}
+
+// TestEventSourceService_ConsentToTheDigestShown: a consent given leaves
+// the binder as it is, and a rebind keeps the consent; once the Orkflow a
+// source follows asks for an identity, the source shows what it asks for
+// and that its consent is stale. (A source cannot be saved for such an
+// Orkflow until a run a message starts may hold one.)
+func TestEventSourceService_ConsentToTheDigestShown(t *testing.T) {
+	f := newSourceFixture(t, nil)
+	ctx := context.Background()
+	src := f.create(t, orderSource(""))
+	resp, err := f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: src, Consent: consent.Empty()}))
+	must.OKf(t, err, "consent")
+	after := resp.Msg.GetEventSource()
+	if after.GetConsented().GetDigest() != consent.Empty() || after.GetBoundBy() != src.GetBoundBy() || after.GetBoundByVerified() != src.GetBoundByVerified() {
+		t.Fatalf("after consenting: consented = %v bound_by = %q", after.GetConsented(), after.GetBoundBy())
+	}
+	at := after.GetConsented().GetAt().AsTime()
+	resp, err = f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: after, Rebind: true}))
+	must.OKf(t, err, "rebind")
+	if !resp.Msg.GetEventSource().GetConsented().GetAt().AsTime().Equal(at) {
+		t.Fatalf("a rebind changed the consent: %v", resp.Msg.GetEventSource().GetConsented())
+	}
+	_, err = f.client.UpdateEventSource(ctx, connect.NewRequest(&orkstackv1.UpdateEventSourceRequest{EventSource: resp.Msg.GetEventSource(),
+		Consent: "c1:" + strings.Repeat("0", 64)}))
+	wantRefusal(t, err, connect.CodeFailedPrecondition, "IDENTITY_CONSENT_MISMATCH")
+
+	v1, err := f.orkflows.Get(ctx, "default", "handle-order", "1.0.0")
+	must.OK(t, err)
+	v2 := proto.Clone(v1).(*orkstackv1.Orkflow)
+	v2.Version = "2.0.0"
+	v2.Tasks[0].Identities = []*orkstackv1.IdentityRef{{Name: "tok", Audience: "sts"}}
+	_, _, err = f.orkflows.Put(ctx, v2, artifacts.HeadExpectation{})
+	must.OK(t, err)
+	_, err = f.orkflows.SetCurrentVersion(ctx, "default", "handle-order", "2.0.0", artifacts.CurrentExpectation{})
+	must.OK(t, err)
+	got, err := f.client.GetEventSource(ctx, connect.NewRequest(&orkstackv1.GetEventSourceRequest{Name: "orders"}))
+	must.OK(t, err)
+	shown := got.Msg.GetEventSource()
+	if !shown.GetConsentStale() || shown.GetAsksFor().GetDigest() == consent.Empty() || strings.Join(shown.GetAsksFor().GetAudiences(), ",") != "sts" {
+		t.Fatalf("after the pointer moved: stale = %v asks_for = %v", shown.GetConsentStale(), shown.GetAsksFor())
 	}
 }

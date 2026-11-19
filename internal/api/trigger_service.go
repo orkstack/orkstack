@@ -4,13 +4,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/orkstack/orkstack/internal/consent"
+	"log/slog"
 
 	"connectrpc.com/connect"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authn"
-	"github.com/orkstack/orkstack/internal/consent"
+	"github.com/orkstack/orkstack/pkg/artifacts"
 	"github.com/orkstack/orkstack/pkg/triggers"
 )
 
@@ -52,9 +54,22 @@ func (s *Service) CreateTrigger(
 		return nil, err
 	}
 	version := req.Msg.GetOrkflowVersion()
-	if _, err := s.orkflows.Get(ctx, ns.GetName(), name, version); err != nil {
-		return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
-			name, version, ns.GetName())
+	// Reading what the version asks for is the check that it exists, and a
+	// create binds, so it needs a consent when that is anything
+	// (consent_save.go).
+	asks, unknown, err := s.asksForSave(ctx, ns.GetName(), name, version)
+	if err != nil {
+		return nil, err
+	}
+	who := authn.Recorded(ctx, req.Header())
+	granted, err := s.binderBindingFor(ctx, ns.GetName(), name)
+	if err != nil {
+		return nil, err
+	}
+	given, err := decideConsent(consentSave{Kind: "trigger", Name: req.Msg.GetName(), Orkflow: name, Binds: true,
+		Given: req.Msg.GetConsent(), Asks: asks, Unknown: unknown, By: recordedBinder(who.ID), Now: s.now().UTC()})
+	if err != nil {
+		return nil, err
 	}
 
 	trigger, secret, err := s.triggers.Create(ctx, triggers.Registration{
@@ -65,7 +80,7 @@ func (s *Service) CreateTrigger(
 		Name:           req.Msg.GetName(),
 		// A create binds its caller (docs/ORKFLOW_TRIGGERS.md, "Who a
 		// trigger runs as").
-		Binding: s.triggerBoundBy(authn.Recorded(ctx, req.Header())),
+		Binding: s.triggerBoundBy(who, granted, given),
 	})
 	if errors.Is(err, triggers.ErrNameTaken) {
 		return nil, connect.NewError(connect.CodeAlreadyExists, fmt.Errorf(
@@ -77,7 +92,7 @@ func (s *Service) CreateTrigger(
 	// The one and only disclosure of the plaintext token: it was generated in
 	// this process a moment ago and is not in the record that was stored.
 	return connect.NewResponse(&orkstackv1.CreateTriggerResponse{
-		Trigger: triggerProto(trigger),
+		Trigger: s.triggerProtoWith(ctx, trigger),
 		Secret:  secret,
 	}), nil
 }
@@ -104,8 +119,9 @@ func (s *Service) ListTriggers(
 		return nil, triggerConnectError(err)
 	}
 	out := make([]*orkstackv1.Trigger, 0, len(list))
+	memo := asksMemo{}
 	for _, trigger := range list {
-		if row := triggerProto(trigger); set.Match(row) {
+		if row := s.triggerProtoMemo(ctx, memo, trigger); set.Match(row) {
 			out = append(out, row)
 		}
 	}
@@ -170,11 +186,26 @@ func (s *Service) UpdateTrigger(
 		return nil, notFound
 	}
 	// A pin must exist at update exactly as at create: a trigger must never
-	// be re-pointed at a version a submission would refuse.
-	if version := req.Msg.GetOrkflowVersion(); version != "" {
-		if _, err := s.orkflows.Get(ctx, ns.GetName(), current.OrkflowName, version); err != nil {
-			return nil, orkflowStoreError(err, "orkflow %q version %q in namespace %q",
-				current.OrkflowName, version, ns.GetName())
+	// be re-pointed at a version a submission would refuse. Reading what it
+	// asks for is that check, and the consent rule's input.
+	// What the version asks for is read only for a save that binds or gives
+	// a consent: a rename or a new description of a trigger needs no read of
+	// its Orkflow. It is also the check that a new pin exists.
+	version := req.Msg.GetOrkflowVersion()
+	var asks consent.Asks
+	var unknown, asked bool
+	ask := func() error {
+		if asked {
+			return nil
+		}
+		var err error
+		asks, unknown, err = s.asksForSave(ctx, ns.GetName(), current.OrkflowName, version)
+		asked = err == nil
+		return err
+	}
+	if current.OrkflowVersion != version || req.Msg.GetConsent() != "" {
+		if err := ask(); err != nil {
+			return nil, err
 		}
 	}
 	who := authn.Recorded(ctx, req.Header())
@@ -182,12 +213,38 @@ func (s *Service) UpdateTrigger(
 		return nil, connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf(
 			"--rebind records you as the trigger's binder, and this request names nobody: send Ork-Principal, or a credential the engine verifies"))
 	}
+	// The granting binding is read before the record's compare-and-swap,
+	// which may run again, for every save: whether it binds is decided
+	// inside, against the record as the swap reads it.
+	granted, err := s.binderBindingFor(ctx, ns.GetName(), current.OrkflowName)
+	if err != nil {
+		return nil, err
+	}
+	var consentErr error
 	updated, found, err := s.triggers.Update(ctx, id, ns.GetName(), func(t *triggers.Trigger) error {
 		// The caller binds when the save changes the version the trigger
 		// starts or asks to rebind; a new name or description rebinds
-		// nothing.
-		if req.Msg.GetRebind() || t.OrkflowVersion != req.Msg.GetOrkflowVersion() {
-			t.Binding = s.triggerBoundBy(who)
+		// nothing. A rebind keeps the consent; a save that binds needs one
+		// when the Orkflow asks for an identity (consent_save.go).
+		consentErr = nil
+		binds := t.OrkflowVersion != version
+		if binds || req.Msg.GetConsent() != "" {
+			if err := ask(); err != nil {
+				consentErr = err
+				return err
+			}
+		}
+		given, err := decideConsent(consentSave{Kind: "trigger", Name: t.Name, Orkflow: t.OrkflowName, Binds: binds,
+			Given: req.Msg.GetConsent(), Asks: asks, Unknown: unknown, Prior: triggerConsentOf(t.Binding), By: recordedBinder(who.ID), Now: s.now().UTC()})
+		if err != nil {
+			consentErr = err
+			return err
+		}
+		switch {
+		case binds || req.Msg.GetRebind():
+			t.Binding = s.triggerBoundBy(who, granted, given)
+		case req.Msg.GetConsent() != "":
+			t.Binding = withTriggerConsent(t.Binding, given)
 		}
 		t.Name = req.Msg.GetName()
 		t.OrkflowVersion = req.Msg.GetOrkflowVersion()
@@ -195,6 +252,8 @@ func (s *Service) UpdateTrigger(
 		return nil
 	})
 	switch {
+	case consentErr != nil:
+		return nil, consentErr
 	case errors.Is(err, triggers.ErrNameTaken):
 		return nil, connect.NewError(connect.CodeAlreadyExists, fmt.Errorf(
 			"trigger name %q is already in use in namespace %q", req.Msg.GetName(), ns.GetName()))
@@ -205,7 +264,7 @@ func (s *Service) UpdateTrigger(
 	case !found:
 		return nil, notFound
 	}
-	return connect.NewResponse(&orkstackv1.UpdateTriggerResponse{Trigger: triggerProto(updated)}), nil
+	return connect.NewResponse(&orkstackv1.UpdateTriggerResponse{Trigger: s.triggerProtoWith(ctx, updated)}), nil
 }
 
 // triggerProto renders one record on the wire. orkstack.v1.Trigger has no
@@ -220,30 +279,56 @@ func triggerProto(trigger triggers.Trigger) *orkstackv1.Trigger {
 		Description:    trigger.Description,
 		CreatedAt:      timestamppb.New(trigger.CreatedAt),
 		Name:           trigger.Name,
-		// Every Orkflow asks for the empty table in this release.
-		AsksFor:   &orkstackv1.AsksFor{Digest: consent.Empty()},
-		Consented: triggerConsent(trigger.Binding),
+		Consented:      triggerConsentOf(trigger.Binding).view(),
 	}
 }
 
-// triggerConsent is the consent a trigger's binding recorded; nil for a
-// trigger bound before this release.
-func triggerConsent(b triggers.Binding) *orkstackv1.ConsentView {
-	if !consent.Valid(b.Consent) {
-		return nil
-	}
-	return &orkstackv1.ConsentView{Digest: b.Consent, At: timestamppb.New(b.ConsentAt)}
+// triggerProtoWith renders trigger with what its Orkflow asks for now, and
+// whether its consent is stale. A definition that cannot be read leaves both
+// unset: "could not tell" is never "asks for nothing".
+func (s *Service) triggerProtoWith(ctx context.Context, trigger triggers.Trigger) *orkstackv1.Trigger {
+	return s.triggerProtoMemo(ctx, nil, trigger)
 }
 
-// triggerBoundBy is who as a trigger's binder, with the empty table's
-// consent; an asserted caller stays asserted.
-func (s *Service) triggerBoundBy(who authn.RecordedPrincipal) triggers.Binding {
-	now := s.now().UTC()
-	b := triggers.Binding{Binder: recordedBinder(who.ID), Verified: who.Verified && who.ID != "", BoundAt: now, Consent: consent.Empty(), ConsentAt: now}
+// triggerProtoMemo is triggerProtoWith reading each Orkflow version once
+// through memo.
+func (s *Service) triggerProtoMemo(ctx context.Context, memo asksMemo, trigger triggers.Trigger) *orkstackv1.Trigger {
+	out := triggerProto(trigger)
+	asks, err := s.asksForMemo(ctx, memo, trigger.Namespace, trigger.OrkflowName, trigger.OrkflowVersion)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.logger.Warn("what a trigger's Orkflow asks for could not be read; it is not shown",
+				slog.String("namespace", trigger.Namespace), slog.String("trigger", trigger.ID), slog.String("error", err.Error()))
+		}
+		return out
+	}
+	out.AsksFor = &orkstackv1.AsksFor{Digest: asks.Digest, Audiences: asks.Audiences, Grants: asks.Grants}
+	out.ConsentStale = consentStale(out.GetConsented(), out.GetAsksFor())
+	return out
+}
+
+// triggerConsentOf is the consent a trigger's binding recorded.
+func triggerConsentOf(b triggers.Binding) consentRecord {
+	return consentRecord{Digest: b.Consent, At: b.ConsentAt, By: b.ConsentBy, Audiences: b.ConsentAudiences, Grants: b.ConsentGrants}
+}
+
+// withTriggerConsent records c in b.
+func withTriggerConsent(b triggers.Binding, c consentRecord) triggers.Binding {
+	b.Consent, b.ConsentAt, b.ConsentBy, b.ConsentAudiences, b.ConsentGrants = c.Digest, c.At.UTC(), c.By, c.Audiences, c.Grants
+	return b
+}
+
+// triggerBoundBy is who as a trigger's binder, with the consent the save
+// decided; an asserted caller stays asserted.
+func (s *Service) triggerBoundBy(who authn.RecordedPrincipal, granted *artifacts.BinderBinding, c consentRecord) triggers.Binding {
+	b := triggers.Binding{Binder: recordedBinder(who.ID), Verified: who.Verified && who.ID != "", BoundAt: s.now().UTC()}
 	if b.Verified {
 		b.Method = recordedBinder(who.Method)
+		if granted != nil {
+			b.BinderBindingName, b.BinderBindingSelector, b.BinderBindingRole, b.BinderBindingScope = granted.Name, granted.Selector, granted.Role, granted.Scope
+		}
 	}
-	return b
+	return withTriggerConsent(b, c)
 }
 
 // triggerConnectError maps a store failure onto a Connect code, the way

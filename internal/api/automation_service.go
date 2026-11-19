@@ -88,6 +88,10 @@ func (s *Service) PlanAutomation(
 		return nil, err
 	}
 	issues = append(issues, targetIssues...)
+	// Consent is a warning of the plan, never a step: it is not in the plan's
+	// digest, so a pipeline checking for drift is not told of what no apply
+	// could make go away (automation_consent.go).
+	issues = append(issues, s.automationConsentIssues(ctx, ns, live, steps)...)
 	return connect.NewResponse(&orkstackv1.PlanAutomationResponse{
 		Namespace:  ns,
 		Managed:    doc.Managed(),
@@ -154,8 +158,9 @@ func (s *Service) readAutomationLive(ctx context.Context, ns string, schedules, 
 		if err != nil {
 			return live, scheduleConnectError(ctx, err, ns, "")
 		}
+		memo := asksMemo{}
 		for _, view := range views {
-			live.Schedules = append(live.Schedules, scheduleProto(view))
+			live.Schedules = append(live.Schedules, s.scheduleProtoMemo(ctx, memo, view))
 		}
 	}
 	if live.Namespace != nil && triggers {
@@ -163,8 +168,9 @@ func (s *Service) readAutomationLive(ctx context.Context, ns string, schedules, 
 		if err != nil {
 			return live, automationReadError(err, "list the triggers of namespace %q", ns)
 		}
+		memo := asksMemo{}
 		for _, trigger := range list {
-			live.Triggers = append(live.Triggers, triggerProto(trigger))
+			live.Triggers = append(live.Triggers, s.triggerProtoMemo(ctx, memo, trigger))
 		}
 	}
 	if live.Namespace != nil && sources {
@@ -271,6 +277,13 @@ func (s *Service) validNamespaceForPlan(ctx context.Context, spec, stored *orkst
 	if err := validNamespaceTelemetryDocument(spec); err != nil {
 		if rerr := refuse("settings.telemetry", err); rerr != nil {
 			return rerr
+		}
+	}
+	if spec.GetIdentity() != nil {
+		if err := s.checkPlannedPolicy(spec); err != nil {
+			if rerr := refuse("settings.identity", err); rerr != nil {
+				return rerr
+			}
 		}
 	}
 	if sink := spec.GetTelemetry().GetSink(); stored == nil || sink != stored.GetTelemetry().GetSink() {

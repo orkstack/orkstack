@@ -297,10 +297,29 @@ message Pool {
   string unavailable_reason = 6;
 }
 
-// NamespaceIdentity is the namespace's identity policy. Fields 1 to 5 are
-// registered for the policy itself (audiences, grants and their bounds),
-// which a later change adds.
+// NamespaceIdentity is the namespace's identity policy: the audiences its
+// tasks may ask for, the principals they may act as, and its id. It is
+// written with its own etag, and an UpdateNamespace that changes it changes
+// nothing else (docs/TASK_IDENTITY.md).
 message NamespaceIdentity {
+  // audiences are the token audiences the namespace's tasks may ask for. A
+  // trailing `*` matches any rest.
+  repeated string audiences = 1;
+  // grants are the principals the namespace's tasks may act as, by name.
+  map<string, Grant> grants = 2;
+  // identities_current_only, true, gives an identity only to a run of its
+  // Orkflow's current version.
+  bool identities_current_only = 3;
+  // etag is the policy's own: an update that names another is
+  // FAILED_PRECONDITION. Output only.
+  string etag = 4;
+  // revision counts the policy's changes: each change writes an immutable
+  // revision. Output only.
+  int64 revision = 5;
+  // attempts_extra is how many attempts past a task's own retries may hold
+  // its identity, inside the deployment's identity.attempts.max_extra.
+  // Unset takes the deployment's identity.attempts.extra.
+  optional int32 attempts_extra = 7;
   // namespace_id is the namespace's immutable id: a namespace deleted and
   // created again under its name has another one, and a binding pinned to
   // this one does not match it (docs/ACCESS.md, "Pinned bindings"). `default`
@@ -308,4 +327,24 @@ message NamespaceIdentity {
   // first need, never by a read. Opaque: nothing parses it, and no request
   // takes it where it takes a name. Output only.
   string namespace_id = 6;
+}
+
+// Grant is a principal a namespace's tasks may act as, through a provider,
+// and which of its Orkflows may use it.
+message Grant {
+  // provider names where the principal is.
+  string provider = 1;
+  // principal is whom the provider gives the task, such as a role.
+  string principal = 2;
+  // orkflows may use the grant: a name of this namespace, `*` for every
+  // Orkflow of it, or `<owner>/<name>` for one another namespace shares.
+  repeated string orkflows = 3;
+  // current_only, true, lets only a run of its Orkflow's current version
+  // use the grant.
+  bool current_only = 4;
+  // origins are the kinds of start the grant serves: submit, schedule,
+  // trigger, event-source, parent-run, run-again. Empty serves every kind.
+  // A child run is judged by its root's.
+  repeated string origins = 5;
+  reserved 6;
 }
