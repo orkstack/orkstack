@@ -98,10 +98,11 @@ func concurrencyReplayID(t *testing.T, recorded *historypb.History) string {
 	}
 	uri := carry.GetCheckpoint().GetUri()
 	before, _, found := strings.Cut(uri, "/continuations/")
-	if !found || carry == nil {
+	runID = before[strings.LastIndex(before, "/")+1:]
+	if !found || !strings.HasPrefix(runID, "ork-") {
 		t.Fatalf("a later generation's carry names no checkpoint under a run: %q", uri)
 	}
-	return before[strings.LastIndex(before, "/")+1:]
+	return runID
 }
 
 func replayConcurrencyRun(recorded *historypb.History, runID string) error {
@@ -279,7 +280,7 @@ func failedPublishes(t *testing.T, recorded *historypb.History) map[string]strin
 // engine's own words around them.
 var (
 	eventInstant      = regexp.MustCompile(`\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z`)
-	eventWaited       = regexp.MustCompile(`waited \S+ for`)
+	eventWaited       = regexp.MustCompile(`waited (\S+) for`)
 	eventSnapshotFail = regexp.MustCompile(`(write snapshot for event \d+): .*`)
 )
 
@@ -292,6 +293,50 @@ func bySequence(t *testing.T, events []map[string]any) {
 		return n
 	}
 	slices.SortStableFunc(events, func(a, b map[string]any) int { return cmp.Compare(seq(a), seq(b)) })
+}
+
+// clocksAgree holds the instants and durations clocklessEvent sets aside to
+// what the recorded build sent, within the moments between the recorded
+// start and the workflow task that read the clock.
+func clocksAgree(recorded, current map[string]any) error {
+	const within = 2 * time.Second
+	rec, _ := recorded["message"].(string)
+	cur, _ := current["message"].(string)
+	ri, ci := eventInstant.FindAllString(rec, -1), eventInstant.FindAllString(cur, -1)
+	if len(ri) != len(ci) {
+		return fmt.Errorf("%d instants, the recorded event %d", len(ci), len(ri))
+	}
+	for i := range ri {
+		r, err := time.Parse(time.RFC3339Nano, ri[i])
+		if err != nil {
+			return err
+		}
+		c, err := time.Parse(time.RFC3339Nano, ci[i])
+		if err != nil {
+			return err
+		}
+		if d := c.Sub(r).Abs(); d > within {
+			return fmt.Errorf("instant %s, the recorded %s", ci[i], ri[i])
+		}
+	}
+	rw, cw := eventWaited.FindAllStringSubmatch(rec, -1), eventWaited.FindAllStringSubmatch(cur, -1)
+	if len(rw) != len(cw) {
+		return fmt.Errorf("%d waits, the recorded event %d", len(cw), len(rw))
+	}
+	for i := range rw {
+		r, err := time.ParseDuration(rw[i][1])
+		if err != nil {
+			return err
+		}
+		c, err := time.ParseDuration(cw[i][1])
+		if err != nil {
+			return err
+		}
+		if d := (c - r).Abs(); d > within {
+			return fmt.Errorf("waited %s, the recorded %s", c, r)
+		}
+	}
+	return nil
 }
 
 func clocklessEvent(event map[string]any) map[string]any {
@@ -340,6 +385,9 @@ func TestConcurrencyRunHistories_PayloadsMatchWhatCurrentCodeSends(t *testing.T)
 			suite := &testsuite.WorkflowTestSuite{}
 			env := generousDeadlock(suite.NewTestWorkflowEnvironment())
 			env.SetTestTimeout(60 * time.Second)
+			// The run's clock starts where the recorded one did, so a deadline
+			// it computes from now is comparable with the recorded one.
+			env.SetStartTime(recorded.GetEvents()[0].GetEventTime().AsTime())
 			env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: runID})
 			env.RegisterWorkflowWithOptions(engine.RunWorkflow, workflow.RegisterOptions{Name: engine.RunWorkflowType})
 			env.RegisterActivityWithOptions(func(context.Context, engine.AcquireConcurrencyInput) (engine.AcquireConcurrencyResult, error) {
@@ -416,6 +464,9 @@ func TestConcurrencyRunHistories_PayloadsMatchWhatCurrentCodeSends(t *testing.T)
 				t.Fatalf("current code published %d events, the recorded run %d", len(sentEvent), len(recordedEvents))
 			}
 			for i := range recordedEvents {
+				if err := clocksAgree(recordedEvents[i], sentEvent[i]); err != nil {
+					t.Errorf("event %d's clocks differ from what the recorded build published: %v", i, err)
+				}
 				if diff := payloadDiff(clocklessEvent(recordedEvents[i]), clocklessEvent(sentEvent[i])); diff != "" {
 					t.Errorf("event %d differs from what the recorded build published:\n%s", i, diff)
 				}
