@@ -182,6 +182,33 @@ func RunWorkflow(
 	plan RunPlan,
 	carry *orkstackv1.RunContinuation,
 ) (*orkstackv1.Run, error) {
+	// The central release (E88 §5.2.5): once the run's body has returned,
+	// a run that asked a gate releases at it on a context its own cancel
+	// does not reach — on every exit but a continue-as-new, which carries
+	// the slot. A panic never returns, and an evicted workflow is unwound
+	// without returning either, so neither ever issues a release from a
+	// coroutine that is going away: such a run keeps its slot, and its
+	// gate's check pass frees it.
+	var conc *concRunState
+	run, err := runWorkflow(ctx, runID, wf, input, plan, carry, &conc)
+	if conc != nil && !workflow.IsContinueAsNewError(err) {
+		releaseSlots(ctx, conc)
+	}
+	return run, err
+}
+
+// runWorkflow is RunWorkflow's body. It hands the run's concurrency state
+// out through conc as soon as it exists, so the release covers every exit
+// after it.
+func runWorkflow(
+	ctx workflow.Context,
+	runID string,
+	wf *orkstackv1.Orkflow,
+	input *orkstackv1.Payload,
+	plan RunPlan,
+	carry *orkstackv1.RunContinuation,
+	conc **concRunState,
+) (*orkstackv1.Run, error) {
 	if carry != nil {
 		// The run id IS the workflow id (AGENTS.md §7). A carried
 		// generation's argument is empty, so a release older than
@@ -209,6 +236,13 @@ func RunWorkflow(
 	}
 
 	state := newRunState(ctx, runID, wf, input, plan)
+	if state.conc != nil {
+		state.conc.runID = state.runID
+		// A carried generation's gates, before anything can end it: a
+		// restore that fails still releases what its predecessor held.
+		state.conc.seedAttempted(carry.GetConcurrency())
+		*conc = state.conc
+	}
 	// The arguments as passed, handed on unchanged at a switch: for a
 	// definition passed by reference, the stub.
 	state.wfArg, state.inputArg = started, input
@@ -250,6 +284,13 @@ func RunWorkflow(
 		if state.runTimeout != nil && !planCarriesRunTimeout(plan) {
 			return state.fail(ctx, cancelRun, inFlight, "", runLevelError(RunDefinitionUnsupportedCode,
 				"this run's definition declares a run timeout its plan does not carry; submit it again"))
+		}
+		// A run-level concurrency limit: the run asks for its slot, and
+		// waits in line for it, before it starts (E88 §5.2.1).
+		if state.conc != nil {
+			if err := state.acquireRunSlot(ctx); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, "", err)
+			}
 		}
 		state.start(ctx)
 		if err := state.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_STARTED, "",
@@ -941,6 +982,10 @@ type runState struct {
 	// definition declares no `timeout:`.
 	runTimeout *runTimeout
 
+	// conc is the run's concurrency state (concurrency_run.go); nil when its
+	// plan declares no run-level limit.
+	conc *concRunState
+
 	// The pause (pause.go): pauses is the request channel, nil for a run
 	// whose plan lacks Pause; pause and pausedByParent are the two causes;
 	// lastPause how the last own pause ended; lastCascadeSeq the last
@@ -1121,6 +1166,7 @@ func buildRunState(
 	}
 	state.declaredRows = DeclaredRows(wf)
 	state.runTimeout = newRunTimeout(wf, plan)
+	state.conc = newConcRunState(plan.Concurrency)
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
 		state.tasks[t.GetId()] = t
@@ -3150,6 +3196,7 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		PausedByParent: s.liveInheritedPauseProto(),
 		PauseWarnings:  s.pauseWarningsProto(),
 		DispatchHold:   s.dispatchHoldProto(),
+		Queued:         s.concQueuedProto(),
 	}
 	for _, id := range s.order {
 		row := s.taskRuns[id]

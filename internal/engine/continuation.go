@@ -639,6 +639,7 @@ func (s *runState) continueAsNew(ctx workflow.Context, inFlight map[string]workf
 		Snapshot:         switchSnapshot,
 	}
 	s.fillPauseCarry(ctx, carry)
+	carry.Concurrency = s.conc.carry()
 	if size, err := task.PayloadSize(carry); err != nil || size > task.MaxActivityInputBytes {
 		s.setNoSwitch(ctx, inFlight, "its carried bookkeeping is larger than 256 KiB")
 		return nil, "", nil
@@ -867,6 +868,11 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.handlerCount": fieldDerived, "runState.handlerStartBytes": fieldDerived,
 	"eachState.spec": fieldDerived, "awaitState.spec": fieldDerived,
 	"pinState.name": fieldDerived, "pinState.pin": fieldDerived, "pinState.tasks": fieldDerived,
+
+	// The concurrency state (concurrency_run.go): rebuilt from the plan,
+	// with its attempted gates and held slot carried (RunContinuation.
+	// concurrency); a queued run never switches.
+	"runState.conc": fieldRestored,
 
 	// Restored: from the carry or the checkpoint.
 	"runState.taskRuns": fieldRestored, "runState.results": fieldRestored, "runState.outputs": fieldRestored,

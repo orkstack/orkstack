@@ -24,7 +24,9 @@ func TestConcurrencySettings_Check(t *testing.T) {
 		{"default below min", func(s *ConcurrencySettings) { s.DefaultQueueTimeout = time.Second }, "default_queue_timeout"},
 		{"default above max", func(s *ConcurrencySettings) { s.DefaultQueueTimeout = 8 * 24 * time.Hour }, "default_queue_timeout"},
 		{"back-off max below min", func(s *ConcurrencySettings) { s.AcquireBackoffMax = time.Millisecond }, "acquire_backoff_max"},
-		{"back-off as long as the acquire", func(s *ConcurrencySettings) { s.AcquireBackoffMin, s.AcquireBackoffMax = gate.AcquireTimeout, gate.AcquireTimeout }, "acquire_backoff_min"},
+		{"back-off as long as the acquire", func(s *ConcurrencySettings) {
+			s.AcquireBackoffMin, s.AcquireBackoffMax = gate.AcquireTimeout, gate.AcquireTimeout
+		}, "acquire_backoff_min"},
 		{"requeue max below interval", func(s *ConcurrencySettings) { s.RequeueIntervalMax = time.Second }, "requeue_interval_max"},
 		{"one run fills a line", func(s *ConcurrencySettings) { s.MaxRunSlotEntries = gate.MaxEntries + 1 }, "max_run_slot_entries"},
 		{"an event shows more than the API", func(s *ConcurrencySettings) { s.EventHoldersShown = s.APIHoldersShown + 1 }, "event_holders_shown"},

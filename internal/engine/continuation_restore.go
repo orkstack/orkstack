@@ -103,6 +103,24 @@ func (s *runState) restore(ctx, runCtx workflow.Context, carry *orkstackv1.RunCo
 	if what := s.adoptPauseCarry(carry, run); what != "" {
 		return RunStateCorruptCode, corruptStateMessage(what)
 	}
+	// The held concurrency slot, whose records are re-issued before the
+	// first dispatch (§5.2.7). A carry with slots the plan has no limit for
+	// is corrupt.
+	if carry.GetConcurrency() != nil && s.conc == nil {
+		return RunStateCorruptCode, corruptStateMessage("the carry holds concurrency slots this run's plan has no limit for")
+	}
+	if carry.GetConcurrency() == nil && s.conc != nil {
+		// A run with a limit asked its gate before it started, so every
+		// carry of it says which.
+		return RunStateCorruptCode, corruptStateMessage("the carry holds no concurrency slots, but this run's plan has a limit")
+	}
+	if err := s.conc.adoptCarry(carry.GetConcurrency()); err != nil {
+		return RunStateCorruptCode, corruptStateMessage(err.Error())
+	}
+	if err := s.restoreConcRecords(ctx); err != nil {
+		// Not corrupt state: the cluster refused the records.
+		return RunConcurrencyUnavailableCode, err.Error()
+	}
 	// The run's loss events, which ride part 0 beside its header (E92), and
 	// every unit an interruption put back, whose not_before is re-armed
 	// toward its original instant.
