@@ -98,7 +98,8 @@ func TestNotAnsweringQueued_SaysTheRunStaysQueued(t *testing.T) {
 }
 
 // TestGateLineOf_OrdersTheLineAndTheHolders: the line by arrival, then the
-// gate's sequence; the holders by when they were granted; and a rebuild's
+// gate's sequence; the holders by when they were granted, each run once
+// however many slots it holds; and a rebuild's
 // state as rebuilding, or failing since it began.
 func TestGateLineOf_OrdersTheLineAndTheHolders(t *testing.T) {
 	t0 := time.Date(2026, 11, 19, 9, 0, 0, 0, time.UTC)
@@ -111,6 +112,7 @@ func TestGateLineOf_OrdersTheLineAndTheHolders(t *testing.T) {
 		Holders: []gateEntry{
 			{Run: "h2", GrantedAt: t0.Add(2 * time.Minute), Stalled: true},
 			{Run: "h1", GrantedAt: t0.Add(time.Minute)},
+			{Run: "h2", TaskIx: 3, GrantedAt: t0.Add(3 * time.Minute), Stalled: true}, // a second slot of h2's
 		},
 		Rebuild: gateRebuild{State: gateRebuildFailing, Since: t0},
 	}
@@ -122,7 +124,7 @@ func TestGateLineOf_OrdersTheLineAndTheHolders(t *testing.T) {
 	if !slices.Equal(line.HolderRuns, []string{"h1", "h2"}) || !slices.Equal(line.StalledRuns, []string{"h2"}) {
 		t.Errorf("holders %v stalled %v", line.HolderRuns, line.StalledRuns)
 	}
-	if !line.Rebuilding || !line.RebuildFailingSince.Equal(t0) || line.Holders != 2 || line.Queued != 3 {
+	if !line.Rebuilding || !line.RebuildFailingSince.Equal(t0) || line.Holders != 3 || line.Queued != 3 {
 		t.Errorf("got %+v", line)
 	}
 	for state, rebuilding := range map[string]bool{gateRebuildNone: false, gateRebuildListing: true, gateRebuildSettling: true} {

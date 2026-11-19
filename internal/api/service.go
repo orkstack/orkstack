@@ -646,6 +646,9 @@ type Service struct {
 	concurrency       engine.ConcurrencySettings
 	gateTunables      engine.GateTunables
 	concurrencyReader engine.ConcurrencyAdmissionReader
+	// queuedWarn spaces GetRun's warnings that a queued run's gate could
+	// not be read (applyLiveQueued): a run page polls GetRun.
+	queuedWarn warnLimiter
 	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
 	// seconds, never negative: what runTimeoutPlanFor pins.
 	runTimeoutGraceSeconds int64

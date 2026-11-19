@@ -57,8 +57,9 @@ func TestListRuns_ConcurrencyFiltersNeedTheIndexAndAskByGate(t *testing.T) {
 
 // TestGetRun_ReadsAQueuedRunsPlaceLiveFromItsGate is decision D21: GetRun
 // asks the gate of a run that waits for its slot where it stands now, and a
-// gate that does not answer, by an error or by the read's bound, leaves the
-// place unknown and says so (NOT_ANSWERING) rather than failing the read.
+// gate that does not answer, by an error, by the read's bound or by not
+// running at all, leaves the place unknown and says so (NOT_ANSWERING) rather
+// than failing the read or reading as a line with nobody in it.
 func TestGetRun_ReadsAQueuedRunsPlaceLiveFromItsGate(t *testing.T) {
 	created := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	gate := engine.GateID("payments", created.Format(time.RFC3339Nano), "db")
@@ -97,6 +98,7 @@ func TestGetRun_ReadsAQueuedRunsPlaceLiveFromItsGate(t *testing.T) {
 	}{
 		{"an error", &fakeConcReader{lineErr: errors.New("frontend unavailable")}},
 		{"no answer within the bound", &fakeConcReader{hang: true}},
+		{"a gate that is not running", &fakeConcReader{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			q := get(t, queued(), tc.reader).GetQueued()

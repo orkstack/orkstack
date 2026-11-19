@@ -38,7 +38,7 @@ type GateLine struct {
 
 	// What GetRun reads to say where a queued run stands (LiveQueued):
 	// the line in order, run-level and task-level entries alike; the runs
-	// holding a slot, earliest granted first, and those of them a liveness
+	// holding a slot, each once, earliest granted first, and those of them a liveness
 	// pass found stalled; and whether the gate is rebuilding its record,
 	// and since when a rebuild has been failing (zero when it is not).
 	Line                []GateLineEntry
@@ -166,11 +166,15 @@ func gateLineOf(g gateState) GateLine {
 	for _, e := range queue {
 		line.Line = append(line.Line, GateLineEntry{Run: e.Run, RunLevel: e.TaskIx == gateRunLevel})
 	}
+	// A run holds as many entries as it has slots of the key (its own and
+	// its tasks'); it is named once, where it was first granted.
 	holders := slices.Clone(g.Holders)
 	slices.SortStableFunc(holders, func(a, b gateEntry) int { return a.GrantedAt.Compare(b.GrantedAt) })
 	for _, e := range holders {
-		line.HolderRuns = append(line.HolderRuns, e.Run)
-		if e.Stalled {
+		if !slices.Contains(line.HolderRuns, e.Run) {
+			line.HolderRuns = append(line.HolderRuns, e.Run)
+		}
+		if e.Stalled && !slices.Contains(line.StalledRuns, e.Run) {
 			line.StalledRuns = append(line.StalledRuns, e.Run)
 		}
 	}

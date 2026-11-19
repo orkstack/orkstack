@@ -1056,8 +1056,10 @@ message ConcurrencyQueued {
   ConcurrencyStrategy strategy = 3;
   // position_at_arrival is the run's place in line when it arrived, from 1.
   int32 position_at_arrival = 4;
-  // position is its place in line now, read live by GetRun only, and only
-  // when position_known says it could be read.
+  // position is its place in its key's line now, from 1, where a task
+  // waiting for one of the key's slots counts as a place too. It is read
+  // live by GetRun only, and only when position_known says it could be
+  // read; note_code says why it could not.
   int32 position = 5;
   bool position_known = 6;
   // holders_ahead names runs holding the key's slots, at most ten;

@@ -233,9 +233,11 @@ func runIndexGates(index *engine.RunIndexQuery, ns *orkstackv1.Namespace, bindin
 
 // applyLiveQueued reads where a run that waits for its concurrency slot
 // stands now (Run.queued's position, holders and note are "read live by
-// GetRun only"): one question to its gate, within censusReadTimeout, GetRun's
-// bound on what it reads beyond the run itself. A gate that does not answer
-// leaves the place unknown and says so (NOT_ANSWERING), and never fails the
+// GetRun only"): the namespace and one question to its gate, together within
+// censusReadTimeout, GetRun's bound on what it reads beyond the run itself.
+// A limit that cannot be read, or whose gate is not running, leaves the
+// place unknown and says so (NOT_ANSWERING: the run asks the gate again,
+// which starts it again), logs why at most once a minute, and never fails the
 // read. A run that is not queued, or has ended, asks nothing.
 func (s *Service) applyLiveQueued(ctx context.Context, run *orkstackv1.Run) {
 	snapshot := run.GetQueued()
@@ -243,24 +245,33 @@ func (s *Service) applyLiveQueued(ctx context.Context, run *orkstackv1.Run) {
 		return
 	}
 	now := time.Now()
-	notAnswering := func() {
+	notAnswering := func(why string, err error) {
 		run.Queued = engine.NotAnsweringQueued(snapshot, now.Add(s.concurrency.RequeueIntervalMax))
+		if ctx.Err() == nil && s.queuedWarn.allow(now, capacityWarnInterval) {
+			s.logger.Warn("get run: "+why+", so the run's place in line is unknown (said at most once a minute)",
+				"run_id", run.GetId(), "key", snapshot.GetKey(), "error", err)
+		}
 	}
-	ns, err := s.namespace(ctx, run.GetNamespace())
+	rctx, cancel := context.WithTimeout(ctx, censusReadTimeout)
+	defer cancel()
+	ns, err := s.namespace(rctx, run.GetNamespace())
 	if err != nil {
-		notAnswering()
+		notAnswering("the run's namespace could not be read", err)
 		return
 	}
 	incarnation, err := concurrencyIncarnation(ns)
 	if err != nil {
-		notAnswering()
+		notAnswering("the run's namespace has no incarnation for its limit", err)
 		return
 	}
-	rctx, cancel := context.WithTimeout(ctx, censusReadTimeout)
-	defer cancel()
-	line, err := s.concurrencyReader.GateLine(rctx, engine.GateID(ns.GetName(), incarnation, snapshot.GetKey()))
-	if err != nil {
-		notAnswering()
+	gate := engine.GateID(ns.GetName(), incarnation, snapshot.GetKey())
+	line, err := s.concurrencyReader.GateLine(rctx, gate)
+	switch {
+	case err != nil:
+		notAnswering("its limit "+gate+" did not answer", err)
+		return
+	case !line.Present:
+		notAnswering("its limit "+gate+" is not running", nil)
 		return
 	}
 	run.Queued = engine.LiveQueued(snapshot, run.GetId(), line, s.concurrency.APIHoldersShown, now)

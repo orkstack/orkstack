@@ -3842,8 +3842,10 @@ type ConcurrencyQueued struct {
 	Strategy ConcurrencyStrategy `protobuf:"varint,3,opt,name=strategy,proto3,enum=orkstack.v1.ConcurrencyStrategy" json:"strategy,omitempty"`
 	// position_at_arrival is the run's place in line when it arrived, from 1.
 	PositionAtArrival int32 `protobuf:"varint,4,opt,name=position_at_arrival,json=positionAtArrival,proto3" json:"position_at_arrival,omitempty"`
-	// position is its place in line now, read live by GetRun only, and only
-	// when position_known says it could be read.
+	// position is its place in its key's line now, from 1, where a task
+	// waiting for one of the key's slots counts as a place too. It is read
+	// live by GetRun only, and only when position_known says it could be
+	// read; note_code says why it could not.
 	Position      int32 `protobuf:"varint,5,opt,name=position,proto3" json:"position,omitempty"`
 	PositionKnown bool  `protobuf:"varint,6,opt,name=position_known,json=positionKnown,proto3" json:"position_known,omitempty"`
 	// holders_ahead names runs holding the key's slots, at most ten;

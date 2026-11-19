@@ -1999,8 +1999,10 @@ export type ConcurrencyQueued = Message<"orkstack.v1.ConcurrencyQueued"> & {
   positionAtArrival: number;
 
   /**
-   * position is its place in line now, read live by GetRun only, and only
-   * when position_known says it could be read.
+   * position is its place in its key's line now, from 1, where a task
+   * waiting for one of the key's slots counts as a place too. It is read
+   * live by GetRun only, and only when position_known says it could be
+   * read; note_code says why it could not.
    *
    * @generated from field: int32 position = 5;
    */
