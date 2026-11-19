@@ -3,6 +3,7 @@ package artifacts
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -77,7 +78,7 @@ func TestScheduleBindingStore_RoundTrip(t *testing.T) {
 				}
 			}
 			got, err := store.Get(ctx, "payments", testScheduleID)
-			if err != nil || len(got.Entries) != 2 || got.Entries[1] != binding("2", "user:corp:a") {
+			if err != nil || len(got.Entries) != 2 || !reflect.DeepEqual(got.Entries[1], binding("2", "user:corp:a")) {
 				t.Fatalf("read back %+v, %v", got, err)
 			}
 			refused := errors.New("refused")
@@ -164,17 +165,18 @@ func TestTriggerRecord_BeforeBindersDecodesUnbound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if trigger.Binding != (triggers.Binding{}) {
+	if !reflect.DeepEqual(trigger.Binding, triggers.Binding{}) {
 		t.Fatalf("an older record decoded bound: %+v", trigger.Binding)
 	}
 	at := time.Date(2026, 11, 15, 12, 0, 0, 0, time.UTC)
-	trigger.Binding = triggers.Binding{Binder: "user:corp:a", Verified: true, Method: "oidc", BoundAt: at, Consent: "c1:" + strings.Repeat("0", 64), ConsentAt: at}
+	trigger.Binding = triggers.Binding{Binder: "user:corp:a", Verified: true, Method: "oidc", BoundAt: at, Consent: "c1:" + strings.Repeat("0", 64), ConsentAt: at,
+		ConsentBy: "user:corp:b", ConsentAudiences: []string{"sts"}, ConsentGrants: []string{"deployer"}}
 	raw, err := marshalTriggerRecord(trigger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	back, err := unmarshalTriggerRecord(raw)
-	if err != nil || back.Binding != trigger.Binding {
+	if err != nil || !reflect.DeepEqual(back.Binding, trigger.Binding) {
 		t.Fatalf("round trip = %+v, %v", back.Binding, err)
 	}
 }

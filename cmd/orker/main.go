@@ -945,6 +945,18 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return artifacts.CheckStoreScopeOf(ctx, commitStore, orkerID)
 	}
 	go activities.WatchStoreScope(scopeCheck, cfg.storeScope).Run(ctx)
+	// The task identity self-check: with an engine configured, this Orker
+	// serves task identity only while the engine says it may, at its pool,
+	// and its storage credential is scoped (docs/TASK_IDENTITY.md, "Which
+	// Orkers serve it"). With none it serves none.
+	if cfg.engine.Configured() {
+		engine, err := orker.NewEngineClient(cfg.engine)
+		if err != nil {
+			return err
+		}
+		defer engine.Close()
+		go activities.WatchIdentitySupport(orker.NewIdentitySupport(engine, orkerID, cfg.pool, activities.StoreScopeNow, logger, nil)).Run(ctx)
+	}
 	// The periodic profile audit: every audit_interval, each device of an
 	// audited profile again; a difference is drift (docs/DEPLOY.md,
 	// "Running a device Orker"). With no profile it returns at once.

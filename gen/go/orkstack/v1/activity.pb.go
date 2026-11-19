@@ -3576,8 +3576,15 @@ type DescribeOrkerResult struct {
 	// profile_cordons are the profile causes that hold this Orker's cordon;
 	// cordoned is true while any is set.
 	ProfileCordons []*ProfileCordon `protobuf:"bytes,28,rep,name=profile_cordons,json=profileCordons,proto3" json:"profile_cordons,omitempty"`
-	// identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+	// identity_supported is whether this Orker serves task identity now: its
+	// engine confirmed, within the last ten minutes, that its credential names
+	// it and holds identity.token.mint and task.result.commit at its pool,
+	// and its storage credential is confirmed scoped. It alone decides.
 	IdentitySupported bool `protobuf:"varint,33,opt,name=identity_supported,json=identitySupported,proto3" json:"identity_supported,omitempty"`
+	// identity_unsupported_reason says why this Orker does not serve task
+	// identity, for display and for naming the cause in a refusal; empty while
+	// identity_supported. It decides nothing.
+	IdentityUnsupportedReason string `protobuf:"bytes,45,opt,name=identity_unsupported_reason,json=identityUnsupportedReason,proto3" json:"identity_unsupported_reason,omitempty"`
 	// providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
 	Providers []*ProviderInfo `protobuf:"bytes,34,rep,name=providers,proto3" json:"providers,omitempty"`
 	// masks_secrets is whether this Orker masks a task's secrets in its logs
@@ -3854,6 +3861,13 @@ func (x *DescribeOrkerResult) GetIdentitySupported() bool {
 		return x.IdentitySupported
 	}
 	return false
+}
+
+func (x *DescribeOrkerResult) GetIdentityUnsupportedReason() string {
+	if x != nil {
+		return x.IdentityUnsupportedReason
+	}
+	return ""
 }
 
 func (x *DescribeOrkerResult) GetProviders() []*ProviderInfo {
@@ -5303,7 +5317,7 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\vstore_error\x18\x0e \x01(\tR\n" +
 	"storeErrorB\n" +
 	"\n" +
-	"\b_ordinal\"\x84\x10\n" +
+	"\b_ordinal\"\xc4\x10\n" +
 	"\x13DescribeOrkerResult\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x19\n" +
 	"\bbuild_id\x18\x02 \x01(\tR\abuildId\x12\x12\n" +
@@ -5337,7 +5351,8 @@ const file_orkstack_v1_activity_proto_rawDesc = "" +
 	"\x17profile_kinds_supported\x18\x1a \x03(\x0e2\x18.orkstack.v1.ProfileKindR\x15profileKindsSupported\x125\n" +
 	"\bprofiles\x18\x1b \x03(\v2\x19.orkstack.v1.OrkerProfileR\bprofiles\x12C\n" +
 	"\x0fprofile_cordons\x18\x1c \x03(\v2\x1a.orkstack.v1.ProfileCordonR\x0eprofileCordons\x12-\n" +
-	"\x12identity_supported\x18! \x01(\bR\x11identitySupported\x127\n" +
+	"\x12identity_supported\x18! \x01(\bR\x11identitySupported\x12>\n" +
+	"\x1bidentity_unsupported_reason\x18- \x01(\tR\x19identityUnsupportedReason\x127\n" +
 	"\tproviders\x18\" \x03(\v2\x19.orkstack.v1.ProviderInfoR\tproviders\x12#\n" +
 	"\rmasks_secrets\x18# \x01(\bR\fmasksSecrets\x12-\n" +
 	"\x12metadata_reachable\x18$ \x03(\tR\x11metadataReachable\x122\n" +

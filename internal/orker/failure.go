@@ -113,6 +113,18 @@ const (
 	// Orker cannot change, so it is not retried; under ORK_ORKER_FORCE_USER
 	// it is a boot refusal instead.
 	ReasonRunAsOrkerUnavailable = "RUN_AS_ORKER_UNAVAILABLE"
+	// ReasonIdentityNotConfigured is a task that holds an identity on an
+	// Orker that reaches no engine (orker.engine unset), so nothing can
+	// issue its token. A host fact, not retried, on the precedent of
+	// RUN_AS_ORKER_UNAVAILABLE.
+	ReasonIdentityNotConfigured = "IDENTITY_NOT_CONFIGURED"
+	// ReasonIdentityNotServed is a task that holds an identity on an Orker
+	// whose self-check does not now find it serves task identity: its
+	// engine did not answer, does not grant it the mint at its pool, or its
+	// storage credential is not confirmed scoped, or the check has not
+	// answered yet since boot. Retryable, but only under the task's own
+	// retry policy: it is no interruption, so a task without retry: fails.
+	ReasonIdentityNotServed = "IDENTITY_NOT_SERVED"
 	// ReasonEachItemUnavailable is a fan-out item whose array no longer
 	// resolves to the one the engine counted:
 	// unreachable while the store honours its digests, stated rather than
@@ -254,6 +266,8 @@ var reasonCategory = map[string]string{
 	ReasonRuntimeStateUnknown:       CategoryInfrastructureError,
 
 	ReasonRunAsOrkerUnavailable: CategoryInfrastructureError,
+	ReasonIdentityNotConfigured: CategoryInfrastructureError,
+	ReasonIdentityNotServed:     CategoryInfrastructureError,
 
 	ReasonImageNotPermitted:         CategoryContractViolation,
 	ReasonImageNotSigned:            CategoryContractViolation,
@@ -283,6 +297,8 @@ var retryableReason = map[string]bool{
 	ReasonCommitStoreUnavailable: false,
 	// The boot probe's finding, which is the host's and not the moment's.
 	ReasonRunAsOrkerUnavailable: false,
+	// orker.engine is unset on this Orker, which a retry here cannot change.
+	ReasonIdentityNotConfigured: false,
 }
 
 // CategoryFor answers which of the five categories a reason code belongs to.

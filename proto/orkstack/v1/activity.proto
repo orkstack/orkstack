@@ -897,8 +897,15 @@ message DescribeOrkerResult {
   // cordoned is true while any is set.
   repeated ProfileCordon profile_cordons = 28;
 
-  // identity_supported is set from identity (E62); unset until it lands (v0.4.0 proto batch).
+  // identity_supported is whether this Orker serves task identity now: its
+  // engine confirmed, within the last ten minutes, that its credential names
+  // it and holds identity.token.mint and task.result.commit at its pool,
+  // and its storage credential is confirmed scoped. It alone decides.
   bool identity_supported = 33;
+  // identity_unsupported_reason says why this Orker does not serve task
+  // identity, for display and for naming the cause in a refusal; empty while
+  // identity_supported. It decides nothing.
+  string identity_unsupported_reason = 45;
 
   // providers is set from identity (E81); unset until it lands (v0.4.0 proto batch).
   repeated ProviderInfo providers = 34;

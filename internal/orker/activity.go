@@ -224,6 +224,22 @@ type Activities struct {
 	scope atomic.Pointer[ScopeWatch]
 }
 
+// WatchIdentitySupport records the self-check DescribeOrker reports and
+// dispatch asks of a task that holds an identity.
+func (a *Activities) WatchIdentitySupport(s *IdentitySupport) *IdentitySupport {
+	a.dispatcher.identity.Store(s)
+	return s
+}
+
+// StoreScopeNow is the storage scope verdict now: unknown until the watch
+// has one.
+func (a *Activities) StoreScopeNow() orkstackv1.StoreScope {
+	if w := a.scope.Load(); w != nil {
+		return w.Report().Scope
+	}
+	return orkstackv1.StoreScope_STORE_SCOPE_UNKNOWN
+}
+
 // NewActivitiesWithOptions builds the activity set with explicit options.
 func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 	workRoot := opts.WorkRoot
@@ -600,6 +616,9 @@ func (a *Activities) DescribeOrker(ctx context.Context) (*orkstackv1.DescribeOrk
 		result.StoreScopeDetail = scope.Detail
 		result.StoreScopeConfirmedAt = scope.ConfirmedAt
 		result.ResultsScope = scope.Results
+	}
+	if id := a.dispatcher.identity.Load(); id != nil {
+		result.IdentitySupported, result.IdentityUnsupportedReason = id.Report()
 	}
 	a.describeMetadata(result)
 	a.profiles.report(result)

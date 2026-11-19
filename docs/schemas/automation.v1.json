@@ -301,6 +301,55 @@
           "minimum": 0,
           "type": "number"
         },
+        "identity": {
+          "additionalProperties": false,
+          "description": "mapping: the namespace's identity policy (below), written in an update of its own",
+          "properties": {
+            "attempts_extra": {
+              "type": "integer"
+            },
+            "audiences": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "grants": {
+              "additionalProperties": {
+                "additionalProperties": false,
+                "properties": {
+                  "current_only": {
+                    "type": "boolean"
+                  },
+                  "origins": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "orkflows": {
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "principal": {
+                    "type": "string"
+                  },
+                  "provider": {
+                    "type": "string"
+                  }
+                },
+                "type": "object"
+              },
+              "type": "object"
+            },
+            "identities_current_only": {
+              "type": "boolean"
+            }
+          },
+          "type": "object"
+        },
         "labels": {
           "additionalProperties": {
             "type": "string"

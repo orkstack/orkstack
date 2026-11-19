@@ -599,6 +599,9 @@ type composeRequest struct {
 	originIndexed    bool
 	// noCache is SubmitRunRequest.no_cache: one for the whole tree.
 	noCache bool
+	// holdsIdentity is a run whose tree holds an identity: every child's
+	// pools are asked whether they serve task identity.
+	holdsIdentity bool
 }
 
 // rootIndexAnswer is the boot answer a plan pins for its child starts (false
@@ -687,12 +690,20 @@ func (s *Service) planChildren(ctx context.Context, r composeRequest, parent *or
 		if err := foreignSecretsRefusal(r.ns, owner, child); err != nil {
 			return childRefusal(err, ref, t.GetId())
 		}
+		if err := s.checkIdentityAtSubmit(ctx, r.ns, child, owner); err != nil {
+			return childRefusal(err, ref, t.GetId())
+		}
 		// 3. The ordinary pool plan over the child: secret policy, the
 		// allow-list, the liveness probe, pin hosts, fan-out support and the
 		// child's own telemetry selection.
 		childPlanned, childPlan, err := r.resolver.Plan(ctx, r.ns, child, r.allowEmpty)
 		if err != nil {
 			return childRefusal(poolPlanError(err), ref, t.GetId())
+		}
+		if r.holdsIdentity {
+			if err := r.resolver.CheckIdentitySupport(ctx, r.ns, childPlanned); err != nil {
+				return childRefusal(poolPlanError(err), ref, t.GetId())
+			}
 		}
 		if owner != composer {
 			childPlan.Shared = &decision
