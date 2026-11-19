@@ -47,6 +47,12 @@ func TestQueuedLine(t *testing.T) {
 			q.PositionKnown, q.Position, q.NoteCode, q.Note = false, 0, "NOT_ANSWERING", "the limit is not answering; this run stays queued and asks again by 2026-11-19T10:17:00Z"
 			return q
 		}(), "queued for key db-migrate:prod (limit 1, place unknown) behind ork-01; since 2026-11-19T10:02:00Z, times out 2026-11-19T12:02:00Z; the limit is not answering; this run stays queued and asks again by 2026-11-19T10:17:00Z"},
+		{"the limit reading its holders", func() *orkstackv1.ConcurrencyQueued {
+			q := base(orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL)
+			q.PositionKnown, q.Position, q.HoldersAhead, q.HoldersCount = false, 0, nil, 0
+			q.NoteCode, q.Note = "REBUILDING", "waiting while the limit on key db-migrate:prod reads which runs hold it (a first run at a key, or after its record was lost)"
+			return q
+		}(), "queued for key db-migrate:prod (limit 1, place unknown); since 2026-11-19T10:02:00Z, times out 2026-11-19T12:02:00Z; waiting while the limit on key db-migrate:prod reads which runs hold it (a first run at a key, or after its record was lost)"},
 		{"more holders than named, as of arrival", func() *orkstackv1.ConcurrencyQueued {
 			q := base(orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_ARRIVAL)
 			q.Limit, q.Position, q.HoldersAhead, q.HoldersCount, q.HoldersAsOfArrival = 3, 1, []string{"ork-01", "ork-02"}, 3, true

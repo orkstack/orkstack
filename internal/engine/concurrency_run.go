@@ -202,6 +202,7 @@ func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPla
 		QueuedSince: timestamppb.New(ans.ArrivedAt), TimesOutAt: timestamppb.New(req.WaitUntil),
 		Cause: cause,
 	}
+	setRebuilding(c.queued, ans.Rebuilding)
 	if err := s.recordRunSlot(ctx, slot, ans, false); err != nil {
 		return err
 	}
@@ -209,8 +210,12 @@ func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPla
 	if cause == orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING {
 		status, text = s.status, "waiting again for key %s (limit %d) to run its failure handlers: position %d behind %d running; times out at %s"
 	}
-	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED, "", status,
-		fmt.Sprintf(text, slot.Key, slot.Limit, ans.Position, ans.HoldersAhead, req.WaitUntil.UTC().Format(time.RFC3339))); err != nil {
+	message := fmt.Sprintf(text, slot.Key, slot.Limit, ans.Position, ans.HoldersAhead, req.WaitUntil.UTC().Format(time.RFC3339))
+	if ans.Rebuilding {
+		// Its place is not known yet: the line is being read back.
+		message = c.queued.GetNote() + "; times out at " + req.WaitUntil.UTC().Format(time.RFC3339)
+	}
+	if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED, "", status, message); err != nil {
 		return err
 	}
 	grants := workflow.GetSignalChannel(ctx, ConcurrencyGrantSignal)
@@ -306,9 +311,23 @@ func (s *runState) waitForRunSlot(ctx workflow.Context, slot *ConcurrencySlotPla
 					}
 				}
 				c.queued.Position = int32(res.Answer.Position)
+				setRebuilding(c.queued, rebuilding)
 			}
 			interval = min(time.Duration(c.plan.RequeueBackoffFactor)*interval, c.plan.RequeueIntervalMax)
 		}
+	}
+}
+
+// setRebuilding marks a queued run's place unknown, with its note, while
+// its limit reads which runs hold its key, and known again once it has.
+func setRebuilding(q *orkstackv1.ConcurrencyQueued, rebuilding bool) {
+	switch {
+	case rebuilding:
+		q.PositionKnown, q.Position = false, 0
+		q.NoteCode, q.Note = QueuedNoteRebuilding, rebuildingNote(q.GetKey())
+	case q.GetNoteCode() == QueuedNoteRebuilding:
+		q.PositionKnown = true
+		q.NoteCode, q.Note = "", ""
 	}
 }
 
