@@ -460,7 +460,7 @@ func (s *runState) hasUnfinishedTasks() bool {
 // or child run, and no pin opening, open or closing — while work remains and
 // the run is not being canceled. Open awaits may cross: their deadlines are absolute instants.
 func (s *runState) canSwitchNow(ctx workflow.Context, inFlight map[string]workflow.Future) bool {
-	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil {
+	if !s.switchDue || s.noSwitch != "" || len(inFlight) != 0 || ctx.Err() != nil || s.concWaiting() {
 		return false
 	}
 	// No switch once the run's deadline is due: the pass top takes it.

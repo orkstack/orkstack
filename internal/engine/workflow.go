@@ -366,6 +366,25 @@ func runWorkflow(
 					return state.fail(ctx, cancelRun, inFlight, id, err)
 				}
 			}
+			// A paused run's run-level slot (concurrency_pause.go): a pause
+			// that reaches its wait for the slot again leaves the line; a
+			// quiet paused run gives the slot back; an unpaused one that
+			// gave it back asks for it again.
+			if state.paused() && state.concWaiting() {
+				if err := state.abandonRequeue(ctx); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, "", err)
+				}
+			}
+			if state.concGivesBack(inFlight) {
+				if err := state.giveBackRunSlot(ctx); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, "", err)
+				}
+			}
+			if state.concReacquires() {
+				if err := state.reacquireRunSlot(ctx); err != nil {
+					return state.fail(ctx, cancelRun, inFlight, "", err)
+				}
+			}
 			state.syncPauseIndexWithin(ctx, inFlight) // retries a write the cluster refused
 			if due, canceled := state.pauseExpiryDue(ctx); canceled {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
@@ -532,7 +551,9 @@ func runWorkflow(
 		// wait for its readiness rather than conclude there is nothing left.
 		// With no budget and no hold every new branch below is skipped, and
 		// this is the loop's original idle check.
-		if len(inFlight) == 0 && state.openingPins() == 0 {
+		// A run waiting for its slot again holds every dispatch: it waits in
+		// the selector for the wait's grant, deadline or re-assert.
+		if len(inFlight) == 0 && state.openingPins() == 0 && !state.concWaiting() {
 			if (state.quiescing || state.heldFanOuts) && ctx.Err() != nil {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
@@ -698,6 +719,13 @@ func runWorkflow(
 				selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
 			}
 		}
+		// A run waiting for its slot again: its grant, deadline and
+		// re-assert, after the pause's cases.
+		concWoke := concWaitNone
+		state.addConcWaitCases(ctx, selector, &concWoke)
+		if state.concWaiting() {
+			selector.AddReceive(ctx.Done(), func(workflow.ReceiveChannel, bool) { pauseWoke = true })
+		}
 		// The run timeout's timer, last of all, while not yet ready: it only
 		// wakes a blocked run, and the next pass's ending check decides.
 		timerReady := false
@@ -744,10 +772,16 @@ func runWorkflow(
 			continue
 		}
 		if pauseWoke {
-			if ctx.Err() != nil && state.paused() {
+			if ctx.Err() != nil && (state.paused() || state.concWaiting()) {
 				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
 			}
 			continue // the pass top applies the request or takes the expiry
+		}
+		if concWoke != concWaitNone {
+			if err := state.takeConcWait(ctx, concWoke); err != nil {
+				return state.fail(ctx, cancelRun, inFlight, "", err)
+			}
+			continue
 		}
 		if waitOver != nil {
 			if err := state.interruptionWaitOver(ctx, runCtx, waitOver, inFlight); err != nil {
@@ -2961,6 +2995,13 @@ func (s *runState) fail(
 	// run's handler loop would, but a canceled, timed-out or handler-less one
 	// has none.
 	s.dropDeferredPause(ctx, "the run is ending")
+	// A run that gave its slot back while paused, or waits for it again,
+	// holds none: a failure handler would run outside the limit, so it
+	// starts none, as a run that ends in line does (failInLine).
+	if s.concSlotGivenBack() {
+		s.endRequeue()
+		s.dropHandlersOutsideLimit()
+	}
 	// The history guard's failure belongs to the run, never to the task or
 	// fan-out where it tripped: every caller reaches here with the id it was
 	// working on.

@@ -57,6 +57,13 @@ type concRunState struct {
 	seqWritten bool
 	// invalid is why the plan's limit cannot be acted on, "" when it can.
 	invalid string
+	// ordinal is the run-level slot's ordinal n (§22.15): how many times the
+	// run gave it back and asked for it again. givenBack: a paused run gave
+	// the slot back and has not been granted it again; requeue is its wait
+	// for it after an unpause (concurrency_pause.go).
+	ordinal   int64
+	givenBack bool
+	requeue   *requeueWait
 }
 
 func newConcRunState(plan *ConcurrencyPlan) *concRunState {
@@ -417,6 +424,9 @@ func (c *concRunState) carry() *orkstackv1.RunConcurrencyCarry {
 	if c.held != nil {
 		out.Held = []*orkstackv1.HeldSlot{{GateId: c.held.gate, Seq: c.held.seq}}
 	}
+	if c.ordinal > 0 {
+		out.Ordinals = []*orkstackv1.SlotOrdinal{{GateId: c.plan.runSlot().GateID, TaskIx: gateRunLevel, N: c.ordinal}}
+	}
 	return out
 }
 
@@ -442,8 +452,17 @@ func (c *concRunState) adoptCarry(in *orkstackv1.RunConcurrencyCarry) error {
 	for _, g := range in.GetAttempted() {
 		c.noteAttempted(g)
 	}
+	for _, o := range in.GetOrdinals() {
+		if o.GetGateId() != c.plan.runSlot().GateID || o.GetTaskIx() != gateRunLevel || o.GetN() < 0 {
+			return fmt.Errorf("the carried slot ordinal %v is not this run's run-level slot's", o)
+		}
+		c.ordinal = o.GetN()
+	}
 	switch held := in.GetHeld(); len(held) {
 	case 0:
+		// A run carries on only after it started, which it does holding its
+		// slot: one that holds none gave it back while paused (§22.15).
+		c.givenBack = true
 	case 1:
 		if held[0].GetGateId() != c.plan.runSlot().GateID {
 			return errors.New("the carried concurrency slot is not this run's run-level gate")
@@ -470,8 +489,15 @@ func (s *runState) failInLine(ctx workflow.Context, cancelRun workflow.CancelFun
 			workflow.GetLogger(ctx).Warn("a run that left the line could not update its index", "run_id", s.runID, "error", err)
 		}
 	}
-	// The run returns from fail at once, so clearing this derived field is
-	// never read by anything after it.
+	s.dropHandlersOutsideLimit()
+	return s.fail(ctx, cancelRun, inFlight, "", cause)
+}
+
+// dropHandlersOutsideLimit ends a run without its failure handlers: it holds
+// no slot of its run-level limit, so a handler would run outside it. The run
+// returns from fail at once, so clearing this derived field is never read by
+// anything after it.
+func (s *runState) dropHandlersOutsideLimit() {
 	if s.hasHandlers {
 		s.hasHandlers = false
 		// The handlers' context issues no command; ending it is tidiness.
@@ -479,7 +505,6 @@ func (s *runState) failInLine(ctx workflow.Context, cancelRun workflow.CancelFun
 			s.cancelHandlers()
 		}
 	}
-	return s.fail(ctx, cancelRun, inFlight, "", cause)
 }
 
 // concCauseCode is the code of a run-level ending of a concurrency limit, or
