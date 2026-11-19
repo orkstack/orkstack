@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -52,4 +53,71 @@ func TestListRuns_ConcurrencyFiltersNeedTheIndexAndAskByGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestGetRun_ReadsAQueuedRunsPlaceLiveFromItsGate is decision D21: GetRun
+// asks the gate of a run that waits for its slot where it stands now, and a
+// gate that does not answer, by an error or by the read's bound, leaves the
+// place unknown and says so (NOT_ANSWERING) rather than failing the read.
+func TestGetRun_ReadsAQueuedRunsPlaceLiveFromItsGate(t *testing.T) {
+	created := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
+	gate := engine.GateID("payments", created.Format(time.RFC3339Nano), "db")
+	queued := func() *orkstackv1.Run {
+		return &orkstackv1.Run{Id: "ork-me", Namespace: "payments", Status: orkstackv1.Status_STATUS_PENDING,
+			Queued: &orkstackv1.ConcurrencyQueued{Key: "db", Limit: 1, PositionAtArrival: 4, Position: 4, PositionKnown: true,
+				HoldersCount: 1, HoldersAsOfArrival: true}}
+	}
+	get := func(t *testing.T, run *orkstackv1.Run, reader *fakeConcReader) *orkstackv1.Run {
+		t.Helper()
+		registry := newFakeRegistry(&orkstackv1.Namespace{Name: "payments", CreatedAt: timestamppb.New(created)})
+		runs := &fakeReader{runs: map[string]*orkstackv1.Run{run.GetId(): run}}
+		svc := api.NewService(api.Config{Orkflows: engine.NewMemoryOrkflowStore(), Namespaces: registry, Reader: runs,
+			Starter: &concStarter{fakeStarter: &fakeStarter{}, indexed: true}, Capabilities: &fakeCapabilities{},
+			ConcurrencyReader: reader})
+		got, err := svc.GetRun(context.Background(), connect.NewRequest(&orkstackv1.GetRunRequest{RunId: run.GetId(), Namespace: "payments"}))
+		if err != nil {
+			t.Fatalf("GetRun: %v", err)
+		}
+		return got.Msg.GetRun()
+	}
+
+	t.Run("answering", func(t *testing.T) {
+		reader := &fakeConcReader{lines: map[string]engine.GateLine{gate: {Present: true, Holders: 1, Queued: 2,
+			Line:       []engine.GateLineEntry{{Run: "ork-ahead", RunLevel: true}, {Run: "ork-me", RunLevel: true}},
+			HolderRuns: []string{"ork-holder"}}}}
+		q := get(t, queued(), reader).GetQueued()
+		if q.GetPosition() != 2 || !q.GetPositionKnown() || q.GetHoldersAsOfArrival() ||
+			len(q.GetHoldersAhead()) != 1 || q.GetHoldersAhead()[0] != "ork-holder" || q.GetPositionAtArrival() != 4 {
+			t.Errorf("queued = %v; want 2nd in line now, behind ork-holder", q)
+		}
+	})
+	for _, tc := range []struct {
+		name   string
+		reader *fakeConcReader
+	}{
+		{"an error", &fakeConcReader{lineErr: errors.New("frontend unavailable")}},
+		{"no answer within the bound", &fakeConcReader{hang: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			q := get(t, queued(), tc.reader).GetQueued()
+			if q.GetPositionKnown() || q.GetNoteCode() != engine.QueuedNoteNotAnswering ||
+				!strings.HasPrefix(q.GetNote(), "the limit is not answering; this run stays queued and asks again by ") {
+				t.Errorf("queued = %v; want the place unknown and NOT_ANSWERING", q)
+			}
+		})
+	}
+	t.Run("a run that is not queued asks nothing", func(t *testing.T) {
+		reader := &fakeConcReader{}
+		run := queued()
+		run.Queued = nil
+		get(t, run, reader)
+		ended := queued()
+		ended.Status = orkstackv1.Status_STATUS_CANCELED
+		if got := get(t, ended, reader).GetQueued(); got.GetNoteCode() != "" || !got.GetPositionKnown() {
+			t.Errorf("an ended run's record was rewritten: %v", got)
+		}
+		if asked := reader.questions(); len(asked) != 0 {
+			t.Errorf("the gate was asked %v", asked)
+		}
+	})
 }

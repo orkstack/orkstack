@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"go.temporal.io/api/serviceerror"
@@ -34,6 +35,23 @@ type GateLine struct {
 	Present bool
 	Holders int
 	Queued  int
+
+	// What GetRun reads to say where a queued run stands (LiveQueued):
+	// the line in order, run-level and task-level entries alike; the runs
+	// holding a slot, earliest granted first, and those of them a liveness
+	// pass found stalled; and whether the gate is rebuilding its record,
+	// and since when a rebuild has been failing (zero when it is not).
+	Line                []GateLineEntry
+	HolderRuns          []string
+	StalledRuns         []string
+	Rebuilding          bool
+	RebuildFailingSince time.Time
+}
+
+// GateLineEntry is one place in a gate's line.
+type GateLineEntry struct {
+	Run      string
+	RunLevel bool // the run's own slot, not one of its tasks'
 }
 
 // ConcurrencyAdmissionReader is what submit reads of the cluster for a
@@ -129,5 +147,39 @@ func (r *TemporalConcurrencyReader) GateLine(ctx context.Context, gateID string)
 	if err := value.Get(&view); err != nil {
 		return GateLine{}, fmt.Errorf("engine: read the concurrency limit %s's line: %w", gateID, err)
 	}
-	return GateLine{Present: true, Holders: len(view.State.Holders), Queued: len(view.State.Queue)}, nil
+	return gateLineOf(view.State), nil
+}
+
+// gateLineOf reads a gate's state as GateLine.
+func gateLineOf(g gateState) GateLine {
+	line := GateLine{Present: true, Holders: len(g.Holders), Queued: len(g.Queue)}
+	queue := slices.Clone(g.Queue)
+	slices.SortStableFunc(queue, func(a, b gateEntry) int {
+		switch {
+		case a.before(b.ArrivedAt, b.Seq):
+			return -1
+		case b.before(a.ArrivedAt, a.Seq):
+			return 1
+		}
+		return 0
+	})
+	for _, e := range queue {
+		line.Line = append(line.Line, GateLineEntry{Run: e.Run, RunLevel: e.TaskIx == gateRunLevel})
+	}
+	holders := slices.Clone(g.Holders)
+	slices.SortStableFunc(holders, func(a, b gateEntry) int { return a.GrantedAt.Compare(b.GrantedAt) })
+	for _, e := range holders {
+		line.HolderRuns = append(line.HolderRuns, e.Run)
+		if e.Stalled {
+			line.StalledRuns = append(line.StalledRuns, e.Run)
+		}
+	}
+	switch g.Rebuild.State {
+	case gateRebuildListing, gateRebuildSettling:
+		line.Rebuilding = true
+	case gateRebuildFailing:
+		line.Rebuilding = true
+		line.RebuildFailingSince = g.Rebuild.Since
+	}
+	return line
 }

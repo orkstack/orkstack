@@ -64,6 +64,9 @@ type fakeConcReader struct {
 	open      int64
 	openErr   error
 	asked     []string
+	// hang makes GateLine wait for its context to end, as a gate that
+	// does not answer does.
+	hang bool
 }
 
 func (f *fakeConcReader) ActiveGates(context.Context, string) (int64, error) {
@@ -80,10 +83,17 @@ func (f *fakeConcReader) QueuedRuns(context.Context, string) (int64, error) {
 	return f.queued, f.queuedErr
 }
 
-func (f *fakeConcReader) GateLine(_ context.Context, gateID string) (engine.GateLine, error) {
+func (f *fakeConcReader) GateLine(ctx context.Context, gateID string) (engine.GateLine, error) {
+	f.mu.Lock()
+	f.asked = append(f.asked, "line")
+	hang := f.hang
+	f.mu.Unlock()
+	if hang {
+		<-ctx.Done()
+		return engine.GateLine{}, ctx.Err()
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.asked = append(f.asked, "line")
 	return f.lines[gateID], f.lineErr
 }
 
