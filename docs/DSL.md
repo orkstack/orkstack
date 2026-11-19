@@ -2066,6 +2066,9 @@ tasks:
 - **Every declaration in a namespace** that renders the same key shares its
   slots and its line, across Orkflows and versions. Keys are never shared
   across namespaces.
+- **A run that ends while it waits**, or that its limit refuses, starts no
+  task, failure handlers included: it never held the key, so it ends `FAILED`
+  or `CANCELED` with its own reason and nothing runs.
 - `on_limit: refuse`, `skip`, `cancel_oldest` and `replace` are refused at
   validate as not available yet.
 - The block is part of the definition digest, its timeout in its short form

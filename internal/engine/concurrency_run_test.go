@@ -3,6 +3,7 @@ package engine
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -31,6 +32,7 @@ type concRunHarness struct {
 	acquires []AcquireConcurrencyInput
 	releases []GateReleaseAll
 	events   []*orkstackv1.Event
+	last     *orkstackv1.Run
 	ran      int
 }
 
@@ -64,8 +66,12 @@ func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concR
 		h.mu.Unlock()
 		return &orkstackv1.ExecuteTaskResult{TaskId: in.GetTaskId(), ValuesJson: []byte(`{}`)}, nil
 	}, activity.RegisterOptions{Name: task.ActivityExecuteTask})
-	h.env.RegisterActivityWithOptions(func(context.Context, *orkstackv1.Run, int64) (string, error) { return "memory://x", nil },
-		activity.RegisterOptions{Name: ActivityWriteSnapshot})
+	h.env.RegisterActivityWithOptions(func(_ context.Context, run *orkstackv1.Run, _ int64) (string, error) {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		h.last = run
+		return "memory://x", nil
+	}, activity.RegisterOptions{Name: ActivityWriteSnapshot})
 	h.env.RegisterActivityWithOptions(func(_ context.Context, e *orkstackv1.Event, _, _ string) error {
 		h.mu.Lock()
 		defer h.mu.Unlock()
@@ -94,8 +100,10 @@ func newConcRunHarness(t *testing.T, answers ...AcquireConcurrencyResult) *concR
 	return h
 }
 
-func (h *concRunHarness) run(plan RunPlan) {
-	h.env.ExecuteWorkflow(RunWorkflow, concRunID, concOrkflow(), &orkstackv1.Payload{}, plan, (*orkstackv1.RunContinuation)(nil))
+func (h *concRunHarness) run(plan RunPlan) { h.runOrkflow(plan, concOrkflow()) }
+
+func (h *concRunHarness) runOrkflow(plan RunPlan, wf *orkstackv1.Orkflow) {
+	h.env.ExecuteWorkflow(RunWorkflow, concRunID, wf, &orkstackv1.Payload{}, plan, (*orkstackv1.RunContinuation)(nil))
 	if !h.env.IsWorkflowCompleted() {
 		h.t.Fatal("the run did not end")
 	}
@@ -317,5 +325,93 @@ func TestConcurrencyRun_ForeignGrantsDoNotDelayTheReassert(t *testing.T) {
 	h.run(concPlan())
 	if err := h.env.GetWorkflowError(); err != nil || h.ran != 1 {
 		t.Fatalf("the run ended %v after %d tasks", err, h.ran)
+	}
+}
+
+// A run that ends while it waits in line, or that the gate refuses, never
+// held its slot, so it starts no task: a failure handler too would run
+// outside the limit the run waited for. It ends with its own reason.
+func TestConcurrencyRun_AnEndingInLineStartsNoHandler(t *testing.T) {
+	handlerOrkflow := func() *orkstackv1.Orkflow {
+		wf := concOrkflow()
+		wf.Tasks = append(wf.Tasks, &orkstackv1.Task{Id: "rollback", Needs: []string{"apply"},
+			Join: orkstackv1.JoinPolicy_JOIN_POLICY_ANY_FAILED, Image: &orkstackv1.ImageRef{Reference: "alpine"}},
+			&orkstackv1.Task{Id: "notify", Needs: []string{"apply"},
+				Join: orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE, Image: &orkstackv1.ImageRef{Reference: "alpine"}})
+		return wf
+	}
+	timeout := concPlan()
+	timeout.Concurrency.Slots[0].QueueTimeoutSeconds = 30
+	for name, tc := range map[string]struct {
+		plan     RunPlan
+		answer   AcquireConcurrencyResult
+		code     string
+		category orkstackv1.FailureCategory
+	}{
+		"queue timeout": {timeout, queued(2, 1), RunQueueTimeoutCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_TIMED_OUT},
+		"line full": {concPlan(), AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerFullBound}}, RunConcurrencyFullCode,
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+		"limit": {concPlan(), AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerFull}}, RunConcurrencyLimitCode,
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+		"fenced": {concPlan(), AcquireConcurrencyResult{Answer: gateAnswer{Proto: 1, Answer: gateAnswerFenced}}, RunConcurrencyFencedCode,
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION},
+		"unavailable": {concPlan(), AcquireConcurrencyResult{Unavailable: "deadline"}, RunConcurrencyUnavailableCode,
+			orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR},
+	} {
+		t.Run(name, func(t *testing.T) {
+			h := newConcRunHarness(t, tc.answer)
+			h.runOrkflow(tc.plan, handlerOrkflow())
+			var app *temporal.ApplicationError
+			if err := h.env.GetWorkflowError(); !errors.As(err, &app) || app.Type() != tc.code {
+				t.Fatalf("the run ended %v, want %s", err, tc.code)
+			}
+			if h.ran != 0 {
+				t.Fatalf("%d activities ran; a run that never held its slot starts none", h.ran)
+			}
+			// The run's own record names the reason, not RUN_FAILED, and no
+			// longer says it waits in line.
+			if got := h.last.GetError(); got.GetCode() != tc.code || strings.Contains(got.GetMessage(), "type: ") {
+				t.Fatalf("the run's error is %s %q, want %s with its own message", got.GetCode(), got.GetMessage(), tc.code)
+			}
+			if got := h.last.GetError().GetCategory(); got != tc.category {
+				t.Fatalf("the run's error category is %s, want %s", got, tc.category)
+			}
+			if h.last.GetQueued() != nil {
+				t.Fatalf("the ended run still reads queued: %v", h.last.GetQueued())
+			}
+			last := h.events[len(h.events)-1]
+			if last.GetType() != orkstackv1.EventType_EVENT_TYPE_RUN_FAILED {
+				t.Fatalf("the last event is %s, want RUN_FAILED", last.GetType())
+			}
+			if len(h.releases) != 1 {
+				t.Fatalf("released %d times, want 1", len(h.releases))
+			}
+			said := map[string]string{}
+			for _, e := range h.events {
+				if e.GetType() == orkstackv1.EventType_EVENT_TYPE_TASK_LOG {
+					said[e.GetTaskId()] = e.GetMessage()
+				}
+			}
+			for _, tr := range h.last.GetTaskRuns() {
+				if tr.GetStatus() != orkstackv1.Status_STATUS_CANCELED || tr.GetStartedAt() != nil ||
+					said[tr.GetTaskId()] != "task canceled: "+runEndedBeforeStart {
+					t.Fatalf("task %s ended %s (started %v) saying %q, want CANCELED, never started, %q",
+						tr.GetTaskId(), tr.GetStatus(), tr.GetStartedAt(), said[tr.GetTaskId()], runEndedBeforeStart)
+				}
+			}
+		})
+	}
+
+	// An operator's cancel while the run waits ends it canceled, with no
+	// handler started.
+	c := newConcRunHarness(t, queued(2, 1))
+	c.env.RegisterDelayedCallback(c.env.CancelWorkflow, 10*time.Second)
+	c.runOrkflow(concPlan(), handlerOrkflow())
+	if err := c.env.GetWorkflowError(); !temporal.IsCanceledError(err) {
+		t.Fatalf("the run ended %v, want canceled", err)
+	}
+	if c.ran != 0 || len(c.releases) != 1 || c.last.GetError().GetCode() != "RUN_CANCELED" || c.last.GetQueued() != nil {
+		t.Fatalf("ran %d, released %d, error %s, queued %v; want 0, 1, RUN_CANCELED, none",
+			c.ran, len(c.releases), c.last.GetError().GetCode(), c.last.GetQueued())
 	}
 }
