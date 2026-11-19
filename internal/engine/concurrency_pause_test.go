@@ -450,3 +450,85 @@ func TestConcurrencyPause_ACarryThatCannotBeAGiveBackIsRefused(t *testing.T) {
 		}
 	}
 }
+
+func queuedAnswers(n int) []AcquireConcurrencyResult {
+	out := []AcquireConcurrencyResult{granted(1)}
+	for range n {
+		out = append(out, queued(7, 1))
+	}
+	return out
+}
+
+// TestConcurrencyPause_AFailingRunAsksForItsSlotOnce: with a second handler
+// not yet ready when the wait for the slot ends, the run does not ask again
+// when it becomes ready: both handlers are stopped with the one reason.
+func TestConcurrencyPause_AFailingRunAsksForItsSlotOnce(t *testing.T) {
+	h := newPausedConcHarness(t, queuedAnswers(40)...)
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	wf := awaitWithCleanup()
+	wf.Tasks = append(wf.Tasks,
+		&orkstackv1.Task{Id: "later", Await: &orkstackv1.AwaitSpec{TimeoutSeconds: 4 * 3600}},
+		&orkstackv1.Task{Id: "report", Image: &orkstackv1.ImageRef{Reference: "alpine"},
+			Needs: []string{"approve", "later"}, Join: orkstackv1.JoinPolicy_JOIN_POLICY_ALL_DONE})
+	h.runOrkflow(pausedConcPlan(t), wf)
+	asks := 0
+	for _, a := range h.acquires {
+		if a.Request.Requeue {
+			asks++
+		}
+	}
+	if asks == 0 || len(h.withType(orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED)) != 1 {
+		t.Fatalf("%d re-acquires and %d RUN_QUEUED; want one wait", asks, len(h.withType(orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED)))
+	}
+	for _, a := range h.acquires {
+		if a.Request.N > 1 {
+			t.Fatalf("an acquire with ordinal %d: the run asked for its slot a second time", a.Request.N)
+		}
+	}
+	if len(h.ranIDs) != 1 || h.last.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		t.Fatalf("ran %v, ended %s; want build alone and FAILED", h.ranIDs, h.last.GetStatus())
+	}
+}
+
+// TestConcurrencyPause_TheRunTimeoutsHardEndCutsTheWaitShort: a failing
+// run waiting for its slot is stopped at its run timeout's hard end, never
+// held past it by the line; its handlers are stopped for the timeout.
+func TestConcurrencyPause_TheRunTimeoutsHardEndCutsTheWaitShort(t *testing.T) {
+	h := newPausedConcHarness(t, queuedAnswers(60)...)
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	plan := pausedConcPlan(t)
+	plan.Concurrency.Slots[0].QueueTimeoutSeconds = 10 * 3600
+	plan.RunTimeout = &RunTimeoutPlan{HandlerGraceSeconds: 60, ResolutionsPerPass: DefaultResolutionsPerPass}
+	wf := awaitWithCleanup()
+	wf.TimeoutSeconds = 2 * 3600
+	start := h.env.Now()
+	h.runOrkflow(plan, wf)
+	if took := h.env.Now().Sub(start); took > 2*time.Hour+5*time.Minute {
+		t.Fatalf("the run ended after %s, past its hard end (2h1m)", took)
+	}
+	if len(h.ranIDs) != 1 || h.last.GetStatus() != orkstackv1.Status_STATUS_FAILED {
+		t.Fatalf("ran %v, ended %s; want build alone and FAILED", h.ranIDs, h.last.GetStatus())
+	}
+	if strings.Contains(h.last.GetError().GetMessage(), "was not regained") || h.last.GetQueued() != nil {
+		t.Fatalf("error %q, queued %v; want the hard end's reason and nothing queued", h.last.GetError().GetMessage(), h.last.GetQueued())
+	}
+}
+
+// TestConcurrencyPause_ACancelDuringTheFailingWaitLeavesNothingQueued: an
+// operator's cancel while the failing run waits ends it CANCELED, and its
+// record no longer reads as queued.
+func TestConcurrencyPause_ACancelDuringTheFailingWaitLeavesNothingQueued(t *testing.T) {
+	h := newPausedConcHarness(t, queuedAnswers(40)...)
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	h.env.RegisterDelayedCallback(h.env.CancelWorkflow, time.Hour+10*time.Minute)
+	h.runOrkflow(pausedConcPlan(t), awaitWithCleanup())
+	if len(h.queuedSeen) == 0 || h.queuedSeen[len(h.queuedSeen)-1].GetCause() != orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING {
+		t.Fatalf("queued snapshots %v, want the failing wait", h.queuedSeen)
+	}
+	if h.last.GetQueued() != nil || len(h.ranIDs) != 1 {
+		t.Fatalf("final queued %v, ran %v; want nothing queued and build alone", h.last.GetQueued(), h.ranIDs)
+	}
+}

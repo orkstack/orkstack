@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
@@ -404,7 +405,9 @@ func (s *runState) requeueEnding(ending error) error {
 // failingRegain asks again, for a failing run that gave its slot back while
 // paused, for the slot its failure handlers need, so they run inside the
 // limit (§22.14.3, decision D22): the next ordinal, strategy queue, cause
-// FAILING. It returns "" once the run holds the slot again, or when the run
+// FAILING. Asked once per run. The wait blocks the failing phase: a pause,
+// an await's resolution or deadline met meanwhile is applied after it, and
+// only a cancel or the run timeout's hard end cuts it short. It returns "" once the run holds the slot again, or when the run
 // is canceled meanwhile (the caller's context decides), and otherwise why its
 // failure handlers cannot run: a line that ended, refused or did not answer.
 func (s *runState) failingRegain(ctx workflow.Context) string {
@@ -421,27 +424,50 @@ func (s *runState) failingRegain(ctx workflow.Context) string {
 	c.noteAttempted(slot.GateID)
 	res, err := s.sendAcquire(ctx, slot, req)
 	if err != nil {
-		return "" // canceled: the caller's context ends the run
+		if ctx.Err() != nil {
+			return "" // canceled: the caller's context ends the run
+		}
+		return s.regainStop(ctx, slot, timeout, runLevelError(RunConcurrencyUnavailableCode,
+			fmt.Sprintf("the limit on key %s could not be asked: %v", slot.Key, err)))
 	}
 	var ending error
 	switch {
 	case res.Unsupported != "" || res.Unavailable != "":
 		ending = concEnding(res, slot)
 	case res.Answer.Answer == gateAnswerGranted:
-		c.givenBack = false
-		if err := s.grantRunSlot(ctx, slot, res.Answer); err != nil {
-			return s.regainStop(ctx, slot, timeout, err)
-		}
-		return ""
+		ending = s.grantRunSlot(ctx, slot, res.Answer)
 	case res.Answer.Answer == gateAnswerQueued:
-		ending = s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING)
-		if ending == nil {
-			c.givenBack = false
+		// The run timeout's hard end bounds the wait as it bounds the
+		// handlers: past it, the handlers are stopped (takeHardEnd).
+		var hard workflow.Future
+		if t := s.runTimeout; t != nil && t.hardTimer != nil && !t.hardTaken {
+			hard = t.hardTimer
+		}
+		ending = s.waitForRunSlot(ctx, slot, req, res.Answer, orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_FAILING, hard)
+		if errors.Is(ending, errWaitAborted) {
+			s.leaveRegainLine(ctx, slot)
+			s.runTimeout.hardTaken = true
+			s.takeHardEnd()
 			return ""
 		}
-		if ctx.Err() != nil {
-			return ""
+	}
+	switch {
+	case c.held != nil:
+		// The run holds the slot again. A record it could not write after the
+		// grant is logged, never a reason to skip its handlers.
+		if ending != nil {
+			workflow.GetLogger(ctx).Warn("a failing run regained its concurrency slot but could not record it all",
+				"run_id", s.runID, "error", ending)
 		}
+		c.givenBack, c.queued = false, nil
+		return ""
+	case ctx.Err() != nil:
+		s.leaveRegainLine(ctx, slot)
+		return "" // canceled while it waited: the caller's context ends the run
+	case ending != nil:
+		return s.regainStop(ctx, slot, timeout, ending)
+	}
+	switch {
 	case res.Answer.Answer == gateAnswerFull:
 		ending = runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the limit on key %s answered full to a queue request", slot.Key))
 	default:
@@ -454,6 +480,20 @@ func (s *runState) failingRegain(ctx workflow.Context) string {
 // regained, said with the limit's own reason. The run leaves the line, and
 // its records stop saying it waits.
 func (s *runState) regainStop(ctx workflow.Context, slot *ConcurrencySlotPlan, timeout time.Duration, ending error) string {
+	s.leaveRegainLine(ctx, slot)
+	failure := concFailure(ending)
+	if failure.GetCode() == RunQueueTimeoutCode {
+		return fmt.Sprintf("failure handlers did not run: the concurrency slot on key %s was not regained within %s (%s)",
+			slot.Key, timeout.Round(time.Second), RunQueueTimeoutCode)
+	}
+	return fmt.Sprintf("failure handlers did not run: the concurrency slot on key %s was not regained (%s: %s)",
+		slot.Key, failure.GetCode(), failure.GetMessage())
+}
+
+// leaveRegainLine drops a failing run's wait for its slot: the snapshot,
+// memo entry and index stop saying it waits. Best effort: a failed write is
+// logged.
+func (s *runState) leaveRegainLine(ctx workflow.Context, slot *ConcurrencySlotPlan) {
 	c := s.conc
 	if c.queued != nil {
 		c.queued = nil
@@ -464,11 +504,4 @@ func (s *runState) regainStop(ctx workflow.Context, slot *ConcurrencySlotPlan, t
 			workflow.GetLogger(ctx).Warn("a failing run that left the line could not update its index", "run_id", s.runID, "error", err)
 		}
 	}
-	failure := concFailure(ending)
-	if failure.GetCode() == RunQueueTimeoutCode {
-		return fmt.Sprintf("failure handlers did not run: the concurrency slot on key %s was not regained within %s (%s)",
-			slot.Key, timeout.Round(time.Second), RunQueueTimeoutCode)
-	}
-	return fmt.Sprintf("failure handlers did not run: the concurrency slot on key %s was not regained (%s: %s)",
-		slot.Key, failure.GetCode(), failure.GetMessage())
 }
