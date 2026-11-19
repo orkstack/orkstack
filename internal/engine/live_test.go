@@ -8,6 +8,7 @@ import (
 	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
+	deploymentpb "go.temporal.io/api/deployment/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/api/serviceerror"
@@ -488,4 +489,64 @@ func TestLiveAttempts_ANilClientIsErrNoLiveReader(t *testing.T) {
 	if !errors.Is(err, ErrNoLiveReader) {
 		t.Fatalf("err = %v, want ErrNoLiveReader", err)
 	}
+}
+
+// TestRunDispatch_ReadsTheRunsReleaseAndAnOpeningPin: one describe says which
+// release a pinned run's tasks go to and whether one of its pins is opening;
+// an execution the cluster does not pin to a release has none, and an attempt
+// or a projection pending is not a pin opening.
+func TestRunDispatch_ReadsTheRunsReleaseAndAnOpeningPin(t *testing.T) {
+	pinnedTo := func(build string, behavior enumspb.VersioningBehavior) *workflowpb.WorkflowExecutionInfo {
+		return &workflowpb.WorkflowExecutionInfo{VersioningInfo: &workflowpb.WorkflowExecutionVersioningInfo{
+			Behavior:          behavior,
+			DeploymentVersion: &deploymentpb.WorkerDeploymentVersion{BuildId: build, DeploymentName: "ork"},
+		}}
+	}
+	now := time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)
+	pending := func(names ...string) []*workflowpb.PendingActivityInfo {
+		var out []*workflowpb.PendingActivityInfo
+		for i, name := range names {
+			out = append(out, &workflowpb.PendingActivityInfo{ActivityId: fmt.Sprint(i + 1), ActivityType: &commonpb.ActivityType{Name: name},
+				State: enumspb.PENDING_ACTIVITY_STATE_STARTED, ScheduledTime: ts(now.Add(-time.Minute))})
+		}
+		return out
+	}
+	waiting := func(scheduledAgo time.Duration, backoff bool) []*workflowpb.PendingActivityInfo {
+		pa := &workflowpb.PendingActivityInfo{ActivityId: "9", ActivityType: &commonpb.ActivityType{Name: task.ActivityExecuteTask},
+			State: enumspb.PENDING_ACTIVITY_STATE_SCHEDULED, ScheduledTime: ts(now.Add(-scheduledAgo))}
+		if backoff {
+			pa.NextAttemptScheduleTime = ts(now.Add(time.Minute))
+		}
+		return []*workflowpb.PendingActivityInfo{pa}
+	}
+	for _, tc := range []struct {
+		name string
+		info *workflowpb.WorkflowExecutionInfo
+		acts []*workflowpb.PendingActivityInfo
+		want RunDispatch
+	}{
+		{"unversioned, nothing opening", &workflowpb.WorkflowExecutionInfo{}, pending(task.ActivityExecuteTask, "PublishEvent"), RunDispatch{}},
+		{"pinned to its release, a pin opening", pinnedTo("b1", enumspb.VERSIONING_BEHAVIOR_PINNED), pending(sessionCreationActivity), RunDispatch{Build: "b1", OpeningPins: true}},
+		{"auto-upgrading is bound to no release", pinnedTo("b1", enumspb.VERSIONING_BEHAVIOR_AUTO_UPGRADE), nil, RunDispatch{}},
+		{"a task activity waiting for an Orker", &workflowpb.WorkflowExecutionInfo{}, waiting(time.Minute, false), RunDispatch{Scheduled: true}},
+		{"one scheduled a moment ago", &workflowpb.WorkflowExecutionInfo{}, waiting(time.Second, false), RunDispatch{}},
+		{"one in a retry's back-off", &workflowpb.WorkflowExecutionInfo{}, waiting(time.Minute, true), RunDispatch{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &fakeReadClient{describes: map[string]*workflowservice.DescribeWorkflowExecutionResponse{
+				liveRunID: {WorkflowExecutionInfo: tc.info, PendingActivities: tc.acts},
+			}}
+			got, err := newRunReader(c, nil).RunDispatch(context.Background(), liveRunID, now)
+			must.OKf(t, err, "RunDispatch")
+			if got.Build != tc.want.Build || got.OpeningPins != tc.want.OpeningPins || got.Scheduled != tc.want.Scheduled {
+				t.Fatalf("RunDispatch = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+	t.Run("a run the cluster no longer holds", func(t *testing.T) {
+		c := &fakeReadClient{describes: map[string]*workflowservice.DescribeWorkflowExecutionResponse{}}
+		if _, err := newRunReader(c, nil).RunDispatch(context.Background(), liveRunID, now); !errors.Is(err, ErrRunNotFound) {
+			t.Fatalf("RunDispatch = %v, want ErrRunNotFound", err)
+		}
+	})
 }

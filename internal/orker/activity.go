@@ -195,6 +195,10 @@ type Activities struct {
 	// cordon interceptor at the SDK seam (running_tasks), and is what a
 	// stopping Orker waits on (WaitForTasks).
 	running taskCount
+	// reports is every ExecuteTask result the SDK still owes the cluster:
+	// owed when the attempt returns, settled when the cluster answers its
+	// report (owed_reports.go). A stopping Orker waits on it before it exits.
+	reports owedReports
 	// stops is every ExecuteTask attempt in flight with its stage, which this
 	// Orker's own stop hands back (stop.go).
 	stops *stopRegistry

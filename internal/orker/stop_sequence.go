@@ -40,10 +40,12 @@ const MaxStopGrace = 744 * time.Hour
 // StopTimeoutTail is what a stop can take past its grace, for tasks within the
 // default cancellation grace: the cancellation sequence, a handed-back
 // attempt's report deadline (the commit tail's cap), the longest poll the
-// cluster may hold open, and a margin. A process manager's stop timeout must
-// be at least the grace plus this, or running tasks are lost rather than
+// cluster may hold open, the wait for the results the SDK still owes the
+// cluster (ReportDrainBound), and a margin. A process manager's stop timeout
+// must be at least the grace plus this, or running tasks are lost rather than
 // handed back.
-const StopTimeoutTail = DefaultCancellationGrace + handBackReportDeadline + 75*time.Second + 10*time.Second
+const StopTimeoutTail = DefaultCancellationGrace + handBackReportDeadline + 75*time.Second + ReportDrainBound +
+	10*time.Second
 
 // GraceEnd is why a stop's grace ended.
 type GraceEnd int

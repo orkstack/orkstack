@@ -61,7 +61,7 @@ func dialedWith(t *testing.T, cfg config, sinks *telemetry.Sinks, logger *slog.L
 	cancel()
 	var dialed client.Options
 	told := false
-	_, _ = connectTemporal(ctx, cfg, testOrkerID, sinks, logger, func(options client.Options) { dialed, told = options, true })
+	_, _ = connectTemporal(ctx, cfg, testOrkerID, sinks, logger, nil, func(options client.Options) { dialed, told = options, true })
 	if !told {
 		t.Fatal("connectTemporal dialed without building its options")
 	}

@@ -25,6 +25,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
+	"google.golang.org/grpc"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/buildinfo"
@@ -664,11 +665,16 @@ func temporalSecurity(ctx context.Context, address string, sinks *telemetry.Sink
 // id holds no whitespace (task.ValidOrkerID), so it advertises no engine
 // capability.
 //
+// reports, when set, is the Orker's report interceptor
+// (orker.Activities.ReportInterceptor): it tells a stopping Orker when the
+// cluster has the results its attempts returned, so it does not exit with
+// one unsent.
+//
 // dialing, when set, is told the options just before the dial: a test's way
 // to see exactly what this process dials with, without a cluster to dial. It
 // is nil in production.
 func connectTemporal(ctx context.Context, cfg config, orkerID string, sinks *telemetry.Sinks, logger *slog.Logger,
-	dialing func(client.Options),
+	reports grpc.UnaryClientInterceptor, dialing func(client.Options),
 ) (client.Client, error) {
 	sec, err := temporalSecurity(ctx, cfg.temporalAddress, sinks, logger)
 	if err != nil {
@@ -679,6 +685,10 @@ func connectTemporal(ctx context.Context, cfg config, orkerID string, sinks *tel
 		return nil, err
 	}
 	temporalOptions.Identity = orkerID
+	if reports != nil {
+		temporalOptions.ConnectionOptions.DialOptions = append(temporalOptions.ConnectionOptions.DialOptions,
+			grpc.WithChainUnaryInterceptor(reports))
+	}
 	if dialing != nil {
 		dialing(temporalOptions)
 	}
@@ -867,7 +877,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		return err
 	}
 
-	temporalClient, err := connectTemporal(ctx, cfg, activities.Dispatcher().OrkerID, sinks, logger, nil)
+	temporalClient, err := connectTemporal(ctx, cfg, activities.Dispatcher().OrkerID, sinks, logger,
+		activities.ReportInterceptor(), nil)
 	if err != nil {
 		return err
 	}
@@ -915,6 +926,11 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			logger.Warn("telemetry: the Orker's interruption metric could not be built; it is not exported", "error", err)
 		} else {
 			activities.Dispatcher().Interruptions = metrics
+		}
+		if metrics, err := telemetry.NewStopWatchMetrics(sinks.Default(), activities.Dispatcher().OrkerID); err != nil {
+			logger.Warn("telemetry: the Orker's stop-watch failure metric could not be built; it is not exported", "error", err)
+		} else {
+			activities.Dispatcher().StopWatchFailures = metrics.StopWatchFailure
 		}
 	}
 	if cfg.storeWatch.Enabled {
@@ -988,6 +1004,7 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		// stop on their own goroutines, and the process must outlive them.
 		stopTasks()
 		awaitStoppedTasks(logger, activities)
+		awaitOwedReports(logger, activities)
 		if controlStarted {
 			controlWorker.Stop()
 		}
@@ -1176,6 +1193,37 @@ func awaitStoppedTasks(logger *slog.Logger, activities *orker.Activities) {
 	started := time.Now()
 	_ = activities.WaitForTasks(context.Background())
 	logger.Info("cancelled tasks stopped", "took", time.Since(started).Round(time.Millisecond))
+}
+
+// awaitOwedReports waits, at most orker.ReportDrainBound, until the cluster
+// has the result of every attempt that returned: the SDK sends a result after
+// its attempt returns, so an Orker that exits as soon as nothing runs can
+// leave one unsent, and the cluster would run that task again
+// (orker/owed_reports.go).
+func awaitOwedReports(logger *slog.Logger, activities *orker.Activities) {
+	owed := activities.OwedReports()
+	if len(owed) == 0 {
+		return
+	}
+	logger.Info("waiting for the cluster to take the results of finished tasks", "owed", len(owed))
+	lapsedBefore, _ := activities.LapsedReports()
+	started := time.Now()
+	ctx, cancel := context.WithTimeout(context.Background(), orker.ReportDrainBound+time.Second)
+	defer cancel()
+	if err := activities.AwaitReports(ctx); err != nil {
+		left := activities.OwedReports()
+		logger.Warn("exiting before the cluster took these finished tasks' results: each runs again, "+
+			"with the same idempotency key, once the cluster times its attempt out",
+			"attempts", left, "waited", time.Since(started).Round(time.Millisecond))
+		return
+	}
+	if lapsed, recent := activities.LapsedReports(); lapsed > lapsedBefore {
+		logger.Warn("the cluster did not answer some finished tasks' results in time: each runs again, "+
+			"with the same idempotency key, once the cluster times its attempt out",
+			"unanswered", lapsed-lapsedBefore, "most_recent", recent, "waited", time.Since(started).Round(time.Millisecond))
+		return
+	}
+	logger.Info("the cluster took every finished task's result", "took", time.Since(started).Round(time.Millisecond))
 }
 
 // configure is start's first step, everything it decides before telemetry

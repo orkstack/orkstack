@@ -2492,7 +2492,11 @@ release runs nothing at all (§1).
    While v1 has runs in flight, `orkctl release status` and `wait` name such a
    pool, as a warning that changes no exit code: `release v1 has 3 runs and no
    Orker taking work on pool gpu; a task they send there waits until one does`
-   (`Release.unserved_pools`). To recover, start an
+   (`Release.unserved_pools`). The waiting task says the same on the run:
+   `orkctl run get` prints `fetch waits: waiting for an Orker of release v1 on
+   pool gpu; none takes work (1 stopping)` (`TaskRun.pending_reason`, derived
+   on read from the run's release and this replica's Orker inventory, never
+   stored, and omitted when either cannot be read). To recover, start an
    Orker with v1's `ORK_DEPLOYMENT_NAME` and `ORK_BUILD_ID` on that pool, or
    uncordon one; the tasks then run on it. Run each release's Orkers as their
    own Deployment (or ECS service, or systemd unit) and remove the old one only
@@ -3926,7 +3930,10 @@ it asks for no new task and opens no new pin, and it lets what runs carry on:
   sent to its pool is accepted and waits, as for a store outage.
 
 An Orker with nothing running and no open pin exits at once, so scaling in an
-idle Orker costs nothing. A second signal ends the grace early; platforms that
+idle Orker costs nothing. Before any stop exits, the Orker waits, for at most
+15 s, until the cluster has taken the result of every task that finished on it,
+so a task that ended just before the exit never runs again for want of its
+report. A second signal ends the grace early; platforms that
 send one `SIGTERM` need it sent by hand (`kubectl exec <pod> -- kill -TERM 1`,
 `docker kill --signal TERM <container>`, `systemctl kill -s TERM <unit>`).
 
@@ -4073,7 +4080,9 @@ before the grace and what follows it have passed, its running tasks are
 stop, and they run again under their policy, as for an Orker that died. So the
 stop timeout must be at least the grace plus the stop's tail: the longest task
 cancellation grace (30 s by default), a hand-back's report (at most 10
-minutes), the longest poll the cluster holds open (75 s) and 10 s. With the
+minutes), the longest poll the cluster holds open (75 s), the wait for the
+cluster to take the results of tasks that finished (at most 15 s) and 10 s.
+With the
 24h default that is **24h15m (87,300 s)**, which the shipped bases set.
 
 | Platform | Setting | Shipped or documented figure | What can cut it short |
@@ -4122,7 +4131,11 @@ default `KillMode=control-group`) signals the container directly; run such an
 Orker with `KillMode=mixed`. A second `SIGTERM` or `SIGINT` ends the grace, and
 signals within a second of each other count as one. A third exits at once, killing every runtime CLI the Orker started, and leaves
 what a crash leaves: the attempts `UNREPORTED`, and a container still inside
-its grace running until this Orker's next boot reaps it.
+its grace running until this Orker's next boot reaps it. However an Orker ends,
+a crash or a `SIGKILL` included, the runtime CLIs it started end with it on
+Linux: none is left running after it, while the containers they drove are the
+daemon's and run on until that reap, as does a container a create or probe
+left half made.
 
 **Why the cordon lives only in the process.** An Orker is stateless and
 disposable (`AGENTS.md` §5): a stored cordon would be durable state about a
@@ -5950,6 +5963,7 @@ policy names one — they can land on a different sink than the process default
 | `ork.task.attempts` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event: the attempt number the task finished on — one observation per fan-out item, none for a composed task |
 | `ork.orker.tasks` | `outcome`, `ork.failure.reason` | Orker, once per attempt (`outcome`: `succeeded`, `failed`, `canceled`, or `adopted` for a retry that found an existing durable commit and ran no container) |
 | `ork.orker.attempt_record_legacy` | `ork.orker_id`, `ork.found` | Orker, each attempt record of an earlier release it met: in the scope it claimed in (`claim`, one per record) or under its own ordinal (`record`); any count means the pool runs two releases ("Upgrading a pool's Orkers") |
+| `ork.orker.stop_watch.failures` | `ork.orker_id`, `reason` | Orker, each attempt whose container ended while the Orker waited on it and whose event stream it could not open (`reason`: `anchor`, the engine did not say when it created the container; `pipe`; `start`, the CLI did not start; `exit`, the CLI started, then ended with an error before the stream said how the container ended), so the stream cannot tell whether the runtime stopped the container; each is also logged as a warning, on a clean exit too |
 | `ork.orker.task.duration` | `outcome` | Orker, same event |
 | `ork.orker.task_phase.duration` | `ork.phase` | Orker, once per phase of an attempt |
 | `ork.orker.task.cpu.time` | — | Orker, once per measured attempt: the CPU seconds its container used, as its cgroup reported them at the last reading (`orker.usage_sample_interval`) |

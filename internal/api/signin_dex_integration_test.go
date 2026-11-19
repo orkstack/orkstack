@@ -289,6 +289,12 @@ var loginForm = regexp.MustCompile(`<form[^>]*method="post"[^>]*action="([^"]+)"
 // return path on the engine, which this test's engine serves no page at.
 func dexLogin(t *testing.T, browser *http.Client, engineURL, ret, email string) *url.URL {
 	t.Helper()
+	return dexLoginAs(t, browser, engineURL, ret, email, dextest.Password)
+}
+
+// dexLoginAs is dexLogin with the password given.
+func dexLoginAs(t *testing.T, browser *http.Client, engineURL, ret, email, password string) *url.URL {
+	t.Helper()
 	resp, err := browser.Get(engineURL + "/v1/auth/login/people?return=" + url.QueryEscape(ret))
 	if err != nil {
 		t.Fatalf("start the sign-in: %v", err)
@@ -306,7 +312,7 @@ func dexLogin(t *testing.T, browser *http.Client, engineURL, ret, email string) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err = browser.PostForm(action.String(), url.Values{"login": {email}, "password": {dextest.Password}})
+	resp, err = browser.PostForm(action.String(), url.Values{"login": {email}, "password": {password}})
 	if err != nil {
 		t.Fatalf("submit Dex's login form: %v", err)
 	}

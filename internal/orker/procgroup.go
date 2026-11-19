@@ -20,7 +20,7 @@ type cliChildren struct {
 // has returned.
 func (c *cliChildren) start(cmd *exec.Cmd) (wait func() error, err error) {
 	ownProcessGroup(cmd)
-	if err := cmd.Start(); err != nil {
+	if err := startTied(cmd); err != nil {
 		return nil, err
 	}
 	pid := cmd.Process.Pid

@@ -419,7 +419,14 @@ export type TaskRun = Message<"orkstack.v1.TaskRun"> & {
   queued?: ConcurrencyQueued | undefined;
 
   /**
-   * pending_reason is set from E92; unset until it lands (v0.4.0 proto batch).
+   * pending_reason says why a task, or a fan-out item, of a live run is not
+   * running yet. GetRun derives it on read and nothing stores it. It is one
+   * of: the instant the task waits for to run again after an interruption;
+   * that no Orker of its pool (on a versioned fleet, of its run's release)
+   * takes work, for a task the run dispatched that no Orker has started; or
+   * that its pin waits for a pin host. It is empty when none applies, and when
+   * the reason cannot be known: the Orker inventory or the run's release could
+   * not be read, or a live Orker did not answer.
    *
    * @generated from field: string pending_reason = 30;
    */

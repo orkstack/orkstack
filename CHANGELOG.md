@@ -30,6 +30,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 - `orkctl admin restore reconcile` removes, after a restore of Temporal, the runs cleanup had retired that the restore brought back; it needs the new `system.restore` permission ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#backup-and-disaster-recovery)).
 - Prometheus alert rules for the observability kit, each with a runbook, plus runbooks for Temporal outages and for backup and restore ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md)).
+- `ork.orker.stop_watch.failures{reason}` counts attempts whose container's event stream an Orker could not open, each also logged as a warning ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - The observability kit's Grafana now provisions two read-only dashboards, OrkStack and OrkStack / Run, with linked logs, traces and metrics ([README](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md#dashboards)).
 - Each engine exports every pool's backlog, `ork.pool.backlog.tasks` and `.age`, its rates and `ork.pool.pollers`, to scale Orkers on; `engine.pool_metrics.*` picks the pools ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#a-pools-backlog-as-metrics)).
 - Metrics for retention cleanup, webhook deliveries, schedules and HTTP triggers, and the `telemetry.object_labels` setting that adds schedule names and webhook ids to them ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
@@ -58,6 +59,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - `orkctl admin identity keys retire --compromised-from T` retires a leaked key so that nothing it signed from T on verifies ([TASK_IDENTITY.md](https://github.com/orkstack/orkstack/blob/main/docs/TASK_IDENTITY.md#rotation-with-no-outage)).
 - Each Orker now checks that its storage credential cannot reach the control plane's objects and reports it on `DescribeOrker`; the engine logs every Orker that is not ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#an-orkers-own-storage-credential)).
 - A task, even without `retry:`, runs again when its Orker stops or is lost, spending no attempt (`engine.interruptions.*`, `retry.max_interruptions`); `task.attempt` may repeat: key on `idempotencyKey` ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#tasks)).
+- `orkctl run get` says why a waiting task is not running: when it runs again after an interruption, or that no Orker of its pool or release takes work, naming the stopping and cordoned ones ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#live-attempt-introspection)).
 - A container whose start the daemon cannot account for fails `RUNTIME_STATE_UNKNOWN` and runs again; it may have run, so key side effects on `idempotencyKey` ([REASONS.md](https://github.com/orkstack/orkstack/blob/main/docs/REASONS.md#task-outcomes)).
 - An Orkflow can bound a whole run with a top-level `timeout:`; at the deadline the run fails `RUN_TIMED_OUT` and its failure handlers get `engine.run_timeout_handler_grace` to finish ([DSL.md](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#run-timeout-timeout)).
 - Two engine metrics count run timeouts per namespace: `ork.run.timeouts` (runs their own `timeout:` ended) and `ork.run.timeout.hard_ends` (runs whose failure handlers it stopped) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#7-telemetry)).
@@ -111,6 +113,8 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- A stopping Orker no longer exits before the cluster has a finished task's result, which made the task run again on another Orker, spending an attempt ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#stop-timeouts)).
+- An Orker that is killed or crashes no longer leaves `docker` or `podman` CLI processes running behind it on Linux ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#stop-timeouts)).
 - `orkctl run watch` and `run logs -f` now resume, rather than fail with `protocol error: incomplete envelope`, when the engine's connection closes as a stream starts
 - Schedule calls no longer answer `internal` while Temporal is down or rate-limiting, and a submit Temporal rate-limited answers `resource_exhausted`; ask again ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#5-ops-notes)).
 - Task logs no longer lose a task's last output when the task is cancelled or its Orker stops while a chunk is uploading ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#live-task-logs-where-they-are-what-bounds-them-how-long-they-stay)).
