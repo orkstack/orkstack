@@ -2068,7 +2068,9 @@ tasks:
   across namespaces.
 - **At submit** the key is rendered from the run's inputs, defaults applied,
   and refused `CONCURRENCY_KEY_INVALID` when it does not render or breaks
-  the rule. A `queue_timeout` outside the deployment's bounds
+  the rule. Validate and create store an Orkflow whose limit the deployment
+  cannot hold now, and warn with the reason a submit would give. A
+  `queue_timeout` outside the deployment's bounds
   (`engine.concurrency.min_queue_timeout`, 10s, and `max_queue_timeout`,
   7d) is refused at validate and create, and at submit for a version created
   before the bounds tightened. A deployment that cannot hold a limit refuses
