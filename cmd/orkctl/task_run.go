@@ -977,7 +977,7 @@ func (r *taskRunner) compose() error {
 	}
 	in, err := engine.LocalTaskInput(engine.LocalTask{
 		Orkflow: r.wf, TaskID: r.opts.task, RunID: r.localID, Input: input, Upstream: upstream,
-		Item: r.opts.itemSelected, ItemCount: itemCount, Join: join,
+		Item: r.opts.itemSelected, ItemCount: itemCount, Join: join, Lines: r.eachLines(),
 	})
 	r.report = r.newReport()
 	var refusal *engine.LocalTaskRefusal
@@ -1033,6 +1033,15 @@ func (r *taskRunner) itemCount() (*int32, error) {
 		return nil, fmt.Errorf("--output %s: %s", source, eerr.Message)
 	}
 	return &n, nil
+}
+
+// eachLines is a lines fan-out's recorded expansion with --from-run, nil
+// otherwise: the index its item reads.
+func (r *taskRunner) eachLines() *orkstackv1.EachLines {
+	if r.run == nil || r.opts.itemSelected == nil {
+		return nil
+	}
+	return fanOutRow(r.run, r.opts.task).GetEach().GetLines()
 }
 
 // pinTimeout is the Orkflow's Pin.timeout_seconds, or the task's own timeout
@@ -1113,6 +1122,16 @@ func (r *taskRunner) dispatch() (err error) {
 	})
 	dispatcher := acts.Dispatcher()
 	dispatcher.LogSinkObserver = r.t.line
+	if r.in.GetEach().GetLines() != nil {
+		// An item of a fan-out over lines reads its run's line index, read
+		// only, from the deployment's store, as its source's span is.
+		indexes, err := artifacts.NewEachIndexStore(r.ctx, artifacts.ConfigFromEnv())
+		if err != nil {
+			return fmt.Errorf("open the deployment's line-index store (set ORK_ARTIFACT_BACKEND and ORK_S3_* to the "+
+				"deployment's object store): %w", err)
+		}
+		dispatcher.EachIndexes = indexes
+	}
 
 	validation := dispatcher.Validate(r.in)
 	r.printHeader(validation)

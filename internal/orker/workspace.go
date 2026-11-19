@@ -923,10 +923,13 @@ func failureCategoryWord(c orkstackv1.FailureCategory) string {
 // 20-digit integer preserved) and the protojson rendering of the run input's
 // value for an input source.
 type taskJSONEach struct {
-	Index int32              `json:"index"`
-	Count int32              `json:"count"`
-	As    string             `json:"as"`
-	Item  stablejson.RawJSON `json:"item"`
+	Index int32  `json:"index"`
+	Count int32  `json:"count"`
+	As    string `json:"as,omitzero"`
+	// Item is omitted only for a batch, which has none; an array's or a
+	// line's item always has one, "null" at least.
+	Item  stablejson.RawJSON `json:"item,omitzero"`
+	Lines *taskJSONEachLines `json:"lines,omitempty"`
 }
 
 // taskJSONEachUpstream says a fan-out upstream exists and how many items it
@@ -1084,6 +1087,9 @@ type TaskContext struct {
 	// that is not an item; EachItem is the resolved element's JSON text.
 	Each     *orkstackv1.EachContext
 	EachItem stablejson.RawJSON
+	// EachLines is task.json's each.lines for an item of a fan-out over an
+	// artifact's lines; nil for any other.
+	EachLines *taskJSONEachLines
 	// StagedEachUpstream lists every fan-out upstream staged for a direct
 	// dependent, with its item count.
 	StagedEachUpstream []taskJSONEachUpstream
@@ -1177,7 +1183,12 @@ func (w *Workspace) WriteTaskJSON(in *orkstackv1.ExecuteTaskInput, tc TaskContex
 		if len(item) == 0 {
 			item = stablejson.RawJSON("null")
 		}
-		doc.Each = &taskJSONEach{Index: e.GetIndex(), Count: e.GetCount(), As: e.GetAs(), Item: item}
+		doc.Each = &taskJSONEach{Index: e.GetIndex(), Count: e.GetCount(), As: e.GetAs(), Item: item, Lines: tc.EachLines}
+		if e.GetLines().GetBatch() >= 2 {
+			// A batch has no single value: no item and no as (§3.2); its
+			// lines are the slice file each.lines.path names.
+			doc.Each.Item, doc.Each.As = nil, ""
+		}
 	}
 	// join exists only for a failure handler (§3.2), read straight off the
 	// wire: TaskContext does not carry it.

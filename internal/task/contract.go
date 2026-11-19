@@ -80,6 +80,12 @@ const (
 	// returns success (docs/OCI_ACTIVITY_CONTRACT.md §6.4).
 	ActivityReleasePin = "ReleasePin"
 
+	// ActivityIndexEachLines is the registered activity name of the line
+	// indexer a fan-out over an artifact's lines expands with. The engine
+	// schedules it on the fan-out's pool channel; an Orker runs it without a
+	// container and writes one immutable line index.
+	ActivityIndexEachLines = "IndexEachLines"
+
 	// ActivityCordonOrker is the registered activity name for setting or
 	// clearing one Orker's cordon. The engine executes it on that Orker's own
 	// control channel (QueueForOrker); the Orker registers it there and on no

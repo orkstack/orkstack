@@ -951,3 +951,38 @@ The session carries the pin's outer bound.
 - recorder: `TestIntegration_RecordPausePinHistory` (137 events; three
   repeats and the recording identical). It never skips, and fails unless the
   history holds the marker and a canceled timer
+
+### `run-each-lines-*-v1.json`, `run-each-mixed-v1.json` — a fan-out over an artifact's lines
+
+Each recorded paced by `TestIntegration_RecordEachLinesHistories`
+(`each_lines_fixtures_integration_test.go`), with the line policy pinned
+(`EachLines`) and the real Orker's line indexer over the real object store;
+`list` uploads `rows.jsonl` as a container's output would be. The path is
+entered only by a definition declaring `over_artifact`, so it has no version
+marker.
+
+- `run-each-lines-v1.json`: three lines, one `IndexEachLines`, then one item
+  per line, and `merge`.
+- `run-each-lines-batch-v1.json`: seven lines in batches of three: one index,
+  three items, the last of one line.
+- `run-each-mixed-v1.json`: an array fan-out and a lines fan-out of the same
+  producer side by side.
+- `run-each-lines-carry-{g0,g1}-v1.json`: a lines fan-out whose item 0 is
+  handed back twice as a store fault (`ATTEMPT_STORE_UNAVAILABLE`); the
+  second's 20 s back-off is the run's one idle moment past its 80-event
+  budget, so it carries on there. `g1` restores the expanded fan-out and its
+  lines, waits what remains and dispatches item 0, with no second index.
+
+- command: `TestRunWorkflow_ReplaysCommittedEachLinesHistories` (each
+  replays, with one index in the first history and none in `g1`, and the
+  item count its batch gives); `g1` replays as `g0`'s run
+- payload: the same test: every `convert` item's input carries `each.lines`
+  (the source's name and digest, the index, the format, the batch), and none
+  stages the source as an upstream artifact
+- negative: `TestEachLinesHistories_CatchAChangedBatch` (the recorded
+  definition's batch changed, 1 to 2 and 3 to 1: refused)
+- recorder: `TestIntegration_RecordEachLinesHistories` (152, 152 and 159
+  events; `g0` 117, `g1` 38; three repeats and the recording identical). It
+  never skips, records into the proof directory by default, and fails unless
+  every shape succeeds, dispatches its items and, for the carry, has two
+  generations and item 0 three runs

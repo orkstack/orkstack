@@ -204,3 +204,16 @@ func (s *EachIndexStore) ref(key string, body []byte) ArtifactRef {
 		SHA256:      hex.EncodeToString(sum[:]),
 	}
 }
+
+// NewEachIndexStore builds the line-index store for the configured backend:
+// beside the commit store, under the same prefix.
+func NewEachIndexStore(ctx context.Context, cfg Config) (*EachIndexStore, error) {
+	switch name := cfg.Backend; name {
+	case "", BackendLocal:
+		return NewLocalEachIndexStore(localDir(cfg))
+	case BackendS3:
+		return NewS3EachIndexStore(ctx, cfg)
+	default:
+		return nil, fmt.Errorf("artifacts: line index store backend %q: %w", name, ErrUnknownBackend)
+	}
+}

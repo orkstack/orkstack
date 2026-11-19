@@ -84,6 +84,12 @@ type eachState struct {
 	// again, in the order they became due; dispatchItems takes them before
 	// the next new index. Rebuilt from the rows at a restore.
 	again []int32
+	// indexing is set while a fan-out over an artifact's lines has its
+	// line index in flight (each_lines.go), under the node's own id; lines
+	// is that expansion once collected, which every item carries and the
+	// saved state holds (TaskEach.lines).
+	indexing bool
+	lines    *orkstackv1.EachLines
 }
 
 // itemFlightKey is an item's key in the loop's in-flight map. A task id is a
@@ -350,6 +356,13 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 		return s.failExpansion(ctx, id, InvalidEachCode, fmt.Sprintf(
 			"task %q is a fan-out the DSL refuses: %s (docs/DSL.md rules 19 and 23)", id, why))
 	}
+	// A fan-out over an artifact's lines is counted by an index activity on
+	// an Orker of its pool; it expands when that is collected. Only a
+	// definition declaring over_artifact reaches here, so no recorded
+	// history does.
+	if source.GetArtifact() != nil {
+		return s.startEachLines(ctx, runCtx, id, inFlight)
+	}
 
 	var count int32
 	if source.GetInput() != "" {
@@ -394,6 +407,15 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 		}
 	}
 
+	return s.expandCounted(ctx, runCtx, id, count, inFlight)
+}
+
+// expandCounted expands fan-out id into count items once they are counted:
+// by expandEach for an array, by collectEachLines for an artifact's lines.
+func (s *runState) expandCounted(ctx, runCtx workflow.Context, id string, count int32, inFlight map[string]workflow.Future) error {
+	t := s.tasks[id]
+	e := s.eaches[id]
+	spec := e.spec
 	if eerr := eachTooMany(count, spec, s.taskIndex(id)); eerr != nil {
 		return s.failExpansion(ctx, id, eerr.Code, eerr.Message)
 	}
@@ -417,8 +439,11 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	now := timestamppb.New(workflow.Now(ctx))
 	e.expanded = true
 	e.count = count
-	taskRun.Each = &orkstackv1.TaskEach{Expanded: true, Count: count}
-	s.chargeFanOutExpand()
+	taskRun.Each = &orkstackv1.TaskEach{Expanded: true, Count: count, Lines: e.lines}
+	if e.lines == nil {
+		// A lines fan-out was charged when its index was scheduled.
+		s.chargeFanOutExpand()
+	}
 
 	if count == 0 {
 		taskRun.Status = orkstackv1.Status_STATUS_SUCCEEDED
@@ -430,7 +455,9 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	pool := s.poolForTask(t)
 	e.limit, e.stride = eachPacing(spec, count)
 	taskRun.Status = orkstackv1.Status_STATUS_RUNNING
-	taskRun.ScheduledAt = now
+	if e.lines == nil {
+		taskRun.ScheduledAt = now // a lines fan-out's is its index's
+	}
 	taskRun.Pool = pool
 	taskRun.Items = make([]*orkstackv1.TaskRun, count)
 	for i := int32(0); i < count; i++ {
@@ -443,6 +470,19 @@ func (s *runState) expandEach(ctx, runCtx workflow.Context, id string, inFlight 
 	scheduled := fmt.Sprintf("fan-out of %d items scheduled on pool %s", count, pool)
 	if e.limit < count {
 		scheduled += fmt.Sprintf(", at most %d at a time", e.limit)
+	}
+	if e.lines != nil {
+		// TASK_SCHEDULED said the lines were being indexed; this says what
+		// they made.
+		started := fmt.Sprintf("fan-out of %d items: dispatching to orkers", count)
+		if k := spec.GetBatch(); k >= 2 {
+			started = fmt.Sprintf("fan-out of %d items of %d lines: dispatching to orkers", count, k)
+		}
+		if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_TASK_STARTED, id,
+			orkstackv1.Status_STATUS_RUNNING, started); err != nil {
+			return err
+		}
+		return s.dispatchItems(ctx, runCtx, id, inFlight)
 	}
 	// As in schedule: nothing changes between these two events, so on the lean
 	// event path TASK_STARTED reuses TASK_SCHEDULED's snapshot.
@@ -624,6 +664,11 @@ func (s *runState) scheduleItem(runCtx workflow.Context, id string, index int32)
 		Count:  e.count,
 		As:     e.spec.GetAs(),
 		Source: e.spec.GetSource(),
+		Lines:  e.lines,
+	}
+	if e.lines != nil {
+		// The source is never staged: an item reads only its own span.
+		input.Upstream = dropSource(input.GetUpstream(), e.spec.GetSource().GetArtifact())
 	}
 	// The input is encoded once: sized from these bytes and handed to the
 	// SDK as they are, so a fan-out's expansion does not encode each item

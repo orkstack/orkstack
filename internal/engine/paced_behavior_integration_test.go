@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/worker"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -70,6 +71,9 @@ type pacer struct {
 	keep map[string]bool
 	// keepCall, when set, also keeps the attempts it says (startPacedCANStackKeeping).
 	keepCall func(in *orkstackv1.ExecuteTaskInput) bool
+	// register, when set, registers further activities on the stack's Orker
+	// worker, which pace them through turn themselves (the line indexer).
+	register func(s *canStack, w worker.Worker)
 }
 
 // registry is every paced stack's parked activities, by execution. It is

@@ -285,10 +285,10 @@ func TestCommittedFixtures_DeclareNoNewPlanFields(t *testing.T) {
 		"retry_max_interval_seconds": {"run-retry-max-interval-v1.json", "run-retry-max-interval-legacy-v1.json",
 			"run-retry-long-initial-v1.json", "run-retry-long-initial-legacy-v1.json"},
 		"in_flight.publish_window": slices.Concat([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
-			continuedStackFixtureNames, interruptionFixtureNames),
+			continuedStackFixtureNames, interruptionFixtureNames, eachLinesFixtureNames),
 		"in_flight.publish_events": slices.Concat([]string{"run-task-publish-window-v1.json", "run-task-publish-window-legacy-v1.json"},
-			continuedStackFixtureNames, interruptionFixtureNames),
-		"interruptions": interruptionFixtureNames,
+			continuedStackFixtureNames, interruptionFixtureNames, eachLinesFixtureNames),
+		"interruptions": slices.Concat(interruptionFixtureNames, eachLinesFixtureNames),
 	}
 	paths, err := filepath.Glob("testdata/history/*.json")
 	if err != nil || len(paths) == 0 {
@@ -353,6 +353,7 @@ var carriedGenerations = map[string]bool{
 	"pause-continued-carried-g1-v2.json":                  true,
 	"run-interruption-retry-item-continuation-g1-v1.json": true,
 	"pause-deferred-g1-v1.json":                           true,
+	"run-each-lines-carry-g1-v1.json":                     true,
 }
 
 // continuedStackFixtureNames are the fixtures recorded under the
