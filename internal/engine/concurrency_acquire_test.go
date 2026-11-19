@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"go.temporal.io/api/serviceerror"
 	"go.temporal.io/sdk/client"
@@ -48,5 +49,61 @@ func TestAcquireConcurrency_APermanentErrorIsNotRetried(t *testing.T) {
 	res, err := (&GateActivities{client: f}).AcquireConcurrency(context.Background(), AcquireConcurrencyInput{GateID: "g"})
 	if err != nil || res.Unavailable == "" || f.calls != 1 {
 		t.Fatalf("a refused acquire = %+v, %v after %d calls; want unavailable at once", res, err, f.calls)
+	}
+}
+
+// notReadyGateClient is a cluster that answers the first acquire Update
+// WorkflowNotReady, as it does an update that arrives while the gate's
+// workflow task that carries its state on or completes it fails
+// (UnhandledCommand): a race a real cluster does not produce on demand, so
+// it is faked here. onGet puts the error on the handle's Get rather than on
+// the call. Every later Update is answered granted.
+type notReadyGateClient struct {
+	client.Client
+	onGet bool
+	calls int
+}
+
+type gateUpdateHandle struct {
+	err error
+	ans gateAnswer
+}
+
+func (h gateUpdateHandle) WorkflowID() string { return "g" }
+func (h gateUpdateHandle) RunID() string      { return "" }
+func (h gateUpdateHandle) UpdateID() string   { return "u" }
+func (h gateUpdateHandle) Get(_ context.Context, out any) error {
+	if h.err != nil {
+		return h.err
+	}
+	*out.(*gateAnswer) = h.ans
+	return nil
+}
+
+func (f *notReadyGateClient) UpdateWorkflow(context.Context, client.UpdateWorkflowOptions) (client.WorkflowUpdateHandle, error) {
+	f.calls++
+	notReady := serviceerror.NewWorkflowNotReady("Unable to perform workflow execution update due to unexpected workflow task failure.")
+	if f.calls == 1 {
+		if f.onGet {
+			return gateUpdateHandle{err: notReady}, nil
+		}
+		return nil, notReady
+	}
+	return gateUpdateHandle{ans: gateAnswer{Proto: 1, Answer: gateAnswerGranted, Seq: 3}}, nil
+}
+
+// TestAcquireConcurrency_AnUpdateTheGateCouldNotTakeIsAskedAgain: an acquire
+// Update the cluster answers WorkflowNotReady was never accepted by the gate,
+// so it is asked again and granted, well inside its acquire_timeout, and is
+// never an unavailable limit.
+func TestAcquireConcurrency_AnUpdateTheGateCouldNotTakeIsAskedAgain(t *testing.T) {
+	for _, onGet := range []bool{false, true} {
+		f := &notReadyGateClient{onGet: onGet}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		res, err := (&GateActivities{client: f}).AcquireConcurrency(ctx, AcquireConcurrencyInput{GateID: "g", BackoffMin: time.Millisecond, BackoffMax: time.Millisecond})
+		cancel()
+		if err != nil || res.Unavailable != "" || res.Unsupported != "" || res.Answer.Answer != gateAnswerGranted || f.calls != 2 {
+			t.Fatalf("error on Get %v: acquire = %+v, %v after %d calls; want granted on the second", onGet, res, err, f.calls)
+		}
 	}
 }
