@@ -52,7 +52,33 @@ type ExitStatus struct {
 	// StopCauseUnrecorded, with StopCauseUnknown, reports why: the runtime keeps
 	// no record of a stop that its events did not say, or did not give it.
 	StopCauseUnrecorded bool
+	// StopWatchFailure, when set, reports that the runtime's events for the
+	// container were never followed at all, and why: a stream that could not
+	// be opened is not one that heard nothing, and the Orker warns and counts
+	// it.
+	StopWatchFailure *StopWatchFailure
 }
+
+// StopWatchFailure is why a container's event stream was never opened.
+type StopWatchFailure struct {
+	// Stage is the step that failed: StopWatchAnchor, StopWatchPipe,
+	// StopWatchStart or StopWatchExit.
+	Stage string
+	Err   error
+}
+
+// The steps of opening a container's event stream that can fail.
+const (
+	// StopWatchAnchor: the engine did not say when it created the container.
+	StopWatchAnchor = "anchor"
+	// StopWatchPipe: the Orker could not make the stream's pipe.
+	StopWatchPipe = "pipe"
+	// StopWatchStart: the runtime CLI that follows the stream did not start.
+	StopWatchStart = "start"
+	// StopWatchExit: the CLI started, then ended with an error before the
+	// stream said how the container ended.
+	StopWatchExit = "exit"
+)
 
 // PullInfo is what the runtime learned about an image it made available.
 type PullInfo struct {

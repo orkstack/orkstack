@@ -860,6 +860,15 @@ type stopWatch struct {
 
 	mu   sync.Mutex
 	seen stopSeen
+
+	// stopping is set once the Orker ends the stream itself, and cliErr is
+	// how its CLI ended when it ended first, with an error (exited).
+	stopping bool
+	cliErr   error
+
+	// failure is why the stream was never opened; nil for one that was. Set
+	// in watchStops before the watch is shared (trackWatch), and never after.
+	failure *StopWatchFailure
 }
 
 // stopWatchSettle is how long Wait gives the stream to say what happened once
@@ -881,29 +890,41 @@ func (d *DockerRuntime) watchStops(ctx context.Context, bin string, id Container
 	watch := &stopWatch{answered: make(chan struct{})}
 	since, err := d.createdAnchor(ctx, id)
 	if err != nil {
-		watch.finish()
-		return watch
+		return watch.failed(StopWatchAnchor, err)
 	}
 	read, write, err := os.Pipe()
 	if err != nil {
-		watch.finish()
-		return watch
+		return watch.failed(StopWatchPipe, err)
 	}
 	watch.pipe = read
 	cmd := exec.Command(bin, d.grammar().eventArgs(string(id), since)...)
 	cmd.Stdout = write
+	stderr := &boundedBuffer{limit: stopWatchStderrBytes}
+	cmd.Stderr = stderr
+	// Stderr is copied, so Wait waits for every holder of it: a wrapper's
+	// child (sudo) that outlives the kill must not hold Wait for good.
+	cmd.WaitDelay = pipeDrainDelay
 	wait, err := d.children.start(cmd)
 	_ = write.Close()
 	if err != nil {
 		_ = read.Close()
-		watch.finish()
-		return watch
+		return watch.failed(StopWatchStart, err)
 	}
 	watch.cmd = cmd
-	go func() { _ = wait() }()
-	go watch.read(read)
+	go func() {
+		// A stream that could not be read further ends at once; only one
+		// whose CLI closed it waits for how the CLI ended.
+		if !watch.read(read) {
+			watch.finish()
+		}
+		watch.exited(wait(), stderr)
+	}()
 	return watch
 }
+
+// stopWatchStderrBytes bounds what a stream's CLI said on stderr that the
+// Orker keeps for its warning.
+const stopWatchStderrBytes = 4 << 10
 
 // createdAnchor is when the engine says it created the container, for the stream
 // to look back to. It is the engine's clock that compares a --since with an event's
@@ -937,10 +958,10 @@ func parseCreatedAnchor(raw string) (string, error) {
 	return created.Format(time.RFC3339Nano), nil
 }
 
-// read takes the stream's words until it ends. A line too long to be a word ends
-// the reading, which is the same as a stream that ended.
-func (w *stopWatch) read(from io.Reader) {
-	defer w.finish()
+// read takes the stream's words until it ends, and reports whether its CLI
+// closed it (false: it could not be read further). A line too long to be a
+// word ends the reading, which is the same as a stream that ended.
+func (w *stopWatch) read(from io.Reader) (closed bool) {
 	lines := bufio.NewScanner(from)
 	for lines.Scan() {
 		w.mu.Lock()
@@ -950,9 +971,43 @@ func (w *stopWatch) read(from io.Reader) {
 			w.finish()
 		}
 	}
+	return lines.Err() == nil
 }
 
 func (w *stopWatch) finish() { w.done.Do(func() { close(w.answered) }) }
+
+// exited records how the stream's CLI ended, then ends the stream. A CLI
+// that ended with an error before the Orker stopped it (a flag it refused,
+// an engine that refused it) never followed the stream: its Wait says so
+// (exitFailure) rather than reading as a stream that heard nothing.
+func (w *stopWatch) exited(err error, stderr *boundedBuffer) {
+	w.mu.Lock()
+	if err != nil && !w.stopping {
+		w.cliErr = fmt.Errorf("the events CLI exited before the container ended: %w: %s",
+			err, strings.TrimSpace(stderr.String()))
+	}
+	w.mu.Unlock()
+	w.finish()
+}
+
+// exitFailure is why a stream whose CLI did start stopped following it, or nil.
+func (w *stopWatch) exitFailure() *StopWatchFailure {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.cliErr == nil {
+		return nil
+	}
+	return &StopWatchFailure{Stage: StopWatchExit, Err: w.cliErr}
+}
+
+// failed ends a stream that was never opened, keeping why: its Wait then says
+// so (ExitStatus.StopWatchFailure) rather than reading as a stream that heard
+// nothing.
+func (w *stopWatch) failed(stage string, err error) *stopWatch {
+	w.failure = &StopWatchFailure{Stage: stage, Err: err}
+	w.finish()
+	return w
+}
 
 // settle waits for the stream's answer, up to within or ctx, ends the stream, and
 // returns what it said.
@@ -974,6 +1029,9 @@ func (w *stopWatch) settle(ctx context.Context, within time.Duration) stopSeen {
 // reach, as a CLI wrapped in sudo: the next word finds no reader.
 func (w *stopWatch) stop() {
 	w.stopOnce.Do(func() {
+		w.mu.Lock()
+		w.stopping = true
+		w.mu.Unlock()
 		if w.cmd != nil {
 			_ = w.cmd.Process.Kill()
 		}
@@ -1243,6 +1301,10 @@ func (d *DockerRuntime) Wait(ctx context.Context, id ContainerID) (ExitStatus, e
 		seen := watch.settle(ctx, d.stopWatchSettle())
 		status.StoppedFromOutside = seen.stopped
 		status.StopCauseUnknown = !seen.stopped && !seen.ended
+		status.StopWatchFailure = watch.failure
+		if status.StopWatchFailure == nil && status.StopCauseUnknown {
+			status.StopWatchFailure = watch.exitFailure()
+		}
 	}
 	// Where the engine keeps a record of having been asked (stoppedByUserQuery),
 	// it answers what the stream did not hear, and an engine that will not
