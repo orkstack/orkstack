@@ -92,6 +92,39 @@ engine:
   run_timeout_handler_grace: 10m  # ork
   run_pause_timeout: 168h  # ork
   run_pause_timeout_max: 744h  # ork
+  concurrency:
+    max_entries: 500  # ork
+    max_tombstones: 1000  # ork
+    max_labels: 32  # ork
+    acquire_timeout: 2m  # ork
+    clock_grace: 1m  # ork
+    tombstone_margin: 1m  # ork
+    verify_min_age: 10s  # ork
+    verify_debounce: 5s  # ork
+    verify_await: 10s  # ork
+    verify_parallel: 16  # ork
+    verify_batch: 64  # ork
+    verify_timeout: 30s  # ork
+    task_ack_grace: 2m  # ork
+    task_confirm_batch: 8  # ork
+    stalled_after: 10m  # ork
+    holder_sweep_interval: 10m  # ork
+    grant_backoff_min: 1s  # ork
+    grant_backoff_max: 30s  # ork
+    rebuild_page_timeout: 30s  # ork
+    rebuild_settle: 30s  # ork
+    rebuild_backoff_min: 1s  # ork
+    rebuild_backoff_max: 5m  # ork
+    rebuild_timeout: 10m  # ork
+    freeze_timeout: 1m  # ork
+    drain_margin: 5s  # ork
+    gate_continue_events: 2000  # ork
+    gate_continue_updates: 500  # ork
+    gate_linger: 5m  # ork
+    census_interval: 1m  # ork
+    census_timeout: 5m  # ork
+    census_max_gates: 2000  # ork
+    census_parallel: 8  # ork
   compose_max_depth: 4  # ork
   cache_max_ttl: 168h  # ork
   usage_cache_ttl: 5m  # ork

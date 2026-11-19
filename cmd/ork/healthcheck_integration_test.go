@@ -20,6 +20,7 @@ import (
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/internal/telemetry"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
@@ -28,22 +29,6 @@ import (
 type healthcheckResult struct {
 	code           int
 	stdout, stderr string
-}
-
-// withoutEnv is environ minus the named variables, so a value the shell
-// running the tests exports cannot stand in for the one the test sets.
-func withoutEnv(environ []string, names ...string) []string {
-	var kept []string
-next:
-	for _, entry := range environ {
-		for _, name := range names {
-			if strings.HasPrefix(entry, name+"=") {
-				continue next
-			}
-		}
-		kept = append(kept, entry)
-	}
-	return kept
 }
 
 // runHealthcheck runs `binary --healthcheck` with environ and returns its exit
@@ -87,7 +72,7 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	binary := buildOrk(t)
 	// The check runs in the environment a container's health check would:
 	// the daemon's own settings, here only the admin address.
-	checkEnv := append(withoutEnv(os.Environ(), telemetry.AdminAddrVar, "ORK_CONFIG_FILE"),
+	checkEnv := append(testbin.StackEnv(os.Environ()),
 		telemetry.AdminAddrVar+"="+adminAddr)
 
 	transcript := &strings.Builder{}
@@ -160,7 +145,7 @@ func TestIntegration_HealthcheckFollowsReadiness(t *testing.T) {
 	}
 
 	// The admin address unset is a configuration the check cannot answer for.
-	unset := check("ORK_ADMIN_ADDR unset", withoutEnv(os.Environ(), telemetry.AdminAddrVar, "ORK_CONFIG_FILE"))
+	unset := check("ORK_ADMIN_ADDR unset", testbin.StackEnv(os.Environ()))
 	if unset.code != 1 || unset.stdout != "" || !strings.Contains(unset.stderr, telemetry.AdminAddrVar) ||
 		strings.Count(unset.stderr, "\n") != 1 {
 		t.Fatalf("admin address unset: exit %d, stdout %q, stderr %q; want exit 1 and one line naming ORK_ADMIN_ADDR",

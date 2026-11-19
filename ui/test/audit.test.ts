@@ -8,11 +8,12 @@ import {
 	auditPrincipalLabel,
 	auditResultLabel,
 	auditScopeSentence,
+	auditShortcuts,
 	auditStackKey,
 	type AuditCoordinates
 } from '../src/lib/audit';
 import { ListAuditRecordsRequestSchema } from '../src/lib/gen/orkstack/v1/audit_pb';
-import { parseFilter, specFor, type FieldFilter } from '../src/lib/listFilter';
+import { FilterOperator, filterFlags, filterOf, parseFilter, specFor, type FieldFilter } from '../src/lib/listFilter';
 
 const base: AuditCoordinates = {
 	ns: 'payments',
@@ -33,7 +34,7 @@ function parsed(...texts: string[]): FieldFilter[] {
 test('the page offers the ListAuditRecords allowlist, namespace among the properties', () => {
 	const spec = specFor(ListAuditRecordsRequestSchema);
 	expect(spec.resource).toBe('AuditRecord');
-	expect(spec.fields.map((f) => f.path)).toEqual(['at', 'namespace', 'action', 'principal', 'target', 'succeeded', 'error_code']);
+	expect(spec.fields.map((f) => f.path)).toEqual(['at', 'namespace', 'action', 'principal', 'target', 'succeeded', 'error_code', 'decision', 'principal_verified']);
 	expect(spec.fields.find((f) => f.path === 'at')?.kind).toBe('time');
 	expect(spec.fields.find((f) => f.path === 'succeeded')?.kind).toBe('bool');
 });
@@ -83,4 +84,26 @@ test('the scope sentence says what the namespace filter selects', () => {
 	expect(auditScopeSentence(parsed('namespace='))).toContain('Showing only deployment-wide writes');
 	expect(auditScopeSentence(parsed('namespace=payments'))).toContain('Showing namespace payments');
 	expect(auditScopeSentence(parsed('namespace!='))).toBe('Showing the namespaces the namespace filter selects.');
+});
+
+test('the access shortcuts add their filter, keep the others, replace one on the same field, and turn themselves off', () => {
+	const ns = filterOf('namespace', FilterOperator.EQUALS, ['payments']);
+	const [denied, wouldDeny, unverified] = auditShortcuts([ns]);
+	expect(denied.label).toBe('Denied');
+	expect(denied.active).toBe(false);
+	expect(filterFlags(denied.filters)).toEqual(filterFlags([ns, filterOf('decision', FilterOperator.EQUALS, ['denied'])]));
+	expect(filterFlags(unverified.filters)).toEqual(filterFlags([ns, filterOf('principal_verified', FilterOperator.EQUALS, ['false'])]));
+
+	const onDenied = auditShortcuts(denied.filters);
+	expect(onDenied[0].active).toBe(true);
+	expect(filterFlags(onDenied[0].filters)).toEqual(filterFlags([ns]));
+	// Would deny takes the decision filter's place rather than ANDing an empty answer.
+	expect(onDenied[1].active).toBe(false);
+	expect(filterFlags(onDenied[1].filters)).toEqual(filterFlags([ns, filterOf('decision', FilterOperator.EQUALS, ['would-deny'])]));
+	expect(wouldDeny.label).toBe('Would deny (observed)');
+
+	// A wider filter on the field is not this shortcut's: it is replaced, not reported active.
+	const both = [filterOf('decision', FilterOperator.IN, ['denied', 'would-deny'])];
+	expect(auditShortcuts(both)[0].active).toBe(false);
+	expect(filterFlags(auditShortcuts(both)[0].filters)).toEqual(filterFlags([filterOf('decision', FilterOperator.EQUALS, ['denied'])]));
 });

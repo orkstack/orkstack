@@ -193,8 +193,56 @@ test('a viewer sees no write control and is refused when it calls the RPC anyway
 	expect(refused).toBe(403);
 	await shot(v, 'signin-viewer-access.png');
 
+	// The admin finds that refusal in the audit trail in one click: Denied
+	// narrows it to what access control refused, and pressed again lets go.
+	await a.goto(`${ENGINE}/admin/audit`);
+	const denied = a.getByTestId('audit-shortcut-denied');
+	await expect(denied).not.toHaveAttribute('aria-current');
+	await denied.click();
+	await expect(a).toHaveURL(/filter=decision%3Ddenied/);
+	await expect(a.getByTestId('audit-shortcut-denied')).toHaveAttribute('aria-current', 'true');
+	const refusal = a.getByTestId('audit-row').filter({ hasText: 'user:people:vera@example.test' });
+	await expect(refusal.first()).toBeVisible();
+	await expect(refusal.first().getByTestId('audit-decision')).toContainText('Denied');
+	await expect(a.getByTestId('audit-row').getByTestId('audit-decision').filter({ hasNotText: 'Denied' })).toHaveCount(0);
+	// A long refusal reads as lines, never a word a line beside the fixed columns.
+	const target = await refusal.first().getByTestId('audit-target').boundingBox();
+	expect(target && target.width >= 280).toBe(true);
+	await shot(a, 'signin-audit-denied.png');
+	await a.getByTestId('audit-shortcut-denied').click();
+	await expect(a.getByTestId('audit-shortcut-denied')).not.toHaveAttribute('aria-current');
+	await expect(a).not.toHaveURL(/decision/);
+	// Every principal is verified under enforce: nothing was asserted.
+	await a.getByTestId('audit-shortcut-unverified').click();
+	await expect(a).toHaveURL(/filter=principal_verified%3Dfalse/);
+	await expect(a.getByTestId('audit-empty')).toBeVisible();
+
 	// Disabling the viewer ends its sign-in in its own browser.
 	await a.goto(`${ENGINE}/admin/access/principals`);
+	// People lists who signed in over the window, newest first, with when.
+	const vera = 'user:people:vera@example.test';
+	await expect(a.getByTestId('people-window-30d')).toHaveAttribute('aria-current', 'page');
+	await expect(a.getByTestId(`person-seen-at-${vera}`)).toBeVisible();
+	await expect(a.getByTestId('people-seen-error')).toHaveCount(0);
+	await expect(a.getByTestId('people-seen-stepped')).toHaveCount(0);
+	await shot(a, 'signin-people.png');
+	// An audit trail too large to read for 30 days in one request: the page
+	// steps down to 7 days by itself and says so. 5001 unrelated records, ten
+	// days back, are one more than the engine examines in one step
+	// (artifacts.AuditScanMaxObjects), written through the store's own code.
+	execFileSync(bin('audit-seed'), ['5001', 'namespace.update', '10'], { cwd: repoRoot, env: { ...process.env, ...storeEnv(BUCKET) } });
+	await a.reload();
+	await expect(a.getByTestId('people-seen-stepped')).toHaveText('Sign-ins of the last 7 days; 30 days examines more audit records than one request may.');
+	await expect(a.getByTestId('people-window-7d')).toHaveAttribute('aria-current', 'page');
+	await expect(a.getByTestId(`person-seen-at-${vera}`)).toBeVisible();
+	await expect(a.getByTestId('people-seen-error')).toHaveCount(0);
+	await shot(a, 'signin-people-stepped-down.png');
+	// Asked for 24 hours, it reads 24 hours and says nothing more.
+	await a.getByTestId('people-window-1d').click();
+	await expect(a).toHaveURL(/window=1d/);
+	await expect(a.getByTestId('people-window-1d')).toHaveAttribute('aria-current', 'page');
+	await expect(a.getByTestId('people-seen-stepped')).toHaveCount(0);
+	await expect(a.getByTestId(`person-seen-at-${vera}`)).toBeVisible();
 	await a.getByTestId('person-disable-user:people:vera@example.test').click();
 	await a.getByTestId('person-confirm').click();
 	await expect(a.getByTestId('person-disabled-user:people:vera@example.test')).toBeVisible();

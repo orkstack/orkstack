@@ -1,7 +1,8 @@
 <script lang="ts">
 	// Access → People (UX35): the principals this deployment knows of here —
-	// signed in now, disabled, or named by a binding — with their sign-ins and
-	// the bindings that name them; disable, enable, and end their sign-ins.
+	// seen to sign in over the window chosen, signed in now, disabled, or named
+	// by a binding — with when they last signed in, their sign-ins and the
+	// bindings that name them; disable, enable, and end their sign-ins.
 	import { invalidateAll } from '$app/navigation';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
@@ -11,17 +12,40 @@
 	import TimeAgo from '#lib/components/TimeAgo.svelte';
 	import { errorMessage } from '#lib/client.ts';
 	import { accessClient } from '#lib/clients/access.ts';
-	import { people, type PersonRow } from '#lib/accessPeople.ts';
+	import {
+		PEOPLE_WINDOW_LABEL,
+		PEOPLE_WINDOW_ORDER,
+		PEOPLE_WINDOW_PHRASE,
+		people,
+		peopleCommand,
+		steppedDownSentence,
+		type PeopleWindow,
+		type PersonRow
+	} from '#lib/accessPeople.ts';
 	import { conflictWords, isConflict, isMe } from '#lib/accessSelf.ts';
 	import { can, missing } from '#lib/permissions.ts';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 	const doc = $derived(data.access?.document);
-	const rows = $derived(doc ? people(doc, data.signins) : []);
+	const read = $derived(data.seenRead);
+	const rows = $derived(doc ? people(doc, data.signins, read.seen) : []);
+	// The window shown, or the one asked for when none could be read.
+	const span = $derived(read.shown ?? read.asked);
+	const stepped = $derived(steppedDownSentence(read));
+	// In asserted mode nothing records who signed in: no window was read.
+	const reads = $derived(data.mode !== 'asserted');
+	const windowHref = (w: PeopleWindow) => `?window=${w}`;
+	// What the command line lists when even the shortest window is too large for the page: the last hour.
+	const shortestCommand = peopleCommand(1);
 	const canWrite = $derived(can(data.grants, 'access.write'));
 	let q = $state('');
-	const shown = $derived(rows.filter((r) => !q.trim() || r.id.toLowerCase().includes(q.trim().toLowerCase())));
+	const shown = $derived(
+		rows.filter((r) => {
+			const needle = q.trim().toLowerCase();
+			return !needle || r.id.toLowerCase().includes(needle) || r.display.toLowerCase().includes(needle);
+		})
+	);
 
 	let acting = $state<{ kind: 'disable' | 'enable' | 'revoke'; row: PersonRow } | null>(null);
 	let busy = $state(false);
@@ -46,13 +70,58 @@
 
 <svelte:head><title>People · Access · OrkStack</title></svelte:head>
 
-<SheetHeader title="People" testid="people-title" commands={[{ label: 'List the sign-ins', command: 'orkctl admin principal signins list' }]} />
+<SheetHeader title="People" testid="people-title" commands={reads ? [{ label: 'The principals seen to sign in', command: peopleCommand(span) }] : []} />
 <AccessTabs />
 
 <p class="mb-4 max-w-prose text-sm text-ink-2">
-	Who is signed in now, who is disabled, and who a binding names. A principal who reached the API with a token only, and is in no
-	binding by name, is in the audit trail rather than here.
+	{reads ? 'Who signed in over the window below, who' : 'Who'} is signed in now, who is disabled, and who a binding names. A principal who reached the API
+	with a token only, and is in no binding by name, is in the audit trail rather than here.
 </p>
+
+{#if data.mode !== 'asserted'}
+	<div class="mb-4 flex flex-wrap items-center gap-3" data-testid="people-window">
+		<span class="caps text-ink-muted" aria-hidden="true">Signed in over</span>
+		<div role="group" aria-label="Signed in over" class="inline-flex h-8 rounded-sm border border-rule-strong bg-paper">
+			{#each PEOPLE_WINDOW_ORDER as w (w)}
+				<a
+					data-testid="people-window-{w}"
+					data-sveltekit-noscroll
+					aria-current={span === w ? 'page' : undefined}
+					href={windowHref(w)}
+					class="figure inline-flex items-center border-r border-rule-strong px-3 text-sm text-ink-secondary transition-colors last:border-r-0 hover:bg-hover hover:text-ink current:bg-blue-tint current:font-semibold current:text-blue-strong"
+					>{PEOPLE_WINDOW_LABEL[w]}</a
+				>
+			{/each}
+		</div>
+	</div>
+
+	{#if stepped}
+		<!-- The window asked for was too large to read: a shorter one is shown, and said. -->
+		<div class="alert mb-4" role="status" data-testid="people-seen-stepped">
+			<span class="alert-ic"><Icon name="clock" /></span>
+			<p class="min-w-0 flex-1 text-sm">{stepped}</p>
+		</div>
+	{/if}
+	{#if read.error}
+		<!-- The seen list failed on its own: everyone else is still listed below. -->
+		<div class="alert alert-fail mb-4" role="alert" data-testid="people-seen-error">
+			<span class="alert-ic"><Icon name="alert" /></span>
+			<p class="min-w-0 flex-1 text-sm">
+				{#if read.tooLong}
+					Even {PEOPLE_WINDOW_PHRASE['1d']} examines more audit records than one request may, so who signed in is not listed. The command line
+					lists a shorter window: <code class="font-mono" data-testid="people-seen-command">{shortestCommand}</code>.
+				{:else}
+					Who signed in could not be read: {read.error}
+				{/if}
+			</p>
+		</div>
+	{:else if read.truncated}
+		<p class="mb-4 text-sm text-ink-3" data-testid="people-seen-truncated">
+			More people signed in over {PEOPLE_WINDOW_PHRASE[span]} than this page lists; the command line lists them all:
+			<code class="font-mono">{peopleCommand(span)}</code>.
+		</p>
+	{/if}
+{/if}
 
 {#if data.accessError || data.signinsError}
 	<ErrorPanel message={data.accessError ?? data.signinsError ?? ''} subject="the people of this deployment" testid="people-error" onretry={() => invalidateAll()} />
@@ -62,19 +131,23 @@
 			<h2 id="people-h">People <span class="tag">{shown.length}</span></h2>
 			<div class="card-end">
 				<label class="sr-only" for="people-q">Find a principal</label>
-				<input id="people-q" class="search field" type="search" placeholder="Principal" bind:value={q} data-testid="people-filter" />
+				<input id="people-q" class="search field" type="search" placeholder="Principal or name" bind:value={q} data-testid="people-filter" />
 			</div>
 		</div>
 		<div class="overflow-x-auto">
 			<table class="register register-stacked wide-reg" data-testid="people-table">
-				<thead class="max-sm:sr-only"><tr><th>Principal</th><th>Sign-ins</th><th>Bound by</th><th><span class="sr-only">Actions</span></th></tr></thead>
+				<thead class="max-sm:sr-only"><tr><th>Principal</th><th>Last signed in</th><th>Sign-ins</th><th>Bound by</th><th><span class="sr-only">Actions</span></th></tr></thead>
 				<tbody>
 					{#each shown as r (r.id)}
 						<tr data-testid="person-{r.id}">
 							<td class="max-sm:col-span-2">
+								{#if r.display}<span class="block text-sm text-ink" data-testid="person-display-{r.id}">{r.display}</span>{/if}
 								<span class="font-mono">{r.id}</span>
 								{#if isMe(data.me, r.id)}<span class="tag ml-2">You</span>{/if}
 								{#if r.disabled}<span class="stamp stamp-sm pill-outline ml-2" data-testid="person-disabled-{r.id}">Disabled</span>{/if}
+							</td>
+							<td class="text-sm" data-label="Last signed in" data-testid="person-seen-{r.id}">
+								{#if r.lastSeen}<TimeAgo at={r.lastSeen} testid="person-seen-at-{r.id}" />{:else if !reads}<span class="text-ink-3">Not recorded</span>{:else if read.error}<span class="text-ink-3">Not read</span>{:else if read.truncated}<span class="text-ink-3">Not among those listed</span>{:else}<span class="text-ink-3">Not in {PEOPLE_WINDOW_PHRASE[span]}</span>{/if}
 							</td>
 							<td data-label="Sign-ins">
 								{#if r.signins.length === 0}<span class="text-ink-3">None</span>{:else}
@@ -100,7 +173,7 @@
 							</td>
 						</tr>
 					{:else}
-						<tr><td colspan="4" class="text-ink-3">{q.trim() ? 'No principal matches.' : 'No one is signed in, disabled or named by a binding.'}</td></tr>
+						<tr><td colspan="5" class="text-ink-3">{q.trim() ? 'No principal matches.' : !reads ? 'No one is signed in now, disabled or named by a binding.' : read.error ? 'No one is signed in now, disabled or named by a binding; who signed in before could not be read.' : `No one signed in over ${PEOPLE_WINDOW_PHRASE[span]}, is disabled or is named by a binding.`}</td></tr>
 					{/each}
 				</tbody>
 			</table>
@@ -145,10 +218,10 @@
 			text-align: left;
 		}
 	}
-	/* From 640 px it is a table, scrolling sideways in its frame below 760 px. */
+	/* From 640 px it is a table, scrolling sideways in its frame below 880 px. */
 	@media (min-width: 640px) {
 		.wide-reg {
-			min-width: 760px;
+			min-width: 880px;
 		}
 	}
 </style>

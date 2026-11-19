@@ -30,7 +30,7 @@ func (r *squashRepo) git(args ...string) string {
 	r.t.Helper()
 	cmd := exec.Command("git", args...)
 	cmd.Dir = r.dir
-	cmd.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@t", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@t")
+	cmd.Env = testGitEnv(os.Environ())
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		r.t.Fatalf("git %v: %v: %s", args, err, out)

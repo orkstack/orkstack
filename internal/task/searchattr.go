@@ -287,6 +287,79 @@ func ensureRunPausedSearchAttribute(
 	})
 }
 
+// The concurrency limit's attributes (E88 §9.7). OrkflowGatePhase is a
+// concurrency gate's own ("active" while it holds or queues anything,
+// "lingering" while it waits to close), so the cluster counts a namespace's
+// active keys. The other three are a run's: OrkflowRunQueued is "true" while
+// it waits for a slot and absent otherwise, and OrkflowConcurrencyHeld and
+// OrkflowConcurrencyQueued list the gate ids it holds or is queued at, which a
+// gate rebuilding its record lists the open runs by.
+const (
+	SearchAttrOrkflowGatePhase         = "OrkflowGatePhase"
+	SearchAttrOrkflowRunQueued         = "OrkflowRunQueued"
+	SearchAttrOrkflowConcurrencyHeld   = "OrkflowConcurrencyHeld"
+	SearchAttrOrkflowConcurrencyQueued = "OrkflowConcurrencyQueued"
+)
+
+// The typed keys of the concurrency limit's attributes.
+var (
+	SearchKeyOrkflowGatePhase         = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowGatePhase)
+	SearchKeyOrkflowRunQueued         = temporal.NewSearchAttributeKeyKeyword(SearchAttrOrkflowRunQueued)
+	SearchKeyOrkflowConcurrencyHeld   = temporal.NewSearchAttributeKeyKeywordList(SearchAttrOrkflowConcurrencyHeld)
+	SearchKeyOrkflowConcurrencyQueued = temporal.NewSearchAttributeKeyKeywordList(SearchAttrOrkflowConcurrencyQueued)
+)
+
+// concurrencySearchAttributes is what a concurrency limit needs indexed, by
+// type.
+var concurrencySearchAttributes = map[string]enumspb.IndexedValueType{
+	SearchAttrOrkflowGatePhase:         enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	SearchAttrOrkflowRunQueued:         enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+	SearchAttrOrkflowConcurrencyHeld:   enumspb.INDEXED_VALUE_TYPE_KEYWORD_LIST,
+	SearchAttrOrkflowConcurrencyQueued: enumspb.INDEXED_VALUE_TYPE_KEYWORD_LIST,
+}
+
+// EnsureConcurrencySearchAttributes registers the concurrency limit's four
+// attributes and reports whether all of them are usable, as one answer: a
+// limit cannot hold, queue or rebuild with any of them missing. It is its own
+// call on the terms EnsureRunRootSearchAttribute states, so a cluster at its
+// limit of custom attributes refuses these alone and keeps every other index.
+// An attribute the namespace already has under another type is unusable too,
+// and named: registering it again would be refused, and a list by it would not
+// mean what the gate asks. Unusable is not fatal: the engine boots and refuses
+// concurrency limits with cause=index (E88 §9.7).
+func EnsureConcurrencySearchAttributes(
+	ctx context.Context,
+	temporalClient client.Client,
+	namespace string,
+) (bool, error) {
+	if namespace == "" {
+		namespace = DefaultNamespace
+	}
+	return ensureConcurrencySearchAttributes(ctx, temporalClient.OperatorService(), namespace)
+}
+
+func ensureConcurrencySearchAttributes(
+	ctx context.Context,
+	svc searchAttributeRegistrar,
+	namespace string,
+) (bool, error) {
+	usable, err := ensureSearchAttributes(ctx, svc, namespace, concurrencySearchAttributes)
+	if !usable || err != nil {
+		return usable, err
+	}
+	response, err := svc.ListSearchAttributes(ctx, &operatorservice.ListSearchAttributesRequest{Namespace: namespace})
+	if err != nil {
+		return false, fmt.Errorf("read the concurrency attributes' types in namespace %q: %w", namespace, err)
+	}
+	for _, name := range sortedAttributeNames(concurrencySearchAttributes) {
+		want, got := concurrencySearchAttributes[name], response.GetCustomAttributes()[name]
+		if got != want {
+			return false, fmt.Errorf("search attribute %s in namespace %q is %v, want %v; concurrency limits are refused until it is", name, namespace, got, want)
+		}
+	}
+	return true, nil
+}
+
 // ensureSearchAttributes registers every attribute in want the namespace does
 // not already index, then polls until all of them are queryable. Only the
 // missing ones are sent: a registration that names an attribute the cluster

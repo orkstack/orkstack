@@ -225,6 +225,7 @@ func cancelUnfinishedRows(rows []*orkstackv1.TaskRun, finished *timestamppb.Time
 			return
 		}
 		row.Status = orkstackv1.Status_STATUS_CANCELED
+		row.DispatchHeld = false
 		row.Error = proto.Clone(reason).(*orkstackv1.Error)
 		if row.GetFinishedAt() == nil {
 			row.FinishedAt = finished
@@ -903,6 +904,8 @@ var runStateFieldClass = map[string]fieldClass{
 	"runState.switchRetryAt": fieldEphemeral, "runState.quiesceRetryAt": fieldEphemeral, "runState.noSwitch": fieldEphemeral,
 	"runState.baseEvents": fieldEphemeral, "runState.baseBytes": fieldEphemeral, "runState.genEvents": fieldEphemeral,
 	"runState.capLogged": fieldEphemeral, "runState.admitted": fieldEphemeral, "runState.pinClosure": fieldEphemeral,
+	// The published dispatch hold is decided afresh by every pass.
+	"runState.dispatchHold": fieldEphemeral, "runState.holdSeen": fieldEphemeral,
 	"runState.pinClosureFresh": fieldEphemeral, "runState.gaveUp": fieldEphemeral, "runState.restoreErr": fieldEphemeral,
 	"runState.bootstrapStarted": fieldEphemeral, "runState.bootstrapDeadline": fieldEphemeral,
 	"runState.bootstrapBatch": fieldEphemeral,

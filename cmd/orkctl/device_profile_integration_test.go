@@ -117,7 +117,7 @@ func buildProbeImage(ctx context.Context, t *testing.T, root, orkerBin, repo, bu
 func binaryCommit(ctx context.Context, t *testing.T, bin string) string {
 	t.Helper()
 	cmd := exec.CommandContext(ctx, bin, "--version")
-	cmd.Env = testbin.OrkerEnv(os.Environ())
+	cmd.Env = testbin.OrkerEnv(testbin.StackEnv(os.Environ()))
 	out, err := cmd.Output()
 	if err != nil {
 		t.Fatalf("%s --version: %v", bin, err)

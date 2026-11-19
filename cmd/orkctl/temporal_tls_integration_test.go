@@ -373,7 +373,7 @@ func TestIntegration_BootRefusesABadTemporalTLSSetting(t *testing.T) {
 				defer cancel()
 				cmd := exec.CommandContext(ctx, testbin.Path(t, binary))
 				cmd.Dir = home
-				cmd.Env = append(os.Environ(),
+				cmd.Env = append(testbin.StackEnv(os.Environ()),
 					"HOME="+home,
 					"ORK_TEMPORAL_ADDRESS="+front.Addr,
 					"ORK_TEMPORAL_NAMESPACE="+privateTemporalNamespace(),

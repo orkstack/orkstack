@@ -710,6 +710,38 @@ then the variable it becomes.
 | `engine.run_timeout_handler_grace` | `ORK_RUN_TIMEOUT_HANDLER_GRACE` | `10m` | `ork` | how long after a run's deadline (an Orkflow's `timeout:`, `docs/DSL.md` "Run timeout") its failure handlers may still run; at that hard end a handler still running is stopped and one not yet started never starts. A duration of whole seconds, `0s` to `24h`; `0s` starts no failure handler once the run timed out; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only, and a child run carries the value its parent's submit read |
 | `engine.run_pause_timeout` | `ORK_RUN_PAUSE_TIMEOUT` | `168h` | `ork` | how long a run's pause lasts when its request names no timeout; at its end a paused run that is not failing fails `RUN_PAUSE_TIMEOUT`. A duration of whole seconds, from `1m` to `engine.run_pause_timeout_max`; anything else is refused at boot, naming the key. Read at submit and carried by the run, so a change applies to new runs only, and a child run carries the value its parent's submit read. No surface can pause a run yet |
 | `engine.run_pause_timeout_max` | `ORK_RUN_PAUSE_TIMEOUT_MAX` | `744h` | `ork` | the longest a run's pause may last, whatever its request asks. A duration of whole seconds, from `1m` to `744h`; a deployment may lower it, never raise it, and boot refuses a default above it: lowering it below `168h` needs `engine.run_pause_timeout` set too, at most the new maximum. Read at submit and carried by the run, as `engine.run_pause_timeout` is |
+| `engine.concurrency.max_entries` | `ORK_CONCURRENCY_MAX_ENTRIES` | `500` | `ork` | how many runs and tasks one key's gate holds or queues; a new arrival past it is refused. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.max_tombstones` | `ORK_CONCURRENCY_MAX_TOMBSTONES` | `1000` | `ork` | how many released slots one gate fences against late acquires; above it the oldest is dropped and the gate checks new holders. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.max_labels` | `ORK_CONCURRENCY_MAX_LABELS` | `32` | `ork` | how many distinct limit templates one gate labels its metrics with; the rest are `_other`. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.acquire_timeout` | `ORK_CONCURRENCY_ACQUIRE_TIMEOUT` | `2m` | `ork` | how long a run keeps asking its gate before it ends unavailable. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.clock_grace` | `ORK_CONCURRENCY_CLOCK_GRACE` | `1m` | `ork` | how far an acquire's clock may trail the gate's before it is fenced as stale. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.tombstone_margin` | `ORK_CONCURRENCY_TOMBSTONE_MARGIN` | `1m` | `ork` | how much longer than an acquire can live a released slot stays fenced. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.verify_min_age` | `ORK_CONCURRENCY_VERIFY_MIN_AGE` | `10s` | `ork` | how old a holder is before a full key checks whether it still runs. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.verify_debounce` | `ORK_CONCURRENCY_VERIFY_DEBOUNCE` | `5s` | `ork` | the shortest time between two checks of one gate. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.verify_await` | `ORK_CONCURRENCY_VERIFY_AWAIT` | `10s` | `ork` | how long an acquire on a full key waits for that check. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.verify_parallel` | `ORK_CONCURRENCY_VERIFY_PARALLEL` | `16` | `ork` | how many runs one check describes at once. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.verify_batch` | `ORK_CONCURRENCY_VERIFY_BATCH` | `64` | `ork` | how many runs one check call describes. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.verify_timeout` | `ORK_CONCURRENCY_VERIFY_TIMEOUT` | `30s` | `ork` | how long one check call may take. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.task_ack_grace` | `ORK_CONCURRENCY_TASK_ACK_GRACE` | `2m` | `ork` | how long an entry whose run has not recorded it yet is left alone. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.task_confirm_batch` | `ORK_CONCURRENCY_TASK_CONFIRM_BATCH` | `8` | `ork` | how many such entries one check releases. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.stalled_after` | `ORK_CONCURRENCY_STALLED_AFTER` | `10m` | `ork` | how long a holder's run may fail its workflow tasks before it is reported stalled. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.holder_sweep_interval` | `ORK_CONCURRENCY_HOLDER_SWEEP_INTERVAL` | `10m` | `ork` | how often a gate with holders checks them all. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.grant_backoff_min` | `ORK_CONCURRENCY_GRANT_BACKOFF_MIN` | `1s` | `ork` | the first wait before a gate resends a grant it could not deliver. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.grant_backoff_max` | `ORK_CONCURRENCY_GRANT_BACKOFF_MAX` | `30s` | `ork` | the longest such wait. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.rebuild_page_timeout` | `ORK_CONCURRENCY_REBUILD_PAGE_TIMEOUT` | `30s` | `ork` | how long one page of a gate's rebuild listing may take. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.rebuild_settle` | `ORK_CONCURRENCY_REBUILD_SETTLE` | `30s` | `ork` | how long a gate that restarted uncleanly grants nothing after its rebuild. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.rebuild_backoff_min` | `ORK_CONCURRENCY_REBUILD_BACKOFF_MIN` | `1s` | `ork` | the first wait before a failed rebuild is tried again. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.rebuild_backoff_max` | `ORK_CONCURRENCY_REBUILD_BACKOFF_MAX` | `5m` | `ork` | the longest such wait. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.rebuild_timeout` | `ORK_CONCURRENCY_REBUILD_TIMEOUT` | `10m` | `ork` | how long a rebuild keeps failing before the gate is reported failing. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.freeze_timeout` | `ORK_CONCURRENCY_FREEZE_TIMEOUT` | `1m` | `ork` | how long a reset may hold a gate frozen. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.drain_margin` | `ORK_CONCURRENCY_DRAIN_MARGIN` | `5s` | `ork` | how much longer than `verify_await` a gate waits for its handlers before it carries on or closes. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.gate_continue_events` | `ORK_CONCURRENCY_GATE_CONTINUE_EVENTS` | `2000` | `ork` | how many history events a gate records before it carries its state on. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.gate_continue_updates` | `ORK_CONCURRENCY_GATE_CONTINUE_UPDATES` | `500` | `ork` | how many acquires a gate answers before it carries its state on. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.gate_linger` | `ORK_CONCURRENCY_GATE_LINGER` | `5m` | `ork` | how long an empty gate waits before it closes. Decided when a key's gate starts and kept by it until it closes, so a busy key keeps the settings it started with. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.census_interval` | `ORK_CONCURRENCY_CENSUS_INTERVAL` | `1m` | `ork` | how often the concurrency census reads every gate. Read at boot; every replica keeps the one census schedule's settings, updating it only when they differ. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.census_timeout` | `ORK_CONCURRENCY_CENSUS_TIMEOUT` | `5m` | `ork` | how long one census pass may take. Read at boot; every replica keeps the one census schedule's settings, updating it only when they differ. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.census_max_gates` | `ORK_CONCURRENCY_CENSUS_MAX_GATES` | `2000` | `ork` | how many gates one census pass reads; the rest are reported truncated. Read at boot; every replica keeps the one census schedule's settings, updating it only when they differ. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
+| `engine.concurrency.census_parallel` | `ORK_CONCURRENCY_CENSUS_PARALLEL` | `8` | `ork` | how many gates one census pass reads at once. Read at boot; every replica keeps the one census schedule's settings, updating it only when they differ. No Orkflow can declare a concurrency limit yet. No Orkflow can declare a concurrency limit yet, so it takes effect only once one can |
 | `engine.compose_max_depth` | `ORK_COMPOSE_MAX_DEPTH` | `4` | `ork` | how many levels of child runs one run may start (a run is level 0). Lowers the built-in ceiling of 4, never raises it; checked at validate and create, and again at submit, so lowering it refuses new runs of an Orkflow created under the old value |
 | `engine.cache_max_ttl` | `ORK_CACHE_MAX_TTL` | `168h` | `ork` | the oldest memoized result a cached task (`cache:`) may reuse, measured from when it was committed; caps every task's `ttl_seconds`, and bounds a task that sets none. At least 1s. Read at submit, so a change applies to new runs |
 | `engine.limits.values_max_bytes` | `ORK_VALUES_MAX_BYTES` | `256 KiB` | `ork` | contract limit: the largest `values.json` an activity may write. Resolved at submit and pinned into the run's plan, so every attempt of a run enforces the same number |
@@ -1556,6 +1588,17 @@ page cannot read (an Orker of a newer release) reads **profile out of
 service**: the Orker takes no work from its pool. None is an operator's
 cordon, so none offers Uncordon, and one that stands beside an operator's
 cordon keeps a stamp of its own.
+
+`orkctl orker list` and `orkctl orker get` say the same in the same words.
+`STATE` names every cause that holds the cordon, an operator's first, as in
+`cordoned (operator; profile drifted)` or `cordoned (profile unavailable)`.
+`PROFILES` lists each profile with its kind and the cause on it, as in
+`a100 (gpu; drifted), fpga (devices)`. Under the table, each profile cause is
+one line with its reason's code and how it ends. `get` gives each profile a
+line of its own, with a `gpu` profile's units, and each cause in full.
+`--json` carries `profiles` and `profileCordons` as the inventory has them.
+A profile's revision, identity digest and a cause's detail stay on the
+Orker's own answer to the engine.
 
 ### An engine's key files and an Orker on one host
 
@@ -3028,6 +3071,17 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   database to do it with. A run
   started before origins were recorded renders `unrecorded` and matches no
   origin filter. No setting controls any of this.
+
+  The boot registers four more for concurrency limits (which no Orkflow can
+  declare yet), as one answer
+  (`task.EnsureConcurrencySearchAttributes`, `concurrency_index=` on the boot
+  line): `OrkflowGatePhase` and `OrkflowRunQueued` (keywords), and
+  `OrkflowConcurrencyHeld` and `OrkflowConcurrencyQueued` (keyword lists). The
+  answer is `true` only when all four, and `OrkflowNamespace`, are indexed with
+  those types; one missing or present under another type answers `false`, with
+  a `WARN visibility does not index concurrency limits` naming it, and the
+  engine still boots. A KeywordList attribute counts against the visibility
+  store's own limit for that type, separately from the keywords.
 - **A double submit is settled by the cluster, not by a replica.** One
   `--idempotency-key` sent to two replicas at once returns one run id, because
   the claim is a Temporal workflow (`engine.IdempotencyClaimWorkflow`), not
@@ -4329,8 +4383,8 @@ this check sends no `store_outage`, and reads as it always has.
 
 ```text
 $ orkctl orker list
-ORKER       POOL   BUILD  STATE                                  TASKS  PINS  CAPACITY  RESERVED  LAST SEEN
-orker-7f3a  build  -      cordoned (object storage unreachable)  0      -     -         -         2026-11-04T09:14:02Z
+ORKER       POOL   BUILD  STATE                                  TASKS  PINS  PROFILES  CAPACITY  RESERVED  LAST SEEN
+orker-7f3a  build  -      cordoned (object storage unreachable)  0      -     -         -         -         2026-11-04T09:14:02Z
 
 1 orker cordoned itself because object storage does not answer; tasks wait, and it resumes by itself once it does:
   orker-7f3a: object storage unreachable: the last check failed; this Orker's log has the error, since 2026-11-04T09:13:10Z
@@ -5064,6 +5118,19 @@ cluster round trips per task.
   tries again after more growth). A run that can never reach such a moment
   stops `RUN_HISTORY_LIMIT` before the cluster's limit, its message naming the
   pin and the await or the size of its saved state.
+
+A run's record says when it is holding work back: `Run.dispatch_hold` is
+`RUN_DISPATCH_HOLD_IN_FLIGHT_CAP` while tasks wait `PENDING` behind its in-flight
+cap and `RUN_DISPATCH_HOLD_CARRYING_ON` while it starts nothing new so it can
+carry on, as of its last event, and unset while nothing waits, while it is
+paused and once it has finished. Each task or item it holds back that could
+otherwise start says so in its `pending_reason` (`held: the run is at its
+in-flight limit`, `held: the run is carrying on`); one that still waits on
+its needs does not. While a run is paused, by its own pause or its
+parent's, a task or item an interruption put back says `held: the run is
+paused`, with `(its wait to run again ends at <time>)` while that wait is
+ahead, since it starts again only once the run is unpaused; every other task
+keeps its own reason.
 
 How to read it: the engine logs `run reached its in-flight cap`, `run will
 carry on into a fresh history at its next idle point`, `run pausing new tasks
@@ -5960,6 +6027,37 @@ A gauge reports its last good reading, and nothing after a pass that failed.
 Every replica reports the deployment's whole count, so aggregate
 `ork.runs.open` across replicas with `max`, never `sum`. `ork.runs.open` is
 counted only when the default sink exports metrics.
+
+#### The concurrency census
+
+The concurrency census is an internal Temporal Schedule (`ork-conc-census`,
+every `engine.concurrency.census_interval`), which each boot creates if absent
+and updates only when its settings changed. Each fire reads every concurrency
+gate's state, at most `engine.concurrency.census_parallel` at once and
+`engine.concurrency.census_max_gates` in all, and counts the runs queued for a
+slot. The replica that ran a pass reports it on the default sink; every
+replica reports its own snapshot while it is newer than twice the interval
+plus `engine.concurrency.census_timeout`, and its age always, so read these
+gauges across replicas with `max`. It decides nothing. No Orkflow can declare
+a concurrency limit yet, so there are no gates: every pass reads none, and the
+gauges below report no slots, keys or queues until one can.
+
+| Gauge | Labels | Means |
+|---|---|---|
+| `ork.concurrency.slots.used`, `.slots.limit` | `ork.namespace`, `ork.concurrency.limit`, `ork.concurrency.level` | slots held, and slots the active keys admit |
+| `ork.concurrency.keys.active`, `.keys.full` | `ork.namespace`, `ork.concurrency.limit` | keys holding or queueing anything, and those with every slot held |
+| `ork.concurrency.queue.depth`, `.queue.oldest_age`, `.queue.oldest_timeout_fraction` | `ork.namespace`, `ork.concurrency.limit`, `ork.concurrency.level` | entries queued, how long the oldest has waited, and that as a share of its bound |
+| `ork.concurrency.stalled_holders`, `.fence_degraded` | `ork.namespace`, `ork.concurrency.limit` | holders whose runs keep failing their workflow tasks, and gates checking new holders because they dropped a live fence |
+| `ork.concurrency.rebuilding` | `ork.namespace`, `ork.concurrency.state` (`running`, `failing`) | gates rebuilding their record |
+| `ork.concurrency.queued_runs` | `ork.namespace` | runs queued for a slot; absent, not zero, when the pass could not count them |
+| `ork.concurrency.census.partial` | `ork.namespace` | 1 when a gate of the namespace did not answer |
+| `ork.concurrency.census.gates`, `.unanswered`, `.truncated` | — | gates read, gates that did not answer, and 1 when the pass stopped at `census_max_gates` |
+| `ork.concurrency.census.unavailable` | — | 1 when the pass could not run; nothing else of that pass is reported |
+| `ork.concurrency.census.duration`, `.local_age`, `.interval` | — | seconds: the last pass, this replica's snapshot age, and the interval |
+| `ork.concurrency.index_unavailable` | — | 1 when the cluster does not index concurrency limits (`concurrency_index=false` at boot) |
+
+`ork.concurrency.limit` is a limit's template cut to 64 bytes, then `#` and
+eight hex digits of its SHA-256, never a rendered key.
 
 #### The store clock
 

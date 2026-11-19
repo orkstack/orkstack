@@ -1083,8 +1083,13 @@ func RevokeToken(ctx context.Context, client *http.Client, endpoint, clientID, s
 
 // SigninListing is one sign-in as AccessService lists it.
 type SigninListing struct {
-	PublicID       string
-	PrincipalID    string
+	PublicID    string
+	PrincipalID string
+	// Display, Issuer and Groups are the principal's as of the sign-in's
+	// last validation, for the People list.
+	Display        string
+	Issuer         string
+	Groups         []string
 	CreatedAt      time.Time
 	ExpiresAt      time.Time
 	ValidatedUntil time.Time
@@ -1123,7 +1128,8 @@ func (s *Signins) List(ctx context.Context, principal string) ([]SigninListing, 
 			if principal != "" && rec.Principal.ID != principal {
 				continue
 			}
-			out = append(out, SigninListing{PublicID: rec.PublicID, PrincipalID: rec.Principal.ID, CreatedAt: rec.CreatedAt,
+			out = append(out, SigninListing{PublicID: rec.PublicID, PrincipalID: rec.Principal.ID,
+				Display: rec.Principal.Display, Issuer: rec.Issuer, Groups: rec.Principal.Groups, CreatedAt: rec.CreatedAt,
 				ExpiresAt: rec.ExpiresAt, ValidatedUntil: rec.ValidatedUntil, IdleExpiresAt: rec.IdleExpiresAt, id: id})
 		}
 		if !more || len(ids) == 0 {

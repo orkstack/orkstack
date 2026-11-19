@@ -36,6 +36,7 @@ import (
 	"github.com/orkstack/orkstack/internal/enumname"
 	"github.com/orkstack/orkstack/internal/testsupport/localcatalog"
 	"github.com/orkstack/orkstack/internal/testsupport/proof"
+	"github.com/orkstack/orkstack/internal/testsupport/testbin"
 
 	"github.com/orkstack/orkstack/internal/testsupport/must"
 )
@@ -99,7 +100,7 @@ func (x *examplesStack) run(args ...string) (string, string, int) {
 	full := append(append([]string(nil), args...), "--server", "http://"+x.replicas[0].addr)
 	cmd := exec.CommandContext(x.ctx, x.orkctlPath, full...)
 	cmd.Dir = x.root
-	cmd.Env = append(os.Environ(), serverEnvVar+"=", namespaceEnvVar+"=", configEnvVar+"="+x.configPath)
+	cmd.Env = append(testbin.StackEnv(os.Environ()), serverEnvVar+"=", namespaceEnvVar+"=", configEnvVar+"="+x.configPath)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
@@ -728,6 +729,7 @@ func ensureExampleImages(ctx context.Context, t *testing.T, orkctlPath, root str
 			tag := fmt.Sprintf("%s/orkstack-examples/%s:%s", localcatalog.Registry(), dir, exampleImageTag())
 			cmd := exec.CommandContext(ctx, orkctlPath, "activity", "build", "examples/"+dir, "--tag", tag)
 			cmd.Dir = root
+			cmd.Env = testbin.StackEnv(os.Environ())
 			out, err := cmd.CombinedOutput()
 			fmt.Fprintf(&log, "$ orkctl activity build examples/%s --tag %s\n%s\n", dir, tag, out)
 			if err != nil {
