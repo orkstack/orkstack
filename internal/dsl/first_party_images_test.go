@@ -492,44 +492,34 @@ func TestFirstPartyImages_SharedHelpersAreByteIdentical(t *testing.T) {
 	}
 }
 
+// gomplateImage is the Dockerfile's gomplate stage: the project's own image
+// for a release, by its tag and the digest of its multi-arch index.
+var gomplateImage = regexp.MustCompile(`(?m)^FROM docker\.io/hairyhenderson/gomplate:v(\d+\.\d+\.\d+)@sha256:[0-9a-f]{64} AS gomplate$`)
+
 func TestActivityTemplate_GomplateIsAPinnedVerifiedRelease(t *testing.T) {
 	dockerfile := readImageFile(t, "activity-template", "Dockerfile")
-	// The shape of a pinned, verified release, not which release: a bump
-	// changes the version and the two digests together, and this holds
-	// whichever it moves to.
-	sums := map[string]string{}
-	for _, want := range []struct{ what, pattern string }{
-		{"a release version (semver)", `(?m)^ARG GOMPLATE_VERSION=\d+\.\d+\.\d+$`},
-		{"an https download base", `(?m)^ARG GOMPLATE_BASE_URL=https://\S+$`},
-		{"the asset of that version, for the architecture being built",
-			`"\$\{GOMPLATE_BASE_URL\}/v\$\{GOMPLATE_VERSION\}/\S*\$\{TARGETARCH\}"`},
-		{"a SHA-256 for amd64", `(?m)^ARG GOMPLATE_SHA256_AMD64=[0-9a-f]{64}$`},
-		{"a SHA-256 for arm64", `(?m)^ARG GOMPLATE_SHA256_ARM64=[0-9a-f]{64}$`},
-		{"each architecture checked against its own SHA-256",
-			`amd64\) sum="\$GOMPLATE_SHA256_AMD64"[\s\S]*arm64\) sum="\$GOMPLATE_SHA256_ARM64"`},
-		{"the download checked before it is installed", `sha256sum -c`},
-	} {
-		if !regexp.MustCompile(want.pattern).MatchString(dockerfile) {
-			t.Errorf("Dockerfile lacks %s (/%s/)", want.what, want.pattern)
-		}
+	// The shape of a pinned official image, not which release: a bump
+	// changes the tag and the digest together, and this holds whichever it
+	// moves to.
+	if !gomplateImage.MatchString(dockerfile) {
+		t.Errorf("Dockerfile has no gomplate stage from hairyhenderson/gomplate:vX.Y.Z pinned by digest (/%s/)", gomplateImage)
 	}
-	for _, m := range regexp.MustCompile(`(?m)^ARG GOMPLATE_SHA256_(AMD64|ARM64)=(\S+)$`).FindAllStringSubmatch(dockerfile, -1) {
-		sums[m[1]] = m[2]
+	if !regexp.MustCompile(`(?m)^COPY --from=gomplate --chmod=0555 /gomplate /usr/local/bin/gomplate$`).MatchString(dockerfile) {
+		t.Error("Dockerfile does not copy the image's /gomplate into /usr/local/bin, read-only and executable")
 	}
-	if len(sums) == 2 && sums["AMD64"] == sums["ARM64"] {
-		t.Errorf("both architectures pin the same SHA-256 %s: one of them is not a checksum of its own binary", sums["AMD64"])
-	}
-	for _, forbidden := range []string{"go install", "golang:"} {
+	// Fetching the binary at build time is what a shared runner's rate limit
+	// refused; a registry pull of the pinned image is what replaces it.
+	for _, forbidden := range []string{"go install", "golang:", "releases/download", "wget ", "curl "} {
 		if strings.Contains(dockerfile, forbidden) {
-			t.Errorf("Dockerfile contains %q: gomplate must be the published release binary, not a build", forbidden)
+			t.Errorf("Dockerfile contains %q: gomplate must be the published image's binary, neither built nor downloaded", forbidden)
 		}
 	}
 }
 
 func TestActivityTemplate_CachingInventoryNamesThePinnedVersion(t *testing.T) {
-	m := regexp.MustCompile(`(?m)^ARG GOMPLATE_VERSION=(\S+)$`).FindStringSubmatch(readImageFile(t, "activity-template", "Dockerfile"))
+	m := gomplateImage.FindStringSubmatch(readImageFile(t, "activity-template", "Dockerfile"))
 	if m == nil {
-		t.Fatal("Dockerfile has no ARG GOMPLATE_VERSION=")
+		t.Fatal("Dockerfile has no pinned gomplate image")
 	}
 	caching := markdownSection(t, readImageFile(t, "activity-template", "README.md"), "Caching")
 	if !strings.Contains(caching, "gomplate "+m[1]) {
