@@ -5586,6 +5586,7 @@ ReleaseBlockerKind names why a release may not take new runs right now.
 | `RELEASE_BLOCKER_KIND_PINS_NOT_HOSTED` | 3 | PINS_NOT_HOSTED: `pool` has a pin host of another release and no uncordoned Orker of this release in it hosts pins. |
 | `RELEASE_BLOCKER_KIND_UNVERSIONED_RUNS` | 4 | UNVERSIONED_RUNS: no release is current yet and runs started before any was are still executing; making this release take new runs would move them onto it mid-run. |
 | `RELEASE_BLOCKER_KIND_UNVERIFIED` | 5 | UNVERIFIED: part of the evidence could not be read, so the release cannot be shown to pass. Never treated as passing. |
+| `RELEASE_BLOCKER_KIND_CAPABILITY_MISSING` | 6 | CAPABILITY_MISSING: an engine process of the release lacks a capability that runs still open need, such as concurrency limits while a run with a limit is open, so sending new runs to it could leave those limits held by no one. |
 
 ### ReleaseDrainState
 
