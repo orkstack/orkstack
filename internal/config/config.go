@@ -252,6 +252,42 @@ var Schema = []Var{
 	// pause's default length and its longest, pinned into every run's plan.
 	{Path: "engine.run_pause_timeout", Env: "ORK_RUN_PAUSE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultRunPauseTimeout)},
 	{Path: "engine.run_pause_timeout_max", Env: "ORK_RUN_PAUSE_TIMEOUT_MAX", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultRunPauseTimeoutMax)},
+	// engine.concurrency.* (E88): the concurrency gates' own settings, decided
+	// by the acquire that starts a gate and carried by it until it closes, and
+	// the census's. Each default is engine.DefaultGateTunables' or
+	// engine.DefaultCensusSettings'.
+	{Path: "engine.concurrency.max_entries", Env: "ORK_CONCURRENCY_MAX_ENTRIES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().MaxEntries))},
+	{Path: "engine.concurrency.max_tombstones", Env: "ORK_CONCURRENCY_MAX_TOMBSTONES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().MaxTombstones))},
+	{Path: "engine.concurrency.max_labels", Env: "ORK_CONCURRENCY_MAX_LABELS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().MaxLabels))},
+	{Path: "engine.concurrency.acquire_timeout", Env: "ORK_CONCURRENCY_ACQUIRE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().AcquireTimeout)},
+	{Path: "engine.concurrency.clock_grace", Env: "ORK_CONCURRENCY_CLOCK_GRACE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().ClockGrace)},
+	{Path: "engine.concurrency.tombstone_margin", Env: "ORK_CONCURRENCY_TOMBSTONE_MARGIN", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().TombstoneMargin)},
+	{Path: "engine.concurrency.verify_min_age", Env: "ORK_CONCURRENCY_VERIFY_MIN_AGE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().VerifyMinAge)},
+	{Path: "engine.concurrency.verify_debounce", Env: "ORK_CONCURRENCY_VERIFY_DEBOUNCE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().VerifyDebounce)},
+	{Path: "engine.concurrency.verify_await", Env: "ORK_CONCURRENCY_VERIFY_AWAIT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().VerifyAwait)},
+	{Path: "engine.concurrency.verify_parallel", Env: "ORK_CONCURRENCY_VERIFY_PARALLEL", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().VerifyParallel))},
+	{Path: "engine.concurrency.verify_batch", Env: "ORK_CONCURRENCY_VERIFY_BATCH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().VerifyBatch))},
+	{Path: "engine.concurrency.verify_timeout", Env: "ORK_CONCURRENCY_VERIFY_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().VerifyTimeout)},
+	{Path: "engine.concurrency.task_ack_grace", Env: "ORK_CONCURRENCY_TASK_ACK_GRACE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().TaskAckGrace)},
+	{Path: "engine.concurrency.task_confirm_batch", Env: "ORK_CONCURRENCY_TASK_CONFIRM_BATCH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().TaskConfirmBatch))},
+	{Path: "engine.concurrency.stalled_after", Env: "ORK_CONCURRENCY_STALLED_AFTER", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().StalledAfter)},
+	{Path: "engine.concurrency.holder_sweep_interval", Env: "ORK_CONCURRENCY_HOLDER_SWEEP_INTERVAL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().HolderSweepInterval)},
+	{Path: "engine.concurrency.grant_backoff_min", Env: "ORK_CONCURRENCY_GRANT_BACKOFF_MIN", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().GrantBackoffMin)},
+	{Path: "engine.concurrency.grant_backoff_max", Env: "ORK_CONCURRENCY_GRANT_BACKOFF_MAX", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().GrantBackoffMax)},
+	{Path: "engine.concurrency.rebuild_page_timeout", Env: "ORK_CONCURRENCY_REBUILD_PAGE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().RebuildPageTimeout)},
+	{Path: "engine.concurrency.rebuild_settle", Env: "ORK_CONCURRENCY_REBUILD_SETTLE", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().RebuildSettle)},
+	{Path: "engine.concurrency.rebuild_backoff_min", Env: "ORK_CONCURRENCY_REBUILD_BACKOFF_MIN", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().RebuildBackoffMin)},
+	{Path: "engine.concurrency.rebuild_backoff_max", Env: "ORK_CONCURRENCY_REBUILD_BACKOFF_MAX", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().RebuildBackoffMax)},
+	{Path: "engine.concurrency.rebuild_timeout", Env: "ORK_CONCURRENCY_REBUILD_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().RebuildTimeout)},
+	{Path: "engine.concurrency.freeze_timeout", Env: "ORK_CONCURRENCY_FREEZE_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().FreezeTimeout)},
+	{Path: "engine.concurrency.drain_margin", Env: "ORK_CONCURRENCY_DRAIN_MARGIN", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().DrainMargin)},
+	{Path: "engine.concurrency.gate_continue_events", Env: "ORK_CONCURRENCY_GATE_CONTINUE_EVENTS", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().ContinueEvents))},
+	{Path: "engine.concurrency.gate_continue_updates", Env: "ORK_CONCURRENCY_GATE_CONTINUE_UPDATES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultGateTunables().ContinueUpdates))},
+	{Path: "engine.concurrency.gate_linger", Env: "ORK_CONCURRENCY_GATE_LINGER", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultGateTunables().Linger)},
+	{Path: "engine.concurrency.census_interval", Env: "ORK_CONCURRENCY_CENSUS_INTERVAL", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultCensusSettings().Interval)},
+	{Path: "engine.concurrency.census_timeout", Env: "ORK_CONCURRENCY_CENSUS_TIMEOUT", Binaries: usesOrk, Kind: KindDuration, Default: formatDuration(engine.DefaultCensusSettings().Timeout)},
+	{Path: "engine.concurrency.census_max_gates", Env: "ORK_CONCURRENCY_CENSUS_MAX_GATES", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultCensusSettings().MaxGates))},
+	{Path: "engine.concurrency.census_parallel", Env: "ORK_CONCURRENCY_CENSUS_PARALLEL", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultCensusSettings().Parallel))},
 	// ORK_COMPOSE_MAX_DEPTH's fallback is engine.DefaultComposeMaxDepth, the
 	// built-in ceiling (engine.MaxComposeDepth) it may lower and never raise.
 	{Path: "engine.compose_max_depth", Env: "ORK_COMPOSE_MAX_DEPTH", Binaries: usesOrk, Kind: KindInt, Default: formatInt(int64(engine.DefaultComposeMaxDepth))},

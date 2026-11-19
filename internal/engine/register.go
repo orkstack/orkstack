@@ -54,6 +54,21 @@ func RegisterWorkflows(w WorkflowRegistrar) {
 		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
 	})
 
+	// AutoUpgrade, for the claim's reason: a concurrency gate holds a key for
+	// as long as runs hold or queue at it, so pinning it would keep a version
+	// from draining. Its commands come from its carried state, and every later
+	// change to them takes a concurrency-gate-<change> GetVersion (E88 §5.1.10).
+	w.RegisterWorkflowWithOptions(ConcurrencyGateWorkflow, workflow.RegisterOptions{
+		Name:               ConcurrencyGateWorkflowType,
+		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
+	})
+	// AutoUpgrade: a census fire is one local activity on a Schedule the
+	// engine owns, and pins no version a release would wait on.
+	w.RegisterWorkflowWithOptions(ConcurrencyCensusWorkflow, workflow.RegisterOptions{
+		Name:               ConcurrencyCensusWorkflowType,
+		VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
+	})
+
 	// Pinned, for the reason RunWorkflow is and with none of the cost the
 	// claim workflow avoids: a fire lives exactly as long as the run it
 	// started, which is pinned to the same version, so it holds no version

@@ -14,11 +14,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 )
@@ -484,7 +486,7 @@ func readKeyFile(path string) (string, error) {
 }
 
 func newAdminPrincipalCommand(g *globalFlags) *cobra.Command {
-	cmd := &cobra.Command{Use: "principal", Short: "Disable and enable principals"}
+	cmd := &cobra.Command{Use: "principal", Short: "List the principals seen to sign in, and disable and enable principals"}
 	set := func(verb string, disabled bool) *cobra.Command {
 		return &cobra.Command{
 			Use: verb + " PRINCIPAL", Short: strings.ToUpper(verb[:1]) + verb[1:] + " a principal, whatever it presents", Args: cobra.ExactArgs(1),
@@ -504,8 +506,103 @@ func newAdminPrincipalCommand(g *globalFlags) *cobra.Command {
 			},
 		}
 	}
-	cmd.AddCommand(set("disable", true), set("enable", false))
+	cmd.AddCommand(newAdminPrincipalListCommand(g), set("disable", true), set("enable", false))
 	return cmd
+}
+
+// newAdminPrincipalListCommand is AccessService.ListPrincipals: the people
+// and services seen to sign in over a window, newest sign-in first, as Access
+// → People lists them.
+func newAdminPrincipalListCommand(g *globalFlags) *cobra.Command {
+	var (
+		window      time.Duration
+		limit       int32
+		pageToken   string
+		filterTexts *[]string
+	)
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List the principals seen to sign in over a window, newest first",
+		Long: "List the principals seen to sign in over a window, newest sign-in first: read\n" +
+			"from the audit trail's sign-in events and the sign-ins alive now, with whether\n" +
+			"each is disabled and how many sign-ins it holds. Nothing stores this list; it\n" +
+			"is derived on each read. A window whose audit trail is too large to read in\n" +
+			"one step is refused: ask for a shorter --window.",
+		Example: "  orkctl admin principal list --window 168h --filter 'issuer=corp'",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			filters, err := parseFilterFlags(*filterTexts)
+			if err != nil {
+				return err
+			}
+			if window < 0 || limit < 0 {
+				return errors.New("--window and --limit must not be negative")
+			}
+			req := &orkstackv1.ListPrincipalsRequest{Filters: filters, PageSize: limit, PageToken: pageToken}
+			if window > 0 {
+				req.Window = durationpb.New(window)
+			}
+			ctx, cancel := g.unaryContext(cmd)
+			defer cancel()
+			resp, err := g.accessClient().ListPrincipals(ctx, connect.NewRequest(req))
+			if err != nil {
+				// A window too large to read is the engine's refusal, said with
+				// what to type next; it is never retried with another window.
+				if connect.CodeOf(err) == connect.CodeResourceExhausted {
+					return fmt.Errorf("%w\nAsk for a shorter window: --window %s", rpcError("admin principal list", err), shorterWindow(window))
+				}
+				return rpcError("admin principal list", err)
+			}
+			if g.json {
+				return writeJSON(cmd.OutOrStdout(), resp.Msg)
+			}
+			out := cmd.OutOrStdout()
+			since := formatTime(resp.Msg.GetWindowStart())
+			switch {
+			case len(resp.Msg.GetPrincipals()) == 0 && len(filters) > 0:
+				fmt.Fprint(out, noMatchSentence("principals", filters))
+			case len(resp.Msg.GetPrincipals()) == 0:
+				fmt.Fprintf(out, "No principal signed in since %s.\n", since)
+			default:
+				table := newTable(out)
+				fmt.Fprintln(table, "PRINCIPAL\tNAME\tISSUER\tLAST SEEN\tSIGN-INS\tDISABLED")
+				for _, p := range resp.Msg.GetPrincipals() {
+					disabled := "no"
+					if p.GetDisabled() {
+						disabled = "yes"
+					}
+					fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%d\t%s\n", p.GetId(), orDash(p.GetDisplay()), orDash(p.GetIssuer()),
+						formatTime(p.GetLastSeen()), p.GetActiveSignins(), disabled)
+				}
+				if err := table.Flush(); err != nil {
+					return fmt.Errorf("write output: %w", err)
+				}
+				fmt.Fprintf(out, "Seen since %s.\n", since)
+			}
+			if next := resp.Msg.GetNextPageToken(); next != "" {
+				fmt.Fprintf(out, "\nNext page: %s\n", nextPageCommand([]string{"admin", "principal", "list"}, filters, limit, next))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().DurationVar(&window, "window", 0, "how far back sign-ins are read (0 = server default, 30 days)")
+	cmd.Flags().Int32Var(&limit, "limit", 0, "principals per page (0 = server default, 100; at most 500)")
+	cmd.Flags().StringVar(&pageToken, "page-token", "", "page token from a previous listing with the same filters")
+	filterTexts = addFilterFlag(cmd, &orkstackv1.ListPrincipalsRequest{})
+	return cmd
+}
+
+// shorterWindow is the next window to ask for after asked (0 = the server's
+// thirty days) was refused as too large: 7 days, then 24 hours, then 1 hour.
+func shorterWindow(asked time.Duration) string {
+	switch {
+	case asked == 0 || asked > 7*24*time.Hour:
+		return "168h"
+	case asked > 24*time.Hour:
+		return "24h"
+	default:
+		return "1h"
+	}
 }
 
 func newAdminAccessCommand(g *globalFlags) *cobra.Command {

@@ -136,7 +136,7 @@ func startObservedReplica(
 	t.Helper()
 	addr := freeAddress(t)
 	cmd := exec.CommandContext(ctx, enginePath)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(testbin.StackEnv(os.Environ()),
 		"ORK_HTTP_ADDR="+addr,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddr,
 		"ORK_TEMPORAL_NAMESPACE="+namespace,

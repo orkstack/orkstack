@@ -4,6 +4,8 @@ import (
 	"debug/elf"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,5 +98,101 @@ func TestOrkerEnv_GivesAnOrkerNoStopGraceUnlessTheTestNamesOne(t *testing.T) {
 		if strings.Join(in, "|") != strings.Join(tc.env, "|") {
 			t.Errorf("%s: OrkerEnv changed its argument to %q", tc.name, in)
 		}
+	}
+}
+
+// TestGoBuildEnv_DropsWhatChangesTheBinary: a shell's target, flags and
+// experiments never reach the build of a binary under test; everything else
+// does, a near-miss name and an entry with no value included.
+func TestGoBuildEnv_DropsWhatChangesTheBinary(t *testing.T) {
+	tests := []struct {
+		name string
+		env  []string
+		want []string
+	}{
+		{"empty", nil, []string{}},
+		{"nothing to drop", []string{"PATH=/bin", "HOME=/h"}, []string{"PATH=/bin", "HOME=/h"}},
+		{"a polluted shell", []string{"PATH=/bin", "GOFLAGS=-tags=x", "GOOS=plan9", "GOARCH=386",
+			"GOEXPERIMENT=nocoverageredesign", "CGO_ENABLED=0", "GOAMD64=v4", "GOARM64=v9.0", "HOME=/h", "GOCACHE=/c"},
+			[]string{"PATH=/bin", "HOME=/h", "GOCACHE=/c"}},
+		{"near-miss names stay", []string{"GOFLAGSX=1", "XGOOS=1", "GOOS"}, []string{"GOFLAGSX=1", "XGOOS=1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := slices.Clone(tt.env)
+			if got := GoBuildEnv(in); !slices.Equal(got, tt.want) {
+				t.Errorf("GoBuildEnv(%q) = %q, want %q", tt.env, got, tt.want)
+			}
+			if !slices.Equal(in, tt.env) {
+				t.Errorf("GoBuildEnv changed its argument to %q", in)
+			}
+		})
+	}
+}
+
+// TestStackEnv_DropsTheShellsOwnDeployment: a configuration file, an admin
+// listener, pprof and a TLS or API-key Temporal connection that a developer's
+// shell holds never reach a process under test; what the proof and CI hand a
+// stack passes through, and a value the test appends after it wins.
+func TestStackEnv_DropsTheShellsOwnDeployment(t *testing.T) {
+	handed := []string{"ORK_TEMPORAL_ADDRESS=127.0.0.1:7233", "ORK_TEMPORAL_NAMESPACE=ork-p1", "ORK_S3_ENDPOINT=http://s3",
+		"ORK_DOCKER_CLI=podman", "ORK_DOCKER_BIN=/usr/bin/podman", "ORK_ORKER_WORKDIR=/w", "PATH=/bin"}
+	shells := []string{"ORK_CONFIG_FILE=/etc/ork.yaml", "ORK_ADMIN_ADDR=127.0.0.1:9464", "ORK_PPROF_ENABLED=true",
+		"ORK_TEMPORAL_TLS_ENABLED=true", "ORK_TEMPORAL_TLS_CA_FILE=/ca", "ORK_TEMPORAL_TLS_CERT_FILE=/c",
+		"ORK_TEMPORAL_TLS_KEY_FILE=/k", "ORK_TEMPORAL_TLS_SERVER_NAME=t", "ORK_TEMPORAL_API_KEY_FILE=/key"}
+	tests := []struct {
+		name string
+		env  []string
+		want []string
+	}{
+		{"empty", nil, []string{}},
+		{"what the proof and CI hand a stack", handed, handed},
+		{"the shell's own deployment", append(slices.Clone(shells), handed...), handed},
+		{"near-miss names stay", []string{"ORK_CONFIG_FILEX=1", "ORK_TEMPORAL_TLS=1"}, []string{"ORK_CONFIG_FILEX=1", "ORK_TEMPORAL_TLS=1"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := StackEnv(tt.env); !slices.Equal(got, tt.want) {
+				t.Errorf("StackEnv =\n%q\nwant\n%q", got, tt.want)
+			}
+		})
+	}
+	// A test's own setting, appended after StackEnv, is the one the child
+	// reads: exec keeps the last of duplicate names.
+	env := append(StackEnv([]string{"ORK_TEMPORAL_TLS_CA_FILE=/shell"}), "ORK_TEMPORAL_TLS_CA_FILE=/test")
+	if !slices.Equal(env, []string{"ORK_TEMPORAL_TLS_CA_FILE=/test"}) {
+		t.Errorf("StackEnv then the test's own = %q, want only the test's", env)
+	}
+}
+
+// TestCompile_IgnoresTheShellsGoTarget: with GOOS, GOARCH and GOFLAGS set for
+// another platform in the environment, as a cross-compiling shell has them,
+// the binary a test runs is still this host's.
+func TestCompile_IgnoresTheShellsGoTarget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a binary")
+	}
+	t.Cleanup(Cleanup)
+	t.Setenv("GOOS", "plan9")
+	t.Setenv("GOARCH", "386")
+	t.Setenv("GOFLAGS", "-tags=testbin_polluted")
+	got, err := compile("./test/tools/deaf-poller", "deaf-poller-polluted", false)
+	must.OK(t, err)
+	f, err := elf.Open(got)
+	if err != nil {
+		t.Fatalf("%s is not this host's executable: %v", got, err)
+	}
+	defer f.Close()
+	if want := hostMachine(); f.Machine != want {
+		t.Fatalf("%s is built for %v, want this host's %v", got, f.Machine, want)
+	}
+}
+
+func hostMachine() elf.Machine {
+	switch runtime.GOARCH {
+	case "arm64":
+		return elf.EM_AARCH64
+	default:
+		return elf.EM_X86_64
 	}
 }

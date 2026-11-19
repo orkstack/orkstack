@@ -1,0 +1,16 @@
+ORKER        POOL   BUILD  STATE                                 TASKS  PINS  PROFILES                             CAPACITY  RESERVED  LAST SEEN
+orker-none   build  -      ready                                 0      -     -                                    -         -         2026-09-22T09:14:02Z
+orker-both   gpu    -      cordoned (operator; profile drifted)  0      -     a100 (gpu; drifted)                  -         -         2026-09-22T09:14:02Z
+orker-drift  gpu    -      cordoned (profile drifted)            0      -     a100 (gpu; drifted), fpga (devices)  -         -         2026-09-22T09:14:02Z
+orker-ok     gpu    -      ready                                 1      -     a100 (gpu), fpga (devices)           -         -         2026-09-22T09:14:02Z
+orker-out    gpu    -      cordoned (profile out of service)     0      -     fpga (devices; out of service)       -         -         2026-09-22T09:14:02Z
+orker-wait   gpu    -      cordoned (profile unavailable)        0      -     fpga (devices; unavailable)          -         -         2026-09-22T09:14:02Z
+
+1 orker is cordoned and is accepting no new work:
+  orker-both: "patching", since 2026-09-22T08:52:10Z
+
+4 orkers cordoned by a profile; what holds each, and how it ends:
+  orker-both: Profile a100 drifted since 2026-09-22T08:54:10Z: its device spec changed (SPEC_CHANGED). It stays out of service on this Orker until the Orker restarts.
+  orker-drift: Profile a100 drifted since 2026-09-22T08:54:10Z: a device was replaced, or changed its numbers or group (DEVICE_CHANGED). It stays out of service on this Orker until the Orker restarts.
+  orker-out: Profile fpga out of service since 2026-09-22T08:54:10Z: the Orker found a fault (REASON_99), for a cause this release cannot read. The Orker takes no work from its pool; see orkctl orker get.
+  orker-wait: Profile fpga unavailable since 2026-09-22T08:54:10Z: a device is not there (DEVICE_ABSENT). Once that is put right, it returns by itself after consecutive good checks.

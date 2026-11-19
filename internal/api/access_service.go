@@ -36,6 +36,7 @@ var accessServiceServed = []string{
 	orkstackv1connect.AccessServiceListAccessRevisionsProcedure,
 	orkstackv1connect.AccessServiceGetAccessRevisionProcedure,
 	orkstackv1connect.AccessServiceAcknowledgeAccessRevisionProcedure,
+	orkstackv1connect.AccessServiceListPrincipalsProcedure,
 	orkstackv1connect.AccessServiceListSigninsProcedure,
 	orkstackv1connect.AccessServiceRevokeSigninsProcedure,
 }

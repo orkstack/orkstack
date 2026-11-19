@@ -1,0 +1,12 @@
+orker           orker-drift
+pool            gpu
+build           -
+state           cordoned (profile drifted)
+reason          -
+since           -
+profile a100    gpu, drifted, 1 of 3 usable units in use; 1 unhealthy
+profile fpga    devices
+profile cordon  Profile a100 drifted since 2026-09-22T08:54:10Z: a device was replaced, or changed its numbers or group (DEVICE_CHANGED). It stays out of service on this Orker until the Orker restarts.
+tasks           0
+pins            -
+last seen       2026-09-22T09:14:02Z

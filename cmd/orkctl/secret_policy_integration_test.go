@@ -566,7 +566,7 @@ func TestIntegration_AMalformedFloorStopsTheOrkerAtBoot(t *testing.T) {
 	} {
 		bootCtx, bootCancel := context.WithTimeout(ctx, 90*time.Second)
 		cmd := exec.CommandContext(bootCtx, orkerPath)
-		cmd.Env = testbin.OrkerEnv(append(os.Environ(),
+		cmd.Env = testbin.OrkerEnv(append(testbin.StackEnv(os.Environ()),
 			"ORK_TEMPORAL_ADDRESS="+address,
 			"ORK_TEMPORAL_NAMESPACE="+partition,
 			"ORK_ORKER_QUEUE="+idempotencyTaskQueue()+"-boot",

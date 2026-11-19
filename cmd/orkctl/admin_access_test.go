@@ -196,3 +196,29 @@ func TestGetPrintsTheID(t *testing.T) {
 		t.Fatalf("orkflow get with no id printed:\n%s", out.String())
 	}
 }
+
+func TestAdminPrincipalList(t *testing.T) {
+	run := accessEngine(t)
+	out, errOut, code := run("admin", "principal", "list")
+	if code != 0 || !strings.Contains(out, "No principal signed in since ") {
+		t.Fatalf("list = %d %q %q", code, out, errOut)
+	}
+	out, _, code = run("admin", "principal", "list", "--window", "24h", "-j")
+	if code != 0 || !strings.Contains(out, `"windowStart"`) {
+		t.Fatalf("list -j = %d %q", code, out)
+	}
+	if _, errOut, code := run("admin", "principal", "list", "--filter", "groups=x"); code == 0 || !strings.Contains(errOut, "groups") {
+		t.Errorf("a filter not declared = %d %q, want refused naming it", code, errOut)
+	}
+	if _, errOut, code := run("admin", "principal", "list", "--window", "-1h"); code == 0 || !strings.Contains(errOut, "--window") {
+		t.Errorf("a negative window = %d %q, want refused", code, errOut)
+	}
+}
+
+func TestShorterWindow(t *testing.T) {
+	for asked, want := range map[time.Duration]string{0: "168h", 720 * time.Hour: "168h", 168 * time.Hour: "24h", 48 * time.Hour: "24h", 24 * time.Hour: "1h", time.Hour: "1h"} {
+		if got := shorterWindow(asked); got != want {
+			t.Errorf("shorterWindow(%v) = %q, want %q", asked, got, want)
+		}
+	}
+}

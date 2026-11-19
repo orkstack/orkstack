@@ -340,9 +340,13 @@ func TestRegisterEngineWorkflows_DeclaresPinnedForRunsAndAutoUpgradeForClaims(t 
 	engine.RegisterWorkflows(&registered)
 
 	want := map[string]workflow.VersioningBehavior{
-		engine.RunWorkflowType:          workflow.VersioningBehaviorPinned,
-		engine.ClaimWorkflowType:        workflow.VersioningBehaviorAutoUpgrade,
-		engine.ScheduleFireWorkflowType: workflow.VersioningBehaviorPinned,
+		engine.RunWorkflowType:   workflow.VersioningBehaviorPinned,
+		engine.ClaimWorkflowType: workflow.VersioningBehaviorAutoUpgrade,
+		// The concurrency gate and census hold no version a release waits
+		// on (E88 §5.1.10).
+		engine.ConcurrencyGateWorkflowType:   workflow.VersioningBehaviorAutoUpgrade,
+		engine.ConcurrencyCensusWorkflowType: workflow.VersioningBehaviorAutoUpgrade,
+		engine.ScheduleFireWorkflowType:      workflow.VersioningBehaviorPinned,
 		// A delivery lives about a minute and never replays on a build it
 		// did not start on (docs/DEPLOY.md, "Why a webhook delivery is
 		// Pinned").

@@ -459,7 +459,7 @@ func startProcessHandle(ctx context.Context, t *testing.T, name, path string, en
 		env = append(env, localActivityCatalogEnv(t))
 	}
 	cmd := exec.CommandContext(ctx, path)
-	cmd.Env = testbin.OrkerEnv(append(os.Environ(), env...))
+	cmd.Env = testbin.OrkerEnv(append(testbin.StackEnv(os.Environ()), env...))
 	var log strings.Builder
 	cmd.Stdout = &log
 	cmd.Stderr = &log
@@ -524,7 +524,7 @@ func runBinary(ctx context.Context, t *testing.T, path, dir string, args ...stri
 	t.Helper()
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = dir
-	cmd.Env = testbin.OrkerEnv(os.Environ())
+	cmd.Env = testbin.OrkerEnv(testbin.StackEnv(os.Environ()))
 	var stdout, stderr strings.Builder
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
