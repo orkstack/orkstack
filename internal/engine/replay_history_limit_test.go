@@ -354,6 +354,9 @@ var carriedGenerations = map[string]bool{
 	"run-interruption-retry-item-continuation-g1-v1.json": true,
 	"pause-deferred-g1-v1.json":                           true,
 	"run-each-lines-carry-g1-v1.json":                     true,
+
+	"concurrency-run-holds-across-continue-g1-v1.json": true,
+	"concurrency-run-continue-gate-rebuild-v1.json":    true,
 }
 
 // continuedStackFixtureNames are the fixtures recorded under the
@@ -370,6 +373,12 @@ var continuedStackFixtureNames = []string{
 	"pause-indexed-continued-g0-v1.json", "pause-indexed-continued-g1-v1.json",
 	"pause-continued-carried-g0-v2.json", "pause-continued-carried-g1-v2.json",
 	"pause-deferred-g0-v1.json", "pause-deferred-g1-v1.json",
+	// TestIntegration_RecordConcurrencyRunHistories, which runs on the same stack.
+	"concurrency-run-granted-v1.json", "concurrency-run-queued-v1.json", "concurrency-run-requeued-v1.json",
+	"concurrency-run-queue-canceled-v1.json", "concurrency-run-queue-timeout-v1.json",
+	"concurrency-run-queue-timeout-rebuilding-v1.json", "concurrency-run-emit-failure-releases-v1.json",
+	"concurrency-run-holds-across-continue-g0-v1.json", "concurrency-run-holds-across-continue-g1-v1.json",
+	"concurrency-run-continue-gate-rebuild-v1.json",
 }
 
 // TestCommittedFixtures_StartWithFourArgumentsAndNoCarry: every committed
