@@ -82,22 +82,26 @@ type PausePlan struct {
 // signal's JSON with the proto's protojson names until the message is
 // generated; int64 fields accept protojson's string form.
 type pauseRequest struct {
-	Format          int32  `json:"format"`
-	Pause           bool   `json:"pause"`
-	Principal       string `json:"principal"`
-	Reason          string `json:"reason"`
-	TimeoutSeconds  int64  `json:"timeoutSeconds,string"`
-	RequestID       string `json:"requestId"`
-	Inherited       bool   `json:"inherited"`
-	ParentRunID     string `json:"parentRunId"`
-	CascadeSeq      int64  `json:"cascadeSeq,string"`
-	OriginExpiresAt string `json:"originExpiresAt"`
-	Depth           int64  `json:"depth,string"`
+	Format    int32  `json:"format"`
+	Pause     bool   `json:"pause"`
+	Principal string `json:"principal"`
+	// PrincipalVerified: OrkStack authenticated Principal (auth.mode observe
+	// or enforce); otherwise a gateway asserted it.
+	PrincipalVerified bool   `json:"principalVerified"`
+	Reason            string `json:"reason"`
+	TimeoutSeconds    int64  `json:"timeoutSeconds,string"`
+	RequestID         string `json:"requestId"`
+	Inherited         bool   `json:"inherited"`
+	ParentRunID       string `json:"parentRunId"`
+	CascadeSeq        int64  `json:"cascadeSeq,string"`
+	OriginExpiresAt   string `json:"originExpiresAt"`
+	Depth             int64  `json:"depth,string"`
 }
 
 // ownPause is the run's own pause: who, when, why, until when, and its timer.
 type ownPause struct {
 	by, reason, requestID string
+	verified              bool // by is a principal OrkStack authenticated
 	at, expiresAt         time.Time
 	timer                 workflow.Future
 	cancel                workflow.CancelFunc
@@ -127,6 +131,11 @@ type lastPause struct {
 	pause ownPause
 	end   pauseEnd
 	endAt time.Time
+	// endedBy is who unpaused it, and endedVerified whether OrkStack
+	// authenticated them; empty for a pause that timed out or that its run's
+	// end closed.
+	endedBy       string
+	endedVerified bool
 }
 
 // paused reports that either pause cause is present.
@@ -275,8 +284,8 @@ func (s *runState) applyDecodedPause(ctx workflow.Context, inFlight map[string]w
 			return false, s.deferPause(ctx, inFlight, req)
 		}
 		return false, s.historyLimitErrorNoting(ctx, inFlight, c, 0,
-			fmt.Sprintf("pause request %s from %s (asserted) was not applied, because recording it would pass that limit",
-				req.RequestID, principalOr(req.Principal)))
+			fmt.Sprintf("pause request %s from %s was not applied, because recording it would pass that limit",
+				req.RequestID, markedPrincipal(req.Principal, req.PrincipalVerified)))
 	}
 	s.applyPause(ctx, inFlight, req)
 	s.syncPauseIndex(ctx)
@@ -310,17 +319,18 @@ func (s *runState) applyPause(ctx workflow.Context, inFlight map[string]workflow
 			return
 		}
 		limit := s.pauseTimeout(req)
-		p := &ownPause{by: req.Principal, reason: req.Reason, requestID: req.RequestID, at: now, expiresAt: now.Add(limit)}
+		p := &ownPause{by: req.Principal, verified: req.PrincipalVerified, reason: req.Reason, requestID: req.RequestID,
+			at: now, expiresAt: now.Add(limit)}
 		p.timer, p.cancel = s.pauseTimer(ctx, limit)
 		s.pause = p
-		message := fmt.Sprintf("run paused by %s (asserted)", principalOr(req.Principal))
+		message := fmt.Sprintf("run paused by %s", markedPrincipal(req.Principal, req.PrincipalVerified))
 		if req.Reason != "" {
 			message += ": " + req.Reason
 		}
 		message += fmt.Sprintf("; running tasks finish, nothing new starts; ends as failed at %s unless unpaused",
 			formatInstant(p.expiresAt))
 		if wasPaused {
-			message = fmt.Sprintf("run also paused by %s (asserted)", principalOr(req.Principal))
+			message = fmt.Sprintf("run also paused by %s", markedPrincipal(req.Principal, req.PrincipalVerified))
 		}
 		s.becomePaused(ctx, inFlight, req, message)
 	case !req.Pause && !req.Inherited:
@@ -331,12 +341,14 @@ func (s *runState) applyPause(ctx workflow.Context, inFlight map[string]workflow
 			return
 		}
 		s.endOwnPause(now, pauseEndUnpaused)
+		s.lastPause.endedBy, s.lastPause.endedVerified = req.Principal, req.PrincipalVerified
+		by := markedPrincipal(req.Principal, req.PrincipalVerified)
 		if s.paused() {
-			s.becomePaused(ctx, inFlight, req, fmt.Sprintf("own pause lifted by %s (asserted); still paused because parent run %s is paused",
-				principalOr(req.Principal), s.pausedByParent.parentRunID))
+			s.becomePaused(ctx, inFlight, req, fmt.Sprintf("own pause lifted by %s; still paused because parent run %s is paused",
+				by, s.pausedByParent.parentRunID))
 			return
 		}
-		s.becomeUnpaused(ctx, inFlight, req, fmt.Sprintf("run unpaused by %s (asserted)", principalOr(req.Principal)))
+		s.becomeUnpaused(ctx, inFlight, req, fmt.Sprintf("run unpaused by %s", by))
 	case req.Pause && req.Inherited:
 		if s.pausedByParent != nil {
 			return
@@ -483,6 +495,15 @@ func (s *runState) terminalPauseTransition(ctx workflow.Context) orkstackv1.Paus
 	return orkstackv1.PauseTransition_PAUSE_TRANSITION_UNSPECIFIED
 }
 
+// markedPrincipal is who asked, marked as AGENTS.md §7 (Principal) says:
+// verified when OrkStack authenticated them, asserted otherwise.
+func markedPrincipal(principal string, verified bool) string {
+	if verified {
+		return principalOr(principal) + " (verified)"
+	}
+	return principalOr(principal) + " (asserted)"
+}
+
 func principalOr(principal string) string {
 	if principal == "" {
 		return "an unnamed caller"
@@ -564,9 +585,9 @@ func (s *runState) pauseExpiredCause(ctx workflow.Context, inFlight map[string]w
 	defer s.syncPauseIndexWithin(ctx, inFlight)
 	now := workflow.Now(ctx)
 	if p := s.pause; p != nil && p.timer.IsReady() {
-		message := fmt.Sprintf("run was paused at %s by %s (asserted) and not unpaused before %s; "+
+		message := fmt.Sprintf("run was paused at %s by %s and not unpaused before %s; "+
 			"resume it with orkctl run resume, and next time unpause sooner or pause with a longer --timeout (at most %s)",
-			formatInstant(p.at), principalOr(p.by), formatInstant(p.expiresAt),
+			formatInstant(p.at), markedPrincipal(p.by, p.verified), formatInstant(p.expiresAt),
 			time.Duration(s.plan.Pause.MaxTimeoutSeconds)*time.Second)
 		s.endOwnPause(minTime(now, p.expiresAt), pauseEndTimedOut)
 		if ip := s.pausedByParent; ip != nil {
@@ -782,7 +803,8 @@ func (s *runState) ownPauseFrom(p *orkstackv1.RunPause) (*ownPause, string) {
 	if longest := time.Duration(s.plan.Pause.MaxTimeoutSeconds) * time.Second; expires.Before(at) || expires.Sub(at) > longest {
 		return nil, fmt.Sprintf("expires at %s, not within %s of its start %s", formatInstant(expires), longest, formatInstant(at))
 	}
-	return &ownPause{by: p.GetPausedBy(), reason: p.GetReason(), requestID: p.GetRequestId(), at: at, expiresAt: expires}, ""
+	return &ownPause{by: p.GetPausedBy(), verified: p.GetPausedByVerified(), reason: p.GetReason(), requestID: p.GetRequestId(),
+		at: at, expiresAt: expires}, ""
 }
 
 // lastPauseFrom is the ended pause p carries; nil for none. It ended one of
@@ -799,7 +821,8 @@ func (s *runState) lastPauseFrom(p *orkstackv1.RunPause) (*lastPause, string) {
 	if p.GetEndedAt().CheckValid() != nil || p.GetEndedAt().AsTime().Before(pause.at) {
 		return nil, "has no valid end, or ended before it started"
 	}
-	return &lastPause{pause: *pause, end: pauseEnd(end), endAt: p.GetEndedAt().AsTime()}, ""
+	return &lastPause{pause: *pause, end: pauseEnd(end), endAt: p.GetEndedAt().AsTime(),
+		endedBy: p.GetEndedBy(), endedVerified: p.GetEndedByVerified()}, ""
 }
 
 // inheritedPauseFrom is the parent's pause p carries, with no timer; nil for
@@ -848,7 +871,7 @@ func (p *ownPause) proto() *orkstackv1.RunPause {
 		return nil
 	}
 	return &orkstackv1.RunPause{PausedAt: timestamppb.New(p.at), ExpiresAt: timestamppb.New(p.expiresAt),
-		PausedBy: p.by, Reason: p.reason, RequestId: p.requestID}
+		PausedBy: p.by, PausedByVerified: p.verified, Reason: p.reason, RequestId: p.requestID}
 }
 
 // proto is the last pause as Run.last_pause carries it; nil for none.
@@ -859,6 +882,7 @@ func (l *lastPause) proto() *orkstackv1.RunPause {
 	out := l.pause.proto()
 	out.End = orkstackv1.PauseEnd(l.end)
 	out.EndedAt = timestamppb.New(l.endAt)
+	out.EndedBy, out.EndedByVerified = l.endedBy, l.endedVerified
 	return out
 }
 

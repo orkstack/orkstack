@@ -1549,7 +1549,8 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 		WithBaseCache(snapshotBases).
 		WithNamespaceIndex(namespaceIndexed).
 		WithOriginIndex(originIndexed).
-		WithRootIndex(rootIndexed)
+		WithRootIndex(rootIndexed).
+		WithPausedIndex(pausedIndexed)
 
 	// The retention policy store and controller: the deployment's maximum run
 	// retention (never a user-facing Temporal setting, AGENTS.md §7) and the
@@ -1806,6 +1807,19 @@ func run(logger *slog.Logger, tcfg telemetry.Config, sinks *telemetry.Sinks, cfg
 			}
 			// Pending webhook deliveries: a deployment gauge, on the default sink.
 			sources.WebhookPending = engine.PendingWebhookDeliveries(censusClient, time.Now)
+			// The paused-run census reads through a counting client of its own,
+			// so each census is charged only what it made.
+			pausedClient, pausedRequests := telemetry.CountingTemporalClient(temporalClient)
+			pausedReader := engine.NewTemporalRunReader(pausedClient).WithPausedIndex(pausedIndexed)
+			sources.PausedRunsRequests = pausedRequests
+			sources.PausedRuns = func(ctx context.Context) (map[string]telemetry.PausedSummary, error) {
+				read, err := pausedReader.PausedRuns(ctx)
+				out := make(map[string]telemetry.PausedSummary, len(read))
+				for ns, p := range read {
+					out[ns] = telemetry.PausedSummary{Count: p.Count, Soonest: p.Soonest}
+				}
+				return out, err
+			}
 		}
 		// The schedule census: each namespace's series go where its policy
 		// says, like every other namespaced record.

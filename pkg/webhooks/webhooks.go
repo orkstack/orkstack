@@ -87,6 +87,15 @@ const (
 	// EventTaskFailed is a task's final failure, after Temporal stopped
 	// retrying it. A task canceled because its run ended is never one.
 	EventTaskFailed Event = "TASK_FAILED"
+	// EventRunPaused is a run that became paused, by a person or by its
+	// parent run's pause, or is still paused with its causes changed
+	// (pause_transition says which). Its status is PAUSED. Opt-in: an empty
+	// subscription does not select it.
+	EventRunPaused Event = "RUN_PAUSED"
+	// EventRunUnpaused is a run that continues after a pause (status RUNNING),
+	// or an unpause of a run that was not paused (pause_transition
+	// NOT_PAUSED). A pause its run's end closed has none. Opt-in.
+	EventRunUnpaused Event = "RUN_UNPAUSED"
 	// EventRunSucceeded is RUNNING → SUCCEEDED.
 	EventRunSucceeded Event = "RUN_SUCCEEDED"
 	// EventRunFailed is RUNNING → FAILED.
@@ -96,7 +105,8 @@ const (
 )
 
 // KnownEvents lists every subscribable event, in lifecycle order. The task
-// events sit between RUN_STARTED and RUN_SUCCEEDED, which leaves the relative
+// events sit between RUN_STARTED and RUN_SUCCEEDED, then a pause's two events
+// (opt-in, inside an open run), which leaves the relative
 // order of the run transitions what it always was; an await's two events sit
 // where an awaited task reaches them, before its outcome.
 func KnownEvents() []Event {
@@ -104,6 +114,7 @@ func KnownEvents() []Event {
 		EventRunStarted,
 		EventTaskScheduled, EventTaskStarted, EventTaskAwaiting, EventTaskResolved,
 		EventTaskSleeping, EventTaskSucceeded, EventTaskFailed,
+		EventRunPaused, EventRunUnpaused,
 		EventRunSucceeded, EventRunFailed, EventRunCanceled,
 	}
 }

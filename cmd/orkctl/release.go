@@ -234,6 +234,9 @@ func releaseRuns(r *orkstackv1.Release) string {
 	if r.GetRunsUnavailableReason() != "" {
 		return "unknown"
 	}
+	if paused := r.GetPausedRuns(); paused > 0 {
+		return fmt.Sprintf("%d (%d paused)", r.GetRunsInFlight(), paused)
+	}
 	return strconv.Itoa(int(r.GetRunsInFlight()))
 }
 
@@ -369,6 +372,10 @@ func renderReleases(out io.Writer, resp *orkstackv1.ListReleasesResponse, now ti
 				}
 				fmt.Fprintf(out, "%sand %d more\n", prefix, more)
 			}
+		}
+		if paused := r.GetPausedRuns(); paused > 0 {
+			fmt.Fprintf(out, "  %s paused: each holds this release until its pause ends; unpause it (orkctl run unpause) or cancel it\n",
+				orkerPlural(int(paused), "run is", "runs are"))
 		}
 		if len(pins) > 0 {
 			label := "  " + orkerPlural(len(pins), "open pin", "open pins") + ":  "

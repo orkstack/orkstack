@@ -30,9 +30,10 @@ func newWebhookCommand(g *globalFlags) *cobra.Command {
 		Long: "A webhook receives a signed POST when a run or one of its tasks changes\n" +
 			"state. Run transitions: RUN_STARTED, RUN_SUCCEEDED, RUN_FAILED,\n" +
 			"RUN_CANCELED. Task events: TASK_SCHEDULED, TASK_STARTED, TASK_AWAITING,\n" +
-			"TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED.\n\n" +
-			"Omitting --event means every run transition; task events are opt-in by\n" +
-			"name. Task events are best-effort hints with a short retry budget: a\n" +
+			"TASK_RESOLVED, TASK_SLEEPING, TASK_SUCCEEDED, TASK_FAILED. A pause's\n" +
+			"events: RUN_PAUSED, RUN_UNPAUSED.\n\n" +
+			"Omitting --event means every run transition; task events and a pause's\n" +
+			"events are opt-in by name. Task events are best-effort hints with a short retry budget: a\n" +
 			"subscriber that must not miss one reconciles with GetRun.\n\n" +
 			"A subscription is deployment-wide unless it names a scope: a namespace\n" +
 			"(-n), an orkflow (--orkflow) and a task (--task), each an exact match.\n\n" +

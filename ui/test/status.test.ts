@@ -72,3 +72,17 @@ test('keepsEventMessage keeps a skip or cancel reason past the terminal re-read'
 		expect(keepsEventMessage(status)).toBe(false);
 	}
 });
+
+test('PAUSED has its own mark and pill, never RUNNING\'s, and every run status a distinct (fill, mark) pair', async () => {
+	const { STATUS_MARKS, statusMark, statusClassWord } = await import('../src/lib/statusMarks');
+	const { statusClasses, statusLabel } = await import('../src/lib/status');
+	expect(statusLabel(Status.PAUSED)).toBe('Paused');
+	expect(statusClasses(Status.PAUSED)).toBe('pill-wait');
+	expect(statusMark(Status.PAUSED).className).toBe('mark-pause');
+	expect(statusClassWord(Status.PAUSED)).toBe('paused');
+	const all = Object.keys(STATUS_MARKS).map(Number) as Status[];
+	expect(new Set(all.map((s) => `${statusMark(s).fill}/${statusMark(s).shape}`)).size).toBe(all.length);
+	const css = (await import('node:fs')).readFileSync(`${import.meta.dir}/../src/app.css`, 'utf8');
+	expect(css).toContain('.mark-pause::before');
+	expect(css).toContain('.pill-wait {');
+});

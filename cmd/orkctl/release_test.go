@@ -39,6 +39,7 @@ type releaseStep struct {
 	obs     engine.ReleaseObservation
 	obsErr  error
 	counts  map[string]int64
+	paused  map[string]int64
 	runs    map[string][]*orkstackv1.Run
 	runErr  map[string]error
 	running int64
@@ -97,6 +98,13 @@ func (s *scriptedReleases) ReleaseRuns(_ context.Context, build string, limit in
 		runs = runs[:limit]
 	}
 	return s.current.counts[build], runs, nil
+}
+
+func (s *scriptedReleases) ReleasePausedRuns(_ context.Context, build string) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, ok := s.current.paused[build]
+	return n, ok, nil
 }
 
 func (s *scriptedReleases) RunningRuns(context.Context) (int64, error) {
@@ -746,5 +754,21 @@ func TestReleaseWait_WarnsOfEachUnservedPoolOnce(t *testing.T) {
 	gpu := "release " + relP + " has 3 runs and no Orker taking work on pool gpu"
 	if got := strings.Count(out.stdout, gpu); got != 3 {
 		t.Fatalf("the gpu warning appears %d times; want 3 (poll 1, poll 6, the timeout):\n%s", got, out.stdout)
+	}
+}
+
+// A previous release's paused runs are named as what holds it, with what to
+// do, and its runs column says how many are paused.
+func TestReleaseStatus_NamesAReleasesPausedRuns(t *testing.T) {
+	useReleaseClock(t, releaseClockStart)
+	step := rolloutStep()
+	step.paused = map[string]int64{relP: 1}
+	f := newReleaseFixture(t, newScriptedReleases(step), releaseFleetFor())
+	out := f.run("release", "status").requireExit(t, exitOK)
+	if !strings.Contains(out.stdout, "1 run is paused: each holds this release until its pause ends; unpause it (orkctl run unpause) or cancel it") {
+		t.Fatalf("release status lacks the paused line:\n%s", out.stdout)
+	}
+	if !strings.Contains(out.stdout, "(1 paused)") {
+		t.Fatalf("release status's runs column lacks the paused count:\n%s", out.stdout)
 	}
 }

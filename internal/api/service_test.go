@@ -49,6 +49,11 @@ type fakeStarter struct {
 	signalIDs []string
 	signalErr error
 	onSignal  func(runID string, sig *orkstackv1.AwaitSignal)
+	// pauses is every pause request delivered, in order, with pauseRunIDs
+	// the run each went to; pauseErr makes delivery fail.
+	pauses      []*orkstackv1.RunPauseSignal
+	pauseRunIDs []string
+	pauseErr    error
 
 	// cluster, when set, is a stand-in cluster several replicas' starters
 	// share: a run id is started at most once across all of them, and
@@ -97,6 +102,17 @@ func (f *fakeStarter) FirstStart(ctx context.Context, runID string) (engine.Firs
 		}
 	}
 	return engine.FirstStartRead{}, nil
+}
+
+func (f *fakeStarter) SignalPause(_ context.Context, runID string, sig *orkstackv1.RunPauseSignal) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.pauseErr != nil {
+		return f.pauseErr
+	}
+	f.pauses = append(f.pauses, sig)
+	f.pauseRunIDs = append(f.pauseRunIDs, runID)
+	return nil
 }
 
 func (f *fakeStarter) SignalAwait(_ context.Context, runID string, sig *orkstackv1.AwaitSignal) error {

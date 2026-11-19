@@ -1289,7 +1289,10 @@ an upstream-supported configuration, and
 doc comment — is the contract; it runs on every proof.
 
 `orkctl release status` and `release wait` name each open pin and the Orker
-holding it. The **host**-scoped complement of the version-scoped `Drained` is
+holding it, and say how many of a release's runs are paused (`Release.paused_runs`,
+where the cluster indexes paused runs): a paused run keeps its release from
+draining until its pause ends, up to `engine.run_pause_timeout_max` (31 days
+at most), so unpause it or cancel it before a rollout that waits on it. The **host**-scoped complement of the version-scoped `Drained` is
 `orkctl orker drain` (§5, "Removing an Orker safely"): cordon one Orker so it
 opens no new pin, and wait until its open pins have finished.
 
@@ -5029,6 +5032,27 @@ that is the audit read, and nothing new is written for it.
 
 ---
 
+### The paused-run index
+
+A paused run (`orkctl run pause`) records its pause in the cluster's
+`OrkflowRunPaused` keyword search attribute, which every engine registers at
+boot (`task.EnsureRunPausedSearchAttribute`; the boot line reports
+`run_paused_index=true`). A run records it only when submit found it usable
+(the run's plan pins that answer), and with it a memo field holding when its
+own pause ends. While it is set, `run list` shows the run as `PAUSED`, and
+`--filter status=PAUSED` selects it: a visibility predicate over live runs
+AND the attribute. `--filter status=RUNNING` then leaves paused runs out. A
+run that ends while paused keeps the attribute on its closed record, so only a
+live record reads as paused.
+
+Where the cluster refuses the attribute, runs still pause, and `run get`, the
+event stream and the run page show the pause exactly; but list rows show a
+paused run as `RUNNING`, and `status=PAUSED` is refused
+(`PAUSED_FILTER_UNAVAILABLE`) rather than answered with an empty list. Lists
+are eventually consistent: a row can lag the run's `RUN_PAUSED` and
+`RUN_UNPAUSED` events by the visibility store's delay. Removing the attribute
+while runs are open is covered in `docs/LIMITATIONS.md` ("Paused-run index").
+
 ### A run that pauses new tasks
 
 Two things make a run hold NEW tasks — never running ones — exactly as a
@@ -5192,7 +5216,7 @@ processes could decide it, and refuses while any of them is too old.
 
 - **What each process advertises.** Every `ork` process polls Temporal with
   its SDK identity followed by ` ork-caps=<list>`, for example
-  `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay,webhook-by-id,run-timeout`, as
+  `48213@engine-2@ ork-caps=each-items-10k,definition-ref,snapshot-overlay,webhook-by-id,run-timeout,run-pause`, as
   `temporal task-queue describe --task-queue ork-tasks` shows it. The run
   worker and the projection worker share the process's client, so both carry
   it. The releases page still counts one process per identity. After the
@@ -5231,6 +5255,11 @@ processes could decide it, and refuses while any of them is too old.
   fails each attempt and settles failed: send it again with
   `orkctl webhook redeliver`. Before rolling back below the release that
   added `webhook-by-id`, wait for deliveries in flight to settle.
+  `run-pause`: `orkctl run pause` and `run unpause` (`PauseRun`,
+  `UnpauseRun`) read the same pollers a submit does, once per request, and
+  refuse `FAILED_PRECONDITION` while any of them lacks it, because an older
+  release would record the request and never apply it, or drop a pause at
+  its next continuation.
 - **What a refused submit says.** `FAILED_PRECONDITION`, naming the Orkflow,
   how many items it declares and how many engine processes run a release
   that cannot run them ("2 engine processes … finish the rollout first") —
@@ -5952,11 +5981,13 @@ passes. A census skipped five times in a row is logged at Warn: raise
 |---|---|---|
 | `runs_open` | `ork.runs.open`: runs open in the deployment, each run counted once however many times it has carried on, and never as zero while it carries on | two counts of the cluster's run index a pass, plus a listing of the runs that carried on within the hour when there are any, each charged |
 | `pool_backlog` | `ork.pool.*`, each pool's backlog ("A pool's backlog, as metrics") | one read of each measured pool's channel every `engine.pool_metrics.interval` (15 s by default) instead of once a minute, outside the budget: its cost is what those settings choose, and a skipped pass would leave an autoscaler without its signal |
+| `runs_paused` | `ork.runs.paused{ork.namespace}`: live runs paused (`orkctl run pause`), and `ork.runs.paused.soonest_expiry{ork.namespace}`: seconds until the soonest own pause of them ends, absent for a namespace whose paused runs are all held by a parent run's pause. Only where the cluster indexes paused runs ("The paused-run index"); a namespace once seen reads 0 when none is paused | one listing of the cluster's live paused runs a pass, each page charged |
 | `telemetry_policy` | `ork.telemetry.namespaces{routing}`: the namespaces the engine's policy cache holds, by where their records go (`default`, `named`, `named_without_metrics`, `sink_unknown`); it refreshes the cache ("Where a namespace's records go") | one listing of the namespace names and at most half the budget of namespace documents a pass (30 by default): a namespace never read first, then the others in turn, so every namespace is read again within ⌈N / 30⌉ minutes and the refresh never takes the other censuses' share |
 | `webhook_pending` | `ork.webhook.deliveries.pending{ork.age_over}`: webhook deliveries not yet settled that were queued more than `5m` and more than `1h` ago, in the deployment | two counts of the cluster's running delivery workflows a pass |
 | `schedules` | `ork.schedules{ork.namespace, state}` (`active`, `paused`), `ork.schedule.next_fire{ork.namespace}` (unix seconds: the soonest active schedule's next fire; by `ork.schedule` too with `telemetry.object_labels`), the counter `ork.schedule.actions.skipped{ork.namespace, ork.schedule.skip_reason}` (`overlap`, `catchup_window`), and on the default sink `ork.schedule.census.coverage` (the share of schedules described this pass) and `ork.schedule.census.unavailable` (1 when the list failed) | one listing of every schedule, which gives each one's state and next fire, and at most half the budget of describes a pass (30 by default, never more than 200), in turn, for the skipped-fire totals; a pass's schedule gauges report nothing after a list that failed, and a namespace whose records are dropped loses the skips seen meanwhile: below 1, `coverage` says those counts lag. A schedule's first describe is its baseline, so fires skipped before this engine watched are never counted. The cluster does not expose fires dropped from its buffer, so no `buffer` reason is reported |
 
-A gauge reports its last good reading, and nothing after a pass that failed.
+A gauge reports its last good reading, and nothing after a pass that failed. A pause shorter than about two census intervals may never show in
+`ork.runs.paused`; `ork.runs.pauses` counts every one.
 Every replica reports the deployment's whole count, so aggregate
 `ork.runs.open` across replicas with `max`, never `sum`. `ork.runs.open` is
 counted only when the default sink exports metrics.
@@ -5990,6 +6021,8 @@ policy names one — they can land on a different sink than the process default
 | `ork.run.duration` | `status` | engine, same event, `finished_at - started_at` |
 | `ork.run.timeouts` | `ork.namespace` | engine, once per terminal run its own `timeout:` ended (`RUN_TIMED_OUT`, `docs/DSL.md` "Run timeout"); a run already failing when its deadline passed keeps its own cause and counts only on `ork.run.timeout.hard_ends`, if its handlers were stopped |
 | `ork.run.timeout.hard_ends` | `ork.namespace` | engine, once per terminal run whose failure handlers were stopped, or never started, at its run timeout's hard end (`engine.run_timeout_handler_grace`) |
+| `ork.runs.pauses` | `ork.pause.cause` (`self`, `parent`), `ork.pause.outcome` (`paused`, `causes_changed`, `unpaused`, `not_paused`, `timed_out`, `run_ended`) | engine, once per pause transition, on the event that marks it (`pause_transition`, first publication only, so a repeated delivery counts once); a replica starts every outcome series of a namespace at 0 the first time it records one |
+| `ork.runs.pause.duration` | `ork.pause.outcome` (`unpaused`, `timed_out`, `run_ended`) | engine, when a run's own pause ends: seconds from its start to its end, buckets 1 min to 31 d |
 | `ork.tasks` | `ork.pool`, `status`, `failure_category`, `ork.cache.outcome` | engine, once per terminal task (succeeded/failed) |
 | `ork.task.duration` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event, `finished_at - scheduled_at` (dispatch to finish; `started_at` on a run recorded before `scheduled_at` existed) |
 | `ork.task.attempts` | `ork.pool`, `status`, `ork.cache.outcome` | engine, same event: the attempt number the task finished on — one observation per fan-out item, none for a composed task |

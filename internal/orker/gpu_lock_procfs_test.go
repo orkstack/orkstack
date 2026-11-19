@@ -20,6 +20,7 @@ var procLocksCases = []struct {
 		"2: POSIX  ADVISORY  READ 99 08:02:870304 0 EOF\n" +
 		"3: FLOCK  ADVISORY  WRITE 708077 00:1a:870304 0 EOF\n" +
 		"3: -> FLOCK  ADVISORY  WRITE 708078 00:1a:870304 0 EOF\n", []int{708077}, false},
+	{"a holder in another pid namespace", "5: FLOCK  ADVISORY  WRITE 0 00:1a:870304 0 EOF\n", nil, false},
 	{"an OFD lock with no pid", "4: OFDLCK ADVISORY  READ -1 00:1a:870304 0 EOF\n", nil, false},
 	{"a byte range", "5: POSIX  ADVISORY  WRITE 12 00:1a:1 0 100\n", nil, false},
 	{"empty", "", nil, false},
@@ -84,6 +85,86 @@ func FuzzParseProcLocks(f *testing.F) {
 		again, err := parseProcLocks(strings.NewReader(body+"\n"), dev, ino)
 		if err != nil || !slices.Equal(again, got) {
 			t.Fatalf("a trailing newline changed the answer: %v, %v against %v", again, err, got)
+		}
+	})
+}
+
+// majorMinorCases are mountinfo devices and the dev_t parseMajorMinor makes
+// of them; a case with ok false is refused.
+var majorMinorCases = []struct {
+	in    string
+	major uint64
+	minor uint64
+	ok    bool
+}{
+	{"0:30", 0, 30, true},
+	{"8:2", 8, 2, true},
+	{"259:65536", 259, 65536, true},
+	{"4095:255", 4095, 255, true},
+	{"4096:256", 4096, 256, true},
+	{"1:1048575", 1, 1048575, true},
+	{"4294967295:4294967295", 4294967295, 4294967295, true},
+	{"", 0, 0, false},
+	{"0", 0, 0, false},
+	{"0:", 0, 0, false},
+	{":3", 0, 0, false},
+	{"0x1:3", 0, 0, false},
+	{"+1:3", 0, 0, false},
+	{"1:3:4", 0, 0, false},
+	{"4294967296:0", 0, 0, false},
+}
+
+// TestParseMajorMinor: a mountinfo device becomes the dev_t whose halves
+// devMajorMinor gives back, which is how /proc/locks' line is matched.
+func TestParseMajorMinor(t *testing.T) {
+	for _, tc := range majorMinorCases {
+		dev, err := parseMajorMinor(tc.in)
+		if !tc.ok {
+			if err == nil {
+				t.Errorf("parseMajorMinor(%q) = %d, want an error", tc.in, dev)
+			}
+			continue
+		}
+		if err != nil {
+			t.Errorf("parseMajorMinor(%q) = %v", tc.in, err)
+			continue
+		}
+		if major, minor := devMajorMinor(dev); major != tc.major || minor != tc.minor {
+			t.Errorf("parseMajorMinor(%q) = %d:%d, want %d:%d", tc.in, major, minor, tc.major, tc.minor)
+		}
+	}
+}
+
+// FuzzParseMajorMinor: whatever it accepts is two decimal numbers that
+// devMajorMinor splits back out of the dev_t, as they were written.
+func FuzzParseMajorMinor(f *testing.F) {
+	for _, tc := range majorMinorCases {
+		f.Add(tc.in)
+	}
+	f.Fuzz(func(t *testing.T, in string) {
+		dev, err := parseMajorMinor(in)
+		if err != nil {
+			return
+		}
+		major, minor := devMajorMinor(dev)
+		var maj, min uint64
+		if _, err := fmt.Sscanf(in, "%d:%d", &maj, &min); err != nil || maj != major || min != minor {
+			t.Fatalf("parseMajorMinor(%q) splits back to %d:%d", in, major, minor)
+		}
+	})
+}
+
+// FuzzDevMajorMinor: makeDev and devMajorMinor are inverses for any two
+// 32-bit halves, so a mountinfo device and a /proc/locks node compare equal
+// exactly when their halves do.
+func FuzzDevMajorMinor(f *testing.F) {
+	for _, tc := range majorMinorCases {
+		f.Add(uint32(tc.major), uint32(tc.minor))
+	}
+	f.Fuzz(func(t *testing.T, major, minor uint32) {
+		gotMajor, gotMinor := devMajorMinor(makeDev(uint64(major), uint64(minor)))
+		if gotMajor != uint64(major) || gotMinor != uint64(minor) {
+			t.Fatalf("devMajorMinor(makeDev(%d, %d)) = %d, %d", major, minor, gotMajor, gotMinor)
 		}
 	})
 }

@@ -707,7 +707,11 @@ var accessRows = map[string]accessRow{
 		{perm: authz.PermRunLogsRead, when: unless("exclude_logs")},
 		{perm: authz.PermRunArtifactsRead, when: unless("exclude_artifacts")},
 	}},
-	orkstackv1connect.RunServiceCancelRunProcedure:    {res: runIn("run_id"), checks: perms(authz.PermRunCancel), notFound: true},
+	orkstackv1connect.RunServiceCancelRunProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunCancel), notFound: true},
+	// A shared Orkflow's child run lives in its parent's namespace, so its
+	// pause is authorized there, never in the owner's (design §18.6).
+	orkstackv1connect.RunServicePauseRunProcedure:     {res: runIn("run_id"), checks: perms(authz.PermRunPause), notFound: true},
+	orkstackv1connect.RunServiceUnpauseRunProcedure:   {res: runIn("run_id"), checks: perms(authz.PermRunPause), notFound: true},
 	orkstackv1connect.RunServiceResolveAwaitProcedure: {res: runIn("run_id"), checks: perms(authz.PermRunAwaitResolve), notFound: true},
 
 	// ScheduleService
