@@ -153,6 +153,7 @@ var compileSeeds = []string{
 	"created_at>=2026-10-09T00:00:00Z", "created_at<2026-10-09T01:00:00+01:00", "created_at<2026-10-08T00:00:00Z",
 	"created_at>=2026-10-09", "created_at>=0001-01-01T00:00:00+01:00", "created_at<9999-12-31T23:59:59.999999999-23:59",
 	"updated_at>=2026-10-09T00:00:00.123456789Z", "drained=true", "cordoned=maybe", "orker_id=a/b", "hold.reason=",
+	"queued=true", "queued=false", "queued_on=db:prod", "holding=", "holding!=db", "queued_on=a,b",
 }
 
 // FuzzCompile_ACompiledSetIsCanonicalAndTheOrderOfItsFiltersDoesNotMatter
@@ -436,6 +437,68 @@ func FuzzMatch_DecidesARowAsTheMatchingRulesSayAndEveryPushdownIsSound(f *testin
 			if !set.Restrict(canonical.GetField()).Match(row) {
 				t.Fatalf("filters %q: the subset on %s rejects a row the whole set accepts", set.Texts(), canonical.GetField())
 			}
+		}
+	})
+}
+
+// FuzzMatchIndexed_AnIndexedFilterHoldsOnlyWhereTheIndexSaysSo states the
+// indexed fields' rules (ListRuns' queued=, queued_on=, holding=): Indexed and
+// WithoutIndexed split a set's texts between them, Indexed in canonical
+// order; Match is MatchIndexed with no index, so a row the index does not
+// describe matches no indexed filter; and MatchIndexed holds exactly when the
+// row's own fields satisfy the rest and the index holds every indexed filter.
+func FuzzMatchIndexed_AnIndexedFilterHoldsOnlyWhereTheIndexSaysSo(f *testing.F) {
+	spec := specOf(f, &orkstackv1.ListRunsRequest{})
+	f.Add("queued=true", "holding=db", "status=RUNNING", "db", "true", "RUNNING")
+	f.Add("queued_on=a", "queued_on=b", "", "a", "", "PENDING")
+	f.Add("holding=x", "status=FAILED", "orkflow_name=deploy", "x", "true", "FAILED")
+	f.Add("status=SUCCEEDED", "", "", "", "", "SUCCEEDED")
+	f.Fuzz(func(t *testing.T, a, b, c, gate, queued, status string) {
+		var filters []*orkstackv1.FieldFilter
+		for _, text := range []string{a, b, c} {
+			if text == "" {
+				continue
+			}
+			parsed, err := listfilter.Parse(text)
+			if err != nil {
+				return
+			}
+			filters = append(filters, parsed)
+		}
+		set, err := spec.Compile(filters)
+		if err != nil {
+			return
+		}
+		indexed, rest := set.Indexed(), set.WithoutIndexed()
+		if len(indexed)+rest.Len() != set.Len() {
+			t.Fatalf("filters %q: %d indexed and %d others make %d", set.Texts(), len(indexed), rest.Len(), set.Len())
+		}
+		if !slices.IsSortedFunc(indexed, func(x, y listfilter.IndexedFilter) int {
+			return strings.Compare(x.Path+"="+x.Value, y.Path+"="+y.Value)
+		}) {
+			t.Fatalf("filters %q: Indexed() = %v is not in canonical order", set.Texts(), indexed)
+		}
+		row := &orkstackv1.Run{Id: "r", Status: orkstackv1.Status(orkstackv1.Status_value["STATUS_"+status])}
+		holds := func(path, value string) bool {
+			switch path {
+			case "queued":
+				return queued == "true" && value == "true"
+			default:
+				return value == gate
+			}
+		}
+		if set.Match(row) != set.MatchIndexed(row, nil) {
+			t.Fatalf("filters %q: Match and MatchIndexed(nil) disagree", set.Texts())
+		}
+		if len(indexed) > 0 && set.MatchIndexed(row, nil) {
+			t.Fatalf("filters %q: a row the index does not describe matched an indexed filter", set.Texts())
+		}
+		want := rest.Match(row)
+		for _, x := range indexed {
+			want = want && holds(x.Path, x.Value)
+		}
+		if got := set.MatchIndexed(row, holds); got != want {
+			t.Fatalf("filters %q on %v: MatchIndexed = %v, want %v", set.Texts(), row, got, want)
 		}
 	})
 }

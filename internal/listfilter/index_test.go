@@ -17,6 +17,7 @@ import (
 // servedRunsSpec is the allowlist ListRunsRequest serves, indexed fields
 // included.
 func servedRunsSpec(t *testing.T) *listfilter.Spec {
+	t.Helper()
 	return specOf(t, &orkstackv1.ListRunsRequest{})
 }
 
@@ -66,6 +67,10 @@ func TestSpec_AnIndexedDeclarationIsHeldToItsRules(t *testing.T) {
 		{"requires", &orkstackv1.FilterableField{Path: "x", Label: "X", Operators: EQ, Indexed: true, Requires: "status"}, "an indexed field cannot declare requires, kept_when_unavailable, allowed_values or value_rule"},
 		{"allowed", &orkstackv1.FilterableField{Path: "x", Label: "X", Operators: EQ, Indexed: true, AllowedValues: []string{"A"}}, "an indexed field cannot declare requires, kept_when_unavailable, allowed_values or value_rule"},
 		{"dotted", &orkstackv1.FilterableField{Path: "x.y", Label: "X", Operators: EQ, Indexed: true}, "an indexed path is one name, with no dot"},
+		{"valuerule", &orkstackv1.FilterableField{Path: "x", Label: "X", Operators: EQ, Indexed: true, ValueRule: orkstackv1.FilterValueRule_FILTER_VALUE_RULE_NAME}, "an indexed field cannot declare requires, kept_when_unavailable, allowed_values or value_rule"},
+		{"nooperator", &orkstackv1.FilterableField{Path: "x", Label: "X", Indexed: true}, "an indexed field takes equals only"},
+		{"shadowscalar", &orkstackv1.FilterableField{Path: "orkflow_name", Label: "X", Operators: EQ, Indexed: true}, "an indexed path cannot name a filterable field of orkstack.v1.Run"},
+		{"shadowtime", &orkstackv1.FilterableField{Path: "created_at", Label: "X", Operators: EQ, Indexed: true}, "an indexed path cannot name a filterable field of orkstack.v1.Run"},
 	}
 	for _, c := range cases {
 		err := declare(t, c.name, c.field)
