@@ -1241,6 +1241,11 @@ func (d *OCIDispatcher) execute(
 	if failure != nil {
 		return nil, failure
 	}
+	// STEP 6′. The image's declared device contracts against what its run
+	// pinned, read from the image just pulled (checkDeclarations).
+	if failure := d.checkDeclarations(ctx, in, image.GetPinned()); failure != nil {
+		return nil, failure
+	}
 
 	// STEP 6b. The gpu units the task asks for, bound from its admission
 	// under the held GPU host lock (dispatch_units.go); freed when its
@@ -2027,6 +2032,140 @@ func (d *OCIDispatcher) resolveSecret(ref *orkstackv1.SecretRef) ([]byte, *Failu
 		return nil, Fail(ReasonSecretSchemeForbid,
 			"secret %q: source scheme %s is unknown", ref.GetName(), dsl.QuoteSecretSource(scheme))
 	}
+}
+
+// ReasonProfileDeclarationMismatch: the image the attempt pulled declares,
+// in its own interface label, a contract of a profile the task names other
+// than the one its run pinned as the image's need, or declares one where the
+// run pinned the profile as undeclared. Create pinned the
+// declaration from this very image, so a difference is a definition that
+// does not hold: a ContractViolation, never retried, and no container is
+// created.
+const ReasonProfileDeclarationMismatch = "PROFILE_DECLARATION_MISMATCH"
+
+// profileGate is execute's STEP 3c (profile_gate.go, profile_contracts.go):
+// each profile the task names offered here, its devices as audited, and the
+// contract that serves the run. It returns that contract's devices, and
+// beat records the selection for the attempt record. A task naming no
+// profile passes with no device and no read of the host.
+func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heartbeater) ([]DeviceMapping, *Failure) {
+	if len(in.GetDevices()) == 0 {
+		return nil, nil
+	}
+	beat.Phase("profiles")
+	if d.profiles == nil {
+		return nil, Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
+	}
+	devices, picked, failure := d.profiles.gateSelect(in.GetDevices(), d.deviceInspector(), time.Now())
+	if failure != nil {
+		return nil, failure
+	}
+	beat.setProfiles(d.effectiveProfiles(in.GetDevices(), picked))
+	return devices, nil
+}
+
+// profileRecheck is the device comparison just before the container is
+// created, and again just before it is started.
+func (d *OCIDispatcher) profileRecheck(in *orkstackv1.ExecuteTaskInput) *Failure {
+	if len(in.GetDevices()) == 0 {
+		return nil
+	}
+	if d.profiles == nil {
+		return Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
+	}
+	return d.profiles.recheck(in.GetDevices(), d.deviceInspector(), time.Now())
+}
+
+// effectiveProfiles is what the attempt record says each profile ran under:
+// the contract step 3c selected, the labels the run pinned, and whether the
+// task's image chose the contract. picked holds one selection per ref, in
+// the refs' order.
+func (d *OCIDispatcher) effectiveProfiles(refs []*orkstackv1.ProfileRef, picked []contractSelection) []*orkstackv1.EffectiveProfile {
+	kinds := map[string]orkstackv1.ProfileKind{}
+	for _, p := range d.profiles.declared.List {
+		kinds[p.Name] = p.Kind
+	}
+	out := make([]*orkstackv1.EffectiveProfile, 0, len(picked))
+	for i, sel := range picked {
+		ref := refs[i]
+		pinned := ref.GetIdentityDigest() != ""
+		labels := make([]string, 0, len(ref.GetContracts()))
+		for _, c := range ref.GetContracts() {
+			labels = append(labels, c.GetLabel())
+			pinned = pinned || len(c.GetIdentityDigests()) > 0
+		}
+		out = append(out, &orkstackv1.EffectiveProfile{
+			Name:           sel.Name,
+			Kind:           kinds[sel.Name],
+			IdentityPinned: pinned,
+			Contract:       sel.Label,
+			RunContracts:   labels,
+			Declared:       sel.Declared,
+		})
+	}
+	return out
+}
+
+// checkDeclarations is the declaration check after STEP 6 (design
+// rollout-revision §2.3): the pulled image's own interface label, read
+// locally, compared with what the run pinned for each profile the task
+// names. It compares only where the label declares the profile, so an image
+// silent about it (no label, one without devices:, or one that does not
+// read; an `@label` override on an image that cannot declare) runs on the
+// run's pin. A ref that carries no contracts has no declaration
+// to compare, and a task with no such ref reads no label.
+func (d *OCIDispatcher) checkDeclarations(ctx context.Context, in *orkstackv1.ExecuteTaskInput, pinned string) *Failure {
+	var refs []*orkstackv1.ProfileRef
+	for _, ref := range in.GetDevices() {
+		if len(ref.GetContracts()) > 0 || ref.GetDeclared() {
+			refs = append(refs, ref)
+		}
+	}
+	if len(refs) == 0 {
+		return nil
+	}
+	raw, ok, err := d.Runtime.ImageLabel(ctx, pinned, dsl.InterfaceLabel)
+	if err != nil {
+		// Not a pass and not the image's fault: the runtime could not say.
+		// The attempt never started, so it runs again within the run's
+		// never-started budget.
+		return neverStarted(FailCause(ReasonRuntimeStateUnknown, err,
+			"task %q: read the interface label of %s to check its device contracts: %v", in.GetTaskId(), pinned, err))
+	}
+	var declared map[string]string
+	if ok {
+		iface, parseErr := dsl.ParseInterfaceLabel(raw)
+		if parseErr != nil {
+			// A label that does not read declares nothing, as create judged
+			// it: a task naming a profile of such an image was created only
+			// with its contract written out, which is the run's pin.
+			d.logger().Warn("the image's interface label cannot be read; its device contracts are not compared",
+				"run_id", in.GetRunId(), "task_id", in.GetTaskId(), "image", pinned, "error", parseErr)
+			return nil
+		}
+		declared = iface.GetDevices()
+	}
+	for _, ref := range refs {
+		label, says := declared[ref.GetName()]
+		if !says {
+			continue
+		}
+		switch {
+		case !ref.GetDeclared():
+			return Fail(ReasonProfileDeclarationMismatch,
+				"task %q: profile %q: the image declares contract %q, and the run pinned the profile as undeclared",
+				in.GetTaskId(), ref.GetName(), label)
+		case len(ref.GetContracts()) != 1 || ref.GetContracts()[0].GetLabel() != label:
+			var want []string
+			for _, c := range ref.GetContracts() {
+				want = append(want, c.GetLabel())
+			}
+			return Fail(ReasonProfileDeclarationMismatch,
+				"task %q: profile %q: the image declares contract %q, and the run pinned %q",
+				in.GetTaskId(), ref.GetName(), label, strings.Join(want, ", "))
+		}
+	}
+	return nil
 }
 
 // resolveImage pulls the pinned image, or loads it from an embedded OCI layout.
@@ -3022,6 +3161,11 @@ func (d *OCIDispatcher) attemptRecord(
 	// What the container's cgroup reported, or why nothing was measured
 	// (E94; usage_record.go).
 	recordMeasured(record, measuredOf(beat))
+	// The contract each profile ran under, as step 3c selected it; none for
+	// an attempt that never reached it.
+	if beat != nil {
+		record.Profiles = beat.effectiveProfiles()
+	}
 
 	// The branch order is Execute's own, and it is load-bearing there for the
 	// reason §6.3 gives: a cancelled attempt is CANCELED whatever failure was

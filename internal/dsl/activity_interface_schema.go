@@ -43,6 +43,13 @@ func interfaceSchemaKeys() map[string]map[string]any {
 		},
 		"interfaceDocument.defaultOp": {"type": "string", "pattern": opNamePattern.String(),
 			"description": "The op the image runs when `op` is absent; with `ops` and no `defaultOp`, `op` is required."},
+		"interfaceDocument.devices": {
+			"type":                 []any{"object", "null"},
+			"maxProperties":        MaxTaskDevices,
+			"propertyNames":        map[string]any{"type": "string", "pattern": slugPattern.String(), "maxLength": MaxSlug},
+			"additionalProperties": map[string]any{"type": "string", "pattern": contractLabelPattern.String()},
+			"description":          "The contract of each device profile the image needs, by profile name: a task naming that profile runs only under that contract, and a task using the image must name every profile listed here.",
+		},
 		"interfaceDocument.values": withDescription(fields,
 			"Documentary: the keys the image writes to `values.json`."),
 		"interfaceOpDocument.fields": withDescription(fields,

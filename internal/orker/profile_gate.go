@@ -44,8 +44,19 @@ type auditedDevice struct {
 
 // profileAudit is one profile as its boot audit found it.
 type profileAudit struct {
+	// identity is the default contract's, the profile's own.
 	identity string
-	devices  []auditedDevice
+	// devices are every contract's host devices, each once: what the drift
+	// checks and the host-view probe cover. A container path two of the
+	// name's contracts both give is replaced, for the probe alone, by one of
+	// its own (probeContainerPath).
+	devices []auditedDevice
+	// contracts are a devices profile's contracts by label: each one's
+	// identity and the devices it passes a task. A gpu profile's one contract
+	// carries its identity and no devices.
+	contracts map[string]contractAudit
+	// def is the label of the default contract.
+	def string
 	// gpu is a gpu profile's CDI audit (cdi_audit.go): the audit set's
 	// digests, re-hashed at 3c and before create. Nil for a devices profile,
 	// and for a gpu profile whose spec was absent at boot.
@@ -56,6 +67,13 @@ type profileAudit struct {
 	// unitNodes are gpuNodes by unit, in the profile's unit order, for the
 	// unit probes.
 	unitNodes [][]auditedDevice
+}
+
+// contractAudit is one contract of a profile as its boot audit found it.
+type contractAudit struct {
+	identity string
+	accepts  []string
+	devices  []auditedDevice
 }
 
 // setAudited records the boot audit. It is set once, before the Orker polls.
@@ -73,33 +91,11 @@ func (s *profileState) audit(name string) (profileAudit, bool) {
 	return a, ok
 }
 
-// gate is step 3c: the devices the task's profiles pass, or why it cannot run
-// here. inspect is what the host says a path is now (inspectHostDevice).
+// gate is step 3c's devices: those of the contracts serving the task's
+// profiles (gateSelect), or why it cannot run here.
 func (s *profileState) gate(refs []*orkstackv1.ProfileRef, inspect func(string) (hostDevice, error), now time.Time) ([]DeviceMapping, *Failure) {
-	var devices []DeviceMapping
-	for _, ref := range refs {
-		name := ref.GetName()
-		audit, ok := s.audit(name)
-		switch {
-		case !ok:
-			return nil, Fail(ReasonProfileNotOffered,
-				"profile %q is not offered by this Orker; the task runs on an Orker of its pool that offers it", name)
-		case ref.GetIdentityDigest() == "":
-			return nil, Fail(ReasonProfileChanged,
-				"profile %q: the task carries no identity for it, so it cannot be held to what its run pinned", name)
-		case ref.GetIdentityDigest() != audit.identity:
-			return nil, Fail(ReasonProfileChanged,
-				"profile %q is defined on this Orker otherwise than when the run was submitted; "+
-					"every Orker of a pool must define it the same way", name)
-		}
-		if failure := s.checkDevices(name, audit, inspect, now); failure != nil {
-			return nil, failure
-		}
-		for _, d := range audit.devices {
-			devices = append(devices, DeviceMapping{HostPath: d.Host.Resolved, ContainerPath: d.ContainerPath, Permissions: d.Permissions})
-		}
-	}
-	return devices, nil
+	devices, _, failure := s.gateSelect(refs, inspect, now)
+	return devices, failure
 }
 
 // recheck is the device comparison again, just before the container is
@@ -225,31 +221,6 @@ func deviceDrift(d auditedDevice, inspect func(string) (hostDevice, error)) (str
 	return "", false
 }
 
-// profileGate is execute's STEP 3c. A task naming no profile passes with no
-// device and no read of the host.
-func (d *OCIDispatcher) profileGate(in *orkstackv1.ExecuteTaskInput, beat *Heartbeater) ([]DeviceMapping, *Failure) {
-	if len(in.GetDevices()) == 0 {
-		return nil, nil
-	}
-	beat.Phase("profiles")
-	if d.profiles == nil {
-		return nil, Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
-	}
-	return d.profiles.gate(in.GetDevices(), d.deviceInspector(), time.Now())
-}
-
-// profileRecheck is the device comparison just before the container is
-// created, and again just before it is started.
-func (d *OCIDispatcher) profileRecheck(in *orkstackv1.ExecuteTaskInput) *Failure {
-	if len(in.GetDevices()) == 0 {
-		return nil
-	}
-	if d.profiles == nil {
-		return Fail(ReasonProfileNotOffered, "task %q names profiles, and this Orker offers none", in.GetTaskId())
-	}
-	return d.profiles.recheck(in.GetDevices(), d.deviceInspector(), time.Now())
-}
-
 // deviceInspector is what the attempt asks of a device path: the host, or a test's
 // seam (inspectDevice).
 func (d *OCIDispatcher) deviceInspector() func(string) (hostDevice, error) {
@@ -260,8 +231,9 @@ func (d *OCIDispatcher) deviceInspector() func(string) (hostDevice, error) {
 }
 
 // profileMemoEntries is the profiles a cached task's memo key covers: each it
-// names, with the identity its run pinned and this Orker's revision. Nil for
-// a task naming none.
+// names, with the identity of the contract serving it here (in a uniform
+// single-contract pool, the one its run pinned) and this Orker's revision.
+// Nil for a task naming none.
 func (d *OCIDispatcher) profileMemoEntries(in *orkstackv1.ExecuteTaskInput) []ProfileMemoEntry {
 	if len(in.GetDevices()) == 0 {
 		return nil
@@ -274,7 +246,11 @@ func (d *OCIDispatcher) profileMemoEntries(in *orkstackv1.ExecuteTaskInput) []Pr
 	}
 	entries := make([]ProfileMemoEntry, 0, len(in.GetDevices()))
 	for _, ref := range in.GetDevices() {
-		entries = append(entries, ProfileMemoEntry{Name: ref.GetName(), Identity: ref.GetIdentityDigest(), Revision: revisions[ref.GetName()]})
+		identity := ref.GetIdentityDigest()
+		if d.profiles != nil {
+			identity = d.profiles.memoIdentity(ref)
+		}
+		entries = append(entries, ProfileMemoEntry{Name: ref.GetName(), Identity: identity, Revision: revisions[ref.GetName()]})
 	}
 	return entries
 }

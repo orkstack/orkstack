@@ -529,10 +529,10 @@
           ]
         },
         "devices": {
-          "description": "optional device and gpu profiles the pool's Orkers define (see \"Device profiles\")",
+          "description": "optional device and gpu profiles the pool's Orkers define, each a name or name@contract to pin one contract (see \"Device profiles\")",
           "items": {
-            "maxLength": 200,
-            "pattern": "^[a-z][a-z0-9-]*$",
+            "maxLength": 265,
+            "pattern": "^[a-z][a-z0-9-]*(@[A-Za-z0-9_.:+-]{1,64})?$",
             "type": [
               "string",
               "number",

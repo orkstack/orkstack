@@ -107,6 +107,9 @@ func validateInterface(iface *orkstackv1.ActivityInterface) error {
 	if err := checkFieldMap("values", iface.GetValues()); err != nil {
 		return err
 	}
+	if err := checkInterfaceDevices(iface.GetDevices()); err != nil {
+		return err
+	}
 	for _, op := range opNames {
 		if err := checkFieldMap("ops."+op+".fields", iface.GetOps()[op].GetFields()); err != nil {
 			return err
@@ -227,15 +230,20 @@ func mapKeys[V any](m map[string]V) []string {
 func isTemplated(s string) bool { return strings.Contains(s, "{{") }
 
 // CheckOrkflowInterfaces walks wf.tasks in document order and checks each
-// task's with: against the interface its resolved image declares. A task
-// whose uses: has no entry in resolutions (no resolver, or a later
-// proposal's `uses: orkflow:` task) produces nothing. Pure.
+// task's with: against the interface its resolved image declares, and its
+// devices: against the contracts the image declares (checkDeviceContracts).
+// A task whose uses: has no entry in resolutions (no resolver, or a
+// `uses: orkflow:` task) has no with: checked; one naming a profile it does
+// not pin is then an error, since its image's need cannot be known. Pure.
 func CheckOrkflowInterfaces(wf *orkstackv1.Orkflow, resolutions Resolutions) []*orkstackv1.ValidationIssue {
 	var issues []*orkstackv1.ValidationIssue
 	for i, task := range wf.GetTasks() {
 		res := resolutions[task.GetUses()]
+		deviceIssues, replaced := checkDeviceContracts(i, task, res)
+		issues = append(issues, deviceIssues...)
 		switch {
 		case res == nil:
+		case res.InterfaceError != "" && replaced:
 		case res.InterfaceError != "":
 			issues = append(issues, &orkstackv1.ValidationIssue{
 				Field: fmt.Sprintf("tasks[%d].uses", i),

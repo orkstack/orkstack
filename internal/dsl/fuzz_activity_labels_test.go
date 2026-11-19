@@ -345,6 +345,8 @@ func FuzzParseActivityDocument(f *testing.F) {
 		header + "description: \"  \"\n",
 		header + "description: |\n  one\n  two\n",
 		header + "fields:\n  a:\n    type: string\n",
+		header + "devices:\n  sensor: \"2\"\n", header + "devices:\n  sensor: 2\n", header + "devices:\n  Sensor: \"1\"\n",
+		header + "devices:\n  sensor: [a]\n",
 		header, "", "- a\n",
 		header + "---\n" + header, header + "---\nfields: [unclosed\n", header + "---\n\tname: a\n", header + "---\n", header + "...\nname: b\n",
 	} {

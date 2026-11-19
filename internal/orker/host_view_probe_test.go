@@ -359,7 +359,7 @@ func TestAuditProfiles_RefusesMoreDevicesThanOneProbe(t *testing.T) {
 	for i := 0; i <= maxProbePaths/16; i++ {
 		p := Profile{Name: fmt.Sprintf("p%d", i), Kind: orkstackv1.ProfileKind_PROFILE_KIND_DEVICES}
 		for j := 0; j < 16; j++ {
-			p.Devices = append(p.Devices, ProfileDevice{Path: "/dev/ttyUSB0", ContainerPath: fmt.Sprintf("/dev/s%d-%d", i, j), Permissions: "r"})
+			p.Devices = append(p.Devices, ProfileDevice{Path: fmt.Sprintf("/dev/ttyUSB%d", i*16+j), ContainerPath: fmt.Sprintf("/dev/s%d-%d", i, j), Permissions: "r"})
 		}
 		declared.List = append(declared.List, p)
 	}

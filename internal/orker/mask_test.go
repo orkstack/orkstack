@@ -45,6 +45,10 @@ func (r *scriptedRuntime) LoadLayout(context.Context, string, string) (PullInfo,
 	return PullInfo{}, errors.New("no embedded layout in this test")
 }
 
+func (r *scriptedRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (r *scriptedRuntime) Create(_ context.Context, spec ContainerSpec) (ContainerID, error) {
 	r.mu.Lock()
 	r.creates++

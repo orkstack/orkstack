@@ -30,6 +30,10 @@ func (r *reapRecorder) Pull(context.Context, string) (PullInfo, error) { return 
 func (r *reapRecorder) LoadLayout(context.Context, string, string) (PullInfo, error) {
 	return PullInfo{}, nil
 }
+
+func (r *reapRecorder) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
 func (r *reapRecorder) Create(context.Context, ContainerSpec) (ContainerID, error) { return "", nil }
 func (r *reapRecorder) Start(context.Context, ContainerID, io.Writer, io.Writer) error {
 	return nil

@@ -147,6 +147,14 @@ type Resolution struct {
 	Docs *orkstackv1.ActivityDocs
 	// DocsError is ActivityInfo.docs_error, through SafeReason.
 	DocsError string
+	// Platform is the platform whose config the labels above were read
+	// from, os/arch[/variant]; empty for a single-platform image.
+	Platform string
+	// OtherPlatforms is what each other runnable platform of a
+	// multi-platform image declares in its interface's devices:, read only
+	// when a task naming a profile uses the image, so create can hold every
+	// platform to one declaration (CheckOrkflowInterfaces).
+	OtherPlatforms []PlatformDevices
 	// ServiceLabels are the image's org.orkstack.service.* labels, as
 	// written, for a service image's readers (pkg/eventsources): nil when
 	// the image carries none or its config could not be read.
@@ -169,6 +177,15 @@ type Resolutions map[string]*Resolution
 // add allocations and a way for two tasks to drift.
 func (r *Resolver) ResolveOrkflow(ctx context.Context, catalog Catalog, wf *orkstackv1.Orkflow) (Resolutions, error) {
 	resolved := make(Resolutions)
+	// An image a task naming a profile uses has every platform's devices:
+	// read, so create can hold them to one declaration (rollout-revision
+	// §2.3); every other image is read as before, its first platform only.
+	profiled := map[string]bool{}
+	for _, t := range wf.GetTasks() {
+		if len(t.GetDevices()) > 0 {
+			profiled[t.GetUses()] = true
+		}
+	}
 	for _, t := range wf.GetTasks() {
 		// An awaited task has no `uses:` and gets no Task.image: it runs no
 		// container (docs/DSL.md rules 6 and 15).
@@ -194,7 +211,7 @@ func (r *Resolver) ResolveOrkflow(ctx context.Context, catalog Catalog, wf *orks
 		if err != nil {
 			return nil, err
 		}
-		res, err := r.Inspect(ctx, uses, reference)
+		res, err := r.inspect(ctx, uses, reference, profiled[uses])
 		if err != nil {
 			return nil, err
 		}
@@ -220,6 +237,12 @@ func (r *Resolver) Resolve(ctx context.Context, uses, reference string) (*orksta
 // `reference` is what the catalog turned it into and is what gets fetched.
 // Keeping both is what makes `uses: shell` explainable after the fact.
 func (r *Resolver) Inspect(ctx context.Context, uses, reference string) (*Resolution, error) {
+	return r.inspect(ctx, uses, reference, false)
+}
+
+// inspect is Inspect, and with everyPlatform it also reads each other
+// runnable platform's devices: (Resolution.OtherPlatforms).
+func (r *Resolver) inspect(ctx context.Context, uses, reference string, everyPlatform bool) (*Resolution, error) {
 	parsed, err := ParseReference(reference)
 	if err != nil {
 		return nil, &ResolveError{Reference: reference, Code: ReasonImageResolveUnsupported,
@@ -273,7 +296,155 @@ func (r *Resolver) Inspect(ctx context.Context, uses, reference string) (*Resolu
 	if err := r.readInterface(ctx, parsed, body, contentType, &authorization, res); err != nil {
 		return nil, err
 	}
+	if everyPlatform {
+		if err := r.readOtherPlatforms(ctx, parsed, body, contentType, &authorization, res); err != nil {
+			return nil, err
+		}
+	}
 	return res, nil
+}
+
+// readOtherPlatforms reads, for an index, each runnable platform after the
+// first one's interface devices:, one platform manifest and one config each.
+// A fetch that fails fails resolution, as the first platform's does; a label
+// that cannot be parsed, or an entry that cannot be read through, is named
+// with why, never read as declaring nothing.
+func (r *Resolver) readOtherPlatforms(ctx context.Context, ref Reference, index []byte, contentType string,
+	authorization *string, res *Resolution,
+) error {
+	switch mediaTypeOf(contentType) {
+	case MediaTypeOCIIndex, MediaTypeDockerManifestList:
+	default:
+		return nil
+	}
+	entries := runnablePlatforms(index)
+	if len(entries) < 2 {
+		return nil
+	}
+	if len(entries) > MaxIndexPlatforms {
+		return &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+			Detail: fmt.Sprintf("index lists %d runnable platforms, more than the %d whose device contracts create reads",
+				len(entries), MaxIndexPlatforms)}
+	}
+	res.OtherPlatforms = []PlatformDevices{}
+	read := map[string]PlatformDevices{}
+	for _, entry := range entries[1:] {
+		if seen, ok := read[entry.digest]; ok {
+			seen.Platform = entry.platform
+			res.OtherPlatforms = append(res.OtherPlatforms, seen)
+			continue
+		}
+		other := PlatformDevices{Platform: entry.platform}
+		devices, why, err := r.platformDevices(ctx, ref, entry, authorization)
+		if err != nil {
+			return err
+		}
+		other.Devices, other.Err = devices, why
+		read[entry.digest] = other
+		res.OtherPlatforms = append(res.OtherPlatforms, other)
+	}
+	return nil
+}
+
+// MaxIndexPlatforms bounds the runnable platforms of an index whose device
+// contracts create reads, two registry GETs each; a real image lists a few.
+const MaxIndexPlatforms = 16
+
+// platformDevices is one platform's interface devices:, or why it cannot be
+// read; err is a fetch the registry failed.
+func (r *Resolver) platformDevices(ctx context.Context, ref Reference, entry platformEntry, authorization *string,
+) (map[string]string, string, error) {
+	if entry.nested {
+		return nil, "the index names another index for this platform", nil
+	}
+	if !sha256DigestPattern.MatchString(entry.digest) {
+		return nil, "the index names no sha256 digest for this platform", nil
+	}
+	manifest, manifestType, _, err := r.getManifest(ctx, ref, entry.digest, authorization)
+	if err != nil {
+		return nil, "", err
+	}
+	if got := digestOf(manifest); !strings.EqualFold(got, entry.digest) {
+		return nil, "", &ResolveError{Reference: ref.Original, Code: ReasonImageDigestMismatch,
+			Detail: fmt.Sprintf("index names platform manifest %s but the registry served a body hashing to %s",
+				entry.digest, got)}
+	}
+	switch mediaTypeOf(manifestType) {
+	case MediaTypeOCIIndex, MediaTypeDockerManifestList:
+		return nil, "the index names another index for this platform", nil
+	}
+	configDigest, err := configDescriptor(manifest)
+	if err != nil {
+		return nil, "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+			Detail: "manifest has no readable config descriptor", Err: err}
+	}
+	config, err := r.getBlob(ctx, ref, configDigest, authorization)
+	if err != nil {
+		return nil, "", err
+	}
+	if got := digestOf(config); !strings.EqualFold(got, configDigest) {
+		return nil, "", &ResolveError{Reference: ref.Original, Code: ReasonImageDigestMismatch,
+			Detail: fmt.Sprintf("manifest names config %s but the registry served a blob hashing to %s",
+				configDigest, got)}
+	}
+	labels, err := labelsOf(config)
+	if err != nil {
+		return nil, "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+			Detail: "config blob is not valid JSON", Err: err}
+	}
+	raw, ok := labels[InterfaceLabel]
+	if !ok {
+		return nil, "", nil
+	}
+	iface, err := ParseInterfaceLabel(raw)
+	if err != nil {
+		return nil, SafeReason(err.Error()), nil
+	}
+	return iface.GetDevices(), "", nil
+}
+
+// platformEntry is one runnable platform of an index, in index order.
+type platformEntry struct {
+	digest   string
+	platform string // os/arch[/variant]
+	nested   bool   // the entry is itself an index
+}
+
+// runnablePlatforms lists an index's runnable platforms in index order, the
+// entries selectPlatformManifest walks: one whose os is empty or "unknown"
+// (an attestation) is skipped.
+func runnablePlatforms(index []byte) []platformEntry {
+	var parsed struct {
+		Manifests []struct {
+			MediaType string `json:"mediaType"`
+			Digest    string `json:"digest"`
+			Platform  *struct {
+				OS           string `json:"os"`
+				Architecture string `json:"architecture"`
+				Variant      string `json:"variant"`
+			} `json:"platform"`
+		} `json:"manifests"`
+	}
+	if err := json.Unmarshal(index, &parsed); err != nil {
+		return nil
+	}
+	var entries []platformEntry
+	for _, m := range parsed.Manifests {
+		if m.Platform == nil || m.Platform.OS == "" || m.Platform.OS == "unknown" {
+			continue
+		}
+		platform := m.Platform.OS + "/" + m.Platform.Architecture
+		if m.Platform.Variant != "" {
+			platform += "/" + m.Platform.Variant
+		}
+		nested := false
+		switch mediaTypeOf(m.MediaType) {
+		case MediaTypeOCIIndex, MediaTypeDockerManifestList:
+			nested = true
+		}
+		entries = append(entries, platformEntry{digest: m.Digest, platform: SafeReason(platform), nested: nested})
+	}
+	return entries
 }
 
 // errNoPlatformManifest is InterfaceError for an index step 7a cannot read a
@@ -300,6 +471,9 @@ func (r *Resolver) readInterface(ctx context.Context, ref Reference, body []byte
 		if !ok {
 			res.noConfig()
 			return nil
+		}
+		if entries := runnablePlatforms(body); len(entries) > 0 {
+			res.Platform = entries[0].platform
 		}
 		platform, platformType, _, err := r.getManifest(ctx, ref, digest, authorization)
 		if err != nil {

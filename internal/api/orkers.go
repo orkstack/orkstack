@@ -192,7 +192,11 @@ func orkerRow(presence engine.OrkerPresence, described *orkstackv1.DescribeOrker
 	row.MaxRequest = described.GetMaxRequest()
 	row.MetadataProbes = described.GetMetadataProbes()
 	for _, profile := range described.GetProfiles() {
-		row.Profiles = append(row.Profiles, project(profile, orkerProfilePublic))
+		listed := project(profile, orkerProfilePublic)
+		for i, c := range listed.GetContracts() {
+			listed.Contracts[i] = project(c, orkerProfileContractPublic)
+		}
+		row.Profiles = append(row.Profiles, listed)
 	}
 	for _, cause := range described.GetProfileCordons() {
 		row.ProfileCordons = append(row.ProfileCordons, project(cause, profileCordonPublic))
@@ -208,14 +212,15 @@ func orkerRow(presence engine.OrkerPresence, described *orkstackv1.DescribeOrker
 var (
 	orkerProfilePublic = map[string]bool{
 		"name": true, "kind": true, "units": true, "usable_units": true, "bound_units": true,
+		"contracts": true, "default_contract": true,
 	}
-	// contracts and default_contract stay off the inventory until the
-	// projection strips each contract's identity_digest (E91 contracts, CP-1).
-	orkerProfileControlOnly = map[string]bool{
-		"revision": true, "identity_digest": true, "contracts": true, "default_contract": true,
-	}
-	profileCordonPublic      = map[string]bool{"cause": true, "profile": true, "reason": true, "since": true}
-	profileCordonControlOnly = map[string]bool{"detail": true}
+	orkerProfileControlOnly = map[string]bool{"revision": true, "identity_digest": true}
+	// A contract is listed by label and accepted labels; its identity is
+	// the control channel's, as the profile's own is.
+	orkerProfileContractPublic      = map[string]bool{"label": true, "accepts": true}
+	orkerProfileContractControlOnly = map[string]bool{"identity_digest": true}
+	profileCordonPublic             = map[string]bool{"cause": true, "profile": true, "reason": true, "since": true}
+	profileCordonControlOnly        = map[string]bool{"detail": true}
 )
 
 // project is a copy of m holding only the fields public names.

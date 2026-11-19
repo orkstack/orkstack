@@ -1242,6 +1242,10 @@ func (s *Service) prepareOrkflow(ctx context.Context, source []byte, requestedNa
 	if hasError(issues) {
 		return nil, nil, issues, connect.NewError(connect.CodeInvalidArgument, &interfaceRefusal{Issues: issues})
 	}
+	// The image's declared device contracts are part of the definition: copied
+	// into each task that names the profile before either hash is taken, so
+	// both cover them (rollout-revision §2.3).
+	dsl.ApplyDeviceContracts(wf, resolutions)
 	// A document that pins no version names the one its content was given, if it
 	// was given one. Otherwise it has none yet, and only ApplyOrkflow mints: this
 	// function is validation's too, and validation writes nothing.

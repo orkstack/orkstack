@@ -654,5 +654,16 @@ func validateDevices(taskIndex int, task *orkstackv1.Task) error {
 		}
 		seen[name] = true
 	}
+	for _, name := range mapKeys(task.GetDeviceContracts()) {
+		label := task.GetDeviceContracts()[name]
+		if !seen[name] {
+			return validationError(fmt.Sprintf("tasks[%d].devices", taskIndex),
+				fmt.Errorf("task %q: a contract is pinned for %q, which `devices:` does not name", task.GetId(), name))
+		}
+		if !contractLabelPattern.MatchString(label) {
+			return validationError(fmt.Sprintf("tasks[%d].devices", taskIndex),
+				fmt.Errorf("task %q: contract %q of %q is not a contract label (%s)", task.GetId(), label, name, contractLabelPattern))
+		}
+	}
 	return nil
 }

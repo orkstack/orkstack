@@ -24,6 +24,7 @@ func TestOrkerProfileProjection_EveryFieldIsClassified(t *testing.T) {
 	}{
 		{(&orkstackv1.OrkerProfile{}).ProtoReflect().Descriptor(), orkerProfilePublic, orkerProfileControlOnly},
 		{(&orkstackv1.ProfileCordon{}).ProtoReflect().Descriptor(), profileCordonPublic, profileCordonControlOnly},
+		{(&orkstackv1.OrkerProfileContract{}).ProtoReflect().Descriptor(), orkerProfileContractPublic, orkerProfileContractControlOnly},
 	} {
 		fields := tc.message.Fields()
 		for i := 0; i < fields.Len(); i++ {
@@ -53,7 +54,8 @@ func TestOrkerRow_ProjectsProfilesWithoutControlChannelFields(t *testing.T) {
 		Cordoned: true,
 		Profiles: []*orkstackv1.OrkerProfile{{
 			Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU, Units: 2, UsableUnits: 1, BoundUnits: 1,
-			Revision: "mesa-25.2", IdentityDigest: "abc",
+			Revision: "mesa-25.2", IdentityDigest: "abc", DefaultContract: "2",
+			Contracts: []*orkstackv1.OrkerProfileContract{{Label: "2", IdentityDigest: "abc", Accepts: []string{"1"}}},
 		}},
 		ProfileCordons: []*orkstackv1.ProfileCordon{{
 			Cause: orkstackv1.ProfileCordon_CAUSE_UNAVAILABLE, Profile: "amd",
@@ -65,6 +67,7 @@ func TestOrkerRow_ProjectsProfilesWithoutControlChannelFields(t *testing.T) {
 
 	wantProfile := &orkstackv1.OrkerProfile{
 		Name: "amd", Kind: orkstackv1.ProfileKind_PROFILE_KIND_GPU, Units: 2, UsableUnits: 1, BoundUnits: 1,
+		DefaultContract: "2", Contracts: []*orkstackv1.OrkerProfileContract{{Label: "2", Accepts: []string{"1"}}},
 	}
 	if len(row.GetProfiles()) != 1 || !proto.Equal(row.GetProfiles()[0], wantProfile) {
 		t.Errorf("profiles = %v, want %v", row.GetProfiles(), wantProfile)
@@ -77,7 +80,8 @@ func TestOrkerRow_ProjectsProfilesWithoutControlChannelFields(t *testing.T) {
 		t.Errorf("profile cordons = %v, want %v", row.GetProfileCordons(), wantCordon)
 	}
 	// The projection copies: the Orker's answer is untouched.
-	if described.GetProfiles()[0].GetRevision() != "mesa-25.2" || described.GetProfileCordons()[0].GetDetail() == "" {
+	if described.GetProfiles()[0].GetRevision() != "mesa-25.2" || described.GetProfileCordons()[0].GetDetail() == "" ||
+		described.GetProfiles()[0].GetContracts()[0].GetIdentityDigest() != "abc" {
 		t.Error("projection changed the described answer")
 	}
 }

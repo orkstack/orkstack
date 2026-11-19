@@ -485,7 +485,12 @@ func CompileWithOptions(source []byte, opts Options) (*orkstackv1.Orkflow, error
 				return nil, validationError(fmt.Sprintf("tasks[%d].devices", taskIndex),
 					fmt.Errorf("task %q: `devices:` names at least one profile; leave it out to hold none", td.ID))
 			}
-			task.Devices = *td.Devices
+			devices, contracts, err := splitDeviceEntries(taskIndex, td.ID, *td.Devices)
+			if err != nil {
+				return nil, err
+			}
+			task.Devices = devices
+			task.DeviceContracts = contracts
 		}
 		if td.TimeoutSeconds != nil {
 			task.TimeoutSeconds = *td.TimeoutSeconds

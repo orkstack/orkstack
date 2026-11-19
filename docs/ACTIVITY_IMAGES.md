@@ -69,9 +69,12 @@ An image MAY write down its `with:` contract in one OCI image label,
 during the create-time resolution that already pins the digest (OCI Activity
 Contract §4.3) and checks every task's `with:` against it at `orkctl orkflow
 validate` and at create (`docs/DSL.md`, validation rule 14). The container never
-reads the label, and nothing about it is stored: it is recomputed from the
-digest-addressed image on every read (an `InspectActivity` that asks with
-`allow_cached` about a pinned digest may get an earlier read of it), so it
+reads the label. One part of it is stored: the device contracts its `devices:`
+key declares are copied into each task that names the profile at create, so
+the definition's digest covers them and the run pins them (`docs/DSL.md`,
+"Device profiles", rule 54). Nothing else about it is stored: it is recomputed
+from the digest-addressed image on every read (an `InspectActivity` that asks
+with `allow_cached` about a pinned digest may get an earlier read of it), so it
 can never disagree with what runs.
 Beside it, an image MAY draw itself an icon (`org.orkstack.activity.icon`,
 "The icon") and describe itself, its ops and its keys in words
@@ -79,7 +82,9 @@ Beside it, an image MAY draw itself an icon (`org.orkstack.activity.icon`,
 returns for clients to show; nothing checks a run against them. For a
 multi-platform image all three labels are read from the first platform
 manifest in index order, so every platform variant should carry the same
-labels.
+labels. For a task that names a device profile, create also reads every other
+platform's interface label and refuses the image unless every platform
+declares the same `devices:` contract of each profile the task names.
 
 The label is **optional**. An image without it is an ordinary activity,
 resolved, created and run exactly as before; its `with:` is checked by the
@@ -178,6 +183,11 @@ LABEL org.orkstack.activity.interface='{"schemaVersion":1,"ops":{"copy":{"fields
 - `defaultOp` is the op the image runs when `op` is absent; with `ops` and no
   `defaultOp`, `op` is required.
 - `values` is documentary: the keys the image writes to `values.json`.
+- `devices`, when present, maps a device profile's name to the contract label
+  the image needs of it (`devices: {sensor: "2"}`; a label matches
+  `^[A-Za-z0-9_.:+-]{1,64}$`, at most 8 profiles). A task using the image must
+  name every profile listed, and runs under that contract; a task naming a
+  profile the image does not list runs under the profile's default contract.
 
 Each key is declared with exactly the vocabulary an Orkflow's `inputs:` has —
 `type` (`string`, `number`, `boolean`, `object`, `array`, or several joined by

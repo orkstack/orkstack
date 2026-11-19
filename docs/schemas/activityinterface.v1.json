@@ -88,6 +88,23 @@
       "pattern": "^[^\\n\\r]*\\n?$",
       "type": "string"
     },
+    "devices": {
+      "additionalProperties": {
+        "pattern": "^[A-Za-z0-9_.:+-]{1,64}$",
+        "type": "string"
+      },
+      "description": "The contract of each device profile the image needs, by profile name: a task naming that profile runs only under that contract, and a task using the image must name every profile listed here.",
+      "maxProperties": 8,
+      "propertyNames": {
+        "maxLength": 200,
+        "pattern": "^[a-z][a-z0-9-]*$",
+        "type": "string"
+      },
+      "type": [
+        "object",
+        "null"
+      ]
+    },
     "fields": {
       "allOf": [
         {

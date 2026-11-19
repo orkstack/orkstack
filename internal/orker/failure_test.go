@@ -36,6 +36,7 @@ var allReasonCodes = []string{
 	ReasonMetadataEndpointReachable, ReasonMetadataProbeFailed,
 	ReasonValuesContainSecret, ReasonMaskCapacityExceeded,
 	ReasonProfileNotOffered, ReasonProfileChanged, ReasonProfileDrifted, ReasonGPUUnitsUnavailable,
+	ReasonProfileContractNotServed, ReasonProfileDeclarationMismatch,
 	eachlines.ReasonLineInvalid, eachlines.ReasonTooManyItems, eachlines.ReasonSourceTooLarge,
 	eachlines.ReasonBatchTooLarge, eachlines.ReasonExpansionFailed,
 }

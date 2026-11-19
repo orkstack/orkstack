@@ -29,6 +29,10 @@ func (fakeStdioRuntime) LoadLayout(context.Context, string, string) (PullInfo, e
 	return PullInfo{}, errors.New("no embedded layout in this test")
 }
 
+func (fakeStdioRuntime) ImageLabel(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
+}
+
 func (fakeStdioRuntime) Create(context.Context, ContainerSpec) (ContainerID, error) {
 	return "fake-container", nil
 }
