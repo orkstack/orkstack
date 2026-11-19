@@ -366,10 +366,16 @@ func runWorkflow(
 					return state.fail(ctx, cancelRun, inFlight, id, err)
 				}
 			}
-			// A paused run's run-level slot (concurrency_pause.go): a pause
-			// that reaches its wait for the slot again leaves the line; a
-			// quiet paused run gives the slot back; an unpaused one that
-			// gave it back asks for it again.
+			state.syncPauseIndexWithin(ctx, inFlight) // retries a write the cluster refused
+			if due, canceled := state.pauseExpiryDue(ctx); canceled {
+				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
+			} else if due {
+				return state.fail(ctx, cancelRun, inFlight, "", state.pauseExpiredCause(ctx, inFlight))
+			}
+			// A paused run's run-level slot (concurrency_pause.go), after its
+			// pause's expiry: a pause that reaches its wait for the slot again
+			// leaves the line; a quiet paused run gives the slot back; an
+			// unpaused one that gave it back asks for it again.
 			if state.paused() && state.concWaiting() {
 				if err := state.abandonRequeue(ctx); err != nil {
 					return state.fail(ctx, cancelRun, inFlight, "", err)
@@ -384,12 +390,6 @@ func runWorkflow(
 				if err := state.reacquireRunSlot(ctx); err != nil {
 					return state.fail(ctx, cancelRun, inFlight, "", err)
 				}
-			}
-			state.syncPauseIndexWithin(ctx, inFlight) // retries a write the cluster refused
-			if due, canceled := state.pauseExpiryDue(ctx); canceled {
-				return state.fail(ctx, cancelRun, inFlight, "", temporal.NewCanceledError())
-			} else if due {
-				return state.fail(ctx, cancelRun, inFlight, "", state.pauseExpiredCause(ctx, inFlight))
 			}
 		}
 		// A run with a timeout applies the resolutions queued when the pass
@@ -1019,6 +1019,9 @@ type runState struct {
 	// conc is the run's concurrency state (concurrency_run.go); nil when its
 	// plan declares no run-level limit.
 	conc *concRunState
+	// handlersDropped: the run ended without its failure handlers, because
+	// it had given its concurrency slot back (fail); its error says so.
+	handlersDropped bool
 
 	// The pause (pause.go): pauses is the request channel, nil for a run
 	// whose plan lacks Pause; pause and pausedByParent are the two causes;
@@ -1201,6 +1204,9 @@ func buildRunState(
 	state.declaredRows = DeclaredRows(wf)
 	state.runTimeout = newRunTimeout(wf, plan)
 	state.conc = newConcRunState(plan.Concurrency)
+	if state.conc != nil {
+		state.conc.pausable = plan.Pause != nil
+	}
 	for _, t := range wf.GetTasks() {
 		state.order = append(state.order, t.GetId())
 		state.tasks[t.GetId()] = t
@@ -2999,7 +3005,12 @@ func (s *runState) fail(
 	// holds none: a failure handler would run outside the limit, so it
 	// starts none, as a run that ends in line does (failInLine).
 	if s.concSlotGivenBack() {
-		s.endRequeue()
+		s.leaveRequeue(ctx)
+		if s.hasHandlers {
+			s.handlersDropped = true
+			workflow.GetLogger(ctx).Warn("a run that gave its concurrency slot back ends without its failure handlers",
+				"run_id", s.runID)
+		}
 		s.dropHandlersOutsideLimit()
 	}
 	// The history guard's failure belongs to the run, never to the task or
@@ -3024,6 +3035,9 @@ func (s *runState) fail(
 	}
 	s.finished = timestamppb.New(workflow.Now(ctx))
 	s.runError = s.runFailureFor(taskID, cause)
+	if s.handlersDropped {
+		s.runError.Message += "; its failure handlers did not run, because the run had given its concurrency slot back while paused"
+	}
 
 	eventCtx := ctx
 	eventType := orkstackv1.EventType_EVENT_TYPE_RUN_FAILED
