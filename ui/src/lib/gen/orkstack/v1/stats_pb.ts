@@ -416,14 +416,14 @@ export type GetStatsResponse = Message<"orkstack.v1.GetStatsResponse"> & {
   paused: bigint;
 
   /**
-   * queued is set from E88; unset until it lands (v0.4.0 proto batch).
+   * queued is how many of the running runs wait for a concurrency slot.
    *
    * @generated from field: int64 queued = 19;
    */
   queued: bigint;
 
   /**
-   * executing is set from E103; unset until it lands (v0.4.0 proto batch).
+   * executing is how many of the running runs do not: running minus queued.
    *
    * @generated from field: int64 executing = 20;
    */
