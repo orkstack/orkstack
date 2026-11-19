@@ -47,3 +47,21 @@ func checkFilterKey(tokenKey string, set listfilter.Set) error {
 	}
 	return nil
 }
+
+// filtersName reports whether a filter of set on field names value, under
+// any operator: a status filter naming PAUSED is refused where the cluster
+// does not index paused runs, because there every paused row reads RUNNING
+// and neither "is" nor "is not" PAUSED would answer truly.
+func filtersName(set listfilter.Set, field, value string) bool {
+	for _, f := range set.Proto() {
+		if f.GetField() != field {
+			continue
+		}
+		for _, v := range f.GetValues() {
+			if v == value {
+				return true
+			}
+		}
+	}
+	return false
+}

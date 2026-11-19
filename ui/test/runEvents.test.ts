@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test';
 import { watchRunEvents, type RunSocketState } from '../src/lib/runEvents';
+import { EventType, PauseTransition } from '../src/lib/gen/orkstack/v1/run_pb';
+import { Status } from '../src/lib/gen/orkstack/v1/common_pb';
 
 // F-ui-ux-7: a run whose socket dies stops saying CONNECTING. Reconnects that
 // deliver no frame are bounded, a delivered frame resets the budget, the
@@ -163,6 +165,28 @@ test('stopping cancels a pending reconnect', () => {
 	w.stop();
 	w.elapse();
 	expect(w.count()).toBe(1);
+});
+
+// E103: the bridge writes EVERY enum without its proto prefix. A RUN_PAUSED
+// frame carries pauseTransition too; restoring only type and status made the
+// decode throw and the frame vanish, so the page never showed Paused.
+test('every enum of a frame is decoded, a pause transition included', () => {
+	const seen: { type: EventType; status: Status; transition: PauseTransition }[] = [];
+	fakeSocket.opened = [];
+	(globalThis as { WebSocket?: unknown }).WebSocket = fakeSocket;
+	watchRunEvents('ork-1', 'alpha', (e) => seen.push({ type: e.type, status: e.status, transition: e.pauseTransition }), () => {});
+	const socket = fakeSocket.opened[0];
+	socket.open();
+	socket.onmessage?.({
+		data: JSON.stringify({ runId: 'ork-1', sequence: '5', type: 'RUN_PAUSED', status: 'PAUSED', requestId: 'pause-1', pauseTransition: 'PAUSED' })
+	});
+	socket.onmessage?.({
+		data: JSON.stringify({ runId: 'ork-1', sequence: '6', type: 'RUN_CANCELED', status: 'CANCELED', pauseTransition: 'ENDED_RUN_ENDED' })
+	});
+	expect(seen).toEqual([
+		{ type: EventType.RUN_PAUSED, status: Status.PAUSED, transition: PauseTransition.PAUSED },
+		{ type: EventType.RUN_CANCELED, status: Status.CANCELED, transition: PauseTransition.ENDED_RUN_ENDED }
+	]);
 });
 
 // The bridge writes every enum short, nested ones too: a task's interruption

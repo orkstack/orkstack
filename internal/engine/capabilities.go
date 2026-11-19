@@ -70,11 +70,17 @@ const CapabilityRunTimeout = "run-timeout"
 // as a definition it refuses.
 const CapabilityEachLines = "each-lines"
 
+// CapabilityRunPause is what PauseRun and UnpauseRun need of every process
+// that could decide the run: an older build drops a pause request it does
+// not know, or a pause it would not carry across a continuation, so the
+// request would read as recorded and never apply.
+const CapabilityRunPause = "run-pause"
+
 // EngineCapabilities is what this build can run, in the order it advertises
 // them. A later stage appends its own token; a token is never removed while a
 // release that relies on it may still poll.
 var EngineCapabilities = []string{CapabilityEachItems10k, CapabilityDefinitionRef, CapabilitySnapshotOverlay,
-	CapabilityWebhookByID, CapabilityRunTimeout, CapabilityEachLines}
+	CapabilityWebhookByID, CapabilityRunTimeout, CapabilityEachLines, CapabilityRunPause}
 
 // capabilitySuffix separates a process's SDK identity from what it advertises.
 const capabilitySuffix = " ork-caps="

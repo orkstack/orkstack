@@ -489,6 +489,9 @@ message RunPauseSignal {
   // per level. An inherited pause's backstop is derived from both.
   google.protobuf.Timestamp origin_expires_at = 11;
   int64 depth = 12;
+  // principal_verified: principal is who OrkStack authenticated (auth.mode
+  // observe or enforce), not a gateway's assertion.
+  bool principal_verified = 13;
 }
 
 // AttemptOutcome is how one Temporal attempt of a task ended.
@@ -1186,8 +1189,9 @@ message ResumeHint {}
 // batch).
 message RunContextState {}
 
-// RunPause is one pause a person asked for. Every principal here is what the
-// gateway asserted (as RunOrigin.principal), never authenticated.
+// RunPause is one pause a person asked for. Each principal is marked as
+// RunOrigin.principal is: verified when OrkStack authenticated it (auth.mode
+// observe or enforce), and otherwise what the gateway asserted.
 message RunPause {
   google.protobuf.Timestamp paused_at = 1;
   google.protobuf.Timestamp expires_at = 2;
@@ -1200,7 +1204,13 @@ message RunPause {
   // end is UNSPECIFIED while the pause lasts.
   PauseEnd end = 7;
   google.protobuf.Timestamp ended_at = 8;
+  // ended_by is who unpaused it; empty when it timed out or the run's end
+  // closed it.
   string ended_by = 9;
+  // paused_by_verified says paused_by is a principal OrkStack authenticated.
+  bool paused_by_verified = 10;
+  // ended_by_verified says ended_by is a principal OrkStack authenticated.
+  bool ended_by_verified = 11;
 }
 
 // RunResume is E85's; it is empty until E85 lands (v0.4.0 proto

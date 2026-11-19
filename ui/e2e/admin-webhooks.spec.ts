@@ -204,6 +204,11 @@ test('registers a scoped task-event webhook and the row states its scope', async
 		await expect(page.getByTestId(`webhook-event-${name}`)).toBeVisible();
 	}
 	await expect(page.getByTestId('webhook-event-TASK_LOG')).toHaveCount(0);
+	// A pause's two events are opt-in run events, offered beside the run
+	// transitions.
+	for (const name of ['RUN_PAUSED', 'RUN_UNPAUSED']) {
+		await expect(page.getByTestId('webhook-run-events').getByTestId(`webhook-event-${name}`)).toBeVisible();
+	}
 
 	await page.getByTestId('webhook-url').fill(`${receiverURL}/scoped`);
 	await page.getByTestId('webhook-namespace').fill('default');

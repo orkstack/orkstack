@@ -27,6 +27,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/listfilter"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -260,6 +261,10 @@ type TemporalRunReader struct {
 
 	// rootIndexed reports that this cluster has OrkflowOriginRootRunId.
 	rootIndexed bool
+	// pausedIndexed reports that boot found OrkflowRunPaused usable
+	// (task.EnsureRunPausedSearchAttribute), so a list row can say PAUSED and
+	// status=PAUSED is a question the cluster answers.
+	pausedIndexed bool
 	// originIndexed reports that this cluster has the OrkflowOriginKind and
 	// OrkflowOriginId search attributes (task.EnsureRunOriginSearchAttributes),
 	// so an origin filter is a predicate the cluster applies. It is a separate
@@ -485,6 +490,15 @@ func (r *TemporalRunReader) WithRootIndex(indexed bool) *TemporalRunReader {
 	return r
 }
 
+// WithPausedIndex records whether the cluster indexes OrkflowRunPaused. Off,
+// a paused run lists as RUNNING (GetRun and the stream stay exact) and
+// status=PAUSED is refused with ErrPausedFilterUnavailable, never answered
+// with an empty list.
+func (r *TemporalRunReader) WithPausedIndex(indexed bool) *TemporalRunReader {
+	r.pausedIndexed = indexed
+	return r
+}
+
 // WithOriginIndex records whether the cluster indexes a run's origin. Off,
 // the reader answers an origin filter by the fail-closed walk the namespace
 // filter takes without its index.
@@ -523,6 +537,27 @@ func (r *TemporalRunReader) GetRun(ctx context.Context, runID string) (*orkstack
 	// Derived on read, never stored: why a waiting row is not running yet.
 	applyPendingReasons(projection.run, time.Now())
 	return projection.run, nil
+}
+
+// GetRunAndSequence is GetRun and the run's last event sequence, both from
+// one read of its history: a pause or unpause request reports it as its
+// after_sequence, so a caller that streams from it sees only events recorded
+// after the request was checked.
+func (r *TemporalRunReader) GetRunAndSequence(ctx context.Context, runID string) (*orkstackv1.Run, int64, error) {
+	if runID == "" {
+		return nil, 0, fmt.Errorf("engine: get run: run id is required")
+	}
+	st := newScanState(false)
+	projection, err := r.scanWith(ctx, runID, false, 0, true, nil, st)
+	if err != nil {
+		return nil, 0, err
+	}
+	if projection.run == nil {
+		return nil, 0, fmt.Errorf("engine: run %s: %w", runID, ErrRunNotFound)
+	}
+	applyCanceledBy(projection.run, projection.canceledBy)
+	applyPendingReasons(projection.run, time.Now())
+	return projection.run, st.lastSequence, nil
 }
 
 // Events returns a run's whole event stream after fromSequence, in sequence
@@ -652,7 +687,10 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	// provably empty is complete, so failing here would refuse a question
 	// visibility was never going to answer. The archive half, which stores the
 	// status it was given, still answers PENDING and SKIPPED.
-	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && !readerDecodableStatuses[q.Status] {
+	if q.Status == orkstackv1.Status_STATUS_PAUSED && !r.pausedIndexed {
+		return nil, ErrPausedFilterUnavailable
+	}
+	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && !r.decodes(q.Status) {
 		return nil, nil
 	}
 
@@ -674,7 +712,7 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	// id whose latest record is ContinuedAsNew (resolveChains). Every caller
 	// issues one of the two; the early return below is for any other.
 	whole := q.Complete || q.Exhaustive
-	running := q.Status == orkstackv1.Status_STATUS_RUNNING
+	running := listSettlesChains(q.Status)
 	page := &chainPage{reader: r, query: q, running: running, settled: map[string]chainSettlement{}}
 	out := make([]*orkstackv1.Run, 0, batch)
 	// foreign records that the walk read and dropped another namespace's run:
@@ -947,6 +985,34 @@ var readerDecodableStatuses = func() map[orkstackv1.Status]bool {
 	return decodable
 }()
 
+// ErrPausedFilterUnavailable refuses status=PAUSED on a cluster that does not
+// index OrkflowRunPaused: every paused run would list as RUNNING there, so an
+// empty answer would read as "no run is paused".
+var ErrPausedFilterUnavailable = errors.New(PausedFilterUnavailableCode +
+	": this deployment's cluster does not index paused runs, so a list cannot select them; " +
+	"register the OrkflowRunPaused search attribute and restart an engine (docs/DEPLOY.md)")
+
+// PausedFilterUnavailableCode is ErrPausedFilterUnavailable's reason.
+const PausedFilterUnavailableCode = "PAUSED_FILTER_UNAVAILABLE"
+
+// decodes reports whether a visibility record can decode to status: the
+// statuses statusFromExecution returns, and PAUSED where the attribute is
+// indexed (listedRun's override).
+func (r *TemporalRunReader) decodes(status orkstackv1.Status) bool {
+	if status == orkstackv1.Status_STATUS_PAUSED {
+		return r.pausedIndexed
+	}
+	return readerDecodableStatuses[status]
+}
+
+// listSettlesChains reports whether a list for status settles a chain whose
+// latest record is ContinuedAsNew (resolveChains): every live status does, so
+// a run between two records is never lost from a RUNNING or PAUSED list
+// (AGENTS.md §7).
+func listSettlesChains(status orkstackv1.Status) bool {
+	return runstatus.IsLive(status)
+}
+
 // executionStatusPredicate is the visibility predicate narrowing a listing to
 // the executions statusFromExecution maps onto want, and whether there is one
 // to push down at all.
@@ -971,6 +1037,13 @@ func executionStatusPredicate(want orkstackv1.Status, now time.Time) (string, bo
 	}
 	if want == orkstackv1.Status_STATUS_RUNNING {
 		return liveRunPredicate(now), true
+	}
+	// PAUSED is asked only where the attribute is indexed (decodes): live
+	// records whose attribute says so. A closed record keeps the value it had
+	// at its end, so the live predicate is what ANDs it with an open
+	// execution; listedRun applies the same rule over the page.
+	if want == orkstackv1.Status_STATUS_PAUSED {
+		return fmt.Sprintf("%s AND %s = %q", liveRunPredicate(now), task.SearchAttrOrkflowRunPaused, "true"), true
 	}
 	var match []enumspb.WorkflowExecutionStatus
 	for _, status := range terminalExecutionStatuses {
@@ -1611,6 +1684,12 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 	if info.GetCloseTime() != nil && !isContinuedAsNew(info) {
 		run.FinishedAt = cloneTime(info.GetCloseTime())
 	}
+	// A live record whose OrkflowRunPaused is "true" is PAUSED; a closed one
+	// keeps the value it had when the run ended and is not. Only an Indexed
+	// run writes the attribute, so elsewhere a paused run lists as RUNNING.
+	if run.Status == orkstackv1.Status_STATUS_RUNNING && r.searchKeyword(info, task.SearchAttrOrkflowRunPaused) == "true" {
+		run.Status = orkstackv1.Status_STATUS_PAUSED
+	}
 	run.OrkflowName = r.memoString(info.GetMemo(), MemoOrkflowName)
 	run.OrkflowVersion = r.memoString(info.GetMemo(), MemoOrkflowVersion)
 	run.Namespace = r.memoString(info.GetMemo(), MemoNamespace)
@@ -1626,6 +1705,20 @@ func (r *TemporalRunReader) listedRun(info *workflowpb.WorkflowExecutionInfo) *o
 		}
 	}
 	return run
+}
+
+// searchKeyword reads one keyword search attribute; absent or undecodable
+// reads as an empty string.
+func (r *TemporalRunReader) searchKeyword(info *workflowpb.WorkflowExecutionInfo, key string) string {
+	payload, ok := info.GetSearchAttributes().GetIndexedFields()[key]
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := r.converter.FromPayload(payload, &value); err != nil {
+		return ""
+	}
+	return value
 }
 
 // memoTime reads one RFC 3339 memo field; absent or unparsable reads as not

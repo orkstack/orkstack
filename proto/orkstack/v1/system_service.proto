@@ -366,7 +366,10 @@ message Release {
   // resumable_runs is set from E85; unset until it lands (v0.4.0 proto batch).
   int64 resumable_runs = 18;
 
-  // paused_runs is set from E103; unset until it lands (v0.4.0 proto batch).
+  // paused_runs is how many of runs_in_flight are paused: each keeps this
+  // release from draining until its pause ends (at most the deployment's
+  // engine.run_pause_timeout_max). 0 where the cluster does not index paused
+  // runs.
   int64 paused_runs = 19;
 
   // event_source_instances is set from E90; unset until it lands (v0.4.0 proto batch).

@@ -60,6 +60,9 @@ type RunStarter interface {
 	// SignalAwait delivers one resolution to a running run
 	// (TemporalStarter.SignalAwait).
 	SignalAwait(ctx context.Context, runID string, signal *orkstackv1.AwaitSignal) error
+	// SignalPause delivers one pause or unpause request to a running run
+	// (TemporalStarter.SignalPause).
+	SignalPause(ctx context.Context, runID string, signal *orkstackv1.RunPauseSignal) error
 }
 
 // ErrNoBinding reports a namespace no binding serves.

@@ -1,6 +1,7 @@
 import {
   test as base,
   type BrowserContext,
+  type Frame,
   type Page,
   type Request,
   type Response,
@@ -74,6 +75,15 @@ export const CODE_SETTLE_MS = 30_000;
  */
 export const APP_DRAWN_MS = 30_000;
 
+/**
+ * How long, after a navigation lost its document, the guard waits for
+ * Chromium to show its error page before it navigates again.
+ */
+export const ERROR_PAGE_MS = 5_000;
+
+/** The URL Chromium commits its error page for a failed document under. */
+const ERROR_PAGE = "chrome-error://";
+
 /** The resource types whose loss leaves a page that cannot start. */
 const PAGE_CODE = new Set(["document", "script", "stylesheet"]);
 
@@ -94,6 +104,12 @@ export async function navigateThroughNetworkChanges(
   for (let attempt = 1; ; attempt++) {
     const aborted: string[] = [];
     const inFlight = new Set<Request>();
+    // The document itself can be the request that was waiting. Chromium then
+    // shows its error page for it, and that is a navigation of its own,
+    // committed some tens of milliseconds after `goto` has already rejected:
+    // a navigation made again before it lands is interrupted by it
+    // ("interrupted by another navigation to chrome-error://chromewebdata/").
+    const lost = { document: false, errorPage: false };
     const onRequest = (request: Request) => {
       if (PAGE_CODE.has(request.resourceType())) inFlight.add(request);
     };
@@ -107,25 +123,50 @@ export async function navigateThroughNetworkChanges(
         PAGE_CODE.has(request.resourceType())
       ) {
         aborted.push(request.url());
+        if (isMainDocument(page, request)) lost.document = true;
+      }
+    };
+    // Any error page the main frame commits while this attempt's listener
+    // is on is this attempt's: the event may come before or after the
+    // document's requestfailed.
+    const onNavigated = (frame: Frame) => {
+      if (frame === page.mainFrame() && frame.url().startsWith(ERROR_PAGE)) {
+        lost.errorPage = true;
       }
     };
     page.on("request", onRequest);
     page.on("requestfinished", onFinished);
     page.on("requestfailed", onFailed);
+    page.on("framenavigated", onNavigated);
     let response: Response | null = null;
     try {
-      response = await navigate();
-      await pageCodeSettled(page, inFlight, Date.now() + CODE_SETTLE_MS);
-      await appDrawn(page, Date.now() + APP_DRAWN_MS);
-    } catch (err) {
-      // The document itself can be the request that was waiting. Any
-      // other navigation error is the spec's to see.
-      if (!String(err).includes(NETWORK_CHANGED)) throw err;
-      aborted.push(`${label} (the document)`);
+      try {
+        response = await navigate();
+        await pageCodeSettled(page, inFlight, Date.now() + CODE_SETTLE_MS);
+        await appDrawn(page, Date.now() + APP_DRAWN_MS);
+      } catch (err) {
+        // A lost document rejects the navigation with the error code, or,
+        // when its error page landed first, as interrupted by that page.
+        // Any other navigation error is the spec's to see.
+        const message = String(err);
+        const lostShape =
+          message.includes(NETWORK_CHANGED) ||
+          (lost.document && message.includes(`another navigation to "${ERROR_PAGE}`));
+        if (!lostShape) throw err;
+        if (!lost.document) {
+          lost.document = true;
+          aborted.push(`${label} (the document)`);
+        }
+      } finally {
+        page.off("request", onRequest);
+        page.off("requestfinished", onFinished);
+        page.off("requestfailed", onFailed);
+      }
+      if (lost.document && !lost.errorPage && attempt < NAVIGATION_ATTEMPTS) {
+        await errorPageShown(page, lost, Date.now() + ERROR_PAGE_MS);
+      }
     } finally {
-      page.off("request", onRequest);
-      page.off("requestfinished", onFinished);
-      page.off("requestfailed", onFailed);
+      page.off("framenavigated", onNavigated);
     }
     if (aborted.length === 0) return response;
     const what =
@@ -139,6 +180,42 @@ export async function navigateThroughNetworkChanges(
     report(
       `e2e: ${what}; navigating again (attempt ${attempt + 1} of ${NAVIGATION_ATTEMPTS})`,
     );
+  }
+}
+
+/** isMainDocument: `request` is the page's own navigation, not a frame's. */
+function isMainDocument(page: Page, request: Request): boolean {
+  try {
+    return request.isNavigationRequest() && request.frame() === page.mainFrame();
+  } catch {
+    // A service worker's request has no frame.
+    return false;
+  }
+}
+
+/**
+ * errorPageShown returns once Chromium has committed its error page for a
+ * lost document (`lost.errorPage`), or at `deadline`, or when the page
+ * closes. The caller's framenavigated listener sets the flag; this only
+ * waits on page events, never on a clock of its own.
+ */
+async function errorPageShown(
+  page: Page,
+  lost: { errorPage: boolean },
+  deadline: number,
+): Promise<void> {
+  while (!lost.errorPage && !page.isClosed() && Date.now() < deadline) {
+    await new Promise<void>((resolve) => {
+      const done = () => {
+        clearTimeout(timer);
+        page.off("framenavigated", done);
+        page.off("close", done);
+        resolve();
+      };
+      const timer = setTimeout(done, Math.max(0, deadline - Date.now()));
+      page.on("framenavigated", done);
+      page.on("close", done);
+    });
   }
 }
 

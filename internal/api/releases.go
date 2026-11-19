@@ -92,6 +92,9 @@ type releaseRunCount struct {
 	n    int64
 	runs []*orkstackv1.Run
 	err  error
+	// paused is how many of them are paused, where the cluster indexes paused
+	// runs; a count that could not be read is logged and reads as 0.
+	paused int64
 }
 
 // ListReleases is the deployment's releases as the cluster routes them.
@@ -176,6 +179,14 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 		inParallel(len(counted), func(i int) {
 			n, runs, err := s.releases.ReleaseRuns(ctx, counted[i], releaseRunsListed)
 			counts[i] = releaseRunCount{n: n, runs: runs, err: err}
+			if err == nil && n > 0 {
+				paused, _, perr := s.releases.ReleasePausedRuns(ctx, counted[i])
+				if perr != nil {
+					s.logger.Warn("list releases: the paused runs of a release could not be counted",
+						"build_id", counted[i], "error", perr)
+				}
+				counts[i].paused = paused
+			}
 		})
 		if obs.Routing.Current == "" {
 			running, runningErr = s.releases.RunningRuns(ctx)
@@ -255,6 +266,7 @@ func (s *Service) releaseSnapshot(ctx context.Context, only string) (*orkstackv1
 		if count, ok := runs[observed.BuildID]; ok && count.err == nil {
 			release.RunsInFlight = int32(count.n)
 			release.Runs = count.runs
+			release.PausedRuns = count.paused
 		} else {
 			release.RunsUnavailableReason = releaseMsgRunsUnknown
 		}

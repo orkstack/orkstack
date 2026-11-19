@@ -331,7 +331,7 @@ test('a 4,000-cell paint is O(n) calls and reads no computed style; a dirty repa
 
 test('every task status has a CSS mark and a canvas mark, and no two share a (fill, mark) pair', () => {
 	// PAUSED is a run status only, never a task's or an item's, so the task map
-	// never draws it; it borrows RUNNING's mark until the pause's own lands.
+	// never draws it (status.test.ts holds its run mark apart).
 	const all = (Object.keys(STATUS_MARKS).map(Number) as Status[]).filter((s) => s !== Status.PAUSED);
 	expect(all.length).toBe(9);
 	const pairs = new Set(all.map((s) => `${statusMark(s).fill}/${statusMark(s).shape}`));
