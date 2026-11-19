@@ -385,6 +385,9 @@ func RunWorkflow(
 			// starts nothing new (pauseHolds): held PENDING, nothing
 			// emitted, nothing classified.
 			if state.pauseHolds(id) {
+				// A pause is said by the run's own pause state, never by a
+				// row's dispatch_held.
+				state.taskRuns[id].DispatchHeld = false
 				continue
 			}
 			// The run timeout's deadline, before every dispatch decision.
@@ -476,6 +479,10 @@ func RunWorkflow(
 				return state.fail(ctx, cancelRun, inFlight, id, err)
 			}
 			inFlight[id] = future
+		}
+		// A pass that held nothing back clears the published hold.
+		if !state.holdSeen {
+			state.dispatchHold = orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_UNSPECIFIED
 		}
 
 		// (E) The idle block. A pin that is opening is work in progress
@@ -908,14 +915,19 @@ type runState struct {
 	segments              []*orkstackv1.EventSegmentRef
 	heldFanOuts           bool
 	capLogged             bool
-	admitted              map[string]bool
-	pinClosure            map[string]bool
-	pinClosureFresh       bool
-	gaveUp                string
-	restoreErr            error
-	bootstrapStarted      time.Time
-	bootstrapDeadline     time.Time
-	bootstrapBatch        int64
+	// dispatchHold is the run's own hold on new dispatch, as its snapshot
+	// publishes it (Run.dispatch_hold): set by holdDispatch the moment it
+	// holds, cleared by a pass that held nothing (holdSeen).
+	dispatchHold      orkstackv1.RunDispatchHold
+	holdSeen          bool
+	admitted          map[string]bool
+	pinClosure        map[string]bool
+	pinClosureFresh   bool
+	gaveUp            string
+	restoreErr        error
+	bootstrapStarted  time.Time
+	bootstrapDeadline time.Time
+	bootstrapBatch    int64
 
 	// runTimeout is the run's own time limit (runtimeout.go); nil when the
 	// definition declares no `timeout:`.
@@ -1990,6 +2002,7 @@ func (s *runState) markSkipped(ctx workflow.Context, id, reason string) error {
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_SKIPPED
 	taskRun.FinishedAt = now
+	taskRun.DispatchHeld = false
 	// Terminal, so this task's pin may now have none left. A pin whose
 	// every member is skipped was never opened, so this is a no-op for it.
 	defer s.closePinFor(ctx, id)
@@ -2670,6 +2683,7 @@ func (s *runState) markCanceled(ctx workflow.Context, id, reason string) error {
 	taskRun := s.taskRuns[id]
 	taskRun.Status = orkstackv1.Status_STATUS_CANCELED
 	taskRun.FinishedAt = now
+	taskRun.DispatchHeld = false
 	// As in markSkipped: terminal, so the pin may be done with. This is
 	// the hook cancelInFlight relies on — it marks every never-started task
 	// CANCELED, which is what makes every pin's members terminal on the
@@ -3116,11 +3130,30 @@ func (s *runState) snapshot() *orkstackv1.Run {
 		LastPause:      s.lastPauseProto(),
 		PausedByParent: s.liveInheritedPauseProto(),
 		PauseWarnings:  s.pauseWarningsProto(),
+		DispatchHold:   s.dispatchHoldProto(),
 	}
 	for _, id := range s.order {
-		run.TaskRuns = append(run.TaskRuns, s.taskRuns[id])
+		row := s.taskRuns[id]
+		settleDispatchHeld(row, s.eaches[id] != nil)
+		run.TaskRuns = append(run.TaskRuns, row)
 	}
 	return run
+}
+
+// settleDispatchHeld keeps dispatch_held to the rows that can wait for
+// dispatch: a PENDING row, or a fan-out still RUNNING with items to send. A
+// row that has started, or ended on any path, never reads held, whichever
+// writer moved it. Pure state, no command.
+func settleDispatchHeld(row *orkstackv1.TaskRun, fanOut bool) {
+	if !row.GetDispatchHeld() {
+		return
+	}
+	switch status := row.GetStatus(); {
+	case status == orkstackv1.Status_STATUS_PENDING:
+	case fanOut && status == orkstackv1.Status_STATUS_RUNNING:
+	default:
+		row.DispatchHeld = false
+	}
 }
 
 // emit publishes one lifecycle event through the projection activity.

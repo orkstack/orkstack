@@ -28,10 +28,13 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- `orkctl admin principal list` and Access → People list who signed in over a window (30 days by default), newest first, with their name and when they last signed in ([ACCESS.md](https://github.com/orkstack/orkstack/blob/main/docs/ACCESS.md#in-the-web-ui)).
+- The audit trail filters on `decision` (`allowed`, `denied`, `would-deny`) and `principal_verified`, and Admin → Audit has one-click Denied, Would deny (observed) and Principal not verified filters ([UI_CLI_PARITY.md](https://github.com/orkstack/orkstack/blob/main/docs/UI_CLI_PARITY.md#filtering-lists)).
 - `orkctl admin restore reconcile` removes, after a restore of Temporal, the runs cleanup had retired that the restore brought back; it needs the new `system.restore` permission ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#backup-and-disaster-recovery)).
 - Prometheus alert rules for the observability kit, each with a runbook, plus runbooks for Temporal outages and for backup and restore ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md)).
 - `ork.orker.stop_watch.failures{reason}` counts attempts whose container's event stream an Orker could not open, each also logged as a warning ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - The observability kit's Grafana now provisions two read-only dashboards, OrkStack and OrkStack / Run, with linked logs, traces and metrics ([README](https://github.com/orkstack/orkstack/blob/main/deploy/observability/README.md#dashboards)).
+- A run's record says when it holds tasks back itself, at its in-flight limit or while it carries on (`Run.dispatch_hold`) ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#a-run-that-pauses-new-tasks)).
 - Each engine exports every pool's backlog, `ork.pool.backlog.tasks` and `.age`, its rates and `ork.pool.pollers`, to scale Orkers on; `engine.pool_metrics.*` picks the pools ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#a-pools-backlog-as-metrics)).
 - Metrics for retention cleanup, webhook deliveries, schedules and HTTP triggers, and the `telemetry.object_labels` setting that adds schedule names and webhook ids to them ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
 - `ork.orker.task.wait.duration` measures how long a task waited for an Orker, and `ork.orker.memo.lookups`, `.reused` and `.writes` count a cached task's memo ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
@@ -81,7 +84,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 - Retention cleanup can now delete retired runs' artifact bytes on S3 (`ORK_CLEANUP_ARTIFACT_GC`); it starts in `dry_run`, and `orkctl admin gc preview` shows what `delete` would do ([STORAGE.md](https://github.com/orkstack/orkstack/blob/main/docs/STORAGE.md#the-artifact-gc)).
 - Reading an artifact the GC deleted answers `ARTIFACT_RECLAIMED`, and an evidence bundle records it as `artifact_reclaimed` ([REASONS.md](https://github.com/orkstack/orkstack/blob/main/docs/REASONS.md#reads-of-reclaimed-artifacts)).
 - Device profiles: an Orker on the device's own host can pass named character devices, such as USB serial ports, to the tasks that select them with `devices:` ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-device-orker)).
-- Admin → Pools shows each Orker's device profiles and why a profile holds an Orker's cordon ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-device-orker)).
+- Admin → Pools, `orkctl orker list` and `orkctl orker get` show each Orker's device profiles and why a profile holds an Orker's cordon ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-device-orker)).
 
 ### Changed
 

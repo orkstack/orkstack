@@ -1,6 +1,6 @@
 import type { AuditRecord } from './gen/orkstack/v1/audit_pb';
 import { listHref, pageStackKey } from './browsing';
-import { FilterOperator, equalityOf, filterFlags, type FieldFilter } from './listFilter';
+import { FilterOperator, equalityOf, filterFlags, filterOf, type FieldFilter } from './listFilter';
 
 // The Admin → Audit page's pure half: the page's address, what a row reads
 // as, and the CLI command for the same listing. Kept out of the component so
@@ -88,4 +88,40 @@ export function auditScopeSentence(filters: FieldFilter[]): string {
 	return one
 		? `Showing namespace ${one}. Deployment-wide writes carry no namespace; the filter namespace= selects them.`
 		: 'Showing the namespaces the namespace filter selects.';
+}
+
+/** A quick filter beside the filter bar: one decision or principal question, in one click. */
+export interface AuditShortcut {
+	label: string;
+	testid: string;
+	/** The filters the link applies: this one in place of any on its field. */
+	filters: FieldFilter[];
+	/** Whether exactly this filter is in force; the link then removes it. */
+	active: boolean;
+}
+
+const SHORTCUTS: { label: string; testid: string; field: string; value: string }[] = [
+	{ label: 'Denied', testid: 'denied', field: 'decision', value: 'denied' },
+	{ label: 'Would deny (observed)', testid: 'would-deny', field: 'decision', value: 'would-deny' },
+	{ label: 'Principal not verified', testid: 'unverified', field: 'principal_verified', value: 'false' }
+];
+
+/**
+ * The questions access control raises of the trail, as filters of the
+ * ListAuditRecordsRequest allowlist: what was refused, what observe mode would
+ * have refused, and which writes came from a principal OrkStack did not
+ * verify. Each replaces any filter on its own field, and an active one turns
+ * itself off; every other filter is kept.
+ */
+export function auditShortcuts(filters: FieldFilter[]): AuditShortcut[] {
+	return SHORTCUTS.map(({ label, testid, field, value }) => {
+		const others = filters.filter((f) => f.field !== field);
+		const active = equalityOf(filters, field) === value;
+		return {
+			label,
+			testid,
+			filters: active ? others : [...others, filterOf(field, FilterOperator.EQUALS, [value])],
+			active
+		};
+	});
 }

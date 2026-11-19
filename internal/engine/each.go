@@ -867,6 +867,9 @@ func categoryNameOf(category orkstackv1.FailureCategory) string {
 func (s *runState) finishFanOutOnRunEnd(ctx workflow.Context, id string) {
 	e := s.eaches[id]
 	node := s.taskRuns[id]
+	if node != nil {
+		node.DispatchHeld = false // the run is ending: nothing of it waits now
+	}
 	if e == nil || !e.expanded || e.count == 0 || node.GetStatus() == orkstackv1.Status_STATUS_SUCCEEDED {
 		return
 	}

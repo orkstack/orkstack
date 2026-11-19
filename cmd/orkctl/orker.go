@@ -101,6 +101,10 @@ func newOrkerListCommand(g *globalFlags) *cobra.Command {
 			"is unknown, never zero, and a filter on pool, build_id or cordoned keeps it.\n" +
 			"An Orker that stopped reads this way for up to 90 seconds, because the cluster\n" +
 			"still remembers it polling.\n" +
+			"STATE names every cause that holds a cordon, an operator's first:\n" +
+			"cordoned (operator; profile drifted). PROFILES is each profile the Orker\n" +
+			"offers with its kind and the cause on it, a100 (gpu; drifted), and each\n" +
+			"profile cause is a line under the table with what was found and how it ends.\n" +
 			"PINS is open/max for a pin host and - otherwise. CAPACITY is what an Orker\n" +
 			"declaring one admits tasks within, and RESERVED what stands reserved against\n" +
 			"it, pinned members included and each outstanding poll counted at the per-task\n" +
@@ -147,7 +151,7 @@ func equalsFilter(field, value string) *orkstackv1.FieldFilter {
 func newOrkerGetCommand(g *globalFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:   "get <orker-id>",
-		Short: "Show one Orker: its state, load and open pins",
+		Short: "Show one Orker: its state, profiles, load and open pins",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := g.unaryContext(cmd)
@@ -201,7 +205,7 @@ func newOrkerCordonCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			row := resp.Msg.GetOrker()
+			row := safeOrker(resp.Msg.GetOrker())
 			out := cmd.OutOrStdout()
 			fmt.Fprintf(out, "cordoned %s: %s\n", row.GetOrkerId(), strconv.Quote(row.GetCordonReason()))
 			fmt.Fprintf(out, "it is accepting no new tasks and will open no new pins; %s %s still running on it.\n",
@@ -233,10 +237,19 @@ func newOrkerUncordonCommand(g *globalFlags) *cobra.Command {
 			if g.json {
 				return writeJSON(cmd.OutOrStdout(), resp.Msg)
 			}
-			row := resp.Msg.GetOrker()
+			row := safeOrker(resp.Msg.GetOrker())
 			if row.GetStopping() != nil {
 				fmt.Fprintf(cmd.OutOrStdout(), "cleared the operator's cordon on %s; it stays cordoned because it is stopping, and takes no new work before it exits.\n",
 					row.GetOrkerId())
+				return nil
+			}
+			if causes := profileCauses(row); len(causes) > 0 {
+				also := ""
+				if row.GetStoreOutage() != nil {
+					also = "; object storage does not answer it either, which ends by itself once it does"
+				}
+				fmt.Fprintf(cmd.OutOrStdout(), "cleared the operator's cordon on %s; it stays cordoned while %s%s.\n",
+					row.GetOrkerId(), profileHoldsText(causes[0]), also)
 				return nil
 			}
 			if row.GetStoreOutage() != nil {
@@ -349,7 +362,7 @@ func (d *drainer) run() error {
 	if len(first.GetOrkers()) == 0 {
 		return d.finish(exitError, errNotPolling(d.id))
 	}
-	row := first.GetOrkers()[0]
+	row := safeOrker(first.GetOrkers()[0])
 	if operatorCordoned(row) && !d.reasonGiven {
 		d.say("cordoned %s: %s\n", d.id, strconv.Quote(row.GetCordonReason()))
 	} else {
@@ -364,7 +377,7 @@ func (d *drainer) run() error {
 		if err != nil {
 			return d.finish(exitError, rpcError("cordon orker", err))
 		}
-		row = resp.Msg.GetOrker()
+		row = safeOrker(resp.Msg.GetOrker())
 		d.last = &orkstackv1.ListOrkersResponse{Orkers: []*orkstackv1.Orker{row}}
 		d.say("cordoned %s: %s\n", d.id, strconv.Quote(row.GetCordonReason()))
 	}
@@ -385,7 +398,7 @@ func (d *drainer) run() error {
 		now = drainClock.Now()
 		var cur *orkstackv1.Orker
 		if err == nil && len(resp.GetOrkers()) > 0 {
-			cur = resp.GetOrkers()[0]
+			cur = safeOrker(resp.GetOrkers()[0])
 		}
 		switch {
 		case err != nil || cur == nil || cur.GetUnavailableReason() != "":
@@ -409,6 +422,11 @@ func (d *drainer) run() error {
 				return d.finish(exitError, fmt.Errorf("%s stopped answering; if the process is gone its pins are "+
 					"already lost (PIN_HOST_LOST), if it restarted it is uncordoned and accepting work", d.id))
 			}
+		case !operatorCordoned(cur) && cur.GetCordoned() && len(cur.GetProfileCordons()) > 0:
+			// A profile's cause holds it now, not the drain's cordon, so the drain
+			// cannot call it safe to stop: an unavailable profile ends by itself.
+			return d.finish(exitError, fmt.Errorf("%s was uncordoned by an operator; it stays cordoned while %s",
+				d.id, profileHoldsText(profileCauses(cur)[0])))
 		case !operatorCordoned(cur) && cur.GetCordoned():
 			// A store outage alone holds it now, and that ends by itself, so this
 			// Orker would take work again with the drain reporting it empty.
@@ -518,16 +536,20 @@ func isAre(n int32) string {
 }
 
 // operatorCordoned says an operator's cordon holds: it always carries a reason.
-// An Orker of a release with no store check and no stop grace only ever
-// reports that cause, so a row with neither reads exactly as it always has.
+// An Orker of a release with no store check, no stop grace and no profiles
+// only ever reports that cause, so a row with none reads exactly as it always
+// has.
 func operatorCordoned(row *orkstackv1.Orker) bool {
 	if !row.GetCordoned() {
 		return false
 	}
-	return row.GetCordonReason() != "" || row.GetStoreOutage() == nil && row.GetStopping() == nil
+	return row.GetCordonReason() != "" ||
+		row.GetStoreOutage() == nil && row.GetStopping() == nil && len(row.GetProfileCordons()) == 0
 }
 
-// orkerState is the STATE column.
+// orkerState is the STATE column. A stopping Orker never takes work again, so
+// it wins; otherwise a cordon names every cause that holds it, in the order
+// Admin → Pools ranks them: an operator's, a profile's, a store outage.
 func orkerState(row *orkstackv1.Orker) string {
 	switch {
 	case row.GetUnavailableReason() != "":
@@ -536,15 +558,31 @@ func orkerState(row *orkstackv1.Orker) string {
 		return "stopping (cordoned by an operator)"
 	case row.GetStopping() != nil:
 		return "stopping"
-	case row.GetStoreOutage() != nil && operatorCordoned(row):
-		return "cordoned (operator; object storage unreachable)"
-	case row.GetStoreOutage() != nil:
-		return "cordoned (object storage unreachable)"
-	case row.GetCordoned():
-		return "cordoned"
-	default:
+	case !row.GetCordoned() && row.GetStoreOutage() == nil && len(row.GetProfileCordons()) == 0:
+		// A cause is read from its own field whatever cordoned says, as the
+		// UI reads it, so a row from a skewed or newer release still names it.
 		return "ready"
 	}
+	// A drifted or unreadable profile ranks before a store outage, an
+	// unavailable one after it, as orkerState in ui/src/lib/orkers.ts does.
+	var causes []string
+	profile := profileStateLabel(row)
+	if profile != "" && profile != "profile unavailable" {
+		causes = append(causes, profile)
+	}
+	if row.GetStoreOutage() != nil {
+		causes = append(causes, "object storage unreachable")
+	}
+	if profile == "profile unavailable" {
+		causes = append(causes, profile)
+	}
+	if len(causes) == 0 {
+		return "cordoned"
+	}
+	if operatorCordoned(row) {
+		causes = append([]string{"operator"}, causes...)
+	}
+	return "cordoned (" + strings.Join(causes, "; ") + ")"
 }
 
 // orkerPins is PINS: open/max for a pin host, - otherwise or when unmeasured.
@@ -604,13 +642,14 @@ func orkerCount(n int) string { return orkerPlural(n, "orker", "orkers") }
 // renderOrkerList prints the fleet as a table, then the cordoned and the
 // unreachable Orkers with their reasons, one line each.
 func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
+	rows = safeOrkers(rows)
 	if len(rows) == 0 {
 		fmt.Fprintln(out, "No orkers are polling.")
 		return nil
 	}
 	table := newTable(out)
-	fmt.Fprintln(table, "ORKER\tPOOL\tBUILD\tSTATE\tTASKS\tPINS\tCAPACITY\tRESERVED\tLAST SEEN")
-	var cordoned, outages, stopping, unreachable, exposed []*orkstackv1.Orker
+	fmt.Fprintln(table, "ORKER\tPOOL\tBUILD\tSTATE\tTASKS\tPINS\tPROFILES\tCAPACITY\tRESERVED\tLAST SEEN")
+	var cordoned, outages, profiled, stopping, unreachable, exposed []*orkstackv1.Orker
 	for _, row := range rows {
 		if row.GetUnavailableReason() != "" {
 			unreachable = append(unreachable, row)
@@ -621,6 +660,9 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 			if row.GetStoreOutage() != nil {
 				outages = append(outages, row)
 			}
+			if len(row.GetProfileCordons()) > 0 {
+				profiled = append(profiled, row)
+			}
 			if row.GetStopping() != nil {
 				stopping = append(stopping, row)
 			}
@@ -628,9 +670,9 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 				exposed = append(exposed, row)
 			}
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			row.GetOrkerId(), orDash(row.GetPool()), orDash(row.GetBuildId()), orkerState(row),
-			orkerTasks(row), orkerPins(row), formatResources(row.GetCapacity()), formatResources(row.GetReserved()),
+			orkerTasks(row), orkerPins(row), orkerProfiles(row), formatResources(row.GetCapacity()), formatResources(row.GetReserved()),
 			formatTime(row.GetLastSeen()))
 	}
 	if err := table.Flush(); err != nil {
@@ -650,6 +692,15 @@ func renderOrkerList(out io.Writer, rows []*orkstackv1.Orker) error {
 		for _, row := range outages {
 			fmt.Fprintf(out, "  %s: %s, since %s\n", row.GetOrkerId(), row.GetStoreOutage().GetReason(),
 				formatTime(row.GetStoreOutage().GetSince()))
+		}
+	}
+	if len(profiled) > 0 {
+		fmt.Fprintf(out, "\n%s cordoned by a profile; what holds %s, and how it ends:\n",
+			orkerCount(len(profiled)), pick(len(profiled), "it", "each"))
+		for _, row := range profiled {
+			for _, cause := range profileCauses(row) {
+				fmt.Fprintf(out, "  %s: %s\n", row.GetOrkerId(), profileCauseNote(cause))
+			}
 		}
 	}
 	if len(stopping) > 0 {
@@ -708,6 +759,7 @@ func itsTheir(n int) string {
 
 // renderOrker prints one Orker as key/value lines, then its open pins.
 func renderOrker(out io.Writer, row *orkstackv1.Orker) error {
+	row = safeOrker(row)
 	table := newTable(out)
 	reason, since := dash, dash
 	if operatorCordoned(row) {
@@ -734,6 +786,14 @@ func renderOrker(out io.Writer, row *orkstackv1.Orker) error {
 		}
 		if stop.GetGraceEndsAt() != nil {
 			fmt.Fprintf(table, "grace ends\t%s\n", formatTime(stop.GetGraceEndsAt()))
+		}
+	}
+	if row.GetUnavailableReason() == "" {
+		for _, p := range row.GetProfiles() {
+			fmt.Fprintf(table, "profile %s\t%s\n", p.GetName(), profileLine(row, p))
+		}
+		for _, cause := range profileCauses(row) {
+			fmt.Fprintf(table, "profile cordon\t%s\n", profileCauseNote(cause))
 		}
 	}
 	fmt.Fprintf(table, "tasks\t%s\n", orkerTasks(row))

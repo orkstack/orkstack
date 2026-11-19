@@ -32,14 +32,30 @@ import (
 // cap replays with DefaultVersion and never holds.
 const InFlightCapChange = "run-in-flight-cap"
 
-// holdDispatch reports whether dispatch point id must wait. O(declared
-// pins): livePins is counted once per call, and pinClosureAllows is a set
-// lookup, built at most once per pass.
+// holdDispatch reports whether dispatch point id must wait, and records the
+// answer on id's row as dispatch_held: set while the in-flight cap or a
+// quiesce keeps a ready task, or a fan-out's next items, back, and cleared
+// the moment it would dispatch. A pause holds too, and is said by the run's
+// pause state instead, so it clears the flag. The flag lives in the run's
+// state and snapshot only (settleDispatchHeld): it issues no command, and a
+// history recorded before it replays the same commands.
 func (s *runState) holdDispatch(ctx workflow.Context, id string, inFlight map[string]workflow.Future) bool {
+	held := s.holdsDispatch(ctx, id, inFlight)
+	if row := s.taskRuns[id]; row != nil {
+		row.DispatchHeld = held && !s.pauseHolds(id)
+	}
+	return held
+}
+
+// holdsDispatch is holdDispatch's decision. O(declared pins): livePins is
+// counted once per call, and pinClosureAllows is a set lookup, built at most
+// once per pass.
+func (s *runState) holdsDispatch(ctx workflow.Context, id string, inFlight map[string]workflow.Future) bool {
 	if s.pauseHolds(id) {
 		return true
 	}
 	if s.quiescing && !s.pinClosureAllows(id) {
+		s.noteHold(orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_CARRYING_ON)
 		return true
 	}
 	lim := s.plan.InFlight
@@ -60,7 +76,47 @@ func (s *runState) holdDispatch(ctx workflow.Context, id string, inFlight map[st
 		s.capLogged = true
 		s.logInfo(ctx, inFlight, "run reached its in-flight cap", "cap", lim.Max)
 	}
+	s.noteHold(orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_IN_FLIGHT_CAP)
 	return true
+}
+
+// noteHold records that this pass held work back for hold, for the run's
+// snapshot (Run.dispatch_hold). Carrying on outranks the cap: a quiescing
+// run holds everything, whatever its cap would allow. It issues no command.
+func (s *runState) noteHold(hold orkstackv1.RunDispatchHold) {
+	if !s.holdSeen || s.dispatchHold != orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_CARRYING_ON {
+		s.dispatchHold = hold
+	}
+	s.holdSeen = true
+}
+
+// dispatchHoldProto is the hold the snapshot publishes. None while the run
+// is paused (its pause says why work waits), while its failure handlers run
+// (the cap never holds them), once it has finished, and when nothing waits:
+// no task or item PENDING and no fan-out with an item due and a slot free.
+// Carrying on is published only while the run still quiesces, so a quiesce
+// given up or switched past is not published past its own pass. A held cap
+// is published as of the last pass; the next pass decides it again.
+func (s *runState) dispatchHoldProto() orkstackv1.RunDispatchHold {
+	hold := s.dispatchHold
+	if hold == orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_CARRYING_ON && !s.quiescing {
+		hold = orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_UNSPECIFIED
+	}
+	if hold == orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_UNSPECIFIED || s.paused() || s.failingPhase || isTerminal(s.status) {
+		return orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_UNSPECIFIED
+	}
+	for _, id := range s.order {
+		row := s.taskRuns[id]
+		if row.GetStatus() == orkstackv1.Status_STATUS_PENDING || s.fanOutCanDispatch(id) {
+			return hold
+		}
+		for _, item := range row.GetItems() {
+			if item.GetStatus() == orkstackv1.Status_STATUS_PENDING {
+				return hold
+			}
+		}
+	}
+	return orkstackv1.RunDispatchHold_RUN_DISPATCH_HOLD_UNSPECIFIED
 }
 
 // inFlightWork is what the cap counts: every activity, item and child run

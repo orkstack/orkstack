@@ -322,7 +322,7 @@ func startEngine(
 	t.Helper()
 	address := freeAddress(t)
 	cmd := exec.CommandContext(ctx, binary)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(testbin.StackEnv(os.Environ()),
 		"ORK_HTTP_ADDR="+address,
 		"ORK_TEMPORAL_ADDRESS="+temporalAddress,
 		// Apply-time image resolution runs here (§4.3), and the built-in

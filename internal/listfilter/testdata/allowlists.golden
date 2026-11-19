@@ -9,14 +9,16 @@ A label is labels.KEY. \ escapes the next character; a comma inside a value is \
 
 == ListAuditRecords (orkstack.v1.AuditRecord)
 Filters (--filter FIELD OP VALUE, repeatable; every filter must hold):
-  FIELD        OPERATORS       VALUES
-  at           >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
-  namespace    = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
-  action       = != =a,b ~ ^   text
-  principal    = != =a,b ~ ^   text
-  target       = != =a,b ~ ^   text
-  succeeded    =               true false
-  error_code   = != =a,b       text
+  FIELD                OPERATORS       VALUES
+  at                   >= <            RFC 3339 instant with a zone (2026-10-09T00:00:00Z)
+  namespace            = != =a,b ~ ^   a name (a-z, 0-9, -; at most 200 bytes) or empty
+  action               = != =a,b ~ ^   text
+  principal            = != =a,b ~ ^   text
+  target               = != =a,b ~ ^   text
+  succeeded            =               true false
+  error_code           = != =a,b       text
+  decision             = != =a,b       text
+  principal_verified   =               true false
 Operators: = equals, != not equals, =a,b in, ~ contains, ^ prefix, >= at or after, < before.
 A label is labels.KEY. \ escapes the next character; a comma inside a value is \,.
 

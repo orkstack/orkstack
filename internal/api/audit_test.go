@@ -762,6 +762,58 @@ func TestListAuditRecords_ActionPrefixPrincipalTargetSucceeded(t *testing.T) {
 	}
 }
 
+func TestListAuditRecords_DecisionAndPrincipalVerified(t *testing.T) {
+	f := newAuditFixture(t, auditOptions{})
+	ctx := context.Background()
+	at := func(i int) time.Time { return f.now.Add(-time.Duration(10-i) * time.Second) }
+	put := func(i int, decision string, verified bool) *orkstackv1.AuditRecord {
+		rec := &orkstackv1.AuditRecord{
+			SchemaVersion: artifacts.AuditSchemaVersion, Id: artifacts.NewAuditID(at(i)), At: timestamppb.New(at(i)),
+			Action: "namespace.update", Principal: "p", Succeeded: decision != api.DecisionDenied,
+			Decision: decision, PrincipalVerified: verified,
+		}
+		must.OKf(t, f.store.PutAuditRecord(ctx, rec), "seed")
+		return rec
+	}
+	asserted := put(1, "", false) // access control off: no decision, an asserted principal
+	allowed := put(2, api.DecisionAllowed, true)
+	denied := put(3, api.DecisionDenied, true)
+	wouldDeny := put(4, api.DecisionWouldDeny, false)
+	for _, tc := range []struct {
+		filters []string
+		want    []*orkstackv1.AuditRecord // newest first
+	}{
+		{[]string{"decision=denied"}, []*orkstackv1.AuditRecord{denied}},
+		{[]string{"decision=denied,would-deny"}, []*orkstackv1.AuditRecord{wouldDeny, denied}},
+		{[]string{"decision!=allowed"}, []*orkstackv1.AuditRecord{wouldDeny, denied, asserted}},
+		{[]string{"decision="}, []*orkstackv1.AuditRecord{asserted}}, // not decided is selectable
+		{[]string{"principal_verified=false"}, []*orkstackv1.AuditRecord{wouldDeny, asserted}},
+		{[]string{"principal_verified=true", "decision=allowed"}, []*orkstackv1.AuditRecord{allowed}},
+	} {
+		resp, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+			Filters: filters(t, tc.filters...),
+		}))
+		must.OKf(t, err, "ListAuditRecords(%q)", tc.filters)
+		var got, want []string
+		for _, rec := range resp.Msg.GetRecords() {
+			got = append(got, rec.GetId())
+		}
+		for _, rec := range tc.want {
+			want = append(want, rec.GetId())
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Errorf("filters %q listed %v, want %v", tc.filters, got, want)
+		}
+	}
+	// decision takes no prefix: a filter names a whole decision.
+	_, err := f.audit().ListAuditRecords(ctx, connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{
+		Filters: filters(t, "decision^den"),
+	}))
+	if connect.CodeOf(err) != connect.CodeInvalidArgument {
+		t.Errorf("decision^den = %v, want InvalidArgument", err)
+	}
+}
+
 func TestListAuditRecords_NoStoreIsFailedPrecondition(t *testing.T) {
 	f := newAuditFixture(t, auditOptions{none: true})
 	_, err := f.audit().ListAuditRecords(context.Background(), connect.NewRequest(&orkstackv1.ListAuditRecordsRequest{}))

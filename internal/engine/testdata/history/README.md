@@ -951,3 +951,58 @@ The session carries the pin's outer bound.
 - recorder: `TestIntegration_RecordPausePinHistory` (137 events; three
   repeats and the recording identical). It never skips, and fails unless the
   history holds the marker and a canceled timer
+
+### `concurrency-gate-*-v1.json` — the concurrency gate
+
+Nineteen real executions of `ConcurrencyGateWorkflow` (E88 P2), each driven
+through the wire a run uses (the `acquire` Update and the release signals) by
+`TestIntegration_RecordConcurrencyGateHistories`
+(`concurrency_record_integration_test.go`). The runs are stand-ins: executions
+of `RunWorkflow` on a task queue nothing polls, carrying the memo entries and
+index attributes a run records, so a check pass describes them and a rebuild
+lists them as it does a run. One fixture per path: a clean start's grant,
+queue and grant by signal (`basic`), a clean start's refuse (`cold-clean`), a
+rebuild without settling (`cold-absent`), a check pass a `verify` asks for, the
+holder sweep's own pass (`sweep`), a task entry marked and then released
+(`task-confirm`), a released slot fenced (`slot-tombstones`), `release_all`
+(`release-below`), a run on a newer incarnation (`stale-incarnation`), a
+re-assert keeping its place (`reassert-place`), an unclean start's rebuild and
+settle (`rebuild`), a rebuild failing past `rebuild_timeout` and then restoring
+(`rebuild-failing`), the execution that continues as new (`continue`), the one
+a continue-as-new starts with a holder and a line (`continue-under-load`), a
+grant that cannot be delivered carried pending across a drain
+(`drain-pending-grant`: the stand-in is filled to the cluster's per-execution
+signal limit, a fault no cluster produces on demand), an empty gate's close
+(`close-completes-empty`), an acquire accepted in the workflow task its
+linger's timer fire started (`close-race`), stale and degraded-fence grants
+(`fenced`), and a gate started by an acquire's Update-with-Start beside a
+holder its rebuild restores, which queues that acquire because it is
+rebuilding from its first instant (`rebuild-first`, behind the
+`concurrency-gate-rebuild-first` version: a gate that set the state only once
+its rebuild began granted such an acquire past the holder).
+
+- command: `TestConcurrencyWorkflows_ReplayCommittedHistories`; every
+  committed `concurrency-*` file must be one it reads
+  (`TestConcurrencyFixtures_EveryOneIsReplayed`)
+- payload: none
+- negative: `TestGateRebuildFirstHistory_CatchesALateRebuildState` replays
+  `rebuild-first` against a gate that sets its rebuilding state late; the
+  replay must fail with a determinism violation
+- recorder: three paced repeats of each scenario, on fresh gates, must take
+  the same path event for event before the last is recorded; each history
+  schedules no activity task and replays clean. It never skips. With
+  `ORK_RECORD_GOLDEN_HISTORY=1` it writes only a fixture that is not yet
+  committed: a committed one is kept, and the log says so. To re-record one
+  whose commands genuinely changed, remove it first and say why in the commit
+
+### `concurrency-census-pass-v1.json`, `concurrency-census-activity-failure-v1.json` — the concurrency census
+
+Real executions of `ConcurrencyCensusWorkflow` over one gate holding a run
+and queuing another, recorded by
+`TestIntegration_RecordConcurrencyCensusHistories`: a pass that reports one
+row for the gate's namespace, limit label and level, and a pass whose local
+activity has a millisecond to run and fails its execution.
+
+- command: `TestConcurrencyWorkflows_ReplayCommittedHistories`
+- payload: none
+- recorder: three repeats of each, same path; it never skips

@@ -336,3 +336,25 @@ func TestSplit_CorruptSourceIsNotTheAuthors(t *testing.T) {
 		t.Errorf("drain: %v, read %d", err, r.read)
 	}
 }
+
+// TestIndex_TooManyItemsWaitsForTheDigest: a source with more items than
+// max_items is refused EACH_TOO_MANY_ITEMS only once its bytes are the
+// committed ones; bytes that are not are EACH_EXPANSION_FAILED, so the count
+// of a source the caller does not hold is never reported.
+func TestIndex_TooManyItemsWaitsForTheDigest(t *testing.T) {
+	data := []byte("a\nb\nc\nd\n")
+	for name, tc := range map[string]struct {
+		digest [32]byte
+		want   string
+	}{
+		"the committed bytes": {sha256.Sum256(data), ReasonTooManyItems},
+		"other bytes":         {sha256.Sum256([]byte("other")), ReasonExpansionFailed},
+	} {
+		o := opts(FormatLines, 1, 2, data)
+		o.SourceSHA256 = &tc.digest
+		_, err := Index(context.Background(), bytes.NewReader(data), 1<<20, 1, o)
+		if ReasonOf(err) != tc.want {
+			t.Errorf("%s: got %v, want %s", name, err, tc.want)
+		}
+	}
+}

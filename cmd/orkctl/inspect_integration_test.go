@@ -56,7 +56,7 @@ func startOrkerWith(ctx context.Context, t *testing.T,
 		env = append(env, localActivityCatalogEnv(t))
 	}
 	cmd := exec.CommandContext(ctx, orkerPath)
-	cmd.Env = testbin.OrkerEnv(append(os.Environ(), env...))
+	cmd.Env = testbin.OrkerEnv(append(testbin.StackEnv(os.Environ()), env...))
 	var log strings.Builder
 	cmd.Stdout = &log
 	cmd.Stderr = &log
