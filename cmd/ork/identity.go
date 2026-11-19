@@ -37,6 +37,17 @@ type identityConfig struct {
 	// old a copy may be and still decide.
 	copyFile   string
 	copyMaxAge time.Duration
+	// attemptsExtra, attemptsMaxExtra and attemptsMax are
+	// identity.attempts.*, the cap on attempts that hold an identity.
+	attemptsExtra, attemptsMaxExtra, attemptsMax int
+	// admissionCacheBytes is identity.admission_cache_bytes, the bound on
+	// the admission records a replica's mints keep.
+	admissionCacheBytes int
+	// tokenTTL is identity.token.ttl, min_ttl and max_ttl.
+	tokenTTL identity.TTLBounds
+	// issuanceRecords is identity.issuance.records; unscopedOrkers is
+	// identity.unscoped_orkers.
+	issuanceRecords, unscopedOrkers string
 }
 
 // The bounds of identity.keys_copy_max_age.
@@ -60,14 +71,21 @@ func identityFromEnv(lookup func(string) (string, bool)) (identityConfig, error)
 		return strings.TrimSpace(v)
 	}
 	c := identityConfig{
-		serveDiscovery:  identity.DefaultServeDiscovery,
-		algorithm:       identity.DefaultAlgorithm,
-		activationDelay: identity.DefaultActivationDelay,
-		verifyPublished: identity.DefaultVerifyPublished,
-		subjectFormat:   identity.DefaultSubjectFormat,
-		trustDomain:     get("ORK_IDENTITY_SPIFFE_TRUST_DOMAIN"),
-		copyFile:        get("ORK_IDENTITY_KEYS_COPY_FILE"),
-		copyMaxAge:      identity.DefaultKeysCopyMaxAge,
+		serveDiscovery:      identity.DefaultServeDiscovery,
+		algorithm:           identity.DefaultAlgorithm,
+		activationDelay:     identity.DefaultActivationDelay,
+		verifyPublished:     identity.DefaultVerifyPublished,
+		subjectFormat:       identity.DefaultSubjectFormat,
+		trustDomain:         get("ORK_IDENTITY_SPIFFE_TRUST_DOMAIN"),
+		copyFile:            get("ORK_IDENTITY_KEYS_COPY_FILE"),
+		copyMaxAge:          identity.DefaultKeysCopyMaxAge,
+		attemptsExtra:       identity.DefaultAttemptsExtra,
+		attemptsMaxExtra:    identity.DefaultAttemptsMaxExtra,
+		attemptsMax:         identity.DefaultAttemptsMax,
+		admissionCacheBytes: identity.DefaultAdmissionCacheBytes,
+		tokenTTL:            identity.TTLBounds{Default: identity.DefaultTokenTTL, Min: identity.DefaultTokenMinTTL, Max: identity.DefaultTokenMaxTTL},
+		issuanceRecords:     identity.IssuanceRequired,
+		unscopedOrkers:      identity.UnscopedRefuse,
 	}
 	var err error
 	if raw := get("ORK_IDENTITY_ISSUER"); raw != "" {
@@ -110,6 +128,9 @@ func identityFromEnv(lookup func(string) (string, bool)) (identityConfig, error)
 		if c.copyMaxAge, err = time.ParseDuration(raw); err != nil || c.copyMaxAge < minKeysCopyMaxAge || c.copyMaxAge > maxKeysCopyMaxAge {
 			return c, fmt.Errorf("identity.keys_copy_max_age (ORK_IDENTITY_KEYS_COPY_MAX_AGE) %q is not a duration from %s to %s", raw, minKeysCopyMaxAge, maxKeysCopyMaxAge)
 		}
+	}
+	if err := c.readAttemptsAndTokens(get); err != nil {
+		return c, err
 	}
 	if c.subjectFormat, err = identity.ParseFormat(get("ORK_IDENTITY_SUBJECT_FORMAT")); err != nil {
 		return c, fmt.Errorf("identity.subject_format (ORK_IDENTITY_SUBJECT_FORMAT): %w", err)
@@ -268,4 +289,75 @@ func setupIssuer(ctx context.Context, c identityConfig, storeCfg artifacts.Confi
 		"subject_format", c.subjectFormat, "trust_domain", c.trustDomain, "serve_discovery", c.serveDiscovery,
 		"keys_copy_file", c.copyFile, "keys_copy_max_age", c.copyMaxAge)
 	return issuer, nil
+}
+
+// readAttemptsAndTokens reads identity.attempts.*, identity.token.*,
+// identity.issuance.records and identity.unscoped_orkers. Each value
+// outside its bounds refuses the boot, naming its setting.
+func (c *identityConfig) readAttemptsAndTokens(get func(string) string) error {
+	for _, n := range []struct {
+		env, setting string
+		into         *int
+		lo, hi       int
+	}{
+		{"ORK_IDENTITY_ATTEMPTS_MAX_EXTRA", "identity.attempts.max_extra", &c.attemptsMaxExtra, 0, artifacts.MaxAttemptsExtra},
+		{"ORK_IDENTITY_ATTEMPTS_MAX", "identity.attempts.max", &c.attemptsMax, 1, artifacts.MaxAttemptSlots},
+		{"ORK_IDENTITY_ATTEMPTS_EXTRA", "identity.attempts.extra", &c.attemptsExtra, 0, -1},
+		{"ORK_IDENTITY_ADMISSION_CACHE_BYTES", "identity.admission_cache_bytes", &c.admissionCacheBytes, identity.MinAdmissionCacheBytes, identity.MaxAdmissionCacheBytes},
+	} {
+		hi := n.hi
+		if hi < 0 {
+			hi = c.attemptsMaxExtra // extra is bounded by max_extra, read first
+		}
+		if raw := get(n.env); raw != "" {
+			v, err := strconv.Atoi(raw)
+			if err != nil || v < n.lo || v > hi {
+				return fmt.Errorf("%s (%s) %q is not a whole number from %d to %d", n.setting, n.env, raw, n.lo, hi)
+			}
+			*n.into = v
+		}
+	}
+	if c.attemptsExtra > c.attemptsMaxExtra {
+		return fmt.Errorf("identity.attempts.extra (%d) is above identity.attempts.max_extra (%d)", c.attemptsExtra, c.attemptsMaxExtra)
+	}
+	for _, d := range []struct {
+		env, setting string
+		into         *time.Duration
+	}{
+		{"ORK_IDENTITY_TOKEN_TTL", "identity.token.ttl", &c.tokenTTL.Default},
+		{"ORK_IDENTITY_TOKEN_MIN_TTL", "identity.token.min_ttl", &c.tokenTTL.Min},
+		{"ORK_IDENTITY_TOKEN_MAX_TTL", "identity.token.max_ttl", &c.tokenTTL.Max},
+	} {
+		if raw := get(d.env); raw != "" {
+			v, err := time.ParseDuration(raw)
+			if err != nil || v <= 0 {
+				return fmt.Errorf("%s (%s) %q is not a duration above zero", d.setting, d.env, raw)
+			}
+			*d.into = v
+		}
+	}
+	switch t := c.tokenTTL; {
+	case t.Max > identity.MaxTokenTTL:
+		return fmt.Errorf("identity.token.max_ttl (ORK_IDENTITY_TOKEN_MAX_TTL) %s is more than %s", t.Max, identity.MaxTokenTTL)
+	case t.Max < t.Min:
+		return fmt.Errorf("identity.token.max_ttl (ORK_IDENTITY_TOKEN_MAX_TTL) %s is below identity.token.min_ttl (%s)", t.Max, t.Min)
+	case t.Default < t.Min || t.Default > t.Max:
+		return fmt.Errorf("identity.token.ttl (ORK_IDENTITY_TOKEN_TTL) %s is not from identity.token.min_ttl (%s) to identity.token.max_ttl (%s)", t.Default, t.Min, t.Max)
+	}
+	for _, e := range []struct {
+		env, setting string
+		into         *string
+		allowed      []string
+	}{
+		{"ORK_IDENTITY_ISSUANCE_RECORDS", "identity.issuance.records", &c.issuanceRecords, []string{identity.IssuanceRequired, identity.IssuanceOff}},
+		{"ORK_IDENTITY_UNSCOPED_ORKERS", "identity.unscoped_orkers", &c.unscopedOrkers, []string{identity.UnscopedRefuse, identity.UnscopedReport}},
+	} {
+		if raw := get(e.env); raw != "" {
+			if raw != e.allowed[0] && raw != e.allowed[1] {
+				return fmt.Errorf("%s (%s) %q is not %s or %s", e.setting, e.env, raw, e.allowed[0], e.allowed[1])
+			}
+			*e.into = raw
+		}
+	}
+	return nil
 }

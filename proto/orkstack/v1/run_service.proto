@@ -1005,9 +1005,32 @@ message TaskLogChunk {
   optional int32 item = 8;
 }
 
-// LiveIdentity is identity (E62)'s; it is empty until identity (E62) lands (v0.4.0 proto
-// batch).
-message LiveIdentity {}
+// LiveIdentity is one identity or credential a running attempt holds, as
+// its Orker last reported it: never a value, a token id or a path.
+message LiveIdentity {
+  // name is the identity's or credential's name in its task.
+  string name = 1;
+  // kind is `identity` or `credential`.
+  string kind = 2;
+  // last_refresh is when it was last minted or refreshed.
+  google.protobuf.Timestamp last_refresh = 3;
+  // expires_at is when what it holds expires.
+  google.protobuf.Timestamp expires_at = 4;
+  // state is whether its last refresh succeeded.
+  LiveIdentityState state = 5;
+}
+
+// LiveIdentityState is whether an attempt's identity is current.
+enum LiveIdentityState {
+  LIVE_IDENTITY_STATE_UNSPECIFIED = 0;
+  // LIVE_IDENTITY_STATE_FRESH: its last refresh succeeded.
+  LIVE_IDENTITY_STATE_FRESH = 1;
+  // LIVE_IDENTITY_STATE_RETRYING: a refresh failed and is being asked
+  // again; what it holds has not expired.
+  LIVE_IDENTITY_STATE_RETRYING = 2;
+  // LIVE_IDENTITY_STATE_EXPIRED: what it holds expired unrefreshed.
+  LIVE_IDENTITY_STATE_EXPIRED = 3;
+}
 
 // LiveUsageUnavailableReason is why a running attempt shows no live CPU and
 // memory.

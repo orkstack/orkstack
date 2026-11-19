@@ -354,6 +354,14 @@ func liveFooters(
 ) []string {
 	id := itemLabel(live.GetTaskId(), live.Item)
 	var lines []string
+	for _, held := range live.GetIdentity() {
+		if held.GetLastRefresh() == nil || held.GetExpiresAt() == nil {
+			continue
+		}
+		state := strings.ToLower(strings.TrimPrefix(held.GetState().String(), "LIVE_IDENTITY_STATE_"))
+		lines = append(lines, fmt.Sprintf("%s: identity %s %s, minted %s, expires %s", id, held.GetName(), state,
+			formatTime(held.GetLastRefresh()), formatTime(held.GetExpiresAt())))
+	}
 	if !live.GetHeartbeatAvailable() {
 		lines = append(lines, fmt.Sprintf("%s: %s", id, unavailableReasonSentence(live.GetHeartbeatUnavailableReason())))
 	}

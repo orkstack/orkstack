@@ -1245,10 +1245,16 @@ type SetCurrentOrkflowVersionResponse struct {
 	// change what runs. BREAKING here means the request acknowledged it.
 	InterfaceVerdict InterfaceVerdict `protobuf:"varint,6,opt,name=interface_verdict,json=interfaceVerdict,proto3,enum=orkstack.v1.InterfaceVerdict" json:"interface_verdict,omitempty"`
 	ComparedVersion  string           `protobuf:"bytes,7,opt,name=compared_version,json=comparedVersion,proto3" json:"compared_version,omitempty"`
-	// stale_consent is set from identity (E61); unset until it lands (v0.4.0 proto batch).
-	StaleConsent  []*StaleConsent `protobuf:"bytes,8,rep,name=stale_consent,json=staleConsent,proto3" json:"stale_consent,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// stale_consent lists the schedules, triggers and event sources that
+	// follow the current pointer and whose consent does not cover what the
+	// version now current asks for: their runs are refused an identity until
+	// someone consents. Empty when that version asks for nothing.
+	StaleConsent []*StaleConsent `protobuf:"bytes,8,rep,name=stale_consent,json=staleConsent,proto3" json:"stale_consent,omitempty"`
+	// stale_consent_unchecked says why stale_consent may be incomplete: what
+	// could not be read or listed. Empty when every object was checked.
+	StaleConsentUnchecked string `protobuf:"bytes,9,opt,name=stale_consent_unchecked,json=staleConsentUnchecked,proto3" json:"stale_consent_unchecked,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *SetCurrentOrkflowVersionResponse) Reset() {
@@ -1335,6 +1341,13 @@ func (x *SetCurrentOrkflowVersionResponse) GetStaleConsent() []*StaleConsent {
 		return x.StaleConsent
 	}
 	return nil
+}
+
+func (x *SetCurrentOrkflowVersionResponse) GetStaleConsentUnchecked() string {
+	if x != nil {
+		return x.StaleConsentUnchecked
+	}
+	return ""
 }
 
 type DiffOrkflowVersionsRequest struct {
@@ -2733,12 +2746,23 @@ func (x *DeleteOrkflowResponse) GetDeletedAt() *timestamppb.Timestamp {
 	return nil
 }
 
-// StaleConsent is identity (E61)'s; it is empty until identity (E61) lands (v0.4.0 proto
-// batch).
+// StaleConsent is a schedule, trigger or event source bound to the Orkflow
+// whose consent no longer covers what the version now current asks for. Its
+// runs are refused an identity until it is consented to again.
 type StaleConsent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// kind is `schedule`, `trigger` or `event-source`.
+	Kind string `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`
+	// name is the object's name.
+	Name string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	// digest is the consent digest to consent to: "c1:" and 64 hexadecimal
+	// digits.
+	Digest string `protobuf:"bytes,3,opt,name=digest,proto3" json:"digest,omitempty"`
+	// older_projection is true when the object's consent was given under an
+	// earlier consent projection, so it is stale whatever changed.
+	OlderProjection bool `protobuf:"varint,4,opt,name=older_projection,json=olderProjection,proto3" json:"older_projection,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *StaleConsent) Reset() {
@@ -2769,6 +2793,34 @@ func (x *StaleConsent) ProtoReflect() protoreflect.Message {
 // Deprecated: Use StaleConsent.ProtoReflect.Descriptor instead.
 func (*StaleConsent) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_orkflow_service_proto_rawDescGZIP(), []int{28}
+}
+
+func (x *StaleConsent) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *StaleConsent) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *StaleConsent) GetDigest() string {
+	if x != nil {
+		return x.Digest
+	}
+	return ""
+}
+
+func (x *StaleConsent) GetOlderProjection() bool {
+	if x != nil {
+		return x.OlderProjection
+	}
+	return false
 }
 
 var File_orkstack_v1_orkflow_service_proto protoreflect.FileDescriptor
@@ -2839,7 +2891,7 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\tR\aversion\x12\x1c\n" +
 	"\tnamespace\x18\x03 \x01(\tR\tnamespace\x121\n" +
-	"\x14acknowledge_breaking\x18\x04 \x01(\bR\x13acknowledgeBreaking\"\x9a\x03\n" +
+	"\x14acknowledge_breaking\x18\x04 \x01(\bR\x13acknowledgeBreaking\"\xd2\x03\n" +
 	" SetCurrentOrkflowVersionResponse\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x12'\n" +
@@ -2849,7 +2901,8 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"updated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\tupdatedAt\x12J\n" +
 	"\x11interface_verdict\x18\x06 \x01(\x0e2\x1d.orkstack.v1.InterfaceVerdictR\x10interfaceVerdict\x12)\n" +
 	"\x10compared_version\x18\a \x01(\tR\x0fcomparedVersion\x12>\n" +
-	"\rstale_consent\x18\b \x03(\v2\x19.orkstack.v1.StaleConsentR\fstaleConsent\"\x90\x01\n" +
+	"\rstale_consent\x18\b \x03(\v2\x19.orkstack.v1.StaleConsentR\fstaleConsent\x126\n" +
+	"\x17stale_consent_unchecked\x18\t \x01(\tR\x15staleConsentUnchecked\"\x90\x01\n" +
 	"\x1aDiffOrkflowVersionsRequest\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12!\n" +
 	"\ffrom_version\x18\x02 \x01(\tR\vfromVersion\x12\x1d\n" +
@@ -2970,8 +3023,12 @@ const file_orkstack_v1_orkflow_service_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1c\n" +
 	"\tnamespace\x18\x02 \x01(\tR\tnamespace\x129\n" +
 	"\n" +
-	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"\x0e\n" +
-	"\fStaleConsent*y\n" +
+	"deleted_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\tdeletedAt\"y\n" +
+	"\fStaleConsent\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12\x16\n" +
+	"\x06digest\x18\x03 \x01(\tR\x06digest\x12)\n" +
+	"\x10older_projection\x18\x04 \x01(\bR\x0folderProjection*y\n" +
 	"\x12ValidationSeverity\x12#\n" +
 	"\x1fVALIDATION_SEVERITY_UNSPECIFIED\x10\x00\x12\x1d\n" +
 	"\x19VALIDATION_SEVERITY_ERROR\x10\x01\x12\x1f\n" +
