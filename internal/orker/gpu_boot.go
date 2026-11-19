@@ -164,14 +164,14 @@ func (a *Activities) recheckForeignUnits(ctx context.Context, offer *gpuOffer) {
 // ledger's mutex. It probes nothing before the lock is held and its reap has
 // run, nothing under drift, and nothing once the Orker is stopping; a probe
 // the stop cuts off judges nothing.
-func (a *Activities) probeUnitsOnce(ctx context.Context, root, image string) {
-	a.probeUnits(ctx, root, image, false)
+func (a *Activities) probeUnitsOnce(ctx context.Context, root string) {
+	a.probeUnits(ctx, root, false)
 }
 
 // runUnitRecovery re-probes each unit outside the usable set every
 // recovery_interval (design §4.7.7), so a unit that recovers is back after
 // recoveryPasses good probes rather than as many audit intervals.
-func (a *Activities) runUnitRecovery(ctx context.Context, root, image string, every time.Duration) {
+func (a *Activities) runUnitRecovery(ctx context.Context, root string, every time.Duration) {
 	if every <= 0 {
 		return
 	}
@@ -182,14 +182,20 @@ func (a *Activities) runUnitRecovery(ctx context.Context, root, image string, ev
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			a.probeUnits(ctx, root, image, true)
+			a.probeUnits(ctx, root, true)
 		}
 	}
 }
 
+// probeImageReasons are the two reasons the probe image's check sets.
+var probeImageReasons = []orkstackv1.ProfileCordonReason{
+	orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE,
+	orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH,
+}
+
 // probeUnits is probeUnitsOnce, or, recovering, only for the units outside
 // the usable set.
-func (a *Activities) probeUnits(ctx context.Context, root, image string, recovering bool) {
+func (a *Activities) probeUnits(ctx context.Context, root string, recovering bool) {
 	offer := a.dispatcher.gpu.Load()
 	if offer == nil || a.capacity == nil || a.profiles.drifted(offer.profile) {
 		return
@@ -204,14 +210,22 @@ func (a *Activities) probeUnits(ctx context.Context, root, image string, recover
 	if !ok {
 		return
 	}
+	// A recovery pass with every unit usable, and the image not what holds
+	// the profile, has nothing to probe, so it asks no registry or daemon.
+	if recovering && !a.profiles.unavailableFor(offer.profile, probeImageReasons...) {
+		needed := false
+		for i := range offer.units {
+			needed = needed || !a.capacity.unitUsable(i)
+		}
+		if !needed {
+			return
+		}
+	}
 	// The probe image first, as every probe's is: pulled, and its build held
 	// to this Orker's own, so a probe of another build never judges a unit.
 	// Its two reasons are this check's alone, set and cleared here.
-	imageReasons := []orkstackv1.ProfileCordonReason{
-		orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE,
-		orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH,
-	}
-	reason, detail, err := checkProbeImage(ctx, rt, image, a.profiles.build)
+	imageReasons := probeImageReasons
+	image, reason, detail, err := checkProbeImage(ctx, rt, a.profiles.probeSource(), a.profiles.build)
 	if err != nil {
 		return
 	}

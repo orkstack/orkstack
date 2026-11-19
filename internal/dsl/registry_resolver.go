@@ -58,7 +58,11 @@ type ResolveError struct {
 	Reference string
 	Code      string
 	Detail    string
-	Err       error
+	// Status is the registry's HTTP status when it answered with one the
+	// resolution could not use, so a caller can tell a rate limit (429)
+	// from an outage without reading Detail. Zero when it did not answer.
+	Status int
+	Err    error
 }
 
 func (e *ResolveError) Error() string {
@@ -795,12 +799,12 @@ func (r *Resolver) getManifest(ctx context.Context, ref Reference, target string
 				"set ORK_REGISTRY_AUTH_FILE to a docker config.json with credentials for %s",
 				ref.APIHost(), resp.StatusCode, ref.Registry)}
 	case resp.StatusCode >= 500:
-		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnavailable,
+		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnavailable, Status: resp.StatusCode,
 			Detail: fmt.Sprintf("registry %s answered %d", ref.APIHost(), resp.StatusCode)}
 	default:
 		// The registry's own words reach a client's terminal through this
 		// error: escaped and cut, as every reason a label gives is.
-		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported,
+		return nil, "", "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnsupported, Status: resp.StatusCode,
 			Detail: fmt.Sprintf("registry %s answered %d: %s",
 				ref.APIHost(), resp.StatusCode, safeBodyReason(body))}
 	}
@@ -1010,7 +1014,7 @@ func (r *Resolver) fetchToken(ctx context.Context, ref Reference, challenge *bea
 			Detail: "the token response could not be read", Err: err}
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnauthorized,
+		return "", &ResolveError{Reference: ref.Original, Code: ReasonImageResolveUnauthorized, Status: resp.StatusCode,
 			Detail: fmt.Sprintf("the registry's token endpoint answered %d", resp.StatusCode)}
 	}
 	var token struct {

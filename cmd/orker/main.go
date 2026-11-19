@@ -52,6 +52,12 @@ var version = "dev"
 // reports it (internal/buildinfo). Same variable name as cmd/ork.
 var commit string
 
+// releaseKey is the release's cosign public key, deploy/cosign.pub
+// base64-encoded: -ldflags "-X main.releaseKey=<base64>" on a release build
+// (internal/dist, Target.BuildArgs), empty otherwise. A device profile's
+// default probe image is verified with it (internal/orker probe_image.go).
+var releaseKey string
+
 type config struct {
 	temporalAddress   string
 	temporalNamespace string
@@ -160,6 +166,11 @@ type config struct {
 	// document that does not parse, refused at boot naming the setting.
 	profiles    orker.Profiles
 	profilesErr error
+	// releaseProbe and releaseProbeKey are the profiles' default probe
+	// image and the key it is verified with, when profiles are declared and
+	// probe_image is not.
+	releaseProbe    string
+	releaseProbeKey string
 	// configFiles is the configuration file this process was started with
 	// and every {file:} it read (config.Document.Files): the Orker's own,
 	// which its secret floor admits as no task's source (orkerPolicy).
@@ -213,6 +224,10 @@ func loadConfig() config {
 	usageSampleInterval, usageSampleErr := orker.ParseUsageSampleInterval(env(orker.UsageSampleIntervalVar, ""))
 	usageLogInterval, usageLogErr := orker.ParseUsageLogInterval(env(orker.UsageLogIntervalVar, ""))
 	profiles, profilesErr := orker.ParseProfiles([]byte(os.Getenv(orker.ProfilesVar)))
+	var releaseProbe, releaseProbeKey string
+	if profilesErr == nil && len(profiles.List) > 0 && profiles.ProbeImage == "" {
+		releaseProbe, releaseProbeKey, profilesErr = orker.DefaultProbeImage(version, commit, releaseKey)
+	}
 	if profilesErr != nil {
 		profilesErr = fmt.Errorf("%s: orker.profiles (%s): %w", orker.ReasonProfileInvalid, orker.ProfilesVar, profilesErr)
 	}
@@ -253,6 +268,8 @@ func loadConfig() config {
 		stopGraceErr:             stopGraceErr,
 		profiles:                 profiles,
 		profilesErr:              profilesErr,
+		releaseProbe:             releaseProbe,
+		releaseProbeKey:          releaseProbeKey,
 		capacityCPU:              env(orker.CapacityCPUVar, ""),
 		capacityMemory:           env(orker.CapacityMemoryVar, ""),
 		deployment:               task.DeploymentFromEnv(),
@@ -1478,6 +1495,11 @@ func orkerOptions(
 	}
 	policy := orkerPolicy(cfg, tcfg)
 	opts.Policy = &policy
+	if cfg.releaseProbe != "" {
+		// The profiles' default probe image, asked through the same resolver
+		// and verifier as the image policy's signatures.
+		opts.ReleaseProbe = orker.NewReleaseProbe(cfg.releaseProbe, cfg.releaseProbeKey, opts.Signatures)
+	}
 
 	// Task log export: an ADDITIONAL best-effort path from a task's
 	// stdout/stderr to a log provider, beside the durable chunk store above.

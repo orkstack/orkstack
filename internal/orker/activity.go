@@ -114,6 +114,10 @@ type Options struct {
 	// Build is the commit this binary was built from (buildinfo.Commit),
 	// which a device profile's probe image must carry.
 	Build string
+	// ReleaseProbe is this release's own probe image, used when
+	// Profiles.ProbeImage is empty (probe_image.go); nil on a build with
+	// none.
+	ReleaseProbe *ReleaseProbe
 	// LogUnmasked is orker.log.mask_secrets: false; AllowSecretValues is
 	// orker.values.refuse_secrets: false (mask.go). The zero values mask
 	// and refuse.
@@ -315,7 +319,7 @@ func NewActivitiesWithOptions(store artifacts.Store, opts Options) *Activities {
 		maxConc:       maxConc,
 		maxPins:       opts.MaxPins,
 		metadataProbe: opts.MetadataProbe,
-		profiles:      newProfileState(opts.Profiles, opts.Build),
+		profiles:      newProfileState(opts.Profiles, opts.Build).withProbe(opts.ReleaseProbe, opts.Logger),
 		cordon:        NewCordon(),
 		pins:          newOpenPins(),
 		stops:         newStopRegistry(),
@@ -1046,6 +1050,13 @@ func (a *Activities) Boot(ctx context.Context) error {
 	}
 	if err := checkGPUSettings(a.dispatcher.Policy, a.profiles.declared); err != nil {
 		return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
+	}
+	// A profile is probed with probe_image, or with this release's own
+	// image; a build with neither cannot show what a container sees.
+	if len(a.profiles.declared.List) > 0 {
+		if err := a.profiles.probeSource().configured(); err != nil {
+			return fmt.Errorf("%s: %w", ReasonProfileInvalid, err)
+		}
 	}
 	// The boot audit (profile_audit.go): every device classified on this
 	// host and recorded, which every later check compares with.
