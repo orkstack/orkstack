@@ -134,7 +134,11 @@
 	//     re-read — and then a link copied out of it names the namespace the
 	//     sender was looking at instead of leaving the reader's own browser to
 	//     answer for them.
+	//
+	// The sign-in pages are bare: they show no namespace, so their URL names
+	// none and their address bar is left as it is.
 	$effect(() => {
+		if (data.bare) return;
 		const url = page.url;
 		if (hasNamespaceParam(url)) {
 			rememberNamespace(data.namespace);
