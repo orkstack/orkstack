@@ -284,3 +284,22 @@ func TestGateOrdinal_ReplacementIsQueuedBeforeAnyPass(t *testing.T) {
 		t.Fatalf("the replacement's retry = %+v; want its own place, first, ahead of b", retry.Answer)
 	}
 }
+
+// A replacing refuse or skip acquire on a full key with a check due still
+// asks for the pass first, so a holder the pass finds gone does not cost it
+// the slot.
+func TestGateOrdinal_ReplacingRefuseStillPassesFirst(t *testing.T) {
+	for _, strategy := range []string{gateStrategyRefuse, gateStrategySkip} {
+		g := newTestGate()
+		g.decideAcquire(acqN("h", 1, 0, gateT0), gateT0, false)
+		first := acqN("a", 1, 0, gateT0)
+		first.Strategy = gateStrategyQueue
+		g.decideAcquire(first, gateT0, false)
+		late := gateT0.Add(g.Tunables.VerifyMinAge + time.Second)
+		again := acqN("a", 1, 1, late)
+		again.Strategy = strategy
+		if d := g.decideAcquire(again, late, false); d.Answer.Answer != "" || !d.WantsPass || !d.Replaced {
+			t.Fatalf("%s: the replacement = %+v; want a pass asked for before any answer", strategy, d)
+		}
+	}
+}

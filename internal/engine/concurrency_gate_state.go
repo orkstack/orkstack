@@ -534,9 +534,13 @@ func (g *gateState) decideAcquire(req gateAcquire, now time.Time, afterPass bool
 	// otherwise have taken the old entry and left none, and the retry would
 	// arrive behind every run that came in meanwhile. Its retry carries the
 	// same n and finds its own entry. A pass a full key is due is still
-	// asked for (WantsPass), and runs on its own.
-	d := g.decideArrival(req, now, afterPass || replaced, !replaced && !req.ArrivedAt.IsZero() && req.Seq > 0)
-	if replaced && !afterPass && g.checkDue(now) {
+	// asked for (WantsPass), and runs on its own. Only a strategy that
+	// queues is decided at once: refuse and skip are never in the line, so
+	// they have no place to lose, and a pass first may free the slot they
+	// would otherwise be refused.
+	queues := req.Strategy == gateStrategyQueue
+	d := g.decideArrival(req, now, afterPass || (replaced && queues), !replaced && !req.ArrivedAt.IsZero() && req.Seq > 0)
+	if replaced && queues && !afterPass && g.checkDue(now) {
 		d.WantsPass = true
 	}
 	d.Admitted, d.Replaced = append(admitted, d.Admitted...), replaced
