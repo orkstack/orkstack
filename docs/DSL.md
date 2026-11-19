@@ -961,19 +961,25 @@ tasks:
 ```
 
 - A submit asks every Orker of the pool that serves it which profiles it
-  offers. A profile one of them lacks is refused (`PROFILE_UNAVAILABLE`), and
-  so is a profile whose definition differs between them (`PROFILE_MISMATCH`).
-  With no Orker answering, a device profile is refused too: it cannot run on
-  an Orker that does not offer it. The run pins the profile's identity, so
-  every attempt runs under the profile it was submitted against.
+  offers, and under which contracts (below). A profile one of them lacks is
+  refused (`PROFILE_UNAVAILABLE`), and so is a pool that cannot serve the
+  contract a task needs (`PROFILE_UNAVAILABLE` or `PROFILE_MISMATCH`, naming
+  the contract and the Orker). With no Orker answering, a device profile is
+  refused too: it cannot run on an Orker that does not offer it. The run pins
+  the contracts and their definitions, so every attempt runs under what it
+  was submitted against.
 - An Orker that does not offer the profile fails the attempt
-  `PROFILE_NOT_OFFERED`; one whose profile has changed since the submit,
-  `PROFILE_CHANGED`.
+  `PROFILE_NOT_OFFERED`. One that offers it under no contract the run pinned
+  (`PROFILE_CONTRACT_NOT_SERVED`), or under a pinned label it defines
+  differently (`PROFILE_CHANGED`), fails it before any container: the task
+  runs again, on whichever Orker of the pool takes it, without spending its
+  own attempts, within the run's never-started fault budget (docs/DEPLOY.md, "Interruption
+  budgets").
 - An Orker that finds a profile's devices no longer matching what it checked
-  at boot stops taking work (`PROFILE_DRIFTED`) until it restarts. The
-  attempt fails and the task is retried, under its `retry:` policy, on
-  another Orker of the pool, so give such a task a `retry:` with more than
-  one attempt.
+  at boot stops taking work (`PROFILE_DRIFTED`) until it restarts, and the
+  attempt that met it runs again the same way.
+  Past that budget each spends an own attempt, so give a profiled task a
+  `retry:` with more than one attempt.
 - `devices:` is refused on awaited, sleeping and composed tasks, which run no
   container.
 
@@ -988,8 +994,9 @@ devices:
 ```
 
 - At create, the image's declaration is copied into the task, so the run
-  pins that contract. A task naming a profile its image does not mention runs
-  under the profile's default contract.
+  pins that contract, and every Orker of the pool must own or accept it. A
+  task naming a profile its image does not mention runs under a contract
+  every Orker's default contract serves, by its label or its `accepts:`.
 - The image needs every profile it declares: a task using it that does not
   name one in `devices:` is refused, `image <image> needs profile sensor
   (contract 2); add it to devices:`.

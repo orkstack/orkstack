@@ -21,12 +21,12 @@ func TestJudgeTaskProfiles_GPUUnitsNeedAGPUProfile(t *testing.T) {
 	orkers := []*orkstackv1.DescribeOrkerResult{deviceOrker("o1", kinds, offered("sensor", dev, digestA), offered("amd", gpu, digestB))}
 	if _, err := judgeTaskProfiles("ns", "gpu", []*orkstackv1.Task{
 		{Id: "train", Devices: []string{"amd"}, Resources: &orkstackv1.ResourceRequest{Gpu: 1}},
-	}, orkers); err != nil {
+	}, orkers, nil); err != nil {
 		t.Fatalf("a gpu count on a gpu profile: %v", err)
 	}
 	_, err := judgeTaskProfiles("ns", "gpu", []*orkstackv1.Task{
 		{Id: "read", Devices: []string{"sensor"}, Resources: &orkstackv1.ResourceRequest{Gpu: 1}},
-	}, orkers)
+	}, orkers, nil)
 	var refused *GPUWithoutGPUProfileError
 	if !errors.As(err, &refused) || refused.Task != "read" || !strings.Contains(err.Error(), "gpu profile") {
 		t.Fatalf("a gpu count on a devices profile = %v, want GPUWithoutGPUProfileError naming read", err)

@@ -51,20 +51,39 @@ If the device is replaced while the Orker runs, the attempt that meets it fails 
 
 | Refusal | Meaning | What to do |
 |---|---|---|
-| `PROFILE_UNAVAILABLE` | An Orker of the pool does not define the profile, or no Orker answered | Define it on every Orker of the pool, or start one that does |
-| `PROFILE_MISMATCH` | Two Orkers of the pool define it differently | Give every Orker the same definition |
+| `PROFILE_UNAVAILABLE` | An Orker of the pool does not define the profile, or lacks the contract the task's image needs, or no Orker answered | Define it, with that contract, on every Orker of the pool |
+| `PROFILE_MISMATCH` | Two Orkers define one contract differently, or their default contracts share no label | Give a changed definition a new contract label, and let it accept the old one |
 
 `allow_empty_pool` does not change either: a device is never assumed to be there.
+
+## Change a profile
+
+Change a profile one Orker at a time, under a new **contract** label, so runs keep running while the pool is mixed. Give the new definition a label, and say which older label it still serves:
+
+```yaml
+    sensor:
+      kind: devices
+      contract: "2"
+      accepts:
+        - "1"
+      devices:
+        - path: /dev/serial/by-id/usb-FTDI_FT232R-if00-port0
+          container_path: /dev/sensor
+          permissions: rw
+```
+
+Never edit a contract in place: two Orkers that define one label differently are refused `PROFILE_MISMATCH`. When images must change too, define both contracts on every Orker, and let the new images declare the one they need with `devices: {sensor: "2"}` in their `interface.ork.yaml`.
 
 ## Limits
 
 - **Linux hosts only.** The Orker must run on the container daemon's own host, as a service with no mount namespacing. Docker Desktop on macOS or Windows cannot pass a host device.
 - **Shared, not exclusive.** Every task that holds the profile opens the same device.
 - **Groups.** A task that runs as a user other than root needs the device's group, usually `dialout`.
-- **Fixed until restart.** Changing a profile means drain, stop, edit and start the Orker.
+- **Fixed until restart.** An Orker reads its profiles at boot; to change one, drain, stop, edit and start each Orker in turn, as below.
 
 ## See also
 
 - [DEPLOY.md, "Running a device Orker"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-a-device-orker): the configuration, the device classes, the systemd unit and drift
+- [DEPLOY.md, "Changing a profile"](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#changing-a-profile): rolling a change, a breaking change, rollback, and when an old contract is unused
 - [DSL.md, "Device profiles"](https://github.com/orkstack/orkstack/blob/main/docs/DSL.md#device-profiles): the `devices:` key and its rules
 - [SECURITY_MODEL.md, "Device profiles"](https://github.com/orkstack/orkstack/blob/main/docs/SECURITY_MODEL.md#device-profiles): what a device profile does and does not grant
