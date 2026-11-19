@@ -557,6 +557,7 @@ encoding (lowerCamel names), verbatim.
 | `ops` | map&lt;`string`, [`OpSchema`](#opschema)&gt; | ops, when non-empty, says the image selects its operation with the `op` key of docs/ACTIVITY_IMAGES.md: the map key is the op's name and the value is the keys that op reads in addition to `fields`. `op` itself is then implicitly declared {type: "string"} and must not appear in `fields`. A key may not be declared both in `fields` and under an op. |
 | `default_op` | `string` | default_op is the op the image runs when `op` is absent, and must be a key of ops. Empty with non-empty ops means `op` is required. |
 | `values` | map&lt;`string`, [`FieldSchema`](#fieldschema)&gt; | values is documentary: the keys the image writes to values.json. Nothing checks it; `orkctl activity inspect` and the Activities page render it so an author knows what `.tasks.<id>.output.<key>` may reference. |
+| `devices` | map&lt;`string`, `string`&gt; | devices maps a profile name to the contract label the image needs of it. A task naming that profile runs only under that contract. |
 
 ### ApplyOrkflowRequest
 
@@ -1424,6 +1425,9 @@ it.
 | `kind` | [`ProfileKind`](#profilekind) |  |
 | `unit_indices` | repeated `int32` | unit_indices are the positions of the `gpu` units the attempt held, numbered from 0 within the profile's list. |
 | `identity_pinned` | `bool` | identity_pinned is whether the run pinned the profile's identity at submit. |
+| `contract` | `string` | contract is the label of the contract the attempt ran under. |
+| `run_contracts` | repeated `string` | run_contracts are the labels the run pinned for this profile. |
+| `declared` | `bool` | declared is whether the task's image chose the contract. |
 
 ### EngineSeen
 
@@ -2408,6 +2412,7 @@ end). A window whose end is not after its start is INVALID_ARGUMENT.
 | Field | Type | Description |
 |---|---|---|
 | `orkers` | repeated [`Orker`](#orker) | orkers is ordered by pool, then orker_id. A stable order is part of the contract: the Admin page renders it. |
+| `read_at` | `google.protobuf.Timestamp` | read_at is the engine's clock when it finished reading the inventory. |
 
 ### ListOrkflowCallersRequest
 
@@ -2952,6 +2957,20 @@ engine and are never listed or exported.
 | `bound_units` | `int32` | bound_units is how many are held by a task now. |
 | `revision` | `string` | revision is the operator's revision label; it changes memo keys only. |
 | `identity_digest` | `string` | identity_digest is the SHA-256 (hex) of the profile's structural identity, which a run pins at submit and every Orker of a pool must share. |
+| `contracts` | repeated [`OrkerProfileContract`](#orkerprofilecontract) | contracts are the profile's contracts: each a label, the definition this Orker gives it and the labels it also accepts (docs/DEPLOY.md, "Changing a profile"). A profile written in the short form has one contract, "1". |
+| `default_contract` | `string` | default_contract is the label a task whose image declares no contract for this profile runs under. |
+
+### OrkerProfileContract
+
+OrkerProfileContract is one contract of an Orker's profile: a label for one
+definition. The inventory (ListOrkers) carries label and accepts;
+identity_digest travels only on the Orker's own answer to the engine.
+
+| Field | Type | Description |
+|---|---|---|
+| `label` | `string` | label names the contract, the one an image declares or a run pins. |
+| `identity_digest` | `string` | identity_digest is the SHA-256 (hex) of this contract's structural identity. |
+| `accepts` | repeated `string` | accepts are the other labels this contract also serves: the operator's assertion that a run pinned to one of them may run under this one. |
 
 ### OrkerStopping
 
@@ -4334,6 +4353,7 @@ execution on an Orker, and an activity is an OCI image.
 | `identities` | repeated [`IdentityRef`](#identityref) | identities is set from identity (E62); unset until it lands (v0.4.0 proto batch). |
 | `credentials` | repeated [`CredentialRef`](#credentialref) | credentials is set from identity (E81); unset until it lands (v0.4.0 proto batch). |
 | `concurrency` | [`ConcurrencySpec`](#concurrencyspec) | concurrency is set from E88; unset until it lands (v0.4.0 proto batch). |
+| `device_contracts` | map&lt;`string`, `string`&gt; | device_contracts maps a profile the task names in devices to the contract label the task needs of it: the image's declaration, or the author's `name@label`. Written at create, only when non-empty. |
 
 ### TaskAttempt
 

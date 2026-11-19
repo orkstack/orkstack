@@ -826,7 +826,10 @@ type ActivityInterface struct {
 	// Nothing checks it; `orkctl activity inspect` and the Activities page
 	// render it so an author knows what `.tasks.<id>.output.<key>` may
 	// reference.
-	Values        map[string]*FieldSchema `protobuf:"bytes,5,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	Values map[string]*FieldSchema `protobuf:"bytes,5,rep,name=values,proto3" json:"values,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// devices maps a profile name to the contract label the image needs of
+	// it. A task naming that profile runs only under that contract.
+	Devices       map[string]string `protobuf:"bytes,6,rep,name=devices,proto3" json:"devices,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -892,6 +895,13 @@ func (x *ActivityInterface) GetDefaultOp() string {
 func (x *ActivityInterface) GetValues() map[string]*FieldSchema {
 	if x != nil {
 		return x.Values
+	}
+	return nil
+}
+
+func (x *ActivityInterface) GetDevices() map[string]string {
+	if x != nil {
+		return x.Devices
 	}
 	return nil
 }
@@ -1071,7 +1081,9 @@ type ListOrkersResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// orkers is ordered by pool, then orker_id. A stable order is part of the
 	// contract: the Admin page renders it.
-	Orkers        []*Orker `protobuf:"bytes,1,rep,name=orkers,proto3" json:"orkers,omitempty"`
+	Orkers []*Orker `protobuf:"bytes,1,rep,name=orkers,proto3" json:"orkers,omitempty"`
+	// read_at is the engine's clock when it finished reading the inventory.
+	ReadAt        *timestamppb.Timestamp `protobuf:"bytes,2,opt,name=read_at,json=readAt,proto3" json:"read_at,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -1109,6 +1121,13 @@ func (*ListOrkersResponse) Descriptor() ([]byte, []int) {
 func (x *ListOrkersResponse) GetOrkers() []*Orker {
 	if x != nil {
 		return x.Orkers
+	}
+	return nil
+}
+
+func (x *ListOrkersResponse) GetReadAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ReadAt
 	}
 	return nil
 }
@@ -1296,14 +1315,15 @@ const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	"\x06fields\x18\x01 \x03(\v2!.orkstack.v1.OpSchema.FieldsEntryR\x06fields\x1aS\n" +
 	"\vFieldsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12.\n" +
-	"\x05value\x18\x02 \x01(\v2\x18.orkstack.v1.FieldSchemaR\x05value:\x028\x01\"\x95\x04\n" +
+	"\x05value\x18\x02 \x01(\v2\x18.orkstack.v1.FieldSchemaR\x05value:\x028\x01\"\x98\x05\n" +
 	"\x11ActivityInterface\x12%\n" +
 	"\x0eschema_version\x18\x01 \x01(\x05R\rschemaVersion\x12B\n" +
 	"\x06fields\x18\x02 \x03(\v2*.orkstack.v1.ActivityInterface.FieldsEntryR\x06fields\x129\n" +
 	"\x03ops\x18\x03 \x03(\v2'.orkstack.v1.ActivityInterface.OpsEntryR\x03ops\x12\x1d\n" +
 	"\n" +
 	"default_op\x18\x04 \x01(\tR\tdefaultOp\x12B\n" +
-	"\x06values\x18\x05 \x03(\v2*.orkstack.v1.ActivityInterface.ValuesEntryR\x06values\x1aS\n" +
+	"\x06values\x18\x05 \x03(\v2*.orkstack.v1.ActivityInterface.ValuesEntryR\x06values\x12E\n" +
+	"\adevices\x18\x06 \x03(\v2+.orkstack.v1.ActivityInterface.DevicesEntryR\adevices\x1aS\n" +
 	"\vFieldsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12.\n" +
 	"\x05value\x18\x02 \x01(\v2\x18.orkstack.v1.FieldSchemaR\x05value:\x028\x01\x1aM\n" +
@@ -1312,7 +1332,10 @@ const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	"\x05value\x18\x02 \x01(\v2\x15.orkstack.v1.OpSchemaR\x05value:\x028\x01\x1aS\n" +
 	"\vValuesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12.\n" +
-	"\x05value\x18\x02 \x01(\v2\x18.orkstack.v1.FieldSchemaR\x05value:\x028\x01\"S\n" +
+	"\x05value\x18\x02 \x01(\v2\x18.orkstack.v1.FieldSchemaR\x05value:\x028\x01\x1a:\n" +
+	"\fDevicesEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"S\n" +
 	"\x16ListActivitiesResponse\x129\n" +
 	"\n" +
 	"activities\x18\x01 \x03(\v2\x19.orkstack.v1.ActivityInfoR\n" +
@@ -1326,9 +1349,10 @@ const file_orkstack_v1_activity_service_proto_rawDesc = "" +
 	"\borker_id\x12\x05Orker\x1a\x05\x01\x02\x03\x04\x058\x02\x12\x17\n" +
 	"\x04pool\x12\x04Pool\x1a\x05\x01\x02\x03\x04\x05(\x018\x01\x12\x1c\n" +
 	"\bbuild_id\x12\aRelease\x1a\x05\x01\x02\x03\x04\x05(\x01\x12\x19\n" +
-	"\bcordoned\x12\bCordoned\x1a\x01\x01(\x01\x1a\x12unavailable_reasonJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x04poolR\borker_id\"@\n" +
+	"\bcordoned\x12\bCordoned\x1a\x01\x01(\x01\x1a\x12unavailable_reasonJ\x04\b\x01\x10\x02J\x04\b\x02\x10\x03R\x04poolR\borker_id\"u\n" +
 	"\x12ListOrkersResponse\x12*\n" +
-	"\x06orkers\x18\x01 \x03(\v2\x12.orkstack.v1.OrkerR\x06orkers\"c\n" +
+	"\x06orkers\x18\x01 \x03(\v2\x12.orkstack.v1.OrkerR\x06orkers\x123\n" +
+	"\aread_at\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x06readAt\"c\n" +
 	"\x12CordonOrkerRequest\x12\x19\n" +
 	"\borker_id\x18\x01 \x01(\tR\aorkerId\x12\x1a\n" +
 	"\bcordoned\x18\x02 \x01(\bR\bcordoned\x12\x16\n" +
@@ -1356,7 +1380,7 @@ func file_orkstack_v1_activity_service_proto_rawDescGZIP() []byte {
 	return file_orkstack_v1_activity_service_proto_rawDescData
 }
 
-var file_orkstack_v1_activity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 27)
+var file_orkstack_v1_activity_service_proto_msgTypes = make([]protoimpl.MessageInfo, 28)
 var file_orkstack_v1_activity_service_proto_goTypes = []any{
 	(*InspectActivityRequest)(nil),  // 0: orkstack.v1.InspectActivityRequest
 	(*InspectActivityResponse)(nil), // 1: orkstack.v1.InspectActivityResponse
@@ -1385,16 +1409,17 @@ var file_orkstack_v1_activity_service_proto_goTypes = []any{
 	nil,                             // 24: orkstack.v1.ActivityInterface.FieldsEntry
 	nil,                             // 25: orkstack.v1.ActivityInterface.OpsEntry
 	nil,                             // 26: orkstack.v1.ActivityInterface.ValuesEntry
-	(*FieldFilter)(nil),             // 27: orkstack.v1.FieldFilter
-	(*timestamppb.Timestamp)(nil),   // 28: google.protobuf.Timestamp
-	(*structpb.Value)(nil),          // 29: google.protobuf.Value
-	(*DescribeOrkerResult)(nil),     // 30: orkstack.v1.DescribeOrkerResult
-	(*Orker)(nil),                   // 31: orkstack.v1.Orker
+	nil,                             // 27: orkstack.v1.ActivityInterface.DevicesEntry
+	(*FieldFilter)(nil),             // 28: orkstack.v1.FieldFilter
+	(*timestamppb.Timestamp)(nil),   // 29: google.protobuf.Timestamp
+	(*structpb.Value)(nil),          // 30: google.protobuf.Value
+	(*DescribeOrkerResult)(nil),     // 31: orkstack.v1.DescribeOrkerResult
+	(*Orker)(nil),                   // 32: orkstack.v1.Orker
 }
 var file_orkstack_v1_activity_service_proto_depIdxs = []int32{
 	3,  // 0: orkstack.v1.InspectActivityResponse.activity:type_name -> orkstack.v1.ActivityInfo
-	27, // 1: orkstack.v1.ListActivitiesRequest.filters:type_name -> orkstack.v1.FieldFilter
-	28, // 2: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
+	28, // 1: orkstack.v1.ListActivitiesRequest.filters:type_name -> orkstack.v1.FieldFilter
+	29, // 2: orkstack.v1.ActivityInfo.resolved_at:type_name -> google.protobuf.Timestamp
 	11, // 3: orkstack.v1.ActivityInfo.interface:type_name -> orkstack.v1.ActivityInterface
 	4,  // 4: orkstack.v1.ActivityInfo.icon:type_name -> orkstack.v1.ActivityIcon
 	7,  // 5: orkstack.v1.ActivityInfo.docs:type_name -> orkstack.v1.ActivityDocs
@@ -1406,36 +1431,38 @@ var file_orkstack_v1_activity_service_proto_depIdxs = []int32{
 	20, // 11: orkstack.v1.ActivityDocs.ops:type_name -> orkstack.v1.ActivityDocs.OpsEntry
 	21, // 12: orkstack.v1.ActivityDocs.values:type_name -> orkstack.v1.ActivityDocs.ValuesEntry
 	22, // 13: orkstack.v1.OpDocs.fields:type_name -> orkstack.v1.OpDocs.FieldsEntry
-	29, // 14: orkstack.v1.FieldSchema.default:type_name -> google.protobuf.Value
+	30, // 14: orkstack.v1.FieldSchema.default:type_name -> google.protobuf.Value
 	23, // 15: orkstack.v1.OpSchema.fields:type_name -> orkstack.v1.OpSchema.FieldsEntry
 	24, // 16: orkstack.v1.ActivityInterface.fields:type_name -> orkstack.v1.ActivityInterface.FieldsEntry
 	25, // 17: orkstack.v1.ActivityInterface.ops:type_name -> orkstack.v1.ActivityInterface.OpsEntry
 	26, // 18: orkstack.v1.ActivityInterface.values:type_name -> orkstack.v1.ActivityInterface.ValuesEntry
-	3,  // 19: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
-	30, // 20: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
-	27, // 21: orkstack.v1.ListOrkersRequest.filters:type_name -> orkstack.v1.FieldFilter
-	31, // 22: orkstack.v1.ListOrkersResponse.orkers:type_name -> orkstack.v1.Orker
-	31, // 23: orkstack.v1.CordonOrkerResponse.orker:type_name -> orkstack.v1.Orker
-	8,  // 24: orkstack.v1.ActivityDocs.OpsEntry.value:type_name -> orkstack.v1.OpDocs
-	9,  // 25: orkstack.v1.OpSchema.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
-	9,  // 26: orkstack.v1.ActivityInterface.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
-	10, // 27: orkstack.v1.ActivityInterface.OpsEntry.value:type_name -> orkstack.v1.OpSchema
-	9,  // 28: orkstack.v1.ActivityInterface.ValuesEntry.value:type_name -> orkstack.v1.FieldSchema
-	2,  // 29: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
-	13, // 30: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
-	15, // 31: orkstack.v1.ActivityService.ListOrkers:input_type -> orkstack.v1.ListOrkersRequest
-	17, // 32: orkstack.v1.ActivityService.CordonOrker:input_type -> orkstack.v1.CordonOrkerRequest
-	0,  // 33: orkstack.v1.ActivityService.InspectActivity:input_type -> orkstack.v1.InspectActivityRequest
-	12, // 34: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
-	14, // 35: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
-	16, // 36: orkstack.v1.ActivityService.ListOrkers:output_type -> orkstack.v1.ListOrkersResponse
-	18, // 37: orkstack.v1.ActivityService.CordonOrker:output_type -> orkstack.v1.CordonOrkerResponse
-	1,  // 38: orkstack.v1.ActivityService.InspectActivity:output_type -> orkstack.v1.InspectActivityResponse
-	34, // [34:39] is the sub-list for method output_type
-	29, // [29:34] is the sub-list for method input_type
-	29, // [29:29] is the sub-list for extension type_name
-	29, // [29:29] is the sub-list for extension extendee
-	0,  // [0:29] is the sub-list for field type_name
+	27, // 19: orkstack.v1.ActivityInterface.devices:type_name -> orkstack.v1.ActivityInterface.DevicesEntry
+	3,  // 20: orkstack.v1.ListActivitiesResponse.activities:type_name -> orkstack.v1.ActivityInfo
+	31, // 21: orkstack.v1.DescribeOrkerResponse.orker:type_name -> orkstack.v1.DescribeOrkerResult
+	28, // 22: orkstack.v1.ListOrkersRequest.filters:type_name -> orkstack.v1.FieldFilter
+	32, // 23: orkstack.v1.ListOrkersResponse.orkers:type_name -> orkstack.v1.Orker
+	29, // 24: orkstack.v1.ListOrkersResponse.read_at:type_name -> google.protobuf.Timestamp
+	32, // 25: orkstack.v1.CordonOrkerResponse.orker:type_name -> orkstack.v1.Orker
+	8,  // 26: orkstack.v1.ActivityDocs.OpsEntry.value:type_name -> orkstack.v1.OpDocs
+	9,  // 27: orkstack.v1.OpSchema.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
+	9,  // 28: orkstack.v1.ActivityInterface.FieldsEntry.value:type_name -> orkstack.v1.FieldSchema
+	10, // 29: orkstack.v1.ActivityInterface.OpsEntry.value:type_name -> orkstack.v1.OpSchema
+	9,  // 30: orkstack.v1.ActivityInterface.ValuesEntry.value:type_name -> orkstack.v1.FieldSchema
+	2,  // 31: orkstack.v1.ActivityService.ListActivities:input_type -> orkstack.v1.ListActivitiesRequest
+	13, // 32: orkstack.v1.ActivityService.DescribeOrker:input_type -> orkstack.v1.DescribeOrkerRequest
+	15, // 33: orkstack.v1.ActivityService.ListOrkers:input_type -> orkstack.v1.ListOrkersRequest
+	17, // 34: orkstack.v1.ActivityService.CordonOrker:input_type -> orkstack.v1.CordonOrkerRequest
+	0,  // 35: orkstack.v1.ActivityService.InspectActivity:input_type -> orkstack.v1.InspectActivityRequest
+	12, // 36: orkstack.v1.ActivityService.ListActivities:output_type -> orkstack.v1.ListActivitiesResponse
+	14, // 37: orkstack.v1.ActivityService.DescribeOrker:output_type -> orkstack.v1.DescribeOrkerResponse
+	16, // 38: orkstack.v1.ActivityService.ListOrkers:output_type -> orkstack.v1.ListOrkersResponse
+	18, // 39: orkstack.v1.ActivityService.CordonOrker:output_type -> orkstack.v1.CordonOrkerResponse
+	1,  // 40: orkstack.v1.ActivityService.InspectActivity:output_type -> orkstack.v1.InspectActivityResponse
+	36, // [36:41] is the sub-list for method output_type
+	31, // [31:36] is the sub-list for method input_type
+	31, // [31:31] is the sub-list for extension type_name
+	31, // [31:31] is the sub-list for extension extendee
+	0,  // [0:31] is the sub-list for field type_name
 }
 
 func init() { file_orkstack_v1_activity_service_proto_init() }
@@ -1451,7 +1478,7 @@ func file_orkstack_v1_activity_service_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_orkstack_v1_activity_service_proto_rawDesc), len(file_orkstack_v1_activity_service_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   27,
+			NumMessages:   28,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

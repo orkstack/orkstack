@@ -165,6 +165,15 @@ type RunPlan struct {
 	// before.
 	ProfileIdentities map[string]map[string]string `json:"profile_identities,omitempty"`
 
+	// ProfileContracts is, per pool and per profile a task of this run names,
+	// the contracts the pool's Orkers served at SUBMIT (docs/DEPLOY.md,
+	// "Changing a profile"): the set an undeclared task may run under, and
+	// the contract each declared label pinned. Like ProfileIdentities it is a
+	// cluster fact decided at submit and only copied by workflow code.
+	// omitempty, so a plan with none, and every plan built before it existed,
+	// encodes exactly as before.
+	ProfileContracts map[string]map[string]ProfileContracts `json:"profile_contracts,omitempty"`
+
 	// History is the per-execution history ceiling this run must stop below,
 	// decided at submit (workflow code may not read config, AGENTS.md §2.1).
 	// Its Reserve — every count and byte charge the guard uses — is carried

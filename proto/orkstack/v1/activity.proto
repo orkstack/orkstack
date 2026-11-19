@@ -1184,6 +1184,27 @@ message OrkerProfile {
   // identity_digest is the SHA-256 (hex) of the profile's structural
   // identity, which a run pins at submit and every Orker of a pool must share.
   string identity_digest = 7;
+  // contracts are the profile's contracts: each a label, the definition this
+  // Orker gives it and the labels it also accepts (docs/DEPLOY.md, "Changing
+  // a profile"). A profile written in the short form has one contract, "1".
+  repeated OrkerProfileContract contracts = 8;
+  // default_contract is the label a task whose image declares no contract
+  // for this profile runs under.
+  string default_contract = 9;
+}
+
+// OrkerProfileContract is one contract of an Orker's profile: a label for one
+// definition. The inventory (ListOrkers) carries label and accepts;
+// identity_digest travels only on the Orker's own answer to the engine.
+message OrkerProfileContract {
+  // label names the contract, the one an image declares or a run pins.
+  string label = 1;
+  // identity_digest is the SHA-256 (hex) of this contract's structural
+  // identity.
+  string identity_digest = 2;
+  // accepts are the other labels this contract also serves: the operator's
+  // assertion that a run pinned to one of them may run under this one.
+  repeated string accepts = 3;
 }
 
 // OrkerStopping is set while an Orker is stopping: from its first stop signal
@@ -1261,6 +1282,20 @@ enum ProfileKind {
 message ProfileRef {
   string name = 1;
   string identity_digest = 2;
+  // contracts are the contracts the run pinned for this profile: for a task
+  // whose image declared one, that contract alone; otherwise every contract
+  // the pool's Orkers served at submit.
+  repeated ProfileContractPin contracts = 3;
+  // declared is whether the task's image declared the contract it needs.
+  bool declared = 4;
+}
+
+// ProfileContractPin is one contract label a run pinned, with the definitions
+// its Orkers gave it at submit. An empty identity_digests pins the label
+// alone, which only an Orker that accepts it serves.
+message ProfileContractPin {
+  string label = 1;
+  repeated string identity_digests = 2;
 }
 
 // ProviderInfo is identity (E81)'s; it is empty until identity (E81) lands (v0.4.0 proto

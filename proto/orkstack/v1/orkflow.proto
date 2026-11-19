@@ -184,6 +184,14 @@ message Task {
 
   // concurrency is set from E88; unset until it lands (v0.4.0 proto batch).
   ConcurrencySpec concurrency = 32;
+
+  // 27 was a field of a draft that recorded histories hold: never reuse it.
+  reserved 27;
+
+  // device_contracts maps a profile the task names in devices to the
+  // contract label the task needs of it: the image's declaration, or the
+  // author's `name@label`. Written at create, only when non-empty.
+  map<string, string> device_contracts = 33;
 }
 
 // CacheSpec opts ONE task into memoization across runs (docs/DSL.md

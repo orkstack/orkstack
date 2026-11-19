@@ -3718,8 +3718,14 @@ type EffectiveProfile struct {
 	// identity_pinned is whether the run pinned the profile's identity at
 	// submit.
 	IdentityPinned bool `protobuf:"varint,4,opt,name=identity_pinned,json=identityPinned,proto3" json:"identity_pinned,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// contract is the label of the contract the attempt ran under.
+	Contract string `protobuf:"bytes,5,opt,name=contract,proto3" json:"contract,omitempty"`
+	// run_contracts are the labels the run pinned for this profile.
+	RunContracts []string `protobuf:"bytes,6,rep,name=run_contracts,json=runContracts,proto3" json:"run_contracts,omitempty"`
+	// declared is whether the task's image chose the contract.
+	Declared      bool `protobuf:"varint,7,opt,name=declared,proto3" json:"declared,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EffectiveProfile) Reset() {
@@ -3776,6 +3782,27 @@ func (x *EffectiveProfile) GetUnitIndices() []int32 {
 func (x *EffectiveProfile) GetIdentityPinned() bool {
 	if x != nil {
 		return x.IdentityPinned
+	}
+	return false
+}
+
+func (x *EffectiveProfile) GetContract() string {
+	if x != nil {
+		return x.Contract
+	}
+	return ""
+}
+
+func (x *EffectiveProfile) GetRunContracts() []string {
+	if x != nil {
+		return x.RunContracts
+	}
+	return nil
+}
+
+func (x *EffectiveProfile) GetDeclared() bool {
+	if x != nil {
+		return x.Declared
 	}
 	return false
 }
@@ -5048,12 +5075,15 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\x05_item\"\x13\n" +
 	"\x11AttemptCredential\"\x11\n" +
 	"\x0fAttemptIdentity\"\x13\n" +
-	"\x11ConcurrencyQueued\"\xa0\x01\n" +
+	"\x11ConcurrencyQueued\"\xfd\x01\n" +
 	"\x10EffectiveProfile\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12,\n" +
 	"\x04kind\x18\x02 \x01(\x0e2\x18.orkstack.v1.ProfileKindR\x04kind\x12!\n" +
 	"\funit_indices\x18\x03 \x03(\x05R\vunitIndices\x12'\n" +
-	"\x0fidentity_pinned\x18\x04 \x01(\bR\x0eidentityPinned\"\xa3\x01\n" +
+	"\x0fidentity_pinned\x18\x04 \x01(\bR\x0eidentityPinned\x12\x1a\n" +
+	"\bcontract\x18\x05 \x01(\tR\bcontract\x12#\n" +
+	"\rrun_contracts\x18\x06 \x03(\tR\frunContracts\x12\x1a\n" +
+	"\bdeclared\x18\a \x01(\bR\bdeclared\"\xa3\x01\n" +
 	"\x0eInheritedPause\x12\"\n" +
 	"\rparent_run_id\x18\x01 \x01(\tR\vparentRunId\x120\n" +
 	"\x05since\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\x05since\x12;\n" +
