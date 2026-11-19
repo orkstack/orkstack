@@ -6097,9 +6097,10 @@ gate's state, at most `engine.concurrency.census_parallel` at once and
 slot. The replica that ran a pass reports it on the default sink; every
 replica reports its own snapshot while it is newer than twice the interval
 plus `engine.concurrency.census_timeout`, and its age always, so read these
-gauges across replicas with `max`. It decides nothing. No Orkflow can declare
-a concurrency limit yet, so there are no gates: every pass reads none, and the
-gauges below report no slots, keys or queues until one can.
+gauges across replicas with `max`. It decides nothing. A key's gate exists
+only while runs hold or wait for it, so a deployment where no Orkflow declares
+a limit has none: every pass reads none, and the gauges report no slots, keys
+or queues.
 
 | Gauge | Labels | Means |
 |---|---|---|
