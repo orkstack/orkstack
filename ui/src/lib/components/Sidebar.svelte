@@ -14,6 +14,8 @@
 		link: (path: string) => string;
 		/** Runs not finished now, or null while unknown. */
 		running: number | null;
+		/** How many of the runs going now (running) are paused. */
+		paused?: number;
 		/** How many of each there are, once read; a read that failed draws no count. */
 		counts?: { orkflows?: string; pools?: string; activities?: string };
 		/** OrkStack's own build, for the foot's plate. */
@@ -27,7 +29,10 @@
 		onclose: () => void;
 	}
 
-	let { pathname, link, running, counts = {}, version, picker, themeSwitch, account, drawer, onclose }: Props = $props();
+	let { pathname, link, running, paused = 0, counts = {}, version, picker, themeSwitch, account, drawer, onclose }: Props = $props();
+	// The runs going and not paused: never below zero, should the two counts
+	// come from reads a moment apart.
+	const going = $derived(Math.max(0, (running ?? 0) - paused));
 
 	const [, runs, orkflows] = BUILD_PAGES;
 	const build = $derived(buildPageOf(pathname)?.id);
@@ -45,8 +50,11 @@
 	<div class="mb-2.5">{@render picker()}</div>
 
 	<a class="nav" href={link(runs.href)} data-testid="nav-runs" aria-current={current(build === 'runs')}
-		><Icon name="runs" />Runs{#if running !== null && running > 0}<span class="live" data-testid="nav-running"
-				><i class="mark-dot" aria-hidden="true"></i>{running} running</span
+		><Icon name="runs" />Runs{#if running !== null && running > 0}<span class="counts" data-testid="nav-running"
+				>{#if going > 0}<span class="live"><i class="mark-dot" aria-hidden="true"></i>{going} running</span
+					>{/if}{#if paused > 0}<span class="live held mark-pause" data-testid="nav-paused" title="{paused} paused"
+						><span aria-hidden="true">{paused}</span><span class="sr-only">{`${paused} paused`}</span></span
+					>{/if}</span
 			>{/if}</a
 	>
 	<a class="nav" href={link(orkflows.href)} data-testid="nav-orkflows" data-n={counts.orkflows} aria-current={current(build === 'orkflows')}
@@ -141,8 +149,14 @@
 	.nav[aria-current='page'] :global(svg) {
 		color: var(--side-active-ink);
 	}
-	.live {
+	/* The live runs, then the paused ones in the pause mark's amber: two
+	   pills, so the row fits the rail at any count a laptop shows. */
+	.counts {
 		margin-left: auto;
+		display: inline-flex;
+		gap: 4px;
+	}
+	.live {
 		display: inline-flex;
 		align-items: center;
 		gap: 6px;
@@ -154,6 +168,10 @@
 		font-size: 13px;
 		font-weight: 600;
 		font-variant-numeric: tabular-nums;
+	}
+	.live.held {
+		background: var(--color-wait-tint);
+		color: var(--color-wait);
 	}
 	.side-h {
 		padding: 14px 10px 4px;

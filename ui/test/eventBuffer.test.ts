@@ -112,3 +112,11 @@ test('a failure is a failure whether the run or a task failed', () => {
 	expect(isFailureEvent(ev(3, EventType.RUN_CANCELED))).toBe(false);
 	expect(isFailureEvent(ev(4, EventType.TASK_SUCCEEDED, 'a'))).toBe(false);
 });
+
+test('a pause and an unpause are the run’s own events, under Run, not Tasks', () => {
+	for (const type of [EventType.RUN_PAUSED, EventType.RUN_UNPAUSED]) {
+		const event = create(EventSchema, { type, sequence: 5n });
+		expect(matchesFilter(event, 'run')).toBe(true);
+		expect(matchesFilter(event, 'tasks')).toBe(false);
+	}
+});

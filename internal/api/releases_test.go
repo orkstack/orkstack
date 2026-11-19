@@ -25,6 +25,7 @@ type stubReleases struct {
 	obs        engine.ReleaseObservation
 	obsErr     error
 	counts     map[string]int64
+	paused     map[string]int64
 	runs       map[string][]*orkstackv1.Run
 	runErr     map[string]error
 	running    int64
@@ -56,6 +57,13 @@ func (s *stubReleases) ReleaseRuns(_ context.Context, build string, limit int) (
 		runs = runs[:limit]
 	}
 	return s.counts[build], runs, nil
+}
+
+func (s *stubReleases) ReleasePausedRuns(_ context.Context, build string) (int64, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	n, ok := s.paused[build]
+	return n, ok, nil
 }
 
 func (s *stubReleases) RunningRuns(context.Context) (int64, error) {
@@ -661,5 +669,20 @@ func TestListReleases_UnservedPoolsNameAPoolWithNoOrkerTakingWork(t *testing.T) 
 				t.Fatalf("unserved pools = %q; want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// A release counts the paused runs among the runs it holds: they keep it
+// from draining for as long as their pauses last (E103 §5.8). A release with
+// no runs is not asked.
+func TestListReleases_CountsAReleasesPausedRuns(t *testing.T) {
+	stub := rolloutReleases()
+	stub.paused = map[string]int64{"v1": 2, "v2": 9}
+	resp := listReleases(t, releaseService(stub, releaseFleet()), "")
+	for _, r := range resp.GetReleases() {
+		want := map[string]int64{"v1": 2}[r.GetBuildId()]
+		if r.GetPausedRuns() != want {
+			t.Errorf("release %s paused_runs = %d, want %d", r.GetBuildId(), r.GetPausedRuns(), want)
+		}
 	}
 }

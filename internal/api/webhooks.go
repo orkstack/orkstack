@@ -365,9 +365,11 @@ func (n *WebhookNotifier) NotifyRunEvent(
 		Status:    enumname.Of(event.GetStatus()),
 		Timestamp: timestamp,
 		Sequence:  event.GetSequence(),
-		TaskID:    event.GetTaskId(),
-		Attempt:   taskAttempt(run, event.GetTaskId()),
-		Run:       encoded,
+		// What the event did to the run's pause, when it did anything.
+		PauseTransition: pauseTransitionName(event.GetPauseTransition()),
+		TaskID:          event.GetTaskId(),
+		Attempt:         taskAttempt(run, event.GetTaskId()),
+		Run:             encoded,
 	})
 }
 
@@ -385,4 +387,13 @@ func taskAttempt(run *orkstackv1.Run, taskID string) int32 {
 		}
 	}
 	return 0
+}
+
+// pauseTransitionName is a delivery's pauseTransition: the short enum
+// spelling, or empty for an event that did nothing to a pause.
+func pauseTransitionName(transition orkstackv1.PauseTransition) string {
+	if transition == orkstackv1.PauseTransition_PAUSE_TRANSITION_UNSPECIFIED {
+		return ""
+	}
+	return enumname.Of(transition)
 }

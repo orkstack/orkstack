@@ -232,3 +232,24 @@ func TestParseSince_ReadsALookbackOrAnInstant(t *testing.T) {
 func (s statsReader) RunDefinition(_ context.Context, _ string, start *engine.RunStartRecord) (*orkstackv1.Orkflow, error) {
 	return start.Orkflow, nil
 }
+
+// Paused runs get their own row, after running, only when there are some.
+func TestRenderStats_PausedRow(t *testing.T) {
+	stats := &orkstackv1.GetStatsResponse{RunsByStatus: map[string]int64{"running": 3, "succeeded": 1, "failed": 0, "canceled": 0}, Paused: 2}
+	var out strings.Builder
+	if err := renderStats(&out, stats); err != nil {
+		t.Fatalf("renderStats: %v", err)
+	}
+	got := collapseSpaces(out.String())
+	if !strings.Contains(got, "running 3 paused 2 succeeded 1") {
+		t.Fatalf("counts read %q, want running, then paused, then succeeded", got)
+	}
+	stats.Paused = 0
+	out.Reset()
+	if err := renderStats(&out, stats); err != nil {
+		t.Fatalf("renderStats: %v", err)
+	}
+	if strings.Contains(out.String(), "paused") {
+		t.Fatalf("a zero paused count draws a row:\n%s", out.String())
+	}
+}

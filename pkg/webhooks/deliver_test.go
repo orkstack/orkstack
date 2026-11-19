@@ -385,3 +385,24 @@ func TestNewResult_RecordsTheDeliverysSequence(t *testing.T) {
 		t.Errorf("a delivery that could not be queued records sequence %d, want the delivery's 7", unqueued.Sequence)
 	}
 }
+
+// A pause's events carry pauseTransition after sequence; every other
+// delivery omits it.
+func TestDelivery_BodyCarriesThePauseTransition(t *testing.T) {
+	d := sampleDelivery()
+	d.Event, d.Status, d.PauseTransition = webhooks.EventRunPaused, "PAUSED", "PAUSED"
+	body, err := d.Body()
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if !strings.Contains(string(body), `"sequence":`) || !strings.Contains(string(body), `,"pauseTransition":"PAUSED",`) {
+		t.Fatalf("body %s lacks pauseTransition after sequence", body)
+	}
+	plain, err := sampleDelivery().Body()
+	if err != nil {
+		t.Fatalf("Body: %v", err)
+	}
+	if strings.Contains(string(plain), "pauseTransition") {
+		t.Fatalf("a delivery with no pause transition carries one: %s", plain)
+	}
+}
