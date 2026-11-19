@@ -3018,11 +3018,12 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   orders one page of the archive index (`pkg/artifacts/archive.go`). Those two
   are the whole list.
 - **Listing runs is a question the cluster answers.** At boot each engine
-  registers four search attributes on its Temporal namespace —
+  registers search attributes on its Temporal namespace (every one, and how
+  to add them by hand, is in "Temporal search attributes" below), among them
   `OrkflowNamespace` (`task.EnsureRunSearchAttributes`),
   `OrkflowOriginKind`/`OrkflowOriginId`
   (`task.EnsureRunOriginSearchAttributes`) and `OrkflowOriginRootRunId`
-  (`task.EnsureRunRootSearchAttribute`) — and stamps every run it starts
+  (`task.EnsureRunRootSearchAttribute`), and stamps every run it starts
   with the ones that apply, so `run list -n payments`, `run list --filter
   origin.kind=TRIGGER --filter origin.id=trg-…`, `run list --filter
   origin.root_run_id=ork-…` and an `origin.kind` filter on the runs page are
@@ -3031,9 +3032,8 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   property: filtered afterwards, how far a list could see would be set by how
   busy the OTHER namespaces were. Finished runs come from the archive, whose
   run, origin and root index keys begin with the namespace (`docs/STORAGE.md`).
-  All four are keywords. A Temporal 1.32 dev server (the development stack's)
-  takes 10 custom keyword attributes per namespace; measure your own visibility
-  store if the namespace holds attributes of your own.
+  All of them are keywords; Temporal's limits per visibility store are in
+  "Temporal search attributes" below.
 
   The boot line reports each answer separately
   (`INFO connected to temporal … run_namespace_index=true run_origin_index=true
@@ -3162,6 +3162,97 @@ cannot see its pin hosts, so check pin hosts by hand for that rollout.
   worktree's dev stack, including any process whose executable is this
   worktree's `bin/ork` or `bin/orker`, and `scripts/proof-stop.sh
   proof/<name>` stops a proof you started.
+
+### Temporal search attributes
+
+Every `ork` registers the custom search attributes below on its Temporal
+namespace (`temporal.namespace`, `ork-main` by default) at boot, before it
+serves (`internal/task/searchattr.go`). Each group is its own registration
+with its own answer, so a cluster that refuses one keeps the others. The
+boot line `INFO connected to temporal` reports each answer under the key
+the table names (`true`: the cluster indexes it). A group the cluster
+refuses does not stop the boot: the engine logs `WARN visibility does not
+index …` once, naming the attribute, and carries on without it. Only a
+Temporal namespace the cluster still cannot see after a minute fails the
+boot.
+
+<!-- search-attributes: table -->
+| Attribute | Type | Used for | Without it | Boot log key |
+|---|---|---|---|---|
+| `OrkflowNamespace` | Keyword | listing, counting and `max_running` of one OrkStack namespace's live runs | each list, count and `max_running` check walks the runs instead (a count, every live run; a list, every run), and one that cannot finish the walk fails rather than answer short | `run_namespace_index` |
+| `OrkflowOriginKind` | Keyword | filtering runs by `origin.kind` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
+| `OrkflowOriginId` | Keyword | filtering runs by `origin.id` | a list filtered by origin walks every run instead, and fails rather than answer short when it cannot finish | `run_origin_index` |
+| `OrkflowOriginRootRunId` | Keyword | filtering runs by `origin.root_run_id` (everything below a root) | a list filtered by root walks every run instead, and fails rather than answer short when it cannot finish | `run_root_index` |
+| `OrkflowRunPaused` | Keyword | a run records in the index whether it is paused (no list reads it yet) | a run does not record its pause; once runs have written it, removing it stops them (below) | `run_paused_index` |
+
+Never remove one while runs are open. `OrkflowRunPaused` above all: a run
+started while it was registered writes it at each pause and unpause, and
+stops there, neither progressing nor ending, until it is registered again
+(docs/LIMITATIONS.md, "Paused-run index"). The engine also reads two
+attributes the cluster owns, `TemporalWorkerDeploymentVersion` and
+`TemporalScheduledStartTime`; they need nothing from you.
+
+**When the engine cannot register them.** The engine registers them through
+Temporal's operator API. A cluster whose operator API is behind an
+authorizer that refuses the engine needs them added by someone who may:
+add them before the first engine boots, or restart the engines afterwards
+so each finds them. A command for an attribute that already exists is
+refused and changes nothing.
+
+On a self-hosted cluster, with the `temporal` CLI and a principal allowed
+to call the operator API:
+
+<!-- search-attributes: self-hosted -->
+```bash
+temporal operator search-attribute create --namespace ork-main --name OrkflowNamespace --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowOriginKind --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowOriginId --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowOriginRootRunId --type Keyword
+temporal operator search-attribute create --namespace ork-main --name OrkflowRunPaused --type Keyword
+temporal operator search-attribute list --namespace ork-main
+```
+
+Temporal Cloud is not supported yet as a whole: the engine also registers
+its namespace and sets its retention, which Cloud administers itself
+(docs/LIMITATIONS.md, "Engine, cluster and gateway"). Its search attributes
+are added with `tcld`, by a user who holds Namespace Admin on the namespace
+(an Account Owner or Global Admin holds it on every namespace); Cloud names
+a namespace `<namespace>.<account>`:
+
+<!-- search-attributes: cloud -->
+```bash
+tcld namespace search-attributes add --namespace ork-main.acct1 \
+  --search-attribute OrkflowNamespace=Keyword \
+  --search-attribute OrkflowOriginKind=Keyword \
+  --search-attribute OrkflowOriginId=Keyword \
+  --search-attribute OrkflowOriginRootRunId=Keyword \
+  --search-attribute OrkflowRunPaused=Keyword
+```
+
+Replace `ork-main` with your `temporal.namespace`, and `acct1` with your
+account id. The newer `temporal cloud namespace search-attribute create`
+does the same, one `--name` and `--type` at a time.
+
+**Limits.** Temporal bounds custom attributes per namespace and type, and
+counts your own attributes in the same namespace against them:
+
+| Visibility store | Keyword | KeywordList |
+|---|---|---|
+| SQL (PostgreSQL 12+, MySQL 8.0.17+, SQLite 3.31.0+) | 10 | 3 |
+| Temporal Cloud | 40 | 5 |
+| Elasticsearch | no Temporal limit | no Temporal limit |
+
+OrkStack uses five Keyword attributes, so a SQL-backed namespace has five
+left for your own. On Elasticsearch an attribute is shared by every
+namespace of the cluster. Temporal Cloud does not support removing a custom
+attribute (its docs send you to Temporal Support), so one added there
+stays.
+
+Sources: Temporal's [search attribute
+limits](https://docs.temporal.io/search-attribute), [self-hosted and
+Cloud creation](https://docs.temporal.io/self-hosted-guide/visibility/custom-search-attributes),
+[`tcld namespace search-attributes add`](https://docs.temporal.io/cloud/tcld/namespace)
+and [Cloud permissions](https://docs.temporal.io/cloud/users).
 
 ### Temporal over TLS
 
