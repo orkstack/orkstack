@@ -536,6 +536,16 @@
 					]
 				},
 				{
+					"route": "docs/operate/passwords-with-dex",
+					"title": "Sign in with a password",
+					"description": "Let people sign in with a username and password through Dex when you have no identity provider.",
+					"parts": [
+						{
+							"source": "site/content/how-to/passwords-with-dex.md"
+						}
+					]
+				},
+				{
 					"route": "docs/operate/task-identity",
 					"title": "Publish the task identity issuer",
 					"description": "Make OrkStack an OpenID Connect issuer that clouds and secret stores can trust.",

@@ -71,7 +71,7 @@
 	import { artifactMetadata, downloadFilename, emptyPayload, formatDuration, payloadJson, pinAccent, runCommand, shortDigestWords, shortRunId, taskCommands, timestampJson } from '#lib/runDetail.ts';
 	import { EVENT_BUFFER_CAP, appendEvents, emptyEventBuffer } from '#lib/eventBuffer.ts';
 	import { eventBatcher, slicedApply } from '#lib/eventBatch.ts';
-	import { loadTaskInspect } from '#lib/taskInspectModule.ts';
+	import { loadTaskInspect, preloadTaskInspect } from '#lib/taskInspectModule.ts';
 	import { Status, type ArtifactRef, type Payload } from '#lib/gen/orkstack/v1/common_pb.ts';
 	import {
 		AttemptOutcome,
@@ -2252,6 +2252,12 @@
 	let inputsAsJson = $state(false);
 	// Which tasks have their Inspect open: a disclosure of one task, never in the address.
 	let inspectOpenByTask = $state<Record<string, boolean>>({});
+	// The Inspect body's code is loaded when the page mounts, not at the first
+	// press: after a page load that press would wait for the import, which
+	// answers behind a live run's event applies (preloadTaskInspect).
+	$effect(() => {
+		void preloadTaskInspect();
+	});
 	const inputEntries = $derived.by(() => {
 		const raw = run?.input?.data;
 		if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return [];

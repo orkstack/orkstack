@@ -877,6 +877,16 @@ where the CLI says `waiting for an orker` or `waiting for capacity`. A task or
 item waiting out a store outage reads `Waiting for object storage` in each of
 those places, and the CLI says `waiting for object storage`.
 
+`GetRun` also says why a waiting task, or fan-out item, is not running yet, in
+`TaskRun.pending_reason`, derived on read and never stored: it waits until an
+instant to run again after an interruption; no Orker of its pool (on a versioned
+fleet, of its run's release) takes work, naming how many are stopping, paused (a store outage, an
+unavailable profile) and cordoned, or that none serves the pool at all; or its pin waits for a pin host. A reason that cannot be known (the
+Orker inventory or the run's release could not be read, or a live Orker did not
+answer) is omitted, never guessed. `orkctl run get` prints one line per such task
+after its task table (`fetch waits: …`, `spread[3] waits: …`). The run page does
+not show it yet.
+
 The run page's live updates come from the run's event socket, which resumes
 from the last event it applied after a dropped connection. Six reconnects in
 a row that deliver nothing end it: the badge reads `STOPPED`, the page says

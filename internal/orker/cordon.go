@@ -429,7 +429,7 @@ type cordonActivityInterceptor struct {
 func (i *cordonActivityInterceptor) ExecuteActivity(
 	ctx context.Context,
 	in *interceptor.ExecuteActivityInput,
-) (interface{}, error) {
+) (result interface{}, err error) {
 	info := activity.GetInfo(ctx)
 	switch info.ActivityType.Name {
 	case task.ActivityExecuteTask:
@@ -445,6 +445,11 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		// every attempt it admitted (stop.go).
 		stage := i.a.stops.admit()
 		defer i.a.stops.leave(stage)
+		// Deferred last, so it runs first: the result is owed before
+		// running_tasks falls, so a stop that sees this Orker idle already
+		// sees the result the SDK has yet to send (owed_reports.go). It runs
+		// for a refused admission and a panic too, which the SDK reports.
+		defer func() { i.a.oweReport(ctx, info, err) }()
 		admission, err := i.a.admit(info.TaskQueue, executeTaskRequest(i.a.dispatcher.Policy, in))
 		if err != nil {
 			return nil, err
@@ -466,6 +471,10 @@ func (i *cordonActivityInterceptor) ExecuteActivity(
 		return i.Next.ExecuteActivity(ctx, in)
 	}
 
+	// A pin's creation activity returns when its pin closes, and the SDK then
+	// reports it like any attempt's result: owed until the cluster answers,
+	// so a pin host that stops idle does not exit with it unsent.
+	defer func() { i.a.oweReport(ctx, info, err) }()
 	if stopping, ok := i.a.cordon.Stopping(); ok {
 		return nil, i.a.refuseStoppingPinCreation(stopping, info)
 	}

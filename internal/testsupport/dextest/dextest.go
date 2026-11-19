@@ -40,7 +40,13 @@ import (
 const (
 	ImageFile  = "deploy/dex-image.txt"
 	ConfigFile = "deploy/dex/config.yaml"
+	// DocFile holds the Dex set-up an operator copies (DocExamples).
+	DocFile = "docs/AUTHENTICATION.md"
 )
+
+// DefaultSecretEnv is the variable deploy/dex/config.yaml's web client reads
+// its secret from.
+const DefaultSecretEnv = "DEX_WEB_SECRET"
 
 // Password is every configured user's password.
 const Password = "password"
@@ -120,6 +126,15 @@ type Options struct {
 	// WebRedirect is the engine's web callback, the one redirect the
 	// orkstack-web client may use.
 	WebRedirect string
+	// ConfigFile is the Dex configuration to serve, a path; empty is
+	// deploy/dex/config.yaml under Root.
+	ConfigFile string
+	// SecretEnv is the variable the configuration's web client reads its
+	// secret from (Dex's secretEnv); empty is DefaultSecretEnv.
+	SecretEnv string
+	// DataDir, when set, is mounted read-write at /var/dex, where a
+	// configuration's sqlite3 storage keeps its file.
+	DataDir string
 	// ProofID and Owner, when Owner is set, label the container as a proof's
 	// own (orkstack.proof, orkstack.proof.owner host:pid:start), so
 	// `proofrun clean` stops it once that owner is gone. The development
@@ -166,6 +181,20 @@ func Start(ctx context.Context, o Options) (*Dex, error) {
 	}
 	// docker -v reads a relative path as a volume's name, never a directory.
 	o.Root, o.Dir = root, dir
+	if o.ConfigFile == "" {
+		o.ConfigFile = filepath.Join(o.Root, filepath.FromSlash(ConfigFile))
+	}
+	if o.ConfigFile, err = filepath.Abs(o.ConfigFile); err != nil {
+		return nil, fmt.Errorf("dextest: %w", err)
+	}
+	if o.DataDir != "" {
+		if o.DataDir, err = filepath.Abs(o.DataDir); err != nil {
+			return nil, fmt.Errorf("dextest: %w", err)
+		}
+	}
+	if o.SecretEnv == "" {
+		o.SecretEnv = DefaultSecretEnv
+	}
 	addr, err := freeAddr(o.Addr)
 	if err != nil {
 		return nil, err
@@ -181,10 +210,10 @@ func Start(ctx context.Context, o Options) (*Dex, error) {
 		return nil, err
 	}
 	issuer := "https://" + addr + "/dex"
-	args := RunArgs(image, o, addr, issuer, tlsDir, filepath.Join(o.Root, filepath.FromSlash(ConfigFile)))
+	args := RunArgs(image, o, addr, issuer, tlsDir, o.ConfigFile)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	// The secret goes to Dex through docker's environment, never its argv.
-	cmd.Env = append(os.Environ(), "DEX_WEB_SECRET="+secret)
+	cmd.Env = append(os.Environ(), o.SecretEnv+"="+secret)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("dextest: docker run %s: %v: %s", image, err, strings.TrimSpace(string(out)))
@@ -207,7 +236,9 @@ func Start(ctx context.Context, o Options) (*Dex, error) {
 // RunArgs is the `docker` command line that starts Dex: the pinned image,
 // never pulled, removed when stopped, as this user (so it reads the key it
 // is handed), published on loopback only, its configuration and certificate
-// mounted read-only, and DEX_WEB_SECRET taken from docker's own environment.
+// mounted read-only, o.DataDir, when set, read-write at /var/dex, and the web
+// client's secret (o.SecretEnv, DefaultSecretEnv when empty) taken from
+// docker's own environment.
 func RunArgs(image string, o Options, addr, issuer, tlsDir, config string) []string {
 	args := []string{"run", "-d", "--rm", "--pull", "never",
 		"--user", strconv.Itoa(os.Getuid()) + ":" + strconv.Itoa(os.Getgid()),
@@ -216,8 +247,15 @@ func RunArgs(image string, o Options, addr, issuer, tlsDir, config string) []str
 		"-v", tlsDir + ":/etc/dex/tls:ro",
 		"-e", "DEX_ISSUER=" + issuer,
 		"-e", "DEX_WEB_REDIRECT=" + o.WebRedirect,
-		"-e", "DEX_WEB_SECRET",
 		"--label", "orkstack.dex=" + issuer,
+	}
+	secretEnv := o.SecretEnv
+	if secretEnv == "" {
+		secretEnv = DefaultSecretEnv
+	}
+	args = append(args, "-e", secretEnv)
+	if o.DataDir != "" {
+		args = append(args, "-v", o.DataDir+":/var/dex")
 	}
 	if o.Owner != "" {
 		args = append(args, "--label", "orkstack.proof="+o.ProofID, "--label", "orkstack.proof.owner="+o.Owner)
@@ -448,4 +486,52 @@ func serial() *big.Int {
 		return big.NewInt(time.Now().UnixNano())
 	}
 	return n
+}
+
+// DocExample is the Dex set-up docs/AUTHENTICATION.md ("Passwords, through
+// Dex") tells an operator to copy: Dex's configuration and OrkStack's, each
+// the YAML block that follows its marker, <!-- dex-example: dex --> and
+// <!-- dex-example: orkstack -->.
+type DocExample struct {
+	Dex, OrkStack []byte
+}
+
+// DocExamples reads the documented Dex set-up from DocFile under root. A
+// marker that is missing, repeated or not followed by a yaml block is an
+// error, so a doc edit cannot quietly leave the example untested.
+func DocExamples(root string) (DocExample, error) {
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(DocFile)))
+	if err != nil {
+		return DocExample{}, fmt.Errorf("dextest: read %s: %w", DocFile, err)
+	}
+	var out DocExample
+	for _, ex := range []struct {
+		name string
+		into *[]byte
+	}{{"dex", &out.Dex}, {"orkstack", &out.OrkStack}} {
+		block, err := docBlock(string(data), ex.name)
+		if err != nil {
+			return DocExample{}, err
+		}
+		*ex.into = []byte(block)
+	}
+	return out, nil
+}
+
+// docBlock is the body of the yaml block right after the marker named name.
+func docBlock(doc, name string) (string, error) {
+	marker := "<!-- dex-example: " + name + " -->\n"
+	if n := strings.Count(doc, marker); n != 1 {
+		return "", fmt.Errorf("dextest: %s holds the marker %q %d times, want once", DocFile, strings.TrimSpace(marker), n)
+	}
+	rest := doc[strings.Index(doc, marker)+len(marker):]
+	const open = "```yaml\n"
+	if !strings.HasPrefix(rest, open) {
+		return "", fmt.Errorf("dextest: %s: the marker %q is not followed by a yaml block", DocFile, strings.TrimSpace(marker))
+	}
+	body, _, found := strings.Cut(rest[len(open):], "```\n")
+	if !found {
+		return "", fmt.Errorf("dextest: %s: the yaml block after %q does not close", DocFile, strings.TrimSpace(marker))
+	}
+	return body, nil
 }

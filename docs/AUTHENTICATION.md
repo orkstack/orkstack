@@ -214,6 +214,190 @@ sign-in ends. Nothing else depends on this key.
 An issuer that offers sign-in needs `auth.public_url`, `https` except on a
 loopback host, and a sign-in key, or the engine refuses to start.
 
+## Passwords, through Dex
+
+OrkStack stores no users and checks no password. A person is whoever a
+trusted issuer's token says (above). A password store would be a durable
+system of its own beside Temporal and object storage, with hashing, resets,
+lockouts and second factors to get right, and OrkStack adds no such system
+(AGENTS.md §13). A deployment with no identity provider runs one instead:
+[Dex](https://dexidp.io), an OpenID Connect provider whose local password
+database (the `local` connector, turned on by `enablePasswordDB`) signs in
+the users its configuration lists under `staticPasswords`. OrkStack trusts
+Dex as it would any issuer. The development stack runs the same set-up, with
+in-memory storage and development users (`deploy/dex/config.yaml`);
+`TestIntegration_SigninWithDex_DocumentedSetup` serves the two
+configurations below with the pinned Dex and signs their user in.
+
+Run the image `deploy/dex-image.txt` pins:
+`ghcr.io/dexidp/dex:v2.45.1@sha256:8499afd690c437f52301efd2b05b2455da5bd2dfc20332cd697dc9937f808462`.
+v2.45.1 is the first release that gives a static user groups and a verified
+email, which OrkStack reads; v2.46.0 and v2.46.1 deadlock the refresh grant
+on in-memory storage (dexidp/dex#5017).
+
+**Dex's configuration.** One user, `alice@example.com`, in the group
+`platform-admins`; two clients, the engine's web sign-in and `orkctl login`:
+
+<!-- dex-example: dex -->
+```yaml
+issuer: https://dex.example.com/dex
+storage:
+  type: sqlite3
+  config:
+    file: /var/dex/dex.db
+web:
+  https: 0.0.0.0:5554
+  tlsCert: /etc/dex/tls/tls.crt
+  tlsKey: /etc/dex/tls/tls.key
+expiry:
+  idTokens: 1h
+  signingKeys: 6h
+oauth2:
+  responseTypes:
+    - code
+  skipApprovalScreen: true
+enablePasswordDB: true
+staticPasswords:
+  - email: alice@example.com
+    # bcrypt of the example password `example-only`: replace it.
+    hash: $2a$10$ooVYj3p6Jn2AMW.w6vwwwe3KSKNo48Off2uiMlIFsYhJoRl00EZ.y
+    username: alice
+    userID: 0b9d8f4e-3c1a-4f8e-9a52-6d1f2e7c4a10
+    emailVerified: true
+    groups:
+      - platform-admins
+staticClients:
+  - id: orkstack-web
+    name: OrkStack
+    secretEnv: ORKSTACK_WEB_CLIENT_SECRET
+    redirectURIs:
+      - https://orkstack.example.com/v1/auth/callback/people
+  - id: orkctl
+    name: orkctl
+    public: true
+```
+
+- `hash` is a bcrypt hash, never the password: make one with
+  `htpasswd -nbBC 10 '' 'THE-PASSWORD' | tr -d ':\n'` (Apache's
+  `htpasswd`, in `apache2-utils` or `httpd-tools`), and keep the file
+  readable by Dex alone. The hash above is of a published password: an
+  operator who copies it as it is makes an admin anyone can sign in as.
+  `userID` is any stable, unique id; Dex derives the token's `sub` from it.
+- `emailVerified: true` is required, because the issuer below names people
+  by their email, which OrkStack accepts only verified.
+- `orkstack-web` is a confidential client. Make its secret once, for
+  example `(umask 077; head -c 32 /dev/urandom | base64 | tr -d '=+/' > web-client.secret)`, and hand the same
+  value to Dex (`ORKSTACK_WEB_CLIENT_SECRET`) and to every engine (the file
+  `client_secret` names below). Its one redirect URI is
+  `<auth.public_url>/v1/auth/callback/<issuer name>`.
+- `orkctl` is a public client, so `orkctl login` may use any loopback
+  redirect, and the device flow (`orkctl login --device`), which Dex offers
+  by default, for a terminal with no browser.
+- Dex reads `staticPasswords` at start: adding a user, changing a password
+  or removing one is an edit and a restart of Dex.
+- Dex listens on port 5554 (`web.https`). Publish it at the issuer URL, on
+  443 behind a load balancer or a port mapping, or write the port into
+  `issuer` here and in OrkStack's `issuer` alike. The volume at `/var/dex`
+  must be writable by the user Dex runs as.
+
+**OrkStack's configuration.** Every engine trusts Dex as the issuer
+`people`, and names the group of its first admins:
+
+<!-- dex-example: orkstack -->
+```yaml
+auth:
+  mode: enforce
+  public_url: https://orkstack.example.com
+  admins:
+    - group:people:platform-admins
+  signin:
+    key_files:
+      - /etc/orkstack/signin.key
+  issuers:
+    people:
+      issuer: https://dex.example.com/dex
+      kind: user
+      audiences:
+        - orkstack-web
+        - orkctl
+      algorithms:
+        - RS256
+      username_claim: email
+      require_verified_email: true
+      groups_claim: groups
+      max_lifetime: 2h
+      login:
+        client_id: orkstack-web
+        client_secret:
+          source: file:/etc/orkstack/web-client.secret
+        cli_client_id: orkctl
+        device_flow: true
+        scopes:
+          - openid
+          - email
+          - groups
+          - offline_access
+identity:
+  signing:
+    key_files:
+      - /etc/orkstack/engine-signing.pem
+```
+
+- `issuer` is Dex's `issuer`, exactly. Dex serves it over `https`, which
+  sign-in requires; when its certificate is from a private CA, give the
+  issuer `ca_file`.
+- `audiences` holds both client ids: a web sign-in's ID token is issued to
+  `orkstack-web`, and `orkctl login`'s to `orkctl`.
+- `algorithms` is `RS256`, the only one Dex v2.45.1 signs with.
+  `max_lifetime` must be at least Dex's `expiry.idTokens`.
+- `scopes` asks for `groups`, which carries the static user's groups, and
+  `offline_access`, without which Dex issues no refresh token and a sign-in
+  must be made again once it is past `auth.signin.revalidate_interval`.
+- `alice@example.com` signs in as `user:people:alice@example.com`, in the
+  group `group:people:platform-admins`, which `auth.admins` makes `admin`.
+  Grant everyone else roles with bindings (ACCESS.md):
+  `orkctl admin binding create ops --role operator --scope namespace:payments --subject group:people:payments-ops`.
+- The sign-in key and the engine signing key are made as above ("The
+  sign-in key", and `identity.signing.key_files`).
+
+**Other sources of users, later.** The same Dex can front LDAP, GitHub, a
+SAML provider or another OpenID Connect provider: add a `connectors:` entry
+to Dex's configuration. OrkStack's configuration does not change: it trusts
+Dex's tokens, whichever connector signed the person in. A person whose
+verified email is the same through two connectors is one principal; their
+groups are whatever that connector gave (a GitHub team is `org:team`).
+
+**Before production.**
+
+- *TLS.* Dex serves `https` with a certificate the engines and every
+  browser trust, at a stable issuer URL: tokens name it, and changing it
+  signs everyone out.
+- *Dex's storage.* `memory` loses Dex's signing keys and refresh tokens at
+  every restart, which ends every sign-in at its next refresh. `sqlite3`, as
+  above, keeps them for one Dex on a persistent volume; several Dex
+  replicas share `postgres`, `mysql`, `etcd` or Kubernetes custom
+  resources. That store is Dex's, as Temporal's database is Temporal's, and
+  OrkStack never reads it.
+- *Dex's signing keys.* Dex makes and rotates them itself, every
+  `expiry.signingKeys` (6 hours by default), and keeps publishing the key it
+  retired until the tokens it signed have expired. An engine fetches Dex's
+  key set again when a token names a key it does not hold, at most once a
+  minute, so a rotation needs nothing from OrkStack. Nothing is rotated by
+  hand; keep the storage, since a key lost with it refuses every token it
+  signed.
+- *The login page.* Dex's password database has no lockout, password reset
+  or second factor: put its login page behind a rate limit at the proxy in
+  front of it, and move to an identity provider that has them (through a
+  Dex connector) when you need them.
+- *Removing a person.* First disable them,
+  `orkctl admin principal disable user:people:alice@example.com`: a
+  disabled principal is refused whatever it presents, a web sign-in or a
+  token `orkctl login` holds (ACCESS.md). Then remove them from
+  `staticPasswords` and restart Dex, so they cannot sign in again. Removing
+  them from Dex alone is not enough: a sign-in ends on a refresh only when
+  the issuer answers `invalid_grant`, and a token already issued stays
+  valid until it expires.
+
 ## An Orker's credential
 
 An Orker reaches the engine's API as itself with `orker.engine.*`:

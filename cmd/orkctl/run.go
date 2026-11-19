@@ -498,6 +498,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 		}
 		fmt.Fprintln(out, composedLine(run.GetNamespace(), taskRun))
 	}
+	// Why each waiting task, and fan-out item, is not running yet: what the
+	// engine derived on read (pending_reason). A run with none prints nothing new.
+	renderWaitingLines(out, run)
 	if err := renderAwaitTable(out, run, nowFunc()); err != nil {
 		return err
 	}
@@ -514,6 +517,34 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	// The JOIN table, after the cache lines. A run with no join prints
 	// nothing new.
 	return renderRunJoinTable(out, run)
+}
+
+// renderWaitingLines prints one line per task or item whose pending_reason
+// is set: "fetch waits: …", "spread[3] waits: …". A reason can quote an object
+// store's error, so it is printed terminal-safe.
+func renderWaitingLines(out io.Writer, run *orkstackv1.Run) {
+	var lines []string
+	for _, taskRun := range run.GetTaskRuns() {
+		if reason := taskRun.GetPendingReason(); reason != "" {
+			lines = append(lines, terminalSafe(taskRun.GetTaskId())+" waits: "+terminalSafe(reason))
+		}
+		for i, item := range taskRun.GetItems() {
+			if reason := item.GetPendingReason(); reason != "" {
+				index := int32(i)
+				if item.Item != nil {
+					index = item.GetItem()
+				}
+				lines = append(lines, fmt.Sprintf("%s[%d] waits: %s", terminalSafe(taskRun.GetTaskId()), index, terminalSafe(reason)))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Fprintln(out)
+	for _, line := range lines {
+		fmt.Fprintln(out, line)
+	}
 }
 
 // runStatusLabel is the Status line: RUNNING (failing), or PAUSED

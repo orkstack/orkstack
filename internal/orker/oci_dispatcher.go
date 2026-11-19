@@ -157,6 +157,11 @@ type OCIDispatcher struct {
 	// UsageSamplerFailed hears every usage sampler panic recovered
 	// (ork.orker.usage.sampler_failures). Nil counts nothing.
 	UsageSamplerFailed func()
+	// StopWatchFailures, when set, hears each attempt whose container's event
+	// stream could not be opened, with the step that failed
+	// (ExitStatus.StopWatchFailure): the count an operator watches, beside the
+	// warning the dispatcher logs.
+	StopWatchFailures func(stage string)
 	// LogSinkObserver is an optional in-process observer of streamed lines.
 	LogSinkObserver func(in *orkstackv1.ExecuteTaskInput, line string)
 	// TaskLogs exports every framed line of every attempt, beside the durable
@@ -1436,6 +1441,9 @@ func (d *OCIDispatcher) execute(
 		case capture.status.StopCauseUnrecorded:
 			failure.Message += ". This container runtime does not record whether it stopped a container, so " +
 				stopCauseUnknownWords
+		case capture.status.StopCauseUnknown && capture.status.StopWatchFailure != nil:
+			failure.Message += fmt.Sprintf(". The container runtime's events could not be followed (%s: %v), so ",
+				capture.status.StopWatchFailure.Stage, capture.status.StopWatchFailure.Err) + stopCauseUnknownWords
 		case capture.status.StopCauseUnknown:
 			failure.Message += ". The container runtime's events ended before they said how the container ended, so " +
 				stopCauseUnknownWords
@@ -2334,6 +2342,15 @@ func (d *OCIDispatcher) runContainer(
 				"wait for the container: %v", waitErr)
 		}
 		capture.status = status
+		if failure := status.StopWatchFailure; failure != nil {
+			d.logger().Warn("the container runtime's events for this attempt's container could not be followed",
+				"run_id", in.GetRunId(), "task_id", in.GetTaskId(),
+				"container", string(id), "stage", failure.Stage, "error", failure.Err,
+				"stop_cause_unknown", status.StopCauseUnknown)
+			if d.StopWatchFailures != nil {
+				d.StopWatchFailures(failure.Stage)
+			}
+		}
 		return capture, nil
 
 	case <-timeout:

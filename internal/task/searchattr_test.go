@@ -417,3 +417,59 @@ func TestWaitNamespaceVisible_AHungCallEndsAtTheDeadline(t *testing.T) {
 		t.Fatal("the wait outlived its deadline behind a hung call")
 	}
 }
+
+// TestEnsureConcurrencySearchAttributes: the concurrency limit's four
+// attributes are registered together and answered as one: usable only when
+// every one is indexed with its own type. A cluster that refuses them, or has
+// one under another type, keeps every other index and reports these unusable,
+// naming the attribute (E88 §9.7: the engine boots and concurrency is refused
+// with cause=index).
+func TestEnsureConcurrencySearchAttributes(t *testing.T) {
+	want := map[string]enumspb.IndexedValueType{
+		SearchAttrOrkflowGatePhase:         enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		SearchAttrOrkflowRunQueued:         enumspb.INDEXED_VALUE_TYPE_KEYWORD,
+		SearchAttrOrkflowConcurrencyHeld:   enumspb.INDEXED_VALUE_TYPE_KEYWORD_LIST,
+		SearchAttrOrkflowConcurrencyQueued: enumspb.INDEXED_VALUE_TYPE_KEYWORD_LIST,
+	}
+	t.Run("fresh namespace", func(t *testing.T) {
+		op := &fakeOperator{}
+		usable, err := ensureConcurrencySearchAttributes(context.Background(), op, DefaultNamespace)
+		if err != nil || !usable {
+			t.Fatalf("usable = %v, %v; want registered and usable", usable, err)
+		}
+		for name, kind := range want {
+			if op.custom[name] != kind {
+				t.Fatalf("%s registered as %v, want %v", name, op.custom[name], kind)
+			}
+		}
+	})
+	t.Run("refused", func(t *testing.T) {
+		op := &fakeOperator{addErr: errors.New("cannot have more than 3 search attribute of type KeywordList")}
+		usable, err := ensureConcurrencySearchAttributes(context.Background(), op, DefaultNamespace)
+		if usable || err == nil || !strings.Contains(err.Error(), SearchAttrOrkflowConcurrencyHeld) {
+			t.Fatalf("usable = %v, %v; want unusable, naming the attribute", usable, err)
+		}
+	})
+	t.Run("wrong type", func(t *testing.T) {
+		custom := map[string]enumspb.IndexedValueType{}
+		for name, kind := range want {
+			custom[name] = kind
+		}
+		custom[SearchAttrOrkflowConcurrencyQueued] = enumspb.INDEXED_VALUE_TYPE_KEYWORD
+		op := &fakeOperator{custom: custom, addErr: errors.New("nothing should be registered")}
+		usable, err := ensureConcurrencySearchAttributes(context.Background(), op, DefaultNamespace)
+		if usable || err == nil || !strings.Contains(err.Error(), SearchAttrOrkflowConcurrencyQueued) {
+			t.Fatalf("usable = %v, %v; want unusable, naming the wrong-typed attribute", usable, err)
+		}
+	})
+	t.Run("already there", func(t *testing.T) {
+		custom := map[string]enumspb.IndexedValueType{}
+		for name, kind := range want {
+			custom[name] = kind
+		}
+		op := &fakeOperator{custom: custom, addErr: errors.New("nothing should be registered")}
+		if usable, err := ensureConcurrencySearchAttributes(context.Background(), op, DefaultNamespace); err != nil || !usable {
+			t.Fatalf("usable = %v, %v", usable, err)
+		}
+	})
+}
