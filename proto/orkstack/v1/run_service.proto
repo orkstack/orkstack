@@ -2,6 +2,7 @@ syntax = "proto3";
 
 package orkstack.v1;
 
+import "google/protobuf/duration.proto";
 import "google/protobuf/timestamp.proto";
 import "orkstack/v1/activity.proto";
 import "orkstack/v1/common.proto";
@@ -16,6 +17,35 @@ service RunService {
   rpc GetRun(GetRunRequest) returns (GetRunResponse);
   rpc ListRuns(ListRunsRequest) returns (ListRunsResponse);
   rpc CancelRun(CancelRunRequest) returns (CancelRunResponse);
+  // PauseRun stops a running run starting anything new, failure handlers
+  // included, and pauses its running child runs too; the one exception is
+  // what an already-open pin needs to finish. Work it already started
+  // finishes under its own rules, and every clock keeps running: a task's or
+  // the run's timeout, an await's deadline and a sleep's wake-up are not
+  // stretched. The run's status is PAUSED from its RUN_PAUSED event until
+  // RUN_UNPAUSED or its end. A pause lasts at most its timeout (the
+  // deployment's default when the request names none): a run that is not
+  // failing then ends FAILED with RUN_PAUSE_TIMEOUT, and a failing run ends
+  // with its own reason, its held failure handlers never started.
+  //
+  // It answers once the run has recorded the request, not once it has
+  // applied it: the RUN_PAUSED event carrying the response's request_id says
+  // it did, read from after_sequence. The checks before sending read the run
+  // as the read model has it and refuse FAILED_PRECONDITION with a reason
+  // (docs/REASONS.md, "Pausing a run"); in a race the run's own decision is
+  // final. A request that recording would take past the run's history limit
+  // is not applied: the run stops RUN_HISTORY_LIMIT naming the request, or, a
+  // run already failing, drops the request, records no event for it and ends
+  // with its own reason. A pause cannot be changed: unpause and pause again.
+  rpc PauseRun(PauseRunRequest) returns (PauseRunResponse);
+  // UnpauseRun lifts a run's own pause, and the pauses of its child runs
+  // that it caused; a child paused on its own stays paused. The run then
+  // starts what it held, in the order it would have with no pause. The
+  // RUN_UNPAUSED event carrying the response's request_id says it applied
+  // (pause_transition NOT_PAUSED when the run was not paused). A run paused
+  // because its parent run is paused is refused RUN_PAUSE_INHERITED: unpause
+  // the parent.
+  rpc UnpauseRun(UnpauseRunRequest) returns (UnpauseRunResponse);
   // StreamEvents server-streams realtime events for a run. from_sequence
   // allows resuming after a disconnect (0 = from start): the stream
   // continues after that event, so a client that passes the last sequence it
@@ -292,7 +322,7 @@ message ListRunsRequest {
         path: "status"
         label: "Status"
         operators: [FILTER_OPERATOR_EQUALS, FILTER_OPERATOR_NOT_EQUALS, FILTER_OPERATOR_IN]
-        allowed_values: ["PENDING", "RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]
+        allowed_values: ["PENDING", "RUNNING", "PAUSED", "SUCCEEDED", "FAILED", "CANCELED", "SKIPPED"]
       },
       {
         path: "created_at"
@@ -845,6 +875,52 @@ message CancelRunRequest {
 }
 
 message CancelRunResponse { Run run = 1; }
+
+message PauseRunRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+  // reason is recorded on the pause, its audit record and its event; at
+  // most 1024 bytes.
+  string reason = 3;
+  // timeout is how long the pause lasts unless it is unpaused: whole
+  // seconds, at least 1 s and at most the deployment's
+  // engine.run_pause_timeout_max (31 days at most). Unset is the
+  // deployment's engine.run_pause_timeout (7 days by default).
+  google.protobuf.Duration timeout = 4;
+  // dry_run makes every check and returns the warnings, and sends nothing:
+  // no request id, no audit record. What a client shows before asking for
+  // the pause.
+  bool dry_run = 5;
+}
+
+message PauseRunResponse {
+  // request_id names the request: the RUN_PAUSED event that applied it
+  // carries it, and so does its audit record. Empty for a dry run.
+  string request_id = 1;
+  // after_sequence is the run's last event sequence read before the request
+  // was sent; stream from it to see what the run did with it.
+  int64 after_sequence = 2;
+  // warnings are what the pause will not hold back: a failing run kept open,
+  // a deadline that ends before the pause does, the child runs paused with
+  // it, a schedule whose next fire cancels it.
+  repeated string warnings = 3;
+}
+
+message UnpauseRunRequest {
+  string run_id = 1;
+  string namespace = 2;                  // empty = the default namespace
+  // reason is recorded on the audit record; at most 1024 bytes.
+  string reason = 3;
+}
+
+message UnpauseRunResponse {
+  // request_id names the request: the RUN_UNPAUSED event that applied it
+  // carries it, and so does its audit record.
+  string request_id = 1;
+  // after_sequence is the run's last event sequence read before the request
+  // was sent.
+  int64 after_sequence = 2;
+}
 
 message StreamEventsRequest {
   string run_id = 1;

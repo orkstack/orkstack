@@ -2198,8 +2198,11 @@ type RunPauseSignal struct {
 	// per level. An inherited pause's backstop is derived from both.
 	OriginExpiresAt *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=origin_expires_at,json=originExpiresAt,proto3" json:"origin_expires_at,omitempty"`
 	Depth           int64                  `protobuf:"varint,12,opt,name=depth,proto3" json:"depth,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// principal_verified: principal is who OrkStack authenticated (auth.mode
+	// observe or enforce), not a gateway's assertion.
+	PrincipalVerified bool `protobuf:"varint,13,opt,name=principal_verified,json=principalVerified,proto3" json:"principal_verified,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
 }
 
 func (x *RunPauseSignal) Reset() {
@@ -2307,6 +2310,13 @@ func (x *RunPauseSignal) GetDepth() int64 {
 		return x.Depth
 	}
 	return 0
+}
+
+func (x *RunPauseSignal) GetPrincipalVerified() bool {
+	if x != nil {
+		return x.PrincipalVerified
+	}
+	return false
 }
 
 // PhaseSpan is one §7.1 phase of one attempt, on the Orker's clock. Spans
@@ -4240,8 +4250,9 @@ func (*RunContextState) Descriptor() ([]byte, []int) {
 	return file_orkstack_v1_run_proto_rawDescGZIP(), []int{29}
 }
 
-// RunPause is one pause a person asked for. Every principal here is what the
-// gateway asserted (as RunOrigin.principal), never authenticated.
+// RunPause is one pause a person asked for. Each principal is marked as
+// RunOrigin.principal is: verified when OrkStack authenticated it (auth.mode
+// observe or enforce), and otherwise what the gateway asserted.
 type RunPause struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
 	PausedAt  *timestamppb.Timestamp `protobuf:"bytes,1,opt,name=paused_at,json=pausedAt,proto3" json:"paused_at,omitempty"`
@@ -4250,11 +4261,17 @@ type RunPause struct {
 	Reason    string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
 	RequestId string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
 	// end is UNSPECIFIED while the pause lasts.
-	End           PauseEnd               `protobuf:"varint,7,opt,name=end,proto3,enum=orkstack.v1.PauseEnd" json:"end,omitempty"`
-	EndedAt       *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
-	EndedBy       string                 `protobuf:"bytes,9,opt,name=ended_by,json=endedBy,proto3" json:"ended_by,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	End     PauseEnd               `protobuf:"varint,7,opt,name=end,proto3,enum=orkstack.v1.PauseEnd" json:"end,omitempty"`
+	EndedAt *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=ended_at,json=endedAt,proto3" json:"ended_at,omitempty"`
+	// ended_by is who unpaused it; empty when it timed out or the run's end
+	// closed it.
+	EndedBy string `protobuf:"bytes,9,opt,name=ended_by,json=endedBy,proto3" json:"ended_by,omitempty"`
+	// paused_by_verified says paused_by is a principal OrkStack authenticated.
+	PausedByVerified bool `protobuf:"varint,10,opt,name=paused_by_verified,json=pausedByVerified,proto3" json:"paused_by_verified,omitempty"`
+	// ended_by_verified says ended_by is a principal OrkStack authenticated.
+	EndedByVerified bool `protobuf:"varint,11,opt,name=ended_by_verified,json=endedByVerified,proto3" json:"ended_by_verified,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *RunPause) Reset() {
@@ -4341,6 +4358,20 @@ func (x *RunPause) GetEndedBy() string {
 		return x.EndedBy
 	}
 	return ""
+}
+
+func (x *RunPause) GetPausedByVerified() bool {
+	if x != nil {
+		return x.PausedByVerified
+	}
+	return false
+}
+
+func (x *RunPause) GetEndedByVerified() bool {
+	if x != nil {
+		return x.EndedByVerified
+	}
+	return false
 }
 
 // RunResume is E85's; it is empty until E85 lands (v0.4.0 proto
@@ -4895,7 +4926,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\vvalues_json\x18\x05 \x01(\fR\n" +
 	"valuesJson\x12/\n" +
 	"\x03via\x18\x06 \x01(\x0e2\x1d.orkstack.v1.AwaitResolvedViaR\x03via\x12\x1c\n" +
-	"\tprincipal\x18\a \x01(\tR\tprincipal\"\x96\x03\n" +
+	"\tprincipal\x18\a \x01(\tR\tprincipal\"\xc5\x03\n" +
 	"\x0eRunPauseSignal\x12\x16\n" +
 	"\x06format\x18\x01 \x01(\x05R\x06format\x12\x14\n" +
 	"\x05pause\x18\x02 \x01(\bR\x05pause\x12\x1c\n" +
@@ -4910,7 +4941,8 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	" \x01(\x03R\n" +
 	"cascadeSeq\x12F\n" +
 	"\x11origin_expires_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x0foriginExpiresAt\x12\x14\n" +
-	"\x05depth\x18\f \x01(\x03R\x05depthJ\x04\b\t\x10\n" +
+	"\x05depth\x18\f \x01(\x03R\x05depth\x12-\n" +
+	"\x12principal_verified\x18\r \x01(\bR\x11principalVerifiedJ\x04\b\t\x10\n" +
 	"R\x11parent_expires_at\"\xd2\x01\n" +
 	"\tPhaseSpan\x12\x14\n" +
 	"\x05phase\x18\x01 \x01(\tR\x05phase\x129\n" +
@@ -5081,7 +5113,7 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"\tRecordRef\"\f\n" +
 	"\n" +
 	"ResumeHint\"\x11\n" +
-	"\x0fRunContextState\"\xdf\x02\n" +
+	"\x0fRunContextState\"\xb9\x03\n" +
 	"\bRunPause\x127\n" +
 	"\tpaused_at\x18\x01 \x01(\v2\x1a.google.protobuf.TimestampR\bpausedAt\x129\n" +
 	"\n" +
@@ -5092,7 +5124,10 @@ const file_orkstack_v1_run_proto_rawDesc = "" +
 	"request_id\x18\x06 \x01(\tR\trequestId\x12'\n" +
 	"\x03end\x18\a \x01(\x0e2\x15.orkstack.v1.PauseEndR\x03end\x125\n" +
 	"\bended_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\aendedAt\x12\x19\n" +
-	"\bended_by\x18\t \x01(\tR\aendedByJ\x04\b\x04\x10\x05R\n" +
+	"\bended_by\x18\t \x01(\tR\aendedBy\x12,\n" +
+	"\x12paused_by_verified\x18\n" +
+	" \x01(\bR\x10pausedByVerified\x12*\n" +
+	"\x11ended_by_verified\x18\v \x01(\bR\x0fendedByVerifiedJ\x04\b\x04\x10\x05R\n" +
 	"changed_by\"\v\n" +
 	"\tRunResume\"\f\n" +
 	"\n" +

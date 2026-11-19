@@ -37,6 +37,8 @@ func newRunCommand(g *globalFlags) *cobra.Command {
 		newRunTimingCommand(g),
 		newRunAgainCommand(g),
 		newRunCancelCommand(g),
+		newRunPauseCommand(g),
+		newRunUnpauseCommand(g),
 		newRunResolveCommand(g),
 	)
 	return cmd
@@ -460,6 +462,9 @@ func renderRunWith(out io.Writer, run *orkstackv1.Run, namespace string) error {
 	}
 	if by := run.GetCanceledBy(); by != "" {
 		fmt.Fprintf(header, "Canceled by:\t%s  %s\n", assertedName(by), canceledByCaption(run))
+	}
+	for _, line := range pauseLines(run) {
+		fmt.Fprintln(header, line)
 	}
 	if err := header.Flush(); err != nil {
 		return fmt.Errorf("write output: %w", err)

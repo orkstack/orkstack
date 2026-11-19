@@ -249,6 +249,19 @@ These codes appear only in the output of `orkctl run plan`, which simulates a ru
 |---|---|---|---|
 | `ASSUMED_FAILED` | — (plan simulation only) | A task that `orkctl run plan --assume-failed` assumed to fail. The message is "assumed to fail (assume_failed)". It is a planning outcome, never the error of a run ([DSL.md](./DSL.md#planning-a-run-orkctl-run-plan), "Planning a run"). | None. No run is started. |
 
+## Pausing a run
+
+`orkctl run pause` and `run unpause` (the API's `PauseRun` and `UnpauseRun`) check the run before they send anything, and refuse with `failed_precondition` and one of these reasons, which leads the message. The checks read the run as the read model has it, so a request can still race the run's own change; then the run's decision stands, and the request's `RUN_PAUSED` or `RUN_UNPAUSED` event, or its absence, says what it did ([API.md](./API.md#pauserunrequest), "PauseRunRequest").
+
+| Reason | Category | Meaning | What to do |
+|---|---|---|---|
+| `RUN_PAUSE_UNSUPPORTED` | — | The run was started by a release without support for pausing, so it cannot be paused. | Cancel it, or let it finish. |
+| `RUN_PAUSE_NOT_RUNNING` | — | The run has not started yet, or is waiting for its concurrency slot. | Cancel it if it should not continue, or pause it once it runs. |
+| `RUN_ALREADY_PAUSED` | — | The run is already paused, by a person or because its parent run is paused. A pause cannot be changed. | Unpause it, or its parent run, then pause it again. |
+| `RUN_PAUSE_INHERITED` | — | An unpause of a run that is paused because its parent run is paused. Only the parent's unpause lifts it. | Unpause the parent run the message names. |
+| `RUN_ENDING` | — | A pause of a failing run whose failure handlers have all started, so a pause would hold nothing, or an unpause of a run whose pause has already expired and which is ending. | Read why the run ended, with `orkctl run get`. |
+| `PAUSED_FILTER_UNAVAILABLE` | — | A list asked for `status=PAUSED` on a deployment whose cluster does not index paused runs. There, a paused run lists as `RUNNING`, and `orkctl run get` shows it exactly ([DEPLOY.md](./DEPLOY.md#the-paused-run-index), "The paused-run index"). | Register the `OrkflowRunPaused` search attribute and restart an engine. |
+
 ## The DSL at validate and create
 
 These are refusals of an Orkflow document. They come from validate and create, when `uses:` values are resolved. A failed resolution is an error, never a silent fallback to a tag ([OCI_ACTIVITY_CONTRACT.md](./OCI_ACTIVITY_CONTRACT.md#43-where-resolution-runs), "§4.3").

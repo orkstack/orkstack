@@ -64,6 +64,9 @@ type ReleaseCluster interface {
 	// RunningRuns counts every run executing on the deployment, on any
 	// release or none.
 	RunningRuns(ctx context.Context) (int64, error)
+	// ReleasePausedRuns counts the runs executing on one release that are
+	// paused; ok is false where the cluster does not index paused runs.
+	ReleasePausedRuns(ctx context.Context, buildID string) (n int64, ok bool, err error)
 	// SetRouting makes exactly one cluster call moving from obs.Routing to
 	// want.
 	SetRouting(ctx context.Context, obs ReleaseObservation, want Routing) error
@@ -528,6 +531,17 @@ func (c *TemporalReleaseCluster) ReleaseRuns(ctx context.Context, buildID string
 		return 0, nil, c.fail(ReleaseOpRead, "count the runs on a release", buildID, err)
 	}
 	return n, runs, nil
+}
+
+// ReleasePausedRuns delegates to the run reader with this deployment's name.
+func (c *TemporalReleaseCluster) ReleasePausedRuns(ctx context.Context, buildID string) (int64, bool, error) {
+	readCtx, cancel := context.WithTimeout(ctx, releaseReadTimeout)
+	defer cancel()
+	n, ok, err := c.runs.ReleasePausedRuns(readCtx, c.deployment, buildID)
+	if err != nil {
+		return 0, false, c.fail(ReleaseOpRead, "count the paused runs on a release", buildID, err)
+	}
+	return n, ok, nil
 }
 
 // RunningRuns delegates to the run reader.
