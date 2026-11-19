@@ -968,7 +968,7 @@ limit's key.
 | `limit` | `int32` | limit is how many runs may hold its slots at once. |
 | `strategy` | [`ConcurrencyStrategy`](#concurrencystrategy) | strategy is the declaration's on_limit. |
 | `position_at_arrival` | `int32` | position_at_arrival is the run's place in line when it arrived, from 1. |
-| `position` | `int32` | position is its place in line now, read live by GetRun only, and only when position_known says it could be read. |
+| `position` | `int32` | position is its place in its key's line now, from 1, where a task waiting for one of the key's slots counts as a place too. It is read live by GetRun only, and only when position_known says it could be read; note_code says why it could not. |
 | `position_known` | `bool` |  |
 | `holders_ahead` | repeated `string` | holders_ahead names runs holding the key's slots, at most ten; holders_count is how many there are. holders_as_of_arrival says both are as the run found them when it arrived, not live. |
 | `holders_count` | `int32` |  |

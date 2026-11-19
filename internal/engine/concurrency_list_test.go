@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -73,6 +74,12 @@ func TestListRuns_AnswersTheConcurrencyFiltersFromTheIndexOfOpenRuns(t *testing.
 			if tc.predicate != "" && !slices.ContainsFunc(index.queries, func(q string) bool { return strings.Contains(q, tc.predicate) }) {
 				t.Errorf("no query pushed %q down: %q", tc.predicate, index.queries)
 			}
+			// Without a status filter the walk asks for live runs only: an
+			// ended run's stale attributes are never read.
+			if !slices.ContainsFunc(tc.filters, func(f string) bool { return strings.HasPrefix(f, "status") }) &&
+				!slices.ContainsFunc(index.queries, func(q string) bool { return livePredicate.MatchString(q) }) {
+				t.Errorf("no query asked for live runs only: %q", index.queries)
+			}
 		})
 	}
 }
@@ -94,5 +101,25 @@ func TestRunListPlan_KeepsNoRunForAnIndexFilterOffTheIndex(t *testing.T) {
 	}
 	if RunListPlan(runFilters(t, "status=RUNNING")).Index != nil {
 		t.Error("a plan without an index filter carries an index query")
+	}
+}
+
+// TestListRuns_AConcurrencyAttributeItCannotReadLeavesTheClustersMatch: a
+// gate list this process cannot decode does not drop the run the cluster's
+// own predicate selected.
+func TestListRuns_AConcurrencyAttributeItCannotReadLeavesTheClustersMatch(t *testing.T) {
+	run := statsCorpusRun{id: "ork-odd", namespace: "alpha", orkflow: "deploy",
+		createdAt: statsWindowEnd.Add(-time.Minute), status: orkstackv1.Status_STATUS_RUNNING}
+	index := statsIndexOver(t, []statsCorpusRun{run})
+	index.records[0].info.SearchAttributes = &commonpb.SearchAttributes{IndexedFields: map[string]*commonpb.Payload{
+		task.SearchAttrOrkflowConcurrencyHeld: {Metadata: map[string][]byte{"encoding": []byte("json/plain")}, Data: []byte("{not a list")},
+	}}
+	q := RunListPlan(runFilters(t, "holding=db"))
+	q.Namespace, q.Complete, q.Limit = "alpha", true, 50
+	q.Index.GateOf = func(key string) string { return "gate-" + key }
+	runs, err := newRunReader(index, converter.GetDefaultDataConverter()).ListRuns(context.Background(), q)
+	must.OKf(t, err, "ListRuns")
+	if len(runs) != 1 || runs[0].GetId() != "ork-odd" {
+		t.Errorf("listed %v, want ork-odd, which the cluster matched", runs)
 	}
 }

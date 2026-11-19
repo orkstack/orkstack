@@ -968,6 +968,11 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originS
 		for _, predicate := range predicates {
 			query += " AND " + predicate
 		}
+		// Only an open run matches, and an ended run keeps the attributes it
+		// last wrote: the live predicate keeps a walk from reading them.
+		if q.Status == orkstackv1.Status_STATUS_UNSPECIFIED {
+			query += " AND " + liveRunPredicate(r.clock())
+		}
 	}
 	return query, scoped, originScoped
 }
@@ -1907,22 +1912,30 @@ func (x *RunIndexQuery) holds(info *workflowpb.WorkflowExecutionInfo) func(path,
 		return nil
 	}
 	fields := info.GetSearchAttributes().GetIndexedFields()
-	gates := func(name string) []string {
-		var ids []string
-		if p := fields[name]; p == nil || DataConverter().FromPayload(p, &ids) != nil {
-			return nil
+	// A list the run wrote but this process cannot decode is left to the
+	// cluster: its predicate, pushed into the query, selected the record.
+	gates := func(name string) (ids []string, decoded bool) {
+		p := fields[name]
+		if p == nil {
+			return nil, true
 		}
-		return ids
+		if err := DataConverter().FromPayload(p, &ids); err != nil {
+			slog.Warn("list runs: a run's concurrency attribute could not be read; the cluster's match stands",
+				"run_id", info.GetExecution().GetWorkflowId(), "attribute", name, "error", err)
+			return nil, false
+		}
+		return ids, true
 	}
-	queuedOn, held := gates(task.SearchAttrOrkflowConcurrencyQueued), gates(task.SearchAttrOrkflowConcurrencyHeld)
+	queuedOn, queuedOnRead := gates(task.SearchAttrOrkflowConcurrencyQueued)
+	held, heldRead := gates(task.SearchAttrOrkflowConcurrencyHeld)
 	return func(path, value string) bool {
 		switch path {
 		case runFilterQueued:
 			return value == "true" && indexedRunQueued(info)
 		case runFilterQueuedOn:
-			return slices.Contains(queuedOn, x.GateOf(value))
+			return !queuedOnRead || slices.Contains(queuedOn, x.GateOf(value))
 		case runFilterHolding:
-			return slices.Contains(held, x.GateOf(value))
+			return !heldRead || slices.Contains(held, x.GateOf(value))
 		}
 		return false
 	}
