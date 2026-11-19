@@ -26,3 +26,12 @@ func TestConcurrencyAdmissionQueries(t *testing.T) {
 		}
 	}
 }
+
+func TestConcurrencyOpenGatesQuery(t *testing.T) {
+	q := openGatesQuery()
+	for _, term := range []string{`WorkflowType = "` + ConcurrencyGateWorkflowType + `"`, `ExecutionStatus = "Running"`} {
+		if !strings.Contains(q, term) {
+			t.Errorf("open gates query %q lacks %q", q, term)
+		}
+	}
+}
