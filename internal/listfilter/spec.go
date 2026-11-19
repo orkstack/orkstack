@@ -201,7 +201,7 @@ func resolveField(spec *Spec, decl *orkstackv1.FilterableField) (*Field, error) 
 		return nil, fmt.Errorf("a field needs a path and a label")
 	}
 	if decl.GetIndexed() {
-		return resolveIndexed(field, decl)
+		return resolveIndexed(spec, field, decl)
 	}
 	if decl.GetFlag() {
 		return nil, fmt.Errorf("flag applies to an indexed field only")
@@ -283,9 +283,17 @@ func resolveField(spec *Spec, decl *orkstackv1.FilterableField) (*Field, error) 
 // resolveIndexed resolves a field the server answers from its index of open
 // rows rather than from a row: one name, equals only, text or a flag, and
 // none of the extras a resource field may carry.
-func resolveIndexed(field *Field, decl *orkstackv1.FilterableField) (*Field, error) {
+func resolveIndexed(spec *Spec, field *Field, decl *orkstackv1.FilterableField) (*Field, error) {
 	if len(splitPath(field.Path)) != 1 {
 		return nil, fmt.Errorf("an indexed path is one name, with no dot")
+	}
+	// A field of the resource a filter could read is never shadowed: the
+	// index would answer what the row already says, and every row would fail
+	// it under Match. A message field may share the name (ListRuns' queued is
+	// the run's queued message, which a filter never reads).
+	if fd := spec.Resource.Fields().ByName(protoreflect.Name(field.Path)); fd != nil &&
+		(fd.Kind() != protoreflect.MessageKind || fd.IsMap() || fd.Message().FullName() == "google.protobuf.Timestamp") {
+		return nil, fmt.Errorf("an indexed path cannot name a filterable field of %s", spec.Resource.FullName())
 	}
 	if !slices.Equal(field.Operators, []orkstackv1.FilterOperator{orkstackv1.FilterOperator_FILTER_OPERATOR_EQUALS}) {
 		return nil, fmt.Errorf("an indexed field takes equals only")

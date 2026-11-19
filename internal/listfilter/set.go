@@ -99,7 +99,9 @@ func (s Set) Proto() []*orkstackv1.FieldFilter {
 	return out
 }
 
-// Equality is the only door to a pushdown of one value. It returns (v, true)
+// Equality is the only door to a pushdown of one value. On an indexed path
+// it names a value only the server's index can check (Indexed, MatchIndexed),
+// never one Match reads from a row. It returns (v, true)
 // only when the set holds exactly one filter on path, that filter is equals
 // (an in of one value already is), and v is non-empty. In every other case
 // the caller reads its whole source and Match decides.
@@ -139,7 +141,8 @@ func (s Set) Interval(path string) (atOrAfter, before time.Time) {
 }
 
 // Restrict is the subset of filters on the named declared paths (a labels
-// map by its declared path, "labels").
+// map by its declared path, "labels"). An indexed filter it keeps still holds
+// only through MatchIndexed.
 func (s Set) Restrict(paths ...string) Set {
 	out := Set{spec: s.spec}
 	for _, f := range s.filters {
