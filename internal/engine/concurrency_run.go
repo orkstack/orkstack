@@ -505,8 +505,11 @@ func concFailure(cause error) *orkstackv1.Error {
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_INFRASTRUCTURE_ERROR
 	case RunSupersededCode:
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
-	default:
+	case RunConcurrencyFencedCode, RunConcurrencyUnsupportedCode:
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
+	default:
+		// A key at its limit, or a full line, is the limit doing its work,
+		// no failure of a kind (docs/REASONS.md).
 	}
 	return failure
 }
