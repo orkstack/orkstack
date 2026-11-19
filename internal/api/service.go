@@ -364,6 +364,11 @@ type Config struct {
 	// (cmd/ork always sets both, validated at boot).
 	Concurrency  engine.ConcurrencySettings
 	GateTunables engine.GateTunables
+	// ConcurrencyReader is what submit reads of the cluster for a limit's
+	// key and line checks, and for the queued runs a max_running refusal
+	// names (engine.TemporalConcurrencyReader). Nil refuses every limited
+	// run CONCURRENCY_CHECK_UNAVAILABLE and counts no queued run.
+	ConcurrencyReader engine.ConcurrencyAdmissionReader
 
 	// RunTimeoutHandlerGrace is engine.run_timeout_handler_grace: how long
 	// after a run's deadline its failure handlers may still run. Zero is a
@@ -638,8 +643,9 @@ type Service struct {
 	interruptions *engine.InterruptionBudgets
 	// concurrency and gateTunables are Config.Concurrency and
 	// Config.GateTunables, the defaults for zero values.
-	concurrency  engine.ConcurrencySettings
-	gateTunables engine.GateTunables
+	concurrency       engine.ConcurrencySettings
+	gateTunables      engine.GateTunables
+	concurrencyReader engine.ConcurrencyAdmissionReader
 	// runTimeoutGraceSeconds is Config.RunTimeoutHandlerGrace in whole
 	// seconds, never negative: what runTimeoutPlanFor pins.
 	runTimeoutGraceSeconds int64
@@ -746,6 +752,7 @@ func NewService(cfg Config) *Service {
 		runTimeoutGraceSeconds: max(0, int64(cfg.RunTimeoutHandlerGrace/time.Second)),
 		concurrency:            concurrencySettingsOf(cfg.Concurrency),
 		gateTunables:           gateTunablesOf(cfg.GateTunables),
+		concurrencyReader:      cfg.ConcurrencyReader,
 		pausePlan:              pausePlanOf(cfg.RunPauseTimeout, cfg.RunPauseTimeoutMax, cfg.RunPauseIndexed),
 		historyMaxBytes:        positiveOr(cfg.HistoryMaxBytes, engine.DefaultHistoryMaxBytes),
 		composeMaxDepth:        composeMaxDepthOf(cfg.ComposeMaxDepth),
