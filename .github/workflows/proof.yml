@@ -125,7 +125,10 @@ jobs:
             base="$MG_BASE_SHA"
             echo "contains_base=true" >>"$GITHUB_OUTPUT"
           elif [ "$GITHUB_EVENT_NAME" = push ]; then
-            base="$(git rev-parse HEAD^1)"
+            # main's commit the pushed branch is built on: its merge base
+            # with main, never the pushed commit's parent, which is the
+            # branch's own previous commit when it holds more than one.
+            base="$(git merge-base "origin/$BASE_INPUT" HEAD)"
             echo "contains_base=true" >>"$GITHUB_OUTPUT"
           else
             base="$(git rev-parse --verify --quiet "origin/$BASE_INPUT^{commit}" || git rev-parse --verify "$BASE_INPUT^{commit}")"
@@ -889,6 +892,10 @@ jobs:
         timeout-minutes: 3
         with:
           ref: ${{ github.sha }}
+          # The whole history: the merger checks the base's copy of the
+          # GPU-host list against the base commit itself (proofrun's
+          # gpuBaseCopyProblems), which a shallow checkout does not hold.
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
