@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -127,6 +128,12 @@ type RunQuery struct {
 	// Keep decides. Nil means no residual, which every caller but ListRuns
 	// passes.
 	Keep func(*orkstackv1.Run) bool
+	// Index holds the filters answered from the cluster's index of open runs
+	// (ListRuns' queued=, queued_on=, holding=). Keep never holds under one,
+	// so a row the index does not describe (archived, in memory) is never
+	// listed; the live walk pushes each into its query and decides an open
+	// record by its own attributes (RunIndexQuery). Nil when there is none.
+	Index *RunIndexQuery
 	// BeforeCreated/BeforeID continue after a descending cursor. They are
 	// selected before Limit so a paged caller does not receive a short page
 	// merely because the source's first rows preceded its cursor.
@@ -693,6 +700,13 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 	if q.Status != orkstackv1.Status_STATUS_UNSPECIFIED && !r.decodes(q.Status) {
 		return nil, nil
 	}
+	if q.Index != nil {
+		// Checked here so listQuery can build the predicates without an
+		// error path of its own.
+		if _, err := q.Index.predicates(); err != nil {
+			return nil, err
+		}
+	}
 
 	query, scoped, originScoped := r.listQuery(q)
 	// A safety-sensitive exhaustive walk must either reach the end or fail.
@@ -739,7 +753,7 @@ func (r *TemporalRunReader) ListRuns(ctx context.Context, q RunQuery) ([]*orksta
 		} else {
 			for _, execution := range response.GetExecutions() {
 				run := r.listedRun(execution)
-				if !matchesRunQuery(run, q) {
+				if !matchesListedRun(run, execution, q) {
 					if q.Namespace != "" && !inNamespace(run.GetNamespace(), q.Namespace) {
 						foreign = true
 					}
@@ -863,7 +877,7 @@ func (p *chainPage) runs(ctx context.Context) ([]*orkstackv1.Run, error) {
 	}
 	out := make([]*orkstackv1.Run, 0, len(p.records))
 	for _, info := range p.records {
-		if run := p.reader.listedRun(info); matchesRunQuery(run, p.query) {
+		if run := p.reader.listedRun(info); matchesListedRun(run, info, p.query) {
 			out = append(out, run)
 		}
 	}
@@ -880,7 +894,7 @@ func (p *chainPage) trim(ctx context.Context, limit int) error {
 	byID := make(map[string]*workflowpb.WorkflowExecutionInfo, len(p.records))
 	runs := make([]*orkstackv1.Run, 0, len(p.records))
 	for _, info := range p.records {
-		if run := p.reader.listedRun(info); matchesRunQuery(run, p.query) {
+		if run := p.reader.listedRun(info); matchesListedRun(run, info, p.query) {
 			byID[run.GetId()] = info
 			runs = append(runs, run)
 		}
@@ -947,6 +961,13 @@ func (r *TemporalRunReader) listQuery(q RunQuery) (query string, scoped, originS
 	}
 	if q.RootRunID != "" && r.rootIndexed {
 		query = fmt.Sprintf("%s AND %s = %q", query, task.SearchAttrOrkflowOriginRootRunId, q.RootRunID)
+	}
+	if q.Index != nil {
+		// ListRuns has checked that the predicates build (GateOf is set).
+		predicates, _ := q.Index.predicates()
+		for _, predicate := range predicates {
+			query += " AND " + predicate
+		}
 	}
 	return query, scoped, originScoped
 }
@@ -1826,7 +1847,96 @@ func RunListPlan(set listfilter.Set) RunQuery {
 	if !set.Empty() {
 		plan.Keep = func(view *orkstackv1.Run) bool { return set.Match(view) }
 	}
+	if filters := set.Indexed(); len(filters) > 0 {
+		plan.Index = &RunIndexQuery{
+			Filters: filters,
+			match:   set.MatchIndexed,
+		}
+	}
 	return plan
+}
+
+// The indexed paths of ListRuns' allowlist (run_service.proto).
+const (
+	runFilterQueued   = "queued"
+	runFilterQueuedOn = "queued_on"
+	runFilterHolding  = "holding"
+)
+
+// RunIndexQuery is a ListRuns filter set's indexed part: what the cluster's
+// index of open runs answers, a concurrency key standing for its gate.
+type RunIndexQuery struct {
+	// Filters are the set's indexed filters (listfilter.Set.Indexed).
+	Filters []listfilter.IndexedFilter
+	// GateOf turns a concurrency key of the listed namespace into its gate
+	// id (GateID), which is what a run's attributes record. The caller sets
+	// it; it knows the namespace's incarnation.
+	GateOf func(key string) string
+
+	match func(row proto.Message, holds func(path, value string) bool) bool
+}
+
+// predicates are the visibility predicates the filters push down: each
+// narrows the walk, and an open record is still decided by its own
+// attributes (holds).
+func (x *RunIndexQuery) predicates() ([]string, error) {
+	if x.GateOf == nil {
+		return nil, errors.New("engine: a concurrency list filter needs its namespace's gates")
+	}
+	out := make([]string, 0, len(x.Filters))
+	for _, f := range x.Filters {
+		switch f.Path {
+		case runFilterQueued:
+			out = append(out, fmt.Sprintf("%s = %q", task.SearchAttrOrkflowRunQueued, "true"))
+		case runFilterQueuedOn:
+			out = append(out, fmt.Sprintf("%s = %q", task.SearchAttrOrkflowConcurrencyQueued, x.GateOf(f.Value)))
+		case runFilterHolding:
+			out = append(out, fmt.Sprintf("%s = %q", task.SearchAttrOrkflowConcurrencyHeld, x.GateOf(f.Value)))
+		default:
+			return nil, fmt.Errorf("engine: %q is no filter the run index answers", f.Path)
+		}
+	}
+	return out, nil
+}
+
+// holds is the index's answer for one listed record: what its attributes say
+// it waits on and holds. Only an open record answers: a run that has ended
+// keeps the attributes it last wrote, and it waits on and holds nothing.
+func (x *RunIndexQuery) holds(info *workflowpb.WorkflowExecutionInfo) func(path, value string) bool {
+	if info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING {
+		return nil
+	}
+	fields := info.GetSearchAttributes().GetIndexedFields()
+	gates := func(name string) []string {
+		var ids []string
+		if p := fields[name]; p == nil || DataConverter().FromPayload(p, &ids) != nil {
+			return nil
+		}
+		return ids
+	}
+	queuedOn, held := gates(task.SearchAttrOrkflowConcurrencyQueued), gates(task.SearchAttrOrkflowConcurrencyHeld)
+	return func(path, value string) bool {
+		switch path {
+		case runFilterQueued:
+			return value == "true" && indexedRunQueued(info)
+		case runFilterQueuedOn:
+			return slices.Contains(queuedOn, x.GateOf(value))
+		case runFilterHolding:
+			return slices.Contains(held, x.GateOf(value))
+		}
+		return false
+	}
+}
+
+// matchesListedRun is matchesRunQuery for a record the cluster's index
+// listed: under an index filter, Keep is the whole set asked of the record's
+// own attributes, and otherwise exactly matchesRunQuery.
+func matchesListedRun(run *orkstackv1.Run, info *workflowpb.WorkflowExecutionInfo, q RunQuery) bool {
+	if q.Index != nil {
+		holds := q.Index.holds(info)
+		q.Keep = func(view *orkstackv1.Run) bool { return q.Index.match(view, holds) }
+	}
+	return matchesRunQuery(run, q)
 }
 
 // RunFilterView is the Run a list filter reads: the fields both run sources

@@ -307,8 +307,11 @@ type statsCorpusRun struct {
 	closedAt  time.Time
 	status    orkstackv1.Status
 	// queued is a run waiting for a concurrency slot: the cluster indexes it
-	// with OrkflowRunQueued = "true".
-	queued bool
+	// with OrkflowRunQueued = "true". queuedOn and holding are the gate ids
+	// it waits on and holds (OrkflowConcurrencyQueued, OrkflowConcurrencyHeld).
+	queued   bool
+	queuedOn []string
+	holding  []string
 }
 
 // statsCorpus is the corpus both sources are asked about. Every row is a case
@@ -388,10 +391,22 @@ func statsIndexOver(t *testing.T, corpus []statsCorpusRun) *statsIndex {
 				MemoNamespace:   payload(run.namespace),
 			}},
 		}
+		attrs := map[string]*commonpb.Payload{}
 		if run.queued {
-			info.SearchAttributes = &commonpb.SearchAttributes{IndexedFields: map[string]*commonpb.Payload{
-				task.SearchAttrOrkflowRunQueued: payload("true"),
-			}}
+			attrs[task.SearchAttrOrkflowRunQueued] = payload("true")
+		}
+		for name, gates := range map[string][]string{
+			task.SearchAttrOrkflowConcurrencyQueued: run.queuedOn,
+			task.SearchAttrOrkflowConcurrencyHeld:   run.holding,
+		} {
+			if gates != nil {
+				encoded, err := dc.ToPayload(gates)
+				must.OKf(t, err, "encode %s", name)
+				attrs[name] = encoded
+			}
+		}
+		if len(attrs) > 0 {
+			info.SearchAttributes = &commonpb.SearchAttributes{IndexedFields: attrs}
 		}
 		if !run.closedAt.IsZero() {
 			info.Status = enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED
