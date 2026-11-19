@@ -92,7 +92,7 @@ func (s *runState) releaseRunEntry(ctx workflow.Context, gate string) error {
 	}
 	if err := f.Get(ctx, nil); err != nil && !categoryOf(err).unknownRun {
 		workflow.GetLogger(ctx).Warn("a paused run could not release its concurrency slot; the limit's check pass frees it",
-			"run", s.runID, "gate", gate, "error", err)
+			"run", s.runID, "gate", gate, "seq_base", c.plan.SeqBase, "n", c.ordinal, "error", err)
 	}
 	return nil
 }
@@ -130,17 +130,13 @@ func (s *runState) takeReacquireAnswer(ctx workflow.Context, req gateAcquire, re
 		return s.requeueEnding(runLevelError(RunConcurrencyUnsupportedCode,
 			fmt.Sprintf("the limit on key %s cannot take this run's request (cause=protocol): %s", slot.Key, res.Unsupported)))
 	case res.Unavailable != "":
-		w := c.requeue
-		if w == nil {
-			return s.requeueEnding(s.requeueUnavailable(slot))
-		}
-		// Counted, not ignored: a wait that ends with its limit
-		// unreachable ends unavailable, never timed out.
-		w.unanswered = true
-		workflow.GetLogger(ctx).Warn("a re-queued run's re-assert was not answered; it keeps waiting",
+		// The run has started and done work, so a limit that does not
+		// answer keeps it waiting, never ends it at once: counted, so a wait
+		// that ends with its limit unreachable ends unavailable, never
+		// timed out.
+		workflow.GetLogger(ctx).Warn("a re-queued run's acquire was not answered; it keeps waiting",
 			"run", s.runID, "gate", slot.GateID, "cause", res.Unavailable)
-		s.armReassert(ctx)
-		return nil
+		return s.waitAgain(ctx, slot, req, gateAnswer{}, waitUnanswered)
 	}
 	switch res.Answer.Answer {
 	case gateAnswerGranted:
@@ -148,12 +144,17 @@ func (s *runState) takeReacquireAnswer(ctx workflow.Context, req gateAcquire, re
 		c.givenBack = false
 		return s.grantRunSlot(ctx, slot, res.Answer)
 	case gateAnswerQueued:
-		return s.waitAgain(ctx, slot, req, res.Answer, false)
+		return s.waitAgain(ctx, slot, req, res.Answer, waitPlaced)
 	case gateAnswerFullBound:
-		return s.waitAgain(ctx, slot, req, res.Answer, true)
+		return s.waitAgain(ctx, slot, req, res.Answer, waitLineFull)
+	case gateAnswerUnavailable:
+		// The limit is rebuilding its record: the run waits, as a run in
+		// line does while it rebuilds.
+		return s.waitAgain(ctx, slot, req, res.Answer, waitRebuilding)
 	case gateAnswerFull:
-		// Answered only to refuse and skip; a re-acquire is queue.
-		return s.requeueEnding(s.requeueUnavailable(slot))
+		// Answered only to refuse and skip, never to a queue re-acquire.
+		return s.requeueEnding(runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf(
+			"the limit on key %s answered full to this run's request for its slot again after an unpause, which it answers only to refuse and skip", slot.Key)))
 	}
 	if ending := concEnding(res, slot); ending != nil {
 		return s.requeueEnding(ending)
@@ -162,10 +163,21 @@ func (s *runState) takeReacquireAnswer(ctx workflow.Context, req gateAcquire, re
 		fmt.Sprintf("the limit on key %s answered %q, which this release does not know", slot.Key, res.Answer.Answer)))
 }
 
+// waitMode is where a re-queued run stands after the gate's answer.
+type waitMode int
+
+const (
+	waitPlaced     waitMode = iota // in line, at a known place
+	waitLineFull                   // the line is at its bound; the run is not in it
+	waitUnanswered                 // the limit did not answer
+	waitRebuilding                 // the limit is rebuilding its record
+)
+
 // waitAgain starts the re-queued run's wait, or carries it on with the
-// gate's newest answer. lineFull is a line at its bound: the run is not in
-// it, and asks again with the acquire back-off until its deadline.
-func (s *runState) waitAgain(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire, ans gateAnswer, lineFull bool) error {
+// gate's newest answer. Outside the line (full, unanswered, rebuilding) the
+// run's place is unknown and its note says why; it asks again with the
+// acquire back-off while the line is full, the re-queue interval otherwise.
+func (s *runState) waitAgain(ctx workflow.Context, slot *ConcurrencySlotPlan, req gateAcquire, ans gateAnswer, mode waitMode) error {
 	c := s.conc
 	w := c.requeue
 	first := w == nil
@@ -180,15 +192,30 @@ func (s *runState) waitAgain(ctx workflow.Context, slot *ConcurrencySlotPlan, re
 			Cause: orkstackv1.ConcurrencyQueueCause_CONCURRENCY_QUEUE_CAUSE_UNPAUSE,
 		}
 	}
-	w.rebuilding = ans.Rebuilding
-	if lineFull {
-		w.lineFull = true
+	until := req.WaitUntil.UTC().Format(time.RFC3339)
+	w.lineFull = mode == waitLineFull
+	w.unanswered = mode == waitUnanswered
+	w.rebuilding = mode == waitRebuilding || ans.Rebuilding
+	if mode != waitPlaced {
 		c.queued.PositionKnown, c.queued.Position = false, 0
-		c.queued.NoteCode = queuedNoteLineFull
-		c.queued.Note = "the key's line is full; this run asks again until " + req.WaitUntil.UTC().Format(time.RFC3339)
+		switch mode {
+		case waitLineFull:
+			c.queued.NoteCode, c.queued.Note = queuedNoteLineFull, "the key's line is full; this run asks again until "+until
+		case waitUnanswered:
+			c.queued.NoteCode = QueuedNoteNotAnswering
+			c.queued.Note = "the limit is not answering; this run stays queued and asks again by " +
+				workflow.Now(ctx).Add(w.interval).UTC().Format(time.RFC3339)
+		case waitRebuilding:
+			c.queued.NoteCode = QueuedNoteRebuilding
+			c.queued.Note = "the limit is rebuilding its record of running runs; this can take a few minutes"
+		}
+		// Not in line, so no memo entry; the index says the run waits.
+		if err := s.syncConcAttributes(ctx); err != nil {
+			return err
+		}
 	} else {
-		moved := first || w.lineFull || ans.Seq != w.ans.Seq || !ans.ArrivedAt.Equal(w.ans.ArrivedAt)
-		w.lineFull, w.ans = false, ans
+		moved := first || ans.Seq != w.ans.Seq || !ans.ArrivedAt.Equal(w.ans.ArrivedAt)
+		w.ans = ans
 		c.queued.PositionKnown, c.queued.Position = true, int32(ans.Position)
 		c.queued.NoteCode, c.queued.Note = "", ""
 		if moved {
@@ -202,10 +229,10 @@ func (s *runState) waitAgain(ctx workflow.Context, slot *ConcurrencySlotPlan, re
 	}
 	if first {
 		text := fmt.Sprintf("waiting again for key %s after an unpause (limit %d): ", slot.Key, slot.Limit)
-		if lineFull {
-			text += "the key's line is full; asks again until " + req.WaitUntil.UTC().Format(time.RFC3339)
+		if mode == waitPlaced {
+			text += fmt.Sprintf("position %d behind %d running; times out at %s", ans.Position, ans.HoldersAhead, until)
 		} else {
-			text += fmt.Sprintf("position %d behind %d running; times out at %s", ans.Position, ans.HoldersAhead, req.WaitUntil.UTC().Format(time.RFC3339))
+			text += c.queued.GetNote() + "; times out at " + until
 		}
 		if err := s.emit(ctx, orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED, "", s.status, text); err != nil {
 			return err
@@ -246,6 +273,24 @@ func (s *runState) endRequeue() {
 	c.requeue, c.queued = nil, nil
 }
 
+// leaveRequeue ends a wait the run's ending cut short (fail): the wait's
+// timers and markers go, and so do its memo entry and its index values, so
+// the closed run never reads as queued. Best effort: a failed write is
+// logged, never put in place of the run's own reason.
+func (s *runState) leaveRequeue(ctx workflow.Context) {
+	if !s.concWaiting() {
+		return
+	}
+	s.endRequeue()
+	gate := s.conc.plan.runSlot().GateID
+	if err := workflow.UpsertMemo(ctx, map[string]any{gateMemoKey(gate, gateRunLevel): nil}); err != nil {
+		workflow.GetLogger(ctx).Warn("a run that left its re-queue could not drop its slot's record", "run_id", s.runID, "error", err)
+	}
+	if err := s.syncConcAttributes(ctx); err != nil {
+		workflow.GetLogger(ctx).Warn("a run that left its re-queue could not update its index", "run_id", s.runID, "error", err)
+	}
+}
+
 // abandonRequeue is a pause reaching a run that waits for its slot again: it
 // releases its entry in line (ordinal n) and stays given back, so the next
 // unpause asks with n+1 (§22.5).
@@ -280,9 +325,16 @@ func (s *runState) addConcWaitCases(ctx workflow.Context, selector workflow.Sele
 	selector.AddReceive(workflow.GetSignalChannel(ctx, ConcurrencyGrantSignal), func(ch workflow.ReceiveChannel, _ bool) {
 		var grant ConcurrencyGrant
 		ch.Receive(ctx, &grant)
-		if !w.lineFull && grant.Gate == slot.GateID && grant.Run == s.runID && grant.TaskIx == gateRunLevel &&
-			grant.SeqBase == w.req.SeqBase && grant.Seq == w.ans.Seq && grant.N == w.req.N {
+		mine := grant.Gate == slot.GateID && grant.Run == s.runID && grant.TaskIx == gateRunLevel &&
+			grant.SeqBase == w.req.SeqBase && grant.N == w.req.N
+		if mine && !w.lineFull && grant.Seq == w.ans.Seq {
 			*woke = concWaitGrant
+			return
+		}
+		if mine {
+			// This run's slot under another seq (a rebuild renumbered the
+			// line): ask the gate at once rather than at the next re-assert.
+			*woke = concWaitReassert
 			return
 		}
 		*woke = concWaitIgnored
@@ -314,6 +366,9 @@ func (s *runState) takeConcWait(ctx workflow.Context, woke concWaitCase) error {
 			"waited %s for key %s's slot after an unpause without continuing",
 			w.req.WaitUntil.Sub(w.req.IssuedAt).Round(time.Second), slot.Key)))
 	case concWaitReassert:
+		if w.cancelReassert != nil {
+			w.cancelReassert() // a grant may have brought the re-assert forward
+		}
 		w.reassert = nil
 		again := w.req
 		again.IssuedAt = workflow.Now(ctx)
@@ -340,9 +395,8 @@ func (s *runState) requeueUnavailable(slot *ConcurrencySlotPlan) error {
 		"the limit on key %s did not answer when this run asked for its slot again after an unpause", slot.Key))
 }
 
-// requeueEnding is how a re-queued run's wait ends the run: its markers are
-// cleared, and the ending is the run's.
+// requeueEnding is how a re-queued run's wait ends the run. The ending goes
+// to fail, which leaves the wait (leaveRequeue).
 func (s *runState) requeueEnding(ending error) error {
-	s.endRequeue()
 	return ending
 }

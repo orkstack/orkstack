@@ -64,6 +64,9 @@ type concRunState struct {
 	ordinal   int64
 	givenBack bool
 	requeue   *requeueWait
+	// pausable: the run's plan carries Pause, the only way a slot is given
+	// back.
+	pausable bool
 }
 
 func newConcRunState(plan *ConcurrencyPlan) *concRunState {
@@ -306,6 +309,11 @@ func (s *runState) recordRunSlot(ctx workflow.Context, slot *ConcurrencySlotPlan
 	c := s.conc
 	entry := gateMemoEntry{Proto: gateProtoLegacy, Held: held, Limit: slot.Limit, Strategy: slot.Strategy, Label: slot.Label,
 		ArrivedAt: ans.ArrivedAt, Seq: ans.Seq, SeqBase: c.plan.SeqBase}
+	if c.ordinal > 0 {
+		// A slot asked for again after a give-back: a rebuilding gate
+		// restores the entry with its ordinal (§22.15).
+		entry.Proto, entry.N, entry.Strategy = gateProtoOrdinal, c.ordinal, gateStrategyQueue
+	}
 	if !held && c.queued != nil {
 		entry.WaitUntil = c.queued.GetTimesOutAt().AsTime()
 	}
@@ -357,15 +365,24 @@ func (s *runState) restoreConcRecords(ctx workflow.Context) error {
 	}
 	slot := c.plan.runSlot()
 	memo := map[string]any{
-		gateMemoKey(c.held.gate, gateRunLevel): gateMemoEntry{Proto: gateProtoLegacy, Held: true, Limit: slot.Limit,
-			Strategy: slot.Strategy, Label: slot.Label, Seq: c.held.seq, SeqBase: c.plan.SeqBase},
-		gateMemoSeqKey: c.plan.SeqBase,
+		gateMemoKey(c.held.gate, gateRunLevel): c.heldMemoEntry(slot),
+		gateMemoSeqKey:                         c.plan.SeqBase,
 	}
 	if err := workflow.UpsertMemo(ctx, memo); err != nil {
 		return runLevelError(RunConcurrencyUnavailableCode, fmt.Sprintf("the run could not record its carried slot: %v", err))
 	}
 	c.seqWritten = true
 	return s.syncConcAttributes(ctx)
+}
+
+// heldMemoEntry is the memo entry of the run-level slot the run holds.
+func (c *concRunState) heldMemoEntry(slot *ConcurrencySlotPlan) gateMemoEntry {
+	entry := gateMemoEntry{Proto: gateProtoLegacy, Held: true, Limit: slot.Limit,
+		Strategy: slot.Strategy, Label: slot.Label, Seq: c.held.seq, SeqBase: c.plan.SeqBase}
+	if c.ordinal > 0 {
+		entry.Proto, entry.N, entry.Strategy = gateProtoOrdinal, c.ordinal, gateStrategyQueue
+	}
+	return entry
 }
 
 // releaseSlots is the central release (§5.2.5): release_all{run, below
@@ -452,16 +469,25 @@ func (c *concRunState) adoptCarry(in *orkstackv1.RunConcurrencyCarry) error {
 	for _, g := range in.GetAttempted() {
 		c.noteAttempted(g)
 	}
-	for _, o := range in.GetOrdinals() {
-		if o.GetGateId() != c.plan.runSlot().GateID || o.GetTaskIx() != gateRunLevel || o.GetN() < 0 {
+	switch ordinals := in.GetOrdinals(); len(ordinals) {
+	case 0:
+	case 1:
+		o := ordinals[0]
+		if o.GetGateId() != c.plan.runSlot().GateID || o.GetTaskIx() != gateRunLevel || o.GetN() <= 0 {
 			return fmt.Errorf("the carried slot ordinal %v is not this run's run-level slot's", o)
 		}
 		c.ordinal = o.GetN()
+	default:
+		return fmt.Errorf("the carry holds %d run-level slot ordinals; a run has one", len(ordinals))
 	}
 	switch held := in.GetHeld(); len(held) {
 	case 0:
 		// A run carries on only after it started, which it does holding its
-		// slot: one that holds none gave it back while paused (§22.15).
+		// slot: one that holds none gave it back while paused (§22.15),
+		// which only a run that can be paused does.
+		if !c.pausable {
+			return errors.New("the carry holds no run-level slot, and a run that cannot be paused never gives one back")
+		}
 		c.givenBack = true
 	case 1:
 		if held[0].GetGateId() != c.plan.runSlot().GateID {

@@ -235,10 +235,12 @@ func TestConcurrencyPause_AFullLineIsAskedAgainUntilItsDeadline(t *testing.T) {
 func TestConcurrencyPause_TheOrdinalAndTheGiveBackCrossAContinuation(t *testing.T) {
 	plan := concPlan()
 	c := newConcRunState(plan.Concurrency)
+	c.pausable = true
 	c.noteAttempted("ork-conc-test")
 	c.ordinal, c.givenBack = 3, true
 	carried := c.carry()
 	next := newConcRunState(plan.Concurrency)
+	next.pausable = true
 	if err := next.adoptCarry(carried); err != nil {
 		t.Fatalf("adoptCarry: %v", err)
 	}
@@ -275,7 +277,89 @@ func TestConcurrencyPause_ARunThatFailsWithItsSlotGivenBackStartsNoHandler(t *te
 	if len(h.single) != 1 || h.ran != 1 {
 		t.Fatalf("single releases %v, ran %d; want the give-back and build alone, no handler", h.single, h.ran)
 	}
-	if h.last.GetStatus() != orkstackv1.Status_STATUS_FAILED {
-		t.Fatalf("the run ended %s %v, want FAILED", h.last.GetStatus(), h.last.GetError())
+	if h.last.GetStatus() != orkstackv1.Status_STATUS_FAILED ||
+		!strings.Contains(h.last.GetError().GetMessage(), "its failure handlers did not run, because the run had given its concurrency slot back") {
+		t.Fatalf("the run ended %s %v, want FAILED saying why its handlers did not run", h.last.GetStatus(), h.last.GetError())
+	}
+}
+
+// TestConcurrencyPause_ALimitThatDoesNotAnswerTheReacquireKeepsTheRunWaiting:
+// a run that has done work is never ended at once by a limit that does not
+// answer: it waits, saying so (NOT_ANSWERING), asks again, and runs on.
+func TestConcurrencyPause_ALimitThatDoesNotAnswerTheReacquireKeepsTheRunWaiting(t *testing.T) {
+	h := newPausedConcHarness(t, granted(1), AcquireConcurrencyResult{Unavailable: "frontend unavailable"}, granted(9))
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	h.runTwoStep(t)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("the run ended %v", err)
+	}
+	if len(h.queuedSeen) == 0 || h.queuedSeen[0].GetNoteCode() != QueuedNoteNotAnswering || h.queuedSeen[0].GetPositionKnown() {
+		t.Fatalf("queued snapshots %v, want one saying the limit is not answering", h.queuedSeen)
+	}
+	if len(h.acquires) != 3 || h.ran != 2 {
+		t.Fatalf("acquires %d, ran %d; want 3 and 2", len(h.acquires), h.ran)
+	}
+}
+
+// TestConcurrencyPause_AGrantUnderAnotherSeqAsksTheGateAtOnce: a grant of
+// the run's own slot under a seq it does not know (a rebuild renumbered the
+// line) brings the re-assert forward rather than waiting for it.
+func TestConcurrencyPause_AGrantUnderAnotherSeqAsksTheGateAtOnce(t *testing.T) {
+	h := newPausedConcHarness(t, granted(1), queued(7, 2), granted(12))
+	h.pauseAt(5*time.Second, true)
+	h.pauseAt(time.Hour, false)
+	h.grantAt(time.Hour+10*time.Second, 12, 1)
+	h.runTwoStep(t)
+	if err := h.env.GetWorkflowError(); err != nil {
+		t.Fatalf("the run ended %v", err)
+	}
+	if len(h.acquires) != 3 {
+		t.Fatalf("acquires %d, want the re-assert the grant brought forward", len(h.acquires))
+	}
+	if at := h.acquires[2].Request.IssuedAt; at.After(h.acquires[1].Request.IssuedAt.Add(time.Minute)) {
+		t.Fatalf("the re-assert was sent at %s, after the re-queue interval; want at the grant", at)
+	}
+}
+
+// TestConcurrencyPause_ARecordedReacquireCarriesItsOrdinal: the memo entry
+// of a slot asked for again names its ordinal, so a rebuilding gate restores
+// it as the run will release it.
+func TestConcurrencyPause_ARecordedReacquireCarriesItsOrdinal(t *testing.T) {
+	plan := concPlan()
+	c := newConcRunState(plan.Concurrency)
+	c.held, c.ordinal = &heldSlot{gate: "ork-conc-test", seq: 4}, 2
+	e := c.heldMemoEntry(plan.Concurrency.runSlot())
+	if e.Proto != gateProtoOrdinal || e.N != 2 || e.Strategy != gateStrategyQueue {
+		t.Fatalf("memo entry %+v, want protocol 2, ordinal 2, queue", e)
+	}
+	c.ordinal = 0
+	if e := c.heldMemoEntry(plan.Concurrency.runSlot()); e.Proto != gateProtoLegacy || e.N != 0 {
+		t.Fatalf("memo entry %+v, want the legacy entry at ordinal 0", e)
+	}
+}
+
+// TestConcurrencyPause_ACarryThatCannotBeAGiveBackIsRefused: a carry with
+// two ordinals, an ordinal of 0, or no slot for a run that cannot be paused
+// is refused, never adopted as a given-back slot.
+func TestConcurrencyPause_ACarryThatCannotBeAGiveBackIsRefused(t *testing.T) {
+	plan := concPlan()
+	ord := func(n int64) *orkstackv1.SlotOrdinal {
+		return &orkstackv1.SlotOrdinal{GateId: "ork-conc-test", TaskIx: gateRunLevel, N: n}
+	}
+	for name, tc := range map[string]struct {
+		carry    *orkstackv1.RunConcurrencyCarry
+		pausable bool
+	}{
+		"two ordinals": {&orkstackv1.RunConcurrencyCarry{Ordinals: []*orkstackv1.SlotOrdinal{ord(1), ord(2)}}, true},
+		"ordinal zero": {&orkstackv1.RunConcurrencyCarry{Ordinals: []*orkstackv1.SlotOrdinal{ord(0)}}, true},
+		"not pausable": {&orkstackv1.RunConcurrencyCarry{}, false},
+		"another gate": {&orkstackv1.RunConcurrencyCarry{Ordinals: []*orkstackv1.SlotOrdinal{{GateId: "x", TaskIx: gateRunLevel, N: 1}}}, true},
+	} {
+		c := newConcRunState(plan.Concurrency)
+		c.pausable = tc.pausable
+		if err := c.adoptCarry(tc.carry); err == nil {
+			t.Errorf("%s: adopted %v", name, tc.carry)
+		}
 	}
 }

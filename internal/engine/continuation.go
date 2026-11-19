@@ -927,7 +927,7 @@ var runStateFieldClass = map[string]fieldClass{
 	// causes, the last pause and the cascade counter cross in the carry
 	// (RunContinuation 12–15).
 	"runState.pauses": fieldDerived, "runState.pause": fieldRestored, "runState.pausedByParent": fieldRestored,
-	"runState.lastPause": fieldRestored, "runState.pauseStop": fieldEphemeral, "runState.lastCascadeSeq": fieldRestored,
+	"runState.lastPause": fieldRestored, "runState.pauseStop": fieldEphemeral, "runState.handlersDropped": fieldEphemeral, "runState.lastCascadeSeq": fieldRestored,
 	// What this generation wrote to its paused index: rewritten at its first
 	// pass when it starts paused (syncPauseIndex).
 	"runState.pauseIndex": fieldEphemeral,
