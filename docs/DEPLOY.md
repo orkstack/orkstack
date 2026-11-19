@@ -2504,8 +2504,10 @@ release runs nothing at all (§1).
    listed with what to start, in OrkStack's words: no engine of v2 running; a
    pool **anybody is serving now** with no uncordoned Orker of v2 (from the
    Orker inventory, so a pool that is quiet today is still judged); a pool
-   that hosts pins with no pin host of v2; or an Orker that did not answer
-   (`UNVERIFIED` — a read that could not be made is never a pass). A count
+   that hosts pins with no pin host of v2; an engine of v2 that cannot hold
+   concurrency limits while a limit has runs holding or waiting
+   (`CAPABILITY_MISSING`); or an Orker that did not answer (`UNVERIFIED` — a
+   read that could not be made is never a pass). A count
    the cluster could not give reads `unknown`, never 0.
 
 3. **Ramp** (optional but recommended):

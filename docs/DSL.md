@@ -2081,7 +2081,9 @@ tasks:
   `engine.concurrency.max_active_keys_per_namespace` (1000) keys in use. These
   counts are read without a lock, so a burst of submits can overshoot them a
   little; the limit itself is never exceeded. A run holding a slot that has
-  ended counts as holding until the limit's own check frees it.
+  ended counts as holding until the limit's own check frees it, so a full
+  line can refuse a run a little early. These checks may refuse early; they
+  never let a run past a bound.
 - **A run that ends while it waits**, or that its limit refuses, starts no
   task, failure handlers included: it never held the key, so it ends `FAILED`
   or `CANCELED` with its own reason and nothing runs.

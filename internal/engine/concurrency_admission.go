@@ -47,6 +47,10 @@ type ConcurrencyAdmissionReader interface {
 	QueuedRuns(ctx context.Context, namespace string) (int64, error)
 	// GateLine is one gate's line, by its state query.
 	GateLine(ctx context.Context, gateID string) (GateLine, error)
+	// OpenGates counts every running gate of the deployment: a key with
+	// runs holding or waiting, or lingering empty. A release refuses a
+	// target whose engines cannot hold limits while it is above zero.
+	OpenGates(ctx context.Context) (int64, error)
 }
 
 // TemporalConcurrencyReader reads the cluster for submit's checks.
@@ -73,6 +77,15 @@ func (r *TemporalConcurrencyReader) ActiveGates(ctx context.Context, namespace s
 // in a line.
 func (r *TemporalConcurrencyReader) QueuedRuns(ctx context.Context, namespace string) (int64, error) {
 	return r.count(ctx, queuedRunsQuery(namespace))
+}
+
+// OpenGates is CountWorkflow over every running gate.
+func (r *TemporalConcurrencyReader) OpenGates(ctx context.Context) (int64, error) {
+	return r.count(ctx, openGatesQuery())
+}
+
+func openGatesQuery() string {
+	return fmt.Sprintf("WorkflowType = %q AND ExecutionStatus = %q", ConcurrencyGateWorkflowType, "Running")
 }
 
 func activeGatesQuery(namespace string) string {

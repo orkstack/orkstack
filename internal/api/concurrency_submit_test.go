@@ -61,6 +61,8 @@ type fakeConcReader struct {
 	lineErr   error
 	activeErr error
 	queuedErr error
+	open      int64
+	openErr   error
 	asked     []string
 }
 
@@ -83,6 +85,12 @@ func (f *fakeConcReader) GateLine(_ context.Context, gateID string) (engine.Gate
 	defer f.mu.Unlock()
 	f.asked = append(f.asked, "line")
 	return f.lines[gateID], f.lineErr
+}
+
+func (f *fakeConcReader) OpenGates(context.Context) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.open, f.openErr
 }
 
 func (f *fakeConcReader) questions() []string {
