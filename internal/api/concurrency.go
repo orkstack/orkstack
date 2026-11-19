@@ -13,6 +13,7 @@ import (
 	"github.com/orkstack/orkstack/internal/dsl"
 	"github.com/orkstack/orkstack/internal/engine"
 	"github.com/orkstack/orkstack/internal/enumname"
+	"github.com/orkstack/orkstack/internal/runstatus"
 	"github.com/orkstack/orkstack/internal/task"
 	"github.com/orkstack/orkstack/pkg/artifacts"
 )
@@ -228,6 +229,41 @@ func runIndexGates(index *engine.RunIndexQuery, ns *orkstackv1.Namespace, bindin
 	namespace := ns.GetName()
 	index.GateOf = func(key string) string { return engine.GateID(namespace, incarnation, key) }
 	return nil
+}
+
+// applyLiveQueued reads where a run that waits for its concurrency slot
+// stands now (Run.queued's position, holders and note are "read live by
+// GetRun only"): one question to its gate, within censusReadTimeout, GetRun's
+// bound on what it reads beyond the run itself. A gate that does not answer
+// leaves the place unknown and says so (NOT_ANSWERING), and never fails the
+// read. A run that is not queued, or has ended, asks nothing.
+func (s *Service) applyLiveQueued(ctx context.Context, run *orkstackv1.Run) {
+	snapshot := run.GetQueued()
+	if snapshot == nil || s.concurrencyReader == nil || runstatus.IsTerminal(run.GetStatus()) {
+		return
+	}
+	now := time.Now()
+	notAnswering := func() {
+		run.Queued = engine.NotAnsweringQueued(snapshot, now.Add(s.concurrency.RequeueIntervalMax))
+	}
+	ns, err := s.namespace(ctx, run.GetNamespace())
+	if err != nil {
+		notAnswering()
+		return
+	}
+	incarnation, err := concurrencyIncarnation(ns)
+	if err != nil {
+		notAnswering()
+		return
+	}
+	rctx, cancel := context.WithTimeout(ctx, censusReadTimeout)
+	defer cancel()
+	line, err := s.concurrencyReader.GateLine(rctx, engine.GateID(ns.GetName(), incarnation, snapshot.GetKey()))
+	if err != nil {
+		notAnswering()
+		return
+	}
+	run.Queued = engine.LiveQueued(snapshot, run.GetId(), line, s.concurrency.APIHoldersShown, now)
 }
 
 // concurrencyIncarnation is the namespace's incarnation at its gates

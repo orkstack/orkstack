@@ -2782,6 +2782,7 @@ func (s *Service) GetRun(
 	}
 	SetRunTiming(run, time.Now())
 	s.applyCensusPendingReasons(ctx, run)
+	s.applyLiveQueued(ctx, run)
 	return connect.NewResponse(&orkstackv1.GetRunResponse{Run: run}), nil
 }
 
