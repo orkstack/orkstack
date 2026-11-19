@@ -46,6 +46,16 @@ groups:
       description: The most overdue run cleanup left unretired is past its due time by over half the retention buffer.
       runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackcleanupbehindretention
       summary: Retention cleanup is far behind.
+  - alert: OrkStackRetentionBackstopShort
+    expr: sum by (ork_deployment) (((ork_retention_backstop_refused_total{outcome="short"} - last_over_time(ork_retention_backstop_refused_total{outcome="short"}[1d] offset 1h)) > 0) or ((ork_retention_backstop_refused_total{outcome="short"} unless last_over_time(ork_retention_backstop_refused_total{outcome="short"}[1d] offset 1h)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 1h)) > 0))) > 0
+    labels:
+      component: cleanup
+      severity: critical
+    annotations:
+      dashboard: /d/orkstack
+      description: The cluster refused the engine the right to set its namespace's retention, and the retention it keeps is shorter than the backstop.
+      runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackretentionbackstopshort
+      summary: Temporal keeps closed runs for less than OrkStack's retention needs, and refuses to change it.
   - alert: OrkStackExecutionsMissing
     expr: sum by (ork_deployment) (((ork_deployment_cleanup_runs_total{outcome="not_found_not_due"} - last_over_time(ork_deployment_cleanup_runs_total{outcome="not_found_not_due"}[1d] offset 1h)) > 0) or ((ork_deployment_cleanup_runs_total{outcome="not_found_not_due"} unless last_over_time(ork_deployment_cleanup_runs_total{outcome="not_found_not_due"}[1d] offset 1h)) and on (ork_deployment) (count by (ork_deployment) (last_over_time(ork_build_info[1d] offset 1h)) > 0))) > 0
     labels:

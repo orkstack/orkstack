@@ -209,6 +209,101 @@ tests:
   - eval_time: 90m
     alertname: OrkStackCleanupBehindRetention
     exp_alerts: []
+- name: 'OrkStackRetentionBackstopShort: appears'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_retention_backstop_refused_total{outcome="short",ork_deployment="d"}
+    values: _x390 1x20
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackRetentionBackstopShort
+    exp_alerts:
+    - exp_labels:
+        component: cleanup
+        ork_deployment: d
+        severity: critical
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: The cluster refused the engine the right to set its namespace's retention, and the retention it keeps is shorter than the backstop.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackretentionbackstopshort
+        summary: Temporal keeps closed runs for less than OrkStack's retention needs, and refuses to change it.
+- name: 'OrkStackRetentionBackstopShort: steady for 2 days'
+  interval: 10m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x300
+  - series: ork_retention_backstop_refused_total{outcome="short",ork_deployment="d"}
+    values: 5x300
+  alert_rule_test:
+  - eval_time: 48h
+    alertname: OrkStackRetentionBackstopShort
+    exp_alerts: []
+- name: 'OrkStackRetentionBackstopShort: 10m gap, same value'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_retention_backstop_refused_total{outcome="short",ork_deployment="d"}
+    values: 1x400 _x2 1x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackRetentionBackstopShort
+    exp_alerts: []
+- name: 'OrkStackRetentionBackstopShort: growth during a 20m gap'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_retention_backstop_refused_total{outcome="short",ork_deployment="d"}
+    values: 1x400 _x4 2x20
+  alert_rule_test:
+  - eval_time: 2030m
+    alertname: OrkStackRetentionBackstopShort
+    exp_alerts:
+    - exp_labels:
+        component: cleanup
+        ork_deployment: d
+        severity: critical
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: The cluster refused the engine the right to set its namespace's retention, and the retention it keeps is shorter than the backstop.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackretentionbackstopshort
+        summary: Temporal keeps closed runs for less than OrkStack's retention needs, and refuses to change it.
+- name: 'OrkStackRetentionBackstopShort: same Orker under a new instance'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x420
+  - series: ork_retention_backstop_refused_total{outcome="short",instance="a",ork_deployment="d"}
+    values: 1x400
+  - series: ork_retention_backstop_refused_total{outcome="short",instance="b",ork_deployment="d"}
+    values: _x390 1x10
+  alert_rule_test:
+  - eval_time: 1955m
+    alertname: OrkStackRetentionBackstopShort
+    exp_alerts:
+    - exp_labels:
+        component: cleanup
+        ork_deployment: d
+        severity: critical
+      exp_annotations:
+        dashboard: /d/orkstack
+        description: The cluster refused the engine the right to set its namespace's retention, and the retention it keeps is shorter than the backstop.
+        runbook_url: https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#orkstackretentionbackstopshort
+        summary: Temporal keeps closed runs for less than OrkStack's retention needs, and refuses to change it.
+- name: 'OrkStackRetentionBackstopShort: a new Prometheus meets a counter already above 0'
+  interval: 5m
+  input_series:
+  - series: ork_build_info{ork_deployment="d"}
+    values: 1x20
+  - series: ork_retention_backstop_refused_total{outcome="short",ork_deployment="d"}
+    values: 7x20
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: OrkStackRetentionBackstopShort
+    exp_alerts: []
 - name: 'OrkStackExecutionsMissing: appears'
   interval: 5m
   input_series:

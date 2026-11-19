@@ -848,6 +848,16 @@ Severity warning; fires after 1h. Retention cleanup is far behind.
 - **Fix:** Shorten `ORK_CLEANUP_INTERVAL` or raise its batch; check CleanupFailing.
 - **Related:** [OrkStackCleanupFailing](#orkstackcleanupfailing), [OrkStackArchiveUnconfirmed](#orkstackarchiveunconfirmed), [the-archive-sweep-risk](#the-archive-sweep-risk)
 
+### OrkStackRetentionBackstopShort
+
+Severity critical; fires at once. Temporal keeps closed runs for less than OrkStack's retention needs, and refuses to change it.
+
+- **What it means:** The engine's Temporal credential may not update the namespace, and the namespace's retention is below the maximum run retention plus the retention buffer. At boot the engine refuses to start; in the cleanup loop it keeps running on the shorter retention.
+- **Impact:** The cluster may delete a closed run before OrkStack archives it.
+- **Confirm:** the engine log names the retention to set and the command; kit: `ork_retention_backstop_refused_total` by `outcome`.
+- **Fix:** Have a cluster admin run the `temporal operator namespace update --retention` the log names, or grant the engine the right to update its namespace.
+- **Related:** [OrkStackExecutionsMissing](#orkstackexecutionsmissing), [the-archive-sweep-risk](#the-archive-sweep-risk)
+
 ### OrkStackExecutionsMissing
 
 Severity critical; fires at once. Runs are missing from Temporal before their retention ended.
