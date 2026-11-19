@@ -67,13 +67,17 @@ func (s *Service) ListOrkers(
 			return nil, connect.NewError(connect.CodeUnavailable, err)
 		}
 	}
+	// When the read finished, on this replica's clock
+	// (ListOrkersResponse.read_at): the later instant, so a census that
+	// begins after it sees at least the state these rows show.
+	readAt := s.now()
 	kept := rows[:0]
 	for _, row := range rows {
 		if set.Match(row) {
 			kept = append(kept, row)
 		}
 	}
-	return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: kept}), nil
+	return connect.NewResponse(&orkstackv1.ListOrkersResponse{Orkers: kept, ReadAt: timestamppb.New(readAt)}), nil
 }
 
 // orkerInventory is ListOrkers' body for the whole fleet: engine.ReadFleet's

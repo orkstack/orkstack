@@ -127,9 +127,27 @@ func (s *Service) submitUnkeyed(
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
 	work, cancel := context.WithTimeout(context.WithoutCancel(ctx), submitWorkBound)
 	defer cancel()
+	if err := s.profileCensusFresh(sub); err != nil {
+		return nil, err
+	}
 	run := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 	s.runs.Save(run)
 	return s.startRun(work, run, sub, false, true)
+}
+
+// profileCensusFresh refuses, Unavailable, to mint a run whose plan pinned
+// profile contracts from a census older than engine.ProfileCensusMaxAge:
+// asked just before each mint, so a run's created_at is never far past the
+// Orkers its plan was judged on (docs/DEPLOY.md, "Changing a profile"). A
+// plan that pinned none passes. Nothing is minted or claimed before it.
+func (s *Service) profileCensusFresh(sub submission) error {
+	read := sub.plan.ProfileCensusReadAt()
+	if read.IsZero() || s.now().Sub(read) <= engine.ProfileCensusMaxAge {
+		return nil
+	}
+	return connect.NewError(connect.CodeUnavailable, fmt.Errorf(
+		"the pool's Orkers were read more than %s ago, which is too long to pin this run's profile contracts on; %s",
+		engine.ProfileCensusMaxAge, submitAgain(sub)))
 }
 
 // submitAgain is what an unavailable answer asks of the caller.
@@ -161,6 +179,9 @@ func (s *Service) submitKeyed(
 		return s.answerBinding(work, sub, binding)
 	}
 
+	if err := s.profileCensusFresh(sub); err != nil {
+		return nil, err
+	}
 	candidate := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 	claim, err := newClaim(candidate, sub.plan.IdempotencyFingerprint)
 	if err != nil {
@@ -367,6 +388,9 @@ func (s *Service) startClaimedID(
 	if err := s.checkClaimAge(ctx, sub.claimKey()); err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable,
 			fmt.Errorf("idempotency key %q: %w", sub.key, err))
+	}
+	if err := s.profileCensusFresh(sub); err != nil {
+		return nil, err
 	}
 	run := s.newPendingRun(binding.RunID, sub.wf, sub.input, sub.origin)
 	// The run was asked for when the key was claimed; who started it is
@@ -637,6 +661,9 @@ func (s *Service) replaceForeignID(
 	sub submission,
 	refused string,
 ) (*connect.Response[orkstackv1.SubmitRunResponse], error) {
+	if err := s.profileCensusFresh(sub); err != nil {
+		return nil, err
+	}
 	next := s.newPendingRun(s.newRunID(), sub.wf, sub.input, sub.origin)
 	if err := s.writeDefinitionObject(ctx, next.GetId(), sub); err != nil {
 		return nil, connect.NewError(connect.CodeUnavailable, fmt.Errorf("%w; submit again under the same key", err))

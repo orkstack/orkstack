@@ -125,7 +125,13 @@ func newOrkerListCommand(g *globalFlags) *cobra.Command {
 				fmt.Fprint(cmd.OutOrStdout(), noMatchSentence("Orkers", filters))
 				return nil
 			}
-			return renderOrkerList(cmd.OutOrStdout(), resp.Msg.GetOrkers())
+			if err := renderOrkerList(cmd.OutOrStdout(), resp.Msg.GetOrkers()); err != nil {
+				return err
+			}
+			if len(resp.Msg.GetOrkers()) > 0 {
+				renderReadAt(cmd.OutOrStdout(), resp.Msg.GetReadAt())
+			}
+			return nil
 		},
 	}
 	filterTexts = addFilterFlag(cmd, &orkstackv1.ListOrkersRequest{})
@@ -597,6 +603,15 @@ func orkerTasks(row *orkstackv1.Orker) string {
 		return dash
 	}
 	return strconv.Itoa(int(row.GetRunningTasks()))
+}
+
+// renderReadAt is the list's "as of" line: when the engine finished reading
+// the fleet, on its own clock; nothing when the response carries no time.
+func renderReadAt(out io.Writer, readAt *timestamppb.Timestamp) {
+	if readAt == nil || !readAt.IsValid() {
+		return
+	}
+	fmt.Fprintf(out, "\nAs of %s, the engine's clock.\n", formatTime(readAt))
 }
 
 func orkerCount(n int) string { return orkerPlural(n, "orker", "orkers") }

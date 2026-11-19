@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/authz"
@@ -173,6 +174,10 @@ type RunPlan struct {
 	// omitempty, so a plan with none, and every plan built before it existed,
 	// encodes exactly as before.
 	ProfileContracts map[string]map[string]ProfileContracts `json:"profile_contracts,omitempty"`
+
+	// profileCensusAt is when the census ProfileContracts was judged on was
+	// read (ProfileCensusReadAt). Unexported, so never encoded.
+	profileCensusAt time.Time
 
 	// History is the per-execution history ceiling this run must stop below,
 	// decided at submit (workflow code may not read config, AGENTS.md §2.1).
