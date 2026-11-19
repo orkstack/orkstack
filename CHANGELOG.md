@@ -28,6 +28,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Added
 
+- An engine now boots on a Temporal credential without admin rights when its namespace's retention already covers OrkStack's; a shorter one refuses the boot, naming the retention to set ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#running-without-temporal-admin-rights))
 - `orkctl admin restore reconcile` removes, after a restore of Temporal, the runs cleanup had retired that the restore brought back; it needs the new `system.restore` permission ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md#backup-and-disaster-recovery)).
 - Prometheus alert rules for the observability kit, each with a runbook, plus runbooks for Temporal outages and for backup and restore ([RUNBOOKS.md](https://github.com/orkstack/orkstack/blob/main/docs/RUNBOOKS.md)).
 - `ork.orker.stop_watch.failures{reason}` counts attempts whose container's event stream an Orker could not open, each also logged as a warning ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#lifecycle-metrics)).
