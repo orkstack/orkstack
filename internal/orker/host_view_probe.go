@@ -12,6 +12,7 @@ import (
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
 	"github.com/orkstack/orkstack/internal/buildinfo"
+	"github.com/orkstack/orkstack/internal/dsl"
 )
 
 // The host-view probe (design §4.12): the probe image, which is the orker
@@ -60,13 +61,13 @@ type hostViewFinding struct {
 	Differs     map[string]string
 }
 
-// probeHostView runs one probe container from image with every device of
-// audits and judges what it reports against the audit. build is this
+// probeHostView runs one probe container from src's image with every device
+// of audits and judges what it reports against the audit. build is this
 // Orker's own commit, which the image's LabelBuild must equal. Only the
 // context's own end is an error: a probe that cannot run, an image that is
 // not this build's, and a report that cannot be read are findings that hold
 // the profiles unavailable until a later probe judges them.
-func (d *OCIDispatcher) probeHostView(ctx context.Context, rt hostViewRuntime, root, image, build string,
+func (d *OCIDispatcher) probeHostView(ctx context.Context, rt hostViewRuntime, root string, src *probeImageSource, build string,
 	audits map[string]profileAudit,
 ) (hostViewFinding, error) {
 	names := slices.Sorted(maps.Keys(audits))
@@ -86,6 +87,16 @@ func (d *OCIDispatcher) probeHostView(ctx context.Context, rt hostViewRuntime, r
 	}
 	const imageUnavailable = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE
 
+	// The image is judged before it runs: on the release path resolved and
+	// its signature verified, then pulled and its build label read, so an
+	// image of another build never starts with the devices attached.
+	image, reason, detail, err := checkProbeImage(ctx, rt, src, build)
+	if err != nil {
+		return hostViewFinding{}, fmt.Errorf("the host-view probe was interrupted: %w", err)
+	} else if reason != 0 {
+		return hostViewFinding{Unavailable: reason, Detail: detail}, nil
+	}
+
 	dir, err := os.MkdirTemp(root, "ork-viewprobe-*")
 	if err != nil {
 		return unavailable(imageUnavailable, "the probe could not be set up: its directory could not be created under "+
@@ -100,14 +111,6 @@ func (d *OCIDispatcher) probeHostView(ctx context.Context, rt hostViewRuntime, r
 	if err != nil {
 		return unavailable(imageUnavailable, "the probe could not be set up under the work root %s: %v", root, err)
 	}
-	// The image is judged before it runs: pulled, and its build label read,
-	// so an image of another build never starts with the devices attached.
-	if reason, detail, err := checkProbeImage(ctx, rt, image, build); err != nil {
-		return hostViewFinding{}, fmt.Errorf("the host-view probe was interrupted: %w", err)
-	} else if reason != 0 {
-		return hostViewFinding{Unavailable: reason, Detail: detail}, nil
-	}
-
 	run, err := rt.RunBootProbe(ctx, spec)
 	switch {
 	case ctx.Err() != nil:
@@ -228,7 +231,7 @@ func (a *Activities) bootHostView(ctx context.Context, root string) error {
 		return fmt.Errorf("%s (%s): device profiles need an Orker on its container daemon's own host: %w",
 			ReasonProfileInvalid, DetailHostViewMismatch, err)
 	}
-	finding, err := a.dispatcher.probeHostView(ctx, rt, root, s.declared.ProbeImage, s.build, audits)
+	finding, err := a.dispatcher.probeHostView(ctx, rt, root, s.probeSource(), s.build, audits)
 	if err != nil {
 		return err
 	}
@@ -269,7 +272,7 @@ func (a *Activities) hostViewOnce(ctx context.Context, root string, now time.Tim
 	if len(audits) == 0 || !ok {
 		return
 	}
-	finding, err := a.dispatcher.probeHostView(ctx, rt, root, s.declared.ProbeImage, s.build, audits)
+	finding, err := a.dispatcher.probeHostView(ctx, rt, root, s.probeSource(), s.build, audits)
 	if err != nil {
 		return
 	}
@@ -323,12 +326,13 @@ func (a *Activities) holdUnavailable(audits map[string]profileAudit, finding hos
 	}
 }
 
-// checkProbeImage pulls the probe image and holds its build label to this
+// judgeProbeImage pulls the probe image and holds its build label to this
 // Orker's own commit, for every probe that carries devices or a gpu unit. A
 // reason other than 0 is the finding that holds a profile unavailable
 // (PROBE_IMAGE_UNAVAILABLE or PROBE_IMAGE_MISMATCH), with its detail; only
-// the context's own end is an error.
-func checkProbeImage(ctx context.Context, rt hostViewRuntime, image, build string) (orkstackv1.ProfileCordonReason, string, error) {
+// the context's own end is an error. release says the image is this
+// release's own (probe_image.go), whose refusals say to set probe_image.
+func judgeProbeImage(ctx context.Context, rt hostViewRuntime, image, build string, release bool) (orkstackv1.ProfileCordonReason, string, error) {
 	const imageUnavailable = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_UNAVAILABLE
 	const imageMismatch = orkstackv1.ProfileCordonReason_PROFILE_CORDON_REASON_PROBE_IMAGE_MISMATCH
 	if _, err := rt.Pull(ctx, image); err != nil {
@@ -346,6 +350,12 @@ func checkProbeImage(ctx context.Context, rt hostViewRuntime, image, build strin
 	case build == "" || build == buildinfo.Unknown:
 		return imageMismatch, "this Orker does not know which commit built it, so no probe image " +
 			"can be shown to be its own; run an Orker built from a commit (`orker --version` names it)", nil
+	case release && !ok:
+		return imageMismatch, fmt.Sprintf("release image %s has no %s label, so it is not this build (this Orker %s); "+
+			"set probe_image to your own", image, LabelBuild, build), nil
+	case release && label != build:
+		return imageMismatch, fmt.Sprintf("release image %s is not this build (commit %q, this Orker %s); "+
+			"set probe_image to your own", image, dsl.SafeReason(label), build), nil
 	case !ok:
 		return imageMismatch, fmt.Sprintf("the probe image %s has no %s label; profiles.probe_image must be "+
 			"the orker image of this Orker's own build (%s)", image, LabelBuild, build), nil

@@ -9,7 +9,6 @@ Add the profile to every Orker of the pool, in its configuration file, and resta
 ```yaml
 orker:
   profiles:
-    probe_image: ghcr.io/orkstack/orker@sha256:<digest of this release's orker image>
     sensor:
       kind: devices
       devices:
@@ -21,7 +20,7 @@ orker:
 - `path` is the device on the host. A `/dev/serial/by-id/` link keeps its name when the adapter moves to another port.
 - `container_path` is where the task sees it.
 - `permissions` is `r`, `w` or `rw`.
-- `probe_image` is this release's orker image, pinned by digest. The Orker uses it to check what a container sees.
+- The Orker checks what a container sees with its own release image. Set `probe_image` only on a host that cannot reach ghcr.io, to your mirrored copy pinned by digest, or on an Orker you built from source.
 
 The Orker refuses to boot if the device is not a USB serial node (`ttyUSB` or `ttyACM`).
 

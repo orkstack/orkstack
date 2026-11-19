@@ -91,7 +91,6 @@ func TestParseProfiles_Refused(t *testing.T) {
 	tests := []struct {
 		name, doc, want string
 	}{
-		{"profiles without probe image", "profiles:\n  amd:\n    kind: gpu\n    cdi:\n      kind: amd.com/gpu\n      units:\n        - \"0\"\n", "probe_image is required"},
 		{"probe image by tag", strings.Replace(validProfilesDoc, "orker@"+testDigest, "orker:0.4.0", 1), "probe_image"},
 		{"unknown top key", "orkers: {}\n", "orkers"},
 		{"second document", validProfilesDoc + "---\nprofiles: {}\n", "second YAML document"},

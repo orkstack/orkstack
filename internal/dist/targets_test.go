@@ -80,10 +80,15 @@ func TestTargets_ReturnsACopy(t *testing.T) {
 func TestTargets_BuildArguments(t *testing.T) {
 	t.Parallel()
 	for _, target := range dist.Targets() {
-		args := target.BuildArgs("v1.2.3", "abc123", "out/"+target.Binary)
+		args := target.BuildArgs("v1.2.3", "abc123", "a2V5", "out/"+target.Binary)
+		ldflags := "-X main.version=v1.2.3 -X main.commit=abc123"
+		if target.Binary == dist.Orker {
+			// Only the orker verifies its probe image with the release key.
+			ldflags += " -X main.releaseKey=a2V5"
+		}
 		want := []string{
 			"build", "-trimpath", "-buildvcs=false", "-tags", "timetzdata",
-			"-ldflags", "-X main.version=v1.2.3 -X main.commit=abc123",
+			"-ldflags", ldflags,
 			"-o", "out/" + target.Binary, "./cmd/" + target.Binary,
 		}
 		if !reflect.DeepEqual(args, want) {
@@ -125,7 +130,7 @@ func TestTargets_EveryBinaryCrossCompiles(t *testing.T) {
 			defer func() { <-slots }()
 			ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 			defer cancel()
-			cmd := exec.CommandContext(ctx, goBin, target.BuildArgs("v0.0.0-test", "0000000000000000000000000000000000000000", os.DevNull)...)
+			cmd := exec.CommandContext(ctx, goBin, target.BuildArgs("v0.0.0-test", "0000000000000000000000000000000000000000", "", os.DevNull)...)
 			cmd.Dir = root
 			cmd.Env = append(os.Environ(), target.BuildEnv()...)
 			var output bytes.Buffer
@@ -161,7 +166,7 @@ func TestTargets_ReleaseBuildsEmbedTheTimeZoneDatabase(t *testing.T) {
 	}
 	tagsOf := func(t *testing.T, target dist.Target) string {
 		t.Helper()
-		args := target.BuildArgs("v0.0.0-test", "0000000000000000000000000000000000000000", "x")
+		args := target.BuildArgs("v0.0.0-test", "0000000000000000000000000000000000000000", "", "x")
 		i := slices.Index(args, "-tags")
 		if i < 0 || i+1 >= len(args) {
 			t.Fatalf("%s: build arguments %q carry no -tags", target, args)

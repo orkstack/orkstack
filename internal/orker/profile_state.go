@@ -1,6 +1,7 @@
 package orker
 
 import (
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -22,6 +23,8 @@ const ReasonProfileInvalid = "ORKER_PROFILE_INVALID"
 // Like a cordon (cordon.go) it is process-local: never stored, gone with the
 // process, so only a restart clears a drift.
 type profileState struct {
+	// probe is where the profile probes' image comes from (probe_image.go).
+	probe    *probeImageSource
 	declared Profiles
 	// build is the commit this Orker was built from, which its probe image
 	// must carry (host_view_probe.go).
@@ -82,8 +85,20 @@ func (c *profileCauses) since() time.Time {
 }
 
 func newProfileState(declared Profiles, build string) *profileState {
-	return &profileState{declared: declared, build: build, causes: map[string]*profileCauses{}}
+	return &profileState{declared: declared, build: build, causes: map[string]*profileCauses{},
+		probe: newProbeImageSource(declared.ProbeImage, nil, declared.RecoveryInterval)}
 }
+
+// withProbe gives s release as its probe image when the document pins none,
+// and logger to say which digest the release path holds.
+func (s *profileState) withProbe(release *ReleaseProbe, logger *slog.Logger) *profileState {
+	s.probe = newProbeImageSource(s.declared.ProbeImage, release, s.declared.RecoveryInterval)
+	s.probe.logger = logger
+	return s
+}
+
+// probeSource is where the profile probes' image comes from.
+func (s *profileState) probeSource() *probeImageSource { return s.probe }
 
 // attach makes the profile causes hold c, the Orker's cordon.
 func (s *profileState) attach(c *Cordon) {
