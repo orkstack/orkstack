@@ -125,6 +125,11 @@ type RunPlan struct {
 	// predates it, so its plan encodes exactly as before.
 	Pause *PausePlan `json:"pause,omitempty"`
 
+	// Concurrency is the run's concurrency limits as its submit decided
+	// them (E88; concurrency_run.go): nil for a run with no limit, so its
+	// plan encodes exactly as before and its every path is today's.
+	Concurrency *ConcurrencyPlan `json:"concurrency,omitempty"`
+
 	// Awaits holds, per task id, the callback credential of every `await:`
 	// of this run that declares `callback: true`: a salt and the salted
 	// SHA-256 of a token minted at SUBMIT (internal/api). NEVER the token.

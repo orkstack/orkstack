@@ -335,6 +335,9 @@ type gateAnswer struct {
 	By           string    `json:"by,omitempty"`
 	Strategy     string    `json:"strategy,omitempty"`
 	Epoch        int64     `json:"epoch"`
+	// Rebuilding: a queued answer from a gate still rebuilding or settling,
+	// so a wait that ends now ends unavailable, not timed out (§5.2.3).
+	Rebuilding bool `json:"rebuilding,omitempty"`
 }
 
 // gateStrategyDecided reports a strategy this gate decides.
@@ -632,7 +635,7 @@ func (g *gateState) queuedAnswer(i int) gateDecision {
 	e := g.Queue[i]
 	return gateDecision{Answer: gateAnswer{
 		Proto: gateProto, Answer: gateAnswerQueued, Seq: e.Seq, ArrivedAt: e.ArrivedAt,
-		Position: i + 1, HoldersAhead: len(g.Holders), Epoch: g.Epoch,
+		Position: i + 1, HoldersAhead: len(g.Holders), Epoch: g.Epoch, Rebuilding: g.rebuilding(),
 	}}
 }
 

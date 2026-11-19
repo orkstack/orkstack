@@ -250,6 +250,7 @@ func isRunLevelEvent(event *orkstackv1.Event) bool {
 	switch event.GetType() {
 	case orkstackv1.EventType_EVENT_TYPE_RUN_CREATED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_STARTED,
+		orkstackv1.EventType_EVENT_TYPE_RUN_QUEUED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_SUCCEEDED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_FAILED,
 		orkstackv1.EventType_EVENT_TYPE_RUN_CANCELED,
