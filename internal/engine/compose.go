@@ -640,6 +640,11 @@ func (s *runState) collectChild(ctx workflow.Context, id string, future workflow
 // and category (docs/DSL.md "Composition").
 func childFailure(err error) (status orkstackv1.Status, code string, category orkstackv1.FailureCategory) {
 	failure := categoryOf(err)
+	if failure.superseded {
+		// A newer run replaced the child on its key: the composed task
+		// fails, because nobody canceled the parent.
+		return orkstackv1.Status_STATUS_FAILED, ChildRunFailedCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
+	}
 	switch {
 	case failure.canceled:
 		return orkstackv1.Status_STATUS_CANCELED, ChildRunCanceledCode, orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED
@@ -689,6 +694,10 @@ func childInnerMessage(err error) string {
 	failure := categoryOf(err)
 	if message := failure.appMessage(); message != "" {
 		return message
+	}
+	if failure.superseded && failure.supersededSentence != "" {
+		// A child a newer run replaced: its own sentence, not "canceled".
+		return failure.supersededSentence
 	}
 	if failure.viaChild {
 		return failure.childInner

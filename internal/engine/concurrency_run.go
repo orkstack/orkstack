@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/types/known/timestamppb"
@@ -138,7 +139,7 @@ func (s *runState) sendAcquire(ctx workflow.Context, slot *ConcurrencySlotPlan, 
 	if err == nil {
 		return res, nil
 	}
-	if temporal.IsCanceledError(err) || ctx.Err() != nil {
+	if categoryOf(err).canceled || ctx.Err() != nil {
 		return res, temporal.NewCanceledError()
 	}
 	// The activity ran out of its acquire_timeout, or failed past its
@@ -508,4 +509,20 @@ func concFailure(cause error) *orkstackv1.Error {
 		failure.Category = orkstackv1.FailureCategory_FAILURE_CATEGORY_CONTRACT_VIOLATION
 	}
 	return failure
+}
+
+// supersededClose reads a canceled close's recorded details where only
+// the close is at hand: RUN_SUPERSEDED and its sentence, as categoryOf reads
+// them off the error (superseded).
+func supersededClose(details *commonpb.Payloads) (string, bool) {
+	payloads := details.GetPayloads()
+	if len(payloads) < 2 {
+		return "", false
+	}
+	var code, sentence string
+	dc := DataConverter()
+	if dc.FromPayload(payloads[0], &code) != nil || code != RunSupersededCode || dc.FromPayload(payloads[1], &sentence) != nil {
+		return "", false
+	}
+	return sentence, true
 }

@@ -1890,10 +1890,22 @@ func closedExecution(
 		}
 		return orkstackv1.Status_STATUS_FAILED, failure, true
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_CANCELED:
-		return orkstackv1.Status_STATUS_CANCELED, &orkstackv1.Error{
-			Code:    "RUN_CANCELED",
-			Message: "run canceled",
-		}, true
+		// A superseded run closes canceled under its own code (fail), what
+		// its terminal snapshot would have said.
+		details := historyEvent.GetWorkflowExecutionCanceledEventAttributes().GetDetails()
+		if sentence, ok := supersededClose(details); ok {
+			return orkstackv1.Status_STATUS_CANCELED, &orkstackv1.Error{
+				Code: RunSupersededCode, Message: sentence,
+				Category: orkstackv1.FailureCategory_FAILURE_CATEGORY_CANCELLED,
+			}, true
+		}
+		canceled := &orkstackv1.Error{Code: "RUN_CANCELED", Message: "run canceled"}
+		if len(details.GetPayloads()) > 0 {
+			// No cancel this release writes carries details but a supersede's;
+			// details it cannot read are said, never dropped.
+			canceled.Details = "the run's close carried details this release could not read"
+		}
+		return orkstackv1.Status_STATUS_CANCELED, canceled, true
 	case enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_TERMINATED:
 		attrs := historyEvent.GetWorkflowExecutionTerminatedEventAttributes()
 		message := attrs.GetReason()
