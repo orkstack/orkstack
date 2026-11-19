@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 
 	orkstackv1 "github.com/orkstack/orkstack/gen/go/orkstack/v1"
@@ -98,6 +99,20 @@ func TestRunPlan_ProfileContractsEncodeAsBeforeWhenUnset(t *testing.T) {
 	if !strings.Contains(string(raw), want) {
 		t.Fatalf("plan encodes as %s; want it to hold %s", raw, want)
 	}
+	// A pinned profile whose set is empty, from a nil or an empty slice,
+	// encodes as [], never null.
+	for _, set := range [][]ContractPin{nil, {}} {
+		empty, err := stablejson.Marshal(ProfileContracts{Set: set})
+		if err != nil || string(empty) != `{"set":[]}` {
+			t.Fatalf("an empty set (%#v) encodes as %s, %v; want {\"set\":[]}", set, empty, err)
+		}
+	}
+	// The same through the data converter that writes a plan into history.
+	payload, err := converter.GetDefaultDataConverter().ToPayload(RunPlan{ProfileContracts: map[string]map[string]ProfileContracts{"lab": {"sensor": {}}}})
+	if err != nil || !strings.Contains(string(payload.GetData()), `"sensor":{"set":[]}`) {
+		t.Fatalf("the data converter writes an empty set as %s, %v; want []", payload.GetData(), err)
+	}
+
 	var back RunPlan
 	if err := json.Unmarshal(raw, &back); err != nil {
 		t.Fatal(err)
