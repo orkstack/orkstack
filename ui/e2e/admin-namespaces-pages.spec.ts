@@ -41,7 +41,10 @@ import { OP, addListFilter, selectOption, pageCli } from './uiHelpers';
 //   N7 an edit on page 2 saves and stays on page 2;
 //   N8 the CLI equivalent is the same filter as orkctl spells it;
 //   N9 page size is a field of the filter form: it applies with Apply
-//      filters, never on change.
+//      filters, never on change;
+//   N10 a sidebar count read the engine does not answer is aborted when
+//      the shell moves to another namespace, so it never holds one of the
+//      browser's connections past its page (proof 44642268123).
 //
 // Isolation (AGENTS.md §11.1): its own Temporal namespace, its own bucket
 // created by this run (so the registry holds exactly what this spec wrote and
@@ -330,4 +333,45 @@ test('N9: page size is a field of the filter form and applies with Apply filters
 	expect(params.get('cursor')).toBeNull();
 	expect(params.getAll('filter')).toEqual(['name^tenant-']);
 	note(`size 25 applied with the filters: ${page.url()}`);
+});
+
+test('N10: a held sidebar read is aborted when the shell moves to another namespace', async ({ page }) => {
+	// The engine always answers ListActivities, so a read it never answers is
+	// a fault the real system cannot produce on demand: a route stub holds
+	// every one this page sends, and never answers it. Each one that is
+	// aborted fails with net::ERR_ABORTED.
+	const held: string[] = [];
+	const aborted: string[] = [];
+	await page.route('**/orkstack.v1.ActivityService/ListActivities', (route) => {
+		held.push(route.request().url());
+	});
+	page.on('requestfailed', (request) => {
+		if (request.url().includes('ActivityService/ListActivities')) aborted.push(request.failure()?.errorText ?? '');
+	});
+	await page.goto(`${UI_ORIGIN}/admin/namespaces?ns=default&size=10`);
+	await expectRows(page, PAGES[0]);
+	// The sidebar reads its counts once the page has settled.
+	await expect.poll(() => held.length, { timeout: 15_000 }).toBe(1);
+	// Seven moves to another namespace, more than the browser's six
+	// connections, each by the app's own navigation (no reload, which would
+	// end every request by itself).
+	const shown = ['tenant-01', 'tenant-02', 'tenant-03', 'tenant-04', 'tenant-05', 'tenant-06', 'default'];
+	for (const [i, ns] of shown.entries()) {
+		await page.evaluate((href) => {
+			const a = document.createElement('a');
+			a.href = href;
+			document.body.append(a);
+			a.click();
+			a.remove();
+		}, `/admin/namespaces?ns=${ns}&size=10`);
+		await expect(page).toHaveURL(new RegExp(`ns=${ns}`));
+		// The page the shell moved to still lists the registry: its own reads went out.
+		await expectRows(page, PAGES[0]);
+		await expect.poll(() => held.length, { timeout: 15_000 }).toBe(i + 2);
+		// Every read of a namespace the shell no longer shows was aborted.
+		await expect.poll(() => aborted.length, { timeout: 15_000 }).toBe(i + 1);
+	}
+	expect(aborted.every((text) => text === 'net::ERR_ABORTED')).toBe(true);
+	note(`N10: ${held.length} held sidebar reads, ${aborted.length} aborted as the shell moved on`);
+	await page.unroute('**/orkstack.v1.ActivityService/ListActivities');
 });

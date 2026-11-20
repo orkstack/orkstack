@@ -8,6 +8,7 @@
 	import Dialog from '#lib/components/Dialog.svelte';
 	import ErrorPanel from '#lib/components/ErrorPanel.svelte';
 	import { forgetCsrfToken, holdCsrfToken, onSigninEnded, returnPath, setCsrfToken } from '#lib/signin.ts';
+	import { readNavCounts, type NavCounts } from '#lib/navCounts.ts';
 	import { authClient } from '#lib/clients/auth.ts';
 	import { forgetWho } from '#lib/authMode.ts';
 	import IconSprite from '#lib/components/IconSprite.svelte';
@@ -134,7 +135,11 @@
 	//     re-read — and then a link copied out of it names the namespace the
 	//     sender was looking at instead of leaving the reader's own browser to
 	//     answer for them.
+	//
+	// The sign-in pages are bare: they show no namespace, so their URL names
+	// none and their address bar is left as it is.
 	$effect(() => {
+		if (data.bare) return;
 		const url = page.url;
 		if (hasNamespaceParam(url)) {
 			rememberNamespace(data.namespace);
@@ -251,26 +256,35 @@
 		};
 	});
 	// The sidebar's other counts: read when the page has settled, by clients of
-	// their own, so no route pays for them on first load. A failed read draws none.
-	let navCounts = $state.raw<{ orkflows?: string; pools?: string; activities?: string }>({});
+	// their own, so no route pays for them on first load. A failed read draws
+	// none, and the reads for a namespace the shell no longer shows are aborted
+	// (#lib/navCounts.ts says why).
+	let navCounts = $state.raw<NavCounts>({});
 	$effect(() => {
 		const namespace = data.namespace;
-		let live = true;
+		const controller = new AbortController();
 		const settle = globalThis.requestIdleCallback ?? ((run: () => void) => setTimeout(run, 500));
 		settle(() => {
+			if (controller.signal.aborted) return;
 			void (async () => {
 				const [{ orkflowClient }, { namespaceClient }, { activityClient }] = await Promise.all([import('#lib/clients/orkflows.ts'), import('#lib/clients/namespaces.ts'), import('#lib/clients/activities.ts')]);
-				const [orkflows, pools, activities] = await Promise.all([
-					orkflowClient(fetch).listOrkflows({ namespace }).then((res) => `${res.orkflows.length}${res.nextPageToken ? '+' : ''}`, () => undefined),
-					namespaceClient(fetch).listPools({ namespace }).then((res) => String(res.pools.length), () => undefined),
-					activityClient(fetch).listActivities({}).then((res) => String(res.activities.length), () => undefined)
-				]);
-				if (live) navCounts = { orkflows, pools, activities };
+				if (controller.signal.aborted) return;
+				const orkflows = orkflowClient(fetch);
+				const namespaces = namespaceClient(fetch);
+				const activities = activityClient(fetch);
+				const counts = await readNavCounts(
+					{
+						listOrkflows: (req, options) => orkflows.listOrkflows(req, options),
+						listPools: (req, options) => namespaces.listPools(req, options),
+						listActivities: (req, options) => activities.listActivities(req, options)
+					},
+					namespace,
+					controller.signal
+				);
+				if (!controller.signal.aborted) navCounts = counts;
 			})();
 		});
-		return () => {
-			live = false;
-		};
+		return () => controller.abort();
 	});
 	onMount(() => {
 		systemClient(fetch)

@@ -286,10 +286,14 @@ test('a sign-in past its revalidation is refreshed under a form being written, a
 	await page.getByTestId('account-trigger').click();
 	await page.getByTestId('account-signout').click();
 	// Dex offers no end-session endpoint: signing out ends the sign-in here
-	// and lands on /signin.
+	// and lands on /signin. The URL is read once the page is drawn, after
+	// anything the shell's effects would write into it: the sign-in pages
+	// name no namespace.
+	await expect(page.getByTestId('signin-issuer-people')).toBeVisible();
 	await expect(page).toHaveURL(/\/signin$/);
 	await page.goto(`${ENGINE}/runs`);
-	await expect(page).toHaveURL(/\/signin\?return=%2Fruns/);
+	await expect(page.getByTestId('signin-issuer-people')).toBeVisible();
+	await expect(page).toHaveURL(/\/signin\?return=%2Fruns$/);
 });
 
 // The identity screens as they are drawn, in light and dark and at a
@@ -323,6 +327,8 @@ test('every identity screen is drawn in light, dark and at a phone’s width, an
 			await page.goto(`${ENGINE}/runs`);
 			await atDex(page, 'dev@example.test');
 			await expect(page.getByTestId('no-access-who')).toContainText('user:people:dev@example.test');
+			// A bare page: drawn, its URL still names no namespace.
+			await expect(page).toHaveURL(/\/signin\/no-access$/);
 			await shot(page, `screens/${at}-no-access.png`);
 			if (first) {
 				await page.getByTestId('no-access-copy').click();

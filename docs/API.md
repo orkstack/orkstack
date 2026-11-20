@@ -545,6 +545,7 @@ it is never stored in a version document.
 | `icon_error` | `string` | icon_error is non-empty when the image carries a non-empty icon label that could not be turned into an ActivityIcon, or when the index advertised no platform manifest to read a config from (interface_error and docs_error then say the same). Empty whenever icon is set. Escaped and bounded as interface_error is. |
 | `docs` | [`ActivityDocs`](#activitydocs) | docs is what the image says about itself in words, read from the org.orkstack.activity.docs label of the same config, a READ-MODEL field exactly as interface is. Its keys are interface's keys: a client joins the two by key. Unset when the image carries no such label, an empty one, or one that could not be read (docs_error says why). |
 | `docs_error` | `string` | docs_error is non-empty when the image carries a non-empty docs label that could not be turned into an ActivityDocs, one that describes an op or key the interface it was read with does not declare, or when no config could be read. Empty whenever docs is set. Escaped and bounded as interface_error is. |
+| `resolve_error` | `string` | resolve_error is non-empty when the catalog's image could not be read within its deadline, or at all: it names the reference and why, for a person to read, never to parse. The entry is still listed, because the catalog is configuration, with every field read from the image empty. Escaped and bounded as interface_error is. |
 
 ### ActivityInterface
 

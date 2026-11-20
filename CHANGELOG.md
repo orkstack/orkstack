@@ -124,6 +124,7 @@ the version's own, and its text is the release's notes on GitHub, word for word.
 
 ### Fixed
 
+- The Admin pages no longer hang when an activity image's registry does not answer: the activity catalog lists it with `resolve_error` within 10 seconds ([API.md](https://github.com/orkstack/orkstack/blob/main/docs/API.md)).
 - A stopping Orker no longer exits before the cluster has a finished task's result, which made the task run again on another Orker, spending an attempt ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#stop-timeouts)).
 - An Orker that is killed or crashes no longer leaves `docker` or `podman` CLI processes running behind it on Linux ([DEPLOY.md](https://github.com/orkstack/orkstack/blob/main/docs/DEPLOY.md#stop-timeouts)).
 - `orkctl run watch` and `run logs -f` now resume, rather than fail with `protocol error: incomplete envelope`, when the engine's connection closes as a stream starts
