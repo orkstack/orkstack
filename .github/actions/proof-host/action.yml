@@ -49,7 +49,12 @@ runs:
         echo '172.17.0.1 host.docker.internal' | sudo tee -a /etc/hosts
         sudo mkdir -p /etc/systemd/resolved.conf.d
         printf '[Resolve]\nDNSStubListenerExtra=172.17.0.1\n' | sudo tee /etc/systemd/resolved.conf.d/20-docker-dns.conf
-        echo '{"dns":["172.17.0.1"]}' | sudo tee /etc/docker/daemon.json
+        # Merged into daemon.json, never written over it: the job's
+        # registry-mirror step set the Docker Hub mirror there first.
+        current='{}'
+        if sudo test -s /etc/docker/daemon.json; then current="$(sudo cat /etc/docker/daemon.json)"; fi
+        jq '.dns = ["172.17.0.1"]' <<<"$current" | sudo tee /etc/docker/daemon.json.new >/dev/null
+        sudo mv /etc/docker/daemon.json.new /etc/docker/daemon.json
         sudo systemctl restart systemd-resolved
         sudo systemctl restart docker
         # The one container this action runs that is not the stack's: the

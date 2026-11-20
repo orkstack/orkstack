@@ -93,6 +93,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+      # Docker Hub pulls go through its mirror, set before any container or
+      # builder of this job starts (.github/actions/registry-mirror): buf
+      # runs from its Docker Hub image.
+      - name: registry mirror
+        uses: ./.github/actions/registry-mirror
+        timeout-minutes: 3
       - name: proto-breaking
         timeout-minutes: 10
         run: make proto-breaking

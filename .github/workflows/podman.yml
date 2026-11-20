@@ -70,6 +70,11 @@ jobs:
         timeout-minutes: 3
         with:
           persist-credentials: false
+      # Docker Hub pulls go through its mirror, set before any container or
+      # builder of this job starts (.github/actions/registry-mirror).
+      - name: registry mirror
+        uses: ./.github/actions/registry-mirror
+        timeout-minutes: 3
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
@@ -101,9 +106,18 @@ jobs:
           podman version | tee -a "$GITHUB_STEP_SUMMARY"
           # The dev registry is plain HTTP on loopback: Docker trusts that by
           # itself, Podman only by name (docs/DEPLOY.md "Running on Podman").
+          # Docker Hub pulls go through the same mirror as Docker's
+          # (.github/actions/registry-mirror); Podman reads no daemon.json.
           conf='[[registry]]
           location = "localhost:5001"
-          insecure = true'
+          insecure = true
+
+          [[registry]]
+          prefix = "docker.io"
+          location = "docker.io"
+
+          [[registry.mirror]]
+          location = "mirror.gcr.io"'
           case "$SHAPE" in
             rootless-cli)
               echo "kernel.apparmor_restrict_unprivileged_userns = $(sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || echo absent)" | tee -a "$GITHUB_STEP_SUMMARY"

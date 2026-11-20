@@ -991,9 +991,34 @@ read the signing key. One action is one commit and one release in every file.
 No test holds these rules: review is what keeps them. Go, Bun, Node and
 cosign are pinned to exact versions. Dependabot moves them, the SHA and its
 comment together, one pull request and one proof at a time; its
-github-actions entry reads `.github/workflows` and both composite actions
+github-actions entry reads `.github/workflows` and the composite actions
 (`.github/actions/proof-host/action.yml`,
-`.github/actions/proof-fetch/action.yml`).
+`.github/actions/proof-fetch/action.yml`,
+`.github/actions/registry-mirror/action.yml`).
+
+The composite action `.github/actions/registry-mirror` makes a hosted
+runner's Docker daemon pull Docker Hub images through `mirror.gcr.io`,
+Google's public cache of Docker Hub, because Docker Hub limits anonymous
+pulls per IP and a hosted runner's address is shared. On a miss the daemon
+pulls from Docker Hub itself, and a pull by digest is verified against that
+digest either way. It merges the mirror into `/etc/docker/daemon.json`,
+restarts the daemon, and fails its step unless `docker info` lists the
+mirror. Every job that starts a container, a builder or a pull runs it right
+after its checkout, before anything else of Docker's
+(`TestWorkflows_DockerHubPullsGoThroughTheMirror`, which also reads the
+Makefile targets a step runs): `proof.yml`'s build, fast, integration,
+ui-e2e, activity-fixture and observability parts, `ci.yml`'s proto,
+`nightly.yml`'s vuln-images, quickstart and examples, `podman.yml`,
+`kind-orker.yml`, and `release.yml`'s artifacts. Two pulls of `kind-orker.yml`
+do not reach the runner's daemon and so not the mirror: the rootless Docker
+engine's image, which the kind node's own containerd pulls, and the alpine
+that engine runs. `proof-host` merges its DNS
+setting into the same file rather than writing over it, each buildx builder
+reads the mirror in its `buildkitd-config-inline`, and `podman.yml` names it
+in Podman's `registries.conf` (`TestWorkflows_TheMirrorIsKeptAndVerified`).
+`release.yml`'s publish job runs only images from ghcr.io and quay.io and
+does not use it. A self-hosted runner's daemon is its owner's, and the action
+leaves it alone (CONTRIBUTING.md, "Linux hosts").
 
 The composite action `.github/actions/proof-host` installs the host setup a
 stack part needs: Docker images cached, the Temporal CLI, cosign, and the

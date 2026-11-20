@@ -113,6 +113,11 @@ jobs:
         timeout-minutes: 3
         with:
           persist-credentials: false
+      # Docker Hub pulls go through its mirror, set before any container or
+      # builder of this job starts (.github/actions/registry-mirror).
+      - name: registry mirror
+        uses: ./.github/actions/registry-mirror
+        timeout-minutes: 3
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         timeout-minutes: 5
         with:
@@ -124,6 +129,11 @@ jobs:
         timeout-minutes: 3
         with:
           driver-opts: image=moby/buildkit:v0.34.1@sha256:99368f3e46177c6405b9740e4461d91cee004128daeecca78d4ceac50ec1da5c
+          # The builder pulls Docker Hub bases through the same mirror as the
+          # daemon (.github/actions/registry-mirror).
+          buildkitd-config-inline: |
+            [registry."docker.io"]
+              mirrors = ["mirror.gcr.io"]
       - name: vuln-images
         timeout-minutes: 60
         run: make vuln-images
@@ -177,6 +187,11 @@ jobs:
         timeout-minutes: 3
         with:
           persist-credentials: false
+      # Docker Hub pulls go through its mirror, set before any container or
+      # builder of this job starts (.github/actions/registry-mirror).
+      - name: registry mirror
+        uses: ./.github/actions/registry-mirror
+        timeout-minutes: 3
       - name: the README's Quickstart, as written, on a clone of this commit
         # release.yml's limit for the same step: a cold build of the stack on
         # a 4-vCPU runner, where 5 minutes was measured cold on 16 CPUs.
@@ -202,6 +217,11 @@ jobs:
         timeout-minutes: 3
         with:
           persist-credentials: false
+      # Docker Hub pulls go through its mirror, set before any container or
+      # builder of this job starts (.github/actions/registry-mirror).
+      - name: registry mirror
+        uses: ./.github/actions/registry-mirror
+        timeout-minutes: 3
       - name: every shipped example with no inputs, on a fresh quickstart
         # The Quickstart's own limit, for its cold build, and a few minutes more.
         timeout-minutes: 45

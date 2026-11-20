@@ -290,6 +290,14 @@ docker run --rm alpine:3.24 getent hosts host.docker.internal
 `172.17.0.1` is the gateway of Docker's default bridge; a host with a
 customized `docker0` uses its own gateway address.
 
+Docker Hub limits anonymous pulls per IP. A host that runs many proofs, or
+shares its address, can point its Docker daemon at `mirror.gcr.io`, the
+public cache of Docker Hub CI runners use (docs/PROOFS.md §5): add
+`"registry-mirrors": ["https://mirror.gcr.io"]` to `/etc/docker/daemon.json`,
+beside any keys already there, restart Docker, and check that
+`docker info` lists it under Registry Mirrors. It is optional, and the
+host's own choice: a pull by digest is verified either way.
+
 ### The usb-serial test device
 
 The device-profile integration test passes a host character device into an
